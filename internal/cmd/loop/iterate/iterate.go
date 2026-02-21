@@ -170,7 +170,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 
 	action, err := shared.CheckConcurrency(ctx, &shared.ConcurrencyCheckConfig{
 		Client:    client,
-		Project:   projectCfg.Project,
+		Project:   projectCfg.Name,
 		WorkDir:   workDir,
 		IOStreams: ios,
 		Prompter:  opts.Prompter,

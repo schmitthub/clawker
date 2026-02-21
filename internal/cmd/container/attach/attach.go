@@ -93,7 +93,7 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 		}
 		var project string
 		if p := cfg.Project(); p != nil {
-			project = p.Project
+			project = p.Name
 		}
 		var nameErr error
 		container, nameErr = docker.ContainerName(project, container)

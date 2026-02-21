@@ -88,7 +88,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Builder
 		return fmt.Errorf("failed to compute content hash: %w", err)
 	}
 
-	hashTag := ImageTagWithHash(b.config.Project, hash)
+	hashTag := ImageTagWithHash(b.config.Name, hash)
 
 	// Check if content-addressed image already exists
 	if !opts.ForceBuild {
@@ -207,7 +207,7 @@ func (b *Builder) mergeImageLabels(existing map[string]string) map[string]string
 	}
 
 	// Add clawker internal labels last — these cannot be overridden
-	for k, v := range b.client.ImageLabels(b.config.Project, b.config.Version) {
+	for k, v := range b.client.ImageLabels(b.config.Name, b.config.Version) {
 		merged[k] = v
 	}
 

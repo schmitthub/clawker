@@ -94,7 +94,7 @@ Container name can be:
 				}
 				var project string
 				if p := cfg.Project(); p != nil {
-					project = p.Project
+					project = p.Name
 				}
 				opts.containerName, err = docker.ContainerName(project, args[0])
 				if err != nil {

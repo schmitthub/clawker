@@ -78,7 +78,7 @@ func waitRun(ctx context.Context, opts *WaitOptions) error {
 		}
 		var project string
 		if p := cfg.Project(); p != nil {
-			project = p.Project
+			project = p.Name
 		}
 		resolved, err := docker.ContainerNamesFromAgents(project, containers)
 		if err != nil {

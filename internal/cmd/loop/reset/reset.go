@@ -73,7 +73,7 @@ func resetRun(_ context.Context, opts *ResetOptions) error {
 
 	var project string
 	if p := cfg.Project(); p != nil {
-		project = p.Project
+		project = p.Name
 	}
 
 	// Get session store

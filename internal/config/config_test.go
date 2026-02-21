@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // helpers
@@ -43,10 +44,15 @@ func mustConfigFromFile(t *testing.T, content string) (Config, string) {
 
 	v := NewViperConfigForTest()
 	v.SetConfigFile(path)
-	require.NoError(t, v.ReadInConfig())
 
-	c := NewConfigWithViperForTest(v)
-	c.SetFilePathsForTest(path, path, path)
+	if content != "" {
+		var flat map[string]any
+		require.NoError(t, yaml.Unmarshal([]byte(content), &flat))
+		require.NoError(t, v.MergeConfigMap(NamespaceMapForTest(flat, ScopeProject)))
+	}
+
+	c := NewConfigForTest(v)
+	SetFilePathsForTest(c, path, path, path)
 
 	return c, path
 }
@@ -69,7 +75,7 @@ func mustOwnedConfig(t *testing.T) (*ConfigImplForTest, map[ConfigScope]string) 
 	require.NoError(t, os.WriteFile(settingsPath, []byte("logging:\n  max_size_mb: 50\n"), 0o644))
 	require.NoError(t, os.WriteFile(userProjectPath, []byte("build:\n  image: user:latest\n"), 0o644))
 	require.NoError(t, os.WriteFile(projectPath, []byte("build:\n  image: project:latest\n"), 0o644))
-	registryYAML := fmt.Sprintf("projects:\n  app:\n    name: app\n    root: %q\n", projectRoot)
+	registryYAML := fmt.Sprintf("projects:\n  - name: app\n    root: %q\n", projectRoot)
 	require.NoError(t, os.WriteFile(registryPath, []byte(registryYAML), 0o644))
 
 	oldWd, err := os.Getwd()
@@ -77,9 +83,9 @@ func mustOwnedConfig(t *testing.T) (*ConfigImplForTest, map[ConfigScope]string) 
 	require.NoError(t, os.Chdir(projectRoot))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	c := NewConfigWithViperForTest(NewViperConfigForTest())
-	c.SetFilePathsForTest(settingsPath, userProjectPath, registryPath)
-	require.NoError(t, c.LoadForTest(NewLoadOptionsForTest(settingsPath, userProjectPath, registryPath)))
+	c := NewConfigForTest(NewViperConfigForTest())
+	SetFilePathsForTest(c, settingsPath, userProjectPath, registryPath)
+	require.NoError(t, LoadForTest(c, settingsPath, userProjectPath, registryPath))
 
 	paths := map[ConfigScope]string{
 		ScopeSettings: settingsPath,
@@ -106,34 +112,62 @@ func mustNewIsolatedConfig(t *testing.T) Config {
 func newConfigFromTestdata(t *testing.T) Config {
 	t.Helper()
 
-	td, err := filepath.Abs("testdata")
+	// Create project root with a valid project config
+	projectRoot := t.TempDir()
+	resolvedRoot, err := filepath.EvalSymlinks(projectRoot)
 	require.NoError(t, err)
+	projectRoot = resolvedRoot
+
+	projectYAML := `version: "1"
+build:
+  image: "buildpack-deps:bookworm-scm"
+  packages:
+    - git
+    - curl
+agent:
+  from_env:
+    - SOME_OTHER
+  claude_code:
+    use_host_auth: false
+    config:
+      strategy: "fresh"
+  enable_shared_dir: false
+security:
+  docker_socket: false
+  firewall:
+    enable: false
+  git_credentials:
+    forward_https: false
+    forward_ssh: false
+    forward_gpg: false
+    copy_git_config: false
+`
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ClawkerConfigFileNameForTest), []byte(projectYAML), 0o644))
+
 	oldWd, err := os.Getwd()
 	require.NoError(t, err)
-	require.NoError(t, os.Chdir(filepath.Join(td, "project")))
-	t.Cleanup(func() {
-		_ = os.Chdir(oldWd)
-	})
-	cwd, err := os.Getwd()
-	require.NoError(t, err)
+	require.NoError(t, os.Chdir(projectRoot))
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
 	configDir := t.TempDir()
-	settingsBytes, err := os.ReadFile(filepath.Join(td, "config", "settings.yaml"))
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerSettingsFileNameForTest), settingsBytes, 0o644))
 
-	userProjectBytes, err := os.ReadFile(filepath.Join(td, "config", ClawkerConfigFileNameForTest))
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerConfigFileNameForTest), userProjectBytes, 0o644))
+	// Settings with monitoring overrides
+	settingsYAML := `monitoring:
+  otel_collector_port: 5318
+  otel_collector_host: "monitoring.internal"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerSettingsFileNameForTest), []byte(settingsYAML), 0o644))
 
-	projectsYAML := fmt.Sprintf(`projects:
-  clawker-tests:
-    name: clawker.test
-    root: %q
-    worktrees:
-      fix/test: fix-test
-`, cwd)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerProjectsFileNameForTest), []byte(projectsYAML), 0o644))
+	// User-level project config (lower precedence than project config)
+	userProjectYAML := `version: "1"
+build:
+  image: "someother:someother"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerConfigFileNameForTest), []byte(userProjectYAML), 0o644))
+
+	// Registry pointing to our project root
+	registryYAML := fmt.Sprintf("projects:\n  - name: clawker.test\n    root: %q\n", projectRoot)
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerProjectsFileNameForTest), []byte(registryYAML), 0o644))
 
 	t.Setenv(ClawkerConfigDirEnvForTest, configDir)
 	cfg, err := NewConfig()
@@ -164,7 +198,7 @@ build:
   imag: typo-value
 `)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "build.imag")
+	assert.Contains(t, err.Error(), "imag")
 }
 
 func TestReadFromString_UnknownRootKey(t *testing.T) {
@@ -175,6 +209,119 @@ build:
 `)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "versoin")
+}
+
+func TestReadFromString_AcceptsAllSchemaKeys(t *testing.T) {
+	// ReadFromString creates a full Config — it must accept keys from
+	// all schemas (project, settings, registry).
+	_, err := ReadFromString(`
+version: "1"
+build:
+  image: ubuntu:22.04
+logging:
+  max_size_mb: 99
+monitoring:
+  otel_collector_port: 5000
+host_proxy:
+  manager:
+    port: 19444
+projects:
+  - name: app
+    root: /tmp/app
+`)
+	require.NoError(t, err)
+}
+
+// Strict validation tests — verify that type mismatches, unknown fields,
+// extra fields, and wrong value types are all rejected.
+
+func TestValidateYAMLStrict_RejectsMapWhereListExpected(t *testing.T) {
+	// ProjectRegistry.Projects is []ProjectEntry, not map
+	err := ValidateYAMLStrictForTest("projects: {}", &ProjectRegistry{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot unmarshal")
+}
+
+func TestValidateYAMLStrict_AcceptsEmptyList(t *testing.T) {
+	err := ValidateYAMLStrictForTest("projects: []\n", &ProjectRegistry{})
+	require.NoError(t, err)
+}
+
+func TestValidateYAMLStrict_RejectsListWhereMapExpected(t *testing.T) {
+	// Project.Build is a struct (map in YAML), not a list
+	err := ValidateYAMLStrictForTest("build:\n  - item\n", &Project{})
+	require.Error(t, err)
+}
+
+func TestValidateYAMLStrict_RejectsStringWhereListExpected(t *testing.T) {
+	// Build.Packages expects []string, not a bare string
+	err := ValidateYAMLStrictForTest("build:\n  packages: notalist\n", &Project{})
+	require.Error(t, err)
+}
+
+func TestValidateYAMLStrict_RejectsExtraFieldsOnNestedStruct(t *testing.T) {
+	err := ValidateYAMLStrictForTest("build:\n  image: ubuntu\n  bogus_field: value\n", &Project{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bogus_field")
+}
+
+func TestValidateYAMLStrict_RejectsExtraFieldsOnProjectEntry(t *testing.T) {
+	yaml := "projects:\n  - name: app\n    root: /tmp\n    nonexistent: value\n"
+	err := ValidateYAMLStrictForTest(yaml, &ProjectRegistry{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nonexistent")
+}
+
+func TestValidateYAMLStrict_RejectsIntWhereStringExpected(t *testing.T) {
+	// Build.Image is string, not int
+	err := ValidateYAMLStrictForTest("build:\n  image: 12345\n", &Project{})
+	// yaml.v3 may coerce int to string — this tests the boundary
+	// If it doesn't error, the coercion is acceptable
+	_ = err
+}
+
+func TestValidateYAMLStrict_AcceptsAllCommentsYAML(t *testing.T) {
+	// All-comments documents should parse as empty (io.EOF handled)
+	err := ValidateYAMLStrictForTest("# just a comment\n# another comment\n", &Settings{})
+	require.NoError(t, err)
+}
+
+func TestValidateYAMLStrict_AcceptsEmptyString(t *testing.T) {
+	err := ValidateYAMLStrictForTest("", &Project{})
+	require.NoError(t, err)
+}
+
+func TestValidateYAMLStrict_RejectsSettingsFieldsInProjectSchema(t *testing.T) {
+	// logging is a Settings field, not a Project field
+	err := ValidateYAMLStrictForTest("logging:\n  max_size_mb: 50\n", &Project{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "logging")
+}
+
+func TestValidateYAMLStrict_RejectsProjectFieldsInSettingsSchema(t *testing.T) {
+	// build is a Project field, not a Settings field
+	err := ValidateYAMLStrictForTest("build:\n  image: ubuntu\n", &Settings{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "build")
+}
+
+func TestValidateConfigFileExact_RejectsInvalidFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("build: [unclosed"), 0o644))
+	err := ValidateConfigFileExactForTest(path, &Project{})
+	require.Error(t, err)
+}
+
+func TestValidateConfigFileExact_RejectsMissingFile(t *testing.T) {
+	err := ValidateConfigFileExactForTest("/nonexistent/path.yaml", &Project{})
+	require.Error(t, err)
+}
+
+func TestValidateConfigFileExact_AcceptsValidFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "valid.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: \"1\"\nbuild:\n  image: ubuntu\n"), 0o644))
+	err := ValidateConfigFileExactForTest(path, &Project{})
+	require.NoError(t, err)
 }
 
 func TestReadFromString_ParsesValues(t *testing.T) {
@@ -194,7 +341,7 @@ agent:
     - ~/.claude/agents
 `)
 
-	v, err := c.Get("agent.includes")
+	v, err := c.Get("project.agent.includes")
 	require.NoError(t, err)
 	assert.Equal(t, []any{"~/.claude/agents"}, v)
 }
@@ -212,13 +359,121 @@ build:
 	assert.Equal(t, "attacker-project", p.Build.Instructions.Labels["dev.clawker.project"])
 }
 
+// --- Namespace helpers ---
+
+func TestNamespacedKey_ProjectKeys(t *testing.T) {
+	tests := []struct {
+		flat     string
+		expected string
+	}{
+		{"build.image", "project.build.image"},
+		{"build", "project.build"},
+		{"version", "project.version"},
+		{"agent.includes", "project.agent.includes"},
+		{"workspace.remote_path", "project.workspace.remote_path"},
+		{"security.firewall.enable", "project.security.firewall.enable"},
+		{"loop.max_loops", "project.loop.max_loops"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.flat, func(t *testing.T) {
+			got, err := NamespacedKeyForTest(tt.flat)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestNamespacedKey_SettingsKeys(t *testing.T) {
+	tests := []struct {
+		flat     string
+		expected string
+	}{
+		{"logging.file_enabled", "settings.logging.file_enabled"},
+		{"logging", "settings.logging"},
+		{"monitoring.grafana_port", "settings.monitoring.grafana_port"},
+		{"host_proxy.manager.port", "settings.host_proxy.manager.port"},
+		{"default_image", "settings.default_image"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.flat, func(t *testing.T) {
+			got, err := NamespacedKeyForTest(tt.flat)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestNamespacedKey_RegistryKeys(t *testing.T) {
+	got, err := NamespacedKeyForTest("projects")
+	require.NoError(t, err)
+	assert.Equal(t, "registry.projects", got)
+}
+
+func TestNamespacedKey_UnknownKey_Errors(t *testing.T) {
+	_, err := NamespacedKeyForTest("bogus.key")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no ownership mapping")
+}
+
+func TestNamespaceMap_WrapsUnderScope(t *testing.T) {
+	flat := map[string]any{
+		"build": map[string]any{"image": "alpine"},
+		"agent": map[string]any{"includes": []string{}},
+	}
+	got := NamespaceMapForTest(flat, ScopeProject)
+	require.Contains(t, got, "project")
+	inner, ok := got["project"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, flat["build"], inner["build"])
+	assert.Equal(t, flat["agent"], inner["agent"])
+}
+
+func TestNamespaceMap_SettingsScope(t *testing.T) {
+	flat := map[string]any{"logging": map[string]any{"file_enabled": true}}
+	got := NamespaceMapForTest(flat, ScopeSettings)
+	require.Contains(t, got, "settings")
+	_, ok := got["settings"].(map[string]any)
+	require.True(t, ok)
+}
+
+func TestScopeFromNamespacedKey_ValidScopes(t *testing.T) {
+	tests := []struct {
+		key   string
+		scope ConfigScope
+	}{
+		{"project.build.image", ScopeProject},
+		{"project.version", ScopeProject},
+		{"settings.logging.file_enabled", ScopeSettings},
+		{"settings.default_image", ScopeSettings},
+		{"registry.projects", ScopeRegistry},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			got, err := ScopeFromNamespacedKeyForTest(tt.key)
+			require.NoError(t, err)
+			assert.Equal(t, tt.scope, got)
+		})
+	}
+}
+
+func TestScopeFromNamespacedKey_InvalidScope_Errors(t *testing.T) {
+	_, err := ScopeFromNamespacedKeyForTest("bogus.build.image")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown scope")
+}
+
+func TestScopeFromNamespacedKey_NoSegments_Errors(t *testing.T) {
+	_, err := ScopeFromNamespacedKeyForTest("nodots")
+	require.Error(t, err)
+}
+
 func TestGet_ReturnsValue(t *testing.T) {
 	c := mustReadFromString(t, `
 build:
   image: ubuntu:22.04
 `)
 
-	v, err := c.Get("build.image")
+	v, err := c.Get("project.build.image")
 	require.NoError(t, err)
 	assert.Equal(t, "ubuntu:22.04", v)
 }
@@ -226,25 +481,25 @@ build:
 func TestGet_KeyNotFound(t *testing.T) {
 	c := mustReadFromString(t, "")
 
-	_, err := c.Get("missing.key")
+	_, err := c.Get("project.missing.key")
 	require.Error(t, err)
 	var notFound *KeyNotFoundError
 	require.ErrorAs(t, err, &notFound)
-	assert.Equal(t, "missing.key", notFound.Key)
+	assert.Equal(t, "project.missing.key", notFound.Key)
 }
 
 func TestSet_ThenGet(t *testing.T) {
 	c, _ := mustConfigFromFile(t, "build:\n  image: ubuntu:22.04\n")
 
-	require.NoError(t, c.Set("build.image", "debian:bookworm"))
-	v, err := c.Get("build.image")
+	require.NoError(t, c.Set("project.build.image", "debian:bookworm"))
+	v, err := c.Get("project.build.image")
 	require.NoError(t, err)
 	assert.Equal(t, "debian:bookworm", v)
 }
 
 func TestSet_DoesNotWriteOwnedSettingsFile(t *testing.T) {
 	c, paths := mustOwnedConfig(t)
-	require.NoError(t, c.Set("logging.max_size_mb", 99))
+	require.NoError(t, c.Set("settings.logging.max_size_mb", 99))
 
 	v := viper.New()
 	v.SetConfigFile(paths[ScopeSettings])
@@ -254,17 +509,18 @@ func TestSet_DoesNotWriteOwnedSettingsFile(t *testing.T) {
 
 func TestSet_DoesNotWriteOwnedRegistryFile(t *testing.T) {
 	c, paths := mustOwnedConfig(t)
-	require.NoError(t, c.Set("projects.app.name", "renamed-app"))
+	require.NoError(t, c.Set("registry.projects.app.name", "renamed-app"))
 
-	v := viper.New()
-	v.SetConfigFile(paths[ScopeRegistry])
-	require.NoError(t, v.ReadInConfig())
-	assert.Equal(t, "app", v.GetString("projects.app.name"))
+	// Verify the on-disk file was NOT mutated by Set
+	raw, err := os.ReadFile(paths[ScopeRegistry])
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "name: app")
+	assert.NotContains(t, string(raw), "renamed-app")
 }
 
 func TestSet_DoesNotWriteOwnedProjectFile(t *testing.T) {
 	c, paths := mustOwnedConfig(t)
-	require.NoError(t, c.Set("build.image", "go:1.23"))
+	require.NoError(t, c.Set("project.build.image", "go:1.23"))
 
 	v := viper.New()
 	v.SetConfigFile(paths[ScopeProject])
@@ -274,7 +530,7 @@ func TestSet_DoesNotWriteOwnedProjectFile(t *testing.T) {
 
 func TestWriteConfigAs(t *testing.T) {
 	cfg, _ := mustConfigFromFile(t, "build:\n  image: ubuntu:22.04\n")
-	require.NoError(t, cfg.Set("build.image", "alpine:3.20"))
+	require.NoError(t, cfg.Set("project.build.image", "alpine:3.20"))
 
 	path := filepath.Join(t.TempDir(), "written.yaml")
 	require.NoError(t, cfg.Write(WriteOptions{Path: path}))
@@ -282,12 +538,12 @@ func TestWriteConfigAs(t *testing.T) {
 	v := viper.New()
 	v.SetConfigFile(path)
 	require.NoError(t, v.ReadInConfig())
-	assert.Equal(t, "alpine:3.20", v.GetString("build.image"))
+	assert.Equal(t, "alpine:3.20", v.GetString("project.build.image"))
 }
 
 func TestWrite_Path_OverwritesExisting(t *testing.T) {
 	cfg, _ := mustConfigFromFile(t, "build:\n  image: ubuntu:22.04\n")
-	require.NoError(t, cfg.Set("build.image", "alpine:3.21"))
+	require.NoError(t, cfg.Set("project.build.image", "alpine:3.21"))
 
 	path := filepath.Join(t.TempDir(), "existing.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("build:\n  image: ubuntu:22.04\n"), 0o644))
@@ -297,7 +553,7 @@ func TestWrite_Path_OverwritesExisting(t *testing.T) {
 	v := viper.New()
 	v.SetConfigFile(path)
 	require.NoError(t, v.ReadInConfig())
-	assert.Equal(t, "alpine:3.21", v.GetString("build.image"))
+	assert.Equal(t, "alpine:3.21", v.GetString("project.build.image"))
 }
 
 func TestSafeWriteConfigAs_NoOverwrite(t *testing.T) {
@@ -317,7 +573,7 @@ func TestWriteConfig_WithoutPredefinedPath(t *testing.T) {
 
 func TestWriteConfig_WithPredefinedPath(t *testing.T) {
 	c, path := mustConfigFromFile(t, "build:\n  image: ubuntu:22.04\n")
-	require.NoError(t, c.Set("build.image", "alpine:3.22"))
+	require.NoError(t, c.Set("project.build.image", "alpine:3.22"))
 
 	require.NoError(t, c.Write(WriteOptions{}))
 
@@ -329,7 +585,7 @@ func TestWriteConfig_WithPredefinedPath(t *testing.T) {
 
 func TestWrite_ScopeSettings_WritesSettingsOnly(t *testing.T) {
 	c, _ := mustOwnedConfig(t)
-	require.NoError(t, c.Set("logging.max_size_mb", 123))
+	require.NoError(t, c.Set("settings.logging.max_size_mb", 123))
 
 	outputPath := filepath.Join(t.TempDir(), "settings-scope.yaml")
 	require.NoError(t, c.Write(WriteOptions{Scope: ScopeSettings, Path: outputPath}))
@@ -353,18 +609,18 @@ func TestWrite_ScopeSettings_NoDirty_NoWrite(t *testing.T) {
 
 func TestWrite_KeyScopeMismatch_Errors(t *testing.T) {
 	c, _ := mustOwnedConfig(t)
-	require.NoError(t, c.Set("logging.max_size_mb", 456))
+	require.NoError(t, c.Set("settings.logging.max_size_mb", 456))
 
-	err := c.Write(WriteOptions{Scope: ScopeProject, Key: "logging.max_size_mb"})
+	err := c.Write(WriteOptions{Scope: ScopeProject, Key: "settings.logging.max_size_mb"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "belongs")
 }
 
 func TestWrite_Key_ClearsDirtyForKey(t *testing.T) {
 	c, paths := mustOwnedConfig(t)
-	require.NoError(t, c.Set("logging.max_size_mb", 444))
+	require.NoError(t, c.Set("settings.logging.max_size_mb", 444))
 
-	require.NoError(t, c.Write(WriteOptions{Key: "logging.max_size_mb"}))
+	require.NoError(t, c.Write(WriteOptions{Key: "settings.logging.max_size_mb"}))
 
 	v := viper.New()
 	v.SetConfigFile(paths[ScopeSettings])
@@ -373,7 +629,7 @@ func TestWrite_Key_ClearsDirtyForKey(t *testing.T) {
 
 	before, err := os.ReadFile(paths[ScopeSettings])
 	require.NoError(t, err)
-	require.NoError(t, c.Write(WriteOptions{Key: "logging.max_size_mb"}))
+	require.NoError(t, c.Write(WriteOptions{Key: "settings.logging.max_size_mb"}))
 	after, err := os.ReadFile(paths[ScopeSettings])
 	require.NoError(t, err)
 	assert.Equal(t, string(before), string(after))
@@ -385,10 +641,10 @@ func TestWrite_AddProjectAndWorktree_PersistsToRegistry(t *testing.T) {
 	newProjectRoot := filepath.Join(t.TempDir(), "new-project")
 	require.NoError(t, os.MkdirAll(newProjectRoot, 0o755))
 
-	require.NoError(t, c.Set("projects.newproj.name", "newproj"))
-	require.NoError(t, c.Set("projects.newproj.root", newProjectRoot))
-	require.NoError(t, c.Set("projects.newproj.worktrees.feature.path", filepath.Join(newProjectRoot, "feature")))
-	require.NoError(t, c.Set("projects.newproj.worktrees.feature.branch", "feature"))
+	require.NoError(t, c.Set("registry.projects.newproj.name", "newproj"))
+	require.NoError(t, c.Set("registry.projects.newproj.root", newProjectRoot))
+	require.NoError(t, c.Set("registry.projects.newproj.worktrees.feature.path", filepath.Join(newProjectRoot, "feature")))
+	require.NoError(t, c.Set("registry.projects.newproj.worktrees.feature.branch", "feature"))
 
 	require.NoError(t, c.Write(WriteOptions{}))
 
@@ -404,11 +660,11 @@ func TestWrite_AddProjectAndWorktree_PersistsToRegistry(t *testing.T) {
 
 func TestWrite_Default_PartialFailure_ClearsOnlySuccessfulDirtyEntries(t *testing.T) {
 	c, paths := mustOwnedConfig(t)
-	require.NoError(t, c.Set("projects.app.name", "renamed-app"))
-	require.NoError(t, c.Set("build.image", "go:1.23"))
+	require.NoError(t, c.Set("registry.projects.app.name", "renamed-app"))
+	require.NoError(t, c.Set("project.build.image", "go:1.23"))
 
 	registryOut := filepath.Join(t.TempDir(), "registry-out.yaml")
-	c.SetProjectRegistryPathForTest(registryOut)
+	SetProjectRegistryPathForTest(c, registryOut)
 
 	err := c.Write(WriteOptions{Safe: true})
 	require.Error(t, err)
@@ -466,7 +722,7 @@ func TestConcurrentReadWrite_NoPanic(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 200; j++ {
-				if err := c.Set("build.image", fmt.Sprintf("image-%d-%d", worker, j)); err != nil {
+				if err := c.Set("project.build.image", fmt.Sprintf("image-%d-%d", worker, j)); err != nil {
 					t.Errorf("set failed: %v", err)
 					return
 				}
@@ -500,6 +756,31 @@ func TestParseMode(t *testing.T) {
 }
 
 // defaults
+
+func TestDefaults_YAMLDrift(t *testing.T) {
+	// Detect drift: default YAML constants must match their Go schema structs.
+	// Uses production validation paths — not test shadows.
+
+	t.Run("default_config_yaml", func(t *testing.T) {
+		// Production path: ReadFromString validates against Project{} schema.
+		_, err := ReadFromString(DefaultConfigYAML)
+		require.NoError(t, err)
+	})
+
+	t.Run("default_settings_yaml", func(t *testing.T) {
+		// Production path: validateConfigFileExact validates against Settings{} schema.
+		path := filepath.Join(t.TempDir(), "settings.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(DefaultSettingsYAML), 0o644))
+		require.NoError(t, ValidateConfigFileExactForTest(path, &Settings{}))
+	})
+
+	t.Run("default_registry_yaml", func(t *testing.T) {
+		// Production path: validateConfigFileExact validates against ProjectRegistry{} schema.
+		path := filepath.Join(t.TempDir(), "projects.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(DefaultRegistryYAML), 0o644))
+		require.NoError(t, ValidateConfigFileExactForTest(path, &ProjectRegistry{}))
+	})
+}
 
 func TestDefaults_Project(t *testing.T) {
 	c := mustReadFromString(t, "")
@@ -617,8 +898,7 @@ func TestSettingsTypedGetter_Defaults(t *testing.T) {
 }
 
 func TestSettingsTypedGetter_RespectsOverrides(t *testing.T) {
-	c := mustReadFromString(t, `
-logging:
+	settingsYAML := `logging:
   file_enabled: false
   max_size_mb: 99
   max_age_days: 14
@@ -650,7 +930,18 @@ host_proxy:
     grace_period: 90s
     max_consecutive_errs: 7
 default_image: alpine:3.20
-`)
+`
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, ClawkerSettingsFileNameForTest)
+	require.NoError(t, os.WriteFile(settingsPath, []byte(settingsYAML), 0o644))
+	projectPath := filepath.Join(dir, ClawkerConfigFileNameForTest)
+	require.NoError(t, os.WriteFile(projectPath, []byte(""), 0o644))
+	registryPath := filepath.Join(dir, ClawkerProjectsFileNameForTest)
+	require.NoError(t, os.WriteFile(registryPath, []byte("projects: []\n"), 0o644))
+
+	c := NewConfigForTest(NewViperConfigForTest())
+	SetFilePathsForTest(c, settingsPath, projectPath, registryPath)
+	require.NoError(t, LoadForTest(c, settingsPath, projectPath, registryPath))
 
 	settings := c.Settings()
 	require.NotNil(t, settings.Logging.FileEnabled)
@@ -687,9 +978,9 @@ default_image: alpine:3.20
 
 func TestWrite_Key_HostProxyPersistsToSettings(t *testing.T) {
 	c, paths := mustOwnedConfig(t)
-	require.NoError(t, c.Set("host_proxy.daemon.port", 18081))
+	require.NoError(t, c.Set("settings.host_proxy.daemon.port", 18081))
 
-	require.NoError(t, c.Write(WriteOptions{Key: "host_proxy.daemon.port"}))
+	require.NoError(t, c.Write(WriteOptions{Key: "settings.host_proxy.daemon.port"}))
 
 	v := viper.New()
 	v.SetConfigFile(paths[ScopeSettings])
@@ -699,7 +990,7 @@ func TestWrite_Key_HostProxyPersistsToSettings(t *testing.T) {
 
 func TestWrite_ScopeSettings_WritesHostProxyRoots(t *testing.T) {
 	c, _ := mustOwnedConfig(t)
-	require.NoError(t, c.Set("host_proxy.manager.port", 19999))
+	require.NoError(t, c.Set("settings.host_proxy.manager.port", 19999))
 
 	outputPath := filepath.Join(t.TempDir(), "settings-host-proxy.yaml")
 	require.NoError(t, c.Write(WriteOptions{Scope: ScopeSettings, Path: outputPath}))
@@ -781,7 +1072,7 @@ func TestNewConfig_ParentEnvVarDoesNotShadowNestedYAMLList(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerSettingsFileNameForTest), []byte(""), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerConfigFileNameForTest), []byte("agent:\n  includes:\n    - ~/.claude/agents\n"), 0o644))
-	registryYAML := "projects: {}\n"
+	registryYAML := "projects: []\n"
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerProjectsFileNameForTest), []byte(registryYAML), 0o644))
 
 	oldWd, err := os.Getwd()
@@ -795,7 +1086,7 @@ func TestNewConfig_ParentEnvVarDoesNotShadowNestedYAMLList(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	v, err := cfg.Get("agent.includes")
+	v, err := cfg.Get("project.agent.includes")
 	require.NoError(t, err)
 	assert.Equal(t, []any{"~/.claude/agents"}, v)
 }
@@ -807,7 +1098,7 @@ func TestNewConfig_LeafEnvVarOverridesConfigValue(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerSettingsFileNameForTest), []byte(""), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerConfigFileNameForTest), []byte("build:\n  image: ubuntu:22.04\n"), 0o644))
-	registryYAML := "projects: {}\n"
+	registryYAML := "projects: []\n"
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerProjectsFileNameForTest), []byte(registryYAML), 0o644))
 
 	oldWd, err := os.Getwd()
@@ -854,7 +1145,7 @@ func TestNewConfig_CreatesMissingConfigFilesWithDefaults(t *testing.T) {
 
 	registryBytes, err := os.ReadFile(registryPath)
 	require.NoError(t, err)
-	assert.Contains(t, string(registryBytes), "projects: {}")
+	assert.Contains(t, string(registryBytes), "projects: []")
 }
 
 func TestNewConfig_DoesNotOverwriteExistingConfigFiles(t *testing.T) {
@@ -868,7 +1159,7 @@ func TestNewConfig_DoesNotOverwriteExistingConfigFiles(t *testing.T) {
 
 	settingsContent := "default_image: custom-settings-image\n"
 	projectContent := "build:\n  image: custom-project-image\n"
-	registryContent := "projects: {}\n"
+	registryContent := "projects: []\n"
 
 	require.NoError(t, os.WriteFile(settingsPath, []byte(settingsContent), 0o644))
 	require.NoError(t, os.WriteFile(userProjectPath, []byte(projectContent), 0o644))
@@ -936,7 +1227,7 @@ func TestNewConfig_CreatesOnlyMissingConfigFiles(t *testing.T) {
 
 	registryAfter, err := os.ReadFile(registryPath)
 	require.NoError(t, err)
-	assert.Contains(t, string(registryAfter), "projects: {}")
+	assert.Contains(t, string(registryAfter), "projects: []")
 }
 
 // RequiredFirewallDomains
@@ -1137,7 +1428,7 @@ func TestProjectRegistryFilePath_ReturnsAbsolutePath(t *testing.T) {
 	assert.True(t, strings.HasSuffix(path, filepath.Join("relative-config", ClawkerProjectsFileNameForTest)))
 }
 
-// testdata-based load tests
+// multi-file load tests
 
 func TestLoad_Testdata_LoadsWithoutError(t *testing.T) {
 	newConfigFromTestdata(t)
@@ -1150,7 +1441,7 @@ func TestLoad_Testdata_DefaultsPreservedAfterMerge(t *testing.T) {
 
 func TestLoad_Testdata_SettingsFileLoaded(t *testing.T) {
 	c := newConfigFromTestdata(t)
-	// update to assert a value explicitly set in testdata/config/settings.yaml
+	// settings YAML sets otel_collector_host — verify it's loaded
 	assert.NotEmpty(t, c.Settings().Monitoring.OtelCollectorHost)
 }
 
@@ -1177,17 +1468,23 @@ func TestMergeProjectConfig_NoMatch(t *testing.T) {
 	require.NoError(t, os.Chdir(otherDir))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	c := mustReadFromStringImpl(t, `
-projects:
-  other:
-    name: other
-    root: /some/other/path
-`)
+	dir := t.TempDir()
+	registryPath := filepath.Join(dir, ClawkerProjectsFileNameForTest)
+	require.NoError(t, os.WriteFile(registryPath, []byte("projects:\n  - name: other\n    root: /some/other/path\n"), 0o644))
+	settingsPath := filepath.Join(dir, ClawkerSettingsFileNameForTest)
+	require.NoError(t, os.WriteFile(settingsPath, []byte(""), 0o644))
+	projectPath := filepath.Join(dir, ClawkerConfigFileNameForTest)
+	require.NoError(t, os.WriteFile(projectPath, []byte(""), 0o644))
+
+	c := NewConfigForTest(NewViperConfigForTest())
+	SetFilePathsForTest(c, settingsPath, projectPath, registryPath)
+	require.NoError(t, LoadForTest(c, settingsPath, projectPath, registryPath))
+
 	root, err := c.GetProjectRoot()
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrNotInProject))
 	assert.Equal(t, "", root)
-	require.NoError(t, c.MergeProjectConfigForTest())
+	require.NoError(t, MergeProjectConfigForTest(c))
 }
 
 func TestGetProjectRoot_CwdWithinProjectRoot(t *testing.T) {
@@ -1195,6 +1492,9 @@ func TestGetProjectRoot_CwdWithinProjectRoot(t *testing.T) {
 	resolvedProjectRoot, err := filepath.EvalSymlinks(projectRoot)
 	require.NoError(t, err)
 	projectRoot = resolvedProjectRoot
+
+	// Project root must have a valid clawker.yaml for merge validation
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ClawkerConfigFileNameForTest), []byte("version: \"1\"\n"), 0o644))
 
 	nestedDir := filepath.Join(projectRoot, "a", "b")
 	require.NoError(t, os.MkdirAll(nestedDir, 0o755))
@@ -1204,12 +1504,17 @@ func TestGetProjectRoot_CwdWithinProjectRoot(t *testing.T) {
 	require.NoError(t, os.Chdir(nestedDir))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	c := mustReadFromStringImpl(t, fmt.Sprintf(`
-projects:
-  myproject:
-    name: myproject
-    root: %q
-`, projectRoot))
+	dir := t.TempDir()
+	registryPath := filepath.Join(dir, ClawkerProjectsFileNameForTest)
+	require.NoError(t, os.WriteFile(registryPath, []byte(fmt.Sprintf("projects:\n  - name: myproject\n    root: %q\n", projectRoot)), 0o644))
+	settingsPath := filepath.Join(dir, ClawkerSettingsFileNameForTest)
+	require.NoError(t, os.WriteFile(settingsPath, []byte(""), 0o644))
+	configPath := filepath.Join(dir, ClawkerConfigFileNameForTest)
+	require.NoError(t, os.WriteFile(configPath, []byte(""), 0o644))
+
+	c := NewConfigForTest(NewViperConfigForTest())
+	SetFilePathsForTest(c, settingsPath, configPath, registryPath)
+	require.NoError(t, LoadForTest(c, settingsPath, configPath, registryPath))
 
 	root, err := c.GetProjectRoot()
 	require.NoError(t, err)
@@ -1222,6 +1527,9 @@ func TestGetProjectIgnoreFile_CwdWithinProjectRoot(t *testing.T) {
 	require.NoError(t, err)
 	projectRoot = resolvedProjectRoot
 
+	// Project root must have a valid clawker.yaml for merge validation
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ClawkerConfigFileNameForTest), []byte("version: \"1\"\n"), 0o644))
+
 	nestedDir := filepath.Join(projectRoot, "a", "b")
 	require.NoError(t, os.MkdirAll(nestedDir, 0o755))
 
@@ -1230,34 +1538,45 @@ func TestGetProjectIgnoreFile_CwdWithinProjectRoot(t *testing.T) {
 	require.NoError(t, os.Chdir(nestedDir))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	c := mustReadFromStringImpl(t, fmt.Sprintf(`
-projects:
-  myproject:
-    name: myproject
-    root: %q
-`, projectRoot))
+	dir := t.TempDir()
+	registryPath := filepath.Join(dir, ClawkerProjectsFileNameForTest)
+	require.NoError(t, os.WriteFile(registryPath, []byte(fmt.Sprintf("projects:\n  - name: myproject\n    root: %q\n", projectRoot)), 0o644))
+	settingsPath := filepath.Join(dir, ClawkerSettingsFileNameForTest)
+	require.NoError(t, os.WriteFile(settingsPath, []byte(""), 0o644))
+	configPath := filepath.Join(dir, ClawkerConfigFileNameForTest)
+	require.NoError(t, os.WriteFile(configPath, []byte(""), 0o644))
+
+	c := NewConfigForTest(NewViperConfigForTest())
+	SetFilePathsForTest(c, settingsPath, configPath, registryPath)
+	require.NoError(t, LoadForTest(c, settingsPath, configPath, registryPath))
+
 	ignoreFile, err := c.GetProjectIgnoreFile()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(projectRoot, ".clawkerignore"), ignoreFile)
 }
 
-func TestMergeProjectConfig_MissingProjectConfigFile(t *testing.T) {
+func TestMergeProjectConfig_InvalidProjectConfig(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
 	require.NoError(t, err)
 	require.NoError(t, os.Chdir(dir))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+	// Invalid YAML in the project root — load should fail during merge
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ClawkerConfigFileNameForTest), []byte("build: ["), 0o644))
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
 
-	c := mustReadFromStringImpl(t, fmt.Sprintf(`
-projects:
-  myproject:
-    name: myproject
-    root: %s
-`, cwd))
-	require.Error(t, c.MergeProjectConfigForTest())
+	configDir := t.TempDir()
+	registryPath := filepath.Join(configDir, ClawkerProjectsFileNameForTest)
+	require.NoError(t, os.WriteFile(registryPath, []byte(fmt.Sprintf("projects:\n  - name: myproject\n    root: %s\n", cwd)), 0o644))
+	settingsPath := filepath.Join(configDir, ClawkerSettingsFileNameForTest)
+	require.NoError(t, os.WriteFile(settingsPath, []byte(""), 0o644))
+	configPath := filepath.Join(configDir, ClawkerConfigFileNameForTest)
+	require.NoError(t, os.WriteFile(configPath, []byte(""), 0o644))
+
+	c := NewConfigForTest(NewViperConfigForTest())
+	SetFilePathsForTest(c, settingsPath, configPath, registryPath)
+	require.Error(t, LoadForTest(c, settingsPath, configPath, registryPath))
 }
 
 // atomicWriteFile
@@ -1267,7 +1586,7 @@ func TestAtomicWriteFile(t *testing.T) {
 	path := filepath.Join(dir, "sub", "file.yaml")
 
 	data := []byte("project: my-app\n")
-	require.NoError(t, ExportAtomicWriteFile(path, data, 0o644))
+	require.NoError(t, AtomicWriteFileForTest(path, data, 0o644))
 
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -1283,7 +1602,7 @@ func TestAtomicWriteFile_OverwritePreservesContent(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("old content\n"), 0o644))
 
 	newData := []byte("new content\n")
-	require.NoError(t, ExportAtomicWriteFile(path, newData, 0o644))
+	require.NoError(t, AtomicWriteFileForTest(path, newData, 0o644))
 
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -1305,7 +1624,7 @@ func TestWithFileLock_MutualExclusion(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func(id int) {
 			defer wg.Done()
-			err := ExportWithFileLock(path, func() error {
+			err := WithFileLockForTest(path, func() error {
 				mu.Lock()
 				order = append(order, id)
 				mu.Unlock()

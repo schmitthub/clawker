@@ -978,7 +978,7 @@ agent:
 
 	// Wire the YAML-parsed value into a config test double
 	cfg := &config.Project{
-		Project: "test",
+		Name: "test",
 		Agent: config.AgentConfig{
 			PostInit: parsedCfg.Agent.PostInit,
 		},

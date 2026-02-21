@@ -45,12 +45,12 @@ func ResolveDefaultImage(cfg *config.Project, settings config.Settings) string {
 // or empty string if not found.
 func (c *Client) findProjectImage(ctx context.Context) (string, error) {
 	project := c.cfg.Project()
-	if project == nil || project.Project == "" {
+	if project == nil || project.Name == "" {
 		return "", nil
 	}
 
 	f := c.ClawkerFilter().
-		Add("label", c.cfg.LabelProject()+"="+project.Project)
+		Add("label", c.cfg.LabelProject()+"="+project.Name)
 
 	result, err := c.ImageList(ctx, ImageListOptions{
 		Filters: f,

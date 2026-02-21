@@ -161,7 +161,7 @@ func TestEnsureImage_CacheHit(t *testing.T) {
 	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
-	hashTag := ImageTagWithHash(projectCfg.Project, hash)
+	hashTag := ImageTagWithHash(projectCfg.Name, hash)
 
 	// Wire fake: image exists for the hash tag (must include managed label to pass whail check)
 	fakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...moby.ImageInspectOption) (moby.ImageInspectResult, error) {
@@ -182,7 +182,7 @@ func TestEnsureImage_CacheHit(t *testing.T) {
 	}
 
 	builder := NewBuilder(client, projectCfg, "")
-	imageTag := ImageTag(projectCfg.Project)
+	imageTag := ImageTag(projectCfg.Name)
 
 	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestEnsureImage_CacheMiss(t *testing.T) {
 	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
-	hashTag := ImageTagWithHash(projectCfg.Project, hash)
+	hashTag := ImageTagWithHash(projectCfg.Name, hash)
 
 	// Wire fake: image does NOT exist
 	fakeAPI.ImageInspectFn = func(_ context.Context, _ string, _ ...moby.ImageInspectOption) (moby.ImageInspectResult, error) {
@@ -223,7 +223,7 @@ func TestEnsureImage_CacheMiss(t *testing.T) {
 	}
 
 	builder := NewBuilder(client, projectCfg, "")
-	imageTag := ImageTag(projectCfg.Project)
+	imageTag := ImageTag(projectCfg.Name)
 
 	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.NoError(t, err)
@@ -248,7 +248,7 @@ func TestEnsureImage_ForceBuild(t *testing.T) {
 	}
 
 	builder := NewBuilder(client, projectCfg, "")
-	imageTag := ImageTag(projectCfg.Project)
+	imageTag := ImageTag(projectCfg.Name)
 
 	err := builder.EnsureImage(context.Background(), imageTag, BuilderOptions{ForceBuild: true})
 	require.NoError(t, err)
@@ -270,7 +270,7 @@ func TestEnsureImage_TagImageFailure(t *testing.T) {
 	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
-	hashTag := ImageTagWithHash(projectCfg.Project, hash)
+	hashTag := ImageTagWithHash(projectCfg.Name, hash)
 
 	// Wire fake: image exists (cache hit — must include managed label)
 	fakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...moby.ImageInspectOption) (moby.ImageInspectResult, error) {
@@ -286,7 +286,7 @@ func TestEnsureImage_TagImageFailure(t *testing.T) {
 	}
 
 	builder := NewBuilder(client, projectCfg, "")
-	imageTag := ImageTag(projectCfg.Project)
+	imageTag := ImageTag(projectCfg.Name)
 
 	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.Error(t, err)
@@ -321,7 +321,7 @@ workspace:
 	}
 
 	builder := NewBuilder(client, projectCfg, workDir)
-	imageTag := ImageTag(projectCfg.Project)
+	imageTag := ImageTag(projectCfg.Name)
 
 	err := builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.NoError(t, err)
@@ -348,7 +348,7 @@ agent:
 	projectCfg := cfg.Project()
 	client, _ := newTestClientWithConfig(cfg)
 	builder := NewBuilder(client, projectCfg, t.TempDir())
-	imageTag := ImageTag(projectCfg.Project)
+	imageTag := ImageTag(projectCfg.Name)
 
 	err := builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.Error(t, err)

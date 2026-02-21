@@ -145,6 +145,6 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 - **`ReadFromString` is env-isolated** — parses YAML + defaults only, no `CLAWKER_*` env overrides.
 - **Dotted label keys in string fixtures are supported** — `ReadFromString` preserves dotted keys under `build.instructions.labels` (e.g. `dev.clawker.project`) instead of expanding into nested maps.
 - **`*bool` pointers** — schema structs preserve nullable `*bool` semantics. Typed accessors (`Settings()`, `LoggingConfig()`, `MonitoringConfig()`) materialize to concrete true/false.
-- **`Project.Project` field** — `yaml:"-"` (not persisted) but `mapstructure:"project"` (loaded from viper). Intentional for ErrorUnused compatibility.
+- **`Project().Name` field** — `yaml:"-"` (not persisted) but `mapstructure:"project"` (loaded from viper). Intentional for ErrorUnused compatibility.
 - **Transitive build failures** — Until all consumers are migrated, `go build ./...` may fail. Test individual packages directly.
 - **Cross-process safety** — `Write` uses `gofrs/flock` advisory lock + atomic temp-file rename. Lock files (`.lock` suffix) are left on disk intentionally.

@@ -18,63 +18,59 @@ var requiredFirewallDomains = []string{
 	"docker.io",
 }
 
-// setDefaults
+// setDefaults registers all default values under namespaced keys.
+// Project-scope keys are prefixed with "project.", settings-scope with "settings.".
 func setDefaults(v *viper.Viper) {
-	v.SetDefault("version", "1")
+	// Project scope
+	v.SetDefault("project.version", "1")
 
-	// Build
-	v.SetDefault("build.image", "node:20-slim")
-	v.SetDefault("build.packages", []string{"git", "curl", "ripgrep"})
+	v.SetDefault("project.build.image", "node:20-slim")
+	v.SetDefault("project.build.packages", []string{"git", "curl", "ripgrep"})
 
-	// Agent
-	v.SetDefault("agent.includes", []string{})
-	v.SetDefault("agent.env", map[string]string{})
+	v.SetDefault("project.agent.includes", []string{})
+	v.SetDefault("project.agent.env", map[string]string{})
 
-	// Workspace
-	v.SetDefault("workspace.remote_path", "/workspace")
-	v.SetDefault("workspace.default_mode", "bind")
+	v.SetDefault("project.workspace.remote_path", "/workspace")
+	v.SetDefault("project.workspace.default_mode", "bind")
 
-	// Security
-	v.SetDefault("security.firewall.enable", true)
-	v.SetDefault("security.docker_socket", false)
-	v.SetDefault("security.cap_add", []string{"NET_ADMIN", "NET_RAW"})
+	v.SetDefault("project.security.firewall.enable", true)
+	v.SetDefault("project.security.docker_socket", false)
+	v.SetDefault("project.security.cap_add", []string{"NET_ADMIN", "NET_RAW"})
 
-	// Logging
-	v.SetDefault("logging.file_enabled", true)
-	v.SetDefault("logging.max_size_mb", 50)
-	v.SetDefault("logging.max_age_days", 7)
-	v.SetDefault("logging.max_backups", 3)
-	v.SetDefault("logging.compress", true)
-	v.SetDefault("logging.otel.enabled", true)
-	v.SetDefault("logging.otel.timeout_seconds", 5)
-	v.SetDefault("logging.otel.max_queue_size", 2048)
-	v.SetDefault("logging.otel.export_interval_seconds", 5)
+	// Settings scope
+	v.SetDefault("settings.logging.file_enabled", true)
+	v.SetDefault("settings.logging.max_size_mb", 50)
+	v.SetDefault("settings.logging.max_age_days", 7)
+	v.SetDefault("settings.logging.max_backups", 3)
+	v.SetDefault("settings.logging.compress", true)
+	v.SetDefault("settings.logging.otel.enabled", true)
+	v.SetDefault("settings.logging.otel.timeout_seconds", 5)
+	v.SetDefault("settings.logging.otel.max_queue_size", 2048)
+	v.SetDefault("settings.logging.otel.export_interval_seconds", 5)
 
-	// Host Proxy
-	v.SetDefault("host_proxy.manager.port", 18374)
-	v.SetDefault("host_proxy.daemon.port", 18374)
-	v.SetDefault("host_proxy.daemon.poll_interval", 30*time.Second)
-	v.SetDefault("host_proxy.daemon.grace_period", 60*time.Second)
-	v.SetDefault("host_proxy.daemon.max_consecutive_errs", 10)
+	v.SetDefault("settings.host_proxy.manager.port", 18374)
+	v.SetDefault("settings.host_proxy.daemon.port", 18374)
+	v.SetDefault("settings.host_proxy.daemon.poll_interval", 30*time.Second)
+	v.SetDefault("settings.host_proxy.daemon.grace_period", 60*time.Second)
+	v.SetDefault("settings.host_proxy.daemon.max_consecutive_errs", 10)
 
-	// Monitoring
-	v.SetDefault("monitoring.otel_collector_port", 4318)
-	v.SetDefault("monitoring.otel_collector_host", "localhost")
-	v.SetDefault("monitoring.otel_collector_internal", "otel-collector")
-	v.SetDefault("monitoring.otel_grpc_port", 4317)
-	v.SetDefault("monitoring.loki_port", 3100)
-	v.SetDefault("monitoring.prometheus_port", 9090)
-	v.SetDefault("monitoring.jaeger_port", 16686)
-	v.SetDefault("monitoring.grafana_port", 3000)
-	v.SetDefault("monitoring.prometheus_metrics_port", 8889)
-	v.SetDefault("monitoring.telemetry.metrics_path", "/v1/metrics")
-	v.SetDefault("monitoring.telemetry.logs_path", "/v1/logs")
-	v.SetDefault("monitoring.telemetry.metric_export_interval_ms", 10000)
-	v.SetDefault("monitoring.telemetry.logs_export_interval_ms", 5000)
-	v.SetDefault("monitoring.telemetry.log_tool_details", true)
-	v.SetDefault("monitoring.telemetry.log_user_prompts", true)
-	v.SetDefault("monitoring.telemetry.include_account_uuid", true)
-	v.SetDefault("monitoring.telemetry.include_session_id", true)
+	v.SetDefault("settings.monitoring.otel_collector_port", 4318)
+	v.SetDefault("settings.monitoring.otel_collector_host", "localhost")
+	v.SetDefault("settings.monitoring.otel_collector_internal", "otel-collector")
+	v.SetDefault("settings.monitoring.otel_grpc_port", 4317)
+	v.SetDefault("settings.monitoring.loki_port", 3100)
+	v.SetDefault("settings.monitoring.prometheus_port", 9090)
+	v.SetDefault("settings.monitoring.jaeger_port", 16686)
+	v.SetDefault("settings.monitoring.grafana_port", 3000)
+	v.SetDefault("settings.monitoring.prometheus_metrics_port", 8889)
+	v.SetDefault("settings.monitoring.telemetry.metrics_path", "/v1/metrics")
+	v.SetDefault("settings.monitoring.telemetry.logs_path", "/v1/logs")
+	v.SetDefault("settings.monitoring.telemetry.metric_export_interval_ms", 10000)
+	v.SetDefault("settings.monitoring.telemetry.logs_export_interval_ms", 5000)
+	v.SetDefault("settings.monitoring.telemetry.log_tool_details", true)
+	v.SetDefault("settings.monitoring.telemetry.log_user_prompts", true)
+	v.SetDefault("settings.monitoring.telemetry.include_account_uuid", true)
+	v.SetDefault("settings.monitoring.telemetry.include_session_id", true)
 }
 
 // TODO: making these dynamically generated while still maintaining commented
@@ -218,7 +214,7 @@ const DefaultSettingsYAML = `# Clawker User Settings
 // DefaultRegistryYAML returns the default registry template
 const DefaultRegistryYAML = `# Clawker ProjectCfg Registry
 # Managed by 'clawker init' — do not edit manually
-projects: [{}]
+projects: []
 `
 
 // DefaultIgnoreFile returns the default .clawkerignore content

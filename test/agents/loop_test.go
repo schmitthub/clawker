@@ -228,7 +228,7 @@ func projectCleanup(t *testing.T, dockerClient *docker.Client, project string) {
 
 // testProject creates a *config.Project for tests.
 func testProject(name string) *config.Project {
-	return &config.Project{Project: name}
+	return &config.Project().Name: name}
 }
 
 // ---------------------------------------------------------------------------

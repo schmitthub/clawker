@@ -37,7 +37,7 @@ func TestNewHarness_WithProject(t *testing.T) {
 func TestNewHarness_WithConfig(t *testing.T) {
 	cfg := &config.Project{
 		Version: "1",
-		Project: "custom-project",
+		Name: "custom-project",
 		Build: config.BuildConfig{
 			Image: "custom:image",
 		},
@@ -160,7 +160,7 @@ func TestHarness_ImageName(t *testing.T) {
 		{
 			name: "without default image",
 			config: &config.Project{
-				Project: "myapp",
+				Name: "myapp",
 			},
 			expectedName: "clawker-myapp:latest",
 		},

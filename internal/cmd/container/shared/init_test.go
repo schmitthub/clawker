@@ -31,7 +31,7 @@ func testConfig() *config.Project {
 	hostProxyDisabled := false
 	return &config.Project{
 		Version: "1",
-		Project: "testproject",
+		Name:    "testproject",
 		Workspace: config.WorkspaceConfig{
 			RemotePath:  "/workspace",
 			DefaultMode: "bind",
@@ -319,7 +319,7 @@ func TestCreateContainer_EmptyProject(t *testing.T) {
 	fake.SetupCopyToContainer()
 
 	cfg := testConfig()
-	cfg.Project = "" // empty project
+	cfg.Name = "" // empty project
 
 	cmd := testFlags()
 	containerOpts := NewContainerOptions()

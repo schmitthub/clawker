@@ -119,7 +119,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	// Resolve container names if --agent provided
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(cfg.Project().Project, containers)
+		resolved, err := docker.ContainerNamesFromAgents(cfg.Project().Name, containers)
 		if err != nil {
 			return err
 		}

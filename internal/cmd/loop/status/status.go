@@ -70,7 +70,7 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 
 	var project string
 	if p := cfg.Project(); p != nil {
-		project = p.Project
+		project = p.Name
 	}
 
 	// Get session store

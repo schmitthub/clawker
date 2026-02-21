@@ -75,7 +75,7 @@ func renameRun(ctx context.Context, opts *RenameOptions) error {
 		}
 		var project string
 		if p := cfg.Project(); p != nil {
-			project = p.Project
+			project = p.Name
 		}
 		var nameErr error
 		oldName, nameErr = docker.ContainerName(project, oldName)

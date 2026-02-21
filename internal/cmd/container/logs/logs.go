@@ -98,7 +98,7 @@ func logsRun(ctx context.Context, opts *LogsOptions) error {
 		}
 		var project string
 		if p := cfg.Project(); p != nil {
-			project = p.Project
+			project = p.Name
 		}
 		containers, err := docker.ContainerNamesFromAgents(project, opts.Containers)
 		if err != nil {

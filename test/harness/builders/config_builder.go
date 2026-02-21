@@ -32,7 +32,7 @@ func (b *ConfigBuilder) WithVersion(version string) *ConfigBuilder {
 
 // WithProject sets the project name.
 func (b *ConfigBuilder) WithProject(name string) *ConfigBuilder {
-	b.project.Project = name
+	b.project.Name = name
 	return b
 }
 

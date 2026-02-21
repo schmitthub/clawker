@@ -41,7 +41,6 @@ type SetupMountsResult struct {
 	WorkspaceVolumeName string
 }
 
-
 // SetupMounts prepares workspace mounts for container creation.
 // It handles workspace mode resolution, strategy creation/preparation,
 // .clawkerignore pattern loading, config volumes, and docker socket mounting.
@@ -86,7 +85,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	wsCfg := Config{
 		HostPath:       hostPath,
 		RemotePath:     project.Workspace.RemotePath,
-		ProjectName:    project.Project,
+		ProjectName:    project.Name,
 		AgentName:      cfg.AgentName,
 		IgnorePatterns: ignorePatterns,
 	}
@@ -132,11 +131,11 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Ensure config volumes (returns creation state for init orchestration)
-	configResult, err := EnsureConfigVolumes(ctx, client, project.Project, cfg.AgentName)
+	configResult, err := EnsureConfigVolumes(ctx, client, project.Name, cfg.AgentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create config volumes: %w", err)
 	}
-	configMounts, err := GetConfigVolumeMounts(project.Project, cfg.AgentName)
+	configMounts, err := GetConfigVolumeMounts(project.Name, cfg.AgentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve config volume names: %w", err)
 	}

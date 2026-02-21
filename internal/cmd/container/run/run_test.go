@@ -577,7 +577,7 @@ func TestBuildConfigs_CapAdd(t *testing.T) {
 		Publish: shared.NewPortOpts(),
 	}
 	projectCfg := &config.Project{
-		Project: "test",
+		Name: "test",
 		Security: config.SecurityConfig{
 			CapAdd: []string{"NET_ADMIN", "SYS_PTRACE"},
 		},

@@ -127,7 +127,7 @@ func updateRun(ctx context.Context, opts *UpdateOptions) error {
 		}
 		var project string
 		if p := cfg.Project(); p != nil {
-			project = p.Project
+			project = p.Name
 		}
 		resolved, err := docker.ContainerNamesFromAgents(project, opts.Containers)
 		if err != nil {

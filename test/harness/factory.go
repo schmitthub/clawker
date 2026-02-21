@@ -79,7 +79,7 @@ func configFromProject(project *config.Project) config.Config {
 	if err != nil {
 		panic(fmt.Sprintf("failed to marshal project config: %v", err))
 	}
-	// Project.Project has yaml:"-" so it's not marshaled — prepend it.
+	// Project().Name has yaml:"-" so it's not marshaled — prepend it.
 	cfgYAML := fmt.Sprintf("project: %s\n%s", project.Project, string(yamlData))
 	return configmocks.NewFromString(cfgYAML)
 }

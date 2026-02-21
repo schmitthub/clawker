@@ -45,7 +45,7 @@ func TestNewIsolatedTestConfig_WritesAreIsolated(t *testing.T) {
 	require.NotNil(t, cfg)
 	require.NotNil(t, read)
 
-	require.NoError(t, cfg.Set("projects", []any{
+	require.NoError(t, cfg.Set("registry.projects", []any{
 		map[string]any{"name": "demo", "root": "/tmp/demo"},
 	}))
 	require.NoError(t, cfg.Write(config.WriteOptions{Scope: config.ScopeRegistry}))

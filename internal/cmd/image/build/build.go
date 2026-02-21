@@ -134,7 +134,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	}
 
 	ios.Logger.Debug().
-		Str("project", cfg.Project).
+		Str("project", cfg.Name).
 		Bool("no-cache", opts.NoCache).
 		Bool("pull", opts.Pull).
 		Str("target", opts.Target).
@@ -157,7 +157,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	}
 
 	// Determine image tag(s)
-	imageTag := docker.ImageTag(cfg.Project)
+	imageTag := docker.ImageTag(cfg.Name)
 
 	// Parse build args
 	buildArgs := parseBuildArgs(opts.BuildArgs)
@@ -175,7 +175,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	// EnsureImage() is ever used. This ensures explicit no-cache requests
 	// always trigger a full rebuild.
 	ios.Logger.Debug().
-		Str("project", cfg.Project).
+		Str("project", cfg.Name).
 		Str("image", imageTag).
 		Msg("building container image")
 	buildOpts := docker.BuilderOptions{
@@ -219,7 +219,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		}()
 
 		result := opts.TUI.RunProgress(opts.Progress, tui.ProgressDisplayConfig{
-			Title:          "Building " + cfg.Project,
+			Title:          "Building " + cfg.Name,
 			Subtitle:       imageTag,
 			CompletionVerb: "Built",
 			MaxVisible:     5,
@@ -316,4 +316,3 @@ func printBuildNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorScheme) {
 	fmt.Fprintln(ios.ErrOut, "  3. Run 'clawker build --no-cache' to rebuild from scratch")
 	fmt.Fprintln(ios.ErrOut, "  4. Use '--progress=plain' for detailed build output")
 }
-

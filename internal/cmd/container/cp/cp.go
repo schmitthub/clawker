@@ -122,7 +122,7 @@ func cpRun(ctx context.Context, opts *CpOptions) error {
 		}
 		var project string
 		if p := cfg.Project(); p != nil {
-			project = p.Project
+			project = p.Name
 		}
 
 		if srcIsContainer && srcContainer != "" {

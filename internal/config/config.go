@@ -7,9 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -21,8 +21,6 @@ import (
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
-
-var invalidKeysRe = regexp.MustCompile(`'([^']+)' has invalid keys: (.+)$`)
 
 const dottedLabelKeySentinel = "__clawker_dot__"
 
@@ -174,8 +172,14 @@ func newViperConfigWithEnv(enableAutomaticEnv bool) *viper.Viper {
 }
 
 func bindSupportedEnvKeys(v *viper.Viper) {
-	for _, key := range supportedEnvKeys {
-		_ = v.BindEnv(key)
+	replacer := strings.NewReplacer(".", "_")
+	for _, flatKey := range supportedEnvKeys {
+		nsKey, err := namespacedKey(flatKey)
+		if err != nil {
+			continue // skip keys without ownership mapping
+		}
+		envVar := "CLAWKER_" + strings.ToUpper(replacer.Replace(flatKey))
+		_ = v.BindEnv(nsKey, envVar)
 	}
 }
 
@@ -383,15 +387,22 @@ func (c *configImpl) clearDirtyPath(key string) {
 	_ = clearPathRecursive(c.dirty, parts)
 }
 
+// dirtyOwnedRoots returns the file-level root keys that are dirty under the
+// given scope. With namespaced dirty tracking, the scope is the top-level node
+// in the dirty tree and its children are the file-level roots.
 func (c *configImpl) dirtyOwnedRoots(scope ConfigScope) []string {
-	roots := ownedRoots(scope)
-	dirtyRoots := make([]string, 0, len(roots))
-	for _, root := range roots {
-		if c.isDirtyPath(root) {
-			dirtyRoots = append(dirtyRoots, root)
+	scopeNode := c.dirtyNodeForPath([]string{string(scope)})
+	if scopeNode == nil {
+		return nil
+	}
+	roots := make([]string, 0, len(scopeNode.children))
+	for root, node := range scopeNode.children {
+		if node.isDirty() {
+			roots = append(roots, root)
 		}
 	}
-	return dirtyRoots
+	sort.Strings(roots)
+	return roots
 }
 
 func (c *configImpl) writeDirtyRootsForScope(scope ConfigScope, overridePath string, safe bool) error {
@@ -405,12 +416,14 @@ func (c *configImpl) writeDirtyRootsForScope(scope ConfigScope, overridePath str
 		return err
 	}
 
-	if err := writeRootsToFile(targetPath, dirtyRoots, c.v, safe); err != nil {
+	// writeRootsToFile reads namespaced keys from Viper but writes flat keys to file.
+	if err := writeRootsToFile(targetPath, dirtyRoots, scope, c.v, safe); err != nil {
 		return err
 	}
 
 	for _, root := range dirtyRoots {
-		c.clearDirtyPath(root)
+		// Clear dirty using the namespaced path: scope.root
+		c.clearDirtyPath(string(scope) + "." + root)
 	}
 	return nil
 }
@@ -438,26 +451,49 @@ func NewConfig() (Config, error) {
 
 // ReadFromString takes a YAML string and returns a Config.
 // Useful for testing or constructing configs programmatically.
+// Top-level keys are grouped by scope via keyOwnership and merged under their
+// namespace prefix (project.*, settings.*, registry.*).
 func ReadFromString(str string) (Config, error) {
 	rewritten, err := rewriteDottedLabelKeysForViper(str)
 	if err != nil {
 		return nil, err
 	}
 
-	str = rewritten
-
-	if err := validateProjectYAMLString(str); err != nil {
-		return nil, err
-	}
-
 	v := newViperConfigWithEnv(false)
-	v.SetConfigType("yaml")
-	if str != "" {
-		err := v.ReadConfig(strings.NewReader(str))
-		if err != nil {
+
+	if rewritten != "" {
+		flat := map[string]any{}
+		if err := yaml.Unmarshal([]byte(rewritten), &flat); err != nil {
 			return nil, fmt.Errorf("parsing config from string: %w", err)
 		}
+
+		// Group top-level keys by owning scope.
+		grouped := map[ConfigScope]map[string]any{}
+		for key, val := range flat {
+			scope, sErr := scopeForKey(key)
+			if sErr != nil {
+				return nil, fmt.Errorf("unknown config key %q: %w", key, sErr)
+			}
+			if grouped[scope] == nil {
+				grouped[scope] = map[string]any{}
+			}
+			grouped[scope][key] = val
+		}
+
+		for scope, m := range grouped {
+			scopeYAML, mErr := yaml.Marshal(m)
+			if mErr != nil {
+				return nil, fmt.Errorf("marshalling %s config for validation: %w", scope, mErr)
+			}
+			if err := validateYAMLStrict(string(scopeYAML), schemaForScope(scope)); err != nil {
+				return nil, fmt.Errorf("invalid %s config: %w", scope, err)
+			}
+			if err := v.MergeConfigMap(namespaceMap(m, scope)); err != nil {
+				return nil, fmt.Errorf("merging %s config from string: %w", scope, err)
+			}
+		}
 	}
+
 	return newConfig(v), nil
 }
 
@@ -526,14 +562,29 @@ func (c *configImpl) RequiredFirewallDomains() []string {
 func (c *configImpl) Logging() map[string]any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.v.GetStringMap("logging")
+	return c.v.GetStringMap("settings.logging")
 }
 
 func (c *configImpl) Project() *Project {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	p := &Project{}
-	_ = c.v.Unmarshal(p)
+	// Use AllSettings() to get a fully merged map across all layers
+	// (config, defaults, env). UnmarshalKey("project") returns only the
+	// config-layer subtree, which omits default values for nested keys
+	// that weren't explicitly set in config files.
+	all := c.v.AllSettings()
+	projectRaw, ok := all["project"]
+	if !ok {
+		return p
+	}
+	projectMap, ok := projectRaw.(map[string]any)
+	if !ok {
+		return p
+	}
+	sub := viper.New()
+	_ = sub.MergeConfigMap(projectMap)
+	_ = sub.Unmarshal(p)
 	restoreDottedLabelKeys(p)
 	return p
 }
@@ -561,52 +612,52 @@ func (c *configImpl) Settings() Settings {
 	defer c.mu.RUnlock()
 	return Settings{
 		Logging: LoggingConfig{
-			FileEnabled: boolPtr(c.v.GetBool("logging.file_enabled")),
-			MaxSizeMB:   c.v.GetInt("logging.max_size_mb"),
-			MaxAgeDays:  c.v.GetInt("logging.max_age_days"),
-			MaxBackups:  c.v.GetInt("logging.max_backups"),
-			Compress:    boolPtr(c.v.GetBool("logging.compress")),
+			FileEnabled: boolPtr(c.v.GetBool("settings.logging.file_enabled")),
+			MaxSizeMB:   c.v.GetInt("settings.logging.max_size_mb"),
+			MaxAgeDays:  c.v.GetInt("settings.logging.max_age_days"),
+			MaxBackups:  c.v.GetInt("settings.logging.max_backups"),
+			Compress:    boolPtr(c.v.GetBool("settings.logging.compress")),
 			Otel: OtelConfig{
-				Enabled:               boolPtr(c.v.GetBool("logging.otel.enabled")),
-				TimeoutSeconds:        c.v.GetInt("logging.otel.timeout_seconds"),
-				MaxQueueSize:          c.v.GetInt("logging.otel.max_queue_size"),
-				ExportIntervalSeconds: c.v.GetInt("logging.otel.export_interval_seconds"),
+				Enabled:               boolPtr(c.v.GetBool("settings.logging.otel.enabled")),
+				TimeoutSeconds:        c.v.GetInt("settings.logging.otel.timeout_seconds"),
+				MaxQueueSize:          c.v.GetInt("settings.logging.otel.max_queue_size"),
+				ExportIntervalSeconds: c.v.GetInt("settings.logging.otel.export_interval_seconds"),
 			},
 		},
 		Monitoring: MonitoringConfig{
-			OtelCollectorEndpoint: c.v.GetString("monitoring.otel_collector_endpoint"),
-			OtelCollectorPort:     c.v.GetInt("monitoring.otel_collector_port"),
-			OtelCollectorHost:     c.v.GetString("monitoring.otel_collector_host"),
-			OtelCollectorInternal: c.v.GetString("monitoring.otel_collector_internal"),
-			OtelGRPCPort:          c.v.GetInt("monitoring.otel_grpc_port"),
-			LokiPort:              c.v.GetInt("monitoring.loki_port"),
-			PrometheusPort:        c.v.GetInt("monitoring.prometheus_port"),
-			JaegerPort:            c.v.GetInt("monitoring.jaeger_port"),
-			GrafanaPort:           c.v.GetInt("monitoring.grafana_port"),
-			PrometheusMetricsPort: c.v.GetInt("monitoring.prometheus_metrics_port"),
+			OtelCollectorEndpoint: c.v.GetString("settings.monitoring.otel_collector_endpoint"),
+			OtelCollectorPort:     c.v.GetInt("settings.monitoring.otel_collector_port"),
+			OtelCollectorHost:     c.v.GetString("settings.monitoring.otel_collector_host"),
+			OtelCollectorInternal: c.v.GetString("settings.monitoring.otel_collector_internal"),
+			OtelGRPCPort:          c.v.GetInt("settings.monitoring.otel_grpc_port"),
+			LokiPort:              c.v.GetInt("settings.monitoring.loki_port"),
+			PrometheusPort:        c.v.GetInt("settings.monitoring.prometheus_port"),
+			JaegerPort:            c.v.GetInt("settings.monitoring.jaeger_port"),
+			GrafanaPort:           c.v.GetInt("settings.monitoring.grafana_port"),
+			PrometheusMetricsPort: c.v.GetInt("settings.monitoring.prometheus_metrics_port"),
 			Telemetry: TelemetryConfig{
-				MetricsPath:            c.v.GetString("monitoring.telemetry.metrics_path"),
-				LogsPath:               c.v.GetString("monitoring.telemetry.logs_path"),
-				MetricExportIntervalMs: c.v.GetInt("monitoring.telemetry.metric_export_interval_ms"),
-				LogsExportIntervalMs:   c.v.GetInt("monitoring.telemetry.logs_export_interval_ms"),
-				LogToolDetails:         boolPtr(c.v.GetBool("monitoring.telemetry.log_tool_details")),
-				LogUserPrompts:         boolPtr(c.v.GetBool("monitoring.telemetry.log_user_prompts")),
-				IncludeAccountUUID:     boolPtr(c.v.GetBool("monitoring.telemetry.include_account_uuid")),
-				IncludeSessionID:       boolPtr(c.v.GetBool("monitoring.telemetry.include_session_id")),
+				MetricsPath:            c.v.GetString("settings.monitoring.telemetry.metrics_path"),
+				LogsPath:               c.v.GetString("settings.monitoring.telemetry.logs_path"),
+				MetricExportIntervalMs: c.v.GetInt("settings.monitoring.telemetry.metric_export_interval_ms"),
+				LogsExportIntervalMs:   c.v.GetInt("settings.monitoring.telemetry.logs_export_interval_ms"),
+				LogToolDetails:         boolPtr(c.v.GetBool("settings.monitoring.telemetry.log_tool_details")),
+				LogUserPrompts:         boolPtr(c.v.GetBool("settings.monitoring.telemetry.log_user_prompts")),
+				IncludeAccountUUID:     boolPtr(c.v.GetBool("settings.monitoring.telemetry.include_account_uuid")),
+				IncludeSessionID:       boolPtr(c.v.GetBool("settings.monitoring.telemetry.include_session_id")),
 			},
 		},
 		HostProxy: HostProxyConfig{
 			Manager: HostProxyManagerConfig{
-				Port: c.v.GetInt("host_proxy.manager.port"),
+				Port: c.v.GetInt("settings.host_proxy.manager.port"),
 			},
 			Daemon: HostProxyDaemonConfig{
-				Port:               c.v.GetInt("host_proxy.daemon.port"),
-				PollInterval:       c.v.GetDuration("host_proxy.daemon.poll_interval"),
-				GracePeriod:        c.v.GetDuration("host_proxy.daemon.grace_period"),
-				MaxConsecutiveErrs: c.v.GetInt("host_proxy.daemon.max_consecutive_errs"),
+				Port:               c.v.GetInt("settings.host_proxy.daemon.port"),
+				PollInterval:       c.v.GetDuration("settings.host_proxy.daemon.poll_interval"),
+				GracePeriod:        c.v.GetDuration("settings.host_proxy.daemon.grace_period"),
+				MaxConsecutiveErrs: c.v.GetInt("settings.host_proxy.daemon.max_consecutive_errs"),
 			},
 		},
-		DefaultImage: c.v.GetString("default_image"),
+		DefaultImage: c.v.GetString("settings.default_image"),
 	}
 }
 
@@ -614,16 +665,16 @@ func (c *configImpl) LoggingConfig() LoggingConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return LoggingConfig{
-		FileEnabled: boolPtr(c.v.GetBool("logging.file_enabled")),
-		MaxSizeMB:   c.v.GetInt("logging.max_size_mb"),
-		MaxAgeDays:  c.v.GetInt("logging.max_age_days"),
-		MaxBackups:  c.v.GetInt("logging.max_backups"),
-		Compress:    boolPtr(c.v.GetBool("logging.compress")),
+		FileEnabled: boolPtr(c.v.GetBool("settings.logging.file_enabled")),
+		MaxSizeMB:   c.v.GetInt("settings.logging.max_size_mb"),
+		MaxAgeDays:  c.v.GetInt("settings.logging.max_age_days"),
+		MaxBackups:  c.v.GetInt("settings.logging.max_backups"),
+		Compress:    boolPtr(c.v.GetBool("settings.logging.compress")),
 		Otel: OtelConfig{
-			Enabled:               boolPtr(c.v.GetBool("logging.otel.enabled")),
-			TimeoutSeconds:        c.v.GetInt("logging.otel.timeout_seconds"),
-			MaxQueueSize:          c.v.GetInt("logging.otel.max_queue_size"),
-			ExportIntervalSeconds: c.v.GetInt("logging.otel.export_interval_seconds"),
+			Enabled:               boolPtr(c.v.GetBool("settings.logging.otel.enabled")),
+			TimeoutSeconds:        c.v.GetInt("settings.logging.otel.timeout_seconds"),
+			MaxQueueSize:          c.v.GetInt("settings.logging.otel.max_queue_size"),
+			ExportIntervalSeconds: c.v.GetInt("settings.logging.otel.export_interval_seconds"),
 		},
 	}
 }
@@ -633,13 +684,13 @@ func (c *configImpl) HostProxyConfig() HostProxyConfig {
 	defer c.mu.RUnlock()
 	return HostProxyConfig{
 		Manager: HostProxyManagerConfig{
-			Port: c.v.GetInt("host_proxy.manager.port"),
+			Port: c.v.GetInt("settings.host_proxy.manager.port"),
 		},
 		Daemon: HostProxyDaemonConfig{
-			Port:               c.v.GetInt("host_proxy.daemon.port"),
-			PollInterval:       c.v.GetDuration("host_proxy.daemon.poll_interval"),
-			GracePeriod:        c.v.GetDuration("host_proxy.daemon.grace_period"),
-			MaxConsecutiveErrs: c.v.GetInt("host_proxy.daemon.max_consecutive_errs"),
+			Port:               c.v.GetInt("settings.host_proxy.daemon.port"),
+			PollInterval:       c.v.GetDuration("settings.host_proxy.daemon.poll_interval"),
+			GracePeriod:        c.v.GetDuration("settings.host_proxy.daemon.grace_period"),
+			MaxConsecutiveErrs: c.v.GetInt("settings.host_proxy.daemon.max_consecutive_errs"),
 		},
 	}
 }
@@ -648,30 +699,31 @@ func (c *configImpl) MonitoringConfig() MonitoringConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return MonitoringConfig{
-		OtelCollectorEndpoint: c.v.GetString("monitoring.otel_collector_endpoint"),
-		OtelCollectorPort:     c.v.GetInt("monitoring.otel_collector_port"),
-		OtelCollectorHost:     c.v.GetString("monitoring.otel_collector_host"),
-		OtelCollectorInternal: c.v.GetString("monitoring.otel_collector_internal"),
-		OtelGRPCPort:          c.v.GetInt("monitoring.otel_grpc_port"),
-		LokiPort:              c.v.GetInt("monitoring.loki_port"),
-		PrometheusPort:        c.v.GetInt("monitoring.prometheus_port"),
-		JaegerPort:            c.v.GetInt("monitoring.jaeger_port"),
-		GrafanaPort:           c.v.GetInt("monitoring.grafana_port"),
-		PrometheusMetricsPort: c.v.GetInt("monitoring.prometheus_metrics_port"),
+		OtelCollectorEndpoint: c.v.GetString("settings.monitoring.otel_collector_endpoint"),
+		OtelCollectorPort:     c.v.GetInt("settings.monitoring.otel_collector_port"),
+		OtelCollectorHost:     c.v.GetString("settings.monitoring.otel_collector_host"),
+		OtelCollectorInternal: c.v.GetString("settings.monitoring.otel_collector_internal"),
+		OtelGRPCPort:          c.v.GetInt("settings.monitoring.otel_grpc_port"),
+		LokiPort:              c.v.GetInt("settings.monitoring.loki_port"),
+		PrometheusPort:        c.v.GetInt("settings.monitoring.prometheus_port"),
+		JaegerPort:            c.v.GetInt("settings.monitoring.jaeger_port"),
+		GrafanaPort:           c.v.GetInt("settings.monitoring.grafana_port"),
+		PrometheusMetricsPort: c.v.GetInt("settings.monitoring.prometheus_metrics_port"),
 		Telemetry: TelemetryConfig{
-			MetricsPath:            c.v.GetString("monitoring.telemetry.metrics_path"),
-			LogsPath:               c.v.GetString("monitoring.telemetry.logs_path"),
-			MetricExportIntervalMs: c.v.GetInt("monitoring.telemetry.metric_export_interval_ms"),
-			LogsExportIntervalMs:   c.v.GetInt("monitoring.telemetry.logs_export_interval_ms"),
-			LogToolDetails:         boolPtr(c.v.GetBool("monitoring.telemetry.log_tool_details")),
-			LogUserPrompts:         boolPtr(c.v.GetBool("monitoring.telemetry.log_user_prompts")),
-			IncludeAccountUUID:     boolPtr(c.v.GetBool("monitoring.telemetry.include_account_uuid")),
-			IncludeSessionID:       boolPtr(c.v.GetBool("monitoring.telemetry.include_session_id")),
+			MetricsPath:            c.v.GetString("settings.monitoring.telemetry.metrics_path"),
+			LogsPath:               c.v.GetString("settings.monitoring.telemetry.logs_path"),
+			MetricExportIntervalMs: c.v.GetInt("settings.monitoring.telemetry.metric_export_interval_ms"),
+			LogsExportIntervalMs:   c.v.GetInt("settings.monitoring.telemetry.logs_export_interval_ms"),
+			LogToolDetails:         boolPtr(c.v.GetBool("settings.monitoring.telemetry.log_tool_details")),
+			LogUserPrompts:         boolPtr(c.v.GetBool("settings.monitoring.telemetry.log_user_prompts")),
+			IncludeAccountUUID:     boolPtr(c.v.GetBool("settings.monitoring.telemetry.include_account_uuid")),
+			IncludeSessionID:       boolPtr(c.v.GetBool("settings.monitoring.telemetry.include_session_id")),
 		},
 	}
 }
 
-// Get returns the value for a dotted config key using Viper's key lookup.
+// Get returns the value for a namespaced config key (e.g. "project.build.image",
+// "settings.logging.file_enabled").
 //
 // It returns KeyNotFoundError when the key is not set in the merged
 // configuration state (including defaults and environment overrides).
@@ -680,6 +732,10 @@ func (c *configImpl) Get(key string) (any, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
+	if _, err := scopeFromNamespacedKey(key); err != nil {
+		return nil, err
+	}
+
 	if !c.v.IsSet(key) {
 		return nil, &KeyNotFoundError{Key: key}
 	}
@@ -687,16 +743,16 @@ func (c *configImpl) Get(key string) (any, error) {
 	return c.v.Get(key), nil
 }
 
-// Set updates a dotted config key in-memory and marks it dirty.
-//
-// Ownership is resolved via the explicit key→file ownership map so later writes
-// can route to the correct file scope.
+// Set updates a namespaced config key in-memory and marks it dirty.
+// Keys must be namespaced (e.g. "project.build.image", "settings.logging.file_enabled").
+// The scope is derived from the first key segment, and dirty tracking uses the
+// namespaced key so writes route to the correct file automatically.
 // Access is protected by an RWMutex for safe concurrent writes.
 func (c *configImpl) Set(key string, value any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if _, err := scopeForKey(key); err != nil {
+	if _, err := scopeFromNamespacedKey(key); err != nil {
 		return err
 	}
 
@@ -719,7 +775,7 @@ func (c *configImpl) Write(opts WriteOptions) error {
 	defer c.mu.Unlock()
 
 	if opts.Key != "" {
-		inferredScope, err := scopeForKey(opts.Key)
+		inferredScope, err := scopeFromNamespacedKey(opts.Key)
 		if err != nil {
 			return err
 		}
@@ -745,8 +801,10 @@ func (c *configImpl) Write(opts WriteOptions) error {
 			return &KeyNotFoundError{Key: opts.Key}
 		}
 
+		// Strip scope prefix for file-relative key.
+		flatKey := stripScopePrefix(opts.Key)
 		value := c.v.Get(opts.Key)
-		if err := writeKeyToFile(targetPath, opts.Key, value, opts.Safe); err != nil {
+		if err := writeKeyToFile(targetPath, flatKey, value, opts.Safe); err != nil {
 			return err
 		}
 		c.clearDirtyPath(opts.Key)
@@ -804,6 +862,19 @@ func (c *configImpl) Watch(onChange func(fsnotify.Event)) error {
 	return nil
 }
 
+func schemaForScope(scope ConfigScope) any {
+	switch scope {
+	case ScopeProject:
+		return &Project{}
+	case ScopeSettings:
+		return &Settings{}
+	case ScopeRegistry:
+		return &ProjectRegistry{}
+	default:
+		return &map[string]any{}
+	}
+}
+
 func scopeForKey(key string) (ConfigScope, error) {
 	root := keyRoot(key)
 	scope, ok := keyOwnership[root]
@@ -816,6 +887,73 @@ func scopeForKey(key string) (ConfigScope, error) {
 func keyRoot(key string) string {
 	parts := strings.SplitN(key, ".", 2)
 	return parts[0]
+}
+
+// validScopes is the set of recognised namespace prefixes.
+var validScopes = map[string]ConfigScope{
+	string(ScopeProject):  ScopeProject,
+	string(ScopeSettings): ScopeSettings,
+	string(ScopeRegistry): ScopeRegistry,
+}
+
+// namespacedKey converts a flat (file-relative) config key to its namespaced
+// equivalent by prepending the owning scope. Used internally by setDefaults and
+// load to translate file keys into the namespaced Viper store.
+// E.g. "build.image" → "project.build.image".
+func namespacedKey(flat string) (string, error) {
+	scope, err := scopeForKey(flat)
+	if err != nil {
+		return "", err
+	}
+	return string(scope) + "." + flat, nil
+}
+
+// namespaceMap wraps a flat config map (as read from a single YAML file)
+// under a scope prefix key.
+// E.g. namespaceMap({"build": {...}}, ScopeProject) → {"project": {"build": {...}}}.
+func namespaceMap(flat map[string]any, scope ConfigScope) map[string]any {
+	return map[string]any{string(scope): flat}
+}
+
+// scopeFromNamespacedKey extracts the ConfigScope from the first segment of a
+// namespaced key. E.g. "project.build.image" → ScopeProject.
+func scopeFromNamespacedKey(key string) (ConfigScope, error) {
+	parts := strings.SplitN(key, ".", 2)
+	if len(parts) < 2 {
+		return "", fmt.Errorf("namespaced key must have at least two segments: %s", key)
+	}
+	scope, ok := validScopes[parts[0]]
+	if !ok {
+		return "", fmt.Errorf("unknown scope prefix %q in key: %s", parts[0], key)
+	}
+	return scope, nil
+}
+
+// readFileToMap reads a YAML file into a flat map[string]any.
+// Returns an empty map for empty files.
+func readFileToMap(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	m := map[string]any{}
+	if len(data) == 0 {
+		return m, nil
+	}
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return m, nil
+}
+
+// stripScopePrefix removes the first dotted segment from a namespaced key.
+// E.g. "project.build.image" → "build.image", "settings.logging" → "logging".
+func stripScopePrefix(key string) string {
+	parts := strings.SplitN(key, ".", 2)
+	if len(parts) < 2 {
+		return key
+	}
+	return parts[1]
 }
 
 func (c *configImpl) resolveTargetPath(scope ConfigScope, overridePath string) (string, error) {
@@ -952,7 +1090,10 @@ func writeKeyToFile(path, key string, value any, safe bool) error {
 	})
 }
 
-func writeRootsToFile(path string, roots []string, source *viper.Viper, safe bool) error {
+// writeRootsToFile persists dirty root keys to a config file.
+// roots are flat file-level keys (e.g. "build", "logging").
+// scope is used to read from the namespaced Viper store (e.g. "project.build").
+func writeRootsToFile(path string, roots []string, scope ConfigScope, source *viper.Viper, safe bool) error {
 	return withFileLock(path, func() error {
 		_, exists, err := openConfigForWrite(path)
 		if err != nil {
@@ -976,9 +1117,11 @@ func writeRootsToFile(path string, roots []string, source *viper.Viper, safe boo
 			}
 		}
 
+		scopePrefix := string(scope) + "."
 		for _, root := range roots {
-			if source.IsSet(root) {
-				content[root] = source.Get(root)
+			nsKey := scopePrefix + root
+			if source.IsSet(nsKey) {
+				content[root] = source.Get(nsKey)
 				continue
 			}
 			delete(content, root)
@@ -1039,12 +1182,12 @@ func (c *configImpl) projectRootFromCurrentDir() (string, error) {
 	}
 	cwd = filepath.Clean(cwd)
 
-	projectsRaw := c.v.Get("projects")
+	projectsRaw := c.v.Get("registry.projects")
 	projectRoots := make([]string, 0)
 	switch projects := projectsRaw.(type) {
 	case map[string]any:
 		for key := range projects {
-			root := filepath.Clean(c.v.GetString(fmt.Sprintf("projects.%s.root", key)))
+			root := filepath.Clean(c.v.GetString(fmt.Sprintf("registry.projects.%s.root", key)))
 			if root != "" {
 				projectRoots = append(projectRoots, root)
 			}
@@ -1096,26 +1239,25 @@ func (c *configImpl) load(opts loadOptions) error {
 	files := []struct {
 		path   string
 		schema any
+		scope  ConfigScope
 	}{
-		{path: opts.settingsFile, schema: &Settings{}},
-		{path: opts.userProjectConfigFile, schema: &Project{}},
-		{path: opts.projectRegistryPath, schema: &projectRegistryValidation{}},
+		{path: opts.settingsFile, schema: &Settings{}, scope: ScopeSettings},
+		{path: opts.userProjectConfigFile, schema: &Project{}, scope: ScopeProject},
+		{path: opts.projectRegistryPath, schema: &ProjectRegistry{}, scope: ScopeRegistry},
 	}
 
-	for i, f := range files {
+	for _, f := range files {
 		if err := validateConfigFileExact(f.path, f.schema); err != nil {
 			return err
 		}
 
-		c.v.SetConfigFile(f.path)
-		var err error
-		if i == 0 {
-			err = c.v.ReadInConfig()
-		} else {
-			err = c.v.MergeInConfig()
-		}
+		raw, err := readFileToMap(f.path)
 		if err != nil {
 			return fmt.Errorf("loading config %s: %w", f.path, err)
+		}
+
+		if err := c.v.MergeConfigMap(namespaceMap(raw, f.scope)); err != nil {
+			return fmt.Errorf("merging config %s: %w", f.path, err)
 		}
 	}
 
@@ -1139,12 +1281,15 @@ func (c *configImpl) mergeProjectConfigUnsafe() error {
 	}
 
 	projectFile := filepath.Join(root, clawkerProjectConfigFileName)
-	c.v.SetConfigFile(projectFile)
 	if err := validateConfigFileExact(projectFile, &Project{}); err != nil {
 		return err
 	}
-	if err := c.v.MergeInConfig(); err != nil {
+	raw, err := readFileToMap(projectFile)
+	if err != nil {
 		return fmt.Errorf("loading project config for root %s: %w", root, err)
+	}
+	if err := c.v.MergeConfigMap(namespaceMap(raw, ScopeProject)); err != nil {
+		return fmt.Errorf("merging project config for root %s: %w", root, err)
 	}
 	c.projectConfigFile = projectFile
 
@@ -1267,85 +1412,25 @@ func writeIfMissingLocked(path string, content []byte) error {
 	})
 }
 
-func validateProjectYAMLString(str string) error {
-	if str == "" {
-		return nil
+// validateYAMLStrict validates YAML content against a Go struct schema using
+// yaml.v3 strict decoding. Catches type mismatches (map where list expected),
+// unknown fields, and structural violations — all derived from struct tags.
+func validateYAMLStrict(yamlContent string, schema any) error {
+	dec := yaml.NewDecoder(strings.NewReader(yamlContent))
+	dec.KnownFields(true)
+	if err := dec.Decode(schema); err != nil && !errors.Is(err, io.EOF) {
+		return err
 	}
-
-	v := viper.New()
-	v.SetConfigType("yaml")
-	if err := v.ReadConfig(strings.NewReader(str)); err != nil {
-		return fmt.Errorf("parsing config from string: %w", err)
-	}
-
-	if err := v.UnmarshalExact(&readFromStringValidation{}); err != nil {
-		return fmt.Errorf("invalid project config: %s", formatDecodeError(err))
-	}
-
 	return nil
 }
 
 func validateConfigFileExact(path string, schema any) error {
-	v := viper.New()
-	v.SetConfigFile(path)
-	if err := v.ReadInConfig(); err != nil {
-		return fmt.Errorf("loading config %s: %w", path, err)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading config %s: %w", path, err)
 	}
-
-	if err := v.UnmarshalExact(schema); err != nil {
-		return fmt.Errorf("invalid config %s: %s", path, formatDecodeError(err))
+	if err := validateYAMLStrict(string(content), schema); err != nil {
+		return fmt.Errorf("invalid config %s: %w", path, err)
 	}
-
 	return nil
-}
-
-func formatDecodeError(err error) string {
-	msg := err.Error()
-	match := invalidKeysRe.FindStringSubmatch(msg)
-	if len(match) != 3 {
-		return msg
-	}
-
-	parent := strings.TrimSpace(match[1])
-	keys := strings.Split(match[2], ",")
-	paths := make([]string, 0, len(keys))
-	for _, key := range keys {
-		k := strings.TrimSpace(key)
-		if parent == "" || parent == "<root>" {
-			paths = append(paths, k)
-			continue
-		}
-		paths = append(paths, parent+"."+k)
-	}
-
-	return "unknown keys: " + strings.Join(paths, ", ")
-}
-
-// readFromStringValidation is a permissive root schema for ReadFromString.
-// It validates unknown keys for known config roots while allowing ad-hoc
-// project registry shapes used in tests.
-type readFromStringValidation struct {
-	Version      string           `mapstructure:"version"`
-	Project      string           `mapstructure:"project"`
-	DefaultImage string           `mapstructure:"default_image"`
-	Build        BuildConfig      `mapstructure:"build"`
-	Agent        AgentConfig      `mapstructure:"agent"`
-	Workspace    WorkspaceConfig  `mapstructure:"workspace"`
-	Security     SecurityConfig   `mapstructure:"security"`
-	Loop         *LoopConfig      `mapstructure:"loop"`
-	Logging      LoggingConfig    `mapstructure:"logging"`
-	HostProxy    HostProxyConfig  `mapstructure:"host_proxy"`
-	Monitoring   MonitoringConfig `mapstructure:"monitoring"`
-	Projects     any              `mapstructure:"projects"`
-}
-
-// projectRegistryValidation accepts both legacy map and new list formats.
-type projectRegistryValidation struct {
-	Projects any `mapstructure:"projects"`
-}
-
-type projectEntryValidation struct {
-	Name      string         `mapstructure:"name"`
-	Root      string         `mapstructure:"root"`
-	Worktrees map[string]any `mapstructure:"worktrees"`
 }

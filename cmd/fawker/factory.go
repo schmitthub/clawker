@@ -70,9 +70,9 @@ func fawkerConfigFunc() func() (config.Config, error) {
 		once.Do(func() {
 			project := fawkerProject()
 			yamlData, _ := yaml.Marshal(project)
-			// Project.Project has yaml:"-" so it's not marshaled — prepend it.
+			// Project().Name has yaml:"-" so it's not marshaled — prepend it.
 			// Also prepend default_image so the config knows the default image tag.
-			cfgYAML := fmt.Sprintf("project: %s\ndefault_image: %s\n%s", project.Project, docker.DefaultImageTag, string(yamlData))
+			cfgYAML := fmt.Sprintf("project: %s\ndefault_image: %s\n%s", project.Name, docker.DefaultImageTag, string(yamlData))
 			cfg = configmocks.NewFromString(cfgYAML)
 		})
 		return cfg, nil
@@ -84,7 +84,7 @@ func fawkerProject() *config.Project {
 	hostProxyDisabled := false
 	return &config.Project{
 		Version: "1",
-		Project: "fawker-demo",
+		Name:    "fawker-demo",
 		Build: config.BuildConfig{
 			Image: "node:20-slim",
 		},

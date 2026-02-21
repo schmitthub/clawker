@@ -95,7 +95,7 @@ func statsRun(ctx context.Context, opts *StatsOptions) error {
 		}
 		var project string
 		if p := cfg.Project(); p != nil {
-			project = p.Project
+			project = p.Name
 		}
 		resolved, err := docker.ContainerNamesFromAgents(project, containers)
 		if err != nil {

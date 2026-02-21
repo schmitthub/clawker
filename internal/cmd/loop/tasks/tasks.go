@@ -175,7 +175,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 
 	action, err := shared.CheckConcurrency(ctx, &shared.ConcurrencyCheckConfig{
 		Client:    client,
-		Project:   projectCfg.Project,
+		Project:   projectCfg.Name,
 		WorkDir:   workDir,
 		IOStreams: ios,
 		Prompter:  opts.Prompter,

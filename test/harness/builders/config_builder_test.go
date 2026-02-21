@@ -13,7 +13,7 @@ func TestConfigBuilder_NewConfigBuilder(t *testing.T) {
 	cfg := builder.Build()
 
 	assert.Equal(t, "1", cfg.Version)
-	assert.Empty(t, cfg.Project)
+	assert.Empty(t, cfg.Name)
 	assert.Equal(t, "/workspace", cfg.Workspace.RemotePath)
 	assert.Equal(t, "bind", cfg.Workspace.DefaultMode)
 }
@@ -32,7 +32,7 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 					Build()
 			},
 			verify: func(t *testing.T, cfg *config.Project) {
-				assert.Equal(t, "my-project", cfg.Project)
+				assert.Equal(t, "my-project", cfg.Name)
 			},
 		},
 		{
@@ -131,7 +131,7 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 					Build()
 			},
 			verify: func(t *testing.T, cfg *config.Project) {
-				assert.Equal(t, "chained", cfg.Project)
+				assert.Equal(t, "chained", cfg.Name)
 				assert.Equal(t, "test:latest", cfg.DefaultImage)
 				assert.Equal(t, "buildpack-deps:bookworm-scm", cfg.Build.Image)
 				require.NotNil(t, cfg.Security.Firewall)
@@ -169,17 +169,17 @@ func TestConfigBuilder_Immutability(t *testing.T) {
 	// Build should return a copy, not a reference to internal state
 	builder := NewConfigBuilder().WithProject("original")
 	cfg1 := builder.Build()
-	cfg1.Project = "modified"
+	cfg1.Name = "modified"
 	cfg2 := builder.Build()
 
-	assert.Equal(t, "original", cfg2.Project, "modifying returned config should not affect builder")
+	assert.Equal(t, "original", cfg2.Name, "modifying returned config should not affect builder")
 }
 
 func TestMinimalValidConfig(t *testing.T) {
 	cfg := MinimalValidConfig().Build()
 
 	assert.Equal(t, "1", cfg.Version)
-	assert.Equal(t, "test-project", cfg.Project)
+	assert.Equal(t, "test-project", cfg.Name)
 	assert.Equal(t, "buildpack-deps:bookworm-scm", cfg.Build.Image)
 }
 
@@ -188,7 +188,7 @@ func TestFullFeaturedConfig(t *testing.T) {
 
 	// Basic fields
 	assert.Equal(t, "1", cfg.Version)
-	assert.Equal(t, "test-project", cfg.Project)
+	assert.Equal(t, "test-project", cfg.Name)
 	assert.Equal(t, "clawker-test:latest", cfg.DefaultImage)
 
 	// Build

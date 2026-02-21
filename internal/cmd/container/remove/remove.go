@@ -14,7 +14,7 @@ import (
 
 // RemoveOptions holds options for the remove command.
 type RemoveOptions struct {
-	IOStreams     *iostreams.IOStreams
+	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() (config.Config, error)
 	SocketBridge func() socketbridge.SocketBridgeManager
@@ -94,7 +94,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		}
 		var project string
 		if p := cfg.Project(); p != nil {
-			project = p.Project
+			project = p.Name
 		}
 		resolved, err := docker.ContainerNamesFromAgents(project, containers)
 		if err != nil {

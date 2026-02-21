@@ -1,6 +1,0 @@
-projects:
-  clawker-tests:
-    name: clawker.test
-    root: /testdata/project
-    worktrees:
-      fix/test: fix-test
