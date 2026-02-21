@@ -48,7 +48,7 @@ func WithConfig(cfg *config.Project) HarnessOption {
 	return func(h *Harness) {
 		h.Config = cfg
 		if cfg != nil {
-			h.Project = cfg.Project
+			h.Project = cfg.Name
 		}
 	}
 }
@@ -59,7 +59,7 @@ func WithConfigBuilder(cb *builders.ConfigBuilder) HarnessOption {
 		cfg := cb.Build()
 		h.Config = cfg
 		if cfg != nil {
-			h.Project = cfg.Project
+			h.Project = cfg.Name
 		}
 	}
 }
@@ -112,9 +112,9 @@ func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 	// - If project was explicitly set via WithProject, update config
 	// - Otherwise, use project name from config
 	if h.Project != "" {
-		h.Config.Project = h.Project
+		h.Config.Name = h.Project
 	} else {
-		h.Project = h.Config.Project
+		h.Project = h.Config.Name
 	}
 
 	// Slugify the project name to match registry resolution behavior.
@@ -122,7 +122,7 @@ func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 	// Container/volume/network names use the slug, so the harness must too.
 	if h.Project != "" {
 		h.Project = text.Slugify(h.Project)
-		h.Config.Project = h.Project // keep config in sync with slugified name
+		h.Config.Name = h.Project // keep config in sync with slugified name
 	}
 
 	// Write clawker.yaml to project directory
@@ -254,7 +254,7 @@ func (h *Harness) VolumeName(agent, purpose string) string {
 
 // NetworkName returns the clawker network name.
 func (h *Harness) NetworkName() string {
-	return NamePrefix + "-net"
+	return _blankCfg.ClawkerNetwork()
 }
 
 // ----------------------------------------------------------------

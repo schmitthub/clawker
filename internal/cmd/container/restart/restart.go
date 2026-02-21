@@ -77,13 +77,14 @@ Container names can be:
 func restartRun(ctx context.Context, opts *RestartOptions) error {
 	ios := opts.IOStreams
 
+	cfg, err := opts.Config()
+	if err != nil {
+		return err
+	}
+
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		cfg, err := opts.Config()
-		if err != nil {
-			return err
-		}
 		var project string
 		if p := cfg.Project(); p != nil {
 			project = p.Name
@@ -104,7 +105,7 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	cs := ios.ColorScheme()
 	var errs []error
 	for _, name := range containers {
-		if err := restartContainer(ctx, client, name, opts); err != nil {
+		if err := restartContainer(ctx, client, name, cfg, opts); err != nil {
 			errs = append(errs, err)
 			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, err)
 		} else {
@@ -118,7 +119,7 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	return nil
 }
 
-func restartContainer(ctx context.Context, client *docker.Client, name string, opts *RestartOptions) error {
+func restartContainer(ctx context.Context, client *docker.Client, name string, cfg config.Config, opts *RestartOptions) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, name)
 	if err != nil {
@@ -136,7 +137,7 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, o
 		_, err = client.ContainerStart(ctx, docker.ContainerStartOptions{
 			ContainerID: c.ID,
 			EnsureNetwork: &docker.EnsureNetworkOptions{
-				Name: docker.NetworkName,
+				Name: cfg.ClawkerNetwork(),
 			},
 		})
 		return err

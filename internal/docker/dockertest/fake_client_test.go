@@ -284,9 +284,9 @@ func TestSetupNetworkExists(t *testing.T) {
 
 	t.Run("returns true when network exists", func(t *testing.T) {
 		fake := dockertest.NewFakeClient(cfg)
-		fake.SetupNetworkExists("clawker-net", true)
+		fake.SetupNetworkExists(cfg.ClawkerNetwork(), true)
 
-		exists, err := fake.Client.NetworkExists(ctx, "clawker-net")
+		exists, err := fake.Client.NetworkExists(ctx, cfg.ClawkerNetwork())
 		if err != nil {
 			t.Fatalf("NetworkExists() error: %v", err)
 		}
@@ -297,9 +297,9 @@ func TestSetupNetworkExists(t *testing.T) {
 
 	t.Run("returns false when network not found", func(t *testing.T) {
 		fake := dockertest.NewFakeClient(cfg)
-		fake.SetupNetworkExists("clawker-net", false)
+		fake.SetupNetworkExists(cfg.ClawkerNetwork(), false)
 
-		exists, err := fake.Client.NetworkExists(ctx, "clawker-net")
+		exists, err := fake.Client.NetworkExists(ctx, cfg.ClawkerNetwork())
 		if err != nil {
 			t.Fatalf("NetworkExists() error: %v", err)
 		}

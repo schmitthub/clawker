@@ -14,10 +14,13 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+var _blankCfg = configmocks.NewBlankConfig()
 
 func TestNewCmdStart(t *testing.T) {
 	tests := []struct {
@@ -199,7 +202,10 @@ func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Facto
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
-			return configmocks.NewBlankConfig(), nil
+			return configmocks.NewFromString(`security: { enable_host_proxy: false }`), nil
+		},
+		HostProxy: func() hostproxy.HostProxyService {
+			return hostproxytest.NewMockManager()
 		},
 	}, tio
 }
@@ -207,7 +213,7 @@ func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Facto
 // setupContainerStart configures the fake for the non-attach container start path.
 // The default FakeClient ContainerInspectFn handles IsContainerManaged checks.
 func setupContainerStart(fake *dockertest.FakeClient) {
-	fake.SetupNetworkExists(docker.NetworkName, true)
+	fake.SetupNetworkExists(_blankCfg.ClawkerNetwork(), true)
 	fake.FakeAPI.NetworkConnectFn = func(_ context.Context, _ string, _ mobyclient.NetworkConnectOptions) (mobyclient.NetworkConnectResult, error) {
 		return mobyclient.NetworkConnectResult{}, nil
 	}
@@ -276,7 +282,7 @@ func TestStartRun_MultipleContainers(t *testing.T) {
 
 func TestStartRun_PartialFailure(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fake.SetupNetworkExists(docker.NetworkName, true)
+	fake.SetupNetworkExists(_blankCfg.ClawkerNetwork(), true)
 	fake.FakeAPI.NetworkConnectFn = func(_ context.Context, _ string, _ mobyclient.NetworkConnectOptions) (mobyclient.NetworkConnectResult, error) {
 		return mobyclient.NetworkConnectResult{}, nil
 	}

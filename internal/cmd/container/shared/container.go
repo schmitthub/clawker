@@ -1622,7 +1622,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		Name:             containerName,
 		ExtraLabels:      docker.Labels{extraLabels},
 		EnsureNetwork: &docker.EnsureNetworkOptions{
-			Name: docker.NetworkName,
+			Name: cfg.Cfg.ClawkerNetwork(),
 		},
 	})
 	if err != nil {

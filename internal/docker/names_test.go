@@ -322,12 +322,6 @@ func TestParseContainerName(t *testing.T) {
 	}
 }
 
-func TestNetworkName(t *testing.T) {
-	if NetworkName != "clawker-net" {
-		t.Errorf("NetworkName = %q, want %q", NetworkName, "clawker-net")
-	}
-}
-
 func TestGlobalVolumeName(t *testing.T) {
 	tests := []struct {
 		purpose string

@@ -20,7 +20,7 @@ func TestNewHarness_Defaults(t *testing.T) {
 
 	// Check config is set with minimal valid defaults
 	require.NotNil(t, h.Config)
-	assert.Equal(t, "test-project", h.Config.Project)
+	assert.Equal(t, "test-project", h.Config.Name)
 	assert.Equal(t, "test-project", h.Project)
 
 	// Check clawker.yaml was written
@@ -31,7 +31,7 @@ func TestNewHarness_WithProject(t *testing.T) {
 	h := NewHarness(t, WithProject("my-project"))
 
 	assert.Equal(t, "my-project", h.Project)
-	assert.Equal(t, "my-project", h.Config.Project)
+	assert.Equal(t, "my-project", h.Config.Name)
 }
 
 func TestNewHarness_WithConfig(t *testing.T) {
@@ -152,7 +152,7 @@ func TestHarness_ImageName(t *testing.T) {
 		{
 			name: "with default image",
 			config: &config.Project{
-				Project:      "myapp",
+				Name:         "myapp",
 				DefaultImage: "custom:v1",
 			},
 			expectedName: "custom:v1",
@@ -184,7 +184,7 @@ func TestHarness_VolumeName(t *testing.T) {
 
 func TestHarness_NetworkName(t *testing.T) {
 	h := NewHarness(t)
-	assert.Equal(t, "clawker-net", h.NetworkName())
+	assert.Equal(t, _blankCfg.ClawkerNetwork(), h.NetworkName())
 }
 
 func TestHarness_WriteFile(t *testing.T) {

@@ -134,11 +134,11 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		}
 
 		containerName := containers[0]
-		return attachAndStart(ctx, ios, client, containerName, opts)
+		return attachAndStart(ctx, ios, client, containerName, cfg, opts)
 	}
 
 	// Start all containers without attaching
-	return startContainersWithoutAttach(ctx, ios, client, containers, opts)
+	return startContainersWithoutAttach(ctx, ios, client, containers, cfg, opts)
 }
 
 // attachAndStart attaches to a container, starts I/O, then starts the container.
@@ -148,7 +148,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 //
 // I/O streaming starts pre-start; resize starts post-start. This ensures we're
 // ready to receive output immediately and avoids kernel pipe buffer issues.
-func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName string, opts *StartOptions) error {
+func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName string, cfg config.Config, opts *StartOptions) error {
 	// Find and inspect the container
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -233,7 +233,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 	_, err = client.ContainerStart(ctx, docker.ContainerStartOptions{
 		ContainerID: containerID,
 		EnsureNetwork: &docker.EnsureNetworkOptions{
-			Name: docker.NetworkName,
+			Name: cfg.ClawkerNetwork(),
 		},
 	})
 	if err != nil {
@@ -243,10 +243,6 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 	ios.Logger.Debug().Msg("container started successfully")
 
 	// Start socket bridge for GPG/SSH forwarding
-	cfg, err := opts.Config()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
 	if shared.NeedsSocketBridge(cfg.Project()) && opts.SocketBridge != nil {
 		gpgEnabled := cfg.Project().Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
@@ -364,13 +360,13 @@ func waitForContainerExit(ctx context.Context, client *docker.Client, containerI
 }
 
 // startContainersWithoutAttach starts multiple containers without attaching.
-func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, opts *StartOptions) error {
+func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, cfg config.Config, opts *StartOptions) error {
 	var errs []error
 	for _, name := range containers {
 		_, err := client.ContainerStart(ctx, docker.ContainerStartOptions{
 			ContainerID: name,
 			EnsureNetwork: &docker.EnsureNetworkOptions{
-				Name: docker.NetworkName,
+				Name: cfg.ClawkerNetwork(),
 			},
 		})
 		if err != nil {
@@ -382,11 +378,6 @@ func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams,
 			fmt.Fprintln(ios.Out, name)
 
 			// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
-			cfg, err := opts.Config()
-			if err != nil {
-				ios.Logger.Warn().Err(err).Str("container", name).Msg("failed to load config for socket bridge")
-				continue
-			}
 			if shared.NeedsSocketBridge(cfg.Project()) && opts.SocketBridge != nil {
 				gpgEnabled := cfg.Project().Security.GitCredentials.GPGEnabled()
 				// Inspect to get full container ID — EnsureBridge must use the same key
