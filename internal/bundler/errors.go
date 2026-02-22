@@ -2,8 +2,13 @@
 package bundler
 
 import (
+	"errors"
+
 	"github.com/schmitthub/clawker/internal/bundler/registry"
 )
+
+// ErrNoBuildImage is returned when no build image is configured and no custom Dockerfile is specified.
+var ErrNoBuildImage = errors.New("no build image configured: run 'clawker project init' or 'clawker init' to set up")
 
 // Re-export error types from registry for convenience.
 var (

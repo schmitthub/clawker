@@ -114,49 +114,6 @@ func TestNewFromString_noDefaults(t *testing.T) {
 	assert.Equal(t, "", p.Workspace.RemotePath)
 }
 
-func TestValidateProjectYAML_validConfig(t *testing.T) {
-	err := ValidateProjectYAML(`
-build:
-  image: "node:20-slim"
-workspace:
-  remote_path: "/workspace"
-`)
-	assert.NoError(t, err)
-}
-
-func TestValidateProjectYAML_rejectsUnknownFields(t *testing.T) {
-	err := ValidateProjectYAML(`
-biuld:
-  image: "node:20-slim"
-`)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "biuld")
-}
-
-func TestValidateProjectYAML_rejectsExtraTopLevelKeys(t *testing.T) {
-	err := ValidateProjectYAML(`
-extra_stuff: true
-build:
-  image: "node:20-slim"
-`)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "extra_stuff")
-}
-
-func TestValidateProjectYAML_rejectsNestedUnknownFields(t *testing.T) {
-	err := ValidateProjectYAML(`
-build:
-  imago: "node:20-slim"
-`)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "imago")
-}
-
-func TestValidateProjectYAML_invalidSyntax(t *testing.T) {
-	err := ValidateProjectYAML("build: [invalid\n bad yaml\n")
-	assert.Error(t, err)
-}
-
 func TestConstantAccessors(t *testing.T) {
 	cfg, err := NewBlankConfig()
 	require.NoError(t, err)

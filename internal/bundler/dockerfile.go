@@ -563,7 +563,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	p := g.cfg.Project()
 	baseImage := p.Build.Image
 	if baseImage == "" {
-		baseImage = "buildpack-deps:bookworm-scm"
+		return nil, ErrNoBuildImage
 	}
 
 	isAlpine := strings.Contains(strings.ToLower(baseImage), "alpine")

@@ -2,7 +2,6 @@ package root
 
 import (
 	bridgecmd "github.com/schmitthub/clawker/internal/cmd/bridge"
-	"github.com/schmitthub/clawker/internal/cmd/config"
 	"github.com/schmitthub/clawker/internal/cmd/container"
 	"github.com/schmitthub/clawker/internal/cmd/generate"
 	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
@@ -67,7 +66,6 @@ Workspace modes:
 	// Add non-alias top-level commands
 	cmd.AddCommand(initcmd.NewCmdInit(f, nil))
 	cmd.AddCommand(project.NewCmdProject(f))
-	cmd.AddCommand(config.NewCmdConfig(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
 	cmd.AddCommand(generate.NewCmdGenerate(f, nil))
 	cmd.AddCommand(loop.NewCmdLoop(f))

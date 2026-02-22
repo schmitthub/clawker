@@ -20,7 +20,6 @@ Workspace modes:
 
 * [clawker attach](clawker_attach.md) - Attach local standard input, output, and error streams to a running container
 * [clawker build](clawker_build.md) - Build an image from a clawker project
-* [clawker config](clawker_config.md) - Configuration management commands
 * [clawker container](clawker_container.md) - Manage containers
 * [clawker cp](clawker_cp.md) - Copy files/folders between a container and the local filesystem
 * [clawker create](clawker_create.md) - Create a new container

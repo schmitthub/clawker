@@ -30,7 +30,7 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 
 | File | Purpose |
 | --- | --- |
-| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), schema accessors, typed mutation (`SetProject`, `SetSettings`), write methods, `ValidateProjectYAML` |
+| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors, typed mutation (deprecated), write methods (deprecated) |
 | `consts.go` | Private constants exposed via `Config` methods. Only export: `Mode` type (`ModeBind`/`ModeSnapshot`) |
 | `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods |
 | `defaults.go` | `defaultProjectYAML`, `defaultSettingsYAML` constants, `requiredFirewallDomains`, scaffold templates |
@@ -47,7 +47,6 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 func NewConfig() (Config, error)                                // Full production loading (defaults + discovery + merge)
 func NewBlankConfig() (Config, error)                           // Defaults only, no file discovery (test double base)
 func NewFromString(projectYAML, settingsYAML string) (Config, error) // Raw YAML, NO defaults (precise test control)
-func ValidateProjectYAML(data string) error                     // Strict validation — rejects unknown fields
 func ConfigDir() string                                         // Config directory path
 func DataDir() string                                           // XDG data dir (~/.local/share/clawker)
 func StateDir() string                                          // XDG state dir (~/.local/state/clawker)
@@ -58,17 +57,23 @@ func ProjectRegistryFilePath() (string, error)
 
 ### Config Interface (method groups)
 
-**Schema accessors**: `Project()`, `Settings()`, `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`
-
-**Typed mutation** (replaces old string-based `Get`/`Set`/`Write`):
+**Store accessors** (preferred):
 ```go
-SetProject(fn func(*Project))              // In-memory mutation, marks dirty
-SetSettings(fn func(*Settings))            // In-memory mutation, marks dirty
-WriteProject(filename ...string) error     // Persist project store to disk
-WriteSettings(filename ...string) error    // Persist settings store to disk
+ProjectStore() *storage.Store[Project]     // Direct access to project config store
+SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 ```
-- `Set*` mutates the struct via callback, serializes back to node tree, marks dirty. Not persisted until `Write*`.
-- `Write*` without args: provenance-based routing (each field → its source file). With filename: all fields → that file.
+
+**Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`
+
+**Deprecated schema accessors**: `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` — use store accessors instead.
+
+**Deprecated mutation methods** — use `ProjectStore().Set()` / `SettingsStore().Set()` instead:
+```go
+SetProject(fn func(*Project))              // Deprecated: Use ProjectStore().Set() instead
+SetSettings(fn func(*Settings))            // Deprecated: Use SettingsStore().Set() instead
+WriteProject(filename ...string) error     // Deprecated: Use ProjectStore().Write() instead
+WriteSettings(filename ...string) error    // Deprecated: Use SettingsStore().Write() instead
+```
 
 **Filename accessors**: `ProjectConfigFileName()` (`"clawker.yaml"`), `SettingsFileName()` (`"settings.yaml"`), `ProjectRegistryFileName()` (`"projects.yaml"`)
 
@@ -126,7 +131,7 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 
 ## Gotchas
 
-- **Unknown fields are silently accepted** by `NewFromString`/`NewConfig`. Use `ValidateProjectYAML()` for strict validation (e.g., `config check` command).
+- **Unknown fields are silently accepted** by `NewFromString`/`NewConfig`.
 - **`NewFromString` has NO defaults** — only caller-provided values. `NewBlankConfig` has defaults. This mirrors storage's `NewFromString` vs `NewStore` distinction.
 - **Project vs Settings scope** — Project keys: `build`, `agent`, `workspace`, `security`, `loop`. Settings keys: `logging`, `monitoring`, `host_proxy`. Project identity (name) is resolved at runtime via `project.ProjectManager.CurrentProject(ctx).Name()`, not stored in config.
 - **`*bool` pointers in schema** — Nil means "not set" (defaults apply). Non-nil `false` means "explicitly disabled". Callers must handle nil when accessing raw schema fields. Typed accessors like `FirewallEnabled()` handle nil-to-default conversion.

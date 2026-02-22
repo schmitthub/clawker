@@ -225,7 +225,7 @@ Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API 
 
 See `.claude/docs/CLI-VERBS.md` for complete command reference.
 
-**Top-level shortcuts**: `init`, `build`, `run`, `start`, `config check`, `monitor *`, `generate`, `loop iterate/tasks/status/reset`, `version`
+**Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `generate`, `loop iterate/tasks/status/reset`, `version`
 
 **Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`), `worktree *`
 

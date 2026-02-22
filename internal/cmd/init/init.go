@@ -170,8 +170,9 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		Str("flavor", selectedFlavor).
 		Msg("initializing user settings")
 
-	// Save initial settings
-	if err := cfg.WriteSettings(); err != nil {
+	// Save initial settings — mark dirty so the store creates the file
+	cfg.SettingsStore().Set(func(s *config.Settings) {})
+	if err := cfg.SettingsStore().Write(); err != nil {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 

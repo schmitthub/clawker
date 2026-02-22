@@ -12,7 +12,7 @@ Project lifecycle management (initialization and registration).
 
 ## Subcommands
 
-- `project init` — initialize new project in current directory (creates `cfg.ProjectConfigFileName()` and `cfg.ClawkerIgnoreName()`)
+- `project init` — initialize new project in current directory (creates `.clawker.yaml` dotfile and `cfg.ClawkerIgnoreName()`). Uses `scaffoldProjectConfig()` based on `config.DefaultConfigYAML`. Optionally prompts to save as user-level default in configDir.
 - `project register` — register existing project in user's registry (`cfg.ProjectRegistryFileName()`)
 
 ## Key Symbols
@@ -44,4 +44,4 @@ func NewCmdProjectRegister(f *cmdutil.Factory, runF func(context.Context, *Regis
 
 ## Config Access Pattern
 
-Both commands use `config.Provider` interface: `opts.Config().ProjectRegistry()` for registry access, `opts.Config().UserSettings()` for user settings.
+Both commands use `config.Config` interface. `project init` uses `config.DefaultConfigYAML` as scaffold template, `config.UserProjectConfigFilePath()` for user-level default, and `project.ProjectManager` for registry.

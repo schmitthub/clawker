@@ -63,21 +63,18 @@ Run()
 
 ## Behavior
 
-1. Creates/updates user settings file via config gateway:
-   - Loads SettingsLoader via `Config().SettingsLoader()`
-   - Falls back to `config.NewSettingsLoader()` if nil (e.g., first run)
-   - Sets it via `Config().SetSettingsLoader()` for subsequent use
+1. Creates/updates user settings file via `cfg.SettingsStore().Set()` + `.Write()`:
+   - The no-op `Set` flips the store's dirty flag, then `Write()` creates `configDir/settings.yaml` via `defaultWritePath()` (handles missing dir + atomic write).
 2. Interactive wizard (unless `--yes` or non-TTY):
    - Build initial base image? (Select: Yes/No)
    - Select Linux flavor (Debian/Alpine) via `bundler.DefaultFlavorOptions()`
    - Confirm setup
 3. Saves settings, then builds base image if requested:
-   - Generates Dockerfile via `bundler.FlavorToImage` + `bundler.NewProjectGenerator`
-   - Builds with `client.BuildImage` (not the deprecated `BuildDefaultImage`)
+   - Builds with `client.BuildDefaultImage(ctx, flavor, progressFunc)`
    - Progress displayed via `TUI.RunProgress("auto", ...)` with single "build" step; result checked for errors
 4. On progress display error (e.g., Ctrl+C): returns error immediately
 5. On build failure: prints error + manual recovery steps (does not return error)
-6. Ensures shared directory at `config.ShareDir()` exists via `config.EnsureDir()`
+6. Ensures shared directory at `cfg.ShareSubdir()` exists
 7. Prints next steps guidance to stderr
 
 ## Factory Wiring

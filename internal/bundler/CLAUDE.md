@@ -172,6 +172,7 @@ func NewVersionInfo(v *semver.Version, debianDefault, alpineDefault string, vari
 ## Error Types (`errors.go`)
 
 ```go
+var ErrNoBuildImage error                                        // No build.image configured — returned by ProjectGenerator.buildContext()
 var ErrVersionNotFound, ErrInvalidVersion, ErrNoVersions error  // Re-exported from registry/
 type NetworkError = registry.NetworkError   // { URL, Message, Err } -- Unwrap() supported
 type RegistryError = registry.RegistryError // { Package, StatusCode, Message } -- IsNotFound() bool

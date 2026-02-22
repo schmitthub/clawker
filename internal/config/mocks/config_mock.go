@@ -5,6 +5,7 @@ package mocks
 
 import (
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/storage"
 	"sync"
 )
 
@@ -153,6 +154,9 @@ var _ config.Config = &ConfigMock{}
 //			ProjectRegistryFileNameFunc: func() string {
 //				panic("mock out the ProjectRegistryFileName method")
 //			},
+//			ProjectStoreFunc: func() *storage.Store[config.Project] {
+//				panic("mock out the ProjectStore method")
+//			},
 //			PrometheusURLFunc: func(host string, https bool) string {
 //				panic("mock out the PrometheusURL method")
 //			},
@@ -170,6 +174,9 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			SettingsFileNameFunc: func() string {
 //				panic("mock out the SettingsFileName method")
+//			},
+//			SettingsStoreFunc: func() *storage.Store[config.Settings] {
+//				panic("mock out the SettingsStore method")
 //			},
 //			ShareSubdirFunc: func() (string, error) {
 //				panic("mock out the ShareSubdir method")
@@ -331,6 +338,9 @@ type ConfigMock struct {
 	// ProjectRegistryFileNameFunc mocks the ProjectRegistryFileName method.
 	ProjectRegistryFileNameFunc func() string
 
+	// ProjectStoreFunc mocks the ProjectStore method.
+	ProjectStoreFunc func() *storage.Store[config.Project]
+
 	// PrometheusURLFunc mocks the PrometheusURL method.
 	PrometheusURLFunc func(host string, https bool) string
 
@@ -348,6 +358,9 @@ type ConfigMock struct {
 
 	// SettingsFileNameFunc mocks the SettingsFileName method.
 	SettingsFileNameFunc func() string
+
+	// SettingsStoreFunc mocks the SettingsStore method.
+	SettingsStoreFunc func() *storage.Store[config.Settings]
 
 	// ShareSubdirFunc mocks the ShareSubdir method.
 	ShareSubdirFunc func() (string, error)
@@ -514,6 +527,9 @@ type ConfigMock struct {
 		// ProjectRegistryFileName holds details about calls to the ProjectRegistryFileName method.
 		ProjectRegistryFileName []struct {
 		}
+		// ProjectStore holds details about calls to the ProjectStore method.
+		ProjectStore []struct {
+		}
 		// PrometheusURL holds details about calls to the PrometheusURL method.
 		PrometheusURL []struct {
 			// Host is the host argument value.
@@ -539,6 +555,9 @@ type ConfigMock struct {
 		}
 		// SettingsFileName holds details about calls to the SettingsFileName method.
 		SettingsFileName []struct {
+		}
+		// SettingsStore holds details about calls to the SettingsStore method.
+		SettingsStore []struct {
 		}
 		// ShareSubdir holds details about calls to the ShareSubdir method.
 		ShareSubdir []struct {
@@ -608,12 +627,14 @@ type ConfigMock struct {
 	lockProject                 sync.RWMutex
 	lockProjectConfigFileName   sync.RWMutex
 	lockProjectRegistryFileName sync.RWMutex
+	lockProjectStore            sync.RWMutex
 	lockPrometheusURL           sync.RWMutex
 	lockRequiredFirewallDomains sync.RWMutex
 	lockSetProject              sync.RWMutex
 	lockSetSettings             sync.RWMutex
 	lockSettings                sync.RWMutex
 	lockSettingsFileName        sync.RWMutex
+	lockSettingsStore           sync.RWMutex
 	lockShareSubdir             sync.RWMutex
 	lockStateDirEnvVar          sync.RWMutex
 	lockTestRepoDirEnvVar       sync.RWMutex
@@ -1860,6 +1881,33 @@ func (mock *ConfigMock) ProjectRegistryFileNameCalls() []struct {
 	return calls
 }
 
+// ProjectStore calls ProjectStoreFunc.
+func (mock *ConfigMock) ProjectStore() *storage.Store[config.Project] {
+	if mock.ProjectStoreFunc == nil {
+		panic("ConfigMock.ProjectStoreFunc: method is nil but Config.ProjectStore was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockProjectStore.Lock()
+	mock.calls.ProjectStore = append(mock.calls.ProjectStore, callInfo)
+	mock.lockProjectStore.Unlock()
+	return mock.ProjectStoreFunc()
+}
+
+// ProjectStoreCalls gets all the calls that were made to ProjectStore.
+// Check the length with:
+//
+//	len(mockedConfig.ProjectStoreCalls())
+func (mock *ConfigMock) ProjectStoreCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockProjectStore.RLock()
+	calls = mock.calls.ProjectStore
+	mock.lockProjectStore.RUnlock()
+	return calls
+}
+
 // PrometheusURL calls PrometheusURLFunc.
 func (mock *ConfigMock) PrometheusURL(host string, https bool) string {
 	if mock.PrometheusURLFunc == nil {
@@ -2038,6 +2086,33 @@ func (mock *ConfigMock) SettingsFileNameCalls() []struct {
 	mock.lockSettingsFileName.RLock()
 	calls = mock.calls.SettingsFileName
 	mock.lockSettingsFileName.RUnlock()
+	return calls
+}
+
+// SettingsStore calls SettingsStoreFunc.
+func (mock *ConfigMock) SettingsStore() *storage.Store[config.Settings] {
+	if mock.SettingsStoreFunc == nil {
+		panic("ConfigMock.SettingsStoreFunc: method is nil but Config.SettingsStore was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockSettingsStore.Lock()
+	mock.calls.SettingsStore = append(mock.calls.SettingsStore, callInfo)
+	mock.lockSettingsStore.Unlock()
+	return mock.SettingsStoreFunc()
+}
+
+// SettingsStoreCalls gets all the calls that were made to SettingsStore.
+// Check the length with:
+//
+//	len(mockedConfig.SettingsStoreCalls())
+func (mock *ConfigMock) SettingsStoreCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockSettingsStore.RLock()
+	calls = mock.calls.SettingsStore
+	mock.lockSettingsStore.RUnlock()
 	return calls
 }
 

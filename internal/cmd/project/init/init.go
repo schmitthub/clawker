@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -99,20 +100,27 @@ func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 	if err != nil {
 		return fmt.Errorf("initializing project manager: %w", err)
 	}
-	configFileName := cfgGateway.ProjectConfigFileName()
+	configFileName := "." + cfgGateway.ProjectConfigFileName() // dotfile form for local project config
 	configPath := filepath.Join(wd, configFileName)
 	ignoreFileName := cfgGateway.ClawkerIgnoreName()
 	ignorePath := filepath.Join(wd, ignoreFileName)
 
-	// Check if configuration already exists
-	if _, err := os.Stat(configPath); err == nil && !opts.Force {
+	// Check if configuration already exists (either dotfile or plain form)
+	plainConfigPath := filepath.Join(wd, cfgGateway.ProjectConfigFileName())
+	configExists := false
+	if _, err := os.Stat(configPath); err == nil {
+		configExists = true
+	} else if _, err := os.Stat(plainConfigPath); err == nil {
+		configExists = true
+	}
+	if configExists && !opts.Force {
 		if opts.Yes || !ios.IsInteractive() {
-			cmdutil.PrintErrorf(ios, "%s already exists", configFileName)
-			cmdutil.PrintNextSteps(ios,
-				"Use --force to overwrite the existing configuration",
-				"Or edit the existing clawker.yaml manually",
-				"Or run 'clawker project register' to register the existing project",
-			)
+			fmt.Fprintf(ios.ErrOut, "%s %s already exists\n", cs.FailureIcon(), configFileName)
+			fmt.Fprintln(ios.ErrOut)
+			fmt.Fprintln(ios.ErrOut, "Next Steps:")
+			fmt.Fprintln(ios.ErrOut, "  - Use --force to overwrite the existing configuration")
+			fmt.Fprintln(ios.ErrOut, "  - Or edit the existing clawker.yaml manually")
+			fmt.Fprintln(ios.ErrOut, "  - Or run 'clawker project register' to register the existing project")
 			return fmt.Errorf("configuration already exists")
 		}
 		// Interactive: ask for confirmation
@@ -136,6 +144,16 @@ func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 			}
 			if registeredProject != nil {
 				fmt.Fprintf(ios.ErrOut, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
+			}
+
+			// Still offer user-level default even when not overwriting local config
+			existingContent, readErr := os.ReadFile(configPath)
+			if readErr != nil {
+				// Try plain form if dotfile not found
+				existingContent, readErr = os.ReadFile(plainConfigPath)
+			}
+			if readErr == nil {
+				maybeOfferUserDefault(ios, cs, prompter, existingContent)
 			}
 			return nil
 		}
@@ -240,9 +258,9 @@ func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 		Msg("initializing project")
 
 	// Generate config content with collected options
-	configContent := generateConfigYAML(buildImage, workspaceMode)
+	configContent := scaffoldProjectConfig(buildImage, workspaceMode)
 
-	// Create clawker.yaml
+	// Create .clawker.yaml (dotfile form)
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("failed to write %s: %w", configFileName, err)
 	}
@@ -265,54 +283,57 @@ func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), configFileName)
 	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), ignoreFileName)
-	fmt.Fprintf(ios.ErrOut, "%s ProjectCfg: %s\n", cs.InfoIcon(), projectName)
+	fmt.Fprintf(ios.ErrOut, "%s Project: %s\n", cs.InfoIcon(), projectName)
+
+	// Offer to save as user-level default if not already present
+	if !opts.Yes && ios.IsInteractive() {
+		maybeOfferUserDefault(ios, cs, prompter, []byte(configContent))
+	}
+
 	fmt.Fprintln(ios.ErrOut)
-	cmdutil.PrintNextSteps(ios,
-		"Review and customize clawker.yaml",
-		"Run 'clawker start' to start Claude in a container",
-	)
+	fmt.Fprintln(ios.ErrOut, "Next Steps:")
+	fmt.Fprintf(ios.ErrOut, "  1. Review and customize %s\n", configFileName)
+	fmt.Fprintf(ios.ErrOut, "  2. Run 'clawker start' to start Claude in a container\n")
 
 	return nil
 }
 
-// generateConfigYAML creates the clawker.yaml content with the given options.
-// buildImage is the base Linux flavor for Dockerfile FROM (e.g., buildpack-deps:bookworm-scm).
-func generateConfigYAML(buildImage, workspaceMode string) string {
-	return fmt.Sprintf(`build:
-  image: "%s"
-  packages:
-    - git
-    - curl
-    - ripgrep
-  instructions:
-    env: {}
-    # copy: []
-    # root_run: []
-    # user_run: []
-  # inject:
-  #   after_from: []
-  #   after_packages: []
+// maybeOfferUserDefault checks if a user-level clawker.yaml exists in configDir.
+// If it doesn't, prompts the user to save the given content as their default.
+func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, prompter *prompterpkg.Prompter, content []byte) {
+	userConfigPath, pathErr := config.UserProjectConfigFilePath()
+	if pathErr != nil {
+		return
+	}
+	if _, statErr := os.Stat(userConfigPath); !os.IsNotExist(statErr) {
+		return // already exists or stat error
+	}
+	saveDefault, promptErr := prompter.Confirm(
+		"Save as default project settings?",
+		false,
+	)
+	if promptErr != nil || !saveDefault {
+		return
+	}
+	dir := filepath.Dir(userConfigPath)
+	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+		ios.Logger.Debug().Err(mkErr).Msg("failed to create config dir for user defaults")
+		return
+	}
+	if writeErr := os.WriteFile(userConfigPath, content, 0644); writeErr != nil {
+		ios.Logger.Debug().Err(writeErr).Msg("failed to write user-level default config")
+		return
+	}
+	fmt.Fprintf(ios.ErrOut, "%s Default: %s\n", cs.SuccessIcon(), userConfigPath)
+}
 
-agent:
-  includes: []
-  env: {}
-  # shell: "/bin/bash"
-  # editor: "vim"
-  # visual: "vim"
-
-workspace:
-  remote_path: "/workspace"
-  default_mode: "%s"
-
-security:
-  enable_firewall: true
-  docker_socket: false
-  # enable_host_proxy: true
-  # git_credentials:
-  #   forward_https: true
-  #   forward_ssh: true
-  #   copy_git_config: true
-  # allowed_domains: []
-  # cap_add: []
-`, buildImage, workspaceMode)
+// scaffoldProjectConfig creates the clawker.yaml content from the canonical template.
+// It inserts the build image and substitutes the workspace mode into DefaultConfigYAML.
+func scaffoldProjectConfig(buildImage, workspaceMode string) string {
+	s := config.DefaultConfigYAML
+	// Insert image line before the first comment in the build section
+	s = strings.Replace(s, "  # Base image for the container", "  image: \""+buildImage+"\"\n  # Base image for the container", 1)
+	// Substitute workspace mode
+	s = strings.Replace(s, `  default_mode: "bind"`, `  default_mode: "`+workspaceMode+`"`, 1)
+	return s
 }

@@ -146,7 +146,7 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 	}
 }
 
-func TestGenerateConfigYAML(t *testing.T) {
+func TestScaffoldProjectConfig(t *testing.T) {
 	tests := []struct {
 		name           string
 		buildImage     string
@@ -161,10 +161,11 @@ func TestGenerateConfigYAML(t *testing.T) {
 			wantContains: []string{
 				`image: "buildpack-deps:bookworm-scm"`,
 				`default_mode: "bind"`,
-				`enable_firewall: true`,
-				`docker_socket: false`,
+				"enable: true", // nested firewall.enable
+				"docker_socket: false",
 			},
 			wantNotContain: []string{
+				"enable_firewall:", // old flat form should NOT appear
 				"default_image:",
 				"version:",
 				"project:",
@@ -192,56 +193,53 @@ func TestGenerateConfigYAML(t *testing.T) {
 				"- curl",
 				"- ripgrep",
 			},
-			wantNotContain: []string{},
 		},
 		{
-			name:          "includes commented sections",
+			name:          "uses nested firewall schema",
 			buildImage:    "debian:latest",
 			workspaceMode: "bind",
 			wantContains: []string{
-				"# copy:",
-				"# root_run:",
-				"# user_run:",
-				"# shell:",
-				"# editor:",
+				"firewall:",
+				"enable: true",
 			},
-			wantNotContain: []string{},
+			wantNotContain: []string{
+				"enable_firewall:",
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generateConfigYAML(tt.buildImage, tt.workspaceMode)
+			result := scaffoldProjectConfig(tt.buildImage, tt.workspaceMode)
 
 			for _, want := range tt.wantContains {
 				if !strings.Contains(result, want) {
-					t.Errorf("generateConfigYAML() missing expected content %q\nGot:\n%s", want, result)
+					t.Errorf("scaffoldProjectConfig() missing expected content %q\nGot:\n%s", want, result)
 				}
 			}
 
 			for _, notWant := range tt.wantNotContain {
 				if strings.Contains(result, notWant) {
-					t.Errorf("generateConfigYAML() contains unexpected content %q\nGot:\n%s", notWant, result)
+					t.Errorf("scaffoldProjectConfig() contains unexpected content %q\nGot:\n%s", notWant, result)
 				}
 			}
 		})
 	}
 }
 
-func TestGenerateConfigYAML_ValidYAML(t *testing.T) {
-	// Test that generated YAML is valid by checking basic structure
-	result := generateConfigYAML("debian:latest", "bind")
+func TestScaffoldProjectConfig_ValidStructure(t *testing.T) {
+	result := scaffoldProjectConfig("debian:latest", "bind")
 
-	// Check it starts with build section (no version prefix)
-	if !strings.HasPrefix(result, "build:") {
-		t.Errorf("generateConfigYAML() should start with build:, got:\n%s", result[:50])
+	// Check it starts with the comment header from DefaultConfigYAML
+	if !strings.HasPrefix(result, "# Clawker") {
+		t.Errorf("scaffoldProjectConfig() should start with '# Clawker', got:\n%s", result[:50])
 	}
 
 	// Check it has proper sections
 	sections := []string{"build:", "agent:", "workspace:", "security:"}
 	for _, section := range sections {
 		if !strings.Contains(result, section) {
-			t.Errorf("generateConfigYAML() missing section %q", section)
+			t.Errorf("scaffoldProjectConfig() missing section %q", section)
 		}
 	}
 }

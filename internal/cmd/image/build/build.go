@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -144,6 +145,11 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	// Handle Dockerfile path from -f/--file flag
 	if opts.File != "" {
 		cfg.Build.Dockerfile = opts.File
+	}
+
+	// Early guard: no build image and no custom Dockerfile means nothing to build
+	if cfg.Build.Image == "" && cfg.Build.Dockerfile == "" {
+		return fmt.Errorf("%w", bundler.ErrNoBuildImage)
 	}
 
 	ios.Logger.Debug().

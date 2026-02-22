@@ -30,7 +30,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E (Docker)
 No build tags — directory separation only.
 
 ## Architecture Highlights
-- **Config**: `storage.Store[T]` typed layered YAML engine. `internal/config` composes `Store[Project]` + `Store[Settings]`. `internal/project` owns `Store[ProjectRegistry]`.
+- **Config**: `storage.Store[T]` typed layered YAML engine. `internal/config` composes `Store[Project]` + `Store[Settings]` with direct store accessors (`cfg.ProjectStore()`, `cfg.SettingsStore()`). `internal/project` owns `Store[ProjectRegistry]`. Old wrapper methods (`SetProject`, `WriteSettings`, etc.) deprecated.
 - **Labels**: `dev.clawker.*` prefix (OCI reverse-DNS). All label keys via `config.Config` methods.
 - **Container creation**: `shared.CreateContainer()` single entry point with events channel for progress.
 - **Loop system**: `loop iterate` (repeated prompt) + `loop tasks` (task-file-driven) with TUI dashboard.

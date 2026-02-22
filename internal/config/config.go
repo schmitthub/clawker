@@ -6,10 +6,8 @@ package config
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/schmitthub/clawker/internal/storage"
-	"gopkg.in/yaml.v3"
 )
 
 // Config is the public configuration contract.
@@ -20,12 +18,36 @@ type Config interface {
 	ClawkerIgnoreName() string
 	Project() *Project
 	Settings() Settings
+
+	// ProjectStore returns the underlying project config store.
+	// Prefer this over SetProject/WriteProject for direct store access.
+	ProjectStore() *storage.Store[Project]
+
+	// SettingsStore returns the underlying settings store.
+	// Prefer this over SetSettings/WriteSettings for direct store access.
+	SettingsStore() *storage.Store[Settings]
+
+	// Deprecated: Use ProjectStore().Get().Logging instead.
 	LoggingConfig() LoggingConfig
+
+	// Deprecated: Use ProjectStore().Get().Monitoring instead.
 	MonitoringConfig() MonitoringConfig
+
+	// Deprecated: Use SettingsStore().Get().HostProxy instead.
+	HostProxyConfig() HostProxyConfig
+
+	// Deprecated: Use ProjectStore().Set() instead.
 	SetProject(fn func(*Project))
+
+	// Deprecated: Use SettingsStore().Set() instead.
 	SetSettings(fn func(*Settings))
+
+	// Deprecated: Use ProjectStore().Write() instead.
 	WriteProject(filename ...string) error
+
+	// Deprecated: Use SettingsStore().Write() instead.
 	WriteSettings(filename ...string) error
+
 	Domain() string
 	LabelDomain() string
 	ConfigDirEnvVar() string
@@ -40,7 +62,6 @@ type Config interface {
 	BridgesSubdir() (string, error)
 	PidsSubdir() (string, error)
 	BridgePIDFilePath(containerID string) (string, error)
-	HostProxyConfig() HostProxyConfig
 	HostProxyLogFilePath() (string, error)
 	HostProxyPIDFilePath() (string, error)
 	ShareSubdir() (string, error)
@@ -149,6 +170,16 @@ func NewFromString(projectYAML, settingsYAML string) (Config, error) {
 	}, nil
 }
 
+// --- Store accessors ---
+
+func (c *configImpl) ProjectStore() *storage.Store[Project] {
+	return c.project
+}
+
+func (c *configImpl) SettingsStore() *storage.Store[Settings] {
+	return c.settings
+}
+
 // --- Schema accessors ---
 
 func (c *configImpl) RequiredFirewallDomains() []string {
@@ -191,14 +222,4 @@ func (c *configImpl) WriteProject(filename ...string) error {
 
 func (c *configImpl) WriteSettings(filename ...string) error {
 	return c.settings.Write(filename...)
-}
-
-// ValidateProjectYAML checks that data is valid YAML conforming to the Project
-// schema. Unknown fields are rejected, catching typos like "biuld" instead of
-// "build". This is stricter than NewFromString which silently ignores unknown keys.
-func ValidateProjectYAML(data string) error {
-	dec := yaml.NewDecoder(strings.NewReader(data))
-	dec.KnownFields(true)
-	var p Project
-	return dec.Decode(&p)
 }

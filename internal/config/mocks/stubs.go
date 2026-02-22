@@ -40,6 +40,10 @@ func NewFromString(projectYAML, settingsYAML string) *ConfigMock {
 func newMockFrom(cfg config.Config) *ConfigMock {
 	mock := &ConfigMock{}
 
+	// Store accessors
+	mock.ProjectStoreFunc = cfg.ProjectStore
+	mock.SettingsStoreFunc = cfg.SettingsStore
+
 	// Schema accessors
 	mock.ProjectFunc = cfg.Project
 	mock.SettingsFunc = cfg.Settings
