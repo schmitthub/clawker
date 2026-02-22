@@ -12,10 +12,7 @@ Container names follow clawker conventions: clawker.project.agent
 When --agent is provided, the container is named clawker.<project>.<agent> where
 project comes from clawker.yaml. When --name is provided, it overrides this.
 
-If IMAGE is "@", clawker will use (in order of precedence):
-1. default_image from clawker.yaml
-2. default_image from user settings (~/.local/clawker/settings.yaml)
-3. The project's built image with :latest tag
+If IMAGE is "@", clawker will resolve the project's built image with :latest tag.
 
 ```
 clawker container create [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]

@@ -1,200 +1,141 @@
 # Config Package
 
-Configuration loading, validation, project registry, resolver, and the `Config` facade type.
+## Related Docs
 
-## Key Files
+- `.claude/docs/ARCHITECTURE.md` — package boundaries and config's place in the DAG.
+- `.claude/docs/DESIGN.md` — config precedence and project resolution rationale.
+- `internal/storage/CLAUDE.md` — underlying store engine, merge strategy, write model.
+
+## Architecture
+
+Two `storage.Store[T]` instances wrapped by a thin `configImpl`. Replaces Viper.
+
+- `Store[Project]` — project config (`clawker.yaml`, `clawker.local.yaml`), walk-up + config dir discovery.
+- `Store[Settings]` — user settings (`settings.yaml`), config dir only.
+
+Both stores use `storage.WithDefaults()` to guarantee critical values (firewall, logging, monitoring) are always present, even with no files on disk.
+
+**Precedence** (highest to lowest): project `clawker.yaml` (walk-up: closest to CWD wins) > user `clawker.yaml` in config dir > defaults YAML string.
+
+Config dir resolution: `CLAWKER_CONFIG_DIR` > `$XDG_CONFIG_HOME/clawker` > `$AppData/clawker` (Windows) > `~/.config/clawker`
+Data dir: `CLAWKER_DATA_DIR` > `$XDG_DATA_HOME/clawker` > `~/.local/share/clawker`
+State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/clawker`
+
+## Boundary
+
+- `config` owns **path resolution primitives** and file-backed config I/O (`GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDir()`, `WriteProject()`).
+- `config` does **not** own project CRUD, slug/key resolution, or worktree lifecycle — those belong in `internal/project`.
+
+## Files
 
 | File | Purpose |
-|------|---------|
-| `config.go` | `Config` facade — eager container for Project, Settings, Resolution, Registry |
-| `schema.go` | `Project` struct (YAML schema + runtime context) and nested types |
-| `project_loader.go` | `ProjectLoader` with functional options: `WithUserDefaults`, `WithProjectRoot`, `WithProjectKey` |
-| `merge.go` | Post-merge reconciliation: `postMerge()`, `sortedUnion()`, `mergeMaps()`, `applyEnvMapOverrides()`, `applyEnvSliceAppend()` |
-| `settings.go` | `Settings`, `LoggingConfig`, `OtelConfig`, `MonitoringConfig` structs + method receivers |
-| `settings_loader.go` | `SettingsLoader` interface + `FileSettingsLoader` — Viper-based, loads/saves `settings.yaml`, merges project-level overrides, supports `CLAWKER_*` env vars |
-| `registry.go` | `ProjectRegistry`, `ProjectEntry`, `RegistryLoader` — persistent slug-to-path map |
-| `resolver.go` | `Resolution`, `Resolver` — resolves working directory to registered project |
-| `project_runtime.go` | `Project` runtime methods — project context + worktree directory management |
-| `validator.go` | Config validation rules |
-| `defaults.go` | Default config values |
-| `agentenv.go` | `ResolveAgentEnv` — merges env_file, from_env, env into single map with precedence |
-| `identity.go` | Project identity constants: `Domain`, `LabelDomain`, label keys, `ContainerUID`, `ContainerGID` |
-| `ip_ranges.go` | IP range source registry, `GetIPRangeSources()` method |
+| --- | --- |
+| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors, typed mutation (deprecated), write methods (deprecated) |
+| `consts.go` | Private constants exposed via `Config` methods. Only export: `Mode` type (`ModeBind`/`ModeSnapshot`) |
+| `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods |
+| `defaults.go` | `defaultProjectYAML`, `defaultSettingsYAML` constants, `requiredFirewallDomains`, scaffold templates |
+| `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()`, `GetProjectRoot`/`GetProjectIgnoreFile`, path helpers |
+| `config_test.go` | Tests: constructors, defaults, validation, typed mutation, persistence, constants, env var overrides |
+| `mocks/config_mock.go` | moq-generated `ConfigMock` (do not edit) |
+| `mocks/stubs.go` | Test helpers: `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)` |
 
-## Constants
+## Public API
 
-- **Identity (`identity.go`):** `Domain` (`clawker.dev`), `LabelDomain` (`dev.clawker`). Label key constants (`LabelPrefix`, `LabelManaged`, `LabelProject`, `LabelAgent`, `LabelVersion`, `LabelImage`, `LabelCreated`, `LabelWorkdir`, `LabelPurpose`, `LabelTestName`, `LabelBaseImage`, `LabelFlavor`, `LabelTest`, `LabelE2ETest`), `EngineLabelPrefix`, `EngineManagedLabel` — re-exported by `internal/docker/labels.go`. `ContainerUID`/`ContainerGID` (`1001`) — container user UID/GID.
-- **Filenames:** `ConfigFileName` (`clawker.yaml`), `IgnoreFileName` (`.clawkerignore`), `SettingsFileName` (`settings.yaml`), `ProjectSettingsFileName` (`.clawker.settings.yaml`), `RegistryFileName` (`projects.yaml`)
-- **Home:** `ClawkerHomeEnv` (`CLAWKER_HOME`), `DefaultClawkerDir` (`.local/clawker`), `ClawkerNetwork` (`clawker-net`)
-- **Subdirs:** `MonitorSubdir`, `BuildSubdir`, `DockerfilesSubdir`, `LogsSubdir`, `ShareSubdir`, `BridgesSubdir`
-- **Modes:** `ModeBind Mode = "bind"`, `ModeSnapshot Mode = "snapshot"` — `ParseMode(s) (Mode, error)`
-
-## Path Helpers (`home.go`)
-
-`ClawkerHome()` (`~/.local/clawker` or `$CLAWKER_HOME`) + subdir helpers (`MonitorDir`, `BuildDir`, `DockerfilesDir`, `LogsDir`, `ShareDir`, `BridgesDir`, `HostProxyPIDFile`, `HostProxyLogFile`, `BridgePIDFile`) — all `(string, error)`. `EnsureDir(path) error`.
-
-## Defaults
-
-`DefaultProject()`, `DefaultSettings()`, `DefaultFirewallDomains`, `DefaultConfigYAML`, `DefaultSettingsYAML`, `DefaultRegistryYAML`
-
-## Config Facade (`config.go`)
-
-Eagerly loads all configuration. Project, Settings, and Resolution are never nil (defaults used). Registry may be nil if initialization failed — check RegistryInitErr().
-
-`Config{Project *Project, Settings *Settings, Resolution *Resolution, Registry Registry}`. Constructors: `NewConfig()` (uses `os.Getwd()`), `NewConfigForTest(project, settings)` (no I/O), `NewConfigForTestWithEntry(project, settings, entry, configDir)` (integration tests — provides ProjectEntry + registry directory for worktree method support). Methods: `SettingsLoader()`, `ProjectLoader()`, `RegistryInitErr()`.
-
-Fatal if `os.Getwd()` fails or `clawker.yaml` invalid. Config not found → defaults.
-
-## ProjectLoader (`project_loader.go`)
-
-`NewProjectLoader(workDir, opts ...ProjectLoaderOption)`. Options: `WithUserDefaults(dir)`, `WithProjectRoot(path)`, `WithProjectKey(key)`. Methods: `Load() (*Project, error)`, `ConfigPath()`, `IgnorePath()`, `Exists()`.
-
-Load order: hardcoded defaults → user clawker.yaml → project clawker.yaml → env vars → postMerge reconciliation → inject project key. `Project.Project` is `yaml:"-"` — injected by loader.
-
-## Post-Merge Reconciliation (`merge.go`)
-
-After viper loads/unmarshals, `postMerge()` re-reads raw YAML to fix viper's lossy merge:
-
-- **Slice unions** (dedup, sorted, accumulate user+project): `agent.from_env`, `agent.includes`, `agent.env_file`, `security.firewall.add_domains`
-- **Map merges** (project wins): `agent.env`, `build.build_args`
-- **Env var map overrides**: `CLAWKER_AGENT_ENV_FOO=val` → `agent.env["FOO"]`; also `CLAWKER_BUILD_BUILD_ARGS_*`
-- **Env var list appends**: `CLAWKER_SECURITY_FIREWALL_ADD_DOMAINS=a,b` → unions with existing
-- **Replace behavior** (not accumulated): `build.packages`, `build.instructions.*`, `build.inject.*`, `security.firewall.override_domains`, `security.firewall.remove_domains`, `security.cap_add`, all scalars
-
-## Validation (`validator.go`)
-
-`NewValidator(workDir)`, `Validate(cfg) error` (returns `MultiValidationError`), `Warnings() []string`. Error types: `ValidationError{Field, Message, Value}`, `ConfigNotFoundError{Path}`, `IsConfigNotFound(err)`.
-
-## Project Runtime Context (`project_runtime.go`)
-
-Runtime methods on `*Project` after facade injects context. Implements `git.WorktreeDirProvider`.
-
-**Accessors**: `Key()`, `DisplayName()`, `Found()`, `RootDir()`
-
-**Worktree dirs**: `GetOrCreateWorktreeDir(name)`, `GetWorktreeDir(name)`, `DeleteWorktreeDir(name)`, `ListWorktreeDirs() ([]WorktreeDirInfo, error)`
-
-`WorktreeDirInfo{Name, Slug, Path string}`. Sentinels: `ErrNotInProject`, `ErrWorktreeNotFound`. Thread-safe (sync.RWMutex).
-
-## Schema Types (`schema.go`)
-
-**Top-level `Project`:** `Version`, `Project` (yaml:"-"), `DefaultImage`, `Build`, `Agent`, `Workspace`, `Security`, `Loop`
-
-**Build:** `BuildConfig` → `DockerInstructions`, `InjectConfig`, `CopyInstruction`, `RunInstruction`, `ExposePort`, `ArgDefinition`, `HealthcheckConfig`
-
-**Agent/Workspace:** `AgentConfig` (Includes, EnvFile, FromEnv, Env, Memory, Editor, Visual, Shell, ClaudeCode, EnableSharedDir, PostInit), `WorkspaceConfig` (RemotePath, DefaultMode)
-- `ClaudeCodeConfig`: `UseHostAuthEnabled()` (default: true), `ConfigStrategy()` (default: "copy")
-- `ClaudeCodeConfigOptions`: Strategy field ("copy" or "fresh")
-- `AgentConfig`: `SharedDirEnabled()` (default: false), `PostInit` (string, optional shell script run once on first container start via entrypoint)
-
-## Agent Environment Resolution (`agentenv.go`)
-
-`ResolveAgentEnv(agent AgentConfig, projectDir string) (map[string]string, []string, error)` — Merges `env_file`, `from_env`, and `env` into a single map. Precedence (lowest→highest): `env_file` < `from_env` < `env`. Env file paths support `~`, `$VAR` expansion; relative resolved against `projectDir`. Unset `from_env` vars produce warnings. Injectable `var userHomeDir = os.UserHomeDir` for testing.
-
-**Security:** `SecurityConfig` → `FirewallConfig`, `GitCredentialsConfig`, `IPRangeSource`
-- `SecurityConfig`: `HostProxyEnabled() bool` (default: true), `FirewallEnabled() bool` (convenience delegate)
-- `FirewallConfig`: `FirewallEnabled()`, `GetFirewallDomains(defaults []string)`, `IsOverrideMode()`, `GetIPRangeSources()`
-- `IPRangeSource`: `IsRequired() bool` (default: true for github)
-- `GitCredentialsConfig`: `GitHTTPSEnabled()`, `GitSSHEnabled()`, `GPGEnabled()`, `CopyGitConfigEnabled()`
-
-**Loop:** `*LoopConfig` (nil when not configured) with `GetMaxLoops()`, `GetStagnationThreshold()`, `GetTimeoutMinutes()`, `GetHooksFile()`, `GetAppendSystemPrompt()`. Fields: MaxLoops, StagnationThreshold, TimeoutMinutes, CallsPerHour, CompletionThreshold, SessionExpirationHours, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, LoopDelaySeconds, SafetyCompletionThreshold (int), SkipPermissions (bool), HooksFile, AppendSystemPrompt (string). Validated by `validateLoop()`: numeric range checks, hooks_file path existence, whitespace-only system prompt rejection.
-
-## Settings (`settings.go`, `settings_loader.go`)
-
-`Settings{Logging LoggingConfig, Monitoring MonitoringConfig, DefaultImage string}`. All fields use `mapstructure` tags for Viper compatibility.
-
-### LoggingConfig
-
-`LoggingConfig{FileEnabled *bool, MaxSizeMB int, MaxAgeDays int, MaxBackups int, Compress *bool, Otel OtelConfig}`.
-
-**Methods**: `IsFileEnabled() bool` (default: true), `IsCompressEnabled() bool` (default: true), `GetMaxSizeMB() int` (default: 50), `GetMaxAgeDays() int` (default: 7), `GetMaxBackups() int` (default: 3).
-
-- `Compress` controls gzip compression of rotated log files. Active `clawker.log` stays plain text; only rotated backups are gzipped.
-- `Otel` configures the OTEL bridge for streaming logs to the monitoring stack. The OTLP endpoint is NOT configured here — it comes from `MonitoringConfig.OtelCollectorEndpoint()`.
-
-### OtelConfig
-
-`OtelConfig{Enabled *bool, TimeoutSeconds int, MaxQueueSize int, ExportIntervalSeconds int}`.
-
-**Getters** (nil-safe, return defaults for zero values): `IsEnabled() bool` (default: true), `GetTimeoutSeconds() int` (default: 5), `GetMaxQueueSize() int` (default: 2048), `GetExportIntervalSeconds() int` (default: 5).
-
-### MonitoringConfig
-
-`MonitoringConfig{OtelCollectorPort, OtelCollectorHost, OtelCollectorInternal, OtelGRPCPort, LokiPort, PrometheusPort, JaegerPort, GrafanaPort, PrometheusMetricsPort, Telemetry TelemetryConfig}`. Single source of truth for monitoring stack — consumed by logger, monitor templates, Dockerfile templates, and monitor commands.
-
-**Defaults**: OtelCollectorPort=4318, Host="localhost", Internal="otel-collector", GRPC=4317, Loki=3100, Prometheus=9090, Jaeger=16686, Grafana=3000, Metrics=8889.
-
-**URL constructors** (nil-safe, defaults for zero): `OtelCollectorEndpoint()` (host-side), `OtelCollectorInternalURL()` (docker-network), `LokiInternalURL()`, `GrafanaURL()`, `JaegerURL()`, `PrometheusURL()`, `GetMetricsEndpoint()`, `GetLogsEndpoint()`, `GetOtelGRPCPort()`.
-
-### TelemetryConfig
-
-Nested under `MonitoringConfig.Telemetry`. Configures Claude Code OTEL env vars for container images. Fields: `MetricsPath`, `LogsPath`, `MetricExportIntervalMs`, `LogsExportIntervalMs`, `LogToolDetails`, `LogUserPrompts`, `IncludeAccountUUID`, `IncludeSessionID` (all with nil-safe getters and sensible defaults).
-
-### DefaultSettings()
-
-Returns fully populated `*Settings` with all nested defaults. Used by `FileSettingsLoader` to register Viper defaults.
-
-### SettingsLoader Interface
-
-**Interface**: `SettingsLoader` — `Path()`, `ProjectSettingsPath()`, `Exists()`, `Load()`, `Save()`, `EnsureExists()`.
-
-**Implementation**: `FileSettingsLoader` (Viper-based). `NewSettingsLoader(opts...)`, `NewSettingsLoaderForTest(dir)`. Option: `WithProjectSettingsRoot(path)`.
-
-**Loading order** (lowest→highest): `DefaultSettings()` → `settings.yaml` → `.clawker.settings.yaml` → `CLAWKER_*` env vars (e.g. `CLAWKER_LOGGING_COMPRESS=false`).
-
-**Config gateway**: `Config.SettingsLoader()`, `Config.SetSettingsLoader(sl)`.
-
-## Registry (`registry.go`)
-
-Persistent project registry at `~/.local/clawker/projects.yaml`.
-
-### Interfaces
+### Constructors & Package Functions
 
 ```go
-type Registry interface {
-    Project(key string) ProjectHandle
-    Load() (*ProjectRegistry, error)
-    Save(r *ProjectRegistry) error
-    Register(displayName, rootDir string) (string, error)
-    Unregister(key string) (bool, error)
-    UpdateProject(key string, fn func(*ProjectEntry) error) error
-    Path() string; Exists() bool
-}
-type ProjectHandle interface {
-    Key() string; Get() (*ProjectEntry, error); Root() (string, error)
-    Exists() (bool, error); Update(fn func(*ProjectEntry) error) error
-    Delete() (bool, error); Worktree(name string) WorktreeHandle
-    ListWorktrees() ([]WorktreeHandle, error)
-}
-type WorktreeHandle interface {
-    Name() string; Slug() string; Path() (string, error)
-    DirExists() bool; GitExists() bool; Status() *WorktreeStatus; Delete() error
-}
+func NewConfig() (Config, error)                                // Full production loading (defaults + discovery + merge)
+func NewBlankConfig() (Config, error)                           // Defaults only, no file discovery (test double base)
+func NewFromString(projectYAML, settingsYAML string) (Config, error) // Raw YAML, NO defaults (precise test control)
+func ConfigDir() string                                         // Config directory path
+func DataDir() string                                           // XDG data dir (~/.local/share/clawker)
+func StateDir() string                                          // XDG state dir (~/.local/state/clawker)
+func SettingsFilePath() (string, error)
+func UserProjectConfigFilePath() (string, error)
+func ProjectRegistryFilePath() (string, error)
 ```
 
-### Core Types
+### Config Interface (method groups)
 
-`ProjectEntry{Name, Root string, Worktrees map[string]string}` with `Valid() error`. `ProjectRegistry{Projects map[string]ProjectEntry}`. `RegistryLoader` (file-based), `NewRegistryLoader()`, `NewRegistryLoaderWithPath(dir)` (testing). `Slugify(name)`, `UniqueSlug(name, registry)`. `Lookup(path)`, `LookupByKey(key)`, `HasKey(key)`.
+**Store accessors** (preferred):
+```go
+ProjectStore() *storage.Store[Project]     // Direct access to project config store
+SettingsStore() *storage.Store[Settings]   // Direct access to settings store
+```
 
-### Handle Pattern (DDD Aggregate Root)
+**Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`
 
-Navigation: `registry.Project("key")` → `handle.Get()`, `handle.Exists()`, `handle.Root()`, `handle.Worktree("branch")` → `wtHandle.Status()`, `handle.ListWorktrees()`.
+**Deprecated schema accessors**: `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` — use store accessors instead.
 
-**WorktreeStatus**: `IsHealthy()` (both exist), `IsPrunable()` (both missing, no error), `Issues() []string`, `String()`, `Error` field (prevents false prunable).
+**Deprecated mutation methods** — use `ProjectStore().Set()` / `SettingsStore().Set()` instead:
+```go
+SetProject(fn func(*Project))              // Deprecated: Use ProjectStore().Set() instead
+SetSettings(fn func(*Settings))            // Deprecated: Use SettingsStore().Set() instead
+WriteProject(filename ...string) error     // Deprecated: Use ProjectStore().Write() instead
+WriteSettings(filename ...string) error    // Deprecated: Use SettingsStore().Write() instead
+```
 
-## Test Utilities (`configtest/`)
+**Filename accessors**: `ProjectConfigFileName()` (`"clawker.yaml"`), `SettingsFileName()` (`"settings.yaml"`), `ProjectRegistryFileName()` (`"projects.yaml"`)
 
-See `.claude/rules/testing.md` for detailed patterns. Key utilities: `ProjectBuilder` (fluent `*config.Project` builder — pointer-safe, no mutex copy), `FakeRegistryBuilder` (file-based, `FakeProjectBuilder` for adding worktrees), `InMemoryRegistryBuilder` (no I/O, `InMemoryProjectBuilder` for fluent worktree setup: `WithWorktree`, `WithHealthyWorktree`, `WithStaleWorktree`, `WithPartialWorktree`, `WithErrorWorktree`), `WorktreeState` (controllable DirExists/GitExists/DeleteError/PathError), `FakeWorktreeFS` (filesystem state control), `InMemorySettingsLoader` (no I/O settings), `NewRegistryLoaderForTest(dir)`. The harness `ConfigBuilder` in `test/harness/builders/` delegates to `configtest.ProjectBuilder`.
+**Path resolution**: `GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`, `TestRepoDirEnvVar()`
 
-## Resolver (`resolver.go`)
+**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `WorktreesSubdir()`
 
-`Resolution{ProjectKey, ProjectEntry, WorkDir}`. `NewResolver(registry)`, `Resolve(workDir) *Resolution`, `Found()`, `ProjectRoot()`.
+**PID/log file helpers**: `BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`
 
-## IP Range Sources (`ip_ranges.go`)
+**Domain/network**: `Domain()` ("clawker.dev"), `LabelDomain()` ("dev.clawker"), `ClawkerNetwork()` ("clawker-net")
 
-`IPRangeSource{Name, URL, JQFilter, Required *bool}`. Built-in: `github`, `google-cloud`, `google`, `cloudflare`, `aws`. `DefaultIPRangeSources()` → `[{Name: "github"}]`; empty in override mode.
+**Label keys**: `LabelPrefix()`, `LabelManaged()`, `LabelMonitoringStack()`, `LabelProject()`, `LabelAgent()`, `LabelVersion()`, `LabelImage()`, `LabelCreated()`, `LabelWorkdir()`, `LabelPurpose()`, `LabelTestName()`, `LabelBaseImage()`, `LabelFlavor()`, `LabelTest()`, `LabelE2ETest()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`
 
-**Types**: `BuiltinIPRangeConfig{URL, JQFilter string}`. `BuiltinIPRangeSources map[string]BuiltinIPRangeConfig` — maps source names to pre-configured URL+filter. `IsKnownIPRangeSource(name string) bool` — checks if name is a built-in source.
+**Container constants**: `ContainerUID()` (1001), `ContainerGID()` (1001)
 
-## Notes
+**Monitoring URLs**: `GrafanaURL(host, https)`, `JaegerURL(host, https)`, `PrometheusURL(host, https)`
 
-- `Project.Project` has `yaml:"-"` — computed by loader, not persisted. `config.Config` is facade; `config.Project` is YAML schema
+### Exported Mode Type (consts.go)
+
+```go
+type Mode string
+const ModeBind     Mode = "bind"
+const ModeSnapshot Mode = "snapshot"
+```
+
+`ParseMode(s string) (Mode, error)` lives in `schema.go`. Empty string defaults to `ModeBind`.
+
+### Schema Types (schema.go)
+
+**Top-level**: `Project`, `Settings`, `LoggingConfig`, `OtelConfig`, `MonitoringConfig`, `TelemetryConfig`, `HostProxyConfig`, `HostProxyManagerConfig`, `HostProxyDaemonConfig`
+
+**Build**: `BuildConfig`, `DockerInstructions`, `CopyInstruction`, `ExposePort`, `ArgDefinition`, `HealthcheckConfig`, `RunInstruction`, `InjectConfig`
+
+**Agent**: `AgentConfig`, `ClaudeCodeConfig`, `ClaudeCodeConfigOptions`
+
+**Workspace/Security**: `WorkspaceConfig`, `SecurityConfig`, `FirewallConfig`, `IPRangeSource`, `GitCredentialsConfig`
+
+**Loop**: `LoopConfig` (max_loops, stagnation_threshold, timeout_minutes, circuit breaker params)
+
+**Registry**: `ProjectRegistry`, `ProjectEntry`, `WorktreeEntry`
+
+**Errors**: `ErrNotInProject`, `KeyNotFoundError` (struct with `Key string` field, implements `error`)
+
+### Test Helpers (`mocks/stubs.go`)
+
+Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
+
+| Helper | Returns | Use case |
+| --- | --- | --- |
+| `NewBlankConfig()` | `*ConfigMock` | Default test double with defaults; Set/Write panic |
+| `NewFromString(projectYAML, settingsYAML)` | `*ConfigMock` | Specific YAML values, NO defaults; Set/Write panic |
+| `NewIsolatedTestConfig(t)` | `Config` | File-backed; supports Set/Write/env overrides |
+
+`NewBlankConfig`/`NewFromString` return moq `*ConfigMock` with read Func fields pre-wired. Override any Func field for partial mocking. Call `mock.ProjectCalls()` etc. for assertions. Set/Write methods are NOT wired — calling them panics via moq's nil-func guard, signaling that `NewIsolatedTestConfig` should be used for mutation tests.
+
+## Gotchas
+
+- **Unknown fields are silently accepted** by `NewFromString`/`NewConfig`.
+- **`NewFromString` has NO defaults** — only caller-provided values. `NewBlankConfig` has defaults. This mirrors storage's `NewFromString` vs `NewStore` distinction.
+- **Project vs Settings scope** — Project keys: `build`, `agent`, `workspace`, `security`, `loop`. Settings keys: `logging`, `monitoring`, `host_proxy`. Project identity (name) is resolved at runtime via `project.ProjectManager.CurrentProject(ctx).Name()`, not stored in config.
+- **`*bool` pointers in schema** — Nil means "not set" (defaults apply). Non-nil `false` means "explicitly disabled". Callers must handle nil when accessing raw schema fields. Typed accessors like `FirewallEnabled()` handle nil-to-default conversion.
+- **Nil vs zero** — Nil pointers/slices mean "not set" (excluded from storage tree). Non-nil zero values mean "explicitly set to zero" (included). This is a semantic distinction in schema design.
+- **No env var overrides** — The old Viper-based `CLAWKER_*` env var binding has been removed. Env vars only affect directory resolution (`CLAWKER_CONFIG_DIR`, etc.), not config values.
+- **Registry moved to project** — `ProjectRegistry` schema type still lives here but the store (`Store[ProjectRegistry]`) is owned by `internal/project`.
+- **Cross-process safety** — Storage uses `gofrs/flock` advisory lock + atomic temp-file rename. Lock files (`.lock` suffix) are left on disk intentionally.

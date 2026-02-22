@@ -5,24 +5,21 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestWriteBuildContextToDir(t *testing.T) {
-	cfg := &config.Config{Project: &config.Project{
-		Build: config.BuildConfig{
-			Image: "buildpack-deps:bookworm-scm",
-		},
-		Workspace: config.WorkspaceConfig{
-			RemotePath: "/workspace",
-		},
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{Enable: true},
-		},
-	}}
-
+	cfg := testConfig(t, `
+version: "1"
+build:
+  image: "buildpack-deps:bookworm-scm"
+workspace:
+  remote_path: "/workspace"
+security:
+  firewall:
+    enable: true
+`)
 	gen := NewProjectGenerator(cfg, t.TempDir())
 	gen.BuildKitEnabled = true
 
@@ -63,18 +60,16 @@ func TestWriteBuildContextToDir(t *testing.T) {
 
 func TestWriteBuildContextToDir_NoFirewall(t *testing.T) {
 	// Firewall script is always included regardless of config — execution is gated at runtime.
-	cfg := &config.Config{Project: &config.Project{
-		Build: config.BuildConfig{
-			Image: "buildpack-deps:bookworm-scm",
-		},
-		Workspace: config.WorkspaceConfig{
-			RemotePath: "/workspace",
-		},
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{Enable: false},
-		},
-	}}
-
+	cfg := testConfig(t, `
+version: "1"
+build:
+  image: "buildpack-deps:bookworm-scm"
+workspace:
+  remote_path: "/workspace"
+security:
+  firewall:
+    enable: false
+`)
 	gen := NewProjectGenerator(cfg, t.TempDir())
 	dir := t.TempDir()
 
@@ -94,18 +89,16 @@ func TestWriteBuildContextToDir_WithIncludes(t *testing.T) {
 	includeContent := []byte("# my include file\n")
 	require.NoError(t, os.WriteFile(filepath.Join(workDir, "CLAUDE.md"), includeContent, 0644))
 
-	cfg := &config.Config{Project: &config.Project{
-		Build: config.BuildConfig{
-			Image: "buildpack-deps:bookworm-scm",
-		},
-		Workspace: config.WorkspaceConfig{
-			RemotePath: "/workspace",
-		},
-		Agent: config.AgentConfig{
-			Includes: []string{"CLAUDE.md"},
-		},
-	}}
-
+	cfg := testConfig(t, `
+version: "1"
+build:
+  image: "buildpack-deps:bookworm-scm"
+workspace:
+  remote_path: "/workspace"
+agent:
+  includes:
+    - "CLAUDE.md"
+`)
 	gen := NewProjectGenerator(cfg, workDir)
 	dir := t.TempDir()
 

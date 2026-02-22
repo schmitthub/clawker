@@ -75,10 +75,10 @@ All errors use `return fmt.Errorf("context: %w", err)` for centralized rendering
 
 - `internal/docker` — PTYHandler, ExecCreate/Start/Attach/Inspect/Resize
 - `internal/signals` — ResizeHandler for SIGWINCH monitoring
-- `internal/logger` — Debug logging for resize failures
 - `internal/hostproxy` — Host proxy for credential forwarding
 - `internal/socketbridge` — SSH/GPG agent socket forwarding
 - `internal/workspace` — SetupGitCredentials for exec sessions
+- Logging via `ios.Logger` (iostreams interface) — `checkExecExitCode` takes `log iostreams.Logger` parameter
 
 ## Testing
 

@@ -1,17 +1,16 @@
 // Package git provides Git repository operations, including worktree management.
 //
-// This is a Tier 1 (Leaf) package in the clawker architecture:
+// This is a Tier 1 (Leaf) package:
 //   - It imports ONLY stdlib and go-git packages
 //   - It does NOT import any internal packages
-//   - Configuration is passed as parameters, not via config package imports
+//   - Directory/layout concerns are provided by caller interfaces
 //
 // The package follows the Facade pattern with domain-specific sub-managers:
 //   - GitManager is the top-level facade owning the repository
 //   - WorktreeManager handles linked worktree operations
 //
-// Dependency Inversion: GitManager defines WorktreeDirProvider interface which
-// Config.ProjectCfg() implements. This allows high-level orchestration without
-// importing the config package.
+// Dependency Inversion: GitManager defines WorktreeDirProvider, implemented by
+// callers so this package stays independent of external config/layout concerns.
 package git
 
 import (
@@ -37,6 +36,9 @@ var (
 
 	// ErrIsCurrentBranch is returned when attempting to delete the currently checked-out branch.
 	ErrIsCurrentBranch = errors.New("cannot delete the currently checked out branch")
+
+	// ErrBranchAlreadyExists is returned when creating a branch that already exists.
+	ErrBranchAlreadyExists = errors.New("branch already exists")
 )
 
 // GitManager is the top-level facade for git operations.
@@ -118,13 +120,13 @@ func (g *GitManager) Worktrees() (*WorktreeManager, error) {
 // It orchestrates: directory creation (via provider) + git worktree add.
 //
 // Parameters:
-//   - dirs: Provider for worktree directory management (typically Config.ProjectCfg())
+//   - dirs: Provider for worktree directory management
 //   - branch: Branch name to check out (created if doesn't exist)
 //   - base: Base ref to create branch from (empty string uses HEAD)
 //
 // Returns the worktree path ready for mounting.
 func (g *GitManager) SetupWorktree(dirs WorktreeDirProvider, branch, base string) (string, error) {
-	// 1. Get or create worktree directory in CLAWKER_HOME
+	// 1. Get or create caller-managed worktree directory
 	wtPath, err := dirs.GetOrCreateWorktreeDir(branch)
 	if err != nil {
 		return "", fmt.Errorf("creating worktree directory: %w", err)
@@ -320,7 +322,7 @@ func (g *GitManager) ListWorktrees(entries []WorktreeDirEntry) ([]WorktreeInfo, 
 		if seenSlugs[entry.Slug] {
 			continue
 		}
-		// Orphaned directory - has config entry but no git metadata
+		// Orphaned directory - has caller entry but no git metadata
 		infos = append(infos, WorktreeInfo{
 			Name:  entry.Name,
 			Slug:  entry.Slug,
@@ -355,6 +357,39 @@ func (g *GitManager) ResolveRef(ref string) (plumbing.Hash, error) {
 		return plumbing.ZeroHash, fmt.Errorf("resolving %q: %w", ref, err)
 	}
 	return *hash, nil
+}
+
+// CreateBranch creates a new branch pointing at the given base ref.
+// If base is empty, the branch is created from HEAD.
+// Returns ErrBranchAlreadyExists if the branch already exists.
+func (g *GitManager) CreateBranch(branch, base string) error {
+	exists, err := g.BranchExists(branch)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrBranchAlreadyExists
+	}
+
+	var hash plumbing.Hash
+	if base != "" {
+		hash, err = g.ResolveRef(base)
+		if err != nil {
+			return err
+		}
+	} else {
+		head, err := g.repo.Head()
+		if err != nil {
+			return fmt.Errorf("resolving HEAD: %w", err)
+		}
+		hash = head.Hash()
+	}
+
+	ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName(branch), hash)
+	if err := g.repo.Storer.SetReference(ref); err != nil {
+		return fmt.Errorf("creating branch %q: %w", branch, err)
+	}
+	return nil
 }
 
 // BranchExists checks if a branch exists in the repository.

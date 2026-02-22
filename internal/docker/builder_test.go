@@ -16,24 +16,140 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestClientWithConfig(cfg *config.Config) (*Client, *whailtest.FakeAPIClient) {
+// testConfig creates a config.Config from a YAML string for tests.
+func testConfig(t *testing.T, projectYAML string) config.Config {
+	t.Helper()
+	// Pass default settings YAML with proper monitoring defaults
+	defaultMonitoringYAML := `
+monitoring:
+  otel_collector_port: 4318
+  otel_collector_host: "localhost"
+  otel_collector_internal: "otel-collector"
+  otel_grpc_port: 4317
+  loki_port: 3100
+  prometheus_port: 9090
+  jaeger_port: 16686
+  grafana_port: 3000
+  prometheus_metrics_port: 8889
+  telemetry:
+    metrics_path: "/v1/metrics"
+    logs_path: "/v1/logs"
+    metric_export_interval_ms: 10000
+    logs_export_interval_ms: 5000
+    log_tool_details: true
+    log_user_prompts: true
+    include_account_uuid: true
+    include_session_id: true
+`
+
+	// Extract monitoring from project YAML if present
+	cleanedProject, customMonitoring := removeMonitoringFromProject(projectYAML)
+
+	// Use custom monitoring if provided, otherwise use defaults
+	settingsYAML := defaultMonitoringYAML
+	if customMonitoring != "monitoring:\n" {
+		// Test provided custom monitoring config - merge it with defaults
+		settingsYAML = mergeMonitoringYAML(defaultMonitoringYAML, customMonitoring)
+	}
+
+	return configmocks.NewFromString(cleanedProject, settingsYAML)
+}
+
+// mergeMonitoringYAML merges custom monitoring YAML with defaults
+func mergeMonitoringYAML(defaults, custom string) string {
+	lines := strings.Split(custom, "\n")
+	var result strings.Builder
+	result.WriteString("monitoring:\n")
+
+	// First, output custom top-level keys
+	for _, line := range lines[1:] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(trimmed, "telemetry:") {
+			break
+		}
+		// This is a custom top-level key, add it
+		result.WriteString(line + "\n")
+	}
+
+	// Then add telemetry from defaults
+	defaultLines := strings.Split(defaults, "\n")
+	for i, line := range defaultLines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "telemetry:" {
+			// Output rest of defaults from here (telemetry section)
+			result.WriteString(strings.Join(defaultLines[i:], "\n"))
+			break
+		}
+	}
+
+	return result.String()
+}
+
+// removeMonitoringFromProject strips the monitoring section from project YAML
+// since monitoring is now in settings, not project. Returns (projectYAML, monitoringYAML).
+func removeMonitoringFromProject(yaml string) (string, string) {
+	lines := strings.Split(yaml, "\n")
+	var projectLines []string
+	var monitoringLines []string
+	skipMonitoring := false
+	var monitoringIndent string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "monitoring:" {
+			skipMonitoring = true
+			// Determine indentation of monitoring key
+			monitoringIndent = strings.TrimSuffix(line, "monitoring:")
+			monitoringIndent = strings.TrimRight(monitoringIndent, " \t")
+			continue
+		}
+
+		if skipMonitoring {
+			// Check if we've moved to a different section
+			if len(trimmed) > 0 && !strings.HasPrefix(line, monitoringIndent+" ") && !strings.HasPrefix(line, monitoringIndent+"\t") {
+				skipMonitoring = false
+			}
+		}
+
+		if skipMonitoring && trimmed != "" {
+			// Store monitoring content for reconstruction
+			monitoringLines = append(monitoringLines, line)
+		} else if !skipMonitoring {
+			projectLines = append(projectLines, line)
+		}
+	}
+
+	// Reconstruct monitoring YAML
+	monitoringYAML := "monitoring:\n"
+	for _, line := range monitoringLines {
+		monitoringYAML += line + "\n"
+	}
+
+	return strings.Join(projectLines, "\n"), monitoringYAML
+}
+
+func newTestClientWithConfig(cfg config.Config) (*Client, *whailtest.FakeAPIClient) {
 	fakeAPI := whailtest.NewFakeAPIClient()
 	engine := whail.NewFromExisting(fakeAPI, whail.EngineOptions{
-		LabelPrefix:  EngineLabelPrefix,
-		ManagedLabel: EngineManagedLabel,
+		LabelPrefix:  cfg.EngineLabelPrefix(),
+		ManagedLabel: cfg.EngineManagedLabel(),
 	})
 	return &Client{Engine: engine, cfg: cfg}, fakeAPI
 }
 
 // managedImageInspect returns an ImageInspectResult with the managed label set,
 // so that whail.Engine.isManagedImage does not panic on nil Config.
-func managedImageInspect(ref string) moby.ImageInspectResult {
+func managedImageInspect(cfg config.Config, ref string) moby.ImageInspectResult {
 	return moby.ImageInspectResult{
 		InspectResponse: dockerimage.InspectResponse{
 			ID: ref,
@@ -41,13 +157,23 @@ func managedImageInspect(ref string) moby.ImageInspectResult {
 				DockerOCIImageConfigExt: dockerspec.DockerOCIImageConfigExt{},
 				ImageConfig: ocispec.ImageConfig{
 					Labels: map[string]string{
-						EngineLabelPrefix + "." + EngineManagedLabel: "true",
+						cfg.EngineLabelPrefix() + "." + cfg.EngineManagedLabel(): cfg.ManagedLabelValue(),
 					},
 				},
 			},
 		},
 	}
 }
+
+const ensureImageTestYAML = `
+build:
+  image: "buildpack-deps:bookworm-scm"
+workspace:
+  remote_path: "/workspace"
+`
+
+// ensureImageTestProject is the project name used alongside ensureImageTestYAML.
+const ensureImageTestProject = "testproj"
 
 func TestMergeTags(t *testing.T) {
 	tests := []struct {
@@ -103,26 +229,25 @@ func TestMergeTags(t *testing.T) {
 }
 
 func TestMergeImageLabels_InternalLabelsOverrideUser(t *testing.T) {
-	cfg := &config.Project{
-		Project: "myproject",
-		Version: "1.0.0",
-		Build: config.BuildConfig{
-			Instructions: &config.DockerInstructions{
-				Labels: map[string]string{
-					LabelProject:   "attacker-project", // attempt to override
-					"custom-label": "custom-value",
-				},
-			},
-		},
-	}
-
-	b := NewBuilder(nil, cfg, "")
+	cfg := testConfig(t, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+  instructions:
+    labels:
+      dev.clawker.project: "attacker-project"
+      custom-label: "custom-value"
+workspace:
+  remote_path: "/workspace"
+`)
+	projectCfg := cfg.Project()
+	client, _ := newTestClientWithConfig(cfg)
+	b := NewBuilder(client, projectCfg, "", "myproject")
 	labels := b.mergeImageLabels(nil)
 
 	// Clawker internal labels must win over user labels
-	assert.Equal(t, "myproject", labels[LabelProject],
+	assert.Equal(t, "myproject", labels[cfg.LabelProject()],
 		"clawker internal project label should not be overridable by user labels")
-	assert.Equal(t, "true", labels[LabelManaged],
+	assert.Equal(t, cfg.ManagedLabelValue(), labels[cfg.LabelManaged()],
 		"clawker managed label should be present")
 
 	// User labels that don't conflict should still be present
@@ -130,39 +255,25 @@ func TestMergeImageLabels_InternalLabelsOverrideUser(t *testing.T) {
 		"non-conflicting user labels should be preserved")
 }
 
-// ensureImageTestConfig returns a minimal config for EnsureImage tests.
-// It uses a standard base image and project name to produce deterministic hashes.
-func ensureImageTestConfig() *config.Project {
-	return &config.Project{
-		Project: "testproj",
-		Version: "1.0.0",
-		Build: config.BuildConfig{
-			Image: "buildpack-deps:bookworm-scm",
-		},
-		Workspace: config.WorkspaceConfig{
-			RemotePath: "/workspace",
-		},
-	}
-}
-
 func TestEnsureImage_CacheHit(t *testing.T) {
-	cfg := ensureImageTestConfig()
-	client, fakeAPI := newTestClientWithConfig(&config.Config{Project: cfg})
+	cfg := testConfig(t, ensureImageTestYAML)
+	projectCfg := cfg.Project()
+	client, fakeAPI := newTestClientWithConfig(cfg)
 
 	// Pre-compute the expected hash tag by generating the Dockerfile and hashing it
-	gen := bundler.NewProjectGenerator(&config.Config{Project: cfg}, t.TempDir())
+	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
 	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
-	hashTag := ImageTagWithHash(cfg.Project, hash)
+	hashTag := ImageTagWithHash(ensureImageTestProject, hash)
 
 	// Wire fake: image exists for the hash tag (must include managed label to pass whail check)
 	fakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...moby.ImageInspectOption) (moby.ImageInspectResult, error) {
 		if ref == hashTag {
-			return managedImageInspect(ref), nil
+			return managedImageInspect(cfg, ref), nil
 		}
 		return moby.ImageInspectResult{}, errors.New("not found")
 	}
@@ -177,8 +288,8 @@ func TestEnsureImage_CacheHit(t *testing.T) {
 		return moby.ImageTagResult{}, nil
 	}
 
-	builder := NewBuilder(client, cfg, "")
-	imageTag := ImageTag(cfg.Project)
+	builder := NewBuilder(client, projectCfg, "", ensureImageTestProject)
+	imageTag := ImageTag(ensureImageTestProject)
 
 	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.NoError(t, err)
@@ -190,18 +301,19 @@ func TestEnsureImage_CacheHit(t *testing.T) {
 }
 
 func TestEnsureImage_CacheMiss(t *testing.T) {
-	cfg := ensureImageTestConfig()
-	client, fakeAPI := newTestClientWithConfig(&config.Config{Project: cfg})
+	cfg := testConfig(t, ensureImageTestYAML)
+	projectCfg := cfg.Project()
+	client, fakeAPI := newTestClientWithConfig(cfg)
 
 	// Pre-compute the expected hash tag
-	gen := bundler.NewProjectGenerator(&config.Config{Project: cfg}, t.TempDir())
+	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
 	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
-	hashTag := ImageTagWithHash(cfg.Project, hash)
+	hashTag := ImageTagWithHash(ensureImageTestProject, hash)
 
 	// Wire fake: image does NOT exist
 	fakeAPI.ImageInspectFn = func(_ context.Context, _ string, _ ...moby.ImageInspectOption) (moby.ImageInspectResult, error) {
@@ -217,8 +329,8 @@ func TestEnsureImage_CacheMiss(t *testing.T) {
 		}, nil
 	}
 
-	builder := NewBuilder(client, cfg, "")
-	imageTag := ImageTag(cfg.Project)
+	builder := NewBuilder(client, projectCfg, "", ensureImageTestProject)
+	imageTag := ImageTag(ensureImageTestProject)
 
 	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.NoError(t, err)
@@ -229,8 +341,9 @@ func TestEnsureImage_CacheMiss(t *testing.T) {
 }
 
 func TestEnsureImage_ForceBuild(t *testing.T) {
-	cfg := ensureImageTestConfig()
-	client, fakeAPI := newTestClientWithConfig(&config.Config{Project: cfg})
+	cfg := testConfig(t, ensureImageTestYAML)
+	projectCfg := cfg.Project()
+	client, fakeAPI := newTestClientWithConfig(cfg)
 
 	// Wire legacy ImageBuild to succeed
 	var buildCalled bool
@@ -241,8 +354,8 @@ func TestEnsureImage_ForceBuild(t *testing.T) {
 		}, nil
 	}
 
-	builder := NewBuilder(client, cfg, "")
-	imageTag := ImageTag(cfg.Project)
+	builder := NewBuilder(client, projectCfg, "", ensureImageTestProject)
+	imageTag := ImageTag(ensureImageTestProject)
 
 	err := builder.EnsureImage(context.Background(), imageTag, BuilderOptions{ForceBuild: true})
 	require.NoError(t, err)
@@ -252,23 +365,24 @@ func TestEnsureImage_ForceBuild(t *testing.T) {
 }
 
 func TestEnsureImage_TagImageFailure(t *testing.T) {
-	cfg := ensureImageTestConfig()
-	client, fakeAPI := newTestClientWithConfig(&config.Config{Project: cfg})
+	cfg := testConfig(t, ensureImageTestYAML)
+	projectCfg := cfg.Project()
+	client, fakeAPI := newTestClientWithConfig(cfg)
 
 	// Pre-compute the expected hash tag
-	gen := bundler.NewProjectGenerator(&config.Config{Project: cfg}, t.TempDir())
+	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
 	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
-	hashTag := ImageTagWithHash(cfg.Project, hash)
+	hashTag := ImageTagWithHash(ensureImageTestProject, hash)
 
 	// Wire fake: image exists (cache hit — must include managed label)
 	fakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...moby.ImageInspectOption) (moby.ImageInspectResult, error) {
 		if ref == hashTag {
-			return managedImageInspect(ref), nil
+			return managedImageInspect(cfg, ref), nil
 		}
 		return moby.ImageInspectResult{}, errors.New("not found")
 	}
@@ -278,8 +392,8 @@ func TestEnsureImage_TagImageFailure(t *testing.T) {
 		return moby.ImageTagResult{}, errors.New("tag failed: permission denied")
 	}
 
-	builder := NewBuilder(client, cfg, "")
-	imageTag := ImageTag(cfg.Project)
+	builder := NewBuilder(client, projectCfg, "", ensureImageTestProject)
+	imageTag := ImageTag(ensureImageTestProject)
 
 	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.Error(t, err)
@@ -292,19 +406,15 @@ func TestEnsureImage_CustomDockerfileDelegatesToBuild(t *testing.T) {
 	customDockerfile := filepath.Join(workDir, "Dockerfile.custom")
 	require.NoError(t, os.WriteFile(customDockerfile, []byte("FROM alpine:latest\n"), 0644))
 
-	cfg := &config.Project{
-		Project: "testproj",
-		Version: "1.0.0",
-		Build: config.BuildConfig{
-			Image:      "buildpack-deps:bookworm-scm",
-			Dockerfile: customDockerfile,
-		},
-		Workspace: config.WorkspaceConfig{
-			RemotePath: "/workspace",
-		},
-	}
-
-	client, fakeAPI := newTestClientWithConfig(&config.Config{Project: cfg})
+	cfg := testConfig(t, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+  dockerfile: "`+customDockerfile+`"
+workspace:
+  remote_path: "/workspace"
+`)
+	projectCfg := cfg.Project()
+	client, fakeAPI := newTestClientWithConfig(cfg)
 
 	// Wire legacy ImageBuild to succeed and capture the labels
 	var buildLabels map[string]string
@@ -315,25 +425,33 @@ func TestEnsureImage_CustomDockerfileDelegatesToBuild(t *testing.T) {
 		}, nil
 	}
 
-	builder := NewBuilder(client, cfg, workDir)
-	imageTag := ImageTag(cfg.Project)
+	builder := NewBuilder(client, projectCfg, workDir, "testproj")
+	imageTag := ImageTag("testproj")
 
 	err := builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.NoError(t, err)
 
 	// mergeImageLabels should have been applied (clawker labels present)
-	assert.Equal(t, "true", buildLabels[LabelManaged],
+	assert.Equal(t, cfg.ManagedLabelValue(), buildLabels[cfg.LabelManaged()],
 		"managed label should be applied via mergeImageLabels")
-	assert.Equal(t, "testproj", buildLabels[LabelProject],
+	assert.Equal(t, "testproj", buildLabels[cfg.LabelProject()],
 		"project label should be applied via mergeImageLabels")
 }
 
 func TestEnsureImage_ContentHashError(t *testing.T) {
-	cfg := ensureImageTestConfig()
-	cfg.Agent.Includes = []string{"nonexistent-file.txt"}
-	client, _ := newTestClientWithConfig(&config.Config{Project: cfg})
-	builder := NewBuilder(client, cfg, t.TempDir())
-	imageTag := ImageTag(cfg.Project)
+	cfg := testConfig(t, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+workspace:
+  remote_path: "/workspace"
+agent:
+  includes:
+    - "nonexistent-file.txt"
+`)
+	projectCfg := cfg.Project()
+	client, _ := newTestClientWithConfig(cfg)
+	builder := NewBuilder(client, projectCfg, t.TempDir(), "testproj")
+	imageTag := ImageTag("testproj")
 
 	err := builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.Error(t, err)

@@ -9,14 +9,16 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // RestartOptions defines the options for the restart command.
 type RestartOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Agent      bool // treat arguments as agents names
 	Timeout    int
@@ -27,9 +29,10 @@ type RestartOptions struct {
 // NewCmdRestart creates a new restart command.
 func NewCmdRestart(f *cmdutil.Factory, runF func(context.Context, *RestartOptions) error) *cobra.Command {
 	opts := &RestartOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		Config:         f.Config,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -77,10 +80,21 @@ Container names can be:
 func restartRun(ctx context.Context, opts *RestartOptions) error {
 	ios := opts.IOStreams
 
+	cfg, err := opts.Config()
+	if err != nil {
+		return err
+	}
+
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
+		var projectName string
+		if pm, err := opts.ProjectManager(); err == nil {
+			if p, err := pm.CurrentProject(ctx); err == nil {
+				projectName = p.Name()
+			}
+		}
+		resolved, err := docker.ContainerNamesFromAgents(projectName, containers)
 		if err != nil {
 			return err
 		}
@@ -96,7 +110,7 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	cs := ios.ColorScheme()
 	var errs []error
 	for _, name := range containers {
-		if err := restartContainer(ctx, client, name, opts); err != nil {
+		if err := restartContainer(ctx, client, name, cfg, opts); err != nil {
 			errs = append(errs, err)
 			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, err)
 		} else {
@@ -110,7 +124,7 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	return nil
 }
 
-func restartContainer(ctx context.Context, client *docker.Client, name string, opts *RestartOptions) error {
+func restartContainer(ctx context.Context, client *docker.Client, name string, cfg config.Config, opts *RestartOptions) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, name)
 	if err != nil {
@@ -128,7 +142,7 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, o
 		_, err = client.ContainerStart(ctx, docker.ContainerStartOptions{
 			ContainerID: c.ID,
 			EnsureNetwork: &docker.EnsureNetworkOptions{
-				Name: docker.NetworkName,
+				Name: cfg.ClawkerNetwork(),
 			},
 		})
 		return err

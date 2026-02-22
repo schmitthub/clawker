@@ -43,8 +43,8 @@ f := &cmdutil.Factory{IOStreams: tio.IOStreams, TUI: tui.NewTUI(tio.IOStreams), 
 - `ioStreams(f)` -- creates IOStreams + initializes logger (eager, needs `f.Config()` for settings)
 - `tui.NewTUI(ios)` -- creates TUI struct bound to IOStreams (eager, inline in `New()`)
 - `clientFunc(f)` -- returns lazy Docker client constructor; closes over `f.Config()` to pass `*config.Config` to `docker.NewClient`
-- `configFunc()` -- returns lazy `*config.Config` gateway constructor (the gateway itself uses `os.Getwd()` internally and lazy-loads Project, Settings, Resolution, Registry via `sync.Once`)
-- `gitManagerFunc(f)` -- returns lazy git manager constructor; uses project root from `f.Config().Project.RootDir()`
+- `configFunc()` -- returns lazy `config.Provider` gateway constructor (the `Config` implementation uses `os.Getwd()` internally and lazy-loads project, settings, registry via `sync.Once`)
+- `gitManagerFunc(f)` -- returns lazy git manager constructor; uses project root from `f.Config().ProjectCfg().RootDir()`
 - `hostProxyFunc()` -- returns lazy host proxy manager constructor
 - `socketBridgeFunc()` -- returns lazy `socketbridge.SocketBridgeManager` constructor (wraps `socketbridge.NewManager()`)
 - `prompterFunc(ios)` -- returns lazy prompter constructor
@@ -58,7 +58,7 @@ All closures use `sync.Once` for lazy single-initialization within the `config.C
 ## Logger Initialization
 
 Logger initialization happens inside `ioStreams(f)`:
-1. Reads `f.Config().Settings` (Viper already resolved ENV > config > defaults)
+1. Reads `f.Config().UserSettings()` (Viper already resolved ENV > config > defaults)
 2. Calls `logger.NewLogger()` with file config (rotation, compression) and optional OTEL config
 3. Sets `ios.Logger = &logger.Log` (`*zerolog.Logger` satisfies `iostreams.Logger`)
 4. Falls back to `logger.Init()` (nop) if `LogsDir()` fails

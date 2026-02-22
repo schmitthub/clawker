@@ -86,7 +86,7 @@ Single entry point for container creation, shared by `run` and `create`. Perform
 
 ## Image Resolution (@ Symbol)
 
-`opts.Image == "@"` → `client.ResolveImageWithSource(ctx)`. Source types: `ImageSourceExplicit`, `ImageSourceProject`, `ImageSourceDefault`. Interactive rebuild in `shared/image.go` (`RebuildMissingDefaultImage`).
+`opts.Image == "@"` → `client.ResolveImageWithSource(ctx, projectName)`. Source types: `ImageSourceExplicit`, `ImageSourceProject`. Project name resolved via `project.ProjectManager.CurrentProject(ctx).Name()`. Returns `nil` when no project image found (caller decides next action).
 
 ## Workspace Setup
 

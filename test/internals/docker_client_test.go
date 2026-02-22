@@ -33,7 +33,7 @@ func TestNewClient_Integration(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig(t.Name())))
+	client, err := docker.NewClient(ctx, _testCfg, docker.WithLabels(docker.TestLabelConfig(_testCfg, t.Name())))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -45,13 +45,13 @@ func TestNewClient_Integration(t *testing.T) {
 	}
 
 	// Verify managed label key matches clawker convention
-	if got := client.ManagedLabelKey(); got != docker.LabelManaged {
-		t.Errorf("ManagedLabelKey() = %q, want %q", got, docker.LabelManaged)
+	if got := client.ManagedLabelKey(); got != _testCfg.LabelManaged() {
+		t.Errorf("ManagedLabelKey() = %q, want %q", got, _testCfg.LabelManaged())
 	}
 
 	// Verify managed label value
-	if got := client.ManagedLabelValue(); got != docker.ManagedLabelValue {
-		t.Errorf("ManagedLabelValue() = %q, want %q", got, docker.ManagedLabelValue)
+	if got := client.ManagedLabelValue(); got != _testCfg.ManagedLabelValue() {
+		t.Errorf("ManagedLabelValue() = %q, want %q", got, _testCfg.ManagedLabelValue())
 	}
 }
 
@@ -59,7 +59,7 @@ func TestListContainersEmpty_Integration(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig(t.Name())))
+	client, err := docker.NewClient(ctx, _testCfg, docker.WithLabels(docker.TestLabelConfig(_testCfg, t.Name())))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -79,7 +79,7 @@ func TestClientContainerLifecycle_Integration(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig(t.Name())))
+	client, err := docker.NewClient(ctx, _testCfg, docker.WithLabels(docker.TestLabelConfig(_testCfg, t.Name())))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -102,7 +102,7 @@ func TestClientContainerLifecycle_Integration(t *testing.T) {
 	}
 
 	// Create container using embedded engine methods with our labels
-	labels := docker.ContainerLabels(project, agent, "test", "alpine:latest", "/test")
+	labels := client.ContainerLabels(project, agent, "test", "alpine:latest", "/test")
 
 	createResp, err := client.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Config: &container.Config{
@@ -174,7 +174,7 @@ func TestFindContainerByAgentNotFound_Integration(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig(t.Name())))
+	client, err := docker.NewClient(ctx, _testCfg, docker.WithLabels(docker.TestLabelConfig(_testCfg, t.Name())))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}

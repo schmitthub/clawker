@@ -31,6 +31,7 @@ type ContainerLister interface {
 // Daemon manages the host proxy server as a background process.
 // It polls Docker for clawker containers and auto-exits when none are running.
 type Daemon struct {
+	cfg                config.Config
 	server             *Server
 	docker             ContainerLister
 	pidFile            string
@@ -39,59 +40,76 @@ type Daemon struct {
 	maxConsecutiveErrs int
 }
 
-// DaemonOptions configures the daemon behavior.
-type DaemonOptions struct {
-	Port               int
-	PIDFile            string
-	PollInterval       time.Duration
-	GracePeriod        time.Duration
-	MaxConsecutiveErrs int
-	// DockerClient allows injecting a custom container lister for testing.
-	// If nil, a default Docker client will be created.
-	DockerClient ContainerLister
+// DaemonOption is a functional option for overriding daemon config values.
+// CLI flags use these to take precedence over config without mutating the config object.
+type DaemonOption func(*Daemon)
+
+// WithDaemonPort overrides the daemon listen port.
+func WithDaemonPort(port int) DaemonOption {
+	return func(d *Daemon) {
+		d.server = NewServer(port)
+	}
 }
 
-// DefaultDaemonOptions returns the default daemon configuration.
-func DefaultDaemonOptions() DaemonOptions {
-	pidFile, err := config.HostProxyPIDFile()
+// WithPollInterval overrides the container poll interval.
+func WithPollInterval(interval time.Duration) DaemonOption {
+	return func(d *Daemon) {
+		d.pollInterval = interval
+	}
+}
+
+// WithGracePeriod overrides the initial grace period.
+func WithGracePeriod(period time.Duration) DaemonOption {
+	return func(d *Daemon) {
+		d.gracePeriod = period
+	}
+}
+
+// NewDaemon creates a new daemon that reads all settings from cfg.HostProxyConfig().
+// Optional DaemonOption values override individual config settings (used by CLI flags).
+// It creates a Docker client internally. Tests that need a mock docker client
+// construct &Daemon{...} directly (the pattern used by watchContainers tests).
+func NewDaemon(cfg config.Config, opts ...DaemonOption) (*Daemon, error) {
+	daemonCfg := cfg.HostProxyConfig().Daemon
+
+	if err := validatePort(daemonCfg.Port, "host proxy daemon"); err != nil {
+		return nil, err
+	}
+	if daemonCfg.PollInterval <= 0 {
+		return nil, fmt.Errorf("invalid poll interval %v: must be positive", daemonCfg.PollInterval)
+	}
+	if daemonCfg.GracePeriod < 0 {
+		return nil, fmt.Errorf("invalid grace period %v: must be non-negative", daemonCfg.GracePeriod)
+	}
+	if daemonCfg.MaxConsecutiveErrs <= 0 {
+		return nil, fmt.Errorf("invalid max consecutive errors %d: must be positive", daemonCfg.MaxConsecutiveErrs)
+	}
+
+	pidFile, err := cfg.HostProxyPIDFilePath()
 	if err != nil {
-		logger.Warn().Err(err).Msg("failed to get host proxy PID file path, daemon tracking disabled")
-	}
-	return DaemonOptions{
-		Port:               DefaultPort,
-		PIDFile:            pidFile,
-		PollInterval:       30 * time.Second,
-		GracePeriod:        60 * time.Second,
-		MaxConsecutiveErrs: 10,
-	}
-}
-
-// NewDaemon creates a new daemon with the given options.
-func NewDaemon(opts DaemonOptions) (*Daemon, error) {
-	dockerClient := opts.DockerClient
-	if dockerClient == nil {
-		var err error
-		dockerClient, err = client.New(
-			client.FromEnv,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create docker client: %w", err)
-		}
+		return nil, fmt.Errorf("failed to resolve host proxy PID file path: %w", err)
 	}
 
-	maxErrs := opts.MaxConsecutiveErrs
-	if maxErrs <= 0 {
-		maxErrs = 10 // Default to 10 consecutive errors before exit
+	dockerClient, err := client.New(client.FromEnv)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
 
-	return &Daemon{
-		server:             NewServer(opts.Port),
+	d := &Daemon{
+		cfg:                cfg,
+		server:             NewServer(daemonCfg.Port),
 		docker:             dockerClient,
-		pidFile:            opts.PIDFile,
-		pollInterval:       opts.PollInterval,
-		gracePeriod:        opts.GracePeriod,
-		maxConsecutiveErrs: maxErrs,
-	}, nil
+		pidFile:            pidFile,
+		pollInterval:       daemonCfg.PollInterval,
+		gracePeriod:        daemonCfg.GracePeriod,
+		maxConsecutiveErrs: daemonCfg.MaxConsecutiveErrs,
+	}
+
+	for _, opt := range opts {
+		opt(d)
+	}
+
+	return d, nil
 }
 
 // Run starts the daemon and blocks until it receives a signal or auto-exits.
@@ -189,9 +207,12 @@ func (d *Daemon) watchContainers(ctx context.Context) {
 
 // countClawkerContainers returns the number of running clawker containers.
 func (d *Daemon) countClawkerContainers(ctx context.Context) (int, error) {
-	// Use the moby client Filters type
+	labelManaged := d.cfg.LabelManaged()
+	managedValue := d.cfg.ManagedLabelValue()
+	labelMonStack := d.cfg.LabelMonitoringStack()
+
 	f := client.Filters{}
-	f = f.Add("label", config.LabelManaged+"="+config.ManagedLabelValue).Add("label", config.LabelMonitoringStack+"!="+config.ManagedLabelValue)
+	f = f.Add("label", labelManaged+"="+managedValue).Add("label", labelMonStack+"!="+managedValue)
 
 	result, err := d.docker.ContainerList(ctx, client.ContainerListOptions{
 		Filters: f,

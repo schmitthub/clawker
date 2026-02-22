@@ -1,8 +1,8 @@
 package config
 
-// RequiredFirewallDomains is the default list of domains allowed through the firewall.
+// requiredFirewallDomains is the default list of domains allowed through the firewall.
 // These are essential for Claude Code and common development tools.
-var RequiredFirewallDomains = []string{
+var requiredFirewallDomains = []string{
 	"api.anthropic.com",
 	"sentry.io",
 	"statsig.anthropic.com",
@@ -12,88 +12,88 @@ var RequiredFirewallDomains = []string{
 	"docker.io",
 }
 
-// DefaultProject returns a Project with sensible default values
-func DefaultProject() *Project {
-	return &Project{
-		Version: "1",
-		Build: BuildConfig{
-			Image:    "node:20-slim",
-			Packages: []string{"git", "curl", "ripgrep"},
-		},
-		Agent: AgentConfig{
-			Includes: []string{},
-			Env:      map[string]string{},
-		},
-		Workspace: WorkspaceConfig{
-			RemotePath:  "/workspace",
-			DefaultMode: "bind",
-		},
-		Security: SecurityConfig{
-			Firewall: &FirewallConfig{
-				Enable: true, // Enabled by default for safety
-			},
-			DockerSocket: false, // Disabled by default, opt-in
-			CapAdd:       []string{"NET_ADMIN", "NET_RAW"},
-		},
-	}
-}
+// defaultProjectYAML is the base-layer defaults for project configuration.
+// Always loaded via storage.WithDefaults() in NewConfig() as the lowest
+// priority layer — guarantees critical values like security.firewall.enable
+// are present even with zero files on disk.
+const defaultProjectYAML = `
+build:
+  packages:
+    - git
+    - curl
+    - ripgrep
 
-// DefaultSettings returns a Settings with sensible default values.
-// This is the single source of truth for all settings defaults.
-func DefaultSettings() *Settings {
-	return &Settings{
-		Logging: LoggingConfig{
-			FileEnabled: boolPtr(true),
-			MaxSizeMB:   50,
-			MaxAgeDays:  7,
-			MaxBackups:  3,
-			Compress:    boolPtr(true),
-			Otel: OtelConfig{
-				Enabled:               boolPtr(true),
-				TimeoutSeconds:        5,
-				MaxQueueSize:          2048,
-				ExportIntervalSeconds: 5,
-			},
-		},
-		Monitoring: MonitoringConfig{
-			OtelCollectorPort:     4318,
-			OtelCollectorHost:     "localhost",
-			OtelCollectorInternal: "otel-collector",
-			OtelGRPCPort:          4317,
-			LokiPort:              3100,
-			PrometheusPort:        9090,
-			JaegerPort:            16686,
-			GrafanaPort:           3000,
-			PrometheusMetricsPort: 8889,
-			Telemetry: TelemetryConfig{
-				MetricsPath:            "/v1/metrics",
-				LogsPath:               "/v1/logs",
-				MetricExportIntervalMs: 10000,
-				LogsExportIntervalMs:   5000,
-				LogToolDetails:         boolPtr(true),
-				LogUserPrompts:         boolPtr(true),
-				IncludeAccountUUID:     boolPtr(true),
-				IncludeSessionID:       boolPtr(true),
-			},
-		},
-	}
-}
+agent:
+  includes: []
+  env: {}
 
-// boolPtr returns a pointer to the given bool value.
-func boolPtr(b bool) *bool { return &b }
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
 
-// TODO: making these dynamically generated while still maintaining commented
-// sections is tricky. For now, we use static strings with placeholders.
+security:
+  firewall:
+    enable: true
+  docker_socket: false
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+`
 
-// DefaultConfigYAML returns the default configuration as YAML for scaffolding
+// defaultSettingsYAML is the base-layer defaults for settings configuration.
+// Always loaded via storage.WithDefaults() in NewConfig() as the lowest
+// priority layer.
+const defaultSettingsYAML = `
+logging:
+  file_enabled: true
+  max_size_mb: 50
+  max_age_days: 7
+  max_backups: 3
+  compress: true
+  otel:
+    enabled: true
+    timeout_seconds: 5
+    max_queue_size: 2048
+    export_interval_seconds: 5
+
+host_proxy:
+  manager:
+    port: 18374
+  daemon:
+    port: 18374
+    poll_interval: 30s
+    grace_period: 60s
+    max_consecutive_errs: 10
+
+monitoring:
+  otel_collector_port: 4318
+  otel_collector_host: "localhost"
+  otel_collector_internal: "otel-collector"
+  otel_grpc_port: 4317
+  loki_port: 3100
+  prometheus_port: 9090
+  jaeger_port: 16686
+  grafana_port: 3000
+  prometheus_metrics_port: 8889
+  telemetry:
+    metrics_path: "/v1/metrics"
+    logs_path: "/v1/logs"
+    metric_export_interval_ms: 10000
+    logs_export_interval_ms: 5000
+    log_tool_details: true
+    log_user_prompts: true
+    include_account_uuid: true
+    include_session_id: true
+`
+
+// DefaultConfigYAML is the commented template written to disk by clawker init.
+// This is a user-facing scaffold — different from defaultProjectYAML which is
+// the programmatic base layer. The template contains comments to guide users.
 const DefaultConfigYAML = `# Clawker Configuration
 # Documentation: https://github.com/schmitthub/clawker
 
-version: "1"
-
 build:
   # Base image for the container
-  image: "node:20-slim"
   # Optional: path to custom Dockerfile (relative to project root)
   # dockerfile: "./.devcontainer/Dockerfile"
   # System packages to install (apt-get on Debian, apk on Alpine)
@@ -147,13 +147,6 @@ security:
     # Add domains to the default allowed list
     # add_domains:
     #   - "api.openai.com"
-    # Remove domains from the default allowed list
-    # remove_domains:
-    #   - "registry.npmjs.org"
-    # Override the entire allowed list (ignores add/remove, skips GitHub IP fetching)
-    # override_domains:
-    #   - "api.anthropic.com"
-    #   - "api.github.com"
   # Mount Docker socket for Docker-in-Docker (security risk if enabled)
   docker_socket: false
 
@@ -176,7 +169,7 @@ security:
 #   session_expiration_hours: 24       # Session TTL
 `
 
-// DefaultSettingsYAML returns the default settings template for new users
+// DefaultSettingsYAML is the commented template written to disk by clawker init.
 const DefaultSettingsYAML = `# Clawker User Settings
 # Documentation: https://github.com/schmitthub/clawker
 
@@ -192,6 +185,16 @@ const DefaultSettingsYAML = `# Clawker User Settings
 #     timeout_seconds: 5
 #     max_queue_size: 2048
 #     export_interval_seconds: 5
+
+# Host Proxy configuration
+# host_proxy:
+#   manager:
+#     port: 18374
+#   daemon:
+#     port: 18374
+#     poll_interval: 30s
+#     grace_period: 60s
+#     max_consecutive_errs: 10
 
 # Monitoring stack ports (override if defaults conflict)
 # monitoring:
@@ -217,10 +220,10 @@ const DefaultSettingsYAML = `# Clawker User Settings
 #     include_session_id: true
 `
 
-// DefaultRegistryYAML returns the default registry template
+// DefaultRegistryYAML is the commented template for the project registry.
 const DefaultRegistryYAML = `# Clawker ProjectCfg Registry
 # Managed by 'clawker init' — do not edit manually
-projects: {}
+projects: []
 `
 
 // DefaultIgnoreFile returns the default .clawkerignore content

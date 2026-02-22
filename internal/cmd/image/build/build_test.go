@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/stretchr/testify/require"
 )
 
@@ -178,47 +177,6 @@ func TestParseKeyValuePairs(t *testing.T) {
 
 			require.Equal(t, tt.expect, result)
 			require.Equal(t, tt.expectInvalid, invalid)
-		})
-	}
-}
-
-func TestMergeLabels(t *testing.T) {
-	tests := []struct {
-		name          string
-		userLabels    map[string]string
-		clawkerLabels map[string]string
-		expect        map[string]string
-	}{
-		{
-			name:          "empty inputs",
-			userLabels:    nil,
-			clawkerLabels: nil,
-			expect:        map[string]string{},
-		},
-		{
-			name:          "only user labels",
-			userLabels:    map[string]string{"user": "value"},
-			clawkerLabels: nil,
-			expect:        map[string]string{"user": "value"},
-		},
-		{
-			name:          "only clawker labels",
-			userLabels:    nil,
-			clawkerLabels: map[string]string{docker.LabelManaged: "true"},
-			expect:        map[string]string{docker.LabelManaged: "true"},
-		},
-		{
-			name:          "clawker labels override user labels",
-			userLabels:    map[string]string{docker.LabelManaged: "false", "user": "value"},
-			clawkerLabels: map[string]string{docker.LabelManaged: "true"},
-			expect:        map[string]string{docker.LabelManaged: "true", "user": "value"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := mergeLabels(tt.userLabels, tt.clawkerLabels)
-			require.Equal(t, tt.expect, result)
 		})
 	}
 }

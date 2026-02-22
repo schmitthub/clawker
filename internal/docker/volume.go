@@ -15,7 +15,6 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -55,7 +54,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 
 	// Create a tar archive of the source directory
 	tarBuffer := new(bytes.Buffer)
-	if err := createTarArchive(srcDir, tarBuffer, ignorePatterns); err != nil {
+	if err := createTarArchive(srcDir, tarBuffer, ignorePatterns, c.cfg.ContainerUID(), c.cfg.ContainerGID()); err != nil {
 		return fmt.Errorf("failed to create tar archive: %w", err)
 	}
 
@@ -68,9 +67,9 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	chownImg := c.chownImage()
 	containerConfig := &container.Config{
 		Image: chownImg,
-		Cmd:   []string{"chown", "-R", fmt.Sprintf("%d:%d", config.ContainerUID, config.ContainerGID), destPath},
+		Cmd:   []string{"chown", "-R", fmt.Sprintf("%d:%d", c.cfg.ContainerUID(), c.cfg.ContainerGID()), destPath},
 		Labels: map[string]string{
-			LabelPurpose: "copy-to-volume",
+			c.cfg.LabelPurpose(): "copy-to-volume",
 		},
 	}
 
@@ -176,7 +175,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 }
 
 // createTarArchive creates a tar archive of a directory.
-func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string) error {
+func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string, uid, gid int) error {
 	tw := tar.NewWriter(buf)
 	defer tw.Close()
 
@@ -216,8 +215,8 @@ func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string) err
 		header.Name = relPath
 
 		// Ensure container user ownership so files are readable inside container.
-		header.Uid = config.ContainerUID
-		header.Gid = config.ContainerGID
+		header.Uid = uid
+		header.Gid = gid
 
 		// Handle symlinks
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -466,8 +465,8 @@ func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 	// fail fast if any negation patterns are present (not yet supported)
 	for _, p := range patterns {
 		if strings.HasPrefix(strings.TrimSpace(p), "!") {
-			logger.Error().Str("pattern", p).Msg("negation patterns in .clawkerignore are not yet supported and will be ignored")
-			return nil, fmt.Errorf("negation patterns in .clawkerignore are not yet supported: %q", p)
+			logger.Error().Str("pattern", p).Msg("negation patterns in ignore file are not yet supported and will be ignored")
+			return nil, fmt.Errorf("negation patterns in ignore file are not yet supported: %q", p)
 		}
 	}
 
@@ -477,9 +476,9 @@ func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 			return err
 		}
 
-		// Only interested in directories
+		// Only interested in directories — files are silently skipped
+		// because bind mode can only mask directories via tmpfs overlays.
 		if !info.IsDir() {
-			logger.Warn().Str("path", path).Msg("files in .clawkerignore are not supported for bind mode")
 			return nil
 		}
 

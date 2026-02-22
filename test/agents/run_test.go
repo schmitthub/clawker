@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
@@ -65,7 +66,7 @@ func TestRunE2E_InteractiveMode(t *testing.T) {
 		imageTag,
 	)
 	cmd.Dir = h.ProjectDir
-	cmd.Env = append(os.Environ(), "CLAWKER_CONFIG_DIR="+h.ConfigDir)
+	cmd.Env = append(os.Environ(), configmocks.NewBlankConfig().ConfigDirEnvVar()+"="+h.ConfigDir)
 
 	// Start with PTY
 	ptmx, err := pty.Start(cmd)
@@ -252,7 +253,7 @@ func TestRunE2E_ContainerExitDetection(t *testing.T) {
 		"sh", "-c", "exit 42",
 	)
 	cmd.Dir = h.ProjectDir
-	cmd.Env = append(os.Environ(), "CLAWKER_CONFIG_DIR="+h.ConfigDir)
+	cmd.Env = append(os.Environ(), configmocks.NewBlankConfig().ConfigDirEnvVar()+"="+h.ConfigDir)
 
 	ptmx, err := pty.Start(cmd)
 	require.NoError(t, err)

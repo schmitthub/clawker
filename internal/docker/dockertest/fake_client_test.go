@@ -7,13 +7,15 @@ import (
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 
-	"github.com/schmitthub/clawker/internal/docker"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 )
 
+var cfg = configmocks.NewBlankConfig()
+
 func TestNewFakeClient(t *testing.T) {
 	t.Run("constructs without panic", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		if fake == nil {
 			t.Fatal("NewFakeClient() returned nil")
 		}
@@ -26,7 +28,7 @@ func TestNewFakeClient(t *testing.T) {
 	})
 
 	t.Run("client engine is non-nil", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		if fake.Client.Engine == nil {
 			t.Fatal("NewFakeClient().Client.Engine is nil")
 		}
@@ -37,7 +39,7 @@ func TestListContainers(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns containers from SetupContainerList", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fixture := dockertest.RunningContainerFixture("myapp", "dev")
 		fake.SetupContainerList(fixture)
 
@@ -60,7 +62,7 @@ func TestListContainers(t *testing.T) {
 	})
 
 	t.Run("returns empty list when no containers", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerList()
 
 		containers, err := fake.Client.ListContainers(ctx, true)
@@ -73,7 +75,7 @@ func TestListContainers(t *testing.T) {
 	})
 
 	t.Run("returns multiple containers", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerList(
 			dockertest.RunningContainerFixture("myapp", "dev"),
 			dockertest.ContainerFixture("myapp", "worker", "alpine:latest"),
@@ -95,7 +97,7 @@ func TestListContainers(t *testing.T) {
 	})
 
 	t.Run("records ContainerList call", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerList()
 
 		_, _ = fake.Client.ListContainers(ctx, true)
@@ -107,7 +109,7 @@ func TestFindContainerByAgent(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("finds container with matching fixture", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fixture := dockertest.RunningContainerFixture("myapp", "dev")
 		fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -130,23 +132,23 @@ func TestFindContainerByAgent(t *testing.T) {
 func TestContainerFixture(t *testing.T) {
 	t.Run("includes clawker labels", func(t *testing.T) {
 		c := dockertest.ContainerFixture("myapp", "dev", "node:20")
-		if c.Labels[docker.LabelManaged] != "true" {
-			t.Errorf("managed label = %q, want %q", c.Labels[docker.LabelManaged], "true")
+		if c.Labels[cfg.LabelManaged()] != "true" {
+			t.Errorf("managed label = %q, want %q", c.Labels[cfg.LabelManaged()], "true")
 		}
-		if c.Labels[docker.LabelProject] != "myapp" {
-			t.Errorf("project label = %q, want %q", c.Labels[docker.LabelProject], "myapp")
+		if c.Labels[cfg.LabelProject()] != "myapp" {
+			t.Errorf("project label = %q, want %q", c.Labels[cfg.LabelProject()], "myapp")
 		}
-		if c.Labels[docker.LabelAgent] != "dev" {
-			t.Errorf("agent label = %q, want %q", c.Labels[docker.LabelAgent], "dev")
+		if c.Labels[cfg.LabelAgent()] != "dev" {
+			t.Errorf("agent label = %q, want %q", c.Labels[cfg.LabelAgent()], "dev")
 		}
-		if c.Labels[docker.LabelImage] != "node:20" {
-			t.Errorf("image label = %q, want %q", c.Labels[docker.LabelImage], "node:20")
+		if c.Labels[cfg.LabelImage()] != "node:20" {
+			t.Errorf("image label = %q, want %q", c.Labels[cfg.LabelImage()], "node:20")
 		}
 	})
 
 	t.Run("omits project label when empty", func(t *testing.T) {
 		c := dockertest.ContainerFixture("", "dev", "node:20")
-		if _, hasProject := c.Labels[docker.LabelProject]; hasProject {
+		if _, hasProject := c.Labels[cfg.LabelProject()]; hasProject {
 			t.Error("expected no project label when project is empty")
 		}
 	})
@@ -175,7 +177,7 @@ func TestImageExists(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns true when image exists", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupImageExists("node:20", true)
 
 		exists, err := fake.Client.ImageExists(ctx, "node:20")
@@ -188,7 +190,7 @@ func TestImageExists(t *testing.T) {
 	})
 
 	t.Run("returns false when image not found", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupImageExists("node:20", false)
 
 		exists, err := fake.Client.ImageExists(ctx, "node:20")
@@ -205,7 +207,7 @@ func TestSetupContainerCreate(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns fake container ID", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerCreate()
 
 		resp, err := fake.Client.ContainerCreate(ctx, dockertest.MinimalCreateOpts())
@@ -223,7 +225,7 @@ func TestSetupContainerStart(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("succeeds without error", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerStart()
 
 		_, err := fake.Client.ContainerStart(ctx, dockertest.MinimalStartOpts("sha256:fakecontainer1234567890abcdef"))
@@ -238,7 +240,7 @@ func TestSetupVolumeExists(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns true when volume exists", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupVolumeExists("myvolume", true)
 
 		exists, err := fake.Client.VolumeExists(ctx, "myvolume")
@@ -251,7 +253,7 @@ func TestSetupVolumeExists(t *testing.T) {
 	})
 
 	t.Run("returns false when volume not found", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupVolumeExists("myvolume", false)
 
 		exists, err := fake.Client.VolumeExists(ctx, "myvolume")
@@ -264,7 +266,7 @@ func TestSetupVolumeExists(t *testing.T) {
 	})
 
 	t.Run("wildcard applies to all volumes", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupVolumeExists("", false)
 
 		exists, err := fake.Client.VolumeExists(ctx, "any-volume")
@@ -281,10 +283,10 @@ func TestSetupNetworkExists(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns true when network exists", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
-		fake.SetupNetworkExists("clawker-net", true)
+		fake := dockertest.NewFakeClient(cfg)
+		fake.SetupNetworkExists(cfg.ClawkerNetwork(), true)
 
-		exists, err := fake.Client.NetworkExists(ctx, "clawker-net")
+		exists, err := fake.Client.NetworkExists(ctx, cfg.ClawkerNetwork())
 		if err != nil {
 			t.Fatalf("NetworkExists() error: %v", err)
 		}
@@ -294,10 +296,10 @@ func TestSetupNetworkExists(t *testing.T) {
 	})
 
 	t.Run("returns false when network not found", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
-		fake.SetupNetworkExists("clawker-net", false)
+		fake := dockertest.NewFakeClient(cfg)
+		fake.SetupNetworkExists(cfg.ClawkerNetwork(), false)
 
-		exists, err := fake.Client.NetworkExists(ctx, "clawker-net")
+		exists, err := fake.Client.NetworkExists(ctx, cfg.ClawkerNetwork())
 		if err != nil {
 			t.Fatalf("NetworkExists() error: %v", err)
 		}
@@ -311,7 +313,7 @@ func TestSetupImageList(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns image summaries", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupImageList(dockertest.ImageSummaryFixture("alpine:latest"))
 
 		result, err := fake.Client.ImageList(ctx, moby.ImageListOptions{})
@@ -327,7 +329,7 @@ func TestSetupImageList(t *testing.T) {
 	})
 
 	t.Run("returns empty list", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupImageList()
 
 		result, err := fake.Client.ImageList(ctx, moby.ImageListOptions{})
@@ -344,7 +346,7 @@ func TestSetupBuildKit(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("BuildKit path is invoked", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		capture := fake.SetupBuildKit()
 
 		err := fake.Client.BuildImage(ctx, nil, dockertest.BuildKitBuildOpts(
@@ -365,7 +367,7 @@ func TestSetupBuildKit(t *testing.T) {
 	})
 
 	t.Run("managed labels are injected", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		capture := fake.SetupBuildKit()
 
 		err := fake.Client.BuildImage(ctx, nil, dockertest.BuildKitBuildOpts(
@@ -375,8 +377,8 @@ func TestSetupBuildKit(t *testing.T) {
 			t.Fatalf("BuildImage() error: %v", err)
 		}
 
-		if capture.Opts.Labels[docker.LabelManaged] != "true" {
-			t.Errorf("expected managed label %q=true, got %q", docker.LabelManaged, capture.Opts.Labels[docker.LabelManaged])
+		if capture.Opts.Labels[cfg.LabelManaged()] != "true" {
+			t.Errorf("expected managed label %q=true, got %q", cfg.LabelManaged(), capture.Opts.Labels[cfg.LabelManaged()])
 		}
 	})
 }
@@ -385,7 +387,7 @@ func TestSetupVolumeCreate(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("succeeds and returns volume with name", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupVolumeCreate()
 
 		result, err := fake.Client.VolumeCreate(ctx, moby.VolumeCreateOptions{
@@ -405,7 +407,7 @@ func TestSetupNetworkCreate(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("succeeds and returns network ID", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupNetworkCreate()
 
 		result, err := fake.Client.NetworkCreate(ctx, "test-net", moby.NetworkCreateOptions{})
@@ -423,7 +425,7 @@ func TestSetupContainerAttach(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns hijacked response that reads EOF", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerAttach()
 
 		containerID := "sha256:fakecontainer1234567890abcdef"
@@ -451,7 +453,7 @@ func TestSetupContainerWait(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns exit code 0", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerWait(0)
 
 		containerID := "sha256:fakecontainer1234567890abcdef"
@@ -469,7 +471,7 @@ func TestSetupContainerWait(t *testing.T) {
 	})
 
 	t.Run("returns non-zero exit code", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerWait(42)
 
 		containerID := "sha256:fakecontainer1234567890abcdef"
@@ -490,7 +492,7 @@ func TestSetupContainerResize(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("succeeds without error", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerResize()
 
 		containerID := "sha256:fakecontainer1234567890abcdef"
@@ -506,7 +508,7 @@ func TestSetupContainerRemove(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("succeeds without error", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerRemove()
 
 		containerID := "sha256:fakecontainer1234567890abcdef"
@@ -522,19 +524,19 @@ func TestAssertions(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("AssertCalled passes after call", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerList()
 		_, _ = fake.Client.ListContainers(ctx, true)
 		fake.AssertCalled(t, "ContainerList")
 	})
 
 	t.Run("AssertNotCalled passes when not called", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.AssertNotCalled(t, "ContainerList")
 	})
 
 	t.Run("AssertCalledN with exact count", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerList()
 		_, _ = fake.Client.ListContainers(ctx, true)
 		_, _ = fake.Client.ListContainers(ctx, false)
@@ -542,7 +544,7 @@ func TestAssertions(t *testing.T) {
 	})
 
 	t.Run("Reset clears call log", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(cfg)
 		fake.SetupContainerList()
 		_, _ = fake.Client.ListContainers(ctx, true)
 		fake.AssertCalled(t, "ContainerList")

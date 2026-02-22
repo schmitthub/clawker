@@ -62,7 +62,7 @@ Import only the standard library or external-only dependencies. Importable by an
 
 Import leaves only. Universally imported as infrastructure.
 
-- `config` — Config loading, validation, project registry + resolver
+- `config` — Config loading, validation, path resolution (composes `storage.Store[Project]` + `storage.Store[Settings]`)
 - `iostreams` — I/O streams, TTY detection, colors, styles, spinners, progress
 - `cmdutil` — Factory struct (DI container), error types, arg validators
 
@@ -144,7 +144,7 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 |-------------|---------|---------|
 | `whail.Engine` | `pkg/whail` | Reusable Docker engine with label-based resource isolation |
 | `docker.Client` | `internal/docker` | Clawker middleware (labels, naming) wrapping whail |
-| `config.Config` | `internal/config` | Gateway type — lazy-loads Project, Settings, Resolution, Registry |
+| `config.Config` | `internal/config` | Typed config wrapper — composes `storage.Store[Project]` + `storage.Store[Settings]` with typed mutation (`SetProject`/`SetSettings`) |
 | `Factory` | `internal/cmdutil` | DI struct (closure fields); constructor in `cmd/factory` |
 | `WorkspaceStrategy` | `internal/workspace` | Bind (live mount) vs Snapshot (ephemeral copy) |
 | `CreateContainer()` | `internal/cmd/container/shared` | Single entry point for container creation — workspace, config, env, create, inject |

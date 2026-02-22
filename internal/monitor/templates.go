@@ -57,7 +57,7 @@ type MonitorTemplateData struct {
 func NewMonitorTemplateData(cfg *config.MonitoringConfig) MonitorTemplateData {
 	return MonitorTemplateData{
 		OtelCollectorPort:     cfg.OtelCollectorPort,
-		OtelGRPCPort:          cfg.GetOtelGRPCPort(),
+		OtelGRPCPort:          cfg.OtelGRPCPort,
 		LokiPort:              cfg.LokiPort,
 		PrometheusPort:        cfg.PrometheusPort,
 		JaegerPort:            cfg.JaegerPort,

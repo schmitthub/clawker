@@ -35,5 +35,6 @@
     "ui.completion.usePlaceholders": true,
     "ui.diagnostic.staticcheck": false,
     "formatting.gofumpt": false
-  }
+  },
+  "sarif-viewer.connectToGithubCodeScanning": "off"
 }

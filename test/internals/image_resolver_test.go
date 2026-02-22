@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/test/harness"
 )
@@ -59,33 +58,33 @@ func setupImageResolverTests(t *testing.T) *imageResolverState {
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(reader)
 
-	// Create docker.Client for tests (nil config; tests inject config per-case)
-	state.dockerClient, err = docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig(t.Name())))
+	// Create docker.Client for tests (blank config; tests create per-case clients with specific configs)
+	state.dockerClient, err = docker.NewClient(ctx, _testCfg, docker.WithLabels(docker.TestLabelConfig(_testCfg, t.Name())))
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
 
 	// Build test images
 	if _, err = buildResolverTestImage(ctx, cli, state.latestImageTag, map[string]string{
-		docker.LabelManaged: docker.ManagedLabelValue,
-		docker.LabelProject: state.projectName,
-		harness.TestLabel:   harness.TestLabelValue,
+		_testCfg.LabelManaged(): _testCfg.ManagedLabelValue(),
+		_testCfg.LabelProject(): state.projectName,
+		harness.TestLabel:       harness.TestLabelValue,
 	}); err != nil {
 		t.Fatalf("failed to build latest image: %v", err)
 	}
 
 	if _, err = buildResolverTestImage(ctx, cli, state.versionedTag, map[string]string{
-		docker.LabelManaged: docker.ManagedLabelValue,
-		docker.LabelProject: state.projectName,
-		harness.TestLabel:   harness.TestLabelValue,
+		_testCfg.LabelManaged(): _testCfg.ManagedLabelValue(),
+		_testCfg.LabelProject(): state.projectName,
+		harness.TestLabel:       harness.TestLabelValue,
 	}); err != nil {
 		t.Fatalf("failed to build versioned image: %v", err)
 	}
 
 	if _, err = buildResolverTestImage(ctx, cli, state.otherProjectTag, map[string]string{
-		docker.LabelManaged: docker.ManagedLabelValue,
-		docker.LabelProject: "other-project",
-		harness.TestLabel:   harness.TestLabelValue,
+		_testCfg.LabelManaged(): _testCfg.ManagedLabelValue(),
+		_testCfg.LabelProject(): "other-project",
+		harness.TestLabel:       harness.TestLabelValue,
 	}); err != nil {
 		t.Fatalf("failed to build other project image: %v", err)
 	}
@@ -177,11 +176,8 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("image matches with :latest tag", func(t *testing.T) {
-		testCfg := config.NewConfigForTest(&config.Project{Project: state.projectName}, nil)
-		state.dockerClient.SetConfig(testCfg)
-		defer state.dockerClient.SetConfig(nil)
-
-		result, err := state.dockerClient.ResolveImageWithSource(ctx)
+		// Project name is now passed as an argument, not via config.
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, state.projectName)
 		if err != nil {
 			t.Errorf("ResolveImageWithSource() unexpected error = %v", err)
 			return
@@ -201,27 +197,19 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	})
 
 	t.Run("no matching images for nonexistent project", func(t *testing.T) {
-		testCfg := config.NewConfigForTest(&config.Project{Project: "nonexistent-project-xyz"}, nil)
-		state.dockerClient.SetConfig(testCfg)
-		defer state.dockerClient.SetConfig(nil)
-
-		result, err := state.dockerClient.ResolveImageWithSource(ctx)
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, "nonexistent-project-xyz")
 		if err != nil {
 			t.Errorf("ResolveImageWithSource() unexpected error = %v", err)
 			return
 		}
-		// No project image and no default → nil
+		// No project image found → nil
 		if result != nil {
-			t.Errorf("ResolveImageWithSource() = %+v, want nil for nonexistent project with no default", result)
+			t.Errorf("ResolveImageWithSource() = %+v, want nil for nonexistent project", result)
 		}
 	})
 
 	t.Run("finds correct project image among multiple", func(t *testing.T) {
-		testCfg := config.NewConfigForTest(&config.Project{Project: "other-project"}, nil)
-		state.dockerClient.SetConfig(testCfg)
-		defer state.dockerClient.SetConfig(nil)
-
-		result, err := state.dockerClient.ResolveImageWithSource(ctx)
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, "other-project")
 		if err != nil {
 			t.Errorf("ResolveImageWithSource() unexpected error = %v", err)
 			return
@@ -234,22 +222,29 @@ func TestFindProjectImage_Integration(t *testing.T) {
 			t.Errorf("ResolveImageWithSource().Reference = %q, want %q", result.Reference, state.otherProjectTag)
 		}
 	})
+
+	t.Run("empty project name returns nil", func(t *testing.T) {
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, "")
+		if err != nil {
+			t.Errorf("ResolveImageWithSource() unexpected error = %v", err)
+			return
+		}
+		if result != nil {
+			t.Errorf("ResolveImageWithSource() = %+v, want nil for empty project name", result)
+		}
+	})
 }
 
 func TestFindProjectImage_NoLatestTag(t *testing.T) {
 	state := setupImageResolverTests(t)
 	ctx := context.Background()
 
-	testCfg := config.NewConfigForTest(&config.Project{Project: "project-with-absolutely-no-images"}, nil)
-	state.dockerClient.SetConfig(testCfg)
-	defer state.dockerClient.SetConfig(nil)
-
-	result, err := state.dockerClient.ResolveImageWithSource(ctx)
+	result, err := state.dockerClient.ResolveImageWithSource(ctx, "project-with-absolutely-no-images")
 	if err != nil {
 		t.Errorf("ResolveImageWithSource() unexpected error: %v", err)
 		return
 	}
-	// No project image and no default → nil
+	// No project image found → nil
 	if result != nil {
 		t.Errorf("ResolveImageWithSource() = %+v, want nil for project with no images", result)
 	}
@@ -260,15 +255,7 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("finds project image with :latest tag", func(t *testing.T) {
-		cfg := &config.Project{
-			Project:      state.projectName,
-			DefaultImage: "fallback:latest",
-		}
-		testCfg := config.NewConfigForTest(cfg, nil)
-		state.dockerClient.SetConfig(testCfg)
-		defer state.dockerClient.SetConfig(nil)
-
-		result, err := state.dockerClient.ResolveImageWithSource(ctx)
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, state.projectName)
 		if err != nil {
 			t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
 		}
@@ -286,30 +273,15 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to default when no project image", func(t *testing.T) {
-		cfg := &config.Project{
-			Project:      "nonexistent-project-xyz",
-			DefaultImage: "fallback:latest",
-		}
-		testCfg := config.NewConfigForTest(cfg, nil)
-		state.dockerClient.SetConfig(testCfg)
-		defer state.dockerClient.SetConfig(nil)
-
-		result, err := state.dockerClient.ResolveImageWithSource(ctx)
+	t.Run("returns nil when no project image found", func(t *testing.T) {
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, "nonexistent-project-xyz")
 		if err != nil {
 			t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
 		}
 
-		if result == nil {
-			t.Fatal("ResolveImageWithSource() returned nil, expected default image")
-		}
-
-		if result.Source != docker.ImageSourceDefault {
-			t.Errorf("ResolveImageWithSource().Source = %q, want %q", result.Source, docker.ImageSourceDefault)
-		}
-
-		if result.Reference != "fallback:latest" {
-			t.Errorf("ResolveImageWithSource().Reference = %q, want %q", result.Reference, "fallback:latest")
+		// No project image and no default fallback → nil
+		if result != nil {
+			t.Errorf("ResolveImageWithSource() = %+v, want nil for nonexistent project", result)
 		}
 	})
 }

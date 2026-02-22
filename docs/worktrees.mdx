@@ -1,0 +1,147 @@
+---
+title: "Worktrees"
+description: "Git worktree integration for multi-branch agent workflows"
+icon: "code-branch"
+---
+
+Clawker integrates with Git worktrees to let you run multiple agents on separate branches simultaneously without conflicts. Each worktree gets its own working directory, and Clawker tracks them in the project registry.
+
+## Why Worktrees?
+
+Without worktrees, running two agents on the same project means they share the same working directory and branch. Changes from one agent can conflict with the other. Worktrees solve this by giving each agent its own checkout of the repository on a separate branch.
+
+Common patterns:
+- Run a feature development loop while a review agent works on a different branch
+- Test multiple approaches to the same problem in parallel
+- Keep the main branch clean while agents experiment on feature branches
+
+## Creating Worktrees
+
+```bash
+# Create a worktree for a new branch (branches from HEAD)
+clawker worktree add feature/auth
+
+# Create from a specific base branch
+clawker worktree add feature/cache --base main
+
+# Branch names with slashes are supported
+clawker worktree add hotfix/login-redirect
+```
+
+The worktree directory is created under `~/.local/share/clawker/worktrees/<project>/`. If the branch already exists, it's checked out in the new worktree. If it doesn't exist, it's created from the base ref (default: HEAD).
+
+Creating a worktree is idempotent -- if the worktree already exists, the command succeeds without changes.
+
+## Listing Worktrees
+
+```bash
+# Full table view
+clawker worktree list
+
+# Branch names only
+clawker worktree ls -q
+```
+
+The table shows:
+
+| Column | Description |
+|--------|-------------|
+| BRANCH | Branch name (or "(detached)" for detached HEAD) |
+| PATH | Filesystem path to worktree |
+| HEAD | Short commit hash |
+| MODIFIED | Relative time since last change |
+| STATUS | Health status |
+
+Status values:
+- **healthy** -- Worktree directory and Git metadata exist
+- **dir missing** -- Directory deleted but registry entry remains
+- **git missing** -- `.git` file missing or invalid
+- **dir missing, git missing** -- Stale entry, safe to prune
+
+## Removing Worktrees
+
+```bash
+# Remove a worktree
+clawker worktree remove feature/auth
+
+# Remove multiple worktrees
+clawker worktree rm feature/auth feature/cache
+
+# Also delete the branch
+clawker worktree remove --delete-branch feature/auth
+
+# Force remove with uncommitted changes
+clawker worktree remove --force feature/auth
+```
+
+Safety checks prevent accidental data loss:
+- Refuses to remove worktrees with uncommitted changes (unless `--force`)
+- `--delete-branch` refuses to delete unmerged branches (use `git branch -D` manually)
+- `--delete-branch` refuses to delete the currently checked-out branch
+
+## Pruning Stale Entries
+
+If worktree directories are deleted manually or by `git worktree remove` (bypassing Clawker), registry entries become stale. Prune them:
+
+```bash
+# Preview what would be pruned
+clawker worktree prune --dry-run
+
+# Remove stale entries
+clawker worktree prune
+```
+
+## Using Worktrees with Loop Mode
+
+Worktrees integrate with `clawker loop iterate` and `clawker loop tasks` via the `--worktree` flag:
+
+```bash
+# Auto-generate a worktree branch
+clawker loop iterate --prompt "Build auth system" --worktree ""
+
+# Use a specific branch
+clawker loop iterate --prompt "Add caching" --worktree feature/cache
+
+# Create branch from a specific base
+clawker loop iterate --prompt "Fix bugs" --worktree hotfix/login:main
+```
+
+If a loop is already running in the project root, Clawker detects the conflict and offers to create a worktree automatically:
+
+- **Interactive mode**: Prompts with three choices -- use a worktree, proceed anyway, or abort
+- **Non-interactive mode**: Warns and suggests `--worktree`
+
+## Example: Parallel Feature Development
+
+```bash
+# Terminal 1: Feature A on its own branch
+clawker loop iterate --prompt "Implement user authentication" \
+  --worktree feature/auth
+
+# Terminal 2: Feature B in parallel
+clawker loop iterate --prompt "Add API rate limiting" \
+  --worktree feature/rate-limit
+
+# Terminal 3: Check on both
+clawker worktree list
+
+# When done, clean up
+clawker worktree remove --delete-branch feature/auth
+clawker worktree remove --delete-branch feature/rate-limit
+```
+
+## How Worktrees Interact with the Project Registry
+
+Worktrees are tracked in the project registry (`~/.config/clawker/projects.yaml`) under each project:
+
+```yaml
+projects:
+  - name: "my-app"
+    root: "/Users/dev/my-app"
+    worktrees:
+      feature-auth:
+        path: "/Users/dev/.local/share/clawker/worktrees/my-app/feature-auth"
+        branch: "feature/auth"
+```
+
+This allows Clawker to manage worktrees across sessions and detect stale entries.

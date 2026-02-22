@@ -8,13 +8,15 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // ResetOptions holds options for the loop reset command.
 type ResetOptions struct {
-	IOStreams *iostreams.IOStreams
-	Config    func() *config.Config
+	IOStreams      *iostreams.IOStreams
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Agent    string
 	ClearAll bool
@@ -23,8 +25,9 @@ type ResetOptions struct {
 
 func NewCmdReset(f *cmdutil.Factory, runF func(context.Context, *ResetOptions) error) *cobra.Command {
 	opts := &ResetOptions{
-		IOStreams: f.IOStreams,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		Config:         f.Config,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -61,12 +64,19 @@ the session history.`,
 	return cmd
 }
 
-func resetRun(_ context.Context, opts *ResetOptions) error {
+func resetRun(ctx context.Context, opts *ResetOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	// Get config
-	cfg := opts.Config().Project
+	// Resolve project name from ProjectManager (empty if no project registered)
+	var project string
+	if opts.ProjectManager != nil {
+		if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+			if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+				project = p.Name()
+			}
+		}
+	}
 
 	// Get session store
 	store, err := shared.DefaultSessionStore()
@@ -75,18 +85,18 @@ func resetRun(_ context.Context, opts *ResetOptions) error {
 	}
 
 	// Reset circuit breaker
-	if err := store.DeleteCircuitState(cfg.Project, opts.Agent); err != nil {
+	if err := store.DeleteCircuitState(project, opts.Agent); err != nil {
 		return fmt.Errorf("resetting circuit breaker: %w", err)
 	}
 
 	if !opts.Quiet {
 		fmt.Fprintf(ios.ErrOut, "%s Circuit breaker reset for %s.%s\n",
-			cs.SuccessIcon(), cfg.Project, opts.Agent)
+			cs.SuccessIcon(), project, opts.Agent)
 	}
 
 	// Optionally clear session
 	if opts.ClearAll {
-		if err := store.DeleteSession(cfg.Project, opts.Agent); err != nil {
+		if err := store.DeleteSession(project, opts.Agent); err != nil {
 			return fmt.Errorf("clearing session: %w", err)
 		}
 		if !opts.Quiet {

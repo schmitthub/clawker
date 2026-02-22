@@ -4,7 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 )
+
+var _blankCfg = configmocks.NewBlankConfig()
 
 func TestMatchPattern(t *testing.T) {
 	tests := []struct {
@@ -406,7 +410,7 @@ func TestLoadIgnorePatterns(t *testing.T) {
 
 	t.Run("valid file with patterns", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, ".clawkerignore")
+		path := filepath.Join(dir, _blankCfg.ClawkerIgnoreName())
 		content := "node_modules\n*.log\nbuild/\n"
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			t.Fatal(err)
@@ -430,7 +434,7 @@ func TestLoadIgnorePatterns(t *testing.T) {
 
 	t.Run("comments and blank lines stripped", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, ".clawkerignore")
+		path := filepath.Join(dir, _blankCfg.ClawkerIgnoreName())
 		content := "# This is a comment\n\nnode_modules\n\n# Another comment\n*.log\n  \n"
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			t.Fatal(err)
@@ -454,7 +458,7 @@ func TestLoadIgnorePatterns(t *testing.T) {
 
 	t.Run("permission error is returned", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, ".clawkerignore")
+		path := filepath.Join(dir, _blankCfg.ClawkerIgnoreName())
 		if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -474,7 +478,7 @@ func TestLoadIgnorePatterns(t *testing.T) {
 
 	t.Run("returns error for malformed pattern", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		ignoreFile := filepath.Join(tmpDir, ".clawkerignore")
+		ignoreFile := filepath.Join(tmpDir, _blankCfg.ClawkerIgnoreName())
 		if err := os.WriteFile(ignoreFile, []byte("[invalid-pattern\n"), 0644); err != nil {
 			t.Fatal(err)
 		}

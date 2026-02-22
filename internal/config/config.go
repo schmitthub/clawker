@@ -1,248 +1,225 @@
+// Package config provides types for interacting with clawker configuration files.
+// It loads clawker.yaml (project) and settings.yaml (user) into a typed Config
+// backed by storage.Store[T], with separate stores for project and settings schemas.
 package config
 
 import (
+	"errors"
 	"fmt"
-	"os"
 
-	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/storage"
 )
 
-// Config is a facade providing access to all configuration.
-// All fields are eagerly loaded from the current working directory.
-type Config struct {
-	// Project is the project configuration from clawker.yaml.
-	// Never nil - uses defaults if no config file exists.
-	// Contains runtime context (Key, RootDir, worktree methods) after loading.
-	Project *Project
-
-	// Settings is the user settings from settings.yaml.
-	// Never nil - uses defaults if no settings file exists.
-	Settings *Settings
-
-	// Resolution is the project resolution (project key, entry, workdir).
-	// Never nil - empty resolution if not in a registered project.
-	Resolution *Resolution
-
-	// Registry is the registry for write operations.
-	// May be nil if registry initialization failed. Check RegistryInitErr() for details.
-	Registry Registry
-
-	// Internal loaders for operations that need them
-	projectLoader   *ProjectLoader
-	settingsLoader  SettingsLoader
-	registryInitErr error // stored for later diagnostics
-}
-
-// NewConfig creates a Config facade by loading all configuration from the
-// current working directory. This function always succeeds - missing files
-// result in default values, and errors are logged but don't prevent creation.
-func NewConfig() *Config {
-	c := &Config{}
-	c.load()
-	return c
-}
-
-// NewConfigForTest creates a Config facade with pre-populated values.
-// This is intended for unit tests that don't need real config file loading.
+// Config is the public configuration contract.
+// Add methods here as the config contract grows.
 //
-// Limitations:
-//   - Project.RootDir() returns "" (no registry entry)
-//   - Worktree methods (GetOrCreateWorktreeDir, etc.) will fail without a registry
-//   - Tests needing full runtime context should use NewConfig() with os.Chdir()
-//     to a temp directory containing clawker.yaml and a registered project
-func NewConfigForTest(project *Project, settings *Settings) *Config {
-	if project == nil {
-		project = DefaultProject()
-	}
-	if settings == nil {
-		settings = DefaultSettings()
-	}
+//go:generate moq -rm -pkg mocks -out mocks/config_mock.go . Config
+type Config interface {
+	ClawkerIgnoreName() string
+	Project() *Project
+	Settings() Settings
 
-	resolution := &Resolution{}
-	if project.Project != "" {
-		resolution.ProjectKey = project.Project
-	}
+	// ProjectStore returns the underlying project config store.
+	// Prefer this over SetProject/WriteProject for direct store access.
+	ProjectStore() *storage.Store[Project]
 
-	// Inject minimal runtime context for tests
-	if resolution.Found() {
-		project.setRuntimeContext(&resolution.ProjectEntry, nil)
-	}
+	// SettingsStore returns the underlying settings store.
+	// Prefer this over SetSettings/WriteSettings for direct store access.
+	SettingsStore() *storage.Store[Settings]
 
-	return &Config{
-		Project:    project,
-		Settings:   settings,
-		Resolution: resolution,
-	}
+	// Deprecated: Use ProjectStore().Get().Logging instead.
+	LoggingConfig() LoggingConfig
+
+	// Deprecated: Use ProjectStore().Get().Monitoring instead.
+	MonitoringConfig() MonitoringConfig
+
+	// Deprecated: Use SettingsStore().Get().HostProxy instead.
+	HostProxyConfig() HostProxyConfig
+
+	// Deprecated: Use ProjectStore().Set() instead.
+	SetProject(fn func(*Project))
+
+	// Deprecated: Use SettingsStore().Set() instead.
+	SetSettings(fn func(*Settings))
+
+	// Deprecated: Use ProjectStore().Write() instead.
+	WriteProject(filename ...string) error
+
+	// Deprecated: Use SettingsStore().Write() instead.
+	WriteSettings(filename ...string) error
+
+	Domain() string
+	LabelDomain() string
+	ConfigDirEnvVar() string
+	StateDirEnvVar() string
+	DataDirEnvVar() string
+	TestRepoDirEnvVar() string
+	MonitorSubdir() (string, error)
+	BuildSubdir() (string, error)
+	DockerfilesSubdir() (string, error)
+	ClawkerNetwork() string
+	LogsSubdir() (string, error)
+	BridgesSubdir() (string, error)
+	PidsSubdir() (string, error)
+	BridgePIDFilePath(containerID string) (string, error)
+	HostProxyLogFilePath() (string, error)
+	HostProxyPIDFilePath() (string, error)
+	ShareSubdir() (string, error)
+	WorktreesSubdir() (string, error)
+	LabelPrefix() string
+	LabelManaged() string
+	LabelMonitoringStack() string
+	LabelProject() string
+	LabelAgent() string
+	LabelVersion() string
+	LabelImage() string
+	LabelCreated() string
+	LabelWorkdir() string
+	LabelPurpose() string
+	LabelTestName() string
+	LabelBaseImage() string
+	LabelFlavor() string
+	LabelTest() string
+	LabelE2ETest() string
+	ManagedLabelValue() string
+	EngineLabelPrefix() string
+	EngineManagedLabel() string
+	ContainerUID() int
+	ContainerGID() int
+	GrafanaURL(host string, https bool) string
+	JaegerURL(host string, https bool) string
+	PrometheusURL(host string, https bool) string
+	RequiredFirewallDomains() []string
+	ProjectConfigFileName() string
+	SettingsFileName() string
+	ProjectRegistryFileName() string
+	GetProjectRoot() (string, error)
+	GetProjectIgnoreFile() (string, error)
 }
 
-// NewConfigForTestWithEntry creates a Config facade with a full project entry.
-// This is intended for integration tests that need worktree methods to work.
-// The configDir is used for registry operations (worktree directory management).
-func NewConfigForTestWithEntry(project *Project, settings *Settings, entry *ProjectEntry, configDir string) *Config {
-	if project == nil {
-		project = DefaultProject()
-	}
-	if settings == nil {
-		settings = DefaultSettings()
-	}
-	if entry == nil {
-		entry = &ProjectEntry{}
-	}
+var ErrNotInProject = errors.New("current directory is not within a configured project root")
 
-	resolution := &Resolution{}
-	if project.Project != "" {
-		resolution.ProjectKey = project.Project
-		resolution.ProjectEntry = *entry
-		resolution.WorkDir = entry.Root
-	}
-
-	// Create a registry loader pointing to the test config dir
-	var registry *RegistryLoader
-	if configDir != "" {
-		registry = NewRegistryLoaderWithPath(configDir)
-	}
-
-	// Inject full runtime context for tests
-	if resolution.Found() {
-		project.setRuntimeContext(&resolution.ProjectEntry, registry)
-	}
-
-	return &Config{
-		Project:    project,
-		Settings:   settings,
-		Resolution: resolution,
-		Registry:   registry,
-	}
+type configImpl struct {
+	project  *storage.Store[Project]
+	settings *storage.Store[Settings]
 }
 
-// load initializes all configuration from the current working directory.
-func (c *Config) load() {
-	wd, err := os.Getwd()
+// NewConfig loads all clawker configuration files into a Config.
+// The project store discovers clawker.yaml via walk-up (CWD → project root)
+// and config dir. The settings store loads settings.yaml from config dir.
+// Both stores use defaults as the lowest-priority base layer.
+func NewConfig() (Config, error) {
+	projectStore, err := storage.NewStore[Project](
+		storage.WithFilenames("clawker.yaml", "clawker.local.yaml"),
+		storage.WithDefaults(defaultProjectYAML),
+		storage.WithWalkUp(),
+		storage.WithConfigDir(),
+	)
 	if err != nil {
-		// This is catastrophic - we can't do anything useful without knowing our location
-		fmt.Fprintf(os.Stderr, "Error: cannot determine working directory: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("config: loading project config: %w", err)
 	}
 
-	// Load registry first (needed for resolution)
-	c.Registry, err = NewRegistryLoader()
+	settingsStore, err := storage.NewStore[Settings](
+		storage.WithFilenames("settings.yaml"),
+		storage.WithDefaults(defaultSettingsYAML),
+		storage.WithConfigDir(),
+	)
 	if err != nil {
-		c.registryInitErr = err
-		logger.Warn().Err(err).Msg("failed to initialize registry loader")
+		return nil, fmt.Errorf("config: loading settings: %w", err)
 	}
 
-	// Resolve project from registry
-	c.Resolution = c.resolveProject(wd)
-
-	// Load project config
-	c.loadProject(wd)
-
-	// Inject runtime context into ProjectCfg
-	if c.Resolution.Found() {
-		c.Project.setRuntimeContext(&c.Resolution.ProjectEntry, c.Registry)
-	}
-
-	// Load settings
-	c.loadSettings()
+	return &configImpl{
+		project:  projectStore,
+		settings: settingsStore,
+	}, nil
 }
 
-// resolveProject resolves the working directory to a registered project.
-func (c *Config) resolveProject(wd string) *Resolution {
-	if c.Registry == nil {
-		return &Resolution{WorkDir: wd}
-	}
-
-	registry, err := c.Registry.Load()
+// NewBlankConfig creates a Config with defaults but no file discovery.
+// Useful as the default test double for consumers that don't care about
+// specific config values.
+func NewBlankConfig() (Config, error) {
+	projectStore, err := storage.NewFromString[Project](defaultProjectYAML)
 	if err != nil {
-		logger.Warn().Err(err).Msg("failed to load project registry; operating without project context")
-		return &Resolution{WorkDir: wd}
+		return nil, fmt.Errorf("config: blank project: %w", err)
 	}
-	if registry == nil {
-		return &Resolution{WorkDir: wd}
-	}
-
-	resolver := NewResolver(registry)
-	return resolver.Resolve(wd)
-}
-
-// loadProject loads the project configuration from clawker.yaml.
-func (c *Config) loadProject(wd string) {
-	var opts []ProjectLoaderOption
-
-	if c.Resolution.Found() {
-		opts = append(opts,
-			WithProjectRoot(c.Resolution.ProjectRoot()),
-			WithProjectKey(c.Resolution.ProjectKey),
-		)
-	}
-
-	opts = append(opts, WithUserDefaults(""))
-	c.projectLoader = NewProjectLoader(wd, opts...)
-
-	project, err := c.projectLoader.Load()
+	settingsStore, err := storage.NewFromString[Settings](defaultSettingsYAML)
 	if err != nil {
-		if IsConfigNotFound(err) {
-			// No config file is fine - use defaults
-			logger.Debug().Msg("no clawker.yaml found; using defaults")
-			c.Project = DefaultProject()
-			return
-		}
-		// Config exists but is invalid - this is a fatal error
-		// The user expects their config to be used, not silently replaced with defaults
-		fmt.Fprintf(os.Stderr, "\nError: clawker.yaml is invalid\n\n%v\n\nFix the configuration file and try again.\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("config: blank settings: %w", err)
 	}
-	c.Project = project
+	return &configImpl{
+		project:  projectStore,
+		settings: settingsStore,
+	}, nil
 }
 
-// loadSettings loads the user settings from settings.yaml.
-func (c *Config) loadSettings() {
-	var opts []SettingsLoaderOption
-
-	if c.Resolution.Found() {
-		opts = append(opts, WithProjectSettingsRoot(c.Resolution.ProjectRoot()))
-	}
-
-	loader, err := NewSettingsLoader(opts...)
+// NewFromString creates a Config from raw YAML strings without defaults.
+// Empty strings produce empty structs. Useful for test fixtures that need
+// precise control over values without defaults being merged.
+func NewFromString(projectYAML, settingsYAML string) (Config, error) {
+	projectStore, err := storage.NewFromString[Project](projectYAML)
 	if err != nil {
-		logger.Warn().Err(err).Msg("failed to initialize settings loader; using defaults")
-		c.Settings = DefaultSettings()
-		return
+		return nil, fmt.Errorf("config: parsing project YAML: %w", err)
 	}
-	c.settingsLoader = loader
-
-	settings, err := loader.Load()
+	settingsStore, err := storage.NewFromString[Settings](settingsYAML)
 	if err != nil {
-		logger.Warn().Err(err).Msg("failed to load settings; using defaults")
-		c.Settings = DefaultSettings()
-		return
+		return nil, fmt.Errorf("config: parsing settings YAML: %w", err)
 	}
-	c.Settings = settings
+	return &configImpl{
+		project:  projectStore,
+		settings: settingsStore,
+	}, nil
 }
 
-// SettingsLoader returns the underlying settings loader for write operations
-// (e.g., saving updated default image). May return nil if settings failed to load.
-func (c *Config) SettingsLoader() SettingsLoader {
-	return c.settingsLoader
+// --- Store accessors ---
+
+func (c *configImpl) ProjectStore() *storage.Store[Project] {
+	return c.project
 }
 
-// ProjectLoader returns the underlying project loader.
-// May return nil if project loading was skipped.
-func (c *Config) ProjectLoader() *ProjectLoader {
-	return c.projectLoader
+func (c *configImpl) SettingsStore() *storage.Store[Settings] {
+	return c.settings
 }
 
-// RegistryInitErr returns the error that occurred during registry initialization,
-// if any. This can be used to provide better error messages when Registry is nil.
-func (c *Config) RegistryInitErr() error {
-	return c.registryInitErr
+// --- Schema accessors ---
+
+func (c *configImpl) RequiredFirewallDomains() []string {
+	return append([]string(nil), requiredFirewallDomains...)
 }
 
-// SetSettingsLoader sets the settings loader for write operations.
-// Used by NewConfigForTest variants and fawker to inject a test-friendly loader.
-func (c *Config) SetSettingsLoader(sl SettingsLoader) {
-	if sl == nil {
-		panic("SetSettingsLoader: nil loader")
-	}
-	c.settingsLoader = sl
+func (c *configImpl) Project() *Project {
+	return c.project.Get()
+}
+
+func (c *configImpl) Settings() Settings {
+	return *c.settings.Get()
+}
+
+func (c *configImpl) LoggingConfig() LoggingConfig {
+	return c.settings.Get().Logging
+}
+
+func (c *configImpl) HostProxyConfig() HostProxyConfig {
+	return c.settings.Get().HostProxy
+}
+
+func (c *configImpl) MonitoringConfig() MonitoringConfig {
+	return c.settings.Get().Monitoring
+}
+
+// --- Typed mutation ---
+
+func (c *configImpl) SetProject(fn func(*Project)) {
+	c.project.Set(fn)
+}
+
+func (c *configImpl) SetSettings(fn func(*Settings)) {
+	c.settings.Set(fn)
+}
+
+func (c *configImpl) WriteProject(filename ...string) error {
+	return c.project.Write(filename...)
+}
+
+func (c *configImpl) WriteSettings(filename ...string) error {
+	return c.settings.Write(filename...)
 }

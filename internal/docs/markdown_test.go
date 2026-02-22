@@ -202,8 +202,8 @@ func TestEscapeMDXProse(t *testing.T) {
 		},
 		{
 			name:  "path with angle brackets",
-			input: "$CLAWKER_HOME/projects/<project>/worktrees/",
-			want:  "$CLAWKER_HOME/projects/`<project>`/worktrees/",
+			input: "~/.local/share/clawker/worktrees/<hash>/",
+			want:  "~/.local/share/clawker/worktrees/`<hash>`/",
 		},
 	}
 

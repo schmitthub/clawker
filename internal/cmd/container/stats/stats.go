@@ -10,19 +10,19 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 )
 
 // StatsOptions defines the options for the stats command.
 type StatsOptions struct {
-	IOStreams *iostreams.IOStreams
-	TUI       *tui.TUI
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	IOStreams      *iostreams.IOStreams
+	TUI            *tui.TUI
+	Client         func(context.Context) (*docker.Client, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Agent      bool // if set to true, treat arguments as agent name
 	NoStream   bool
@@ -33,10 +33,10 @@ type StatsOptions struct {
 // NewCmdStats creates a new stats command.
 func NewCmdStats(f *cmdutil.Factory, runF func(context.Context, *StatsOptions) error) *cobra.Command {
 	opts := &StatsOptions{
-		IOStreams: f.IOStreams,
-		TUI:       f.TUI,
-		Client:    f.Client,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		TUI:            f.TUI,
+		Client:         f.Client,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -89,7 +89,15 @@ func statsRun(ctx context.Context, opts *StatsOptions) error {
 	// Resolve container names if --agent provided
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
+		var projectName string
+		if opts.ProjectManager != nil {
+			if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+				if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+					projectName = p.Name()
+				}
+			}
+		}
+		resolved, err := docker.ContainerNamesFromAgents(projectName, containers)
 		if err != nil {
 			return err
 		}

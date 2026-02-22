@@ -102,7 +102,7 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, a
 	if err != nil {
 		return result, err
 	}
-	configLabels := docker.VolumeLabels(projectName, agentName, "config")
+	configLabels := cli.VolumeLabels(projectName, agentName, "config")
 	created, err := cli.EnsureVolume(ctx, configVolume, configLabels)
 	if err != nil {
 		return result, err
@@ -113,7 +113,7 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, a
 	if err != nil {
 		return result, err
 	}
-	historyLabels := docker.VolumeLabels(projectName, agentName, "history")
+	historyLabels := cli.VolumeLabels(projectName, agentName, "history")
 	created, err = cli.EnsureVolume(ctx, historyVolume, historyLabels)
 	if err != nil {
 		return result, err
@@ -139,19 +139,6 @@ const (
 	// ShareStagingPath is the container mount point for the shared volume.
 	ShareStagingPath = "/home/claude/.clawker-share"
 )
-
-// EnsureShareDir creates the global shared directory if it doesn't already exist.
-// This directory provides a read-only bind mount across all projects and agents.
-func EnsureShareDir() (string, error) {
-	sharePath, err := config.ShareDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve share directory: %w", err)
-	}
-	if err := config.EnsureDir(sharePath); err != nil {
-		return "", fmt.Errorf("failed to create share directory: %w", err)
-	}
-	return sharePath, nil
-}
 
 // GetShareVolumeMount returns the mount for the global shared volume (read-only).
 func GetShareVolumeMount(hostPath string) mount.Mount {

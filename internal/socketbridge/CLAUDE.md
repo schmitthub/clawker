@@ -31,7 +31,7 @@ type SocketBridgeManager interface {
 }
 ```
 
-Concrete implementation: `Manager`. Mock: `socketbridgetest.MockManager`.
+Concrete implementation: `Manager`. Mock: `sockebridgemocks.SocketBridgeManagerMock` (moq-generated).
 
 ## Key Files
 
@@ -39,9 +39,12 @@ Concrete implementation: `Manager`. Mock: `socketbridgetest.MockManager`.
 |------|---------|
 | `manager.go` | `Manager` -- spawns/tracks bridge daemon subprocesses via PID files |
 | `bridge.go` | `Bridge` -- host-side muxrpc session over docker exec |
-| `bridge_test.go` | Unit tests for Bridge, sendMessage, readLoop |
-| `manager_test.go` | Unit tests for Manager, PID file handling, process checks |
-| `socketbridgetest/mock.go` | `MockManager` -- test fake with call tracking |
+| `export_test.go` | Test accessors for Bridge/Manager internals (external test package) |
+| `bridge_test.go` | Unit tests for Bridge, sendMessage, readLoop (`package socketbridge_test`) |
+| `manager_test.go` | Unit tests for Manager, PID file handling, process checks (`package socketbridge_test`) |
+| `mocks/manager_mock.go` | moq-generated `SocketBridgeManagerMock` (do not edit) |
+| `mocks/stubs.go` | `NewMockManager()` (no-op defaults), `CalledWith()` convenience helper |
+| `mocks/helpers.go` | `NewTestManager()`, `WriteTestMessage()`, `NopWriteCloser`, `FlushWriteCloser` |
 
 ## Protocol
 
@@ -83,18 +86,39 @@ The bridge daemon subscribes to Docker `die` events for the target container. On
 
 ## Testing
 
+Import as `sockebridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"`.
+
+### Mock (moq-generated)
+
 ```go
-mock := socketbridgetest.NewMockManager()
-mock.EnsureBridgeFn = func(id string, gpg bool) error { return nil }
+mock := sockebridgemocks.NewMockManager()
+mock.EnsureBridgeFunc = func(id string, gpg bool) error { return nil }
 // Use in Factory:
 f.SocketBridge = func() socketbridge.SocketBridgeManager { return mock }
-// Assert (returns bool, no *testing.T):
-assert.True(t, mock.CalledWith("EnsureBridge", containerID))
-// Inspect raw calls:
-// mock.Calls []Call — each Call has Method string and Args []any
+// Assert via typed call slices:
+assert.True(t, sockebridgemocks.CalledWith(mock, "EnsureBridge", containerID))
+// Or inspect calls directly:
+calls := mock.EnsureBridgeCalls() // []struct{ ContainerID string; GpgEnabled bool }
 ```
 
-**Call tracking**: `Call` struct (`Method string`, `Args []any`). `MockManager.Calls []Call` records all invocations in order. `CalledWith(method, containerID) bool` checks if a method was called with the given container ID as first arg.
+**Call tracking**: moq generates typed `*Calls()` methods (e.g. `EnsureBridgeCalls()`, `StopBridgeCalls()`) returning typed structs with named fields. `CalledWith(mock, method, containerID)` is a convenience wrapper.
+
+### Test Helpers (`mocks/helpers.go`)
+
+| Helper | Purpose |
+|--------|---------|
+| `NewTestManager(t, dir)` | Creates a `*socketbridge.Manager` with mock config isolated to temp dir. Sets env vars via Config interface methods (`ConfigDirEnvVar`, `StateDirEnvVar`, `DataDirEnvVar`) to prevent drift. |
+| `WriteTestMessage(buf, msg)` | Writes a protocol message in wire format |
+| `NopWriteCloser` | No-op `io.WriteCloser` |
+| `FlushWriteCloser{W}` | Wraps `io.Writer` with no-op Close |
+
+### Test Accessors (`export_test.go`)
+
+Bridge: `SetBridgeIOForTest`, `InitErrChForTest`, `StartReadLoopForTest`, `WaitReadLoopForTest`, `SendMessageForTest`, `ReadMessageForTest`
+
+Manager: `SetBridgeForTest`, `HasBridgeForTest`, `BridgePIDForTest`, `BridgeCountForTest`
+
+Package-level: `ReadPIDFileForTest`, `IsProcessAliveForTest`, `WaitForPIDFileForTest`, `ShortIDForTest`
 
 ## Gotchas
 
@@ -102,3 +126,4 @@ assert.True(t, mock.CalledWith("EnsureBridge", containerID))
 - Context cancellation after `bridge.Start()` kills the exec'd process -- don't cancel on success
 - GPG needs `pubring.kbx` **file** (not directory) with exported public key
 - File ownership (`chown`) matters for GPG sockets inside containers
+- Tests use `package socketbridge_test` (external) — access internals via `export_test.go` accessors

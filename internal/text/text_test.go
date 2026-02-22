@@ -1,6 +1,7 @@
 package text
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -310,6 +311,28 @@ func TestLineCount(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, LineCount(tt.input))
+		})
+	}
+}
+
+func TestSlugify(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"basic words", "My Project", "my-project"},
+		{"trim and lowercase", "  Hello WORLD  ", "hello-world"},
+		{"collapse punctuation", "hello___world!!!", "hello-world"},
+		{"collapse repeated dashes", "a---b", "a-b"},
+		{"fallback when empty", "@@@", "project"},
+		{"length capped", strings.Repeat("a", 70), strings.Repeat("a", 64)},
+		{"trim hyphen after cap", strings.Repeat("a", 63) + "-z", strings.Repeat("a", 63)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, Slugify(tt.input))
 		})
 	}
 }

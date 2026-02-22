@@ -6,17 +6,17 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // RenameOptions defines the options for the rename command.
 type RenameOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Agent     bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	container string
@@ -26,9 +26,9 @@ type RenameOptions struct {
 // NewCmdRename creates a new rename command.
 func NewCmdRename(f *cmdutil.Factory, runF func(context.Context, *RenameOptions) error) *cobra.Command {
 	opts := &RenameOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -69,10 +69,18 @@ func renameRun(ctx context.Context, opts *RenameOptions) error {
 	newName := opts.newName
 
 	if opts.Agent {
-		var err error
-		oldName, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, oldName)
-		if err != nil {
-			return err
+		var projectName string
+		if opts.ProjectManager != nil {
+			if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+				if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+					projectName = p.Name()
+				}
+			}
+		}
+		var nameErr error
+		oldName, nameErr = docker.ContainerName(projectName, oldName)
+		if nameErr != nil {
+			return nameErr
 		}
 	}
 

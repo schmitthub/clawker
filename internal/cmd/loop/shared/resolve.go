@@ -86,6 +86,7 @@ func ResolveTasksPrompt(tasksFile, taskPrompt, taskPromptFile string) (string, e
 func BuildRunnerOptions(
 	loopOpts *LoopOptions,
 	project *config.Project,
+	projectName string,
 	agent, prompt, workDir string,
 	createContainer func(ctx context.Context) (*ContainerStartConfig, error),
 	flags *pflag.FlagSet,
@@ -94,6 +95,7 @@ func BuildRunnerOptions(
 ) Options {
 	opts := Options{
 		ProjectCfg:                project,
+		ProjectName:               projectName,
 		Agent:                     agent,
 		Prompt:                    prompt,
 		WorkDir:                   workDir,

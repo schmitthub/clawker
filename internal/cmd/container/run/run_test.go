@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/git"
@@ -508,7 +511,7 @@ func TestBuildConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, config.DefaultProject())
+			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, &config.Project{})
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -576,7 +579,6 @@ func TestBuildConfigs_CapAdd(t *testing.T) {
 		Publish: shared.NewPortOpts(),
 	}
 	projectCfg := &config.Project{
-		Project: "test",
 		Security: config.SecurityConfig{
 			CapAdd: []string{"NET_ADMIN", "SYS_PTRACE"},
 		},
@@ -602,11 +604,12 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // Tests @ symbol resolution (using mock Docker client) and explicit image pass-through.
 func TestImageArg(t *testing.T) {
 	// Tests for @ symbol resolution (uses dockertest.FakeClient)
+	// ResolveImageWithSource resolves project images only (no default image fallback).
+	// Returns nil when no project image with :latest tag is found.
 	t.Run("@ symbol resolution", func(t *testing.T) {
 		tests := []struct {
 			name          string
 			projectName   string
-			defaultImage  string
 			fakeImages    []string // Images to return from fake ImageList
 			wantReference string
 			wantSource    docker.ImageSource
@@ -615,41 +618,34 @@ func TestImageArg(t *testing.T) {
 			{
 				name:          "@ resolves to project image when exists",
 				projectName:   "myproject",
-				defaultImage:  "alpine:latest",
 				fakeImages:    []string{"clawker-myproject:latest"},
 				wantReference: "clawker-myproject:latest",
 				wantSource:    docker.ImageSourceProject,
 			},
 			{
-				name:          "@ resolves to default image when no project image",
-				projectName:   "myproject",
-				defaultImage:  "node:20-slim",
-				fakeImages:    []string{}, // No project images
-				wantReference: "node:20-slim",
-				wantSource:    docker.ImageSourceDefault,
+				name:        "@ returns nil when no project image",
+				projectName: "myproject",
+				fakeImages:  []string{}, // No project images
+				wantNil:     true,
 			},
 			{
-				name:         "@ returns nil when no default available",
-				projectName:  "myproject",
-				defaultImage: "", // No default configured
-				fakeImages:   []string{},
-				wantNil:      true,
+				name:        "@ returns nil for empty project",
+				projectName: "",
+				fakeImages:  []string{},
+				wantNil:     true,
 			},
 			{
-				name:          "@ prefers project image over default",
+				name:          "@ prefers latest-tagged project image",
 				projectName:   "myproject",
-				defaultImage:  "alpine:latest",
 				fakeImages:    []string{"clawker-myproject:latest", "other:tag"},
 				wantReference: "clawker-myproject:latest",
 				wantSource:    docker.ImageSourceProject,
 			},
 			{
-				name:          "@ ignores non-latest project images",
-				projectName:   "myproject",
-				defaultImage:  "alpine:latest",
-				fakeImages:    []string{"clawker-myproject:v1.0"}, // No :latest tag
-				wantReference: "alpine:latest",
-				wantSource:    docker.ImageSourceDefault,
+				name:        "@ ignores non-latest project images",
+				projectName: "myproject",
+				fakeImages:  []string{"clawker-myproject:v1.0"}, // No :latest tag
+				wantNil:     true,
 			},
 		}
 
@@ -657,8 +653,10 @@ func TestImageArg(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				ctx := context.Background()
 
-				// Create fake Docker client
-				fake := dockertest.NewFakeClient()
+				testCfg := configmocks.NewBlankConfig()
+
+				// Create fake Docker client with the config
+				fake := dockertest.NewFakeClient(testCfg)
 
 				// Build image summaries and configure fake
 				var summaries []whail.ImageSummary
@@ -669,21 +667,8 @@ func TestImageArg(t *testing.T) {
 				}
 				fake.SetupImageList(summaries...)
 
-				// Build config and settings, inject into fake client
-				cfg := &config.Project{
-					Project: tt.projectName,
-				}
-				var settings *config.Settings
-				if tt.defaultImage != "" {
-					settings = &config.Settings{
-						DefaultImage: tt.defaultImage,
-					}
-				}
-				testCfg := config.NewConfigForTest(cfg, settings)
-				fake.Client.SetConfig(testCfg)
-
-				// Call the resolution method on the client
-				result, err := fake.Client.ResolveImageWithSource(ctx)
+				// Call the resolution method on the client with projectName
+				result, err := fake.Client.ResolveImageWithSource(ctx, tt.projectName)
 				require.NoError(t, err)
 
 				if tt.wantNil {
@@ -804,8 +789,19 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(testConfig(), config.DefaultSettings())
+		Config: func() (config.Config, error) {
+			mock := configmocks.NewFromString(`
+version: "1"
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { enable_host_proxy: false, firewall: { enable: false } }
+`, "")
+			mock.GetProjectIgnoreFileFunc = func() (string, error) {
+				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
+			}
+			mock.GetProjectRootFunc = func() (string, error) {
+				return os.TempDir(), nil
+			}
+			return mock, nil
 		},
 		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
@@ -817,29 +813,9 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 	}, tio
 }
 
-// testConfig returns a minimal *config.Project for test use.
-// Host proxy disabled, bind mode, empty project, firewall disabled.
-func testConfig() *config.Project {
-	hostProxyDisabled := false
-	return &config.Project{
-		Version: "1",
-		Project: "",
-		Workspace: config.WorkspaceConfig{
-			RemotePath:  "/workspace",
-			DefaultMode: "bind",
-		},
-		Security: config.SecurityConfig{
-			EnableHostProxy: &hostProxyDisabled,
-			Firewall: &config.FirewallConfig{
-				Enable: false,
-			},
-		},
-	}
-}
-
 func TestRunRun(t *testing.T) {
 	t.Run("detached mode prints container ID", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 		fake.SetupContainerStart()
@@ -865,7 +841,7 @@ func TestRunRun(t *testing.T) {
 	})
 
 	t.Run("container create failure returns error", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
 			return moby.ContainerCreateResult{}, fmt.Errorf("disk full")
 		}
@@ -885,7 +861,7 @@ func TestRunRun(t *testing.T) {
 	})
 
 	t.Run("container start failure returns error", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 		fake.FakeAPI.ContainerStartFn = func(_ context.Context, _ string, _ moby.ContainerStartOptions) (moby.ContainerStartResult, error) {
@@ -905,18 +881,21 @@ func TestRunRun(t *testing.T) {
 		fake.AssertCalled(t, "ContainerCreate")
 	})
 
-	t.Run("non-interactive missing default image returns error", func(t *testing.T) {
-		cfgProject := testConfig()
-		cfgProject.DefaultImage = "node:20-slim"
-
-		fake := dockertest.NewFakeClient(
-			dockertest.WithConfig(config.NewConfigForTest(cfgProject, config.DefaultSettings())),
-		)
-		fake.SetupImageList()                        // empty — no project image found
-		fake.SetupImageExists("node:20-slim", false) // default image missing
-		fake.SetupContainerCreate()
-		fake.SetupCopyToContainer()
-		fake.SetupContainerStart()
+	t.Run("non-interactive @ with no project image returns error", func(t *testing.T) {
+		// With no project image and no default image fallback, @ should fail
+		// with a "no image found" message guiding the user.
+		testCfg := configmocks.NewFromString(`
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { enable_host_proxy: false, firewall: { enable: false } }
+`, "")
+		testCfg.GetProjectIgnoreFileFunc = func() (string, error) {
+			return filepath.Join(os.TempDir(), testCfg.ClawkerIgnoreName()), nil
+		}
+		testCfg.GetProjectRootFunc = func() (string, error) {
+			return os.TempDir(), nil
+		}
+		fake := dockertest.NewFakeClient(testCfg)
+		fake.SetupImageList() // empty — no project image found
 
 		tio := iostreamstest.New() // non-interactive
 		f := &cmdutil.Factory{
@@ -925,8 +904,8 @@ func TestRunRun(t *testing.T) {
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},
-			Config: func() *config.Config {
-				return config.NewConfigForTest(cfgProject, config.DefaultSettings())
+			Config: func() (config.Config, error) {
+				return testCfg, nil
 			},
 			GitManager: func() (*git.GitManager, error) {
 				return nil, fmt.Errorf("GitManager not available in test")
@@ -947,7 +926,8 @@ func TestRunRun(t *testing.T) {
 		require.ErrorIs(t, err, cmdutil.SilentError)
 
 		errOutput := tio.ErrBuf.String()
-		require.Contains(t, errOutput, "node:20-slim")
+		require.Contains(t, errOutput, "No image specified")
+		require.Contains(t, errOutput, "no project image found")
 
 		fake.AssertNotCalled(t, "ContainerCreate")
 	})

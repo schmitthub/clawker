@@ -5,19 +5,19 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
 )
 
 // RemoveOptions holds options for the remove command.
 type RemoveOptions struct {
-	IOStreams    *iostreams.IOStreams
-	Client       func(context.Context) (*docker.Client, error)
-	Config       func() *config.Config
-	SocketBridge func() socketbridge.SocketBridgeManager
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	ProjectManager func() (project.ProjectManager, error)
+	SocketBridge   func() socketbridge.SocketBridgeManager
 
 	Agent   bool
 	Force   bool
@@ -29,10 +29,10 @@ type RemoveOptions struct {
 // NewCmdRemove creates the container remove command.
 func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command {
 	opts := &RemoveOptions{
-		IOStreams:    f.IOStreams,
-		Client:       f.Client,
-		Config:       f.Config,
-		SocketBridge: f.SocketBridge,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		ProjectManager: f.ProjectManager,
+		SocketBridge:   f.SocketBridge,
 	}
 
 	cmd := &cobra.Command{
@@ -88,7 +88,15 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
+		var projectName string
+		if opts.ProjectManager != nil {
+			if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+				if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+					projectName = p.Name()
+				}
+			}
+		}
+		resolved, err := docker.ContainerNamesFromAgents(projectName, containers)
 		if err != nil {
 			return err
 		}

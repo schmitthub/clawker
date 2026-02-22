@@ -19,6 +19,7 @@ import (
 // GenerateOptions contains the options for the generate command.
 type GenerateOptions struct {
 	IOStreams *iostreams.IOStreams
+	Config    func() (config.Config, error)
 
 	Versions  []string // Positional args: version patterns
 	SkipFetch bool
@@ -30,6 +31,7 @@ type GenerateOptions struct {
 func NewCmdGenerate(f *cmdutil.Factory, runF func(context.Context, *GenerateOptions) error) *cobra.Command {
 	opts := &GenerateOptions{
 		IOStreams: f.IOStreams,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -79,20 +81,19 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 	defer cancel()
 	versions := opts.Versions
 	ios := opts.IOStreams
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
 
 	// Determine output directory: explicit flag > default build dir
 	outputDir := opts.OutputDir
 	if outputDir == "" {
 		var err error
-		outputDir, err = config.BuildDir()
+		outputDir, err = cfg.BuildSubdir()
 		if err != nil {
 			return fmt.Errorf("failed to determine build directory: %w", err)
 		}
-	}
-
-	// Ensure output directory exists
-	if err := config.EnsureDir(outputDir); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
 	versionsFile := filepath.Join(outputDir, "versions.json")
@@ -113,12 +114,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 	if opts.SkipFetch {
 		vf, err := bundler.LoadVersionsFile(versionsFile)
 		if err != nil {
-			cmdutil.PrintErrorf(ios, "Failed to load versions.json from %s", outputDir)
-			cmdutil.PrintNextSteps(ios,
-				"Run 'clawker generate <versions...>' to fetch versions from npm",
-				fmt.Sprintf("Ensure versions.json exists in %s", outputDir),
-			)
-			return err
+			return fmt.Errorf("Failed to load versions.json from %s: %w", outputDir, err)
 		}
 		return displayVersionsFile(vf, ios.ErrOut)
 	}
@@ -143,17 +139,18 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 
 	// Save updated versions.json
 	if err := bundler.SaveVersionsFile(versionsFile, vf); err != nil {
-		cmdutil.PrintErrorf(ios, "Failed to save versions.json")
-		return err
+		return fmt.Errorf("Failed to save versions.json: %w", err)
 	}
 
 	fmt.Fprintf(ios.ErrOut, "Saved %d version(s) to %s\n", len(*vf), versionsFile)
 
 	// Generate Dockerfiles
-	dfMgr := bundler.NewDockerfileManager(outputDir, nil)
+	dfMgr := bundler.NewDockerfileManager(cfg, &bundler.DockerFileManagerOptions{
+		OutputDir:  outputDir,
+		VariantCfg: nil,
+	})
 	if err := dfMgr.GenerateDockerfiles(vf); err != nil {
-		cmdutil.PrintErrorf(ios, "Failed to generate Dockerfiles")
-		return err
+		return fmt.Errorf("Failed to generate Dockerfiles: %w", err)
 	}
 	fmt.Fprintf(ios.ErrOut, "Generated Dockerfiles in %s\n", dfMgr.DockerfilesDir())
 
@@ -164,12 +161,7 @@ func showVersions(ios *iostreams.IOStreams, path string) error {
 	vf, err := bundler.LoadVersionsFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			cmdutil.PrintErrorf(ios, "No versions.json found")
-			cmdutil.PrintNextSteps(ios,
-				"Run 'clawker generate latest' to fetch the latest version",
-				"Run 'clawker generate 2.1.2' to fetch a specific version",
-			)
-			return err
+			return fmt.Errorf("No versions.json found: %w", err)
 		}
 		return err
 	}

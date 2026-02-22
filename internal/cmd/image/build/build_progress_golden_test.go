@@ -8,9 +8,12 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/project"
+	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 	"github.com/schmitthub/clawker/test/harness/golden"
@@ -32,9 +35,31 @@ func TestBuildProgress_Golden(t *testing.T) {
 		t.Run(scenario.Name, func(t *testing.T) {
 			t.Setenv("DOCKER_BUILDKIT", "1")
 
-			testCfg := config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
-			fake := dockertest.NewFakeClient(dockertest.WithConfig(testCfg))
+			testCfg := configmocks.NewFromString(`
+build: { image: "node:20-slim" }
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { firewall: { enable: false } }
+`, `
+monitoring:
+  otel_collector_port: 4318
+  otel_grpc_port: 4317
+  telemetry:
+    metrics_path: "/v1/metrics"
+    logs_path: "/v1/logs"
+    log_tool_details: true
+    log_user_prompts: true
+    include_account_uuid: true
+    include_session_id: true
+`)
+			fake := dockertest.NewFakeClient(testCfg)
 			fake.SetupBuildKitWithProgress(scenario.Events)
+
+			// Wire a ProjectManager that returns "test-project" so buildRun
+			// resolves project name via ProjectManager.CurrentProject(ctx).
+			mockPM := projectmocks.NewMockProjectManager()
+			mockPM.CurrentProjectFunc = func(_ context.Context) (project.Project, error) {
+				return projectmocks.NewMockProject("test-project", "/fake/repo"), nil
+			}
 
 			tio := iostreamstest.New()
 			f := &cmdutil.Factory{
@@ -43,8 +68,11 @@ func TestBuildProgress_Golden(t *testing.T) {
 				Client: func(_ context.Context) (*docker.Client, error) {
 					return fake.Client, nil
 				},
-				Config: func() *config.Config {
-					return testCfg
+				Config: func() (config.Config, error) {
+					return testCfg, nil
+				},
+				ProjectManager: func() (project.ProjectManager, error) {
+					return mockPM, nil
 				},
 			}
 

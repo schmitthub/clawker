@@ -2,6 +2,12 @@
 
 Clawker is a Go CLI tool that wraps the Claude Code agent in secure, reproducible Docker containers.
 
+## Related Docs
+
+- `.claude/docs/ARCHITECTURE.md` — package layering and dependency boundaries.
+- `internal/storage/CLAUDE.md` — storage package API, node tree architecture, merge/write internals.
+- `internal/config/CLAUDE.md` — config package contracts, persistence model, and test helpers.
+
 ## 1. Philosophy: "The Padded Cell"
 
 ### Core Principle
@@ -23,26 +29,15 @@ We do **not** inherit Docker's threat model. If Docker allows catastrophic comma
 
 ### 2.1 Project
 
-A clawker project is defined by configuration files. Every clawker command requires project context.
+A clawker project is defined by a `.clawker/` directory containing configuration files. Every clawker command requires project context.
 
-**Configuration Precedence** (highest to lowest):
+**Project Resolution**: `config.NewConfig()` performs a walk-up merge of configuration files (see §2.4) and resolves the current project from the registry via `GetProjectRoot()`. The `Config` interface exposes typed accessors — all file paths and constants are private to the package.
 
-1. CLI flags
-2. Environment variables
-3. Project config (`./clawker.yaml`)
-4. User defaults (from settings)
+**Project identity** is decoupled from configuration:
+- `internal/config` — configuration file I/O, walk-up loading, path helpers
+- `internal/project` — project registration, CRUD, worktree lifecycle, `registry.yaml` I/O
 
-Higher precedence wins silently (no warnings on override).
-
-**Configuration Files**:
-
-| Location | Purpose |
-|----------|---------|
-| `./clawker.yaml` | Project-specific config (schema: `Config`) |
-| `~/.local/clawker/settings.yaml` | User settings (`Settings`: default_image, logging) |
-| `~/.local/clawker/projects.yaml` | Project registry (`ProjectRegistry`: slug→path map) |
-
-**Project Resolution**: The `Resolver` uses the project registry to resolve the current working directory to a registered project via longest-prefix path matching. This replaces directory walking. The result is a `Resolution` containing `ProjectKey`, `ProjectEntry`, and `WorkDir`. `Config.Project` is `yaml:"-"` — injected by the loader from the registry, never persisted in YAML.
+See **§2.4 Configuration System** for the full design: file layout, schemas, load/merge/write flows, and migrations.
 
 ### 2.2 Agent
 
@@ -85,9 +80,251 @@ dev.clawker.agent=<agent-name>
 
 ### Project Registry Lifecycle
 
-1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to `projects.yaml`
-2. **Lookup**: `Factory.Resolution()` calls `Resolver.Resolve(workDir)` to find the matching project by longest-prefix path match
+1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to `cfg.ProjectRegistryFileName()`
+2. **Lookup**: `Factory.Config()` returns a `config.Config` — the single interface all callers receive. Project resolution uses registry + `os.Getwd()` internally
 3. **Orphan projects**: If no project is resolved, resources get 2-segment names and omit the project label
+
+### 2.4 Configuration System
+
+Replaces Viper with `yaml.v3` only. No Go config library handles writes, locking, or commented YAML — those are always application-level. The Viper namespace refactor (prefixing keys with scope) was a workaround, not a real design need — it is eliminated entirely.
+
+#### File Layout (Full XDG)
+
+All user-level directories follow the XDG Base Directory Specification. Walk-up never reaches HOME — it is bounded at the registered project root.
+
+```
+~/.config/clawker/                       ← config (XDG_CONFIG_HOME)
+  clawker.yaml                           ← ConfigFile (global project defaults)
+  clawker.local.yaml                     ← ConfigFile (global personal overrides)
+  settings.yaml                          ← SettingsFile (host infrastructure)
+
+<any-walk-up-level>/                     ← dual placement at every level (dir wins)
+  .clawker.yaml                          ← flat form (committed)
+  .clawker.local.yaml                    ← flat form (personal, gitignored)
+  .clawker/                              ← OR directory form (wins if .clawker/ exists)
+    clawker.yaml                         ← dir form (committed)
+    clawker.local.yaml                   ← dir form (personal, gitignored)
+
+~/.local/share/clawker/                  ← data (XDG_DATA_HOME)
+  registry.yaml                          ← project/worktree state (owned by internal/project)
+
+~/.local/state/clawker/                  ← state (XDG_STATE_HOME)
+  logs/
+  cache/
+```
+
+**Filename-driven discovery:** The store takes an ordered list of filenames on construction (e.g., `"clawker.yaml"`, `"clawker.local.yaml"`). All filenames share the same schema. At each walk-up level, for each filename:
+1. If `.clawker/` dir exists → check `.clawker/{filename}`
+2. Otherwise → check `.{filename}` (flat dotfile)
+
+Dir form and flat form are mutually exclusive per level. Both `.yaml` and `.yml` extensions accepted. First filename takes merge precedence at the same level.
+
+**Walk-up pattern:** Bounded from CWD to registered project root. Home-level configs (`~/.config/clawker/`) are added via `WithConfig()` convenience option — never discovered via walk-up. Walk-up requires CWD to be within a registered project; if not, only home/explicit configs are loaded (sentinel error `ErrNotInProject` lets callers decide how to handle it).
+
+**Env overrides (precedence order):**
+1. `CLAWKER_CONFIG_DIR` / `CLAWKER_DATA_DIR` / `CLAWKER_STATE_DIR` — clawker-specific, highest precedence
+2. `XDG_CONFIG_HOME` / `XDG_DATA_HOME` / `XDG_STATE_HOME` — standard XDG
+3. Defaults: `~/.config/clawker/`, `~/.local/share/clawker/`, `~/.local/state/clawker/`
+
+**`.clawkerignore`:** Lives at project root (not inside `.clawker/`). No walk-up — follows `.gitignore`/`.dockerignore` convention. Project root anchor from `internal/project`.
+
+#### Two Independent Schemas
+
+Settings and config are **never collapsed** — different concerns, different evolution, different write patterns.
+
+```go
+// Host infrastructure — ~/.config/clawker/settings.yaml only
+type Settings struct {
+    DefaultImage string           `yaml:"default_image,omitempty"`
+    Logging      LoggingConfig    `yaml:"logging"`
+    HostProxy    HostProxyConfig  `yaml:"host_proxy"`
+    Monitoring   MonitoringConfig `yaml:"monitoring"`
+}
+
+// Project defaults — tiered via walk-up (global → project → local)
+type Project struct {
+    Version   string          `yaml:"version"`
+    Name      string          `yaml:"name,omitempty"`
+    Build     BuildConfig     `yaml:"build"`
+    Workspace WorkspaceConfig `yaml:"workspace"`
+    Security  SecurityConfig  `yaml:"security"`
+    Agent     AgentConfig     `yaml:"agent"`
+    Loop      *LoopConfig     `yaml:"loop,omitempty"`
+}
+```
+
+**Design decisions:**
+- **No version field** in either struct. Struct is source of truth. Migrations check data shape, not version numbers.
+- **No `project` field** in config. Project identity lives in registry only (owned by `internal/project`).
+- **No `ProjectDefaults` shared embed.** The two schemas are fully independent — no coupling.
+
+#### Config Interface
+
+Single access point with namespaced sub-accessors. One factory closure (`f.Config()`), one interface.
+
+```go
+type Config interface {
+    // Store accessors — each delegates to a composed Store[T].Get()
+    Settings() Settings         // → ~/.config/clawker/settings.yaml
+    Project() *Project          // → merged walk-up result
+
+    // Typed mutation — separate methods per store (different generic types)
+    SetProject(fn func(*Project))              // in-memory mutation → tree update
+    SetSettings(fn func(*Settings))            // in-memory mutation → tree update
+    WriteProject(filename ...string) error     // provenance-routed atomic write
+    WriteSettings(filename ...string) error    // provenance-routed atomic write
+
+    // Path helpers, constants, labels (~40 methods)
+    ConfigDir() string
+    Domain() string
+    LabelDomain() string
+    // ...
+}
+```
+
+`cfg.SetProject(fn)` / `cfg.WriteProject()` and `pm.Set(fn)` / `pm.Write()` share the same familiar API shape — thin wrappers around `Store[T].Set` / `Store[T].Write`, consistent across all things that compose `Store[T]`.
+
+**Usage:**
+- `cfg.Project().Build.Image` — from merged config walk-up
+- `cfg.Settings().Logging.FileEnabled` — from settings.yaml
+- `cfg.MonitoringConfig()` — typed convenience accessor
+- `cfg.ConfigDirEnvVar()` — constants via interface methods
+
+**No collision risk:** If both schemas grow a `Build` section, `cfg.Settings().Build` vs `cfg.Project().Build`.
+
+**No generic `Get(key)` / `Set(key, val)`.** Typed mutation via `SetProject(fn)` / `SetSettings(fn)` only.
+
+#### Node Tree Architecture
+
+The node tree (`map[string]any`) is the merge engine and persistence layer. The typed struct `*T` is a deserialized view — the read/write API.
+
+```
+Load:   file → map[string]any ─┐
+                                ├→ merge maps → deserialize → *T
+        string → map[string]any ─┘
+
+Set:    *T (mutated) → structToMap → merge into tree → mark dirty
+
+Write:  tree → route by provenance → per-file atomic write
+```
+
+**Why not struct-based merge:** `yaml.Marshal` respects `omitempty` tags, silently dropping fields set to zero values (e.g., `false`, `0`, `""`). Map-based merge avoids this — absent keys mean "not set" (not iterated), present keys with zero values mean "explicitly set". `structToMap` uses reflection to serialize structs ignoring `omitempty` tags, so explicit clears survive.
+
+#### Two-Phase Load
+
+1. **Phase 1 (lenient):** YAML → `map[string]any` → run precondition migrations → re-save if anything changed
+2. **Phase 2 (typed):** Merged map → typed struct via YAML round-trip. Only known keys read, unknowns silently ignored. Struct defaults fill missing keys.
+
+Unknown fields silently ignored — matches Claude Code and Serena. No `KnownFields(true)`. Typos are the user's problem.
+
+`structToMap` (used in `Set`) ignores `omitempty` and preserves unknown keys via `mergeIntoTree`. Raw YAML content that the struct doesn't model survives round-trips.
+
+#### Merge Strategy
+
+**Walk-up merge order for ConfigFile:**
+
+```
+WithDefaults(yaml) → ~/.config/clawker/clawker.yaml → walk-up configs → env vars → CLI flags
+```
+
+**Configuration precedence** (highest to lowest):
+
+1. CLI flags
+2. Environment variables (hardcoded shortlist)
+3. `.clawker.local.yaml` or `.clawker/clawker.local.yaml` (personal overrides)
+4. `.clawker.yaml` or `.clawker/clawker.yaml` (project config, committed)
+5. `~/.config/clawker/clawker.yaml` (global defaults)
+6. `WithDefaults(DefaultConfigYAML)` — YAML string template, base layer
+
+**Defaults as YAML templates:** The same `DefaultConfigYAML` constant serves as both the base merge layer (parsed, comments ignored) and the scaffolding template written by `clawker init` (comments preserved). One source of truth — no imperative `SetDefaults()`, no struct tag defaults.
+
+At each walk-up level, dir form (`.clawker/`) wins over flat form (`.clawker.yaml`) — they are mutually exclusive per directory.
+
+Higher precedence wins silently (no warnings on override).
+
+**Per-field merge for arrays** via struct tags:
+
+| Tag | Behavior | Used By |
+|-----|----------|---------|
+| `merge:"union"` | Additive, deduped | `from_env`, `packages`, `includes`, `firewall.sources` |
+| `merge:"overwrite"` | Project wins entirely | `copy`, `root_run`, `user_run`, `inject.*` |
+| (none / scalar) | Last-wins | All scalar fields |
+
+Untagged slices default to overwrite at runtime (safe fallback). A reflection test in CI asserts every `[]T` field has an explicit `merge` tag — missing tag = test failure. Go can't enforce struct tags at compile time; test + CI gate is the standard approach.
+
+**SettingsFile:** Loaded separately, not merged with ConfigFile.
+
+**Env var overrides:** Removed. The old Viper-based `CLAWKER_*` env var binding has been eliminated. Env vars only affect directory resolution (`CLAWKER_CONFIG_DIR`, `CLAWKER_DATA_DIR`, `CLAWKER_STATE_DIR`).
+
+#### Migrations
+
+Precondition-based idempotent functions (Claude Code + Serena pattern):
+
+```go
+func migrateOldBuildKey(raw map[string]any) bool {
+    // Check: does old data shape exist?
+    if _, ok := raw["old_key"]; !ok {
+        return false // already current or never had old shape
+    }
+    // Transform: old shape → new shape
+    raw["new_key"] = raw["old_key"]
+    delete(raw, "old_key")
+    return true // signal: re-save needed
+}
+```
+
+- Each migration checks if old data shape exists in the raw map
+- If found: transform → re-save → done
+- If not found: skip (already current or never applied)
+- No version field, no migration chain, no ordering constraints
+- Runs during Phase 1 of load (on the raw map, before struct validation)
+- Idempotent by construction — safe for concurrent processes
+
+#### Write Model
+
+All writes go through `Set*()` + `Write*()` on the composed `Store[T]`:
+
+```go
+cfg.SetProject(func(p *Project) { p.Build.Image = "ubuntu:24.04" })
+cfg.WriteProject("clawker.local.yaml")
+
+cfg.SetSettings(func(s *Settings) { s.DefaultImage = "custom:latest" })
+cfg.WriteSettings()
+```
+
+| Call | Target File | Writer | When |
+|------|-------------|--------|------|
+| `cfg.WriteSettings()` | `~/.config/clawker/settings.yaml` | `clawker init`, image commands | Settings mutation |
+| `cfg.WriteProject()` | Auto-routed by provenance | Programmatic | Project config updates |
+| `cfg.WriteProject("clawker.local.yaml")` | First layer matching filename | User/programmatic | Personal overrides |
+| `pm.Write()` | `~/.local/share/clawker/registry.yaml` | `internal/project` | Runtime CRUD |
+
+Write semantics: `Set*()` mutates in-memory struct + serializes back into node tree via `structToMap`. `Write*()` persists the current tree — routes fields by provenance, read-merge-write per file with atomic I/O (temp+fsync+rename).
+
+Settings files do NOT need locking — per-machine, no concurrent writers. Registry uses flock (owned by `internal/project`).
+
+#### Package Ownership
+
+| Package | Owns | Imports |
+|---------|------|---------|
+| `internal/storage` | Node tree engine (map-based merge, provenance), structToMap (omitempty-safe), atomic write (temp+rename), flock, YAML read/write | Leaf — zero internal imports |
+| `internal/config` | `settings.yaml` + `clawker.yaml` walk-up. One `Config` interface. Two schemas. | `storage`, `logger` |
+| `internal/project` | `registry.yaml`. Project domain: registration, resolution, worktree lifecycle. | `storage`, `config`, `iostreams`, `logger` |
+
+`internal/project` is a middle-tier domain package ("if I want project operations, I go here"). Registry is its persistence layer, not its identity — don't rename to `internal/registry`.
+
+#### Testing Infrastructure
+
+Storage provides mechanisms — composing packages (`config/mocks`, `project/mocks`) build test doubles and harnesses for their callers.
+
+| Mechanism | What it does | Owned by |
+|-----------|-------------|----------|
+| `storage.NewFromString[T](yaml)` | Separate constructor. Bypasses the entire pipeline (no discovery, no migration, no layering, no merge). Parses YAML string → node tree → `*T`. No write paths — Set+Write errors. | `storage` |
+| Real `Store[T]` + `t.TempDir()` | Full store pointed at a jailed temp dir. Consumer wires its own schemas/filenames/defaults. Full node tree plumbing. | Consumer (`config/mocks`, `project/mocks`) |
+
+Consumer mock APIs stay unchanged (`NewBlankConfig`, `NewFromString`, `NewIsolatedTestConfig`, etc.). Callers never see `Store[T]` or `NewFromString[T]` directly.
+
+`Store[T]` itself has no mock interface — it's a concrete struct composed inside `configImpl` / `projectManagerImpl`. The consumer interfaces (`Config`, `ProjectManager`) are the mock boundary, generated via `go:generate moq`.
 
 ## 3. System Architecture
 
@@ -100,7 +337,7 @@ dev.clawker.agent=<agent-name>
 ┌─────────────────────▼───────────────────────────────────────┐
 │                  internal/docker                             │
 │            (Clawker-specific middleware)                     │
-│         - Config-dependent (uses Viper)                      │
+│         - Config-dependent (Config interface)                 │
 │         - Exposes interface for commands                     │
 └─────────────────────┬───────────────────────────────────────┘
                       │
@@ -198,7 +435,7 @@ with all closures wired                       *cmdutil.Factory
 Factory is a pure struct with 9 closure/value fields — no methods. 3 eager (set directly), 6 lazy (closures with `sync.Once`):
 
 **Eager**: `Version` (string), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
-**Lazy**: `Config` (`func() *config.Config`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
+**Lazy**: `Config` (`func() (config.Config, error)`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
 
 The constructor in `internal/cmd/factory/default.go` wires all closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 
@@ -262,7 +499,7 @@ See also `.claude/rules/dependency-placement.md` (auto-loaded).
 Clawker-specific middleware that builds on the External Engine:
 
 - Initializes External Engine with clawker's label configuration
-- Loads configuration via Viper (merged from all sources)
+- Receives `Config` interface for label keys, naming, and path helpers
 - Handles clawker-specific logic (agent naming, volume conventions)
 - Exposes high-level interface for Cobra commands
 
@@ -559,7 +796,7 @@ New containers require one-time initialization to inherit the host user's Claude
 configuration (settings, plugins, credentials). This avoids manual re-authentication
 and plugin installation on every container creation.
 
-**Config schema** (`config.ClaudeCodeConfig` in `clawker.yaml`):
+**Config schema** (`config.ClaudeCodeConfig` in `cfg.ProjectConfigFileName()`):
 - `strategy`: `"copy"` (copy host config) or `"fresh"` (clean slate). Default: `"copy"`
 - `use_host_auth`: Forward host credentials to container. Default: `true`
 
@@ -657,12 +894,22 @@ func TestNewCmdStop(t *testing.T) {
 }
 ```
 
+### 11.3 Config Package Testing
+
+Use test doubles from `internal/config/mocks/` (import as `configmocks`) for all callers:
+
+- `configmocks.NewBlankConfig()` — defaults-seeded config for simple unit tests
+- `configmocks.NewFromString(projectYAML, settingsYAML)` — deterministic pre-seeded state from YAML strings (NO defaults)
+- `configmocks.NewIsolatedTestConfig(t)` — full isolated config with temp directories for write tests
+
+See `internal/config/CLAUDE.md` for detailed test helper documentation.
+
 ## 12. Dependencies
 
 | Dependency | Purpose |
 |------------|---------|
 | `github.com/spf13/cobra` | CLI framework |
-| `github.com/spf13/viper` | Configuration management |
+| `gopkg.in/yaml.v3` | YAML configuration parsing |
 | `github.com/moby/moby` | Docker SDK |
 | `github.com/rs/zerolog` | Structured logging |
 | `github.com/charmbracelet/bubbletea` | Terminal UI framework (TUI package only) |

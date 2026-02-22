@@ -29,38 +29,31 @@ type HostProxyService interface {
 	ProxyURL() string
 }
 
+// validatePort checks that a port number is in the valid TCP range.
+func validatePort(port int, label string) error {
+	if port <= 0 || port > 65535 {
+		return fmt.Errorf("invalid %s port %d: must be between 1 and 65535", label, port)
+	}
+	return nil
+}
+
 // Manager manages the lifecycle of the host proxy daemon.
 // It spawns a daemon subprocess that persists beyond CLI lifetime,
 // enabling containers to use the proxy even after the CLI exits.
 type Manager struct {
-	port    int
-	pidFile string
-	mu      sync.Mutex
+	cfg  config.Config
+	port int
+	mu   sync.Mutex
 }
 
-// NewManager creates a new host proxy manager using the default port.
-func NewManager() *Manager {
-	pidFile, err := config.HostProxyPIDFile()
-	if err != nil {
-		logger.Warn().Err(err).Msg("failed to get host proxy PID file path, daemon tracking disabled")
+// NewManager creates a new host proxy manager.
+// Port is read and validated from cfg.HostProxyConfig().Manager.Port at construction time.
+func NewManager(cfg config.Config) (*Manager, error) {
+	port := cfg.HostProxyConfig().Manager.Port
+	if err := validatePort(port, "host proxy manager"); err != nil {
+		return nil, err
 	}
-	return &Manager{port: DefaultPort, pidFile: pidFile}
-}
-
-// NewManagerWithPort creates a new host proxy manager using a custom port.
-// This is primarily useful for testing.
-func NewManagerWithPort(port int) *Manager {
-	pidFile, err := config.HostProxyPIDFile()
-	if err != nil {
-		logger.Warn().Err(err).Msg("failed to get host proxy PID file path, daemon tracking disabled")
-	}
-	return &Manager{port: port, pidFile: pidFile}
-}
-
-// NewManagerWithOptions creates a new host proxy manager with custom port and PID file.
-// This is primarily useful for testing.
-func NewManagerWithOptions(port int, pidFile string) *Manager {
-	return &Manager{port: port, pidFile: pidFile}
+	return &Manager{cfg: cfg, port: port}, nil
 }
 
 // EnsureRunning ensures the host proxy daemon is running.
@@ -98,10 +91,14 @@ func (m *Manager) StopDaemon() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.pidFile == "" {
+	if m.cfg == nil {
 		return nil
 	}
-	return StopDaemon(m.pidFile)
+	pidFile, err := m.cfg.HostProxyPIDFilePath()
+	if err != nil {
+		return fmt.Errorf("failed to get PID file path: %w", err)
+	}
+	return StopDaemon(pidFile)
 }
 
 // IsRunning returns whether the host proxy daemon is running.
@@ -124,12 +121,17 @@ func (m *Manager) ProxyURL() string {
 
 // isDaemonRunning checks if the daemon is running via PID file and health check.
 func (m *Manager) isDaemonRunning() bool {
-	if m.pidFile == "" {
+	if m.cfg == nil {
+		return false
+	}
+
+	pidFile, err := m.cfg.HostProxyPIDFilePath()
+	if err != nil {
 		return false
 	}
 
 	// Check PID file
-	if !IsDaemonRunning(m.pidFile) {
+	if !IsDaemonRunning(pidFile) {
 		return false
 	}
 
@@ -144,13 +146,10 @@ func (m *Manager) startDaemon() error {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	// Build command arguments
+	// Build command arguments — port passed explicitly to ensure manager and daemon agree
 	args := []string{
 		"host-proxy", "serve",
 		"--port", strconv.Itoa(m.port),
-	}
-	if m.pidFile != "" {
-		args = append(args, "--pid-file", m.pidFile)
 	}
 
 	cmd := exec.Command(exe, args...)
@@ -261,24 +260,18 @@ func (m *Manager) healthCheck() error {
 	return nil
 }
 
-// openDaemonLogFile opens the daemon log file for writing, creating directories as needed.
-// Returns nil and an error if the file cannot be opened.
+// openDaemonLogFile opens the daemon log file for writing.
+// HostProxyLogFilePath already ensures the logs directory exists via subdirPath().
 func (m *Manager) openDaemonLogFile() (*os.File, error) {
-	logPath, err := config.HostProxyLogFile()
+	if m.cfg == nil {
+		return nil, fmt.Errorf("config not available for log file path")
+	}
+
+	logPath, err := m.cfg.HostProxyLogFilePath()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get log file path: %w", err)
 	}
 
-	// Ensure logs directory exists
-	logsDir, err := config.LogsDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get logs directory: %w", err)
-	}
-	if err := config.EnsureDir(logsDir); err != nil {
-		return nil, fmt.Errorf("failed to create logs directory: %w", err)
-	}
-
-	// Open log file with append mode
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %w", err)

@@ -6,10 +6,8 @@ import (
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -20,13 +18,12 @@ import (
 
 // RebuildMissingImageOpts holds options for the rebuild prompt flow.
 type RebuildMissingImageOpts struct {
-	ImageRef       string
-	IOStreams      *iostreams.IOStreams
-	TUI            *tui.TUI
-	Prompter       func() *prompter.Prompter
-	SettingsLoader func() config.SettingsLoader
-	BuildImage     docker.BuildDefaultImageFn
-	CommandVerb    string // "run" or "create" for error messages
+	ImageRef    string
+	IOStreams   *iostreams.IOStreams
+	TUI         *tui.TUI
+	Prompter    func() *prompter.Prompter
+	BuildImage  docker.BuildDefaultImageFn
+	CommandVerb string // "run" or "create" for error messages
 }
 
 // RebuildMissingDefaultImage prompts the user to rebuild a missing default image.
@@ -86,11 +83,6 @@ func RebuildMissingDefaultImage(ctx context.Context, opts RebuildMissingImageOpt
 	}
 
 	fmt.Fprintf(ios.ErrOut, "%s Using image: %s\n", cs.SuccessIcon(), docker.DefaultImageTag)
-
-	// Persist the default image in settings
-	if warning := persistDefaultImageSetting(opts.SettingsLoader); warning != "" {
-		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), warning)
-	}
 
 	return nil
 }
@@ -184,27 +176,4 @@ func printImageNotFoundNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorSc
 	fmt.Fprintln(ios.ErrOut, "  1. Run 'clawker init' to rebuild the base image")
 	fmt.Fprintf(ios.ErrOut, "  2. Or specify an image explicitly: clawker %s IMAGE\n", commandVerb)
 	fmt.Fprintln(ios.ErrOut, "  3. Or build a project image: clawker build")
-}
-
-// persistDefaultImageSetting saves the default image tag in user settings.
-// Returns a warning message if the setting could not be saved, empty string on success.
-func persistDefaultImageSetting(settingsLoaderFn func() config.SettingsLoader) string {
-	if settingsLoaderFn == nil {
-		return ""
-	}
-	loader := settingsLoaderFn()
-	if loader == nil {
-		return ""
-	}
-	currentSettings, loadErr := loader.Load()
-	if loadErr != nil {
-		logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update")
-		return fmt.Sprintf("Could not save default image setting: %v", loadErr)
-	}
-	currentSettings.DefaultImage = docker.DefaultImageTag
-	if saveErr := loader.Save(currentSettings); saveErr != nil {
-		logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
-		return fmt.Sprintf("Could not save default image setting: %v", saveErr)
-	}
-	return ""
 }

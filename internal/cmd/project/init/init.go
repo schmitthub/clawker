@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -13,14 +14,17 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 )
 
 // ProjectInitOptions contains the options for the project init command.
 type ProjectInitOptions struct {
-	IOStreams *iostreams.IOStreams
-	Prompter  func() *prompterpkg.Prompter
-	Config    func() *config.Config
+	IOStreams      *iostreams.IOStreams
+	TUI            *tui.TUI
+	Prompter       func() *prompterpkg.Prompter
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Name  string // Positional arg: project name
 	Force bool
@@ -30,9 +34,11 @@ type ProjectInitOptions struct {
 // NewCmdProjectInit creates the project init command.
 func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectInitOptions) error) *cobra.Command {
 	opts := &ProjectInitOptions{
-		IOStreams: f.IOStreams,
-		Prompter:  f.Prompter,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		TUI:            f.TUI,
+		Prompter:       f.Prompter,
+		Config:         f.Config,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -68,7 +74,7 @@ Use --yes/-y to skip prompts and accept all defaults.`,
 			if runF != nil {
 				return runF(cmd.Context(), opts)
 			}
-			return projectInitRun(cmd.Context(), opts)
+			return Run(cmd.Context(), opts)
 		},
 	}
 
@@ -78,266 +84,377 @@ Use --yes/-y to skip prompts and accept all defaults.`,
 	return cmd
 }
 
-func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
+// Run executes the project init command logic.
+func Run(ctx context.Context, opts *ProjectInitOptions) error {
+	if opts.Yes || !opts.IOStreams.IsInteractive() {
+		return runNonInteractive(ctx, opts)
+	}
+	return runInteractive(ctx, opts)
+}
+
+// wizardContext captures external state needed by wizard field definitions.
+type wizardContext struct {
+	configExists   bool
+	force          bool
+	nameDefault    string
+	configFileName string
+}
+
+// overwriteDeclined returns true when the overwrite field was answered "no".
+func overwriteDeclined(vals tui.WizardValues) bool {
+	return vals["overwrite"] == "no"
+}
+
+// runInteractive runs the wizard-based interactive flow.
+func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
-	prompter := opts.Prompter()
 
-	// Get current working directory (where to initialize the project)
 	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	cfgGateway := opts.Config()
-
-	// Check if configuration already exists
-	loader := config.NewProjectLoader(wd)
-	if loader.Exists() && !opts.Force {
-		if opts.Yes || !ios.IsInteractive() {
-			cmdutil.PrintErrorf(ios, "%s already exists", config.ConfigFileName)
-			cmdutil.PrintNextSteps(ios,
-				"Use --force to overwrite the existing configuration",
-				"Or edit the existing clawker.yaml manually",
-				"Or run 'clawker project register' to register the existing project",
-			)
-			return fmt.Errorf("configuration already exists")
-		}
-		// Interactive: ask for confirmation
-		overwrite, err := prompter.Confirm(
-			fmt.Sprintf("%s already exists. Overwrite?", config.ConfigFileName),
-			false,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to get confirmation: %w", err)
-		}
-		if !overwrite {
-			// Don't overwrite config, but still register the project using directory name
-			absPath, absErr := filepath.Abs(wd)
-			if absErr != nil {
-				return fmt.Errorf("resolving project path: %w", absErr)
-			}
-			dirName := filepath.Base(absPath)
-			registryLoader := cfgGateway.Registry
-			slug, err := project.RegisterProject(ios, registryLoader, wd, dirName)
-			if err != nil {
-				ios.Logger.Debug().Err(err).Msg("failed to register project during init (non-overwrite path)")
-			}
-			if slug != "" {
-				fmt.Fprintf(ios.ErrOut, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
-			}
-			return nil
-		}
+	cfgGateway, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	projectManager, err := opts.ProjectManager()
+	if err != nil {
+		return fmt.Errorf("initializing project manager: %w", err)
 	}
 
-	// Print header
-	fmt.Fprintln(ios.ErrOut, "Setting up clawker project...")
-	if !opts.Yes && ios.IsInteractive() {
-		fmt.Fprintln(ios.ErrOut, "(Press Enter to accept defaults)")
-	}
-	fmt.Fprintln(ios.ErrOut)
+	configFileName := "." + cfgGateway.ProjectConfigFileName()
+	configPath := filepath.Join(wd, configFileName)
+	plainConfigPath := filepath.Join(wd, cfgGateway.ProjectConfigFileName())
 
-	// Get absolute path of working directory
+	// Check if configuration already exists (either dotfile or plain form)
+	configExists := false
+	if _, err := os.Stat(configPath); err == nil {
+		configExists = true
+	} else if _, err := os.Stat(plainConfigPath); err == nil {
+		configExists = true
+	}
+
 	absPath, err := filepath.Abs(wd)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
 	dirName := filepath.Base(absPath)
 
-	// Determine project name
-	var projectName string
+	nameDefault := dirName
+	if opts.Name != "" {
+		nameDefault = opts.Name
+	}
+
+	// Print header
+	fmt.Fprintln(ios.ErrOut, "Setting up clawker project...")
+	fmt.Fprintln(ios.ErrOut)
+
+	// Run wizard
+	wctx := wizardContext{
+		configExists:   configExists,
+		force:          opts.Force,
+		nameDefault:    nameDefault,
+		configFileName: configFileName,
+	}
+	result, err := opts.TUI.RunWizard(buildProjectWizardFields(wctx))
+	if err != nil {
+		return fmt.Errorf("wizard failed: %w", err)
+	}
+	if !result.Submitted {
+		fmt.Fprintln(ios.ErrOut, "Setup cancelled.")
+		return nil
+	}
+
+	// Handle overwrite-declined: register only
+	if overwriteDeclined(result.Values) {
+		registeredProject, regErr := projectManager.Register(ctx, dirName, wd)
+		if regErr != nil {
+			ios.Logger.Debug().Err(regErr).Msg("failed to register project during init (non-overwrite path)")
+		}
+		if registeredProject != nil {
+			fmt.Fprintf(ios.ErrOut, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
+		}
+
+		// Still offer user-level default from existing config
+		existingContent, readErr := os.ReadFile(configPath)
+		if readErr != nil {
+			existingContent, readErr = os.ReadFile(plainConfigPath)
+		}
+		if readErr == nil {
+			prompter := opts.Prompter()
+			maybeOfferUserDefault(ios, cs, prompter, existingContent)
+		}
+		return nil
+	}
+
+	// Extract wizard values
+	projectName := result.Values["project_name"]
+	buildImage := resolveImageFromWizard(result.Values)
+	workspaceMode := result.Values["workspace_mode"]
+
+	return performProjectSetup(ctx, opts, projectName, buildImage, workspaceMode)
+}
+
+// runNonInteractive runs the non-interactive (--yes) path with no prompts.
+func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
+	ios := opts.IOStreams
+	cs := ios.ColorScheme()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	cfgGateway, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	configFileName := "." + cfgGateway.ProjectConfigFileName()
+	configPath := filepath.Join(wd, configFileName)
+	plainConfigPath := filepath.Join(wd, cfgGateway.ProjectConfigFileName())
+
+	// Check if configuration already exists
+	configExists := false
+	if _, err := os.Stat(configPath); err == nil {
+		configExists = true
+	} else if _, err := os.Stat(plainConfigPath); err == nil {
+		configExists = true
+	}
+
+	if configExists && !opts.Force {
+		fmt.Fprintf(ios.ErrOut, "%s %s already exists\n", cs.FailureIcon(), configFileName)
+		fmt.Fprintln(ios.ErrOut)
+		fmt.Fprintln(ios.ErrOut, "Next Steps:")
+		fmt.Fprintln(ios.ErrOut, "  - Use --force to overwrite the existing configuration")
+		fmt.Fprintln(ios.ErrOut, "  - Or edit the existing clawker.yaml manually")
+		fmt.Fprintln(ios.ErrOut, "  - Or run 'clawker project register' to register the existing project")
+		return fmt.Errorf("configuration already exists")
+	}
+
+	// Print header
+	fmt.Fprintln(ios.ErrOut, "Setting up clawker project...")
+	fmt.Fprintln(ios.ErrOut)
+
+	absPath, err := filepath.Abs(wd)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+	dirName := filepath.Base(absPath)
+
+	projectName := dirName
 	if opts.Name != "" {
 		projectName = opts.Name
-	} else if opts.Yes || !ios.IsInteractive() {
-		// Non-interactive: use directory name
-		projectName = dirName
-	} else {
-		// Interactive: prompt for project name
-		projectName, err = prompter.String(prompterpkg.PromptConfig{
-			Message:  "ProjectCfg name",
-			Default:  dirName,
-			Required: true,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to get project name: %w", err)
-		}
+	}
+	buildImage := intbuild.FlavorToImage("bookworm")
+	workspaceMode := "bind"
+
+	return performProjectSetup(ctx, opts, projectName, buildImage, workspaceMode)
+}
+
+// performProjectSetup handles file creation, registration, and success output.
+// Both runInteractive and runNonInteractive delegate to this function.
+func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectName, buildImage, workspaceMode string) error {
+	ios := opts.IOStreams
+	cs := ios.ColorScheme()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	// Get default image from user settings if available (for fallback image, not build base)
-	userDefaultImage := ""
-	settings := cfgGateway.Settings
-	if settings != nil && settings.DefaultImage != "" {
-		userDefaultImage = settings.DefaultImage
+	cfgGateway, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	projectManager, err := opts.ProjectManager()
+	if err != nil {
+		return fmt.Errorf("initializing project manager: %w", err)
 	}
 
-	// Prompt for build.image (base Linux flavor for Dockerfile FROM)
-	var buildImage string
-	if opts.Yes || !ios.IsInteractive() {
-		// Non-interactive: use buildpack-deps:bookworm-scm as default
-		buildImage = intbuild.FlavorToImage("bookworm")
-	} else {
-		// Interactive: show flavor options + Custom option
-		flavors := intbuild.DefaultFlavorOptions()
-		selectOptions := make([]prompterpkg.SelectOption, len(flavors)+1)
-		for i, opt := range flavors {
-			selectOptions[i] = prompterpkg.SelectOption{
-				Label:       opt.Name,
-				Description: opt.Description,
-			}
-		}
-		selectOptions[len(flavors)] = prompterpkg.SelectOption{
-			Label:       "Custom",
-			Description: "Enter a custom base image (e.g., node:20, python:3.12)",
-		}
-
-		idx, err := prompter.Select("Base Linux flavor for build", selectOptions, 0)
-		if err != nil {
-			return fmt.Errorf("failed to get base flavor: %w", err)
-		}
-
-		if idx == len(flavors) {
-			// Custom option selected - prompt for custom image
-			customImage, err := prompter.String(prompterpkg.PromptConfig{
-				Message:  "Custom base image",
-				Required: true,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to get custom base image: %w", err)
-			}
-			buildImage = customImage
-		} else {
-			// Map flavor name to full image reference
-			buildImage = intbuild.FlavorToImage(selectOptions[idx].Label)
-		}
-	}
-
-	// Prompt for default_image (pre-built fallback image for clawker run)
-	var defaultImage string
-	if opts.Yes || !ios.IsInteractive() {
-		// Non-interactive: use user's default_image from settings (can be empty)
-		defaultImage = userDefaultImage
-	} else {
-		// Interactive: prompt with user's default_image as default, allow override or empty
-		defaultImage, err = prompter.String(prompterpkg.PromptConfig{
-			Message:  "Default fallback image (leave empty if none)",
-			Default:  userDefaultImage,
-			Required: false,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to get default image: %w", err)
-		}
-	}
-
-	// Prompt for workspace mode
-	var workspaceMode string
-	if opts.Yes || !ios.IsInteractive() {
-		workspaceMode = "bind"
-	} else {
-		options := []prompterpkg.SelectOption{
-			{Label: "bind", Description: "live sync - changes immediately affect host filesystem"},
-			{Label: "snapshot", Description: "isolated copy - use git to sync changes"},
-		}
-		idx, err := prompter.Select("Default workspace mode", options, 0)
-		if err != nil {
-			return fmt.Errorf("failed to get workspace mode: %w", err)
-		}
-		workspaceMode = options[idx].Label
-	}
+	configFileName := "." + cfgGateway.ProjectConfigFileName()
+	configPath := filepath.Join(wd, configFileName)
+	ignoreFileName := cfgGateway.ClawkerIgnoreName()
+	ignorePath := filepath.Join(wd, ignoreFileName)
 
 	ios.Logger.Debug().
 		Str("project", projectName).
 		Str("build_image", buildImage).
-		Str("default_image", defaultImage).
 		Str("mode", workspaceMode).
 		Str("workdir", wd).
 		Bool("force", opts.Force).
 		Msg("initializing project")
 
 	// Generate config content with collected options
-	configContent := generateConfigYAML(buildImage, defaultImage, workspaceMode)
+	configContent := scaffoldProjectConfig(buildImage, workspaceMode)
 
-	// Create clawker.yaml
-	configPath := loader.ConfigPath()
+	// Create .clawker.yaml (dotfile form)
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", config.ConfigFileName, err)
+		return fmt.Errorf("failed to write %s: %w", configFileName, err)
 	}
 	ios.Logger.Debug().Str("file", configPath).Msg("created configuration file")
 
 	// Create .clawkerignore
-	ignorePath := loader.IgnorePath()
 	if _, err := os.Stat(ignorePath); os.IsNotExist(err) || opts.Force {
 		if err := os.WriteFile(ignorePath, []byte(config.DefaultIgnoreFile), 0644); err != nil {
-			return fmt.Errorf("failed to write %s: %w", config.IgnoreFileName, err)
+			return fmt.Errorf("failed to write %s: %w", ignoreFileName, err)
 		}
 		ios.Logger.Debug().Str("file", ignorePath).Msg("created ignore file")
 	}
 
 	// Register project in user settings
-	if _, err := project.RegisterProject(ios, cfgGateway.Registry, wd, projectName); err != nil {
+	if _, err := projectManager.Register(ctx, projectName, wd); err != nil {
 		ios.Logger.Debug().Err(err).Msg("failed to register project during init")
 	}
 
 	// Success output
 	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), config.ConfigFileName)
-	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), config.IgnoreFileName)
-	fmt.Fprintf(ios.ErrOut, "%s ProjectCfg: %s\n", cs.InfoIcon(), projectName)
+	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), configFileName)
+	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), ignoreFileName)
+	fmt.Fprintf(ios.ErrOut, "%s Project: %s\n", cs.InfoIcon(), projectName)
+
+	// Offer to save as user-level default if not already present
+	if !opts.Yes && ios.IsInteractive() {
+		prompter := opts.Prompter()
+		maybeOfferUserDefault(ios, cs, prompter, []byte(configContent))
+	}
+
 	fmt.Fprintln(ios.ErrOut)
-	cmdutil.PrintNextSteps(ios,
-		"Review and customize clawker.yaml",
-		"Run 'clawker start' to start Claude in a container",
-	)
+	fmt.Fprintln(ios.ErrOut, "Next Steps:")
+	fmt.Fprintf(ios.ErrOut, "  1. Review and customize %s\n", configFileName)
+	fmt.Fprintf(ios.ErrOut, "  2. Run 'clawker start' to start Claude in a container\n")
 
 	return nil
 }
 
-// generateConfigYAML creates the clawker.yaml content with the given options.
-// buildImage is the base Linux flavor for Dockerfile FROM (e.g., buildpack-deps:bookworm-scm).
-// defaultImage is the pre-built fallback image for clawker run when no project image exists.
-func generateConfigYAML(buildImage, defaultImage, workspaceMode string) string {
-	// Only include default_image line if it's set
-	defaultImageLine := ""
-	if defaultImage != "" {
-		defaultImageLine = fmt.Sprintf("default_image: \"%s\"\n", defaultImage)
+// buildProjectWizardFields returns the wizard field definitions for interactive project init.
+func buildProjectWizardFields(wctx wizardContext) []tui.WizardField {
+	return []tui.WizardField{
+		{
+			ID:         "overwrite",
+			Title:      "Overwrite",
+			Prompt:     fmt.Sprintf("%s already exists. Overwrite?", wctx.configFileName),
+			Kind:       tui.FieldConfirm,
+			DefaultYes: false,
+			SkipIf: func(_ tui.WizardValues) bool {
+				return !wctx.configExists || wctx.force
+			},
+		},
+		{
+			ID:          "project_name",
+			Title:       "Project",
+			Prompt:      "Project name",
+			Kind:        tui.FieldText,
+			Default:     wctx.nameDefault,
+			Placeholder: "my-project",
+			Required:    true,
+			SkipIf: func(vals tui.WizardValues) bool {
+				return overwriteDeclined(vals)
+			},
+		},
+		{
+			ID:         "flavor",
+			Title:      "Image",
+			Prompt:     "Base Linux flavor for build",
+			Kind:       tui.FieldSelect,
+			Options:    flavorFieldOptionsWithCustom(),
+			DefaultIdx: 0,
+			SkipIf: func(vals tui.WizardValues) bool {
+				return overwriteDeclined(vals)
+			},
+		},
+		{
+			ID:          "custom_image",
+			Title:       "Custom Image",
+			Prompt:      "Custom base image",
+			Kind:        tui.FieldText,
+			Placeholder: "e.g., node:20, python:3.12",
+			Required:    true,
+			SkipIf: func(vals tui.WizardValues) bool {
+				return overwriteDeclined(vals) || vals["flavor"] != "Custom"
+			},
+		},
+		{
+			ID:     "workspace_mode",
+			Title:  "Workspace",
+			Prompt: "Default workspace mode",
+			Kind:   tui.FieldSelect,
+			Options: []tui.FieldOption{
+				{Label: "bind", Description: "live sync - changes immediately affect host filesystem"},
+				{Label: "snapshot", Description: "isolated copy - use git to sync changes"},
+			},
+			DefaultIdx: 0,
+			SkipIf: func(vals tui.WizardValues) bool {
+				return overwriteDeclined(vals)
+			},
+		},
 	}
+}
 
-	return fmt.Sprintf(`version: "1"
-%s
-build:
-  image: "%s"
-  packages:
-    - git
-    - curl
-    - ripgrep
-  instructions:
-    env: {}
-    # copy: []
-    # root_run: []
-    # user_run: []
-  # inject:
-  #   after_from: []
-  #   after_packages: []
+// flavorFieldOptionsWithCustom converts bundler flavor options to TUI wizard field options
+// and appends a "Custom" option for entering a custom base image.
+func flavorFieldOptionsWithCustom() []tui.FieldOption {
+	flavors := intbuild.DefaultFlavorOptions()
+	options := make([]tui.FieldOption, len(flavors)+1)
+	for i, f := range flavors {
+		options[i] = tui.FieldOption{
+			Label:       f.Name,
+			Description: f.Description,
+		}
+	}
+	options[len(flavors)] = tui.FieldOption{
+		Label:       "Custom",
+		Description: "Enter a custom base image (e.g., node:20, python:3.12)",
+	}
+	return options
+}
 
-agent:
-  includes: []
-  env: {}
-  # shell: "/bin/bash"
-  # editor: "vim"
-  # visual: "vim"
+// resolveImageFromWizard converts wizard values to a Docker image reference.
+func resolveImageFromWizard(values tui.WizardValues) string {
+	if values["flavor"] == "Custom" {
+		return values["custom_image"]
+	}
+	return intbuild.FlavorToImage(values["flavor"])
+}
 
-workspace:
-  remote_path: "/workspace"
-  default_mode: "%s"
+// maybeOfferUserDefault checks if a user-level clawker.yaml exists in configDir.
+// If it doesn't, prompts the user to save the given content as their default.
+func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, prompter *prompterpkg.Prompter, content []byte) {
+	userConfigPath, pathErr := config.UserProjectConfigFilePath()
+	if pathErr != nil {
+		return
+	}
+	if _, statErr := os.Stat(userConfigPath); !os.IsNotExist(statErr) {
+		return // already exists or stat error
+	}
+	saveDefault, promptErr := prompter.Confirm(
+		"Save as default project settings?",
+		false,
+	)
+	if promptErr != nil || !saveDefault {
+		return
+	}
+	dir := filepath.Dir(userConfigPath)
+	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+		ios.Logger.Debug().Err(mkErr).Msg("failed to create config dir for user defaults")
+		return
+	}
+	if writeErr := os.WriteFile(userConfigPath, content, 0644); writeErr != nil {
+		ios.Logger.Debug().Err(writeErr).Msg("failed to write user-level default config")
+		return
+	}
+	fmt.Fprintf(ios.ErrOut, "%s Default: %s\n", cs.SuccessIcon(), userConfigPath)
+}
 
-security:
-  enable_firewall: true
-  docker_socket: false
-  # enable_host_proxy: true
-  # git_credentials:
-  #   forward_https: true
-  #   forward_ssh: true
-  #   copy_git_config: true
-  # allowed_domains: []
-  # cap_add: []
-`, defaultImageLine, buildImage, workspaceMode)
+// scaffoldProjectConfig creates the clawker.yaml content from the canonical template.
+// It inserts the build image and substitutes the workspace mode into DefaultConfigYAML.
+func scaffoldProjectConfig(buildImage, workspaceMode string) string {
+	s := config.DefaultConfigYAML
+	// Insert image line before the first comment in the build section
+	s = strings.Replace(s, "  # Base image for the container", "  image: \""+buildImage+"\"\n  # Base image for the container", 1)
+	// Substitute workspace mode
+	s = strings.Replace(s, `  default_mode: "bind"`, `  default_mode: "`+workspaceMode+`"`, 1)
+	return s
 }

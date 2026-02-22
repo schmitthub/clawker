@@ -7,7 +7,7 @@
 //
 // Usage:
 //
-//	fake := dockertest.NewFakeClient()
+//	fake := dockertest.NewFakeClient(cfg)
 //	fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "dev"))
 //	containers, err := fake.Client.ListContainers(ctx, true)
 //
@@ -32,17 +32,6 @@ import (
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 )
 
-// clawkerEngineOptions returns EngineOptions matching docker.NewClient's
-// production configuration so that whail's label injection and filtering
-// uses the same managed label key as real code.
-func clawkerEngineOptions() whail.EngineOptions {
-	return whail.EngineOptions{
-		LabelPrefix:  docker.EngineLabelPrefix,
-		ManagedLabel: docker.EngineManagedLabel,
-		Labels:       docker.TestLabelConfig(),
-	}
-}
-
 // FakeClient wraps a real *docker.Client backed by a whailtest.FakeAPIClient.
 // Configure behavior via FakeAPI's Fn fields; pass Client to code under test.
 type FakeClient struct {
@@ -53,26 +42,27 @@ type FakeClient struct {
 	// FakeAPI is the underlying function-field fake. Set Fn fields here
 	// to control what the Docker SDK "returns" for each operation.
 	FakeAPI *whailtest.FakeAPIClient
+
+	// Cfg is the config used to construct this client. Exposed so that
+	// Setup helpers and callers can read label keys without hardcoding.
+	Cfg config.Config
 }
 
 // FakeClientOption configures a FakeClient.
 type FakeClientOption func(*FakeClient)
 
-// WithConfig sets a config gateway on the fake client for image resolution tests.
-func WithConfig(cfg *config.Config) FakeClientOption {
-	return func(fc *FakeClient) {
-		fc.Client.SetConfig(cfg)
-	}
-}
-
 // NewFakeClient constructs a FakeClient with production-equivalent label
 // configuration. The returned Client.Engine uses clawker's label prefix,
 // so docker-layer methods (ListContainers, FindContainerByAgent,
 // etc.) exercise real label filtering logic.
-func NewFakeClient(opts ...FakeClientOption) *FakeClient {
+func NewFakeClient(cfg config.Config, opts ...FakeClientOption) *FakeClient {
 	fakeAPI := whailtest.NewFakeAPIClient()
-	engine := whail.NewFromExisting(fakeAPI, clawkerEngineOptions())
-	client := &docker.Client{Engine: engine}
+	engine := whail.NewFromExisting(fakeAPI, whail.EngineOptions{
+		LabelPrefix:  cfg.EngineLabelPrefix(),
+		ManagedLabel: cfg.EngineManagedLabel(),
+		Labels:       docker.TestLabelConfig(cfg),
+	})
+	client := docker.NewClientFromEngine(engine, cfg)
 
 	// Override whailtest's default ContainerInspect to return clawker labels
 	// instead of whailtest's "com.whailtest.managed" default. This prevents
@@ -83,7 +73,7 @@ func NewFakeClient(opts ...FakeClientOption) *FakeClient {
 				ID: id,
 				Config: &container.Config{
 					Labels: map[string]string{
-						docker.LabelManaged: docker.ManagedLabelValue,
+						cfg.LabelManaged(): cfg.ManagedLabelValue(),
 					},
 				},
 			},
@@ -91,22 +81,18 @@ func NewFakeClient(opts ...FakeClientOption) *FakeClient {
 	}
 
 	// Override whailtest's default VolumeInspect to return clawker labels.
-	// Without this, EnsureVolume/IsVolumeManaged would see "com.whailtest.managed"
-	// labels and fail management checks.
 	fakeAPI.VolumeInspectFn = func(_ context.Context, name string, _ moby.VolumeInspectOptions) (moby.VolumeInspectResult, error) {
 		return moby.VolumeInspectResult{
 			Volume: volume.Volume{
 				Name: name,
 				Labels: map[string]string{
-					docker.LabelManaged: docker.ManagedLabelValue,
+					cfg.LabelManaged(): cfg.ManagedLabelValue(),
 				},
 			},
 		}, nil
 	}
 
 	// Override whailtest's default NetworkInspect to return clawker labels.
-	// Without this, EnsureNetwork/IsNetworkManaged would see "com.whailtest.managed"
-	// labels and fail management checks.
 	fakeAPI.NetworkInspectFn = func(_ context.Context, name string, _ moby.NetworkInspectOptions) (moby.NetworkInspectResult, error) {
 		return moby.NetworkInspectResult{
 			Network: network.Inspect{
@@ -114,7 +100,7 @@ func NewFakeClient(opts ...FakeClientOption) *FakeClient {
 					Name: name,
 					ID:   "net-" + name,
 					Labels: map[string]string{
-						docker.LabelManaged: docker.ManagedLabelValue,
+						cfg.LabelManaged(): cfg.ManagedLabelValue(),
 					},
 				},
 			},
@@ -122,15 +108,11 @@ func NewFakeClient(opts ...FakeClientOption) *FakeClient {
 	}
 
 	// Default ContainerList returns an empty list.
-	// Without this, IsMonitoringActive (called during every container creation)
-	// would panic on the "not implemented" sentinel in whailtest.
 	fakeAPI.ContainerListFn = func(_ context.Context, _ moby.ContainerListOptions) (moby.ContainerListResult, error) {
 		return moby.ContainerListResult{}, nil
 	}
 
 	// Override whailtest's default ImageInspect to return clawker labels.
-	// Without this, isManagedImage/ImageRemove would see "com.whailtest.managed"
-	// labels and fail management checks.
 	fakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...moby.ImageInspectOption) (moby.ImageInspectResult, error) {
 		return moby.ImageInspectResult{
 			InspectResponse: dockerimage.InspectResponse{
@@ -138,7 +120,7 @@ func NewFakeClient(opts ...FakeClientOption) *FakeClient {
 				Config: &dockerspec.DockerOCIImageConfig{
 					ImageConfig: ocispec.ImageConfig{
 						Labels: map[string]string{
-							docker.LabelManaged: docker.ManagedLabelValue,
+							cfg.LabelManaged(): cfg.ManagedLabelValue(),
 						},
 					},
 				},
@@ -149,6 +131,7 @@ func NewFakeClient(opts ...FakeClientOption) *FakeClient {
 	fc := &FakeClient{
 		Client:  client,
 		FakeAPI: fakeAPI,
+		Cfg:     cfg,
 	}
 
 	for _, opt := range opts {

@@ -24,7 +24,7 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 	}
 
 	// 1. Get build output directory
-	buildDir, err := config.BuildDir()
+	buildDir, err := c.cfg.BuildSubdir()
 	if err != nil {
 		return fmt.Errorf("failed to get build directory: %w", err)
 	}
@@ -50,7 +50,7 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 
 	// 5. Generate dockerfiles (with BuildKit-conditional cache mounts)
 	logger.Debug().Str("output_dir", buildDir).Msg("generating dockerfiles")
-	dfMgr := bundler.NewDockerfileManager(buildDir, nil)
+	dfMgr := bundler.NewDockerfileManager(c.cfg, &bundler.DockerFileManagerOptions{OutputDir: buildDir})
 	dfMgr.BuildKitEnabled = buildkitEnabled
 	if err := dfMgr.GenerateDockerfiles(versions); err != nil {
 		return fmt.Errorf("failed to generate dockerfiles: %w", err)
@@ -87,9 +87,9 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 		Tags:       []string{DefaultImageTag},
 		Dockerfile: dockerfileName,
 		Labels: map[string]string{
-			LabelManaged:   ManagedLabelValue,
-			LabelBaseImage: ManagedLabelValue,
-			LabelFlavor:    flavor,
+			c.cfg.LabelManaged():   c.cfg.ManagedLabelValue(),
+			c.cfg.LabelBaseImage(): c.cfg.ManagedLabelValue(),
+			c.cfg.LabelFlavor():    flavor,
 		},
 		BuildKitEnabled: buildkitEnabled,
 		ContextDir:      dockerfilesDir,
@@ -112,12 +112,12 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 //
 //	docker ps -a --filter label=dev.clawker.test.name=TestMyFunction
 //	docker volume ls --filter label=dev.clawker.test.name=TestMyFunction
-func TestLabelConfig(testName ...string) whail.LabelConfig {
+func TestLabelConfig(cfg config.Config, testName ...string) whail.LabelConfig {
 	labels := map[string]string{
-		LabelTest: ManagedLabelValue,
+		cfg.LabelTest(): cfg.ManagedLabelValue(),
 	}
 	if len(testName) > 0 && testName[0] != "" {
-		labels[LabelTestName] = testName[0]
+		labels[cfg.LabelTestName()] = testName[0]
 	}
 	return whail.LabelConfig{Default: labels}
 }

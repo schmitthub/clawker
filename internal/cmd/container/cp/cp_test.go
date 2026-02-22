@@ -9,6 +9,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -274,14 +275,14 @@ func testCpFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory,
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}, tio
 }
 
 func TestCpRun_CopyFromContainer_Stdout(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupCopyFromContainer()
@@ -300,7 +301,7 @@ func TestCpRun_CopyFromContainer_Stdout(t *testing.T) {
 }
 
 func TestCpRun_CopyToContainer_Stdin(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupCopyToContainer()
@@ -325,8 +326,8 @@ func TestCpRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -342,7 +343,7 @@ func TestCpRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestCpRun_ContainerNotFound_CopyFrom(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testCpFactory(t, fake)
@@ -359,7 +360,7 @@ func TestCpRun_ContainerNotFound_CopyFrom(t *testing.T) {
 }
 
 func TestCpRun_ContainerNotFound_CopyTo(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testCpFactory(t, fake)
@@ -376,7 +377,7 @@ func TestCpRun_ContainerNotFound_CopyTo(t *testing.T) {
 }
 
 func TestCpRun_BothPathsContainer(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	f, tio := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
@@ -391,7 +392,7 @@ func TestCpRun_BothPathsContainer(t *testing.T) {
 }
 
 func TestCpRun_BothPathsHost(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	f, tio := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)

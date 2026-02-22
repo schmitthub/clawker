@@ -26,7 +26,7 @@ All symbols are in `cmd.go`.
 - Errors logged via `logger.Debug().Err(err)` (always to file log)
 - `printUpdateNotification()` prints to stderr only if result is non-nil and stderr is a TTY
 
-Cache file: `~/.local/clawker/update-state.yaml` (via `updateStatePath()`).
+Cache file: `config.StateDir()/update-state.yaml` (via `updateStatePath()`).
 
 Suppressed when: `CLAWKER_NO_UPDATE_NOTIFIER` set, `CI` set, version is `"DEV"`, or cache is < 24h old.
 

@@ -22,7 +22,7 @@ import (
 // Additional methods provide clawker-specific high-level operations.
 type Client struct {
 	*whail.Engine
-	cfg *config.Config // lazily provides ProjectCfg() and Settings() for image resolution
+	cfg config.Config // lazily provides project and settings for image resolution
 
 	// BuildDefaultImageFunc overrides BuildDefaultImage when non-nil.
 	// Used by fawker/tests to inject fake build behavior.
@@ -54,15 +54,15 @@ func WithLabels(labels whail.LabelConfig) ClientOption {
 	}
 }
 
-func NewClient(ctx context.Context, cfg *config.Config, opts ...ClientOption) (*Client, error) {
+func NewClient(ctx context.Context, cfg config.Config, opts ...ClientOption) (*Client, error) {
 	var o clientOptions
 	for _, opt := range opts {
 		opt(&o)
 	}
 
 	engineOpts := whail.EngineOptions{
-		LabelPrefix:  EngineLabelPrefix,
-		ManagedLabel: EngineManagedLabel,
+		LabelPrefix:  cfg.EngineLabelPrefix(),
+		ManagedLabel: cfg.EngineManagedLabel(),
 		Labels:       o.labels,
 	}
 
@@ -74,9 +74,10 @@ func NewClient(ctx context.Context, cfg *config.Config, opts ...ClientOption) (*
 	return &Client{Engine: engine, cfg: cfg}, nil
 }
 
-// SetConfig sets the config gateway on the client. Intended for tests.
-func (c *Client) SetConfig(cfg *config.Config) {
-	c.cfg = cfg
+// NewClientFromEngine creates a Client from an existing Engine and config.
+// Intended for testing — production code should use NewClient.
+func NewClientFromEngine(engine *whail.Engine, cfg config.Config) *Client {
+	return &Client{Engine: engine, cfg: cfg}
 }
 
 // Close closes the underlying Docker connection.
@@ -100,7 +101,7 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	for _, ctr := range result.Items {
 		if ctr.NetworkSettings != nil {
 			for netName := range ctr.NetworkSettings.Networks {
-				if netName == "clawker-net" {
+				if netName == c.cfg.ClawkerNetwork() {
 					logger.Debug().Msg("monitoring stack detected as active")
 					return true
 				}
@@ -479,7 +480,7 @@ type Container struct {
 func (c *Client) ListContainers(ctx context.Context, includeAll bool) ([]Container, error) {
 	opts := whail.ContainerListOptions{
 		All:     includeAll,
-		Filters: ClawkerFilter(),
+		Filters: c.ClawkerFilter(),
 	}
 
 	result, err := c.ContainerList(ctx, opts)
@@ -487,14 +488,14 @@ func (c *Client) ListContainers(ctx context.Context, includeAll bool) ([]Contain
 		return nil, err
 	}
 
-	return parseContainers(result.Items), nil
+	return c.parseContainers(result.Items), nil
 }
 
 // ListContainersByProject returns containers for a specific project.
 func (c *Client) ListContainersByProject(ctx context.Context, project string, includeAll bool) ([]Container, error) {
 	opts := whail.ContainerListOptions{
 		All:     includeAll,
-		Filters: ProjectFilter(project),
+		Filters: c.ProjectFilter(project),
 	}
 
 	result, err := c.ContainerList(ctx, opts)
@@ -502,7 +503,7 @@ func (c *Client) ListContainersByProject(ctx context.Context, project string, in
 		return nil, err
 	}
 
-	return parseContainers(result.Items), nil
+	return c.parseContainers(result.Items), nil
 }
 
 // FindContainerByAgent finds a container by project and agent name.
@@ -536,8 +537,8 @@ func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID str
 		return err
 	}
 
-	project := info.Container.Config.Labels[LabelProject]
-	agent := info.Container.Config.Labels[LabelAgent]
+	project := info.Container.Config.Labels[c.cfg.LabelProject()]
+	agent := info.Container.Config.Labels[c.cfg.LabelAgent()]
 
 	// Stop container if running
 	if info.Container.State.Running {
@@ -583,8 +584,8 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 
 	// Try label-based lookup first
 	volumes, err := c.VolumeList(ctx, map[string]string{
-		LabelProject: project,
-		LabelAgent:   agent,
+		c.cfg.LabelProject(): project,
+		c.cfg.LabelAgent():   agent,
 	})
 	if err != nil {
 		logger.Warn().Err(err).Msg("failed to list volumes for cleanup, trying fallback")
@@ -655,7 +656,7 @@ func isNotFoundError(err error) bool {
 }
 
 // parseContainers converts Docker container list to Container slice.
-func parseContainers(containers []container.Summary) []Container {
+func (cl *Client) parseContainers(containers []container.Summary) []Container {
 	var result = make([]Container, 0, len(containers))
 	for _, c := range containers {
 		// Extract container name (remove leading slash)
@@ -668,7 +669,7 @@ func parseContainers(containers []container.Summary) []Container {
 		}
 
 		// Use label image if set, otherwise fall back to Docker-provided image
-		image := c.Labels[LabelImage]
+		image := c.Labels[cl.cfg.LabelImage()]
 		if image == "" {
 			image = c.Image
 		}
@@ -676,10 +677,10 @@ func parseContainers(containers []container.Summary) []Container {
 		result = append(result, Container{
 			ID:      c.ID,
 			Name:    name,
-			Project: c.Labels[LabelProject],
-			Agent:   c.Labels[LabelAgent],
+			Project: c.Labels[cl.cfg.LabelProject()],
+			Agent:   c.Labels[cl.cfg.LabelAgent()],
 			Image:   image,
-			Workdir: c.Labels[LabelWorkdir],
+			Workdir: c.Labels[cl.cfg.LabelWorkdir()],
 			Status:  string(c.State),
 			Created: c.Created,
 		})

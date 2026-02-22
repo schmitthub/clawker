@@ -1369,3 +1369,126 @@ func TestProgressModel_ProcessEvent_ErrorStep(t *testing.T) {
 	assert.Equal(t, StepError, m.steps[0].status)
 	assert.Equal(t, "exit code 1", m.steps[0].errMsg)
 }
+
+// ---------------------------------------------------------------------------
+// Error display tests
+// ---------------------------------------------------------------------------
+
+func TestPlainMode_ErrorStepWithLogLines(t *testing.T) {
+	tio := iostreamstest.New()
+	ch := make(chan ProgressStep, 10)
+
+	go sendProgressSteps(ch,
+		ProgressStep{ID: "s1", Name: "RUN npm install", Status: StepRunning},
+		ProgressStep{ID: "s1", LogLine: "npm ERR! code ERESOLVE"},
+		ProgressStep{ID: "s1", LogLine: "npm ERR! unable to resolve"},
+		ProgressStep{ID: "s1", Status: StepError, Error: "exit code: 1"},
+	)
+
+	cfg := testDisplayConfig()
+	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	assert.NoError(t, result.Err)
+
+	output := tio.ErrBuf.String()
+	// Log lines should appear after the [fail] line.
+	assert.Contains(t, output, "[fail]")
+	assert.Contains(t, output, "npm ERR! code ERESOLVE")
+	assert.Contains(t, output, "npm ERR! unable to resolve")
+	// Summary should show the error details.
+	assert.Contains(t, output, "exit code: 1")
+}
+
+func TestPlainMode_LogEventsStoredForErrors(t *testing.T) {
+	tio := iostreamstest.New()
+	ch := make(chan ProgressStep, 10)
+
+	// Log-only events (Name == "") should still be buffered.
+	go sendProgressSteps(ch,
+		ProgressStep{ID: "s1", Name: "RUN build", Status: StepRunning},
+		ProgressStep{ID: "s1", LogLine: "compiling..."},
+		ProgressStep{ID: "s1", LogLine: "error: missing semicolon"},
+		ProgressStep{ID: "s1", Name: "RUN build", Status: StepError, Error: "exit code: 2"},
+	)
+
+	cfg := testDisplayConfig()
+	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	assert.NoError(t, result.Err)
+
+	output := tio.ErrBuf.String()
+	assert.Contains(t, output, "error: missing semicolon")
+}
+
+func TestRenderStageNode_ErrorExpanded(t *testing.T) {
+	cs := iostreams.NewColorScheme(false, "") // no color for assertions
+	cfg := &ProgressDisplayConfig{}
+
+	stage := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{name: "FROM node:20", status: StepComplete, startTime: time.Now(), endTime: time.Now()},
+			{name: "RUN npm install", status: StepError, errMsg: "exit code: 1", startTime: time.Now(), endTime: time.Now()},
+		},
+	}
+
+	var buf strings.Builder
+	lines := renderStageNode(&buf, cs, cfg, stage, 5, 80)
+
+	output := buf.String()
+	// Error stage should be expanded (not collapsed).
+	assert.Contains(t, output, "FROM node:20", "completed step should be visible in expanded error stage")
+	assert.Contains(t, output, "RUN npm install", "error step should be visible")
+	assert.Greater(t, lines, 1, "expanded stage should have more than one line")
+}
+
+func TestRenderStageChildren_ErrorStepShowsLogs(t *testing.T) {
+	cs := iostreams.NewColorScheme(false, "")
+	cfg := &ProgressDisplayConfig{}
+
+	logBuf := newRingBuffer(3)
+	logBuf.Push("npm ERR! code ERESOLVE")
+	logBuf.Push("npm ERR! unable to resolve")
+
+	stage := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{name: "FROM node:20", status: StepComplete, startTime: time.Now(), endTime: time.Now()},
+			{name: "RUN npm install", status: StepError, logBuf: logBuf, startTime: time.Now(), endTime: time.Now()},
+		},
+	}
+
+	var buf strings.Builder
+	renderStageChildren(&buf, cs, cfg, stage, 5, 80)
+
+	output := buf.String()
+	assert.Contains(t, output, "npm ERR! code ERESOLVE", "log lines should be shown for error steps")
+	assert.Contains(t, output, "npm ERR! unable to resolve")
+}
+
+func TestRenderProgressSummary_ErrorWithDetails(t *testing.T) {
+	tio := iostreamstest.New()
+
+	logBuf := newRingBuffer(3)
+	logBuf.Push("npm ERR! code ERESOLVE")
+
+	steps := []*progressStep{
+		{name: "FROM node:20", status: StepComplete},
+		{name: "RUN npm install", status: StepError, errMsg: "exit code: 1", logBuf: logBuf},
+	}
+
+	cfg := &ProgressDisplayConfig{
+		Title:    "Building test",
+		Subtitle: "test:latest",
+	}
+
+	renderProgressSummary(tio.IOStreams, cfg, steps, time.Now())
+
+	output := tio.ErrBuf.String()
+	// Summary should show the failed step name.
+	assert.Contains(t, output, "RUN npm install")
+	// Summary should show log lines.
+	assert.Contains(t, output, "npm ERR! code ERESOLVE")
+	// Summary should show the error message.
+	assert.Contains(t, output, "exit code: 1")
+	// Summary should show overall failure.
+	assert.Contains(t, output, "failed")
+}

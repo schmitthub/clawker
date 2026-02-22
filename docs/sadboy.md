@@ -1,3 +1,7 @@
+---
+title: "The Sorrows of Token Boy"
+---
+
 # The Sorrows of Token Boy
 
 > *"Once upon a midnight dreary, while I pondered, weak and weary,

@@ -12,10 +12,9 @@ func TestConfigBuilder_NewConfigBuilder(t *testing.T) {
 	builder := NewConfigBuilder()
 	cfg := builder.Build()
 
-	assert.Equal(t, "1", cfg.Version)
-	assert.Empty(t, cfg.Project)
 	assert.Equal(t, "/workspace", cfg.Workspace.RemotePath)
 	assert.Equal(t, "bind", cfg.Workspace.DefaultMode)
+	assert.Empty(t, cfg.Build.Image)
 }
 
 func TestConfigBuilder_Fluent(t *testing.T) {
@@ -25,36 +24,26 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 		verify func(t *testing.T, cfg *config.Project)
 	}{
 		{
-			name: "WithProject",
+			name: "WithProject is a no-op",
 			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithProject("my-project").
 					Build()
 			},
 			verify: func(t *testing.T, cfg *config.Project) {
-				assert.Equal(t, "my-project", cfg.Project)
+				// WithProject is a no-op — project identity comes from ProjectManager
+				assert.Equal(t, "/workspace", cfg.Workspace.RemotePath)
 			},
 		},
 		{
-			name: "WithVersion",
-			build: func() *config.Project {
-				return NewConfigBuilder().
-					WithVersion("2").
-					Build()
-			},
-			verify: func(t *testing.T, cfg *config.Project) {
-				assert.Equal(t, "2", cfg.Version)
-			},
-		},
-		{
-			name: "WithDefaultImage",
+			name: "WithDefaultImage sets build image",
 			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithDefaultImage("clawker-custom:v1").
 					Build()
 			},
 			verify: func(t *testing.T, cfg *config.Project) {
-				assert.Equal(t, "clawker-custom:v1", cfg.DefaultImage)
+				assert.Equal(t, "clawker-custom:v1", cfg.Build.Image)
 			},
 		},
 		{
@@ -124,15 +113,13 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 			name: "Chained fluent calls",
 			build: func() *config.Project {
 				return NewConfigBuilder().
-					WithProject("chained").
 					WithDefaultImage("test:latest").
 					WithBuild(DefaultBuild()).
 					WithSecurity(SecurityFirewallEnabled()).
 					Build()
 			},
 			verify: func(t *testing.T, cfg *config.Project) {
-				assert.Equal(t, "chained", cfg.Project)
-				assert.Equal(t, "test:latest", cfg.DefaultImage)
+				// WithBuild overwrites the build image set by WithDefaultImage
 				assert.Equal(t, "buildpack-deps:bookworm-scm", cfg.Build.Image)
 				require.NotNil(t, cfg.Security.Firewall)
 				assert.True(t, cfg.Security.Firewall.Enable)
@@ -142,7 +129,6 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 			name: "ForTestBaseImage",
 			build: func() *config.Project {
 				return NewConfigBuilder().
-					WithProject("test").
 					WithBuild(config.BuildConfig{
 						Image:    "buildpack-deps:bookworm-scm",
 						Packages: []string{"git", "curl", "ripgrep"},
@@ -167,32 +153,26 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 
 func TestConfigBuilder_Immutability(t *testing.T) {
 	// Build should return a copy, not a reference to internal state
-	builder := NewConfigBuilder().WithProject("original")
+	builder := NewConfigBuilder().WithDefaultImage("original:latest")
 	cfg1 := builder.Build()
-	cfg1.Project = "modified"
+	cfg1.Build.Image = "modified:latest"
 	cfg2 := builder.Build()
 
-	assert.Equal(t, "original", cfg2.Project, "modifying returned config should not affect builder")
+	assert.Equal(t, "original:latest", cfg2.Build.Image, "modifying returned config should not affect builder")
 }
 
 func TestMinimalValidConfig(t *testing.T) {
 	cfg := MinimalValidConfig().Build()
 
-	assert.Equal(t, "1", cfg.Version)
-	assert.Equal(t, "test-project", cfg.Project)
 	assert.Equal(t, "buildpack-deps:bookworm-scm", cfg.Build.Image)
+	assert.Equal(t, "/workspace", cfg.Workspace.RemotePath)
 }
 
 func TestFullFeaturedConfig(t *testing.T) {
 	cfg := FullFeaturedConfig().Build()
 
-	// Basic fields
-	assert.Equal(t, "1", cfg.Version)
-	assert.Equal(t, "test-project", cfg.Project)
-	assert.Equal(t, "clawker-test:latest", cfg.DefaultImage)
-
 	// Build
-	assert.Equal(t, "buildpack-deps:bookworm-scm", cfg.Build.Image)
+	assert.Equal(t, "clawker-test:latest", cfg.Build.Image)
 	assert.Contains(t, cfg.Build.Packages, "git")
 	require.NotNil(t, cfg.Build.Instructions)
 	assert.Equal(t, "development", cfg.Build.Instructions.Env["NODE_ENV"])

@@ -11,11 +11,12 @@ import (
 	mobyclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/socketbridge"
-	"github.com/schmitthub/clawker/internal/socketbridge/socketbridgetest"
+	sockebridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 	"github.com/stretchr/testify/require"
 )
 
@@ -85,8 +86,8 @@ func TestNewCmdRemove(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
-				Config: func() *config.Config {
-					return config.NewConfigForTest(nil, nil)
+				Config: func() (config.Config, error) {
+					return configmocks.NewBlankConfig(), nil
 				},
 			}
 
@@ -149,7 +150,7 @@ func TestCmdRemove_Properties(t *testing.T) {
 // --- Tier 2: Cobra+Factory integration tests ---
 
 func TestRemoveRun_StopsBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -160,8 +161,8 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 		return mobyclient.ContainerRemoveResult{}, nil
 	}
 
-	mock := socketbridgetest.NewMockManager()
-	mock.StopBridgeFn = func(_ string) error {
+	mock := sockebridgemocks.NewMockManager()
+	mock.StopBridgeFunc = func(_ string) error {
 		require.False(t, dockerRemoveCalled, "bridge must stop before docker remove")
 		return nil
 	}
@@ -177,12 +178,12 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 	require.NoError(t, err)
 
 	// Both operations were called
-	require.True(t, mock.CalledWith("StopBridge", fixture.ID))
+	require.True(t, sockebridgemocks.CalledWith(mock, "StopBridge", fixture.ID))
 	fake.AssertCalled(t, "ContainerRemove")
 }
 
 func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -190,8 +191,8 @@ func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
 		return mobyclient.ContainerRemoveResult{}, nil
 	}
 
-	mock := socketbridgetest.NewMockManager()
-	mock.StopBridgeFn = func(_ string) error {
+	mock := sockebridgemocks.NewMockManager()
+	mock.StopBridgeFunc = func(_ string) error {
 		return fmt.Errorf("bridge not found")
 	}
 	f, tio := testFactory(t, fake, mock)
@@ -206,12 +207,12 @@ func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
 	require.NoError(t, err)
 
 	// Bridge error was best-effort — remove still succeeded
-	require.True(t, mock.CalledWith("StopBridge", fixture.ID))
+	require.True(t, sockebridgemocks.CalledWith(mock, "StopBridge", fixture.ID))
 	fake.AssertCalled(t, "ContainerRemove")
 }
 
 func TestRemoveRun_NilSocketBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -235,7 +236,7 @@ func TestRemoveRun_NilSocketBridge(t *testing.T) {
 }
 
 func TestRemoveRun_WithVolumes(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -285,8 +286,8 @@ func TestRemoveRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -303,7 +304,7 @@ func TestRemoveRun_DockerConnectionError(t *testing.T) {
 
 // --- Per-package test helpers ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgetest.MockManager) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 	tio := iostreamstest.New()
 
@@ -312,8 +313,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgete
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 

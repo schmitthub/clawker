@@ -15,7 +15,7 @@ import (
 
 type InitOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() *config.Config
+	Config    func() (config.Config, error)
 
 	Force bool
 }
@@ -64,8 +64,13 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
 	// Resolve monitor directory
-	monitorDir, err := config.MonitorDir()
+	monitorDir, err := cfg.MonitorSubdir()
 	if err != nil {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
@@ -73,15 +78,11 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	ios.Logger.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
 
 	// Get monitoring config for template rendering
-	settings := opts.Config().Settings
-	tmplData := monitor.NewMonitorTemplateData(&settings.Monitoring)
+	monCfg := cfg.MonitoringConfig()
+	tmplData := monitor.NewMonitorTemplateData(&monCfg)
 
-	// Ensure directory exists
-	fmt.Fprintf(ios.ErrOut, "%s Checking configuration directory...\n", cs.InfoIcon())
-	if err := config.EnsureDir(monitorDir); err != nil {
-		return fmt.Errorf("failed to create monitor directory: %w", err)
-	}
-	fmt.Fprintf(ios.ErrOut, "%s Created directory: %s\n", cs.InfoIcon(), monitorDir)
+	// MonitorSubdir() ensures the directory exists
+	fmt.Fprintf(ios.ErrOut, "%s Configuration directory: %s\n", cs.InfoIcon(), monitorDir)
 
 	// Define files to write — templates are rendered, static files are written as-is
 	type fileEntry struct {
@@ -129,8 +130,8 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	fmt.Fprintln(ios.ErrOut, "Next Steps:")
 	fmt.Fprintln(ios.ErrOut, "  1. Start the stack:")
 	fmt.Fprintln(ios.ErrOut, "     clawker monitor up")
-	fmt.Fprintf(ios.ErrOut, "  2. Open Grafana at %s (No login required)\n", settings.Monitoring.GrafanaURL())
-	fmt.Fprintf(ios.ErrOut, "  3. Open Jaeger at %s\n", settings.Monitoring.JaegerURL())
+	fmt.Fprintf(ios.ErrOut, "  2. Open Grafana at %s (No login required)\n", cfg.GrafanaURL("localhost", false))
+	fmt.Fprintf(ios.ErrOut, "  3. Open Jaeger at %s\n", cfg.JaegerURL("localhost", false))
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintln(ios.ErrOut, "Note: The monitoring stack uses the clawker-net Docker network.")
 	fmt.Fprintln(ios.ErrOut, "      Run 'clawker start' or 'clawker run' to create the network if needed.")

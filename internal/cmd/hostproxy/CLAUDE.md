@@ -18,14 +18,16 @@ Hidden daemon management commands for the host proxy subprocess. Internal use on
 
 ```go
 func NewCmdHostProxy() *cobra.Command  // Hidden parent command group
-func NewCmdServe() *cobra.Command      // Flags: --port, --pid-file, --poll-interval, --grace-period
-func NewCmdStatus() *cobra.Command     // No flags; reads PID file
+func NewCmdServe() *cobra.Command      // Flags: --port, --poll-interval, --grace-period
+func NewCmdStatus() *cobra.Command     // No flags; reads PID file from config
 func NewCmdStop() *cobra.Command       // Flags: --wait duration
 ```
 
-## Pattern: No Factory
+## Pattern: Config + Functional Options
 
-Unlike most cmd packages, these commands do NOT accept `*cmdutil.Factory`. They construct options via `hostproxy.DefaultDaemonOptions()` directly. This is appropriate for internal daemon management.
+Commands load config via `config.NewConfig()`. `serve` collects changed flags into `[]hostproxy.DaemonOption` functional options, then calls `hostproxy.NewDaemon(cfg, opts...)`. This allows CLI flags to override config values without mutating the config object. PID file always comes from `cfg.HostProxyPIDFilePath()` (no `--pid-file` flag).
+
+`status` and `stop` read PID file path from `cfg.HostProxyPIDFilePath()` directly.
 
 ## Integration
 

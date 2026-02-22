@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"github.com/schmitthub/clawker/internal/config"
 )
 
 // ImageSource indicates where an image reference was resolved from.
@@ -14,7 +12,6 @@ type ImageSource string
 const (
 	ImageSourceExplicit ImageSource = "explicit" // User specified via CLI or args
 	ImageSourceProject  ImageSource = "project"  // Found via project label search
-	ImageSourceDefault  ImageSource = "default"  // From config/settings default_image
 )
 
 // ResolvedImage contains the result of image resolution with source tracking.
@@ -23,39 +20,17 @@ type ResolvedImage struct {
 	Source    ImageSource // Where the image was resolved from
 }
 
-// ResolveDefaultImage returns the default_image from merged config/settings.
-// Local project config takes precedence over user settings.
-// Returns empty string if not configured.
-func ResolveDefaultImage(cfg *config.Project, settings *config.Settings) string {
-	// Local project config takes precedence
-	if cfg != nil && cfg.DefaultImage != "" {
-		return cfg.DefaultImage
-	}
-
-	// Fall back to user settings
-	if settings != nil && settings.DefaultImage != "" {
-		return settings.DefaultImage
-	}
-
-	return ""
-}
-
 // findProjectImage searches for a clawker-managed image matching the project label
 // with the :latest tag. Returns the image reference (name:tag) if found,
-// or empty string if not found.
-func (c *Client) findProjectImage(ctx context.Context) (string, error) {
-	if c.cfg == nil {
+// or empty string if not found. projectName is the resolved project identity
+// (from ProjectManager); empty string means no registered project.
+func (c *Client) findProjectImage(ctx context.Context, projectName string) (string, error) {
+	if projectName == "" {
 		return "", nil
 	}
 
-	cfg := c.cfg.Project
-	if cfg.Project == "" {
-		return "", nil
-	}
-
-	f := Filters{}.
-		Add("label", LabelManaged+"="+ManagedLabelValue).
-		Add("label", LabelProject+"="+cfg.Project)
+	f := c.ClawkerFilter().
+		Add("label", c.cfg.LabelProject()+"="+projectName)
 
 	result, err := c.ImageList(ctx, ImageListOptions{
 		Filters: f,
@@ -76,9 +51,10 @@ func (c *Client) findProjectImage(ctx context.Context) (string, error) {
 }
 
 // ResolveImage resolves the image reference to use.
+// projectName is the resolved project identity (from ProjectManager); empty for unregistered projects.
 // Returns empty string if no image could be resolved.
-func (c *Client) ResolveImage(ctx context.Context) (string, error) {
-	result, err := c.ResolveImageWithSource(ctx)
+func (c *Client) ResolveImage(ctx context.Context, projectName string) (string, error) {
+	result, err := c.ResolveImageWithSource(ctx, projectName)
 	if err != nil {
 		return "", err
 	}
@@ -89,30 +65,16 @@ func (c *Client) ResolveImage(ctx context.Context) (string, error) {
 }
 
 // ResolveImageWithSource resolves the image to use for container operations.
-// Resolution order:
-// 1. ProjectCfg image with :latest tag (by label lookup)
-// 2. Merged default_image from config/settings
-//
+// projectName is the resolved project identity (from ProjectManager); empty for unregistered projects.
+// Resolution: finds a clawker-managed image matching the project label with :latest tag.
 // Returns nil if no image could be resolved (caller decides what to do).
-func (c *Client) ResolveImageWithSource(ctx context.Context) (*ResolvedImage, error) {
-	if c.cfg == nil {
-		return nil, nil
-	}
-
-	// 1. Try to find a project image with :latest tag
-	projectImage, err := c.findProjectImage(ctx)
+func (c *Client) ResolveImageWithSource(ctx context.Context, projectName string) (*ResolvedImage, error) {
+	projectImage, err := c.findProjectImage(ctx, projectName)
 	if err != nil {
 		return nil, fmt.Errorf("auto-detect project image: %w", err)
 	}
 	if projectImage != "" {
 		return &ResolvedImage{Reference: projectImage, Source: ImageSourceProject}, nil
-	}
-
-	// 2. Try merged default_image from config/settings
-	cfg := c.cfg.Project
-	settings := c.cfg.Settings
-	if defaultImage := ResolveDefaultImage(cfg, settings); defaultImage != "" {
-		return &ResolvedImage{Reference: defaultImage, Source: ImageSourceDefault}, nil
 	}
 
 	return nil, nil

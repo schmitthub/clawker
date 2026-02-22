@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -29,7 +30,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 
 func TestImageList_Rendering(t *testing.T) {
 	t.Run("table_output", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupImageList(
 			dockertest.ImageSummaryFixture("clawker-fawker-demo:latest"),
 			dockertest.ImageSummaryFixture("node:20-slim"),
@@ -58,7 +59,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("quiet_mode", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupImageList(
 			dockertest.ImageSummaryFixture("clawker-fawker-demo:latest"),
 			dockertest.ImageSummaryFixture("node:20-slim"),
@@ -81,7 +82,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("empty_list", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupImageList()
 
 		f, tio := testFactory(t, fake)
@@ -99,7 +100,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("untagged_image", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		untagged := docker.ImageSummary{
 			ID:       "sha256:deadbeef1234567890deadbeef1234567890deadbeef1234567890deadbeef1234",
 			RepoTags: nil,
@@ -124,7 +125,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("multi_tag_image", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		multiTag := docker.ImageSummary{
 			ID:       "sha256:a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890",
 			RepoTags: []string{"myapp:latest", "myapp:v1.0"},
@@ -149,7 +150,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("error_propagation", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.FakeAPI.ImageListFn = func(_ context.Context, _ docker.ImageListOptions) (docker.ImageListResult, error) {
 			return docker.ImageListResult{}, fmt.Errorf("connection refused")
 		}
@@ -167,7 +168,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("json_output", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupImageList(
 			dockertest.ImageSummaryFixture("clawker-fawker-demo:latest"),
 			dockertest.ImageSummaryFixture("node:20-slim"),
@@ -192,7 +193,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("format_json", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupImageList(dockertest.ImageSummaryFixture("myapp:v1"))
 
 		f, tio := testFactory(t, fake)
@@ -210,7 +211,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("template_output", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupImageList(
 			dockertest.ImageSummaryFixture("clawker-fawker-demo:latest"),
 			dockertest.ImageSummaryFixture("node:20-slim"),
@@ -233,7 +234,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("filter_reference", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupImageList(
 			dockertest.ImageSummaryFixture("clawker-fawker-demo:latest"),
 			dockertest.ImageSummaryFixture("node:20-slim"),
@@ -255,7 +256,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("filter_no_match", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupImageList(
 			dockertest.ImageSummaryFixture("clawker-fawker-demo:latest"),
 		)
@@ -275,7 +276,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("invalid_filter_key", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupImageList(dockertest.ImageSummaryFixture("myapp:v1"))
 
 		f, tio := testFactory(t, fake)
@@ -291,7 +292,7 @@ func TestImageList_Rendering(t *testing.T) {
 	})
 
 	t.Run("quiet_and_json_exclusive", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupImageList(dockertest.ImageSummaryFixture("myapp:v1"))
 
 		f, tio := testFactory(t, fake)

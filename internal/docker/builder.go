@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -14,9 +15,10 @@ import (
 
 // Builder handles Docker image building for clawker projects.
 type Builder struct {
-	client  *Client
-	config  *config.Project
-	workDir string
+	client      *Client
+	config      *config.Project
+	workDir     string
+	projectName string
 }
 
 // BuilderOptions contains options for build operations.
@@ -54,11 +56,13 @@ func (o BuilderOptions) toBuildImageOpts(tags []string, dockerfile string, conte
 }
 
 // NewBuilder creates a new Builder instance.
-func NewBuilder(cli *Client, cfg *config.Project, workDir string) *Builder {
+// projectName is the resolved project identity (from ProjectManager); empty string for unregistered projects.
+func NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string) *Builder {
 	return &Builder{
-		client:  cli,
-		config:  cfg,
-		workDir: workDir,
+		client:      cli,
+		config:      cfg,
+		workDir:     workDir,
+		projectName: projectName,
 	}
 }
 
@@ -88,7 +92,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Builder
 		return fmt.Errorf("failed to compute content hash: %w", err)
 	}
 
-	hashTag := ImageTagWithHash(b.config.Project, hash)
+	hashTag := ImageTagWithHash(b.projectName, hash)
 
 	// Check if content-addressed image already exists
 	if !opts.ForceBuild {
@@ -207,7 +211,7 @@ func (b *Builder) mergeImageLabels(existing map[string]string) map[string]string
 	}
 
 	// Add clawker internal labels last — these cannot be overridden
-	for k, v := range ImageLabels(b.config.Project, b.config.Version) {
+	for k, v := range b.client.ImageLabels(b.projectName, build.Version) {
 		merged[k] = v
 	}
 

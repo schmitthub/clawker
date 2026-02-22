@@ -189,9 +189,6 @@ func ImageTagWithHash(project, hash string) string {
 	return fmt.Sprintf("%s-%s:sha-%s", NamePrefix, project, hash)
 }
 
-// NetworkName is the name of the clawker network.
-const NetworkName = "clawker-net"
-
 // GlobalVolumeName returns the name for a global (non-agent-scoped) volume.
 // Example: GlobalVolumeName("globals") → "clawker-globals"
 func GlobalVolumeName(purpose string) string {

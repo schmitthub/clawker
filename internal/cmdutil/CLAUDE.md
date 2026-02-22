@@ -13,7 +13,7 @@ Heavy command helpers have been extracted to dedicated packages:
 | File | Purpose |
 |------|---------|
 | `factory.go` | `Factory` -- pure struct with closure fields (no methods, no construction logic) |
-| `output.go` | Deprecated: `HandleError`, `PrintError`, `PrintWarning`, `PrintNextSteps`, `PrintStatus`, `OutputJSON`, `PrintHelpHint` |
+| `output.go` | Deprecated: `HandleError`, `PrintNextSteps`, `PrintErrorf`, `OutputJSON`, `PrintHelpHint` |
 | `errors.go` | `ExitError`, `FlagError`, `FlagErrorf`, `FlagErrorWrap`, `SilentError` — typed error vocabulary for centralized rendering |
 | `required.go` | `NoArgs`, `ExactArgs`, `RequiresMinArgs`, `RequiresMaxArgs`, `RequiresRangeArgs`, `AgentArgsValidator`, `AgentArgsValidatorExact` |
 | `project.go` | `ErrAborted` sentinel (stdlib only) |
@@ -36,7 +36,7 @@ type Factory struct {
 
     // Lazy nouns (each returns a thing; commands call methods on the thing)
     Client       func(context.Context) (*docker.Client, error)
-    Config       func() *config.Config
+    Config       func() config.Provider
     GitManager   func() (*git.GitManager, error)
     HostProxy    func() hostproxy.HostProxyService
     SocketBridge func() socketbridge.SocketBridgeManager
@@ -48,13 +48,13 @@ type Factory struct {
 - `Version`, `IOStreams` -- set eagerly at construction
 - `TUI` -- eager `*tui.TUI` presentation layer noun; commands call `.RunProgress()` on it. Hooks are registered post-construction via `.RegisterHooks()` (pointer sharing ensures commands see hooks registered in PersistentPreRunE)
 - `Client(ctx)` -- lazy Docker client (connects on first call)
-- `Config()` -- returns `*config.Config` gateway (which itself lazy-loads Project, Settings, Resolution, Registry)
+- `Config()` -- returns `config.Provider` gateway interface (which lazy-loads project, settings, registry via `sync.Once`)
 - `GitManager()` -- lazy git manager for worktree operations; uses project root from Config.Project.RootDir()
 - `HostProxy()` -- returns `hostproxy.HostProxyService` (interface); commands call `.EnsureRunning()` / `.IsRunning()` / `.ProxyURL()` on it. Mock: `hostproxytest.MockManager`
-- `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `socketbridgetest.MockManager`
+- `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `sockebridgemocks.MockManager`
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
 
-**Config gateway pattern:** Instead of separate `f.Settings()`, `f.Registry()`, `f.Resolution()` fields, commands now use `f.Config().Settings()`, `f.Config().Registry()`, `f.Config().Resolution()`, etc.
+**Config gateway pattern:** Commands use `f.Config().ProjectCfg()`, `f.Config().UserSettings()`, `f.Config().ProjectKey()`, `f.Config().WorkDir()`, `f.Config().ProjectRegistry()`, `f.Config().SettingsLoader()`, etc.
 
 **Testing:** Construct minimal Factory structs directly:
 ```go
@@ -73,7 +73,7 @@ Commands that use `opts.TUI.RunProgress()` require the `TUI` field. Commands tha
 
 None — all output helpers are deprecated. Use `fmt.Fprintf` with `ios.ColorScheme()` directly.
 
-**Deprecated** (`output.go`): `HandleError`, `PrintError`, `PrintWarning`, `PrintNextSteps`, `PrintStatus`, `OutputJSON`, `PrintHelpHint` — use `fmt.Fprintf` with `ios.ColorScheme()` directly.
+**Deprecated** (`output.go`): `HandleError`, `PrintNextSteps`, `PrintErrorf`, `OutputJSON`, `PrintHelpHint` — use `fmt.Fprintf` with `ios.ColorScheme()` directly.
 
 ### Error Types (`errors.go`)
 

@@ -2,6 +2,7 @@ package buildkit
 
 import (
 	"testing"
+	"time"
 
 	bkclient "github.com/moby/buildkit/client"
 	digest "github.com/opencontainers/go-digest"
@@ -10,6 +11,72 @@ import (
 
 	"github.com/schmitthub/clawker/pkg/whail"
 )
+
+func TestDrainProgress_ErrorVertex_CallbackReceivesEvent(t *testing.T) {
+	ch := make(chan *bkclient.SolveStatus, 1)
+	vertexDigest := digest.FromString("error-vertex")
+
+	started := ptrTime()
+	ch <- &bkclient.SolveStatus{
+		Vertexes: []*bkclient.Vertex{
+			{Digest: vertexDigest, Name: "RUN failing-command", Started: started, Error: "exit code: 1"},
+		},
+	}
+	close(ch)
+
+	var events []whail.BuildProgressEvent
+	drainProgress(ch, func(event whail.BuildProgressEvent) {
+		events = append(events, event)
+	})
+
+	require.Len(t, events, 1, "should receive exactly one error event")
+	assert.Equal(t, whail.BuildStepError, events[0].Status)
+	assert.Equal(t, "exit code: 1", events[0].Error)
+	assert.Equal(t, "RUN failing-command", events[0].StepName)
+}
+
+func TestDrainProgress_ErrorVertex_NilCallback(t *testing.T) {
+	// When no callback is provided, error vertices should not panic.
+	ch := make(chan *bkclient.SolveStatus, 1)
+	vertexDigest := digest.FromString("error-vertex")
+
+	ch <- &bkclient.SolveStatus{
+		Vertexes: []*bkclient.Vertex{
+			{Digest: vertexDigest, Name: "RUN failing", Error: "exit code: 1"},
+		},
+	}
+	close(ch)
+
+	// Should not panic with nil callback.
+	drainProgress(ch, nil)
+}
+
+func TestDrainProgress_NilCallback_SkipsProcessing(t *testing.T) {
+	// With nil callback, non-error vertices and logs are skipped silently.
+	ch := make(chan *bkclient.SolveStatus, 2)
+	vertexDigest := digest.FromString("vertex")
+	started := ptrTime()
+
+	ch <- &bkclient.SolveStatus{
+		Vertexes: []*bkclient.Vertex{
+			{Digest: vertexDigest, Name: "RUN build", Started: started},
+		},
+	}
+	ch <- &bkclient.SolveStatus{
+		Logs: []*bkclient.VertexLog{
+			{Vertex: vertexDigest, Data: []byte("output\n")},
+		},
+	}
+	close(ch)
+
+	// Should not panic with nil callback.
+	drainProgress(ch, nil)
+}
+
+func ptrTime() *time.Time {
+	t := time.Now()
+	return &t
+}
 
 func TestDrainProgress_CarriageReturnStripping(t *testing.T) {
 	// BuildKit tools (apt-get, pip, npm) emit CR-based progress bars.
@@ -70,7 +137,7 @@ func TestDrainProgress_CarriageReturnStripping(t *testing.T) {
 			close(ch)
 
 			var logLines []string
-			drainProgress(ch, false, func(event whail.BuildProgressEvent) {
+			drainProgress(ch, func(event whail.BuildProgressEvent) {
 				if event.LogLine != "" {
 					logLines = append(logLines, event.LogLine)
 				}

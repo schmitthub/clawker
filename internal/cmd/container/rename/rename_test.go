@@ -10,6 +10,7 @@ import (
 	mobyclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -51,8 +52,8 @@ func TestNewCmdRename(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
-				Config: func() *config.Config {
-					return config.NewConfigForTest(nil, nil)
+				Config: func() (config.Config, error) {
+					return configmocks.NewBlankConfig(), nil
 				},
 			}
 
@@ -116,14 +117,14 @@ func testRenameFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Fact
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}, tio
 }
 
 func TestRenameRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerRename()
@@ -150,8 +151,8 @@ func TestRenameRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -167,7 +168,7 @@ func TestRenameRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestRenameRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testRenameFactory(t, fake)
@@ -184,7 +185,7 @@ func TestRenameRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestRenameRun_RenameAPIError(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	// Set up rename to fail

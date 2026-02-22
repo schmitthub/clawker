@@ -48,8 +48,8 @@ func TestContainerExec_BasicCommands(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"}, // Sleep for 5 minutes
 			Labels: map[string]string{
-				docker.LabelProject: "exec-test",
-				docker.LabelAgent:   agentName,
+				_blankCfg.LabelProject(): "exec-test",
+				_blankCfg.LabelAgent():   agentName,
 			},
 		},
 	})
@@ -156,8 +156,8 @@ func TestContainerExec_WithAgent(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				docker.LabelProject: "exec-agent-test",
-				docker.LabelAgent:   agentName,
+				_blankCfg.LabelProject(): "exec-agent-test",
+				_blankCfg.LabelAgent():   agentName,
 			},
 		},
 	})
@@ -220,8 +220,8 @@ func TestContainerExec_EnvFlag(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				docker.LabelProject: "exec-env-test",
-				docker.LabelAgent:   agentName,
+				_blankCfg.LabelProject(): "exec-env-test",
+				_blankCfg.LabelAgent():   agentName,
 			},
 		},
 	})
@@ -287,8 +287,8 @@ func TestContainerExec_ErrorCases(t *testing.T) {
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: map[string]string{
-					docker.LabelProject: "exec-error-test",
-					docker.LabelAgent:   agentName,
+					_blankCfg.LabelProject(): "exec-error-test",
+					_blankCfg.LabelAgent():   agentName,
 				},
 			},
 		})
@@ -330,8 +330,8 @@ func TestContainerExec_ErrorCases(t *testing.T) {
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: map[string]string{
-					docker.LabelProject: "exec-error-test",
-					docker.LabelAgent:   agentName,
+					_blankCfg.LabelProject(): "exec-error-test",
+					_blankCfg.LabelAgent():   agentName,
 				},
 			},
 		})
@@ -395,8 +395,8 @@ func TestContainerExec_ScriptExecution(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				docker.LabelProject: "exec-script-test",
-				docker.LabelAgent:   agentName,
+				_blankCfg.LabelProject(): "exec-script-test",
+				_blankCfg.LabelAgent():   agentName,
 			},
 		},
 	})

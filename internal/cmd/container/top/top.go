@@ -6,29 +6,28 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 )
 
 // TopOptions holds options for the top command.
 type TopOptions struct {
-	TUI    *tui.TUI
-	Client func(context.Context) (*docker.Client, error)
-	Config func() *config.Config
+	TUI            *tui.TUI
+	Client         func(context.Context) (*docker.Client, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Agent bool
-
-	Args []string
+	Args  []string
 }
 
 // NewCmdTop creates a new top command.
 func NewCmdTop(f *cmdutil.Factory, runF func(context.Context, *TopOptions) error) *cobra.Command {
 	opts := &TopOptions{
-		TUI:    f.TUI,
-		Client: f.Client,
-		Config: f.Config,
+		TUI:            f.TUI,
+		Client:         f.Client,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -76,8 +75,16 @@ func topRun(ctx context.Context, opts *TopOptions) error {
 	psArgs := opts.Args[1:]
 
 	if opts.Agent {
+		var projectName string
+		if opts.ProjectManager != nil {
+			if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+				if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+					projectName = p.Name()
+				}
+			}
+		}
 		// Resolve agent name to full container name
-		containers, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, []string{containerName})
+		containers, err := docker.ContainerNamesFromAgents(projectName, []string{containerName})
 		if err != nil {
 			return err
 		}

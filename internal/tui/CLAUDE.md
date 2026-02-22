@@ -41,7 +41,7 @@ All models use value semantics — setters return new copies. Each has `Init()`,
 
 ### SpinnerModel (`spinner.go`)
 
-Types: `SpinnerDots`, `SpinnerLine`, `SpinnerMiniDots`, `SpinnerJump`, `SpinnerPulse`, `SpinnerPoints`, `SpinnerGlobe`, `SpinnerMoon`, `SpinnerMonkey`. `NewSpinner(type, label)`, `NewDefaultSpinner(label)`. Setters: `SetLabel`, `SetSpinnerType`.
+Types: `SpinnerDots`, `SpinnerLine`, `SpinnerMiniDots`, `SpinnerJump`, `SpinnerPulse`, `SpinnerPoints`, `SpinnerGlobe`, `SpinnerMoon`, `SpinnerMonkey`. `SpinnerTickMsg` (type alias for `spinner.TickMsg`). `NewSpinner(type, label)`, `NewDefaultSpinner(label)`. Setters: `SetLabel`, `SetSpinnerType`.
 
 ### PanelModel (`panel.go`)
 
@@ -153,7 +153,7 @@ Three standalone BubbleTea field models. All use value semantics.
 
 **SelectField**: `NewSelectField(id, prompt, options, defaultIdx)`. Arrow-key selection. Methods: `Value()`, `SelectedIndex()`, `IsConfirmed()`, `SetSize(w, h)`.
 
-**TextField**: `NewTextField(id, prompt, opts...)` with `WithPlaceholder/Default/Validator/Required`. Methods: `Value()`, `IsConfirmed()`, `Err()`, `SetSize(w, h)`.
+**TextField**: `NewTextField(id, prompt, opts ...TextFieldOption)` with `WithPlaceholder/Default/Validator/Required`. `TextFieldOption` is `func(*TextField)`. Methods: `Value()`, `IsConfirmed()`, `Err()`, `SetSize(w, h)`.
 
 **ConfirmField**: `NewConfirmField(id, prompt, defaultYes)`. Left/Right/Tab toggle. Methods: `Value()` ("yes"/"no"), `BoolValue()`, `IsConfirmed()`, `SetSize(w, h)`.
 

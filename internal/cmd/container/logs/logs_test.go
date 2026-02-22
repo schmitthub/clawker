@@ -9,6 +9,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -104,8 +105,8 @@ func TestNewCmdLogs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
-				Config: func() *config.Config {
-					return config.NewConfigForTest(nil, nil)
+				Config: func() (config.Config, error) {
+					return configmocks.NewBlankConfig(), nil
 				},
 			}
 
@@ -189,14 +190,14 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}, tio
 }
 
 func TestLogsRun_HappyPath(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerLogs("line1\nline2\nline3\n")
@@ -220,8 +221,8 @@ func TestLogsRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -237,7 +238,7 @@ func TestLogsRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestLogsRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
 	f, tio := testFactory(t, fake)
@@ -253,7 +254,7 @@ func TestLogsRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestLogsRun_WithTailFlag(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerLogs("last line\n")

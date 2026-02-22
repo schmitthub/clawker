@@ -8,13 +8,15 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // StatusOptions holds options for the loop status command.
 type StatusOptions struct {
-	IOStreams *iostreams.IOStreams
-	Config    func() *config.Config
+	IOStreams      *iostreams.IOStreams
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Agent string
 	JSON  bool
@@ -22,8 +24,9 @@ type StatusOptions struct {
 
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {
 	opts := &StatusOptions{
-		IOStreams: f.IOStreams,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		Config:         f.Config,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -58,12 +61,19 @@ Shows information about:
 	return cmd
 }
 
-func statusRun(_ context.Context, opts *StatusOptions) error {
+func statusRun(ctx context.Context, opts *StatusOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	// Get config
-	cfg := opts.Config().Project
+	// Resolve project name from ProjectManager (empty if no project registered)
+	var project string
+	if opts.ProjectManager != nil {
+		if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+			if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+				project = p.Name()
+			}
+		}
+	}
 
 	// Get session store
 	store, err := shared.DefaultSessionStore()
@@ -72,13 +82,13 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	}
 
 	// Load session
-	session, err := store.LoadSession(cfg.Project, opts.Agent)
+	session, err := store.LoadSession(project, opts.Agent)
 	if err != nil {
 		return fmt.Errorf("loading session: %w", err)
 	}
 
 	// Load circuit state
-	circuitState, err := store.LoadCircuitState(cfg.Project, opts.Agent)
+	circuitState, err := store.LoadCircuitState(project, opts.Agent)
 	if err != nil {
 		return fmt.Errorf("loading circuit state: %w", err)
 	}
@@ -123,7 +133,7 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	}
 
 	// Human-readable output — primary data goes to stdout
-	fmt.Fprintf(ios.Out, "Loop status for %s.%s\n\n", cfg.Project, opts.Agent)
+	fmt.Fprintf(ios.Out, "Loop status for %s.%s\n\n", project, opts.Agent)
 
 	if session != nil {
 		fmt.Fprintf(ios.Out, "Session:\n")

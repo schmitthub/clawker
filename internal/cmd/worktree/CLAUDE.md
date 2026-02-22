@@ -4,7 +4,7 @@ Git worktree management commands for clawker projects.
 
 ## Package Structure
 
-```
+```text
 internal/cmd/worktree/
 ├── worktree.go           # Parent command, registers subcommands
 ├── add/
@@ -37,23 +37,24 @@ Creates a git worktree for a specified branch.
 
 ```go
 type AddOptions struct {
-    IOStreams  *iostreams.IOStreams
-    GitManager func() (*git.GitManager, error)
-    Config     func() *config.Config
-    Branch     string
-    Base       string
+    IOStreams *iostreams.IOStreams
+    ProjectManager func() (project.ProjectManager, error)
+    Branch    string
+    Base      string
 }
 ```
 
 **Flags:**
+
 - `--base REF` — Base ref to create branch from (default: HEAD). Only used if branch doesn't exist.
 
 **Behavior:**
+
 - If worktree already exists → success (idempotent)
 - If branch exists but not checked out elsewhere → check it out in new worktree
 - If branch doesn't exist → create from base ref
 
-Wraps `GitManager.SetupWorktree()` which handles all the above logic.
+Delegates orchestration to `project.ProjectManager.FromCWD(...).CreateWorktree(...)`.
 
 ### List (`list/list.go`)
 
@@ -63,7 +64,7 @@ Lists all git worktrees for the current project.
 type ListOptions struct {
     IOStreams  *iostreams.IOStreams
     GitManager func() (*git.GitManager, error)
-    Config     func() *config.Config
+    ProjectManager func() (project.ProjectManager, error)
     Quiet      bool
 }
 ```
@@ -71,13 +72,15 @@ type ListOptions struct {
 **Output columns:** Branch, Path, HEAD, Modified, Status
 
 **Status values:**
-- (empty) — healthy worktree
+
+- `healthy` — healthy worktree
 - `dir missing` — worktree directory doesn't exist
 - `git missing` — .git file missing or invalid
 - `dir missing, git missing` — stale entry (prunable)
 - `error: path error: ...` — failed to resolve worktree path (not prunable)
 
 **Flags:**
+
 - `--quiet` / `-q` — Suppress headers, show branch names only
 
 **Prune Warning:** When stale entries are detected, shows a warning suggesting `clawker worktree prune`.
@@ -89,22 +92,24 @@ Removes stale worktree entries from the project registry.
 ```go
 type PruneOptions struct {
     IOStreams *iostreams.IOStreams
-    Config    func() *config.Config
+    ProjectManager func() (project.ProjectManager, error)
     DryRun    bool
 }
 ```
 
 **When to use:**
+
 - After using native `git worktree remove` (bypasses clawker registry)
 - When `clawker worktree remove` failed partway through
 - After manual deletion of worktree directories
 
 **Flags:**
+
 - `--dry-run` — Show what would be pruned without removing
 
 **Prunable criteria:** Both directory and git metadata are missing (stale registry entry).
 
-Uses `config.WorktreeHandle.Status()` to detect stale entries and `WorktreeHandle.Delete()` to remove from registry.
+Delegates pruning to `project.ProjectManager.FromCWD(...).PruneStaleWorktrees(...)`.
 
 ### Remove (`remove/remove.go`)
 
@@ -114,7 +119,7 @@ Removes git worktrees by branch name.
 type RemoveOptions struct {
     IOStreams    *iostreams.IOStreams
     GitManager   func() (*git.GitManager, error)
-    Config       func() *config.Config
+    ProjectManager func() (project.ProjectManager, error)
     Prompter     func() *prompter.Prompter
     Force        bool
     DeleteBranch bool
@@ -123,10 +128,12 @@ type RemoveOptions struct {
 ```
 
 **Flags:**
+
 - `--force` — Remove even with uncommitted changes
 - `--delete-branch` — Also delete the git branch after removing worktree (uses `GitManager.DeleteBranch`)
 
 **Safety checks:**
+
 - Verifies worktree has no uncommitted changes (unless `--force`)
 - If status cannot be verified, requires `--force`
 - `--delete-branch` refuses to delete branches with unmerged commits (like `git branch -d`): prints warning and suggests `git branch -D` for force deletion. The worktree is still removed successfully.
@@ -135,6 +142,7 @@ type RemoveOptions struct {
 - Batch operation: processes multiple branches, reports all errors at end
 
 **Internal helpers:**
+
 - `handleBranchDelete(ios, gitMgr, branch)` — Extracted helper for branch deletion with user-friendly error reporting. Tested directly with `gittest.InMemoryGitManager` (doesn't require worktree filesystem operations).
 
 ## Command Patterns
@@ -145,14 +153,14 @@ Commands use Factory function references (not direct Factory access):
 opts := &ListOptions{
     IOStreams:  f.IOStreams,
     GitManager: f.GitManager,
-    Config:     f.Config,
+    ProjectManager: f.ProjectManager,
 }
 ```
 
 ## Dependencies
 
 - `f.GitManager()` — Access to git operations via `internal/git.GitManager`
-- `f.Config().Project()` — Project info and worktree directory management
+- `f.ProjectManager()` — Project-layer manager built from `config.Config`
 
 ## Testing
 

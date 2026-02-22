@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
@@ -14,7 +15,11 @@ import (
 // NewCmdServe creates the hidden daemon subcommand that runs the host proxy server.
 // This is invoked by Manager.EnsureRunning() when spawning a daemon subprocess.
 func NewCmdServe() *cobra.Command {
-	opts := hostproxy.DefaultDaemonOptions()
+	var (
+		port         int
+		pollInterval time.Duration
+		gracePeriod  time.Duration
+	)
 
 	cmd := &cobra.Command{
 		Use:    "serve",
@@ -29,14 +34,25 @@ func NewCmdServe() *cobra.Command {
 			// Initialize daemon logger (debug mode disabled for background daemon)
 			logger.Init()
 
-			logger.Debug().
-				Int("port", opts.Port).
-				Str("pid_file", opts.PIDFile).
-				Dur("poll_interval", opts.PollInterval).
-				Dur("grace_period", opts.GracePeriod).
-				Msg("starting host proxy daemon")
+			cfg, err := config.NewConfig()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
 
-			daemon, err := hostproxy.NewDaemon(opts)
+			// Collect flag overrides — these take precedence over config values
+			// without mutating the config object.
+			var opts []hostproxy.DaemonOption
+			if cmd.Flags().Changed("port") {
+				opts = append(opts, hostproxy.WithDaemonPort(port))
+			}
+			if cmd.Flags().Changed("poll-interval") {
+				opts = append(opts, hostproxy.WithPollInterval(pollInterval))
+			}
+			if cmd.Flags().Changed("grace-period") {
+				opts = append(opts, hostproxy.WithGracePeriod(gracePeriod))
+			}
+
+			daemon, err := hostproxy.NewDaemon(cfg, opts...)
 			if err != nil {
 				logger.Error().Err(err).Msg("failed to create daemon")
 				return err
@@ -53,10 +69,9 @@ func NewCmdServe() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().IntVar(&opts.Port, "port", opts.Port, "Port to listen on")
-	cmd.Flags().StringVar(&opts.PIDFile, "pid-file", opts.PIDFile, "Path to PID file")
-	cmd.Flags().DurationVar(&opts.PollInterval, "poll-interval", opts.PollInterval, "Container poll interval")
-	cmd.Flags().DurationVar(&opts.GracePeriod, "grace-period", opts.GracePeriod, "Initial grace period before container checking")
+	cmd.Flags().IntVar(&port, "port", 18374, "Port to listen on")
+	cmd.Flags().DurationVar(&pollInterval, "poll-interval", 30*time.Second, "Container poll interval")
+	cmd.Flags().DurationVar(&gracePeriod, "grace-period", 60*time.Second, "Initial grace period before container checking")
 
 	return cmd
 }
@@ -86,8 +101,15 @@ func NewCmdStatus() *cobra.Command {
 		Example: `  # Check if the host proxy daemon is running
   clawker host-proxy status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts := hostproxy.DefaultDaemonOptions()
-			pid := hostproxy.GetDaemonPID(opts.PIDFile)
+			cfg, err := config.NewConfig()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			pidFile, err := cfg.HostProxyPIDFilePath()
+			if err != nil {
+				return fmt.Errorf("failed to resolve PID file path: %w", err)
+			}
+			pid := hostproxy.GetDaemonPID(pidFile)
 			if pid == 0 {
 				cmd.Println("Host proxy daemon is not running")
 				return nil
@@ -112,8 +134,15 @@ func NewCmdStop() *cobra.Command {
   # Stop and wait up to 5 seconds for shutdown
   clawker host-proxy stop --wait 5s`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts := hostproxy.DefaultDaemonOptions()
-			if err := hostproxy.StopDaemon(opts.PIDFile); err != nil {
+			cfg, err := config.NewConfig()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			pidFile, err := cfg.HostProxyPIDFilePath()
+			if err != nil {
+				return fmt.Errorf("failed to resolve PID file path: %w", err)
+			}
+			if err := hostproxy.StopDaemon(pidFile); err != nil {
 				return err
 			}
 			cmd.Println("Stop signal sent to host proxy daemon")
@@ -122,7 +151,7 @@ func NewCmdStop() *cobra.Command {
 				// Wait for daemon to stop
 				deadline := time.Now().Add(wait)
 				for time.Now().Before(deadline) {
-					if !hostproxy.IsDaemonRunning(opts.PIDFile) {
+					if !hostproxy.IsDaemonRunning(pidFile) {
 						cmd.Println("Host proxy daemon stopped")
 						return nil
 					}

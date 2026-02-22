@@ -62,8 +62,12 @@ After installing, initialize Clawker:
 clawker init
 ```
 
-This creates the `~/.local/clawker/` directory structure with:
-- Logs directory
-- User settings (`settings.yaml`)
-- Project registry (`projects.yaml`)
-- Optional default fallback image build
+This creates the Clawker directory structure following the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
+
+| Directory | Default Path | Contents |
+|-----------|-------------|----------|
+| Config | `~/.config/clawker/` | `settings.yaml`, `projects.yaml` |
+| Data | `~/.local/share/clawker/` | Build cache, worktree metadata |
+| State | `~/.local/state/clawker/` | Log files, PID files |
+
+It also prompts you to build a default fallback image.

@@ -46,8 +46,8 @@ func TestContainerStart_BasicStart(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				docker.LabelProject: "start-basic-test",
-				docker.LabelAgent:   agentName,
+				_blankCfg.LabelProject(): "start-basic-test",
+				_blankCfg.LabelAgent():   agentName,
 			},
 		},
 	})
@@ -118,8 +118,8 @@ func TestContainerStart_BothPatterns(t *testing.T) {
 					Image: "alpine:latest",
 					Cmd:   []string{"sleep", "300"},
 					Labels: map[string]string{
-						docker.LabelProject: project,
-						docker.LabelAgent:   agentName,
+						_blankCfg.LabelProject(): project,
+						_blankCfg.LabelAgent():   agentName,
 					},
 				},
 			})
@@ -197,8 +197,8 @@ func TestContainerStart_BothImages(t *testing.T) {
 					Image: tt.image,
 					Cmd:   []string{"sleep", "300"},
 					Labels: map[string]string{
-						docker.LabelProject: project,
-						docker.LabelAgent:   agentName,
+						_blankCfg.LabelProject(): project,
+						_blankCfg.LabelAgent():   agentName,
 					},
 				},
 			})
@@ -259,8 +259,8 @@ func TestContainerStart_MultipleContainers(t *testing.T) {
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: map[string]string{
-					docker.LabelProject: "start-multi-test",
-					docker.LabelAgent:   agentName,
+					_blankCfg.LabelProject(): "start-multi-test",
+					_blankCfg.LabelAgent():   agentName,
 				},
 			},
 		})
@@ -320,8 +320,8 @@ func TestContainerStart_AlreadyRunning(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				docker.LabelProject: "start-running-test",
-				docker.LabelAgent:   agentName,
+				_blankCfg.LabelProject(): "start-running-test",
+				_blankCfg.LabelAgent():   agentName,
 			},
 		},
 	})
@@ -408,8 +408,8 @@ func TestContainerStart_MultipleWithAttach(t *testing.T) {
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: map[string]string{
-					docker.LabelProject: "start-attach-test",
-					docker.LabelAgent:   agentName,
+					_blankCfg.LabelProject(): "start-attach-test",
+					_blankCfg.LabelAgent():   agentName,
 				},
 			},
 		})

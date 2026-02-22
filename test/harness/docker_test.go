@@ -3,7 +3,6 @@ package harness
 import (
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -71,8 +70,8 @@ func TestAddClawkerLabels(t *testing.T) {
 
 	assert.Equal(t, TestLabelValue, result[TestLabel])
 	assert.Equal(t, "true", result[ClawkerManagedLabel])
-	assert.Equal(t, "myproject", result[docker.LabelProject])
-	assert.Equal(t, "myagent", result[docker.LabelAgent])
+	assert.Equal(t, "myproject", result[_blankCfg.LabelProject()])
+	assert.Equal(t, "myagent", result[_blankCfg.LabelAgent()])
 	assert.Equal(t, "TestAddClawkerLabels", result[LabelTestName])
 }
 

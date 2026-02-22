@@ -641,7 +641,7 @@ func renderStageChildren(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *P
 			}
 			renderTreeStepLine(buf, cs, cfg, step, connector, width)
 			lines++
-			if step.status == StepRunning {
+			if step.status == StepRunning || step.status == StepError {
 				renderTreeLogLines(buf, cs, step, isLast, width)
 				if step.logBuf != nil {
 					n := len(step.logBuf.Lines())
@@ -652,10 +652,10 @@ func renderStageChildren(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *P
 		return lines
 	}
 
-	// Centered window: find first running step.
+	// Centered window: find first running or error step.
 	runIdx := -1
 	for i, step := range steps {
-		if step.status == StepRunning {
+		if step.status == StepRunning || step.status == StepError {
 			runIdx = i
 			break
 		}
@@ -707,7 +707,7 @@ func renderStageChildren(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *P
 		}
 		renderTreeStepLine(buf, cs, cfg, steps[i], connector, width)
 		lines++
-		if steps[i].status == StepRunning {
+		if steps[i].status == StepRunning || steps[i].status == StepError {
 			renderTreeLogLines(buf, cs, steps[i], isLast, width)
 			if steps[i].logBuf != nil {
 				n := len(steps[i].logBuf.Lines())
@@ -730,20 +730,20 @@ func renderStageChildren(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *P
 	return lines
 }
 
-// renderStageNode writes a single stage: collapsed if complete/error/pending, expanded if active.
+// renderStageNode writes a single stage: collapsed if complete/pending, expanded if active or error.
 func renderStageNode(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *ProgressDisplayConfig, stage *stageNode, maxVisible int, width int) int {
 	state := stage.stageState()
 	lines := 0
 
 	switch state {
-	case StepRunning:
-		// Active stage: heading + expanded children.
+	case StepRunning, StepError:
+		// Active or error stage: heading + expanded children.
 		icon := stageIcon(cs, state)
 		buf.WriteString(fmt.Sprintf("  %s %s\n", icon, cs.Bold(stage.name)))
 		lines++
 		lines += renderStageChildren(buf, cs, cfg, stage, maxVisible, width)
 	default:
-		// Collapsed stage (complete, pending, error).
+		// Collapsed stage (complete, pending).
 		renderCollapsedStage(buf, cs, stage)
 		lines++
 	}
@@ -845,9 +845,22 @@ func runProgressPlain(ios *iostreams.IOStreams, cfg ProgressDisplayConfig, event
 	var orderedSteps []*progressStep
 
 	for step := range eventCh {
-		// Skip log-only events in plain mode.
-		if step.ID == "" || (step.LogLine != "" && step.Name == "") {
+		if step.ID == "" {
 			continue
+		}
+
+		// Buffer log lines for known steps (needed for error context display).
+		if step.LogLine != "" {
+			if s, exists := steps[step.ID]; exists {
+				if s.logBuf == nil {
+					s.logBuf = newRingBuffer(cfg.logLines())
+				}
+				s.logBuf.Push(step.LogLine)
+			}
+			// Log-only events (no Name, no Status change) stop here.
+			if step.Name == "" {
+				continue
+			}
 		}
 
 		s, exists := steps[step.ID]
@@ -914,6 +927,12 @@ func renderPlainProgressStepLine(ios *iostreams.IOStreams, cs *iostreams.ColorSc
 		fmt.Fprintf(ios.ErrOut, "%s   %s (cached)\n", cs.Success("[ok]"), name)
 	case StepError:
 		fmt.Fprintf(ios.ErrOut, "%s %s: %s\n", cs.Error("[fail]"), name, step.errMsg)
+		// Show buffered log lines below the error for diagnostic context.
+		if step.logBuf != nil {
+			for _, line := range step.logBuf.Lines() {
+				fmt.Fprintf(ios.ErrOut, "       %s\n", cs.Muted(line))
+			}
+		}
 	}
 }
 
@@ -935,6 +954,28 @@ func renderProgressSummary(ios *iostreams.IOStreams, cfg *ProgressDisplayConfig,
 	}
 
 	if hasError {
+		fmt.Fprintln(ios.ErrOut)
+
+		// Show error details for each failed step.
+		for _, step := range steps {
+			if step.status != StepError {
+				continue
+			}
+			if cfg.isInternal(step.name) {
+				continue
+			}
+			name := cfg.cleanName(step.name)
+			fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.FailureIcon(), name)
+			if step.logBuf != nil {
+				for _, line := range step.logBuf.Lines() {
+					fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Muted(line))
+				}
+			}
+			if step.errMsg != "" {
+				fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Error(step.errMsg))
+			}
+		}
+
 		fmt.Fprintf(ios.ErrOut, "\n%s %s failed (%s)\n", cs.FailureIcon(), cfg.Title, cfg.formatDuration(elapsed))
 		return
 	}

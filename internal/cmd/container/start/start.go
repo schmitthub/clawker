@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
@@ -21,11 +22,12 @@ import (
 
 // StartOptions holds options for the start command.
 type StartOptions struct {
-	IOStreams    *iostreams.IOStreams
-	Client       func(context.Context) (*docker.Client, error)
-	Config       func() *config.Config
-	HostProxy    func() hostproxy.HostProxyService
-	SocketBridge func() socketbridge.SocketBridgeManager
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
+	HostProxy      func() hostproxy.HostProxyService
+	SocketBridge   func() socketbridge.SocketBridgeManager
 
 	Agent       bool // Use agent name (resolves to clawker.<project>.<agent>)
 	Attach      bool
@@ -36,11 +38,12 @@ type StartOptions struct {
 // NewCmdStart creates the container start command.
 func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) error) *cobra.Command {
 	opts := &StartOptions{
-		IOStreams:    f.IOStreams,
-		Client:       f.Client,
-		Config:       f.Config,
-		HostProxy:    f.HostProxy,
-		SocketBridge: f.SocketBridge,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		Config:         f.Config,
+		ProjectManager: f.ProjectManager,
+		HostProxy:      f.HostProxy,
+		SocketBridge:   f.SocketBridge,
 	}
 
 	cmd := &cobra.Command{
@@ -86,8 +89,10 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	ctx, cancelFun := context.WithCancel(ctx)
 	defer cancelFun()
 	ios := opts.IOStreams
-	cfgGateway := opts.Config()
-	cfg := cfgGateway.Project
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
 
 	// --- Phase A: Config + Docker connect + host proxy ---
 
@@ -97,7 +102,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	}
 
 	// Ensure host proxy is running (if enabled)
-	if cfg.Security.HostProxyEnabled() {
+	if cfg.Project().Security.HostProxyEnabled() {
 		hp := opts.HostProxy()
 		if hp == nil {
 			ios.Logger.Debug().Msg("host proxy factory returned nil, skipping")
@@ -117,7 +122,13 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	// Resolve container names if --agent provided
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(cfgGateway.Resolution.ProjectKey, containers)
+		var projectName string
+		if pm, err := opts.ProjectManager(); err == nil {
+			if p, err := pm.CurrentProject(ctx); err == nil {
+				projectName = p.Name()
+			}
+		}
+		resolved, err := docker.ContainerNamesFromAgents(projectName, containers)
 		if err != nil {
 			return err
 		}
@@ -132,11 +143,11 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		}
 
 		containerName := containers[0]
-		return attachAndStart(ctx, ios, client, containerName, opts)
+		return attachAndStart(ctx, ios, client, containerName, cfg, opts)
 	}
 
 	// Start all containers without attaching
-	return startContainersWithoutAttach(ctx, ios, client, containers, opts)
+	return startContainersWithoutAttach(ctx, ios, client, containers, cfg, opts)
 }
 
 // attachAndStart attaches to a container, starts I/O, then starts the container.
@@ -146,7 +157,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 //
 // I/O streaming starts pre-start; resize starts post-start. This ensures we're
 // ready to receive output immediately and avoids kernel pipe buffer issues.
-func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName string, opts *StartOptions) error {
+func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName string, cfg config.Config, opts *StartOptions) error {
 	// Find and inspect the container
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -231,7 +242,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 	_, err = client.ContainerStart(ctx, docker.ContainerStartOptions{
 		ContainerID: containerID,
 		EnsureNetwork: &docker.EnsureNetworkOptions{
-			Name: docker.NetworkName,
+			Name: cfg.ClawkerNetwork(),
 		},
 	})
 	if err != nil {
@@ -241,9 +252,8 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 	ios.Logger.Debug().Msg("container started successfully")
 
 	// Start socket bridge for GPG/SSH forwarding
-	cfg := opts.Config().Project
-	if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
-		gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
+	if shared.NeedsSocketBridge(cfg.Project()) && opts.SocketBridge != nil {
+		gpgEnabled := cfg.Project().Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
 			ios.Logger.Warn().Err(err).Msg("failed to start socket bridge")
 		} else {
@@ -359,13 +369,13 @@ func waitForContainerExit(ctx context.Context, client *docker.Client, containerI
 }
 
 // startContainersWithoutAttach starts multiple containers without attaching.
-func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, opts *StartOptions) error {
+func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, cfg config.Config, opts *StartOptions) error {
 	var errs []error
 	for _, name := range containers {
 		_, err := client.ContainerStart(ctx, docker.ContainerStartOptions{
 			ContainerID: name,
 			EnsureNetwork: &docker.EnsureNetworkOptions{
-				Name: docker.NetworkName,
+				Name: cfg.ClawkerNetwork(),
 			},
 		})
 		if err != nil {
@@ -377,9 +387,8 @@ func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams,
 			fmt.Fprintln(ios.Out, name)
 
 			// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
-			cfg := opts.Config().Project
-			if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
-				gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
+			if shared.NeedsSocketBridge(cfg.Project()) && opts.SocketBridge != nil {
+				gpgEnabled := cfg.Project().Security.GitCredentials.GPGEnabled()
 				// Inspect to get full container ID — EnsureBridge must use the same key
 				// as exec/run commands (which use the container ID, not name).
 				info, inspErr := client.ContainerInspect(ctx, name, docker.ContainerInspectOptions{})

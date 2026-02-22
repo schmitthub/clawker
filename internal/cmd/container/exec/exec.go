@@ -13,6 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/workspace"
@@ -21,11 +22,12 @@ import (
 
 // ExecOptions holds options for the exec command.
 type ExecOptions struct {
-	IOStreams    *iostreams.IOStreams
-	Client       func(context.Context) (*docker.Client, error)
-	Config       func() *config.Config
-	HostProxy    func() hostproxy.HostProxyService
-	SocketBridge func() socketbridge.SocketBridgeManager
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
+	HostProxy      func() hostproxy.HostProxyService
+	SocketBridge   func() socketbridge.SocketBridgeManager
 
 	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	Interactive bool
@@ -43,11 +45,12 @@ type ExecOptions struct {
 // NewCmdExec creates a new exec command.
 func NewCmdExec(f *cmdutil.Factory, runF func(context.Context, *ExecOptions) error) *cobra.Command {
 	opts := &ExecOptions{
-		IOStreams:    f.IOStreams,
-		Client:       f.Client,
-		Config:       f.Config,
-		HostProxy:    f.HostProxy,
-		SocketBridge: f.SocketBridge,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		Config:         f.Config,
+		ProjectManager: f.ProjectManager,
+		HostProxy:      f.HostProxy,
+		SocketBridge:   f.SocketBridge,
 	}
 
 	cmd := &cobra.Command{
@@ -88,8 +91,16 @@ Container name can be:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containerName = args[0]
 			if opts.Agent {
+				var projectName string
+				if opts.ProjectManager != nil {
+					if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+						if p, pErr := pm.CurrentProject(cmd.Context()); pErr == nil {
+							projectName = p.Name()
+						}
+					}
+				}
 				var err error
-				opts.containerName, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, args[0])
+				opts.containerName, err = docker.ContainerName(projectName, args[0])
 				if err != nil {
 					return err
 				}
@@ -145,9 +156,14 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 
 	// Setup git credential forwarding for exec sessions
 	// This enables GPG signing and git credential helpers in exec'd commands
-	cfg := opts.Config().Project
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	p := cfg.Project()
+
 	hostProxyRunning := false
-	if cfg.Security.HostProxyEnabled() && opts.HostProxy != nil {
+	if p != nil && p.Security.HostProxyEnabled() && opts.HostProxy != nil {
 		hp := opts.HostProxy()
 		if hp == nil {
 			ios.Logger.Debug().Msg("host proxy function returned nil")
@@ -161,13 +177,15 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	}
 
 	// Setup git credentials (includes GPG forwarding env vars)
-	gitSetup := workspace.SetupGitCredentials(cfg.Security.GitCredentials, hostProxyRunning)
-	opts.Env = append(opts.Env, gitSetup.Env...)
+	if p != nil {
+		gitSetup := workspace.SetupGitCredentials(p.Security.GitCredentials, hostProxyRunning)
+		opts.Env = append(opts.Env, gitSetup.Env...)
+	}
 
 	// Ensure socket bridge is running for GPG/SSH forwarding
 	// The bridge may already be running from a prior run/start command
-	if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
-		gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
+	if shared.NeedsSocketBridge(p) && opts.SocketBridge != nil {
+		gpgEnabled := p.Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(c.ID, gpgEnabled); err != nil {
 			ios.Logger.Warn().Err(err).Msg("failed to ensure socket bridge for exec")
 		}

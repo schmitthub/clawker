@@ -4,242 +4,426 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// testChdir changes to the given directory and returns a cleanup function.
-// This is needed because NewConfig() uses os.Getwd() internally.
-func testChdir(t *testing.T, dir string) {
-	t.Helper()
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get current directory: %v", err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("failed to change to directory %s: %v", dir, err)
-	}
-	t.Cleanup(func() {
-		if err := os.Chdir(origDir); err != nil {
-			t.Logf("warning: failed to restore directory: %v", err)
-		}
-	})
+func TestNewBlankConfig(t *testing.T) {
+	cfg, err := NewBlankConfig()
+	require.NoError(t, err)
+
+	p := cfg.Project()
+	require.NotNil(t, p)
+
+	// Default project YAML does not set build.image — only packages
+	assert.Empty(t, p.Build.Image)
+	assert.Contains(t, p.Build.Packages, "git")
+	assert.Equal(t, "/workspace", p.Workspace.RemotePath)
+	assert.Equal(t, "bind", p.Workspace.DefaultMode)
+	assert.True(t, p.Security.Firewall.FirewallEnabled())
 }
 
-func TestConfig_Project(t *testing.T) {
-	tmpDir := t.TempDir()
+func TestNewBlankConfig_settingsDefaults(t *testing.T) {
+	cfg, err := NewBlankConfig()
+	require.NoError(t, err)
 
-	// Set CLAWKER_HOME so registry/settings don't touch real home
-	clawkerHome := filepath.Join(tmpDir, "home")
-	if err := os.MkdirAll(clawkerHome, 0755); err != nil {
-		t.Fatalf("failed to create clawker home: %v", err)
-	}
-	t.Setenv(ClawkerHomeEnv, clawkerHome)
+	s := cfg.Settings()
 
-	projectDir := filepath.Join(tmpDir, "project")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatalf("failed to create project dir: %v", err)
-	}
+	// Logging defaults
+	require.NotNil(t, s.Logging.FileEnabled)
+	assert.True(t, *s.Logging.FileEnabled)
+	assert.Equal(t, 50, s.Logging.MaxSizeMB)
+	assert.Equal(t, 7, s.Logging.MaxAgeDays)
 
-	configContent := `
-version: "1"
+	// Monitoring defaults
+	mon := cfg.MonitoringConfig()
+	assert.Equal(t, 4318, mon.OtelCollectorPort)
+	assert.Equal(t, "localhost", mon.OtelCollectorHost)
+	assert.Equal(t, "otel-collector", mon.OtelCollectorInternal)
+	assert.Equal(t, "/v1/metrics", mon.Telemetry.MetricsPath)
+	assert.Equal(t, "/v1/logs", mon.Telemetry.LogsPath)
+
+	// Host proxy defaults
+	hp := cfg.HostProxyConfig()
+	assert.Equal(t, 18374, hp.Manager.Port)
+}
+
+func TestNewFromString_projectOnly(t *testing.T) {
+	cfg, err := NewFromString(`
 build:
-  image: "node:20-slim"
-  packages:
-    - git
+  image: "ubuntu:22.04"
 workspace:
-  remote_path: "/workspace"
-  default_mode: "bind"
-security:
-  firewall:
-    enable: true
-`
-	if err := os.WriteFile(filepath.Join(projectDir, ConfigFileName), []byte(configContent), 0644); err != nil {
-		t.Fatalf("failed to write config file: %v", err)
-	}
+  remote_path: "/app"
+`, "")
+	require.NoError(t, err)
 
-	testChdir(t, projectDir)
-	cfg := NewConfig()
-
-	if cfg.Project.Build.Image != "node:20-slim" {
-		t.Errorf("ProjectCfg.Build.Image = %q, want %q", cfg.Project.Build.Image, "node:20-slim")
-	}
-	if cfg.Project.Workspace.RemotePath != "/workspace" {
-		t.Errorf("ProjectCfg.Workspace.RemotePath = %q, want %q", cfg.Project.Workspace.RemotePath, "/workspace")
-	}
+	p := cfg.Project()
+	assert.Equal(t, "ubuntu:22.04", p.Build.Image)
+	assert.Equal(t, "/app", p.Workspace.RemotePath)
 }
 
-func TestConfig_Settings(t *testing.T) {
-	tmpDir := t.TempDir()
+func TestNewFromString_settingsOnly(t *testing.T) {
+	cfg, err := NewFromString("", `
+monitoring:
+  otel_collector_port: 9999
+  otel_collector_internal: "custom-host"
+`)
+	require.NoError(t, err)
 
-	clawkerHome := filepath.Join(tmpDir, "home")
-	if err := os.MkdirAll(clawkerHome, 0755); err != nil {
-		t.Fatalf("failed to create clawker home: %v", err)
-	}
-	t.Setenv(ClawkerHomeEnv, clawkerHome)
-
-	testChdir(t, tmpDir)
-	cfg := NewConfig()
-
-	if cfg.Settings == nil {
-		t.Fatal("Config.Settings is nil")
-	}
+	mon := cfg.MonitoringConfig()
+	assert.Equal(t, 9999, mon.OtelCollectorPort)
+	assert.Equal(t, "custom-host", mon.OtelCollectorInternal)
 }
 
-func TestConfig_Resolution_NoRegistry(t *testing.T) {
-	tmpDir := t.TempDir()
+func TestNewFromString_emptyStrings(t *testing.T) {
+	cfg, err := NewFromString("", "")
+	require.NoError(t, err)
 
-	clawkerHome := filepath.Join(tmpDir, "home")
-	if err := os.MkdirAll(clawkerHome, 0755); err != nil {
-		t.Fatalf("failed to create clawker home: %v", err)
-	}
-	t.Setenv(ClawkerHomeEnv, clawkerHome)
+	// Empty project — all zero values
+	p := cfg.Project()
+	assert.Empty(t, p.Build.Image)
+	assert.Empty(t, p.Agent.Env)
 
-	workDir := filepath.Join(tmpDir, "project")
-	if err := os.MkdirAll(workDir, 0755); err != nil {
-		t.Fatalf("failed to create work dir: %v", err)
-	}
-
-	// Resolve symlinks for macOS where /var -> /private/var
-	var evalErr error
-	workDir, evalErr = filepath.EvalSymlinks(workDir)
-	if evalErr != nil {
-		t.Fatalf("failed to resolve symlinks: %v", evalErr)
-	}
-
-	testChdir(t, workDir)
-	cfg := NewConfig()
-
-	if cfg.Resolution == nil {
-		t.Fatal("Config.Resolution is nil")
-	}
-	if cfg.Resolution.Found() {
-		t.Error("Resolution.Found() should be false when no registry exists")
-	}
-	if cfg.Resolution.WorkDir != workDir {
-		t.Errorf("Resolution.WorkDir = %q, want %q", cfg.Resolution.WorkDir, workDir)
-	}
+	// Empty settings — zero values
+	s := cfg.Settings()
+	assert.Equal(t, 0, s.Monitoring.OtelCollectorPort)
 }
 
-func TestConfig_SettingsLoader(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	clawkerHome := filepath.Join(tmpDir, "home")
-	if err := os.MkdirAll(clawkerHome, 0755); err != nil {
-		t.Fatalf("failed to create clawker home: %v", err)
-	}
-	t.Setenv(ClawkerHomeEnv, clawkerHome)
-
-	testChdir(t, tmpDir)
-	cfg := NewConfig()
-
-	loader := cfg.SettingsLoader()
-	// May be nil if settings loading failed, but that's ok for this test
-	_ = loader
+func TestNewFromString_invalidYAML(t *testing.T) {
+	_, err := NewFromString("version: [invalid\n bad yaml\n", "")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing project YAML")
 }
 
-func TestConfig_Registry(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	clawkerHome := filepath.Join(tmpDir, "home")
-	if err := os.MkdirAll(clawkerHome, 0755); err != nil {
-		t.Fatalf("failed to create clawker home: %v", err)
-	}
-	t.Setenv(ClawkerHomeEnv, clawkerHome)
-
-	testChdir(t, tmpDir)
-	cfg := NewConfig()
-
-	// Registry may be nil if initialization failed
-	if cfg.Registry == nil {
-		t.Log("Config.Registry is nil (registry initialization may have failed)")
-	}
+func TestNewFromString_invalidSettingsYAML(t *testing.T) {
+	_, err := NewFromString("", "monitoring: [invalid\n bad\n")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing settings YAML")
 }
 
-func TestConfig_ProjectRuntimeMethods(t *testing.T) {
-	tmpDir := t.TempDir()
+func TestNewFromString_noDefaults(t *testing.T) {
+	// NewFromString provides NO defaults — only caller-provided values.
+	cfg, err := NewFromString(`build:
+  image: "node:20"`, "")
+	require.NoError(t, err)
 
-	clawkerHome := filepath.Join(tmpDir, "home")
-	if err := os.MkdirAll(clawkerHome, 0755); err != nil {
-		t.Fatalf("failed to create clawker home: %v", err)
-	}
-	t.Setenv(ClawkerHomeEnv, clawkerHome)
-
-	testChdir(t, tmpDir)
-	cfg := NewConfig()
-
-	// ProjectCfg should have runtime methods available
-	if cfg.Project == nil {
-		t.Fatal("Config.ProjectCfg is nil")
-	}
-
-	// Not in a registered project, so these should return empty/false
-	if cfg.Project.Found() {
-		t.Error("ProjectCfg.Found() should be false when not in a registered project")
-	}
-	if cfg.Project.RootDir() != "" {
-		t.Error("ProjectCfg.RootDir() should be empty when not in a registered project")
-	}
+	p := cfg.Project()
+	assert.Equal(t, "node:20", p.Build.Image)
+	// Workspace is empty because no defaults are applied
+	assert.Equal(t, "", p.Workspace.RemotePath)
 }
 
-func TestConfig_DefaultsWhenNoConfigFile(t *testing.T) {
-	tmpDir := t.TempDir()
+func TestConstantAccessors(t *testing.T) {
+	cfg, err := NewBlankConfig()
+	require.NoError(t, err)
 
-	clawkerHome := filepath.Join(tmpDir, "home")
-	if err := os.MkdirAll(clawkerHome, 0755); err != nil {
-		t.Fatalf("failed to create clawker home: %v", err)
-	}
-	t.Setenv(ClawkerHomeEnv, clawkerHome)
-
-	// No config file in this directory
-	testChdir(t, tmpDir)
-	cfg := NewConfig()
-
-	// Should get defaults
-	if cfg.Project == nil {
-		t.Fatal("Config.ProjectCfg is nil even with no config file")
-	}
-	if cfg.Settings == nil {
-		t.Fatal("Config.Settings is nil even with no settings file")
-	}
+	assert.Equal(t, ".clawkerignore", cfg.ClawkerIgnoreName())
+	assert.Equal(t, "clawker.yaml", cfg.ProjectConfigFileName())
+	assert.Equal(t, "settings.yaml", cfg.SettingsFileName())
+	assert.Equal(t, "projects.yaml", cfg.ProjectRegistryFileName())
+	assert.Equal(t, "clawker.dev", cfg.Domain())
+	assert.Equal(t, "dev.clawker", cfg.LabelDomain())
+	assert.Equal(t, "clawker-net", cfg.ClawkerNetwork())
+	assert.Equal(t, 1001, cfg.ContainerUID())
+	assert.Equal(t, 1001, cfg.ContainerGID())
 }
 
-func TestNewConfigForTest(t *testing.T) {
-	project := &Project{
-		Project: "test-project",
-		Build: BuildConfig{
-			Image: "test-image:latest",
-		},
-	}
-	settings := &Settings{
-		DefaultImage: "default:latest",
-	}
+func TestLabelAccessors(t *testing.T) {
+	cfg, err := NewBlankConfig()
+	require.NoError(t, err)
 
-	cfg := NewConfigForTest(project, settings)
-
-	if cfg.Project != project {
-		t.Error("NewConfigForTest did not set ProjectCfg correctly")
-	}
-	if cfg.Settings != settings {
-		t.Error("NewConfigForTest did not set Settings correctly")
-	}
-	if cfg.Resolution == nil {
-		t.Fatal("NewConfigForTest did not set Resolution")
-	}
-	if cfg.Resolution.ProjectKey != "test-project" {
-		t.Errorf("Resolution.ProjectKey = %q, want %q", cfg.Resolution.ProjectKey, "test-project")
-	}
-	// ProjectCfg should have runtime context set
-	if cfg.Project.Key() != "test-project" {
-		t.Errorf("ProjectCfg.Key() = %q, want %q", cfg.Project.Key(), "test-project")
-	}
+	assert.Equal(t, "dev.clawker.", cfg.LabelPrefix())
+	assert.Equal(t, "dev.clawker.managed", cfg.LabelManaged())
+	assert.Equal(t, "dev.clawker.project", cfg.LabelProject())
+	assert.Equal(t, "dev.clawker.agent", cfg.LabelAgent())
+	assert.Equal(t, "dev.clawker.version", cfg.LabelVersion())
+	assert.Equal(t, "dev.clawker.image", cfg.LabelImage())
+	assert.Equal(t, "dev.clawker.created", cfg.LabelCreated())
+	assert.Equal(t, "dev.clawker.workdir", cfg.LabelWorkdir())
+	assert.Equal(t, "dev.clawker.purpose", cfg.LabelPurpose())
+	assert.Equal(t, "dev.clawker.test.name", cfg.LabelTestName())
+	assert.Equal(t, "dev.clawker.test", cfg.LabelTest())
+	assert.Equal(t, "dev.clawker.e2e-test", cfg.LabelE2ETest())
+	assert.Equal(t, "true", cfg.ManagedLabelValue())
 }
 
-func TestNewConfigForTest_NilInputs(t *testing.T) {
-	cfg := NewConfigForTest(nil, nil)
+func TestEnvVarAccessors(t *testing.T) {
+	cfg, err := NewBlankConfig()
+	require.NoError(t, err)
 
-	if cfg.Project == nil {
-		t.Fatal("NewConfigForTest(nil, nil) should use default ProjectCfg")
+	assert.Equal(t, "CLAWKER_CONFIG_DIR", cfg.ConfigDirEnvVar())
+	assert.Equal(t, "CLAWKER_DATA_DIR", cfg.DataDirEnvVar())
+	assert.Equal(t, "CLAWKER_STATE_DIR", cfg.StateDirEnvVar())
+	assert.Equal(t, "CLAWKER_TEST_REPO_DIR", cfg.TestRepoDirEnvVar())
+}
+
+func TestRequiredFirewallDomains(t *testing.T) {
+	cfg, err := NewBlankConfig()
+	require.NoError(t, err)
+
+	domains := cfg.RequiredFirewallDomains()
+	assert.Contains(t, domains, "api.anthropic.com")
+	assert.Contains(t, domains, "registry-1.docker.io")
+
+	// Returned slice is a copy — mutations don't affect the original.
+	domains[0] = "mutated.com"
+	assert.Contains(t, cfg.RequiredFirewallDomains(), "api.anthropic.com")
+}
+
+func TestConfigDir_envOverride(t *testing.T) {
+	t.Setenv("CLAWKER_CONFIG_DIR", "/custom/config")
+	assert.Equal(t, "/custom/config", ConfigDir())
+}
+
+func TestConfigDir_xdgOverride(t *testing.T) {
+	t.Setenv("CLAWKER_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "/xdg/config")
+	assert.Equal(t, "/xdg/config/clawker", ConfigDir())
+}
+
+func TestDataDir_envOverride(t *testing.T) {
+	t.Setenv("CLAWKER_DATA_DIR", "/custom/data")
+	assert.Equal(t, "/custom/data", DataDir())
+}
+
+func TestStateDir_envOverride(t *testing.T) {
+	t.Setenv("CLAWKER_STATE_DIR", "/custom/state")
+	assert.Equal(t, "/custom/state", StateDir())
+}
+
+func TestMonitoringURLs(t *testing.T) {
+	cfg, err := NewBlankConfig()
+	require.NoError(t, err)
+
+	assert.Equal(t, "http://localhost:3000", cfg.GrafanaURL("localhost", false))
+	assert.Equal(t, "https://myhost:3000", cfg.GrafanaURL("myhost", true))
+	assert.Equal(t, "http://localhost:16686", cfg.JaegerURL("localhost", false))
+	assert.Equal(t, "http://localhost:9090", cfg.PrometheusURL("localhost", false))
+}
+
+func TestSubdirPaths(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
+	t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
+
+	cfg, err := NewBlankConfig()
+	require.NoError(t, err)
+
+	// Each subdir call should create the directory
+	monDir, err := cfg.MonitorSubdir()
+	require.NoError(t, err)
+	assert.DirExists(t, monDir)
+	assert.Contains(t, monDir, "monitor")
+
+	buildDir, err := cfg.BuildSubdir()
+	require.NoError(t, err)
+	assert.DirExists(t, buildDir)
+
+	logsDir, err := cfg.LogsSubdir()
+	require.NoError(t, err)
+	assert.DirExists(t, logsDir)
+
+	pidsDir, err := cfg.PidsSubdir()
+	require.NoError(t, err)
+	assert.DirExists(t, pidsDir)
+}
+
+func TestNewConfig_isolatedWithDefaults(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("CLAWKER_CONFIG_DIR", filepath.Join(base, "config"))
+	t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
+	t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
+
+	for _, dir := range []string{
+		filepath.Join(base, "config"),
+		filepath.Join(base, "data"),
+		filepath.Join(base, "state"),
+	} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
 	}
-	if cfg.Settings == nil {
-		t.Fatal("NewConfigForTest(nil, nil) should use default Settings")
+
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+
+	// NewConfig loads defaults — verify critical values are present
+	p := cfg.Project()
+	assert.True(t, p.Security.Firewall.FirewallEnabled())
+	assert.Equal(t, "/workspace", p.Workspace.RemotePath)
+
+	mon := cfg.MonitoringConfig()
+	assert.Equal(t, 4318, mon.OtelCollectorPort)
+}
+
+func TestNewConfig_projectFileOverridesDefaults(t *testing.T) {
+	base := t.TempDir()
+	configDir := filepath.Join(base, "config")
+	t.Setenv("CLAWKER_CONFIG_DIR", configDir)
+	t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
+	t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
+
+	for _, dir := range []string{
+		configDir,
+		filepath.Join(base, "data"),
+		filepath.Join(base, "state"),
+	} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+
+	// Write a project config that overrides the build image
+	require.NoError(t, os.WriteFile(
+		filepath.Join(configDir, "clawker.yaml"),
+		[]byte(`build:
+  image: "ubuntu:24.04"
+`),
+		0o644,
+	))
+
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+
+	// The file value should override the default
+	p := cfg.Project()
+	assert.Equal(t, "ubuntu:24.04", p.Build.Image)
+
+	// Defaults for unset values should still be present
+	assert.Equal(t, "/workspace", p.Workspace.RemotePath)
+}
+
+func TestSetProject_mutation(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("CLAWKER_CONFIG_DIR", filepath.Join(base, "config"))
+	t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
+	t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
+	for _, dir := range []string{
+		filepath.Join(base, "config"),
+		filepath.Join(base, "data"),
+		filepath.Join(base, "state"),
+	} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+
+	// Mutate build image
+	cfg.SetProject(func(p *Project) {
+		p.Build.Image = "custom:latest"
+	})
+
+	assert.Equal(t, "custom:latest", cfg.Project().Build.Image)
+
+	// Other values should be preserved
+	assert.Equal(t, "/workspace", cfg.Project().Workspace.RemotePath)
+}
+
+func TestSetSettings_mutation(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("CLAWKER_CONFIG_DIR", filepath.Join(base, "config"))
+	t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
+	t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
+	for _, dir := range []string{
+		filepath.Join(base, "config"),
+		filepath.Join(base, "data"),
+		filepath.Join(base, "state"),
+	} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+
+	cfg.SetSettings(func(s *Settings) {
+		s.Logging.MaxSizeMB = 100
+	})
+
+	assert.Equal(t, 100, cfg.Settings().Logging.MaxSizeMB)
+
+	// Monitoring defaults should survive the mutation
+	assert.Equal(t, 4318, cfg.MonitoringConfig().OtelCollectorPort)
+}
+
+func TestWriteProject_persistsToFile(t *testing.T) {
+	base := t.TempDir()
+	configDir := filepath.Join(base, "config")
+	t.Setenv("CLAWKER_CONFIG_DIR", configDir)
+	t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
+	t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
+	for _, dir := range []string{
+		configDir,
+		filepath.Join(base, "data"),
+		filepath.Join(base, "state"),
+	} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+
+	cfg.SetProject(func(p *Project) {
+		p.Build.Image = "persisted:latest"
+	})
+
+	err = cfg.WriteProject()
+	require.NoError(t, err)
+
+	// Re-read and verify persistence
+	cfg2, err := NewConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "persisted:latest", cfg2.Project().Build.Image)
+}
+
+func TestWriteSettings_persistsToFile(t *testing.T) {
+	base := t.TempDir()
+	configDir := filepath.Join(base, "config")
+	t.Setenv("CLAWKER_CONFIG_DIR", configDir)
+	t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
+	t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
+	for _, dir := range []string{
+		configDir,
+		filepath.Join(base, "data"),
+		filepath.Join(base, "state"),
+	} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+
+	cfg.SetSettings(func(s *Settings) {
+		s.Logging.MaxSizeMB = 200
+	})
+
+	err = cfg.WriteSettings()
+	require.NoError(t, err)
+
+	// Re-read and verify persistence
+	cfg2, err := NewConfig()
+	require.NoError(t, err)
+	assert.Equal(t, 200, cfg2.Settings().Logging.MaxSizeMB)
+}
+
+func TestParseMode(t *testing.T) {
+	tests := []struct {
+		input string
+		want  Mode
+		err   bool
+	}{
+		{"bind", ModeBind, false},
+		{"snapshot", ModeSnapshot, false},
+		{"invalid", "", true},
+		{"", ModeBind, false}, // empty defaults to bind
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := ParseMode(tt.input)
+			if tt.err {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, got)
+			}
+		})
 	}
 }

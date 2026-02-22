@@ -10,6 +10,15 @@ repos:
     hooks:
       - id: gitleaks
         args: [--baseline-path, gitleaks-report.json]
+  - repo: local
+    hooks:
+      - id: semgrep
+        name: Semgrep SAST
+        # Expected version: 1.146.0 (must match CI image tag in security.yml)
+        entry: semgrep scan --config p/golang --config p/security-audit --error
+        language: system
+        types: [go]
+        pass_filenames: false
 
   # ── Lint ──────────────────────────────────────────────────────────────────
   - repo: https://github.com/golangci/golangci-lint
@@ -18,17 +27,9 @@ repos:
       - id: golangci-lint-full
         args: [--config, .golangci.yml]
 
-  # ── Local hooks ───────────────────────────────────────────────────────────
+  # ── Quality ─────────────────────────────────────────────────────────────
   - repo: local
     hooks:
-      - id: semgrep
-        name: Semgrep SAST
-        # Expected version: 1.146.0 (must match CI image tag in security.yml)
-        entry: semgrep scan --baseline-commit HEAD --config p/golang --config p/security-audit --error
-        language: system
-        types: [go]
-        pass_filenames: false
-
       - id: govulncheck
         name: govulncheck SCA
         entry: govulncheck ./...
