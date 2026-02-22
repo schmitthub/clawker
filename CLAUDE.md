@@ -4,7 +4,7 @@
 
 ## MANTRA
 
-This is an in-development pre-release alpha project with zero users. Features can be made quickly or in haste, architecture and design can change Legacy code that no longer fits the big picture can be encountered often therefore...
+This is an in-development alpha project. Features are sometimes made quickly or in haste, architecture and design can change Legacy code that no longer fits the big picture can be encountered often therefore...
 * we don't write bad hackish code just to get a single task or feature done. that is a sure fire way to create massive technical debt.
 * you must always be thinking about the big picture.
 * when we find gaps and bad patterns we pivot and address them before continuing so that the project can scale painlessly
