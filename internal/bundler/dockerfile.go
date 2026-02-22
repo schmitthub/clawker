@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -175,8 +177,8 @@ type RunInstruction struct {
 }
 
 type DockerFileManagerOptions struct {
-	OutputDir string
-	VariantCfg       *VariantConfig
+	OutputDir  string
+	VariantCfg *VariantConfig
 }
 
 // NewDockerfileManager creates a new DockerfileManager.
@@ -264,7 +266,7 @@ func otelBaseEndpoint(mon config.MonitoringConfig) string {
 	if mon.OtelCollectorEndpoint != "" {
 		return mon.OtelCollectorEndpoint
 	}
-	return fmt.Sprintf("http://%s:%d", mon.OtelCollectorInternal, mon.OtelCollectorPort)
+	return "http://" + net.JoinHostPort(mon.OtelCollectorInternal, strconv.Itoa(mon.OtelCollectorPort))
 }
 
 // createContext creates a DockerfileContext for a given version and variant.
@@ -338,7 +340,6 @@ func NewProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator {
 		workDir: workDir,
 	}
 }
-
 
 // Generate creates a Dockerfile based on the project configuration.
 func (g *ProjectGenerator) Generate() ([]byte, error) {

@@ -432,7 +432,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 version: "1"
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { enable_host_proxy: false, firewall: { enable: false } }
-`)
+`, "")
 			mock.GetProjectIgnoreFileFunc = func() (string, error) {
 				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
 			}
@@ -589,7 +589,7 @@ version: "1"
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { enable_host_proxy: false, firewall: { enable: false } }
 agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
-`)
+`, "")
 		useHostAuthCfg.GetProjectIgnoreFileFunc = func() (string, error) {
 			return filepath.Join(os.TempDir(), useHostAuthCfg.ClawkerIgnoreName()), nil
 		}

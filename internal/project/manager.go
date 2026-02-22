@@ -10,6 +10,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/storage"
 )
 
 var ErrProjectNotFound = errors.New("project not found")
@@ -95,17 +96,22 @@ type projectHandle struct {
 }
 
 type projectManager struct {
-	cfg        config.Config
-	newGitMgr  GitManagerFactory
+	cfg           config.Config
+	registryStore *storage.Store[config.ProjectRegistry]
+	newGitMgr     GitManagerFactory
 }
 
-func NewProjectManager(cfg config.Config, gitFactory GitManagerFactory) ProjectManager {
+func NewProjectManager(cfg config.Config, gitFactory GitManagerFactory) (ProjectManager, error) {
 	if gitFactory == nil {
 		gitFactory = func(root string) (*git.GitManager, error) {
 			return git.NewGitManager(root)
 		}
 	}
-	return &projectManager{cfg: cfg, newGitMgr: gitFactory}
+	registryStore, err := newRegistryStore()
+	if err != nil {
+		return nil, fmt.Errorf("project: loading registry: %w", err)
+	}
+	return &projectManager{cfg: cfg, registryStore: registryStore, newGitMgr: gitFactory}, nil
 }
 
 // Register adds or updates a project registration and returns a project object.
@@ -436,11 +442,11 @@ func (p *projectHandle) GetWorktree(ctx context.Context, branch string) (Worktre
 }
 
 func (s *projectManager) registry() *projectRegistry {
-	return newRegistry(s.cfg)
+	return newRegistry(s.registryStore)
 }
 
 func (s *projectManager) worktrees() *worktreeService {
-	return newWorktreeService(s.cfg, s.newGitMgr)
+	return newWorktreeService(s.cfg, s.registryStore, s.newGitMgr)
 }
 
 func (p *projectHandle) ensureProjectDir() error {

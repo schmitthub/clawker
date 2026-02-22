@@ -6,7 +6,7 @@ Fix test infrastructure around `NewIsolatedTestConfig` and wire up proper test s
 ## Background Context
 The config mock system has three tiers:
 1. **`NewBlankConfig()`** — read-only `*ConfigMock` with nil Func fields for Set/Write/path helpers. Good for consumers that only read config values.
-2. **`NewFromString(yaml)`** — same as above but seeded from YAML string.
+2. **`NewFromString(projectYAML, settingsYAML)`** — same as above but seeded from raw YAML strings (NO defaults). Pass empty strings for schemas you don't care about.
 3. **`NewIsolatedTestConfig(t)`** — returns a real `config.Config` (not a mock) backed by temp directories. Supports Set/Write and all path helper methods. Use for tests needing mutation/persistence.
 
 ## Completed Work

@@ -62,7 +62,7 @@ func TestRebuildMissingImage_BuildSuccess(t *testing.T) {
 		return nil
 	}
 
-	cfg, _ := configmocks.NewIsolatedTestConfig(t)
+	cfg := configmocks.NewIsolatedTestConfig(t)
 
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
 		ImageRef:    "test-image:latest",
@@ -116,8 +116,8 @@ func TestRebuildMissingImage_PersistSettingsWarning(t *testing.T) {
 	}
 
 	mock := configmocks.NewBlankConfig()
-	mock.SetFunc = func(key string, value any) error { return nil }
-	mock.WriteFunc = func(opts config.WriteOptions) error { return fmt.Errorf("save failed") }
+	mock.SetSettingsFunc = func(fn func(*config.Settings)) { fn(&config.Settings{}) }
+	mock.WriteSettingsFunc = func(filename ...string) error { return fmt.Errorf("save failed") }
 
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
 		ImageRef:    "test-image:latest",
@@ -142,15 +142,15 @@ func TestPersistDefaultImageSetting_NilConfig(t *testing.T) {
 
 func TestPersistDefaultImageSetting_WriteError(t *testing.T) {
 	mock := configmocks.NewBlankConfig()
-	mock.SetFunc = func(key string, value any) error { return nil }
-	mock.WriteFunc = func(opts config.WriteOptions) error { return fmt.Errorf("save failed") }
+	mock.SetSettingsFunc = func(fn func(*config.Settings)) { fn(&config.Settings{}) }
+	mock.WriteSettingsFunc = func(filename ...string) error { return fmt.Errorf("save failed") }
 
 	warning := persistDefaultImageSetting(mock)
 	assert.Contains(t, warning, "Could not save")
 }
 
 func TestPersistDefaultImageSetting_Success(t *testing.T) {
-	cfg, _ := configmocks.NewIsolatedTestConfig(t)
+	cfg := configmocks.NewIsolatedTestConfig(t)
 	warning := persistDefaultImageSetting(cfg)
 	assert.Empty(t, warning)
 

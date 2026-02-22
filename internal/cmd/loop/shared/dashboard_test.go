@@ -14,7 +14,7 @@ import (
 )
 
 func testProject(name string) config.Config {
-	return configmock.NewFromString(`name: ` + name)
+	return configmock.NewFromString(`name: `+name, "")
 }
 
 func TestWireLoopDashboard_SendsStartEvent(t *testing.T) {

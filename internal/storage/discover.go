@@ -76,6 +76,19 @@ func walkUp(filenames []string) ([]discoveredFile, error) {
 	return files, nil
 }
 
+// ResolveProjectRoot resolves the project root for the current working directory
+// by reading the project registry and finding the deepest registered root that
+// contains CWD. Returns ErrRegistryNotFound if the registry does not exist,
+// and ErrNotInProject if CWD is not within any registered project.
+func ResolveProjectRoot() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("storage: getting CWD: %w", err)
+	}
+	cwd = filepath.Clean(cwd)
+	return resolveProjectRoot(cwd)
+}
+
 // resolveProjectRoot reads the registry file and finds the registered project
 // root that contains cwd. Returns ErrRegistryNotFound if the registry file
 // does not exist, and ErrNotInProject if cwd is not within any registered project.

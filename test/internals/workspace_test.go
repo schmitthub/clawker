@@ -85,7 +85,7 @@ name: "test-project"
 workspace:
   remote_path: "/workspace"
   default_mode: "bind"
-`)
+`, "")
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride:   "bind",
@@ -182,7 +182,7 @@ name: "test-project"
 workspace:
   remote_path: "/workspace"
   default_mode: "bind"
-`)
+`, "")
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride:   "bind",
@@ -231,7 +231,7 @@ workspace:
   default_mode: "bind"
 agent:
   enable_shared_dir: true
-`)
+`, "")
 	// Override ShareSubdir to return our temp share dir
 	mockCfg.ShareSubdirFunc = func() (string, error) {
 		if err := os.MkdirAll(shareDir, 0755); err != nil {
@@ -302,7 +302,7 @@ workspace:
   default_mode: "bind"
 agent:
   enable_shared_dir: false
-`)
+`, "")
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride: "bind",

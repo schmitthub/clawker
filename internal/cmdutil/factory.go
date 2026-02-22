@@ -30,11 +30,11 @@ type Factory struct {
 	TUI       *tui.TUI
 
 	// Lazy nouns
-	Client       func(context.Context) (*docker.Client, error)
-	Config       func() (config.Config, error)
+	Client         func(context.Context) (*docker.Client, error)
+	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
-	GitManager   func() (*git.GitManager, error)
-	HostProxy    func() hostproxy.HostProxyService
-	SocketBridge func() socketbridge.SocketBridgeManager
-	Prompter     func() *prompter.Prompter
+	GitManager     func() (*git.GitManager, error)
+	HostProxy      func() hostproxy.HostProxyService
+	SocketBridge   func() socketbridge.SocketBridgeManager
+	Prompter       func() *prompter.Prompter
 }

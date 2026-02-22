@@ -16,7 +16,7 @@ import (
 // newMockConfigWithPort creates a mock config with a custom manager port.
 func newMockConfigWithPort(t *testing.T, port int) config.Config {
 	t.Helper()
-	return configmocks.NewFromString(fmt.Sprintf(`host_proxy: { manager: { port: %d }, daemon: { port: %d } }`, port, port))
+	return configmocks.NewFromString("", fmt.Sprintf(`host_proxy: { manager: { port: %d }, daemon: { port: %d } }`, port, port))
 }
 
 // getFreeMgrPort returns an available TCP port for manager tests.
@@ -81,7 +81,7 @@ func TestManagerDefaultPort(t *testing.T) {
 }
 
 func TestManagerInvalidPort(t *testing.T) {
-	cfg := configmocks.NewFromString(`host_proxy: { manager: { port: 0 } }`)
+	cfg := configmocks.NewFromString("", `host_proxy: { manager: { port: 0 } }`)
 	_, err := NewManager(cfg)
 	if err == nil {
 		t.Fatal("expected error for invalid port 0")

@@ -93,7 +93,10 @@ func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	projectManager := project.NewProjectManager(cfgGateway, nil)
+	projectManager, err := project.NewProjectManager(cfgGateway, nil)
+	if err != nil {
+		return fmt.Errorf("initializing project manager: %w", err)
+	}
 	configFileName := cfgGateway.ProjectConfigFileName()
 	configPath := filepath.Join(wd, configFileName)
 	ignoreFileName := cfgGateway.ClawkerIgnoreName()

@@ -14,7 +14,7 @@ import (
 
 // StopOptions holds options for the stop command.
 type StopOptions struct {
-	IOStreams     *iostreams.IOStreams
+	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() (config.Config, error)
 	SocketBridge func() socketbridge.SocketBridgeManager

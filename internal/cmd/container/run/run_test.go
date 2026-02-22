@@ -661,11 +661,12 @@ func TestImageArg(t *testing.T) {
 				ctx := context.Background()
 
 				// Build config mock with project + optional default image
-				cfgYAML := fmt.Sprintf("name: %s", tt.projectName)
+				projectYAML := fmt.Sprintf("name: %s", tt.projectName)
+				settingsYAML := ""
 				if tt.defaultImage != "" {
-					cfgYAML += fmt.Sprintf("\ndefault_image: %s", tt.defaultImage)
+					settingsYAML = fmt.Sprintf("default_image: %s", tt.defaultImage)
 				}
-				testCfg := configmocks.NewFromString(cfgYAML)
+				testCfg := configmocks.NewFromString(projectYAML, settingsYAML)
 
 				// Create fake Docker client with the config
 				fake := dockertest.NewFakeClient(testCfg)
@@ -806,7 +807,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 version: "1"
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { enable_host_proxy: false, firewall: { enable: false } }
-`)
+`, "")
 			mock.GetProjectIgnoreFileFunc = func() (string, error) {
 				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
 			}
@@ -896,9 +897,10 @@ func TestRunRun(t *testing.T) {
 	t.Run("non-interactive missing default image returns error", func(t *testing.T) {
 		testCfg := configmocks.NewFromString(`
 version: "1"
-default_image: "node:20-slim"
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { enable_host_proxy: false, firewall: { enable: false } }
+`, `
+default_image: "node:20-slim"
 `)
 		testCfg.GetProjectIgnoreFileFunc = func() (string, error) {
 			return filepath.Join(os.TempDir(), testCfg.ClawkerIgnoreName()), nil

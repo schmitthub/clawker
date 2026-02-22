@@ -37,7 +37,7 @@ func TestNewHarness_WithProject(t *testing.T) {
 func TestNewHarness_WithConfig(t *testing.T) {
 	cfg := &config.Project{
 		Version: "1",
-		Name: "custom-project",
+		Name:    "custom-project",
 		Build: config.BuildConfig{
 			Image: "custom:image",
 		},
@@ -249,7 +249,7 @@ func TestHarness_UpdateConfig(t *testing.T) {
 	// Verify file was rewritten - reload and check
 	data, err := os.ReadFile(h.ConfigPath())
 	require.NoError(t, err)
-	reloaded, err := config.ReadFromString(string(data))
+	reloaded, err := config.NewFromString(string(data), "")
 	require.NoError(t, err)
 	assert.Equal(t, "new:image", reloaded.Project().Build.Image)
 }

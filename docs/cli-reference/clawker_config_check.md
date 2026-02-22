@@ -7,11 +7,8 @@ Validate your clawker configuration
 Validates a clawker.yaml configuration file.
 
 Checks for:
-  - Unknown or misspelled fields
-  - Required fields (version, build.image or build.dockerfile)
-  - Valid field values and formats
-  - File existence for referenced paths (dockerfile, includes)
-  - Security configuration consistency
+  - Valid YAML syntax
+  - Known configuration structure
 
 ```
 clawker config check [flags]

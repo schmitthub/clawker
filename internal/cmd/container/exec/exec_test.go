@@ -245,7 +245,7 @@ func testConfig() config.Config {
 	cfg := configmocks.NewFromString(`
 security:
   enable_host_proxy: false
-`)
+`, "")
 	cfg.ProjectFunc = func() *config.Project {
 		p := &config.Project{}
 		p.Security.EnableHostProxy = ptrBool(false)

@@ -82,6 +82,10 @@ func NewMockProject(name, repoPath string) *ProjectMock {
 // Pass a GitManagerFactory to enable worktree operations, or nil for registry-only tests.
 func NewTestProjectManager(t *testing.T, gitFactory project.GitManagerFactory) project.ProjectManager {
 	t.Helper()
-	cfg, _ := configmocks.NewIsolatedTestConfig(t)
-	return project.NewProjectManager(cfg, gitFactory)
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	mgr, err := project.NewProjectManager(cfg, gitFactory)
+	if err != nil {
+		t.Fatalf("creating test project manager: %v", err)
+	}
+	return mgr
 }

@@ -80,7 +80,6 @@ func NewClientFromEngine(engine *whail.Engine, cfg config.Config) *Client {
 	return &Client{Engine: engine, cfg: cfg}
 }
 
-
 // Close closes the underlying Docker connection.
 func (c *Client) Close() error {
 	return c.APIClient.Close()

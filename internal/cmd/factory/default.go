@@ -30,13 +30,13 @@ func New(version string) *cmdutil.Factory {
 		Config:  configFunc(),
 	}
 
-	f.HostProxy = hostProxyFunc(f)       // depends on Config
-	f.SocketBridge = socketBridgeFunc(f)  // depends on Config
-	f.IOStreams = ioStreams(f)             // needs f.Config() for logger settings
-	f.TUI = tuiFunc(f)                    // needs IOStreams
+	f.HostProxy = hostProxyFunc(f)           // depends on Config
+	f.SocketBridge = socketBridgeFunc(f)     // depends on Config
+	f.IOStreams = ioStreams(f)               // needs f.Config() for logger settings
+	f.TUI = tuiFunc(f)                       // needs IOStreams
 	f.ProjectManager = projectManagerFunc(f) // depends on Config + IOStreams
-	f.Client = clientFunc(f)              // depends on Config
-	f.GitManager = gitManagerFunc(f)      // depends on Config
+	f.Client = clientFunc(f)                 // depends on Config
+	f.GitManager = gitManagerFunc(f)         // depends on Config
 	f.Prompter = prompterFunc(f)
 
 	return f
@@ -56,7 +56,7 @@ func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, erro
 				err = fmt.Errorf("failed to get config: %w", cfgErr)
 				return
 			}
-			svc = project.NewProjectManager(cfg, nil)
+			svc, err = project.NewProjectManager(cfg, nil)
 		})
 		return svc, err
 	}

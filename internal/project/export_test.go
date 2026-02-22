@@ -1,6 +1,8 @@
 package project
 
-import "github.com/schmitthub/clawker/internal/config"
+import (
+	"github.com/schmitthub/clawker/internal/config"
+)
 
 type ProjectHandleForTest = projectHandle
 
@@ -12,8 +14,12 @@ type RegistryForTest struct {
 	registry *projectRegistry
 }
 
-func NewRegistryForTest(cfg config.Config) *RegistryForTest {
-	return &RegistryForTest{registry: newRegistry(cfg)}
+func NewRegistryForTest() (*RegistryForTest, error) {
+	store, err := newRegistryStore()
+	if err != nil {
+		return nil, err
+	}
+	return &RegistryForTest{registry: newRegistry(store)}, nil
 }
 
 func (r *RegistryForTest) RemoveByRoot(root string) error {

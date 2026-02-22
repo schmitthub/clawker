@@ -28,7 +28,7 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | Package | Test Utils | Provides |
 |---------|------------|----------|
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
-| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `ConfigMock` |
+| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
@@ -45,11 +45,10 @@ configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 Use the lightest helper that fits the assertion:
 
 - `configmocks.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
-- `configmocks.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
-- `configmocks.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
-- `configmocks.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
+- `configmocks.NewFromString(projectYAML, settingsYAML)` — test double with specific YAML values, NO defaults. Pass empty strings for schemas you don't care about. Returns `*ConfigMock`.
+- `configmocks.NewIsolatedTestConfig(t)` — file-backed config (real `storage.Store`) for tests that need `SetProject`/`SetSettings`/`WriteProject`/`WriteSettings` or env var overrides. Returns `Config`.
 
-`NewBlankConfig` and `NewFromString` return `*configmocks.ConfigMock` (moq-generated) with every read Func field pre-wired. Set/Write/Watch are intentionally NOT wired — calling them panics, signaling that `NewIsolatedTestConfig` should be used.
+`NewBlankConfig` and `NewFromString` return `*configmocks.ConfigMock` (moq-generated) with every read Func field pre-wired. Mutation methods (`SetProject`, `SetSettings`, `WriteProject`, `WriteSettings`) are intentionally NOT wired — calling them panics, signaling that `NewIsolatedTestConfig` should be used.
 
 Project test doubles live in `internal/project/mocks/`. Import as:
 
@@ -60,16 +59,14 @@ projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 Typical mapping:
 
 - Defaults and typed getter behavior → `NewBlankConfig()`
-- Specific YAML values for schema/parsing tests → `NewFromString(yaml)`
-- Key mutation / selective persistence / env override tests → `NewIsolatedTestConfig(t)`
-- YAML parsing and validation errors → `ReadFromString(...)` directly
-
-When working specifically on `internal/config`, keep validation package-local while migration is in progress:
+- Specific YAML values for schema/parsing tests → `NewFromString(projectYAML, settingsYAML)`
+- Typed mutation / persistence / env override tests → `NewIsolatedTestConfig(t)`
+- YAML strict validation errors → `config.ValidateProjectYAML(data)` directly
 
 ```bash
 go test ./internal/config -v
-go test ./internal/config -run TestWrite -v
-go test ./internal/config -run TestReadFromString -v
+go test ./internal/config -run TestSetProject -v
+go test ./internal/config -run TestWriteProject -v
 ```
 
 For tests asserting defaults or file values, clear `CLAWKER_*` environment overrides first.

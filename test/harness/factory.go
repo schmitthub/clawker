@@ -81,7 +81,7 @@ func configFromProject(project *config.Project) config.Config {
 	}
 	// Name has yaml:"name,omitempty" so yaml.Marshal includes it.
 	cfgYAML := string(yamlData)
-	return configmocks.NewFromString(cfgYAML)
+	return configmocks.NewFromString(cfgYAML, "")
 }
 
 // applyTestDefaults sets test-safe defaults on a project config without

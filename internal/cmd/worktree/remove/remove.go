@@ -15,7 +15,7 @@ import (
 
 // RemoveOptions contains the options for the remove command.
 type RemoveOptions struct {
-	IOStreams       *iostreams.IOStreams
+	IOStreams      *iostreams.IOStreams
 	ProjectManager func() (project.ProjectManager, error)
 
 	Force        bool
@@ -26,7 +26,7 @@ type RemoveOptions struct {
 // NewCmdRemove creates the worktree remove command.
 func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command {
 	opts := &RemoveOptions{
-		IOStreams:  f.IOStreams,
+		IOStreams:      f.IOStreams,
 		ProjectManager: f.ProjectManager,
 	}
 

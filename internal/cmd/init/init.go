@@ -167,9 +167,9 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 
 	if buildBaseImage {
 		// Clear default image when building (will be set after successful build)
-		if err := cfg.Set("settings.default_image", ""); err != nil {
-			return fmt.Errorf("failed to clear default image: %w", err)
-		}
+		cfg.SetSettings(func(s *config.Settings) {
+			s.DefaultImage = ""
+		})
 	}
 
 	ios.Logger.Debug().
@@ -178,7 +178,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		Msg("initializing user settings")
 
 	// Save initial settings
-	if err := cfg.Write(config.WriteOptions{}); err != nil {
+	if err := cfg.WriteSettings(); err != nil {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
@@ -260,10 +260,10 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		}
 
 		// Update settings with the built image
-		if err := cfg.Set("settings.default_image", docker.DefaultImageTag); err != nil {
-			ios.Logger.Warn().Err(err).Msg("failed to update settings with default image")
-		}
-		if err := cfg.Write(config.WriteOptions{}); err != nil {
+		cfg.SetSettings(func(s *config.Settings) {
+			s.DefaultImage = docker.DefaultImageTag
+		})
+		if err := cfg.WriteSettings(); err != nil {
 			ios.Logger.Warn().Err(err).Msg("failed to save settings with default image")
 			fmt.Fprintf(ios.ErrOut, "%s Warning: built image %s but failed to update settings: %v\n",
 				cs.WarningIcon(), docker.DefaultImageTag, err)

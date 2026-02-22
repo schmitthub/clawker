@@ -320,7 +320,8 @@ func newWorktreeTestFactory(t *testing.T, h *harness.Harness) (*cmdutil.Factory,
 	require.NoError(t, err, "failed to load config")
 
 	// Build a real ProjectManager so CurrentProject/Record work against the registry
-	pm := project.NewProjectManager(cfg, nil)
+	pm, err := project.NewProjectManager(cfg, nil)
+	require.NoError(t, err, "failed to create project manager")
 
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,

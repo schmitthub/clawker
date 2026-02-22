@@ -20,13 +20,13 @@ import (
 
 // RebuildMissingImageOpts holds options for the rebuild prompt flow.
 type RebuildMissingImageOpts struct {
-	ImageRef       string
-	IOStreams      *iostreams.IOStreams
-	TUI            *tui.TUI
-	Prompter   func() *prompter.Prompter
-	Cfg        config.Config
-	BuildImage docker.BuildDefaultImageFn
-	CommandVerb    string // "run" or "create" for error messages
+	ImageRef    string
+	IOStreams   *iostreams.IOStreams
+	TUI         *tui.TUI
+	Prompter    func() *prompter.Prompter
+	Cfg         config.Config
+	BuildImage  docker.BuildDefaultImageFn
+	CommandVerb string // "run" or "create" for error messages
 }
 
 // RebuildMissingDefaultImage prompts the user to rebuild a missing default image.
@@ -192,8 +192,10 @@ func persistDefaultImageSetting(cfg config.Config) string {
 	if cfg == nil {
 		return ""
 	}
-	cfg.Set("settings.default_image", docker.DefaultImageTag)
-	if saveErr := cfg.Write(config.WriteOptions{Key: "settings.default_image"}); saveErr != nil {
+	cfg.SetSettings(func(s *config.Settings) {
+		s.DefaultImage = docker.DefaultImageTag
+	})
+	if saveErr := cfg.WriteSettings(); saveErr != nil {
 		logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
 		return fmt.Sprintf("Could not save default image setting: %v", saveErr)
 	}

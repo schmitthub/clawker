@@ -134,19 +134,22 @@ Settings and config are **never collapsed** — different concerns, different ev
 
 ```go
 // Host infrastructure — ~/.config/clawker/settings.yaml only
-type SettingsFile struct {
-    Logging    LoggingConfig    `yaml:"logging"`
-    HostProxy  HostProxyConfig  `yaml:"host_proxy"`
-    Monitoring MonitoringConfig `yaml:"monitoring"`
+type Settings struct {
+    DefaultImage string           `yaml:"default_image,omitempty"`
+    Logging      LoggingConfig    `yaml:"logging"`
+    HostProxy    HostProxyConfig  `yaml:"host_proxy"`
+    Monitoring   MonitoringConfig `yaml:"monitoring"`
 }
 
 // Project defaults — tiered via walk-up (global → project → local)
-type ConfigFile struct {
+type Project struct {
+    Version   string          `yaml:"version"`
+    Name      string          `yaml:"name,omitempty"`
     Build     BuildConfig     `yaml:"build"`
     Workspace WorkspaceConfig `yaml:"workspace"`
     Security  SecurityConfig  `yaml:"security"`
     Agent     AgentConfig     `yaml:"agent"`
-    Loop      LoopConfig      `yaml:"loop"`
+    Loop      *LoopConfig     `yaml:"loop,omitempty"`
 }
 ```
 
@@ -162,13 +165,14 @@ Single access point with namespaced sub-accessors. One factory closure (`f.Confi
 ```go
 type Config interface {
     // Store accessors — each delegates to a composed Store[T].Get()
-    Settings() *SettingsFile    // → ~/.config/clawker/settings.yaml
-    Project() *ConfigFile       // → merged walk-up result
+    Settings() Settings         // → ~/.config/clawker/settings.yaml
+    Project() *Project          // → merged walk-up result
 
-    // Store mutations — same Get/Set/Write API as Store[T]
-    Get() ...                   // (via Settings() / Project() typed accessors above)
-    Set(fn func(*T))            // in-memory mutation → structToMap → tree update
-    Write(opts ...WriteOption) error  // tree → provenance-routed atomic write
+    // Typed mutation — separate methods per store (different generic types)
+    SetProject(fn func(*Project))              // in-memory mutation → tree update
+    SetSettings(fn func(*Settings))            // in-memory mutation → tree update
+    WriteProject(filename ...string) error     // provenance-routed atomic write
+    WriteSettings(filename ...string) error    // provenance-routed atomic write
 
     // Path helpers, constants, labels (~40 methods)
     ConfigDir() string
@@ -178,16 +182,17 @@ type Config interface {
 }
 ```
 
-`cfg.Write(...)`, `cfg.Set(...)`, and `projectManager.Write(...)` / `projectManager.Set(...)` share the same familiar API shape — consistent across all things that compose `Store[T]`.
+`cfg.SetProject(fn)` / `cfg.WriteProject()` and `pm.Set(fn)` / `pm.Write()` share the same familiar API shape — thin wrappers around `Store[T].Set` / `Store[T].Write`, consistent across all things that compose `Store[T]`.
 
 **Usage:**
 - `cfg.Project().Build.Image` — from merged config walk-up
 - `cfg.Settings().Logging.FileEnabled` — from settings.yaml
-- `cfg.ConfigDir()` — path helpers at top level
+- `cfg.MonitoringConfig()` — typed convenience accessor
+- `cfg.ConfigDirEnvVar()` — constants via interface methods
 
 **No collision risk:** If both schemas grow a `Build` section, `cfg.Settings().Build` vs `cfg.Project().Build`.
 
-**No generic `Get(key)` / `Set(key, val)`.** Typed accessors only.
+**No generic `Get(key)` / `Set(key, val)`.** Typed mutation via `SetProject(fn)` / `SetSettings(fn)` only.
 
 #### Node Tree Architecture
 
@@ -249,7 +254,7 @@ Untagged slices default to overwrite at runtime (safe fallback). A reflection te
 
 **SettingsFile:** Loaded separately, not merged with ConfigFile.
 
-**Env var overrides:** Hardcoded shortlist only. No generic `CLAWKER_*` → field mapping. Explicitly supported env vars, added as needed.
+**Env var overrides:** Removed. The old Viper-based `CLAWKER_*` env var binding has been eliminated. Env vars only affect directory resolution (`CLAWKER_CONFIG_DIR`, `CLAWKER_DATA_DIR`, `CLAWKER_STATE_DIR`).
 
 #### Migrations
 
@@ -277,21 +282,24 @@ func migrateOldBuildKey(raw map[string]any) bool {
 
 #### Write Model
 
-All writes go through `Set()` + `Write()` on the composed `Store[T]`:
+All writes go through `Set*()` + `Write*()` on the composed `Store[T]`:
 
 ```go
-cfg.Set(func(c *ConfigFile) { c.Build.Image = "ubuntu:24.04" })
-cfg.Write(WithFilename("clawker.local.yaml"))
+cfg.SetProject(func(p *Project) { p.Build.Image = "ubuntu:24.04" })
+cfg.WriteProject("clawker.local.yaml")
+
+cfg.SetSettings(func(s *Settings) { s.DefaultImage = "custom:latest" })
+cfg.WriteSettings()
 ```
 
 | Call | Target File | Writer | When |
 |------|-------------|--------|------|
-| `cfg.Write(WithFilename("settings.yaml"))` | `~/.config/clawker/settings.yaml` | `clawker init` | One-time scaffolding |
-| `cfg.Write(WithFilename("clawker.yaml"))` | `~/.config/clawker/clawker.yaml` | `clawker init` | Global defaults |
-| `cfg.Write(WithFilename("clawker.local.yaml"))` | `.clawker/clawker.local.yaml` or `.clawker.local.yaml` | User/programmatic | Personal overrides |
+| `cfg.WriteSettings()` | `~/.config/clawker/settings.yaml` | `clawker init`, image commands | Settings mutation |
+| `cfg.WriteProject()` | Auto-routed by provenance | Programmatic | Project config updates |
+| `cfg.WriteProject("clawker.local.yaml")` | First layer matching filename | User/programmatic | Personal overrides |
 | `pm.Write()` | `~/.local/share/clawker/registry.yaml` | `internal/project` | Runtime CRUD |
 
-Write semantics: `Set()` mutates in-memory struct + serializes back into node tree via `structToMap`. `Write()` persists the current tree — routes fields by provenance, read-merge-write per file with atomic I/O (temp+fsync+rename).
+Write semantics: `Set*()` mutates in-memory struct + serializes back into node tree via `structToMap`. `Write*()` persists the current tree — routes fields by provenance, read-merge-write per file with atomic I/O (temp+fsync+rename).
 
 Settings files do NOT need locking — per-machine, no concurrent writers. Registry uses flock (owned by `internal/project`).
 
@@ -890,8 +898,8 @@ func TestNewCmdStop(t *testing.T) {
 
 Use test doubles from `internal/config/mocks/` (import as `configmocks`) for all callers:
 
-- `configmocks.NewBlankConfig()` — zero-value config for simple unit tests
-- `configmocks.NewFromString(yaml)` — deterministic pre-seeded state from YAML string
+- `configmocks.NewBlankConfig()` — defaults-seeded config for simple unit tests
+- `configmocks.NewFromString(projectYAML, settingsYAML)` — deterministic pre-seeded state from YAML strings (NO defaults)
 - `configmocks.NewIsolatedTestConfig(t)` — full isolated config with temp directories for write tests
 
 See `internal/config/CLAUDE.md` for detailed test helper documentation.

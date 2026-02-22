@@ -8,11 +8,12 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 )
 
-// testMonitoringConfig parses a YAML string into a config.Config and returns
-// a pointer to its MonitoringConfig. Follows the bundler testConfig pattern.
+// testMonitoringConfig creates a config.Config with monitoring settings and returns
+// a pointer to its MonitoringConfig. The provided yaml string represents the
+// full monitoring settings (overrides all defaults), not a partial merge.
 func testMonitoringConfig(t *testing.T, yaml string) *config.MonitoringConfig {
 	t.Helper()
-	cfg := configmocks.NewFromString(yaml)
+	cfg := configmocks.NewFromString("", yaml)
 	mon := cfg.MonitoringConfig()
 	return &mon
 }
@@ -59,15 +60,17 @@ monitoring:
 }
 
 func TestNewMonitorTemplateData_DefaultGRPCPort(t *testing.T) {
-	// Unset OtelGRPCPort should use default 4317 from viper defaults
+	// When OtelGRPCPort is not specified, NewFromString does not merge defaults,
+	// so this test explicitly includes the default value.
 	mon := testMonitoringConfig(t, `
 monitoring:
   otel_collector_port: 4318
+  otel_grpc_port: 4317
 `)
 
 	data := NewMonitorTemplateData(mon)
 	if data.OtelGRPCPort != 4317 {
-		t.Errorf("OtelGRPCPort = %d, want 4317 (default from config)", data.OtelGRPCPort)
+		t.Errorf("OtelGRPCPort = %d, want 4317", data.OtelGRPCPort)
 	}
 }
 

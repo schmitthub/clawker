@@ -108,7 +108,7 @@ Three packages form the configuration subsystem. `storage` is the engine, `confi
 │  cfg, _ := f.Config()              pm, _ := f.Project()                 │
 │  cfg.Project().Build.Image         pm.Register(slug, path)              │
 │  cfg.Settings().Logging            pm.ListWorktrees(ctx)                │
-│  cfg.Write(partial, opts...)       pm.Resolve(cwd)                      │
+│  cfg.SetProject(fn); cfg.WriteProject()  pm.Resolve(cwd)               │
 └────────────┬────────────────────────────────────┬───────────────────────┘
              │ Config interface                   │ ProjectManager interface
              ▼                                    ▼
@@ -117,8 +117,8 @@ Three packages form the configuration subsystem. `storage` is the engine, `confi
 │  (thin domain wrapper)      │     │  (thin domain wrapper)              │
 │                             │     │                                     │
 │  configImpl {               │     │  projectManagerImpl {               │
-│    *Store[ConfigFile]       │     │    *Store[Registry]                 │
-│    *Store[SettingsFile]     │     │  }                                  │
+│    *Store[Project]       │     │    *Store[ProjectRegistry]                 │
+│    *Store[Settings]     │     │  }                                  │
 │  }                          │     │                                     │
 │                             │     │  • Project CRUD, resolution         │
 │  • Config interface         │     │  • Worktree lifecycle               │
@@ -199,13 +199,13 @@ Each file migrates independently — any file at any depth can be independently 
 
 ### internal/config - Configuration
 
-Thin domain wrapper composing `Store[ConfigFile]` + `Store[SettingsFile]`. Exposes the `Config` interface — a closed box where all file names, paths, and constants are private.
+Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings]`. Exposes the `Config` interface — a closed box where all file names, paths, and constants are private. Replaces Viper — no env var binding, no mapstructure, no fsnotify.
 
 **Design principle**: If a caller needs information from the config package, it must use an existing `Config` method or propose a new one on the interface. No reaching into package internals.
 
 **Two independent schemas, one interface:**
-- `SettingsFile` — host infrastructure (logging, host_proxy, monitoring)
-- `ConfigFile` — project defaults (build, workspace, security, agent, loop). Tiered via walk-up.
+- `Settings` — host infrastructure (logging, host_proxy, monitoring)
+- `Project` — project defaults (build, workspace, security, agent, loop). Tiered via walk-up.
 - Callers access both through namespaced sub-accessors: `cfg.Settings().Logging`, `cfg.Project().Build.Image`, `cfg.ConfigDir()`
 
 **File layout (full XDG — walk-up bounded at project root, never reaches HOME):**
@@ -241,7 +241,7 @@ Thin domain wrapper composing `Store[ConfigFile]` + `Store[SettingsFile]`. Expos
 **What `configImpl` adds on top of `Store[T]`:**
 - `Config` interface with namespaced accessors
 - Path/constant helpers (`ConfigDir()`, `Domain()`, `LabelDomain()`, ~40 methods)
-- `Write(partial, opts...)` — same familiar `Store[T]` API surface as `projectManager`
+- `SetProject`/`SetSettings` + `WriteProject`/`WriteSettings` — typed mutation wrappers around `Store[T].Set`/`Write`
 
 **Testing**: See `internal/config/CLAUDE.md` for test helpers and mocks.
 
@@ -332,7 +332,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
 | `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. Leaf — zero internal imports |
-| `internal/config` | Thin wrapper composing `Store[ConfigFile]` + `Store[SettingsFile]`. Exposes `Config` interface with namespaced accessors, path/constant helpers. See `internal/config/CLAUDE.md` |
+| `internal/config` | Thin wrapper composing `Store[Project]` + `Store[Settings]`. Exposes `Config` interface with namespaced accessors, path/constant helpers. See `internal/config/CLAUDE.md` |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
 | `internal/cmdutil` | Factory struct (closure fields), error types, format/filter flags, arg validators |

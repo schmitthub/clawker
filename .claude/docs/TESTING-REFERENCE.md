@@ -71,7 +71,7 @@ Each package with complex dependencies provides test infrastructure:
 | Package | Test Location | What It Provides |
 |---------|---------------|------------------|
 | `internal/docker` | `dockertest/` | `FakeClient`, `SetupContainerList`, fixtures |
-| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `ConfigMock` |
+| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, function-field fake |
@@ -121,7 +121,7 @@ The DAG fills in, and eventually **any tier can mock/fake/stub the entire chain 
 
 ## Config Package Testing Guide (`internal/config`)
 
-The config package exposes lightweight test doubles in `internal/config/mocks/stubs.go`. `NewBlankConfig()` and `NewFromString()` return `*ConfigMock` (moq-generated) with every read Func field pre-wired to delegate to a real `configImpl`. This enables partial mocking and call assertions.
+The config package exposes lightweight test doubles in `internal/config/mocks/stubs.go`. `NewBlankConfig()` and `NewFromString(projectYAML, settingsYAML)` return `*ConfigMock` (moq-generated) with every read Func field pre-wired to delegate to a real `configImpl`. Mutation methods (`SetProject`, `SetSettings`, `WriteProject`, `WriteSettings`) are NOT wired — calling them panics, signaling that `NewIsolatedTestConfig` should be used.
 
 Import as:
 ```go
@@ -131,28 +131,26 @@ configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 ### Which helper to use
 
 - `configmocks.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
-- `configmocks.NewFromString(yaml)` — empty config test double with specific YAML values Returns `*ConfigMock`.
-- `configmocks.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback. Test repository directory is also set up and can be accessed via `cfg.TestRepoDirEnvVar()`.
-- `configmocks.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
+- `configmocks.NewFromString(projectYAML, settingsYAML)` — test double with specific YAML values, NO defaults. Pass empty strings for schemas you don't care about. Returns `*ConfigMock`.
+- `configmocks.NewIsolatedTestConfig(t)` — file-backed config (real `storage.Store`) for tests that need `SetProject`/`SetSettings`/`WriteProject`/`WriteSettings` or env var overrides. Returns `Config`.
 
 ### Typical test mapping
 
 - Defaults and typed getter behavior → `NewBlankConfig()`
-- Specific YAML values for schema/parsing tests → `NewFromString(yaml)`
-- Key mutation / selective persistence / env override tests → `NewIsolatedTestConfig(t)`
-- YAML parsing and validation errors → `ReadFromString(...)` directly
+- Specific YAML values for schema/parsing tests → `NewFromString(projectYAML, settingsYAML)`
+- Typed mutation / persistence / env override tests → `NewIsolatedTestConfig(t)`
+- YAML strict validation errors → `config.ValidateProjectYAML(data)` directly
 
 ### Focused commands
 
 ```bash
 go test ./internal/config -v
-go test ./internal/config -run TestWrite -v
-go test ./internal/config -run TestReadFromString -v
+go test ./internal/config -run TestSetProject -v
+go test ./internal/config -run TestWriteProject -v
 ```
 
 ### Practical notes
 
-- Keep config refactor validation package-local while transitive callers are still being migrated.
 - For tests asserting defaults/file values, clear `CLAWKER_*` environment overrides first.
 
 ---
@@ -181,7 +179,7 @@ mgr.GetFunc = func(_ context.Context, root string) (project.Project, error) {
 
 Use `projectmocks.NewReadOnlyTestManager(t, yaml)` when your test needs realistic project reads from YAML while preventing registry mutation.
 
-- Config double source: `configmocks.NewFromString(yaml)`
+- Config double source: `configmocks.NewFromString(yaml, "")`
 - Git double source: `gittest.NewInMemoryGitManager(t, repoRoot)`
 - Mutation guard: `Register`, `Update`, and `Remove` return `project.ErrReadOnlyTestManager`
 
@@ -943,8 +941,8 @@ gitMgr := gittest.NewInMemoryGitManager()
 | Need | Use |
 |------|-----|
 | Default config for command tests | `configmocks.NewBlankConfig()` |
-| Config with specific YAML values | `configmocks.NewFromString(yaml)` |
-| Config needing Set/Write/Watch | `configmocks.NewIsolatedTestConfig(t)` |
+| Config with specific YAML values | `configmocks.NewFromString(projectYAML, settingsYAML)` |
+| Config needing SetProject/WriteProject | `configmocks.NewIsolatedTestConfig(t)` |
 | Test git operations without filesystem | `gittest.NewInMemoryGitManager()` |
 | Test git operations with real branches | `gittest.NewTestRepoOnDisk(t)` |
 

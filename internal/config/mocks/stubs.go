@@ -1,7 +1,6 @@
 package mocks
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,12 +19,14 @@ func NewBlankConfig() *ConfigMock {
 }
 
 // NewFromString creates an in-memory *ConfigMock from YAML.
-// All read methods delegate to an empty config with values from the provided YAML.
+// projectYAML and settingsYAML are raw YAML strings with NO defaults merged.
+// Pass empty strings for schemas you don't care about.
 // Panics on invalid YAML to match test-stub ergonomics.
-// Set, Write, and Watch are NOT wired — calling them panics via moq's nil-func guard,
-// signaling that NewIsolatedTestConfig should be used for mutation tests.
-func NewFromString(cfgStr string) *ConfigMock {
-	cfg, err := config.ReadFromString(cfgStr)
+// SetProject, SetSettings, WriteProject, WriteSettings are NOT wired —
+// calling them panics via moq's nil-func guard, signaling that
+// NewIsolatedTestConfig should be used for mutation tests.
+func NewFromString(projectYAML, settingsYAML string) *ConfigMock {
+	cfg, err := config.NewFromString(projectYAML, settingsYAML)
 	if err != nil {
 		panic(err)
 	}
@@ -33,19 +34,18 @@ func NewFromString(cfgStr string) *ConfigMock {
 }
 
 // newMockFrom wires all read-only Func fields on a ConfigMock to delegate to cfg.
-// Set, Write, Watch, and path helpers are intentionally NOT wired — calling them
-// panics via moq's nil-func guard, signaling that NewIsolatedTestConfig should be used.
+// Mutation methods (SetProject, SetSettings, WriteProject, WriteSettings) are
+// intentionally NOT wired — calling them panics via moq's nil-func guard,
+// signaling that NewIsolatedTestConfig should be used.
 func newMockFrom(cfg config.Config) *ConfigMock {
 	mock := &ConfigMock{}
 
 	// Schema accessors
 	mock.ProjectFunc = cfg.Project
 	mock.SettingsFunc = cfg.Settings
-	mock.LoggingFunc = cfg.Logging
 	mock.LoggingConfigFunc = cfg.LoggingConfig
 	mock.MonitoringConfigFunc = cfg.MonitoringConfig
 	mock.HostProxyConfigFunc = cfg.HostProxyConfig
-	mock.GetFunc = cfg.Get
 	mock.RequiredFirewallDomainsFunc = cfg.RequiredFirewallDomains
 	mock.GetProjectRootFunc = cfg.GetProjectRoot
 	mock.GetProjectIgnoreFileFunc = cfg.GetProjectIgnoreFile
@@ -60,6 +60,7 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.ConfigDirEnvVarFunc = cfg.ConfigDirEnvVar
 	mock.StateDirEnvVarFunc = cfg.StateDirEnvVar
 	mock.DataDirEnvVarFunc = cfg.DataDirEnvVar
+	mock.TestRepoDirEnvVarFunc = cfg.TestRepoDirEnvVar
 	mock.ClawkerNetworkFunc = cfg.ClawkerNetwork
 	mock.ContainerUIDFunc = cfg.ContainerUID
 	mock.ContainerGIDFunc = cfg.ContainerGID
@@ -69,6 +70,19 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.GrafanaURLFunc = cfg.GrafanaURL
 	mock.JaegerURLFunc = cfg.JaegerURL
 	mock.PrometheusURLFunc = cfg.PrometheusURL
+
+	// Path helpers
+	mock.MonitorSubdirFunc = cfg.MonitorSubdir
+	mock.BuildSubdirFunc = cfg.BuildSubdir
+	mock.DockerfilesSubdirFunc = cfg.DockerfilesSubdir
+	mock.LogsSubdirFunc = cfg.LogsSubdir
+	mock.BridgesSubdirFunc = cfg.BridgesSubdir
+	mock.PidsSubdirFunc = cfg.PidsSubdir
+	mock.ShareSubdirFunc = cfg.ShareSubdir
+	mock.WorktreesSubdirFunc = cfg.WorktreesSubdir
+	mock.BridgePIDFilePathFunc = cfg.BridgePIDFilePath
+	mock.HostProxyPIDFilePathFunc = cfg.HostProxyPIDFilePath
+	mock.HostProxyLogFilePathFunc = cfg.HostProxyLogFilePath
 
 	// Labels
 	mock.LabelPrefixFunc = cfg.LabelPrefix
@@ -91,65 +105,31 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 }
 
 // NewIsolatedTestConfig creates a file-backed config isolated to a temp directory.
-// It returns a real Config (backed by configImpl with defaults) that supports Set/Write,
-// and a reader callback that reads any data written to disk during the test.
-// Use this for tests that need mutation, persistence, or env var overrides.
-func NewIsolatedTestConfig(t *testing.T) (config.Config, func(io.Writer, io.Writer, io.Writer, io.Writer)) {
+// It returns a real Config (backed by storage.Store) that supports Set/Write,
+// and a cleanup function. Use this for tests that need mutation or persistence.
+func NewIsolatedTestConfig(t *testing.T) config.Config {
 	t.Helper()
-
-	cfg, err := config.NewBlankConfig()
-	if err != nil {
-		t.Fatalf("creating blank config for isolated test: %v", err)
-	}
 
 	base := t.TempDir()
 
 	configDir := filepath.Join(base, "config")
 	dataDir := filepath.Join(base, "data")
-	testRepoDir := filepath.Join(base, "testrepo")
 	stateDir := filepath.Join(base, "state")
 
-	t.Setenv(cfg.ConfigDirEnvVar(), configDir)
-	t.Setenv(cfg.DataDirEnvVar(), dataDir)
-	t.Setenv(cfg.StateDirEnvVar(), stateDir)
-	t.Setenv(cfg.TestRepoDirEnvVar(), testRepoDir)
-
-	err = os.MkdirAll(configDir, 0o755)
-	if err != nil {
-		t.Fatalf("creating config dir: %v", err)
-	}
-	err = os.MkdirAll(dataDir, 0o755)
-	if err != nil {
-		t.Fatalf("creating data dir: %v", err)
-	}
-	err = os.MkdirAll(stateDir, 0o755)
-	if err != nil {
-		t.Fatalf("creating state dir: %v", err)
-	}
-	err = os.MkdirAll(testRepoDir, 0o755)
-	if err != nil {
-		t.Fatalf("creating testrepo dir: %v", err)
-	}
-
-	settingsFileName := cfg.SettingsFileName()
-	userProjectFileName := cfg.ProjectConfigFileName()
-	repoProjectFileName := cfg.ProjectConfigFileName()
-	projectRegistryFileName := cfg.ProjectRegistryFileName()
-
-	return cfg, func(settingsOut io.Writer, userProjectOut io.Writer, repoProjectOut io.Writer, registryOut io.Writer) {
-		copyFile := func(path string, out io.Writer) {
-			f, err := os.Open(path)
-			if err != nil {
-				return // file not written, skip silently
-			}
-			defer f.Close()
-			io.Copy(out, f)
+	for _, dir := range []string{configDir, dataDir, stateDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("creating dir %s: %v", dir, err)
 		}
-
-		copyFile(filepath.Join(configDir, settingsFileName), settingsOut)
-		copyFile(filepath.Join(configDir, userProjectFileName), userProjectOut)
-		copyFile(filepath.Join(testRepoDir, repoProjectFileName), repoProjectOut)
-		copyFile(filepath.Join(configDir, projectRegistryFileName), registryOut)
-
 	}
+
+	t.Setenv("CLAWKER_CONFIG_DIR", configDir)
+	t.Setenv("CLAWKER_DATA_DIR", dataDir)
+	t.Setenv("CLAWKER_STATE_DIR", stateDir)
+
+	cfg, err := config.NewConfig()
+	if err != nil {
+		t.Fatalf("creating isolated test config: %v", err)
+	}
+
+	return cfg
 }

@@ -230,8 +230,8 @@ func projectCleanup(t *testing.T, dockerClient *docker.Client, project string) {
 func testProject(name string) *config.Project {
 	cfg := configmocks.NewFromString(`
 Project:
-  - Name: ` + name + `
-`)
+  - Name: `+name+`
+`, "")
 	return cfg.Project()
 }
 

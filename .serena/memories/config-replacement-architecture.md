@@ -1,9 +1,9 @@
-# Config Replacement: Viper → yaml.v3
+# Config Replacement: Viper → storage.Store[T]
 
-> **Status:** Storage engine implemented. Config/project migration next.
+> **Status:** COMPLETE — All migration tasks finished, Viper fully removed.
 > **Last Updated:** 2026-02-22
 > **Branch:** `refactor/configapocalypse`
-> **Docs:** `.claude/docs/DESIGN.md` §2.4, `.claude/docs/ARCHITECTURE.md` (triad diagram), `internal/storage/CLAUDE.md`
+> **Docs:** `.claude/docs/DESIGN.md` §2.4, `.claude/docs/ARCHITECTURE.md` (triad diagram), `internal/storage/CLAUDE.md`, `internal/config/CLAUDE.md`
 
 ## Problem
 
@@ -15,83 +15,57 @@ Viper is designed for single-file configs. Clawker needs multi-file layered conf
 - `internal/storage` provides `Store[T]` — the generic engine.
 - `internal/config` and `internal/project` compose it with their schemas.
 
-## Current State
-
-### Completed
-
-- [x] Architecture decisions finalized
-- [x] `internal/storage` package implemented (8 files, 28 tests passing)
-- [x] Node tree architecture (solves `omitempty` problem)
-- [x] Discovery: walk-up + explicit paths + dual placement
-- [x] Load + migrations (precondition-based, idempotent)
-- [x] Merge with provenance tracking and struct tag strategies
-- [x] Write: provenance-based routing + explicit filename targeting
-- [x] Atomic I/O (temp+fsync+rename) + optional flock
-- [x] XDG resolution (CLAWKER_*_DIR > XDG_*_HOME > defaults)
-- [x] Documentation: `internal/storage/CLAUDE.md`, ARCHITECTURE.md, DESIGN.md updated
-- [x] Serena memories updated
-
-### Next: Config Migration
-
-Migrate `internal/config` to compose `Store[T]`:
+## Final Architecture
 
 ```go
-// Target architecture
 type configImpl struct {
-    project  *storage.Store[ConfigFile]
-    settings *storage.Store[SettingsFile]
-}
-
-func NewConfig() (Config, error) {
-    projectStore, _ := storage.NewStore[ConfigFile](
-        storage.WithFilenames("clawker.yaml", "clawker.local.yaml"),
-        storage.WithDefaults(DefaultConfigYAML),
-        storage.WithWalkUp(),
-        storage.WithConfigDir(),
-        storage.WithMigrations(configMigrations...),
-    )
-    settingsStore, _ := storage.NewStore[SettingsFile](
-        storage.WithFilenames("settings.yaml"),
-        storage.WithDefaults(DefaultSettingsYAML),
-        storage.WithConfigDir(),
-    )
-    return &configImpl{project: projectStore, settings: settingsStore}, nil
+    project  *storage.Store[Project]
+    settings *storage.Store[Settings]
 }
 ```
 
-### Next: Project Migration
+- `Store[Project]` — project config (`clawker.yaml`, `clawker.local.yaml`), walk-up + config dir discovery.
+- `Store[Settings]` — user settings (`settings.yaml`), config dir only.
+- `Store[ProjectRegistry]` — owned by `internal/project`, data dir with flock.
+
+### Typed Mutation API
 
 ```go
-type projectManagerImpl struct {
-    registry *storage.Store[Registry]
-}
-
-func NewProjectManager() (ProjectManager, error) {
-    store, _ := storage.NewStore[Registry](
-        storage.WithFilenames("registry.yaml"),
-        storage.WithDataDir(),
-        storage.WithMigrations(registryMigrations...),
-        storage.WithLock(),
-    )
-    return &projectManagerImpl{registry: store}, nil
-}
+cfg.SetProject(func(p *Project) { p.Name = "foo" })
+cfg.SetSettings(func(s *Settings) { s.DefaultImage = "node:20" })
+cfg.WriteProject()   // persists to disk
+cfg.WriteSettings()  // persists to disk
 ```
 
-### Callers That Need Updating
+### Constructors
 
-| Caller | Current | New |
-|--------|---------|-----|
-| `internal/project/registry.go` | `cfg.Set("registry.projects", ...)` | `pm.Set(func(r *Registry) { ... })` |
-| `internal/cmd/init/init.go` | `cfg.Set("settings.default_image", ...)` | `cfg.Set(func(c *ConfigFile) { ... })` |
-| All callers | `cfg.Get("project.build.image")` | `cfg.Project().Build.Image` |
-| All callers | `cfg.Get("settings.logging.*")` | `cfg.Settings().Logging.*` |
+| Constructor | Defaults | File Discovery | Use Case |
+|------------|----------|----------------|----------|
+| `NewConfig()` | Yes (YAML constants) | Yes (walk-up + config dir) | Production |
+| `NewBlankConfig()` | Yes | No | Test base (read-only mock) |
+| `NewFromString(project, settings)` | **No** | No | Precise test control |
+| `ValidateProjectYAML(data)` | N/A | N/A | Strict validation (`config check`) |
 
-## TODO
+## Completed Tasks
 
-- [ ] Migrate `internal/config` to compose `Store[ConfigFile]` + `Store[SettingsFile]`
-- [ ] Migrate `internal/project` to compose `Store[Registry]`
-- [ ] Update consumer mock APIs (`config/mocks`, `project/mocks`)
-- [ ] Update `internal/config/CLAUDE.md` with new API
-- [ ] Remove Viper dependency
-- [ ] Remove namespace refactor artifacts
-- [ ] Migrate callers to typed accessors
+- [x] `internal/storage` package implemented (8 files, 28 tests)
+- [x] Remove `mapstructure` tags from schema.go
+- [x] Create defaults YAML string constants (`defaultProjectYAML`, `defaultSettingsYAML`)
+- [x] Export `ResolveProjectRoot()` from storage
+- [x] Rewrite `configImpl` and `Config` interface (two-store composition)
+- [x] Extract registry to `internal/project` as `Store[ProjectRegistry]`
+- [x] Update all consumers (init, image, config check) and regenerate mocks
+- [x] Rewrite config tests (25 tests covering constructors, defaults, validation, mutation, persistence)
+- [x] Remove Viper, fsnotify, mapstructure dependencies from go.mod
+- [x] Delete dead code: `dirty.go`, `load.go`, `write.go`, namespace helpers
+- [x] Update documentation: CLAUDE.md files, ARCHITECTURE.md, DESIGN.md
+- [x] Full build passes, all tests pass
+
+## Key Decisions
+
+1. **No env var overrides** — `CLAWKER_*` env vars only affect directory resolution, not config values
+2. **`Watch()` dropped** — zero callers, dead code
+3. **`Logging() map[string]any` dropped** — redundant with typed `LoggingConfig()`
+4. **`ValidateProjectYAML()`** — uses `yaml.Decoder` with `KnownFields(true)` for strict validation
+5. **`NewFromString` has NO defaults** — mirrors storage's raw `NewFromString` semantics
+6. **Registry in project** — `internal/project` owns `Store[ProjectRegistry]`, not config

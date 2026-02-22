@@ -10,112 +10,112 @@ import (
 //
 // Project is a pure persisted schema model for clawker.yaml.
 type Project struct {
-	Version      string          `yaml:"version" mapstructure:"version"`
-	Name         string          `yaml:"name,omitempty" mapstructure:"name"`
-	DefaultImage string          `yaml:"default_image,omitempty" mapstructure:"default_image"`
-	Build        BuildConfig     `yaml:"build" mapstructure:"build"`
-	Agent        AgentConfig     `yaml:"agent" mapstructure:"agent"`
-	Workspace    WorkspaceConfig `yaml:"workspace" mapstructure:"workspace"`
-	Security     SecurityConfig  `yaml:"security" mapstructure:"security"`
-	Loop         *LoopConfig     `yaml:"loop,omitempty" mapstructure:"loop"`
+	Version      string          `yaml:"version"`
+	Name         string          `yaml:"name,omitempty"`
+	DefaultImage string          `yaml:"default_image,omitempty"`
+	Build        BuildConfig     `yaml:"build"`
+	Agent        AgentConfig     `yaml:"agent"`
+	Workspace    WorkspaceConfig `yaml:"workspace"`
+	Security     SecurityConfig  `yaml:"security"`
+	Loop         *LoopConfig     `yaml:"loop,omitempty"`
 }
 
 // BuildConfig defines the container build configuration
 type BuildConfig struct {
-	Image        string              `yaml:"image" mapstructure:"image"`
-	Dockerfile   string              `yaml:"dockerfile,omitempty" mapstructure:"dockerfile"`
-	Packages     []string            `yaml:"packages,omitempty" mapstructure:"packages"`
-	Context      string              `yaml:"context,omitempty" mapstructure:"context"`
-	BuildArgs    map[string]string   `yaml:"build_args,omitempty" mapstructure:"build_args"`
-	Instructions *DockerInstructions `yaml:"instructions,omitempty" mapstructure:"instructions"`
-	Inject       *InjectConfig       `yaml:"inject,omitempty" mapstructure:"inject"`
+	Image        string              `yaml:"image"`
+	Dockerfile   string              `yaml:"dockerfile,omitempty"`
+	Packages     []string            `yaml:"packages,omitempty"`
+	Context      string              `yaml:"context,omitempty"`
+	BuildArgs    map[string]string   `yaml:"build_args,omitempty"`
+	Instructions *DockerInstructions `yaml:"instructions,omitempty"`
+	Inject       *InjectConfig       `yaml:"inject,omitempty"`
 }
 
 // DockerInstructions represents type-safe Dockerfile instructions
 type DockerInstructions struct {
-	Copy        []CopyInstruction  `yaml:"copy,omitempty" mapstructure:"copy"`
-	Env         map[string]string  `yaml:"env,omitempty" mapstructure:"env"`
-	Labels      map[string]string  `yaml:"labels,omitempty" mapstructure:"labels"`
-	Expose      []ExposePort       `yaml:"expose,omitempty" mapstructure:"expose"`
-	Args        []ArgDefinition    `yaml:"args,omitempty" mapstructure:"args"`
-	Volumes     []string           `yaml:"volumes,omitempty" mapstructure:"volumes"`
-	Workdir     string             `yaml:"workdir,omitempty" mapstructure:"workdir"`
-	Healthcheck *HealthcheckConfig `yaml:"healthcheck,omitempty" mapstructure:"healthcheck"`
-	Shell       []string           `yaml:"shell,omitempty" mapstructure:"shell"`
-	UserRun     []RunInstruction   `yaml:"user_run,omitempty" mapstructure:"user_run"`
-	RootRun     []RunInstruction   `yaml:"root_run,omitempty" mapstructure:"root_run"`
+	Copy        []CopyInstruction  `yaml:"copy,omitempty"`
+	Env         map[string]string  `yaml:"env,omitempty"`
+	Labels      map[string]string  `yaml:"labels,omitempty"`
+	Expose      []ExposePort       `yaml:"expose,omitempty"`
+	Args        []ArgDefinition    `yaml:"args,omitempty"`
+	Volumes     []string           `yaml:"volumes,omitempty"`
+	Workdir     string             `yaml:"workdir,omitempty"`
+	Healthcheck *HealthcheckConfig `yaml:"healthcheck,omitempty"`
+	Shell       []string           `yaml:"shell,omitempty"`
+	UserRun     []RunInstruction   `yaml:"user_run,omitempty"`
+	RootRun     []RunInstruction   `yaml:"root_run,omitempty"`
 }
 
 // CopyInstruction represents a COPY instruction with optional chown/chmod
 type CopyInstruction struct {
-	Src   string `yaml:"src" mapstructure:"src"`
-	Dest  string `yaml:"dest" mapstructure:"dest"`
-	Chown string `yaml:"chown,omitempty" mapstructure:"chown"`
-	Chmod string `yaml:"chmod,omitempty" mapstructure:"chmod"`
+	Src   string `yaml:"src"`
+	Dest  string `yaml:"dest"`
+	Chown string `yaml:"chown,omitempty"`
+	Chmod string `yaml:"chmod,omitempty"`
 }
 
 // ExposePort represents an EXPOSE instruction
 type ExposePort struct {
-	Port     int    `yaml:"port" mapstructure:"port"`
-	Protocol string `yaml:"protocol,omitempty" mapstructure:"protocol"` // "tcp" or "udp", defaults to tcp
+	Port     int    `yaml:"port"`
+	Protocol string `yaml:"protocol,omitempty"` // "tcp" or "udp", defaults to tcp
 }
 
 // ArgDefinition represents an ARG instruction
 type ArgDefinition struct {
-	Name    string `yaml:"name" mapstructure:"name"`
-	Default string `yaml:"default,omitempty" mapstructure:"default"`
+	Name    string `yaml:"name"`
+	Default string `yaml:"default,omitempty"`
 }
 
 // HealthcheckConfig represents HEALTHCHECK instruction
 type HealthcheckConfig struct {
-	Cmd         []string `yaml:"cmd" mapstructure:"cmd"`
-	Interval    string   `yaml:"interval,omitempty" mapstructure:"interval"`
-	Timeout     string   `yaml:"timeout,omitempty" mapstructure:"timeout"`
-	StartPeriod string   `yaml:"start_period,omitempty" mapstructure:"start_period"`
-	Retries     int      `yaml:"retries,omitempty" mapstructure:"retries"`
+	Cmd         []string `yaml:"cmd"`
+	Interval    string   `yaml:"interval,omitempty"`
+	Timeout     string   `yaml:"timeout,omitempty"`
+	StartPeriod string   `yaml:"start_period,omitempty"`
+	Retries     int      `yaml:"retries,omitempty"`
 }
 
 // RunInstruction represents a RUN command with OS-awareness
 type RunInstruction struct {
-	Cmd    string `yaml:"cmd,omitempty" mapstructure:"cmd"`       // Generic command for both OS
-	Alpine string `yaml:"alpine,omitempty" mapstructure:"alpine"` // Alpine-specific command
-	Debian string `yaml:"debian,omitempty" mapstructure:"debian"` // Debian-specific command
+	Cmd    string `yaml:"cmd,omitempty"`    // Generic command for both OS
+	Alpine string `yaml:"alpine,omitempty"` // Alpine-specific command
+	Debian string `yaml:"debian,omitempty"` // Debian-specific command
 }
 
 // InjectConfig defines injection points for arbitrary Dockerfile instructions
 type InjectConfig struct {
-	AfterFrom          []string `yaml:"after_from,omitempty" mapstructure:"after_from"`
-	AfterPackages      []string `yaml:"after_packages,omitempty" mapstructure:"after_packages"`
-	AfterUserSetup     []string `yaml:"after_user_setup,omitempty" mapstructure:"after_user_setup"`
-	AfterUserSwitch    []string `yaml:"after_user_switch,omitempty" mapstructure:"after_user_switch"`
-	AfterClaudeInstall []string `yaml:"after_claude_install,omitempty" mapstructure:"after_claude_install"`
-	BeforeEntrypoint   []string `yaml:"before_entrypoint,omitempty" mapstructure:"before_entrypoint"`
+	AfterFrom          []string `yaml:"after_from,omitempty"`
+	AfterPackages      []string `yaml:"after_packages,omitempty"`
+	AfterUserSetup     []string `yaml:"after_user_setup,omitempty"`
+	AfterUserSwitch    []string `yaml:"after_user_switch,omitempty"`
+	AfterClaudeInstall []string `yaml:"after_claude_install,omitempty"`
+	BeforeEntrypoint   []string `yaml:"before_entrypoint,omitempty"`
 }
 
 // ClaudeCodeConfigOptions controls how Claude Code config is initialized in containers.
 type ClaudeCodeConfigOptions struct {
-	Strategy string `yaml:"strategy" mapstructure:"strategy"` // "copy" or "fresh"
+	Strategy string `yaml:"strategy"` // "copy" or "fresh"
 }
 
 // ClaudeCodeConfig controls Claude Code settings and authentication in containers.
 type ClaudeCodeConfig struct {
-	Config      ClaudeCodeConfigOptions `yaml:"config" mapstructure:"config"`
-	UseHostAuth *bool                   `yaml:"use_host_auth,omitempty" mapstructure:"use_host_auth"`
+	Config      ClaudeCodeConfigOptions `yaml:"config"`
+	UseHostAuth *bool                   `yaml:"use_host_auth,omitempty"`
 }
 
 // AgentConfig defines Claude agent-specific settings.
 type AgentConfig struct {
-	Includes        []string          `yaml:"includes,omitempty" mapstructure:"includes"`
-	EnvFile         []string          `yaml:"env_file,omitempty" mapstructure:"env_file"`
-	FromEnv         []string          `yaml:"from_env,omitempty" mapstructure:"from_env"`
-	Env             map[string]string `yaml:"env,omitempty" mapstructure:"env"`
-	Memory          string            `yaml:"memory,omitempty" mapstructure:"memory"`
-	Editor          string            `yaml:"editor,omitempty" mapstructure:"editor"`
-	Visual          string            `yaml:"visual,omitempty" mapstructure:"visual"`
-	Shell           string            `yaml:"shell,omitempty" mapstructure:"shell"`
-	ClaudeCode      *ClaudeCodeConfig `yaml:"claude_code,omitempty" mapstructure:"claude_code"`
-	EnableSharedDir *bool             `yaml:"enable_shared_dir,omitempty" mapstructure:"enable_shared_dir"`
-	PostInit        string            `yaml:"post_init,omitempty" mapstructure:"post_init"`
+	Includes        []string          `yaml:"includes,omitempty"`
+	EnvFile         []string          `yaml:"env_file,omitempty"`
+	FromEnv         []string          `yaml:"from_env,omitempty"`
+	Env             map[string]string `yaml:"env,omitempty"`
+	Memory          string            `yaml:"memory,omitempty"`
+	Editor          string            `yaml:"editor,omitempty"`
+	Visual          string            `yaml:"visual,omitempty"`
+	Shell           string            `yaml:"shell,omitempty"`
+	ClaudeCode      *ClaudeCodeConfig `yaml:"claude_code,omitempty"`
+	EnableSharedDir *bool             `yaml:"enable_shared_dir,omitempty"`
+	PostInit        string            `yaml:"post_init,omitempty"`
 }
 
 // UseHostAuthEnabled returns whether host auth should be used (default: true).
@@ -144,8 +144,8 @@ func (a *AgentConfig) SharedDirEnabled() bool {
 
 // WorkspaceConfig defines workspace mounting behavior
 type WorkspaceConfig struct {
-	RemotePath  string `yaml:"remote_path" mapstructure:"remote_path"`
-	DefaultMode string `yaml:"default_mode" mapstructure:"default_mode"`
+	RemotePath  string `yaml:"remote_path"`
+	DefaultMode string `yaml:"default_mode"`
 }
 
 // SecurityConfig defines optional security hardening settings
@@ -155,13 +155,13 @@ type WorkspaceConfig struct {
 // or custom with explicit URL and jq filter.
 type IPRangeSource struct {
 	// Name is the identifier (e.g., "github", "google-cloud", "cloudflare")
-	Name string `yaml:"name" mapstructure:"name" json:"name"`
+	Name string `yaml:"name" json:"name"`
 	// URL is an optional custom URL (uses built-in URL if empty for known sources)
-	URL string `yaml:"url,omitempty" mapstructure:"url" json:"url,omitempty"`
+	URL string `yaml:"url,omitempty" json:"url,omitempty"`
 	// JQFilter extracts CIDR arrays from JSON response (optional, uses built-in if empty)
-	JQFilter string `yaml:"jq_filter,omitempty" mapstructure:"jq_filter" json:"jq_filter,omitempty"`
+	JQFilter string `yaml:"jq_filter,omitempty" json:"jq_filter,omitempty"`
 	// Required determines if failure to fetch is fatal (default: false)
-	Required *bool `yaml:"required,omitempty" mapstructure:"required" json:"required,omitempty"`
+	Required *bool `yaml:"required,omitempty" json:"required,omitempty"`
 }
 
 // IsRequired returns whether this source is required (failure to fetch is fatal).
@@ -176,9 +176,9 @@ func (s *IPRangeSource) IsRequired() bool {
 
 // FirewallConfig defines network firewall settings
 type FirewallConfig struct {
-	Enable         bool            `yaml:"enable" mapstructure:"enable"`
-	AddDomains     []string        `yaml:"add_domains,omitempty" mapstructure:"add_domains"`
-	IPRangeSources []IPRangeSource `yaml:"ip_range_sources,omitempty" mapstructure:"ip_range_sources"`
+	Enable         bool            `yaml:"enable"`
+	AddDomains     []string        `yaml:"add_domains,omitempty"`
+	IPRangeSources []IPRangeSource `yaml:"ip_range_sources,omitempty"`
 }
 
 // FirewallEnabled returns whether the firewall should be enabled.
@@ -215,11 +215,11 @@ func (f *FirewallConfig) GetFirewallDomains(requiredDomains []string) []string {
 }
 
 type SecurityConfig struct {
-	Firewall        *FirewallConfig       `yaml:"firewall,omitempty" mapstructure:"firewall"`
-	DockerSocket    bool                  `yaml:"docker_socket" mapstructure:"docker_socket"`
-	CapAdd          []string              `yaml:"cap_add,omitempty" mapstructure:"cap_add"`
-	EnableHostProxy *bool                 `yaml:"enable_host_proxy,omitempty" mapstructure:"enable_host_proxy"` // defaults to true
-	GitCredentials  *GitCredentialsConfig `yaml:"git_credentials,omitempty" mapstructure:"git_credentials"`
+	Firewall        *FirewallConfig       `yaml:"firewall,omitempty"`
+	DockerSocket    bool                  `yaml:"docker_socket"`
+	CapAdd          []string              `yaml:"cap_add,omitempty"`
+	EnableHostProxy *bool                 `yaml:"enable_host_proxy,omitempty"` // defaults to true
+	GitCredentials  *GitCredentialsConfig `yaml:"git_credentials,omitempty"`
 }
 
 // HostProxyEnabled returns whether the host proxy should be enabled.
@@ -239,10 +239,10 @@ func (s *SecurityConfig) FirewallEnabled() bool {
 
 // GitCredentialsConfig defines git credential forwarding settings
 type GitCredentialsConfig struct {
-	ForwardHTTPS  *bool `yaml:"forward_https,omitempty" mapstructure:"forward_https"`     // Enable HTTPS credential forwarding (default: follows host_proxy)
-	ForwardSSH    *bool `yaml:"forward_ssh,omitempty" mapstructure:"forward_ssh"`         // Enable SSH agent forwarding (default: true)
-	ForwardGPG    *bool `yaml:"forward_gpg,omitempty" mapstructure:"forward_gpg"`         // Enable GPG agent forwarding (default: true)
-	CopyGitConfig *bool `yaml:"copy_git_config,omitempty" mapstructure:"copy_git_config"` // Copy host .gitconfig (default: true)
+	ForwardHTTPS  *bool `yaml:"forward_https,omitempty"`   // Enable HTTPS credential forwarding (default: follows host_proxy)
+	ForwardSSH    *bool `yaml:"forward_ssh,omitempty"`     // Enable SSH agent forwarding (default: true)
+	ForwardGPG    *bool `yaml:"forward_gpg,omitempty"`     // Enable GPG agent forwarding (default: true)
+	CopyGitConfig *bool `yaml:"copy_git_config,omitempty"` // Copy host .gitconfig (default: true)
 }
 
 // GitHTTPSEnabled returns whether HTTPS credential forwarding should be enabled.
@@ -283,20 +283,20 @@ func (g *GitCredentialsConfig) GPGEnabled() bool {
 
 // LoopConfig defines configuration for autonomous agent loops.
 type LoopConfig struct {
-	MaxLoops                  int    `yaml:"max_loops,omitempty" mapstructure:"max_loops"`
-	StagnationThreshold       int    `yaml:"stagnation_threshold,omitempty" mapstructure:"stagnation_threshold"`
-	TimeoutMinutes            int    `yaml:"timeout_minutes,omitempty" mapstructure:"timeout_minutes"`
-	CallsPerHour              int    `yaml:"calls_per_hour,omitempty" mapstructure:"calls_per_hour"`
-	CompletionThreshold       int    `yaml:"completion_threshold,omitempty" mapstructure:"completion_threshold"`
-	SessionExpirationHours    int    `yaml:"session_expiration_hours,omitempty" mapstructure:"session_expiration_hours"`
-	SameErrorThreshold        int    `yaml:"same_error_threshold,omitempty" mapstructure:"same_error_threshold"`
-	OutputDeclineThreshold    int    `yaml:"output_decline_threshold,omitempty" mapstructure:"output_decline_threshold"`
-	MaxConsecutiveTestLoops   int    `yaml:"max_consecutive_test_loops,omitempty" mapstructure:"max_consecutive_test_loops"`
-	LoopDelaySeconds          int    `yaml:"loop_delay_seconds,omitempty" mapstructure:"loop_delay_seconds"`
-	SafetyCompletionThreshold int    `yaml:"safety_completion_threshold,omitempty" mapstructure:"safety_completion_threshold"`
-	SkipPermissions           bool   `yaml:"skip_permissions,omitempty" mapstructure:"skip_permissions"`
-	HooksFile                 string `yaml:"hooks_file,omitempty" mapstructure:"hooks_file"`
-	AppendSystemPrompt        string `yaml:"append_system_prompt,omitempty" mapstructure:"append_system_prompt"`
+	MaxLoops                  int    `yaml:"max_loops,omitempty"`
+	StagnationThreshold       int    `yaml:"stagnation_threshold,omitempty"`
+	TimeoutMinutes            int    `yaml:"timeout_minutes,omitempty"`
+	CallsPerHour              int    `yaml:"calls_per_hour,omitempty"`
+	CompletionThreshold       int    `yaml:"completion_threshold,omitempty"`
+	SessionExpirationHours    int    `yaml:"session_expiration_hours,omitempty"`
+	SameErrorThreshold        int    `yaml:"same_error_threshold,omitempty"`
+	OutputDeclineThreshold    int    `yaml:"output_decline_threshold,omitempty"`
+	MaxConsecutiveTestLoops   int    `yaml:"max_consecutive_test_loops,omitempty"`
+	LoopDelaySeconds          int    `yaml:"loop_delay_seconds,omitempty"`
+	SafetyCompletionThreshold int    `yaml:"safety_completion_threshold,omitempty"`
+	SkipPermissions           bool   `yaml:"skip_permissions,omitempty"`
+	HooksFile                 string `yaml:"hooks_file,omitempty"`
+	AppendSystemPrompt        string `yaml:"append_system_prompt,omitempty"`
 }
 
 // GetHooksFile returns the hooks file path (empty string if not configured).
@@ -360,90 +360,90 @@ func (e *KeyNotFoundError) Error() string { return "key not found: " + e.Key }
 
 // Settings represents user-level configuration stored in ~/.local/clawker/settings.yaml.
 type Settings struct {
-	Logging      LoggingConfig    `yaml:"logging,omitempty" mapstructure:"logging"`
-	Monitoring   MonitoringConfig `yaml:"monitoring,omitempty" mapstructure:"monitoring"`
-	DefaultImage string           `yaml:"default_image,omitempty" mapstructure:"default_image"`
-	HostProxy    HostProxyConfig  `yaml:"host_proxy,omitempty" mapstructure:"host_proxy"`
+	Logging      LoggingConfig    `yaml:"logging,omitempty"`
+	Monitoring   MonitoringConfig `yaml:"monitoring,omitempty"`
+	DefaultImage string           `yaml:"default_image,omitempty"`
+	HostProxy    HostProxyConfig  `yaml:"host_proxy,omitempty"`
 }
 
 // HostProxyConfig configures the host proxy.
 type HostProxyConfig struct {
-	Manager HostProxyManagerConfig `yaml:"manager,omitempty" mapstructure:"manager"`
-	Daemon  HostProxyDaemonConfig  `yaml:"daemon,omitempty" mapstructure:"daemon"`
+	Manager HostProxyManagerConfig `yaml:"manager,omitempty"`
+	Daemon  HostProxyDaemonConfig  `yaml:"daemon,omitempty"`
 }
 
 // HostProxyManagerConfig configures the host proxy manager.
 type HostProxyManagerConfig struct {
-	Port int `yaml:"port" mapstructure:"port"`
+	Port int `yaml:"port"`
 }
 
 // HostProxyDaemonConfig defines configuration for the host proxy daemon.
 type HostProxyDaemonConfig struct {
-	Port               int           `yaml:"port" mapstructure:"port"`
-	PollInterval       time.Duration `yaml:"poll_interval,omitempty" mapstructure:"poll_interval"`
-	GracePeriod        time.Duration `yaml:"grace_period,omitempty" mapstructure:"grace_period"`
-	MaxConsecutiveErrs int           `yaml:"max_consecutive_errs,omitempty" mapstructure:"max_consecutive_errs"`
+	Port               int           `yaml:"port"`
+	PollInterval       time.Duration `yaml:"poll_interval,omitempty"`
+	GracePeriod        time.Duration `yaml:"grace_period,omitempty"`
+	MaxConsecutiveErrs int           `yaml:"max_consecutive_errs,omitempty"`
 }
 
 // LoggingConfig configures file-based logging.
 type LoggingConfig struct {
-	FileEnabled *bool      `yaml:"file_enabled,omitempty" mapstructure:"file_enabled"`
-	MaxSizeMB   int        `yaml:"max_size_mb,omitempty" mapstructure:"max_size_mb"`
-	MaxAgeDays  int        `yaml:"max_age_days,omitempty" mapstructure:"max_age_days"`
-	MaxBackups  int        `yaml:"max_backups,omitempty" mapstructure:"max_backups"`
-	Compress    *bool      `yaml:"compress,omitempty" mapstructure:"compress"`
-	Otel        OtelConfig `yaml:"otel,omitempty" mapstructure:"otel"`
+	FileEnabled *bool      `yaml:"file_enabled,omitempty"`
+	MaxSizeMB   int        `yaml:"max_size_mb,omitempty"`
+	MaxAgeDays  int        `yaml:"max_age_days,omitempty"`
+	MaxBackups  int        `yaml:"max_backups,omitempty"`
+	Compress    *bool      `yaml:"compress,omitempty"`
+	Otel        OtelConfig `yaml:"otel,omitempty"`
 }
 
 // OtelConfig configures the OTEL zerolog bridge.
 type OtelConfig struct {
-	Enabled               *bool `yaml:"enabled,omitempty" mapstructure:"enabled"`
-	TimeoutSeconds        int   `yaml:"timeout_seconds,omitempty" mapstructure:"timeout_seconds"`
-	MaxQueueSize          int   `yaml:"max_queue_size,omitempty" mapstructure:"max_queue_size"`
-	ExportIntervalSeconds int   `yaml:"export_interval_seconds,omitempty" mapstructure:"export_interval_seconds"`
+	Enabled               *bool `yaml:"enabled,omitempty"`
+	TimeoutSeconds        int   `yaml:"timeout_seconds,omitempty"`
+	MaxQueueSize          int   `yaml:"max_queue_size,omitempty"`
+	ExportIntervalSeconds int   `yaml:"export_interval_seconds,omitempty"`
 }
 
 // MonitoringConfig configures monitoring stack ports and OTEL endpoints.
 type MonitoringConfig struct {
-	OtelCollectorEndpoint string          `yaml:"otel_collector_endpoint,omitempty" mapstructure:"otel_collector_endpoint"`
-	OtelCollectorPort     int             `yaml:"otel_collector_port,omitempty" mapstructure:"otel_collector_port"`
-	OtelCollectorHost     string          `yaml:"otel_collector_host,omitempty" mapstructure:"otel_collector_host"`
-	OtelCollectorInternal string          `yaml:"otel_collector_internal,omitempty" mapstructure:"otel_collector_internal"`
-	OtelGRPCPort          int             `yaml:"otel_grpc_port,omitempty" mapstructure:"otel_grpc_port"`
-	LokiPort              int             `yaml:"loki_port,omitempty" mapstructure:"loki_port"`
-	PrometheusPort        int             `yaml:"prometheus_port,omitempty" mapstructure:"prometheus_port"`
-	JaegerPort            int             `yaml:"jaeger_port,omitempty" mapstructure:"jaeger_port"`
-	GrafanaPort           int             `yaml:"grafana_port,omitempty" mapstructure:"grafana_port"`
-	PrometheusMetricsPort int             `yaml:"prometheus_metrics_port,omitempty" mapstructure:"prometheus_metrics_port"`
-	Telemetry             TelemetryConfig `yaml:"telemetry,omitempty" mapstructure:"telemetry"`
+	OtelCollectorEndpoint string          `yaml:"otel_collector_endpoint,omitempty"`
+	OtelCollectorPort     int             `yaml:"otel_collector_port,omitempty"`
+	OtelCollectorHost     string          `yaml:"otel_collector_host,omitempty"`
+	OtelCollectorInternal string          `yaml:"otel_collector_internal,omitempty"`
+	OtelGRPCPort          int             `yaml:"otel_grpc_port,omitempty"`
+	LokiPort              int             `yaml:"loki_port,omitempty"`
+	PrometheusPort        int             `yaml:"prometheus_port,omitempty"`
+	JaegerPort            int             `yaml:"jaeger_port,omitempty"`
+	GrafanaPort           int             `yaml:"grafana_port,omitempty"`
+	PrometheusMetricsPort int             `yaml:"prometheus_metrics_port,omitempty"`
+	Telemetry             TelemetryConfig `yaml:"telemetry,omitempty"`
 }
 
 // TelemetryConfig configures telemetry export paths and intervals.
 type TelemetryConfig struct {
-	MetricsPath            string `yaml:"metrics_path,omitempty" mapstructure:"metrics_path"`
-	LogsPath               string `yaml:"logs_path,omitempty" mapstructure:"logs_path"`
-	MetricExportIntervalMs int    `yaml:"metric_export_interval_ms,omitempty" mapstructure:"metric_export_interval_ms"`
-	LogsExportIntervalMs   int    `yaml:"logs_export_interval_ms,omitempty" mapstructure:"logs_export_interval_ms"`
-	LogToolDetails         *bool  `yaml:"log_tool_details,omitempty" mapstructure:"log_tool_details"`
-	LogUserPrompts         *bool  `yaml:"log_user_prompts,omitempty" mapstructure:"log_user_prompts"`
-	IncludeAccountUUID     *bool  `yaml:"include_account_uuid,omitempty" mapstructure:"include_account_uuid"`
-	IncludeSessionID       *bool  `yaml:"include_session_id,omitempty" mapstructure:"include_session_id"`
+	MetricsPath            string `yaml:"metrics_path,omitempty"`
+	LogsPath               string `yaml:"logs_path,omitempty"`
+	MetricExportIntervalMs int    `yaml:"metric_export_interval_ms,omitempty"`
+	LogsExportIntervalMs   int    `yaml:"logs_export_interval_ms,omitempty"`
+	LogToolDetails         *bool  `yaml:"log_tool_details,omitempty"`
+	LogUserPrompts         *bool  `yaml:"log_user_prompts,omitempty"`
+	IncludeAccountUUID     *bool  `yaml:"include_account_uuid,omitempty"`
+	IncludeSessionID       *bool  `yaml:"include_session_id,omitempty"`
 }
 
 // ProjectEntry represents a project in the registry.
 type ProjectEntry struct {
-	Name      string                   `yaml:"name" mapstructure:"name"`
-	Root      string                   `yaml:"root" mapstructure:"root"`
-	Worktrees map[string]WorktreeEntry `yaml:"worktrees,omitempty" mapstructure:"worktrees"`
+	Name      string                   `yaml:"name"`
+	Root      string                   `yaml:"root"`
+	Worktrees map[string]WorktreeEntry `yaml:"worktrees,omitempty"`
 }
 
 // WorktreeEntry represents a worktree within a project.
 type WorktreeEntry struct {
-	Path   string `yaml:"path" mapstructure:"path"`
-	Branch string `yaml:"branch,omitempty" mapstructure:"branch"`
+	Path   string `yaml:"path"`
+	Branch string `yaml:"branch,omitempty"`
 }
 
 // ProjectRegistry is the on-disk structure for projects.yaml.
 type ProjectRegistry struct {
-	Projects []ProjectEntry `yaml:"projects" mapstructure:"projects"`
+	Projects []ProjectEntry `yaml:"projects"`
 }

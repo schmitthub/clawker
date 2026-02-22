@@ -1,7 +1,6 @@
 package project_test
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -45,21 +44,9 @@ func debugDirs(t *testing.T, label, root string) {
 	})
 }
 
-// dumpConfigFiles reads config files via the reader callback and logs their contents.
-func dumpConfigFiles(t *testing.T, label string, readFn func(s, u, r, reg *bytes.Buffer)) {
-	t.Helper()
-	var settings, userProj, repoProj, registry bytes.Buffer
-	readFn(&settings, &userProj, &repoProj, &registry)
-	t.Logf("=== %s: config file contents ===", label)
-	t.Logf("--- settings.yaml ---\n%s", settings.String())
-	t.Logf("--- user clawker.yaml ---\n%s", userProj.String())
-	t.Logf("--- repo clawker.yaml ---\n%s", repoProj.String())
-	t.Logf("--- projects.yaml (registry) ---\n%s", registry.String())
-}
-
 func TestProjectManager_FullLifecycle(t *testing.T) {
 	t.Run("register then add worktree", func(t *testing.T) {
-		cfg, readFiles := configmocks.NewIsolatedTestConfig(t)
+		cfg := configmocks.NewIsolatedTestConfig(t)
 		root := os.Getenv(cfg.TestRepoDirEnvVar())
 		resolvedRoot, err := filepath.EvalSymlinks(root)
 		require.NoError(t, err)
@@ -85,7 +72,8 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, factory)
+		require.NoError(t, err)
 		ctx := context.Background()
 
 		// Register
@@ -95,9 +83,6 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 
 		t.Log("\n--- after Register ---")
 		debugDirs(t, "post-register layout", base)
-		dumpConfigFiles(t, "post-register", func(s, u, r, reg *bytes.Buffer) {
-			readFiles(s, u, r, reg)
-		})
 
 		// chdir so GetProjectRoot() resolves against the registry
 		oldWd, err := os.Getwd()
@@ -120,9 +105,6 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 		t.Logf("state.ExistsInGit    = %v", state.ExistsInGit)
 		t.Logf("state.ExistsInRegistry = %v", state.ExistsInRegistry)
 		debugDirs(t, "post-worktree layout", base)
-		dumpConfigFiles(t, "post-worktree", func(s, u, r, reg *bytes.Buffer) {
-			readFiles(s, u, r, reg)
-		})
 
 		// Worktree directory exists on disk
 		_, err = os.Stat(state.Path)
@@ -142,7 +124,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 	})
 
 	t.Run("remove worktree preserves branch", func(t *testing.T) {
-		cfg, _ := configmocks.NewIsolatedTestConfig(t)
+		cfg := configmocks.NewIsolatedTestConfig(t)
 		root := os.Getenv(cfg.TestRepoDirEnvVar())
 		resolvedRoot, err := filepath.EvalSymlinks(root)
 		require.NoError(t, err)
@@ -152,7 +134,8 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, factory)
+		require.NoError(t, err)
 		ctx := context.Background()
 
 		proj, err := mgr.Register(ctx, "my-app", resolvedRoot)
@@ -186,7 +169,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 	})
 
 	t.Run("remove worktree with delete-branch", func(t *testing.T) {
-		cfg, _ := configmocks.NewIsolatedTestConfig(t)
+		cfg := configmocks.NewIsolatedTestConfig(t)
 		root := os.Getenv(cfg.TestRepoDirEnvVar())
 		resolvedRoot, err := filepath.EvalSymlinks(root)
 		require.NoError(t, err)
@@ -196,7 +179,8 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, factory)
+		require.NoError(t, err)
 		ctx := context.Background()
 
 		proj, err := mgr.Register(ctx, "my-app", resolvedRoot)
@@ -230,7 +214,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 	})
 
 	t.Run("duplicate worktree errors then remove project preserves worktree dir", func(t *testing.T) {
-		cfg, _ := configmocks.NewIsolatedTestConfig(t)
+		cfg := configmocks.NewIsolatedTestConfig(t)
 		root := os.Getenv(cfg.TestRepoDirEnvVar())
 		resolvedRoot, err := filepath.EvalSymlinks(root)
 		require.NoError(t, err)
@@ -240,7 +224,8 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, factory)
+		require.NoError(t, err)
 		ctx := context.Background()
 
 		proj, err := mgr.Register(ctx, "my-app", resolvedRoot)
@@ -278,7 +263,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 	})
 
 	t.Run("add worktree checks out existing branch", func(t *testing.T) {
-		cfg, _ := configmocks.NewIsolatedTestConfig(t)
+		cfg := configmocks.NewIsolatedTestConfig(t)
 		root := os.Getenv(cfg.TestRepoDirEnvVar())
 		resolvedRoot, err := filepath.EvalSymlinks(root)
 		require.NoError(t, err)
@@ -288,7 +273,8 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, factory)
+		require.NoError(t, err)
 		ctx := context.Background()
 
 		proj, err := mgr.Register(ctx, "my-app", resolvedRoot)
@@ -327,7 +313,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 	})
 
 	t.Run("add worktree rejects branch already in a worktree", func(t *testing.T) {
-		cfg, _ := configmocks.NewIsolatedTestConfig(t)
+		cfg := configmocks.NewIsolatedTestConfig(t)
 		root := os.Getenv(cfg.TestRepoDirEnvVar())
 		resolvedRoot, err := filepath.EvalSymlinks(root)
 		require.NoError(t, err)
@@ -337,7 +323,8 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, factory)
+		require.NoError(t, err)
 		ctx := context.Background()
 
 		proj, err := mgr.Register(ctx, "my-app", resolvedRoot)
@@ -365,7 +352,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 	})
 
 	t.Run("list worktrees reports unhealthy statuses", func(t *testing.T) {
-		cfg, _ := configmocks.NewIsolatedTestConfig(t)
+		cfg := configmocks.NewIsolatedTestConfig(t)
 		root := os.Getenv(cfg.TestRepoDirEnvVar())
 		resolvedRoot, err := filepath.EvalSymlinks(root)
 		require.NoError(t, err)
@@ -375,7 +362,8 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, factory)
+		require.NoError(t, err)
 		ctx := context.Background()
 
 		proj, err := mgr.Register(ctx, "my-app", resolvedRoot)

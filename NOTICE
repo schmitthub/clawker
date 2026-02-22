@@ -42,7 +42,6 @@ github.com/opencontainers/go-digest                                            A
 github.com/opencontainers/image-spec/specs-go                                  Apache-2.0
 github.com/pjbgf/sha1cd                                                        Apache-2.0
 github.com/shibumi/go-pathspec                                                 Apache-2.0
-github.com/spf13/afero                                                         Apache-2.0
 github.com/spf13/cobra                                                         Apache-2.0
 go.opentelemetry.io/auto/sdk                                                   Apache-2.0
 go.opentelemetry.io/contrib/bridges/otelzerolog                                Apache-2.0
@@ -61,7 +60,6 @@ go.opentelemetry.io/proto/otlp                                                 A
 google.golang.org/genproto/googleapis/api/httpbody                             Apache-2.0
 google.golang.org/genproto/googleapis/rpc/status                               Apache-2.0
 google.golang.org/grpc                                                         Apache-2.0
-gopkg.in/ini.v1                                                                Apache-2.0
 
 ================================================================================
 BSD-2-Clause
@@ -69,7 +67,6 @@ BSD-2-Clause
 
 github.com/emirpasic/gods                                                      BSD-2-Clause
 github.com/godbus/dbus/v5                                                      BSD-2-Clause
-github.com/magiconair/properties                                               BSD-2-Clause
 github.com/pkg/errors                                                          BSD-2-Clause
 github.com/russross/blackfriday/v2                                             BSD-2-Clause
 
@@ -80,7 +77,6 @@ BSD-3-Clause
 github.com/ProtonMail/go-crypto                                                BSD-3-Clause
 github.com/atotto/clipboard                                                    BSD-3-Clause
 github.com/cloudflare/circl                                                    BSD-3-Clause
-github.com/fsnotify/fsnotify                                                   BSD-3-Clause
 github.com/go-git/gcfg/v2                                                      BSD-3-Clause
 github.com/gofrs/flock                                                         BSD-3-Clause
 github.com/gogo/protobuf/proto                                                 BSD-3-Clause
@@ -91,7 +87,6 @@ github.com/grpc-ecosystem/grpc-gateway/v2                                      B
 github.com/klauspost/compress/internal/snapref                                 BSD-3-Clause
 github.com/planetscale/vtprotobuf                                              BSD-3-Clause
 github.com/pmezard/go-difflib/difflib                                          BSD-3-Clause
-github.com/sagikazarmark/slog-shim                                             BSD-3-Clause
 github.com/spf13/pflag                                                         BSD-3-Clause
 golang.org/x/crypto                                                            BSD-3-Clause
 golang.org/x/net                                                               BSD-3-Clause
@@ -131,20 +126,15 @@ github.com/lucasb-eyer/go-colorful                                             M
 github.com/mattn/go-colorable                                                  MIT
 github.com/mattn/go-isatty                                                     MIT
 github.com/mattn/go-runewidth                                                  MIT
-github.com/mitchellh/mapstructure                                              MIT
 github.com/muesli/ansi                                                         MIT
 github.com/muesli/cancelreader                                                 MIT
 github.com/muesli/termenv                                                      MIT
-github.com/pelletier/go-toml/v2                                                MIT
 github.com/rivo/uniseg                                                         MIT
 github.com/rs/zerolog                                                          MIT
 github.com/secure-systems-lab/go-securesystemslib                              MIT
 github.com/sergi/go-diff/diffmatchpatch                                        MIT
 github.com/sirupsen/logrus                                                     MIT
-github.com/spf13/cast                                                          MIT
-github.com/spf13/viper                                                         MIT
 github.com/stretchr/testify                                                    MIT
-github.com/subosito/gotenv                                                     MIT
 github.com/tonistiigi/fsutil                                                   MIT
 github.com/xo/terminfo                                                         MIT
 github.com/zalando/go-keyring                                                  MIT
@@ -156,4 +146,3 @@ MPL-2.0
 ================================================================================
 
 github.com/cyphar/filepath-securejoin                                          MPL-2.0
-github.com/hashicorp/hcl                                                       MPL-2.0

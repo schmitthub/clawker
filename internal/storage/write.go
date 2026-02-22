@@ -158,7 +158,13 @@ func encodeValue(v reflect.Value) any {
 		return encodeValue(v.Elem())
 
 	case reflect.Struct:
-		return structToMap(v.Addr().Interface())
+		if v.CanAddr() {
+			return structToMap(v.Addr().Interface())
+		}
+		// Non-addressable struct (e.g. from map iteration) — copy to addressable value.
+		cp := reflect.New(v.Type())
+		cp.Elem().Set(v)
+		return structToMap(cp.Interface())
 
 	case reflect.Slice:
 		if v.IsNil() {

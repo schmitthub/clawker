@@ -56,7 +56,7 @@ func CalledWith(mock *SocketBridgeManagerMock, method, containerID string) bool 
 // on nil mock funcs.
 func NewTestManager(t *testing.T) (*socketbridge.Manager, string) {
 	t.Helper()
-	cfg, _ := configmocks.NewIsolatedTestConfig(t)
+	cfg := configmocks.NewIsolatedTestConfig(t)
 	stateDir, err := cfg.BridgesSubdir()
 	if err != nil {
 		t.Fatalf("getting bridges subdir: %v", err)

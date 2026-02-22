@@ -57,7 +57,7 @@ func TestNewDaemon_ReadsConfigDefaults(t *testing.T) {
 }
 
 func TestNewDaemon_ValidatesPort(t *testing.T) {
-	cfg := configmocks.NewFromString(`host_proxy: { daemon: { port: 0 } }`)
+	cfg := configmocks.NewFromString("", `host_proxy: { daemon: { port: 0 } }`)
 	_, err := NewDaemon(cfg)
 	if err == nil {
 		t.Fatal("expected error for port 0")
@@ -65,7 +65,7 @@ func TestNewDaemon_ValidatesPort(t *testing.T) {
 }
 
 func TestNewDaemon_ValidatesPollInterval(t *testing.T) {
-	cfg := configmocks.NewFromString(`host_proxy: { daemon: { poll_interval: "0s" } }`)
+	cfg := configmocks.NewFromString("", `host_proxy: { daemon: { poll_interval: "0s" } }`)
 	_, err := NewDaemon(cfg)
 	if err == nil {
 		t.Fatal("expected error for zero poll interval")
@@ -73,7 +73,7 @@ func TestNewDaemon_ValidatesPollInterval(t *testing.T) {
 }
 
 func TestNewDaemon_ValidatesGracePeriod(t *testing.T) {
-	cfg := configmocks.NewFromString(`host_proxy: { daemon: { grace_period: "-1s" } }`)
+	cfg := configmocks.NewFromString("", `host_proxy: { daemon: { grace_period: "-1s" } }`)
 	_, err := NewDaemon(cfg)
 	if err == nil {
 		t.Fatal("expected error for negative grace period")
@@ -81,7 +81,7 @@ func TestNewDaemon_ValidatesGracePeriod(t *testing.T) {
 }
 
 func TestNewDaemon_ValidatesMaxConsecutiveErrs(t *testing.T) {
-	cfg := configmocks.NewFromString(`host_proxy: { daemon: { max_consecutive_errs: 0 } }`)
+	cfg := configmocks.NewFromString("", `host_proxy: { daemon: { max_consecutive_errs: 0 } }`)
 	_, err := NewDaemon(cfg)
 	if err == nil {
 		t.Fatal("expected error for zero max consecutive errors")

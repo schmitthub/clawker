@@ -202,7 +202,7 @@ func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Facto
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
-			return configmocks.NewFromString(`security: { enable_host_proxy: false }`), nil
+			return configmocks.NewFromString(`security: { enable_host_proxy: false }`, ""), nil
 		},
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()

@@ -28,7 +28,7 @@ type Store[T any] struct {
 	defaults map[string]any // parsed defaults as map (internal)
 	opts     options        // construction options (internal)
 	tags     tagRegistry    // merge tags from T's struct type (internal)
-	mu       sync.RWMutex  // guards value + tree + dirty
+	mu       sync.RWMutex   // guards value + tree + dirty
 }
 
 // LayerInfo describes a discovered configuration layer.

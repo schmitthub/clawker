@@ -16,6 +16,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 	"github.com/stretchr/testify/assert"
@@ -23,11 +24,118 @@ import (
 )
 
 // testConfig creates a config.Config from a YAML string for tests.
-func testConfig(t *testing.T, yaml string) config.Config {
+func testConfig(t *testing.T, projectYAML string) config.Config {
 	t.Helper()
-	cfg, err := config.ReadFromString(yaml)
-	require.NoError(t, err)
-	return cfg
+	// Pass default settings YAML with proper monitoring defaults
+	defaultMonitoringYAML := `
+monitoring:
+  otel_collector_port: 4318
+  otel_collector_host: "localhost"
+  otel_collector_internal: "otel-collector"
+  otel_grpc_port: 4317
+  loki_port: 3100
+  prometheus_port: 9090
+  jaeger_port: 16686
+  grafana_port: 3000
+  prometheus_metrics_port: 8889
+  telemetry:
+    metrics_path: "/v1/metrics"
+    logs_path: "/v1/logs"
+    metric_export_interval_ms: 10000
+    logs_export_interval_ms: 5000
+    log_tool_details: true
+    log_user_prompts: true
+    include_account_uuid: true
+    include_session_id: true
+`
+
+	// Extract monitoring from project YAML if present
+	cleanedProject, customMonitoring := removeMonitoringFromProject(projectYAML)
+
+	// Use custom monitoring if provided, otherwise use defaults
+	settingsYAML := defaultMonitoringYAML
+	if customMonitoring != "monitoring:\n" {
+		// Test provided custom monitoring config - merge it with defaults
+		settingsYAML = mergeMonitoringYAML(defaultMonitoringYAML, customMonitoring)
+	}
+
+	return configmocks.NewFromString(cleanedProject, settingsYAML)
+}
+
+// mergeMonitoringYAML merges custom monitoring YAML with defaults
+func mergeMonitoringYAML(defaults, custom string) string {
+	lines := strings.Split(custom, "\n")
+	var result strings.Builder
+	result.WriteString("monitoring:\n")
+
+	// First, output custom top-level keys
+	for _, line := range lines[1:] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(trimmed, "telemetry:") {
+			break
+		}
+		// This is a custom top-level key, add it
+		result.WriteString(line + "\n")
+	}
+
+	// Then add telemetry from defaults
+	defaultLines := strings.Split(defaults, "\n")
+	for i, line := range defaultLines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "telemetry:" {
+			// Output rest of defaults from here (telemetry section)
+			result.WriteString(strings.Join(defaultLines[i:], "\n"))
+			break
+		}
+	}
+
+	return result.String()
+}
+
+// removeMonitoringFromProject strips the monitoring section from project YAML
+// since monitoring is now in settings, not project. Returns (projectYAML, monitoringYAML).
+func removeMonitoringFromProject(yaml string) (string, string) {
+	lines := strings.Split(yaml, "\n")
+	var projectLines []string
+	var monitoringLines []string
+	skipMonitoring := false
+	var monitoringIndent string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "monitoring:" {
+			skipMonitoring = true
+			// Determine indentation of monitoring key
+			monitoringIndent = strings.TrimSuffix(line, "monitoring:")
+			monitoringIndent = strings.TrimRight(monitoringIndent, " \t")
+			continue
+		}
+
+		if skipMonitoring {
+			// Check if we've moved to a different section
+			if len(trimmed) > 0 && !strings.HasPrefix(line, monitoringIndent+" ") && !strings.HasPrefix(line, monitoringIndent+"\t") {
+				skipMonitoring = false
+			}
+		}
+
+		if skipMonitoring && trimmed != "" {
+			// Store monitoring content for reconstruction
+			monitoringLines = append(monitoringLines, line)
+		} else if !skipMonitoring {
+			projectLines = append(projectLines, line)
+		}
+	}
+
+	// Reconstruct monitoring YAML
+	monitoringYAML := "monitoring:\n"
+	for _, line := range monitoringLines {
+		monitoringYAML += line + "\n"
+	}
+
+	return strings.Join(projectLines, "\n"), monitoringYAML
 }
 
 func newTestClientWithConfig(cfg config.Config) (*Client, *whailtest.FakeAPIClient) {

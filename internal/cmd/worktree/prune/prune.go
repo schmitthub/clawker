@@ -14,7 +14,7 @@ import (
 
 // PruneOptions contains the options for the prune command.
 type PruneOptions struct {
-	IOStreams *iostreams.IOStreams
+	IOStreams      *iostreams.IOStreams
 	ProjectManager func() (project.ProjectManager, error)
 
 	DryRun bool
@@ -23,7 +23,7 @@ type PruneOptions struct {
 // NewCmdPrune creates the worktree prune command.
 func NewCmdPrune(f *cmdutil.Factory, runF func(context.Context, *PruneOptions) error) *cobra.Command {
 	opts := &PruneOptions{
-		IOStreams: f.IOStreams,
+		IOStreams:      f.IOStreams,
 		ProjectManager: f.ProjectManager,
 	}
 

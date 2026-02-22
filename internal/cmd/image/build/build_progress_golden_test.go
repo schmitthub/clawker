@@ -39,6 +39,17 @@ name: test-project
 build: { image: "node:20-slim" }
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { firewall: { enable: false } }
+`, `
+monitoring:
+  otel_collector_port: 4318
+  otel_grpc_port: 4317
+  telemetry:
+    metrics_path: "/v1/metrics"
+    logs_path: "/v1/logs"
+    log_tool_details: true
+    log_user_prompts: true
+    include_account_uuid: true
+    include_session_id: true
 `)
 			fake := dockertest.NewFakeClient(testCfg)
 			fake.SetupBuildKitWithProgress(scenario.Events)

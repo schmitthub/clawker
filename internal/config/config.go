@@ -1,17 +1,15 @@
 // Package config provides types for interacting with clawker configuration files.
-// It loads clawker.yaml (project) and settings.yaml (user) into one merged
-// in-memory Config backed by viper, with key-path traversal via Get/Set/Keys/Remove.
+// It loads clawker.yaml (project) and settings.yaml (user) into a typed Config
+// backed by storage.Store[T], with separate stores for project and settings schemas.
 package config
 
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
-	"sync"
 
-	"github.com/fsnotify/fsnotify"
-	"github.com/spf13/viper"
+	"github.com/schmitthub/clawker/internal/storage"
+	"gopkg.in/yaml.v3"
 )
 
 // Config is the public configuration contract.
@@ -20,15 +18,14 @@ import (
 //go:generate moq -rm -pkg mocks -out mocks/config_mock.go . Config
 type Config interface {
 	ClawkerIgnoreName() string
-	Logging() map[string]any
 	Project() *Project
 	Settings() Settings
 	LoggingConfig() LoggingConfig
 	MonitoringConfig() MonitoringConfig
-	Get(key string) (any, error)
-	Set(key string, value any) error
-	Write(opts WriteOptions) error
-	Watch(onChange func(fsnotify.Event)) error
+	SetProject(fn func(*Project))
+	SetSettings(fn func(*Settings))
+	WriteProject(filename ...string) error
+	WriteSettings(filename ...string) error
 	Domain() string
 	LabelDomain() string
 	ConfigDirEnvVar() string
@@ -82,57 +79,74 @@ type Config interface {
 var ErrNotInProject = errors.New("current directory is not within a configured project root")
 
 type configImpl struct {
-	v *viper.Viper
-
-	settingsFile          string
-	userProjectConfigFile string
-	projectRegistryPath   string
-	projectConfigFile     string
-	dirty                 *dirtyNode
-
-	mu sync.RWMutex
+	project  *storage.Store[Project]
+	settings *storage.Store[Settings]
 }
 
-type ConfigScope string
-
-const (
-	ScopeSettings ConfigScope = "settings"
-	ScopeProject  ConfigScope = "project"
-	ScopeRegistry ConfigScope = "registry"
-)
-
-var keyOwnership = map[string]ConfigScope{
-	"logging":       ScopeSettings,
-	"monitoring":    ScopeSettings,
-	"host_proxy":    ScopeSettings,
-	"default_image": ScopeSettings,
-
-	"projects": ScopeRegistry,
-
-	"version":   ScopeProject,
-	"name":      ScopeProject,
-	"build":     ScopeProject,
-	"agent":     ScopeProject,
-	"workspace": ScopeProject,
-	"security":  ScopeProject,
-	"loop":      ScopeProject,
-}
-
-// validScopes is the set of recognised namespace prefixes, derived from keyOwnership.
-var validScopes map[string]ConfigScope
-
-func init() {
-	validScopes = make(map[string]ConfigScope)
-	for _, scope := range keyOwnership {
-		validScopes[string(scope)] = scope
+// NewConfig loads all clawker configuration files into a Config.
+// The project store discovers clawker.yaml via walk-up (CWD → project root)
+// and config dir. The settings store loads settings.yaml from config dir.
+// Both stores use defaults as the lowest-priority base layer.
+func NewConfig() (Config, error) {
+	projectStore, err := storage.NewStore[Project](
+		storage.WithFilenames("clawker.yaml", "clawker.local.yaml"),
+		storage.WithDefaults(defaultProjectYAML),
+		storage.WithWalkUp(),
+		storage.WithConfigDir(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("config: loading project config: %w", err)
 	}
-}
 
-func newConfig(v *viper.Viper) *configImpl {
+	settingsStore, err := storage.NewStore[Settings](
+		storage.WithFilenames("settings.yaml"),
+		storage.WithDefaults(defaultSettingsYAML),
+		storage.WithConfigDir(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("config: loading settings: %w", err)
+	}
+
 	return &configImpl{
-		v:     v,
-		dirty: newDirtyNode(),
+		project:  projectStore,
+		settings: settingsStore,
+	}, nil
+}
+
+// NewBlankConfig creates a Config with defaults but no file discovery.
+// Useful as the default test double for consumers that don't care about
+// specific config values.
+func NewBlankConfig() (Config, error) {
+	projectStore, err := storage.NewFromString[Project](defaultProjectYAML)
+	if err != nil {
+		return nil, fmt.Errorf("config: blank project: %w", err)
 	}
+	settingsStore, err := storage.NewFromString[Settings](defaultSettingsYAML)
+	if err != nil {
+		return nil, fmt.Errorf("config: blank settings: %w", err)
+	}
+	return &configImpl{
+		project:  projectStore,
+		settings: settingsStore,
+	}, nil
+}
+
+// NewFromString creates a Config from raw YAML strings without defaults.
+// Empty strings produce empty structs. Useful for test fixtures that need
+// precise control over values without defaults being merged.
+func NewFromString(projectYAML, settingsYAML string) (Config, error) {
+	projectStore, err := storage.NewFromString[Project](projectYAML)
+	if err != nil {
+		return nil, fmt.Errorf("config: parsing project YAML: %w", err)
+	}
+	settingsStore, err := storage.NewFromString[Settings](settingsYAML)
+	if err != nil {
+		return nil, fmt.Errorf("config: parsing settings YAML: %w", err)
+	}
+	return &configImpl{
+		project:  projectStore,
+		settings: settingsStore,
+	}, nil
 }
 
 // --- Schema accessors ---
@@ -141,262 +155,50 @@ func (c *configImpl) RequiredFirewallDomains() []string {
 	return append([]string(nil), requiredFirewallDomains...)
 }
 
-func (c *configImpl) Logging() map[string]any {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.v.GetStringMap("settings.logging")
-}
-
 func (c *configImpl) Project() *Project {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	p := &Project{}
-	// Use AllSettings() to get a fully merged map across all layers
-	// (config, defaults, env). UnmarshalKey("project") returns only the
-	// config-layer subtree, which omits default values for nested keys
-	// that weren't explicitly set in config files.
-	all := c.v.AllSettings()
-	projectRaw, ok := all["project"]
-	if !ok {
-		return p
-	}
-	projectMap, ok := projectRaw.(map[string]any)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "config: Project() expected map[string]any, got %T\n", projectRaw)
-		return p
-	}
-	sub := viper.New()
-	if err := sub.MergeConfigMap(projectMap); err != nil {
-		fmt.Fprintf(os.Stderr, "config: Project() MergeConfigMap: %v\n", err)
-		return p
-	}
-	if err := sub.Unmarshal(p); err != nil {
-		fmt.Fprintf(os.Stderr, "config: Project() Unmarshal: %v\n", err)
-		return p
-	}
-	restoreDottedLabelKeys(p)
-	return p
-}
-
-func restoreDottedLabelKeys(project *Project) {
-	if project == nil || project.Build.Instructions == nil {
-		return
-	}
-
-	labels := project.Build.Instructions.Labels
-	if len(labels) == 0 {
-		return
-	}
-
-	restored := make(map[string]string, len(labels))
-	for key, value := range labels {
-		restored[strings.ReplaceAll(key, dottedLabelKeySentinel, ".")] = value
-	}
-
-	project.Build.Instructions.Labels = restored
+	return c.project.Get()
 }
 
 func (c *configImpl) Settings() Settings {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return Settings{
-		Logging: LoggingConfig{
-			FileEnabled: boolPtr(c.v.GetBool("settings.logging.file_enabled")),
-			MaxSizeMB:   c.v.GetInt("settings.logging.max_size_mb"),
-			MaxAgeDays:  c.v.GetInt("settings.logging.max_age_days"),
-			MaxBackups:  c.v.GetInt("settings.logging.max_backups"),
-			Compress:    boolPtr(c.v.GetBool("settings.logging.compress")),
-			Otel: OtelConfig{
-				Enabled:               boolPtr(c.v.GetBool("settings.logging.otel.enabled")),
-				TimeoutSeconds:        c.v.GetInt("settings.logging.otel.timeout_seconds"),
-				MaxQueueSize:          c.v.GetInt("settings.logging.otel.max_queue_size"),
-				ExportIntervalSeconds: c.v.GetInt("settings.logging.otel.export_interval_seconds"),
-			},
-		},
-		Monitoring: MonitoringConfig{
-			OtelCollectorEndpoint: c.v.GetString("settings.monitoring.otel_collector_endpoint"),
-			OtelCollectorPort:     c.v.GetInt("settings.monitoring.otel_collector_port"),
-			OtelCollectorHost:     c.v.GetString("settings.monitoring.otel_collector_host"),
-			OtelCollectorInternal: c.v.GetString("settings.monitoring.otel_collector_internal"),
-			OtelGRPCPort:          c.v.GetInt("settings.monitoring.otel_grpc_port"),
-			LokiPort:              c.v.GetInt("settings.monitoring.loki_port"),
-			PrometheusPort:        c.v.GetInt("settings.monitoring.prometheus_port"),
-			JaegerPort:            c.v.GetInt("settings.monitoring.jaeger_port"),
-			GrafanaPort:           c.v.GetInt("settings.monitoring.grafana_port"),
-			PrometheusMetricsPort: c.v.GetInt("settings.monitoring.prometheus_metrics_port"),
-			Telemetry: TelemetryConfig{
-				MetricsPath:            c.v.GetString("settings.monitoring.telemetry.metrics_path"),
-				LogsPath:               c.v.GetString("settings.monitoring.telemetry.logs_path"),
-				MetricExportIntervalMs: c.v.GetInt("settings.monitoring.telemetry.metric_export_interval_ms"),
-				LogsExportIntervalMs:   c.v.GetInt("settings.monitoring.telemetry.logs_export_interval_ms"),
-				LogToolDetails:         boolPtr(c.v.GetBool("settings.monitoring.telemetry.log_tool_details")),
-				LogUserPrompts:         boolPtr(c.v.GetBool("settings.monitoring.telemetry.log_user_prompts")),
-				IncludeAccountUUID:     boolPtr(c.v.GetBool("settings.monitoring.telemetry.include_account_uuid")),
-				IncludeSessionID:       boolPtr(c.v.GetBool("settings.monitoring.telemetry.include_session_id")),
-			},
-		},
-		HostProxy: HostProxyConfig{
-			Manager: HostProxyManagerConfig{
-				Port: c.v.GetInt("settings.host_proxy.manager.port"),
-			},
-			Daemon: HostProxyDaemonConfig{
-				Port:               c.v.GetInt("settings.host_proxy.daemon.port"),
-				PollInterval:       c.v.GetDuration("settings.host_proxy.daemon.poll_interval"),
-				GracePeriod:        c.v.GetDuration("settings.host_proxy.daemon.grace_period"),
-				MaxConsecutiveErrs: c.v.GetInt("settings.host_proxy.daemon.max_consecutive_errs"),
-			},
-		},
-		DefaultImage: c.v.GetString("settings.default_image"),
-	}
+	return *c.settings.Get()
 }
 
 func (c *configImpl) LoggingConfig() LoggingConfig {
-	return c.Settings().Logging
+	return c.settings.Get().Logging
 }
 
 func (c *configImpl) HostProxyConfig() HostProxyConfig {
-	return c.Settings().HostProxy
+	return c.settings.Get().HostProxy
 }
 
 func (c *configImpl) MonitoringConfig() MonitoringConfig {
-	return c.Settings().Monitoring
+	return c.settings.Get().Monitoring
 }
 
-// --- Get / Set / Watch ---
+// --- Typed mutation ---
 
-// Get returns the value for a namespaced config key (e.g. "project.build.image",
-// "settings.logging.file_enabled").
-//
-// It returns KeyNotFoundError when the key is not set in the merged
-// configuration state (including defaults and environment overrides).
-// Access is protected by an RWMutex for safe concurrent reads.
-func (c *configImpl) Get(key string) (any, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if _, err := scopeFromNamespacedKey(key); err != nil {
-		return nil, err
-	}
-
-	if !c.v.IsSet(key) {
-		return nil, &KeyNotFoundError{Key: key}
-	}
-
-	return c.v.Get(key), nil
+func (c *configImpl) SetProject(fn func(*Project)) {
+	c.project.Set(fn)
 }
 
-// Set updates a namespaced config key in-memory and marks it dirty.
-// Keys must be namespaced (e.g. "project.build.image", "settings.logging.file_enabled").
-// The scope is derived from the first key segment, and dirty tracking uses the
-// namespaced key so writes route to the correct file automatically.
-// Access is protected by an RWMutex for safe concurrent writes.
-func (c *configImpl) Set(key string, value any) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if _, err := scopeFromNamespacedKey(key); err != nil {
-		return err
-	}
-
-	c.v.Set(key, value)
-	c.markDirtyPath(key)
-	return nil
+func (c *configImpl) SetSettings(fn func(*Settings)) {
+	c.settings.Set(fn)
 }
 
-// Watch enables file watching for the currently loaded config file.
-//
-// If onChange is non-nil, it is registered with Viper's OnConfigChange hook.
-// The caller must ensure config paths/files were configured before watching;
-// this method returns an error when no config file is currently in use.
-// Access is protected by an RWMutex for safe watcher setup.
-func (c *configImpl) Watch(onChange func(fsnotify.Event)) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.v.ConfigFileUsed() == "" {
-		return fmt.Errorf("watch config requires a loaded config file")
-	}
-
-	if onChange != nil {
-		c.v.OnConfigChange(onChange)
-	}
-	c.v.WatchConfig()
-	return nil
+func (c *configImpl) WriteProject(filename ...string) error {
+	return c.project.Write(filename...)
 }
 
-// --- Key / scope helpers ---
-
-func schemaForScope(scope ConfigScope) any {
-	switch scope {
-	case ScopeProject:
-		return &Project{}
-	case ScopeSettings:
-		return &Settings{}
-	case ScopeRegistry:
-		return &ProjectRegistry{}
-	default:
-		panic(fmt.Sprintf("config: no schema for scope %q", scope))
-	}
+func (c *configImpl) WriteSettings(filename ...string) error {
+	return c.settings.Write(filename...)
 }
 
-func scopeForKey(key string) (ConfigScope, error) {
-	root := keyRoot(key)
-	scope, ok := keyOwnership[root]
-	if !ok {
-		return "", fmt.Errorf("no ownership mapping for key: %s", key)
-	}
-	return scope, nil
-}
-
-func keyRoot(key string) string {
-	parts := strings.SplitN(key, ".", 2)
-	return parts[0]
-}
-
-// namespacedKey converts a flat (file-relative) config key to its namespaced
-// equivalent by prepending the owning scope. Used internally by setDefaults and
-// load to translate file keys into the namespaced Viper store.
-// E.g. "build.image" → "project.build.image".
-func namespacedKey(flat string) (string, error) {
-	scope, err := scopeForKey(flat)
-	if err != nil {
-		return "", err
-	}
-	return string(scope) + "." + flat, nil
-}
-
-// namespaceMap wraps a flat config map (as read from a single YAML file)
-// under a scope prefix key.
-// E.g. namespaceMap({"build": {...}}, ScopeProject) → {"project": {"build": {...}}}.
-func namespaceMap(flat map[string]any, scope ConfigScope) map[string]any {
-	return map[string]any{string(scope): flat}
-}
-
-// scopeFromNamespacedKey extracts the ConfigScope from the first segment of a
-// namespaced key. E.g. "project.build.image" → ScopeProject.
-func scopeFromNamespacedKey(key string) (ConfigScope, error) {
-	parts := strings.SplitN(key, ".", 2)
-	if len(parts) < 2 {
-		return "", fmt.Errorf("namespaced key must have at least two segments: %s", key)
-	}
-	scope, ok := validScopes[parts[0]]
-	if !ok {
-		return "", fmt.Errorf("unknown scope prefix %q in key: %s", parts[0], key)
-	}
-	return scope, nil
-}
-
-// stripScopePrefix removes the first dotted segment from a namespaced key.
-// E.g. "project.build.image" → "build.image", "settings.logging" → "logging".
-func stripScopePrefix(key string) string {
-	parts := strings.SplitN(key, ".", 2)
-	if len(parts) < 2 {
-		return key
-	}
-	return parts[1]
-}
-
-func boolPtr(v bool) *bool {
-	b := v
-	return &b
+// ValidateProjectYAML checks that data is valid YAML conforming to the Project
+// schema. Unknown fields are rejected, catching typos like "biuld" instead of
+// "build". This is stricter than NewFromString which silently ignores unknown keys.
+func ValidateProjectYAML(data string) error {
+	dec := yaml.NewDecoder(strings.NewReader(data))
+	dec.KnownFields(true)
+	var p Project
+	return dec.Decode(&p)
 }

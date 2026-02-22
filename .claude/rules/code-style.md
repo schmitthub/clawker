@@ -90,10 +90,5 @@ fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available"
 - Use only the `config.Config` interface in consumers; never reach into `internal/config` internals.
 - Do not hardcode config file paths or constants in callers (`clawker.yaml`, subdirs, label domains) when an interface method exists.
 - Read paths/constants through methods (`ConfigDir()`, `Domain()`, `LabelDomain()`, `LogsSubdir()`, etc.).
-- `Set(key, value)` is in-memory + dirty tracking; persistence happens via `Write(WriteOptions)`.
-- Use scoped/key writes intentionally:
-  - `Write(WriteOptions{Key: ...})` for one key
-  - `Write(WriteOptions{Scope: ...})` for owned dirty roots in a scope
-  - `Write(WriteOptions{Path: ...})` for explicit full-config writes
-- Project-scope writes resolve to local project `clawker.yaml` when in a registered project; otherwise they fall back to user-level config-dir `clawker.yaml`.
-- In tests, prefer `configmocks.NewBlankConfig()`, `configmocks.NewFromString(yaml)`, and `configmocks.NewIsolatedTestConfig(t)` from `internal/config/mocks/` (import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`).
+- Typed mutation: `SetProject(fn func(*Project))` / `SetSettings(fn func(*Settings))` mutates in-memory; `WriteProject()` / `WriteSettings()` persists to disk.
+- In tests, prefer `configmocks.NewBlankConfig()`, `configmocks.NewFromString(projectYAML, settingsYAML)`, and `configmocks.NewIsolatedTestConfig(t)` from `internal/config/mocks/` (import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`).

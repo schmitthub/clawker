@@ -185,4 +185,4 @@ Imports: `internal/config`, `internal/bundler/registry`, `internal/bundler/semve
 
 Unit tests: `dockerfile_test.go`, `build_test.go`, `hash_test.go`, `defaults_test.go`, `firewall_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.
 
-Test helper: `testConfig(t, yaml) config.Config` wraps `config.ReadFromString(yaml)` — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.
+Test helper: `testConfig(t, projectYAML) config.Config` wraps `config.NewFromString(projectYAML, settingsYAML)` with default monitoring settings — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.

@@ -1,11 +1,5 @@
 package config
 
-import (
-	"time"
-
-	"github.com/spf13/viper"
-)
-
 // requiredFirewallDomains is the default list of domains allowed through the firewall.
 // These are essential for Claude Code and common development tools.
 var requiredFirewallDomains = []string{
@@ -18,65 +12,86 @@ var requiredFirewallDomains = []string{
 	"docker.io",
 }
 
-// SetDefaults registers all default values under namespaced keys.
-// Project-scope keys are prefixed with "project.", settings-scope with "settings.".
-func SetDefaults(v *viper.Viper) {
-	// Project scope
-	v.SetDefault("project.version", "1")
+// defaultProjectYAML is the base-layer defaults for project configuration.
+// Always loaded via storage.WithDefaults() in NewConfig() as the lowest
+// priority layer — guarantees critical values like security.firewall.enable
+// are present even with zero files on disk.
+const defaultProjectYAML = `
+version: "1"
 
-	v.SetDefault("project.build.image", "node:20-slim")
-	v.SetDefault("project.build.packages", []string{"git", "curl", "ripgrep"})
+build:
+  image: "node:20-slim"
+  packages:
+    - git
+    - curl
+    - ripgrep
 
-	v.SetDefault("project.agent.includes", []string{})
-	v.SetDefault("project.agent.env", map[string]string{})
+agent:
+  includes: []
+  env: {}
 
-	v.SetDefault("project.workspace.remote_path", "/workspace")
-	v.SetDefault("project.workspace.default_mode", "bind")
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
 
-	v.SetDefault("project.security.firewall.enable", true)
-	v.SetDefault("project.security.docker_socket", false)
-	v.SetDefault("project.security.cap_add", []string{"NET_ADMIN", "NET_RAW"})
+security:
+  firewall:
+    enable: true
+  docker_socket: false
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+`
 
-	// Settings scope
-	v.SetDefault("settings.logging.file_enabled", true)
-	v.SetDefault("settings.logging.max_size_mb", 50)
-	v.SetDefault("settings.logging.max_age_days", 7)
-	v.SetDefault("settings.logging.max_backups", 3)
-	v.SetDefault("settings.logging.compress", true)
-	v.SetDefault("settings.logging.otel.enabled", true)
-	v.SetDefault("settings.logging.otel.timeout_seconds", 5)
-	v.SetDefault("settings.logging.otel.max_queue_size", 2048)
-	v.SetDefault("settings.logging.otel.export_interval_seconds", 5)
+// defaultSettingsYAML is the base-layer defaults for settings configuration.
+// Always loaded via storage.WithDefaults() in NewConfig() as the lowest
+// priority layer.
+const defaultSettingsYAML = `
+logging:
+  file_enabled: true
+  max_size_mb: 50
+  max_age_days: 7
+  max_backups: 3
+  compress: true
+  otel:
+    enabled: true
+    timeout_seconds: 5
+    max_queue_size: 2048
+    export_interval_seconds: 5
 
-	v.SetDefault("settings.host_proxy.manager.port", 18374)
-	v.SetDefault("settings.host_proxy.daemon.port", 18374)
-	v.SetDefault("settings.host_proxy.daemon.poll_interval", 30*time.Second)
-	v.SetDefault("settings.host_proxy.daemon.grace_period", 60*time.Second)
-	v.SetDefault("settings.host_proxy.daemon.max_consecutive_errs", 10)
+host_proxy:
+  manager:
+    port: 18374
+  daemon:
+    port: 18374
+    poll_interval: 30s
+    grace_period: 60s
+    max_consecutive_errs: 10
 
-	v.SetDefault("settings.monitoring.otel_collector_port", 4318)
-	v.SetDefault("settings.monitoring.otel_collector_host", "localhost")
-	v.SetDefault("settings.monitoring.otel_collector_internal", "otel-collector")
-	v.SetDefault("settings.monitoring.otel_grpc_port", 4317)
-	v.SetDefault("settings.monitoring.loki_port", 3100)
-	v.SetDefault("settings.monitoring.prometheus_port", 9090)
-	v.SetDefault("settings.monitoring.jaeger_port", 16686)
-	v.SetDefault("settings.monitoring.grafana_port", 3000)
-	v.SetDefault("settings.monitoring.prometheus_metrics_port", 8889)
-	v.SetDefault("settings.monitoring.telemetry.metrics_path", "/v1/metrics")
-	v.SetDefault("settings.monitoring.telemetry.logs_path", "/v1/logs")
-	v.SetDefault("settings.monitoring.telemetry.metric_export_interval_ms", 10000)
-	v.SetDefault("settings.monitoring.telemetry.logs_export_interval_ms", 5000)
-	v.SetDefault("settings.monitoring.telemetry.log_tool_details", true)
-	v.SetDefault("settings.monitoring.telemetry.log_user_prompts", true)
-	v.SetDefault("settings.monitoring.telemetry.include_account_uuid", true)
-	v.SetDefault("settings.monitoring.telemetry.include_session_id", true)
-}
+monitoring:
+  otel_collector_port: 4318
+  otel_collector_host: "localhost"
+  otel_collector_internal: "otel-collector"
+  otel_grpc_port: 4317
+  loki_port: 3100
+  prometheus_port: 9090
+  jaeger_port: 16686
+  grafana_port: 3000
+  prometheus_metrics_port: 8889
+  telemetry:
+    metrics_path: "/v1/metrics"
+    logs_path: "/v1/logs"
+    metric_export_interval_ms: 10000
+    logs_export_interval_ms: 5000
+    log_tool_details: true
+    log_user_prompts: true
+    include_account_uuid: true
+    include_session_id: true
+`
 
-// TODO: making these dynamically generated while still maintaining commented
-// sections is tricky. For now, we use static strings with placeholders.
-
-// DefaultConfigYAML returns the default configuration as YAML for scaffolding
+// DefaultConfigYAML is the commented template written to disk by clawker init.
+// This is a user-facing scaffold — different from defaultProjectYAML which is
+// the programmatic base layer. The template contains comments to guide users.
 const DefaultConfigYAML = `# Clawker Configuration
 # Documentation: https://github.com/schmitthub/clawker
 
@@ -160,7 +175,7 @@ security:
 #   session_expiration_hours: 24       # Session TTL
 `
 
-// DefaultSettingsYAML returns the default settings template for new users
+// DefaultSettingsYAML is the commented template written to disk by clawker init.
 const DefaultSettingsYAML = `# Clawker User Settings
 # Documentation: https://github.com/schmitthub/clawker
 
@@ -211,7 +226,7 @@ const DefaultSettingsYAML = `# Clawker User Settings
 #     include_session_id: true
 `
 
-// DefaultRegistryYAML returns the default registry template
+// DefaultRegistryYAML is the commented template for the project registry.
 const DefaultRegistryYAML = `# Clawker ProjectCfg Registry
 # Managed by 'clawker init' — do not edit manually
 projects: []

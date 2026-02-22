@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/text"
 )
 
@@ -33,16 +34,18 @@ type PruneStaleResult struct {
 
 type worktreeService struct {
 	cfg             config.Config
+	registryStore   *storage.Store[config.ProjectRegistry]
 	newGitMgr       GitManagerFactory
 	registryFactory func() worktreeRegistry
 }
 
-func newWorktreeService(cfg config.Config, gitFactory GitManagerFactory) *worktreeService {
+func newWorktreeService(cfg config.Config, registryStore *storage.Store[config.ProjectRegistry], gitFactory GitManagerFactory) *worktreeService {
 	return &worktreeService{
-		cfg:       cfg,
-		newGitMgr: gitFactory,
+		cfg:           cfg,
+		registryStore: registryStore,
+		newGitMgr:     gitFactory,
 		registryFactory: func() worktreeRegistry {
-			return newRegistry(cfg)
+			return newRegistry(registryStore)
 		},
 	}
 }
@@ -293,7 +296,14 @@ func generateWorktreeDirName(repoName, projectName string) string {
 // enabling path reuse for existing worktrees and UUID-based generation for new ones.
 // External callers (e.g. container/shared) use this instead of the full project service.
 func NewWorktreeDirProvider(cfg config.Config, projectRoot string) git.WorktreeDirProvider {
-	registry := newRegistry(cfg)
+	store, err := newRegistryStore()
+	if err != nil {
+		// Graceful degradation: return a provider with no known paths.
+		return &flatWorktreeDirProvider{
+			knownPaths: map[string]string{},
+		}
+	}
+	registry := newRegistry(store)
 	projects := registry.Projects()
 
 	resolvedRoot, err := filepath.EvalSymlinks(projectRoot)

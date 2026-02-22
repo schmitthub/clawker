@@ -23,7 +23,7 @@ import (
 func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) *InitOptions {
 	t.Helper()
 
-	cfg, _ := configmocks.NewIsolatedTestConfig(t)
+	cfg := configmocks.NewIsolatedTestConfig(t)
 
 	fake := dockertest.NewFakeClient(cfg)
 	fake.Client.BuildDefaultImageFunc = func(_ context.Context, _ string, _ whail.BuildProgressFunc) error {
@@ -158,7 +158,7 @@ func TestPerformSetup_BuildSuccess(t *testing.T) {
 
 func TestPerformSetup_BuildFailure(t *testing.T) {
 	tio := iostreamstest.New()
-	cfg, _ := configmocks.NewIsolatedTestConfig(t)
+	cfg := configmocks.NewIsolatedTestConfig(t)
 
 	fake := dockertest.NewFakeClient(cfg)
 	fake.Client.BuildDefaultImageFunc = func(_ context.Context, _ string, _ whail.BuildProgressFunc) error {

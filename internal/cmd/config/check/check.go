@@ -24,7 +24,7 @@ type CheckOptions struct {
 func NewCmdCheck(f *cmdutil.Factory, runF func(context.Context, *CheckOptions) error) *cobra.Command {
 	opts := &CheckOptions{
 		IOStreams: f.IOStreams,
-		Config:   f.Config,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -134,8 +134,7 @@ func checkRun(_ context.Context, opts *CheckOptions) error {
 		return fmt.Errorf("failed to read %s: %w", target.displayPath, err)
 	}
 
-	_, err = config.ReadFromString(string(data))
-	if err != nil {
+	if err := config.ValidateProjectYAML(string(data)); err != nil {
 		fmt.Fprintf(ios.ErrOut, "%s %s: %s\n", cs.FailureIcon(), target.displayPath, err)
 		return cmdutil.SilentError
 	}

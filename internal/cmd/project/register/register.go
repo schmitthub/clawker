@@ -84,7 +84,10 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	projectManager := project.NewProjectManager(cfgGateway, nil)
+	projectManager, err := project.NewProjectManager(cfgGateway, nil)
+	if err != nil {
+		return fmt.Errorf("initializing project manager: %w", err)
+	}
 
 	// Require an existing clawker.yaml
 	configFileName := cfgGateway.ProjectConfigFileName()

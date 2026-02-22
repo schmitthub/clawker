@@ -86,7 +86,7 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 | Package | Test Utils | Provides |
 |---------|------------|----------|
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
-| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `ConfigMock` |
+| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `internal/project` | `mocks/` | `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient` |
@@ -163,7 +163,7 @@ Use `internal/project/mocks/stubs.go` to pick the lightest project dependency do
 | Need | Helper | What You Get |
 |------|--------|---------------|
 | Pure behavior mock, no config/git I/O | `projectmocks.NewProjectManagerMock()` | Panic-safe `ProjectManagerMock` with default funcs, easy per-method overrides |
-| Read-only config + in-memory git | `projectmocks.NewReadOnlyTestManager(t, yaml)` | `configmocks.NewFromString(yaml)` + `gittest.NewInMemoryGitManager`; `Register/Update/Remove` are blocked with `ErrReadOnlyTestManager` |
+| Read-only config + in-memory git | `projectmocks.NewReadOnlyTestManager(t, yaml)` | `configmocks.NewFromString(yaml, "")` + `gittest.NewInMemoryGitManager`; `Register/Update/Remove` are blocked with `ErrReadOnlyTestManager` |
 | Isolated file-backed config + in-memory git | `projectmocks.NewIsolatedTestManager(t)` | `configmocks.NewIsolatedTestConfig(t)` + `gittest.NewInMemoryGitManager` + `ReadConfigFiles` callback for persisted-file assertions |
 
 Example:

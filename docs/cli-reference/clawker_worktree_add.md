@@ -6,7 +6,7 @@ Create a worktree for a branch
 
 Creates a git worktree for the specified branch.
 
-If the worktree already exists, the command succeeds (idempotent).
+If the worktree already exists, the command will fail.
 If the branch exists but isn't checked out elsewhere, it's checked out in the new worktree.
 If the branch doesn't exist, it's created from the base ref (default: HEAD).
 

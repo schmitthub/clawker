@@ -4,88 +4,75 @@
 
 - `.claude/docs/ARCHITECTURE.md` — package boundaries and config's place in the DAG.
 - `.claude/docs/DESIGN.md` — config precedence and project resolution rationale.
+- `internal/storage/CLAUDE.md` — underlying store engine, merge strategy, write model.
 
 ## Architecture
 
-Viper-backed configuration with merged multi-file loading. One `Config` interface, one private `configImpl` struct wrapping `*viper.Viper`.
+Two `storage.Store[T]` instances wrapped by a thin `configImpl`. Replaces Viper.
 
-**Precedence** (highest to lowest): env vars (`CLAWKER_*` leaf keys only) > project `clawker.yaml` > project registry > user config > settings > defaults
+- `Store[Project]` — project config (`clawker.yaml`, `clawker.local.yaml`), walk-up + config dir discovery.
+- `Store[Settings]` — user settings (`settings.yaml`), config dir only.
 
-**Files loaded by `NewConfig()`** (use accessors — never hardcode these names):
-1. `cfg.SettingsFileName()` — user settings
-2. `cfg.ProjectConfigFileName()` — user-level project config overrides
-3. `cfg.ProjectRegistryFileName()` — project registry (slug to root path)
-4. `<project-root>/cfg.ProjectConfigFileName()` — project config (auto-discovered via registry + cwd)
+Both stores use `storage.WithDefaults()` to guarantee critical values (firewall, logging, monitoring) are always present, even with no files on disk.
 
-Config dir resolution: `cfg.ConfigDirEnvVar()` > `$XDG_CONFIG_HOME/clawker` > `$AppData/clawker` (Windows) > `~/.config/clawker`
-Data dir: `cfg.DataDirEnvVar()` > `$XDG_DATA_HOME/clawker` > `~/.local/share/clawker`
-State dir: `cfg.StateDirEnvVar()` > `$XDG_STATE_HOME/clawker` > `~/.local/state/clawker`
+**Precedence** (highest to lowest): project `clawker.yaml` (walk-up: closest to CWD wins) > user `clawker.yaml` in config dir > defaults YAML string.
+
+Config dir resolution: `CLAWKER_CONFIG_DIR` > `$XDG_CONFIG_HOME/clawker` > `$AppData/clawker` (Windows) > `~/.config/clawker`
+Data dir: `CLAWKER_DATA_DIR` > `$XDG_DATA_HOME/clawker` > `~/.local/share/clawker`
+State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/clawker`
 
 ## Boundary
 
-- `config` owns **path resolution primitives** and file-backed config I/O (`GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDir()`, `Write(WriteOptions)`).
+- `config` owns **path resolution primitives** and file-backed config I/O (`GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDir()`, `WriteProject()`).
 - `config` does **not** own project CRUD, slug/key resolution, or worktree lifecycle — those belong in `internal/project`.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `config.go` | `Config` interface, `configImpl` struct, `ConfigScope`/`keyOwnership`, schema accessors, `Get`/`Set`/`Watch`, key/scope helpers |
-| `dirty.go` | Dirty tree data structure (`dirtyNode`), mark/query/clear helpers, `dirtyOwnedRoots` |
-| `write.go` | `WriteOptions`, `Write()` dispatch, `resolveTargetPath`, atomic file I/O, file locks, `writeKeyToFile`/`writeRootsToFile` |
-| `load.go` | `NewConfig()`, `ReadFromString()`, viper init, YAML parsing/validation, dotted-label rewriting, `load`/`mergeProjectConfig`, `ensureDefaultConfigFiles` |
-| `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()`, `GetProjectRoot`/`GetProjectIgnoreFile`, `projectRootFromCurrentDir` |
+| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), schema accessors, typed mutation (`SetProject`, `SetSettings`), write methods, `ValidateProjectYAML` |
 | `consts.go` | Private constants exposed via `Config` methods. Only export: `Mode` type (`ModeBind`/`ModeSnapshot`) |
 | `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods |
-| `defaults.go` | `setDefaults(v)`, `requiredFirewallDomains`, YAML template constants |
+| `defaults.go` | `defaultProjectYAML`, `defaultSettingsYAML` constants, `requiredFirewallDomains`, scaffold templates |
+| `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()`, `GetProjectRoot`/`GetProjectIgnoreFile`, path helpers |
+| `config_test.go` | Tests: constructors, defaults, validation, typed mutation, persistence, constants, env var overrides |
 | `mocks/config_mock.go` | moq-generated `ConfigMock` (do not edit) |
-| `mocks/stubs.go` | Test helpers: `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `StubWriteConfig()` |
+| `mocks/stubs.go` | Test helpers: `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)` |
 
 ## Public API
 
 ### Constructors & Package Functions
 
 ```go
-func NewConfig() (Config, error)         // Full production loading
-func ReadFromString(str string) (Config, error) // Parse YAML string (env-isolated)
-func ConfigDir() string                  // Config directory path
-func DataDir() string                    // XDG data dir (~/.local/share/clawker)
-func StateDir() string                   // XDG state dir (~/.local/state/clawker)
+func NewConfig() (Config, error)                                // Full production loading (defaults + discovery + merge)
+func NewBlankConfig() (Config, error)                           // Defaults only, no file discovery (test double base)
+func NewFromString(projectYAML, settingsYAML string) (Config, error) // Raw YAML, NO defaults (precise test control)
+func ValidateProjectYAML(data string) error                     // Strict validation — rejects unknown fields
+func ConfigDir() string                                         // Config directory path
+func DataDir() string                                           // XDG data dir (~/.local/share/clawker)
+func StateDir() string                                          // XDG state dir (~/.local/state/clawker)
 func SettingsFilePath() (string, error)
 func UserProjectConfigFilePath() (string, error)
 func ProjectRegistryFilePath() (string, error)
 ```
 
-### ConfigScope & WriteOptions
-
-```go
-type ConfigScope string
-const ScopeSettings ConfigScope = "settings"
-const ScopeProject  ConfigScope = "project"
-const ScopeRegistry ConfigScope = "registry"
-
-type WriteOptions struct {
-    Path  string      // explicit output file (optional)
-    Safe  bool        // create-only mode
-    Scope ConfigScope // settings/project/registry (optional)
-    Key   string      // single dotted key (optional)
-}
-```
-
-Key ownership: `logging/monitoring/host_proxy/default_image` -> settings, `projects` -> registry, `version/project/build/agent/workspace/security/loop` -> project.
-
 ### Config Interface (method groups)
 
-**Schema accessors**: `Project()`, `Settings()`, `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()`, `Logging()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`
+**Schema accessors**: `Project()`, `Settings()`, `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`
+
+**Typed mutation** (replaces old string-based `Get`/`Set`/`Write`):
+```go
+SetProject(fn func(*Project))              // In-memory mutation, marks dirty
+SetSettings(fn func(*Settings))            // In-memory mutation, marks dirty
+WriteProject(filename ...string) error     // Persist project store to disk
+WriteSettings(filename ...string) error    // Persist settings store to disk
+```
+- `Set*` mutates the struct via callback, serializes back to node tree, marks dirty. Not persisted until `Write*`.
+- `Write*` without args: provenance-based routing (each field → its source file). With filename: all fields → that file.
 
 **Filename accessors**: `ProjectConfigFileName()` (`"clawker.yaml"`), `SettingsFileName()` (`"settings.yaml"`), `ProjectRegistryFileName()` (`"projects.yaml"`)
 
 **Path resolution**: `GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`, `TestRepoDirEnvVar()`
-
-**Mutation**: `Get(key)`, `Set(key, value)`, `Write(WriteOptions)`, `Watch(onChange)`
-- `Set` updates in-memory state + marks dirty; does not persist
-- `Write` acquires cross-process flock, persists selected dirty content via atomic rename, clears dirty state
-- Write dispatch: `Key` set -> persist that key; `Scope` set -> persist dirty roots for scope; neither -> persist all dirty roots by scope; `Path` set -> legacy single-file write
 
 **Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `WorktreesSubdir()`
 
@@ -107,7 +94,7 @@ const ModeBind     Mode = "bind"
 const ModeSnapshot Mode = "snapshot"
 ```
 
-`ParseMode(s string) (Mode, error)` lives in `schema.go`.
+`ParseMode(s string) (Mode, error)` lives in `schema.go`. Empty string defaults to `ModeBind`.
 
 ### Schema Types (schema.go)
 
@@ -121,13 +108,9 @@ const ModeSnapshot Mode = "snapshot"
 
 **Loop**: `LoopConfig` (max_loops, stagnation_threshold, timeout_minutes, circuit breaker params)
 
-**Registry**: `Registry` interface, `ProjectEntry`, `WorktreeEntry`, `ProjectRegistry`
+**Registry**: `ProjectRegistry`, `ProjectEntry`, `WorktreeEntry`
 
-**Errors**: `KeyNotFoundError`, `ErrNotInProject`
-
-### Convenience Methods on Schema Types
-
-`(*ClaudeCodeConfig).UseHostAuthEnabled()`, `(*ClaudeCodeConfig).ConfigStrategy()`, `(*AgentConfig).SharedDirEnabled()`, `(*IPRangeSource).IsRequired()`, `(*FirewallConfig).FirewallEnabled()`, `(*FirewallConfig).GetFirewallDomains(required)`, `(*SecurityConfig).HostProxyEnabled()`, `(*SecurityConfig).FirewallEnabled()`, `(*GitCredentialsConfig).GitHTTPSEnabled(hostProxy)`, `(*GitCredentialsConfig).GitSSHEnabled()`, `(*GitCredentialsConfig).CopyGitConfigEnabled()`, `(*GitCredentialsConfig).GPGEnabled()`, `(*LoopConfig).GetMaxLoops()`, `(*LoopConfig).GetStagnationThreshold()`, `(*LoopConfig).GetTimeoutMinutes()`, `(*LoopConfig).GetHooksFile()`, `(*LoopConfig).GetAppendSystemPrompt()`
+**Errors**: `ErrNotInProject`
 
 ### Test Helpers (`mocks/stubs.go`)
 
@@ -135,20 +118,19 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 
 | Helper | Returns | Use case |
 | --- | --- | --- |
-| `NewBlankConfig()` | `*ConfigMock` | Default test double; Set/Write/Watch panic |
-| `NewFromString(yaml)` | `*ConfigMock` | Empty config unless specific YAML values; Set/Write/Watch panic |
-| `NewIsolatedTestConfig(t)` | `Config` + reader callback | File-backed; supports Set/Write/env overrides
+| `NewBlankConfig()` | `*ConfigMock` | Default test double with defaults; Set/Write panic |
+| `NewFromString(projectYAML, settingsYAML)` | `*ConfigMock` | Specific YAML values, NO defaults; Set/Write panic |
+| `NewIsolatedTestConfig(t)` | `Config` | File-backed; supports Set/Write/env overrides |
 
-`NewBlankConfig`/`NewFromString` return moq `*ConfigMock` with read Func fields pre-wired. Override any Func field for partial mocking. Call `mock.ProjectCalls()` etc. for assertions.
+`NewBlankConfig`/`NewFromString` return moq `*ConfigMock` with read Func fields pre-wired. Override any Func field for partial mocking. Call `mock.ProjectCalls()` etc. for assertions. Set/Write methods are NOT wired — calling them panics via moq's nil-func guard, signaling that `NewIsolatedTestConfig` should be used for mutation tests.
 
 ## Gotchas
 
-- **Unknown fields are rejected** — `ReadFromString`/`NewConfig` use `viper.UnmarshalExact`; unknown keys cause errors.
-- **Env overrides are key-level only** — env bindings are derived automatically via schema struct reflection (`bindEnvKeysFromSchema`). Only leaf `mapstructure` tag paths with a root in `keyOwnership` get bound. Parent vars like `CLAWKER_AGENT` are ignored. No manual list to maintain.
-- **`ReadFromString` is env-isolated** — parses YAML + defaults only, no `CLAWKER_*` env overrides.
-- **Duplicate top-level YAML keys are rejected** — `ReadFromString` checks for duplicate top-level keys before parsing to prevent silent value shadowing.
-- **Dotted label keys in string fixtures are supported** — `ReadFromString` preserves dotted keys under `build.instructions.labels` (e.g. `dev.clawker.project`) instead of expanding into nested maps.
-- **`*bool` pointers** — schema structs preserve nullable `*bool` semantics. Typed accessors (`Settings()`, `LoggingConfig()`, `MonitoringConfig()`) materialize to concrete true/false.
-- **`Project().Name` field** — `yaml:"name,omitempty"` / `mapstructure:"name"`. The `name` key is in `keyOwnership` mapped to `ScopeProject`, making it overridable via `CLAWKER_NAME` env var.
-- **Transitive build failures** — Until all consumers are migrated, `go build ./...` may fail. Test individual packages directly.
-- **Cross-process safety** — `Write` uses `gofrs/flock` advisory lock + atomic temp-file rename. Lock files (`.lock` suffix) are left on disk intentionally.
+- **Unknown fields are silently accepted** by `NewFromString`/`NewConfig`. Use `ValidateProjectYAML()` for strict validation (e.g., `config check` command).
+- **`NewFromString` has NO defaults** — only caller-provided values. `NewBlankConfig` has defaults. This mirrors storage's `NewFromString` vs `NewStore` distinction.
+- **Project vs Settings scope** — Project keys: `version`, `name`, `build`, `agent`, `workspace`, `security`, `loop`. Settings keys: `default_image`, `logging`, `monitoring`, `host_proxy`.
+- **`*bool` pointers in schema** — Nil means "not set" (defaults apply). Non-nil `false` means "explicitly disabled". Callers must handle nil when accessing raw schema fields. Typed accessors like `FirewallEnabled()` handle nil-to-default conversion.
+- **Nil vs zero** — Nil pointers/slices mean "not set" (excluded from storage tree). Non-nil zero values mean "explicitly set to zero" (included). This is a semantic distinction in schema design.
+- **No env var overrides** — The old Viper-based `CLAWKER_*` env var binding has been removed. Env vars only affect directory resolution (`CLAWKER_CONFIG_DIR`, etc.), not config values.
+- **Registry moved to project** — `ProjectRegistry` schema type still lives here but the store (`Store[ProjectRegistry]`) is owned by `internal/project`.
+- **Cross-process safety** — Storage uses `gofrs/flock` advisory lock + atomic temp-file rename. Lock files (`.lock` suffix) are left on disk intentionally.
