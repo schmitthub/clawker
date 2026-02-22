@@ -5,6 +5,7 @@
 ## Related Docs
 
 - `.claude/docs/DESIGN.md` — behavior and product-level rationale.
+- `internal/storage/CLAUDE.md` — storage package API, node tree architecture, merge/write internals.
 - `internal/config/CLAUDE.md` — config package API, write semantics, and testing details.
 
 ## System Layers
@@ -96,77 +97,158 @@ Thin layer configuring whail with clawker's conventions.
 - Names: `clawker.project.agent` (containers), `clawker.project.agent-purpose` (volumes)
 - Client embeds `whail.Engine`, adding clawker-specific operations
 
-### internal/storage - File Persistence (leaf)
+### Configuration & Storage Triad
 
-Shared leaf package for safe, structured file I/O. Zero internal imports.
+Three packages form the configuration subsystem. `storage` is the engine, `config` and `project` are domain wrappers.
 
-**Provides:**
-- Atomic write (temp file + `os.Rename`)
-- File locking (`flock` wrapper for RMW cycles)
-- YAML read/unmarshal helpers (`yaml.v3`)
-- Reflection-based struct merge with `merge:"union"` / `merge:"overwrite"` struct tags
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  COMMANDS (internal/cmd/*)                                               │
+│                                                                         │
+│  cfg, _ := f.Config()              pm, _ := f.Project()                 │
+│  cfg.Project().Build.Image         pm.Register(slug, path)              │
+│  cfg.Settings().Logging            pm.ListWorktrees(ctx)                │
+│  cfg.Write(partial, opts...)       pm.Resolve(cwd)                      │
+└────────────┬────────────────────────────────────┬───────────────────────┘
+             │ Config interface                   │ ProjectManager interface
+             ▼                                    ▼
+┌────────────────────────────┐     ┌────────────────────────────────────┐
+│  internal/config            │     │  internal/project                   │
+│  (thin domain wrapper)      │     │  (thin domain wrapper)              │
+│                             │     │                                     │
+│  configImpl {               │     │  projectManagerImpl {               │
+│    *Store[ConfigFile]       │     │    *Store[Registry]                 │
+│    *Store[SettingsFile]     │     │  }                                  │
+│  }                          │     │                                     │
+│                             │     │  • Project CRUD, resolution         │
+│  • Config interface         │     │  • Worktree lifecycle               │
+│  • Schema types             │     │  • Registry schema                  │
+│  • Filenames + migrations   │     │  • Registry migrations              │
+│  • Path/constant helpers    │     │                                     │
+└────────────┬────────────────┘     └──────────────────┬─────────────────┘
+             │ composes                                │ composes
+             ▼                                         ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  internal/storage                                                        │
+│  Store[T] — generic layered YAML store engine                            │
+│                                                                         │
+│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐  ┌─────────────┐ │
+│  │  Discovery   │  │ Load+Migrate │  │ Merge+Provenance│  │   Write    │ │
+│  │             │  │              │  │               │  │             │ │
+│  │ • Static    │  │ • Per-file   │  │ • N-way map   │  │ • Explicit  │ │
+│  │   paths     │→│ • YAML→map  │→│   fold        │  │   scope     │ │
+│  │ • Walk-up   │  │ • Migrations │  │ • merge: tags │  │ • Auto from │ │
+│  │   patterns  │  │ • Re-save    │  │ • Provenance  │  │   provenance│ │
+│  │ • Dual form │  │              │  │   tracking    │  │ • Atomic    │ │
+│  └─────────────┘  └──────────────┘  └───────────────┘  └─────────────┘ │
+│                                                                         │
+│  Node tree (map[string]any) = merge engine + persistence layer          │
+│  Typed struct *T = deserialized view (read/write API)                   │
+│  structToMap = omitempty-safe serializer (Set → tree update)            │
+│  Also: flock locking (optional), atomic I/O (temp+rename)               │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
-**Imported by:** `internal/config` (settings + config files), `internal/project` (registry)
+**Key relationships:**
+- Commands never see `storage` — they use `Config` and `ProjectManager` interfaces
+- `config` and `project` are thin wrappers — they compose `Store[T]`, provide schemas/filenames/migrations, expose domain APIs
+- `storage` is the engine — discovery, load, migrate, merge, provenance, write
+- `storage` has zero domain knowledge — it doesn't know about clawker, config files, or registries
+
+### internal/storage - Layered YAML Store Engine
+
+Generic `Store[T]` that handles the full lifecycle of layered YAML configuration. Zero internal imports (leaf package). See `internal/storage/CLAUDE.md` for detailed API reference.
+
+**Node tree architecture:** The node tree (`map[string]any`) is the merge engine and persistence layer. The typed struct `*T` is a deserialized view — the read/write API. Merge operates on maps only; the struct is deserialized from the merged tree at end of construction. This avoids the `omitempty` problem (YAML marshaling drops zero-value fields like `false` or `0`).
+
+```
+Load:   file → map[string]any ─┐
+                                ├→ merge maps → deserialize → *T
+        string → map[string]any ─┘
+
+Set:    *T (mutated) → structToMap → merge into tree → mark dirty
+
+Write:  tree → route by provenance → per-file atomic write
+```
+
+**Discovery** (how files are found — two additive modes):
+
+| Mode | Options | Use case |
+|------|---------|----------|
+| Walk-up | `WithWalkUp()` | Config — CWD to project root, non-deterministic |
+| Static | `WithConfigDir()` / `WithDataDir()` / `WithPaths()` | Registry, settings — known XDG locations |
+
+**Filename-driven:** Store takes ordered filenames on construction (e.g., `"clawker.yaml"`, `"clawker.local.yaml"`). Walk-up is non-deterministic — at each level, checks `.clawker/{filename}` (dir form) first, falls back to `.{filename}` (flat dotfile). Both `.yaml`/`.yml` accepted. Bounded at registered project root — never reaches HOME.
+
+**XDG convenience options:** `WithConfigDir()`, `WithDataDir()`, `WithStateDir()`, `WithCacheDir()` resolve directory paths and add them to the explicit path list. Precedence: `CLAWKER_*_DIR` > `XDG_*_HOME` > default. Explicit paths check `{dir}/{filename}` directly (no dir/flat form).
+
+**Pipeline** (per file, before merge):
+1. Read YAML → `map[string]any`
+2. Run caller-provided migrations (precondition-based, idempotent)
+3. Atomic re-save if any migration fired
+
+Each file migrates independently — any file at any depth can be independently stale.
+
+**Merge with provenance**: Fold N layer maps in priority order (closest to CWD = highest). Per-field merge strategy via `merge:"union"|"overwrite"` struct tags on `T`, extracted into a `tagRegistry` at construction. Provenance map tracks which layer won each field — used for auto-scoped writes. Absent keys mean "not set" (not iterated), present keys with zero values mean "explicitly set".
+
+**Write model**: Explicit filename (`Write("clawker.local.yaml")`) or auto-route (`Write()` — provenance resolves each field's target). `structToMap` serializes the struct via reflection, ignoring `omitempty` tags. `mergeIntoTree` preserves unknown keys in the tree that aren't in the struct schema.
+
+**Testing**: `storage.NewFromString[T](yaml)` is a separate constructor that bypasses the pipeline — parses YAML string → node tree → `*T`, no store machinery. Composing packages (`config/mocks`, `project/mocks`) use it to build their test doubles and use real `Store[T]` + `t.TempDir()` for isolated FS harnesses. `Store[T]` has no mock interface; consumer interfaces are the mock boundary.
+
+**Imported by:** `internal/config`, `internal/project`
 
 ### internal/config - Configuration
 
-Single `Config` interface that all callers receive. The package is a closed box — config file names, directory locations, file paths, and constants are all private to the package. Callers never construct paths or reference config internals directly.
+Thin domain wrapper composing `Store[ConfigFile]` + `Store[SettingsFile]`. Exposes the `Config` interface — a closed box where all file names, paths, and constants are private.
 
 **Design principle**: If a caller needs information from the config package, it must use an existing `Config` method or propose a new one on the interface. No reaching into package internals.
 
 **Two independent schemas, one interface:**
-- `SettingsFile` — host infrastructure (logging, host_proxy, monitoring). Lives at `~/.clawker/settings.yaml` only.
-- `ConfigFile` — project defaults (build, workspace, security, agent, loop). Tiered via walk-up: `~/.clawker/config.yaml` → `.clawker/config.yaml` → `.clawker/local.yaml`.
-- Callers access both through namespaced sub-accessors on a single `Config` interface: `cfg.Settings().Logging()`, `cfg.Project().Build().Image`, `cfg.ConfigDir()`.
+- `SettingsFile` — host infrastructure (logging, host_proxy, monitoring)
+- `ConfigFile` — project defaults (build, workspace, security, agent, loop). Tiered via walk-up.
+- Callers access both through namespaced sub-accessors: `cfg.Settings().Logging`, `cfg.Project().Build.Image`, `cfg.ConfigDir()`
 
-**File layout (walk-up + XDG hybrid, mirrors Claude Code pattern):**
+**File layout (full XDG — walk-up bounded at project root, never reaches HOME):**
 ```
-~/.clawker/                          ← config (walk-up root, NOT XDG)
-  config.yaml                        ← ConfigFile (global project defaults)
+~/.config/clawker/                   ← config (XDG_CONFIG_HOME)
+  clawker.yaml                       ← ConfigFile (global project defaults)
+  clawker.local.yaml                 ← ConfigFile (global personal overrides)
   settings.yaml                      ← SettingsFile (host infrastructure)
 
-.clawker/                            ← project tier (walk-up match)
-  config.yaml                        ← ConfigFile (per-project, committed)
-  local.yaml                         ← ConfigFile (personal overrides, gitignored)
+<walk-up-level>/                     ← dual placement (dir wins over flat)
+  .clawker.yaml                      ← flat form (committed)
+  .clawker.local.yaml                ← flat form (personal, gitignored)
+  .clawker/                          ← OR directory form
+    clawker.yaml                     ← dir form (committed)
+    clawker.local.yaml               ← dir form (personal, gitignored)
 
-~/.local/share/clawker/              ← data (XDG, owned by internal/project)
+~/.local/share/clawker/              ← data (XDG_DATA_HOME, owned by internal/project)
   registry.yaml                      ← project/worktree state
 
-~/.local/state/clawker/              ← state (XDG)
+~/.local/state/clawker/              ← state (XDG_STATE_HOME)
   logs/                              ← log files
   cache/                             ← cached state
 ```
 
-**Walk-up loader:** starts at CWD, walks to HOME, collects all `.clawker/config.yaml` files, merges global-first/closest-wins. Any config file can become tiered by placing a copy at a lower level.
+**Walk-up dual placement:** At each level, check for `.clawker/` dir first → use `clawker.yaml` inside it. No dir → fall back to `.clawker.yaml` flat dotfile. Mutually exclusive per directory.
 
-**Key API:**
-- `NewConfig() (Config, error)` — full production loading (settings + walk-up config merge + env vars)
-- `Config` interface — namespaced accessors (`Settings()`, `Project()`) plus path/constant helpers (`ConfigDir()`, `Domain()`, `LabelDomain()`, etc.)
-- All constants are private — exposed only through `Config` interface methods
+**What `configImpl` provides to `Store[T]`:**
+- Filenames (e.g., `"clawker.yaml"`, `"clawker.local.yaml"`) — ordered, same schema
+- Migration functions (schema evolution)
+- Schema types (`ConfigFile`, `SettingsFile`)
+- Discovery options (`WithWalkUp`, `WithConfig`) — anchors locked in at construction
 
-**Merge strategy:**
-- Per-field merge for arrays via struct tags: `merge:"union"` (additive, deduped) or `merge:"overwrite"` (project wins entirely)
-- Untagged slices default to overwrite at runtime; reflection test in CI enforces all slices have explicit tags
-- Scalars: always last-wins (overwrite)
-
-**Two-phase load:**
-1. YAML → `map[string]any` (lenient) → run precondition migrations → re-save if changed
-2. Map → typed struct (only known keys read, unknowns silently ignored)
-
-**Validation:** Unknown fields silently ignored (matches Claude Code + Serena pattern). Struct is source of truth — file provides overrides, missing keys get defaults.
-
-**Migrations:** Precondition-based idempotent functions (Claude Code + Serena pattern). Each checks data shape, transforms if old shape found, skips if current. No version field, no migration chain.
-
-**Write model:**
-- Scoped writes: `WriteSettings()`, `WriteProjectConfig()`, `WriteLocalConfig()`
-- Each write: read current → deep merge partial update → atomic write via `internal/storage`
-- Settings files do not need locking (per-machine, no concurrent writers)
+**What `configImpl` adds on top of `Store[T]`:**
+- `Config` interface with namespaced accessors
+- Path/constant helpers (`ConfigDir()`, `Domain()`, `LabelDomain()`, ~40 methods)
+- `Write(partial, opts...)` — same familiar `Store[T]` API surface as `projectManager`
 
 **Testing**: See `internal/config/CLAUDE.md` for test helpers and mocks.
 
 **Boundary:**
-- Config file I/O, walk-up loading, and path helpers stay in `internal/config`.
-- Project identity, CRUD, worktree orchestration, and registry I/O belong to `internal/project`.
+- `config` defines schemas, filenames, migrations, and the domain interface.
+- `storage` does all the mechanical work — discovery, load, migrate, merge, write.
+- `project` owns project identity, CRUD, worktree lifecycle, and registry I/O.
 
 ### internal/cmd/* - CLI Commands
 
@@ -249,8 +331,8 @@ User interaction utilities with TTY and CI awareness.
 | `internal/containerfs` | Host Claude config preparation for container init: copies settings, plugins, credentials to config volume; prepares post-init script tar (leaf — keyring + logger only) |
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
-| `internal/storage` | Shared file persistence leaf (atomic write, flock, YAML read/write, reflection-based merge with `merge:` struct tags) |
-| `internal/config` | Single `Config` interface. Two schemas (`SettingsFile`, `ConfigFile`), walk-up merge, yaml.v3, precondition migrations. All file paths and directory locations are private. See `internal/config/CLAUDE.md` |
+| `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. Leaf — zero internal imports |
+| `internal/config` | Thin wrapper composing `Store[ConfigFile]` + `Store[SettingsFile]`. Exposes `Config` interface with namespaced accessors, path/constant helpers. See `internal/config/CLAUDE.md` |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
 | `internal/cmdutil` | Factory struct (closure fields), error types, format/filter flags, arg validators |
