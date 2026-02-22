@@ -16,9 +16,8 @@ import (
 )
 
 // clearClawkerEnv unsets all CLAWKER_* env vars for the duration of a test.
-// The config package uses viper.AutomaticEnv() with CLAWKER_ prefix, so
-// container-injected env vars (e.g. CLAWKER_VERSION) would override config
-// file values and break isolated validation tests.
+// CLAWKER_* env vars affect directory resolution (CLAWKER_CONFIG_DIR, etc.)
+// which could break isolated validation tests.
 func clearClawkerEnv(t *testing.T) {
 	t.Helper()
 	for _, kv := range os.Environ() {
@@ -94,9 +93,7 @@ func TestNewCmdCheck_metadata(t *testing.T) {
 	assert.Contains(t, cmd.Example, "--file")
 }
 
-const validConfig = `version: "1"
-name: "test-project"
-build:
+const validConfig = `build:
   image: "node:20-slim"
 workspace:
   remote_path: "/workspace"
@@ -144,7 +141,7 @@ func TestCheckRun_validFile(t *testing.T) {
 func TestCheckRun_invalidFile(t *testing.T) {
 	clearClawkerEnv(t)
 	dir := t.TempDir()
-	// Malformed YAML — viper will fail to parse this
+	// Malformed YAML — parser will fail to decode this
 	writeConfig(t, dir, "version: [invalid\n  bad yaml\n")
 
 	tio := iostreamstest.New()

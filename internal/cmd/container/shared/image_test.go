@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/prompter"
@@ -62,14 +60,11 @@ func TestRebuildMissingImage_BuildSuccess(t *testing.T) {
 		return nil
 	}
 
-	cfg := configmocks.NewIsolatedTestConfig(t)
-
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
 		ImageRef:    "test-image:latest",
 		IOStreams:   tio.IOStreams,
 		TUI:         nil, // spinner fallback
 		Prompter:    func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		Cfg:         cfg,
 		BuildImage:  buildFn,
 		CommandVerb: "run",
 	})
@@ -77,10 +72,6 @@ func TestRebuildMissingImage_BuildSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "bookworm", capturedFlavor)
 	assert.Contains(t, tio.ErrBuf.String(), docker.DefaultImageTag)
-
-	// Verify settings were persisted
-	settings := cfg.Settings()
-	assert.Equal(t, docker.DefaultImageTag, settings.DefaultImage)
 }
 
 func TestRebuildMissingImage_BuildFailure(t *testing.T) {
@@ -104,58 +95,6 @@ func TestRebuildMissingImage_BuildFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to rebuild default image")
 	assert.Contains(t, err.Error(), "build exploded")
-}
-
-func TestRebuildMissingImage_PersistSettingsWarning(t *testing.T) {
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
-	tio.InBuf.SetInput("1\n1\n") // "Yes" then "bookworm"
-
-	buildFn := func(_ context.Context, _ string, _ whail.BuildProgressFunc) error {
-		return nil
-	}
-
-	mock := configmocks.NewBlankConfig()
-	mock.SetSettingsFunc = func(fn func(*config.Settings)) { fn(&config.Settings{}) }
-	mock.WriteSettingsFunc = func(filename ...string) error { return fmt.Errorf("save failed") }
-
-	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
-		ImageRef:    "test-image:latest",
-		IOStreams:   tio.IOStreams,
-		TUI:         nil,
-		Prompter:    func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		Cfg:         mock,
-		BuildImage:  buildFn,
-		CommandVerb: "run",
-	})
-
-	require.NoError(t, err)
-	assert.Contains(t, tio.ErrBuf.String(), "Could not save")
-}
-
-// --- persistDefaultImageSetting tests ---
-
-func TestPersistDefaultImageSetting_NilConfig(t *testing.T) {
-	warning := persistDefaultImageSetting(nil)
-	assert.Empty(t, warning)
-}
-
-func TestPersistDefaultImageSetting_WriteError(t *testing.T) {
-	mock := configmocks.NewBlankConfig()
-	mock.SetSettingsFunc = func(fn func(*config.Settings)) { fn(&config.Settings{}) }
-	mock.WriteSettingsFunc = func(filename ...string) error { return fmt.Errorf("save failed") }
-
-	warning := persistDefaultImageSetting(mock)
-	assert.Contains(t, warning, "Could not save")
-}
-
-func TestPersistDefaultImageSetting_Success(t *testing.T) {
-	cfg := configmocks.NewIsolatedTestConfig(t)
-	warning := persistDefaultImageSetting(cfg)
-	assert.Empty(t, warning)
-
-	settings := cfg.Settings()
-	assert.Equal(t, docker.DefaultImageTag, settings.DefaultImage)
 }
 
 // --- progressStatus tests ---

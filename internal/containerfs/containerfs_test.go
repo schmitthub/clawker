@@ -517,7 +517,7 @@ func TestPrepareOnboardingTar(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, tr); err != nil {
+	if _, err := io.Copy(&buf, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb
 		t.Fatalf("read tar entry: %v", err)
 	}
 
@@ -606,7 +606,7 @@ func TestPreparePostInitTar(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, tr); err != nil {
+	if _, err := io.Copy(&buf, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb
 		t.Fatalf("read tar entry: %v", err)
 	}
 

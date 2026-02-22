@@ -32,8 +32,6 @@ func (e testNotFoundError) NotFound()     {}
 func testConfig() *config.Project {
 	hostProxyDisabled := false
 	return &config.Project{
-		Version: "1",
-		Name:    "testproject",
 		Workspace: config.WorkspaceConfig{
 			RemotePath:  "/workspace",
 			DefaultMode: "bind",
@@ -75,12 +73,13 @@ func testMockConfig(project *config.Project) *configmocks.ConfigMock {
 // testCreateConfig builds a CreateContainerConfig with test defaults.
 func testCreateConfig(fake *dockertest.FakeClient, project *config.Project, containerOpts *ContainerOptions, cmd *cobra.Command) *CreateContainerConfig {
 	return &CreateContainerConfig{
-		Client:  fake.Client,
-		Cfg:     testMockConfig(project),
-		Config:  project,
-		Options: containerOpts,
-		Flags:   cmd.Flags(),
-		Logger:  loggertest.NewNop(),
+		Client:      fake.Client,
+		Cfg:         testMockConfig(project),
+		Config:      project,
+		ProjectName: "testproject",
+		Options:     containerOpts,
+		Flags:       cmd.Flags(),
+		Logger:      loggertest.NewNop(),
 		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
 		},
@@ -340,15 +339,17 @@ func TestCreateContainer_EmptyProject(t *testing.T) {
 	fake.SetupCopyToContainer()
 
 	cfg := testConfig()
-	cfg.Name = "" // empty project
+	// ProjectName defaults to "" on CreateContainerConfig (empty project)
 
 	cmd := testFlags()
 	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "myagent"
 
-	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
+	cc := testCreateConfig(fake, cfg, containerOpts, cmd)
+	cc.ProjectName = "" // empty project → 2-segment name
+
+	result, err := CreateContainer(context.Background(), cc, nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)

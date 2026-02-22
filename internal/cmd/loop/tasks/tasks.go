@@ -16,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -26,15 +27,16 @@ type TasksOptions struct {
 	*shared.LoopOptions
 
 	// Factory DI
-	IOStreams    *iostreams.IOStreams
-	TUI          *tui.TUI
-	Client       func(context.Context) (*docker.Client, error)
-	Config       func() (config.Config, error)
-	GitManager   func() (*git.GitManager, error)
-	HostProxy    func() hostproxy.HostProxyService
-	SocketBridge func() socketbridge.SocketBridgeManager
-	Prompter     func() *prompter.Prompter
-	Version      string
+	IOStreams      *iostreams.IOStreams
+	TUI            *tui.TUI
+	Client         func(context.Context) (*docker.Client, error)
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
+	GitManager     func() (*git.GitManager, error)
+	HostProxy      func() hostproxy.HostProxyService
+	SocketBridge   func() socketbridge.SocketBridgeManager
+	Prompter       func() *prompter.Prompter
+	Version        string
 
 	// Task file (required)
 	TasksFile string
@@ -54,16 +56,17 @@ type TasksOptions struct {
 func NewCmdTasks(f *cmdutil.Factory, runF func(context.Context, *TasksOptions) error) *cobra.Command {
 	loopOpts := shared.NewLoopOptions()
 	opts := &TasksOptions{
-		LoopOptions:  loopOpts,
-		IOStreams:    f.IOStreams,
-		TUI:          f.TUI,
-		Client:       f.Client,
-		Config:       f.Config,
-		GitManager:   f.GitManager,
-		HostProxy:    f.HostProxy,
-		SocketBridge: f.SocketBridge,
-		Prompter:     f.Prompter,
-		Version:      f.Version,
+		LoopOptions:    loopOpts,
+		IOStreams:      f.IOStreams,
+		TUI:            f.TUI,
+		Client:         f.Client,
+		Config:         f.Config,
+		ProjectManager: f.ProjectManager,
+		GitManager:     f.GitManager,
+		HostProxy:      f.HostProxy,
+		SocketBridge:   f.SocketBridge,
+		Prompter:       f.Prompter,
+		Version:        f.Version,
 	}
 
 	cmd := &cobra.Command{
@@ -154,6 +157,16 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 	}
 	projectCfg := cfgGateway.Project()
 
+	// Resolve project name from ProjectManager (empty if no project registered)
+	var projectName string
+	if opts.ProjectManager != nil {
+		if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+			if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+				projectName = p.Name()
+			}
+		}
+	}
+
 	// 3a. Apply config file defaults for pre-runner fields (hooks_file, append_system_prompt)
 	shared.ApplyLoopConfigDefaults(opts.LoopOptions, opts.flags, projectCfg.Loop)
 
@@ -175,7 +188,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 
 	action, err := shared.CheckConcurrency(ctx, &shared.ConcurrencyCheckConfig{
 		Client:    client,
-		Project:   projectCfg.Name,
+		Project:   projectName,
 		WorkDir:   workDir,
 		IOStreams: ios,
 		Prompter:  opts.Prompter,
@@ -197,7 +210,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 	}
 
 	// 4. Resolve image once
-	image, err := shared.ResolveLoopImage(ctx, client, ios, opts.LoopOptions)
+	image, err := shared.ResolveLoopImage(ctx, client, ios, opts.LoopOptions, projectName)
 	if err != nil {
 		return err
 	}
@@ -219,6 +232,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 		Client:       client,
 		Command:      cmd,
 		Config:       cfgGateway,
+		ProjectName:  projectName,
 		LoopOpts:     opts.LoopOptions,
 		Flags:        opts.flags,
 		Version:      opts.Version,
@@ -236,15 +250,16 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 
 	// 7. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
-		opts.LoopOptions, projectCfg, opts.Agent, prompt, workDir,
+		opts.LoopOptions, projectCfg, projectName, opts.Agent, prompt, workDir,
 		createContainer, opts.flags, projectCfg.Loop, ios.Logger,
 	)
 
 	// Setup info for dashboard/monitor display (no container ID — per-iteration)
 	setup := &shared.LoopContainerResult{
-		AgentName:  opts.Agent,
-		ProjectCfg: projectCfg,
-		WorkDir:    workDir,
+		AgentName:   opts.Agent,
+		ProjectName: projectName,
+		ProjectCfg:  projectCfg,
+		WorkDir:     workDir,
 	}
 
 	// 8. Run loop with appropriate output mode (TUI dashboard or text monitor)

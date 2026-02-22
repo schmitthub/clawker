@@ -165,13 +165,6 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if buildBaseImage {
-		// Clear default image when building (will be set after successful build)
-		cfg.SetSettings(func(s *config.Settings) {
-			s.DefaultImage = ""
-		})
-	}
-
 	ios.Logger.Debug().
 		Bool("build_base_image", buildBaseImage).
 		Str("flavor", selectedFlavor).
@@ -259,15 +252,6 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 			return nil // early return to avoid duplicate next steps
 		}
 
-		// Update settings with the built image
-		cfg.SetSettings(func(s *config.Settings) {
-			s.DefaultImage = docker.DefaultImageTag
-		})
-		if err := cfg.WriteSettings(); err != nil {
-			ios.Logger.Warn().Err(err).Msg("failed to save settings with default image")
-			fmt.Fprintf(ios.ErrOut, "%s Warning: built image %s but failed to update settings: %v\n",
-				cs.WarningIcon(), docker.DefaultImageTag, err)
-		}
 	}
 
 	fmt.Fprintln(ios.ErrOut)

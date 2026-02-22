@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/test/harness"
 )
@@ -177,10 +176,8 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("image matches with :latest tag", func(t *testing.T) {
-		testCfg := configmocks.NewFromString(fmt.Sprintf("name: %q", state.projectName), "")
-		localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
-
-		result, err := localClient.ResolveImageWithSource(ctx)
+		// Project name is now passed as an argument, not via config.
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, state.projectName)
 		if err != nil {
 			t.Errorf("ResolveImageWithSource() unexpected error = %v", err)
 			return
@@ -200,25 +197,19 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	})
 
 	t.Run("no matching images for nonexistent project", func(t *testing.T) {
-		testCfg := configmocks.NewFromString(`name: "nonexistent-project-xyz"`, "")
-		localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
-
-		result, err := localClient.ResolveImageWithSource(ctx)
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, "nonexistent-project-xyz")
 		if err != nil {
 			t.Errorf("ResolveImageWithSource() unexpected error = %v", err)
 			return
 		}
-		// No project image and no default → nil
+		// No project image found → nil
 		if result != nil {
-			t.Errorf("ResolveImageWithSource() = %+v, want nil for nonexistent project with no default", result)
+			t.Errorf("ResolveImageWithSource() = %+v, want nil for nonexistent project", result)
 		}
 	})
 
 	t.Run("finds correct project image among multiple", func(t *testing.T) {
-		testCfg := configmocks.NewFromString(`name: "other-project"`, "")
-		localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
-
-		result, err := localClient.ResolveImageWithSource(ctx)
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, "other-project")
 		if err != nil {
 			t.Errorf("ResolveImageWithSource() unexpected error = %v", err)
 			return
@@ -231,21 +222,29 @@ func TestFindProjectImage_Integration(t *testing.T) {
 			t.Errorf("ResolveImageWithSource().Reference = %q, want %q", result.Reference, state.otherProjectTag)
 		}
 	})
+
+	t.Run("empty project name returns nil", func(t *testing.T) {
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, "")
+		if err != nil {
+			t.Errorf("ResolveImageWithSource() unexpected error = %v", err)
+			return
+		}
+		if result != nil {
+			t.Errorf("ResolveImageWithSource() = %+v, want nil for empty project name", result)
+		}
+	})
 }
 
 func TestFindProjectImage_NoLatestTag(t *testing.T) {
 	state := setupImageResolverTests(t)
 	ctx := context.Background()
 
-	testCfg := configmocks.NewFromString(`name: "project-with-absolutely-no-images"`, "")
-	localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
-
-	result, err := localClient.ResolveImageWithSource(ctx)
+	result, err := state.dockerClient.ResolveImageWithSource(ctx, "project-with-absolutely-no-images")
 	if err != nil {
 		t.Errorf("ResolveImageWithSource() unexpected error: %v", err)
 		return
 	}
-	// No project image and no default → nil
+	// No project image found → nil
 	if result != nil {
 		t.Errorf("ResolveImageWithSource() = %+v, want nil for project with no images", result)
 	}
@@ -256,13 +255,7 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("finds project image with :latest tag", func(t *testing.T) {
-		testCfg := configmocks.NewFromString(
-			fmt.Sprintf("name: %q", state.projectName),
-			fmt.Sprintf("default_image: %q", "fallback:latest"),
-		)
-		localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
-
-		result, err := localClient.ResolveImageWithSource(ctx)
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, state.projectName)
 		if err != nil {
 			t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
 		}
@@ -280,28 +273,15 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to default when no project image", func(t *testing.T) {
-		testCfg := configmocks.NewFromString(
-			`name: "nonexistent-project-xyz"`,
-			`default_image: "fallback:latest"`,
-		)
-		localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
-
-		result, err := localClient.ResolveImageWithSource(ctx)
+	t.Run("returns nil when no project image found", func(t *testing.T) {
+		result, err := state.dockerClient.ResolveImageWithSource(ctx, "nonexistent-project-xyz")
 		if err != nil {
 			t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
 		}
 
-		if result == nil {
-			t.Fatal("ResolveImageWithSource() returned nil, expected default image")
-		}
-
-		if result.Source != docker.ImageSourceDefault {
-			t.Errorf("ResolveImageWithSource().Source = %q, want %q", result.Source, docker.ImageSourceDefault)
-		}
-
-		if result.Reference != "fallback:latest" {
-			t.Errorf("ResolveImageWithSource().Reference = %q, want %q", result.Reference, "fallback:latest")
+		// No project image and no default fallback → nil
+		if result != nil {
+			t.Errorf("ResolveImageWithSource() = %+v, want nil for nonexistent project", result)
 		}
 	})
 }

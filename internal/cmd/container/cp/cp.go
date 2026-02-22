@@ -11,17 +11,17 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // CpOptions holds options for the cp command.
 type CpOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() (config.Config, error)
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Agent      bool
 	Archive    bool
@@ -35,9 +35,9 @@ type CpOptions struct {
 // NewCmdCp creates a new cp command.
 func NewCmdCp(f *cmdutil.Factory, runF func(context.Context, *CpOptions) error) *cobra.Command {
 	opts := &CpOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -116,18 +116,18 @@ func cpRun(ctx context.Context, opts *CpOptions) error {
 
 	// If --agent is provided, resolve container names as agent names
 	if opts.Agent {
-		cfg, err := opts.Config()
-		if err != nil {
-			return err
-		}
-		var project string
-		if p := cfg.Project(); p != nil {
-			project = p.Name
+		var projectName string
+		if opts.ProjectManager != nil {
+			if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+				if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+					projectName = p.Name()
+				}
+			}
 		}
 
 		if srcIsContainer && srcContainer != "" {
 			var nameErr error
-			srcContainer, nameErr = docker.ContainerName(project, srcContainer)
+			srcContainer, nameErr = docker.ContainerName(projectName, srcContainer)
 			if nameErr != nil {
 				return nameErr
 			}
@@ -135,7 +135,7 @@ func cpRun(ctx context.Context, opts *CpOptions) error {
 
 		if dstIsContainer && dstContainer != "" {
 			var nameErr error
-			dstContainer, nameErr = docker.ContainerName(project, dstContainer)
+			dstContainer, nameErr = docker.ContainerName(projectName, dstContainer)
 			if nameErr != nil {
 				return nameErr
 			}

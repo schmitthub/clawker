@@ -12,6 +12,8 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/project"
+	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 	"github.com/schmitthub/clawker/test/harness/golden"
@@ -34,8 +36,6 @@ func TestBuildProgress_Golden(t *testing.T) {
 			t.Setenv("DOCKER_BUILDKIT", "1")
 
 			testCfg := configmocks.NewFromString(`
-version: "1"
-name: test-project
 build: { image: "node:20-slim" }
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { firewall: { enable: false } }
@@ -54,6 +54,13 @@ monitoring:
 			fake := dockertest.NewFakeClient(testCfg)
 			fake.SetupBuildKitWithProgress(scenario.Events)
 
+			// Wire a ProjectManager that returns "test-project" so buildRun
+			// resolves project name via ProjectManager.CurrentProject(ctx).
+			mockPM := projectmocks.NewMockProjectManager()
+			mockPM.CurrentProjectFunc = func(_ context.Context) (project.Project, error) {
+				return projectmocks.NewMockProject("test-project", "/fake/repo"), nil
+			}
+
 			tio := iostreamstest.New()
 			f := &cmdutil.Factory{
 				IOStreams: tio.IOStreams,
@@ -63,6 +70,9 @@ monitoring:
 				},
 				Config: func() (config.Config, error) {
 					return testCfg, nil
+				},
+				ProjectManager: func() (project.ProjectManager, error) {
+					return mockPM, nil
 				},
 			}
 

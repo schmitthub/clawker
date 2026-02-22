@@ -78,7 +78,6 @@ Run()
 4. On progress display error (e.g., Ctrl+C): returns error immediately
 5. On build failure: prints error + manual recovery steps (does not return error)
 6. Ensures shared directory at `config.ShareDir()` exists via `config.EnsureDir()`
-7. On build success: updates `settings.DefaultImage` to `docker.DefaultImageTag`
 7. Prints next steps guidance to stderr
 
 ## Factory Wiring

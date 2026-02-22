@@ -53,6 +53,11 @@ type Options struct {
 	// ProjectCfg is the project configuration.
 	ProjectCfg *config.Project
 
+	// ProjectName is the project identity string used for session/circuit
+	// storage keys and container naming. Resolved from project.ProjectManager
+	// at command level; empty string when no project is registered.
+	ProjectName string
+
 	// Agent is the agent name.
 	Agent string
 
@@ -209,7 +214,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	// Load or create session (with expiration check)
-	session, expired, err := r.store.LoadSessionWithExpiration(opts.ProjectCfg.Name, opts.Agent, opts.SessionExpirationHours)
+	session, expired, err := r.store.LoadSessionWithExpiration(opts.ProjectName, opts.Agent, opts.SessionExpirationHours)
 	if err != nil {
 		opts.Logger.Error().Err(err).Msg("failed to load session")
 		return &Result{
@@ -219,16 +224,16 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	if expired {
 		opts.Logger.Debug().Msg("session expired, starting fresh")
-		if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Name, opts.Agent, "expired", "", "", 0); histErr != nil {
+		if histErr := r.history.AddSessionEntry(opts.ProjectName, opts.Agent, "expired", "", "", 0); histErr != nil {
 			opts.Logger.Warn().Err(histErr).Msg("failed to record session expiration in history")
 		}
 	}
 	sessionCreated := session == nil
 	if session == nil {
-		session = NewSession(opts.ProjectCfg.Name, opts.Agent, opts.Prompt, opts.WorkDir)
+		session = NewSession(opts.ProjectName, opts.Agent, opts.Prompt, opts.WorkDir)
 	}
 	if sessionCreated {
-		if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Name, opts.Agent, "created", StatusPending, "", 0); histErr != nil {
+		if histErr := r.history.AddSessionEntry(opts.ProjectName, opts.Agent, "created", StatusPending, "", 0); histErr != nil {
 			opts.Logger.Warn().Err(histErr).Msg("failed to record session creation in history")
 		}
 		if saveErr := r.store.SaveSession(session); saveErr != nil {
@@ -261,7 +266,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 
 	// Reset circuit if requested
 	if opts.ResetCircuit {
-		if err := r.store.DeleteCircuitState(opts.ProjectCfg.Name, opts.Agent); err != nil {
+		if err := r.store.DeleteCircuitState(opts.ProjectName, opts.Agent); err != nil {
 			opts.Logger.Warn().Err(err).Msg("failed to delete circuit state")
 			return &Result{
 				Session:    session,
@@ -269,11 +274,11 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 				Error:      fmt.Errorf("failed to reset circuit breaker as requested: %w", err),
 			}, nil
 		}
-		if histErr := r.history.AddCircuitEntry(opts.ProjectCfg.Name, opts.Agent, "tripped", "closed", "manual reset", 0, 0, 0, 0); histErr != nil {
+		if histErr := r.history.AddCircuitEntry(opts.ProjectName, opts.Agent, "tripped", "closed", "manual reset", 0, 0, 0, 0); histErr != nil {
 			opts.Logger.Warn().Err(histErr).Msg("failed to record circuit reset in history")
 		}
 	} else {
-		circuitState, err := r.store.LoadCircuitState(opts.ProjectCfg.Name, opts.Agent)
+		circuitState, err := r.store.LoadCircuitState(opts.ProjectName, opts.Agent)
 		if err != nil {
 			opts.Logger.Error().Err(err).Msg("failed to load circuit state - refusing to run")
 			return &Result{
@@ -428,7 +433,7 @@ mainLoop:
 			if status != nil {
 				statusStr = status.Status
 			}
-			if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Name, opts.Agent, "updated", statusStr, errStr, session.LoopsCompleted); histErr != nil {
+			if histErr := r.history.AddSessionEntry(opts.ProjectName, opts.Agent, "updated", statusStr, errStr, session.LoopsCompleted); histErr != nil {
 				opts.Logger.Warn().Err(histErr).Msg("failed to record session update in history")
 			}
 		}
@@ -452,7 +457,7 @@ mainLoop:
 
 		// Surface repeated errors in history before they trip the circuit.
 		if sameCount := circuit.SameErrorCount(); sameCount >= 3 && analysis != nil && analysis.ErrorSignature != "" {
-			if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Name, opts.Agent, "repeated_error", "", analysis.ErrorSignature, session.LoopsCompleted); histErr != nil {
+			if histErr := r.history.AddSessionEntry(opts.ProjectName, opts.Agent, "repeated_error", "", analysis.ErrorSignature, session.LoopsCompleted); histErr != nil {
 				opts.Logger.Warn().Err(histErr).Msg("failed to record repeated error in history")
 			}
 		}
@@ -484,7 +489,7 @@ mainLoop:
 
 			now := time.Now()
 			circuitState := &CircuitState{
-				Project:         opts.ProjectCfg.Name,
+				Project:         opts.ProjectName,
 				Agent:           opts.Agent,
 				NoProgressCount: circuit.NoProgressCount(),
 				Tripped:         true,
@@ -498,7 +503,7 @@ mainLoop:
 			}
 
 			state := circuit.State()
-			if histErr := r.history.AddCircuitEntry(opts.ProjectCfg.Name, opts.Agent, "closed", "tripped", updateResult.Reason,
+			if histErr := r.history.AddCircuitEntry(opts.ProjectName, opts.Agent, "closed", "tripped", updateResult.Reason,
 				state.NoProgressCount, state.SameErrorCount, state.ConsecutiveTestLoops, state.ConsecutiveCompletionCount); histErr != nil {
 				opts.Logger.Warn().Err(histErr).Msg("failed to record circuit trip in history")
 			}

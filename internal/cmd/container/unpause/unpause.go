@@ -5,17 +5,17 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // UnpauseOptions holds options for the unpause command.
 type UnpauseOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() (config.Config, error)
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Agent bool
 
@@ -25,9 +25,9 @@ type UnpauseOptions struct {
 // NewCmdUnpause creates the container unpause command.
 func NewCmdUnpause(f *cmdutil.Factory, runF func(context.Context, *UnpauseOptions) error) *cobra.Command {
 	opts := &UnpauseOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -70,15 +70,15 @@ func unpauseRun(ctx context.Context, opts *UnpauseOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		cfg, err := opts.Config()
-		if err != nil {
-			return err
+		var projectName string
+		if opts.ProjectManager != nil {
+			if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+				if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+					projectName = p.Name()
+				}
+			}
 		}
-		var project string
-		if p := cfg.Project(); p != nil {
-			project = p.Name
-		}
-		resolved, err := docker.ContainerNamesFromAgents(project, containers)
+		resolved, err := docker.ContainerNamesFromAgents(projectName, containers)
 		if err != nil {
 			return err
 		}

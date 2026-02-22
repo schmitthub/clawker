@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
@@ -21,11 +22,12 @@ import (
 
 // StartOptions holds options for the start command.
 type StartOptions struct {
-	IOStreams    *iostreams.IOStreams
-	Client       func(context.Context) (*docker.Client, error)
-	Config       func() (config.Config, error)
-	HostProxy    func() hostproxy.HostProxyService
-	SocketBridge func() socketbridge.SocketBridgeManager
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
+	HostProxy      func() hostproxy.HostProxyService
+	SocketBridge   func() socketbridge.SocketBridgeManager
 
 	Agent       bool // Use agent name (resolves to clawker.<project>.<agent>)
 	Attach      bool
@@ -36,11 +38,12 @@ type StartOptions struct {
 // NewCmdStart creates the container start command.
 func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) error) *cobra.Command {
 	opts := &StartOptions{
-		IOStreams:    f.IOStreams,
-		Client:       f.Client,
-		Config:       f.Config,
-		HostProxy:    f.HostProxy,
-		SocketBridge: f.SocketBridge,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		Config:         f.Config,
+		ProjectManager: f.ProjectManager,
+		HostProxy:      f.HostProxy,
+		SocketBridge:   f.SocketBridge,
 	}
 
 	cmd := &cobra.Command{
@@ -119,7 +122,13 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	// Resolve container names if --agent provided
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(cfg.Project().Name, containers)
+		var projectName string
+		if pm, err := opts.ProjectManager(); err == nil {
+			if p, err := pm.CurrentProject(ctx); err == nil {
+				projectName = p.Name()
+			}
+		}
+		resolved, err := docker.ContainerNamesFromAgents(projectName, containers)
 		if err != nil {
 			return err
 		}

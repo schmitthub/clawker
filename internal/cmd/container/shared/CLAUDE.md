@@ -84,13 +84,12 @@ Interactive rebuild flow for missing default images, shared between `run/` and `
 
 ```go
 err := shared.RebuildMissingDefaultImage(ctx, shared.RebuildMissingImageOpts{
-    ImageRef:       resolvedImage.Reference,
-    IOStreams:      ios,
-    TUI:           opts.TUI,
-    Prompter:       opts.Prompter,
-    SettingsLoader: func() config.SettingsLoader { return cfgGateway.SettingsLoader() },
-    BuildImage:     client.BuildDefaultImage,
-    CommandVerb:    "run",
+    ImageRef:    resolvedImage.Reference,
+    IOStreams:   ios,
+    TUI:        opts.TUI,
+    Prompter:   opts.Prompter,
+    BuildImage: client.BuildDefaultImage,
+    CommandVerb: "run",
 })
 ```
 
@@ -115,7 +114,7 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 | `InitConfigOpts` | Project/agent names, `ContainerWorkDir`, `*config.ClaudeCodeConfig`, `CopyToVolumeFn` |
 | `InjectOnboardingOpts` | Container ID, `CopyToContainerFn` |
 | `InjectPostInitOpts` | Container ID, Script content, `CopyToContainerFn` — injects `~/.clawker/post-init.sh` |
-| `RebuildMissingImageOpts` | Image ref, IOStreams, TUI, Prompter, SettingsLoader, BuildImage fn, CommandVerb |
+| `RebuildMissingImageOpts` | Image ref, IOStreams, TUI, Prompter, BuildImage fn, CommandVerb |
 
 ### Functions
 
@@ -141,6 +140,6 @@ Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `interna
 
 Unit tests in `shared/init_test.go` — `CreateContainer` tests using `dockertest.FakeClient` + `hostproxytest.MockManager`.
 Unit tests in `shared/container_test.go` — Flag parsing, BuildConfigs, ValidateFlags, pflag.Value types.
-Unit tests in `shared/image_test.go` — `RebuildMissingDefaultImage` interactive flow, `persistDefaultImageSetting` edge cases, `progressStatus` mapping.
+Unit tests in `shared/image_test.go` — `RebuildMissingDefaultImage` interactive flow, `progressStatus` mapping.
 Unit tests in `shared/containerfs_test.go` — uses mock CopyToVolume/CopyToContainer function trackers.
 Integration tests in `test/internals/containerfs_test.go` — exercises full pipeline with real Docker containers.

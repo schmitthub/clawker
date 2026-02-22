@@ -15,7 +15,6 @@ type ConfigBuilder struct {
 func NewConfigBuilder() *ConfigBuilder {
 	return &ConfigBuilder{
 		project: &config.Project{
-			Version: "1",
 			Workspace: config.WorkspaceConfig{
 				RemotePath:  "/workspace",
 				DefaultMode: "bind",
@@ -24,21 +23,15 @@ func NewConfigBuilder() *ConfigBuilder {
 	}
 }
 
-// WithVersion sets the config version.
-func (b *ConfigBuilder) WithVersion(version string) *ConfigBuilder {
-	b.project.Version = version
+// WithProject is a no-op retained for backward compatibility.
+// Project identity now comes from project.ProjectManager, not config.Project.
+func (b *ConfigBuilder) WithProject(_ string) *ConfigBuilder {
 	return b
 }
 
-// WithProject sets the project name.
-func (b *ConfigBuilder) WithProject(name string) *ConfigBuilder {
-	b.project.Name = name
-	return b
-}
-
-// WithDefaultImage sets the default image.
+// WithDefaultImage sets the build image (build.image) as the default.
 func (b *ConfigBuilder) WithDefaultImage(image string) *ConfigBuilder {
-	b.project.DefaultImage = image
+	b.project.Build.Image = image
 	return b
 }
 
@@ -103,9 +96,8 @@ func FullFeaturedConfig() *ConfigBuilder {
 
 	return NewConfigBuilder().
 		WithProject("test-project").
-		WithDefaultImage("clawker-test:latest").
 		WithBuild(config.BuildConfig{
-			Image:    "buildpack-deps:bookworm-scm",
+			Image:    "clawker-test:latest",
 			Packages: []string{"git", "curl", "ripgrep"},
 			Instructions: &config.DockerInstructions{
 				Env: map[string]string{

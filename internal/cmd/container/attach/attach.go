@@ -8,20 +8,20 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/spf13/cobra"
 )
 
 // AttachOptions holds options for the attach command.
 type AttachOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() (config.Config, error)
-	HostProxy func() hostproxy.HostProxyService
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	ProjectManager func() (project.ProjectManager, error)
+	HostProxy      func() hostproxy.HostProxyService
 
 	Agent      bool // treat argument as agent name(resolves to clawker.<project>.<agent>)
 	NoStdin    bool
@@ -33,10 +33,10 @@ type AttachOptions struct {
 // NewCmdAttach creates a new attach command.
 func NewCmdAttach(f *cmdutil.Factory, runF func(context.Context, *AttachOptions) error) *cobra.Command {
 	opts := &AttachOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
-		HostProxy: f.HostProxy,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		ProjectManager: f.ProjectManager,
+		HostProxy:      f.HostProxy,
 	}
 
 	cmd := &cobra.Command{
@@ -87,16 +87,14 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 
 	container := opts.container
 	if opts.Agent {
-		cfg, err := opts.Config()
-		if err != nil {
-			return err
-		}
-		var project string
-		if p := cfg.Project(); p != nil {
-			project = p.Name
+		var projectName string
+		if pm, err := opts.ProjectManager(); err == nil {
+			if p, err := pm.CurrentProject(ctx); err == nil {
+				projectName = p.Name()
+			}
 		}
 		var nameErr error
-		container, nameErr = docker.ContainerName(project, container)
+		container, nameErr = docker.ContainerName(projectName, container)
 		if nameErr != nil {
 			return nameErr
 		}

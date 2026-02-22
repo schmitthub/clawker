@@ -17,10 +17,7 @@ var requiredFirewallDomains = []string{
 // priority layer — guarantees critical values like security.firewall.enable
 // are present even with zero files on disk.
 const defaultProjectYAML = `
-version: "1"
-
 build:
-  image: "node:20-slim"
   packages:
     - git
     - curl
@@ -95,11 +92,8 @@ monitoring:
 const DefaultConfigYAML = `# Clawker Configuration
 # Documentation: https://github.com/schmitthub/clawker
 
-version: "1"
-
 build:
   # Base image for the container
-  image: "node:20-slim"
   # Optional: path to custom Dockerfile (relative to project root)
   # dockerfile: "./.devcontainer/Dockerfile"
   # System packages to install (apt-get on Debian, apk on Alpine)

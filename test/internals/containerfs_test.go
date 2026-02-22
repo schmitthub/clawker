@@ -978,14 +978,13 @@ agent:
 
 	// Wire the YAML-parsed value into a config test double
 	cfg := &config.Project{
-		Name: "test",
 		Agent: config.AgentConfig{
 			PostInit: parsedCfg.Agent.PostInit,
 		},
 	}
 
 	agent := harness.UniqueAgentName(t)
-	volumeName := createConfigVolume(t, ctx, client, cfg.Name, agent)
+	volumeName := createConfigVolume(t, ctx, client, "test", agent)
 
 	// Create container manually (not via RunContainer — we need to inject before start)
 	containerName := fmt.Sprintf("clawker-test-postinit-%s", agent)

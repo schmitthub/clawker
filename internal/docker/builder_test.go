@@ -166,13 +166,14 @@ func managedImageInspect(cfg config.Config, ref string) moby.ImageInspectResult 
 }
 
 const ensureImageTestYAML = `
-name: "testproj"
-version: "1.0.0"
 build:
   image: "buildpack-deps:bookworm-scm"
 workspace:
   remote_path: "/workspace"
 `
+
+// ensureImageTestProject is the project name used alongside ensureImageTestYAML.
+const ensureImageTestProject = "testproj"
 
 func TestMergeTags(t *testing.T) {
 	tests := []struct {
@@ -229,8 +230,6 @@ func TestMergeTags(t *testing.T) {
 
 func TestMergeImageLabels_InternalLabelsOverrideUser(t *testing.T) {
 	cfg := testConfig(t, `
-name: "myproject"
-version: "1.0.0"
 build:
   image: "buildpack-deps:bookworm-scm"
   instructions:
@@ -242,7 +241,7 @@ workspace:
 `)
 	projectCfg := cfg.Project()
 	client, _ := newTestClientWithConfig(cfg)
-	b := NewBuilder(client, projectCfg, "")
+	b := NewBuilder(client, projectCfg, "", "myproject")
 	labels := b.mergeImageLabels(nil)
 
 	// Clawker internal labels must win over user labels
@@ -269,7 +268,7 @@ func TestEnsureImage_CacheHit(t *testing.T) {
 	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
-	hashTag := ImageTagWithHash(projectCfg.Name, hash)
+	hashTag := ImageTagWithHash(ensureImageTestProject, hash)
 
 	// Wire fake: image exists for the hash tag (must include managed label to pass whail check)
 	fakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...moby.ImageInspectOption) (moby.ImageInspectResult, error) {
@@ -289,8 +288,8 @@ func TestEnsureImage_CacheHit(t *testing.T) {
 		return moby.ImageTagResult{}, nil
 	}
 
-	builder := NewBuilder(client, projectCfg, "")
-	imageTag := ImageTag(projectCfg.Name)
+	builder := NewBuilder(client, projectCfg, "", ensureImageTestProject)
+	imageTag := ImageTag(ensureImageTestProject)
 
 	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.NoError(t, err)
@@ -314,7 +313,7 @@ func TestEnsureImage_CacheMiss(t *testing.T) {
 	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
-	hashTag := ImageTagWithHash(projectCfg.Name, hash)
+	hashTag := ImageTagWithHash(ensureImageTestProject, hash)
 
 	// Wire fake: image does NOT exist
 	fakeAPI.ImageInspectFn = func(_ context.Context, _ string, _ ...moby.ImageInspectOption) (moby.ImageInspectResult, error) {
@@ -330,8 +329,8 @@ func TestEnsureImage_CacheMiss(t *testing.T) {
 		}, nil
 	}
 
-	builder := NewBuilder(client, projectCfg, "")
-	imageTag := ImageTag(projectCfg.Name)
+	builder := NewBuilder(client, projectCfg, "", ensureImageTestProject)
+	imageTag := ImageTag(ensureImageTestProject)
 
 	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.NoError(t, err)
@@ -355,8 +354,8 @@ func TestEnsureImage_ForceBuild(t *testing.T) {
 		}, nil
 	}
 
-	builder := NewBuilder(client, projectCfg, "")
-	imageTag := ImageTag(projectCfg.Name)
+	builder := NewBuilder(client, projectCfg, "", ensureImageTestProject)
+	imageTag := ImageTag(ensureImageTestProject)
 
 	err := builder.EnsureImage(context.Background(), imageTag, BuilderOptions{ForceBuild: true})
 	require.NoError(t, err)
@@ -378,7 +377,7 @@ func TestEnsureImage_TagImageFailure(t *testing.T) {
 	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
-	hashTag := ImageTagWithHash(projectCfg.Name, hash)
+	hashTag := ImageTagWithHash(ensureImageTestProject, hash)
 
 	// Wire fake: image exists (cache hit — must include managed label)
 	fakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...moby.ImageInspectOption) (moby.ImageInspectResult, error) {
@@ -393,8 +392,8 @@ func TestEnsureImage_TagImageFailure(t *testing.T) {
 		return moby.ImageTagResult{}, errors.New("tag failed: permission denied")
 	}
 
-	builder := NewBuilder(client, projectCfg, "")
-	imageTag := ImageTag(projectCfg.Name)
+	builder := NewBuilder(client, projectCfg, "", ensureImageTestProject)
+	imageTag := ImageTag(ensureImageTestProject)
 
 	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.Error(t, err)
@@ -408,8 +407,6 @@ func TestEnsureImage_CustomDockerfileDelegatesToBuild(t *testing.T) {
 	require.NoError(t, os.WriteFile(customDockerfile, []byte("FROM alpine:latest\n"), 0644))
 
 	cfg := testConfig(t, `
-name: "testproj"
-version: "1.0.0"
 build:
   image: "buildpack-deps:bookworm-scm"
   dockerfile: "`+customDockerfile+`"
@@ -428,8 +425,8 @@ workspace:
 		}, nil
 	}
 
-	builder := NewBuilder(client, projectCfg, workDir)
-	imageTag := ImageTag(projectCfg.Name)
+	builder := NewBuilder(client, projectCfg, workDir, "testproj")
+	imageTag := ImageTag("testproj")
 
 	err := builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.NoError(t, err)
@@ -443,8 +440,6 @@ workspace:
 
 func TestEnsureImage_ContentHashError(t *testing.T) {
 	cfg := testConfig(t, `
-name: "testproj"
-version: "1.0.0"
 build:
   image: "buildpack-deps:bookworm-scm"
 workspace:
@@ -455,8 +450,8 @@ agent:
 `)
 	projectCfg := cfg.Project()
 	client, _ := newTestClientWithConfig(cfg)
-	builder := NewBuilder(client, projectCfg, t.TempDir())
-	imageTag := ImageTag(projectCfg.Name)
+	builder := NewBuilder(client, projectCfg, t.TempDir(), "testproj")
+	imageTag := ImageTag("testproj")
 
 	err := builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
 	require.Error(t, err)

@@ -6,17 +6,17 @@ import (
 	"io"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // LogsOptions holds options for the logs command.
 type LogsOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() (config.Config, error)
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Agent      bool
 	Follow     bool
@@ -32,9 +32,9 @@ type LogsOptions struct {
 // NewCmdLogs creates the container logs command.
 func NewCmdLogs(f *cmdutil.Factory, runF func(context.Context, *LogsOptions) error) *cobra.Command {
 	opts := &LogsOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -92,15 +92,15 @@ func logsRun(ctx context.Context, opts *LogsOptions) error {
 	// Resolve container name
 	containerName := opts.Containers[0]
 	if opts.Agent {
-		cfg, err := opts.Config()
-		if err != nil {
-			return err
+		var projectName string
+		if opts.ProjectManager != nil {
+			if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+				if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+					projectName = p.Name()
+				}
+			}
 		}
-		var project string
-		if p := cfg.Project(); p != nil {
-			project = p.Name
-		}
-		containers, err := docker.ContainerNamesFromAgents(project, opts.Containers)
+		containers, err := docker.ContainerNamesFromAgents(projectName, opts.Containers)
 		if err != nil {
 			return err
 		}

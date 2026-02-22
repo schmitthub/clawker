@@ -41,6 +41,10 @@ type LoopContainerConfig struct {
 	// Config is the config.Config interface providing Project(), Settings(), etc.
 	Config config.Config
 
+	// ProjectName is the resolved project name (from project.ProjectManager).
+	// Empty string when no project is registered.
+	ProjectName string
+
 	// LoopOpts holds the shared loop flags (agent, image, worktree, etc.).
 	LoopOpts *LoopOptions
 
@@ -74,7 +78,10 @@ type LoopContainerResult struct {
 	// AgentName is the resolved agent name.
 	AgentName string
 
-	// ProjectCfg is the project name.
+	// ProjectName is the resolved project name (from project.ProjectManager).
+	ProjectName string
+
+	// ProjectCfg is the project configuration.
 	ProjectCfg *config.Project
 
 	// WorkDir is the host working directory for this session.
@@ -84,35 +91,24 @@ type LoopContainerResult struct {
 // ResolveLoopImage resolves the container image for loop execution.
 // If an image is explicitly set on loopOpts, it's returned as-is.
 // Otherwise, the Docker client's image resolution chain is used.
-func ResolveLoopImage(ctx context.Context, client *docker.Client, ios *iostreams.IOStreams, loopOpts *LoopOptions) (string, error) {
+func ResolveLoopImage(ctx context.Context, client *docker.Client, ios *iostreams.IOStreams, loopOpts *LoopOptions, projectName string) (string, error) {
 	image := loopOpts.Image
 	if image != "" && image != "@" {
 		return image, nil
 	}
 
-	resolvedImage, err := client.ResolveImageWithSource(ctx)
+	resolvedImage, err := client.ResolveImageWithSource(ctx, projectName)
 	if err != nil {
 		return "", fmt.Errorf("resolving image: %w", err)
 	}
 	if resolvedImage == nil {
 		cs := ios.ColorScheme()
-		fmt.Fprintf(ios.ErrOut, "%s No image specified and no default image configured\n", cs.FailureIcon())
+		fmt.Fprintf(ios.ErrOut, "%s No image specified and no image configured\n", cs.FailureIcon())
 		fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
 		fmt.Fprintln(ios.ErrOut, "  1. Specify an image: clawker loop iterate --image IMAGE ...")
-		fmt.Fprintln(ios.ErrOut, "  2. Set default_image in clawker.yaml")
-		fmt.Fprintln(ios.ErrOut, "  3. Set default_image in ~/.local/clawker/settings.yaml")
-		fmt.Fprintln(ios.ErrOut, "  4. Build a project image: clawker build")
+		fmt.Fprintln(ios.ErrOut, "  2. Set build.image in clawker.yaml")
+		fmt.Fprintln(ios.ErrOut, "  3. Build a project image: clawker build")
 		return "", fmt.Errorf("no image available")
-	}
-
-	if resolvedImage.Source == docker.ImageSourceDefault {
-		exists, err := client.ImageExists(ctx, resolvedImage.Reference)
-		if err != nil {
-			return "", fmt.Errorf("checking if image exists: %w", err)
-		}
-		if !exists {
-			return "", fmt.Errorf("default image %q not found — build it first with: clawker build", resolvedImage.Reference)
-		}
 	}
 
 	return resolvedImage.Reference, nil
@@ -144,6 +140,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 				Client:      cfg.Client,
 				Cfg:         cfg.Config,
 				Config:      cfg.Config.Project(),
+				ProjectName: cfg.ProjectName,
 				Options:     containerOpts,
 				Flags:       cfg.Flags,
 				Version:     cfg.Version,
@@ -206,29 +203,18 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 	// --- Phase A: Image resolution ---
 	image := cfg.LoopOpts.Image
 	if image == "" || image == "@" {
-		resolvedImage, err := cfg.Client.ResolveImageWithSource(ctx)
+		resolvedImage, err := cfg.Client.ResolveImageWithSource(ctx, cfg.ProjectName)
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolving image: %w", err)
 		}
 		if resolvedImage == nil {
 			cs := ios.ColorScheme()
-			fmt.Fprintf(ios.ErrOut, "%s No image specified and no default image configured\n", cs.FailureIcon())
+			fmt.Fprintf(ios.ErrOut, "%s No image specified and no image configured\n", cs.FailureIcon())
 			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
 			fmt.Fprintln(ios.ErrOut, "  1. Specify an image: clawker loop iterate --image IMAGE ...")
-			fmt.Fprintln(ios.ErrOut, "  2. Set default_image in clawker.yaml")
-			fmt.Fprintln(ios.ErrOut, "  3. Set default_image in ~/.local/clawker/settings.yaml")
-			fmt.Fprintln(ios.ErrOut, "  4. Build a project image: clawker build")
+			fmt.Fprintln(ios.ErrOut, "  2. Set build.image in clawker.yaml")
+			fmt.Fprintln(ios.ErrOut, "  3. Build a project image: clawker build")
 			return nil, nil, fmt.Errorf("no image available")
-		}
-
-		if resolvedImage.Source == docker.ImageSourceDefault {
-			exists, err := cfg.Client.ImageExists(ctx, resolvedImage.Reference)
-			if err != nil {
-				return nil, nil, fmt.Errorf("checking if image exists: %w", err)
-			}
-			if !exists {
-				return nil, nil, fmt.Errorf("default image %q not found — build it first with: clawker build", resolvedImage.Reference)
-			}
 		}
 
 		image = resolvedImage.Reference
@@ -256,6 +242,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 		r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerConfig{
 			Client:      cfg.Client,
 			Config:      projectCfg,
+			ProjectName: cfg.ProjectName,
 			Options:     containerOpts,
 			Flags:       cfg.Flags,
 			Version:     cfg.Version,
@@ -329,6 +316,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 		ContainerID:   containerID,
 		ContainerName: containerName,
 		AgentName:     agentName,
+		ProjectName:   cfg.ProjectName,
 		ProjectCfg:    projectCfg,
 		WorkDir:       o.result.WorkDir,
 	}, cleanup, nil

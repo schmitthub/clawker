@@ -150,7 +150,6 @@ func TestGenerateConfigYAML(t *testing.T) {
 	tests := []struct {
 		name           string
 		buildImage     string
-		defaultImage   string
 		workspaceMode  string
 		wantContains   []string
 		wantNotContain []string
@@ -158,38 +157,35 @@ func TestGenerateConfigYAML(t *testing.T) {
 		{
 			name:          "basic config",
 			buildImage:    "buildpack-deps:bookworm-scm",
-			defaultImage:  "",
 			workspaceMode: "bind",
 			wantContains: []string{
 				`image: "buildpack-deps:bookworm-scm"`,
 				`default_mode: "bind"`,
-				`version: "1"`,
 				`enable_firewall: true`,
 				`docker_socket: false`,
 			},
 			wantNotContain: []string{
 				"default_image:",
+				"version:",
 				"project:",
 			},
 		},
 		{
-			name:          "with default image",
+			name:          "snapshot mode",
 			buildImage:    "alpine:latest",
-			defaultImage:  "clawker-default:latest",
 			workspaceMode: "snapshot",
 			wantContains: []string{
 				`image: "alpine:latest"`,
-				`default_image: "clawker-default:latest"`,
 				`default_mode: "snapshot"`,
 			},
 			wantNotContain: []string{
-				"project:",
+				"default_image:",
+				"version:",
 			},
 		},
 		{
 			name:          "includes standard packages",
 			buildImage:    "debian:latest",
-			defaultImage:  "",
 			workspaceMode: "bind",
 			wantContains: []string{
 				"- git",
@@ -201,7 +197,6 @@ func TestGenerateConfigYAML(t *testing.T) {
 		{
 			name:          "includes commented sections",
 			buildImage:    "debian:latest",
-			defaultImage:  "",
 			workspaceMode: "bind",
 			wantContains: []string{
 				"# copy:",
@@ -216,7 +211,7 @@ func TestGenerateConfigYAML(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generateConfigYAML(tt.buildImage, tt.defaultImage, tt.workspaceMode)
+			result := generateConfigYAML(tt.buildImage, tt.workspaceMode)
 
 			for _, want := range tt.wantContains {
 				if !strings.Contains(result, want) {
@@ -235,11 +230,11 @@ func TestGenerateConfigYAML(t *testing.T) {
 
 func TestGenerateConfigYAML_ValidYAML(t *testing.T) {
 	// Test that generated YAML is valid by checking basic structure
-	result := generateConfigYAML("debian:latest", "default:latest", "bind")
+	result := generateConfigYAML("debian:latest", "bind")
 
-	// Check it starts with version
-	if !strings.HasPrefix(result, `version: "1"`) {
-		t.Errorf("generateConfigYAML() should start with version, got:\n%s", result[:50])
+	// Check it starts with build section (no version prefix)
+	if !strings.HasPrefix(result, "build:") {
+		t.Errorf("generateConfigYAML() should start with build:, got:\n%s", result[:50])
 	}
 
 	// Check it has proper sections

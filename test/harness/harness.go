@@ -44,23 +44,18 @@ func WithProject(name string) HarnessOption {
 }
 
 // WithConfig sets the config directly.
+// Note: Project name is no longer stored in config.Project. Use WithProject() to set the project name.
 func WithConfig(cfg *config.Project) HarnessOption {
 	return func(h *Harness) {
 		h.Config = cfg
-		if cfg != nil {
-			h.Project = cfg.Name
-		}
 	}
 }
 
 // WithConfigBuilder sets the config from a ConfigBuilder.
+// Note: Project name is no longer stored in config.Project. Use WithProject() to set the project name.
 func WithConfigBuilder(cb *builders.ConfigBuilder) HarnessOption {
 	return func(h *Harness) {
-		cfg := cb.Build()
-		h.Config = cfg
-		if cfg != nil {
-			h.Project = cfg.Name
-		}
+		h.Config = cb.Build()
 	}
 }
 
@@ -108,22 +103,17 @@ func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 		h.Config = builders.MinimalValidConfig().Build()
 	}
 
-	// Sync project name between harness and config
-	// - If project was explicitly set via WithProject, update config
-	// - Otherwise, use project name from config
-	if h.Project != "" {
-		h.Config.Name = h.Project
-	} else {
-		h.Project = h.Config.Name
+	// Use a default project name if none was provided via WithProject.
+	// Project identity is no longer stored in config.Project — it comes from
+	// project.ProjectManager in production, and from Harness.Project in tests.
+	if h.Project == "" {
+		h.Project = "test-project"
 	}
 
 	// Slugify the project name to match registry resolution behavior.
 	// The registry stores projects by slug, and Resolution.ProjectKey returns the slug.
 	// Container/volume/network names use the slug, so the harness must too.
-	if h.Project != "" {
-		h.Project = text.Slugify(h.Project)
-		h.Config.Name = h.Project // keep config in sync with slugified name
-	}
+	h.Project = text.Slugify(h.Project)
 
 	// Write clawker.yaml to project directory
 	if err := h.writeConfig(); err != nil {
@@ -238,10 +228,10 @@ func (h *Harness) ContainerName(agent string) string {
 }
 
 // ImageName returns the expected image name.
-// Returns DefaultImage if set, otherwise clawker.<project>:latest
+// Returns Build.Image if set, otherwise clawker-<project>:latest
 func (h *Harness) ImageName() string {
-	if h.Config != nil && h.Config.DefaultImage != "" {
-		return h.Config.DefaultImage
+	if h.Config != nil && h.Config.Build.Image != "" {
+		return h.Config.Build.Image
 	}
 	return NamePrefix + "-" + h.Project + ":latest"
 }

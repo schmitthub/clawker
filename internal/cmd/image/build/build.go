@@ -11,6 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -19,10 +20,11 @@ import (
 
 // BuildOptions contains the options for the build command.
 type BuildOptions struct {
-	IOStreams *iostreams.IOStreams
-	TUI       *tui.TUI
-	Config    func() (config.Config, error)
-	Client    func(context.Context) (*docker.Client, error)
+	IOStreams      *iostreams.IOStreams
+	TUI            *tui.TUI
+	Config         func() (config.Config, error)
+	Client         func(context.Context) (*docker.Client, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	File      string   // -f, --file (Dockerfile path)
 	Tags      []string // -t, --tag (multiple allowed)
@@ -39,10 +41,11 @@ type BuildOptions struct {
 // NewCmdBuild creates the image build command.
 func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) error) *cobra.Command {
 	opts := &BuildOptions{
-		IOStreams: f.IOStreams,
-		TUI:       f.TUI,
-		Config:    f.Config,
-		Client:    f.Client,
+		IOStreams:      f.IOStreams,
+		TUI:            f.TUI,
+		Config:         f.Config,
+		Client:         f.Client,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -117,6 +120,16 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	}
 	cfg := cfgGateway.Project()
 
+	// Resolve project name from ProjectManager
+	var projectName string
+	if opts.ProjectManager != nil {
+		if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+			if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+				projectName = p.Name()
+			}
+		}
+	}
+
 	// Get working directory from project root, or fall back to current directory
 	wd, wdErr := cfgGateway.GetProjectRoot()
 	if wdErr != nil || wd == "" {
@@ -134,7 +147,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	}
 
 	ios.Logger.Debug().
-		Str("project", cfg.Name).
+		Str("project", projectName).
 		Bool("no-cache", opts.NoCache).
 		Bool("pull", opts.Pull).
 		Str("target", opts.Target).
@@ -157,7 +170,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	}
 
 	// Determine image tag(s)
-	imageTag := docker.ImageTag(cfg.Name)
+	imageTag := docker.ImageTag(projectName)
 
 	// Parse build args
 	buildArgs := parseBuildArgs(opts.BuildArgs)
@@ -168,14 +181,14 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		fmt.Fprintf(ios.ErrOut, "%s Ignoring malformed label %q — use format KEY=VALUE\n", cs.WarningIcon(), label)
 	}
 
-	builder := docker.NewBuilder(client, cfg, wd)
+	builder := docker.NewBuilder(client, cfg, wd, projectName)
 
 	// Build with options.
 	// Defense in depth: --no-cache should also skip content hash check if
 	// EnsureImage() is ever used. This ensures explicit no-cache requests
 	// always trigger a full rebuild.
 	ios.Logger.Debug().
-		Str("project", cfg.Name).
+		Str("project", projectName).
 		Str("image", imageTag).
 		Msg("building container image")
 	buildOpts := docker.BuilderOptions{
@@ -219,7 +232,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		}()
 
 		result := opts.TUI.RunProgress(opts.Progress, tui.ProgressDisplayConfig{
-			Title:          "Building " + cfg.Name,
+			Title:          "Building " + projectName,
 			Subtitle:       imageTag,
 			CompletionVerb: "Built",
 			MaxVisible:     5,

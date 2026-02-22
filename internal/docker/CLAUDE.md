@@ -45,13 +45,13 @@ type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 
 `Client` embeds `*whail.Engine`. Fields: `cfg config.Config` (interface, always set), `BuildDefaultImageFunc BuildDefaultImageFn`, `ChownImage string`.
 
-**Methods**: `Close()`, `ResolveImage(ctx)`, `ResolveImageWithSource(ctx)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`, `IsMonitoringActive(ctx)`, `ListContainers(ctx, all)`, `ListContainersByProject(ctx, project, all)`, `FindContainerByAgent(ctx, project, agent)`, `RemoveContainerWithVolumes(ctx, id, force)`, `parseContainers(summaries)` (private).
+**Methods**: `Close()`, `ResolveImage(ctx, projectName)`, `ResolveImageWithSource(ctx, projectName)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`, `IsMonitoringActive(ctx)`, `ListContainers(ctx, all)`, `ListContainersByProject(ctx, project, all)`, `FindContainerByAgent(ctx, project, agent)`, `RemoveContainerWithVolumes(ctx, id, force)`, `parseContainers(summaries)` (private).
 
-**Image resolution**: `ImageSource` enum (`Explicit/Project/Default`). `ResolvedImage` struct (Reference + Source). `ResolveDefaultImage(cfg config.Config, settings config.Settings) string`.
+**Image resolution**: `ImageSource` enum (`Explicit`/`Project`). `ResolvedImage` struct (Reference + Source). `ResolveImageWithSource(ctx, projectName)` resolves from Docker images matching the project label with `:latest` tag; returns `nil, nil` when no project image found. `ResolveImage(ctx, projectName)` is a convenience wrapper returning just the reference string. `projectName` is the resolved project identity (from `project.ProjectManager.CurrentProject(ctx).Name()` at the command layer); empty string means no registered project.
 
 ## Builder (`builder.go`)
 
-`NewBuilder(cli, cfg, workDir)`. `EnsureImage(ctx, tag, opts)` — content-addressed (skips if hash matches). `Build(ctx, tag, opts)` — always builds. `BuilderOptions`: `ForceBuild/NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/Dockerfile/OnProgress`.
+`NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string)`. `EnsureImage(ctx, tag, opts)` — content-addressed (skips if hash matches). `Build(ctx, tag, opts)` — always builds. `BuilderOptions`: `ForceBuild/NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/Dockerfile/OnProgress`.
 
 ## Default Image (`defaults.go`)
 

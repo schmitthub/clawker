@@ -16,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -28,15 +29,16 @@ import (
 type RunOptions struct {
 	*shared.ContainerOptions
 
-	IOStreams    *iostreams.IOStreams
-	TUI          *tui.TUI
-	Client       func(context.Context) (*docker.Client, error)
-	Config       func() (config.Config, error)
-	GitManager   func() (*git.GitManager, error)
-	HostProxy    func() hostproxy.HostProxyService
-	SocketBridge func() socketbridge.SocketBridgeManager
-	Prompter     func() *prompter.Prompter
-	Version      string
+	IOStreams      *iostreams.IOStreams
+	TUI            *tui.TUI
+	Client         func(context.Context) (*docker.Client, error)
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
+	GitManager     func() (*git.GitManager, error)
+	HostProxy      func() hostproxy.HostProxyService
+	SocketBridge   func() socketbridge.SocketBridgeManager
+	Prompter       func() *prompter.Prompter
+	Version        string
 
 	// Run-specific options
 	Detach bool
@@ -57,6 +59,7 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		TUI:              f.TUI,
 		Client:           f.Client,
 		Config:           f.Config,
+		ProjectManager:   f.ProjectManager,
 		GitManager:       f.GitManager,
 		HostProxy:        f.HostProxy,
 		SocketBridge:     f.SocketBridge,
@@ -74,10 +77,7 @@ Container names follow clawker conventions: clawker.project.agent
 When --agent is provided, the container is named clawker.<project>.<agent> where
 project comes from clawker.yaml.
 
-If IMAGE is "@", clawker will use (in order of precedence):
-1. default_image from clawker.yaml
-2. default_image from user settings (~/.local/clawker/settings.yaml)
-3. The project's built image with :latest tag`,
+If IMAGE is "@", clawker will resolve the project's built image with :latest tag.`,
 		Example: `  # Run an interactive shell
   clawker container run -it --agent shell @ alpine sh
 
@@ -149,40 +149,28 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
+	// Resolve project name from ProjectManager (empty if no project registered)
+	var projectName string
+	if opts.ProjectManager != nil {
+		if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+			if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+				projectName = p.Name()
+			}
+		}
+	}
+
 	if containerOpts.Image == "@" {
-		resolvedImage, err := client.ResolveImageWithSource(ctx)
+		resolvedImage, err := client.ResolveImageWithSource(ctx, projectName)
 		if err != nil {
 			return fmt.Errorf("resolving image: %w", err)
 		}
 		if resolvedImage == nil {
 			cs := ios.ColorScheme()
-			fmt.Fprintf(ios.ErrOut, "%s No image specified and no default image configured\n", cs.FailureIcon())
+			fmt.Fprintf(ios.ErrOut, "%s No image specified and no project image found\n", cs.FailureIcon())
 			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
 			fmt.Fprintln(ios.ErrOut, "  1. Specify an image: clawker container run IMAGE")
-			fmt.Fprintln(ios.ErrOut, "  2. Set default_image in clawker.yaml")
-			fmt.Fprintln(ios.ErrOut, "  3. Set default_image in ~/.local/clawker/settings.yaml")
-			fmt.Fprintln(ios.ErrOut, "  4. Build a project image: clawker build")
+			fmt.Fprintln(ios.ErrOut, "  2. Build a project image: clawker build")
 			return cmdutil.SilentError
-		}
-
-		if resolvedImage.Source == docker.ImageSourceDefault {
-			exists, err := client.ImageExists(ctx, resolvedImage.Reference)
-			if err != nil {
-				return fmt.Errorf("checking if image exists: %w", err)
-			}
-			if !exists {
-				if err := shared.RebuildMissingDefaultImage(ctx, shared.RebuildMissingImageOpts{
-					ImageRef:    resolvedImage.Reference,
-					IOStreams:   ios,
-					TUI:         opts.TUI,
-					Prompter:    opts.Prompter,
-					Cfg:         cfgGateway,
-					BuildImage:  client.BuildDefaultImage,
-					CommandVerb: "run",
-				}); err != nil {
-					return err
-				}
-			}
 		}
 
 		containerOpts.Image = resolvedImage.Reference
@@ -203,6 +191,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			Client:      client,
 			Cfg:         cfgGateway,
 			Config:      cfg,
+			ProjectName: projectName,
 			Options:     containerOpts,
 			Flags:       opts.flags,
 			Version:     opts.Version,

@@ -6,18 +6,18 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // TODO might be able to replace with container opts
 // UpdateOptions defines the options for the update command.
 type UpdateOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() (config.Config, error)
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Agent              bool
 	blkioWeight        uint16
@@ -43,9 +43,9 @@ type UpdateOptions struct {
 // NewCmdUpdate creates a new update command.
 func NewCmdUpdate(f *cmdutil.Factory, runF func(context.Context, *UpdateOptions) error) *cobra.Command {
 	opts := &UpdateOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -121,15 +121,15 @@ func updateRun(ctx context.Context, opts *UpdateOptions) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		cfg, err := opts.Config()
-		if err != nil {
-			return err
+		var projectName string
+		if opts.ProjectManager != nil {
+			if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+				if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+					projectName = p.Name()
+				}
+			}
 		}
-		var project string
-		if p := cfg.Project(); p != nil {
-			project = p.Name
-		}
-		resolved, err := docker.ContainerNamesFromAgents(project, opts.Containers)
+		resolved, err := docker.ContainerNamesFromAgents(projectName, opts.Containers)
 		if err != nil {
 			return err
 		}

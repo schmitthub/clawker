@@ -18,6 +18,10 @@ type SetupMountsConfig struct {
 	ModeOverride string
 	// Cfg is the config.Config interface for reading paths and constants.
 	Cfg config.Config
+	// ProjectName is the resolved project name for volume naming.
+	// Resolved from project.ProjectManager at the command level.
+	// Empty string when no project is registered.
+	ProjectName string
 	// AgentName is the agent name for volume naming
 	AgentName string
 	// WorkDir is the host working directory for workspace mounts.
@@ -85,7 +89,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	wsCfg := Config{
 		HostPath:       hostPath,
 		RemotePath:     project.Workspace.RemotePath,
-		ProjectName:    project.Name,
+		ProjectName:    cfg.ProjectName,
 		AgentName:      cfg.AgentName,
 		IgnorePatterns: ignorePatterns,
 	}
@@ -131,11 +135,11 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Ensure config volumes (returns creation state for init orchestration)
-	configResult, err := EnsureConfigVolumes(ctx, client, project.Name, cfg.AgentName)
+	configResult, err := EnsureConfigVolumes(ctx, client, cfg.ProjectName, cfg.AgentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create config volumes: %w", err)
 	}
-	configMounts, err := GetConfigVolumeMounts(project.Name, cfg.AgentName)
+	configMounts, err := GetConfigVolumeMounts(cfg.ProjectName, cfg.AgentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve config volume names: %w", err)
 	}

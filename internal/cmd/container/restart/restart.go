@@ -9,14 +9,16 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // RestartOptions defines the options for the restart command.
 type RestartOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() (config.Config, error)
+	IOStreams      *iostreams.IOStreams
+	Client         func(context.Context) (*docker.Client, error)
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Agent      bool // treat arguments as agents names
 	Timeout    int
@@ -27,9 +29,10 @@ type RestartOptions struct {
 // NewCmdRestart creates a new restart command.
 func NewCmdRestart(f *cmdutil.Factory, runF func(context.Context, *RestartOptions) error) *cobra.Command {
 	opts := &RestartOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		Client:         f.Client,
+		Config:         f.Config,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -85,11 +88,13 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		var project string
-		if p := cfg.Project(); p != nil {
-			project = p.Name
+		var projectName string
+		if pm, err := opts.ProjectManager(); err == nil {
+			if p, err := pm.CurrentProject(ctx); err == nil {
+				projectName = p.Name()
+			}
 		}
-		resolved, err := docker.ContainerNamesFromAgents(project, containers)
+		resolved, err := docker.ContainerNamesFromAgents(projectName, containers)
 		if err != nil {
 			return err
 		}

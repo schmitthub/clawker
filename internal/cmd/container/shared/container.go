@@ -1456,6 +1456,7 @@ type CreateContainerConfig struct {
 	Client      *docker.Client
 	Cfg         config.Config
 	Config      *config.Project
+	ProjectName string
 	Options     *ContainerOptions
 	Flags       *pflag.FlagSet
 	Version     string
@@ -1496,7 +1497,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	if agentName == "" {
 		agentName = docker.GenerateRandomName()
 	}
-	containerName, err := docker.ContainerName(projectCfg.Name, agentName)
+	containerName, err := docker.ContainerName(cfg.ProjectName, agentName)
 	if err != nil {
 		return nil, err
 	}
@@ -1509,6 +1510,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride:   containerOpts.Mode,
 		Cfg:            cfg.Cfg,
+		ProjectName:    cfg.ProjectName,
 		AgentName:      agentName,
 		WorkDir:        wd,
 		ProjectRootDir: projectRootDir,
@@ -1522,7 +1524,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	// (with user session data) are never touched.
 	var createdVolumes []string
 	if wsResult.ConfigVolumeResult.ConfigCreated {
-		if vn, vnErr := docker.VolumeName(projectCfg.Name, agentName, "config"); vnErr != nil {
+		if vn, vnErr := docker.VolumeName(cfg.ProjectName, agentName, "config"); vnErr != nil {
 			log.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track config volume for cleanup: %v", vnErr))
 		} else {
@@ -1530,7 +1532,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		}
 	}
 	if wsResult.ConfigVolumeResult.HistoryCreated {
-		if vn, vnErr := docker.VolumeName(projectCfg.Name, agentName, "history"); vnErr != nil {
+		if vn, vnErr := docker.VolumeName(cfg.ProjectName, agentName, "history"); vnErr != nil {
 			log.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track history volume for cleanup: %v", vnErr))
 		} else {
@@ -1564,7 +1566,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	if wsResult.ConfigVolumeResult.ConfigCreated {
 		sendInfo(ctx, events, "config", "Initializing config")
 		if err := InitContainerConfig(ctx, InitConfigOpts{
-			ProjectName:      projectCfg.Name,
+			ProjectName:      cfg.ProjectName,
 			AgentName:        agentName,
 			ContainerWorkDir: projectCfg.Workspace.RemotePath,
 			ClaudeCode:       projectCfg.Agent.ClaudeCode,
@@ -1610,7 +1612,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	}
 
 	extraLabels := map[string]string{
-		cfg.Cfg.LabelProject(): projectCfg.Name,
+		cfg.Cfg.LabelProject(): cfg.ProjectName,
 		cfg.Cfg.LabelAgent():   agentName,
 		cfg.Cfg.LabelWorkdir(): wd,
 	}
@@ -1793,7 +1795,7 @@ func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg
 
 	envOpts := docker.RuntimeEnvOpts{
 		Version:          cfg.Version,
-		Project:          projectCfg.Name,
+		Project:          cfg.ProjectName,
 		Agent:            agentName,
 		WorkspaceMode:    workspaceMode,
 		WorkspaceSource:  wd,

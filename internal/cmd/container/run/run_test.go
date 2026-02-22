@@ -579,7 +579,6 @@ func TestBuildConfigs_CapAdd(t *testing.T) {
 		Publish: shared.NewPortOpts(),
 	}
 	projectCfg := &config.Project{
-		Name: "test",
 		Security: config.SecurityConfig{
 			CapAdd: []string{"NET_ADMIN", "SYS_PTRACE"},
 		},
@@ -605,11 +604,12 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // Tests @ symbol resolution (using mock Docker client) and explicit image pass-through.
 func TestImageArg(t *testing.T) {
 	// Tests for @ symbol resolution (uses dockertest.FakeClient)
+	// ResolveImageWithSource resolves project images only (no default image fallback).
+	// Returns nil when no project image with :latest tag is found.
 	t.Run("@ symbol resolution", func(t *testing.T) {
 		tests := []struct {
 			name          string
 			projectName   string
-			defaultImage  string
 			fakeImages    []string // Images to return from fake ImageList
 			wantReference string
 			wantSource    docker.ImageSource
@@ -618,41 +618,34 @@ func TestImageArg(t *testing.T) {
 			{
 				name:          "@ resolves to project image when exists",
 				projectName:   "myproject",
-				defaultImage:  "alpine:latest",
 				fakeImages:    []string{"clawker-myproject:latest"},
 				wantReference: "clawker-myproject:latest",
 				wantSource:    docker.ImageSourceProject,
 			},
 			{
-				name:          "@ resolves to default image when no project image",
-				projectName:   "myproject",
-				defaultImage:  "node:20-slim",
-				fakeImages:    []string{}, // No project images
-				wantReference: "node:20-slim",
-				wantSource:    docker.ImageSourceDefault,
+				name:        "@ returns nil when no project image",
+				projectName: "myproject",
+				fakeImages:  []string{}, // No project images
+				wantNil:     true,
 			},
 			{
-				name:         "@ returns nil when no default available",
-				projectName:  "myproject",
-				defaultImage: "", // No default configured
-				fakeImages:   []string{},
-				wantNil:      true,
+				name:        "@ returns nil for empty project",
+				projectName: "",
+				fakeImages:  []string{},
+				wantNil:     true,
 			},
 			{
-				name:          "@ prefers project image over default",
+				name:          "@ prefers latest-tagged project image",
 				projectName:   "myproject",
-				defaultImage:  "alpine:latest",
 				fakeImages:    []string{"clawker-myproject:latest", "other:tag"},
 				wantReference: "clawker-myproject:latest",
 				wantSource:    docker.ImageSourceProject,
 			},
 			{
-				name:          "@ ignores non-latest project images",
-				projectName:   "myproject",
-				defaultImage:  "alpine:latest",
-				fakeImages:    []string{"clawker-myproject:v1.0"}, // No :latest tag
-				wantReference: "alpine:latest",
-				wantSource:    docker.ImageSourceDefault,
+				name:        "@ ignores non-latest project images",
+				projectName: "myproject",
+				fakeImages:  []string{"clawker-myproject:v1.0"}, // No :latest tag
+				wantNil:     true,
 			},
 		}
 
@@ -660,13 +653,7 @@ func TestImageArg(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				ctx := context.Background()
 
-				// Build config mock with project + optional default image
-				projectYAML := fmt.Sprintf("name: %s", tt.projectName)
-				settingsYAML := ""
-				if tt.defaultImage != "" {
-					settingsYAML = fmt.Sprintf("default_image: %s", tt.defaultImage)
-				}
-				testCfg := configmocks.NewFromString(projectYAML, settingsYAML)
+				testCfg := configmocks.NewBlankConfig()
 
 				// Create fake Docker client with the config
 				fake := dockertest.NewFakeClient(testCfg)
@@ -680,8 +667,8 @@ func TestImageArg(t *testing.T) {
 				}
 				fake.SetupImageList(summaries...)
 
-				// Call the resolution method on the client
-				result, err := fake.Client.ResolveImageWithSource(ctx)
+				// Call the resolution method on the client with projectName
+				result, err := fake.Client.ResolveImageWithSource(ctx, tt.projectName)
 				require.NoError(t, err)
 
 				if tt.wantNil {
@@ -894,14 +881,13 @@ func TestRunRun(t *testing.T) {
 		fake.AssertCalled(t, "ContainerCreate")
 	})
 
-	t.Run("non-interactive missing default image returns error", func(t *testing.T) {
+	t.Run("non-interactive @ with no project image returns error", func(t *testing.T) {
+		// With no project image and no default image fallback, @ should fail
+		// with a "no image found" message guiding the user.
 		testCfg := configmocks.NewFromString(`
-version: "1"
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { enable_host_proxy: false, firewall: { enable: false } }
-`, `
-default_image: "node:20-slim"
-`)
+`, "")
 		testCfg.GetProjectIgnoreFileFunc = func() (string, error) {
 			return filepath.Join(os.TempDir(), testCfg.ClawkerIgnoreName()), nil
 		}
@@ -909,11 +895,7 @@ default_image: "node:20-slim"
 			return os.TempDir(), nil
 		}
 		fake := dockertest.NewFakeClient(testCfg)
-		fake.SetupImageList()                        // empty — no project image found
-		fake.SetupImageExists("node:20-slim", false) // default image missing
-		fake.SetupContainerCreate()
-		fake.SetupCopyToContainer()
-		fake.SetupContainerStart()
+		fake.SetupImageList() // empty — no project image found
 
 		tio := iostreamstest.New() // non-interactive
 		f := &cmdutil.Factory{
@@ -944,7 +926,8 @@ default_image: "node:20-slim"
 		require.ErrorIs(t, err, cmdutil.SilentError)
 
 		errOutput := tio.ErrBuf.String()
-		require.Contains(t, errOutput, "node:20-slim")
+		require.Contains(t, errOutput, "No image specified")
+		require.Contains(t, errOutput, "no project image found")
 
 		fake.AssertNotCalled(t, "ContainerCreate")
 	})

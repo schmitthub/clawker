@@ -555,7 +555,7 @@ func BuildTestImage(t *testing.T, h *Harness, opts BuildTestImageOptions) string
 	dockerClient := NewTestClient(t)
 
 	// Create builder with harness config
-	builder := docker.NewBuilder(dockerClient, h.Config, h.ProjectDir)
+	builder := docker.NewBuilder(dockerClient, h.Config, h.ProjectDir, h.Project)
 
 	// Build labels that mark this as a test image
 	labels := map[string]string{

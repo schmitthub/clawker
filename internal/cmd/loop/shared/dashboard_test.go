@@ -6,24 +6,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/schmitthub/clawker/internal/config"
-	configmock "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func testProject(name string) config.Config {
-	return configmock.NewFromString(`name: `+name, "")
-}
-
 func TestWireLoopDashboard_SendsStartEvent(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
-	cfg := testProject("testproj")
 	setup := &LoopContainerResult{
-		AgentName:  "loop-test-agent",
-		ProjectCfg: cfg.Project(),
+		AgentName:   "loop-test-agent",
+		ProjectName: "testproj",
 	}
 
 	WireLoopDashboard(opts, ch, setup, 50)
@@ -39,10 +32,9 @@ func TestWireLoopDashboard_SetsCallbacks(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
 
-	cfg := testProject("testproj")
 	setup := &LoopContainerResult{
-		AgentName:  "loop-test-agent",
-		ProjectCfg: cfg.Project(),
+		AgentName:   "loop-test-agent",
+		ProjectName: "testproj",
 	}
 
 	WireLoopDashboard(opts, ch, setup, 50)
@@ -58,8 +50,7 @@ func TestWireLoopDashboard_SetsCallbacks(t *testing.T) {
 func TestWireLoopDashboard_OnLoopStart(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
-	cfg := testProject("proj")
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: cfg.Project()}
+	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -74,8 +65,7 @@ func TestWireLoopDashboard_OnLoopStart(t *testing.T) {
 func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
-	cfg := testProject("proj")
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: cfg.Project()}
+	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -112,8 +102,7 @@ func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 func TestWireLoopDashboard_OnLoopEnd_WithResultEvent(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
-	cfg := testProject("proj")
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: cfg.Project()}
+	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -138,8 +127,7 @@ func TestWireLoopDashboard_OnLoopEnd_WithResultEvent(t *testing.T) {
 func TestWireLoopDashboard_OnLoopEnd_NilStatus(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
-	cfg := testProject("proj")
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: cfg.Project()}
+	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -158,8 +146,7 @@ func TestWireLoopDashboard_OnLoopEnd_NilStatus(t *testing.T) {
 func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
-	cfg := testProject("proj")
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: cfg.Project()}
+	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -182,8 +169,7 @@ func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
 func TestWireLoopDashboard_OnStreamEvent_TextDelta(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
-	cfg := testProject("proj")
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: cfg.Project()}
+	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -204,8 +190,7 @@ func TestWireLoopDashboard_OnStreamEvent_TextDelta(t *testing.T) {
 func TestWireLoopDashboard_OnStreamEvent_ToolStart(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
-	cfg := testProject("proj")
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: cfg.Project()}
+	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -226,8 +211,7 @@ func TestWireLoopDashboard_OnStreamEvent_ToolStart(t *testing.T) {
 func TestWireLoopDashboard_OnStreamEvent_IgnoresOtherEvents(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
-	cfg := testProject("proj")
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: cfg.Project()}
+	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -248,8 +232,7 @@ func TestWireLoopDashboard_OnStreamEvent_IgnoresOtherEvents(t *testing.T) {
 func TestWireLoopDashboard_OnLoopEnd_WithError(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
-	cfg := testProject("proj")
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: cfg.Project()}
+	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start

@@ -18,9 +18,10 @@ import (
 
 // ProjectInitOptions contains the options for the project init command.
 type ProjectInitOptions struct {
-	IOStreams *iostreams.IOStreams
-	Prompter  func() *prompterpkg.Prompter
-	Config    func() (config.Config, error)
+	IOStreams      *iostreams.IOStreams
+	Prompter       func() *prompterpkg.Prompter
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Name  string // Positional arg: project name
 	Force bool
@@ -30,9 +31,10 @@ type ProjectInitOptions struct {
 // NewCmdProjectInit creates the project init command.
 func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectInitOptions) error) *cobra.Command {
 	opts := &ProjectInitOptions{
-		IOStreams: f.IOStreams,
-		Prompter:  f.Prompter,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		Prompter:       f.Prompter,
+		Config:         f.Config,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -93,7 +95,7 @@ func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	projectManager, err := project.NewProjectManager(cfgGateway, nil)
+	projectManager, err := opts.ProjectManager()
 	if err != nil {
 		return fmt.Errorf("initializing project manager: %w", err)
 	}
@@ -172,13 +174,6 @@ func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 		}
 	}
 
-	// Get default image from user settings if available (for fallback image, not build base)
-	userDefaultImage := ""
-	settings := cfgGateway.Settings()
-	if settings.DefaultImage != "" {
-		userDefaultImage = settings.DefaultImage
-	}
-
 	// Prompt for build.image (base Linux flavor for Dockerfile FROM)
 	var buildImage string
 	if opts.Yes || !ios.IsInteractive() {
@@ -220,23 +215,6 @@ func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 		}
 	}
 
-	// Prompt for default_image (pre-built fallback image for clawker run)
-	var defaultImage string
-	if opts.Yes || !ios.IsInteractive() {
-		// Non-interactive: use user's default_image from settings (can be empty)
-		defaultImage = userDefaultImage
-	} else {
-		// Interactive: prompt with user's default_image as default, allow override or empty
-		defaultImage, err = prompter.String(prompterpkg.PromptConfig{
-			Message:  "Default fallback image (leave empty if none)",
-			Default:  userDefaultImage,
-			Required: false,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to get default image: %w", err)
-		}
-	}
-
 	// Prompt for workspace mode
 	var workspaceMode string
 	if opts.Yes || !ios.IsInteractive() {
@@ -256,14 +234,13 @@ func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 	ios.Logger.Debug().
 		Str("project", projectName).
 		Str("build_image", buildImage).
-		Str("default_image", defaultImage).
 		Str("mode", workspaceMode).
 		Str("workdir", wd).
 		Bool("force", opts.Force).
 		Msg("initializing project")
 
 	// Generate config content with collected options
-	configContent := generateConfigYAML(buildImage, defaultImage, workspaceMode)
+	configContent := generateConfigYAML(buildImage, workspaceMode)
 
 	// Create clawker.yaml
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
@@ -300,17 +277,8 @@ func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 
 // generateConfigYAML creates the clawker.yaml content with the given options.
 // buildImage is the base Linux flavor for Dockerfile FROM (e.g., buildpack-deps:bookworm-scm).
-// defaultImage is the pre-built fallback image for clawker run when no project image exists.
-func generateConfigYAML(buildImage, defaultImage, workspaceMode string) string {
-	// Only include default_image line if it's set
-	defaultImageLine := ""
-	if defaultImage != "" {
-		defaultImageLine = fmt.Sprintf("default_image: \"%s\"\n", defaultImage)
-	}
-
-	return fmt.Sprintf(`version: "1"
-%s
-build:
+func generateConfigYAML(buildImage, workspaceMode string) string {
+	return fmt.Sprintf(`build:
   image: "%s"
   packages:
     - git
@@ -346,5 +314,5 @@ security:
   #   copy_git_config: true
   # allowed_domains: []
   # cap_add: []
-`, defaultImageLine, buildImage, workspaceMode)
+`, buildImage, workspaceMode)
 }

@@ -16,8 +16,8 @@ func TestNewBlankConfig(t *testing.T) {
 	p := cfg.Project()
 	require.NotNil(t, p)
 
-	assert.Equal(t, "1", p.Version)
-	assert.Equal(t, "node:20-slim", p.Build.Image)
+	// Default project YAML does not set build.image — only packages
+	assert.Empty(t, p.Build.Image)
 	assert.Contains(t, p.Build.Packages, "git")
 	assert.Equal(t, "/workspace", p.Workspace.RemotePath)
 	assert.Equal(t, "bind", p.Workspace.DefaultMode)
@@ -51,7 +51,6 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 
 func TestNewFromString_projectOnly(t *testing.T) {
 	cfg, err := NewFromString(`
-version: "2"
 build:
   image: "ubuntu:22.04"
 workspace:
@@ -60,7 +59,6 @@ workspace:
 	require.NoError(t, err)
 
 	p := cfg.Project()
-	assert.Equal(t, "2", p.Version)
 	assert.Equal(t, "ubuntu:22.04", p.Build.Image)
 	assert.Equal(t, "/app", p.Workspace.RemotePath)
 }
@@ -84,8 +82,8 @@ func TestNewFromString_emptyStrings(t *testing.T) {
 
 	// Empty project — all zero values
 	p := cfg.Project()
-	assert.Equal(t, "", p.Version)
-	assert.Equal(t, "", p.Build.Image)
+	assert.Empty(t, p.Build.Image)
+	assert.Empty(t, p.Agent.Env)
 
 	// Empty settings — zero values
 	s := cfg.Settings()
@@ -106,18 +104,18 @@ func TestNewFromString_invalidSettingsYAML(t *testing.T) {
 
 func TestNewFromString_noDefaults(t *testing.T) {
 	// NewFromString provides NO defaults — only caller-provided values.
-	cfg, err := NewFromString(`version: "1"`, "")
+	cfg, err := NewFromString(`build:
+  image: "node:20"`, "")
 	require.NoError(t, err)
 
 	p := cfg.Project()
-	assert.Equal(t, "1", p.Version)
-	// Build image is empty because no defaults are applied
-	assert.Equal(t, "", p.Build.Image)
+	assert.Equal(t, "node:20", p.Build.Image)
+	// Workspace is empty because no defaults are applied
+	assert.Equal(t, "", p.Workspace.RemotePath)
 }
 
 func TestValidateProjectYAML_validConfig(t *testing.T) {
 	err := ValidateProjectYAML(`
-version: "1"
 build:
   image: "node:20-slim"
 workspace:
@@ -128,7 +126,6 @@ workspace:
 
 func TestValidateProjectYAML_rejectsUnknownFields(t *testing.T) {
 	err := ValidateProjectYAML(`
-version: "1"
 biuld:
   image: "node:20-slim"
 `)
@@ -138,7 +135,6 @@ biuld:
 
 func TestValidateProjectYAML_rejectsExtraTopLevelKeys(t *testing.T) {
 	err := ValidateProjectYAML(`
-version: "1"
 extra_stuff: true
 build:
   image: "node:20-slim"
@@ -149,7 +145,6 @@ build:
 
 func TestValidateProjectYAML_rejectsNestedUnknownFields(t *testing.T) {
 	err := ValidateProjectYAML(`
-version: "1"
 build:
   imago: "node:20-slim"
 `)
@@ -158,7 +153,7 @@ build:
 }
 
 func TestValidateProjectYAML_invalidSyntax(t *testing.T) {
-	err := ValidateProjectYAML("version: [invalid\n bad yaml\n")
+	err := ValidateProjectYAML("build: [invalid\n bad yaml\n")
 	assert.Error(t, err)
 }
 
@@ -296,8 +291,8 @@ func TestNewConfig_isolatedWithDefaults(t *testing.T) {
 
 	// NewConfig loads defaults — verify critical values are present
 	p := cfg.Project()
-	assert.Equal(t, "1", p.Version)
 	assert.True(t, p.Security.Firewall.FirewallEnabled())
+	assert.Equal(t, "/workspace", p.Workspace.RemotePath)
 
 	mon := cfg.MonitoringConfig()
 	assert.Equal(t, 4318, mon.OtelCollectorPort)
@@ -354,15 +349,15 @@ func TestSetProject_mutation(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	// Mutate project name
+	// Mutate build image
 	cfg.SetProject(func(p *Project) {
-		p.Name = "my-project"
+		p.Build.Image = "custom:latest"
 	})
 
-	assert.Equal(t, "my-project", cfg.Project().Name)
+	assert.Equal(t, "custom:latest", cfg.Project().Build.Image)
 
 	// Other values should be preserved
-	assert.Equal(t, "1", cfg.Project().Version)
+	assert.Equal(t, "/workspace", cfg.Project().Workspace.RemotePath)
 }
 
 func TestSetSettings_mutation(t *testing.T) {
@@ -382,10 +377,10 @@ func TestSetSettings_mutation(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg.SetSettings(func(s *Settings) {
-		s.DefaultImage = "custom:latest"
+		s.Logging.MaxSizeMB = 100
 	})
 
-	assert.Equal(t, "custom:latest", cfg.Settings().DefaultImage)
+	assert.Equal(t, 100, cfg.Settings().Logging.MaxSizeMB)
 
 	// Monitoring defaults should survive the mutation
 	assert.Equal(t, 4318, cfg.MonitoringConfig().OtelCollectorPort)
@@ -409,7 +404,7 @@ func TestWriteProject_persistsToFile(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg.SetProject(func(p *Project) {
-		p.Name = "persisted-project"
+		p.Build.Image = "persisted:latest"
 	})
 
 	err = cfg.WriteProject()
@@ -418,7 +413,7 @@ func TestWriteProject_persistsToFile(t *testing.T) {
 	// Re-read and verify persistence
 	cfg2, err := NewConfig()
 	require.NoError(t, err)
-	assert.Equal(t, "persisted-project", cfg2.Project().Name)
+	assert.Equal(t, "persisted:latest", cfg2.Project().Build.Image)
 }
 
 func TestWriteSettings_persistsToFile(t *testing.T) {
@@ -439,7 +434,7 @@ func TestWriteSettings_persistsToFile(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg.SetSettings(func(s *Settings) {
-		s.DefaultImage = "persisted:latest"
+		s.Logging.MaxSizeMB = 200
 	})
 
 	err = cfg.WriteSettings()
@@ -448,7 +443,7 @@ func TestWriteSettings_persistsToFile(t *testing.T) {
 	// Re-read and verify persistence
 	cfg2, err := NewConfig()
 	require.NoError(t, err)
-	assert.Equal(t, "persisted:latest", cfg2.Settings().DefaultImage)
+	assert.Equal(t, 200, cfg2.Settings().Logging.MaxSizeMB)
 }
 
 func TestParseMode(t *testing.T) {

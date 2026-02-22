@@ -238,7 +238,9 @@ Commands use positional arguments for resource names (e.g., `clawker container s
 ### User Settings (`cfg.SettingsFileName()` → settings.yaml)
 
 ```yaml
-default_image: "node:20-slim"
+logging:
+  file_enabled: true
+  max_size_mb: 50
 ```
 
 ### Project Registry (`cfg.ProjectRegistryFileName()` → projects.yaml)
@@ -255,8 +257,6 @@ Managed by `clawker project init` and `clawker project register`. The registry m
 ### Project Config (`cfg.ProjectConfigFileName()` → clawker.yaml)
 
 ```yaml
-version: "1"
-project: "my-app"
 build:
   image: "buildpack-deps:bookworm-scm"
   packages: ["git", "ripgrep"]

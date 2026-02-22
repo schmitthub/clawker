@@ -10,14 +10,11 @@ import (
 //
 // Project is a pure persisted schema model for clawker.yaml.
 type Project struct {
-	Version      string          `yaml:"version"`
-	Name         string          `yaml:"name,omitempty"`
-	DefaultImage string          `yaml:"default_image,omitempty"`
-	Build        BuildConfig     `yaml:"build"`
-	Agent        AgentConfig     `yaml:"agent"`
-	Workspace    WorkspaceConfig `yaml:"workspace"`
-	Security     SecurityConfig  `yaml:"security"`
-	Loop         *LoopConfig     `yaml:"loop,omitempty"`
+	Build     BuildConfig     `yaml:"build"`
+	Agent     AgentConfig     `yaml:"agent"`
+	Workspace WorkspaceConfig `yaml:"workspace"`
+	Security  SecurityConfig  `yaml:"security"`
+	Loop      *LoopConfig     `yaml:"loop,omitempty"`
 }
 
 // BuildConfig defines the container build configuration
@@ -360,10 +357,9 @@ func (e *KeyNotFoundError) Error() string { return "key not found: " + e.Key }
 
 // Settings represents user-level configuration stored in ~/.local/clawker/settings.yaml.
 type Settings struct {
-	Logging      LoggingConfig    `yaml:"logging,omitempty"`
-	Monitoring   MonitoringConfig `yaml:"monitoring,omitempty"`
-	DefaultImage string           `yaml:"default_image,omitempty"`
-	HostProxy    HostProxyConfig  `yaml:"host_proxy,omitempty"`
+	Logging    LoggingConfig    `yaml:"logging,omitempty"`
+	Monitoring MonitoringConfig `yaml:"monitoring,omitempty"`
+	HostProxy  HostProxyConfig  `yaml:"host_proxy,omitempty"`
 }
 
 // HostProxyConfig configures the host proxy.

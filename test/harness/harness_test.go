@@ -20,7 +20,6 @@ func TestNewHarness_Defaults(t *testing.T) {
 
 	// Check config is set with minimal valid defaults
 	require.NotNil(t, h.Config)
-	assert.Equal(t, "test-project", h.Config.Name)
 	assert.Equal(t, "test-project", h.Project)
 
 	// Check clawker.yaml was written
@@ -31,13 +30,10 @@ func TestNewHarness_WithProject(t *testing.T) {
 	h := NewHarness(t, WithProject("my-project"))
 
 	assert.Equal(t, "my-project", h.Project)
-	assert.Equal(t, "my-project", h.Config.Name)
 }
 
 func TestNewHarness_WithConfig(t *testing.T) {
 	cfg := &config.Project{
-		Version: "1",
-		Name:    "custom-project",
 		Build: config.BuildConfig{
 			Image: "custom:image",
 		},
@@ -45,7 +41,8 @@ func TestNewHarness_WithConfig(t *testing.T) {
 
 	h := NewHarness(t, WithConfig(cfg))
 
-	assert.Equal(t, "custom-project", h.Project)
+	// WithConfig without a project name defaults to "test-project"
+	assert.Equal(t, "test-project", h.Project)
 	assert.Equal(t, "custom:image", h.Config.Build.Image)
 }
 
@@ -58,7 +55,8 @@ func TestNewHarness_WithConfigBuilder(t *testing.T) {
 		),
 	)
 
-	assert.Equal(t, "builder-project", h.Project)
+	// WithProject is a no-op on ConfigBuilder — project name comes from WithConfigBuilder option
+	assert.Equal(t, "test-project", h.Project)
 	assert.Equal(t, "alpine:latest", h.Config.Build.Image)
 }
 
@@ -146,29 +144,31 @@ func TestHarness_ContainerName(t *testing.T) {
 func TestHarness_ImageName(t *testing.T) {
 	tests := []struct {
 		name         string
+		project      string
 		config       *config.Project
 		expectedName string
 	}{
 		{
-			name: "with default image",
+			name:    "with build image",
+			project: "myapp",
 			config: &config.Project{
-				Name:         "myapp",
-				DefaultImage: "custom:v1",
+				Build: config.BuildConfig{
+					Image: "custom:v1",
+				},
 			},
 			expectedName: "custom:v1",
 		},
 		{
-			name: "without default image",
-			config: &config.Project{
-				Name: "myapp",
-			},
+			name:         "without build image",
+			project:      "myapp",
+			config:       &config.Project{},
 			expectedName: "clawker-myapp:latest",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewHarness(t, WithConfig(tt.config))
+			h := NewHarness(t, WithProject(tt.project), WithConfig(tt.config))
 			assert.Equal(t, tt.expectedName, h.ImageName())
 		})
 	}
