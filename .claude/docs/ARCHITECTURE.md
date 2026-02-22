@@ -96,34 +96,77 @@ Thin layer configuring whail with clawker's conventions.
 - Names: `clawker.project.agent` (containers), `clawker.project.agent-purpose` (volumes)
 - Client embeds `whail.Engine`, adding clawker-specific operations
 
+### internal/storage - File Persistence (leaf)
+
+Shared leaf package for safe, structured file I/O. Zero internal imports.
+
+**Provides:**
+- Atomic write (temp file + `os.Rename`)
+- File locking (`flock` wrapper for RMW cycles)
+- YAML read/unmarshal helpers (`yaml.v3`)
+- Reflection-based struct merge with `merge:"union"` / `merge:"overwrite"` struct tags
+
+**Imported by:** `internal/config` (settings + config files), `internal/project` (registry)
+
 ### internal/config - Configuration
 
 Single `Config` interface that all callers receive. The package is a closed box — config file names, directory locations, file paths, and constants are all private to the package. Callers never construct paths or reference config internals directly.
 
 **Design principle**: If a caller needs information from the config package, it must use an existing `Config` method or propose a new one on the interface. No reaching into package internals.
 
+**Two independent schemas, one interface:**
+- `SettingsFile` — host infrastructure (logging, host_proxy, monitoring). Lives at `~/.clawker/settings.yaml` only.
+- `ConfigFile` — project defaults (build, workspace, security, agent, loop). Tiered via walk-up: `~/.clawker/config.yaml` → `.clawker/config.yaml` → `.clawker/local.yaml`.
+- Callers access both through namespaced sub-accessors on a single `Config` interface: `cfg.Settings().Logging()`, `cfg.Project().Build().Image`, `cfg.ConfigDir()`.
+
+**File layout (walk-up + XDG hybrid, mirrors Claude Code pattern):**
+```
+~/.clawker/                          ← config (walk-up root, NOT XDG)
+  config.yaml                        ← ConfigFile (global project defaults)
+  settings.yaml                      ← SettingsFile (host infrastructure)
+
+.clawker/                            ← project tier (walk-up match)
+  config.yaml                        ← ConfigFile (per-project, committed)
+  local.yaml                         ← ConfigFile (personal overrides, gitignored)
+
+~/.local/share/clawker/              ← data (XDG, owned by internal/project)
+  registry.yaml                      ← project/worktree state
+
+~/.local/state/clawker/              ← state (XDG)
+  logs/                              ← log files
+  cache/                             ← cached state
+```
+
+**Walk-up loader:** starts at CWD, walks to HOME, collects all `.clawker/config.yaml` files, merges global-first/closest-wins. Any config file can become tiered by placing a copy at a lower level.
+
 **Key API:**
-- `NewConfig() (Config, error)` — full production loading (settings → user config → registry → project config → env vars)
-- `ReadFromString(str string) (Config, error)` — parse a single YAML string (testing, `config check`)
-- `Config` interface — schema accessors (`Project()`, `Settings()`, etc.) plus private constant accessors (`Domain()`, `LabelDomain()`, `LogsSubdir()`, etc.)
-- `ConfigDir() string` — config directory path (respects `CLAWKER_CONFIG`, `XDG_CONFIG_HOME`)
-- All constants are private (`domain`, `labelDomain`, subdirs) — exposed only through `Config` interface methods
+- `NewConfig() (Config, error)` — full production loading (settings + walk-up config merge + env vars)
+- `Config` interface — namespaced accessors (`Settings()`, `Project()`) plus path/constant helpers (`ConfigDir()`, `Domain()`, `LabelDomain()`, etc.)
+- All constants are private — exposed only through `Config` interface methods
 
-**Write model (current):**
-- `Set(key, value)` updates in-memory state and marks dirty nodes only.
-- `Write(opts)` persists dirty keys/roots selectively based on ownership (`settings`, `registry`, `project`).
-- Dirty markers clear only for successful writes, supporting retry after partial failures.
-- Project-scope write target resolution: local project `cfg.ProjectConfigFileName()` when cwd resolves to a registered project; fallback to user-level config-dir config file otherwise.
+**Merge strategy:**
+- Per-field merge for arrays via struct tags: `merge:"union"` (additive, deduped) or `merge:"overwrite"` (project wins entirely)
+- Untagged slices default to overwrite at runtime; reflection test in CI enforces all slices have explicit tags
+- Scalars: always last-wins (overwrite)
 
-**Validation**: `viper.UnmarshalExact` catches unknown/misspelled keys with user-friendly dot-path error messages. Both `ReadFromString` and `NewConfig` validate automatically.
+**Two-phase load:**
+1. YAML → `map[string]any` (lenient) → run precondition migrations → re-save if changed
+2. Map → typed struct (only known keys read, unknowns silently ignored)
 
-**Testing**: `NewMockConfig()`, `NewFakeConfig(opts)`, `NewConfigFromString(yaml)` — all in `stubs.go`, no separate `configtest/` subpackage. Prefer package-local runs (`go test ./internal/config -v`) during ongoing refactor migration.
+**Validation:** Unknown fields silently ignored (matches Claude Code + Serena pattern). Struct is source of truth — file provides overrides, missing keys get defaults.
 
-See `internal/config/CLAUDE.md` for full package reference and migration guide.
+**Migrations:** Precondition-based idempotent functions (Claude Code + Serena pattern). Each checks data shape, transforms if old shape found, skips if current. No version field, no migration chain.
+
+**Write model:**
+- Scoped writes: `WriteSettings()`, `WriteProjectConfig()`, `WriteLocalConfig()`
+- Each write: read current → deep merge partial update → atomic write via `internal/storage`
+- Settings files do not need locking (per-machine, no concurrent writers)
+
+**Testing**: See `internal/config/CLAUDE.md` for test helpers and mocks.
 
 **Boundary:**
-- Path resolution and config file I/O stay in `internal/config` (for example `GetProjectRoot`, `GetProjectIgnoreFile`, `Write`).
-- Project identity, CRUD, and worktree lifecycle orchestration belong to `internal/project`.
+- Config file I/O, walk-up loading, and path helpers stay in `internal/config`.
+- Project identity, CRUD, worktree orchestration, and registry I/O belong to `internal/project`.
 
 ### internal/cmd/* - CLI Commands
 
@@ -162,7 +205,7 @@ Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy depe
 - `New(version string) *cmdutil.Factory` — called exactly once at CLI entry point
 
 **Dependency wiring order:**
-1. Config (lazy, `config.NewConfig()` via `sync.Once`) → 2. HostProxy (lazy, reads Config) → 3. SocketBridge (lazy, reads Config) → 4. IOStreams (eager, logger initialized from Config) → 5. TUI (eager, wraps IOStreams) → 6. Project (lazy, built from Config + IOStreams logger) → 7. Client (lazy, reads Config) → 8. GitManager (lazy, reads Config) → 9. Prompter (lazy)
+1. Config (lazy, `config.NewConfig()` via `sync.Once` — walk-up + settings load) → 2. HostProxy (lazy, reads Config) → 3. SocketBridge (lazy, reads Config) → 4. IOStreams (eager, logger initialized from Config) → 5. TUI (eager, wraps IOStreams) → 6. Project (lazy, owns registry.yaml independently from Config) → 7. Client (lazy, reads Config) → 8. GitManager (lazy, reads Config) → 9. Prompter (lazy)
 
 Tests never import this package — they construct minimal `&cmdutil.Factory{}` structs directly.
 
@@ -206,7 +249,8 @@ User interaction utilities with TTY and CI awareness.
 | `internal/containerfs` | Host Claude config preparation for container init: copies settings, plugins, credentials to config volume; prepares post-init script tar (leaf — keyring + logger only) |
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
-| `internal/config` | Single `Config` interface wrapping `*viper.Viper`. Multi-file loading, schema types, validation via `UnmarshalExact`, constants. All file paths and directory locations are private — callers use `Config` methods or propose new ones. See `internal/config/CLAUDE.md` |
+| `internal/storage` | Shared file persistence leaf (atomic write, flock, YAML read/write, reflection-based merge with `merge:` struct tags) |
+| `internal/config` | Single `Config` interface. Two schemas (`SettingsFile`, `ConfigFile`), walk-up merge, yaml.v3, precondition migrations. All file paths and directory locations are private. See `internal/config/CLAUDE.md` |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
 | `internal/cmdutil` | Factory struct (closure fields), error types, format/filter flags, arg validators |
@@ -217,7 +261,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/bundler` | Image building, Dockerfile generation, semver, npm registry client |
 | `internal/docs` | CLI documentation generation (used by cmd/gen-docs) |
 | `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |
-| `internal/project` | Project domain layer: registry CRUD, project identity resolution, and worktree orchestration services built on `config.Config` |
+| `internal/project` | Project domain layer: owns `registry.yaml` (via `internal/storage`), project identity resolution, registration CRUD, worktree orchestration. Fully decoupled from `internal/config` |
 | `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
 
 **Note:** `hostproxy/internals/` is a structurally-leaf subpackage (stdlib + embed only) that provides container-side scripts and binaries. It is imported by `internal/bundler` for embedding into Docker images, but does NOT import `internal/hostproxy` or any other internal package.
@@ -402,7 +446,8 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Import: standard library only (or external-only like go-git)   │
 │  Imported by: anyone                                            │
 │                                                                 │
-│  Clawker examples: logger, term, text, signals, monitor, docs, git│
+│  Clawker examples: logger, term, text, signals, monitor, docs, git,│
+│                    storage                                         │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
@@ -416,7 +461,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Their imports are leaf-only or type-level declarations.        │
 │                                                                 │
 │  Clawker examples:                                              │
-│    config/ → logger                                             │
+│    config/ → logger, storage                                    │
 │    iostreams/ → logger, term, text                              │
 │    cmdutil/ → type-only imports for Factory struct fields +     │
 │              output helpers via iostreams                        │
@@ -436,7 +481,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │    hostproxy/ → logger                                          │
 │    socketbridge/ → config, logger                               │
 │    prompter/ → iostreams                                        │
-│    project/ → config, iostreams, logger                         │
+│    project/ → config, storage, iostreams, logger                │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
