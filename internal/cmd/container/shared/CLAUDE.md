@@ -129,6 +129,7 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 | `InitContainerConfig(ctx, InitConfigOpts)` | Copy host Claude config (strategy=copy) and/or credentials (use_host_auth) to config volume |
 | `InjectOnboardingFile(ctx, InjectOnboardingOpts)` | Write `~/.claude.json` onboarding marker to a created container |
 | `InjectPostInitScript(ctx, InjectPostInitOpts)` | Write `~/.clawker/post-init.sh` to a created container; entrypoint runs it once on first start |
+| `ResolveAgentEnv(agent, projectDir) (map[string]string, []string, error)` | Merges `env_file` + `from_env` + `env` into env map. Precedence: env_file < from_env < env |
 | `RebuildMissingDefaultImage(ctx, RebuildMissingImageOpts)` | Interactive rebuild flow for missing default images with TUI progress |
 | `NewCopyToContainerFn(client *docker.Client) CopyToContainerFn` | Creates a `CopyToContainerFn` closure wrapping `docker.Client.CopyToContainer` |
 

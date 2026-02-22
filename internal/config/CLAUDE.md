@@ -110,7 +110,7 @@ const ModeSnapshot Mode = "snapshot"
 
 **Registry**: `ProjectRegistry`, `ProjectEntry`, `WorktreeEntry`
 
-**Errors**: `ErrNotInProject`
+**Errors**: `ErrNotInProject`, `KeyNotFoundError` (struct with `Key string` field, implements `error`)
 
 ### Test Helpers (`mocks/stubs.go`)
 

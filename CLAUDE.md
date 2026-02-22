@@ -65,7 +65,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, version/, loop/, worktree/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
-│   ├── config/                # Viper-backed config: schema types, multi-file loading, constants (REFACTORING — see internal/config/CLAUDE.md)
+│   ├── config/                # Storage.Store[T] config engine: schema types, multi-file loading, constants (see internal/config/CLAUDE.md)
 │   ├── containerfs/           # Host Claude config preparation for container init
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
 │   │   └── dockertest/        # FakeClient, test helpers
