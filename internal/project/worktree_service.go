@@ -2,7 +2,7 @@ package project
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -283,7 +283,7 @@ func worktreesRootDir(cfg config.Config) string {
 // <repoName>-<projectName>-<sha1(uuid)[:12]>
 func generateWorktreeDirName(repoName, projectName string) string {
 	id := uuid.New()
-	sum := sha1.Sum(id[:])
+	sum := sha256.Sum256(id[:])
 	return fmt.Sprintf("%s-%s-%x",
 		text.Slugify(repoName),
 		text.Slugify(projectName),
