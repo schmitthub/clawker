@@ -4,5 +4,12 @@
 [ok]   [stage-0 2/3] COPY package.json /app/ (0.0s)
 [run]  [stage-0 3/3] RUN npm install
 [fail] [stage-0 3/3] RUN npm install: process "npm install" did not complete successfully: exit code: 1
+       npm ERR! code ERESOLVE
+       npm ERR! ERESOLVE unable to resolve dependency tree
+
+[error] [stage-0 3/3] RUN npm install
+  npm ERR! code ERESOLVE
+  npm ERR! ERESOLVE unable to resolve dependency tree
+  process "npm install" did not complete successfully: exit code: 1
 
 [error] Building test-project failed (0.0s)

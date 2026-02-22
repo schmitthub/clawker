@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -390,18 +392,14 @@ func TestResolveImageFromWizard(t *testing.T) {
 }
 
 func TestPerformProjectSetup(t *testing.T) {
-	// Create temp dir and chdir into it
-	tmpDir := t.TempDir()
+	// Chdir into temp dir, then resolve via Getwd so the path matches
+	// what performProjectSetup sees (macOS: /var → /private/var).
 	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get cwd: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(origDir)
-	})
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to chdir: %v", err)
-	}
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+	require.NoError(t, os.Chdir(t.TempDir()))
+	tmpDir, err := os.Getwd()
+	require.NoError(t, err)
 
 	tio := iostreamstest.New()
 	cfg := configmocks.NewIsolatedTestConfig(t)

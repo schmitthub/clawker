@@ -48,11 +48,11 @@ func NewImageBuilder(apiClient DockerDialer) func(context.Context, whail.ImageBu
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			drainProgress(statusCh, opts.SuppressOutput, opts.OnProgress)
+			drainProgress(statusCh, opts.OnProgress)
 		}()
 
-		// Solve returns errors for failed vertices. The drainProgress goroutine logs
-		// per-vertex errors from the status channel for diagnostics, but Solve's
+		// Solve returns errors for failed vertices. The drainProgress goroutine
+		// forwards per-vertex errors via the progress callback, but Solve's
 		// return value is the authoritative error source.
 		_, err = bkClient.Solve(ctx, nil, solveOpt, statusCh)
 		wg.Wait()

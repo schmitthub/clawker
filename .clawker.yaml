@@ -1,8 +1,6 @@
 # Clawker Configuration
 # Documentation: https://github.com/schmitthub/clawker
 
-version: "1"
-
 build:
   # Base image for the container
   image: "buildpack-deps:bookworm-scm"
