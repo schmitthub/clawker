@@ -30,7 +30,7 @@ func NewCmdRoot(f *cmdutil.Factory, version, buildDate string) (*cobra.Command, 
 
 Quick start:
   clawker init           # Set up user settings (~/.config/clawker/settings.yaml)
-  clawker project init   # Initialize project in current directory (clawker.yaml)
+  clawker project init   # Initialize project in current directory (.clawker.yaml)
   clawker start          # Build and start Claude Code in a container
   clawker stop           # Stop the container
 

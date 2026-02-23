@@ -7,7 +7,7 @@ Unpause all processes within one or more containers
 Unpauses all processes within one or more paused clawker containers.
 
 When --agent is provided, the container names are resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent

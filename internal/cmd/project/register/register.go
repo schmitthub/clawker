@@ -43,7 +43,7 @@ If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default). Use --yes to accept the directory name
 without prompting.
 
-This is useful when a clawker.yaml was manually created, copied from another
+This is useful when a .clawker.yaml was manually created, copied from another
 machine, or already exists and you want to register it locally.`,
 		Example: `  # Register with interactive prompt for project name
   clawker project register
@@ -89,7 +89,7 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 		return fmt.Errorf("initializing project manager: %w", err)
 	}
 
-	// Require an existing clawker.yaml
+	// Require an existing .clawker.yaml
 	configFileName := cfgGateway.ProjectConfigFileName()
 	configPath := filepath.Join(wd, configFileName)
 	if _, err := os.Stat(configPath); err != nil {

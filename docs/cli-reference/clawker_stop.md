@@ -10,7 +10,7 @@ The container is sent a SIGTERM signal, then after a timeout period (default 10s
 it is sent SIGKILL if still running.
 
 When --agent is provided, the container names are resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent

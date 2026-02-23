@@ -446,7 +446,6 @@ func (s *projectManager) worktrees() *worktreeService {
 	return newWorktreeService(s.cfg, s.registryStore, s.newGitMgr)
 }
 
-
 func projectRecordFromEntry(entry config.ProjectEntry) ProjectRecord {
 	record := ProjectRecord{
 		Name:      entry.Name,

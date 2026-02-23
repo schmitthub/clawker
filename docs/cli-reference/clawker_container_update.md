@@ -10,7 +10,7 @@ This command updates the resource limits of containers that are already running
 or have been created but not yet started.
 
 When --agent is provided, the container name is resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent

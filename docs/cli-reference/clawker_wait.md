@@ -7,7 +7,7 @@ Block until one or more containers stop, then print their exit codes
 Blocks until one or more clawker containers stop, then prints their exit codes.
 
 When --agent is provided, the container name is resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent

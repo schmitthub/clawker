@@ -40,7 +40,7 @@ The main process inside the container is sent SIGKILL signal (default),
 or the signal specified with the --signal option.
 
 When --agent is provided, the container names are resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent

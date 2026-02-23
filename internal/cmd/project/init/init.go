@@ -44,7 +44,7 @@ func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectIn
 	cmd := &cobra.Command{
 		Use:   "init [project-name]",
 		Short: "Initialize a new clawker project in the current directory",
-		Long: `Creates a clawker.yaml configuration file and .clawkerignore in the current directory if they don't exist'.
+		Long: `Creates a .clawker.yaml configuration file and .clawkerignore in the current directory if they don't exist'.
 
 If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default).
@@ -229,7 +229,7 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "Next Steps:")
 		fmt.Fprintln(ios.ErrOut, "  - Use --force to overwrite the existing configuration")
-		fmt.Fprintln(ios.ErrOut, "  - Or edit the existing clawker.yaml manually")
+		fmt.Fprintln(ios.ErrOut, "  - Or edit the existing .clawker.yaml manually")
 		fmt.Fprintln(ios.ErrOut, "  - Or run 'clawker project register' to register the existing project")
 		return fmt.Errorf("configuration already exists")
 	}
@@ -448,7 +448,7 @@ func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, 
 	fmt.Fprintf(ios.ErrOut, "%s Default: %s\n", cs.SuccessIcon(), userConfigPath)
 }
 
-// scaffoldProjectConfig creates the clawker.yaml content from the canonical template.
+// scaffoldProjectConfig creates the .clawker.yaml content from the canonical template.
 // It inserts the build image and substitutes the workspace mode into DefaultConfigYAML.
 func scaffoldProjectConfig(buildImage, workspaceMode string) string {
 	s := config.DefaultConfigYAML

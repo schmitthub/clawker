@@ -106,7 +106,7 @@ func ResolveLoopImage(ctx context.Context, client *docker.Client, ios *iostreams
 		fmt.Fprintf(ios.ErrOut, "%s No image specified and no image configured\n", cs.FailureIcon())
 		fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
 		fmt.Fprintln(ios.ErrOut, "  1. Specify an image: clawker loop iterate --image IMAGE ...")
-		fmt.Fprintln(ios.ErrOut, "  2. Set build.image in clawker.yaml")
+		fmt.Fprintln(ios.ErrOut, "  2. Set build.image in .clawker.yaml")
 		fmt.Fprintln(ios.ErrOut, "  3. Build a project image: clawker build")
 		return "", fmt.Errorf("no image available")
 	}
@@ -212,7 +212,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 			fmt.Fprintf(ios.ErrOut, "%s No image specified and no image configured\n", cs.FailureIcon())
 			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
 			fmt.Fprintln(ios.ErrOut, "  1. Specify an image: clawker loop iterate --image IMAGE ...")
-			fmt.Fprintln(ios.ErrOut, "  2. Set build.image in clawker.yaml")
+			fmt.Fprintln(ios.ErrOut, "  2. Set build.image in .clawker.yaml")
 			fmt.Fprintln(ios.ErrOut, "  3. Build a project image: clawker build")
 			return nil, nil, fmt.Errorf("no image available")
 		}

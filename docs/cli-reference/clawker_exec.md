@@ -10,7 +10,7 @@ This creates a new process inside the container and connects to it.
 Use -it flags for an interactive shell session.
 
 When --agent is provided, the container name is resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+using the project from your .clawker.yaml configuration.
 
 Container name can be:
   - Full name: clawker.myproject.myagent

@@ -249,7 +249,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 			fmt.Fprintln(ios.ErrOut)
 			fmt.Fprintln(ios.ErrOut, "Next Steps:")
 			fmt.Fprintf(ios.ErrOut, "  1. %s\n", "You can manually build later with 'clawker generate latest && docker build ...'")
-			fmt.Fprintf(ios.ErrOut, "  2. %s\n", "Or specify images per-project in clawker.yaml")
+			fmt.Fprintf(ios.ErrOut, "  2. %s\n", "Or specify images per-project in .clawker.yaml")
 			return nil // early return to avoid duplicate next steps
 		}
 

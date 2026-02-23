@@ -64,7 +64,7 @@ For each `.claude/rules/*.md` file with a `paths:` frontmatter field:
 ### 5. Mintlify Docs Consistency
 
 1. Check if `docs/docs.json` navigation groups reference files that actually exist in `docs/` and `docs/cli-reference/`
-2. Flag hand-authored pages (`docs/*.mdx`) that reference outdated commands or config keys (spot-check against `clawker.yaml` schema and CLI command tree)
+2. Flag hand-authored pages (`docs/*.mdx`) that reference outdated commands or config keys (spot-check against `.clawker.yaml` schema and CLI command tree)
 3. Skip `docs/cli-reference/*.md` for content accuracy — they are auto-generated
 
 ### 6. Serena Memory Staleness

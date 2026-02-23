@@ -147,7 +147,7 @@ func InjectOnboardingFile(ctx context.Context, opts InjectOnboardingOpts) error 
 type InjectPostInitOpts struct {
 	// ContainerID is the Docker container ID to inject the script into.
 	ContainerID string
-	// Script is the user's post_init content from clawker.yaml.
+	// Script is the user's post_init content from .clawker.yaml.
 	Script string
 	// Cfg provides config constants for containerfs.
 	Cfg config.Config
