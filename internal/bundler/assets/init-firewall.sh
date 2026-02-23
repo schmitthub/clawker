@@ -303,7 +303,7 @@ iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
 # Handle both IPv4 (iptables) and IPv6 (ip6tables) addresses
 # Note: getent hosts only returns one address (prefers IPv6), so we combine with ahostsv4
 # to ensure we get both IPv4 and IPv6 addresses for Docker Desktop compatibility.
-host_addrs=$( { getent hosts host.docker.internal 2>/dev/null | awk '{print $1}'; getent ahostsv4 host.docker.internal 2>/dev/null | awk '{print $1}'; } | sort -u ) || true
+host_addrs=$( { getent hosts host.docker.internal 2>/dev/null || true; getent ahostsv4 host.docker.internal 2>/dev/null || true; } | awk '{print $1}' | sort -u )
 if [ -n "$host_addrs" ]; then
     while read -r host_ip; do
         if [[ "$host_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

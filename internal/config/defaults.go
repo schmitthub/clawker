@@ -110,7 +110,7 @@ agent:
   claude_code:
     config:
       strategy: "copy" # "copy" (host ~/.claude/) or "fresh" (clean)
-    use_host_auth: true # forward host auth tokens (falls back to ~/.claude/)
+    use_host_auth: true # keyring or ~/.claude/.credentials.json
   enable_shared_dir: false # read-only mount at ~/.clawker-share
   #post_init: | # runs once after init (set -e), failure aborts startup
   #  claude mcp add -- npx -y @anthropic-ai/claude-code-mcp
