@@ -278,7 +278,7 @@ fi
 # Git branch (+ cyan worktree indicator)
 if [ -n "$branch" ]; then
     if $is_worktree; then
-        line1+=$(printf " ${CYAN}%s+(wt)${NC}" "${GIT}$branch")
+        line1+=$(printf " ${CYAN}%s+%s(wt)${NC}" "${GIT}" "$branch")
     else
         line1+=$(printf " ${GRAY}%s${NC}" "${GIT}$branch")
     fi
