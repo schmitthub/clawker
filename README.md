@@ -13,7 +13,7 @@
 </p>
 
 <div align="center">
-  <img src="docs/assets/threat-model.svg" alt="Threat Model: Bare Metal vs Sandbox vs Clawker Container" width="700">
+  <img src="docs/assets/threat-model.png" alt="Threat Model: Bare Metal vs Sandbox vs Clawker Container" width="700">
 </div>
 
 ---
