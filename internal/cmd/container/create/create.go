@@ -66,23 +66,15 @@ When --agent is provided, the container is named clawker.<project>.<agent> where
 project comes from .clawker.yaml. When --name is provided, it overrides this.
 
 If IMAGE is "@", clawker will resolve the project's built image with :latest tag.`,
-		Example: `  # Create a container with a specific agent name
-  clawker container create --agent myagent alpine
+		Example: `  # Create a container with a specific agent name and interactive TTY
+  clawker container create -it --agent ralph @ 
 
-  # Create a container using default image from config
-  clawker container create --agent myagent @
-
-  # Create a container with a command
-  clawker container create --agent worker alpine echo "hello world"
-
+  # Create a container with a specific claude code entry flag and interactive TTY
+  clawker container create -it --agent myagent @ --dangerously-skip-permissions
+  
   # Create a container with environment variables and ports
-  clawker container create --agent web -e PORT=8080 -p 8080:8080 node:20
-
-  # Create a container with a bind mount
-  clawker container create --agent dev -v /host/path:/container/path alpine
-
-  # Create an interactive container with TTY
-  clawker container create -it --agent shell alpine sh`,
+  clawker container create -it --agent web -e PORT=8080 -p 8080:8080 @
+`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			containerOpts.Image = args[0]

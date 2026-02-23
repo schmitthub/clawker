@@ -79,17 +79,22 @@ project comes from .clawker.yaml.
 
 If IMAGE is "@", clawker will resolve the project's built image with :latest tag.`,
 		Example: `  # Run an interactive shell
-  clawker container run -it --agent shell @ alpine sh
+  clawker container run -it --agent ralph @ 
 
   # Run using default image with generated agent name from config
   clawker container run -it @
 
-  # Run a command
-  clawker container run --agent worker @ echo "hello world"
-  clawker container run --agent worker myimage:tag echo "hello world"
+  # Pass claude code flags 
+  clawker container run --rm --agent worker @ --help
+  clawker container run --rm --agent ralph @ --dangerously-skip-permissions
 
-  # Pass a claude code flag
-  clawker container run --detach --agent web @ -p "build entire app, don't make mistakes"
+  # Run in detached mode (background)
+  clawker container run --detach --agent web @ -p "build entire app, don't make mistakes" --dangerously-skip-permissions
+
+  # Bypass claude code and run system commands on the container directly 
+  clawker container run --agent worker @ echo "Hello" 
+  clawker container run --agent worker @ zsh 
+
 
   # Run with environment variables
   clawker container run -it --agent dev -e NODE_ENV=development @ echo $NODE_ENV
@@ -98,7 +103,7 @@ If IMAGE is "@", clawker will resolve the project's built image with :latest tag
   clawker container run -it --agent dev -v /host/path:/container/path @
 
   # Run and automatically remove on exit
-  clawker container run --rm -it @ sh`,
+  clawker container run --rm -it @`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			containerOpts.Image = args[0]
