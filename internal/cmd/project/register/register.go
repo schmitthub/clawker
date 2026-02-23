@@ -17,9 +17,10 @@ import (
 
 // RegisterOptions contains the options for the project register command.
 type RegisterOptions struct {
-	IOStreams *iostreams.IOStreams
-	Prompter  func() *prompterpkg.Prompter
-	Config    func() (config.Config, error)
+	IOStreams      *iostreams.IOStreams
+	Prompter       func() *prompterpkg.Prompter
+	Config         func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Name string // Positional arg: project name
 	Yes  bool
@@ -28,9 +29,10 @@ type RegisterOptions struct {
 // NewCmdProjectRegister creates the project register command.
 func NewCmdProjectRegister(f *cmdutil.Factory, runF func(context.Context, *RegisterOptions) error) *cobra.Command {
 	opts := &RegisterOptions{
-		IOStreams: f.IOStreams,
-		Prompter:  f.Prompter,
-		Config:    f.Config,
+		IOStreams:      f.IOStreams,
+		Prompter:       f.Prompter,
+		ProjectManager: f.ProjectManager,
+		Config:         f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -82,21 +84,17 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 
 	cfgGateway, err := opts.Config()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return fmt.Errorf("error loading config: %w", err)
 	}
-	projectManager, err := project.NewProjectManager(cfgGateway, nil)
+	projectManager, err := opts.ProjectManager()
 	if err != nil {
-		return fmt.Errorf("initializing project manager: %w", err)
+		return fmt.Errorf("error initializing project manager: %w", err)
 	}
 
 	// Require an existing .clawker.yaml
 	configFileName := cfgGateway.ProjectConfigFileName()
 	configPath := filepath.Join(wd, configFileName)
 	if _, err := os.Stat(configPath); err != nil {
-		cmdutil.PrintErrorf(ios, "No %s found in the current directory", configFileName)
-		cmdutil.PrintNextSteps(ios,
-			"Run 'clawker project init' to create a new project configuration",
-		)
 		return fmt.Errorf("no %s found", configFileName)
 	}
 
@@ -115,7 +113,7 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 	} else {
 		prompter := opts.Prompter()
 		projectName, err = prompter.String(prompterpkg.PromptConfig{
-			Message:  "ProjectCfg name",
+			Message:  "Project Name",
 			Default:  dirName,
 			Required: true,
 		})
@@ -126,12 +124,11 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 
 	registeredProject, err := projectManager.Register(ctx, projectName, wd)
 	if err != nil {
-		cmdutil.PrintErrorf(ios, "Could not register project in registry: %v", err)
 		return fmt.Errorf("could not register project: %w", err)
 	}
 
 	if registeredProject != nil {
-		fmt.Fprintf(ios.ErrOut, "%s Registered project '%s'\n", cs.SuccessIcon(), projectName)
+		fmt.Fprintf(ios.Out, "%s Registered project '%s'\n", cs.SuccessIcon(), projectName)
 	}
 
 	return nil

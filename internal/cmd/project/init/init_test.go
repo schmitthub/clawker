@@ -453,14 +453,14 @@ func TestPerformProjectSetup(t *testing.T) {
 	}
 
 	// Verify output
-	errOut := tio.ErrBuf.String()
-	if !strings.Contains(errOut, "Created:") {
+	out := tio.OutBuf.String()
+	if !strings.Contains(out, "Created:") {
 		t.Error("expected success output with 'Created:'")
 	}
-	if !strings.Contains(errOut, "test-project") {
+	if !strings.Contains(out, "test-project") {
 		t.Error("expected project name in output")
 	}
-	if !strings.Contains(errOut, "Next Steps:") {
+	if !strings.Contains(out, "Next Steps:") {
 		t.Error("expected next steps in output")
 	}
 }

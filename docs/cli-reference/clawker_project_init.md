@@ -14,7 +14,7 @@ If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default).
 
 In interactive mode (default), you will be prompted to configure:
-  - ProjectCfg name
+  - Project Name
   - Base container image
   - Default workspace mode (bind or snapshot)
 
