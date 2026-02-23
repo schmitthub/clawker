@@ -303,15 +303,15 @@ clawker container create --agent test @
 Run separate agents per git worktree for parallel development:
 
 ```bash
+# Use the --worktree flag for automatic worktree creation and mounting in containers
+clawker run --worktree feature/todo-apps-are-dope:main -it --agent todo-apps @ --dangerously-skip-permissions
+
 # Create worktrees manually
 clawker worktree add feature/todo-apps-are-dope
 clawker worktree add feat-feet --base main
 
 # list your worktrees
 clawker worktree list
-
-# Run agents in worktree containers
-clawker run --worktree feature/todo-apps-are-dope -it --agent todo-apps @ --dangerously-skip-permissions
 ```
 
 ## Managing Resources
