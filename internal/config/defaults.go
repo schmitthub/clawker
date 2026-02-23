@@ -107,11 +107,11 @@ agent:
   #  - "ANTHROPIC_API_KEY"
   #  - "GITHUB_TOKEN"
   env: {}
-  #claude_code:
-  #  config:
-  #    strategy: "copy" # "copy" (host ~/.claude/) or "fresh" (clean)
-  #  use_host_auth: true # forward host auth tokens (falls back to ~/.claude/)
-  #enable_shared_dir: false # read-only mount at ~/.clawker-share
+  claude_code:
+    config:
+      strategy: "copy" # "copy" (host ~/.claude/) or "fresh" (clean)
+    use_host_auth: true # forward host auth tokens (falls back to ~/.claude/)
+  enable_shared_dir: false # read-only mount at ~/.clawker-share
   #post_init: | # runs once after init (set -e), failure aborts startup
   #  claude mcp add -- npx -y @anthropic-ai/claude-code-mcp
   #  npm install -g typescript
