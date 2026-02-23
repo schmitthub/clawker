@@ -59,7 +59,9 @@ func NewWithOptions(ctx context.Context, opts EngineOptions) (*Engine, error) {
 		opts.ManagedLabel = DefaultManagedLabel
 	}
 
-	// Create the underlying Docker client using moby/moby v0.2.1 API
+	// Create the underlying Docker client using moby/moby v0.2.1 API.
+	// client.New is lazy — it only configures the client, not connecting to
+	// the daemon. Connection errors surface at HealthCheck (Ping) below.
 	realClient, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
@@ -81,7 +83,7 @@ func NewWithOptions(ctx context.Context, opts EngineOptions) (*Engine, error) {
 	// Verify connectivity
 
 	if err := e.HealthCheck(ctx); err != nil {
-		return nil, err
+		return nil, ErrDockerHealthCheckFailed(err)
 	}
 	// logger.Printf("[Engine] Connected to Docker daemon")
 
@@ -109,10 +111,7 @@ func NewFromExisting(c client.APIClient, opts ...EngineOptions) *Engine {
 // HealthCheck verifies the Docker daemon is reachable.
 func (e *Engine) HealthCheck(ctx context.Context) error {
 	_, err := e.Ping(ctx, client.PingOptions{})
-	if err != nil {
-		return ErrDockerNotRunning(err)
-	}
-	return nil
+	return err
 }
 
 // Options returns the engine options.

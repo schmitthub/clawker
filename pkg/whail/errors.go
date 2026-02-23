@@ -1,9 +1,15 @@
 package whail
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrDockerNotAvailable is a sentinel error indicating the Docker daemon
+// cannot be reached — either not installed or not running.
+// Use errors.Is(err, ErrDockerNotAvailable) to detect this condition.
+var ErrDockerNotAvailable = errors.New("docker not available")
 
 // DockerError represents a user-friendly Docker error with remediation steps.
 // It wraps underlying Docker SDK errors with context and actionable guidance.
@@ -20,6 +26,13 @@ func (e *DockerError) Error() string {
 
 func (e *DockerError) Unwrap() error {
 	return e.Err
+}
+
+// Is supports sentinel error matching. A DockerError with Op "connect"
+// matches ErrDockerNotAvailable, allowing errors.Is detection through
+// any depth of fmt.Errorf wrapping without polluting the Err chain.
+func (e *DockerError) Is(target error) bool {
+	return target == ErrDockerNotAvailable && e.Op == "connect"
 }
 
 // FormatUserError formats the error for display to users with next steps.
@@ -43,12 +56,15 @@ func (e *DockerError) FormatUserError() string {
 
 // Common error constructors
 
-// ErrDockerNotRunning returns an error for when Docker daemon is not accessible.
-func ErrDockerNotRunning(err error) *DockerError {
+// ErrDockerHealthCheckFailed returns an error for when the Docker daemon
+// health check (Ping) fails. The returned error wraps ErrDockerNotAvailable
+// so callers can detect Docker connectivity failures via
+// errors.Is(err, ErrDockerNotAvailable).
+func ErrDockerHealthCheckFailed(err error) *DockerError {
 	return &DockerError{
 		Op:      "connect",
 		Err:     err,
-		Message: "Cannot connect to Docker daemon",
+		Message: "Docker health check failed",
 		NextSteps: []string{
 			"Ensure Docker is installed",
 			"Start Docker Desktop (macOS/Windows) or run 'sudo systemctl start docker' (Linux)",

@@ -17,6 +17,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/update"
+	"github.com/schmitthub/clawker/pkg/whail"
 )
 
 // Main is the entry point for the clawker CLI.
@@ -66,7 +67,11 @@ func Main() int {
 	updateCancel()
 
 	if err != nil {
-		if !errors.Is(err, cmdutil.SilentError) {
+		if errors.Is(err, cmdutil.SilentError) {
+			// Already displayed — no-op
+		} else if errors.Is(err, whail.ErrDockerNotAvailable) {
+			printDockerInstallHelper(f.IOStreams.ErrOut, f.IOStreams.ColorScheme(), err)
+		} else {
 			printError(f.IOStreams.ErrOut, f.IOStreams.ColorScheme(), err, cmd)
 		}
 
@@ -125,6 +130,24 @@ func updateStatePath() string {
 		return ""
 	}
 	return filepath.Join(stateDir, "update-state.yaml")
+}
+
+// printDockerInstallHelper renders a user-friendly message when the Docker
+// daemon cannot be reached, showing the actual error and troubleshooting steps.
+func printDockerInstallHelper(out io.Writer, cs *iostreams.ColorScheme, err error) {
+	// Extract the actual cause from the DockerError chain
+	detail := err.Error()
+	var dockerErr *whail.DockerError
+	if errors.As(err, &dockerErr) && dockerErr.Unwrap() != nil {
+		detail = dockerErr.Unwrap().Error()
+	}
+
+	fmt.Fprintf(out, "%s Failed to connect to Docker: %s\n\n", cs.FailureIcon(), cs.Muted(cs.Italic(detail)))
+	fmt.Fprintf(out, "%s\n", cs.Bold("Troubleshooting:"))
+	fmt.Fprintf(out, "  1. Install Docker Desktop: %s\n", cs.Cyan("https://docs.docker.com/get-docker/"))
+	fmt.Fprintf(out, "  2. Start Docker Desktop or run %s\n", cs.Bold("sudo systemctl start docker"))
+	fmt.Fprintf(out, "  3. Verify the daemon is reachable: %s\n", cs.Bold("docker info"))
+	fmt.Fprintf(out, "  4. Re-run your command\n")
 }
 
 // userFormattedError is a duck-typed interface for errors that provide
