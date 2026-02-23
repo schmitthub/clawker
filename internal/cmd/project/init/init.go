@@ -297,16 +297,16 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 		ios.Logger.Debug().Str("file", ignorePath).Msg("created ignore file")
 	}
 
-	// Register project in user settings
-	if _, err := projectManager.Register(ctx, projectName, wd); err != nil {
-		return fmt.Errorf("could not register project: %w", err)
-	}
-
-	// Success output
+	// Success output — always report files created before registration attempt
 	fmt.Fprintln(ios.Out)
 	fmt.Fprintf(ios.Out, "%s Created: %s\n", cs.SuccessIcon(), configFileName)
 	fmt.Fprintf(ios.Out, "%s Created: %s\n", cs.SuccessIcon(), ignoreFileName)
 	fmt.Fprintf(ios.Out, "%s Project: %s\n", cs.InfoIcon(), projectName)
+
+	// Register project in user settings
+	if _, err := projectManager.Register(ctx, projectName, wd); err != nil {
+		return fmt.Errorf("could not register project: %w", err)
+	}
 
 	// Offer to save as user-level default if not already present
 	if !opts.Yes && ios.IsInteractive() {
