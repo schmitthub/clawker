@@ -1,3 +1,7 @@
+---
+title: "clawker network remove"
+---
+
 ## clawker network remove
 
 Remove one or more networks
@@ -47,4 +51,4 @@ clawker network remove NETWORK [NETWORK...] [flags]
 
 ### See also
 
-* [clawker network](clawker_network.md) - Manage networks
+* [clawker network](clawker_network) - Manage networks

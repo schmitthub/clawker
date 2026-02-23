@@ -1,3 +1,7 @@
+---
+title: "clawker wait"
+---
+
 ## clawker wait
 
 Block until one or more containers stop, then print their exit codes
@@ -6,7 +10,7 @@ Block until one or more containers stop, then print their exit codes
 
 Blocks until one or more clawker containers stop, then prints their exit codes.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
 using the project from your .clawker.yaml configuration.
 
 Container names can be:
@@ -45,4 +49,4 @@ clawker wait CONTAINER [CONTAINER...] [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

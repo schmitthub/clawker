@@ -1,3 +1,7 @@
+---
+title: "clawker network"
+---
+
 ## clawker network
 
 Manage networks
@@ -27,11 +31,11 @@ and monitoring stack integration.
 
 ### Subcommands
 
-* [clawker network create](clawker_network_create.md) - Create a network
-* [clawker network inspect](clawker_network_inspect.md) - Display detailed information on one or more networks
-* [clawker network list](clawker_network_list.md) - List networks
-* [clawker network prune](clawker_network_prune.md) - Remove unused networks
-* [clawker network remove](clawker_network_remove.md) - Remove one or more networks
+* [clawker network create](clawker_network_create) - Create a network
+* [clawker network inspect](clawker_network_inspect) - Display detailed information on one or more networks
+* [clawker network list](clawker_network_list) - List networks
+* [clawker network prune](clawker_network_prune) - Remove unused networks
+* [clawker network remove](clawker_network_remove) - Remove one or more networks
 
 ### Options
 
@@ -47,4 +51,4 @@ and monitoring stack integration.
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

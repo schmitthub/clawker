@@ -1,3 +1,7 @@
+---
+title: "clawker container create"
+---
+
 ## clawker container create
 
 Create a new container
@@ -9,7 +13,7 @@ Create a new clawker container from the specified image.
 The container is created but not started. Use 'clawker container start' to start it.
 Container names follow clawker conventions: clawker.project.agent
 
-When --agent is provided, the container is named clawker.<project>.<agent> where
+When --agent is provided, the container is named clawker.`<project>`.`<agent>` where
 project comes from .clawker.yaml. When --name is provided, it overrides this.
 
 If IMAGE is "@", clawker will resolve the project's built image with :latest tag.
@@ -152,4 +156,4 @@ clawker container create [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]
 
 ### See also
 
-* [clawker container](clawker_container.md) - Manage containers
+* [clawker container](clawker_container) - Manage containers

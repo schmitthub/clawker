@@ -1,3 +1,7 @@
+---
+title: "clawker project init"
+---
+
 ## clawker project init
 
 Initialize a new clawker project in the current directory
@@ -52,4 +56,4 @@ clawker project init [project-name] [flags]
 
 ### See also
 
-* [clawker project](clawker_project.md) - Manage clawker projects
+* [clawker project](clawker_project) - Manage clawker projects

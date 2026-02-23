@@ -1,3 +1,7 @@
+---
+title: "clawker monitor"
+---
+
 ## clawker monitor
 
 Manage local observability stack
@@ -33,10 +37,10 @@ Available commands:
 
 ### Subcommands
 
-* [clawker monitor down](clawker_monitor_down.md) - Stop the monitoring stack
-* [clawker monitor init](clawker_monitor_init.md) - Scaffold monitoring configuration files
-* [clawker monitor status](clawker_monitor_status.md) - Show monitoring stack status
-* [clawker monitor up](clawker_monitor_up.md) - Start the monitoring stack
+* [clawker monitor down](clawker_monitor_down) - Stop the monitoring stack
+* [clawker monitor init](clawker_monitor_init) - Scaffold monitoring configuration files
+* [clawker monitor status](clawker_monitor_status) - Show monitoring stack status
+* [clawker monitor up](clawker_monitor_up) - Start the monitoring stack
 
 ### Options
 
@@ -52,4 +56,4 @@ Available commands:
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

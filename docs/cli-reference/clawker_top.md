@@ -1,3 +1,7 @@
+---
+title: "clawker top"
+---
+
 ## clawker top
 
 Display the running processes of a container
@@ -8,7 +12,7 @@ Display the running processes of a clawker container.
 
 Additional arguments are passed directly to ps as options.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
 using the project from your .clawker.yaml configuration.
 
 Container name can be:
@@ -50,4 +54,4 @@ clawker top [OPTIONS] CONTAINER [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

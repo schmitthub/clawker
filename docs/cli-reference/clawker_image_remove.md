@@ -1,3 +1,7 @@
+---
+title: "clawker image remove"
+---
+
 ## clawker image remove
 
 Remove one or more images
@@ -54,4 +58,4 @@ clawker image remove IMAGE [IMAGE...] [flags]
 
 ### See also
 
-* [clawker image](clawker_image.md) - Manage images
+* [clawker image](clawker_image) - Manage images

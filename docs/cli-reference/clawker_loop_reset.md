@@ -1,3 +1,7 @@
+---
+title: "clawker loop reset"
+---
+
 ## clawker loop reset
 
 Reset the circuit breaker for an agent
@@ -45,4 +49,4 @@ clawker loop reset [flags]
 
 ### See also
 
-* [clawker loop](clawker_loop.md) - Run Claude Code in autonomous loops
+* [clawker loop](clawker_loop) - Run Claude Code in autonomous loops

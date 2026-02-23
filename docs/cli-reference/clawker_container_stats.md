@@ -1,3 +1,7 @@
+---
+title: "clawker container stats"
+---
+
 ## clawker container stats
 
 Display a live stream of container resource usage statistics
@@ -8,7 +12,7 @@ Display a live stream of container resource usage statistics.
 
 When no containers are specified, shows stats for all running clawker containers.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
 using the project from your .clawker.yaml configuration.
 
 Container names can be:
@@ -55,4 +59,4 @@ clawker container stats [OPTIONS] [CONTAINER...] [flags]
 
 ### See also
 
-* [clawker container](clawker_container.md) - Manage containers
+* [clawker container](clawker_container) - Manage containers

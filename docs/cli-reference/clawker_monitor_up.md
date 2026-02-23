@@ -1,3 +1,7 @@
+---
+title: "clawker monitor up"
+---
+
 ## clawker monitor up
 
 Start the monitoring stack
@@ -45,4 +49,4 @@ clawker monitor up [flags]
 
 ### See also
 
-* [clawker monitor](clawker_monitor.md) - Manage local observability stack
+* [clawker monitor](clawker_monitor) - Manage local observability stack

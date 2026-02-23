@@ -1,3 +1,7 @@
+---
+title: "clawker worktree remove"
+---
+
 ## clawker worktree remove
 
 Remove one or more worktrees
@@ -52,4 +56,4 @@ clawker worktree remove BRANCH [BRANCH...] [flags]
 
 ### See also
 
-* [clawker worktree](clawker_worktree.md) - Manage git worktrees for isolated branch development
+* [clawker worktree](clawker_worktree) - Manage git worktrees for isolated branch development

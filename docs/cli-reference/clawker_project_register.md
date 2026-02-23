@@ -1,3 +1,7 @@
+---
+title: "clawker project register"
+---
+
 ## clawker project register
 
 Register an existing clawker project in the local registry
@@ -46,4 +50,4 @@ clawker project register [project-name] [flags]
 
 ### See also
 
-* [clawker project](clawker_project.md) - Manage clawker projects
+* [clawker project](clawker_project) - Manage clawker projects

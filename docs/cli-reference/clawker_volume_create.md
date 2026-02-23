@@ -1,3 +1,7 @@
+---
+title: "clawker volume create"
+---
+
 ## clawker volume create
 
 Create a volume
@@ -46,4 +50,4 @@ clawker volume create [OPTIONS] [VOLUME] [flags]
 
 ### See also
 
-* [clawker volume](clawker_volume.md) - Manage volumes
+* [clawker volume](clawker_volume) - Manage volumes

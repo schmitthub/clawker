@@ -1,3 +1,7 @@
+---
+title: "clawker loop status"
+---
+
 ## clawker loop status
 
 Show current loop session status
@@ -43,4 +47,4 @@ clawker loop status [flags]
 
 ### See also
 
-* [clawker loop](clawker_loop.md) - Run Claude Code in autonomous loops
+* [clawker loop](clawker_loop) - Run Claude Code in autonomous loops

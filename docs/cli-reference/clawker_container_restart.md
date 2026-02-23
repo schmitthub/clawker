@@ -1,3 +1,7 @@
+---
+title: "clawker container restart"
+---
+
 ## clawker container restart
 
 Restart one or more containers
@@ -9,7 +13,7 @@ Restarts one or more clawker containers.
 The container is stopped with a timeout period (default 10s), then started again.
 If --signal is specified, that signal is sent instead of SIGTERM.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
 using the project from your .clawker.yaml configuration.
 
 Container names can be:
@@ -53,4 +57,4 @@ clawker container restart [CONTAINER...] [flags]
 
 ### See also
 
-* [clawker container](clawker_container.md) - Manage containers
+* [clawker container](clawker_container) - Manage containers

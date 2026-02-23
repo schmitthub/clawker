@@ -1,3 +1,7 @@
+---
+title: "clawker volume list"
+---
+
 ## clawker volume list
 
 List volumes
@@ -47,4 +51,4 @@ clawker volume list [flags]
 
 ### See also
 
-* [clawker volume](clawker_volume.md) - Manage volumes
+* [clawker volume](clawker_volume) - Manage volumes

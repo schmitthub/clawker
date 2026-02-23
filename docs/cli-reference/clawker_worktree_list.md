@@ -1,3 +1,7 @@
+---
+title: "clawker worktree list"
+---
+
 ## clawker worktree list
 
 List worktrees for the current project
@@ -49,4 +53,4 @@ clawker worktree list [flags]
 
 ### See also
 
-* [clawker worktree](clawker_worktree.md) - Manage git worktrees for isolated branch development
+* [clawker worktree](clawker_worktree) - Manage git worktrees for isolated branch development

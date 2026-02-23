@@ -1,3 +1,7 @@
+---
+title: "clawker image build"
+---
+
 ## clawker image build
 
 Build an image from a clawker project
@@ -69,4 +73,4 @@ clawker image build [flags]
 
 ### See also
 
-* [clawker image](clawker_image.md) - Manage images
+* [clawker image](clawker_image) - Manage images

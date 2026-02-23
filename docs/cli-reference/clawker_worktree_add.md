@@ -1,3 +1,7 @@
+---
+title: "clawker worktree add"
+---
+
 ## clawker worktree add
 
 Create a worktree for a branch
@@ -42,4 +46,4 @@ clawker worktree add BRANCH [flags]
 
 ### See also
 
-* [clawker worktree](clawker_worktree.md) - Manage git worktrees for isolated branch development
+* [clawker worktree](clawker_worktree) - Manage git worktrees for isolated branch development

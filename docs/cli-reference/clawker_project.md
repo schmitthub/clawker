@@ -1,3 +1,7 @@
+---
+title: "clawker project"
+---
+
 ## clawker project
 
 Manage clawker projects
@@ -27,8 +31,8 @@ Use 'clawker project init' to set up a new project in the current directory.
 
 ### Subcommands
 
-* [clawker project init](clawker_project_init.md) - Initialize a new clawker project in the current directory
-* [clawker project register](clawker_project_register.md) - Register an existing clawker project in the local registry
+* [clawker project init](clawker_project_init) - Initialize a new clawker project in the current directory
+* [clawker project register](clawker_project_register) - Register an existing clawker project in the local registry
 
 ### Options
 
@@ -44,4 +48,4 @@ Use 'clawker project init' to set up a new project in the current directory.
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

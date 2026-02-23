@@ -1,3 +1,7 @@
+---
+title: "clawker volume inspect"
+---
+
 ## clawker volume inspect
 
 Display detailed information on one or more volumes
@@ -36,4 +40,4 @@ clawker volume inspect VOLUME [VOLUME...] [flags]
 
 ### See also
 
-* [clawker volume](clawker_volume.md) - Manage volumes
+* [clawker volume](clawker_volume) - Manage volumes

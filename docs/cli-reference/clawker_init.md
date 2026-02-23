@@ -1,3 +1,7 @@
+---
+title: "clawker init"
+---
+
 ## clawker init
 
 Initialize clawker user settings
@@ -44,4 +48,4 @@ clawker init [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

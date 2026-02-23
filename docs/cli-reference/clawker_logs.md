@@ -1,3 +1,7 @@
+---
+title: "clawker logs"
+---
+
 ## clawker logs
 
 Fetch the logs of a container
@@ -6,7 +10,7 @@ Fetch the logs of a container
 
 Fetches the logs of a clawker container.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
 using the project from your .clawker.yaml configuration.
 
 Container name can be:
@@ -60,4 +64,4 @@ clawker logs [OPTIONS] CONTAINER [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

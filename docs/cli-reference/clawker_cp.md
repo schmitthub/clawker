@@ -1,3 +1,7 @@
+---
+title: "clawker cp"
+---
+
 ## clawker cp
 
 Copy files/folders between a container and the local filesystem
@@ -11,7 +15,7 @@ to stdout. Use '-' as the source to read a tar archive from stdin and
 extract it to a directory destination in a container.
 
 When --agent is provided, container names in CONTAINER:PATH are resolved
-as agent names (clawker.<project>.<agent>).
+as agent names (clawker.`<project>`.`<agent>`).
 
 Container path format: CONTAINER:PATH
 Local path format: PATH
@@ -61,4 +65,4 @@ cp [OPTIONS] SRC_PATH|- CONTAINER:DEST_PATH [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

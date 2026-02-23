@@ -1,3 +1,7 @@
+---
+title: "clawker rm"
+---
+
 ## clawker rm
 
 Remove one or more containers
@@ -9,7 +13,7 @@ Removes one or more clawker containers.
 By default, only stopped containers can be removed. Use --force to remove
 running containers.
 
-When --agent is provided, the container names are resolved as clawker.<project>.<agent>
+When --agent is provided, the container names are resolved as clawker.`<project>`.`<agent>`
 using the project from your .clawker.yaml configuration.
 
 Container names can be:
@@ -60,4 +64,4 @@ clawker rm [OPTIONS] CONTAINER [CONTAINER...] [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

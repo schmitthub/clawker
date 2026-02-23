@@ -1,3 +1,7 @@
+---
+title: "clawker network list"
+---
+
 ## clawker network list
 
 List networks
@@ -45,4 +49,4 @@ clawker network list [flags]
 
 ### See also
 
-* [clawker network](clawker_network.md) - Manage networks
+* [clawker network](clawker_network) - Manage networks

@@ -1,3 +1,7 @@
+---
+title: "clawker network inspect"
+---
+
 ## clawker network inspect
 
 Display detailed information on one or more networks
@@ -41,4 +45,4 @@ clawker network inspect NETWORK [NETWORK...] [flags]
 
 ### See also
 
-* [clawker network](clawker_network.md) - Manage networks
+* [clawker network](clawker_network) - Manage networks

@@ -1,3 +1,7 @@
+---
+title: "clawker worktree"
+---
+
 ## clawker worktree
 
 Manage git worktrees for isolated branch development
@@ -10,7 +14,7 @@ Worktrees allow running containers against different branches simultaneously
 without switching branches in your main repository. Each worktree is a
 separate checkout of the repository at a specific branch.
 
-Worktrees are created automatically when using 'clawker run --worktree <branch>'
+Worktrees are created automatically when using 'clawker run --worktree `<branch>`'
 and stored under the clawker data directory (default: ~/.local/share/clawker/worktrees/).
 
 ### Examples
@@ -43,10 +47,10 @@ and stored under the clawker data directory (default: ~/.local/share/clawker/wor
 
 ### Subcommands
 
-* [clawker worktree add](clawker_worktree_add.md) - Create a worktree for a branch
-* [clawker worktree list](clawker_worktree_list.md) - List worktrees for the current project
-* [clawker worktree prune](clawker_worktree_prune.md) - Remove stale worktree entries from the registry
-* [clawker worktree remove](clawker_worktree_remove.md) - Remove one or more worktrees
+* [clawker worktree add](clawker_worktree_add) - Create a worktree for a branch
+* [clawker worktree list](clawker_worktree_list) - List worktrees for the current project
+* [clawker worktree prune](clawker_worktree_prune) - Remove stale worktree entries from the registry
+* [clawker worktree remove](clawker_worktree_remove) - Remove one or more worktrees
 
 ### Options
 
@@ -62,4 +66,4 @@ and stored under the clawker data directory (default: ~/.local/share/clawker/wor
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

@@ -1,3 +1,7 @@
+---
+title: "clawker monitor status"
+---
+
 ## clawker monitor status
 
 Show monitoring stack status
@@ -33,4 +37,4 @@ clawker monitor status [flags]
 
 ### See also
 
-* [clawker monitor](clawker_monitor.md) - Manage local observability stack
+* [clawker monitor](clawker_monitor) - Manage local observability stack

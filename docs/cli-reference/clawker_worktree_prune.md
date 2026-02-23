@@ -1,3 +1,7 @@
+---
+title: "clawker worktree prune"
+---
+
 ## clawker worktree prune
 
 Remove stale worktree entries from the registry
@@ -43,4 +47,4 @@ clawker worktree prune [flags]
 
 ### See also
 
-* [clawker worktree](clawker_worktree.md) - Manage git worktrees for isolated branch development
+* [clawker worktree](clawker_worktree) - Manage git worktrees for isolated branch development

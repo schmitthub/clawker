@@ -1,3 +1,7 @@
+---
+title: "clawker attach"
+---
+
 ## clawker attach
 
 Attach local standard input, output, and error streams to a running container
@@ -9,7 +13,7 @@ Attach local standard input, output, and error streams to a running container.
 Use ctrl-p, ctrl-q to detach from the container and leave it running.
 To stop a container, use clawker container stop.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
 using the project from your .clawker.yaml configuration.
 
 Container name can be:
@@ -54,4 +58,4 @@ clawker attach CONTAINER [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

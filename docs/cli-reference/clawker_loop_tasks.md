@@ -1,3 +1,7 @@
+---
+title: "clawker loop tasks"
+---
+
 ## clawker loop tasks
 
 Run an agent loop driven by a task file
@@ -86,4 +90,4 @@ clawker loop tasks [flags]
 
 ### See also
 
-* [clawker loop](clawker_loop.md) - Run Claude Code in autonomous loops
+* [clawker loop](clawker_loop) - Run Claude Code in autonomous loops

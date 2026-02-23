@@ -1,3 +1,7 @@
+---
+title: "clawker exec"
+---
+
 ## clawker exec
 
 Execute a command in a running container
@@ -9,7 +13,7 @@ Execute a command in a running clawker container.
 This creates a new process inside the container and connects to it.
 Use -it flags for an interactive shell session.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
 using the project from your .clawker.yaml configuration.
 
 Container name can be:
@@ -67,4 +71,4 @@ clawker exec [OPTIONS] CONTAINER COMMAND [ARG...] [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

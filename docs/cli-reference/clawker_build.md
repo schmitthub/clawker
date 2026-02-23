@@ -1,3 +1,7 @@
+---
+title: "clawker build"
+---
+
 ## clawker build
 
 Build an image from a clawker project
@@ -69,4 +73,4 @@ clawker build [OPTIONS] [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

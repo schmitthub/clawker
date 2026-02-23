@@ -1,3 +1,7 @@
+---
+title: "clawker volume"
+---
+
 ## clawker volume
 
 Manage volumes
@@ -24,11 +28,11 @@ configuration, and command history between container runs.
 
 ### Subcommands
 
-* [clawker volume create](clawker_volume_create.md) - Create a volume
-* [clawker volume inspect](clawker_volume_inspect.md) - Display detailed information on one or more volumes
-* [clawker volume list](clawker_volume_list.md) - List volumes
-* [clawker volume prune](clawker_volume_prune.md) - Remove unused local volumes
-* [clawker volume remove](clawker_volume_remove.md) - Remove one or more volumes
+* [clawker volume create](clawker_volume_create) - Create a volume
+* [clawker volume inspect](clawker_volume_inspect) - Display detailed information on one or more volumes
+* [clawker volume list](clawker_volume_list) - List volumes
+* [clawker volume prune](clawker_volume_prune) - Remove unused local volumes
+* [clawker volume remove](clawker_volume_remove) - Remove one or more volumes
 
 ### Options
 
@@ -44,4 +48,4 @@ configuration, and command history between container runs.
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

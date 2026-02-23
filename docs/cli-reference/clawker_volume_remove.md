@@ -1,3 +1,7 @@
+---
+title: "clawker volume remove"
+---
+
 ## clawker volume remove
 
 Remove one or more volumes
@@ -47,4 +51,4 @@ clawker volume remove VOLUME [VOLUME...] [flags]
 
 ### See also
 
-* [clawker volume](clawker_volume.md) - Manage volumes
+* [clawker volume](clawker_volume) - Manage volumes
