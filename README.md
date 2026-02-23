@@ -116,6 +116,7 @@ export PATH="$PWD/bin:$PATH"
 ## Quick Start
 
 Fastest path to a seamless containerized Claude Code instance with all your host settings, plugins, and creds copied in so you can get to work right away. 
+
 ```bash
 cd your-project
 clawker project init 
@@ -123,7 +124,9 @@ clawker build
 clawker run -it --rm --agent example @ --dangerously-skip-permissions
 ```
 
-If you want to learn about image customization, worktree support, loops, monitoring, and all the other bells and whistles, keep reading for the walkthrough below.
+This gets you a project scoped container image (clawker-<project>:latest) built with the default Dockerfile template, then starts a container with all your host Claude Code settings, plugins, authentication, skills, etc copied in for a seamless transition from host to container development. The `--rm` flag means the container will be removed when you exit it, so it's perfect for quick tasks or experimentation. If you want persistence, just omit the `--rm` flag and you can start the same container back up again later after exiting with `clawker start -a -i --agent example` (or you can leave it running via detach `ctrl p+q`, reattach later `clawker attach --agent example` to the same terminal session).  
+
+If you want to learn more about image customization, worktree support, loops, monitoring, and all the other bells and whistles keep reading for the walkthrough below.
 
 ## Walkthrough
 
