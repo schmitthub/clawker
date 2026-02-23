@@ -16,6 +16,8 @@
   <img src="docs/assets/threat-model.png" alt="Threat Model: Bare Metal vs Sandbox vs Clawker Container" width="700">
 </div>
 
+> ! Clawker is in an early development stage, but it's usable and has a lot of features. Expect breaking changes and rough edges. I quickly patch regressions that were missed. If you want to contribute or have any feedback, please open an issue or a pull request! Give it a star if you find it useful so I can brag about them at parties
+
 ---
 
 ## Table of Contents
@@ -23,7 +25,6 @@
 - [Clawker: Claude Code agent-in-container orchestration and automation](#clawker-claude-code-agent-in-container-orchestration-and-automation)
   - [Table of Contents](#table-of-contents)
   - [High-Level Feature Overview](#high-level-feature-overview)
-  - [Roadmap / Known Issues](#roadmap--known-issues)
   - [Installation](#installation)
   - [Quick Start](#quick-start)
   - [Walkthrough](#walkthrough)
@@ -37,7 +38,7 @@
   - [Monitoring](#monitoring)
   - [Autonomous Loops (Experimental)](#autonomous-loops-experimental)
     - [A TUI will open showing you the agent's progress, decisions, tool calls, and more in real time](#a-tui-will-open-showing-you-the-agents-progress-decisions-tool-calls-and-more-in-real-time)
-  - [Known Issues](#known-issues)
+  - [Roadmap / Known Issues](#roadmap--known-issues)
   - [Contributing](#contributing)
   - [License](#license)
 
@@ -69,18 +70,6 @@ When I began experimenting with Claude Code to keep up with the Agentic AI trend
 - **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees created by clawker, uses `go-git` under the hood to avoid relying on the host git binary
 - **Optional monitoring stack** with Prometheus, Loki, and Grafana to monitor agents and containers; every container has the environment variables needed to communicate with it
 - **Looping mode (experimental)**: pass a prompt, file, or task list to Clawker and it runs an autonomous loop with a fresh container each iteration with stagnation detection, circuit breaker protection, max loops, tracking container agent output, progress, costs, token usage, etc.
-
-## Roadmap / Known Issues
-
-- Currently, clawker containers use stdout/stderr as a poor man's event transport for monitoring and looping mode. I am working on a control plane and container agent daemon to properly manage container lifecycles, configs, and events via gRPC. The clawker cli will just be the scheduler to control plane, and handle user UI direct with the containers. This will keep container stdout/err sacred and allow for more robust features, better monitoring, better loop control, peering communications, and a more seamless experience overall. This is the main focus of my next set of work on clawker. See: [control plane notes](.serena/memories/clawkerd-container-control-plane.md)
-- Linux might have a bug involving accessing the keychain for creds, I haven't focused on linux I'll do this in parallel with control plane work
-- The TUI/UI formatting is mainly a polished turd currently, I'm aware of this. It's functional, but it'll be the last thing I really care about 
-- Being my first vibe coding experience, I come across some utterly insane, often painful, sometimes funny quality issues from good ole claude boy.  
-- I'm realizing it's probably trivial (just jinxed myself) to swap out different AI agents as the container entrypoint beyond claude code. So I am considering adding options for what AI agent you want. Making clawker essentially a general "harness for the harness" / agent-in-container solution  
-
-> Clawker is in a very early experimental stage, but it's usable and has a lot of features. I'm actively developing it and have a long list of quality issues, bugs, and enhacements I'm tracking locally. Expect breaking changes and rough edges. If you want to contribute or have any feedback, please open an issue or a pull request! Give it a star if you find it useful so I can brag about them at parties
-
-> I feel obligated to state this... **Clawker** is a portmanteau of Claude + Docker. The project was at first named `claucker`, but reading it, saying it, and especially typing it always felt awkward to my brain because it violates the phonetic rules of English. Before I was aware of the whole `clawdbot` `openclaw` `clawthis` `clawthat` naming craze, I changed it to be the "correct" phonetic spelling, `clawker`, purely because it just rolls off the fingers when typing it. For those reasons I'm not going to change the name, but I want to make it clear the decision wasn't to chase a trend  
 
 ## Installation
 
@@ -365,7 +354,13 @@ clawker loop iterate --prompt "write a small poem to a file @test.txt" --max-loo
 
 See `clawker loop --help` for all options and configuration.
 
-## Known Issues
+## Roadmap / Known Issues
+
+- Currently, clawker containers use stdout/stderr as a poor man's event transport for monitoring and looping mode. I am working on a control plane and container agent daemon to properly manage container lifecycles, configs, and events via gRPC. The clawker cli will just be the scheduler to control plane, and handle user UI direct with the containers. This will keep container stdout/err sacred and allow for more robust features, better monitoring, better loop control, peering communications, and a more seamless experience overall. This is the main focus of my next set of work on clawker. See: [control plane notes](.serena/memories/clawkerd-container-control-plane.md)
+- Linux might have a bug involving accessing the keychain for creds, I haven't focused on linux I'll do this in parallel with control plane work
+- The TUI/UI formatting is mainly a polished turd currently, I'm aware of this. It's functional, but it'll be the last thing I really care about 
+- Being my first vibe coding experience, I come across some utterly insane, often painful, sometimes funny quality issues from good ole claude boy.  
+- I'm realizing it's probably trivial (just jinxed myself) to swap out different AI agents as the container entrypoint beyond claude code. So I am considering adding options for what AI agent you want. Making clawker essentially a general "harness for the harness" / agent-in-container solution  
 
 See [GitHub Issues](https://github.com/schmitthub/clawker/issues?q=is%3Aissue+is%3Aopen+label%3Aknown-issue) for current known issues and limitations.
 
@@ -378,3 +373,5 @@ Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 ## License
 
 MIT — see [LICENSE](LICENSE)
+
+> I feel obligated to state this... **Clawker** is a portmanteau of Claude + Docker. The project was at first named `claucker`, but reading it, saying it, and especially typing it always felt awkward to my brain because it violates the phonetic rules of English. Before I was aware of the whole `clawdbot` `openclaw` `clawthis` `clawthat` naming craze, I changed it to be the "correct" phonetic spelling, `clawker`, purely because it just rolls off the fingers when typing it. For those reasons I'm not going to change the name, but I want to make it clear the decision wasn't to chase a trend  
