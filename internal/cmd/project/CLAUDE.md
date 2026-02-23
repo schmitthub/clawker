@@ -1,6 +1,6 @@
 # Project Command Package
 
-Project lifecycle management (initialization and registration).
+Project lifecycle management: initialization, registration, listing, inspection, and removal.
 
 ## Files
 
@@ -9,6 +9,9 @@ Project lifecycle management (initialization and registration).
 | `project.go` | `NewCmdProject(f)` — parent command |
 | `init/init.go` | `NewCmdProjectInit(f, runF)` — initialize project via TUI wizard |
 | `register/register.go` | `NewCmdProjectRegister(f, runF)` — register existing project |
+| `list/list.go` | `NewCmdList(f, runF)` — list registered projects with format flags |
+| `show/show.go` | `NewCmdShow(f, runF)` — show project details (name, root, worktrees, status) |
+| `remove/remove.go` | `NewCmdRemove(f, runF)` — remove projects from registry (with confirmation) |
 | `shared/discovery.go` | `HasLocalProjectConfig(cfg, dir)` — config existence check via storage layers + fallback probe |
 | `shared/discovery_test.go` | Table-driven tests: registered/unregistered × all config placements |
 
@@ -16,6 +19,9 @@ Project lifecycle management (initialization and registration).
 
 - `project init` — initialize new project in current directory (creates `.clawker.yaml` dotfile and `cfg.ClawkerIgnoreName()`). Uses TUI wizard for interactive prompts, `scaffoldProjectConfig()` based on `config.DefaultConfigYAML`. Optionally prompts to save as user-level default in configDir.
 - `project register` — register existing project in user's registry (`cfg.ProjectRegistryFileName()`)
+- `project list` (alias `ls`) — list all registered projects. Table output with NAME, ROOT, WORKTREES, STATUS columns. Supports `--format`/`--json`/`-q` flags via `FormatFlags`. Shows directory existence status.
+- `project show NAME` — show detailed info for a single project: name, root, directory status, worktrees. Supports `--json` output.
+- `project remove NAME [NAME...]` (alias `rm`) — remove projects from registry by name. Prompts for confirmation unless `--yes` or non-interactive. Does not delete files from disk.
 
 ## Key Symbols
 
@@ -53,7 +59,7 @@ type RegisterOptions struct {
 func NewCmdProjectRegister(f *cmdutil.Factory, runF func(context.Context, *RegisterOptions) error) *cobra.Command
 ```
 
-`NewCmdProject` is the parent (no RunE). Both subcommands accept `runF` for test injection.
+`NewCmdProject` is the parent (no RunE). All subcommands accept `runF` for test injection.
 
 ## Architecture
 
@@ -104,6 +110,5 @@ Tests use `runF` injection for flag/option capture. Key patterns:
 - `flavorFieldOptionsWithCustom()` and `resolveImageFromWizard()` tested as pure functions
 
 ```bash
-go test ./internal/cmd/project/init/... -v
-go test ./internal/cmd/project/shared/... -v
+go test ./internal/cmd/project/... -v
 ```

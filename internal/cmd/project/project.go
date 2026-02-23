@@ -3,7 +3,10 @@ package project
 
 import (
 	projectinit "github.com/schmitthub/clawker/internal/cmd/project/init"
+	projectlist "github.com/schmitthub/clawker/internal/cmd/project/list"
 	projectregister "github.com/schmitthub/clawker/internal/cmd/project/register"
+	projectremove "github.com/schmitthub/clawker/internal/cmd/project/remove"
+	projectshow "github.com/schmitthub/clawker/internal/cmd/project/show"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -28,13 +31,25 @@ Use 'clawker project init' to set up a new project in the current directory.`,
   clawker project init --yes
 
   # Register an existing project
-  clawker project register`,
+  clawker project register
+
+  # List all registered projects
+  clawker project list
+
+  # Show project details
+  clawker project show my-project
+
+  # Remove a project from registry
+  clawker project remove my-project`,
 		// No RunE - this is a parent command
 	}
 
 	// Add subcommands
 	cmd.AddCommand(projectinit.NewCmdProjectInit(f, nil))
 	cmd.AddCommand(projectregister.NewCmdProjectRegister(f, nil))
+	cmd.AddCommand(projectlist.NewCmdList(f, nil))
+	cmd.AddCommand(projectshow.NewCmdShow(f, nil))
+	cmd.AddCommand(projectremove.NewCmdRemove(f, nil))
 
 	return cmd
 }
