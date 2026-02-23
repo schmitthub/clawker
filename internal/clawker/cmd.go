@@ -62,9 +62,10 @@ func Main() int {
 
 	cmd, err := rootCmd.ExecuteC()
 
-	// Cancel the update context — if the goroutine is still running,
-	// the HTTP request will be aborted and it will send nil promptly.
-	updateCancel()
+	// Don't cancel the update context here — the goroutine needs to complete
+	// so it can write the cache file. The blocking read below waits for it,
+	// and the HTTP client has its own 5s timeout. defer updateCancel() handles
+	// cleanup on exit.
 
 	if err != nil {
 		if errors.Is(err, cmdutil.SilentError) {
