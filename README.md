@@ -21,6 +21,7 @@
   - [High-Level Feature Overview](#high-level-feature-overview)
   - [Roadmap / Known Issues](#roadmap--known-issues)
   - [Installation](#installation)
+  - [Quick Start](#quick-start)
   - [Walkthrough](#walkthrough)
     - [Initialize](#initialize)
       - [Start a project](#start-a-project)
@@ -112,9 +113,21 @@ export PATH="$PWD/bin:$PATH"
 ```
 </details>
 
+## Quick Start
+
+Fastest path to a seamless containerized Claude Code instance with all your host settings, plugins, and creds copied in so you can get to work right away. 
+```bash
+cd your-project
+clawker project init 
+clawker build
+clawker run -it --rm --agent example @ --dangerously-skip-permissions
+```
+
+If you want to learn about image customization, worktree support, loops, monitoring, and all the other bells and whistles, keep reading for the walkthrough below.
+
 ## Walkthrough
 
-Instead of giving you a wall of text here I'll just go over how I'm using `clawker` today and how I'm finding it useful. 
+Here are ways I'm using `clawker` today and how I'm finding it useful. 
 
 ### Initialize 
 
