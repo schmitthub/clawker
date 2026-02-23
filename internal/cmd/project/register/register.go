@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -91,11 +92,9 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 		return fmt.Errorf("initializing project manager: %w", err)
 	}
 
-	// Require an existing .clawker.yaml
-	configFileName := cfgGateway.ProjectConfigFileName()
-	configPath := filepath.Join(wd, configFileName)
-	if _, err := os.Stat(configPath); err != nil {
-		return fmt.Errorf("no %s found — run 'clawker project init' first", configFileName)
+	// Require a project config in the current directory.
+	if !shared.HasLocalProjectConfig(cfgGateway, wd) {
+		return fmt.Errorf("no project config found in %s — run 'clawker project init' first to create one", wd)
 	}
 
 	// Determine project name

@@ -13,7 +13,8 @@ type options struct {
 	filenames  []string
 	defaults   string // raw YAML string for the base layer
 	walkUp     bool
-	paths      []string // explicit directories to probe
+	dirs       []string // directories probed with dual placement (highest priority first)
+	paths      []string // explicit directories to probe (no dual placement)
 	migrations []Migration
 	lock       bool
 }
@@ -47,6 +48,19 @@ func WithDefaults(yaml string) Option {
 func WithWalkUp() Option {
 	return func(o *options) {
 		o.walkUp = true
+	}
+}
+
+// WithDirs adds directories to be probed with dual placement discovery.
+// Each directory uses the same dual-placement logic as walk-up: if a .clawker/
+// subdirectory exists, it probes .clawker/{filename} (dir form); otherwise it
+// probes .{filename} (flat dotfile form). Both .yaml and .yml extensions are
+// accepted. No registry required.
+// Directories are probed in the order given (first = highest priority).
+// Priority: walk-up > dirs > explicit paths (WithPaths/WithConfigDir/etc.).
+func WithDirs(dirs ...string) Option {
+	return func(o *options) {
+		o.dirs = append(o.dirs, dirs...)
 	}
 }
 

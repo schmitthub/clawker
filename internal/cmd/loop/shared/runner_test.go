@@ -173,8 +173,7 @@ func TestRunnerRun_MaxLoopsReached(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, 2, result.LoopsCompleted)
 	assert.Equal(t, "max loops reached", result.ExitReason)
-	require.Error(t, result.Error)
-	assert.Contains(t, result.Error.Error(), "reached maximum loops")
+	assert.NoError(t, result.Error, "max loops is a normal exit, not an error")
 }
 
 func TestRunnerRun_CircuitBreakerTrips(t *testing.T) {

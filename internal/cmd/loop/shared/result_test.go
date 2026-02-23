@@ -55,6 +55,27 @@ func TestNewResultOutput_Error(t *testing.T) {
 	assert.Equal(t, "circuit breaker tripped", output.Error)
 }
 
+func TestNewResultOutput_MaxLoopsReached(t *testing.T) {
+	result := &Result{
+		LoopsCompleted: 50,
+		ExitReason:     "max loops reached",
+		// Error is nil — max loops is a normal exit condition.
+		Session: &Session{
+			TotalTasksCompleted: 10,
+			TotalFilesModified:  15,
+		},
+	}
+
+	output := NewResultOutput(result)
+
+	assert.Equal(t, 50, output.LoopsCompleted)
+	assert.Equal(t, "max loops reached", output.ExitReason)
+	assert.True(t, output.Success, "max loops reached is a normal exit, not an error")
+	assert.Empty(t, output.Error)
+	assert.Equal(t, 10, output.TotalTasksCompleted)
+	assert.Equal(t, 15, output.TotalFilesModified)
+}
+
 func TestNewResultOutput_NilSession(t *testing.T) {
 	result := &Result{
 		LoopsCompleted: 0,
@@ -97,6 +118,32 @@ func TestWriteResult_JSON(t *testing.T) {
 	assert.Equal(t, 3, parsed.LoopsCompleted)
 	assert.True(t, parsed.Success)
 	assert.Equal(t, "agent signaled completion", parsed.ExitReason)
+}
+
+func TestWriteResult_JSON_MaxLoopsReached(t *testing.T) {
+	result := &Result{
+		LoopsCompleted: 50,
+		ExitReason:     "max loops reached",
+		Session: &Session{
+			TotalTasksCompleted: 10,
+			TotalFilesModified:  15,
+		},
+	}
+
+	var stdout, stderr bytes.Buffer
+	format := &cmdutil.FormatFlags{}
+	format.Format, _ = cmdutil.ParseFormat("json")
+
+	err := WriteResult(&stdout, &stderr, result, format)
+	require.NoError(t, err)
+
+	var parsed ResultOutput
+	err = json.Unmarshal(stdout.Bytes(), &parsed)
+	require.NoError(t, err)
+	assert.Equal(t, 50, parsed.LoopsCompleted)
+	assert.True(t, parsed.Success, "max loops reached should report success=true in JSON")
+	assert.Equal(t, "max loops reached", parsed.ExitReason)
+	assert.Empty(t, parsed.Error)
 }
 
 func TestWriteResult_Default(t *testing.T) {

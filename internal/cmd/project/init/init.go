@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
+	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -128,13 +129,8 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	configPath := filepath.Join(wd, configFileName)
 	plainConfigPath := filepath.Join(wd, cfgGateway.ProjectConfigFileName())
 
-	// Check if configuration already exists (either dotfile or plain form)
-	configExists := false
-	if _, err := os.Stat(configPath); err == nil {
-		configExists = true
-	} else if _, err := os.Stat(plainConfigPath); err == nil {
-		configExists = true
-	}
+	// Check if configuration already exists via storage layer discovery.
+	configExists := shared.HasLocalProjectConfig(cfgGateway, wd)
 
 	absPath, err := filepath.Abs(wd)
 	if err != nil {
@@ -217,16 +213,9 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	}
 
 	configFileName := "." + cfgGateway.ProjectConfigFileName()
-	configPath := filepath.Join(wd, configFileName)
-	plainConfigPath := filepath.Join(wd, cfgGateway.ProjectConfigFileName())
 
-	// Check if configuration already exists
-	configExists := false
-	if _, err := os.Stat(configPath); err == nil {
-		configExists = true
-	} else if _, err := os.Stat(plainConfigPath); err == nil {
-		configExists = true
-	}
+	// Check if configuration already exists via storage layer discovery.
+	configExists := shared.HasLocalProjectConfig(cfgGateway, wd)
 
 	if configExists && !opts.Force {
 		fmt.Fprintf(ios.ErrOut, "%s %s already exists\n", cs.FailureIcon(), configFileName)
