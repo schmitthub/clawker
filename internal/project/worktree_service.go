@@ -274,7 +274,7 @@ func (s *worktreeService) findProjectByRoot(projectRoot string) (config.ProjectE
 func worktreesRootDir(cfg config.Config) string {
 	root, err := cfg.WorktreesSubdir()
 	if err != nil || root == "" {
-		return filepath.Join(config.ConfigDir(), "worktrees")
+		return filepath.Join(config.DataDir(), "worktrees")
 	}
 	return root
 }

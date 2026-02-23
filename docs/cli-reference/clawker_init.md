@@ -4,7 +4,7 @@ Initialize clawker user settings
 
 ### Synopsis
 
-Creates or updates the user settings file at ~/.local/clawker/settings.yaml.
+Creates or updates the user settings file at ~/.config/clawker/settings.yaml.
 
 This command sets up user-level defaults that apply across all clawker projects.
 In interactive mode (default), you will be prompted to:

@@ -355,7 +355,7 @@ type KeyNotFoundError struct {
 
 func (e *KeyNotFoundError) Error() string { return "key not found: " + e.Key }
 
-// Settings represents user-level configuration stored in ~/.local/clawker/settings.yaml.
+// Settings represents user-level configuration stored in ~/.config/clawker/settings.yaml.
 type Settings struct {
 	Logging    LoggingConfig    `yaml:"logging,omitempty"`
 	Monitoring MonitoringConfig `yaml:"monitoring,omitempty"`

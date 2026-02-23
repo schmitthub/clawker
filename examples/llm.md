@@ -34,7 +34,7 @@ The config file has two phases of effect:
 
 `version: "1"` is always required as the first field.
 
-Config merge chain (lowest to highest precedence): hardcoded defaults, user-level `~/.local/clawker/clawker.yaml`, project-level `clawker.yaml`, `CLAWKER_*` environment variables.
+Config merge chain (lowest to highest precedence): hardcoded defaults, user-level `~/.config/clawker/clawker.yaml`, project-level `.clawker.yaml`
 
 ---
 

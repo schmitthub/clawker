@@ -39,7 +39,7 @@ func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) err
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize clawker user settings",
-		Long: `Creates or updates the user settings file at ~/.local/clawker/settings.yaml.
+		Long: `Creates or updates the user settings file at ~/.config/clawker/settings.yaml.
 
 This command sets up user-level defaults that apply across all clawker projects.
 In interactive mode (default), you will be prompted to:

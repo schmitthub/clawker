@@ -7,8 +7,8 @@ Manage Claude Code in secure Docker containers with clawker
 Clawker (claude + docker) wraps Claude Code in safe, reproducible, monitored, isolated Docker containers.
 
 Quick start:
-  clawker init           # Set up user settings (~/.local/clawker/settings.yaml)
-  clawker project init   # Initialize project in current directory (clawker.yaml)
+  clawker init           # Set up user settings (~/.config/clawker/settings.yaml)
+  clawker project init   # Initialize project in current directory (.clawker.yaml)
   clawker start          # Build and start Claude Code in a container
   clawker stop           # Stop the container
 
