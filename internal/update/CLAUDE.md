@@ -56,8 +56,9 @@ func CheckForUpdate(ctx context.Context, stateFilePath, currentVersion, repo str
 ## Context Support
 
 `CheckForUpdate` accepts `context.Context` as first parameter, threaded through to `http.NewRequestWithContext`.
-Context cancellation cleanly aborts the HTTP request — used by `Main()` to cancel the background check
-when the CLI command finishes before the update check completes.
+The HTTP client has its own 5s timeout (`httpTimeout`) which bounds request duration independently of context.
+`Main()` does NOT cancel the context after `ExecuteC()` — the goroutine must complete to write the cache file.
+`defer updateCancel()` handles cleanup after the blocking channel read on function exit.
 
 ## Integration Point
 
@@ -66,7 +67,7 @@ Wired into `internal/clawker/cmd.go:Main()` following the gh CLI pattern:
 - `context.WithCancel` creates a cancellable context for the HTTP request
 - Buffered(1) channel (`make(chan *update.CheckResult, 1)`) — goroutine sends exactly once; buffer prevents leak on early return
 - Blocking read (`<-updateMessageChan`) after command completes — never skips the result
-- `updateCancel()` called after `ExecuteC()` — aborts in-flight HTTP if still running
+- Context NOT cancelled after `ExecuteC()` — goroutine completes for cache write; `defer updateCancel()` cleans up on exit
 - Errors logged via `logger.Debug().Err(err)` (always to file log)
 
 Cache file: `config.StateDir()/update-state.yaml`

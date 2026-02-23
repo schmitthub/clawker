@@ -19,10 +19,11 @@ All symbols are in `cmd.go`.
 `Main()` spawns a background goroutine following the gh CLI pattern: `context.WithCancel` + buffered(1) channel + blocking read.
 
 - Goroutine calls `checkForUpdate(ctx, buildVersion)` which wraps `update.CheckForUpdate`
-- Context cancellation aborts the HTTP request when the command finishes first
+- Context is NOT cancelled after `ExecuteC()` — the goroutine needs to complete so it can write the cache file
 - Buffered(1) channel prevents goroutine leak if `Main()` returns early (e.g. root command creation fails)
-- After `ExecuteC()`, `updateCancel()` is called — if the goroutine is still blocked on HTTP, cancellation aborts it
-- Blocking read (`<-updateMessageChan`) — goroutine always sends exactly once
+- Blocking read (`<-updateMessageChan`) after `ExecuteC()` waits for the goroutine to finish — goroutine always sends exactly once
+- `defer updateCancel()` handles context cleanup on function exit (after the blocking read)
+- The HTTP client's own 5s timeout (`httpTimeout`) bounds the worst-case wait
 - Errors logged via `logger.Debug().Err(err)` (always to file log)
 - `printUpdateNotification()` prints to stderr only if result is non-nil and stderr is a TTY
 
@@ -36,7 +37,9 @@ Suppressed when: `CLAWKER_NO_UPDATE_NOTIFIER` set, `CI` set, version is `"DEV"`,
 
 ```go
 cmd, err := rootCmd.ExecuteC()
-updateCancel() // Abort in-flight HTTP if still running
+// Context NOT cancelled here — goroutine needs to complete for cache write.
+// Blocking read below waits for it; HTTP client has its own 5s timeout.
+// defer updateCancel() handles cleanup on exit.
 if err != nil {
     if !errors.Is(err, cmdutil.SilentError) {
         printError(f.IOStreams.ErrOut, f.IOStreams.ColorScheme(), err, cmd)
