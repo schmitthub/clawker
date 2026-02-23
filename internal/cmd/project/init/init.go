@@ -297,16 +297,16 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 		ios.Logger.Debug().Str("file", ignorePath).Msg("created ignore file")
 	}
 
-	// Register project in user settings
-	if _, err := projectManager.Register(ctx, projectName, wd); err != nil {
-		return fmt.Errorf("could not register project: %w", err)
-	}
-
-	// Success output
+	// Success output — always report files created before registration attempt
 	fmt.Fprintln(ios.Out)
 	fmt.Fprintf(ios.Out, "%s Created: %s\n", cs.SuccessIcon(), configFileName)
 	fmt.Fprintf(ios.Out, "%s Created: %s\n", cs.SuccessIcon(), ignoreFileName)
 	fmt.Fprintf(ios.Out, "%s Project: %s\n", cs.InfoIcon(), projectName)
+
+	// Register project in user settings
+	if _, err := projectManager.Register(ctx, projectName, wd); err != nil {
+		return fmt.Errorf("could not register project: %w", err)
+	}
 
 	// Offer to save as user-level default if not already present
 	if !opts.Yes && ios.IsInteractive() {
@@ -445,8 +445,13 @@ func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, 
 // It inserts the build image and substitutes the workspace mode into DefaultConfigYAML.
 func scaffoldProjectConfig(buildImage, workspaceMode string) string {
 	s := config.DefaultConfigYAML
-	// Insert image line before the first comment in the build section
-	s = strings.Replace(s, "  # Base image for the container", "  image: \""+buildImage+"\"\n  # Base image for the container", 1)
+	// Uncomment and set the image line (with fallback if template anchor changes)
+	const imageAnchor = `  #image: "buildpack-deps:bookworm-scm"`
+	if replaced := strings.Replace(s, imageAnchor, `  image: "`+buildImage+`"`, 1); replaced != s {
+		s = replaced
+	} else {
+		s = strings.Replace(s, "build:\n", "build:\n  image: \""+buildImage+"\"\n", 1)
+	}
 	// Substitute workspace mode
 	s = strings.Replace(s, `  default_mode: "bind"`, `  default_mode: "`+workspaceMode+`"`, 1)
 	return s
