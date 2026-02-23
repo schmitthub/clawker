@@ -445,8 +445,8 @@ func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, 
 // It inserts the build image and substitutes the workspace mode into DefaultConfigYAML.
 func scaffoldProjectConfig(buildImage, workspaceMode string) string {
 	s := config.DefaultConfigYAML
-	// Insert image line before the first comment in the build section
-	s = strings.Replace(s, "  # Base image for the container", "  image: \""+buildImage+"\"\n  # Base image for the container", 1)
+	// Uncomment and set the image line
+	s = strings.Replace(s, "  #image: \"buildpack-deps:bookworm-scm\"", "  image: \""+buildImage+"\"", 1)
 	// Substitute workspace mode
 	s = strings.Replace(s, `  default_mode: "bind"`, `  default_mode: "`+workspaceMode+`"`, 1)
 	return s

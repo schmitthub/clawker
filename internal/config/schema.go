@@ -102,7 +102,7 @@ type ClaudeCodeConfig struct {
 
 // AgentConfig defines Claude agent-specific settings.
 type AgentConfig struct {
-	Includes        []string          `yaml:"includes,omitempty"`
+	Includes        []string          `yaml:"includes,omitempty"` // TODO: these are added to the build context and image hash but never COPY'd into the image. Project root is already mounted at runtime. Do we still need this?
 	EnvFile         []string          `yaml:"env_file,omitempty"`
 	FromEnv         []string          `yaml:"from_env,omitempty"`
 	Env             map[string]string `yaml:"env,omitempty"`
