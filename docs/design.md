@@ -22,7 +22,7 @@ We do not inherit Docker's full threat model. If Docker allows a command, Clawke
 
 ### Project
 
-A project is defined by `.clawker.yaml` and registered in the project registry (`~/.local/share/registry.yaml`). Every Clawker command requires project context, resolved via longest-prefix path matching against the registry.
+A project is defined by `.clawker.yaml` and registered in the project registry (`~/.local/share/clawker/registry.yaml`). Every Clawker command requires project context, resolved via longest-prefix path matching against the registry.
 
 **Configuration precedence** (highest to lowest):
 1. CLI flags

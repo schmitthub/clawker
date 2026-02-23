@@ -15,7 +15,7 @@ import (
 
 // Harness provides an isolated test environment for clawker tests.
 // It manages:
-// - Temporary project directory with .clawker.yaml
+// - Temporary project directory with clawker.yaml
 // - Isolated config directory (~/.config/clawker/)
 // - Environment variable backup and restoration
 // - Automatic cleanup via t.Cleanup()

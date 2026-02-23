@@ -34,7 +34,7 @@ The config file has two phases of effect:
 
 `version: "1"` is always required as the first field.
 
-Config merge chain (lowest to highest precedence): hardcoded defaults, user-level `~/.config/clawker/clawker.yaml`, project-level `.clawker.yaml`
+Config merge chain (lowest to highest precedence): hardcoded defaults; user-level `~/.config/clawker/clawker.yaml` then `clawker.local.yaml`; project-level `.clawker.yaml` (or `.clawker/clawker.yaml`); project-local overrides `.clawker.local.yaml` (or `.clawker/clawker.local.yaml`). Subdirectory configs override parent configs up to CWD.
 
 ---
 
