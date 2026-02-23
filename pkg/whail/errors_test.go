@@ -2,6 +2,7 @@ package whail
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -80,9 +81,9 @@ func TestDockerError_FormatUserError(t *testing.T) {
 	}
 }
 
-func TestErrDockerNotRunning(t *testing.T) {
+func TestErrDockerHealthCheckFailed(t *testing.T) {
 	underlying := errors.New("connection refused")
-	err := ErrDockerNotRunning(underlying)
+	err := ErrDockerHealthCheckFailed(underlying)
 
 	if err.Op != "connect" {
 		t.Errorf("Op = %q, want %q", err.Op, "connect")
@@ -92,6 +93,39 @@ func TestErrDockerNotRunning(t *testing.T) {
 	}
 	if len(err.NextSteps) == 0 {
 		t.Error("should have next steps")
+	}
+}
+
+func TestErrDockerHealthCheckFailed_SentinelChain(t *testing.T) {
+	underlying := errors.New("connection refused")
+	err := ErrDockerHealthCheckFailed(underlying)
+
+	if !errors.Is(err, ErrDockerNotAvailable) {
+		t.Error("ErrDockerHealthCheckFailed should satisfy errors.Is(err, ErrDockerNotAvailable)")
+	}
+}
+
+func TestErrDockerNotAvailable_SurvivesCommandWrapping(t *testing.T) {
+	// Commands wrap with fmt.Errorf("connecting to Docker: %w", err)
+	// The sentinel must survive this wrapping.
+	underlying := errors.New("connection refused")
+	dockerErr := ErrDockerHealthCheckFailed(underlying)
+	wrapped := fmt.Errorf("connecting to Docker: %w", dockerErr)
+
+	if !errors.Is(wrapped, ErrDockerNotAvailable) {
+		t.Error("sentinel must survive fmt.Errorf wrapping in commands")
+	}
+}
+
+func TestErrDockerNotAvailable_SurvivesDoubleWrapping(t *testing.T) {
+	// Factory wraps, then command wraps again.
+	underlying := errors.New("dial unix /var/run/docker.sock: connect: no such file or directory")
+	dockerErr := ErrDockerHealthCheckFailed(underlying)
+	factoryWrapped := fmt.Errorf("failed to get config: %w", dockerErr)
+	commandWrapped := fmt.Errorf("connecting to Docker: %w", factoryWrapped)
+
+	if !errors.Is(commandWrapped, ErrDockerNotAvailable) {
+		t.Error("sentinel must survive double wrapping through factory and command layers")
 	}
 }
 
