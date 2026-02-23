@@ -1,3 +1,7 @@
+---
+title: "clawker image build"
+---
+
 ## clawker image build
 
 Build an image from a clawker project
@@ -6,7 +10,7 @@ Build an image from a clawker project
 
 Builds a container image from a clawker project configuration.
 
-The image is built from the project's clawker.yaml configuration,
+The image is built from the project's .clawker.yaml configuration,
 generating a Dockerfile and building the image. Alternatively,
 use -f/--file to specify a custom Dockerfile.
 
@@ -69,4 +73,4 @@ clawker image build [flags]
 
 ### See also
 
-* [clawker image](clawker_image.md) - Manage images
+* [clawker image](clawker_image) - Manage images

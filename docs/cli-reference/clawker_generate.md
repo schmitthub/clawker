@@ -1,3 +1,7 @@
+---
+title: "clawker generate"
+---
+
 ## clawker generate
 
 Generate Dockerfiles for Claude Code releases
@@ -54,4 +58,4 @@ clawker generate [versions...] [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

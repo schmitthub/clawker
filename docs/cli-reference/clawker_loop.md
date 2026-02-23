@@ -1,3 +1,7 @@
+---
+title: "clawker loop"
+---
+
 ## clawker loop
 
 Run Claude Code in autonomous loops
@@ -43,10 +47,10 @@ Available commands:
 
 ### Subcommands
 
-* [clawker loop iterate](clawker_loop_iterate.md) - Run an agent loop with a repeated prompt
-* [clawker loop reset](clawker_loop_reset.md) - Reset the circuit breaker for an agent
-* [clawker loop status](clawker_loop_status.md) - Show current loop session status
-* [clawker loop tasks](clawker_loop_tasks.md) - Run an agent loop driven by a task file
+* [clawker loop iterate](clawker_loop_iterate) - Run an agent loop with a repeated prompt
+* [clawker loop reset](clawker_loop_reset) - Reset the circuit breaker for an agent
+* [clawker loop status](clawker_loop_status) - Show current loop session status
+* [clawker loop tasks](clawker_loop_tasks) - Run an agent loop driven by a task file
 
 ### Options
 
@@ -62,4 +66,4 @@ Available commands:
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

@@ -1,3 +1,7 @@
+---
+title: "clawker volume prune"
+---
+
 ## clawker volume prune
 
 Remove unused local volumes
@@ -38,4 +42,4 @@ clawker volume prune [OPTIONS] [flags]
 
 ### See also
 
-* [clawker volume](clawker_volume.md) - Manage volumes
+* [clawker volume](clawker_volume) - Manage volumes

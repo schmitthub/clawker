@@ -37,7 +37,7 @@ func NewCmdRename(f *cmdutil.Factory, runF func(context.Context, *RenameOptions)
 		Long: `Renames a clawker container.
 
 When --agent is provided, the container name is resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration, and only NEW_NAME is required.
+using the project from your .clawker.yaml configuration, and only NEW_NAME is required.
 
 Container names can be:
   - Full name: clawker.myproject.myagent

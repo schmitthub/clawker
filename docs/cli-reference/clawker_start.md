@@ -1,3 +1,7 @@
+---
+title: "clawker start"
+---
+
 ## clawker start
 
 Start one or more stopped containers
@@ -6,8 +10,8 @@ Start one or more stopped containers
 
 Starts one or more stopped clawker containers.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent
@@ -50,4 +54,4 @@ clawker start [CONTAINER...] [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

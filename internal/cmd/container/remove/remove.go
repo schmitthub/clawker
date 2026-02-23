@@ -45,7 +45,7 @@ By default, only stopped containers can be removed. Use --force to remove
 running containers.
 
 When --agent is provided, the container names are resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent

@@ -1,3 +1,7 @@
+---
+title: "clawker image prune"
+---
+
 ## clawker image prune
 
 Remove unused images
@@ -44,4 +48,4 @@ clawker image prune [OPTIONS] [flags]
 
 ### See also
 
-* [clawker image](clawker_image.md) - Manage images
+* [clawker image](clawker_image) - Manage images

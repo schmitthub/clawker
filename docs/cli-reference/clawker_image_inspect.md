@@ -1,3 +1,7 @@
+---
+title: "clawker image inspect"
+---
+
 ## clawker image inspect
 
 Display detailed information on one or more images
@@ -36,4 +40,4 @@ clawker image inspect IMAGE [IMAGE...] [flags]
 
 ### See also
 
-* [clawker image](clawker_image.md) - Manage images
+* [clawker image](clawker_image) - Manage images

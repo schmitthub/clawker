@@ -48,7 +48,7 @@ Use ctrl-p, ctrl-q to detach from the container and leave it running.
 To stop a container, use clawker container stop.
 
 When --agent is provided, the container name is resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+using the project from your .clawker.yaml configuration.
 
 Container name can be:
   - Full name: clawker.myproject.myagent

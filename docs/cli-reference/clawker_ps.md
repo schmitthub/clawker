@@ -1,3 +1,7 @@
+---
+title: "clawker ps"
+---
+
 ## clawker ps
 
 List containers
@@ -66,4 +70,4 @@ clawker ps [OPTIONS] [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

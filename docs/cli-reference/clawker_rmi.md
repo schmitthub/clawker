@@ -1,3 +1,7 @@
+---
+title: "clawker rmi"
+---
+
 ## clawker rmi
 
 Remove one or more images
@@ -54,4 +58,4 @@ clawker rmi [OPTIONS] [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

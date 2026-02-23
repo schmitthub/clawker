@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -89,11 +90,7 @@ func NewSessionStore(baseDir string) *SessionStore {
 
 // DefaultSessionStore returns a session store using the default clawker directory.
 func DefaultSessionStore() (*SessionStore, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
-	}
-	baseDir := filepath.Join(home, ".local", "clawker", "loop")
+	baseDir := filepath.Join(config.StateDir(), "loop")
 	return NewSessionStore(baseDir), nil
 }
 

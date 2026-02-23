@@ -52,7 +52,7 @@ func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) e
 		Long: `Starts one or more stopped clawker containers.
 
 When --agent is provided, the container name is resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent
@@ -111,7 +111,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 			cs := ios.ColorScheme()
 			fmt.Fprintf(ios.ErrOut, "%s Host proxy failed to start. Browser authentication may not work.\n", cs.WarningIcon())
 			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
-			fmt.Fprintln(ios.ErrOut, "  1. To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+			fmt.Fprintln(ios.ErrOut, "  1. To disable: set 'security.enable_host_proxy: false' in .clawker.yaml")
 		} else {
 			ios.Logger.Debug().Msg("host proxy started successfully")
 		}

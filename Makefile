@@ -315,12 +315,12 @@ licenses-check:
 # Generate CLI reference docs
 docs:
 	@echo "Generating CLI reference docs..."
-	$(GO) run ./cmd/gen-docs --doc-path docs --markdown
+	$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
 
 # Check CLI docs are up to date (used by CI)
 docs-check:
 	@echo "Checking CLI docs freshness..."
-	@$(GO) run ./cmd/gen-docs --doc-path docs --markdown
+	@$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
 	@if ! git diff --quiet docs/cli-reference/; then \
 		echo "" >&2; \
 		echo "ERROR: CLI docs are out of date. Run 'make docs' and commit." >&2; \

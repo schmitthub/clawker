@@ -1,3 +1,7 @@
+---
+title: "clawker container stop"
+---
+
 ## clawker container stop
 
 Stop one or more running containers
@@ -9,8 +13,8 @@ Stops one or more running clawker containers.
 The container is sent a SIGTERM signal, then after a timeout period (default 10s),
 it is sent SIGKILL if still running.
 
-When --agent is provided, the container names are resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+When --agent is provided, the container names are resolved as clawker.`<project>`.`<agent>`
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent
@@ -53,4 +57,4 @@ clawker container stop [CONTAINER...] [flags]
 
 ### See also
 
-* [clawker container](clawker_container.md) - Manage containers
+* [clawker container](clawker_container) - Manage containers

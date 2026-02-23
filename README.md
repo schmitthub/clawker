@@ -145,7 +145,7 @@ Here are ways I'm using `clawker` today and how I'm finding it useful.
 clawker init
 ```
 
-This is going to create a `~/.local/config/clawker` directory (configurable with `CLAWKER_CONFIG_DIR`) where all of Clawker's global user settings live. Clawker also stores logs, state, and caches using `XDG` directories (`XDG_CACHE_HOME`, `XDG_STATE_HOME`, `XDG_DATA_HOME`). It is also going to ask you if you want to create a default fallback image to use when you aren't in a project directory. This image is optional but it can be a nice sandbox to have around for quick experimentation when you don't want to set up a whole project. You can also use it as a base image for your projects if you want to share common dependencies across them.
+This is going to create a `~/.config/clawker` directory (configurable with `CLAWKER_CONFIG_DIR`) where all of Clawker's global user settings live. Clawker also stores logs, state, and caches using `XDG` directories (`XDG_CACHE_HOME`, `XDG_STATE_HOME`, `XDG_DATA_HOME`). It is also going to ask you if you want to create a default fallback image to use when you aren't in a project directory. This image is optional but it can be a nice sandbox to have around for quick experimentation when you don't want to set up a whole project. You can also use it as a base image for your projects if you want to share common dependencies across them.
 
 #### Start a project
 

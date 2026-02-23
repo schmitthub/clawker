@@ -267,9 +267,6 @@ func (p *projectHandle) CreateWorktree(ctx context.Context, branch, base string)
 	if p == nil || p.manager == nil {
 		return "", ErrProjectHandleNotInitialized
 	}
-	if err := p.ensureProjectDir(); err != nil {
-		return "", err
-	}
 	worktreePath, err := p.manager.worktrees().CreateWorktree(ctx, branch, base)
 	if err != nil {
 		return "", err
@@ -447,17 +444,6 @@ func (s *projectManager) registry() *projectRegistry {
 
 func (s *projectManager) worktrees() *worktreeService {
 	return newWorktreeService(s.cfg, s.registryStore, s.newGitMgr)
-}
-
-func (p *projectHandle) ensureProjectDir() error {
-	if p == nil {
-		return ErrProjectHandleNotInitialized
-	}
-	projectDir := filepath.Join(config.ConfigDir(), "projects")
-	if err := os.MkdirAll(projectDir, 0o755); err != nil {
-		return fmt.Errorf("ensuring project directory %s: %w", projectDir, err)
-	}
-	return nil
 }
 
 func projectRecordFromEntry(entry config.ProjectEntry) ProjectRecord {

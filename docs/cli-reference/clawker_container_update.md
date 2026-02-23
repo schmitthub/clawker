@@ -1,3 +1,7 @@
+---
+title: "clawker container update"
+---
+
 ## clawker container update
 
 Update configuration of one or more containers
@@ -9,8 +13,8 @@ Update configuration of one or more containers.
 This command updates the resource limits of containers that are already running
 or have been created but not yet started.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent
@@ -68,4 +72,4 @@ clawker container update [OPTIONS] [CONTAINER...] [flags]
 
 ### See also
 
-* [clawker container](clawker_container.md) - Manage containers
+* [clawker container](clawker_container) - Manage containers

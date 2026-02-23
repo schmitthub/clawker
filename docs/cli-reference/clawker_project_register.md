@@ -1,3 +1,7 @@
+---
+title: "clawker project register"
+---
+
 ## clawker project register
 
 Register an existing clawker project in the local registry
@@ -11,7 +15,7 @@ If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default). Use --yes to accept the directory name
 without prompting.
 
-This is useful when a clawker.yaml was manually created, copied from another
+This is useful when a .clawker.yaml was manually created, copied from another
 machine, or already exists and you want to register it locally.
 
 ```
@@ -46,4 +50,4 @@ clawker project register [project-name] [flags]
 
 ### See also
 
-* [clawker project](clawker_project.md) - Manage clawker projects
+* [clawker project](clawker_project) - Manage clawker projects

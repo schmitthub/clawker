@@ -3,7 +3,6 @@ package factory
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -95,7 +94,7 @@ func ioStreams(f *cmdutil.Factory) *iostreams.IOStreams {
 		}
 	}
 
-	logsDir := filepath.Join(config.ConfigDir(), "logs")
+	logsDir, _ := cfg.LogsSubdir()
 	if err := logger.NewLogger(&logger.Options{
 		LogsDir: logsDir,
 		FileConfig: &logger.LoggingConfig{

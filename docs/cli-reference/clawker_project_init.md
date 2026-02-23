@@ -1,10 +1,14 @@
+---
+title: "clawker project init"
+---
+
 ## clawker project init
 
 Initialize a new clawker project in the current directory
 
 ### Synopsis
 
-Creates a clawker.yaml configuration file and .clawkerignore in the current directory if they don't exist'.
+Creates a .clawker.yaml configuration file and .clawkerignore in the current directory if they don't exist'.
 
 If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default).
@@ -52,4 +56,4 @@ clawker project init [project-name] [flags]
 
 ### See also
 
-* [clawker project](clawker_project.md) - Manage clawker projects
+* [clawker project](clawker_project) - Manage clawker projects

@@ -1766,7 +1766,7 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 	if err := hp.EnsureRunning(); err != nil {
 		log.Warn().Err(err).Msg("failed to start host proxy server")
 		sendWarning(ctx, events, "environment", "Host proxy failed to start. Browser authentication may not work.")
-		sendWarning(ctx, events, "environment", "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+		sendWarning(ctx, events, "environment", "To disable: set 'security.enable_host_proxy: false' in .clawker.yaml")
 		return false
 	}
 

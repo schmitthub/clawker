@@ -1,3 +1,7 @@
+---
+title: "clawker rename"
+---
+
 ## clawker rename
 
 Rename a container
@@ -6,8 +10,8 @@ Rename a container
 
 Renames a clawker container.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration, and only NEW_NAME is required.
+When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
+using the project from your .clawker.yaml configuration, and only NEW_NAME is required.
 
 Container names can be:
   - Full name: clawker.myproject.myagent
@@ -42,4 +46,4 @@ clawker rename CONTAINER NEW_NAME [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

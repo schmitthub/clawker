@@ -1,3 +1,7 @@
+---
+title: "clawker monitor init"
+---
+
 ## clawker monitor init
 
 Scaffold monitoring configuration files
@@ -47,4 +51,4 @@ clawker monitor init [flags]
 
 ### See also
 
-* [clawker monitor](clawker_monitor.md) - Manage local observability stack
+* [clawker monitor](clawker_monitor) - Manage local observability stack

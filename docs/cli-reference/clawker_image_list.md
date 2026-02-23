@@ -1,3 +1,7 @@
+---
+title: "clawker image list"
+---
+
 ## clawker image list
 
 List images
@@ -61,4 +65,4 @@ clawker image list [flags]
 
 ### See also
 
-* [clawker image](clawker_image.md) - Manage images
+* [clawker image](clawker_image) - Manage images

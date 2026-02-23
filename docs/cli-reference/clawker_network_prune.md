@@ -1,3 +1,7 @@
+---
+title: "clawker network prune"
+---
+
 ## clawker network prune
 
 Remove unused networks
@@ -41,4 +45,4 @@ clawker network prune [OPTIONS] [flags]
 
 ### See also
 
-* [clawker network](clawker_network.md) - Manage networks
+* [clawker network](clawker_network) - Manage networks

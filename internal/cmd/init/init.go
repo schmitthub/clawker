@@ -39,7 +39,7 @@ func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) err
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize clawker user settings",
-		Long: `Creates or updates the user settings file at ~/.local/clawker/settings.yaml.
+		Long: `Creates or updates the user settings file at ~/.config/clawker/settings.yaml.
 
 This command sets up user-level defaults that apply across all clawker projects.
 In interactive mode (default), you will be prompted to:
@@ -249,7 +249,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 			fmt.Fprintln(ios.ErrOut)
 			fmt.Fprintln(ios.ErrOut, "Next Steps:")
 			fmt.Fprintf(ios.ErrOut, "  1. %s\n", "You can manually build later with 'clawker generate latest && docker build ...'")
-			fmt.Fprintf(ios.ErrOut, "  2. %s\n", "Or specify images per-project in clawker.yaml")
+			fmt.Fprintf(ios.ErrOut, "  2. %s\n", "Or specify images per-project in .clawker.yaml")
 			return nil // early return to avoid duplicate next steps
 		}
 

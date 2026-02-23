@@ -1,3 +1,7 @@
+---
+title: "clawker kill"
+---
+
 ## clawker kill
 
 Kill one or more running containers
@@ -9,8 +13,8 @@ Kills one or more running clawker containers.
 The main process inside the container is sent SIGKILL signal (default),
 or the signal specified with the --signal option.
 
-When --agent is provided, the container names are resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+When --agent is provided, the container names are resolved as clawker.`<project>`.`<agent>`
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent
@@ -53,4 +57,4 @@ clawker kill [OPTIONS] CONTAINER [CONTAINER...] [flags]
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

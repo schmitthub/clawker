@@ -1,3 +1,7 @@
+---
+title: "clawker image"
+---
+
 ## clawker image
 
 Manage images
@@ -30,11 +34,11 @@ image management commands.
 
 ### Subcommands
 
-* [clawker image build](clawker_image_build.md) - Build an image from a clawker project
-* [clawker image inspect](clawker_image_inspect.md) - Display detailed information on one or more images
-* [clawker image list](clawker_image_list.md) - List images
-* [clawker image prune](clawker_image_prune.md) - Remove unused images
-* [clawker image remove](clawker_image_remove.md) - Remove one or more images
+* [clawker image build](clawker_image_build) - Build an image from a clawker project
+* [clawker image inspect](clawker_image_inspect) - Display detailed information on one or more images
+* [clawker image list](clawker_image_list) - List images
+* [clawker image prune](clawker_image_prune) - Remove unused images
+* [clawker image remove](clawker_image_remove) - Remove one or more images
 
 ### Options
 
@@ -50,4 +54,4 @@ image management commands.
 
 ### See also
 
-* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker

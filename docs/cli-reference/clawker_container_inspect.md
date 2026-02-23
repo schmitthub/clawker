@@ -1,3 +1,7 @@
+---
+title: "clawker container inspect"
+---
+
 ## clawker container inspect
 
 Display detailed information on one or more containers
@@ -8,8 +12,8 @@ Returns low-level information about clawker containers.
 
 By default, outputs JSON. Use --format to extract specific fields.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
-using the project from your clawker.yaml configuration.
+When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
+using the project from your .clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent
@@ -55,4 +59,4 @@ clawker container inspect [OPTIONS] CONTAINER [CONTAINER...] [flags]
 
 ### See also
 
-* [clawker container](clawker_container.md) - Manage containers
+* [clawker container](clawker_container) - Manage containers

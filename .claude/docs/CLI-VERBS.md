@@ -615,7 +615,7 @@ Error: Could not resolve image
 
 Next steps:
   1. Run 'clawker build' to build a project image
-  2. Set 'default_image' in clawker.yaml or ~/.local/clawker/settings.yaml
+  2. Set 'default_image' in clawker.yaml or ~/.config/clawker/settings.yaml
   3. Or specify an image directly: clawker run IMAGE
 ```
 

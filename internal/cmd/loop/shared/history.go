@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/config"
 )
 
 const (
@@ -60,11 +62,7 @@ func NewHistoryStore(baseDir string) *HistoryStore {
 
 // DefaultHistoryStore returns a history store using the default clawker directory.
 func DefaultHistoryStore() (*HistoryStore, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
-	}
-	baseDir := filepath.Join(home, ".local", "clawker", "loop", "history")
+	baseDir := filepath.Join(config.StateDir(), "loop", "history")
 	return NewHistoryStore(baseDir), nil
 }
 

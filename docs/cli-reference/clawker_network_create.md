@@ -1,3 +1,7 @@
+---
+title: "clawker network create"
+---
+
 ## clawker network create
 
 Create a network
@@ -49,4 +53,4 @@ clawker network create [OPTIONS] NETWORK [flags]
 
 ### See also
 
-* [clawker network](clawker_network.md) - Manage networks
+* [clawker network](clawker_network) - Manage networks

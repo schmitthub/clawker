@@ -1,3 +1,7 @@
+---
+title: "clawker loop iterate"
+---
+
 ## clawker loop iterate
 
 Run an agent loop with a repeated prompt
@@ -87,4 +91,4 @@ clawker loop iterate [flags]
 
 ### See also
 
-* [clawker loop](clawker_loop.md) - Run Claude Code in autonomous loops
+* [clawker loop](clawker_loop) - Run Claude Code in autonomous loops
