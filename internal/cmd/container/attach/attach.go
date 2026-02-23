@@ -61,9 +61,7 @@ Container name can be:
 
   # Attach without stdin (output only)
   clawker container attach --no-stdin --agent dev
-
-  # Attach with custom detach keys
-  clawker container attach --agent dev`,
+`,
 		Args: cmdutil.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.container = args[0]

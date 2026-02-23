@@ -19,7 +19,6 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -441,9 +440,6 @@ security: { enable_host_proxy: false, firewall: { enable: false } }
 			}
 			return mock, nil
 		},
-		GitManager: func() (*git.GitManager, error) {
-			return nil, fmt.Errorf("GitManager not available in test")
-		},
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()
 		},
@@ -609,9 +605,6 @@ agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 			},
 			Config: func() (config.Config, error) {
 				return useHostAuthCfg, nil
-			},
-			GitManager: func() (*git.GitManager, error) {
-				return nil, fmt.Errorf("GitManager not available in test")
 			},
 			HostProxy: func() hostproxy.HostProxyService {
 				return hostproxytest.NewMockManager()

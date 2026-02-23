@@ -14,10 +14,10 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/logger/loggertest"
+	projectpkg "github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -80,8 +80,8 @@ func testCreateConfig(fake *dockertest.FakeClient, project *config.Project, cont
 		Options:     containerOpts,
 		Flags:       cmd.Flags(),
 		Logger:      loggertest.NewNop(),
-		GitManager: func() (*git.GitManager, error) {
-			return nil, fmt.Errorf("GitManager not available in test")
+		ProjectManager: func() (projectpkg.ProjectManager, error) {
+			return nil, fmt.Errorf("ProjectManager not available in test")
 		},
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()
@@ -193,8 +193,8 @@ func TestCreateContainer_HostProxyFailure(t *testing.T) {
 		Options: containerOpts,
 		Flags:   cmd.Flags(),
 		Logger:  loggertest.NewNop(),
-		GitManager: func() (*git.GitManager, error) {
-			return nil, fmt.Errorf("GitManager not available in test")
+		ProjectManager: func() (projectpkg.ProjectManager, error) {
+			return nil, fmt.Errorf("ProjectManager not available in test")
 		},
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewFailingMockManager(fmt.Errorf("mock host proxy failure"))

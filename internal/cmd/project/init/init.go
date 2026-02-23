@@ -117,11 +117,11 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 
 	cfgGateway, err := opts.Config()
 	if err != nil {
-		return fmt.Errorf("error loading config: %w", err)
+		return fmt.Errorf("loading config: %w", err)
 	}
 	projectManager, err := opts.ProjectManager()
 	if err != nil {
-		return fmt.Errorf("error initializing project manager: %w", err)
+		return fmt.Errorf("initializing project manager: %w", err)
 	}
 
 	configFileName := "." + cfgGateway.ProjectConfigFileName()
@@ -310,7 +310,7 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 
 	// Register project in user settings
 	if _, err := projectManager.Register(ctx, projectName, wd); err != nil {
-		ios.Logger.Debug().Err(err).Msg("failed to register project during init")
+		return fmt.Errorf("could not register project: %w", err)
 	}
 
 	// Success output
@@ -328,7 +328,7 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 	fmt.Fprintln(ios.Out)
 	fmt.Fprintln(ios.Out, "Next Steps:")
 	fmt.Fprintf(ios.Out, "  1. Review and customize %s\n", configFileName)
-	fmt.Fprintf(ios.Out, "  2. Run 'clawker build' to create your project image Claude in a container\n")
+	fmt.Fprintf(ios.Out, "  2. Run 'clawker build' to build your project's container image\n")
 	fmt.Fprintf(ios.Out, "  3. Run 'clawker run -it --agent <agent-name> @' to start an interactive shell in the container\n")
 	return nil
 }

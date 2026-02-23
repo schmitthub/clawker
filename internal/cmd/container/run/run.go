@@ -13,7 +13,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
@@ -34,7 +33,6 @@ type RunOptions struct {
 	Client         func(context.Context) (*docker.Client, error)
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
-	GitManager     func() (*git.GitManager, error)
 	HostProxy      func() hostproxy.HostProxyService
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
@@ -60,7 +58,6 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		Client:           f.Client,
 		Config:           f.Config,
 		ProjectManager:   f.ProjectManager,
-		GitManager:       f.GitManager,
 		HostProxy:        f.HostProxy,
 		SocketBridge:     f.SocketBridge,
 		Prompter:         f.Prompter,
@@ -193,18 +190,18 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	go func() {
 		defer close(events)
 		r, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
-			Client:      client,
-			Cfg:         cfgGateway,
-			Config:      cfg,
-			ProjectName: projectName,
-			Options:     containerOpts,
-			Flags:       opts.flags,
-			Version:     opts.Version,
-			GitManager:  opts.GitManager,
-			HostProxy:   opts.HostProxy,
-			Logger:      ios.Logger,
-			Is256Color:  ios.Is256ColorSupported(),
-			IsTrueColor: ios.IsTrueColorSupported(),
+			Client:         client,
+			Cfg:            cfgGateway,
+			Config:         cfg,
+			ProjectName:    projectName,
+			Options:        containerOpts,
+			Flags:          opts.flags,
+			Version:        opts.Version,
+			ProjectManager: opts.ProjectManager,
+			HostProxy:      opts.HostProxy,
+			Logger:         ios.Logger,
+			Is256Color:     ios.Is256ColorSupported(),
+			IsTrueColor:    ios.IsTrueColorSupported(),
 		}, events)
 		done <- outcome{r, err}
 	}()

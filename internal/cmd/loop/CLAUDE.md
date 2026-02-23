@@ -116,7 +116,7 @@ Result output formatting:
 
 Container lifecycle management for loop commands:
 
-- `LoopContainerConfig` — all inputs: Client, Config, LoopOpts, Flags, Version, GitManager, HostProxy, SocketBridge, IOStreams
+- `LoopContainerConfig` — all inputs: Client, Config, LoopOpts, Flags, Version, ProjectManager, HostProxy, SocketBridge, IOStreams
 - `LoopContainerResult` — outputs: ContainerID, ContainerName, AgentName, Project, WorkDir
 - `SetupLoopContainer(ctx, cfg) (*LoopContainerResult, func(), error)` — creates container via `container/shared.CreateContainer`, injects hooks, starts container, returns cleanup function
 - `InjectLoopHooks(ctx, containerID, hooksFile, copyFn) error` — resolves hooks (default or custom), writes settings.json + hook scripts to container

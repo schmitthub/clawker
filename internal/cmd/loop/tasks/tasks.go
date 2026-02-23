@@ -13,7 +13,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
@@ -32,7 +31,6 @@ type TasksOptions struct {
 	Client         func(context.Context) (*docker.Client, error)
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
-	GitManager     func() (*git.GitManager, error)
 	HostProxy      func() hostproxy.HostProxyService
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
@@ -62,7 +60,6 @@ func NewCmdTasks(f *cmdutil.Factory, runF func(context.Context, *TasksOptions) e
 		Client:         f.Client,
 		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
-		GitManager:     f.GitManager,
 		HostProxy:      f.HostProxy,
 		SocketBridge:   f.SocketBridge,
 		Prompter:       f.Prompter,
@@ -229,17 +226,17 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 
 	// 5. Build per-iteration container factory
 	createContainer := shared.MakeCreateContainerFunc(&shared.LoopContainerConfig{
-		Client:       client,
-		Command:      cmd,
-		Config:       cfgGateway,
-		ProjectName:  projectName,
-		LoopOpts:     opts.LoopOptions,
-		Flags:        opts.flags,
-		Version:      opts.Version,
-		GitManager:   opts.GitManager,
-		HostProxy:    opts.HostProxy,
-		SocketBridge: opts.SocketBridge,
-		IOStreams:    ios,
+		Client:         client,
+		Command:        cmd,
+		Config:         cfgGateway,
+		ProjectName:    projectName,
+		LoopOpts:       opts.LoopOptions,
+		Flags:          opts.flags,
+		Version:        opts.Version,
+		ProjectManager: opts.ProjectManager,
+		HostProxy:      opts.HostProxy,
+		SocketBridge:   opts.SocketBridge,
+		IOStreams:      ios,
 	})
 
 	// 6. Create runner

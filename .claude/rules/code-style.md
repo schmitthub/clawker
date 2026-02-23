@@ -60,10 +60,8 @@ fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available"
 - **Tables**: `f.TUI.NewTable(headers...)` — never raw `tabwriter`
 - **Semantic colors**: `cs.Primary/Success/Warning/Error()` via `ios.ColorScheme()`
 - **Icons**: `cs.SuccessIcon()`, `cs.WarningIcon()`, `cs.FailureIcon()`, `cs.InfoIcon()`
-- **Data output**: `ios.Out` (stdout) — tables, IDs, JSON, command results
-- **Status messages**: `ios.ErrOut` (stderr) — "Created X", "Removed Y", success confirmations
+- **User info**: `ios.Out` (stdout) — tables, IDs, JSON, command results, status messages ("Created X", "Removed Y"), success confirmations, next steps guidance
 - **Warnings**: `ios.ErrOut` (stderr) — always visible regardless of piping
-- **Next steps**: `ios.ErrOut` (stderr) — guidance, not data
 - **Errors**: Return typed errors to Main() for centralized rendering — never print errors directly
   - `return fmt.Errorf("context: %w", err)` — default error
   - `return cmdutil.FlagErrorf("bad flag: %s", val)` — triggers usage display

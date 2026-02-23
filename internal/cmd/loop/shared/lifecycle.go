@@ -13,9 +13,9 @@ import (
 	containershared "github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/pflag"
 )
@@ -54,8 +54,8 @@ type LoopContainerConfig struct {
 	// Version is the clawker build version.
 	Version string
 
-	// GitManager returns the git manager.
-	GitManager func() (*git.GitManager, error)
+	// ProjectManager returns the project manager for worktree registration.
+	ProjectManager func() (project.ProjectManager, error)
 
 	// HostProxy returns the host proxy service.
 	HostProxy func() hostproxy.HostProxyService
@@ -137,18 +137,18 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 		go func() {
 			defer close(events)
 			r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerConfig{
-				Client:      cfg.Client,
-				Cfg:         cfg.Config,
-				Config:      cfg.Config.Project(),
-				ProjectName: cfg.ProjectName,
-				Options:     containerOpts,
-				Flags:       cfg.Flags,
-				Version:     cfg.Version,
-				GitManager:  cfg.GitManager,
-				HostProxy:   cfg.HostProxy,
-				Logger:      cfg.IOStreams.Logger,
-				Is256Color:  cfg.IOStreams.Is256ColorSupported(),
-				IsTrueColor: cfg.IOStreams.IsTrueColorSupported(),
+				Client:         cfg.Client,
+				Cfg:            cfg.Config,
+				Config:         cfg.Config.Project(),
+				ProjectName:    cfg.ProjectName,
+				Options:        containerOpts,
+				Flags:          cfg.Flags,
+				Version:        cfg.Version,
+				ProjectManager: cfg.ProjectManager,
+				HostProxy:      cfg.HostProxy,
+				Logger:         cfg.IOStreams.Logger,
+				Is256Color:     cfg.IOStreams.Is256ColorSupported(),
+				IsTrueColor:    cfg.IOStreams.IsTrueColorSupported(),
 			}, events)
 			done <- outcome{r, err}
 		}()
@@ -240,17 +240,17 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 	go func() {
 		defer close(events)
 		r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerConfig{
-			Client:      cfg.Client,
-			Config:      projectCfg,
-			ProjectName: cfg.ProjectName,
-			Options:     containerOpts,
-			Flags:       cfg.Flags,
-			Version:     cfg.Version,
-			GitManager:  cfg.GitManager,
-			HostProxy:   cfg.HostProxy,
-			Logger:      ios.Logger,
-			Is256Color:  ios.Is256ColorSupported(),
-			IsTrueColor: ios.IsTrueColorSupported(),
+			Client:         cfg.Client,
+			Config:         projectCfg,
+			ProjectName:    cfg.ProjectName,
+			Options:        containerOpts,
+			Flags:          cfg.Flags,
+			Version:        cfg.Version,
+			ProjectManager: cfg.ProjectManager,
+			HostProxy:      cfg.HostProxy,
+			Logger:         ios.Logger,
+			Is256Color:     ios.Is256ColorSupported(),
+			IsTrueColor:    ios.IsTrueColorSupported(),
 		}, events)
 		done <- outcome{r, err}
 	}()

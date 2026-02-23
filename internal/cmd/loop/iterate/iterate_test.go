@@ -404,7 +404,7 @@ func TestNewCmdIterate_FactoryDIWiring(t *testing.T) {
 	// Verify all Factory DI fields are wired
 	assert.NotNil(t, gotOpts.IOStreams, "IOStreams should be wired")
 	assert.NotNil(t, gotOpts.TUI, "TUI should be wired")
-	// Client, Config, GitManager, HostProxy, SocketBridge, Prompter may be nil
+	// Client, Config, HostProxy, SocketBridge, Prompter may be nil
 	// on test Factory — the important thing is the field exists and is set
 	assert.Nil(t, gotOpts.HostProxy, "HostProxy should be nil for test factory")
 	assert.Nil(t, gotOpts.SocketBridge, "SocketBridge should be nil for test factory")

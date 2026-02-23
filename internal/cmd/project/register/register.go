@@ -84,18 +84,18 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 
 	cfgGateway, err := opts.Config()
 	if err != nil {
-		return fmt.Errorf("error loading config: %w", err)
+		return fmt.Errorf("loading config: %w", err)
 	}
 	projectManager, err := opts.ProjectManager()
 	if err != nil {
-		return fmt.Errorf("error initializing project manager: %w", err)
+		return fmt.Errorf("initializing project manager: %w", err)
 	}
 
 	// Require an existing .clawker.yaml
 	configFileName := cfgGateway.ProjectConfigFileName()
 	configPath := filepath.Join(wd, configFileName)
 	if _, err := os.Stat(configPath); err != nil {
-		return fmt.Errorf("no %s found", configFileName)
+		return fmt.Errorf("no %s found — run 'clawker project init' first", configFileName)
 	}
 
 	// Determine project name

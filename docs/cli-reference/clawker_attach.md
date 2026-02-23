@@ -36,8 +36,6 @@ clawker attach CONTAINER [flags]
   # Attach without stdin (output only)
   clawker container attach --no-stdin --agent dev
 
-  # Attach with custom detach keys
-  clawker container attach --agent dev
 ```
 
 ### Options

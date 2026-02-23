@@ -85,35 +85,6 @@ get_total_output_tokens() { echo "$input" | jq -r '.context_window.total_output_
 get_used_percentage() { echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1; }
 get_duration() { echo "$input" | jq -r '.cost.total_duration_ms // 0'; }
 
-# Refresh the usage cache if stale or missing
-refresh_usage_cache() {
-    if [ -f "$USAGE_CACHE" ]; then
-        if [ "$(uname)" = "Darwin" ]; then
-            cache_age=$(( $(date +%s) - $(stat -f %m "$USAGE_CACHE") ))
-        else
-            cache_age=$(( $(date +%s) - $(stat -c %Y "$USAGE_CACHE") ))
-        fi
-        [ "$cache_age" -lt "$USAGE_CACHE_MAX_AGE" ] && return 0
-    fi
-
-    local raw_cred
-    raw_cred=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null) || return 1
-    [ -z "$raw_cred" ] && return 1
-
-    local token
-    token=$(echo "$raw_cred" | jq -r '.claudeAiOauth.accessToken // .accessToken // empty' 2>/dev/null)
-    [ -z "$token" ] && token="$raw_cred"
-
-    local response
-    response=$(curl -s --max-time 3 \
-        -H "Authorization: Bearer $token" \
-        -H "anthropic-beta: oauth-2025-04-20" \
-        https://api.anthropic.com/api/oauth/usage 2>/dev/null) || return 1
-
-    echo "$response" | jq -e '.five_hour.utilization' >/dev/null 2>&1 || return 1
-    echo "$response" > "$USAGE_CACHE"
-}
-
 # Render a usage bar: render_bar <utilization_pct> <label>
 render_bar() {
     local util="$1" label="$2" bar_width=10
@@ -322,22 +293,6 @@ stats=""
 [ -n "$duration_display" ] && stats+=" ${duration_display}"
 if [ -n "$stats" ]; then
     line2+="${SEP}${stats# }"  # trim leading space
-fi
-
-# Section 4: Subscription usage (macOS keychain — silently skipped in containers)
-if refresh_usage_cache 2>/dev/null; then
-    five_hour=$(jq -r '.five_hour.utilization // empty' "$USAGE_CACHE" 2>/dev/null)
-    seven_day=$(jq -r '.seven_day.utilization // empty' "$USAGE_CACHE" 2>/dev/null)
-    five_hour_resets=$(jq -r '.five_hour.resets_at // empty' "$USAGE_CACHE" 2>/dev/null)
-    seven_day_resets=$(jq -r '.seven_day.resets_at // empty' "$USAGE_CACHE" 2>/dev/null)
-
-    if [ -n "$five_hour" ] && [ -n "$seven_day" ]; then
-        label_5h=$(format_remaining "$five_hour_resets" "5h")
-        label_7d=$(format_remaining "$seven_day_resets" "7d")
-        bar_5h=$(render_bar "$five_hour" "$label_5h")
-        bar_7d=$(render_bar "$seven_day" "$label_7d")
-        line2+="${SEP}${bar_5h} ${bar_7d}"
-    fi
 fi
 
 # Lines added/removed (end of line 2)
