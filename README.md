@@ -115,7 +115,7 @@ export PATH="$PWD/bin:$PATH"
 
 ## Quick Start
 
-Fastest path to a seamless containerized Claude Code instance with all your host settings, plugins, and creds copied in so you can get to work right away. 
+The fastest path to a seamless containerized Claude Code instance, with all your host settings, plugins, and creds copied in so you can get to work right away.
 
 ```bash
 cd your-project
@@ -124,9 +124,16 @@ clawker build
 clawker run -it --rm --agent example @ --dangerously-skip-permissions
 ```
 
-This gets you a project scoped container image (clawker-<project>:latest) built with the default Dockerfile template, then starts a container with all your host Claude Code settings, plugins, authentication, skills, etc copied in for a seamless transition from host to container development. The `--rm` flag means the container will be removed when you exit it, so it's perfect for quick tasks or experimentation. If you want persistence, just omit the `--rm` flag and you can start the same container back up again later after exiting with `clawker start -a -i --agent example` (or you can leave it running via detach `ctrl p+q`, reattach later `clawker attach --agent example` to the same terminal session).  
+This:
+- Builds a project-scoped container image (`clawker-<project>:latest`, with `@` as a shortcut when you are in the project directory), using the default Dockerfile template
+- Starts and attaches your terminal to the container (`clawker.<project>.example`) using that image (via the `@` identifier), with your current working directory bind-mounted (i.e., live share)
+- Copies your host Claude Code settings, plugins, authentication, skills, etc. for a seamless transition from host to container development.
+ 
+The `--rm` flag removes the container when you exit, so it's perfect for quick tasks or experimentation.
+If you want persistence, omit `--rm` and start the same container again later with `clawker start -a -i --agent example`.
+You can also keep it running by detaching (`Ctrl+P`, `Ctrl+Q`) and reattach later with `clawker attach --agent example` to the same terminal session.
 
-If you want to learn more about image customization, worktree support, loops, monitoring, and all the other bells and whistles keep reading for the walkthrough below.
+If you want to learn more about image customization, worktree support, loops, monitoring, and other bells and whistles, keep reading for the walkthrough below.
 
 ## Walkthrough
 
