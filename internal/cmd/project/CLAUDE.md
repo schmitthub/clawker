@@ -9,6 +9,8 @@ Project lifecycle management (initialization and registration).
 | `project.go` | `NewCmdProject(f)` — parent command |
 | `init/init.go` | `NewCmdProjectInit(f, runF)` — initialize project via TUI wizard |
 | `register/register.go` | `NewCmdProjectRegister(f, runF)` — register existing project |
+| `shared/discovery.go` | `HasLocalProjectConfig(cfg, dir)` — config existence check via storage layers + fallback probe |
+| `shared/discovery_test.go` | Table-driven tests: registered/unregistered × all config placements |
 
 ## Subcommands
 
@@ -78,6 +80,17 @@ Run()
 
 `maybeOfferUserDefault` uses `prompter.Confirm` (not wizard) to offer saving config as user-level default. This is a one-off post-action offer, separate from the setup wizard.
 
+## Shared Utilities (`shared/`)
+
+### `HasLocalProjectConfig(cfg config.Config, dir string) bool`
+
+Checks whether a project config file exists in the given directory. Two-phase:
+
+1. **Fast path**: Checks the factory-constructed config's discovered layers (covers registered projects via walk-up).
+2. **Fallback**: Constructs a temporary `storage.NewStore[config.Project]` with `storage.WithDirs(dir)` to probe the directory using dual-placement discovery — works for unregistered projects where walk-up can't find the directory.
+
+Filenames are derived from `cfg.ProjectConfigFileName()` (main + `.local` variant). Used by both `init` and `register` to detect existing config before proceeding.
+
 ## Config Access Pattern
 
 Both commands use `config.Config` interface. `project init` uses `config.DefaultConfigYAML` as scaffold template, `config.UserProjectConfigFilePath()` for user-level default, and `project.ProjectManager` for registry.
@@ -92,4 +105,5 @@ Tests use `runF` injection for flag/option capture. Key patterns:
 
 ```bash
 go test ./internal/cmd/project/init/... -v
+go test ./internal/cmd/project/shared/... -v
 ```

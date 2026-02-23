@@ -37,6 +37,10 @@ func discover(opts *options) ([]discoveredFile, error) {
 		}
 	}
 
+	for _, dir := range opts.dirs {
+		files = append(files, probeDir(dir, opts.filenames)...)
+	}
+
 	files = append(files, probeExplicitDirs(opts.paths, opts.filenames)...)
 
 	return dedup(files), nil

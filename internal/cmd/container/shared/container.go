@@ -26,7 +26,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
@@ -1453,18 +1452,18 @@ type CreateContainerEvent struct {
 
 // CreateContainerConfig holds all inputs for CreateContainer.
 type CreateContainerConfig struct {
-	Client      *docker.Client
-	Cfg         config.Config
-	Config      *config.Project
-	ProjectName string
-	Options     *ContainerOptions
-	Flags       *pflag.FlagSet
-	Version     string
-	GitManager  func() (*git.GitManager, error)
-	HostProxy   func() hostproxy.HostProxyService
-	Logger      iostreams.Logger
-	Is256Color  bool
-	IsTrueColor bool
+	Client         *docker.Client
+	Cfg            config.Config
+	Config         *config.Project
+	ProjectName    string
+	Options        *ContainerOptions
+	Flags          *pflag.FlagSet
+	Version        string
+	ProjectManager func() (project.ProjectManager, error)
+	HostProxy      func() hostproxy.HostProxyService
+	Logger         iostreams.Logger
+	Is256Color     bool
+	IsTrueColor    bool
 }
 
 // CreateContainerResult holds the outputs of CreateContainer.
@@ -1502,7 +1501,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		return nil, err
 	}
 
-	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, cfg.Cfg, agentName, cfg.GitManager, log)
+	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, cfg.Cfg, agentName, cfg.ProjectManager, log)
 	if err != nil {
 		return nil, err
 	}
@@ -1713,26 +1712,34 @@ func sendCached(ctx context.Context, ch chan<- CreateContainerEvent, step, msg s
 // --- Internal helpers (absorbed from init.go) ---
 
 // resolveWorkDir determines the working directory for the container.
-func resolveWorkDir(_ context.Context, containerOpts *ContainerOptions, cfgGateway config.Config, agentName string, gitMgr func() (*git.GitManager, error), log iostreams.Logger) (wd string, projectRootDir string, err error) {
+// When --worktree is set, it routes through ProjectManager to ensure the worktree
+// is registered in the project registry (not just created at the git level).
+func resolveWorkDir(ctx context.Context, containerOpts *ContainerOptions, cfgGateway config.Config, agentName string, projectManager func() (project.ProjectManager, error), log iostreams.Logger) (wd string, projectRootDir string, err error) {
 	if containerOpts.Worktree != "" {
 		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, agentName)
 		if err != nil {
 			return "", "", fmt.Errorf("invalid --worktree flag: %w", err)
 		}
 
-		gm, err := gitMgr()
+		if projectManager == nil {
+			return "", "", fmt.Errorf("cannot use --worktree: project manager not available")
+		}
+		pm, err := projectManager()
 		if err != nil {
 			return "", "", fmt.Errorf("cannot use --worktree: %w", err)
 		}
 
-		projectRoot, _ := cfgGateway.GetProjectRoot()
-		dirs := project.NewWorktreeDirProvider(cfgGateway, projectRoot)
-		wd, err = gm.SetupWorktree(dirs, wtSpec.Branch, wtSpec.Base)
+		proj, err := pm.CurrentProject(ctx)
+		if err != nil {
+			return "", "", fmt.Errorf("cannot use --worktree: not in a registered project directory: %w", err)
+		}
+
+		wd, err = proj.CreateWorktree(ctx, wtSpec.Branch, wtSpec.Base)
 		if err != nil {
 			return "", "", fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, agentName, err)
 		}
 		log.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("using git worktree")
-		return wd, projectRoot, nil
+		return wd, proj.RepoPath(), nil
 	}
 
 	wd, _ = cfgGateway.GetProjectRoot()

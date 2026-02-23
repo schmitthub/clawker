@@ -72,7 +72,7 @@ type LayerInfo struct { Filename, Path string }
 
 ### Options (Construction)
 
-`WithFilenames(names...)`, `WithDefaults(yaml)`, `WithWalkUp()`, `WithConfigDir()`, `WithDataDir()`, `WithStateDir()`, `WithCacheDir()`, `WithPaths(dirs...)`, `WithMigrations(fns...)`, `WithLock()`
+`WithFilenames(names...)`, `WithDefaults(yaml)`, `WithWalkUp()`, `WithDirs(dirs...)`, `WithConfigDir()`, `WithDataDir()`, `WithStateDir()`, `WithCacheDir()`, `WithPaths(dirs...)`, `WithMigrations(fns...)`, `WithLock()`
 
 ### Sentinel Errors
 
@@ -84,10 +84,11 @@ type LayerInfo struct { Filename, Path string }
 
 | Mode | Option | Behavior |
 |------|--------|----------|
-| Walk-up | `WithWalkUp()` | CWD → project root, dual placement per level (`.clawker/{file}` > `.{file}`). Bounded at project root. |
-| Explicit | `WithConfigDir()`, `WithDataDir()`, `WithPaths()` | Direct `{dir}/{filename}` probe. Lowest priority. |
+| Walk-up | `WithWalkUp()` | CWD → project root, dual placement per level (`.clawker/{file}` or `.{file}`). Bounded at project root. |
+| Dir probe | `WithDirs(dirs...)` | Dual placement per directory (`.clawker/{file}` or `.{file}`), no registry needed. First dir = highest priority. |
+| Explicit | `WithConfigDir()`, `WithDataDir()`, `WithPaths()` | Direct `{dir}/{filename}` probe (no dual placement). Lowest priority. |
 
-Overlapping discovery deduplicated by path. First occurrence wins.
+Priority: walk-up > dirs > explicit paths. Overlapping discovery deduplicated by path. First occurrence wins.
 
 ### Merge (`merge.go`)
 

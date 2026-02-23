@@ -11,7 +11,7 @@ Start one or more stopped containers
 Starts one or more stopped clawker containers.
 
 When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
-using the project from your .clawker.yaml configuration.
+if you are within a registered (clawker project init) project directory.
 
 Container names can be:
   - Full name: clawker.myproject.myagent
@@ -33,8 +33,8 @@ clawker container start [OPTIONS] CONTAINER [CONTAINER...] [flags]
   # Start multiple containers
   clawker container start clawker.myapp.dev clawker.myapp.writer
 
-  # Start and attach to container output
-  clawker container start --attach clawker.myapp.dev
+  # Start and attach your terminal
+  clawker container start -ia clawker.myapp.dev
 ```
 
 ### Options

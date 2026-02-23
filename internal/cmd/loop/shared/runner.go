@@ -528,10 +528,10 @@ mainLoop:
 		}
 	}
 
-	// Check if we hit max loops
+	// Check if we hit max loops — this is a normal exit condition, not an error.
+	// result.Error stays nil so JSON output reports success=true and exit code is 0.
 	if result.LoopsCompleted >= opts.MaxLoops && result.ExitReason == "" {
 		result.ExitReason = "max loops reached"
-		result.Error = fmt.Errorf("reached maximum loops (%d)", opts.MaxLoops)
 	}
 
 	if opts.Monitor != nil {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
+	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -50,7 +51,7 @@ If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default).
 
 In interactive mode (default), you will be prompted to configure:
-  - ProjectCfg name
+  - Project Name
   - Base container image
   - Default workspace mode (bind or snapshot)
 
@@ -128,13 +129,8 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	configPath := filepath.Join(wd, configFileName)
 	plainConfigPath := filepath.Join(wd, cfgGateway.ProjectConfigFileName())
 
-	// Check if configuration already exists (either dotfile or plain form)
-	configExists := false
-	if _, err := os.Stat(configPath); err == nil {
-		configExists = true
-	} else if _, err := os.Stat(plainConfigPath); err == nil {
-		configExists = true
-	}
+	// Check if configuration already exists via storage layer discovery.
+	configExists := shared.HasLocalProjectConfig(cfgGateway, wd)
 
 	absPath, err := filepath.Abs(wd)
 	if err != nil {
@@ -148,8 +144,8 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	}
 
 	// Print header
-	fmt.Fprintln(ios.ErrOut, "Setting up clawker project...")
-	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintln(ios.Out, "Setting up clawker project...")
+	fmt.Fprintln(ios.Out)
 
 	// Run wizard
 	wctx := wizardContext{
@@ -163,7 +159,7 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		return fmt.Errorf("wizard failed: %w", err)
 	}
 	if !result.Submitted {
-		fmt.Fprintln(ios.ErrOut, "Setup cancelled.")
+		fmt.Fprintln(ios.Out, "Setup cancelled.")
 		return nil
 	}
 
@@ -172,15 +168,19 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		registeredProject, regErr := projectManager.Register(ctx, dirName, wd)
 		if regErr != nil {
 			ios.Logger.Debug().Err(regErr).Msg("failed to register project during init (non-overwrite path)")
+			return fmt.Errorf("could not register project: %w", regErr)
 		}
 		if registeredProject != nil {
-			fmt.Fprintf(ios.ErrOut, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
+			fmt.Fprintf(ios.Out, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
 		}
 
 		// Still offer user-level default from existing config
 		existingContent, readErr := os.ReadFile(configPath)
 		if readErr != nil {
 			existingContent, readErr = os.ReadFile(plainConfigPath)
+			if readErr != nil {
+				ios.Logger.Debug().Err(readErr).Msg("failed to read existing config for user default offer")
+			}
 		}
 		if readErr == nil {
 			prompter := opts.Prompter()
@@ -213,16 +213,9 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	}
 
 	configFileName := "." + cfgGateway.ProjectConfigFileName()
-	configPath := filepath.Join(wd, configFileName)
-	plainConfigPath := filepath.Join(wd, cfgGateway.ProjectConfigFileName())
 
-	// Check if configuration already exists
-	configExists := false
-	if _, err := os.Stat(configPath); err == nil {
-		configExists = true
-	} else if _, err := os.Stat(plainConfigPath); err == nil {
-		configExists = true
-	}
+	// Check if configuration already exists via storage layer discovery.
+	configExists := shared.HasLocalProjectConfig(cfgGateway, wd)
 
 	if configExists && !opts.Force {
 		fmt.Fprintf(ios.ErrOut, "%s %s already exists\n", cs.FailureIcon(), configFileName)
@@ -306,14 +299,14 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 
 	// Register project in user settings
 	if _, err := projectManager.Register(ctx, projectName, wd); err != nil {
-		ios.Logger.Debug().Err(err).Msg("failed to register project during init")
+		return fmt.Errorf("could not register project: %w", err)
 	}
 
 	// Success output
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), configFileName)
-	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), ignoreFileName)
-	fmt.Fprintf(ios.ErrOut, "%s Project: %s\n", cs.InfoIcon(), projectName)
+	fmt.Fprintln(ios.Out)
+	fmt.Fprintf(ios.Out, "%s Created: %s\n", cs.SuccessIcon(), configFileName)
+	fmt.Fprintf(ios.Out, "%s Created: %s\n", cs.SuccessIcon(), ignoreFileName)
+	fmt.Fprintf(ios.Out, "%s Project: %s\n", cs.InfoIcon(), projectName)
 
 	// Offer to save as user-level default if not already present
 	if !opts.Yes && ios.IsInteractive() {
@@ -321,11 +314,11 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 		maybeOfferUserDefault(ios, cs, prompter, []byte(configContent))
 	}
 
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintln(ios.ErrOut, "Next Steps:")
-	fmt.Fprintf(ios.ErrOut, "  1. Review and customize %s\n", configFileName)
-	fmt.Fprintf(ios.ErrOut, "  2. Run 'clawker start' to start Claude in a container\n")
-
+	fmt.Fprintln(ios.Out)
+	fmt.Fprintln(ios.Out, "Next Steps:")
+	fmt.Fprintf(ios.Out, "  1. Review and customize %s\n", configFileName)
+	fmt.Fprintf(ios.Out, "  2. Run 'clawker build' to build your project's container image\n")
+	fmt.Fprintf(ios.Out, "  3. Run 'clawker run -it --agent <agent-name> @' to start an interactive shell in the container\n")
 	return nil
 }
 
@@ -445,7 +438,7 @@ func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, 
 		ios.Logger.Debug().Err(writeErr).Msg("failed to write user-level default config")
 		return
 	}
-	fmt.Fprintf(ios.ErrOut, "%s Default: %s\n", cs.SuccessIcon(), userConfigPath)
+	fmt.Fprintf(ios.Out, "%s Default: %s\n", cs.SuccessIcon(), userConfigPath)
 }
 
 // scaffoldProjectConfig creates the .clawker.yaml content from the canonical template.

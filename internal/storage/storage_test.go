@@ -815,3 +815,139 @@ func TestStore_CacheDir(t *testing.T) {
 		})
 	}
 }
+
+func TestStore_Dirs(t *testing.T) {
+	tests := []struct {
+		name       string
+		placement  string // "flat", "flat-yml", "dir", "none"
+		wantLayers int
+		wantName   string
+	}{
+		{
+			name:       "flat dotfile form",
+			placement:  "flat",
+			wantLayers: 1,
+			wantName:   "myproject",
+		},
+		{
+			name:       "flat dotfile .yml extension",
+			placement:  "flat-yml",
+			wantLayers: 1,
+			wantName:   "myproject",
+		},
+		{
+			name:       "dir form .clawker/config.yaml",
+			placement:  "dir",
+			wantLayers: 1,
+			wantName:   "myproject",
+		},
+		{
+			name:       "dir form .clawker/config.yml",
+			placement:  "dir-yml",
+			wantLayers: 1,
+			wantName:   "myproject",
+		},
+		{
+			name:       "no config file present",
+			placement:  "none",
+			wantLayers: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projectDir := t.TempDir()
+			yaml := "name: myproject\nbuild:\n  image: node:20\n"
+
+			switch tt.placement {
+			case "flat":
+				require.NoError(t, os.WriteFile(filepath.Join(projectDir, ".config.yaml"), []byte(yaml), 0o644))
+			case "flat-yml":
+				require.NoError(t, os.WriteFile(filepath.Join(projectDir, ".config.yml"), []byte(yaml), 0o644))
+			case "dir":
+				clawkerDir := filepath.Join(projectDir, ".clawker")
+				require.NoError(t, os.MkdirAll(clawkerDir, 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(clawkerDir, "config.yaml"), []byte(yaml), 0o644))
+			case "dir-yml":
+				clawkerDir := filepath.Join(projectDir, ".clawker")
+				require.NoError(t, os.MkdirAll(clawkerDir, 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(clawkerDir, "config.yml"), []byte(yaml), 0o644))
+			case "none":
+				// no file
+			}
+
+			store, err := NewStore[testConfig](
+				WithFilenames("config.yaml"),
+				WithDirs(projectDir),
+			)
+			require.NoError(t, err)
+
+			layers := store.Layers()
+			assert.Len(t, layers, tt.wantLayers)
+
+			if tt.wantName != "" {
+				assert.Equal(t, tt.wantName, store.Get().Name)
+			}
+		})
+	}
+}
+
+func TestStore_Dirs_MergePrecedence(t *testing.T) {
+	// Two directories: high-priority overrides low-priority via merge order.
+	highDir := t.TempDir()
+	lowDir := t.TempDir()
+
+	// Low-priority has full data.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(lowDir, ".config.yaml"),
+		[]byte(testFullData()),
+		0o644,
+	))
+
+	// High-priority overrides name and version.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(highDir, ".config.yaml"),
+		[]byte("name: override\nversion: 99\n"),
+		0o644,
+	))
+
+	store, err := NewStore[testConfig](
+		WithFilenames("config.yaml"),
+		WithDirs(highDir, lowDir),
+	)
+	require.NoError(t, err)
+
+	assert.Len(t, store.Layers(), 2)
+
+	// High-priority dir wins for scalar fields.
+	assert.Equal(t, "override", store.Get().Name)
+	assert.Equal(t, 99, store.Get().Version)
+
+	// Low-priority dir provides fields not set in high-priority.
+	assert.Equal(t, "node:20", store.Get().Build.Image)
+}
+
+func TestStore_Dirs_DedupWithPaths(t *testing.T) {
+	// If the same directory is passed to both WithDirs and WithPaths,
+	// WithDirs (dual placement) discovers the dotfile form while WithPaths
+	// (explicit) probes the plain filename. Dedup ensures no double-loading.
+	dir := t.TempDir()
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".config.yaml"),
+		[]byte("name: from-dotfile\n"),
+		0o644,
+	))
+
+	store, err := NewStore[testConfig](
+		WithFilenames("config.yaml"),
+		WithDirs(dir),
+		WithPaths(dir),
+	)
+	require.NoError(t, err)
+
+	// Only one layer — the dotfile discovered by WithDirs.
+	// WithPaths probes dir/config.yaml (plain form) which doesn't exist.
+	assert.Len(t, store.Layers(), 1)
+	assert.Equal(t, "from-dotfile", store.Get().Name)
+}

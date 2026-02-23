@@ -13,7 +13,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
@@ -34,7 +33,6 @@ type RunOptions struct {
 	Client         func(context.Context) (*docker.Client, error)
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
-	GitManager     func() (*git.GitManager, error)
 	HostProxy      func() hostproxy.HostProxyService
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
@@ -60,7 +58,6 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		Client:           f.Client,
 		Config:           f.Config,
 		ProjectManager:   f.ProjectManager,
-		GitManager:       f.GitManager,
 		HostProxy:        f.HostProxy,
 		SocketBridge:     f.SocketBridge,
 		Prompter:         f.Prompter,
@@ -79,17 +76,22 @@ project comes from .clawker.yaml.
 
 If IMAGE is "@", clawker will resolve the project's built image with :latest tag.`,
 		Example: `  # Run an interactive shell
-  clawker container run -it --agent shell @ alpine sh
+  clawker container run -it --agent ralph @ 
 
   # Run using default image with generated agent name from config
   clawker container run -it @
 
-  # Run a command
-  clawker container run --agent worker @ echo "hello world"
-  clawker container run --agent worker myimage:tag echo "hello world"
+  # Pass claude code flags 
+  clawker container run --rm --agent worker @ --help
+  clawker container run --rm --agent ralph @ --dangerously-skip-permissions
 
-  # Pass a claude code flag
-  clawker container run --detach --agent web @ -p "build entire app, don't make mistakes"
+  # Run in detached mode (background)
+  clawker container run --detach --agent web @ -p "build entire app, don't make mistakes" --dangerously-skip-permissions
+
+  # Bypass claude code and run system commands on the container directly 
+  clawker container run --agent worker @ echo "Hello" 
+  clawker container run --agent worker @ zsh 
+
 
   # Run with environment variables
   clawker container run -it --agent dev -e NODE_ENV=development @ echo $NODE_ENV
@@ -98,7 +100,7 @@ If IMAGE is "@", clawker will resolve the project's built image with :latest tag
   clawker container run -it --agent dev -v /host/path:/container/path @
 
   # Run and automatically remove on exit
-  clawker container run --rm -it @ sh`,
+  clawker container run --rm -it @`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			containerOpts.Image = args[0]
@@ -188,18 +190,18 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	go func() {
 		defer close(events)
 		r, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
-			Client:      client,
-			Cfg:         cfgGateway,
-			Config:      cfg,
-			ProjectName: projectName,
-			Options:     containerOpts,
-			Flags:       opts.flags,
-			Version:     opts.Version,
-			GitManager:  opts.GitManager,
-			HostProxy:   opts.HostProxy,
-			Logger:      ios.Logger,
-			Is256Color:  ios.Is256ColorSupported(),
-			IsTrueColor: ios.IsTrueColorSupported(),
+			Client:         client,
+			Cfg:            cfgGateway,
+			Config:         cfg,
+			ProjectName:    projectName,
+			Options:        containerOpts,
+			Flags:          opts.flags,
+			Version:        opts.Version,
+			ProjectManager: opts.ProjectManager,
+			HostProxy:      opts.HostProxy,
+			Logger:         ios.Logger,
+			Is256Color:     ios.Is256ColorSupported(),
+			IsTrueColor:    ios.IsTrueColorSupported(),
 		}, events)
 		done <- outcome{r, err}
 	}()
