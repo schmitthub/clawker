@@ -51,12 +51,14 @@ type SetupMountsConfig struct {
     AgentName      string
     WorkDir        string        // Host working directory (empty = os.Getwd() fallback)
     ProjectRootDir string        // Main repo root for worktree .git mounting (empty for non-worktree)
+    ContainerPath  string        // Override for container-side mount destination (empty = use config remote_path)
 }
 
 type SetupMountsResult struct {
     Mounts              []mount.Mount
     ConfigVolumeResult  ConfigVolumeResult
     WorkspaceVolumeName string  // Non-empty only for snapshot mode when volume was newly created. Used for cleanup on init failure.
+    ContainerPath       string  // Resolved container-side workspace mount path
 }
 
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)

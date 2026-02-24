@@ -78,6 +78,7 @@
           "security",
           "credentials",
           "custom-images",
+          "container-internals",
           "loops",
           "worktrees",
           "monitoring"

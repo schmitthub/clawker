@@ -1,0 +1,184 @@
+---
+title: "Container Internals"
+description: "How Clawker containers are built, initialized, and managed — workspace mounting, session persistence, git integration, and the container lifecycle"
+icon: "microchip"
+---
+
+Clawker containers are more than a simple `docker run`. Every container goes through a multi-phase initialization that sets up workspace mirroring, git integration, session persistence, credential forwarding, and security controls. This page explains what happens under the hood and why.
+
+## Container Lifecycle
+
+When you run `clawker run @` or `clawker container create @`, the container goes through four phases before it's ready:
+
+1. **Workspace** — resolve the working directory, set up mounts, ensure volumes
+2. **Config** — initialize the Claude Code config volume (first run only)
+3. **Environment** — start the host proxy, forward git credentials, resolve environment variables
+4. **Container** — validate flags, build Docker configs, create the container, inject post-init scripts
+
+Each phase streams progress events to the terminal so you can see exactly what's happening.
+
+### Create vs Start vs Run
+
+| Command | What it does |
+|---------|-------------|
+| `clawker container create` | Runs all four init phases, produces a stopped container |
+| `clawker container start` | Starts an existing container (no init, attaches if interactive) |
+| `clawker run` | Create + Start in one step |
+
+Init only happens at **creation time**. Starting, stopping, and restarting a container never re-runs initialization. This means your session data, config, and command history survive restarts.
+
+## Workspace Mounting
+
+The most important mount is the workspace — your project source code made available inside the container. Clawker supports two workspace modes:
+
+### Bind Mode (default)
+
+Your host directory is mounted directly into the container as a live bind mount. Changes on either side are visible immediately. This is the default because it gives Claude Code real-time access to your latest code.
+
+### Snapshot Mode
+
+A one-time copy of your project is placed into a Docker volume. The container works on an isolated snapshot — changes inside the container don't affect your host, and vice versa. Useful when you want Claude to experiment without risk.
+
+### Path Mirroring
+
+Here's something subtle but important: the workspace is not mounted at a generic path like `/workspace`. Instead, Clawker mirrors your host's actual directory structure inside the container.
+
+If your project lives at `/Users/schmitthub/Code/myapp` on the host, it appears at `/Users/schmitthub/Code/myapp` inside the container too. The container's working directory is set to match.
+
+**Why?** Claude Code tracks sessions by the current working directory. When you use `/resume` to pick up a previous conversation, it discovers your project's git worktrees and looks for session files that match those paths. If the container used a synthetic path like `/workspace`, those session lookups would fail — the paths wouldn't match what git reports, and Claude Code would say "No conversations found."
+
+By mirroring the real host path, everything lines up naturally: sessions created in the container are findable by `/resume`, and sessions from the host (or other containers working on the same repo) are discoverable too.
+
+## Git Integration
+
+Clawker makes git work seamlessly inside containers, even for advanced setups like worktrees.
+
+### Standard Repositories
+
+For a normal (non-worktree) project, the `.git` directory is part of your workspace and gets mounted along with everything else. Git commands inside the container work exactly as they do on your host.
+
+### Worktree Support
+
+Git worktrees are more complex. A worktree is a separate checkout of your repository that shares the same `.git` metadata as the main repo. The worktree directory contains a `.git` **file** (not a directory) that points back to the main repository's `.git/worktrees/<name>/` metadata.
+
+The challenge: those `.git` file references use **absolute host paths**. If the main repo is at `/Users/schmitthub/Code/myapp`, the worktree's `.git` file says something like:
+
+```
+gitdir: /Users/schmitthub/Code/myapp/.git/worktrees/feature-branch
+```
+
+For git to work inside the container, that path must resolve. Clawker handles this by mounting the main repository's `.git` directory at its **original absolute path** inside the container. The mount source and target are identical — if the `.git` directory lives at `/Users/schmitthub/Code/myapp/.git` on the host, it appears at exactly that path in the container.
+
+Combined with path mirroring for the worktree directory itself, git commands work correctly: the `.git` file's reference resolves, git finds the shared metadata, and operations like `git log`, `git status`, and `git commit` all behave normally.
+
+### Credential Forwarding
+
+Git credentials are forwarded into the container automatically based on your project's security settings:
+
+- **HTTPS** — Clawker runs a host proxy that the container's git credential helper calls through. Your host's git credentials are never copied into the container.
+- **SSH** — SSH agent forwarding is handled via a socket bridge (muxrpc over `docker exec`). Your SSH keys stay on the host.
+- **GPG** — GPG agent forwarding works the same way as SSH, via the socket bridge.
+- **Git config** — Your `~/.gitconfig` is mounted read-only. The entrypoint copies it while filtering out `credential.helper` entries (since the container uses its own credential forwarding).
+
+## Session Persistence
+
+Claude Code sessions are preserved across container restarts through persistent Docker volumes.
+
+### Config Volume
+
+Each agent gets a dedicated config volume (named `clawker.<project>.<agent>-config`) mounted at `~/.claude` inside the container. This volume stores:
+
+- **Session transcripts** — Full conversation history as JSONL files under `projects/<path>/`
+- **Config state** — The `.config.json` file tracking the last session ID, startup count, and project metadata
+- **Plugins and settings** — Any Claude Code plugins or settings that persist across sessions
+
+Because this is a Docker volume, it survives container removal and recreation. As long as you use the same project and agent name, your sessions are preserved.
+
+### History Volume
+
+A second volume (`clawker.<project>.<agent>-history`) preserves shell command history at `/commandhistory`, so your bash history carries over between sessions.
+
+### How Resume Works
+
+When you type `/resume` inside Claude Code, it needs to find previous sessions for the current project. Here's the discovery process:
+
+1. Claude Code reads the `.git` metadata in the current working directory
+2. It discovers all git worktrees associated with the repository (the main checkout plus any worktrees)
+3. For each worktree path, it looks for session files stored under that path's identifier
+4. It presents matching sessions for you to resume
+
+This is why path mirroring matters. The working directory inside the container must match a real path that git worktree discovery returns. If the container used `/workspace` as its working directory, Claude Code would store sessions under a `/workspace` identifier, but the worktree discovery step would return host-absolute paths. The identifiers wouldn't match, and resume would find nothing.
+
+With path mirroring:
+- Container cwd = `/Users/schmitthub/Code/myapp` (matches the host)
+- Sessions stored under the `/Users/schmitthub/Code/myapp` identifier
+- Git worktree discovery returns `/Users/schmitthub/Code/myapp` in its list
+- `/resume` finds the sessions
+
+This also means sessions are portable between the host and containers — a session started on the host is resumable from inside a container, and vice versa. Multiple containers working on the same project (but different agents) each get their own sessions that are all discoverable.
+
+### First-Run Initialization
+
+The first time a container is created for a given project+agent combination, Clawker initializes the config volume:
+
+1. **Onboarding bypass** — The container image includes a seed config that marks onboarding as complete, so Claude Code doesn't show the first-run wizard
+2. **Host config copy** — If `claude_code.config_strategy` is set to `copy` (the default), your host's Claude Code settings, plugins, and preferences are copied into the config volume
+3. **Credential injection** — If `claude_code.use_host_auth` is enabled, your host's Claude Code credentials are copied so the container can authenticate without re-login
+
+On subsequent container recreations with the same agent name, the config volume already exists and this initialization is skipped. Your existing sessions and settings are preserved.
+
+### Post-Init Scripts
+
+If your `clawker.yaml` includes a `post_init` script, it's injected into the container after creation and runs once on first start. A marker file prevents it from running again on restarts. This is useful for project-specific setup like installing dependencies or configuring tools.
+
+## Volumes and Naming
+
+Clawker uses a consistent naming scheme for all Docker resources:
+
+| Resource | Pattern | Example |
+|----------|---------|---------|
+| Container | `clawker.<project>.<agent>` | `clawker.myapp.dev` |
+| Config volume | `clawker.<project>.<agent>-config` | `clawker.myapp.dev-config` |
+| History volume | `clawker.<project>.<agent>-history` | `clawker.myapp.dev-history` |
+| Workspace volume | `clawker.<project>.<agent>-workspace` | `clawker.myapp.dev-workspace` (snapshot mode only) |
+
+All resources are tagged with labels (`dev.clawker.project`, `dev.clawker.agent`) for filtering and management. The `clawker container ls` command uses these labels to show only Clawker-managed containers.
+
+### Volume Lifecycle
+
+- **Config and history volumes** persist independently of containers. Removing a container does not remove its volumes. Use `clawker volume prune` to clean up orphaned volumes.
+- **Workspace volumes** (snapshot mode only) are ephemeral and tied to the container lifecycle.
+- **Volume cleanup on failure** — If container creation fails partway through, only volumes created during that attempt are cleaned up. Pre-existing volumes with your session data are never touched.
+
+## Container Image
+
+Clawker builds custom Docker images tailored to your project. The image includes:
+
+- A base image (default: `buildpack-deps:bookworm-scm`)
+- System packages you've specified (`build.packages`)
+- Claude Code (installed via npm)
+- An entrypoint script that handles init, firewall setup, and Claude Code startup
+- A non-root user (`claude`) with sudo access
+
+The entrypoint handles several responsibilities on container start:
+
+1. Seeds the Claude Code config if it's a fresh config volume
+2. Copies the host git config (filtering credential helpers)
+3. Runs the firewall setup (if enabled)
+4. Executes the post-init script (first start only)
+5. Launches Claude Code
+
+See [Custom Images](/custom-images) for details on customizing the build.
+
+## Shared Directory
+
+When `agent.enable_shared_dir` is set to `true`, Clawker mounts a shared directory from `~/.local/share/clawker/share/` on the host into the container at `~/.clawker-share` (read-only). This lets you share files across all agents without including them in the workspace.
+
+## Security Controls
+
+Every container runs with a network firewall enabled by default. See [Security & Firewall](/security) for the full details on:
+
+- Domain and IP allowlisting
+- Docker socket access
+- Capability management
+- Credential isolation

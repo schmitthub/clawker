@@ -271,7 +271,7 @@ func (p *projectHandle) CreateWorktree(ctx context.Context, branch, base string)
 	if p == nil || p.manager == nil {
 		return "", ErrProjectHandleNotInitialized
 	}
-	worktreePath, err := p.manager.worktrees().CreateWorktree(ctx, branch, base)
+	worktreePath, err := p.manager.worktrees().CreateWorktree(ctx, p.record.Root, branch, base)
 	if err != nil {
 		return "", err
 	}
@@ -306,7 +306,7 @@ func (p *projectHandle) RemoveWorktree(ctx context.Context, branch string, delet
 	if p == nil || p.manager == nil {
 		return ErrProjectHandleNotInitialized
 	}
-	err := p.manager.worktrees().RemoveWorktree(ctx, branch, deleteBranch)
+	err := p.manager.worktrees().RemoveWorktree(ctx, p.record.Root, branch, deleteBranch)
 	// Worktree is gone regardless of branch deletion outcome — always update record.
 	delete(p.record.Worktrees, branch)
 	return err
@@ -317,7 +317,7 @@ func (p *projectHandle) PruneStaleWorktrees(ctx context.Context, dryRun bool) (*
 	if p == nil || p.manager == nil {
 		return nil, ErrProjectHandleNotInitialized
 	}
-	result, err := p.manager.worktrees().PruneStaleWorktrees(ctx, dryRun)
+	result, err := p.manager.worktrees().PruneStaleWorktrees(ctx, p.record.Root, dryRun)
 	if err != nil {
 		return nil, err
 	}

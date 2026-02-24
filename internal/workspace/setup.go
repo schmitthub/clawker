@@ -31,6 +31,11 @@ type SetupMountsConfig struct {
 	// If set, the .git directory will be mounted at the same absolute path
 	// in the container to allow git worktree references to resolve.
 	ProjectRootDir string
+	// ContainerPath overrides config's remote_path as the container-side mount
+	// destination. When set, used instead of project.Workspace.RemotePath.
+	// Enables mounting at host absolute path for Claude Code /resume compatibility.
+	// If empty, falls back to project.Workspace.RemotePath.
+	ContainerPath string
 }
 
 // SetupMountsResult holds the results from setting up workspace mounts.
@@ -43,6 +48,9 @@ type SetupMountsResult struct {
 	// WorkspaceVolumeName is the name of the workspace volume created during setup.
 	// Non-empty only for snapshot mode. Used for cleanup on init failure.
 	WorkspaceVolumeName string
+	// ContainerPath is the resolved container-side workspace mount path.
+	// Either the explicit ContainerPath override or the config's remote_path.
+	ContainerPath string
 }
 
 // SetupMounts prepares workspace mounts for container creation.
@@ -85,10 +93,16 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		return nil, fmt.Errorf("failed to load %s: %w", ignoreFile, err)
 	}
 
+	// Resolve container-side mount path: explicit override takes precedence
+	containerPath := cfg.ContainerPath
+	if containerPath == "" {
+		containerPath = project.Workspace.RemotePath
+	}
+
 	// Create workspace strategy
 	wsCfg := Config{
 		HostPath:       hostPath,
-		RemotePath:     project.Workspace.RemotePath,
+		RemotePath:     containerPath,
 		ProjectName:    cfg.ProjectName,
 		AgentName:      cfg.AgentName,
 		IgnorePatterns: ignorePatterns,
@@ -163,6 +177,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		Mounts:              mounts,
 		ConfigVolumeResult:  configResult,
 		WorkspaceVolumeName: wsVolumeName,
+		ContainerPath:       containerPath,
 	}, nil
 }
 

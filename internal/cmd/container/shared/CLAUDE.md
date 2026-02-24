@@ -66,7 +66,7 @@ import "github.com/schmitthub/clawker/internal/cmd/container/shared"
 err := shared.InitContainerConfig(ctx, shared.InitConfigOpts{
     ProjectName:      "myapp",
     AgentName:        "dev",
-    ContainerWorkDir: cfg.Workspace.RemotePath,
+    ContainerWorkDir: wsResult.ContainerPath, // host absolute path for Claude Code /resume compatibility
     ClaudeCode:       cfg.Agent.ClaudeCode,
     CopyToVolume:     client.CopyToVolume,
 })
