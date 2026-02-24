@@ -50,9 +50,11 @@ type AddOptions struct {
 
 **Behavior:**
 
-- If worktree already exists → success (idempotent)
+- If worktree already exists in registry → error (`ErrWorktreeExists`). This is strict creation semantics.
 - If branch exists but not checked out elsewhere → check it out in new worktree
 - If branch doesn't exist → create from base ref
+
+For idempotent "get or create" behavior, use `--worktree` on container/loop commands instead (see `internal/cmd/container/shared/CLAUDE.md`).
 
 Delegates orchestration to `project.ProjectManager.FromCWD(...).CreateWorktree(...)`.
 

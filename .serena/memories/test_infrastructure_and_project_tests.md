@@ -37,7 +37,8 @@ The config mock system has three tiers:
 
 ### 5. Worktree refactor: flat UUID naming, duplicate rejection, ListWorktrees (DONE)
 - Worktree dirs changed from nested `<sha1(projectRoot)[:12]>/<slugified-branch>` to flat `<repoName>-<projectName>-<sha1(uuid)[:12]>` using `google/uuid`.
-- `AddWorktree` now rejects duplicates with `ErrWorktreeExists`.
+- `AddWorktree` rejects duplicates with `ErrWorktreeExists` (strict creation semantics).
+- `--worktree` flag on container/loop commands is idempotent: `resolveWorkDir()` catches `ErrWorktreeExists` and falls back to `GetWorktree()` to reuse healthy existing worktrees. Stale worktrees produce error suggesting `clawker worktree prune`. Tests in `shared/workdir_test.go`.
 - `RemoveWorktree` accepts `deleteBranch bool` — project layer handles branch deletion.
 - `ProjectManager.ListWorktrees(ctx)` aggregates across all projects.
 - `Project.ListWorktrees(ctx)` enriched with git-level detail (HEAD, detached, inspect errors).
