@@ -428,7 +428,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Config: func() (config.Config, error) {
 			mock := configmocks.NewFromString(`
 version: "1"
-workspace: { remote_path: "/workspace", default_mode: "bind" }
+workspace: { default_mode: "bind" }
 security: { enable_host_proxy: false, firewall: { enable: false } }
 `, "")
 			mock.GetProjectIgnoreFileFunc = func() (string, error) {
@@ -535,7 +535,7 @@ func TestCreateRun(t *testing.T) {
 		// Explicitly disable use_host_auth, no post_init → no CopyToContainer calls
 		useHostAuthCfg := configmocks.NewFromString(`
 version: "1"
-workspace: { remote_path: "/workspace", default_mode: "bind" }
+workspace: { default_mode: "bind" }
 security: { enable_host_proxy: false, firewall: { enable: false } }
 agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 `, "")

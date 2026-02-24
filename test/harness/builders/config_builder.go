@@ -16,7 +16,6 @@ func NewConfigBuilder() *ConfigBuilder {
 	return &ConfigBuilder{
 		project: &config.Project{
 			Workspace: config.WorkspaceConfig{
-				RemotePath:  "/workspace",
 				DefaultMode: "bind",
 			},
 		},
@@ -111,7 +110,6 @@ func FullFeaturedConfig() *ConfigBuilder {
 			},
 		}).
 		WithWorkspace(config.WorkspaceConfig{
-			RemotePath:  "/workspace",
 			DefaultMode: "bind",
 		}).
 		WithSecurity(config.SecurityConfig{
@@ -248,7 +246,6 @@ func AgentWithIncludes(includes ...string) config.AgentConfig {
 // DefaultWorkspace returns a workspace config with bind mode.
 func DefaultWorkspace() config.WorkspaceConfig {
 	return config.WorkspaceConfig{
-		RemotePath:  "/workspace",
 		DefaultMode: "bind",
 	}
 }
@@ -256,16 +253,14 @@ func DefaultWorkspace() config.WorkspaceConfig {
 // WorkspaceSnapshot returns a workspace config with snapshot mode.
 func WorkspaceSnapshot() config.WorkspaceConfig {
 	return config.WorkspaceConfig{
-		RemotePath:  "/workspace",
 		DefaultMode: "snapshot",
 	}
 }
 
-// WorkspaceWithPath returns a workspace config with a custom remote path.
-func WorkspaceWithPath(remotePath string) config.WorkspaceConfig {
+// WorkspaceWithMode returns a workspace config with a custom mode.
+func WorkspaceWithMode(mode string) config.WorkspaceConfig {
 	return config.WorkspaceConfig{
-		RemotePath:  remotePath,
-		DefaultMode: "bind",
+		DefaultMode: mode,
 	}
 }
 

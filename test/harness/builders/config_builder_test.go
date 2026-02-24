@@ -12,7 +12,6 @@ func TestConfigBuilder_NewConfigBuilder(t *testing.T) {
 	builder := NewConfigBuilder()
 	cfg := builder.Build()
 
-	assert.Equal(t, "/workspace", cfg.Workspace.RemotePath)
 	assert.Equal(t, "bind", cfg.Workspace.DefaultMode)
 	assert.Empty(t, cfg.Build.Image)
 }
@@ -32,7 +31,7 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 			},
 			verify: func(t *testing.T, cfg *config.Project) {
 				// WithProject is a no-op — project identity comes from ProjectManager
-				assert.Equal(t, "/workspace", cfg.Workspace.RemotePath)
+				assert.Equal(t, "bind", cfg.Workspace.DefaultMode)
 			},
 		},
 		{
@@ -81,13 +80,11 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithWorkspace(config.WorkspaceConfig{
-						RemotePath:  "/app",
 						DefaultMode: "snapshot",
 					}).
 					Build()
 			},
 			verify: func(t *testing.T, cfg *config.Project) {
-				assert.Equal(t, "/app", cfg.Workspace.RemotePath)
 				assert.Equal(t, "snapshot", cfg.Workspace.DefaultMode)
 			},
 		},
@@ -165,7 +162,7 @@ func TestMinimalValidConfig(t *testing.T) {
 	cfg := MinimalValidConfig().Build()
 
 	assert.Equal(t, "buildpack-deps:bookworm-scm", cfg.Build.Image)
-	assert.Equal(t, "/workspace", cfg.Workspace.RemotePath)
+	assert.Equal(t, "bind", cfg.Workspace.DefaultMode)
 }
 
 func TestFullFeaturedConfig(t *testing.T) {
@@ -181,7 +178,6 @@ func TestFullFeaturedConfig(t *testing.T) {
 	assert.Equal(t, "true", cfg.Agent.Env["CLAUDE_TEST"])
 
 	// Workspace
-	assert.Equal(t, "/workspace", cfg.Workspace.RemotePath)
 	assert.Equal(t, "bind", cfg.Workspace.DefaultMode)
 
 	// Security
@@ -355,7 +351,6 @@ func TestWorkspaceConfigPresets(t *testing.T) {
 			name:   "DefaultWorkspace",
 			preset: DefaultWorkspace(),
 			verify: func(t *testing.T, cfg config.WorkspaceConfig) {
-				assert.Equal(t, "/workspace", cfg.RemotePath)
 				assert.Equal(t, "bind", cfg.DefaultMode)
 			},
 		},
@@ -363,16 +358,14 @@ func TestWorkspaceConfigPresets(t *testing.T) {
 			name:   "WorkspaceSnapshot",
 			preset: WorkspaceSnapshot(),
 			verify: func(t *testing.T, cfg config.WorkspaceConfig) {
-				assert.Equal(t, "/workspace", cfg.RemotePath)
 				assert.Equal(t, "snapshot", cfg.DefaultMode)
 			},
 		},
 		{
-			name:   "WorkspaceWithPath",
-			preset: WorkspaceWithPath("/app"),
+			name:   "WorkspaceWithMode",
+			preset: WorkspaceWithMode("snapshot"),
 			verify: func(t *testing.T, cfg config.WorkspaceConfig) {
-				assert.Equal(t, "/app", cfg.RemotePath)
-				assert.Equal(t, "bind", cfg.DefaultMode)
+				assert.Equal(t, "snapshot", cfg.DefaultMode)
 			},
 		},
 	}

@@ -25,8 +25,6 @@ func TestWriteBuildContextToDir(t *testing.T) {
 version: "1"
 build:
   image: "buildpack-deps:bookworm-scm"
-workspace:
-  remote_path: "/workspace"
 security:
   firewall:
     enable: true
@@ -76,8 +74,6 @@ func TestWriteBuildContextToDir_NoFirewall(t *testing.T) {
 version: "1"
 build:
   image: "buildpack-deps:bookworm-scm"
-workspace:
-  remote_path: "/workspace"
 security:
   firewall:
     enable: false
@@ -105,8 +101,6 @@ func TestWriteBuildContextToDir_WithIncludes(t *testing.T) {
 version: "1"
 build:
   image: "buildpack-deps:bookworm-scm"
-workspace:
-  remote_path: "/workspace"
 agent:
   includes:
     - "CLAUDE.md"

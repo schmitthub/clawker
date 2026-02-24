@@ -168,8 +168,6 @@ func managedImageInspect(cfg config.Config, ref string) moby.ImageInspectResult 
 const ensureImageTestYAML = `
 build:
   image: "buildpack-deps:bookworm-scm"
-workspace:
-  remote_path: "/workspace"
 `
 
 // ensureImageTestProject is the project name used alongside ensureImageTestYAML.
@@ -236,8 +234,6 @@ build:
     labels:
       dev.clawker.project: "attacker-project"
       custom-label: "custom-value"
-workspace:
-  remote_path: "/workspace"
 `)
 	projectCfg := cfg.Project()
 	client, _ := newTestClientWithConfig(cfg)
@@ -410,8 +406,6 @@ func TestEnsureImage_CustomDockerfileDelegatesToBuild(t *testing.T) {
 build:
   image: "buildpack-deps:bookworm-scm"
   dockerfile: "`+customDockerfile+`"
-workspace:
-  remote_path: "/workspace"
 `)
 	projectCfg := cfg.Project()
 	client, fakeAPI := newTestClientWithConfig(cfg)
@@ -442,8 +436,6 @@ func TestEnsureImage_ContentHashError(t *testing.T) {
 	cfg := testConfig(t, `
 build:
   image: "buildpack-deps:bookworm-scm"
-workspace:
-  remote_path: "/workspace"
 agent:
   includes:
     - "nonexistent-file.txt"

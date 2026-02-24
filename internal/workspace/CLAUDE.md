@@ -21,7 +21,7 @@ type Strategy interface {
 
 type Config struct {
     HostPath       string   // Host path to mount/copy
-    RemotePath     string   // Container path
+    RemotePath     string   // Container-side mount path (host absolute path)
     ProjectName    string   // For volume naming
     AgentName      string   // For agent-specific volumes
     IgnorePatterns []string // Patterns to exclude (snapshot + bind modes)
@@ -51,7 +51,7 @@ type SetupMountsConfig struct {
     AgentName      string
     WorkDir        string        // Host working directory (empty = os.Getwd() fallback)
     ProjectRootDir string        // Main repo root for worktree .git mounting (empty for non-worktree)
-    ContainerPath  string        // Override for container-side mount destination (empty = use config remote_path)
+    ContainerPath  string        // Container-side mount destination (host absolute path for /resume compatibility)
 }
 
 type SetupMountsResult struct {

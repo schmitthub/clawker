@@ -85,7 +85,6 @@ func fawkerProject() *config.Project {
 			Image: "node:20-slim",
 		},
 		Workspace: config.WorkspaceConfig{
-			RemotePath:  "/workspace",
 			DefaultMode: "bind",
 		},
 		Security: config.SecurityConfig{

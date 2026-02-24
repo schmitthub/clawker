@@ -28,7 +28,6 @@ agent:
   env: {}
 
 workspace:
-  remote_path: "/workspace"
   default_mode: "bind"
 
 security:
@@ -117,7 +116,6 @@ agent:
   #  npm install -g typescript
 
 workspace:
-  remote_path: "/workspace" # container path where your code is mounted
   default_mode: "bind" # "bind" (live sync) or "snapshot" (isolated copy)
 
 security:

@@ -720,7 +720,7 @@ clawker container create --agent test --mode=snapshot @
 **Workspace mounts created:**
 
 Both modes automatically create the following mounts:
-- Workspace mount at `workspace.remote_path` (default: `/workspace`)
+- Workspace mount at the host's absolute path (mirrored inside the container for session persistence)
   - **Bind mode**: Direct bind mount from host working directory; changes immediately affect host
   - **Snapshot mode**: Docker volume with copy of workspace files; changes isolated from host
 - Config volume at `/home/claude/.claude`

@@ -83,7 +83,6 @@ func TestWorktreeGitMountsInContainer(t *testing.T) {
 	mockCfg := configmocks.NewFromString(`
 name: "test-project"
 workspace:
-  remote_path: "/workspace"
   default_mode: "bind"
 `, "")
 
@@ -180,7 +179,6 @@ func TestWorktreeGitMounts_WithoutProjectRootDir(t *testing.T) {
 	mockCfg := configmocks.NewFromString(`
 name: "test-project"
 workspace:
-  remote_path: "/workspace"
   default_mode: "bind"
 `, "")
 
@@ -227,7 +225,6 @@ func TestSharedDir_MountedWhenEnabled(t *testing.T) {
 	mockCfg := configmocks.NewFromString(`
 name: "test-project"
 workspace:
-  remote_path: "/workspace"
   default_mode: "bind"
 agent:
   enable_shared_dir: true
@@ -298,7 +295,6 @@ func TestSharedDir_NotMountedWhenDisabled(t *testing.T) {
 	mockCfg := configmocks.NewFromString(`
 name: "test-project"
 workspace:
-  remote_path: "/workspace"
   default_mode: "bind"
 agent:
   enable_shared_dir: false

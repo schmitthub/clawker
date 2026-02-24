@@ -11,14 +11,14 @@ Claude Code's `/resume` slash command couldn't find sessions in containers becau
 - **Host-path mount approach implemented** — container workspace mounted at host absolute path instead of `/workspace`
 - Non-worktree containers: mount at project root (e.g., `/Users/andrew/Code/clawker`)
 - Worktree containers: mount at worktree host path (e.g., `/Users/andrew/.local/share/clawker/worktrees/...`)
-- `workspace.remote_path` config field remains as-is; overridden at container creation via `ContainerPath` field
+- `workspace.remote_path` config field removed entirely (dead code — always overridden by `ContainerPath`)
 - Dockerfile `WORKDIR /workspace` stays as image default; overridden at runtime by `container.Config.WorkingDir`
 - `--workdir` CLI flag still takes precedence if user provides it
 
 ## Implementation (Completed)
 
 ### Files Changed
-- `internal/workspace/setup.go` — Added `ContainerPath` to `SetupMountsConfig` and `SetupMountsResult`; `SetupMounts()` uses override when set, falls back to config `remote_path`
+- `internal/workspace/setup.go` — Added `ContainerPath` to `SetupMountsConfig` and `SetupMountsResult`; `SetupMounts()` uses `ContainerPath` directly (no fallback)
 - `internal/cmd/container/shared/container.go` — `CreateContainer()` passes `wd` as `ContainerPath`, uses `wsResult.ContainerPath` for `InitConfigOpts.ContainerWorkDir`, sets `containerConfig.WorkingDir` when `--workdir` not provided
 - `internal/project/worktree_service.go` — Fixed symlink bug: removed `GetProjectRoot()` calls, methods now accept `projectRoot` parameter from handle
 - `internal/project/manager.go` — Updated `projectHandle` to pass `p.record.Root` to worktree service

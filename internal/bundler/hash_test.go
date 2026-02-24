@@ -111,8 +111,6 @@ build:
   image: "buildpack-deps:bookworm-scm"
   packages:
     - "ripgrep"
-workspace:
-  remote_path: "/workspace"
 security:
   firewall:
     enable: true
@@ -160,8 +158,6 @@ build:
   image: "buildpack-deps:bookworm-scm"
   packages:
     - "ripgrep"
-workspace:
-  remote_path: "/workspace"
 security:
   firewall:
     enable: true
@@ -188,8 +184,6 @@ build:
       app: "myapp"
     env:
       NODE_ENV: "production"
-workspace:
-  remote_path: "/workspace"
 security:
   firewall:
     enable: true
@@ -209,8 +203,6 @@ build:
   image: "buildpack-deps:bookworm-scm"
   packages:
     - "ripgrep"
-workspace:
-  remote_path: "/workspace"
 security:
   firewall:
     enable: true
@@ -231,8 +223,6 @@ build:
   packages:
     - "ripgrep"
     - "jq-extra-tools"
-workspace:
-  remote_path: "/workspace"
 security:
   firewall:
     enable: true
@@ -253,8 +243,6 @@ build:
   image: "buildpack-deps:bookworm-scm"
   packages:
     - "ripgrep"
-workspace:
-  remote_path: "/workspace"
 security:
   firewall:
     enable: true
@@ -344,8 +332,6 @@ version: "1"
 name: "testproj"
 build:
   image: "alpine:3.22"
-workspace:
-  remote_path: "/workspace"
 security:
   firewall:
     enable: true

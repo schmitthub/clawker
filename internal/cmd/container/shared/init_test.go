@@ -33,7 +33,6 @@ func testConfig() *config.Project {
 	hostProxyDisabled := false
 	return &config.Project{
 		Workspace: config.WorkspaceConfig{
-			RemotePath:  "/workspace",
 			DefaultMode: "bind",
 		},
 		Security: config.SecurityConfig{

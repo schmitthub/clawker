@@ -141,7 +141,6 @@ func (a *AgentConfig) SharedDirEnabled() bool {
 
 // WorkspaceConfig defines workspace mounting behavior
 type WorkspaceConfig struct {
-	RemotePath  string `yaml:"remote_path"`
 	DefaultMode string `yaml:"default_mode"`
 }
 

@@ -37,7 +37,7 @@ func TestBuildProgress_Golden(t *testing.T) {
 
 			testCfg := configmocks.NewFromString(`
 build: { image: "node:20-slim" }
-workspace: { remote_path: "/workspace", default_mode: "bind" }
+workspace: { default_mode: "bind" }
 security: { firewall: { enable: false } }
 `, `
 monitoring:
