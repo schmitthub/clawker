@@ -219,6 +219,9 @@ func (s *worktreeService) PruneStaleWorktrees(_ context.Context, projectRoot str
 }
 
 func (s *worktreeService) findProjectByRoot(projectRoot string) (config.ProjectEntry, error) {
+	if projectRoot == "" {
+		return config.ProjectEntry{}, fmt.Errorf("project root cannot be empty")
+	}
 	resolvedProjectRoot, err := filepath.EvalSymlinks(projectRoot)
 	if err != nil {
 		resolvedProjectRoot = filepath.Clean(projectRoot)

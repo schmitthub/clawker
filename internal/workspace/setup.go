@@ -98,6 +98,9 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	if containerPath == "" {
 		containerPath = project.Workspace.RemotePath
 	}
+	if !filepath.IsAbs(containerPath) {
+		return nil, fmt.Errorf("container mount path must be absolute, got %q", containerPath)
+	}
 
 	// Create workspace strategy
 	wsCfg := Config{

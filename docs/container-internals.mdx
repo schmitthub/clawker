@@ -47,7 +47,7 @@ If your project lives at `/Users/schmitthub/Code/myapp` on the host, it appears 
 
 **Why?** Claude Code tracks sessions by the current working directory. When you use `/resume` to pick up a previous conversation, it discovers your project's git worktrees and looks for session files that match those paths. If the container used a synthetic path like `/workspace`, those session lookups would fail — the paths wouldn't match what git reports, and Claude Code would say "No conversations found."
 
-By mirroring the real host path, everything lines up naturally: sessions created in the container are findable by `/resume`, and sessions from the host (or other containers working on the same repo) are discoverable too.
+By mirroring the real host path, everything lines up naturally: sessions created in the container are findable by `/resume`.
 
 ## Git Integration
 
@@ -78,7 +78,7 @@ Git credentials are forwarded into the container automatically based on your pro
 - **HTTPS** — Clawker runs a host proxy that the container's git credential helper calls through. Your host's git credentials are never copied into the container.
 - **SSH** — SSH agent forwarding is handled via a socket bridge (muxrpc over `docker exec`). Your SSH keys stay on the host.
 - **GPG** — GPG agent forwarding works the same way as SSH, via the socket bridge.
-- **Git config** — Your `~/.gitconfig` is mounted read-only. The entrypoint copies it while filtering out `credential.helper` entries (since the container uses its own credential forwarding).
+- **Git config** — Your `~/.gitconfig` is mounted read-only. The entrypoint copies it while filtering out `credential` sections (since the container uses its own credential forwarding).
 
 ## Session Persistence
 
@@ -115,14 +115,14 @@ With path mirroring:
 - Git worktree discovery returns `/Users/schmitthub/Code/myapp` in its list
 - `/resume` finds the sessions
 
-This also means sessions are portable between the host and containers — a session started on the host is resumable from inside a container, and vice versa. Multiple containers working on the same project (but different agents) each get their own sessions that are all discoverable.
+Multiple containers working on the same project (but different agents) each get their own sessions that are all discoverable via `/resume`.
 
 ### First-Run Initialization
 
 The first time a container is created for a given project+agent combination, Clawker initializes the config volume:
 
 1. **Onboarding bypass** — The container image includes a seed config that marks onboarding as complete, so Claude Code doesn't show the first-run wizard
-2. **Host config copy** — If `claude_code.config_strategy` is set to `copy` (the default), your host's Claude Code settings, plugins, and preferences are copied into the config volume
+2. **Host config copy** — If `claude_code.config_strategy` is set to `copy` (the default), your host's Claude Code plugin configuration, installed plugins, agents, skills, and custom commands are copied into the config volume
 3. **Credential injection** — If `claude_code.use_host_auth` is enabled, your host's Claude Code credentials are copied so the container can authenticate without re-login
 
 On subsequent container recreations with the same agent name, the config volume already exists and this initialization is skipped. Your existing sessions and settings are preserved.
@@ -162,11 +162,13 @@ Clawker builds custom Docker images tailored to your project. The image includes
 
 The entrypoint handles several responsibilities on container start:
 
-1. Seeds the Claude Code config if it's a fresh config volume
-2. Copies the host git config (filtering credential helpers)
-3. Runs the firewall setup (if enabled)
-4. Executes the post-init script (first start only)
-5. Launches Claude Code
+1. Runs the firewall setup (if enabled)
+2. Seeds the Claude Code config if it's a fresh config volume
+3. Copies the host git config (filtering credential sections)
+4. Configures the git credential helper (if HTTPS forwarding enabled)
+5. Sets up SSH known hosts for common git hosting services
+6. Executes the post-init script (first start only)
+7. Launches Claude Code
 
 See [Custom Images](/custom-images) for details on customizing the build.
 

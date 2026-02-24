@@ -33,7 +33,7 @@ type InitConfigOpts struct {
 	ProjectName string
 	// AgentName is the agent name for volume naming.
 	AgentName string
-	// ContainerWorkDir is the workspace directory inside the container (e.g. "/workspace").
+	// ContainerWorkDir is the workspace directory inside the container (e.g. "/Users/dev/my-app").
 	// Used to rewrite projectPath values in installed_plugins.json.
 	ContainerWorkDir string
 	// ClaudeCode is the claude code configuration. Nil uses defaults (copy strategy + host auth).

@@ -129,7 +129,7 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 
 ## Worktree Resolution (`resolveWorkDir`)
 
-`resolveWorkDir()` resolves the host path for the container's `/workspace` mount. When `--worktree` is set, it creates or reuses a Git worktree:
+`resolveWorkDir()` resolves the host path for the container's workspace mount (mounted at the same absolute path inside the container). When `--worktree` is set, it creates or reuses a Git worktree:
 
 1. Parses flag via `cmdutil.ParseWorktreeFlag(value, agentName)` → `WorktreeSpec{Branch, Base}`
 2. Calls `proj.CreateWorktree(ctx, branch, base)` to create the worktree

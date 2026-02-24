@@ -189,8 +189,8 @@ projects:
   - name: "my-app"
     root: "/Users/dev/my-app"
     worktrees:
-      feature-auth:
-        path: "/Users/dev/.local/share/clawker/worktrees/my-app/feature-auth"
+      feature/auth:
+        path: "/Users/dev/.local/share/clawker/worktrees/my-app-my-app-a1b2c3d4e5f6"
         branch: "feature/auth"
 ```
 
@@ -202,7 +202,7 @@ All worktree operations use the project root from the registry record rather tha
 
 When a container is created with `--worktree`, two mounts are set up:
 
-1. **Worktree directory** — The worktree's checkout directory is mounted at its host absolute path (e.g., `~/.local/share/clawker/worktrees/my-app-abc123def456/`). This becomes the container's working directory.
+1. **Worktree directory** — The worktree's checkout directory is mounted at its host absolute path (e.g., `~/.local/share/clawker/worktrees/my-app-my-app-abc123def456/`). This becomes the container's working directory.
 
 2. **Main `.git` directory** — The main repository's `.git` directory is mounted at its original host absolute path (e.g., `/Users/dev/my-app/.git`). This is necessary because the worktree's `.git` file contains an absolute path reference back to the main repository's `.git/worktrees/<slug>/` metadata.
 
