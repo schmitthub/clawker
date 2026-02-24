@@ -93,8 +93,6 @@ agent:
     claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
 
 workspace:
-  # Container path where your code is mounted
-  remote_path: "/workspace"
   # Default mode: "bind" (live sync) or "snapshot" (isolated copy)
   default_mode: "bind"
 
