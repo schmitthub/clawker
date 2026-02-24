@@ -78,7 +78,7 @@ Git credentials are forwarded into the container automatically based on your pro
 - **HTTPS** — Clawker runs a host proxy that the container's git credential helper calls through. Your host's git credentials are never copied into the container.
 - **SSH** — SSH agent forwarding is handled via a socket bridge (muxrpc over `docker exec`). Your SSH keys stay on the host.
 - **GPG** — GPG agent forwarding works the same way as SSH, via the socket bridge.
-- **Git config** — Your `~/.gitconfig` is bind-mounted read-only to a staging path inside the container. The entrypoint copies it to `~/.gitconfig` while filtering out `[credential]` sections (since the container uses its own credential forwarding).
+- **Git config** — Your `~/.gitconfig` is bind-mounted read-only at `/tmp/host-gitconfig` inside the container. On startup, the entrypoint reads that file, filters out any `[credential]` sections, and writes the sanitized result to `~/.gitconfig` inside the container (which then uses its own credential forwarding).
 
 ## Session Persistence
 
@@ -166,7 +166,7 @@ The entrypoint handles several responsibilities on container start:
 2. Seeds the Claude Code config if it's a fresh config volume
 3. Copies the host git config (filtering credential sections)
 4. Configures the git credential helper (if HTTPS forwarding enabled)
-5. Sets up SSH known hosts for common git hosting services
+5. Always adds GitHub, GitLab, and Bitbucket to SSH known hosts (unconditional — runs regardless of credential forwarding settings)
 6. Executes the post-init script (first start only)
 7. Launches Claude Code
 

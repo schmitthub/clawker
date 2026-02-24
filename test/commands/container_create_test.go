@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"bytes"
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -246,4 +248,112 @@ func TestContainerCreate_InvalidAgentName(t *testing.T) {
 			require.Empty(t, containers, "no containers should exist for invalid name %q", tt.agent)
 		})
 	}
+}
+
+// TestContainerCreate_WorkingDirDefault verifies that when --workdir is not provided,
+// the container's WorkingDir is set to the host absolute path (path mirroring for
+// Claude Code /resume compatibility).
+func TestContainerCreate_WorkingDirDefault(t *testing.T) {
+	harness.RequireDocker(t)
+	ctx := context.Background()
+
+	project := "create-workdir-default"
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
+				WithProject(project).
+				WithSecurity(builders.SecurityFirewallDisabled()),
+		),
+	)
+	h.Chdir()
+
+	client := harness.NewTestClient(t)
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, project); err != nil {
+			t.Logf("WARNING: cleanup failed for %s: %v", project, err)
+		}
+	}()
+
+	agentName := "test-workdir-" + time.Now().Format("150405.000000")
+
+	f, tio := harness.NewTestFactory(t, h)
+
+	cmd, err := h.NewRootCmd(f)
+	require.NoError(t, err)
+	cmd.SetArgs([]string{
+		"container", "create",
+		"--agent", agentName,
+		"alpine:latest",
+	})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err = cmd.Execute()
+	require.NoError(t, err, "create command failed: stderr=%s", tio.ErrBuf.String())
+
+	containers, err := client.ListContainersByProject(ctx, project, true)
+	require.NoError(t, err, "failed to list containers")
+	require.Len(t, containers, 1, "expected exactly one container")
+
+	info, err := client.ContainerInspect(ctx, containers[0].ID, docker.ContainerInspectOptions{})
+	require.NoError(t, err, "failed to inspect container")
+
+	workingDir := info.Container.Config.WorkingDir
+	require.NotEmpty(t, workingDir, "container WorkingDir should not be empty")
+	require.True(t, filepath.IsAbs(workingDir),
+		"container WorkingDir should be an absolute path, got %q", workingDir)
+}
+
+// TestContainerCreate_WorkingDirOverride verifies that the --workdir flag explicitly
+// overrides the container's WorkingDir instead of defaulting to the host path.
+func TestContainerCreate_WorkingDirOverride(t *testing.T) {
+	harness.RequireDocker(t)
+	ctx := context.Background()
+
+	project := "create-workdir-override"
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
+				WithProject(project).
+				WithSecurity(builders.SecurityFirewallDisabled()),
+		),
+	)
+	h.Chdir()
+
+	client := harness.NewTestClient(t)
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, project); err != nil {
+			t.Logf("WARNING: cleanup failed for %s: %v", project, err)
+		}
+	}()
+
+	agentName := "test-workdir-" + time.Now().Format("150405.000000")
+
+	f, tio := harness.NewTestFactory(t, h)
+
+	cmd, err := h.NewRootCmd(f)
+	require.NoError(t, err)
+	cmd.SetArgs([]string{
+		"container", "create",
+		"--agent", agentName,
+		"--workdir", "/custom/work/dir",
+		"alpine:latest",
+	})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err = cmd.Execute()
+	require.NoError(t, err, "create command failed: stderr=%s", tio.ErrBuf.String())
+
+	containers, err := client.ListContainersByProject(ctx, project, true)
+	require.NoError(t, err, "failed to list containers")
+	require.Len(t, containers, 1, "expected exactly one container")
+
+	info, err := client.ContainerInspect(ctx, containers[0].ID, docker.ContainerInspectOptions{})
+	require.NoError(t, err, "failed to inspect container")
+
+	require.Equal(t, "/custom/work/dir", info.Container.Config.WorkingDir,
+		"container WorkingDir should match the explicit --workdir value")
 }

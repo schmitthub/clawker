@@ -624,6 +624,71 @@ func TestCreateContainer_DisableFirewallFalse(t *testing.T) {
 		"CLAWKER_FIREWALL_ENABLED=true should be set when DisableFirewall=false and config has firewall enabled")
 }
 
+func TestCreateContainer_WorkingDirDefault(t *testing.T) {
+	// When --workdir is NOT set, WorkingDir defaults to wsResult.ContainerPath
+	// (the host absolute path used for session persistence).
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake.SetupCopyToContainer()
+
+	// Capture the ContainerCreateOptions to inspect WorkingDir
+	var capturedWorkingDir string
+	fake.FakeAPI.ContainerCreateFn = func(_ context.Context, opts moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
+		if opts.Config != nil {
+			capturedWorkingDir = opts.Config.WorkingDir
+		}
+		return moby.ContainerCreateResult{ID: "sha256:fakecontainer1234567890abcdef"}, nil
+	}
+
+	cmd := testFlags()
+	containerOpts := NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+	// Workdir intentionally left empty — default behavior
+
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// WorkingDir should be set to a non-empty absolute path (the host cwd)
+	require.NotEmpty(t, capturedWorkingDir, "WorkingDir should default to wsResult.ContainerPath")
+	require.True(t, filepath.IsAbs(capturedWorkingDir),
+		"default WorkingDir should be an absolute path, got %q", capturedWorkingDir)
+}
+
+func TestCreateContainer_WorkingDirOverride(t *testing.T) {
+	// When --workdir is explicitly set, it should override the default.
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake.SetupCopyToContainer()
+
+	var capturedWorkingDir string
+	fake.FakeAPI.ContainerCreateFn = func(_ context.Context, opts moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
+		if opts.Config != nil {
+			capturedWorkingDir = opts.Config.WorkingDir
+		}
+		return moby.ContainerCreateResult{ID: "sha256:fakecontainer1234567890abcdef"}, nil
+	}
+
+	cmd := testFlags()
+	// Simulate --workdir flag being set
+	require.NoError(t, cmd.Flags().Set("workdir", "/custom/work/dir"))
+
+	containerOpts := NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+	containerOpts.Workdir = "/custom/work/dir"
+
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.Equal(t, "/custom/work/dir", capturedWorkingDir,
+		"WorkingDir should match the explicit --workdir value")
+}
+
 func TestCreateContainer_EventsSequence(t *testing.T) {
 	// Verify events are sent in expected order with expected steps.
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
