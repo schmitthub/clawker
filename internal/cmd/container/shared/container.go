@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -1736,7 +1737,18 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerOptions, cfgGat
 
 		wd, err = proj.CreateWorktree(ctx, wtSpec.Branch, wtSpec.Base)
 		if err != nil {
-			return "", "", fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, agentName, err)
+			if !errors.Is(err, project.ErrWorktreeExists) {
+				return "", "", fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, agentName, err)
+			}
+			// --worktree is idempotent: reuse existing healthy worktree
+			state, getErr := proj.GetWorktree(ctx, wtSpec.Branch)
+			if getErr != nil {
+				return "", "", fmt.Errorf("worktree %q exists but cannot be retrieved: %w", wtSpec.Branch, getErr)
+			}
+			if state.Status != project.WorktreeHealthy {
+				return "", "", fmt.Errorf("worktree %q exists but is %s; run 'clawker worktree prune' to clean up", wtSpec.Branch, state.Status)
+			}
+			wd = state.Path
 		}
 		log.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("using git worktree")
 		return wd, proj.RepoPath(), nil
