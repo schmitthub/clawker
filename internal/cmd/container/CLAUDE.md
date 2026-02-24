@@ -80,9 +80,9 @@ Single entry point for container creation, shared by `run` and `create`. Perform
 
 **Types**: `CreateContainerConfig`, `CreateContainerResult`, `CreateContainerEvent`, `StepStatus`, `MessageType`.
 
-**Low-level helpers**: `InitContainerConfig(ctx, opts)` copies host Claude config to volume; `InjectOnboardingFile(ctx, opts)` writes onboarding marker; `InjectPostInitScript(ctx, opts)` writes post-init script.
+**Low-level helpers**: `InitContainerConfig(ctx, opts)` copies host Claude config to volume; `InjectPostInitScript(ctx, opts)` writes post-init script. Onboarding bypass is image-level (entrypoint seeds `~/.claude/.config.json`).
 
-**Types**: `CopyToVolumeFn`, `CopyToContainerFn`, `InitConfigOpts`, `InjectOnboardingOpts`, `InjectPostInitOpts`, `RebuildMissingImageOpts`
+**Types**: `CopyToVolumeFn`, `CopyToContainerFn`, `InitConfigOpts`, `InjectPostInitOpts`, `RebuildMissingImageOpts`
 
 ## Image Resolution (@ Symbol)
 

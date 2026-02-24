@@ -3,7 +3,6 @@ package create
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -528,58 +527,12 @@ func TestCreateRun(t *testing.T) {
 		fake.AssertCalled(t, "ContainerCreate")
 	})
 
-	t.Run("onboarding injected when use_host_auth enabled", func(t *testing.T) {
-		// Default config: UseHostAuth=nil → UseHostAuthEnabled()=true
-		// Default fake: volumes exist → ConfigCreated=false → no init
-		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-		fake.SetupContainerCreate()
+	// NOTE: Onboarding bypass tests removed — onboarding is now handled at image level
+	// (entrypoint seeds ~/.claude/.config.json from ~/.claude-init/.config.json).
+	// CopyToContainer is no longer called for onboarding injection.
 
-		copyToContainerCalled := false
-		fake.FakeAPI.CopyToContainerFn = func(_ context.Context, _ string, _ moby.CopyToContainerOptions) (moby.CopyToContainerResult, error) {
-			copyToContainerCalled = true
-			return moby.CopyToContainerResult{}, nil
-		}
-
-		f, tio := testFactory(t, fake)
-		cmd := NewCmdCreate(f, nil)
-
-		cmd.SetArgs([]string{"alpine"})
-		cmd.SetIn(&bytes.Buffer{})
-		cmd.SetOut(tio.OutBuf)
-		cmd.SetErr(tio.ErrBuf)
-
-		err := cmd.Execute()
-		require.NoError(t, err)
-		require.True(t, copyToContainerCalled, "CopyToContainer should be called for onboarding injection")
-		fake.AssertCalled(t, "ContainerCreate")
-	})
-
-	t.Run("onboarding failure returns error", func(t *testing.T) {
-		// Default config: UseHostAuth=nil → UseHostAuthEnabled()=true
-		// CopyToContainer fails → onboarding error propagates
-		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-		fake.SetupContainerCreate()
-		fake.SetupContainerRemove() // CreateContainer cleans up on injection failure
-
-		fake.FakeAPI.CopyToContainerFn = func(_ context.Context, _ string, _ moby.CopyToContainerOptions) (moby.CopyToContainerResult, error) {
-			return moby.CopyToContainerResult{}, fmt.Errorf("copy failed: disk full")
-		}
-
-		f, tio := testFactory(t, fake)
-		cmd := NewCmdCreate(f, nil)
-
-		cmd.SetArgs([]string{"alpine"})
-		cmd.SetIn(&bytes.Buffer{})
-		cmd.SetOut(tio.OutBuf)
-		cmd.SetErr(tio.ErrBuf)
-
-		err := cmd.Execute()
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "inject onboarding")
-	})
-
-	t.Run("onboarding skipped when use_host_auth disabled", func(t *testing.T) {
-		// Explicitly disable use_host_auth → no onboarding injection
+	t.Run("no CopyToContainer when use_host_auth disabled and no post_init", func(t *testing.T) {
+		// Explicitly disable use_host_auth, no post_init → no CopyToContainer calls
 		useHostAuthCfg := configmocks.NewFromString(`
 version: "1"
 workspace: { remote_path: "/workspace", default_mode: "bind" }

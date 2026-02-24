@@ -806,7 +806,7 @@ Progress streamed via events channel (`chan CreateContainerEvent`). Steps:
 1. **workspace** — `workspace.SetupMounts()` + `workspace.EnsureConfigVolumes()`
 2. **config** (skipped if volume cached) — `containerfs.PrepareClaudeConfig()` + `containerfs.PrepareCredentials()` → `docker.CopyToVolume()`
 3. **environment** — `config.ResolveAgentEnv()` merges env_file/from_env/env → runtime env vars (warnings sent as `MessageWarning` events)
-4. **container** — validate flags, `BuildConfigs()`, `docker.ContainerCreate()` + `InjectOnboardingFile()` (when `use_host_auth`) + `InjectPostInitScript()` (when `agent.post_init` configured)
+4. **container** — validate flags, `BuildConfigs()`, `docker.ContainerCreate()` + `InjectPostInitScript()` (when `agent.post_init` configured). Onboarding bypass is image-level: entrypoint seeds `~/.claude/.config.json` from staged defaults
 
 **Key packages**: `internal/containerfs` (tar preparation, path rewriting),
 `internal/workspace` (volume lifecycle), `internal/cmd/container/shared` (orchestration)

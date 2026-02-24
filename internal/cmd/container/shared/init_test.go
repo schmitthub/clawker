@@ -267,10 +267,9 @@ func TestCreateContainer_PostInit(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	fake.AssertCalled(t, "ContainerCreate")
-	// CopyToContainer should be called — for onboarding + post-init
+	// CopyToContainer should be called for post-init script injection
 	fake.AssertCalled(t, "CopyToContainer")
-	// Verify it was called at least twice (onboarding + post-init)
-	fake.AssertCalledN(t, "CopyToContainer", 2)
+	fake.AssertCalledN(t, "CopyToContainer", 1)
 }
 
 func TestCreateContainer_NoPostInit(t *testing.T) {
@@ -306,14 +305,9 @@ func TestCreateContainer_PostInitInjectionError(t *testing.T) {
 	fake.SetupContainerCreate()
 	fake.SetupContainerRemove() // CreateContainer cleans up on injection failure
 
-	// Custom CopyToContainer: succeed first (onboarding), fail second (post-init)
-	callCount := 0
+	// CopyToContainer fails → post-init injection error propagates
 	fake.FakeAPI.CopyToContainerFn = func(_ context.Context, _ string, _ moby.CopyToContainerOptions) (moby.CopyToContainerResult, error) {
-		callCount++
-		if callCount >= 2 {
-			return moby.CopyToContainerResult{}, fmt.Errorf("simulated copy failure")
-		}
-		return moby.CopyToContainerResult{}, nil
+		return moby.CopyToContainerResult{}, fmt.Errorf("simulated copy failure")
 	}
 
 	cfg := testConfig()

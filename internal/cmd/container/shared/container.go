@@ -1635,24 +1635,8 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	// Clear cleanup list so deferred cleanup won't remove them.
 	createdVolumes = nil
 
-	// Inject onboarding + post-init files.
+	// Inject post-init script if configured.
 	copyFn := NewCopyToContainerFn(client)
-
-	if projectCfg.Agent.ClaudeCode.UseHostAuthEnabled() {
-		sendInfo(ctx, events, "container", "Injecting onboarding config")
-		if err := InjectOnboardingFile(ctx, InjectOnboardingOpts{
-			ContainerID:     resp.ID,
-			Cfg:             cfg.Cfg,
-			CopyToContainer: copyFn,
-		}); err != nil {
-			cleanupCtx := context.Background()
-			if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
-				log.Warn().Str("containerID", resp.ID).Err(rmErr).
-					Msg("failed to clean up container after injection failure")
-			}
-			return nil, fmt.Errorf("inject onboarding: %w", err)
-		}
-	}
 
 	if projectCfg.Agent.PostInit != "" {
 		sendInfo(ctx, events, "container", "Injecting post-init script")

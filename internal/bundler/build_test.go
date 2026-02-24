@@ -39,6 +39,7 @@ security:
 		"entrypoint.sh",
 		"statusline.sh",
 		"claude-settings.json",
+		"claude-config.json",
 		"host-open.sh",
 		"callback-forwarder.go",
 		"git-credential-clawker.sh",

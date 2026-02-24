@@ -489,58 +489,6 @@ func TestPrepareCredentials_NeitherSource(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// PrepareOnboardingTar
-// ---------------------------------------------------------------------------
-
-func TestPrepareOnboardingTar(t *testing.T) {
-	cfg := configmocks.NewBlankConfig()
-	reader, err := PrepareOnboardingTar(cfg, "/home/claude")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	tr := tar.NewReader(reader)
-	hdr, err := tr.Next()
-	if err != nil {
-		t.Fatalf("tar next: %v", err)
-	}
-
-	if hdr.Name != ".claude.json" {
-		t.Errorf("tar entry name: got %q, want %q", hdr.Name, ".claude.json")
-	}
-	if hdr.Mode != 0o600 {
-		t.Errorf("tar entry mode: got %#o, want %#o", hdr.Mode, int64(0o600))
-	}
-	if hdr.ModTime.IsZero() {
-		t.Error("tar entry modtime should not be zero (epoch)")
-	}
-
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb
-		t.Fatalf("read tar entry: %v", err)
-	}
-
-	var content map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &content); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	val, ok := content["hasCompletedOnboarding"]
-	if !ok {
-		t.Fatal("missing hasCompletedOnboarding")
-	}
-	if val != true {
-		t.Errorf("hasCompletedOnboarding: got %v, want true", val)
-	}
-
-	// Should have no more entries
-	_, err = tr.Next()
-	if err != io.EOF {
-		t.Errorf("expected EOF, got: %v", err)
-	}
-}
-
 func TestPreparePostInitTar_EmptyScript(t *testing.T) {
 	cfg := configmocks.NewBlankConfig()
 	_, err := PreparePostInitTar(cfg, "")

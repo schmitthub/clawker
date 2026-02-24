@@ -47,6 +47,9 @@ var StatuslineScript string
 //go:embed assets/claude-settings.json
 var SettingsFile string
 
+//go:embed assets/claude-config.json
+var ConfigFile string
+
 // Re-export hostproxy container scripts from internal/hostproxy/internals.
 // These were previously embedded directly in this package but now live
 // alongside the hostproxy code they interact with.
@@ -222,6 +225,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		{"init-firewall.sh", FirewallScript, 0755},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
+		{"claude-config.json", ConfigFile, 0644},
 		{"host-open.sh", HostOpenScript, 0755},
 		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},
@@ -397,6 +401,11 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
+	// Add claude config seed (onboarding bypass + session pointer persistence)
+	if err := addFileToTar(tw, "claude-config.json", []byte(ConfigFile)); err != nil {
+		return nil, err
+	}
+
 	// Add firewall script (always included; execution gated at runtime)
 	if err := addFileToTar(tw, "init-firewall.sh", []byte(FirewallScript)); err != nil {
 		return nil, err
@@ -466,6 +475,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		{"init-firewall.sh", FirewallScript, 0755},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
+		{"claude-config.json", ConfigFile, 0644},
 		{"host-open.sh", HostOpenScript, 0755},
 		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},

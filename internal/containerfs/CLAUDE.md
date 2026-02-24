@@ -9,7 +9,6 @@ Prepares host Claude Code configuration for container injection. Receives `confi
 | `ResolveHostConfigDir() (string, error)` | Find host ~/.claude/ dir ($CLAUDE_CONFIG_DIR or default) |
 | `PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error)` | Stage host config for volume copy (settings, plugins, agents, etc.) |
 | `PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func(), err error)` | Stage credentials from keyring or file fallback |
-| `PrepareOnboardingTar(cfg config.Config, containerHomeDir string) (io.Reader, error)` | Create tar with ~/.claude.json onboarding marker |
 | `PreparePostInitTar(cfg config.Config, script string) (io.Reader, error)` | Create tar with .clawker/post-init.sh (bash shebang + set -e + user script); extracts at /home/claude |
 
 ## Dependencies
@@ -49,12 +48,6 @@ Each `Prepare*` function returns a temp directory with this layout:
 ```
 <tmpdir>/.claude/
   .credentials.json
-```
-
-### PrepareOnboardingTar
-Returns an `io.Reader` containing a tar archive with:
-```
-.claude.json         ({"hasCompletedOnboarding": true})
 ```
 
 ### PreparePostInitTar
