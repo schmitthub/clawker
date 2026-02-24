@@ -41,8 +41,8 @@ const (
 	GrafanaDatasourcesFileName = "grafana-datasources.yaml"
 	PrometheusFileName         = "prometheus.yaml"
 	GrafanaDashboardsFileName  = "grafana-dashboards.yaml"
-	GrafanaDashboardFileName     = "grafana-dashboard.json"
-	GrafanaCPDashboardFileName   = "grafana-cp-dashboard.json"
+	GrafanaDashboardFileName   = "grafana-dashboard.json"
+	GrafanaCPDashboardFileName = "grafana-cp-dashboard.json"
 )
 
 // MonitorTemplateData provides values for rendering monitoring stack templates.

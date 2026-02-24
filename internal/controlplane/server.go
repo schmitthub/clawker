@@ -7,14 +7,30 @@ import (
 	"net"
 	"time"
 
+	mobyclient "github.com/moby/moby/client"
 	v1 "github.com/schmitthub/clawker/internal/clawkerd/protocol/v1"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
-	mobyclient "github.com/moby/moby/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// ControlPlaneService is the consumer-facing contract for the control plane.
+// CLI commands and other packages depend on this interface; tests use
+// controlplanetest.MockServer.
+//
+//go:generate moq -rm -pkg controlplanetest -out controlplanetest/controlplane_mock.go . ControlPlaneService
+type ControlPlaneService interface {
+	// Serve starts serving gRPC on the given listener. Blocks until Stop.
+	Serve(lis net.Listener) error
+	// Stop gracefully stops the control plane.
+	Stop()
+	// IsRegistered returns true if an agent with the given container ID has registered.
+	IsRegistered(containerID string) bool
+	// GetAgent returns agent connection info, or nil if not registered.
+	GetAgent(containerID string) *AgentConnection
+}
 
 // Config holds control plane server configuration.
 type Config struct {
@@ -24,9 +40,9 @@ type Config struct {
 	InitSpec *v1.RunInitRequest
 	// DockerClient is used to inspect containers for IP resolution.
 	DockerClient *docker.Client
-	// Settings provides resolved user settings (logging, monitoring, OTEL config).
+	// Cfg provides access to the config store for settings resolution.
 	// Used to populate ClawkerdConfiguration in RegisterResponse.
-	Settings *config.Settings
+	Cfg config.Config
 	// Project is the project name for clawkerd logger context.
 	Project string
 	// Agent is the agent name for clawkerd logger context.
@@ -69,7 +85,17 @@ func (s *Server) Stop() {
 	s.registry.Close()
 }
 
-// Registry returns the agent registry for inspection.
+// IsRegistered returns true if an agent with the given container ID has registered.
+func (s *Server) IsRegistered(containerID string) bool {
+	return s.registry.IsRegistered(containerID)
+}
+
+// GetAgent returns agent connection info, or nil if not registered.
+func (s *Server) GetAgent(containerID string) *AgentConnection {
+	return s.registry.Get(containerID)
+}
+
+// Registry returns the agent registry for direct inspection.
 func (s *Server) Registry() *Registry {
 	return s.registry
 }
@@ -137,29 +163,26 @@ func (s *Server) buildClawkerdConfig() *v1.ClawkerdConfiguration {
 		Agent:   s.config.Agent,
 	}
 
-	settings := s.config.Settings
-	if settings == nil {
-		return cfg
-	}
+	settings := s.config.Cfg.SettingsStore().Get()
 
 	// OTEL config — uses InternalEndpoint (host:port, no scheme) for container-side collector.
-	if settings.Logging.Otel.IsEnabled() {
+	if settings.Logging.Otel.Enabled != nil && *settings.Logging.Otel.Enabled {
 		cfg.Otel = &v1.OtelLogConfig{
-			Endpoint:              settings.Monitoring.OtelCollectorInternalEndpoint(),
+			Endpoint:              fmt.Sprintf("%s:%d", settings.Monitoring.OtelCollectorInternal, settings.Monitoring.OtelGRPCPort),
 			Insecure:              true,
-			TimeoutSeconds:        int32(settings.Logging.Otel.GetTimeoutSeconds()),
-			MaxQueueSize:          int32(settings.Logging.Otel.GetMaxQueueSize()),
-			ExportIntervalSeconds: int32(settings.Logging.Otel.GetExportIntervalSeconds()),
+			TimeoutSeconds:        int32(settings.Logging.Otel.TimeoutSeconds),
+			MaxQueueSize:          int32(settings.Logging.Otel.MaxQueueSize),
+			ExportIntervalSeconds: int32(settings.Logging.Otel.ExportIntervalSeconds),
 		}
 	}
 
 	// File logging config.
 	cfg.FileLogging = &v1.FileLogConfig{
-		Enabled:    settings.Logging.IsFileEnabled(),
-		MaxSizeMb:  int32(settings.Logging.GetMaxSizeMB()),
-		MaxAgeDays: int32(settings.Logging.GetMaxAgeDays()),
-		MaxBackups: int32(settings.Logging.GetMaxBackups()),
-		Compress:   settings.Logging.IsCompressEnabled(),
+		Enabled:    settings.Logging.FileEnabled != nil && *settings.Logging.FileEnabled,
+		MaxSizeMb:  int32(settings.Logging.MaxSizeMB),
+		MaxAgeDays: int32(settings.Logging.MaxAgeDays),
+		MaxBackups: int32(settings.Logging.MaxBackups),
+		Compress:   settings.Logging.Compress != nil && *settings.Logging.Compress,
 	}
 
 	return cfg

@@ -249,7 +249,7 @@ func initLogger(cfg *v1.ClawkerdConfiguration) {
 			LogsDir:     logsDir,
 			ServiceName: "clawker",
 			ScopeName:   "clawkerd",
-			FileConfig: &logger.LoggingConfig{
+			FileConfig:  &logger.LoggingConfig{
 				// defaults: file enabled, 50MB, 7 days, 3 backups, compress
 			},
 		})
