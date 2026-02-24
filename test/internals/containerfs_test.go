@@ -503,10 +503,10 @@ func TestContainerFs_FreshStrategy_InContainer(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Rule: Host auth provisions onboarding and credential files
+// Rule: Host auth provisions credential files
 // ---------------------------------------------------------------------------
 
-func TestContainerFs_HostAuth_OnboardingAndCredentials(t *testing.T) {
+func TestContainerFs_HostAuth_Credentials(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping internals test in short mode")
 	}
@@ -810,7 +810,7 @@ func TestContainerFs_FullPipeline_FreshStrategy_WithHostAuth(t *testing.T) {
 	client := harness.NewTestClient(t)
 	image := harness.BuildLightImage(t, client)
 
-	// Fresh strategy with host auth: only credentials + onboarding, no config copy
+	// Fresh strategy with host auth: credentials only, no config copy
 	hostDir := t.TempDir()
 	seedCredentialsFile(t, hostDir)
 	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)

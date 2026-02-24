@@ -192,6 +192,25 @@ func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	assert.Contains(t, content, "http://otel-collector:4318/v1/logs")
 }
 
+func TestBuildContext_ClaudeConfigDir(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := NewProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.Generate()
+	require.NoError(t, err)
+
+	content := string(dockerfile)
+
+	// CLAUDE_CONFIG_DIR must point to .claude under the user's home (uses Docker ARG substitution)
+	assert.Contains(t, content, "ENV CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude",
+		"Dockerfile must set CLAUDE_CONFIG_DIR to the config volume mount point")
+
+	// claude-config.json must be staged to .claude-init for entrypoint seeding
+	assert.Contains(t, content, "claude-config.json",
+		"Dockerfile must COPY claude-config.json into build context")
+	assert.Contains(t, content, ".claude-init/.config.json",
+		"Dockerfile must stage claude-config.json to .claude-init/.config.json")
+}
+
 func TestBuildContext_TelemetryConfig(t *testing.T) {
 	cfg := testConfig(t, `
 version: "1"

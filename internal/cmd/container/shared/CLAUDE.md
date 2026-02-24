@@ -49,7 +49,7 @@ close(events)
 1. **workspace** — resolve work dir, setup mounts, ensure volumes
 2. **config** — init container config (or cached if volume exists)
 3. **environment** — host proxy, git credentials, runtime env vars
-4. **container** — validate flags, build Docker configs, create, inject onboarding + post-init
+4. **container** — validate flags, build Docker configs, create, inject post-init (if configured)
 
 **Volume cleanup on failure**: Uses named return values with deferred cleanup. Tracks newly-created volumes; removes only those on error. Pre-existing volumes are never touched.
 

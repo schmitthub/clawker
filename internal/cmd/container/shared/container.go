@@ -1636,10 +1636,9 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	createdVolumes = nil
 
 	// Inject post-init script if configured.
-	copyFn := NewCopyToContainerFn(client)
-
 	if projectCfg.Agent.PostInit != "" {
 		sendInfo(ctx, events, "container", "Injecting post-init script")
+		copyFn := NewCopyToContainerFn(client)
 		if err := InjectPostInitScript(ctx, InjectPostInitOpts{
 			ContainerID:     resp.ID,
 			Script:          projectCfg.Agent.PostInit,

@@ -262,8 +262,8 @@ ENV SHELL={{.Shell}}
 ENV PATH=/home/${USERNAME}/.local/bin:$PATH
 # Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
 ENV BROWSER=/usr/local/bin/host-open
-# Claude Code config directory — matches the config volume mount point.
-# Ensures .config.json lives on the persistent volume for session continuity.
+# Tell Claude Code where its config lives — must match the config volume mount.
+# The entrypoint seeds .config.json from ~/.claude-init/ on first boot.
 ENV CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude
 # Terminal color defaults; RuntimeEnv may override these based on host capabilities,
 # using safe fallback values (xterm-256color, truecolor) rather than passing through host TERM.

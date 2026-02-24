@@ -18,6 +18,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	whail "github.com/schmitthub/clawker/pkg/whail"
@@ -82,6 +83,7 @@ func TestEntrypoint_FullInitSequence(t *testing.T) {
 			Env: []string{
 				"CLAWKER_PROJECT=" + project,
 				"CLAWKER_AGENT=" + agent,
+				"CLAWKER_FIREWALL_ENABLED=true",
 				// Use github+google IP ranges to produce >10KB of firewall output.
 				// This catches the SIGPIPE bug: head -c 10000 in the entrypoint closes
 				// the pipe, killing the firewall script before DROP policies are set.
@@ -132,6 +134,7 @@ func TestEntrypoint_FullInitSequence(t *testing.T) {
 	err = shared.InjectPostInitScript(ctx, shared.InjectPostInitOpts{
 		ContainerID:     containerID,
 		Script:          `echo "post-init-executed" > /tmp/e2e-post-init-marker`,
+		Cfg:             configmocks.NewBlankConfig(),
 		CopyToContainer: copyFn,
 	})
 	require.NoError(t, err, "InjectPostInitScript failed")
@@ -200,6 +203,15 @@ func TestEntrypoint_FullInitSequence(t *testing.T) {
 		t.Run("statusline_copied", func(t *testing.T) {
 			assert.True(t, ctr.FileExists(ctx, dc, containerHomeDir+"/.claude/statusline.sh"),
 				"statusline.sh should be copied from init dir")
+		})
+
+		t.Run("config_json_seeded", func(t *testing.T) {
+			assert.True(t, ctr.FileExists(ctx, dc, containerHomeDir+"/.claude/.config.json"),
+				".config.json should be seeded from init dir")
+			content, err := ctr.ReadFile(ctx, dc, containerHomeDir+"/.claude/.config.json")
+			require.NoError(t, err)
+			assert.Contains(t, content, "hasCompletedOnboarding",
+				".config.json should contain hasCompletedOnboarding for onboarding bypass")
 		})
 	})
 
@@ -395,7 +407,7 @@ func TestEntrypoint_FullInitSequence(t *testing.T) {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-// injectClaudeInit creates a tar with ~/.claude-init/{statusline.sh, settings.json}
+// injectClaudeInit creates a tar with ~/.claude-init/{statusline.sh, settings.json, .config.json}
 // from bundler assets and copies it into the container.
 func injectClaudeInit(t *testing.T, ctx context.Context, dc *docker.Client, containerID string) {
 	t.Helper()
@@ -410,6 +422,9 @@ func injectClaudeInit(t *testing.T, ctx context.Context, dc *docker.Client, cont
 
 	settings, err := os.ReadFile(filepath.Join(assetsDir, "claude-settings.json"))
 	require.NoError(t, err, "failed to read claude-settings.json")
+
+	configJSON, err := os.ReadFile(filepath.Join(assetsDir, "claude-config.json"))
+	require.NoError(t, err, "failed to read claude-config.json")
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -441,6 +456,16 @@ func injectClaudeInit(t *testing.T, ctx context.Context, dc *docker.Client, cont
 		ModTime: now,
 	}))
 	_, err = tw.Write(settings)
+	require.NoError(t, err)
+
+	// .config.json (onboarding bypass + session pointer persistence)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:    ".claude-init/.config.json",
+		Mode:    0644,
+		Size:    int64(len(configJSON)),
+		ModTime: now,
+	}))
+	_, err = tw.Write(configJSON)
 	require.NoError(t, err)
 
 	require.NoError(t, tw.Close())
