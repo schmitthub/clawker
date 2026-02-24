@@ -503,10 +503,10 @@ func TestContainerFs_FreshStrategy_InContainer(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Rule: Host auth provisions onboarding and credential files
+// Rule: Host auth provisions credential files
 // ---------------------------------------------------------------------------
 
-func TestContainerFs_HostAuth_OnboardingAndCredentials(t *testing.T) {
+func TestContainerFs_HostAuth_Credentials(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping internals test in short mode")
 	}
@@ -518,34 +518,9 @@ func TestContainerFs_HostAuth_OnboardingAndCredentials(t *testing.T) {
 	client := harness.NewTestClient(t)
 	image := harness.BuildLightImage(t, client)
 
-	// --- Scenario: Onboarding marker is written via production InjectOnboardingFile ---
-	t.Run("onboarding_marker_written", func(t *testing.T) {
-		ctr := harness.RunContainer(t, client, image,
-			harness.WithCmd("sleep", "infinity"),
-		)
-
-		// Inject onboarding via production code path
-		err := shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{
-			ContainerID:     ctr.ID,
-			CopyToContainer: shared.NewCopyToContainerFn(client),
-		})
-		require.NoError(t, err, "InjectOnboardingFile failed")
-
-		// Verify .claude.json exists
-		claudeJSONPath := containerHomeDir + "/.claude.json"
-		assert.True(t, ctr.FileExists(ctx, client, claudeJSONPath),
-			".claude.json should exist in the container")
-
-		// Verify contents
-		content, err := ctr.ReadFile(ctx, client, claudeJSONPath)
-		require.NoError(t, err)
-		var parsed map[string]any
-		require.NoError(t, json.Unmarshal([]byte(content), &parsed), "unmarshal .claude.json")
-
-		val, ok := parsed["hasCompletedOnboarding"]
-		assert.True(t, ok, ".claude.json should have hasCompletedOnboarding key")
-		assert.Equal(t, true, val, "hasCompletedOnboarding should be true")
-	})
+	// NOTE: Onboarding bypass is now handled by the entrypoint seeding
+	// ~/.claude/.config.json from ~/.claude-init/.config.json at first boot.
+	// See internal/bundler/assets/entrypoint.sh config volume init block.
 
 	// --- Scenario: Credentials via production InitContainerConfig ---
 	t.Run("credentials_file_written", func(t *testing.T) {
@@ -760,24 +735,7 @@ func TestContainerFs_FullPipeline_CopyStrategy_WithHostAuth(t *testing.T) {
 		harness.WithVolumeMount(volumeName, containerHomeDir+"/.claude"),
 	)
 
-	// Inject onboarding via production code path
-	err = shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{
-		ContainerID:     ctr.ID,
-		CopyToContainer: shared.NewCopyToContainerFn(client),
-	})
-	require.NoError(t, err, "InjectOnboardingFile failed")
-
-	// Verify the full state of the container
-	t.Run("onboarding_marker_present", func(t *testing.T) {
-		assert.True(t, ctr.FileExists(ctx, client, containerHomeDir+"/.claude.json"),
-			".claude.json should exist")
-
-		content, err := ctr.ReadFile(ctx, client, containerHomeDir+"/.claude.json")
-		require.NoError(t, err)
-		var parsed map[string]any
-		require.NoError(t, json.Unmarshal([]byte(content), &parsed))
-		assert.Equal(t, true, parsed["hasCompletedOnboarding"])
-	})
+	// NOTE: Onboarding bypass is now handled by entrypoint seeding ~/.claude/.config.json.
 
 	t.Run("credentials_present", func(t *testing.T) {
 		credsPath := containerHomeDir + "/.claude/.credentials.json"
@@ -852,7 +810,7 @@ func TestContainerFs_FullPipeline_FreshStrategy_WithHostAuth(t *testing.T) {
 	client := harness.NewTestClient(t)
 	image := harness.BuildLightImage(t, client)
 
-	// Fresh strategy with host auth: only credentials + onboarding, no config copy
+	// Fresh strategy with host auth: credentials only, no config copy
 	hostDir := t.TempDir()
 	seedCredentialsFile(t, hostDir)
 	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
@@ -878,17 +836,7 @@ func TestContainerFs_FullPipeline_FreshStrategy_WithHostAuth(t *testing.T) {
 		harness.WithVolumeMount(volumeName, containerHomeDir+"/.claude"),
 	)
 
-	// Inject onboarding via production code path
-	err = shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{
-		ContainerID:     ctr.ID,
-		CopyToContainer: shared.NewCopyToContainerFn(client),
-	})
-	require.NoError(t, err, "InjectOnboardingFile failed")
-
-	// Verify onboarding marker
-	t.Run("onboarding_marker", func(t *testing.T) {
-		assert.True(t, ctr.FileExists(ctx, client, containerHomeDir+"/.claude.json"))
-	})
+	// NOTE: Onboarding bypass is now handled by entrypoint seeding ~/.claude/.config.json.
 
 	// Verify credentials present and readable
 	t.Run("credentials_present", func(t *testing.T) {

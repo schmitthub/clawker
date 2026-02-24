@@ -143,7 +143,7 @@ func fawkerClient(scenarioName string, cfg config.Config) (*docker.Client, error
 	// Wire volume/network/copy operations used by the container run/create flow.
 	// Default FakeAPIClient inspect handlers make volumes/networks appear pre-existing,
 	// so EnsureVolume/EnsureNetwork skip creation. CopyToContainer is needed if
-	// InjectOnboardingFile triggers (host auth enabled).
+	// InjectPostInitScript triggers (post_init configured).
 	fake.SetupCopyToContainer()
 	fake.SetupVolumeCreate()
 	fake.SetupNetworkCreate()

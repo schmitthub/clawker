@@ -49,7 +49,7 @@ close(events)
 1. **workspace** — resolve work dir, setup mounts, ensure volumes
 2. **config** — init container config (or cached if volume exists)
 3. **environment** — host proxy, git credentials, runtime env vars
-4. **container** — validate flags, build Docker configs, create, inject onboarding + post-init
+4. **container** — validate flags, build Docker configs, create, inject post-init (if configured)
 
 **Volume cleanup on failure**: Uses named return values with deferred cleanup. Tracks newly-created volumes; removes only those on error. Pre-existing volumes are never touched.
 
@@ -71,11 +71,8 @@ err := shared.InitContainerConfig(ctx, shared.InitConfigOpts{
     CopyToVolume:     client.CopyToVolume,
 })
 
-// Inject onboarding marker after ContainerCreate, before ContainerStart
-err := shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{
-    ContainerID:     containerID,
-    CopyToContainer: shared.NewCopyToContainerFn(client),
-})
+// NOTE: Onboarding bypass (hasCompletedOnboarding) is handled at image level —
+// the entrypoint seeds ~/.claude/.config.json from ~/.claude-init/.config.json.
 ```
 
 ### Image Rebuild (`image.go`)
@@ -112,7 +109,6 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 | `CopyToVolumeFn` | Function type matching `(*docker.Client).CopyToVolume` |
 | `CopyToContainerFn` | Simplified function type for tar-to-container copy |
 | `InitConfigOpts` | Project/agent names, `ContainerWorkDir`, `*config.ClaudeCodeConfig`, `CopyToVolumeFn` |
-| `InjectOnboardingOpts` | Container ID, `CopyToContainerFn` |
 | `InjectPostInitOpts` | Container ID, Script content, `CopyToContainerFn` — injects `~/.clawker/post-init.sh` |
 | `RebuildMissingImageOpts` | Image ref, IOStreams, TUI, Prompter, BuildImage fn, CommandVerb |
 
@@ -126,7 +122,6 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 | `CreateContainer(ctx, cfg, events)` | Single entry point — workspace, config, env, create, inject. Events channel for progress (nil = silent) |
 | `NeedsSocketBridge(cfg)` | Check if GPG/SSH socket bridge is needed |
 | `InitContainerConfig(ctx, InitConfigOpts)` | Copy host Claude config (strategy=copy) and/or credentials (use_host_auth) to config volume |
-| `InjectOnboardingFile(ctx, InjectOnboardingOpts)` | Write `~/.claude.json` onboarding marker to a created container |
 | `InjectPostInitScript(ctx, InjectPostInitOpts)` | Write `~/.clawker/post-init.sh` to a created container; entrypoint runs it once on first start |
 | `ResolveAgentEnv(agent, projectDir) (map[string]string, []string, error)` | Merges `env_file` + `from_env` + `env` into env map. Precedence: env_file < from_env < env |
 | `RebuildMissingDefaultImage(ctx, RebuildMissingImageOpts)` | Interactive rebuild flow for missing default images with TUI progress |

@@ -236,42 +236,6 @@ func TestInitContainerConfig_HostConfigDirNotFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// InjectOnboardingFile tests
-// ---------------------------------------------------------------------------
-
-func TestInjectOnboardingFile(t *testing.T) {
-	tracker := &containerCopyTracker{}
-	opts := InjectOnboardingOpts{
-		ContainerID:     "abc123",
-		Cfg:             configmocks.NewBlankConfig(),
-		CopyToContainer: tracker.copyFn(),
-	}
-
-	err := InjectOnboardingFile(context.Background(), opts)
-	require.NoError(t, err)
-
-	require.Equal(t, 1, tracker.callCount())
-	call := tracker.calls()[0]
-	assert.Equal(t, "abc123", call.containerID)
-	assert.Equal(t, "/home/claude", call.destPath)
-	assert.NotNil(t, call.content, "tar content should not be nil")
-}
-
-func TestInjectOnboardingFile_CopyError(t *testing.T) {
-	opts := InjectOnboardingOpts{
-		ContainerID: "abc123",
-		Cfg:         configmocks.NewBlankConfig(),
-		CopyToContainer: func(_ context.Context, _, _ string, _ io.Reader) error {
-			return assert.AnError
-		},
-	}
-
-	err := InjectOnboardingFile(context.Background(), opts)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to inject onboarding file")
-}
-
-// ---------------------------------------------------------------------------
 // InjectPostInitScript tests
 // ---------------------------------------------------------------------------
 

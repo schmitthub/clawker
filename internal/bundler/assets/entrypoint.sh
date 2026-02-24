@@ -112,6 +112,15 @@ if [ -d "$INIT_DIR" ]; then
     # Copy statusline.sh if missing
     [ ! -f "$CONFIG_DIR/statusline.sh" ] && cp "$INIT_DIR/statusline.sh" "$CONFIG_DIR/statusline.sh"
 
+    # Seed .config.json if missing or empty (onboarding bypass + session pointer persistence).
+    # Claude Code stores onboarding state and session pointers in this file.
+    # On the persistent config volume, it accumulates session data across restarts.
+    if [ ! -f "$CONFIG_DIR/.config.json" ] || [ ! -s "$CONFIG_DIR/.config.json" ]; then
+        if ! cp "$INIT_DIR/.config.json" "$CONFIG_DIR/.config.json"; then
+            emit_error "config" "failed to seed .config.json"
+        fi
+    fi
+
     # Initialize or merge settings.json
     if [ ! -f "$CONFIG_DIR/settings.json" ]; then
         cp "$INIT_DIR/settings.json" "$CONFIG_DIR/settings.json"

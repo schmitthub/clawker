@@ -111,38 +111,6 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 	return nil
 }
 
-// InjectOnboardingOpts holds options for onboarding file injection.
-type InjectOnboardingOpts struct {
-	// ContainerID is the Docker container ID to inject the file into.
-	ContainerID string
-	// Cfg provides config constants (e.g. domain, label prefix) for containerfs.
-	Cfg config.Config
-	// CopyToContainer copies a tar archive to the container at the given destination path.
-	// In production, wire this to a function that calls (*docker.Client).CopyToContainer.
-	CopyToContainer CopyToContainerFn
-}
-
-// InjectOnboardingFile writes ~/.claude.json to a created (not started) container.
-// Must be called after ContainerCreate and before ContainerStart.
-// The file marks Claude Code onboarding as complete so the user is not prompted.
-func InjectOnboardingFile(ctx context.Context, opts InjectOnboardingOpts) error {
-	if opts.CopyToContainer == nil {
-		return fmt.Errorf("InjectOnboardingFile: CopyToContainerFn is required")
-	}
-
-	tar, err := containerfs.PrepareOnboardingTar(opts.Cfg, containerHomeDir)
-	if err != nil {
-		return fmt.Errorf("failed to prepare onboarding file: %w", err)
-	}
-
-	if err := opts.CopyToContainer(ctx, opts.ContainerID, containerHomeDir, tar); err != nil {
-		return fmt.Errorf("failed to inject onboarding file: %w", err)
-	}
-
-	logger.Debug().Msg("injected onboarding file into container")
-	return nil
-}
-
 // InjectPostInitOpts holds options for post-init script injection.
 type InjectPostInitOpts struct {
 	// ContainerID is the Docker container ID to inject the script into.

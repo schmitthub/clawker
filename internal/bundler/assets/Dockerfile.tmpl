@@ -262,6 +262,9 @@ ENV SHELL={{.Shell}}
 ENV PATH=/home/${USERNAME}/.local/bin:$PATH
 # Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
 ENV BROWSER=/usr/local/bin/host-open
+# Tell Claude Code where its config lives — must match the config volume mount.
+# The entrypoint seeds .config.json from ~/.claude-init/ on first boot.
+ENV CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude
 # Terminal color defaults; RuntimeEnv may override these based on host capabilities,
 # using safe fallback values (xterm-256color, truecolor) rather than passing through host TERM.
 ENV TERM=xterm-256color
@@ -351,6 +354,7 @@ RUN curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
 # Stage config files for volume initialization (not shadowed by volume mount)
 COPY --chown=${USERNAME}:${USERNAME} statusline.sh /home/${USERNAME}/.claude-init/statusline.sh
 COPY --chown=${USERNAME}:${USERNAME} claude-settings.json /home/${USERNAME}/.claude-init/settings.json
+COPY --chown=${USERNAME}:${USERNAME} claude-config.json /home/${USERNAME}/.claude-init/.config.json
 
 {{/* COPY instructions (as user, after expensive build steps for better caching) */}}
 {{- if .Instructions}}

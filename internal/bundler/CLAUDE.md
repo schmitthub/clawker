@@ -115,7 +115,7 @@ const DefaultClaudeCodeVersion, DefaultUsername, DefaultShell = "latest", "claud
 
 UID/GID come from `cfg.ContainerUID()` / `cfg.ContainerGID()` (no bundler-local constants).
 
-Embedded: `DockerfileTemplate`, `EntrypointScript`, `FirewallScript`, `StatuslineScript`, `SettingsFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`.
+Embedded: `DockerfileTemplate`, `EntrypointScript`, `FirewallScript`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`.
 
 ## Version Management (`versions.go`)
 

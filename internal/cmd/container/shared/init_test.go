@@ -221,32 +221,6 @@ func TestCreateContainer_HostProxyFailure(t *testing.T) {
 	require.NotEmpty(t, result.ContainerID)
 }
 
-func TestCreateContainer_OnboardingSkippedWhenDisabled(t *testing.T) {
-	// UseHostAuth=false → no onboarding injection → CopyToContainer not called
-	cfg := testConfig()
-	useHostAuth := false
-	cfg.Agent.ClaudeCode = &config.ClaudeCodeConfig{
-		UseHostAuth: &useHostAuth,
-		Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
-	}
-
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fake.SetupContainerCreate()
-	// No CopyToContainer setup — if called, would panic
-
-	cmd := testFlags()
-	containerOpts := NewContainerOptions()
-	containerOpts.Image = "alpine"
-
-	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	fake.AssertCalled(t, "ContainerCreate")
-	fake.AssertNotCalled(t, "CopyToContainer")
-}
-
 func TestCreateContainer_PostInit(t *testing.T) {
 	// PostInit configured → CopyToContainer called for post-init script injection
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
@@ -267,14 +241,13 @@ func TestCreateContainer_PostInit(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	fake.AssertCalled(t, "ContainerCreate")
-	// CopyToContainer should be called — for onboarding + post-init
+	// CopyToContainer should be called for post-init script injection
 	fake.AssertCalled(t, "CopyToContainer")
-	// Verify it was called at least twice (onboarding + post-init)
-	fake.AssertCalledN(t, "CopyToContainer", 2)
+	fake.AssertCalledN(t, "CopyToContainer", 1)
 }
 
 func TestCreateContainer_NoPostInit(t *testing.T) {
-	// No PostInit configured, no host auth → CopyToContainer not called
+	// No PostInit configured → no CopyToContainer calls
 	cfg := testConfig()
 	useHostAuth := false
 	cfg.Agent.ClaudeCode = &config.ClaudeCodeConfig{
@@ -300,20 +273,14 @@ func TestCreateContainer_NoPostInit(t *testing.T) {
 }
 
 func TestCreateContainer_PostInitInjectionError(t *testing.T) {
-	// PostInit configured but CopyToContainer fails on the second call (post-init injection).
-	// First call (onboarding) succeeds, second call (post-init) fails.
+	// PostInit configured but CopyToContainer fails → post-init injection error propagates.
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupContainerRemove() // CreateContainer cleans up on injection failure
 
-	// Custom CopyToContainer: succeed first (onboarding), fail second (post-init)
-	callCount := 0
+	// CopyToContainer fails → post-init injection error propagates
 	fake.FakeAPI.CopyToContainerFn = func(_ context.Context, _ string, _ moby.CopyToContainerOptions) (moby.CopyToContainerResult, error) {
-		callCount++
-		if callCount >= 2 {
-			return moby.CopyToContainerResult{}, fmt.Errorf("simulated copy failure")
-		}
-		return moby.CopyToContainerResult{}, nil
+		return moby.CopyToContainerResult{}, fmt.Errorf("simulated copy failure")
 	}
 
 	cfg := testConfig()

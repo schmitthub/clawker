@@ -1,6 +1,7 @@
 package bundler
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestConfigFile_ValidJSON(t *testing.T) {
+	var content map[string]any
+	require.NoError(t, json.Unmarshal([]byte(ConfigFile), &content),
+		"ConfigFile must be valid JSON")
+
+	val, ok := content["hasCompletedOnboarding"]
+	require.True(t, ok, "ConfigFile must contain hasCompletedOnboarding key")
+	require.Equal(t, true, val, "hasCompletedOnboarding must be true")
+}
 
 func TestWriteBuildContextToDir(t *testing.T) {
 	cfg := testConfig(t, `
@@ -39,6 +50,7 @@ security:
 		"entrypoint.sh",
 		"statusline.sh",
 		"claude-settings.json",
+		"claude-config.json",
 		"host-open.sh",
 		"callback-forwarder.go",
 		"git-credential-clawker.sh",

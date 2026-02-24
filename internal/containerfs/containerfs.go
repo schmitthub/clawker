@@ -152,40 +152,6 @@ func PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func()
 	)
 }
 
-// PrepareOnboardingTar creates a tar archive containing ~/.claude.json
-// with {hasCompletedOnboarding: true} for CopyToContainer.
-//
-// The tar contains a single file named ".claude.json" — the caller specifies
-// the container home directory as the extraction destination.
-//
-// TODO: containerHomeDir is currently unused — evaluate if needed for custom home paths.
-func PrepareOnboardingTar(cfg config.Config, containerHomeDir string) (io.Reader, error) {
-	content := []byte(`{"hasCompletedOnboarding":true}` + "\n")
-
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-
-	hdr := &tar.Header{
-		Name:    ".claude.json",
-		Mode:    0o600,
-		Size:    int64(len(content)),
-		Uid:     cfg.ContainerUID(),
-		Gid:     cfg.ContainerGID(),
-		ModTime: time.Now(),
-	}
-	if err := tw.WriteHeader(hdr); err != nil {
-		return nil, fmt.Errorf("write tar header: %w", err)
-	}
-	if _, err := tw.Write(content); err != nil {
-		return nil, fmt.Errorf("write tar content: %w", err)
-	}
-	if err := tw.Close(); err != nil {
-		return nil, fmt.Errorf("close tar writer: %w", err)
-	}
-
-	return &buf, nil
-}
-
 // PreparePostInitTar creates a tar archive containing a post-init script at .clawker/post-init.sh.
 // The script is prefixed with a bash shebang and set -e, then the user's commands verbatim.
 // The tar is designed for extraction at /home/claude, producing /home/claude/.clawker/post-init.sh.
