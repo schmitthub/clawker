@@ -28,9 +28,9 @@ clawker worktree add feature/cache --base main
 clawker worktree add hotfix/login-redirect
 ```
 
-The worktree directory is created under `~/.local/share/clawker/worktrees/<project>/`. If the branch already exists, it's checked out in the new worktree. If it doesn't exist, it's created from the base ref (default: HEAD).
+The worktree directory is created under `~/.local/share/clawker/worktrees/<repoName>-<projectName>-<sha256(uuid)[:12]>/`. If the branch already exists, it's checked out in the new worktree. If it doesn't exist, it's created from the base ref (default: HEAD).
 
-Creating a worktree is idempotent -- if the worktree already exists, the command succeeds without changes.
+If the worktree already exists in the registry, the command returns an error. Use `clawker worktree list` to check existing worktrees, or use the `--worktree` flag on container/loop commands for idempotent "get or create" behavior.
 
 ## Listing Worktrees
 
@@ -91,20 +91,48 @@ clawker worktree prune --dry-run
 clawker worktree prune
 ```
 
-## Using Worktrees with Loop Mode
+## Automatic Worktree Creation via `--worktree`
 
-Worktrees integrate with `clawker loop iterate` and `clawker loop tasks` via the `--worktree` flag:
+Container and loop commands accept a `--worktree` flag that automatically creates or reuses a worktree for the container's `/workspace` mount:
 
 ```bash
-# Auto-generate a worktree branch
-clawker loop iterate --prompt "Build auth system" --worktree ""
+# Container commands
+clawker run --worktree feature/auth @
+clawker container run --worktree feature/cache @
+clawker container create --worktree hotfix/login @
 
-# Use a specific branch
-clawker loop iterate --prompt "Add caching" --worktree feature/cache
+# Loop commands
+clawker loop iterate --prompt "Build auth system" --worktree feature/auth
+clawker loop tasks --file tasks.md --worktree feature/tasks
 
 # Create branch from a specific base
-clawker loop iterate --prompt "Fix bugs" --worktree hotfix/login:main
+clawker run --worktree hotfix/login:main @
+
+# Auto-generate a branch name (loop only)
+clawker loop iterate --prompt "Experiment" --worktree ""
 ```
+
+The flag syntax is `branch` or `branch:base`. If the branch doesn't exist, it's created from the base ref (default: HEAD). If it already exists, it's checked out in the worktree.
+
+### Idempotent behavior
+
+The `--worktree` flag is **idempotent** -- if the worktree already exists and is healthy, it is reused rather than recreated. This means you can run the same command repeatedly without error:
+
+```bash
+# First run: creates the worktree
+clawker run --worktree feature/auth @
+
+# Second run: reuses the existing worktree
+clawker run --worktree feature/auth @
+```
+
+If the worktree exists in the registry but is unhealthy (directory deleted, Git metadata missing, or branch deleted), the command fails with a message suggesting `clawker worktree prune` to clean up the stale entry first.
+
+<Note>
+This differs from `clawker worktree add`, which is a strict creation command -- it errors if the worktree already exists. The `--worktree` flag on container/loop commands is designed for repeated use in workflows where you want "get or create" semantics.
+</Note>
+
+### Loop conflict detection
 
 If a loop is already running in the project root, Clawker detects the conflict and offers to create a worktree automatically:
 

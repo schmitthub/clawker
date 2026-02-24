@@ -1151,3 +1151,72 @@ func listAllBranches(mgr *GitManager) ([]string, error) {
 	})
 	return branches, err
 }
+
+func TestGitManager_GitDir(t *testing.T) {
+	t.Run("returns .git path for filesystem repo", func(t *testing.T) {
+		_, repoDir := newTestRepoOnDisk(t)
+		mgr, err := NewGitManager(repoDir)
+		require.NoError(t, err)
+
+		gitDir := mgr.GitDir()
+		assert.NotEmpty(t, gitDir)
+		assert.DirExists(t, gitDir)
+		assert.Equal(t, ".git", filepath.Base(gitDir))
+	})
+
+	t.Run("returns path for repo opened via NewGitManagerWithRepo", func(t *testing.T) {
+		repo, repoDir := newTestRepoOnDisk(t)
+		mgr := NewGitManagerWithRepo(repo, repoDir)
+
+		gitDir := mgr.GitDir()
+		// Same repo object, so filesystem storer is preserved
+		assert.NotEmpty(t, gitDir)
+		assert.DirExists(t, gitDir)
+	})
+}
+
+func TestGitManager_IsWorktreeLocked(t *testing.T) {
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
+	// Create a worktree
+	wtPath := filepath.Join(t.TempDir(), "lock-test")
+	require.NoError(t, os.MkdirAll(wtPath, 0755))
+	require.NoError(t, wt.Add(wtPath, "lock-test", plumbing.ZeroHash))
+
+	t.Run("returns false for unlocked worktree", func(t *testing.T) {
+		locked, err := mgr.IsWorktreeLocked("lock-test")
+		require.NoError(t, err)
+		assert.False(t, locked)
+	})
+
+	t.Run("returns true for locked worktree", func(t *testing.T) {
+		gitDir := mgr.GitDir()
+		lockPath := filepath.Join(gitDir, "worktrees", "lock-test", "locked")
+		require.NoError(t, os.WriteFile(lockPath, []byte("test lock reason\n"), 0644))
+
+		locked, err := mgr.IsWorktreeLocked("lock-test")
+		require.NoError(t, err)
+		assert.True(t, locked)
+	})
+
+	t.Run("returns false after lock removed", func(t *testing.T) {
+		gitDir := mgr.GitDir()
+		lockPath := filepath.Join(gitDir, "worktrees", "lock-test", "locked")
+		require.NoError(t, os.Remove(lockPath))
+
+		locked, err := mgr.IsWorktreeLocked("lock-test")
+		require.NoError(t, err)
+		assert.False(t, locked)
+	})
+
+	t.Run("returns false for non-existent worktree", func(t *testing.T) {
+		locked, err := mgr.IsWorktreeLocked("nonexistent")
+		require.NoError(t, err)
+		assert.False(t, locked)
+	})
+}

@@ -70,7 +70,7 @@ type Project interface {
 
 - `AddWorktree` rejects duplicates with `ErrWorktreeExists`. Returns enriched `WorktreeState`.
 - `RemoveWorktree(deleteBranch=true)`: worktree always removed; `ErrBranchNotFound` swallowed, other branch errors wrapped.
-- `ListWorktrees` enriches registry data with git-level detail (HEAD, detached state, inspect errors).
+- `ListWorktrees` enriches registry data with git-level detail (HEAD, detached state, inspect errors) and performs multi-layer health checks: directory existence, `.git` file presence, git metadata existence, branch existence, lock file presence.
 
 ## Data Types
 
@@ -90,11 +90,14 @@ type WorktreeState struct {
     IsDetached       bool
     ExistsInRegistry bool
     ExistsInGit      bool
-    Status           WorktreeStatus // healthy, registry_only, git_only, broken
-    InspectError     error
+    Status           WorktreeStatus
+    IsLocked         bool           // worktree is locked against pruning (.git/worktrees/<slug>/locked)
+    InspectError     error          // non-nil indicates degraded health check (permissions, git errors)
 }
 
-type WorktreeStatus string // WorktreeHealthy, WorktreeRegistryOnly, WorktreeGitOnly, WorktreeBroken
+type WorktreeStatus string
+// WorktreeHealthy, WorktreeRegistryOnly, WorktreeGitOnly, WorktreeBroken,
+// WorktreeDotGitMissing, WorktreeGitMetadataMissing
 ```
 
 ## Error Sentinels
@@ -123,7 +126,7 @@ For external callers needing a `WorktreeDirProvider` without the full project se
 
 ### Prune
 
-`PruneStaleWorktrees` marks entries prunable when: directory missing, git metadata missing, or branch deleted. Supports dry-run and partial-failure reporting via `PruneStaleResult`.
+`PruneStaleWorktrees` marks entries prunable when: directory missing, git metadata missing, or branch deleted. Locked worktrees (`.git/worktrees/<slug>/locked` exists) are skipped even if stale, reported via `PruneStaleResult.Locked`. Supports dry-run and partial-failure reporting via `PruneStaleResult`.
 
 ## Test Doubles (`mocks/`)
 

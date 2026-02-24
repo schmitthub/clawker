@@ -132,9 +132,21 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 | `RebuildMissingDefaultImage(ctx, RebuildMissingImageOpts)` | Interactive rebuild flow for missing default images with TUI progress |
 | `NewCopyToContainerFn(client *docker.Client) CopyToContainerFn` | Creates a `CopyToContainerFn` closure wrapping `docker.Client.CopyToContainer` |
 
+## Worktree Resolution (`resolveWorkDir`)
+
+`resolveWorkDir()` resolves the host path for the container's `/workspace` mount. When `--worktree` is set, it creates or reuses a Git worktree:
+
+1. Parses flag via `cmdutil.ParseWorktreeFlag(value, agentName)` → `WorktreeSpec{Branch, Base}`
+2. Calls `proj.CreateWorktree(ctx, branch, base)` to create the worktree
+3. If `project.ErrWorktreeExists` → falls back to `proj.GetWorktree(ctx, branch)` for idempotent reuse
+4. Validates health: only `WorktreeHealthy` is accepted; stale worktrees produce an error suggesting `clawker worktree prune`
+5. Returns `(worktreePath, proj.RepoPath(), nil)` — the second return is the main repo root (used for `.git` directory mount)
+
+The `--worktree` flag is idempotent (get-or-create). This differs from `clawker worktree add` which is strict (create-only, rejects duplicates).
+
 ## Dependencies
 
-Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/workspace`, `pkg/whail`
+Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/project`, `internal/workspace`, `pkg/whail`
 
 ## Testing
 
@@ -142,4 +154,5 @@ Unit tests in `shared/init_test.go` — `CreateContainer` tests using `dockertes
 Unit tests in `shared/container_test.go` — Flag parsing, BuildConfigs, ValidateFlags, pflag.Value types.
 Unit tests in `shared/image_test.go` — `RebuildMissingDefaultImage` interactive flow, `progressStatus` mapping.
 Unit tests in `shared/containerfs_test.go` — uses mock CopyToVolume/CopyToContainer function trackers.
+Unit tests in `shared/workdir_test.go` — `resolveWorkDir` worktree idempotent reuse: create new, reuse healthy existing, error on stale.
 Integration tests in `test/internals/containerfs_test.go` — exercises full pipeline with real Docker containers.

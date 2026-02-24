@@ -50,11 +50,13 @@ type AddOptions struct {
 
 **Behavior:**
 
-- If worktree already exists → success (idempotent)
+- If worktree already exists in registry → error (`ErrWorktreeExists`). This is strict creation semantics.
 - If branch exists but not checked out elsewhere → check it out in new worktree
 - If branch doesn't exist → create from base ref
 
-Delegates orchestration to `project.ProjectManager.FromCWD(...).CreateWorktree(...)`.
+For idempotent "get or create" behavior, use `--worktree` on container/loop commands instead (see `internal/cmd/container/shared/CLAUDE.md`).
+
+Delegates orchestration to `project.ProjectManager.CurrentProject(ctx).CreateWorktree(...)`.
 
 ### List (`list/list.go`)
 
@@ -107,9 +109,9 @@ type PruneOptions struct {
 
 - `--dry-run` — Show what would be pruned without removing
 
-**Prunable criteria:** Both directory and git metadata are missing (stale registry entry).
+**Prunable criteria:** Directory missing, git worktree metadata missing, or branch deleted (stale registry entry). Locked worktrees (via `git worktree lock`) are skipped even if stale — reported in output with unlock instructions.
 
-Delegates pruning to `project.ProjectManager.FromCWD(...).PruneStaleWorktrees(...)`.
+Delegates pruning to `project.ProjectManager.CurrentProject(ctx).PruneStaleWorktrees(...)`.
 
 ### Remove (`remove/remove.go`)
 
