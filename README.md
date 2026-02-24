@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+The rise of Agentic AI has been meteoric, but in the rush to ship model harnesses, the industry is skipping the risks and responsibilities that come with them. They’re avoiding dependency pain by shipping bare-metal software, when the harness itself needs a harness. LLMs are powerful, but they’re also unpredictable, naive, and easy to coerce—and handing one unrestricted code execution, network access, software install rights, internet reach, and full filesystem access to unsuspecting users is reckless. As a security engineer, my first instinct was to protect my own machine by building the harness for the harness: an "agent-in-container" solution. Clawker started as my way to learn Claude Code, then proved useful enough to open source as a practical example of secure-by-default guardrails for agentic software. I hope this project inspires the industry to prioritize containerization natively in their agentic software offerings, and to build more tools that make it easy and seamless for users to run agents in containers with strong security defaults.
+</p>
+
+<p align="center">
 <code>clawker</code> is basically what would happen if <code>devcontainers</code> and <code>k8s</code> had a <code>Claude Code</code> baby. It's a container orchestration and automation tool for running Claude Code agents in isolated containers on any host with docker installed. I wrote this because I didn't want to have to pay someone to run claude code agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and claude code's sandbox mode is the temu version of a container. <code>clawker</code> offers convenience features beyond just building and running claude code in a container using a Dockerfile (you don't even have to write a Dockerfile it's got you covered).
 </p>
 
