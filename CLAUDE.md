@@ -217,7 +217,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `project.ProjectManager` | Project-layer domain API: registration, resolution, worktree lifecycle. Constructor: `NewProjectManager(cfg, gitFactory)`. `ListWorktrees(ctx)` aggregates across all projects; `Project.ListWorktrees(ctx)` returns enriched state for one project |
 | `config.Config` | Configuration and path-resolution contract. Owns config file I/O and path helpers (`GetProjectRoot`, `GetProjectIgnoreFile`, `ConfigDir`, `Write`). It does not own project CRUD/worktree lifecycle orchestration |
 | `build.Version` / `build.Date` | Build-time metadata injected via ldflags; `DEV` default with `debug.ReadBuildInfo` fallback |
-| `WorktreeStatus` | String enum for worktree health: `WorktreeHealthy`, `WorktreeRegistryOnly`, `WorktreeGitOnly`, `WorktreeBroken` |
+| `WorktreeStatus` | String enum for worktree health: `WorktreeHealthy`, `WorktreeRegistryOnly`, `WorktreeGitOnly`, `WorktreeBroken`, `WorktreeDotGitMissing`, `WorktreeGitMetadataMissing` |
 
 Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API references.
 

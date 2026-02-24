@@ -28,7 +28,7 @@ clawker worktree add feature/cache --base main
 clawker worktree add hotfix/login-redirect
 ```
 
-The worktree directory is created under `~/.local/share/clawker/worktrees/<project>/`. If the branch already exists, it's checked out in the new worktree. If it doesn't exist, it's created from the base ref (default: HEAD).
+The worktree directory is created under `~/.local/share/clawker/worktrees/<repoName>-<projectName>-<sha256(uuid)[:12]>/`. If the branch already exists, it's checked out in the new worktree. If it doesn't exist, it's created from the base ref (default: HEAD).
 
 If the worktree already exists in the registry, the command returns an error. Use `clawker worktree list` to check existing worktrees, or use the `--worktree` flag on container/loop commands for idempotent "get or create" behavior.
 

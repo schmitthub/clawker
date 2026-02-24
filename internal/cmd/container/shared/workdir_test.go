@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git/gittest"
 	"github.com/schmitthub/clawker/internal/logger/loggertest"
 	"github.com/schmitthub/clawker/internal/project"
+	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,15 +21,15 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 	tests := []struct {
 		name        string
 		branch      string
-		setup       func(t *testing.T, proj project.Project)
+		setup       func(t *testing.T, proj project.Project) string // returns expected path (empty = don't check)
 		wantErr     bool
 		errContains string
-		checkPath   func(t *testing.T, wd string)
+		checkPath   func(t *testing.T, wd, wantPath string)
 	}{
 		{
 			name:   "creates new worktree",
 			branch: "feature/new",
-			checkPath: func(t *testing.T, wd string) {
+			checkPath: func(t *testing.T, wd, _ string) {
 				t.Helper()
 				_, err := os.Stat(wd)
 				require.NoError(t, err, "worktree directory should exist")
@@ -36,25 +38,28 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 		{
 			name:   "reuses existing healthy worktree",
 			branch: "feature/existing",
-			setup: func(t *testing.T, proj project.Project) {
+			setup: func(t *testing.T, proj project.Project) string {
 				t.Helper()
-				_, err := proj.CreateWorktree(context.Background(), "feature/existing", "")
+				path, err := proj.CreateWorktree(context.Background(), "feature/existing", "")
 				require.NoError(t, err)
+				return path
 			},
-			checkPath: func(t *testing.T, wd string) {
+			checkPath: func(t *testing.T, wd, wantPath string) {
 				t.Helper()
 				_, err := os.Stat(wd)
 				require.NoError(t, err, "reused worktree directory should exist")
+				assert.Equal(t, wantPath, wd, "reused worktree should return same path")
 			},
 		},
 		{
 			name:   "errors on stale worktree with missing directory",
 			branch: "feature/stale",
-			setup: func(t *testing.T, proj project.Project) {
+			setup: func(t *testing.T, proj project.Project) string {
 				t.Helper()
 				path, err := proj.CreateWorktree(context.Background(), "feature/stale", "")
 				require.NoError(t, err)
 				require.NoError(t, os.RemoveAll(path))
+				return ""
 			},
 			wantErr:     true,
 			errContains: "clawker worktree prune",
@@ -85,8 +90,9 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 			require.NoError(t, os.Chdir(resolvedRoot))
 			t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
+			var wantPath string
 			if tt.setup != nil {
-				tt.setup(t, proj)
+				wantPath = tt.setup(t, proj)
 			}
 
 			containerOpts := &ContainerOptions{Worktree: tt.branch}
@@ -108,8 +114,100 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 			assert.NotEmpty(t, wd)
 			assert.Equal(t, proj.RepoPath(), projectRootDir)
 			if tt.checkPath != nil {
-				tt.checkPath(t, wd)
+				tt.checkPath(t, wd, wantPath)
 			}
+		})
+	}
+}
+
+func TestResolveWorkDir_WorktreeGetError(t *testing.T) {
+	mockProj := &projectmocks.ProjectMock{
+		CreateWorktreeFunc: func(_ context.Context, _, _ string) (string, error) {
+			return "", project.ErrWorktreeExists
+		},
+		GetWorktreeFunc: func(_ context.Context, _ string) (project.WorktreeState, error) {
+			return project.WorktreeState{}, fmt.Errorf("registry corrupted")
+		},
+		RepoPathFunc: func() string { return "/fake/root" },
+	}
+	mockMgr := &projectmocks.ProjectManagerMock{
+		CurrentProjectFunc: func(_ context.Context) (project.Project, error) {
+			return mockProj, nil
+		},
+	}
+
+	containerOpts := &ContainerOptions{Worktree: "feature/broken"}
+	pmFunc := func() (project.ProjectManager, error) { return mockMgr, nil }
+	cfg := configmocks.NewBlankConfig()
+
+	_, _, err := resolveWorkDir(
+		context.Background(), containerOpts, cfg,
+		"dev", pmFunc, loggertest.NewNop(),
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot be retrieved")
+}
+
+func TestResolveWorkDir_UnhealthyStatuses(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      project.WorktreeStatus
+		errContains string
+	}{
+		{
+			name:        "dotgit_missing status",
+			status:      project.WorktreeDotGitMissing,
+			errContains: "clawker worktree prune",
+		},
+		{
+			name:        "git_metadata_missing status",
+			status:      project.WorktreeGitMetadataMissing,
+			errContains: "clawker worktree prune",
+		},
+		{
+			name:        "broken status",
+			status:      project.WorktreeBroken,
+			errContains: "clawker worktree prune",
+		},
+		{
+			name:        "registry_only status",
+			status:      project.WorktreeRegistryOnly,
+			errContains: "clawker worktree prune",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockProj := &projectmocks.ProjectMock{
+				CreateWorktreeFunc: func(_ context.Context, _, _ string) (string, error) {
+					return "", project.ErrWorktreeExists
+				},
+				GetWorktreeFunc: func(_ context.Context, branch string) (project.WorktreeState, error) {
+					return project.WorktreeState{
+						Branch: branch,
+						Path:   "/fake/worktree",
+						Status: tt.status,
+					}, nil
+				},
+				RepoPathFunc: func() string { return "/fake/root" },
+			}
+			mockMgr := &projectmocks.ProjectManagerMock{
+				CurrentProjectFunc: func(_ context.Context) (project.Project, error) {
+					return mockProj, nil
+				},
+			}
+
+			containerOpts := &ContainerOptions{Worktree: "feature/test"}
+			pmFunc := func() (project.ProjectManager, error) { return mockMgr, nil }
+			cfg := configmocks.NewBlankConfig()
+
+			_, _, err := resolveWorkDir(
+				context.Background(), containerOpts, cfg,
+				"dev", pmFunc, loggertest.NewNop(),
+			)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContains)
+			assert.Contains(t, err.Error(), string(tt.status))
 		})
 	}
 }

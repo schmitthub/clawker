@@ -1748,9 +1748,11 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerOptions, cfgGat
 			if state.Status != project.WorktreeHealthy {
 				return "", "", fmt.Errorf("worktree %q exists but is %s; run 'clawker worktree prune' to clean up", wtSpec.Branch, state.Status)
 			}
+			log.Debug().Str("worktree", state.Path).Str("branch", wtSpec.Branch).Str("status", string(state.Status)).Msg("reusing existing worktree")
 			wd = state.Path
+		} else {
+			log.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("created new worktree")
 		}
-		log.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("using git worktree")
 		return wd, proj.RepoPath(), nil
 	}
 

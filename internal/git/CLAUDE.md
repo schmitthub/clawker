@@ -44,6 +44,7 @@ mgr := git.NewGitManagerWithRepo(repo, repoRoot)
 ```go
 repo := mgr.Repository()
 root := mgr.RepoRoot()
+gitDir := mgr.GitDir()           // absolute path to .git dir (empty for in-memory repos)
 wt, err := mgr.Worktrees()
 ```
 
@@ -76,6 +77,14 @@ err = mgr.DeleteBranch(branch)
 - refuses current branch (`ErrIsCurrentBranch`)
 - refuses unmerged branch (`ErrBranchNotMerged`)
 - returns `ErrBranchNotFound` when missing
+
+### Worktree Lock
+
+```go
+locked, err := mgr.IsWorktreeLocked(slug)
+```
+
+Checks if `.git/worktrees/<slug>/locked` exists (created by `git worktree lock`). Returns `(false, nil)` for in-memory repos. Non-nil error on unexpected filesystem failures (permissions, etc.).
 
 ### Utility
 

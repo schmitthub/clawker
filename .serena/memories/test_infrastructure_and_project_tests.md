@@ -48,6 +48,18 @@ The config mock system has three tiers:
 - `NewTestProjectManager(t, gitFactory)` accepts `GitManagerFactory` for worktree operation tests.
 - All 14 project tests + all worktree command tests passing.
 
+### 6. Worktree health check hardening (DONE)
+- `GitManager.GitDir()` accessor via go-git storer API (`FilesystemStorer`). Returns empty for in-memory repos.
+- `GitManager.IsWorktreeLocked(slug)` checks `.git/worktrees/<slug>/locked` file. Returns `(false, nil)` for in-memory repos.
+- `ListWorktrees` overhauled with multi-layer health checks: directory existence (with `fs.ErrNotExist` discrimination), `.git` file presence, git metadata via `wtMgr.Exists(slug)`, branch existence (no longer defaults true on error), lock file detection.
+- New statuses: `WorktreeDotGitMissing` (dir exists but no `.git` file), `WorktreeGitMetadataMissing` (dir+.git exist but no git metadata).
+- `WorktreeState.IsLocked` field for lock status.
+- `PruneStaleWorktrees` skips locked worktrees. `PruneStaleResult.Locked` field tracks skipped entries.
+- Prune command displays locked worktrees with unlock instructions.
+- `resolveWorkDir` debug log distinguishes "created new worktree" vs "reusing existing worktree".
+- Tests: `TestGitManager_GitDir`, `TestGitManager_IsWorktreeLocked`, `TestResolveWorkDir_WorktreeGetError`, `TestResolveWorkDir_UnhealthyStatuses`, project tests for dotgit_missing/git_metadata_missing/prune_skips_locked.
+- Files: `internal/git/git.go`, `internal/git/git_test.go`, `internal/project/manager.go`, `internal/project/worktree_service.go`, `internal/project/project_test.go`, `internal/cmd/worktree/prune/prune.go`, `internal/cmd/container/shared/container.go`, `internal/cmd/container/shared/workdir_test.go`.
+
 ## Remaining TODOs (not started)
 - [ ] Add registry edge case tests (e.g. legacy map format decoding, symlink resolution)
 - [ ] Add worktree CRUD tests on Project (CreateWorktree, AddWorktree, RemoveWorktree, ListWorktrees, GetWorktree, PruneStaleWorktrees) — these require git repo setup

@@ -5,7 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/git"
@@ -460,6 +463,148 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 		require.Len(t, states, 1, "only healthy worktree should survive prune")
 		assert.Equal(t, "feature/healthy", states[0].Branch)
 		assert.Equal(t, project.WorktreeHealthy, states[0].Status)
+	})
+
+	t.Run("list worktrees detects dotgit_missing status", func(t *testing.T) {
+		cfg := configmocks.NewIsolatedTestConfig(t)
+		root := os.Getenv(cfg.TestRepoDirEnvVar())
+		resolvedRoot, err := filepath.EvalSymlinks(root)
+		require.NoError(t, err)
+
+		inMemGit := gittest.NewInMemoryGitManager(t, resolvedRoot)
+		factory := func(_ string) (*git.GitManager, error) {
+			return inMemGit.GitManager, nil
+		}
+
+		mgr, err := project.NewProjectManager(cfg, factory)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		proj, err := mgr.Register(ctx, "dotgit-test", resolvedRoot)
+		require.NoError(t, err)
+
+		oldWd, err := os.Getwd()
+		require.NoError(t, err)
+		require.NoError(t, os.Chdir(resolvedRoot))
+		t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+		state, err := proj.AddWorktree(ctx, "feature/dotgit-check", "")
+		require.NoError(t, err)
+		require.Equal(t, project.WorktreeHealthy, state.Status)
+
+		// Sabotage: remove the .git file from the worktree directory
+		dotGitPath := filepath.Join(state.Path, ".git")
+		require.NoError(t, os.Remove(dotGitPath))
+
+		states, err := proj.ListWorktrees(ctx)
+		require.NoError(t, err)
+		require.Len(t, states, 1)
+		assert.Equal(t, project.WorktreeDotGitMissing, states[0].Status,
+			"worktree with deleted .git file should be dotgit_missing")
+	})
+
+	t.Run("list worktrees detects git_metadata_missing status", func(t *testing.T) {
+		cfg := configmocks.NewIsolatedTestConfig(t)
+		root := os.Getenv(cfg.TestRepoDirEnvVar())
+		resolvedRoot, err := filepath.EvalSymlinks(root)
+		require.NoError(t, err)
+
+		inMemGit := gittest.NewInMemoryGitManager(t, resolvedRoot)
+		factory := func(_ string) (*git.GitManager, error) {
+			return inMemGit.GitManager, nil
+		}
+
+		mgr, err := project.NewProjectManager(cfg, factory)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		proj, err := mgr.Register(ctx, "metadata-test", resolvedRoot)
+		require.NoError(t, err)
+
+		oldWd, err := os.Getwd()
+		require.NoError(t, err)
+		require.NoError(t, os.Chdir(resolvedRoot))
+		t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+		state, err := proj.AddWorktree(ctx, "feature/metadata-check", "")
+		require.NoError(t, err)
+		require.Equal(t, project.WorktreeHealthy, state.Status)
+
+		// Sabotage: remove git worktree metadata via worktree manager
+		wtMgr, err := inMemGit.GitManager.Worktrees()
+		require.NoError(t, err)
+		slug := filepath.Base(state.Path)
+		require.NoError(t, wtMgr.Remove(slug))
+
+		states, err := proj.ListWorktrees(ctx)
+		require.NoError(t, err)
+		require.Len(t, states, 1)
+		assert.Equal(t, project.WorktreeGitMetadataMissing, states[0].Status,
+			"worktree with removed git metadata should be git_metadata_missing")
+	})
+
+	t.Run("prune skips locked worktrees", func(t *testing.T) {
+		cfg := configmocks.NewIsolatedTestConfig(t)
+
+		// Create a real on-disk git repo with an initial commit
+		repoDir := t.TempDir()
+		repo, err := gogit.PlainInit(repoDir, false)
+		require.NoError(t, err)
+		wt, err := repo.Worktree()
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Test\n"), 0o644))
+		_, err = wt.Add("README.md")
+		require.NoError(t, err)
+		_, err = wt.Commit("initial", &gogit.CommitOptions{
+			Author: &object.Signature{Name: "test", Email: "t@t.com", When: time.Now()},
+		})
+		require.NoError(t, err)
+
+		gitMgr := git.NewGitManagerWithRepo(repo, repoDir)
+		factory := func(_ string) (*git.GitManager, error) {
+			return gitMgr, nil
+		}
+
+		mgr, err := project.NewProjectManager(cfg, factory)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		proj, err := mgr.Register(ctx, "lock-test", repoDir)
+		require.NoError(t, err)
+
+		oldWd, err := os.Getwd()
+		require.NoError(t, err)
+		require.NoError(t, os.Chdir(repoDir))
+		t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+		state, err := proj.AddWorktree(ctx, "feature/locked", "")
+		require.NoError(t, err)
+
+		// Sabotage: delete directory to make it stale
+		require.NoError(t, os.RemoveAll(state.Path))
+
+		// Lock the worktree
+		slug := filepath.Base(state.Path)
+		gitDir := gitMgr.GitDir()
+		require.NotEmpty(t, gitDir, "GitDir() should return a path for filesystem repos")
+		lockDir := filepath.Join(gitDir, "worktrees", slug)
+		require.NoError(t, os.MkdirAll(lockDir, 0o755))
+		lockPath := filepath.Join(lockDir, "locked")
+		require.NoError(t, os.WriteFile(lockPath, []byte("locked by test"), 0o644))
+
+		// Prune should skip the locked worktree
+		pruneResult, err := proj.PruneStaleWorktrees(ctx, false)
+		require.NoError(t, err)
+		assert.Empty(t, pruneResult.Prunable, "locked worktree should not be prunable")
+		assert.Empty(t, pruneResult.Removed, "locked worktree should not be removed")
+		assert.Contains(t, pruneResult.Locked, "feature/locked",
+			"locked worktree should appear in Locked list")
+
+		// Verify ListWorktrees shows it as locked
+		states, err := proj.ListWorktrees(ctx)
+		require.NoError(t, err)
+		require.Len(t, states, 1)
+		assert.True(t, states[0].IsLocked, "worktree should be marked as locked")
 	})
 
 	t.Run("rejects duplicate root", func(t *testing.T) {

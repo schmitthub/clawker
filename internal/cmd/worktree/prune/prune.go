@@ -79,10 +79,12 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 		return err
 	}
 
-	if len(result.Prunable) == 0 {
+	if len(result.Prunable) == 0 && len(result.Locked) == 0 {
 		fmt.Fprintln(opts.IOStreams.Out, "No stale entries to prune.")
 		return nil
 	}
+
+	cs := opts.IOStreams.ColorScheme()
 
 	// Process prunable entries
 	for _, name := range result.Prunable {
@@ -95,11 +97,16 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 		}
 	}
 
+	// Display locked worktrees (skipped from pruning)
+	for _, name := range result.Locked {
+		fmt.Fprintf(opts.IOStreams.Out, "%s Skipped (locked): %s\n", cs.WarningIcon(), name)
+	}
+
 	// Summary
 	if opts.DryRun {
 		if len(result.Prunable) == 1 {
 			fmt.Fprintln(opts.IOStreams.Out, "\n1 stale entry would be removed.")
-		} else {
+		} else if len(result.Prunable) > 0 {
 			fmt.Fprintf(opts.IOStreams.Out, "\n%d stale entries would be removed.\n", len(result.Prunable))
 		}
 	} else {
@@ -116,6 +123,15 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 			}
 			return fmt.Errorf("%d of %d entries failed to prune", failedCount, len(result.Prunable))
 		}
+	}
+
+	if len(result.Locked) > 0 {
+		noun := "entry"
+		if len(result.Locked) > 1 {
+			noun = "entries"
+		}
+		fmt.Fprintf(opts.IOStreams.ErrOut, "\n%d stale %s skipped (locked). Use 'git worktree unlock' to allow pruning.\n",
+			len(result.Locked), noun)
 	}
 
 	return nil

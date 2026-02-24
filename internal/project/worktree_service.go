@@ -30,6 +30,7 @@ type PruneStaleResult struct {
 	Prunable []string
 	Removed  []string
 	Failed   map[string]error
+	Locked   []string // worktrees skipped due to git worktree lock
 }
 
 type worktreeService struct {
@@ -225,6 +226,15 @@ func (s *worktreeService) PruneStaleWorktrees(_ context.Context, dryRun bool) (*
 
 		// Prunable if any of: dir missing, git worktree metadata gone, or branch gone
 		if !dirExists || !gitWorktreeExists || !branchExists {
+			// Check if worktree is locked (protected from pruning)
+			locked, lockErr := manager.IsWorktreeLocked(wtName)
+			if lockErr != nil {
+				return nil, fmt.Errorf("checking worktree lock %s: %w", name, lockErr)
+			}
+			if locked {
+				result.Locked = append(result.Locked, name)
+				continue
+			}
 			result.Prunable = append(result.Prunable, name)
 		}
 	}
@@ -280,7 +290,7 @@ func worktreesRootDir(cfg config.Config) string {
 }
 
 // generateWorktreeDirName produces a flat directory name for a worktree:
-// <repoName>-<projectName>-<sha1(uuid)[:12]>
+// <repoName>-<projectName>-<sha256(uuid)[:12]>
 func generateWorktreeDirName(repoName, projectName string) string {
 	id := uuid.New()
 	sum := sha256.Sum256(id[:])
@@ -352,7 +362,7 @@ func newFlatWorktreeDirProvider(cfg config.Config, projectRoot string, entry con
 // flatWorktreeDirProvider implements git.WorktreeDirProvider with flat UUID-based naming.
 // Worktree directories are placed directly under the worktrees root:
 //
-//	<WorktreesRoot>/<repoName>-<projectName>-<sha1(uuid)[:12]>
+//	<WorktreesRoot>/<repoName>-<projectName>-<sha256(uuid)[:12]>
 //
 // Known paths from the registry are reused for existing worktrees.
 // New worktrees get a freshly generated UUID-based directory name.

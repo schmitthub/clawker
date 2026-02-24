@@ -16,12 +16,14 @@ package git
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
 
 	gogit "github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
+	gogitstorer "github.com/go-git/go-git/v6/plumbing/storer"
 )
 
 var (
@@ -100,6 +102,36 @@ func (g *GitManager) Repository() *gogit.Repository {
 // RepoRoot returns the root directory of the git repository.
 func (g *GitManager) RepoRoot() string {
 	return g.repoRoot
+}
+
+// GitDir returns the absolute path to the .git directory.
+// Returns empty string if the storer is not filesystem-backed (e.g., in-memory repos).
+func (g *GitManager) GitDir() string {
+	fss, ok := g.repo.Storer.(gogitstorer.FilesystemStorer)
+	if !ok {
+		return ""
+	}
+	return fss.Filesystem().Root()
+}
+
+// IsWorktreeLocked checks if a worktree has a lock file (.git/worktrees/<slug>/locked).
+// Locked worktrees are protected from pruning per git convention.
+// Returns (locked, error). Error is non-nil for unexpected filesystem errors
+// (permissions, etc.) — callers should not assume absence on error.
+func (g *GitManager) IsWorktreeLocked(slug string) (bool, error) {
+	gitDir := g.GitDir()
+	if gitDir == "" {
+		return false, nil // in-memory repo, no lock possible
+	}
+	lockPath := filepath.Join(gitDir, "worktrees", slug, "locked")
+	_, err := os.Stat(lockPath)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return false, fmt.Errorf("checking lock file %s: %w", lockPath, err)
 }
 
 // Worktrees returns the WorktreeManager for linked worktree operations.

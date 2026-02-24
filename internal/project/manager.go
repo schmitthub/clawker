@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -50,10 +51,12 @@ type WorktreeRecord struct {
 type WorktreeStatus string
 
 const (
-	WorktreeHealthy      WorktreeStatus = "healthy"
-	WorktreeRegistryOnly WorktreeStatus = "registry_only"
-	WorktreeGitOnly      WorktreeStatus = "git_only"
-	WorktreeBroken       WorktreeStatus = "broken"
+	WorktreeHealthy            WorktreeStatus = "healthy"
+	WorktreeRegistryOnly       WorktreeStatus = "registry_only"
+	WorktreeGitOnly            WorktreeStatus = "git_only"
+	WorktreeBroken             WorktreeStatus = "broken"
+	WorktreeDotGitMissing      WorktreeStatus = "dotgit_missing"
+	WorktreeGitMetadataMissing WorktreeStatus = "git_metadata_missing"
 )
 
 // WorktreeState is a caller-facing merged worktree view.
@@ -66,7 +69,8 @@ type WorktreeState struct {
 	ExistsInRegistry bool
 	ExistsInGit      bool
 	Status           WorktreeStatus
-	InspectError     error
+	IsLocked         bool  // worktree is locked against pruning (.git/worktrees/<slug>/locked exists)
+	InspectError     error // non-nil indicates degraded health check (permissions, git errors)
 }
 
 // Project is the runtime behavior contract for a single registered project.
@@ -327,7 +331,17 @@ func (p *projectHandle) PruneStaleWorktrees(ctx context.Context, dryRun bool) (*
 
 // ListWorktrees returns merged worktree state views with actual health checks.
 // It uses the git layer to inspect each worktree for HEAD, branch, and detached
-// state, then combines that with registry and disk state to set Status.
+// state, then combines that with registry, disk, and git metadata state to set Status.
+//
+// Health checks performed per worktree:
+//   - Directory exists on disk
+//   - .git file present inside worktree directory (file, not directory)
+//   - Git metadata exists in parent repo (.git/worktrees/<slug>/)
+//   - Branch ref exists in git
+//   - Lock file present (.git/worktrees/<slug>/locked)
+//
+// Filesystem errors other than "not found" are propagated via InspectError
+// rather than silently treated as "missing".
 func (p *projectHandle) ListWorktrees(_ context.Context) ([]WorktreeState, error) {
 	if p == nil {
 		return nil, ErrProjectHandleNotInitialized
@@ -338,9 +352,12 @@ func (p *projectHandle) ListWorktrees(_ context.Context) ([]WorktreeState, error
 
 	// Try to get git manager for detailed worktree inspection.
 	var gitMgr *git.GitManager
+	var gitMgrErr error
 	if p.manager != nil && p.manager.newGitMgr != nil {
 		mgr, err := p.manager.newGitMgr(p.record.Root)
-		if err == nil {
+		if err != nil {
+			gitMgrErr = err
+		} else {
 			gitMgr = mgr
 		}
 	}
@@ -369,6 +386,15 @@ func (p *projectHandle) ListWorktrees(_ context.Context) ([]WorktreeState, error
 		}
 	}
 
+	// Get worktree manager for metadata existence and lock checks
+	var wtMgr *git.WorktreeManager
+	if gitMgr != nil {
+		wm, err := gitMgr.Worktrees()
+		if err == nil {
+			wtMgr = wm
+		}
+	}
+
 	states := make([]WorktreeState, 0, len(p.record.Worktrees))
 	for branch, wt := range p.record.Worktrees {
 		state := WorktreeState{
@@ -381,14 +407,58 @@ func (p *projectHandle) ListWorktrees(_ context.Context) ([]WorktreeState, error
 		// Check if directory exists on disk
 		_, statErr := os.Stat(wt.Path)
 		dirExists := statErr == nil
+		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+			state.InspectError = fmt.Errorf("checking worktree directory: %w", statErr)
+		}
+
+		// Check .git file inside worktree dir (must be a file, not directory for linked worktrees)
+		dotGitOK := false
+		if dirExists {
+			dotGitPath := filepath.Join(wt.Path, ".git")
+			info, err := os.Stat(dotGitPath)
+			if err == nil {
+				dotGitOK = !info.IsDir()
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				if state.InspectError == nil {
+					state.InspectError = fmt.Errorf("checking .git in worktree: %w", err)
+				}
+			}
+		}
+
+		// Check git metadata existence (.git/worktrees/<slug>/)
+		slug := filepath.Base(wt.Path)
+		gitMetadataExists := false
+		if wtMgr != nil {
+			exists, err := wtMgr.Exists(slug)
+			if err == nil {
+				gitMetadataExists = exists
+			}
+		}
+
+		// Check lock file (.git/worktrees/<slug>/locked)
+		if gitMgr != nil {
+			locked, lockErr := gitMgr.IsWorktreeLocked(slug)
+			if lockErr != nil {
+				if state.InspectError == nil {
+					state.InspectError = fmt.Errorf("checking lock: %w", lockErr)
+				}
+			} else {
+				state.IsLocked = locked
+			}
+		}
 
 		// Check if branch exists in git
-		branchExists := true // assume true if we can't check
+		var branchExists bool
+		var branchCheckErr error
 		if gitMgr != nil {
 			exists, err := gitMgr.BranchExists(branch)
-			if err == nil {
+			if err != nil {
+				branchCheckErr = err
+			} else {
 				branchExists = exists
 			}
+		} else if gitMgrErr != nil {
+			branchCheckErr = gitMgrErr
 		}
 
 		state.ExistsInGit = branchExists
@@ -404,15 +474,24 @@ func (p *projectHandle) ListWorktrees(_ context.Context) ([]WorktreeState, error
 			}
 		}
 
+		// Determine health status with expanded checks
 		switch {
-		case dirExists && branchExists:
-			state.Status = WorktreeHealthy
-		case !dirExists && branchExists:
+		case !dirExists:
 			state.Status = WorktreeRegistryOnly
-		case dirExists && !branchExists:
+		case dirExists && !dotGitOK:
+			state.Status = WorktreeDotGitMissing
+		case dirExists && wtMgr != nil && !gitMetadataExists:
+			state.Status = WorktreeGitMetadataMissing
+		case dirExists && !branchExists && branchCheckErr == nil:
 			state.Status = WorktreeBroken
+		case dirExists && branchCheckErr != nil:
+			// Can't verify branch — degrade gracefully with InspectError
+			state.Status = WorktreeHealthy
+			if state.InspectError == nil {
+				state.InspectError = branchCheckErr
+			}
 		default:
-			state.Status = WorktreeRegistryOnly
+			state.Status = WorktreeHealthy
 		}
 
 		states = append(states, state)
