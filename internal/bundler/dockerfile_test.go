@@ -15,8 +15,6 @@ func minimalProjectYAML() string {
 version: "1"
 build:
   image: "buildpack-deps:bookworm-scm"
-workspace:
-  remote_path: "/workspace"
 `
 }
 
@@ -164,8 +162,6 @@ func TestBuildContext_CustomMonitoringEndpoints(t *testing.T) {
 version: "1"
 build:
   image: "buildpack-deps:bookworm-scm"
-workspace:
-  remote_path: "/workspace"
 monitoring:
   otel_collector_port: 9999
   otel_collector_internal: "custom-collector"
@@ -216,8 +212,6 @@ func TestBuildContext_TelemetryConfig(t *testing.T) {
 version: "1"
 build:
   image: "buildpack-deps:bookworm-scm"
-workspace:
-  remote_path: "/workspace"
 monitoring:
   otel_collector_port: 4318
   otel_collector_internal: "otel-collector"

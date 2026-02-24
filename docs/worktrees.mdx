@@ -53,10 +53,13 @@ The table shows:
 | STATUS | Health status |
 
 Status values:
-- **healthy** -- Worktree directory and Git metadata exist
-- **dir missing** -- Directory deleted but registry entry remains
-- **git missing** -- `.git` file missing or invalid
-- **dir missing, git missing** -- Stale entry, safe to prune
+- **healthy** — Directory, `.git` file, git metadata, and branch all exist
+- **registry_only** — Directory deleted but registry entry remains (safe to prune)
+- **dotgit_missing** — Directory exists but the `.git` file inside is missing or is a directory instead of a file
+- **git_metadata_missing** — Directory and `.git` file exist, but git's internal worktree metadata (`.git/worktrees/<slug>/`) is gone
+- **broken** — Directory and git metadata exist, but the branch has been deleted
+
+Locked worktrees (via `git worktree lock`) have `IsLocked` set internally and are protected from pruning, but lock status is independent of health — a locked worktree can have any status.
 
 ## Removing Worktrees
 
@@ -79,6 +82,18 @@ Safety checks prevent accidental data loss:
 - `--delete-branch` refuses to delete unmerged branches (use `git branch -D` manually)
 - `--delete-branch` refuses to delete the currently checked-out branch
 
+## Health Checks
+
+When you list or inspect worktrees, Clawker performs a multi-layer health check on each entry:
+
+1. **Directory existence** — Does the worktree directory still exist on disk?
+2. **`.git` file check** — Linked worktrees contain a `.git` *file* (not a directory) that points back to the main repository's `.git/worktrees/<slug>/` metadata. Clawker verifies this file exists and is indeed a file.
+3. **Git metadata check** — The main repository's `.git/worktrees/<slug>/` directory must exist. This is where git stores the worktree's HEAD, index, and config.
+4. **Branch existence** — The branch associated with the worktree must still exist in the repository.
+5. **Lock detection** — Checks for a `locked` file in the worktree's git metadata. Locked worktrees are protected from pruning.
+
+If any check fails, the worktree's status reflects the first failure found. When a check can't be performed (e.g., the git manager isn't available), Clawker degrades gracefully — it reports what it can and notes the limitation in the inspect error.
+
 ## Pruning Stale Entries
 
 If worktree directories are deleted manually or by `git worktree remove` (bypassing Clawker), registry entries become stale. Prune them:
@@ -91,9 +106,11 @@ clawker worktree prune --dry-run
 clawker worktree prune
 ```
 
+A worktree is considered prunable when any of: the directory is missing, git metadata is gone, or the branch has been deleted. However, **locked worktrees are never pruned** — even if they appear stale. If a worktree has been locked with `git worktree lock`, it's skipped during pruning and reported separately in the output.
+
 ## Automatic Worktree Creation via `--worktree`
 
-Container and loop commands accept a `--worktree` flag that automatically creates or reuses a worktree for the container's `/workspace` mount:
+Container and loop commands accept a `--worktree` flag that automatically creates or reuses a worktree:
 
 ```bash
 # Container commands
@@ -126,11 +143,17 @@ clawker run --worktree feature/auth @
 clawker run --worktree feature/auth @
 ```
 
-If the worktree exists in the registry but is unhealthy (directory deleted, Git metadata missing, or branch deleted), the command fails with a message suggesting `clawker worktree prune` to clean up the stale entry first.
+If the worktree exists in the registry but is unhealthy (directory deleted, `.git` file missing, git metadata gone, or branch deleted), the command fails with a message suggesting `clawker worktree prune` to clean up the stale entry first. Only worktrees with a `healthy` status are accepted for reuse.
 
 <Note>
-This differs from `clawker worktree add`, which is a strict creation command -- it errors if the worktree already exists. The `--worktree` flag on container/loop commands is designed for repeated use in workflows where you want "get or create" semantics.
+This differs from `clawker worktree add`, which is a strict creation command — it errors if the worktree already exists. The `--worktree` flag on container/loop commands is designed for repeated use in workflows where you want "get or create" semantics.
 </Note>
+
+### Path mirroring
+
+When `--worktree` is used, the worktree directory is mounted into the container at its **host absolute path** — not at a generic `/workspace`. This is essential for session persistence: Claude Code discovers sessions by matching the container's current working directory against git worktree paths. If the container used a synthetic path, session resume would fail because the paths wouldn't match.
+
+See [Container Internals](/container-internals) for the full explanation of path mirroring and session persistence.
 
 ### Loop conflict detection
 
@@ -167,9 +190,23 @@ projects:
   - name: "my-app"
     root: "/Users/dev/my-app"
     worktrees:
-      feature-auth:
-        path: "/Users/dev/.local/share/clawker/worktrees/my-app/feature-auth"
+      feature/auth:
+        path: "/Users/dev/.local/share/clawker/worktrees/my-app-my-app-a1b2c3d4e5f6"
         branch: "feature/auth"
 ```
 
 This allows Clawker to manage worktrees across sessions and detect stale entries.
+
+All worktree operations use the project root from the registry record rather than re-resolving from the filesystem. This avoids subtle path mismatches on systems where paths can differ between resolutions (e.g., macOS symlinks like `/var` → `/private/var`). The registry is the single source of truth for project identity.
+
+## How Worktrees Work Inside Containers
+
+When a container is created with `--worktree`, two mounts are set up:
+
+1. **Worktree directory** — The worktree's checkout directory is mounted at its host absolute path (e.g., `~/.local/share/clawker/worktrees/my-app-my-app-abc123def456/`). This becomes the container's working directory.
+
+2. **Main `.git` directory** — The main repository's `.git` directory is mounted at its original host absolute path (e.g., `/Users/dev/my-app/.git`). This is necessary because the worktree's `.git` file contains an absolute path reference back to the main repository's `.git/worktrees/<slug>/` metadata.
+
+By mounting both at their real host paths, git commands inside the container work correctly — the `.git` file's reference resolves, git finds the shared metadata, and operations like `git log`, `git status`, and `git commit` behave normally.
+
+See [Container Internals](/container-internals) for the complete explanation of workspace mounting, git integration, and session persistence.

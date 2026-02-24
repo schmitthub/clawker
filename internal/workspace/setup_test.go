@@ -113,6 +113,33 @@ func TestBuildWorktreeGitMount_SymlinkResolution(t *testing.T) {
 	}
 }
 
+func TestSetupMounts_EmptyContainerPath(t *testing.T) {
+	// SetupMounts should fail early with a clear message when ContainerPath is empty.
+	// The nil client is safe because the validation fires before any Docker calls.
+	_, err := SetupMounts(t.Context(), nil, SetupMountsConfig{
+		ContainerPath: "",
+	})
+	if err == nil {
+		t.Fatal("SetupMounts() error = nil, want error about required ContainerPath")
+	}
+	if !strings.Contains(err.Error(), "required") {
+		t.Errorf("error message = %q, should mention 'required'", err.Error())
+	}
+}
+
+func TestSetupMounts_RelativeContainerPath(t *testing.T) {
+	// SetupMounts should reject relative container paths with a clear message.
+	_, err := SetupMounts(t.Context(), nil, SetupMountsConfig{
+		ContainerPath: "relative/path",
+	})
+	if err == nil {
+		t.Fatal("SetupMounts() error = nil, want error about absolute path")
+	}
+	if !strings.Contains(err.Error(), "must be absolute") {
+		t.Errorf("error message = %q, should mention 'must be absolute'", err.Error())
+	}
+}
+
 // containsAll checks if s contains all the given substrings
 func containsAll(s string, substrs ...string) bool {
 	for _, sub := range substrs {

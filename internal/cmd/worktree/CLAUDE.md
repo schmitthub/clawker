@@ -75,11 +75,11 @@ type ListOptions struct {
 
 **Status values:**
 
-- `healthy` — healthy worktree
-- `dir missing` — worktree directory doesn't exist
-- `git missing` — .git file missing or invalid
-- `dir missing, git missing` — stale entry (prunable)
-- `error: path error: ...` — failed to resolve worktree path (not prunable)
+- `healthy` — All checks pass (directory, `.git` file, git metadata, branch all exist)
+- `registry_only` — Directory deleted but registry entry remains (safe to prune)
+- `dotgit_missing` — Directory exists but `.git` file is missing or is a directory
+- `git_metadata_missing` — Git metadata directory (`.git/worktrees/<slug>/`) missing
+- `broken` — Branch has been deleted
 
 **Flags:**
 

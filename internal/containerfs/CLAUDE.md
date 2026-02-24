@@ -28,7 +28,7 @@ Imports: `internal/config`, `internal/keyring`, `internal/logger`, stdlib only. 
 
 Uses `pathRewriteRule` and `rewriteJSONFile` to generalize host-to-container path rewriting:
 - **Prefix swap** (`hostPrefix != ""`): replaces host prefix with container prefix (e.g., `installPath`, `installLocation`)
-- **Full replacement** (`hostPrefix == ""`): replaces entire value (e.g., `projectPath` → `/workspace`)
+- **Full replacement** (`hostPrefix == ""`): replaces entire value (e.g., `projectPath` → container work dir)
 
 ## Staging Directory Structure
 

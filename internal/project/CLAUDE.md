@@ -110,6 +110,18 @@ Internal facade over `config.Config` for registry persistence. Decodes both list
 
 ## Worktree Service (`worktree_service.go`)
 
+### Root Resolution
+
+All worktree service methods accept `projectRoot` from the calling `projectHandle` (which gets it from `record.Root`). This ensures deterministic path matching against the registry — the service never re-resolves the root from the filesystem via `os.Getwd()`. The `findProjectByRoot` helper resolves symlinks on both the input and registry entries for robust matching (e.g., macOS `/var` → `/private/var`).
+
+### Internal API
+
+```go
+CreateWorktree(_ context.Context, projectRoot, branch, base string) (string, error)
+RemoveWorktree(_ context.Context, projectRoot, branch string, deleteBranch bool) error
+PruneStaleWorktrees(_ context.Context, projectRoot string, dryRun bool) (*PruneStaleResult, error)
+```
+
 ### Directory Naming
 
 Flat UUID-based naming under `cfg.WorktreesSubdir()`: `<repoName>-<projectName>-<sha256(uuid)[:12]>`. Registry (`ProjectEntry.Worktrees[branch].Path`) is the source of truth for path lookups.

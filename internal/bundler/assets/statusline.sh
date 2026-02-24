@@ -282,6 +282,12 @@ fi
 line2=""
 SEP=$(printf " ${DARK_GRAY}|${NC} ")
 
+# Claude Code version (leading)
+if [ "$VERSION" != "null" ] && [ -n "$VERSION" ]; then
+    line2+=$(printf "${DARK_GRAY}cc: v%s${NC}" "$VERSION")
+    line2+="$SEP"
+fi
+
 # Section 1: Model + context icon
 line2+=$(printf "${ORANGE}[%s]${NC} %s" "$MODEL" "$ctx")
 

@@ -19,7 +19,6 @@ func TestNewBlankConfig(t *testing.T) {
 	// Default project YAML does not set build.image — only packages
 	assert.Empty(t, p.Build.Image)
 	assert.Contains(t, p.Build.Packages, "git")
-	assert.Equal(t, "/workspace", p.Workspace.RemotePath)
 	assert.Equal(t, "bind", p.Workspace.DefaultMode)
 	assert.True(t, p.Security.Firewall.FirewallEnabled())
 }
@@ -54,13 +53,13 @@ func TestNewFromString_projectOnly(t *testing.T) {
 build:
   image: "ubuntu:22.04"
 workspace:
-  remote_path: "/app"
+  default_mode: "snapshot"
 `, "")
 	require.NoError(t, err)
 
 	p := cfg.Project()
 	assert.Equal(t, "ubuntu:22.04", p.Build.Image)
-	assert.Equal(t, "/app", p.Workspace.RemotePath)
+	assert.Equal(t, "snapshot", p.Workspace.DefaultMode)
 }
 
 func TestNewFromString_settingsOnly(t *testing.T) {
@@ -111,7 +110,7 @@ func TestNewFromString_noDefaults(t *testing.T) {
 	p := cfg.Project()
 	assert.Equal(t, "node:20", p.Build.Image)
 	// Workspace is empty because no defaults are applied
-	assert.Equal(t, "", p.Workspace.RemotePath)
+	assert.Equal(t, "", p.Workspace.DefaultMode)
 }
 
 func TestConstantAccessors(t *testing.T) {
@@ -249,7 +248,7 @@ func TestNewConfig_isolatedWithDefaults(t *testing.T) {
 	// NewConfig loads defaults — verify critical values are present
 	p := cfg.Project()
 	assert.True(t, p.Security.Firewall.FirewallEnabled())
-	assert.Equal(t, "/workspace", p.Workspace.RemotePath)
+	assert.Equal(t, "bind", p.Workspace.DefaultMode)
 
 	mon := cfg.MonitoringConfig()
 	assert.Equal(t, 4318, mon.OtelCollectorPort)
@@ -287,7 +286,7 @@ func TestNewConfig_projectFileOverridesDefaults(t *testing.T) {
 	assert.Equal(t, "ubuntu:24.04", p.Build.Image)
 
 	// Defaults for unset values should still be present
-	assert.Equal(t, "/workspace", p.Workspace.RemotePath)
+	assert.Equal(t, "bind", p.Workspace.DefaultMode)
 }
 
 func TestSetProject_mutation(t *testing.T) {
@@ -314,7 +313,7 @@ func TestSetProject_mutation(t *testing.T) {
 	assert.Equal(t, "custom:latest", cfg.Project().Build.Image)
 
 	// Other values should be preserved
-	assert.Equal(t, "/workspace", cfg.Project().Workspace.RemotePath)
+	assert.Equal(t, "bind", cfg.Project().Workspace.DefaultMode)
 }
 
 func TestSetSettings_mutation(t *testing.T) {

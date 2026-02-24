@@ -321,7 +321,7 @@ You can also use any Docker Hub image directly (e.g., `golang:1.24-bookworm`, `n
 | `instructions.expose` | list[ExposePort] | `[]` | build | EXPOSE instructions. |
 | `instructions.labels` | map[string, string] | `{}` | build | LABEL instructions. |
 | `instructions.volumes` | list[string] | `[]` | build | VOLUME instructions. |
-| `instructions.workdir` | string | `""` | build | Override WORKDIR (default: `workspace.remote_path`). |
+| `instructions.workdir` | string | `""` | build | Override WORKDIR (default: host absolute path). |
 | `instructions.healthcheck` | HealthcheckConfig | (auto) | build | Override the default HEALTHCHECK. |
 | `instructions.shell` | list[string] | `[]` | build | Override SHELL instruction. |
 
@@ -431,7 +431,6 @@ build:
 
 | Field | Type | Default | Phase | Description |
 |-------|------|---------|-------|-------------|
-| `workspace.remote_path` | string | `"/workspace"` | runtime | Mount point inside the container. |
 | `workspace.default_mode` | string | `"bind"` | runtime | `"bind"` (live sync) or `"snapshot"` (isolated copy). |
 
 ### `security` — Security Configuration

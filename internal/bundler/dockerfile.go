@@ -588,7 +588,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		UID:                      g.cfg.ContainerUID(),
 		GID:                      g.cfg.ContainerGID(),
 		Shell:                    DefaultShell,
-		WorkspacePath:            p.Workspace.RemotePath,
+		WorkspacePath:            "/workspace",
 		ClaudeVersion:            DefaultClaudeCodeVersion,
 		IsAlpine:                 isAlpine,
 		BuildKitEnabled:          g.BuildKitEnabled,

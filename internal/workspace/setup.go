@@ -31,6 +31,10 @@ type SetupMountsConfig struct {
 	// If set, the .git directory will be mounted at the same absolute path
 	// in the container to allow git worktree references to resolve.
 	ProjectRootDir string
+	// ContainerPath is the container-side mount destination for the workspace.
+	// Set to the host absolute path for Claude Code /resume compatibility.
+	// Must be set by callers (CreateContainer passes the resolved working directory).
+	ContainerPath string
 }
 
 // SetupMountsResult holds the results from setting up workspace mounts.
@@ -43,6 +47,8 @@ type SetupMountsResult struct {
 	// WorkspaceVolumeName is the name of the workspace volume created during setup.
 	// Non-empty only for snapshot mode. Used for cleanup on init failure.
 	WorkspaceVolumeName string
+	// ContainerPath is the resolved container-side workspace mount path.
+	ContainerPath string
 }
 
 // SetupMounts prepares workspace mounts for container creation.
@@ -51,6 +57,15 @@ type SetupMountsResult struct {
 //
 // Returns a result containing the mounts and config volume creation state.
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error) {
+	// Validate ContainerPath early — before any config or Docker access.
+	containerPath := cfg.ContainerPath
+	if containerPath == "" {
+		return nil, fmt.Errorf("container workspace path is required (ContainerPath must be set on SetupMountsConfig)")
+	}
+	if !filepath.IsAbs(containerPath) {
+		return nil, fmt.Errorf("container mount path must be absolute, got %q", containerPath)
+	}
+
 	var mounts []mount.Mount
 
 	// Get host path (working directory)
@@ -88,7 +103,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	// Create workspace strategy
 	wsCfg := Config{
 		HostPath:       hostPath,
-		RemotePath:     project.Workspace.RemotePath,
+		RemotePath:     containerPath,
 		ProjectName:    cfg.ProjectName,
 		AgentName:      cfg.AgentName,
 		IgnorePatterns: ignorePatterns,
@@ -163,6 +178,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		Mounts:              mounts,
 		ConfigVolumeResult:  configResult,
 		WorkspaceVolumeName: wsVolumeName,
+		ContainerPath:       containerPath,
 	}, nil
 }
 

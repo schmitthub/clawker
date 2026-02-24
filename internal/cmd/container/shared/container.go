@@ -29,6 +29,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
@@ -1514,6 +1515,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		AgentName:      agentName,
 		WorkDir:        wd,
 		ProjectRootDir: projectRootDir,
+		ContainerPath:  wd, // Mount at host absolute path for Claude Code /resume compatibility
 	})
 	if err != nil {
 		return nil, err
@@ -1568,7 +1570,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		if err := InitContainerConfig(ctx, InitConfigOpts{
 			ProjectName:      cfg.ProjectName,
 			AgentName:        agentName,
-			ContainerWorkDir: projectCfg.Workspace.RemotePath,
+			ContainerWorkDir: wsResult.ContainerPath,
 			ClaudeCode:       projectCfg.Agent.ClaudeCode,
 			CopyToVolume:     client.CopyToVolume,
 		}); err != nil {
@@ -1609,6 +1611,12 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		cfg.Flags, workspaceMounts, projectCfg)
 	if err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// Set container WorkingDir to match the workspace mount target unless
+	// the user explicitly provided --workdir.
+	if containerConfig.WorkingDir == "" {
+		containerConfig.WorkingDir = wsResult.ContainerPath
 	}
 
 	extraLabels := map[string]string{
@@ -1739,7 +1747,11 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerOptions, cfgGat
 		return wd, proj.RepoPath(), nil
 	}
 
-	wd, _ = cfgGateway.GetProjectRoot()
+	wd, wdErr := cfgGateway.GetProjectRoot()
+	if wdErr != nil {
+		logger.Debug().Err(wdErr).Msg("could not resolve project root, falling back to working directory")
+		wd = ""
+	}
 	if wd == "" {
 		wd, err = os.Getwd()
 		if err != nil {

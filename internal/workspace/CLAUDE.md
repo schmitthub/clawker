@@ -21,7 +21,7 @@ type Strategy interface {
 
 type Config struct {
     HostPath       string   // Host path to mount/copy
-    RemotePath     string   // Container path
+    RemotePath     string   // Container-side mount path (host absolute path)
     ProjectName    string   // For volume naming
     AgentName      string   // For agent-specific volumes
     IgnorePatterns []string // Patterns to exclude (snapshot + bind modes)
@@ -51,12 +51,14 @@ type SetupMountsConfig struct {
     AgentName      string
     WorkDir        string        // Host working directory (empty = os.Getwd() fallback)
     ProjectRootDir string        // Main repo root for worktree .git mounting (empty for non-worktree)
+    ContainerPath  string        // Container-side mount destination (host absolute path for /resume compatibility)
 }
 
 type SetupMountsResult struct {
     Mounts              []mount.Mount
     ConfigVolumeResult  ConfigVolumeResult
     WorkspaceVolumeName string  // Non-empty only for snapshot mode when volume was newly created. Used for cleanup on init failure.
+    ContainerPath       string  // Resolved container-side workspace mount path
 }
 
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)

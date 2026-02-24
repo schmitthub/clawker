@@ -31,7 +31,7 @@ func TestBuildProgress_Pipeline(t *testing.T) {
 version: "1"
 name: test-project
 build: { image: "node:20-slim" }
-workspace: { remote_path: "/workspace", default_mode: "bind" }
+workspace: { default_mode: "bind" }
 security: { firewall: { enable: false } }
 `, `
 monitoring:
@@ -98,7 +98,7 @@ func TestBuildProgress_SimplePipeline(t *testing.T) {
 version: "1"
 name: test-project
 build: { image: "node:20-slim" }
-workspace: { remote_path: "/workspace", default_mode: "bind" }
+workspace: { default_mode: "bind" }
 security: { firewall: { enable: false } }
 `, `
 monitoring:
@@ -155,7 +155,7 @@ func TestBuildProgress_Suppressed(t *testing.T) {
 version: "1"
 name: test-project
 build: { image: "node:20-slim" }
-workspace: { remote_path: "/workspace", default_mode: "bind" }
+workspace: { default_mode: "bind" }
 security: { firewall: { enable: false } }
 `, `
 monitoring:
@@ -207,7 +207,7 @@ func TestBuildProgress_CaptureCallCount(t *testing.T) {
 version: "1"
 name: test-project
 build: { image: "node:20-slim" }
-workspace: { remote_path: "/workspace", default_mode: "bind" }
+workspace: { default_mode: "bind" }
 security: { firewall: { enable: false } }
 `, `
 monitoring:

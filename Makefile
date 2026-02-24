@@ -1,7 +1,6 @@
 .PHONY: help \
         clawker clawker-build clawker-generate clawker-test clawker-test-internals clawker-lint clawker-staticcheck clawker-install clawker-clean \
-        fawker \
-        test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean golden-update \
+        test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean \
         licenses licenses-check \
         docs docs-check \
         pre-commit pre-commit-install
@@ -44,7 +43,6 @@ help:
 	@echo "  test-all            Run all test suites"
 	@echo "  test-coverage       Unit tests with coverage"
 	@echo "  test-clean          Remove test Docker resources (containers, volumes, networks, images)"
-	@echo "  golden-update       Regenerate golden files"
 	@echo ""
 	@echo "Clawker targets:"
 	@echo "  clawker                 Build the clawker Clawker binary"
@@ -83,12 +81,6 @@ clawker-build:
 	@echo "Building $(BINARY_NAME) $(CLAWKER_VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
-
-# Build the fawker demo Clawker (faked deps, no Docker required)
-fawker:
-	@echo "Building fawker..."
-	@mkdir -p $(BIN_DIR)
-	$(GO) build -o $(BIN_DIR)/fawker ./cmd/fawker
 
 # Build the standalone generate binary
 clawker-generate:
@@ -280,11 +272,6 @@ test-clean:
 	@docker network rm $$(docker network ls -q --filter "label=dev.clawker.test=true") 2>/dev/null || true
 	@docker rmi -f $$(docker images -q --filter "label=dev.clawker.test=true") 2>/dev/null || true
 	@echo "Test cleanup complete!"
-
-# Regenerate golden files
-golden-update:
-	@echo "Regenerating golden files..."
-	GOLDEN_UPDATE=1 $(TEST_CMD) ./...
 
 # ============================================================================
 # License Targets

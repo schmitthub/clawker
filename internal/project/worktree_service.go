@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/text"
 )
@@ -51,19 +52,11 @@ func newWorktreeService(cfg config.Config, registryStore *storage.Store[config.P
 	}
 }
 
-func (s *worktreeService) CreateWorktree(ctx context.Context, branch, base string) (string, error) {
-	return s.AddWorktree(ctx, branch, base)
+func (s *worktreeService) CreateWorktree(_ context.Context, projectRoot, branch, base string) (string, error) {
+	return s.addWorktree(projectRoot, branch, base)
 }
 
-func (s *worktreeService) AddWorktree(_ context.Context, branch, base string) (string, error) {
-	projectRoot, err := s.cfg.GetProjectRoot()
-	if err != nil {
-		if errors.Is(err, config.ErrNotInProject) {
-			return "", ErrNotInProjectPath
-		}
-		return "", fmt.Errorf("resolving project root: %w", err)
-	}
-
+func (s *worktreeService) addWorktree(projectRoot, branch, base string) (string, error) {
 	entry, err := s.findProjectByRoot(projectRoot)
 	if err != nil {
 		return "", err
@@ -102,15 +95,7 @@ func (s *worktreeService) AddWorktree(_ context.Context, branch, base string) (s
 	return worktreePath, nil
 }
 
-func (s *worktreeService) RemoveWorktree(_ context.Context, branch string, deleteBranch bool) error {
-	projectRoot, err := s.cfg.GetProjectRoot()
-	if err != nil {
-		if errors.Is(err, config.ErrNotInProject) {
-			return ErrNotInProjectPath
-		}
-		return fmt.Errorf("resolving project root: %w", err)
-	}
-
+func (s *worktreeService) RemoveWorktree(_ context.Context, projectRoot, branch string, deleteBranch bool) error {
 	entry, err := s.findProjectByRoot(projectRoot)
 	if err != nil {
 		return err
@@ -148,25 +133,8 @@ func (s *worktreeService) RemoveWorktree(_ context.Context, branch string, delet
 	return nil
 }
 
-func (s *worktreeService) CurrentProject() (config.ProjectEntry, error) {
-	projectRoot, err := s.cfg.GetProjectRoot()
-	if err != nil {
-		if errors.Is(err, config.ErrNotInProject) {
-			return config.ProjectEntry{}, ErrNotInProjectPath
-		}
-		return config.ProjectEntry{}, fmt.Errorf("resolving project root: %w", err)
-	}
-
+func (s *worktreeService) PruneStaleWorktrees(_ context.Context, projectRoot string, dryRun bool) (*PruneStaleResult, error) {
 	projectEntry, err := s.findProjectByRoot(projectRoot)
-	if err != nil {
-		return config.ProjectEntry{}, err
-	}
-
-	return projectEntry, nil
-}
-
-func (s *worktreeService) PruneStaleWorktrees(_ context.Context, dryRun bool) (*PruneStaleResult, error) {
-	projectEntry, err := s.CurrentProject()
 	if err != nil {
 		return nil, err
 	}
@@ -174,14 +142,6 @@ func (s *worktreeService) PruneStaleWorktrees(_ context.Context, dryRun bool) (*
 	result := &PruneStaleResult{Failed: make(map[string]error)}
 	if len(projectEntry.Worktrees) == 0 {
 		return result, nil
-	}
-
-	projectRoot, err := s.cfg.GetProjectRoot()
-	if err != nil {
-		if errors.Is(err, config.ErrNotInProject) {
-			return nil, ErrNotInProjectPath
-		}
-		return nil, fmt.Errorf("resolving project root: %w", err)
 	}
 
 	manager, err := s.newGitMgr(projectRoot)
@@ -260,6 +220,9 @@ func (s *worktreeService) PruneStaleWorktrees(_ context.Context, dryRun bool) (*
 }
 
 func (s *worktreeService) findProjectByRoot(projectRoot string) (config.ProjectEntry, error) {
+	if projectRoot == "" {
+		return config.ProjectEntry{}, fmt.Errorf("project root cannot be empty; the project registry may be corrupted — try re-registering with 'clawker project register'")
+	}
 	resolvedProjectRoot, err := filepath.EvalSymlinks(projectRoot)
 	if err != nil {
 		resolvedProjectRoot = filepath.Clean(projectRoot)
@@ -309,6 +272,7 @@ func NewWorktreeDirProvider(cfg config.Config, projectRoot string) git.WorktreeD
 	store, err := newRegistryStore()
 	if err != nil {
 		// Graceful degradation: return a provider with no known paths.
+		logger.Warn().Err(err).Msg("could not load project registry; worktree path reuse disabled")
 		return &flatWorktreeDirProvider{
 			knownPaths: map[string]string{},
 		}

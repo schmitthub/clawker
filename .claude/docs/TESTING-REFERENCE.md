@@ -795,7 +795,7 @@ cfg := builders.NewConfigBuilder().
 |----------|-----------|---------|
 | `DefaultWorkspace()` | `()` | Standard workspace (bind mode) |
 | `WorkspaceSnapshot()` | `()` | Snapshot mode |
-| `WorkspaceWithPath` | `(path string)` | Custom remote path |
+| `WorkspaceWithMode` | `(mode string)` | Custom workspace mode |
 
 **Instruction Presets:**
 
