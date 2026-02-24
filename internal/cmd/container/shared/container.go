@@ -29,6 +29,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
@@ -1746,7 +1747,11 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerOptions, cfgGat
 		return wd, proj.RepoPath(), nil
 	}
 
-	wd, _ = cfgGateway.GetProjectRoot()
+	wd, wdErr := cfgGateway.GetProjectRoot()
+	if wdErr != nil {
+		logger.Debug().Err(wdErr).Msg("could not resolve project root, falling back to working directory")
+		wd = ""
+	}
 	if wd == "" {
 		wd, err = os.Getwd()
 		if err != nil {

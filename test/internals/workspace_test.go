@@ -92,6 +92,7 @@ workspace:
 		AgentName:      "test-agent",
 		WorkDir:        worktreeDir,
 		ProjectRootDir: mainRepoDir,
+		ContainerPath:  worktreeDir,
 	})
 	require.NoError(t, err)
 
@@ -124,8 +125,12 @@ workspace:
 	require.NoError(t, err)
 
 	// 4. Exec git commands inside the container
+	// The workspace is mounted at the host absolute path (with symlinks resolved),
+	// so we need the resolved path for container exec commands.
+	containerWd := wsResult.ContainerPath
+
 	// Test: git rev-parse --abbrev-ref HEAD
-	result, err := ctr.Exec(ctx, client, "git", "-C", "/workspace", "rev-parse", "--abbrev-ref", "HEAD")
+	result, err := ctr.Exec(ctx, client, "git", "-C", containerWd, "rev-parse", "--abbrev-ref", "HEAD")
 	require.NoError(t, err, "git rev-parse should succeed")
 	require.Equal(t, 0, result.ExitCode, "git rev-parse exit code should be 0, stderr: %s", result.Stderr)
 
@@ -133,12 +138,12 @@ workspace:
 	assert.Equal(t, worktreeBranch, branchName, "should be on the worktree branch")
 
 	// Test: git status
-	result, err = ctr.Exec(ctx, client, "git", "-C", "/workspace", "status", "--short")
+	result, err = ctr.Exec(ctx, client, "git", "-C", containerWd, "status", "--short")
 	require.NoError(t, err, "git status should succeed")
 	require.Equal(t, 0, result.ExitCode, "git status exit code should be 0, stderr: %s", result.Stderr)
 
 	// Test: git log (verify we can see commit history)
-	result, err = ctr.Exec(ctx, client, "git", "-C", "/workspace", "log", "--oneline", "-1")
+	result, err = ctr.Exec(ctx, client, "git", "-C", containerWd, "log", "--oneline", "-1")
 	require.NoError(t, err, "git log should succeed")
 	require.Equal(t, 0, result.ExitCode, "git log exit code should be 0, stderr: %s", result.Stderr)
 	assert.Contains(t, result.CleanOutput(), "Initial commit")
@@ -146,14 +151,14 @@ workspace:
 	// Test: git add and commit (verify write operations work)
 	// The .git mount is read-write, so we should be able to commit changes
 	result, err = ctr.Exec(ctx, client, "sh", "-c",
-		"echo 'new content' > /workspace/newfile.txt && "+
-			"git -C /workspace add newfile.txt && "+
-			"git -C /workspace commit -m 'Add newfile from container'")
+		fmt.Sprintf("echo 'new content' > %s/newfile.txt && "+
+			"git -C %s add newfile.txt && "+
+			"git -C %s commit -m 'Add newfile from container'", containerWd, containerWd, containerWd))
 	require.NoError(t, err, "git add + commit should succeed")
 	require.Equal(t, 0, result.ExitCode, "git commit exit code should be 0, stderr: %s", result.Stderr)
 
 	// Verify the commit exists
-	result, err = ctr.Exec(ctx, client, "git", "-C", "/workspace", "log", "--oneline", "-1")
+	result, err = ctr.Exec(ctx, client, "git", "-C", containerWd, "log", "--oneline", "-1")
 	require.NoError(t, err, "git log after commit should succeed")
 	require.Equal(t, 0, result.ExitCode, "git log exit code should be 0")
 	assert.Contains(t, result.CleanOutput(), "Add newfile from container")
@@ -188,6 +193,7 @@ workspace:
 		AgentName:      "test-agent",
 		WorkDir:        tmpDir,
 		ProjectRootDir: "", // Empty - not a worktree
+		ContainerPath:  tmpDir,
 	})
 	require.NoError(t, err)
 
@@ -238,10 +244,11 @@ agent:
 	}
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
-		ModeOverride: "bind",
-		Cfg:          mockCfg,
-		AgentName:    harness.UniqueAgentName(t),
-		WorkDir:      tmpDir,
+		ModeOverride:  "bind",
+		Cfg:           mockCfg,
+		AgentName:     harness.UniqueAgentName(t),
+		WorkDir:       tmpDir,
+		ContainerPath: tmpDir,
 	})
 	require.NoError(t, err)
 
@@ -301,10 +308,11 @@ agent:
 `, "")
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
-		ModeOverride: "bind",
-		Cfg:          mockCfg,
-		AgentName:    harness.UniqueAgentName(t),
-		WorkDir:      tmpDir,
+		ModeOverride:  "bind",
+		Cfg:           mockCfg,
+		AgentName:     harness.UniqueAgentName(t),
+		WorkDir:       tmpDir,
+		ContainerPath: tmpDir,
 	})
 	require.NoError(t, err)
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -237,10 +238,12 @@ func (s *projectManager) ListWorktrees(ctx context.Context) ([]WorktreeState, er
 	for _, entry := range entries {
 		proj, err := s.Get(ctx, entry.Root)
 		if err != nil {
+			logger.Debug().Err(err).Str("root", entry.Root).Msg("skipping project in worktree listing")
 			continue
 		}
 		states, err := proj.ListWorktrees(ctx)
 		if err != nil {
+			logger.Debug().Err(err).Str("root", entry.Root).Msg("skipping project worktrees due to listing error")
 			continue
 		}
 		all = append(all, states...)

@@ -78,7 +78,7 @@ Git credentials are forwarded into the container automatically based on your pro
 - **HTTPS** — Clawker runs a host proxy that the container's git credential helper calls through. Your host's git credentials are never copied into the container.
 - **SSH** — SSH agent forwarding is handled via a socket bridge (muxrpc over `docker exec`). Your SSH keys stay on the host.
 - **GPG** — GPG agent forwarding works the same way as SSH, via the socket bridge.
-- **Git config** — Your `~/.gitconfig` is mounted read-only. The entrypoint copies it while filtering out `credential` sections (since the container uses its own credential forwarding).
+- **Git config** — Your `~/.gitconfig` is bind-mounted read-only to a staging path inside the container. The entrypoint copies it to `~/.gitconfig` while filtering out `[credential]` sections (since the container uses its own credential forwarding).
 
 ## Session Persistence
 
@@ -88,7 +88,7 @@ Claude Code sessions are preserved across container restarts through persistent 
 
 Each agent gets a dedicated config volume (named `clawker.<project>.<agent>-config`) mounted at `~/.claude` inside the container. This volume stores:
 
-- **Session transcripts** — Full conversation history as JSONL files under `projects/<path>/`
+- **Session transcripts** — Full conversation history as JSONL files under `projects/<mangled-cwd>/` (where the directory name is derived from the working directory path, with non-alphanumeric characters replaced by hyphens)
 - **Config state** — The `.config.json` file tracking the last session ID, startup count, and project metadata
 - **Plugins and settings** — Any Claude Code plugins or settings that persist across sessions
 
@@ -122,8 +122,8 @@ Multiple containers working on the same project (but different agents) each get 
 The first time a container is created for a given project+agent combination, Clawker initializes the config volume:
 
 1. **Onboarding bypass** — The container image includes a seed config that marks onboarding as complete, so Claude Code doesn't show the first-run wizard
-2. **Host config copy** — If `claude_code.config_strategy` is set to `copy` (the default), your host's Claude Code plugin configuration, installed plugins, agents, skills, and custom commands are copied into the config volume
-3. **Credential injection** — If `claude_code.use_host_auth` is enabled, your host's Claude Code credentials are copied so the container can authenticate without re-login
+2. **Host config copy** — If `agent.claude_code.config.strategy` is set to `copy` (the default), your host's Claude Code plugin configuration, installed plugins, agents, skills, and custom commands are copied into the config volume
+3. **Credential injection** — If `agent.claude_code.use_host_auth` is enabled, your host's Claude Code credentials are copied so the container can authenticate without re-login
 
 On subsequent container recreations with the same agent name, the config volume already exists and this initialization is skipped. Your existing sessions and settings are preserved.
 

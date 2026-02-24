@@ -58,7 +58,8 @@ Status values:
 - **dotgit_missing** — Directory exists but the `.git` file inside is missing or is a directory instead of a file
 - **git_metadata_missing** — Directory and `.git` file exist, but git's internal worktree metadata (`.git/worktrees/<slug>/`) is gone
 - **broken** — Directory and git metadata exist, but the branch has been deleted
-- **locked** — Shown in the locked column; worktree has been protected with `git worktree lock`
+
+Locked worktrees (via `git worktree lock`) have `IsLocked` set internally and are protected from pruning, but lock status is independent of health — a locked worktree can have any status.
 
 ## Removing Worktrees
 

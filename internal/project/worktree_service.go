@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/text"
 )
@@ -220,7 +221,7 @@ func (s *worktreeService) PruneStaleWorktrees(_ context.Context, projectRoot str
 
 func (s *worktreeService) findProjectByRoot(projectRoot string) (config.ProjectEntry, error) {
 	if projectRoot == "" {
-		return config.ProjectEntry{}, fmt.Errorf("project root cannot be empty")
+		return config.ProjectEntry{}, fmt.Errorf("project root cannot be empty; the project registry may be corrupted — try re-registering with 'clawker project register'")
 	}
 	resolvedProjectRoot, err := filepath.EvalSymlinks(projectRoot)
 	if err != nil {
@@ -271,6 +272,7 @@ func NewWorktreeDirProvider(cfg config.Config, projectRoot string) git.WorktreeD
 	store, err := newRegistryStore()
 	if err != nil {
 		// Graceful degradation: return a provider with no known paths.
+		logger.Warn().Err(err).Msg("could not load project registry; worktree path reuse disabled")
 		return &flatWorktreeDirProvider{
 			knownPaths: map[string]string{},
 		}

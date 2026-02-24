@@ -57,6 +57,15 @@ type SetupMountsResult struct {
 //
 // Returns a result containing the mounts and config volume creation state.
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error) {
+	// Validate ContainerPath early — before any config or Docker access.
+	containerPath := cfg.ContainerPath
+	if containerPath == "" {
+		return nil, fmt.Errorf("container workspace path is required (ContainerPath must be set on SetupMountsConfig)")
+	}
+	if !filepath.IsAbs(containerPath) {
+		return nil, fmt.Errorf("container mount path must be absolute, got %q", containerPath)
+	}
+
 	var mounts []mount.Mount
 
 	// Get host path (working directory)
@@ -89,13 +98,6 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	ignorePatterns, err := docker.LoadIgnorePatterns(ignoreFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load %s: %w", ignoreFile, err)
-	}
-
-	// ContainerPath is the container-side mount destination (host absolute path
-	// for session persistence). Always required — set by CreateContainer().
-	containerPath := cfg.ContainerPath
-	if !filepath.IsAbs(containerPath) {
-		return nil, fmt.Errorf("container mount path must be absolute, got %q", containerPath)
 	}
 
 	// Create workspace strategy
