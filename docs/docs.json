@@ -61,6 +61,11 @@
       "website": "https://clawker.dev"
     }
   },
+  "integrations": {
+    "ga4": {
+      "measurementId": "G-TM021J82T6"
+    }
+  },
   "navigation": {
     "groups": [
       {
