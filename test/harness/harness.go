@@ -1,311 +1,179 @@
 package harness
 
 import (
-	"fmt"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/cmd/root"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/text"
-	"github.com/schmitthub/clawker/test/harness/builders"
-	"gopkg.in/yaml.v3"
 )
 
-// Harness provides an isolated test environment for clawker tests.
-// It manages:
-// - Temporary project directory with clawker.yaml
-// - Isolated config directory (~/.config/clawker/)
-// - Environment variable backup and restoration
-// - Automatic cleanup via t.Cleanup()
+const projectName = "testrepo"
+
+// Harness provides an isolated filesystem environment for integration tests.
+// It creates temp directories, sets XDG env vars, registers a project, and
+// optionally persists config — all driven by what the caller wired into the Factory.
 type Harness struct {
-	T           *testing.T
-	ProjectDir  string            // Temp dir with clawker.yaml
-	ConfigDir   string            // Isolated ~/.config/clawker/
-	OriginalEnv map[string]string // For restoration
-	OriginalDir string            // Original working directory
-	Config      *config.Project   // The test config
-	Project     string            // Project name
-	envKeys     []string          // Keys we've set for cleanup
-	changedDir  bool              // Whether we changed directory
+	t          *testing.T
+	factory    *cmdutil.Factory
+	projectDir string
+	configDir  string
+	dataDir    string
+	stateDir   string
+	prevDir    string
 }
 
-// HarnessOption configures a Harness.
-type HarnessOption func(*Harness)
-
-// WithProject sets the project name.
-// Note: This should be used before WithConfig/WithConfigBuilder, or the config's
-// project name will override this setting.
-func WithProject(name string) HarnessOption {
-	return func(h *Harness) {
-		h.Project = name
-	}
+// RunResult holds the outcome of a CLI command execution.
+type RunResult struct {
+	ExitCode int
+	Err      error
 }
 
-// WithConfig sets the config directly.
-// Note: Project name is no longer stored in config.Project. Use WithProject() to set the project name.
-func WithConfig(cfg *config.Project) HarnessOption {
-	return func(h *Harness) {
-		h.Config = cfg
-	}
+// Option configures harness behavior.
+type Option func(*options)
+
+type options struct {
+	skipProjectRegistration bool
+	cfg                     config.Config
 }
 
-// WithConfigBuilder sets the config from a ConfigBuilder.
-// Note: Project name is no longer stored in config.Project. Use WithProject() to set the project name.
-func WithConfigBuilder(cb *builders.ConfigBuilder) HarnessOption {
-	return func(h *Harness) {
-		h.Config = cb.Build()
-	}
+// WithoutProjectRegistered skips automatic project registration.
+// Use this for testing init/project-init commands that do their own registration.
+func WithoutProjectRegistered() Option {
+	return func(o *options) { o.skipProjectRegistration = true }
 }
 
-// NewHarness creates a new test harness with isolation.
-// The harness automatically cleans up all resources when the test completes.
-func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
+// WithConfig persists a config.Config to disk via its store Write() methods.
+// The Config must be created AFTER harness.New() sets env vars — pass it via
+// a closure or create it inside the test after New() returns... but that's
+// too late. Instead, create Config lazily: the factory's Config closure will
+// resolve after env vars are set. Use WriteConfig() on the harness after New().
+func WithConfig(cfg config.Config) Option {
+	return func(o *options) { o.cfg = cfg }
+}
+
+// New creates an isolated test environment and returns a Harness.
+//
+// The caller passes a pre-built *cmdutil.Factory. The harness:
+//  1. Creates temp dirs for config, data, state, and project
+//  2. Sets CLAWKER_CONFIG_DIR, CLAWKER_DATA_DIR, CLAWKER_STATE_DIR via t.Setenv
+//  3. If f.ProjectManager is set (and not opted out): registers "testrepo" at projectDir
+//  4. Chdirs to projectDir (restored on cleanup)
+func New(t *testing.T, f *cmdutil.Factory, opts ...Option) *Harness {
 	t.Helper()
 
-	// Create temp directories
-	projectDir := t.TempDir() // Auto-cleaned by testing framework
-	configDir := t.TempDir()  // Auto-cleaned by testing framework
-
-	// Resolve symlinks for consistent path comparisons (e.g., /var -> /private/var on macOS)
-	projectDir, err := filepath.EvalSymlinks(projectDir)
-	if err != nil {
-		t.Fatalf("failed to resolve project directory symlinks: %v", err)
-	}
-	configDir, err = filepath.EvalSymlinks(configDir)
-	if err != nil {
-		t.Fatalf("failed to resolve config directory symlinks: %v", err)
-	}
-
-	// Save original working directory
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get current directory: %v", err)
-	}
-
-	h := &Harness{
-		T:           t,
-		ProjectDir:  projectDir,
-		ConfigDir:   configDir,
-		OriginalDir: origDir,
-		OriginalEnv: make(map[string]string),
-		envKeys:     make([]string, 0),
-	}
-
-	// Apply options
+	var o options
 	for _, opt := range opts {
-		opt(h)
+		opt(&o)
 	}
 
-	// If no config provided, use minimal valid config
-	if h.Config == nil {
-		h.Config = builders.MinimalValidConfig().Build()
+	// Resolve symlinks on the base temp dir so registry paths match
+	// os.Getwd() after chdir (macOS: /var → /private/var).
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("harness: resolving temp dir symlinks: %v", err)
 	}
+	configDir := filepath.Join(base, "config")
+	dataDir := filepath.Join(base, "data")
+	stateDir := filepath.Join(base, "state")
+	projectDir := filepath.Join(base, "project")
 
-	// Use a default project name if none was provided via WithProject.
-	// Project identity is no longer stored in config.Project — it comes from
-	// project.ProjectManager in production, and from Harness.Project in tests.
-	if h.Project == "" {
-		h.Project = "test-project"
-	}
-
-	// Slugify the project name to match registry resolution behavior.
-	// The registry stores projects by slug, and Resolution.ProjectKey returns the slug.
-	// Container/volume/network names use the slug, so the harness must too.
-	h.Project = text.Slugify(h.Project)
-
-	// Write clawker.yaml to project directory
-	if err := h.writeConfig(); err != nil {
-		t.Fatalf("failed to write config: %v", err)
-	}
-
-	// Isolate config dir so registry/settings load from temp dir
-	cfgConsts := configmocks.NewBlankConfig()
-	h.SetEnv(cfgConsts.ConfigDirEnvVar(), h.ConfigDir)
-
-	// Register the project in a temp registry so resolution finds it
-	if h.Project != "" {
-		slug := text.Slugify(h.Project)
-		regYAML := fmt.Sprintf("projects:\n  %s:\n    name: %s\n    root: %s\n", slug, h.Project, h.ProjectDir)
-		regPath := filepath.Join(h.ConfigDir, cfgConsts.ProjectRegistryFileName())
-		if err := os.WriteFile(regPath, []byte(regYAML), 0644); err != nil {
-			t.Fatalf("failed to write registry: %v", err)
+	for _, dir := range []string{configDir, dataDir, stateDir, projectDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("harness: creating dir %s: %v", dir, err)
 		}
 	}
 
-	// Set up cleanup
-	t.Cleanup(h.cleanup)
+	t.Setenv("CLAWKER_CONFIG_DIR", configDir)
+	t.Setenv("CLAWKER_DATA_DIR", dataDir)
+	t.Setenv("CLAWKER_STATE_DIR", stateDir)
+
+	// Register project by default if the factory has a ProjectManager wired.
+	if f.ProjectManager != nil && !o.skipProjectRegistration {
+		pm, err := f.ProjectManager()
+		if err != nil {
+			t.Fatalf("harness: getting project manager: %v", err)
+		}
+		if _, err := pm.Register(context.Background(), projectName, projectDir); err != nil {
+			t.Fatalf("harness: registering project: %v", err)
+		}
+	}
+
+	// Chdir to project directory so config discovery works from CWD.
+	prevDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("harness: getting cwd: %v", err)
+	}
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatalf("harness: chdir to project dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(prevDir)
+	})
+
+	h := &Harness{
+		t:          t,
+		factory:    f,
+		projectDir: projectDir,
+		configDir:  configDir,
+		dataDir:    dataDir,
+		stateDir:   stateDir,
+		prevDir:    prevDir,
+	}
+
+	// Persist config to disk if provided via WithConfig.
+	if o.cfg != nil {
+		h.WriteConfig(o.cfg)
+	}
 
 	return h
 }
 
-// writeConfig writes the Config to clawker.yaml in the project directory.
-func (h *Harness) writeConfig() error {
-	data, err := yaml.Marshal(h.Config)
-	if err != nil {
-		return err
+// WriteConfig persists a config.Config to disk by calling Write() on its
+// project and settings stores. Call this after New() to persist config that
+// was created using the harness's env vars.
+func (h *Harness) WriteConfig(cfg config.Config) {
+	h.t.Helper()
+	if err := cfg.ProjectStore().Write(); err != nil {
+		h.t.Fatalf("harness: writing project config: %v", err)
 	}
-
-	cfgConsts := configmocks.NewBlankConfig()
-	configPath := filepath.Join(h.ProjectDir, cfgConsts.ProjectConfigFileName())
-	return os.WriteFile(configPath, data, 0644)
+	if err := cfg.SettingsStore().Write(); err != nil {
+		h.t.Fatalf("harness: writing settings config: %v", err)
+	}
 }
 
-// cleanup restores the original state.
-func (h *Harness) cleanup() {
-	// Restore working directory if changed
-	if h.changedDir {
-		if err := os.Chdir(h.OriginalDir); err != nil {
-			h.T.Errorf("failed to restore working directory: %v", err)
-		}
+// Run executes a CLI command through the full root.NewCmdRoot Cobra pipeline
+// using the stored factory. IO is whatever the caller wired into the factory.
+func (h *Harness) Run(args ...string) *RunResult {
+	h.t.Helper()
+
+	cmd, err := root.NewCmdRoot(h.factory, "test", "test")
+	if err != nil {
+		return &RunResult{ExitCode: 1, Err: err}
 	}
 
-	// Restore environment variables
-	for _, key := range h.envKeys {
-		original, existed := h.OriginalEnv[key]
-		if existed {
-			os.Setenv(key, original)
+	cmd.SetArgs(args)
+
+	err = cmd.Execute()
+
+	exitCode := 0
+	if err != nil {
+		var exitErr *cmdutil.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.Code
 		} else {
-			os.Unsetenv(key)
+			exitCode = 1
 		}
 	}
+
+	return &RunResult{ExitCode: exitCode, Err: err}
 }
 
-// ----------------------------------------------------------------
-// Environment Management
-// ----------------------------------------------------------------
-
-// SetEnv sets an environment variable and registers it for cleanup.
-// The original value is restored when the test completes.
-func (h *Harness) SetEnv(key, value string) {
-	// Save original value if not already saved
-	if _, exists := h.OriginalEnv[key]; !exists {
-		h.OriginalEnv[key] = os.Getenv(key)
-		h.envKeys = append(h.envKeys, key)
-	}
-
-	if err := os.Setenv(key, value); err != nil {
-		h.T.Fatalf("failed to set env %s: %v", key, err)
-	}
-}
-
-// UnsetEnv unsets an environment variable and registers it for cleanup.
-func (h *Harness) UnsetEnv(key string) {
-	// Save original value if not already saved
-	if _, exists := h.OriginalEnv[key]; !exists {
-		h.OriginalEnv[key] = os.Getenv(key)
-		h.envKeys = append(h.envKeys, key)
-	}
-
-	if err := os.Unsetenv(key); err != nil {
-		h.T.Fatalf("failed to unset env %s: %v", key, err)
-	}
-}
-
-// Chdir changes to the project directory and registers restoration for cleanup.
-func (h *Harness) Chdir() {
-	h.T.Helper()
-	if err := os.Chdir(h.ProjectDir); err != nil {
-		h.T.Fatalf("failed to change to project directory: %v", err)
-	}
-	h.changedDir = true
-}
-
-// ----------------------------------------------------------------
-// Resource Name Generation
-// ----------------------------------------------------------------
-
-const (
-	// NamePrefix is the standard prefix for clawker resources
-	NamePrefix = "clawker"
-)
-
-// ContainerName generates the expected container name for an agent.
-// Format: clawker.<project>.<agent>
-func (h *Harness) ContainerName(agent string) string {
-	return NamePrefix + "." + h.Project + "." + agent
-}
-
-// ImageName returns the expected image name.
-// Returns Build.Image if set, otherwise clawker-<project>:latest
-func (h *Harness) ImageName() string {
-	if h.Config != nil && h.Config.Build.Image != "" {
-		return h.Config.Build.Image
-	}
-	return NamePrefix + "-" + h.Project + ":latest"
-}
-
-// VolumeName generates the expected volume name for an agent and purpose.
-// Format: clawker.<project>.<agent>-<purpose>
-func (h *Harness) VolumeName(agent, purpose string) string {
-	return NamePrefix + "." + h.Project + "." + agent + "-" + purpose
-}
-
-// NetworkName returns the clawker network name.
-func (h *Harness) NetworkName() string {
-	return _blankCfg.ClawkerNetwork()
-}
-
-// ----------------------------------------------------------------
-// Utilities
-// ----------------------------------------------------------------
-
-// ConfigPath returns the path to the clawker.yaml file.
-func (h *Harness) ConfigPath() string {
-	cfgConsts := configmocks.NewBlankConfig()
-	return filepath.Join(h.ProjectDir, cfgConsts.ProjectConfigFileName())
-}
-
-// WriteFile writes a file to the project directory.
-func (h *Harness) WriteFile(relPath, content string) {
-	h.T.Helper()
-	fullPath := filepath.Join(h.ProjectDir, relPath)
-
-	// Create parent directories if needed
-	dir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		h.T.Fatalf("failed to create directory %s: %v", dir, err)
-	}
-
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-		h.T.Fatalf("failed to write file %s: %v", fullPath, err)
-	}
-}
-
-// ReadFile reads a file from the project directory.
-func (h *Harness) ReadFile(relPath string) string {
-	h.T.Helper()
-	fullPath := filepath.Join(h.ProjectDir, relPath)
-
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		h.T.Fatalf("failed to read file %s: %v", fullPath, err)
-	}
-
-	return string(data)
-}
-
-// FileExists checks if a file exists in the project directory.
-func (h *Harness) FileExists(relPath string) bool {
-	fullPath := filepath.Join(h.ProjectDir, relPath)
-	_, err := os.Stat(fullPath)
-	return err == nil
-}
-
-// ParseYAML unmarshals a YAML string into a value of type T.
-// Generic utility for tests that need to parse YAML config snippets.
-func ParseYAML[T any](yamlStr string) (T, error) {
-	var result T
-	err := yaml.Unmarshal([]byte(yamlStr), &result)
-	return result, err
-}
-
-// UpdateConfig updates the config and rewrites clawker.yaml.
-func (h *Harness) UpdateConfig(fn func(*config.Project)) {
-	h.T.Helper()
-	fn(h.Config)
-	if err := h.writeConfig(); err != nil {
-		h.T.Fatalf("failed to update config: %v", err)
-	}
+// ProjectDir returns the path to the isolated project directory.
+func (h *Harness) ProjectDir() string {
+	return h.projectDir
 }

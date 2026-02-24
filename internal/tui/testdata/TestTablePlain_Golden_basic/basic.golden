@@ -1,3 +1,0 @@
-NAME  STATUS   IMAGE
-web   running  nginx:latest
-db    stopped  postgres:16
