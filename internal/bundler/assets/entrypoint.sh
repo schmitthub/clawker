@@ -157,7 +157,10 @@ if [ -f "$HOST_GITCONFIG" ]; then
     if [ -n "$current_gpg" ]; then
         container_gpg="$(command -v gpg 2>/dev/null)" || true
         if [ -n "$container_gpg" ]; then
-            git config --global gpg.program "$container_gpg"
+            git config --global gpg.program "$container_gpg" 2>/dev/null || true
+        else
+            # Host path won't exist in container — unset so git uses PATH lookup
+            git config --global --unset gpg.program 2>/dev/null || true
         fi
     fi
 fi
