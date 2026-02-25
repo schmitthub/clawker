@@ -136,6 +136,25 @@ Consumer mock APIs stay unchanged. Callers never see `Store[T]` directly — the
 
 Test env vars: `CLAWKER_DATA_DIR` (isolate registry), `CLAWKER_TEST_REPO_DIR` (walk-up tests).
 
+## Oracle and Golden Test Strategy
+
+Defense in depth — two independent guards for merge correctness:
+
+| Layer | How it works | What it catches |
+|-------|-------------|-----------------|
+| Oracle (randomized) | Computes expected merge from spec rules (~15 lines), independent of prod code. Runs every time with a new seed. | Any merge bug that manifests for the random placement |
+| Golden (fixed seed) | Hardcoded struct literal blessed from known-correct state. No auto-update. | Any regression from the blessed baseline, including oracle bugs |
+
+**Key design decisions:**
+
+| Decision | Rationale |
+|----------|-----------|
+| Deepest level forced to have both `config.local.yaml` and `config.yaml` | Guarantees filename priority is always exercised |
+| Main/local files have distinct names (`level3-main` vs `level3-local`) | Scalar assertions can distinguish which file won |
+| Golden values are code, not files | Must be hand-edited to change — no accidental `GOLDEN_UPDATE=1` sweep |
+| `make storage-golden` prints new values with interactive confirmation | Blocks CI — human must review and approve |
+| `STORAGE_GOLDEN_BLESS` env var is specific to this one test | No global sweep risk |
+
 ## Gotchas
 
 - **Use `Read()`, not `Get()`** — Both are now identical (lock-free atomic load of immutable snapshot), but `Get` is deprecated. Migrate call sites to `Read`. Snapshots are immutable by convention — the store never mutates a published `*T`; `Set` creates and swaps a new one.
