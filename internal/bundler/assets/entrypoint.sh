@@ -151,18 +151,6 @@ if [ -f "$HOST_GITCONFIG" ]; then
     else
         rm -f "$HOME/.gitconfig.tmp"
     fi
-
-    # Fix gpg.program path — host path (e.g. /opt/homebrew/bin/gpg) is never correct in container
-    current_gpg="$(git config --global gpg.program 2>/dev/null)" || true
-    if [ -n "$current_gpg" ]; then
-        container_gpg="$(command -v gpg 2>/dev/null)" || true
-        if [ -n "$container_gpg" ]; then
-            git config --global gpg.program "$container_gpg" 2>/dev/null || true
-        else
-            # Host path won't exist in container — unset so git uses PATH lookup
-            git config --global --unset gpg.program 2>/dev/null || true
-        fi
-    fi
 fi
 
 # Configure git credential helper if HTTPS forwarding is enabled

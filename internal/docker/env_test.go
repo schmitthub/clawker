@@ -393,6 +393,11 @@ func TestRuntimeEnv_GPGForwardingEnabled(t *testing.T) {
 		}
 	}
 	require.True(t, found, "expected CLAWKER_REMOTE_SOCKETS env var")
+
+	// Should override gpg.program via GIT_CONFIG env vars
+	assert.Contains(t, env, "GIT_CONFIG_COUNT=1")
+	assert.Contains(t, env, "GIT_CONFIG_KEY_0=gpg.program")
+	assert.Contains(t, env, "GIT_CONFIG_VALUE_0=/usr/bin/gpg")
 }
 
 func TestRuntimeEnv_BothForwardingEnabled(t *testing.T) {
@@ -425,6 +430,8 @@ func TestRuntimeEnv_NoForwardingNoSocketVars(t *testing.T) {
 			"should not set CLAWKER_REMOTE_SOCKETS when no forwarding")
 		assert.False(t, strings.HasPrefix(e, "SSH_AUTH_SOCK="),
 			"should not set SSH_AUTH_SOCK when no forwarding")
+		assert.False(t, strings.HasPrefix(e, "GIT_CONFIG_COUNT="),
+			"should not set GIT_CONFIG_COUNT when no forwarding")
 	}
 }
 
