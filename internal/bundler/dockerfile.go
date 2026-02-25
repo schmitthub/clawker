@@ -101,7 +101,6 @@ const (
 // DockerfileManager generates and persists Dockerfiles for each version/variant combination.
 type DockerfileManager struct {
 	cfg             config.Config
-	outputDir       string
 	variantConfig   *VariantConfig
 	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
 }
@@ -180,7 +179,6 @@ type RunInstruction struct {
 }
 
 type DockerFileManagerOptions struct {
-	OutputDir  string
 	VariantCfg *VariantConfig
 }
 
@@ -192,7 +190,6 @@ func NewDockerfileManager(cfg config.Config, opts *DockerFileManagerOptions) *Do
 
 	return &DockerfileManager{
 		cfg:           cfg,
-		outputDir:     opts.OutputDir,
 		variantConfig: opts.VariantCfg,
 	}
 }
@@ -326,8 +323,9 @@ func (m *DockerfileManager) renderDockerfile(tmpl *template.Template, ctx *Docke
 }
 
 // DockerfilesDir returns the path to the dockerfiles directory.
-func (m *DockerfileManager) DockerfilesDir() string {
-	return filepath.Join(m.outputDir, "dockerfiles")
+// Delegates to cfg.DockerfilesSubdir() as the single source of truth.
+func (m *DockerfileManager) DockerfilesDir() (string, error) {
+	return m.cfg.DockerfilesSubdir()
 }
 
 // ProjectGenerator creates Dockerfiles dynamically from project configuration (clawker.yaml).

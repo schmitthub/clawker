@@ -1,6 +1,7 @@
 package bundler
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -255,4 +256,31 @@ func TestBuildContext_TelemetryConfig_DefaultsEnabled(t *testing.T) {
 	assert.Contains(t, content, "OTEL_METRICS_INCLUDE_SESSION_ID=true")
 	assert.Contains(t, content, "OTEL_METRIC_EXPORT_INTERVAL=10000")
 	assert.Contains(t, content, "OTEL_LOGS_EXPORT_INTERVAL=5000")
+}
+
+func TestDockerfilesDir_DelegatesToConfig(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	mgr := NewDockerfileManager(cfg, &DockerFileManagerOptions{})
+
+	expected, err := cfg.DockerfilesSubdir()
+	require.NoError(t, err)
+
+	got, err := mgr.DockerfilesDir()
+	require.NoError(t, err)
+	assert.Equal(t, expected, got)
+	assert.Contains(t, got, "build/dockerfiles",
+		"DockerfilesDir must nest under build/dockerfiles")
+}
+
+func TestDockerfilesDir_PropagatesError(t *testing.T) {
+	mock := configmocks.NewBlankConfig()
+	mock.DockerfilesSubdirFunc = func() (string, error) {
+		return "", fmt.Errorf("permission denied")
+	}
+	mgr := NewDockerfileManager(mock, &DockerFileManagerOptions{})
+
+	dir, err := mgr.DockerfilesDir()
+	assert.Error(t, err)
+	assert.Empty(t, dir)
+	assert.Contains(t, err.Error(), "permission denied")
 }

@@ -50,7 +50,7 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 
 	// 5. Generate dockerfiles (with BuildKit-conditional cache mounts)
 	logger.Debug().Str("output_dir", buildDir).Msg("generating dockerfiles")
-	dfMgr := bundler.NewDockerfileManager(c.cfg, &bundler.DockerFileManagerOptions{OutputDir: buildDir})
+	dfMgr := bundler.NewDockerfileManager(c.cfg, &bundler.DockerFileManagerOptions{})
 	dfMgr.BuildKitEnabled = buildkitEnabled
 	if err := dfMgr.GenerateDockerfiles(versions); err != nil {
 		return fmt.Errorf("failed to generate dockerfiles: %w", err)
@@ -67,7 +67,10 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 	}
 
 	dockerfileName := fmt.Sprintf("%s-%s.dockerfile", latestVersion, flavor)
-	dockerfilesDir := dfMgr.DockerfilesDir()
+	dockerfilesDir, err := dfMgr.DockerfilesDir()
+	if err != nil {
+		return fmt.Errorf("failed to resolve dockerfiles directory: %w", err)
+	}
 	dockerfilePath := filepath.Join(dockerfilesDir, dockerfileName)
 
 	logger.Debug().

@@ -26,7 +26,7 @@ func NewCmdGenerate(f *cmdutil.Factory, runF func(context.Context, *GenerateOpti
 
 - `--skip-fetch` — use cached versions.json
 - `--cleanup` (default: true) — remove stale files
-- `--output` / `-o` — custom output directory (default: `cfg.BuildSubdir()`)
+- `--output` / `-o` — custom output directory for versions.json (default: `cfg.BuildSubdir()`). Dockerfiles always go to `cfg.DockerfilesSubdir()`
 
 ## Behavior
 
