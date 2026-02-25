@@ -33,14 +33,18 @@ archives:
       - LICENSE
       - README.md
 
-homebrew_casks:
+brews:
   - name: clawker
     repository:
       owner: schmitthub
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
     homepage: https://github.com/schmitthub/clawker
     description: "Development containers for AI coding agents"
+    license: "MIT"
+    install: |
+      bin.install "clawker"
 
 checksum:
   name_template: "checksums.txt"
