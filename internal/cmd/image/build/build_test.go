@@ -6,11 +6,14 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdBuild(t *testing.T) {
-	f := &cmdutil.Factory{}
+	f := &cmdutil.Factory{
+		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdBuild(f, nil)
 
 	// Test command basics
@@ -40,7 +43,9 @@ func TestCmd_Flags(t *testing.T) {
 		{"network flag", "network", "", ""},
 	}
 
-	f := &cmdutil.Factory{}
+	f := &cmdutil.Factory{
+		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdBuild(f, nil)
 
 	for _, tt := range tests {
@@ -251,7 +256,9 @@ func TestCmd_FlagParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
+			f := &cmdutil.Factory{
+				Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+			}
 			var gotOpts *BuildOptions
 			cmd := NewCmdBuild(f, func(_ context.Context, opts *BuildOptions) error {
 				gotOpts = opts
@@ -383,7 +390,9 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
+			f := &cmdutil.Factory{
+				Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+			}
 
 			var gotOpts *BuildOptions
 			cmd := NewCmdBuild(f, func(_ context.Context, opts *BuildOptions) error {

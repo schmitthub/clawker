@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
@@ -61,7 +62,7 @@ func NewTestManager(t *testing.T) (*socketbridge.Manager, string) {
 	if err != nil {
 		t.Fatalf("getting bridges subdir: %v", err)
 	}
-	return socketbridge.NewManager(cfg), stateDir
+	return socketbridge.NewManager(cfg, logger.Nop()), stateDir
 }
 
 // WriteTestMessage writes a socketbridge protocol message to buf

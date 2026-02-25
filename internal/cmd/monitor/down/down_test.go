@@ -5,12 +5,16 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 func TestNewCmdDown(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 
 	var gotOpts *DownOptions
 	cmd := NewCmdDown(f, func(_ context.Context, opts *DownOptions) error {
@@ -27,7 +31,7 @@ func TestNewCmdDown(t *testing.T) {
 	if gotOpts == nil {
 		t.Fatal("expected runF to be called")
 	}
-	if gotOpts.IOStreams != tio.IOStreams {
+	if gotOpts.IOStreams != tio {
 		t.Error("expected IOStreams to be set from factory")
 	}
 	if gotOpts.Volumes {
@@ -36,8 +40,11 @@ func TestNewCmdDown(t *testing.T) {
 }
 
 func TestNewCmdDown_VolumesFlag(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 
 	var gotOpts *DownOptions
 	cmd := NewCmdDown(f, func(_ context.Context, opts *DownOptions) error {

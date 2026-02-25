@@ -12,33 +12,36 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func testFactory(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T) (*cmdutil.Factory, *iostreams.IOStreams) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		TUI:       tui.NewTUI(tio),
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 	}
 	return f, tio
 }
 
-func testFactoryWithConfig(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactoryWithConfig(t *testing.T) (*cmdutil.Factory, *iostreams.IOStreams) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	cfg := configmocks.NewFromString(`name: testproject`, "")
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		TUI:       tui.NewTUI(tio),
 		Config:    func() (config.Config, error) { return cfg, nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("docker not available in tests")
 		},
+		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
 	}
 	return f, tio
 }

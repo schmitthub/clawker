@@ -4,23 +4,23 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewTUI(t *testing.T) {
-	tio := iostreamstest.New()
-	tu := NewTUI(tio.IOStreams)
+	tio, _, _, _ := iostreams.Test()
+	tu := NewTUI(tio)
 
 	require.NotNil(t, tu)
-	assert.Equal(t, tio.IOStreams, tu.IOStreams())
+	assert.Equal(t, tio, tu.IOStreams())
 	assert.Empty(t, tu.hooks)
 }
 
 func TestTUI_RegisterHooks(t *testing.T) {
-	tio := iostreamstest.New()
-	tu := NewTUI(tio.IOStreams)
+	tio, _, _, _ := iostreams.Test()
+	tu := NewTUI(tio)
 
 	h1 := LifecycleHook(func(_, _ string) HookResult { return HookResult{Continue: true} })
 	h2 := LifecycleHook(func(_, _ string) HookResult { return HookResult{Continue: true} })
@@ -33,8 +33,8 @@ func TestTUI_RegisterHooks(t *testing.T) {
 }
 
 func TestTUI_RunProgress_InjectsHook(t *testing.T) {
-	tio := iostreamstest.New()
-	tu := NewTUI(tio.IOStreams)
+	tio, _, _, _ := iostreams.Test()
+	tu := NewTUI(tio)
 
 	var hookFired bool
 	tu.RegisterHooks(func(component, event string) HookResult {
@@ -57,8 +57,8 @@ func TestTUI_RunProgress_InjectsHook(t *testing.T) {
 }
 
 func TestTUI_RunProgress_NoHooks(t *testing.T) {
-	tio := iostreamstest.New()
-	tu := NewTUI(tio.IOStreams)
+	tio, _, _, _ := iostreams.Test()
+	tu := NewTUI(tio)
 
 	ch := make(chan ProgressStep, 1)
 	ch <- ProgressStep{ID: "1", Name: "test step", Status: StepComplete}
@@ -72,8 +72,8 @@ func TestTUI_RunProgress_NoHooks(t *testing.T) {
 }
 
 func TestTUI_RunProgress_DoesNotOverrideExplicitHook(t *testing.T) {
-	tio := iostreamstest.New()
-	tu := NewTUI(tio.IOStreams)
+	tio, _, _, _ := iostreams.Test()
+	tu := NewTUI(tio)
 
 	var registeredFired, explicitFired bool
 	tu.RegisterHooks(func(_, _ string) HookResult {
@@ -100,8 +100,8 @@ func TestTUI_RunProgress_DoesNotOverrideExplicitHook(t *testing.T) {
 }
 
 func TestTUI_ComposedHook_ShortCircuitsOnAbort(t *testing.T) {
-	tio := iostreamstest.New()
-	tu := NewTUI(tio.IOStreams)
+	tio, _, _, _ := iostreams.Test()
+	tu := NewTUI(tio)
 
 	var h1Fired, h2Fired bool
 	tu.RegisterHooks(
@@ -125,8 +125,8 @@ func TestTUI_ComposedHook_ShortCircuitsOnAbort(t *testing.T) {
 }
 
 func TestTUI_ComposedHook_ShortCircuitsOnError(t *testing.T) {
-	tio := iostreamstest.New()
-	tu := NewTUI(tio.IOStreams)
+	tio, _, _, _ := iostreams.Test()
+	tu := NewTUI(tio)
 
 	hookErr := fmt.Errorf("hook failed")
 	var h2Fired bool
@@ -148,9 +148,8 @@ func TestTUI_ComposedHook_ShortCircuitsOnError(t *testing.T) {
 }
 
 func TestTUI_ComposedHook_SingleHookDirect(t *testing.T) {
-	tio := iostreamstest.New()
-	tu := NewTUI(tio.IOStreams)
-
+	tio, _, _, _ := iostreams.Test()
+	tu := NewTUI(tio)
 	var capturedComponent, capturedEvent string
 	tu.RegisterHooks(func(component, event string) HookResult {
 		capturedComponent = component

@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
 )
@@ -17,12 +18,14 @@ import (
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
 	Config    func() (config.Config, error)
+	Logger    func() (*logger.Logger, error)
 }
 
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {
 	opts := &StatusOptions{
 		IOStreams: f.IOStreams,
 		Config:    f.Config,
+		Logger:    f.Logger,
 	}
 
 	cmd := &cobra.Command{
@@ -48,6 +51,11 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
+
 	cfg, err := opts.Config()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -60,7 +68,7 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
 
-	ios.Logger.Debug().Str("monitor_dir", monitorDir).Msg("checking monitor stack status")
+	log.Debug().Str("monitor_dir", monitorDir).Msg("checking monitor stack status")
 
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName

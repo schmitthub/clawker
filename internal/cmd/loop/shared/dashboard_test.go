@@ -6,10 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// dashNopLog is a nop logger for dashboard tests.
+var dashNopLog = logger.Nop()
 
 func TestWireLoopDashboard_SendsStartEvent(t *testing.T) {
 	opts := &Options{}
@@ -19,7 +23,7 @@ func TestWireLoopDashboard_SendsStartEvent(t *testing.T) {
 		ProjectName: "testproj",
 	}
 
-	WireLoopDashboard(opts, ch, setup, 50)
+	WireLoopDashboard(opts, ch, setup, 50, dashNopLog)
 
 	ev := <-ch
 	assert.Equal(t, LoopDashEventStart, ev.Kind)
@@ -37,7 +41,7 @@ func TestWireLoopDashboard_SetsCallbacks(t *testing.T) {
 		ProjectName: "testproj",
 	}
 
-	WireLoopDashboard(opts, ch, setup, 50)
+	WireLoopDashboard(opts, ch, setup, 50, dashNopLog)
 	<-ch // drain start
 
 	assert.NotNil(t, opts.OnLoopStart)
@@ -52,7 +56,7 @@ func TestWireLoopDashboard_OnLoopStart(t *testing.T) {
 	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
-	WireLoopDashboard(opts, ch, setup, 10)
+	WireLoopDashboard(opts, ch, setup, 10, dashNopLog)
 	<-ch // drain start
 
 	opts.OnLoopStart(3)
@@ -67,7 +71,7 @@ func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
-	WireLoopDashboard(opts, ch, setup, 10)
+	WireLoopDashboard(opts, ch, setup, 10, dashNopLog)
 	<-ch // drain start
 
 	opts.OnLoopStart(1)
@@ -104,7 +108,7 @@ func TestWireLoopDashboard_OnLoopEnd_WithResultEvent(t *testing.T) {
 	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
-	WireLoopDashboard(opts, ch, setup, 10)
+	WireLoopDashboard(opts, ch, setup, 10, dashNopLog)
 	<-ch // drain start
 
 	opts.OnLoopStart(1)
@@ -129,7 +133,7 @@ func TestWireLoopDashboard_OnLoopEnd_NilStatus(t *testing.T) {
 	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
-	WireLoopDashboard(opts, ch, setup, 10)
+	WireLoopDashboard(opts, ch, setup, 10, dashNopLog)
 	<-ch // drain start
 
 	opts.OnLoopStart(1)
@@ -148,7 +152,7 @@ func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
 	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
-	WireLoopDashboard(opts, ch, setup, 10)
+	WireLoopDashboard(opts, ch, setup, 10, dashNopLog)
 	<-ch // drain start
 
 	opts.OnLoopStart(1)
@@ -171,7 +175,7 @@ func TestWireLoopDashboard_OnStreamEvent_TextDelta(t *testing.T) {
 	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
-	WireLoopDashboard(opts, ch, setup, 10)
+	WireLoopDashboard(opts, ch, setup, 10, dashNopLog)
 	<-ch // drain start
 
 	opts.OnStreamEvent(&StreamDeltaEvent{
@@ -192,7 +196,7 @@ func TestWireLoopDashboard_OnStreamEvent_ToolStart(t *testing.T) {
 	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
-	WireLoopDashboard(opts, ch, setup, 10)
+	WireLoopDashboard(opts, ch, setup, 10, dashNopLog)
 	<-ch // drain start
 
 	opts.OnStreamEvent(&StreamDeltaEvent{
@@ -213,7 +217,7 @@ func TestWireLoopDashboard_OnStreamEvent_IgnoresOtherEvents(t *testing.T) {
 	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
-	WireLoopDashboard(opts, ch, setup, 10)
+	WireLoopDashboard(opts, ch, setup, 10, dashNopLog)
 	<-ch // drain start
 
 	// message_stop should not produce any output event
@@ -234,7 +238,7 @@ func TestWireLoopDashboard_OnLoopEnd_WithError(t *testing.T) {
 	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectName: "proj"}
 
-	WireLoopDashboard(opts, ch, setup, 10)
+	WireLoopDashboard(opts, ch, setup, 10, dashNopLog)
 	<-ch // drain start
 
 	opts.OnLoopStart(1)
@@ -253,7 +257,7 @@ func TestSendEvent_FullChannel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		sendEvent(ch, LoopDashEvent{Kind: LoopDashEventOutput})
+		sendEvent(ch, LoopDashEvent{Kind: LoopDashEventOutput}, dashNopLog)
 		close(done)
 	}()
 
@@ -270,8 +274,8 @@ func TestSendEvent_FullChannel(t *testing.T) {
 
 func TestDrainLoopEventsAsText_IterStart(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreamstest.New()
-	cs := tio.IOStreams.ColorScheme()
+	tio, _, _, _ := iostreams.Test()
+	cs := tio.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
 	ch <- LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 3}
@@ -283,8 +287,8 @@ func TestDrainLoopEventsAsText_IterStart(t *testing.T) {
 
 func TestDrainLoopEventsAsText_IterEnd(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreamstest.New()
-	cs := tio.IOStreams.ColorScheme()
+	tio, _, _, _ := iostreams.Test()
+	cs := tio.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
 	ch <- LoopDashEvent{
@@ -307,8 +311,8 @@ func TestDrainLoopEventsAsText_IterEnd(t *testing.T) {
 
 func TestDrainLoopEventsAsText_IterEnd_WithError(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreamstest.New()
-	cs := tio.IOStreams.ColorScheme()
+	tio, _, _, _ := iostreams.Test()
+	cs := tio.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
 	ch <- LoopDashEvent{
@@ -325,8 +329,8 @@ func TestDrainLoopEventsAsText_IterEnd_WithError(t *testing.T) {
 
 func TestDrainLoopEventsAsText_IterEnd_NoStatus(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreamstest.New()
-	cs := tio.IOStreams.ColorScheme()
+	tio, _, _, _ := iostreams.Test()
+	cs := tio.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
 	ch <- LoopDashEvent{Kind: LoopDashEventIterEnd, Iteration: 1}
@@ -338,8 +342,8 @@ func TestDrainLoopEventsAsText_IterEnd_NoStatus(t *testing.T) {
 
 func TestDrainLoopEventsAsText_RateLimit(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreamstest.New()
-	cs := tio.IOStreams.ColorScheme()
+	tio, _, _, _ := iostreams.Test()
+	cs := tio.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
 	ch <- LoopDashEvent{Kind: LoopDashEventRateLimit, RateRemaining: 5, RateLimit: 100}
@@ -351,8 +355,8 @@ func TestDrainLoopEventsAsText_RateLimit(t *testing.T) {
 
 func TestDrainLoopEventsAsText_Complete(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreamstest.New()
-	cs := tio.IOStreams.ColorScheme()
+	tio, _, _, _ := iostreams.Test()
+	cs := tio.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
 	ch <- LoopDashEvent{Kind: LoopDashEventComplete, ExitReason: "agent signaled completion"}
@@ -364,8 +368,8 @@ func TestDrainLoopEventsAsText_Complete(t *testing.T) {
 
 func TestDrainLoopEventsAsText_CompleteWithError(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreamstest.New()
-	cs := tio.IOStreams.ColorScheme()
+	tio, _, _, _ := iostreams.Test()
+	cs := tio.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
 	ch <- LoopDashEvent{
@@ -383,8 +387,8 @@ func TestDrainLoopEventsAsText_CompleteWithError(t *testing.T) {
 
 func TestDrainLoopEventsAsText_MultipleEvents(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreamstest.New()
-	cs := tio.IOStreams.ColorScheme()
+	tio, _, _, _ := iostreams.Test()
+	cs := tio.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 8)
 	ch <- LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1}
@@ -414,8 +418,8 @@ func TestDrainLoopEventsAsText_MultipleEvents(t *testing.T) {
 
 func TestDrainLoopEventsAsText_IgnoresOutputEvents(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreamstest.New()
-	cs := tio.IOStreams.ColorScheme()
+	tio, _, _, _ := iostreams.Test()
+	cs := tio.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
 	ch <- LoopDashEvent{Kind: LoopDashEventOutput, OutputChunk: "some output"}

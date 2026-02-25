@@ -17,6 +17,7 @@ import (
 type Builder struct {
 	client      *Client
 	config      *config.Project
+	log         *logger.Logger
 	workDir     string
 	projectName string
 }
@@ -57,10 +58,12 @@ func (o BuilderOptions) toBuildImageOpts(tags []string, dockerfile string, conte
 
 // NewBuilder creates a new Builder instance.
 // projectName is the resolved project identity (from ProjectManager); empty string for unregistered projects.
+// The builder inherits the logger from the Client.
 func NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string) *Builder {
 	return &Builder{
 		client:      cli,
 		config:      cfg,
+		log:         cli.log,
 		workDir:     workDir,
 		projectName: projectName,
 	}
@@ -101,7 +104,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Builder
 			return fmt.Errorf("failed to check image existence for %s: %w", hashTag, err)
 		}
 		if exists {
-			logger.Debug().
+			b.log.Debug().
 				Str("image", hashTag).
 				Msg("image up-to-date, skipping build")
 
@@ -134,7 +137,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 
 	// Check if we should use a custom Dockerfile
 	if gen.UseCustomDockerfile() {
-		logger.Debug().
+		b.log.Debug().
 			Str("dockerfile", b.config.Build.Dockerfile).
 			Msg("building from custom Dockerfile")
 
@@ -149,7 +152,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 		return b.client.BuildImage(ctx, buildCtx, opts.toBuildImageOpts(tags, filepath.Base(gen.GetCustomDockerfilePath()), gen.GetBuildContext()))
 	}
 
-	logger.Debug().Str("image", imageTag).Msg("building container image")
+	b.log.Debug().Str("image", imageTag).Msg("building container image")
 
 	// Generate Dockerfile bytes if not already provided
 	var dockerfile []byte
@@ -172,7 +175,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 		}
 		defer func() {
 			if err := os.RemoveAll(tempDir); err != nil {
-				logger.Debug().Err(err).Str("dir", tempDir).Msg("failed to clean up build context temp dir")
+				b.log.Debug().Err(err).Str("dir", tempDir).Msg("failed to clean up build context temp dir")
 			}
 		}()
 

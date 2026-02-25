@@ -7,6 +7,7 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // Strategy defines the interface for workspace mounting strategies
@@ -50,12 +51,12 @@ type Config struct {
 }
 
 // NewStrategy creates a Strategy based on the mode
-func NewStrategy(mode config.Mode, cfg Config) (Strategy, error) {
+func NewStrategy(mode config.Mode, cfg Config, log *logger.Logger) (Strategy, error) {
 	switch mode {
 	case config.ModeBind:
-		return NewBindStrategy(cfg), nil
+		return NewBindStrategy(cfg, log), nil
 	case config.ModeSnapshot:
-		return NewSnapshotStrategy(cfg)
+		return NewSnapshotStrategy(cfg, log)
 	default:
 		return nil, fmt.Errorf("unsupported workspace mode: %s", mode)
 	}

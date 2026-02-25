@@ -7,7 +7,8 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,10 +40,10 @@ func TestNewCmdInspect(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tios := iostreamstest.New()
-			ios := tios.IOStreams
+			ios, _, _, _ := iostreams.Test()
 			f := &cmdutil.Factory{
 				IOStreams: ios,
+				Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 			}
 
 			var gotOpts *InspectOptions
@@ -78,9 +79,10 @@ func TestNewCmdInspect(t *testing.T) {
 }
 
 func TestCmdInspect_Properties(t *testing.T) {
-	tios := iostreamstest.New()
+	ios, _, _, _ := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tios.IOStreams,
+		IOStreams: ios,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 	}
 	cmd := NewCmdInspect(f, nil)
 

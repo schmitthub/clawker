@@ -33,8 +33,8 @@ rootCmd, err := root.NewCmdRoot(f, build.Version, build.Date)
 
 **Tests NEVER import this package.** Tests construct minimal Factory structs:
 ```go
-tio := iostreamstest.New()
-f := &cmdutil.Factory{IOStreams: tio.IOStreams, TUI: tui.NewTUI(tio.IOStreams), Version: "1.0.0"}
+tio, _, _, _ := iostreams.Test()
+f := &cmdutil.Factory{IOStreams: tio, TUI: tui.NewTUI(tio), Version: "1.0.0"}
 ```
 
 ## Extracted Helper Pattern

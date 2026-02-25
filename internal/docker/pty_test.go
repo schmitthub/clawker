@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
 )
 
@@ -29,6 +30,7 @@ func TestResetVisualStateUnlocked_Terminal(t *testing.T) {
 		stdin:   os.Stdin,
 		stdout:  w,
 		stderr:  os.Stderr,
+		log:     logger.Nop(),
 		rawMode: term.NewRawMode(int(w.Fd())),
 	}
 
@@ -62,6 +64,7 @@ func TestResetVisualStateUnlocked_NonTerminal(t *testing.T) {
 		stdin:   os.Stdin,
 		stdout:  w,
 		stderr:  os.Stderr,
+		log:     logger.Nop(),
 		rawMode: term.NewRawMode(int(w.Fd())), // pipe is not a terminal
 	}
 
@@ -93,6 +96,7 @@ func TestRestore_ResetsVisualState(t *testing.T) {
 		stdin:   os.Stdin,
 		stdout:  w,
 		stderr:  os.Stderr,
+		log:     logger.Nop(),
 		rawMode: term.NewRawMode(int(w.Fd())), // pipe is not a terminal
 	}
 
@@ -121,6 +125,7 @@ func TestRestore_NoErrorOnNonTerminal(t *testing.T) {
 		stdin:   os.Stdin,
 		stdout:  os.Stdout,
 		stderr:  os.Stderr,
+		log:     logger.Nop(),
 		rawMode: term.NewRawMode(-1), // invalid fd, but IsTerminal will return false
 	}
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 var _blankCfg = configmocks.NewBlankConfig()
@@ -93,7 +94,7 @@ func TestMatchPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchPattern(tt.path, tt.pattern)
+			got := matchPattern(logger.Nop(), tt.path, tt.pattern)
 			if got != tt.want {
 				t.Errorf("matchPattern(%q, %q) = %v, want %v", tt.path, tt.pattern, got, tt.want)
 			}
@@ -190,7 +191,7 @@ func TestShouldIgnore(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldIgnore(tt.path, tt.isDir, tt.patterns)
+			got := shouldIgnore(logger.Nop(), tt.path, tt.isDir, tt.patterns)
 			if got != tt.want {
 				t.Errorf("shouldIgnore(%q, %v, %v) = %v, want %v", tt.path, tt.isDir, tt.patterns, got, tt.want)
 			}
@@ -213,7 +214,7 @@ func TestFindIgnoredDirs(t *testing.T) {
 		root := t.TempDir()
 		mkdirs(t, root, "node_modules/foo", "src", "dist", ".venv/lib")
 
-		dirs, err := FindIgnoredDirs(root, []string{"node_modules/", "dist/", ".venv/"})
+		dirs, err := FindIgnoredDirs(nil, root, []string{"node_modules/", "dist/", ".venv/"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -238,7 +239,7 @@ func TestFindIgnoredDirs(t *testing.T) {
 		mkdirs(t, root, ".git/objects", "node_modules")
 
 		// Even with a pattern that would match .git, it should be skipped
-		dirs, err := FindIgnoredDirs(root, []string{".git/", "node_modules/"})
+		dirs, err := FindIgnoredDirs(nil, root, []string{".git/", "node_modules/"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -263,7 +264,7 @@ func TestFindIgnoredDirs(t *testing.T) {
 		root := t.TempDir()
 		mkdirs(t, root, "node_modules/deep/nested")
 
-		dirs, err := FindIgnoredDirs(root, []string{"node_modules/"})
+		dirs, err := FindIgnoredDirs(nil, root, []string{"node_modules/"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -280,7 +281,7 @@ func TestFindIgnoredDirs(t *testing.T) {
 		root := t.TempDir()
 		mkdirs(t, root, "node_modules", "dist")
 
-		dirs, err := FindIgnoredDirs(root, nil)
+		dirs, err := FindIgnoredDirs(nil, root, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -293,7 +294,7 @@ func TestFindIgnoredDirs(t *testing.T) {
 		root := t.TempDir()
 		mkdirs(t, root, "src", "lib")
 
-		dirs, err := FindIgnoredDirs(root, []string{"node_modules/", "dist/"})
+		dirs, err := FindIgnoredDirs(nil, root, []string{"node_modules/", "dist/"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -306,7 +307,7 @@ func TestFindIgnoredDirs(t *testing.T) {
 		root := t.TempDir()
 		mkdirs(t, root, "vendor/pkg", "build/output")
 
-		dirs, err := FindIgnoredDirs(root, []string{"vendor", "build"})
+		dirs, err := FindIgnoredDirs(nil, root, []string{"vendor", "build"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -324,7 +325,7 @@ func TestFindIgnoredDirs(t *testing.T) {
 	})
 
 	t.Run("returns error for nonexistent path", func(t *testing.T) {
-		dirs, err := FindIgnoredDirs("/nonexistent/path/that/does/not/exist", []string{"node_modules/"})
+		dirs, err := FindIgnoredDirs(nil, "/nonexistent/path/that/does/not/exist", []string{"node_modules/"})
 		if err == nil {
 			t.Fatal("expected error for nonexistent path, got nil")
 		}
@@ -337,7 +338,7 @@ func TestFindIgnoredDirs(t *testing.T) {
 		root := t.TempDir()
 		mkdirs(t, root, "src", "logs")
 
-		dirs, err := FindIgnoredDirs(root, []string{"*.log", "*.env"})
+		dirs, err := FindIgnoredDirs(nil, root, []string{"*.log", "*.env"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

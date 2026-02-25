@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	sockebridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 	"github.com/stretchr/testify/assert"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestBridge_Stop_DoubleCallDoesNotPanic(t *testing.T) {
-	b := socketbridge.NewBridge("test-container-id", false)
+	b := socketbridge.NewBridge("test-container-id", false, logger.Nop())
 
 	// First Stop should succeed
 	err := b.Stop()
@@ -28,7 +29,7 @@ func TestBridge_Stop_DoubleCallDoesNotPanic(t *testing.T) {
 }
 
 func TestBridge_ReadLoop_EOFSignalsError(t *testing.T) {
-	b := socketbridge.NewBridge("test-container-id", false)
+	b := socketbridge.NewBridge("test-container-id", false, logger.Nop())
 
 	// Set up a reader that returns EOF immediately (simulating docker exec dying)
 	b.SetBridgeIOForTest(io.NopCloser(strings.NewReader("")), sockebridgemocks.NopWriteCloser{})
@@ -46,7 +47,7 @@ func TestBridge_ReadLoop_EOFSignalsError(t *testing.T) {
 }
 
 func TestBridge_ReadLoop_ReceivesReady(t *testing.T) {
-	b := socketbridge.NewBridge("test-container-id", false)
+	b := socketbridge.NewBridge("test-container-id", false, logger.Nop())
 
 	// Write a READY message in protocol format
 	var buf bytes.Buffer
@@ -66,7 +67,7 @@ func TestBridge_ReadLoop_ReceivesReady(t *testing.T) {
 
 func TestSendMessage_ReducedAllocations(t *testing.T) {
 	var buf bytes.Buffer
-	b := socketbridge.NewBridge("test-container-id", false)
+	b := socketbridge.NewBridge("test-container-id", false, logger.Nop())
 	b.SetBridgeIOForTest(io.NopCloser(strings.NewReader("")), &sockebridgemocks.FlushWriteCloser{W: &buf})
 
 	msg := socketbridge.Message{Type: socketbridge.MsgData, StreamID: 42, Payload: []byte("hello")}

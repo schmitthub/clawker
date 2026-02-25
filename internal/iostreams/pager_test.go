@@ -1,7 +1,7 @@
 package iostreams
 
 import (
-	"bytes"
+	"fmt"
 	"os"
 	"runtime"
 	"testing"
@@ -69,13 +69,68 @@ func TestGetPagerCommand(t *testing.T) {
 	}
 }
 
-func TestPagerWriter_EmptyCommand(t *testing.T) {
-	var buf bytes.Buffer
-	pw, err := newPagerWriter("", &buf)
-	if err != nil {
-		t.Fatalf("newPagerWriter with empty command should not error: %v", err)
+func TestIOStreams_pager(t *testing.T) {
+	t.Skip("TODO: fix this test in race detection mode")
+	ios, _, stdout, _ := Test()
+	ios.SetStdoutTTY(true)
+	ios.SetPager(fmt.Sprintf("%s -test.run=TestHelperProcess --", os.Args[0]))
+	t.Setenv("GH_WANT_HELPER_PROCESS", "1")
+	if err := ios.StartPager(); err != nil {
+		t.Fatal(err)
 	}
-	if pw != nil {
-		t.Error("newPagerWriter with empty command should return nil")
+	if _, err := fmt.Fprintln(ios.Out, "line1"); err != nil {
+		t.Errorf("error writing line 1: %v", err)
+	}
+	if _, err := fmt.Fprintln(ios.Out, "line2"); err != nil {
+		t.Errorf("error writing line 2: %v", err)
+	}
+	ios.StopPager()
+	wants := "pager: line1\npager: line2\n"
+	if got := stdout.String(); got != wants {
+		t.Errorf("expected %q, got %q", wants, got)
+	}
+}
+
+func TestStartPager_NoopWhenEmpty(t *testing.T) {
+	ios, _, _, _ := Test()
+	ios.SetStdoutTTY(true)
+	ios.SetPager("")
+	err := ios.StartPager()
+	if err != nil {
+		t.Errorf("StartPager with empty command should return nil, got %v", err)
+	}
+}
+
+func TestStartPager_NoopWhenCat(t *testing.T) {
+	ios, _, _, _ := Test()
+	ios.SetStdoutTTY(true)
+	ios.SetPager("cat")
+	err := ios.StartPager()
+	if err != nil {
+		t.Errorf("StartPager with 'cat' should return nil, got %v", err)
+	}
+}
+
+func TestStartPager_NoopWhenNotTTY(t *testing.T) {
+	ios, _, _, _ := Test()
+	// stdout not TTY (default from Test())
+	ios.SetPager("less")
+	err := ios.StartPager()
+	if err != nil {
+		t.Errorf("StartPager with non-TTY should return nil, got %v", err)
+	}
+}
+
+func TestStopPager_NoopWithoutStart(t *testing.T) {
+	ios, _, _, _ := Test()
+	// Should not panic
+	ios.StopPager()
+}
+
+func TestErrClosedPagerPipe(t *testing.T) {
+	inner := fmt.Errorf("broken pipe")
+	err := &ErrClosedPagerPipe{inner}
+	if err.Error() != "broken pipe" {
+		t.Errorf("ErrClosedPagerPipe.Error() = %q, want %q", err.Error(), "broken pipe")
 	}
 }

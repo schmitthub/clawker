@@ -7,7 +7,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
@@ -30,7 +29,7 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 	}
 
 	// 2. Resolve "latest" version from npm
-	logger.Debug().Msg("resolving latest Claude Code version from npm")
+	c.log.Debug().Msg("resolving latest Claude Code version from npm")
 	mgr := bundler.NewVersionsManager()
 	versions, err := mgr.ResolveVersions(ctx, []string{"latest"}, bundler.ResolveOptions{})
 	if err != nil {
@@ -43,13 +42,13 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 	// 4. Check BuildKit availability (cache mounts require it)
 	buildkitEnabled, bkErr := BuildKitEnabled(ctx, c.APIClient)
 	if bkErr != nil {
-		logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
+		c.log.Warn().Err(bkErr).Msg("BuildKit detection failed")
 	} else if !buildkitEnabled {
-		logger.Warn().Msg("BuildKit is not available — cache mount directives will be omitted and builds may be slower")
+		c.log.Warn().Msg("BuildKit is not available — cache mount directives will be omitted and builds may be slower")
 	}
 
 	// 5. Generate dockerfiles (with BuildKit-conditional cache mounts)
-	logger.Debug().Str("output_dir", buildDir).Msg("generating dockerfiles")
+	c.log.Debug().Str("output_dir", buildDir).Msg("generating dockerfiles")
 	dfMgr := bundler.NewDockerfileManager(c.cfg, &bundler.DockerFileManagerOptions{})
 	dfMgr.BuildKitEnabled = buildkitEnabled
 	if err := dfMgr.GenerateDockerfiles(versions); err != nil {
@@ -73,7 +72,7 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 	}
 	dockerfilePath := filepath.Join(dockerfilesDir, dockerfileName)
 
-	logger.Debug().
+	c.log.Debug().
 		Str("dockerfile", dockerfilePath).
 		Str("version", latestVersion).
 		Str("flavor", flavor).
@@ -102,7 +101,7 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 		return fmt.Errorf("failed to build image: %w", err)
 	}
 
-	logger.Debug().Str("image", DefaultImageTag).Msg("base image built successfully")
+	c.log.Debug().Str("image", DefaultImageTag).Msg("base image built successfully")
 	return nil
 }
 

@@ -868,8 +868,8 @@ func TestNewCmdStop(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            tio := iostreamstest.New()
-            f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+            tio, _, _, _ := iostreams.Test()
+            f := &cmdutil.Factory{IOStreams: tio}
 
             var gotOpts *StopOptions
             cmd := NewCmdStop(f, func(opts *StopOptions) error {

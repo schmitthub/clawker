@@ -1,53 +1,50 @@
 # Logger Package
 
-Zerolog-based file-only logging with project context and optional OTEL bridge. Zerolog never writes to the console — user-visible output uses `fmt.Fprintf` to IOStreams (see code style guide).
+Zerolog-based file-only logging with optional OTEL bridge. Struct-based API — no global state. Zerolog never writes to the console — user-visible output uses `fmt.Fprintf` to IOStreams (see code style guide).
 
 ## Architecture
 
-**File-only by default**: All log output goes to `cfg.LogsSubdir()/clawker.log` via lumberjack rotation with gzip compression. There is no console writer. Before `NewLogger` (or legacy `InitWithFile`) is called, the logger is a nop (all output discarded).
+**File-only by default**: All log output goes to `cfg.LogsSubdir()/clawker.log` via lumberjack rotation with gzip compression. There is no console writer.
 
-**Dual-destination**: When `OtelConfig` is provided, logs go to both the local file (lumberjack writer) and an OTEL collector via the `otelzerolog` bridge hook attached to the zerolog logger. OTEL failure is non-fatal — if the provider cannot be created, logging falls back to file-only with a warning.
+**Struct-based**: `*Logger` is a self-contained struct holding the zerolog instance, file writer, and OTEL provider. Created via `New(opts)` for production or `Nop()` for tests/disabled logging. No global state.
+
+**Factory noun**: Wired as a lazy closure on `cmdutil.Factory.Logger`. Commands capture `f.Logger` on their Options struct and resolve it in the run function. Library packages accept `*logger.Logger` in constructors.
+
+**Dual-destination**: When `OtelOptions` is provided, logs go to both the local file (lumberjack writer) and an OTEL collector via the `otelzerolog` bridge hook. OTEL failure is non-fatal — if the provider cannot be created, logging falls back to file-only with a warning.
 
 **User-visible output**: Commands use `fmt.Fprintf(ios.ErrOut, ...)` with `ios.ColorScheme()` for warnings/status, and return errors to `Main()` for centralized rendering. See `cli-output-style-guide` memory for per-scenario details.
 
-## Global State
-
-```go
-var Log zerolog.Logger              // Global logger instance (file-only; nop before NewLogger)
-var fileWriter *lumberjack.Logger   // Lumberjack rotator (nil before NewLogger)
-var loggerProvider *sdklog.LoggerProvider  // OTEL log provider (nil if OTEL not configured)
-```
-
-Internal state: `logContext` (project/agent fields, mutex-protected).
-
 ## Types
 
-### LoggingConfig
+### Logger
 
 ```go
-type LoggingConfig struct {
-    FileEnabled *bool  // Enable file logging (default: true; pointer for nil detection)
-    MaxSizeMB   int    // Max log file size (default: 50)
-    MaxAgeDays  int    // Max log age (default: 7)
-    MaxBackups  int    // Max backup count (default: 3)
-    Compress    *bool  // Gzip rotated logs (default: true; pointer for nil detection)
+type Logger struct {
+    zl       zerolog.Logger          // underlying zerolog instance
+    fw       *lumberjack.Logger      // file writer (nil for Nop)
+    provider *sdklog.LoggerProvider  // OTEL provider (nil if not configured)
+    mu       sync.Mutex              // guards Close
+    closed   bool
 }
 ```
 
-#### Config Getters (with defaults)
+### Options
 
 ```go
-(*LoggingConfig).IsFileEnabled() bool       // defaults true
-(*LoggingConfig).IsCompressEnabled() bool   // defaults true
-(*LoggingConfig).GetMaxSizeMB() int         // defaults 50
-(*LoggingConfig).GetMaxAgeDays() int        // defaults 7
-(*LoggingConfig).GetMaxBackups() int        // defaults 3
+type Options struct {
+    LogsDir    string       // directory for log files (required)
+    MaxSizeMB  int          // max log file size (default: 50)
+    MaxAgeDays int          // max log age (default: 7)
+    MaxBackups int          // max backup count (default: 3)
+    Compress   bool         // gzip rotated logs (default: true)
+    Otel       *OtelOptions // nil = file-only, no OTEL bridge
+}
 ```
 
-### OtelLogConfig
+### OtelOptions
 
 ```go
-type OtelLogConfig struct {
+type OtelOptions struct {
     Endpoint       string        // e.g. "localhost:4318"
     Insecure       bool          // default: true (local collector)
     Timeout        time.Duration // export timeout
@@ -56,81 +53,83 @@ type OtelLogConfig struct {
 }
 ```
 
-### Options
+## Constructors
 
 ```go
-type Options struct {
-    LogsDir    string         // directory for log files
-    FileConfig *LoggingConfig // file rotation settings
-    OtelConfig *OtelLogConfig // nil = file-only, no OTEL bridge
+func New(opts Options) (*Logger, error)  // File logging + optional OTEL bridge
+func Nop() *Logger                        // Discards all output (tests, disabled logging)
+```
+
+`New` creates the log directory, configures lumberjack rotation, and optionally attaches the OTEL bridge. Returns error if `LogsDir` is empty or directory creation fails. OTEL failure is non-fatal (falls back to file-only).
+
+`Nop` returns a logger backed by `zerolog.Nop()` — zero allocation, no file I/O.
+
+## Methods
+
+### Logging
+
+```go
+func (l *Logger) Debug() *zerolog.Event
+func (l *Logger) Info()  *zerolog.Event
+func (l *Logger) Warn()  *zerolog.Event
+func (l *Logger) Error() *zerolog.Event
+func (l *Logger) Fatal() *zerolog.Event  // NEVER use in Cobra hooks — return errors instead
+```
+
+### Context
+
+```go
+func (l *Logger) With(keyvals ...interface{}) *Logger
+```
+
+Returns a new `*Logger` with additional structured fields. Accepts alternating key/value pairs where keys must be strings. Panics on odd argument count or non-string key.
+
+```go
+projectLog := log.With("project", "foo", "agent", "bar")
+projectLog.Info().Msg("started")
+```
+
+### Interop
+
+```go
+func (l *Logger) Zerolog() zerolog.Logger  // underlying zerolog.Logger for libraries
+func (l *Logger) LogFilePath() string      // log file path (empty for Nop)
+```
+
+### Lifecycle
+
+```go
+func (l *Logger) Close() error  // flush OTEL + close file writer; safe to call multiple times
+```
+
+## Factory Integration
+
+Commands access logger through `f.Logger` (Factory lazy noun):
+
+```go
+// In NewCmdFoo:
+opts.Logger = f.Logger
+
+// In fooRun:
+log, err := opts.Logger()
+if err != nil {
+    return fmt.Errorf("initializing logger: %w", err)
 }
+log.Debug().Str("key", "val").Msg("diagnostic info")
 ```
 
-## Initialization
-
-### Preferred: NewLogger
+Library packages accept `*logger.Logger` in constructors:
 
 ```go
-func NewLogger(opts *Options) error
+func NewClient(ctx context.Context, cfg config.Config, log *logger.Logger, opts ...Option) (*Client, error)
 ```
 
-Creates file logging via lumberjack with optional OTEL bridge. This is the preferred initialization path.
-
-Behavior:
-1. If `opts` is nil, `LogsDir` is empty, `FileConfig` is nil, or file logging is disabled: sets `Log` to nop.
-2. Creates logs directory, configures lumberjack writer with rotation + compression settings.
-3. If `OtelConfig` is non-nil: creates an OTLP HTTP exporter, batch processor, and `LoggerProvider`, then attaches an `otelzerolog.Hook` to the logger. OTEL failure is non-fatal (falls back to file-only with a warning).
-4. Sets the global `Log` instance.
-
-### Legacy (thin wrappers)
+Tests use `logger.Nop()`:
 
 ```go
-func Init()                                                  // Nop logger (pre-file-logging placeholder)
-func InitWithFile(logsDir string, cfg *LoggingConfig) error  // Thin wrapper around NewLogger (file-only, no OTEL)
-```
-
-`Init()` sets `Log = zerolog.Nop()`. `InitWithFile()` delegates to `NewLogger` with nil `OtelConfig`.
-
-## Shutdown
-
-### Preferred: Close
-
-```go
-func Close() error
-```
-
-Flushes pending OTEL batches (5s timeout) then closes the lumberjack file writer. Sets both `loggerProvider` and `fileWriter` to nil. Returns the first error encountered.
-
-### Legacy (thin wrapper)
-
-```go
-func CloseFileWriter() error  // Thin wrapper around Close() for backwards compat
-```
-
-## Log Level Functions
-
-```go
-func Debug() *zerolog.Event  // Developer diagnostics (file-only)
-func Info() *zerolog.Event   // Informational (file-only)
-func Warn() *zerolog.Event   // Warnings (file-only)
-func Error() *zerolog.Event  // Errors (file-only)
-func Fatal() *zerolog.Event  // NEVER use in Cobra hooks — return errors instead
-func WithField(key string, value interface{}) zerolog.Logger  // Returns sub-logger with extra field
-```
-
-All functions call `addContext()` to inject project/agent fields.
-
-## Context
-
-```go
-func SetContext(project, agent string)  // Add project/agent fields to all log entries
-func ClearContext()                     // Remove project/agent context
-```
-
-## Utilities
-
-```go
-func GetLogFilePath() string  // Returns log file path (empty if file logging disabled)
+f := &cmdutil.Factory{
+    Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+}
 ```
 
 ## OTEL Resilience
@@ -140,59 +139,23 @@ The OTEL SDK handles resilience natively — no custom health checking is needed
 - Retries on transient failures (429, 503, 504)
 - Buffer overflow drops oldest entries (no OOM, no blocking)
 - Collector down at startup: buffer, retry, drop. Comes up later: auto-recovers.
-- **Custom error handler**: `otel.SetErrorHandler()` is called in `createOtelProvider()` to redirect OTEL SDK internal errors (e.g., BatchProcessor export failures) to the file logger via `Log.Warn()` instead of the default `log.Println()` to stderr. This preserves clawker's rule that zerolog is file-only and no library output leaks to the console.
-
-## Test Subpackage: `loggertest/`
-
-Test infrastructure for logger consumers, following the project's DAG test utility pattern.
-
-```go
-package loggertest
-
-type TestLogger struct {
-    logger zerolog.Logger    // Unexported field (NOT embedded); delegate methods below
-    buf    *bytes.Buffer     // Captured output buffer
-}
-
-func New() *TestLogger       // Creates a test logger that captures all output to a buffer
-func NewNop() *TestLogger    // Creates a test logger that discards all output (zerolog.Nop)
-
-// Delegate methods — satisfy iostreams.Logger interface
-func (tl *TestLogger) Debug() *zerolog.Event
-func (tl *TestLogger) Info()  *zerolog.Event
-func (tl *TestLogger) Warn()  *zerolog.Event
-func (tl *TestLogger) Error() *zerolog.Event
-
-func (tl *TestLogger) Output() string  // Returns captured log output as a string
-func (tl *TestLogger) Reset()          // Clears captured output
-```
-
-Usage in command tests:
-```go
-tl := loggertest.New()
-tio := iostreamstest.New()
-tio.IOStreams.Logger = tl  // *TestLogger satisfies iostreams.Logger via delegate methods
-// ... run command ...
-assert.Contains(t, tl.Output(), "expected log message")
-```
+- **Custom error handler**: `otel.SetErrorHandler()` redirects OTEL SDK internal errors to the file logger via `l.zl.Warn()` instead of stderr.
 
 ## Test Coverage
 
-`logger_test.go` — tests for initialization, file-only output, context fields, nop behavior, no-console-output verification, compress config, NewLogger with/without OTEL.
-
-`loggertest/loggertest_test.go` — tests for TestLogger capture, nop discard, reset behavior.
+`logger_test.go` — tests for `New`, `Nop`, `Close` (idempotent), `With` context, `LogFilePath`, file output verification, no-console-output verification.
 
 ## Key Rules
 
 - **Never** use `logger.Fatal()` in Cobra hooks — return errors instead
 - Zerolog is for **file logging only** — never for user-visible output
-- `logger.Debug()` for developer diagnostics; `logger.Info/Warn/Error()` for file-only structured logs
-- User-visible output uses `fmt.Fprintf` to IOStreams streams
+- Commands access logger via `f.Logger` (Factory noun) — never import logger package directly for calling methods in command code
+- Library packages accept `*logger.Logger` in constructors — never use globals
+- Tests use `logger.Nop()` — no special test infrastructure needed
+- Don't swallow `opts.Logger()` errors — always check and return them
 - Log path: `cfg.LogsSubdir()/clawker.log`
 - File rotation via lumberjack: 50MB size, 7 days age, 3 backups, gzip compression (defaults)
-- Prefer `NewLogger()` over `Init()`/`InitWithFile()` for new code
-- Prefer `Close()` over `CloseFileWriter()` for new code
-- OTEL bridge is optional — set `OtelConfig` in `Options` to enable dual-destination logging
+- OTEL bridge is optional — set `Otel` in `Options` to enable dual-destination logging
 
 ## Dependencies
 

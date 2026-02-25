@@ -7,6 +7,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
@@ -18,6 +19,7 @@ type RemoveOptions struct {
 	Client         func(context.Context) (*docker.Client, error)
 	ProjectManager func() (project.ProjectManager, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
+	Logger         func() (*logger.Logger, error)
 
 	Agent   bool
 	Force   bool
@@ -33,6 +35,7 @@ func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions)
 		Client:         f.Client,
 		ProjectManager: f.ProjectManager,
 		SocketBridge:   f.SocketBridge,
+		Logger:         f.Logger,
 	}
 
 	cmd := &cobra.Command{
@@ -139,7 +142,9 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 	if opts.SocketBridge != nil {
 		if mgr := opts.SocketBridge(); mgr != nil {
 			if err := mgr.StopBridge(container.ID); err != nil {
-				opts.IOStreams.Logger.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
+				if log, logErr := opts.Logger(); logErr == nil {
+					log.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
+				}
 			}
 		}
 	}

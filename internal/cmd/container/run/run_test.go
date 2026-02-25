@@ -21,7 +21,8 @@ import (
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 
@@ -779,12 +780,13 @@ func TestImageArg(t *testing.T) {
 
 // testFactory constructs a minimal *cmdutil.Factory for command-level testing.
 // The returned Factory wires fake Docker client, test config, and test IOStreams.
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+		TUI:       tui.NewTUI(tio),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -806,7 +808,7 @@ security: { enable_host_proxy: false, firewall: { enable: false } }
 			return hostproxytest.NewMockManager()
 		},
 		Prompter: func() *prompter.Prompter { return nil },
-	}, tio
+	}, in, out, errOut
 }
 
 func TestRunRun(t *testing.T) {
@@ -816,21 +818,21 @@ func TestRunRun(t *testing.T) {
 		fake.SetupCopyToContainer()
 		fake.SetupContainerStart()
 
-		f, tio := testFactory(t, fake)
+		f, in, out, errOut := testFactory(t, fake)
 		cmd := NewCmdRun(f, nil)
 
 		cmd.SetArgs([]string{"--detach", "alpine"})
-		cmd.SetIn(&bytes.Buffer{})
-		cmd.SetOut(tio.OutBuf)
-		cmd.SetErr(tio.ErrBuf)
+		cmd.SetIn(in)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
 
 		err := cmd.Execute()
 		require.NoError(t, err)
 
 		// Detached mode prints 12-char container ID to stdout
-		out := tio.OutBuf.String()
-		require.Contains(t, out, "sha256:fakec")
-		require.Len(t, strings.TrimSpace(out), 12)
+		outStr := out.String()
+		require.Contains(t, outStr, "sha256:fakec")
+		require.Len(t, strings.TrimSpace(outStr), 12)
 
 		fake.AssertCalled(t, "ContainerCreate")
 		fake.AssertCalled(t, "ContainerStart")
@@ -843,13 +845,13 @@ func TestRunRun(t *testing.T) {
 		}
 		fake.SetupContainerStart()
 
-		f, tio := testFactory(t, fake)
+		f, in, out, errOut := testFactory(t, fake)
 		cmd := NewCmdRun(f, nil)
 
 		cmd.SetArgs([]string{"--detach", "alpine"})
-		cmd.SetIn(&bytes.Buffer{})
-		cmd.SetOut(tio.OutBuf)
-		cmd.SetErr(tio.ErrBuf)
+		cmd.SetIn(in)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
 
 		err := cmd.Execute()
 		require.Error(t, err)
@@ -864,13 +866,13 @@ func TestRunRun(t *testing.T) {
 			return moby.ContainerStartResult{}, fmt.Errorf("port already in use")
 		}
 
-		f, tio := testFactory(t, fake)
+		f, in, out, errOut := testFactory(t, fake)
 		cmd := NewCmdRun(f, nil)
 
 		cmd.SetArgs([]string{"--detach", "alpine"})
-		cmd.SetIn(&bytes.Buffer{})
-		cmd.SetOut(tio.OutBuf)
-		cmd.SetErr(tio.ErrBuf)
+		cmd.SetIn(in)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
 
 		err := cmd.Execute()
 		require.Error(t, err)
@@ -893,10 +895,11 @@ security: { enable_host_proxy: false, firewall: { enable: false } }
 		fake := dockertest.NewFakeClient(testCfg)
 		fake.SetupImageList() // empty — no project image found
 
-		tio := iostreamstest.New() // non-interactive
+		tio, in, out, errOut := iostreams.Test() // non-interactive
 		f := &cmdutil.Factory{
-			IOStreams: tio.IOStreams,
-			TUI:       tui.NewTUI(tio.IOStreams),
+			IOStreams: tio,
+			Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+			TUI:       tui.NewTUI(tio),
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},
@@ -911,14 +914,14 @@ security: { enable_host_proxy: false, firewall: { enable: false } }
 
 		cmd := NewCmdRun(f, nil)
 		cmd.SetArgs([]string{"--detach", "@"})
-		cmd.SetIn(&bytes.Buffer{})
-		cmd.SetOut(tio.OutBuf)
-		cmd.SetErr(tio.ErrBuf)
+		cmd.SetIn(in)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
 
 		err := cmd.Execute()
 		require.ErrorIs(t, err, cmdutil.SilentError)
 
-		errOutput := tio.ErrBuf.String()
+		errOutput := errOut.String()
 		require.Contains(t, errOutput, "No image specified")
 		require.Contains(t, errOutput, "no project image found")
 

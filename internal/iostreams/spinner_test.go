@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 // --- SpinnerFrame pure function tests ---
@@ -171,39 +170,39 @@ func TestSpinnerFrames_UnknownType(t *testing.T) {
 // --- IOStreams spinner integration tests ---
 
 func TestStartSpinner_TextFallback(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, errOut := iostreams.Test()
+
 	ios.SetSpinnerDisabled(true) // text fallback mode
 
-	ios.IOStreams.StartSpinner("Building")
+	ios.StartSpinner("Building")
 
-	output := ios.ErrBuf.String()
+	output := errOut.String()
 	if !strings.Contains(output, "Building...") {
 		t.Errorf("expected 'Building...' in text fallback, got %q", output)
 	}
 }
 
 func TestStartSpinner_TextFallback_DefaultLabel(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, errOut := iostreams.Test()
+
 	ios.SetSpinnerDisabled(true)
 
-	ios.IOStreams.StartSpinner("")
+	ios.StartSpinner("")
 
-	output := ios.ErrBuf.String()
+	output := errOut.String()
 	if !strings.Contains(output, "Working...") {
 		t.Errorf("expected default 'Working...' label, got %q", output)
 	}
 }
 
 func TestStartSpinner_TextFallback_NoDoubleEllipsis(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, errOut := iostreams.Test()
+
 	ios.SetSpinnerDisabled(true)
 
-	ios.IOStreams.StartSpinner("Loading...")
+	ios.StartSpinner("Loading...")
 
-	output := ios.ErrBuf.String()
+	output := errOut.String()
 	if strings.Contains(output, "Loading......") {
 		t.Errorf("should not double ellipsis, got %q", output)
 	}
@@ -213,42 +212,40 @@ func TestStartSpinner_TextFallback_NoDoubleEllipsis(t *testing.T) {
 }
 
 func TestStartSpinner_Disabled(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(false)
+	ios, _, _, errOut := iostreams.Test()
 
-	ios.IOStreams.StartSpinner("Test")
-	ios.IOStreams.StopSpinner()
+	ios.StartSpinner("Test")
+	ios.StopSpinner()
 
-	if ios.ErrBuf.String() != "" {
-		t.Errorf("expected no output when disabled, got %q", ios.ErrBuf.String())
+	if errOut.String() != "" {
+		t.Errorf("expected no output when disabled, got %q", errOut.String())
 	}
 }
 
 func TestStopSpinner_WithoutStart(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, _ := iostreams.Test()
 
 	// Should not panic
-	ios.IOStreams.StopSpinner()
+	ios.StopSpinner()
 }
 
 func TestStopSpinner_Twice(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, _ := iostreams.Test()
+
 	ios.SetSpinnerDisabled(true)
 
-	ios.IOStreams.StartSpinner("Test")
-	ios.IOStreams.StopSpinner()
-	ios.IOStreams.StopSpinner() // Should not panic
+	ios.StartSpinner("Test")
+	ios.StopSpinner()
+	ios.StopSpinner() // Should not panic
 }
 
 func TestRunWithSpinner_CallsFunction(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, errOut := iostreams.Test()
+
 	ios.SetSpinnerDisabled(true)
 
 	called := false
-	err := ios.IOStreams.RunWithSpinner("Processing", func() error {
+	err := ios.RunWithSpinner("Processing", func() error {
 		called = true
 		return nil
 	})
@@ -260,19 +257,19 @@ func TestRunWithSpinner_CallsFunction(t *testing.T) {
 		t.Error("function was not called")
 	}
 
-	output := ios.ErrBuf.String()
+	output := errOut.String()
 	if !strings.Contains(output, "Processing...") {
 		t.Errorf("expected 'Processing...' in output, got %q", output)
 	}
 }
 
 func TestRunWithSpinner_PropagatesError(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, _ := iostreams.Test()
+
 	ios.SetSpinnerDisabled(true)
 
 	expectedErr := errors.New("task failed")
-	err := ios.IOStreams.RunWithSpinner("Processing", func() error {
+	err := ios.RunWithSpinner("Processing", func() error {
 		return expectedErr
 	})
 
@@ -282,21 +279,21 @@ func TestRunWithSpinner_PropagatesError(t *testing.T) {
 }
 
 func TestStartSpinnerWithType(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, errOut := iostreams.Test()
+
 	ios.SetSpinnerDisabled(true)
 
-	ios.IOStreams.StartSpinnerWithType(iostreams.SpinnerLine, "Building")
+	ios.StartSpinnerWithType(iostreams.SpinnerLine, "Building")
 
-	output := ios.ErrBuf.String()
+	output := errOut.String()
 	if !strings.Contains(output, "Building...") {
 		t.Errorf("expected 'Building...' in output, got %q", output)
 	}
 }
 
 func TestSpinner_ConcurrentAccess(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, _ := iostreams.Test()
+
 	ios.SetSpinnerDisabled(true)
 
 	var wg sync.WaitGroup
@@ -304,11 +301,11 @@ func TestSpinner_ConcurrentAccess(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			ios.IOStreams.StartSpinner("concurrent")
+			ios.StartSpinner("concurrent")
 		}()
 		go func() {
 			defer wg.Done()
-			ios.IOStreams.StopSpinner()
+			ios.StopSpinner()
 		}()
 	}
 	wg.Wait()
@@ -316,8 +313,8 @@ func TestSpinner_ConcurrentAccess(t *testing.T) {
 }
 
 func TestSpinner_ConcurrentAccess_AnimatedMode(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, _ := iostreams.Test()
+
 	// spinnerDisabled is false → animated mode
 
 	var wg sync.WaitGroup
@@ -325,59 +322,59 @@ func TestSpinner_ConcurrentAccess_AnimatedMode(t *testing.T) {
 		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			ios.IOStreams.StartSpinner("concurrent")
+			ios.StartSpinner("concurrent")
 		}()
 		go func() {
 			defer wg.Done()
-			ios.IOStreams.StopSpinner()
+			ios.StopSpinner()
 		}()
 		go func(label string) {
 			defer wg.Done()
-			ios.IOStreams.StartSpinner(label)
+			ios.StartSpinner(label)
 		}(fmt.Sprintf("label-%d", i))
 	}
 	wg.Wait()
-	ios.IOStreams.StopSpinner() // ensure cleanup
+	ios.StopSpinner() // ensure cleanup
 	// Test passes if no panic/deadlock/race
 }
 
 func TestStopSpinner_AnimatedMode_Twice(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, _ := iostreams.Test()
+
 	// spinnerDisabled is false — animated mode
 
-	ios.IOStreams.StartSpinner("Test")
+	ios.StartSpinner("Test")
 	// Small sleep to let goroutine start
 	time.Sleep(10 * time.Millisecond)
-	ios.IOStreams.StopSpinner()
-	ios.IOStreams.StopSpinner() // Should not panic (sync.Once protects spinnerRunner.Stop)
+	ios.StopSpinner()
+	ios.StopSpinner() // Should not panic (sync.Once protects spinnerRunner.Stop)
 }
 
 func TestStartSpinner_AnimatedMode_StartStop(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, _ := iostreams.Test()
+
 	// spinnerDisabled is false — animated mode
 
-	ios.IOStreams.StartSpinner("First")
+	ios.StartSpinner("First")
 	time.Sleep(10 * time.Millisecond)
-	ios.IOStreams.StopSpinner()
+	ios.StopSpinner()
 
 	// Start a second spinner after stopping the first
-	ios.IOStreams.StartSpinner("Second")
+	ios.StartSpinner("Second")
 	time.Sleep(10 * time.Millisecond)
-	ios.IOStreams.StopSpinner()
+	ios.StopSpinner()
 	// Should not panic — verifies goroutine cleanup between cycles
 }
 
 func TestStartSpinner_LabelUpdate(t *testing.T) {
-	ios := iostreamstest.New()
-	ios.SetProgressEnabled(true)
+	ios, _, _, errOut := iostreams.Test()
+
 	ios.SetSpinnerDisabled(true)
 
-	ios.IOStreams.StartSpinner("First")
-	ios.IOStreams.StartSpinner("Second")
+	ios.StartSpinner("First")
+	ios.StartSpinner("Second")
 
-	output := ios.ErrBuf.String()
+	output := errOut.String()
 	// Both should appear in text fallback mode
 	if !strings.Contains(output, "First...") {
 		t.Errorf("expected 'First...' in output, got %q", output)

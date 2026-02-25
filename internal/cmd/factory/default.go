@@ -29,16 +29,85 @@ func New(version string) *cmdutil.Factory {
 		Config:  configFunc(),
 	}
 
+	f.Logger = loggerLazy(f)                 // depends on Config
 	f.HostProxy = hostProxyFunc(f)           // depends on Config
 	f.SocketBridge = socketBridgeFunc(f)     // depends on Config
-	f.IOStreams = ioStreams(f)               // needs f.Config() for logger settings
+	f.IOStreams = ioStreams()                // TTY/color/CI detection
 	f.TUI = tuiFunc(f)                       // needs IOStreams
-	f.ProjectManager = projectManagerFunc(f) // depends on Config + IOStreams
+	f.ProjectManager = projectManagerFunc(f) // depends on Config
 	f.Client = clientFunc(f)                 // depends on Config
 	f.GitManager = gitManagerFunc(f)         // depends on Config
 	f.Prompter = prompterFunc(f)
 
 	return f
+}
+
+// loggerLazy returns a lazy closure that creates the Logger once.
+func loggerLazy(f *cmdutil.Factory) func() (*logger.Logger, error) {
+	var (
+		once sync.Once
+		log  *logger.Logger
+		err  error
+	)
+	return func() (*logger.Logger, error) {
+		once.Do(func() {
+			log, err = newLogger(f)
+		})
+		return log, err
+	}
+}
+
+func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
+	cfg, err := f.Config()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get config: %w", err)
+	}
+	logsDir, err := cfg.LogsSubdir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get logs subdir: %w", err)
+	}
+	settings := cfg.SettingsStore().Read()
+	loggingCfg := settings.Logging
+	monitoringCfg := settings.Monitoring
+
+	// Build OTEL config from settings if enabled
+	var otelCfg *logger.OtelOptions
+	if loggingCfg.Otel.Enabled != nil && *loggingCfg.Otel.Enabled {
+		endpoint := monitoringCfg.OtelCollectorEndpoint
+		endpoint = strings.TrimSpace(endpoint)
+		if i := strings.Index(endpoint, "://"); i >= 0 {
+			endpoint = endpoint[i+3:]
+		}
+		if endpoint != "" {
+			otelCfg = &logger.OtelOptions{
+				Endpoint:       endpoint,
+				Insecure:       true,
+				Timeout:        time.Duration(loggingCfg.Otel.TimeoutSeconds) * time.Second,
+				MaxQueueSize:   loggingCfg.Otel.MaxQueueSize,
+				ExportInterval: time.Duration(loggingCfg.Otel.ExportIntervalSeconds) * time.Second,
+			}
+		}
+	}
+
+	compress := true
+	if loggingCfg.Compress != nil {
+		compress = *loggingCfg.Compress
+	}
+	opts := logger.Options{
+		LogsDir: logsDir,
+
+		MaxSizeMB:  loggingCfg.MaxSizeMB,
+		MaxAgeDays: loggingCfg.MaxAgeDays,
+		MaxBackups: loggingCfg.MaxBackups,
+		Compress:   compress,
+		Otel:       otelCfg,
+	}
+	l, err := logger.New(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	return l, nil
+
 }
 
 func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, error) {
@@ -55,7 +124,12 @@ func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, erro
 				err = fmt.Errorf("failed to get config: %w", cfgErr)
 				return
 			}
-			svc, err = project.NewProjectManager(cfg, nil)
+			log, logErr := f.Logger()
+			if logErr != nil {
+				err = fmt.Errorf("failed to get logger: %w", logErr)
+				return
+			}
+			svc, err = project.NewProjectManager(cfg, log, nil)
 		})
 		return svc, err
 	}
@@ -67,49 +141,8 @@ func tuiFunc(f *cmdutil.Factory) *tui.TUI {
 }
 
 // ioStreams creates an IOStreams with TTY/color/CI detection and initializes the logger.
-func ioStreams(f *cmdutil.Factory) *iostreams.IOStreams {
+func ioStreams() *iostreams.IOStreams {
 	ios := iostreams.System()
-
-	cfg, err := f.Config()
-	if err != nil {
-		return ios
-	}
-
-	settings := cfg.Settings()
-	loggingCfg := settings.Logging
-	monitoringCfg := settings.Monitoring
-
-	// Build OTEL config from settings if enabled
-	var otelCfg *logger.OtelLogConfig
-	if loggingCfg.Otel.Enabled != nil && *loggingCfg.Otel.Enabled {
-		otelCfg = &logger.OtelLogConfig{
-			Endpoint:       strings.TrimPrefix(strings.TrimPrefix(monitoringCfg.OtelCollectorEndpoint, "https://"), "http://"),
-			Insecure:       true,
-			Timeout:        time.Duration(loggingCfg.Otel.TimeoutSeconds) * time.Second,
-			MaxQueueSize:   loggingCfg.Otel.MaxQueueSize,
-			ExportInterval: time.Duration(loggingCfg.Otel.ExportIntervalSeconds) * time.Second,
-		}
-		if otelCfg.Endpoint == "" && monitoringCfg.OtelCollectorHost != "" && monitoringCfg.OtelCollectorPort > 0 {
-			otelCfg.Endpoint = fmt.Sprintf("%s:%d", monitoringCfg.OtelCollectorHost, monitoringCfg.OtelCollectorPort)
-		}
-	}
-
-	logsDir, _ := cfg.LogsSubdir()
-	if err := logger.NewLogger(&logger.Options{
-		LogsDir: logsDir,
-		FileConfig: &logger.LoggingConfig{
-			FileEnabled: loggingCfg.FileEnabled,
-			MaxSizeMB:   loggingCfg.MaxSizeMB,
-			MaxAgeDays:  loggingCfg.MaxAgeDays,
-			MaxBackups:  loggingCfg.MaxBackups,
-			Compress:    loggingCfg.Compress,
-		},
-		OtelConfig: otelCfg,
-	}); err != nil {
-		logger.Init()
-	}
-
-	ios.Logger = &logger.Log
 	return ios
 }
 
@@ -127,7 +160,12 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 				clientErr = fmt.Errorf("failed to get config: %w", err)
 				return
 			}
-			client, clientErr = docker.NewClient(ctx, cfg)
+			log, logErr := f.Logger()
+			if logErr != nil {
+				// Non-fatal: use nop logger if logger initialization fails.
+				log = nil
+			}
+			client, clientErr = docker.NewClient(ctx, cfg, log)
 			if clientErr == nil {
 				docker.WireBuildKit(client)
 			}
@@ -146,13 +184,15 @@ func hostProxyFunc(f *cmdutil.Factory) func() hostproxy.HostProxyService {
 		once.Do(func() {
 			cfg, err := f.Config()
 			if err != nil {
-				logger.Warn().Err(err).Msg("failed to get config for host proxy manager, using defaults")
-				cfg = nil
+				panic(fmt.Errorf("failed to get config for host proxy manager: %w", err))
 			}
-			m, mErr := hostproxy.NewManager(cfg)
+			log, err := f.Logger()
+			if err != nil {
+				panic(fmt.Errorf("failed to get logger for host proxy manager: %w", err))
+			}
+			m, mErr := hostproxy.NewManager(cfg, log)
 			if mErr != nil {
-				logger.Error().Err(mErr).Msg("failed to create host proxy manager")
-				return
+				panic(fmt.Errorf("failed to create host proxy manager: %w", mErr))
 			}
 			manager = m
 		})
@@ -170,10 +210,13 @@ func socketBridgeFunc(f *cmdutil.Factory) func() socketbridge.SocketBridgeManage
 		once.Do(func() {
 			cfg, err := f.Config()
 			if err != nil {
-				logger.Warn().Err(err).Msg("failed to get config for socket bridge manager, using defaults")
-				cfg = nil
+				panic(fmt.Errorf("failed to get config for socket bridge manager: %w", err))
 			}
-			manager = socketbridge.NewManager(cfg)
+			log, err := f.Logger()
+			if err != nil {
+				panic(fmt.Errorf("failed to get logger for socket bridge manager: %w", err))
+			}
+			manager = socketbridge.NewManager(cfg, log)
 		})
 		return manager
 	}

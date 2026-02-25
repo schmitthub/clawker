@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/pflag"
 )
 
@@ -91,7 +91,7 @@ func BuildRunnerOptions(
 	createContainer func(ctx context.Context) (*ContainerStartConfig, error),
 	flags *pflag.FlagSet,
 	loopCfg *config.LoopConfig,
-	log iostreams.Logger,
+	log *logger.Logger,
 ) Options {
 	opts := Options{
 		ProjectCfg:                project,

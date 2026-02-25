@@ -15,7 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/logger/loggertest"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // loopStatusText builds the assistant text containing a LOOP_STATUS block.
@@ -130,7 +130,7 @@ func TestRunnerRun_SingleLoopCompletion(t *testing.T) {
 		Agent:           "testagent",
 		Prompt:          "implement the feature",
 		MaxLoops:        10,
-		Logger:          loggertest.NewNop(),
+		Logger:          logger.Nop(),
 	})
 
 	require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestRunnerRun_MaxLoopsReached(t *testing.T) {
 		MaxLoops:            2,
 		StagnationThreshold: 10, // High so we don't trip circuit
 		LoopDelaySeconds:    1,
-		Logger:              loggertest.NewNop(),
+		Logger:              logger.Nop(),
 	})
 
 	require.NoError(t, err)
@@ -194,7 +194,7 @@ func TestRunnerRun_CircuitBreakerTrips(t *testing.T) {
 		MaxLoops:            10,
 		StagnationThreshold: 2, // Trip after 2 loops without progress
 		LoopDelaySeconds:    1,
-		Logger:              loggertest.NewNop(),
+		Logger:              logger.Nop(),
 	})
 
 	require.NoError(t, err)
@@ -226,7 +226,7 @@ func TestRunnerRun_ContextCancellation(t *testing.T) {
 		MaxLoops:            100,
 		StagnationThreshold: 100,
 		LoopDelaySeconds:    1,
-		Logger:              loggertest.NewNop(),
+		Logger:              logger.Nop(),
 		OnLoopEnd: func(_ int, _ *shared.Status, _ *shared.ResultEvent, _ error) {
 			loopsRan++
 			if loopsRan >= 1 {
@@ -260,7 +260,7 @@ func TestRunnerRun_CallbacksFired(t *testing.T) {
 		Agent:           "testagent",
 		Prompt:          "do it",
 		MaxLoops:        5,
-		Logger:          loggertest.NewNop(),
+		Logger:          logger.Nop(),
 		OnLoopStart: func(loopNum int) {
 			startLoops = append(startLoops, loopNum)
 		},
@@ -296,7 +296,7 @@ func TestRunnerRun_PreCancelledContext(t *testing.T) {
 		Agent:           "testagent",
 		Prompt:          "do it",
 		MaxLoops:        5,
-		Logger:          loggertest.NewNop(),
+		Logger:          logger.Nop(),
 	})
 
 	require.NoError(t, err)
@@ -325,7 +325,7 @@ func TestRunnerRun_RepeatedErrorHistoryEntry(t *testing.T) {
 		MaxLoops:            4,
 		StagnationThreshold: 100, // High to avoid stagnation trip
 		LoopDelaySeconds:    1,
-		Logger:              loggertest.NewNop(),
+		Logger:              logger.Nop(),
 	})
 
 	require.NoError(t, err)
@@ -369,7 +369,7 @@ func TestRunnerRun_CircuitAlreadyTripped(t *testing.T) {
 		Agent:           "testagent",
 		Prompt:          "do it",
 		MaxLoops:        5,
-		Logger:          loggertest.NewNop(),
+		Logger:          logger.Nop(),
 	})
 
 	require.NoError(t, runErr)

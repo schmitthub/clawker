@@ -10,7 +10,7 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/git/gittest"
-	"github.com/schmitthub/clawker/internal/logger/loggertest"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/stretchr/testify/assert"
@@ -78,7 +78,7 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 				return inMemGit.GitManager, nil
 			}
 
-			mgr, err := project.NewProjectManager(cfg, gitFactory)
+			mgr, err := project.NewProjectManager(cfg, logger.Nop(), gitFactory)
 			require.NoError(t, err)
 			ctx := context.Background()
 
@@ -100,7 +100,7 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 
 			wd, projectRootDir, err := resolveWorkDir(
 				ctx, containerOpts, cfg,
-				"dev", pmFunc, loggertest.NewNop(),
+				"dev", pmFunc, logger.Nop(),
 			)
 
 			if tt.wantErr {
@@ -142,7 +142,7 @@ func TestResolveWorkDir_WorktreeGetError(t *testing.T) {
 
 	_, _, err := resolveWorkDir(
 		context.Background(), containerOpts, cfg,
-		"dev", pmFunc, loggertest.NewNop(),
+		"dev", pmFunc, logger.Nop(),
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be retrieved")
@@ -203,7 +203,7 @@ func TestResolveWorkDir_UnhealthyStatuses(t *testing.T) {
 
 			_, _, err := resolveWorkDir(
 				context.Background(), containerOpts, cfg,
-				"dev", pmFunc, loggertest.NewNop(),
+				"dev", pmFunc, logger.Nop(),
 			)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errContains)

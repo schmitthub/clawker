@@ -15,6 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -34,6 +35,7 @@ type IterateOptions struct {
 	HostProxy      func() hostproxy.HostProxyService
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
+	Logger         func() (*logger.Logger, error)
 	Version        string
 
 	// Prompt source (mutually exclusive, one required)
@@ -60,6 +62,7 @@ func NewCmdIterate(f *cmdutil.Factory, runF func(context.Context, *IterateOption
 		HostProxy:      f.HostProxy,
 		SocketBridge:   f.SocketBridge,
 		Prompter:       f.Prompter,
+		Logger:         f.Logger,
 		Version:        f.Version,
 	}
 
@@ -131,6 +134,11 @@ The loop exits when:
 
 func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	ios := opts.IOStreams
+
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
 
 	// 1. Resolve prompt
 	prompt, err := shared.ResolvePrompt(opts.Prompt, opts.PromptFile)
@@ -235,6 +243,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 		HostProxy:      opts.HostProxy,
 		SocketBridge:   opts.SocketBridge,
 		IOStreams:      ios,
+		Log:            log,
 	})
 
 	// 6. Create runner
@@ -246,7 +255,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	// 7. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
 		opts.LoopOptions, projectCfg, projectName, opts.Agent, prompt, workDir,
-		createContainer, opts.flags, projectCfg.Loop, ios.Logger,
+		createContainer, opts.flags, projectCfg.Loop, log,
 	)
 
 	// Setup info for dashboard/monitor display (no container ID — per-iteration)

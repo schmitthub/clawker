@@ -5,12 +5,16 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 func TestNewCmdGenerate(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 
 	var gotOpts *GenerateOptions
 	cmd := NewCmdGenerate(f, func(_ context.Context, opts *GenerateOptions) error {
@@ -28,7 +32,7 @@ func TestNewCmdGenerate(t *testing.T) {
 		t.Fatal("expected runF to be called")
 	}
 
-	if gotOpts.IOStreams != tio.IOStreams {
+	if gotOpts.IOStreams != tio {
 		t.Error("expected IOStreams to be set from factory")
 	}
 
@@ -50,8 +54,11 @@ func TestNewCmdGenerate(t *testing.T) {
 }
 
 func TestNewCmdGenerate_NoArgs(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 
 	var gotOpts *GenerateOptions
 	cmd := NewCmdGenerate(f, func(_ context.Context, opts *GenerateOptions) error {
@@ -75,8 +82,11 @@ func TestNewCmdGenerate_NoArgs(t *testing.T) {
 }
 
 func TestNewCmdGenerate_Flags(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 
 	var gotOpts *GenerateOptions
 	cmd := NewCmdGenerate(f, func(_ context.Context, opts *GenerateOptions) error {

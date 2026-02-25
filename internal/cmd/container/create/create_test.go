@@ -20,7 +20,8 @@ import (
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/require"
@@ -416,12 +417,13 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // ---------------------------------------------------------------------------
 
 // testFactory builds a *cmdutil.Factory backed by a FakeClient for Tier 2 create tests.
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+		TUI:       tui.NewTUI(tio),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -443,7 +445,7 @@ security: { enable_host_proxy: false, firewall: { enable: false } }
 			return hostproxytest.NewMockManager()
 		},
 		Prompter: func() *prompter.Prompter { return nil },
-	}, tio
+	}, in, out, errOut
 }
 
 func TestCreateRun(t *testing.T) {
@@ -452,21 +454,21 @@ func TestCreateRun(t *testing.T) {
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 
-		f, tio := testFactory(t, fake)
+		f, _, out, errOut := testFactory(t, fake)
 		cmd := NewCmdCreate(f, nil)
 
 		cmd.SetArgs([]string{"alpine"})
 		cmd.SetIn(&bytes.Buffer{})
-		cmd.SetOut(tio.OutBuf)
-		cmd.SetErr(tio.ErrBuf)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
 
 		err := cmd.Execute()
 		require.NoError(t, err)
 
 		// Create prints 12-char container ID to stdout
-		out := tio.OutBuf.String()
-		require.Contains(t, out, "sha256:fakec")
-		require.Len(t, strings.TrimSpace(out), 12)
+		outStr := out.String()
+		require.Contains(t, outStr, "sha256:fakec")
+		require.Len(t, strings.TrimSpace(outStr), 12)
 
 		fake.AssertCalled(t, "ContainerCreate")
 	})
@@ -485,13 +487,13 @@ func TestCreateRun(t *testing.T) {
 		// (proving it WAS called when ConfigCreated=true).
 		t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-test-dir")
 
-		f, tio := testFactory(t, fake)
+		f, _, out, errOut := testFactory(t, fake)
 		cmd := NewCmdCreate(f, nil)
 
 		cmd.SetArgs([]string{"alpine"})
 		cmd.SetIn(&bytes.Buffer{})
-		cmd.SetOut(tio.OutBuf)
-		cmd.SetErr(tio.ErrBuf)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
 
 		err := cmd.Execute()
 		require.Error(t, err)
@@ -510,20 +512,20 @@ func TestCreateRun(t *testing.T) {
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 
-		f, tio := testFactory(t, fake)
+		f, _, out, errOut := testFactory(t, fake)
 		cmd := NewCmdCreate(f, nil)
 
 		cmd.SetArgs([]string{"alpine"})
 		cmd.SetIn(&bytes.Buffer{})
-		cmd.SetOut(tio.OutBuf)
-		cmd.SetErr(tio.ErrBuf)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
 
 		err := cmd.Execute()
 		require.NoError(t, err)
 
 		// Container created successfully — no init errors
-		out := tio.OutBuf.String()
-		require.Len(t, strings.TrimSpace(out), 12)
+		outStr := out.String()
+		require.Len(t, strings.TrimSpace(outStr), 12)
 		fake.AssertCalled(t, "ContainerCreate")
 	})
 
@@ -549,10 +551,11 @@ agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 		fake.SetupContainerCreate()
 		// No CopyToContainer setup — if called, it would panic
 
-		tio := iostreamstest.New()
+		tio, _, out, errOut := iostreams.Test()
 		f := &cmdutil.Factory{
-			IOStreams: tio.IOStreams,
-			TUI:       tui.NewTUI(tio.IOStreams),
+			IOStreams: tio,
+			Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+			TUI:       tui.NewTUI(tio),
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},
@@ -568,15 +571,15 @@ agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 		cmd := NewCmdCreate(f, nil)
 		cmd.SetArgs([]string{"alpine"})
 		cmd.SetIn(&bytes.Buffer{})
-		cmd.SetOut(tio.OutBuf)
-		cmd.SetErr(tio.ErrBuf)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
 
 		err := cmd.Execute()
 		require.NoError(t, err)
 
 		// Container created successfully without CopyToContainer being called
-		out := tio.OutBuf.String()
-		require.Len(t, strings.TrimSpace(out), 12)
+		outStr := out.String()
+		require.Len(t, strings.TrimSpace(outStr), 12)
 		fake.AssertCalled(t, "ContainerCreate")
 		fake.AssertNotCalled(t, "CopyToContainer")
 	})

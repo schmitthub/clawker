@@ -15,7 +15,8 @@ import (
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -192,12 +193,13 @@ func TestCmdStart_Properties(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests (non-attach path) ---
 
-func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 
 	return &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -207,7 +209,7 @@ func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Facto
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()
 		},
-	}, tio
+	}, in, out, errOut
 }
 
 // setupContainerStart configures the fake for the non-attach container start path.
@@ -221,9 +223,10 @@ func setupContainerStart(fake *dockertest.FakeClient) {
 }
 
 func TestStartRun_DockerConnectionError(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
@@ -234,9 +237,9 @@ func TestStartRun_DockerConnectionError(t *testing.T) {
 
 	cmd := NewCmdStart(f, nil)
 	cmd.SetArgs([]string{"mycontainer"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -247,16 +250,16 @@ func TestStartRun_Success(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
-	f, tio := testStartFactory(t, fake)
+	f, in, out, errOut := testStartFactory(t, fake)
 	cmd := NewCmdStart(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
-	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
+	assert.Contains(t, out.String(), "clawker.myapp.dev")
 	fake.AssertCalled(t, "ContainerStart")
 }
 
@@ -264,19 +267,19 @@ func TestStartRun_MultipleContainers(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
-	f, tio := testStartFactory(t, fake)
+	f, in, out, errOut := testStartFactory(t, fake)
 	cmd := NewCmdStart(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.writer"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.dev")
-	assert.Contains(t, out, "clawker.myapp.writer")
+	outStr := out.String()
+	assert.Contains(t, outStr, "clawker.myapp.dev")
+	assert.Contains(t, outStr, "clawker.myapp.writer")
 	fake.AssertCalledN(t, "ContainerStart", 2)
 }
 
@@ -293,30 +296,31 @@ func TestStartRun_PartialFailure(t *testing.T) {
 		return mobyclient.ContainerStartResult{}, nil
 	}
 
-	f, tio := testStartFactory(t, fake)
+	f, in, out, errOut := testStartFactory(t, fake)
 	cmd := NewCmdStart(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.missing"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.ErrorIs(t, err, cmdutil.SilentError)
 
 	// First container succeeded
-	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
+	assert.Contains(t, out.String(), "clawker.myapp.dev")
 	// Second container had error
-	assert.Contains(t, tio.ErrBuf.String(), "clawker.myapp.missing")
+	assert.Contains(t, errOut.String(), "clawker.myapp.missing")
 }
 
 func TestStartRun_NilHostProxy(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	// Default config has host proxy enabled (EnableHostProxy = nil → true)
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -328,11 +332,11 @@ func TestStartRun_NilHostProxy(t *testing.T) {
 
 	cmd := NewCmdStart(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err) // No panic, start succeeds
-	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
+	assert.Contains(t, out.String(), "clawker.myapp.dev")
 }

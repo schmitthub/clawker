@@ -193,4 +193,3 @@ func (c *configImpl) HostProxyConfig() HostProxyConfig {
 func (c *configImpl) MonitoringConfig() MonitoringConfig {
 	return c.settings.Get().Monitoring
 }
-

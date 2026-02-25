@@ -11,7 +11,8 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -20,7 +21,7 @@ import (
 )
 
 // testInitOpts builds a default InitOptions for testing with an isolated config.
-func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) *InitOptions {
+func testInitOpts(t *testing.T, tio *iostreams.IOStreams) *InitOptions {
 	t.Helper()
 
 	cfg := configmocks.NewIsolatedTestConfig(t)
@@ -31,10 +32,11 @@ func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) *InitOptions {
 	}
 
 	return &InitOptions{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
-		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		IOStreams: tio,
+		TUI:       tui.NewTUI(tio),
+		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 		Config:    func() (config.Config, error) { return cfg, nil },
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}
 }
@@ -42,13 +44,13 @@ func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) *InitOptions {
 // --- NewCmdInit tests ---
 
 func TestNewCmdInit(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	cfg := configmocks.NewBlankConfig()
 	fake := dockertest.NewFakeClient(cfg)
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
-		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		IOStreams: tio,
+		TUI:       tui.NewTUI(tio),
+		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 		Config:    func() (config.Config, error) { return cfg, nil },
 		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}
@@ -64,7 +66,7 @@ func TestNewCmdInit(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, gotOpts, "expected runF to be called")
 
-	assert.Equal(t, tio.IOStreams, gotOpts.IOStreams, "IOStreams should be wired from factory")
+	assert.Equal(t, tio, gotOpts.IOStreams, "IOStreams should be wired from factory")
 	assert.NotNil(t, gotOpts.TUI, "TUI should be wired from factory")
 	assert.NotNil(t, gotOpts.Prompter, "Prompter func should be wired from factory")
 	assert.NotNil(t, gotOpts.Config, "Config func should be wired from factory")
@@ -73,8 +75,8 @@ func TestNewCmdInit(t *testing.T) {
 }
 
 func TestNewCmdInit_YesFlag(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: tio}
 
 	var gotOpts *InitOptions
 	cmd := NewCmdInit(f, func(_ context.Context, opts *InitOptions) error {
@@ -92,7 +94,7 @@ func TestNewCmdInit_YesFlag(t *testing.T) {
 // --- Run dispatch tests ---
 
 func TestRun_NonInteractive(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 
 	opts := testInitOpts(t, tio)
 	opts.Yes = true
@@ -100,14 +102,14 @@ func TestRun_NonInteractive(t *testing.T) {
 	err := Run(context.Background(), opts)
 	require.NoError(t, err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "Setting up clawker user settings...")
 	assert.Contains(t, output, "Settings:")
 	assert.Contains(t, output, "Next Steps:")
 }
 
 func TestRun_NonInteractive_SettingsUnchanged(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 
 	opts := testInitOpts(t, tio)
 	opts.Yes = true
@@ -123,13 +125,13 @@ func TestRun_NonInteractive_SettingsUnchanged(t *testing.T) {
 // --- performSetup tests ---
 
 func TestPerformSetup_NoBuild(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	opts := testInitOpts(t, tio)
 
 	err := performSetup(context.Background(), opts, false, "")
 	require.NoError(t, err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "Setting up clawker user settings...")
 	assert.Contains(t, output, "Settings:")
 	assert.Contains(t, output, "Next Steps:")
@@ -141,7 +143,7 @@ func TestPerformSetup_NoBuild(t *testing.T) {
 }
 
 func TestPerformSetup_BuildSuccess(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	opts := testInitOpts(t, tio)
 
 	err := performSetup(context.Background(), opts, true, "bookworm")
@@ -153,7 +155,7 @@ func TestPerformSetup_BuildSuccess(t *testing.T) {
 }
 
 func TestPerformSetup_BuildFailure(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	cfg := configmocks.NewIsolatedTestConfig(t)
 
 	fake := dockertest.NewFakeClient(cfg)
@@ -162,10 +164,11 @@ func TestPerformSetup_BuildFailure(t *testing.T) {
 	}
 
 	opts := &InitOptions{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
-		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		IOStreams: tio,
+		TUI:       tui.NewTUI(tio),
+		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 		Config:    func() (config.Config, error) { return cfg, nil },
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}
 
@@ -173,7 +176,7 @@ func TestPerformSetup_BuildFailure(t *testing.T) {
 	// performSetup does not return an error on build failure — it prints a message and continues
 	require.NoError(t, err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "Base image build failed")
 	assert.Contains(t, output, "You can manually build later")
 

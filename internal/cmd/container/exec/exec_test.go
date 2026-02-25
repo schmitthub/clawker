@@ -12,7 +12,8 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -257,24 +258,26 @@ security:
 
 func ptrBool(b bool) *bool { return &b }
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
 			return testConfig(), nil
 		},
-	}, tio
+	}, in, out, errOut
 }
 
 func TestExecRun_DockerConnectionError(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
@@ -286,8 +289,8 @@ func TestExecRun_DockerConnectionError(t *testing.T) {
 	cmd := NewCmdExec(f, nil)
 	cmd.SetArgs([]string{"mycontainer", "ls"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -297,13 +300,13 @@ func TestExecRun_DockerConnectionError(t *testing.T) {
 func TestExecRun_ContainerNotFound(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — no containers
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 
 	cmd := NewCmdExec(f, nil)
 	cmd.SetArgs([]string{"nonexistent", "ls"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -317,13 +320,13 @@ func TestExecRun_ContainerNotRunning(t *testing.T) {
 
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 
 	cmd := NewCmdExec(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev", "ls"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -337,17 +340,17 @@ func TestExecRun_DetachMode(t *testing.T) {
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-abc123")
 	fake.SetupExecStart()
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 
 	cmd := NewCmdExec(f, nil)
 	cmd.SetArgs([]string{"--detach", "clawker.myapp.dev", "sleep", "100"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
-	assert.Contains(t, tio.OutBuf.String(), "exec-abc123")
+	assert.Contains(t, out.String(), "exec-abc123")
 	fake.AssertCalled(t, "ExecCreate")
 	fake.AssertCalled(t, "ExecStart")
 }
@@ -360,13 +363,13 @@ func TestExecRun_NonTTYHappyPath(t *testing.T) {
 	fake.SetupExecCreate("exec-xyz789")
 	fake.SetupExecAttach()
 	fake.SetupExecInspect(0) // exit code 0
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 
 	cmd := NewCmdExec(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev", "echo", "hello"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
@@ -383,13 +386,13 @@ func TestExecRun_NonZeroExitCode(t *testing.T) {
 	fake.SetupExecCreate("exec-fail")
 	fake.SetupExecAttach()
 	fake.SetupExecInspect(42) // non-zero exit code
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 
 	cmd := NewCmdExec(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev", "false"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)

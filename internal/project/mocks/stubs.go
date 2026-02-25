@@ -6,6 +6,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 )
 
@@ -83,7 +84,7 @@ func NewMockProject(name, repoPath string) *ProjectMock {
 func NewTestProjectManager(t *testing.T, gitFactory project.GitManagerFactory) project.ProjectManager {
 	t.Helper()
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	mgr, err := project.NewProjectManager(cfg, gitFactory)
+	mgr, err := project.NewProjectManager(cfg, logger.Nop(), gitFactory)
 	if err != nil {
 		t.Fatalf("creating test project manager: %v", err)
 	}

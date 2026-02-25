@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +36,9 @@ func TestNewCmdPrune(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
+			f := &cmdutil.Factory{
+				Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+			}
 
 			var gotOpts *PruneOptions
 			cmd := NewCmdPrune(f, func(_ context.Context, opts *PruneOptions) error {
@@ -64,7 +67,9 @@ func TestNewCmdPrune(t *testing.T) {
 }
 
 func TestCmdPrune_Properties(t *testing.T) {
-	f := &cmdutil.Factory{}
+	f := &cmdutil.Factory{
+		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdPrune(f, nil)
 
 	// Test command basics

@@ -36,14 +36,16 @@ type PruneStaleResult struct {
 
 type worktreeService struct {
 	cfg             config.Config
+	log             *logger.Logger
 	registryStore   *storage.Store[config.ProjectRegistry]
 	newGitMgr       GitManagerFactory
 	registryFactory func() worktreeRegistry
 }
 
-func newWorktreeService(cfg config.Config, registryStore *storage.Store[config.ProjectRegistry], gitFactory GitManagerFactory) *worktreeService {
+func newWorktreeService(cfg config.Config, log *logger.Logger, registryStore *storage.Store[config.ProjectRegistry], gitFactory GitManagerFactory) *worktreeService {
 	return &worktreeService{
 		cfg:           cfg,
+		log:           log,
 		registryStore: registryStore,
 		newGitMgr:     gitFactory,
 		registryFactory: func() worktreeRegistry {
@@ -268,11 +270,11 @@ func generateWorktreeDirName(repoName, projectName string) string {
 // It looks up the project in the registry to populate known worktree paths,
 // enabling path reuse for existing worktrees and UUID-based generation for new ones.
 // External callers (e.g. container/shared) use this instead of the full project service.
-func NewWorktreeDirProvider(cfg config.Config, projectRoot string) git.WorktreeDirProvider {
+func NewWorktreeDirProvider(log *logger.Logger, cfg config.Config, projectRoot string) git.WorktreeDirProvider {
 	store, err := newRegistryStore()
 	if err != nil {
 		// Graceful degradation: return a provider with no known paths.
-		logger.Warn().Err(err).Msg("could not load project registry; worktree path reuse disabled")
+		log.Warn().Err(err).Msg("could not load project registry; worktree path reuse disabled")
 		return &flatWorktreeDirProvider{
 			knownPaths: map[string]string{},
 		}

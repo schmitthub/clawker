@@ -13,7 +13,8 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -108,19 +109,20 @@ func TestCmdRename_Properties(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests ---
 
-func testRenameFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testRenameFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 
 	return &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
 			return configmocks.NewBlankConfig(), nil
 		},
-	}, tio
+	}, in, out, errOut
 }
 
 func TestRenameRun_Success(t *testing.T) {
@@ -129,25 +131,26 @@ func TestRenameRun_Success(t *testing.T) {
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerRename()
 
-	f, tio := testRenameFactory(t, fake)
+	f, in, out, errOut := testRenameFactory(t, fake)
 
 	cmd := NewCmdRename(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.newname"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.newname")
+	require.Contains(t, out.String(), "clawker.myapp.newname")
 	fake.AssertCalled(t, "ContainerRename")
 }
 
 func TestRenameRun_DockerConnectionError(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
@@ -158,9 +161,9 @@ func TestRenameRun_DockerConnectionError(t *testing.T) {
 
 	cmd := NewCmdRename(f, nil)
 	cmd.SetArgs([]string{"oldname", "newname"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -171,13 +174,13 @@ func TestRenameRun_ContainerNotFound(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
-	f, tio := testRenameFactory(t, fake)
+	f, in, out, errOut := testRenameFactory(t, fake)
 
 	cmd := NewCmdRename(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.newname"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -193,13 +196,13 @@ func TestRenameRun_RenameAPIError(t *testing.T) {
 		return mobyclient.ContainerRenameResult{}, fmt.Errorf("name already in use")
 	}
 
-	f, tio := testRenameFactory(t, fake)
+	f, in, out, errOut := testRenameFactory(t, fake)
 
 	cmd := NewCmdRename(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.taken"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)

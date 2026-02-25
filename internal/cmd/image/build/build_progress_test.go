@@ -1,7 +1,6 @@
 package build
 
 import (
-	"bytes"
 	"context"
 	"testing"
 
@@ -10,7 +9,8 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
@@ -23,7 +23,7 @@ import (
 //
 // Each scenario uses whailtest pre-built event sequences that mirror real BuildKit output patterns.
 func TestBuildProgress_Pipeline(t *testing.T) {
-	for _, scenario := range whailtest.AllBuildScenarios() {
+	for _, scenario := range whailtest.AllBuildScenarios() { // TODO: This should not be importing whail test doubles its suposed to test from the docker packages
 		t.Run(scenario.Name, func(t *testing.T) {
 			t.Setenv("DOCKER_BUILDKIT", "1")
 
@@ -48,23 +48,24 @@ monitoring:
 			fake := dockertest.NewFakeClient(testCfg)
 			fake.SetupBuildKitWithProgress(scenario.Events)
 
-			tio := iostreamstest.New()
+			tio, in, out, errOut := iostreams.Test()
 			f := &cmdutil.Factory{
-				IOStreams: tio.IOStreams,
-				TUI:       tui.NewTUI(tio.IOStreams),
+				IOStreams: tio,
+				TUI:       tui.NewTUI(tio),
 				Client: func(_ context.Context) (*docker.Client, error) {
 					return fake.Client, nil
 				},
 				Config: func() (config.Config, error) {
 					return testCfg, nil
 				},
+				Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
 			}
 
 			cmd := NewCmdBuild(f, nil) // nil runF → real buildRun
 			cmd.SetArgs([]string{"--progress", "plain"})
-			cmd.SetIn(&bytes.Buffer{})
-			cmd.SetOut(tio.OutBuf)
-			cmd.SetErr(tio.ErrBuf)
+			cmd.SetIn(in)
+			cmd.SetOut(out)
+			cmd.SetErr(errOut)
 
 			err := cmd.Execute()
 
@@ -72,7 +73,7 @@ monitoring:
 			// display should still render the error step.
 			require.NoError(t, err)
 
-			output := tio.ErrBuf.String()
+			output := errOut.String()
 
 			// Verify all visible step names appear in plain output.
 			for _, event := range scenario.Events {
@@ -115,28 +116,29 @@ monitoring:
 	fake := dockertest.NewFakeClient(testCfg)
 	fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		TUI:       tui.NewTUI(tio),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
 			return testCfg, nil
 		},
+		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
 	}
 
 	cmd := NewCmdBuild(f, nil)
 	cmd.SetArgs([]string{"--progress", "plain"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 
 	// Visible steps should appear.
 	assert.Contains(t, output, "FROM node:20-slim")
@@ -172,29 +174,30 @@ monitoring:
 	fake := dockertest.NewFakeClient(testCfg)
 	fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		TUI:       tui.NewTUI(tio),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
 			return testCfg, nil
 		},
+		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
 	}
 
 	cmd := NewCmdBuild(f, nil)
 	cmd.SetArgs([]string{"--quiet"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
 	// Progress output should not contain step names.
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.NotContains(t, output, "FROM node:20-slim")
 	assert.NotContains(t, output, "RUN apt-get update")
 }
@@ -224,23 +227,24 @@ monitoring:
 	fake := dockertest.NewFakeClient(testCfg)
 	capture := fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		TUI:       tui.NewTUI(tio),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
 			return testCfg, nil
 		},
+		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
 	}
 
 	cmd := NewCmdBuild(f, nil)
 	cmd.SetArgs([]string{"--progress", "plain"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)

@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -21,6 +22,7 @@ type InitOptions struct {
 	TUI       *tui.TUI
 	Prompter  func() *prompterpkg.Prompter
 	Config    func() (config.Config, error)
+	Logger    func() (*logger.Logger, error)
 	Client    func(context.Context) (*docker.Client, error)
 
 	Yes bool // Non-interactive mode
@@ -33,6 +35,7 @@ func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) err
 		TUI:       f.TUI,
 		Prompter:  f.Prompter,
 		Config:    f.Config,
+		Logger:    f.Logger,
 		Client:    f.Client,
 	}
 
@@ -156,6 +159,11 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
+
 	// Print header
 	fmt.Fprintln(ios.ErrOut, "Setting up clawker user settings...")
 	fmt.Fprintln(ios.ErrOut)
@@ -165,7 +173,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	ios.Logger.Debug().
+	log.Debug().
 		Bool("build_base_image", buildBaseImage).
 		Str("flavor", selectedFlavor).
 		Msg("initializing user settings")

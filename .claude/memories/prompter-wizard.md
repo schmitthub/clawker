@@ -96,13 +96,13 @@ All prompts write to `ios.ErrOut` (stderr) — keeps stdout clean for data outpu
 ### Test Pattern
 
 ```go
-tio := iostreamstest.New()
+tio, _, _, _ := iostreams.Test()
 tio.SetInteractive(true)
 tio.InBuf.SetInput("y\n")
 
-p := prompter.NewPrompter(tio.IOStreams)
+p := prompter.NewPrompter(tio)
 result, err := p.Confirm("Continue?", false)
-// result == true, tio.ErrBuf.String() contains "Continue?"
+// result == true, errOut.String() contains "Continue?"
 ```
 
 ## 3. Wizard TUI Components (`internal/tui/`)

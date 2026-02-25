@@ -13,6 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -25,6 +26,7 @@ type ProjectInitOptions struct {
 	TUI            *tui.TUI
 	Prompter       func() *prompterpkg.Prompter
 	Config         func() (config.Config, error)
+	Logger         func() (*logger.Logger, error)
 	ProjectManager func() (project.ProjectManager, error)
 
 	Name  string // Positional arg: project name
@@ -39,6 +41,7 @@ func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectIn
 		TUI:            f.TUI,
 		Prompter:       f.Prompter,
 		Config:         f.Config,
+		Logger:         f.Logger,
 		ProjectManager: f.ProjectManager,
 	}
 
@@ -111,6 +114,11 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
+
 	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get working directory: %w", err)
@@ -167,7 +175,7 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	if overwriteDeclined(result.Values) {
 		registeredProject, regErr := projectManager.Register(ctx, dirName, wd)
 		if regErr != nil {
-			ios.Logger.Debug().Err(regErr).Msg("failed to register project during init (non-overwrite path)")
+			log.Debug().Err(regErr).Msg("failed to register project during init (non-overwrite path)")
 			return fmt.Errorf("could not register project: %w", regErr)
 		}
 		if registeredProject != nil {
@@ -179,12 +187,12 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		if readErr != nil {
 			existingContent, readErr = os.ReadFile(plainConfigPath)
 			if readErr != nil {
-				ios.Logger.Debug().Err(readErr).Msg("failed to read existing config for user default offer")
+				log.Debug().Err(readErr).Msg("failed to read existing config for user default offer")
 			}
 		}
 		if readErr == nil {
 			prompter := opts.Prompter()
-			maybeOfferUserDefault(ios, cs, prompter, existingContent)
+			maybeOfferUserDefault(ios, cs, log, prompter, existingContent)
 		}
 		return nil
 	}
@@ -253,6 +261,11 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
+
 	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get working directory: %w", err)
@@ -272,7 +285,7 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 	ignoreFileName := cfgGateway.ClawkerIgnoreName()
 	ignorePath := filepath.Join(wd, ignoreFileName)
 
-	ios.Logger.Debug().
+	log.Debug().
 		Str("project", projectName).
 		Str("build_image", buildImage).
 		Str("mode", workspaceMode).
@@ -287,14 +300,14 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("failed to write %s: %w", configFileName, err)
 	}
-	ios.Logger.Debug().Str("file", configPath).Msg("created configuration file")
+	log.Debug().Str("file", configPath).Msg("created configuration file")
 
 	// Create .clawkerignore
 	if _, err := os.Stat(ignorePath); os.IsNotExist(err) || opts.Force {
 		if err := os.WriteFile(ignorePath, []byte(config.DefaultIgnoreFile), 0644); err != nil {
 			return fmt.Errorf("failed to write %s: %w", ignoreFileName, err)
 		}
-		ios.Logger.Debug().Str("file", ignorePath).Msg("created ignore file")
+		log.Debug().Str("file", ignorePath).Msg("created ignore file")
 	}
 
 	// Success output — always report files created before registration attempt
@@ -311,7 +324,7 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 	// Offer to save as user-level default if not already present
 	if !opts.Yes && ios.IsInteractive() {
 		prompter := opts.Prompter()
-		maybeOfferUserDefault(ios, cs, prompter, []byte(configContent))
+		maybeOfferUserDefault(ios, cs, log, prompter, []byte(configContent))
 	}
 
 	fmt.Fprintln(ios.Out)
@@ -414,7 +427,7 @@ func resolveImageFromWizard(values tui.WizardValues) string {
 
 // maybeOfferUserDefault checks if a user-level clawker.yaml exists in configDir.
 // If it doesn't, prompts the user to save the given content as their default.
-func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, prompter *prompterpkg.Prompter, content []byte) {
+func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, log *logger.Logger, prompter *prompterpkg.Prompter, content []byte) {
 	userConfigPath, pathErr := config.UserProjectConfigFilePath()
 	if pathErr != nil {
 		return
@@ -431,11 +444,11 @@ func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, 
 	}
 	dir := filepath.Dir(userConfigPath)
 	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
-		ios.Logger.Debug().Err(mkErr).Msg("failed to create config dir for user defaults")
+		log.Debug().Err(mkErr).Msg("failed to create config dir for user defaults")
 		return
 	}
 	if writeErr := os.WriteFile(userConfigPath, content, 0644); writeErr != nil {
-		ios.Logger.Debug().Err(writeErr).Msg("failed to write user-level default config")
+		log.Debug().Err(writeErr).Msg("failed to write user-level default config")
 		return
 	}
 	fmt.Fprintf(ios.Out, "%s Default: %s\n", cs.SuccessIcon(), userConfigPath)

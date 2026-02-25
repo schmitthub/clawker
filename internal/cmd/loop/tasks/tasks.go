@@ -15,6 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -34,6 +35,7 @@ type TasksOptions struct {
 	HostProxy      func() hostproxy.HostProxyService
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
+	Logger         func() (*logger.Logger, error)
 	Version        string
 
 	// Task file (required)
@@ -63,6 +65,7 @@ func NewCmdTasks(f *cmdutil.Factory, runF func(context.Context, *TasksOptions) e
 		HostProxy:      f.HostProxy,
 		SocketBridge:   f.SocketBridge,
 		Prompter:       f.Prompter,
+		Logger:         f.Logger,
 		Version:        f.Version,
 	}
 
@@ -137,6 +140,11 @@ The loop exits when:
 
 func tasksRun(ctx context.Context, opts *TasksOptions) error {
 	ios := opts.IOStreams
+
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
 
 	// 1. Resolve task prompt
 	prompt, err := shared.ResolveTasksPrompt(opts.TasksFile, opts.TaskPrompt, opts.TaskPromptFile)
@@ -237,6 +245,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 		HostProxy:      opts.HostProxy,
 		SocketBridge:   opts.SocketBridge,
 		IOStreams:      ios,
+		Log:            log,
 	})
 
 	// 6. Create runner
@@ -248,7 +257,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 	// 7. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
 		opts.LoopOptions, projectCfg, projectName, opts.Agent, prompt, workDir,
-		createContainer, opts.flags, projectCfg.Loop, ios.Logger,
+		createContainer, opts.flags, projectCfg.Loop, log,
 	)
 
 	// Setup info for dashboard/monitor display (no container ID — per-iteration)

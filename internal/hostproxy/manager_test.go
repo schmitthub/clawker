@@ -11,6 +11,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // newMockConfigWithPort creates a mock config with a custom manager port.
@@ -33,7 +34,7 @@ func getFreeMgrPort(t *testing.T) int {
 
 func TestManagerProxyURL(t *testing.T) {
 	cfg := newMockConfigWithPort(t, 12345)
-	m, err := NewManager(cfg)
+	m, err := NewManager(cfg, logger.Nop())
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -45,7 +46,7 @@ func TestManagerProxyURL(t *testing.T) {
 
 func TestManagerPort(t *testing.T) {
 	cfg := newMockConfigWithPort(t, 12345)
-	m, err := NewManager(cfg)
+	m, err := NewManager(cfg, logger.Nop())
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -56,7 +57,7 @@ func TestManagerPort(t *testing.T) {
 
 func TestManagerIsRunningInitially(t *testing.T) {
 	cfg := newMockConfigWithPort(t, getFreeMgrPort(t))
-	m, err := NewManager(cfg)
+	m, err := NewManager(cfg, logger.Nop())
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestManagerIsRunningInitially(t *testing.T) {
 
 func TestManagerDefaultPort(t *testing.T) {
 	cfg := configmocks.NewBlankConfig()
-	m, err := NewManager(cfg)
+	m, err := NewManager(cfg, logger.Nop())
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -82,7 +83,7 @@ func TestManagerDefaultPort(t *testing.T) {
 
 func TestManagerInvalidPort(t *testing.T) {
 	cfg := configmocks.NewFromString("", `host_proxy: { manager: { port: 0 } }`)
-	_, err := NewManager(cfg)
+	_, err := NewManager(cfg, logger.Nop())
 	if err == nil {
 		t.Fatal("expected error for invalid port 0")
 	}
@@ -90,7 +91,7 @@ func TestManagerInvalidPort(t *testing.T) {
 
 func TestManagerStopIsNoOp(t *testing.T) {
 	cfg := newMockConfigWithPort(t, getFreeMgrPort(t))
-	m, err := NewManager(cfg)
+	m, err := NewManager(cfg, logger.Nop())
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestWriteAndReadPIDFile(t *testing.T) {
 	}
 
 	// Clean up
-	removePIDFile(pidFile)
+	removePIDFile(pidFile, nil)
 	if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
 		t.Error("expected PID file to be removed")
 	}
@@ -212,7 +213,7 @@ func TestIsProcessAlive(t *testing.T) {
 func TestManagerHealthCheck(t *testing.T) {
 	port := getFreeMgrPort(t)
 	cfg := newMockConfigWithPort(t, port)
-	m, err := NewManager(cfg)
+	m, err := NewManager(cfg, logger.Nop())
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -247,7 +248,7 @@ func TestManagerHealthCheck(t *testing.T) {
 func TestManagerIsPortInUse(t *testing.T) {
 	port := getFreeMgrPort(t)
 	cfg := newMockConfigWithPort(t, port)
-	m, err := NewManager(cfg)
+	m, err := NewManager(cfg, logger.Nop())
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -282,7 +283,7 @@ func TestManagerIsPortInUse(t *testing.T) {
 func TestManagerIsPortInUseWithWrongService(t *testing.T) {
 	port := getFreeMgrPort(t)
 	cfg := newMockConfigWithPort(t, port)
-	m, err := NewManager(cfg)
+	m, err := NewManager(cfg, logger.Nop())
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}

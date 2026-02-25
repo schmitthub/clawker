@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"testing"
@@ -10,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 func TestLoopDashEventKind_String(t *testing.T) {
@@ -33,18 +33,18 @@ func TestLoopDashEventKind_String(t *testing.T) {
 	}
 }
 
-func newTestRenderer() (*loopDashRenderer, *iostreams.IOStreams) {
-	ios := iostreamstest.New()
+func newTestRenderer() (*loopDashRenderer, *iostreams.IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+	ios, in, out, errOut := iostreams.Test()
 	cfg := LoopDashboardConfig{
 		AgentName: "loop-brave-turing",
 		Project:   "myapp",
 		MaxLoops:  50,
 	}
-	return newLoopDashRenderer(ios.IOStreams, cfg), ios.IOStreams
+	return newLoopDashRenderer(ios, cfg), ios, in, out, errOut
 }
 
 func TestLoopDashRenderer_ProcessEvent_Start(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 	r.processEvent(LoopDashEvent{
 		Kind:          LoopDashEventStart,
 		AgentName:     "loop-new-name",
@@ -58,7 +58,7 @@ func TestLoopDashRenderer_ProcessEvent_Start(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ProcessEvent_IterStart(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 	r.processEvent(LoopDashEvent{
 		Kind:      LoopDashEventIterStart,
 		Iteration: 3,
@@ -71,7 +71,7 @@ func TestLoopDashRenderer_ProcessEvent_IterStart(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ProcessEvent_IterEnd(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 	r.processEvent(LoopDashEvent{
 		Kind:      LoopDashEventIterStart,
 		Iteration: 1,
@@ -122,7 +122,7 @@ func TestLoopDashRenderer_ProcessEvent_IterEnd(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ProcessEvent_Complete(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 	r.processEvent(LoopDashEvent{
 		Kind:       LoopDashEventComplete,
 		ExitReason: "agent signaled completion",
@@ -136,7 +136,7 @@ func TestLoopDashRenderer_ProcessEvent_Complete(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ProcessEvent_CompleteWithError(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 	testErr := errors.New("circuit breaker tripped")
 	r.processEvent(LoopDashEvent{
 		Kind:       LoopDashEventComplete,
@@ -149,7 +149,7 @@ func TestLoopDashRenderer_ProcessEvent_CompleteWithError(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ProcessEvent_RateLimit(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 	r.processEvent(LoopDashEvent{
 		Kind:          LoopDashEventRateLimit,
 		RateRemaining: 0,
@@ -161,7 +161,7 @@ func TestLoopDashRenderer_ProcessEvent_RateLimit(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ActivityRingBuffer(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 
 	for i := 1; i <= maxActivityEntries+2; i++ {
 		r.processEvent(LoopDashEvent{
@@ -181,7 +181,7 @@ func TestLoopDashRenderer_ActivityRingBuffer(t *testing.T) {
 }
 
 func TestLoopDashRenderer_View_InitialState(t *testing.T) {
-	r, ios := newTestRenderer()
+	r, ios, _, _, _ := newTestRenderer()
 	cs := ios.ColorScheme()
 	view := r.View(cs, 80)
 
@@ -195,7 +195,7 @@ func TestLoopDashRenderer_View_InitialState(t *testing.T) {
 }
 
 func TestLoopDashRenderer_View_WithActivity(t *testing.T) {
-	r, ios := newTestRenderer()
+	r, ios, _, _, _ := newTestRenderer()
 	cs := ios.ColorScheme()
 
 	r.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1})
@@ -221,7 +221,7 @@ func TestLoopDashRenderer_View_WithActivity(t *testing.T) {
 }
 
 func TestLoopDashRenderer_View_CircuitTripped(t *testing.T) {
-	r, ios := newTestRenderer()
+	r, ios, _, _, _ := newTestRenderer()
 	cs := ios.ColorScheme()
 	r.circuitTripped = true
 	view := r.View(cs, 80)
@@ -230,7 +230,7 @@ func TestLoopDashRenderer_View_CircuitTripped(t *testing.T) {
 }
 
 func TestLoopDashRenderer_View_WithRate(t *testing.T) {
-	r, ios := newTestRenderer()
+	r, ios, _, _, _ := newTestRenderer()
 	cs := ios.ColorScheme()
 	r.rateLimit = 100
 	r.rateRemaining = 97
@@ -240,7 +240,7 @@ func TestLoopDashRenderer_View_WithRate(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ProcessEvent_CostTokenAccumulation(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 
 	r.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1})
 	r.processEvent(LoopDashEvent{
@@ -270,7 +270,7 @@ func TestLoopDashRenderer_ProcessEvent_CostTokenAccumulation(t *testing.T) {
 }
 
 func TestLoopDashRenderer_View_WithCostTokens(t *testing.T) {
-	r, ios := newTestRenderer()
+	r, ios, _, _, _ := newTestRenderer()
 	cs := ios.ColorScheme()
 
 	r.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1})
@@ -297,7 +297,7 @@ func TestLoopDashRenderer_View_WithCostTokens(t *testing.T) {
 }
 
 func TestLoopDashRenderer_View_NoCostTokensBeforeFirstIteration(t *testing.T) {
-	r, ios := newTestRenderer()
+	r, ios, _, _, _ := newTestRenderer()
 	cs := ios.ColorScheme()
 	view := r.View(cs, 80)
 
@@ -364,7 +364,8 @@ func TestLoopDash_FormatElapsed(t *testing.T) {
 }
 
 func TestLoopDash_FormatStatusText(t *testing.T) {
-	cs := iostreamstest.New().IOStreams.ColorScheme()
+	io, _, _, _ := iostreams.Test()
+	cs := io.ColorScheme()
 
 	tests := []struct {
 		status string
@@ -385,7 +386,7 @@ func TestLoopDash_FormatStatusText(t *testing.T) {
 }
 
 func TestLoopDashRenderer_UpdateRunningActivity_NotFound(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 
 	r.updateRunningActivity(activityEntry{
 		iteration: 1,
@@ -400,7 +401,7 @@ func TestLoopDashRenderer_UpdateRunningActivity_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLoopDashRenderer_ProcessOutputEvent_Text(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 
 	// Start a running entry
 	r.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1})
@@ -418,7 +419,7 @@ func TestLoopDashRenderer_ProcessOutputEvent_Text(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ProcessOutputEvent_ToolStart(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 
 	r.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1})
 
@@ -434,7 +435,7 @@ func TestLoopDashRenderer_ProcessOutputEvent_ToolStart(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ProcessOutputEvent_MaxLines(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 
 	r.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1})
 
@@ -454,7 +455,7 @@ func TestLoopDashRenderer_ProcessOutputEvent_MaxLines(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ProcessOutputEvent_ClearedOnIterEnd(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 
 	r.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1})
 	r.processEvent(LoopDashEvent{
@@ -475,7 +476,7 @@ func TestLoopDashRenderer_ProcessOutputEvent_ClearedOnIterEnd(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ProcessOutputEvent_NoRunningEntry(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 
 	// Output with no running entry should be silently ignored
 	r.processEvent(LoopDashEvent{
@@ -488,7 +489,7 @@ func TestLoopDashRenderer_ProcessOutputEvent_NoRunningEntry(t *testing.T) {
 }
 
 func TestLoopDashRenderer_ProcessOutputEvent_BufferResetOnIterStart(t *testing.T) {
-	r, _ := newTestRenderer()
+	r, _, _, _, _ := newTestRenderer()
 
 	r.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1})
 	// Partial line (no newline)
@@ -510,7 +511,7 @@ func TestLoopDashRenderer_ProcessOutputEvent_BufferResetOnIterStart(t *testing.T
 }
 
 func TestLoopDashRenderer_View_WithOutputLines(t *testing.T) {
-	r, ios := newTestRenderer()
+	r, ios, _, _, _ := newTestRenderer()
 	cs := ios.ColorScheme()
 
 	r.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1})

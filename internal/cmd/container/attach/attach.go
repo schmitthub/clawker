@@ -11,6 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/spf13/cobra"
@@ -22,6 +23,7 @@ type AttachOptions struct {
 	Client         func(context.Context) (*docker.Client, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
+	Logger         func() (*logger.Logger, error)
 
 	Agent      bool // treat argument as agent name(resolves to clawker.<project>.<agent>)
 	NoStdin    bool
@@ -37,6 +39,7 @@ func NewCmdAttach(f *cmdutil.Factory, runF func(context.Context, *AttachOptions)
 		Client:         f.Client,
 		ProjectManager: f.ProjectManager,
 		HostProxy:      f.HostProxy,
+		Logger:         f.Logger,
 	}
 
 	cmd := &cobra.Command{
@@ -83,6 +86,11 @@ Container name can be:
 func attachRun(ctx context.Context, opts *AttachOptions) error {
 	ios := opts.IOStreams
 
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
+
 	container := opts.container
 	if opts.Agent {
 		var projectName string
@@ -121,7 +129,7 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 	if opts.HostProxy != nil {
 		if hp := opts.HostProxy(); hp != nil {
 			if err := hp.EnsureRunning(); err != nil {
-				ios.Logger.Warn().Err(err).Msg("failed to start host proxy for attach")
+				log.Warn().Err(err).Msg("failed to start host proxy for attach")
 			}
 		}
 	}
@@ -145,7 +153,7 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 	// Set up TTY if container has one
 	var pty *docker.PTYHandler
 	if hasTTY && !opts.NoStdin {
-		pty = docker.NewPTYHandler()
+		pty = docker.NewPTYHandler(nil)
 		if err := pty.Setup(); err != nil {
 			return fmt.Errorf("failed to set up terminal: %w", err)
 		}
@@ -176,14 +184,14 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 		if pty.IsTerminal() {
 			width, height, err := pty.GetSize()
 			if err != nil {
-				ios.Logger.Debug().Err(err).Msg("failed to get initial terminal size")
+				log.Debug().Err(err).Msg("failed to get initial terminal size")
 			} else {
 				// +1/-1 trick forces SIGWINCH to trigger TUI redraw on re-attach
 				if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
-					ios.Logger.Debug().Err(err).Msg("failed to set artificial container TTY size")
+					log.Debug().Err(err).Msg("failed to set artificial container TTY size")
 				}
 				if err := resizeFunc(uint(height), uint(width)); err != nil {
-					ios.Logger.Debug().Err(err).Msg("failed to set actual container TTY size")
+					log.Debug().Err(err).Msg("failed to set actual container TTY size")
 				}
 			}
 

@@ -13,25 +13,27 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+		TUI:       tui.NewTUI(tio),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
 			return configmocks.NewBlankConfig(), nil
 		},
-	}, tio
+	}, in, out, errOut
 }
 
 // --- Tier 1: Flag parsing tests ---
@@ -77,8 +79,8 @@ func TestNewCmdList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreamstest.New()
-			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+			tio, _, _, _ := iostreams.Test()
+			f := &cmdutil.Factory{IOStreams: tio}
 
 			var gotOpts *ListOptions
 			cmd := NewCmdList(f, func(_ context.Context, opts *ListOptions) error {
@@ -141,8 +143,8 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreamstest.New()
-			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+			tio, _, _, _ := iostreams.Test()
+			f := &cmdutil.Factory{IOStreams: tio}
 
 			cmd := NewCmdList(f, func(_ context.Context, _ *ListOptions) error {
 				return nil
@@ -167,8 +169,8 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 }
 
 func TestCmdList_Properties(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: tio}
 	cmd := NewCmdList(f, nil)
 
 	require.Equal(t, "list", cmd.Use)
@@ -198,21 +200,21 @@ func TestListRun_DefaultTable(t *testing.T) {
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
 
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{"-a"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.dev")
-	assert.Contains(t, out, "running")
-	assert.Contains(t, out, "myapp")
-	assert.Contains(t, out, "dev")
+	outStr := out.String()
+	assert.Contains(t, outStr, "clawker.myapp.dev")
+	assert.Contains(t, outStr, "running")
+	assert.Contains(t, outStr, "myapp")
+	assert.Contains(t, outStr, "dev")
 	fake.AssertCalled(t, "ContainerList")
 }
 
@@ -222,21 +224,21 @@ func TestListRun_JSONOutput(t *testing.T) {
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
 
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{"-a", "--json"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	out := tio.OutBuf.String()
-	assert.Contains(t, out, `"name": "clawker.myapp.dev"`)
-	assert.Contains(t, out, `"status": "running"`)
-	assert.Contains(t, out, `"project": "myapp"`)
-	assert.Contains(t, out, `"agent": "dev"`)
+	outStr := out.String()
+	assert.Contains(t, outStr, `"name": "clawker.myapp.dev"`)
+	assert.Contains(t, outStr, `"status": "running"`)
+	assert.Contains(t, outStr, `"project": "myapp"`)
+	assert.Contains(t, outStr, `"agent": "dev"`)
 }
 
 func TestListRun_QuietMode(t *testing.T) {
@@ -246,22 +248,22 @@ func TestListRun_QuietMode(t *testing.T) {
 		dockertest.RunningContainerFixture("myapp", "worker"),
 	)
 
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{"-a", "-q"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.dev")
-	assert.Contains(t, out, "clawker.myapp.worker")
+	outStr := out.String()
+	assert.Contains(t, outStr, "clawker.myapp.dev")
+	assert.Contains(t, outStr, "clawker.myapp.worker")
 	// Quiet mode: names only, no table headers
-	assert.NotContains(t, out, "STATUS")
-	assert.NotContains(t, out, "PROJECT")
+	assert.NotContains(t, outStr, "STATUS")
+	assert.NotContains(t, outStr, "PROJECT")
 }
 
 func TestListRun_TemplateOutput(t *testing.T) {
@@ -270,18 +272,18 @@ func TestListRun_TemplateOutput(t *testing.T) {
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
 
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{"-a", "--format", "{{.Name}} {{.Agent}}"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.dev dev")
+	outStr := out.String()
+	assert.Contains(t, outStr, "clawker.myapp.dev dev")
 }
 
 func TestListRun_FilterByStatus(t *testing.T) {
@@ -291,19 +293,19 @@ func TestListRun_FilterByStatus(t *testing.T) {
 		dockertest.ContainerFixture("myapp", "worker", "alpine:latest"),
 	)
 
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{"-a", "--filter", "status=running"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.dev")
-	assert.NotContains(t, out, "clawker.myapp.worker")
+	outStr := out.String()
+	assert.Contains(t, outStr, "clawker.myapp.dev")
+	assert.NotContains(t, outStr, "clawker.myapp.worker")
 }
 
 func TestListRun_FilterByAgent(t *testing.T) {
@@ -313,31 +315,31 @@ func TestListRun_FilterByAgent(t *testing.T) {
 		dockertest.RunningContainerFixture("myapp", "worker"),
 	)
 
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{"-a", "--filter", "agent=dev"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.dev")
-	assert.NotContains(t, out, "clawker.myapp.worker")
+	outStr := out.String()
+	assert.Contains(t, outStr, "clawker.myapp.dev")
+	assert.NotContains(t, outStr, "clawker.myapp.worker")
 }
 
 func TestListRun_FilterInvalidKey(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList()
 
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{"--filter", "invalid=value"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -348,42 +350,43 @@ func TestListRun_EmptyResults(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList()
 
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{"-a"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	assert.Empty(t, tio.OutBuf.String())
-	assert.Contains(t, tio.ErrBuf.String(), "No clawker containers found.")
+	assert.Empty(t, out.String())
+	assert.Contains(t, errOut.String(), "No clawker containers found.")
 }
 
 func TestListRun_EmptyResultsRunningOnly(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList()
 
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	assert.Contains(t, tio.ErrBuf.String(), "No running clawker containers found. Use -a to show all containers.")
+	assert.Contains(t, errOut.String(), "No running clawker containers found. Use -a to show all containers.")
 }
 
 func TestListRun_DockerConnectionError(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+		TUI:       tui.NewTUI(tio),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
@@ -395,8 +398,8 @@ func TestListRun_DockerConnectionError(t *testing.T) {
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -409,18 +412,18 @@ func TestListRun_ProjectFilter(t *testing.T) {
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
 
-	f, tio := testFactory(t, fake)
+	f, _, out, errOut := testFactory(t, fake)
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{"-p", "myapp"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.dev")
+	outStr := out.String()
+	assert.Contains(t, outStr, "clawker.myapp.dev")
 	fake.AssertCalled(t, "ContainerList")
 }
 

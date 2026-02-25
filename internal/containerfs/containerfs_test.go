@@ -13,6 +13,7 @@ import (
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/keyring"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // ---------------------------------------------------------------------------
@@ -94,7 +95,7 @@ func TestPrepareClaudeConfig_SettingsJSON(t *testing.T) {
 	}
 	writeJSON(t, filepath.Join(hostDir, "settings.json"), hostSettings)
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(hostDir, "/home/claude", "/workspace")
+	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,7 +139,7 @@ func TestPrepareClaudeConfig_DirectoriesCopied(t *testing.T) {
 		}
 	}
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(hostDir, "/home/claude", "/workspace")
+	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestPrepareClaudeConfig_PluginsCacheCopied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(hostDir, "/home/claude", "/workspace")
+	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -227,7 +228,7 @@ func TestPrepareClaudeConfig_KnownMarketplacesRewrite(t *testing.T) {
 	writeJSON(t, filepath.Join(pluginsDir, "known_marketplaces.json"), marketplace)
 
 	containerHome := "/home/claude"
-	stagingDir, cleanup, err := PrepareClaudeConfig(hostDir, containerHome, "/workspace")
+	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, containerHome, "/workspace")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -295,7 +296,7 @@ func TestPrepareClaudeConfig_InstalledPluginsRewrite(t *testing.T) {
 
 	containerHome := "/home/claude"
 	containerWorkDir := "/workspace"
-	stagingDir, cleanup, err := PrepareClaudeConfig(hostDir, containerHome, containerWorkDir)
+	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, containerHome, containerWorkDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -340,7 +341,7 @@ func TestPrepareClaudeConfig_MissingFilesSkipped(t *testing.T) {
 	hostDir := t.TempDir()
 	// Empty host dir — nothing to copy
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(hostDir, "/home/claude", "/workspace")
+	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -374,7 +375,7 @@ func TestPrepareClaudeConfig_SymlinksResolved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(hostDir, "/home/claude", "/workspace")
+	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -430,7 +431,7 @@ func TestPrepareCredentials_FromKeyring(t *testing.T) {
 
 	hostDir := t.TempDir() // not used because keyring succeeds
 
-	stagingDir, cleanup, err := PrepareCredentials(hostDir)
+	stagingDir, cleanup, err := PrepareCredentials(logger.Nop(), hostDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -461,7 +462,7 @@ func TestPrepareCredentials_FallbackToFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stagingDir, cleanup, err := PrepareCredentials(hostDir)
+	stagingDir, cleanup, err := PrepareCredentials(logger.Nop(), hostDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -483,7 +484,7 @@ func TestPrepareCredentials_NeitherSource(t *testing.T) {
 
 	hostDir := t.TempDir() // no .credentials.json file
 
-	_, _, err := PrepareCredentials(hostDir)
+	_, _, err := PrepareCredentials(logger.Nop(), hostDir)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -587,7 +588,7 @@ func TestPrepareClaudeConfig_SettingsNoEnabledPlugins(t *testing.T) {
 		"theme": "dark",
 	})
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(hostDir, "/home/claude", "/workspace")
+	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -621,7 +622,7 @@ func TestPrepareClaudeConfig_NestedPluginDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(hostDir, "/home/claude", "/workspace")
+	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -664,7 +665,7 @@ func TestPrepareClaudeConfig_KnownMarketplacesNonStringInstallPath(t *testing.T)
 	}
 	writeJSON(t, filepath.Join(pluginsDir, "known_marketplaces.json"), marketplace)
 
-	_, cleanup, err := PrepareClaudeConfig(hostDir, "/home/claude", "/workspace")
+	_, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -675,7 +676,7 @@ func TestPrepareCredentials_NeitherSourceErrorMessage(t *testing.T) {
 	keyring.MockInit()
 	hostDir := t.TempDir()
 
-	_, _, err := PrepareCredentials(hostDir)
+	_, _, err := PrepareCredentials(logger.Nop(), hostDir)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

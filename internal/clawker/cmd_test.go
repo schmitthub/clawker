@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/update"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -50,18 +49,17 @@ func TestPrintDockerInstallHelper_SentinelDetection(t *testing.T) {
 }
 
 func TestPrintUpdateNotification_NilResult(t *testing.T) {
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
+	tio, _, _, errOut := iostreams.Test()
 
-	printUpdateNotification(tio.IOStreams, nil)
+	printUpdateNotification(tio, nil)
 
-	if tio.ErrBuf.String() != "" {
-		t.Errorf("expected no output for nil result, got %q", tio.ErrBuf.String())
+	if errOut.String() != "" {
+		t.Errorf("expected no output for nil result, got %q", errOut.String())
 	}
 }
 
 func TestPrintUpdateNotification_NonTTY(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	// Default: non-TTY — should suppress output
 
 	result := &update.CheckResult{
@@ -70,16 +68,16 @@ func TestPrintUpdateNotification_NonTTY(t *testing.T) {
 		ReleaseURL:     "https://github.com/schmitthub/clawker/releases/tag/v2.0.0",
 	}
 
-	printUpdateNotification(tio.IOStreams, result)
+	printUpdateNotification(tio, result)
 
-	if tio.ErrBuf.String() != "" {
-		t.Errorf("expected no output for non-TTY stderr, got %q", tio.ErrBuf.String())
+	if errOut.String() != "" {
+		t.Errorf("expected no output for non-TTY stderr, got %q", errOut.String())
 	}
 }
 
 func TestPrintUpdateNotification_TTYWithResult(t *testing.T) {
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
+	tio, _, _, errOut := iostreams.Test()
+	tio.SetStderrTTY(true)
 
 	result := &update.CheckResult{
 		CurrentVersion: "1.0.0",
@@ -87,9 +85,9 @@ func TestPrintUpdateNotification_TTYWithResult(t *testing.T) {
 		ReleaseURL:     "https://github.com/schmitthub/clawker/releases/tag/v2.0.0",
 	}
 
-	printUpdateNotification(tio.IOStreams, result)
+	printUpdateNotification(tio, result)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	if output == "" {
 		t.Fatal("expected notification output on TTY stderr, got empty")
 	}

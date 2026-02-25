@@ -31,6 +31,7 @@ type dynamicListener struct {
 // host-side actions.
 type Server struct {
 	port             int
+	log              *logger.Logger
 	listeners        []net.Listener // IPv4 and optionally IPv6 listeners
 	servers          []*http.Server // One server per listener
 	mu               sync.RWMutex
@@ -42,12 +43,13 @@ type Server struct {
 }
 
 // NewServer creates a new host proxy server on the specified port.
-func NewServer(port int) *Server {
+func NewServer(port int, log *logger.Logger) *Server {
 	sessionStore := NewSessionStore()
 	s := &Server{
 		port:             port,
+		log:              log,
 		sessionStore:     sessionStore,
-		callbackChannel:  NewCallbackChannel(sessionStore),
+		callbackChannel:  NewCallbackChannel(sessionStore, log),
 		dynamicListeners: make(map[int]*dynamicListener),
 		portToSession:    make(map[int]string),
 	}
@@ -112,7 +114,7 @@ func (s *Server) Start() error {
 		listener, err := net.Listen("tcp", addr)
 		if err != nil {
 			// IPv6 may not be available on all systems - log and continue
-			logger.Debug().Str("addr", addr).Err(err).Msg("failed to listen (may be expected if protocol not available)")
+			s.log.Debug().Str("addr", addr).Err(err).Msg("failed to listen (may be expected if protocol not available)")
 			continue
 		}
 
@@ -141,14 +143,14 @@ func (s *Server) Start() error {
 		server := servers[i]
 		addr := listenedAddrs[i]
 		go func(l net.Listener, srv *http.Server, a string) {
-			logger.Debug().Str("addr", a).Msg("host proxy server starting")
+			s.log.Debug().Str("addr", a).Msg("host proxy server starting")
 			if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
-				logger.Error().Err(err).Str("addr", a).Msg("host proxy server error")
+				s.log.Error().Err(err).Str("addr", a).Msg("host proxy server error")
 			}
 		}(listener, server, addr)
 	}
 
-	logger.Debug().Strs("addrs", listenedAddrs).Msg("host proxy server started")
+	s.log.Debug().Strs("addrs", listenedAddrs).Msg("host proxy server started")
 	return nil
 }
 
@@ -232,13 +234,13 @@ func (s *Server) startDynamicListener(port int, sessionID string) error {
 	s.portToSession[port] = sessionID
 
 	go func() {
-		logger.Debug().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener starting")
+		s.log.Debug().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener starting")
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			logger.Error().Err(err).Int("port", port).Msg("dynamic listener error")
+			s.log.Error().Err(err).Int("port", port).Msg("dynamic listener error")
 		}
 	}()
 
-	logger.Debug().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener started")
+	s.log.Debug().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener started")
 	return nil
 }
 
@@ -256,7 +258,7 @@ func (s *Server) closeDynamicListenerLocked(port int) {
 		return
 	}
 
-	logger.Debug().Int("port", port).Msg("closing dynamic listener")
+	s.log.Debug().Int("port", port).Msg("closing dynamic listener")
 
 	// Shutdown the server gracefully with a short timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -264,7 +266,7 @@ func (s *Server) closeDynamicListenerLocked(port int) {
 
 	if err := dl.server.Shutdown(ctx); err != nil {
 		// Timeout during cleanup is expected - just force close
-		logger.Debug().Int("port", port).Msg("force closing dynamic listener")
+		s.log.Debug().Int("port", port).Msg("force closing dynamic listener")
 		dl.listener.Close()
 	}
 
@@ -279,12 +281,12 @@ func (s *Server) handleDynamicCallback(port int, w http.ResponseWriter, r *http.
 	s.mu.RUnlock()
 
 	if !exists {
-		logger.Error().Int("port", port).Msg("no session found for dynamic listener port")
+		s.log.Error().Int("port", port).Msg("no session found for dynamic listener port")
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 
-	logger.Debug().
+	s.log.Debug().
 		Int("port", port).
 		Str("session_id", sessionID).
 		Str("path", r.URL.Path).
@@ -301,7 +303,7 @@ func (s *Server) handleDynamicCallback(port int, w http.ResponseWriter, r *http.
 		}
 
 		// Log actual errors
-		logger.Error().Err(err).Str("session_id", sessionID).Msg("failed to capture callback")
+		s.log.Error().Err(err).Str("session_id", sessionID).Msg("failed to capture callback")
 		s.writeCallbackErrorPage(w, "An error occurred. Please try again.")
 		return
 	}
@@ -372,10 +374,10 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Debug().Str("url", req.URL).Msg("opening URL in browser")
+	s.log.Debug().Str("url", req.URL).Msg("opening URL in browser")
 
 	if err := openBrowser(req.URL); err != nil {
-		logger.Error().Err(err).Str("url", req.URL).Msg("failed to open URL in browser")
+		s.log.Error().Err(err).Str("url", req.URL).Msg("failed to open URL in browser")
 		s.writeJSON(w, http.StatusInternalServerError, openURLResponse{
 			Success: false,
 			URL:     req.URL,
@@ -409,7 +411,7 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		logger.Error().Err(err).Msg("failed to encode JSON response")
+		s.log.Error().Err(err).Msg("failed to encode JSON response")
 	}
 }
 
@@ -439,7 +441,7 @@ func (s *Server) handleCallbackRegister(w http.ResponseWriter, r *http.Request) 
 
 	var req callbackRegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Debug().Err(err).Msg("failed to decode callback register request")
+		s.log.Debug().Err(err).Msg("failed to decode callback register request")
 		s.writeJSON(w, http.StatusBadRequest, callbackRegisterResponse{
 			Success: false,
 			Error:   "invalid JSON request body",
@@ -467,7 +469,7 @@ func (s *Server) handleCallbackRegister(w http.ResponseWriter, r *http.Request) 
 
 	session, err := s.callbackChannel.Register(req.Port, path, ttl)
 	if err != nil {
-		logger.Error().Err(err).Msg("failed to register callback session")
+		s.log.Error().Err(err).Msg("failed to register callback session")
 		s.writeJSON(w, http.StatusInternalServerError, callbackRegisterResponse{
 			Success: false,
 			Error:   "failed to create session",
@@ -479,7 +481,7 @@ func (s *Server) handleCallbackRegister(w http.ResponseWriter, r *http.Request) 
 	// This allows the host to capture OAuth callbacks on the same port
 	// that Claude Code expects, without rewriting the redirect_uri
 	if err := s.startDynamicListener(req.Port, session.ID); err != nil {
-		logger.Error().Err(err).Int("port", req.Port).Msg("failed to start dynamic listener")
+		s.log.Error().Err(err).Int("port", req.Port).Msg("failed to start dynamic listener")
 		// Clean up the session since we couldn't start the listener
 		s.callbackChannel.Delete(session.ID)
 		s.writeJSON(w, http.StatusInternalServerError, callbackRegisterResponse{
@@ -489,7 +491,7 @@ func (s *Server) handleCallbackRegister(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	logger.Debug().
+	s.log.Debug().
 		Str("session_id", session.ID).
 		Int("port", req.Port).
 		Str("path", path).
@@ -588,7 +590,7 @@ func (s *Server) handleCallbackCapture(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Log actual errors
-		logger.Error().Err(err).Str("session_id", sessionID).Msg("failed to capture callback")
+		s.log.Error().Err(err).Str("session_id", sessionID).Msg("failed to capture callback")
 
 		// Check if session doesn't exist
 		if s.sessionStore.Get(sessionID) == nil {
@@ -610,7 +612,7 @@ func (s *Server) writeCallbackSuccessPage(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte(callbackPage("Authentication Complete", callbackSuccessBody))); err != nil {
-		logger.Debug().Err(err).Msg("failed to write callback success page")
+		s.log.Debug().Err(err).Msg("failed to write callback success page")
 	}
 }
 
@@ -619,6 +621,6 @@ func (s *Server) writeCallbackErrorPage(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusInternalServerError)
 	if _, err := w.Write([]byte(callbackPage("Authentication Error", callbackErrorBody(message)))); err != nil {
-		logger.Debug().Err(err).Msg("failed to write callback error page")
+		s.log.Debug().Err(err).Msg("failed to write callback error page")
 	}
 }

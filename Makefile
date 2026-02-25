@@ -189,7 +189,7 @@ clawker-clean:
 # ============================================================================
 
 # Package list for unit tests (excludes integration test directories)
-UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/cli' | grep -v '/test/commands' | grep -v '/test/whail' | grep -v '/test/internals' | grep -v '/test/agents')
+UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/cli' | grep -v '/test/commands' | grep -v '/test/whail' | grep -v '/test/internals' | grep -v '/test/agents' | grep -v '/test/e2e')
 
 # Unit tests only (fast, no Docker)
 # Excludes test/cli, test/internals, test/agents which require Docker

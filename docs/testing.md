@@ -90,7 +90,7 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `internal/project` | `mocks/` | `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient` |
-| `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
+| `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 
 **Rule**: If a dependency node lacks test infrastructure, add it before writing tests that depend on it.
 
@@ -109,8 +109,8 @@ func TestMyCommand(t *testing.T) {
 
     cmd.SetArgs([]string{"--detach", "alpine"})
     cmd.SetIn(&bytes.Buffer{})
-    cmd.SetOut(tio.OutBuf)
-    cmd.SetErr(tio.ErrBuf)
+    cmd.SetOut(out)
+    cmd.SetErr(errOut)
 
     err := cmd.Execute()
     require.NoError(t, err)

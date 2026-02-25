@@ -13,19 +13,21 @@ import (
 // SnapshotStrategy implements Strategy for ephemeral volume copy (isolated)
 type SnapshotStrategy struct {
 	config     Config
+	log        *logger.Logger
 	volumeName string
 	created    bool
 }
 
 // NewSnapshotStrategy creates a new snapshot strategy.
 // Returns an error if the project or agent name is invalid for Docker resource naming.
-func NewSnapshotStrategy(cfg Config) (*SnapshotStrategy, error) {
+func NewSnapshotStrategy(cfg Config, log *logger.Logger) (*SnapshotStrategy, error) {
 	vn, err := docker.VolumeName(cfg.ProjectName, cfg.AgentName, "workspace")
 	if err != nil {
 		return nil, err
 	}
 	return &SnapshotStrategy{
 		config:     cfg,
+		log:        log,
 		volumeName: vn,
 		created:    false,
 	}, nil
@@ -43,7 +45,7 @@ func (s *SnapshotStrategy) Mode() config.Mode {
 
 // Prepare creates the volume and copies files
 func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) error {
-	logger.Debug().
+	s.log.Debug().
 		Str("strategy", s.Name()).
 		Str("volume", s.volumeName).
 		Str("host_path", s.config.HostPath).
@@ -56,7 +58,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) erro
 	}
 
 	if exists {
-		logger.Debug().
+		s.log.Debug().
 			Str("volume", s.volumeName).
 			Msg("using existing workspace volume")
 		return nil
@@ -78,7 +80,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) erro
 
 	// Copy files to the volume
 	if created {
-		logger.Debug().
+		s.log.Debug().
 			Str("volume", s.volumeName).
 			Str("src", s.config.HostPath).
 			Msg("copying files to snapshot volume")
@@ -92,7 +94,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) erro
 		); err != nil {
 			// Clean up on failure - log but don't override the original error
 			if _, cleanupErr := cli.VolumeRemove(ctx, s.volumeName, true); cleanupErr != nil {
-				logger.Warn().
+				s.log.Warn().
 					Str("volume", s.volumeName).
 					Err(cleanupErr).
 					Msg("failed to clean up volume after copy failure")
@@ -100,7 +102,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) erro
 			return fmt.Errorf("failed to copy files to volume: %w", err)
 		}
 
-		logger.Debug().
+		s.log.Debug().
 			Str("volume", s.volumeName).
 			Msg("snapshot volume ready")
 	}
@@ -121,20 +123,20 @@ func (s *SnapshotStrategy) GetMounts() ([]mount.Mount, error) {
 
 // Cleanup removes the snapshot volume
 func (s *SnapshotStrategy) Cleanup(ctx context.Context, cli *docker.Client) error {
-	logger.Debug().
+	s.log.Debug().
 		Str("strategy", s.Name()).
 		Str("volume", s.volumeName).
 		Msg("cleaning up snapshot workspace")
 
 	if _, err := cli.VolumeRemove(ctx, s.volumeName, false); err != nil {
-		logger.Warn().
+		s.log.Warn().
 			Str("volume", s.volumeName).
 			Err(err).
 			Msg("failed to remove snapshot volume")
 		return err
 	}
 
-	logger.Debug().Str("volume", s.volumeName).Msg("removed snapshot volume")
+	s.log.Debug().Str("volume", s.volumeName).Msg("removed snapshot volume")
 	return nil
 }
 

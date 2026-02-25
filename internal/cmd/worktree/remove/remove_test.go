@@ -1,7 +1,6 @@
 package remove
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -15,11 +14,8 @@ import (
 )
 
 func newTestIOStreams() *iostreams.IOStreams {
-	return &iostreams.IOStreams{
-		In:     &bytes.Buffer{},
-		Out:    &bytes.Buffer{},
-		ErrOut: &bytes.Buffer{},
-	}
+	ios, _, _, _ := iostreams.Test()
+	return ios
 }
 
 func TestRemoveRun_ProjectLoadError(t *testing.T) {

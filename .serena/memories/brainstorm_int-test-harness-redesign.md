@@ -63,7 +63,7 @@ type RunResult struct {
 8. Registers `t.Cleanup` for: cwd restore, Docker resource cleanup by project label
 
 ### What Run() does
-1. Creates `iostreamstest.New()` for output capture
+1. Creates `iostreams.Test()` for output capture
 2. Constructs `&cmdutil.Factory{}` with:
    - `Config`: fresh `config.NewConfig()` call (discovers from cwd)
    - `Client`: real `docker.NewClient` with test labels

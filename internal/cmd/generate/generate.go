@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/spf13/cobra"
 )
@@ -20,6 +21,7 @@ import (
 type GenerateOptions struct {
 	IOStreams *iostreams.IOStreams
 	Config    func() (config.Config, error)
+	Logger    func() (*logger.Logger, error)
 
 	Versions  []string // Positional args: version patterns
 	SkipFetch bool
@@ -32,6 +34,7 @@ func NewCmdGenerate(f *cmdutil.Factory, runF func(context.Context, *GenerateOpti
 	opts := &GenerateOptions{
 		IOStreams: f.IOStreams,
 		Config:    f.Config,
+		Logger:    f.Logger,
 	}
 
 	cmd := &cobra.Command{
@@ -81,6 +84,12 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 	defer cancel()
 	versions := opts.Versions
 	ios := opts.IOStreams
+
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
+
 	cfg, err := opts.Config()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -98,7 +107,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 
 	versionsFile := filepath.Join(outputDir, "versions.json")
 
-	ios.Logger.Debug().
+	log.Debug().
 		Strs("versions", versions).
 		Bool("skip-fetch", opts.SkipFetch).
 		Str("output-dir", outputDir).

@@ -1,13 +1,13 @@
 package prune
 
 import (
-	"bytes"
 	"context"
 	"testing"
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/stretchr/testify/require"
 )
@@ -52,8 +52,10 @@ func TestNewCmd(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tio, in, out, errOut := iostreams.Test()
 			f := &cmdutil.Factory{
-				IOStreams: iostreamstest.New().IOStreams,
+				IOStreams: tio,
+				Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 				Prompter:  func() *prompter.Prompter { return nil },
 			}
 
@@ -68,9 +70,9 @@ func TestNewCmd(t *testing.T) {
 			argv, err := shlex.Split(tt.input)
 			require.NoError(t, err)
 			cmd.SetArgs(argv)
-			cmd.SetIn(&bytes.Buffer{})
-			cmd.SetOut(&bytes.Buffer{})
-			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetIn(in)
+			cmd.SetOut(out)
+			cmd.SetErr(errOut)
 
 			_, err = cmd.ExecuteC()
 			require.NoError(t, err)
@@ -81,8 +83,10 @@ func TestNewCmd(t *testing.T) {
 }
 
 func TestCmd_Properties(t *testing.T) {
+	tio, _, _, _ := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: iostreamstest.New().IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Prompter:  func() *prompter.Prompter { return nil },
 	}
 	cmd := NewCmdPrune(f, nil)

@@ -42,18 +42,19 @@ func validatePort(port int, label string) error {
 // enabling containers to use the proxy even after the CLI exits.
 type Manager struct {
 	cfg  config.Config
+	log  *logger.Logger
 	port int
 	mu   sync.Mutex
 }
 
 // NewManager creates a new host proxy manager.
 // Port is read and validated from cfg.HostProxyConfig().Manager.Port at construction time.
-func NewManager(cfg config.Config) (*Manager, error) {
+func NewManager(cfg config.Config, log *logger.Logger) (*Manager, error) {
 	port := cfg.HostProxyConfig().Manager.Port
 	if err := validatePort(port, "host proxy manager"); err != nil {
 		return nil, err
 	}
-	return &Manager{cfg: cfg, port: port}, nil
+	return &Manager{cfg: cfg, log: log, port: port}, nil
 }
 
 // EnsureRunning ensures the host proxy daemon is running.
@@ -64,13 +65,13 @@ func (m *Manager) EnsureRunning() error {
 
 	// Check if daemon is already running via PID file + health check
 	if m.isDaemonRunning() {
-		logger.Debug().Int("port", m.port).Msg("host proxy daemon already running")
+		m.log.Debug().Int("port", m.port).Msg("host proxy daemon already running")
 		return nil
 	}
 
 	// Check if something is on the port (might be a daemon we didn't start)
 	if m.isPortInUse() {
-		logger.Debug().Int("port", m.port).Msg("host proxy already running on port")
+		m.log.Debug().Int("port", m.port).Msg("host proxy already running on port")
 		return nil
 	}
 
@@ -161,7 +162,7 @@ func (m *Manager) startDaemon() error {
 	cmd.Stdin = nil
 	logFile, err := m.openDaemonLogFile()
 	if err != nil {
-		logger.Debug().Err(err).Msg("failed to open daemon log file, output will be discarded")
+		m.log.Debug().Err(err).Msg("failed to open daemon log file, output will be discarded")
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 	} else {
@@ -180,17 +181,17 @@ func (m *Manager) startDaemon() error {
 
 	// Release the child process so it can run independently
 	if err := cmd.Process.Release(); err != nil {
-		logger.Debug().Err(err).Msg("failed to release daemon process (non-fatal)")
+		m.log.Debug().Err(err).Msg("failed to release daemon process (non-fatal)")
 	}
 
-	logger.Debug().Int("port", m.port).Int("pid", cmd.Process.Pid).Msg("started host proxy daemon")
+	m.log.Debug().Int("port", m.port).Int("pid", cmd.Process.Pid).Msg("started host proxy daemon")
 
 	// Wait for health check with retry
 	if err := m.waitForHealthy(3 * time.Second); err != nil {
 		return fmt.Errorf("daemon started but not responding: %w", err)
 	}
 
-	logger.Debug().Msg("host proxy daemon health check passed")
+	m.log.Debug().Msg("host proxy daemon health check passed")
 	return nil
 }
 

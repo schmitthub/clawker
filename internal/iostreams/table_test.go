@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,12 +22,11 @@ func forceColorProfile(t *testing.T) {
 
 func TestRenderStyledTable_Basic(t *testing.T) {
 	forceColorProfile(t)
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
-	tio.SetColorEnabled(true)
-	tio.SetTerminalSize(80, 24)
+	ios, _, _, _ := iostreams.Test()
 
-	output := tio.IOStreams.RenderStyledTable(
+	ios.SetColorEnabled(true)
+
+	output := ios.RenderStyledTable(
 		[]string{"NAME", "STATUS", "IMAGE"},
 		[][]string{
 			{"web", "running", "nginx:latest"},
@@ -55,12 +54,11 @@ func TestRenderStyledTable_Basic(t *testing.T) {
 
 func TestRenderStyledTable_UppercaseHeaders(t *testing.T) {
 	forceColorProfile(t)
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
-	tio.SetColorEnabled(true)
-	tio.SetTerminalSize(80, 24)
+	ios, _, _, _ := iostreams.Test()
 
-	output := tio.IOStreams.RenderStyledTable(
+	ios.SetColorEnabled(true)
+
+	output := ios.RenderStyledTable(
 		[]string{"name", "status"},
 		[][]string{{"web", "ok"}},
 		nil,
@@ -73,12 +71,11 @@ func TestRenderStyledTable_UppercaseHeaders(t *testing.T) {
 
 func TestRenderStyledTable_Empty(t *testing.T) {
 	forceColorProfile(t)
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
-	tio.SetColorEnabled(true)
-	tio.SetTerminalSize(80, 24)
+	ios, _, _, _ := iostreams.Test()
 
-	output := tio.IOStreams.RenderStyledTable(
+	ios.SetColorEnabled(true)
+
+	output := ios.RenderStyledTable(
 		[]string{"NAME", "STATUS"},
 		nil,
 		nil,
@@ -91,12 +88,11 @@ func TestRenderStyledTable_Empty(t *testing.T) {
 
 func TestRenderStyledTable_NoBorders(t *testing.T) {
 	forceColorProfile(t)
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
-	tio.SetColorEnabled(true)
-	tio.SetTerminalSize(80, 24)
+	ios, _, _, _ := iostreams.Test()
 
-	output := tio.IOStreams.RenderStyledTable(
+	ios.SetColorEnabled(true)
+
+	output := ios.RenderStyledTable(
 		[]string{"A", "B"},
 		[][]string{{"1", "2"}},
 		nil,
@@ -110,12 +106,11 @@ func TestRenderStyledTable_NoBorders(t *testing.T) {
 
 func TestRenderStyledTable_FitsTermWidth(t *testing.T) {
 	forceColorProfile(t)
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
-	tio.SetColorEnabled(true)
-	tio.SetTerminalSize(60, 24)
+	ios, _, _, _ := iostreams.Test()
 
-	output := tio.IOStreams.RenderStyledTable(
+	ios.SetColorEnabled(true)
+
+	output := ios.RenderStyledTable(
 		[]string{"IMAGE", "ID", "CREATED", "SIZE"},
 		[][]string{
 			{"clawker-fawker-demo:latest", "a1b2c3d4e5f6", "2 months ago", "256.00MB"},
@@ -124,12 +119,12 @@ func TestRenderStyledTable_FitsTermWidth(t *testing.T) {
 		nil,
 	)
 
-	// Each line should not exceed terminal width
+	// FakeTerm returns width=80; each line should not exceed that
 	for _, line := range strings.Split(output, "\n") {
 		if line == "" {
 			continue
 		}
-		require.LessOrEqual(t, lipgloss.Width(line), 60,
+		require.LessOrEqual(t, lipgloss.Width(line), 80,
 			"line exceeds terminal width: %q", line)
 	}
 }

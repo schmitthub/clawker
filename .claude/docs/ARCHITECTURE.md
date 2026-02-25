@@ -72,7 +72,7 @@ Clawker follows the GitHub CLI's three-layer Factory pattern for dependency inje
 ```
 
 **Why this pattern:**
-- **Testability**: Tests construct `&cmdutil.Factory{IOStreams: tio.IOStreams}` with only needed fields
+- **Testability**: Tests construct `&cmdutil.Factory{IOStreams: tio}` with only needed fields
 - **Decoupling**: cmdutil has no construction logic; factory/ imports the heavy deps
 - **Transparent**: `f.Client(ctx)` syntax is identical for methods and closure fields
 - **Assignable**: `opts.Client = f.Client` works naturally for Options injection
@@ -299,7 +299,7 @@ Testable I/O abstraction following the GitHub CLI pattern.
 - `IOStreams` - Core I/O with TTY detection, color support, progress indicators
 - `Logger` - Interface (`Debug/Info/Warn/Error() *zerolog.Event`) decoupling commands from `internal/logger`; set on IOStreams by factory
 - `ColorScheme` - Color formatting that bridges to `tui/styles.go`
-- `TestIOStreams` - Test helper with in-memory buffers (constructor: `iostreamstest.New()` in `iostreamstest/` subpackage)
+- `Test()` - Exported test constructor: `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` — nil Logger, uses `mocks.FakeTerm{}`
 
 **Features:**
 - TTY detection (`IsInputTTY`, `IsOutputTTY`, `IsInteractive`, `CanPrompt`)
@@ -609,7 +609,8 @@ Test doubles follow a `<package>/<package>test/` naming convention. Each provide
 | `docker/dockertest/` | `FakeClient`, test helpers |
 | `git/gittest/` | `InMemoryGitManager` |
 | `hostproxy/hostproxytest/` | `MockManager` (implements `HostProxyService`) |
-| `iostreams/iostreamstest/` | `New()` → `*TestIOStreams` constructor |
+| `iostreams` | `Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
+| `term/mocks/` | `FakeTerm` — stub satisfying `iostreams.term` interface |
 | `logger/loggertest/` | `TestLogger` (captures output), `New()`, `NewNop()` |
 | `socketbridge/socketbridgetest/` | `MockManager` |
 

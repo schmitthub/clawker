@@ -8,8 +8,11 @@ description: Code style guidelines for the clawker codebase
 - `zerolog` is for **file logging only** — never for user-visible output
 - File logging to `cfg.LogsSubdir()/clawker.log` with rotation (50MB, 7 days, 3 backups)
 - User-visible output uses `fmt.Fprintf` to IOStreams (`ios.ErrOut` for status/warnings, `ios.Out` for data; see per-scenario rules in style guide)
-- `logger.Debug()` / `logger.Warn()` are fine for diagnostic file logs
-- Project/agent context: `logger.SetContext(project, agent)` adds structured fields
+- **Factory noun pattern**: Commands access logger via `f.Logger` (lazy closure on Options struct), resolve in run function. Never import `internal/logger` directly in command code for calling log methods
+- **Library packages** accept `*logger.Logger` in constructors — never use globals
+- **Tests** use `logger.Nop()` — no special test infrastructure needed
+- **Don't swallow errors**: Always check `opts.Logger()` return — `log, err := opts.Logger(); if err != nil { return ... }`
+- Project/agent context: `log.With("project", name, "agent", agent)` returns a sub-logger with structured fields
 - Never use `logger.Fatal()` in Cobra hooks — return errors instead
 
 ## Whail Client Enforcement

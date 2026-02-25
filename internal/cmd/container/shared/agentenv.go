@@ -19,7 +19,7 @@ var userHomeDir = os.UserHomeDir
 // Precedence (lowest to highest): env_file < from_env < env.
 // The projectDir is used to resolve relative paths in env_file entries.
 // Returns the merged env map, any warnings (e.g. unset from_env vars), and an error.
-func ResolveAgentEnv(agent config.AgentConfig, projectDir string) (map[string]string, []string, error) {
+func ResolveAgentEnv(agent config.AgentConfig, projectDir string, log *logger.Logger) (map[string]string, []string, error) {
 	result := make(map[string]string)
 	var warnings []string
 
@@ -29,7 +29,7 @@ func ResolveAgentEnv(agent config.AgentConfig, projectDir string) (map[string]st
 		if err != nil {
 			return nil, nil, fmt.Errorf("agent.env_file %q: %w", path, err)
 		}
-		fileEnv, err := parseEnvFile(resolved)
+		fileEnv, err := parseEnvFile(resolved, log)
 		if err != nil {
 			return nil, nil, fmt.Errorf("agent.env_file %q: %w", path, err)
 		}
@@ -40,7 +40,7 @@ func ResolveAgentEnv(agent config.AgentConfig, projectDir string) (map[string]st
 	for _, name := range agent.FromEnv {
 		val, ok := os.LookupEnv(name)
 		if !ok {
-			logger.Debug().Str("var", name).Msg("agent.from_env: variable not set on host, skipping")
+			log.Debug().Str("var", name).Msg("agent.from_env: variable not set on host, skipping")
 			warnings = append(warnings, fmt.Sprintf("agent.from_env: variable %q not set on host, skipping", name))
 			continue
 		}
@@ -59,7 +59,7 @@ func ResolveAgentEnv(agent config.AgentConfig, projectDir string) (map[string]st
 // readEnvFile reads an env file and returns key-value pairs.
 // Format: KEY=VALUE lines, # comments, blank lines skipped.
 // Bare KEY lines (no =) set the key to an empty string.
-func parseEnvFile(path string) (map[string]string, error) {
+func parseEnvFile(path string, log *logger.Logger) (map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -86,7 +86,7 @@ func parseEnvFile(path string) (map[string]string, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	logger.Debug().Str("file", path).Int("count", len(result)).Msg("loaded env file")
+	log.Debug().Str("file", path).Int("count", len(result)).Msg("loaded env file")
 	return result, nil
 }
 

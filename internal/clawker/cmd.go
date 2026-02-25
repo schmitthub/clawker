@@ -15,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/update"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -25,14 +24,18 @@ import (
 // Error rendering is centralized here — commands return typed errors
 // rather than printing them directly.
 func Main() int {
-	// Ensure logs and OTEL provider are flushed on exit
-	defer logger.Close()
-
 	buildDate := build.Date
 	buildVersion := build.Version
 
 	// Create factory with version info
 	f := factory.New(buildVersion)
+
+	// Ensure logs and OTEL provider are flushed on exit
+	defer func() {
+		if log, err := f.Logger(); err == nil {
+			log.Close()
+		}
+	}()
 
 	// Start background update check with cancellable context.
 	// Pattern from gh CLI: goroutine + buffered channel + blocking read.
@@ -43,10 +46,7 @@ func Main() int {
 	defer updateCancel()
 	updateMessageChan := make(chan *update.CheckResult, 1)
 	go func() {
-		rel, err := checkForUpdate(updateCtx, buildVersion)
-		if err != nil {
-			logger.Debug().Err(err).Msg("update check failed")
-		}
+		rel, _ := checkForUpdate(updateCtx, buildVersion)
 		updateMessageChan <- rel
 	}()
 

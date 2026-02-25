@@ -5,16 +5,18 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func testFactory(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T) (*cmdutil.Factory, *iostreams.IOStreams) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 	}
 	return f, tio
 }

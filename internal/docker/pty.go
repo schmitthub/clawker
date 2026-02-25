@@ -24,18 +24,24 @@ type PTYHandler struct {
 	stdin   *os.File
 	stdout  *os.File
 	stderr  *os.File
+	log     *logger.Logger
 	rawMode *term.RawMode
 
 	// mu protects concurrent access
 	mu sync.Mutex
 }
 
-// NewPTYHandler creates a new PTY handler
-func NewPTYHandler() *PTYHandler {
+// NewPTYHandler creates a new PTY handler.
+// When log is nil, a Nop logger is used.
+func NewPTYHandler(log *logger.Logger) *PTYHandler {
+	if log == nil {
+		log = logger.Nop()
+	}
 	return &PTYHandler{
 		stdin:   os.Stdin,
 		stdout:  os.Stdout,
 		stderr:  os.Stderr,
+		log:     log,
 		rawMode: term.NewRawModeStdin(),
 	}
 }
@@ -46,7 +52,7 @@ func (p *PTYHandler) Setup() error {
 	defer p.mu.Unlock()
 
 	if !p.rawMode.IsTerminal() {
-		logger.Debug().Msg("stdin is not a terminal, skipping raw mode")
+		p.log.Debug().Msg("stdin is not a terminal, skipping raw mode")
 		return nil
 	}
 
@@ -54,7 +60,7 @@ func (p *PTYHandler) Setup() error {
 		return err
 	}
 
-	logger.Debug().Msg("terminal set to raw mode")
+	p.log.Debug().Msg("terminal set to raw mode")
 	return nil
 }
 
@@ -72,7 +78,7 @@ func (p *PTYHandler) Restore() error {
 		return err
 	}
 
-	logger.Debug().Msg("terminal restored")
+	p.log.Debug().Msg("terminal restored")
 	return nil
 }
 
@@ -83,7 +89,7 @@ func (p *PTYHandler) resetVisualStateUnlocked() {
 		return
 	}
 	if _, err := p.stdout.WriteString(resetSequence); err != nil {
-		logger.Warn().Err(err).Msg("failed to write terminal reset sequence")
+		p.log.Warn().Err(err).Msg("failed to write terminal reset sequence")
 	}
 }
 
@@ -141,16 +147,16 @@ func (p *PTYHandler) StreamWithResize(
 	if p.rawMode.IsTerminal() {
 		width, height, err := p.rawMode.GetSize()
 		if err != nil {
-			logger.Debug().Err(err).Msg("failed to get initial terminal size")
+			p.log.Debug().Err(err).Msg("failed to get initial terminal size")
 		} else if resizeFunc != nil {
 			// Docker CLI's +1/-1 trick: resize to artificial size first, then actual
 			// This forces a size change event to trigger TUI redraw on re-attach
 			// See: docker/cli/cli/command/container/attach.go resizeTTY()
 			if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
-				logger.Debug().Err(err).Msg("failed to set artificial container TTY size")
+				p.log.Debug().Err(err).Msg("failed to set artificial container TTY size")
 			}
 			if err := resizeFunc(uint(height), uint(width)); err != nil {
-				logger.Debug().Err(err).Msg("failed to set actual container TTY size")
+				p.log.Debug().Err(err).Msg("failed to set actual container TTY size")
 			}
 		}
 
@@ -164,7 +170,7 @@ func (p *PTYHandler) StreamWithResize(
 	go func() {
 		_, err := io.Copy(p.stdout, hijacked.Reader)
 		if err != nil && err != io.EOF && !isClosedConnectionError(err) {
-			logger.Debug().Err(err).Msg("error copying container output")
+			p.log.Debug().Err(err).Msg("error copying container output")
 			errCh <- err
 		}
 		close(outputDone)
@@ -174,7 +180,7 @@ func (p *PTYHandler) StreamWithResize(
 	go func() {
 		_, err := io.Copy(hijacked.Conn, p.stdin)
 		if err != nil && err != io.EOF && !isClosedConnectionError(err) {
-			logger.Debug().Err(err).Msg("error copying stdin to container")
+			p.log.Debug().Err(err).Msg("error copying stdin to container")
 			errCh <- err
 		}
 		hijacked.CloseWrite()

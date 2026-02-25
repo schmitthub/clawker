@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 func TestPromptForConfirmation(t *testing.T) {
@@ -38,12 +38,12 @@ func TestPromptForConfirmation(t *testing.T) {
 }
 
 func TestNewPrompter(t *testing.T) {
-	ios := iostreamstest.New()
-	p := NewPrompter(ios.IOStreams)
+	ios, _, _, _ := iostreams.Test()
+	p := NewPrompter(ios)
 	if p == nil {
 		t.Fatal("NewPrompter() returned nil")
 	}
-	if p.ios != ios.IOStreams {
+	if p.ios != ios {
 		t.Error("NewPrompter().ios is not set correctly")
 	}
 }
@@ -125,11 +125,14 @@ func TestPrompter_String(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := iostreamstest.New()
-			ios.InBuf.SetInput(tt.input)
-			ios.SetInteractive(tt.interactive)
+			ios, in, _, _ := iostreams.Test()
+			if tt.interactive {
+				ios.SetStdinTTY(true)
+				ios.SetStdoutTTY(true)
+			}
+			in.Write([]byte(tt.input))
 
-			p := NewPrompter(ios.IOStreams)
+			p := NewPrompter(ios)
 			got, err := p.String(tt.cfg)
 
 			if tt.wantErr {
@@ -233,11 +236,14 @@ func TestPrompter_Confirm(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := iostreamstest.New()
-			ios.InBuf.SetInput(tt.input)
-			ios.SetInteractive(tt.interactive)
+			ios, in, _, _ := iostreams.Test()
+			if tt.interactive {
+				ios.SetStdinTTY(true)
+				ios.SetStdoutTTY(true)
+			}
+			in.Write([]byte(tt.input))
 
-			p := NewPrompter(ios.IOStreams)
+			p := NewPrompter(ios)
 			got, err := p.Confirm("Continue?", tt.defaultYes)
 
 			if tt.wantErr {
@@ -384,11 +390,14 @@ func TestPrompter_Select(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := iostreamstest.New()
-			ios.InBuf.SetInput(tt.input)
-			ios.SetInteractive(tt.interactive)
+			ios, in, _, _ := iostreams.Test()
+			if tt.interactive {
+				ios.SetStdinTTY(true)
+				ios.SetStdoutTTY(true)
+			}
+			in.Write([]byte(tt.input))
 
-			p := NewPrompter(ios.IOStreams)
+			p := NewPrompter(ios)
 			got, err := p.Select("Choose option", tt.options, tt.defaultIdx)
 
 			if tt.wantErr {

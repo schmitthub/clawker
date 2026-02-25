@@ -76,7 +76,7 @@ func (s *Server) handleGitCredential(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log request (without password)
-	logger.Debug().
+	s.log.Debug().
 		Str("action", req.Action).
 		Str("protocol", req.Protocol).
 		Str("host", req.Host).
@@ -111,7 +111,7 @@ func (s *Server) handleGitCredential(w http.ResponseWriter, r *http.Request) {
 		if errMsg == "" {
 			errMsg = err.Error()
 		}
-		logger.Debug().
+		s.log.Debug().
 			Str("action", req.Action).
 			Str("host", req.Host).
 			Str("stderr", errMsg).
@@ -125,9 +125,9 @@ func (s *Server) handleGitCredential(w http.ResponseWriter, r *http.Request) {
 
 	// For get action, parse the output and return credentials
 	if req.Action == "get" {
-		creds := parseGitCredentialOutput(stdout.String())
+		creds := parseGitCredentialOutput(stdout.String(), s.log)
 		// Log success without password
-		logger.Debug().
+		s.log.Debug().
 			Str("host", req.Host).
 			Str("username", creds.Username).
 			Bool("has_password", creds.Password != "").
@@ -195,7 +195,7 @@ type gitCredentials struct {
 }
 
 // parseGitCredentialOutput parses git credential protocol output.
-func parseGitCredentialOutput(output string) gitCredentials {
+func parseGitCredentialOutput(output string, log *logger.Logger) gitCredentials {
 	var creds gitCredentials
 	scanner := bufio.NewScanner(strings.NewReader(output))
 
@@ -226,7 +226,7 @@ func parseGitCredentialOutput(output string) gitCredentials {
 	}
 
 	if err := scanner.Err(); err != nil {
-		logger.Debug().Err(err).Msg("error scanning git credential output")
+		log.Debug().Err(err).Msg("error scanning git credential output")
 	}
 
 	return creds

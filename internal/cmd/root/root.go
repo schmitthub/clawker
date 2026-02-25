@@ -15,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/volume"
 	"github.com/schmitthub/clawker/internal/cmd/worktree"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -42,12 +41,6 @@ Workspace modes:
 			"versionInfo": versioncmd.Format(version, buildDate),
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// Logger is initialized by factory.ioStreams() during Factory construction.
-			logger.Debug().
-				Str("version", f.Version).
-				Bool("debug", debug).
-				Msg("clawker starting")
-
 			return nil
 		},
 		Version: f.Version,

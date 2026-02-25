@@ -13,6 +13,7 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/git/gittest"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/stretchr/testify/assert"
@@ -75,7 +76,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -137,7 +138,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -182,7 +183,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -227,7 +228,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -276,7 +277,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -326,7 +327,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -365,7 +366,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -476,7 +477,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -514,7 +515,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -565,7 +566,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return gitMgr, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, factory)
+		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
 		require.NoError(t, err)
 		ctx := context.Background()
 

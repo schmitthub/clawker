@@ -1,11 +1,11 @@
 package iostreams
 
 import (
+	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
-	"strings"
+	"syscall"
 )
 
 // getPagerCommand returns the pager command to use.
@@ -28,61 +28,24 @@ func getPagerCommand() string {
 	return "less -R"
 }
 
-// pagerWriter manages piping output to a pager process.
+// pagerWriter implements a WriteCloser that wraps all EPIPE errors in an ErrClosedPagerPipe type.
 type pagerWriter struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	origW  io.Writer
-	active bool
+	io.WriteCloser
 }
 
-// newPagerWriter creates a pager that pipes output to the given command.
-// The command string is split on spaces for arguments.
-func newPagerWriter(pagerCmd string, origWriter io.Writer) (*pagerWriter, error) {
-	parts := strings.Fields(pagerCmd)
-	if len(parts) == 0 {
-		return nil, nil
+func (w *pagerWriter) Write(d []byte) (int, error) {
+	n, err := w.WriteCloser.Write(d)
+	if err != nil && (errors.Is(err, io.ErrClosedPipe) || isEpipeError(err)) {
+		return n, &ErrClosedPagerPipe{err}
 	}
-
-	cmd := exec.Command(parts[0], parts[1:]...)
-	cmd.Stdout = origWriter
-	cmd.Stderr = os.Stderr
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-
-	if err := cmd.Start(); err != nil {
-		stdin.Close()
-		return nil, err
-	}
-
-	return &pagerWriter{
-		cmd:    cmd,
-		stdin:  stdin,
-		origW:  origWriter,
-		active: true,
-	}, nil
+	return n, err
 }
 
-// Write implements io.Writer.
-func (p *pagerWriter) Write(data []byte) (int, error) {
-	if !p.active {
-		return p.origW.Write(data)
-	}
-	return p.stdin.Write(data)
+func isEpipeError(err error) bool {
+	return errors.Is(err, syscall.EPIPE)
 }
 
-// Close closes the pager stdin and waits for the process to finish.
-func (p *pagerWriter) Close() error {
-	if !p.active {
-		return nil
-	}
-	p.active = false
-
-	if err := p.stdin.Close(); err != nil {
-		return err
-	}
-	return p.cmd.Wait()
+// ErrClosedPagerPipe is the error returned when writing to a pager that has been closed.
+type ErrClosedPagerPipe struct {
+	error
 }

@@ -19,20 +19,20 @@ type GitCredentialSetupResult struct {
 //
 // SSH and GPG agent forwarding are handled by the socketbridge package (via docker exec),
 // not by host proxy or socket mounts. Only HTTPS credentials and git config are handled here.
-func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool) GitCredentialSetupResult {
+func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool, log *logger.Logger) GitCredentialSetupResult {
 	var result GitCredentialSetupResult
 
 	// HTTPS credential forwarding (requires host proxy)
 	if cfg.GitHTTPSEnabled(hostProxyRunning) {
 		result.Env = append(result.Env, "CLAWKER_GIT_HTTPS=true")
-		logger.Debug().Msg("git HTTPS credential forwarding enabled")
+		log.Debug().Msg("git HTTPS credential forwarding enabled")
 	}
 
 	// Git config forwarding
 	if cfg.CopyGitConfigEnabled() {
 		if GitConfigExists() {
-			result.Mounts = append(result.Mounts, GetGitConfigMount()...)
-			logger.Debug().Msg("host gitconfig mount enabled")
+			result.Mounts = append(result.Mounts, GetGitConfigMount(log)...)
+			log.Debug().Msg("host gitconfig mount enabled")
 		}
 	}
 

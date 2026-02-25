@@ -1,7 +1,6 @@
 package add
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -14,11 +13,8 @@ import (
 )
 
 func newTestIOStreams() *iostreams.IOStreams {
-	return &iostreams.IOStreams{
-		In:     &bytes.Buffer{},
-		Out:    &bytes.Buffer{},
-		ErrOut: &bytes.Buffer{},
-	}
+	ios, _, _, _ := iostreams.Test()
+	return ios
 }
 
 func TestAddRun_ProjectLoadError(t *testing.T) {

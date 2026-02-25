@@ -1,12 +1,13 @@
 package tui
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+	"github.com/schmitthub/clawker/internal/iostreams"
 
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,14 +22,14 @@ func forceColorProfile(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 }
 
-func newTestTUI(t *testing.T) (*TUI, *iostreamstest.TestIOStreams) {
+func newTestTUI(t *testing.T) (*TUI, *iostreams.IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
-	return NewTUI(tio.IOStreams), tio
+	tio, in, out, errOut := iostreams.Test()
+	return NewTUI(tio), tio, in, out, errOut
 }
 
 func TestTablePrinter_NewTable(t *testing.T) {
-	tui, _ := newTestTUI(t)
+	tui, _, _, _, _ := newTestTUI(t)
 	tp := tui.NewTable("NAME", "STATUS")
 
 	assert.NotNil(t, tp)
@@ -36,7 +37,7 @@ func TestTablePrinter_NewTable(t *testing.T) {
 }
 
 func TestTablePrinter_AddRow(t *testing.T) {
-	tui, _ := newTestTUI(t)
+	tui, _, _, _, _ := newTestTUI(t)
 	tp := tui.NewTable("NAME", "STATUS")
 
 	tp.AddRow("web", "running")
@@ -45,7 +46,7 @@ func TestTablePrinter_AddRow(t *testing.T) {
 }
 
 func TestTablePrinter_AddRow_NormalizesColumns(t *testing.T) {
-	tui, _ := newTestTUI(t)
+	tui, _, _, _, _ := newTestTUI(t)
 	tp := tui.NewTable("NAME", "STATUS", "IMAGE")
 
 	// Fewer columns than headers — should pad
@@ -58,8 +59,7 @@ func TestTablePrinter_AddRow_NormalizesColumns(t *testing.T) {
 }
 
 func TestTablePrinter_RenderPlain(t *testing.T) {
-	tui, tio := newTestTUI(t)
-	// TestIOStreams is non-TTY by default → plain mode
+	tui, _, _, out, errOut := newTestTUI(t)
 	tp := tui.NewTable("NAME", "STATUS", "IMAGE")
 	tp.AddRow("web", "running", "nginx:latest")
 	tp.AddRow("db", "stopped", "postgres:16")
@@ -67,7 +67,7 @@ func TestTablePrinter_RenderPlain(t *testing.T) {
 	err := tp.Render()
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := out.String()
 
 	// Verify headers present
 	assert.Contains(t, output, "NAME")
@@ -83,27 +83,26 @@ func TestTablePrinter_RenderPlain(t *testing.T) {
 	assert.Contains(t, output, "postgres:16")
 
 	// Verify output goes to Out (stdout), not ErrOut
-	assert.Empty(t, tio.ErrBuf.String())
+	assert.Empty(t, errOut.String())
 }
 
 func TestTablePrinter_RenderPlain_NoANSI(t *testing.T) {
-	tui, tio := newTestTUI(t)
+	tui, _, _, out, _ := newTestTUI(t)
 	tp := tui.NewTable("NAME", "STATUS")
 	tp.AddRow("web", "running")
 
 	err := tp.Render()
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := out.String()
 	assert.NotContains(t, output, "\x1b[", "plain mode should not contain ANSI escapes")
 }
 
 func TestTablePrinter_RenderStyled(t *testing.T) {
 	forceColorProfile(t)
-	tui, tio := newTestTUI(t)
-	tio.SetInteractive(true)
+	tui, tio, _, out, _ := newTestTUI(t)
+	tio.SetStdoutTTY(true)
 	tio.SetColorEnabled(true)
-	tio.SetTerminalSize(80, 24)
 
 	tp := tui.NewTable("NAME", "STATUS", "IMAGE")
 	tp.AddRow("web", "running", "nginx:latest")
@@ -112,7 +111,7 @@ func TestTablePrinter_RenderStyled(t *testing.T) {
 	err := tp.Render()
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := out.String()
 	assert.Contains(t, output, "NAME")
 	assert.Contains(t, output, "web")
 	assert.Contains(t, output, "nginx:latest")
@@ -121,33 +120,32 @@ func TestTablePrinter_RenderStyled(t *testing.T) {
 }
 
 func TestTablePrinter_RenderEmpty(t *testing.T) {
-	tui, tio := newTestTUI(t)
+	tui, _, _, out, _ := newTestTUI(t)
 	tp := tui.NewTable("NAME", "STATUS")
 
 	err := tp.Render()
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := out.String()
 	// Headers should still render even with no rows
 	assert.Contains(t, output, "NAME")
 	assert.Contains(t, output, "STATUS")
 }
 
 func TestTablePrinter_RenderNoHeaders(t *testing.T) {
-	tui, tio := newTestTUI(t)
+	tui, _, _, out, _ := newTestTUI(t)
 	tp := tui.NewTable()
 
 	err := tp.Render()
 	require.NoError(t, err)
-	assert.Empty(t, tio.OutBuf.String())
+	assert.Empty(t, out.String())
 }
 
 func TestTablePrinter_RenderStyled_Unicode(t *testing.T) {
 	forceColorProfile(t)
-	tui, tio := newTestTUI(t)
-	tio.SetInteractive(true)
+	tui, tio, _, out, _ := newTestTUI(t)
+	tio.SetStdoutTTY(true)
 	tio.SetColorEnabled(true)
-	tio.SetTerminalSize(80, 24)
 
 	tp := tui.NewTable("名前", "状態")
 	tp.AddRow("ウェブ", "実行中")
@@ -155,17 +153,16 @@ func TestTablePrinter_RenderStyled_Unicode(t *testing.T) {
 	err := tp.Render()
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := out.String()
 	assert.Contains(t, output, "名前")
 	assert.Contains(t, output, "ウェブ")
 }
 
 func TestTablePrinter_WithStyleOverrides(t *testing.T) {
 	forceColorProfile(t)
-	tui, tio := newTestTUI(t)
-	tio.SetInteractive(true)
+	tui, tio, _, out, _ := newTestTUI(t)
+	tio.SetStdoutTTY(true)
 	tio.SetColorEnabled(true)
-	tio.SetTerminalSize(80, 24)
 
 	called := map[string]bool{}
 	tp := tui.NewTable("NAME", "STATUS").
@@ -186,7 +183,7 @@ func TestTablePrinter_WithStyleOverrides(t *testing.T) {
 	err := tp.Render()
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := out.String()
 	assert.True(t, called["header"], "header override should be called")
 	assert.True(t, called["primary"], "primary override should be called")
 	assert.True(t, called["cell"], "cell override should be called")
@@ -197,7 +194,7 @@ func TestTablePrinter_WithStyleOverrides(t *testing.T) {
 }
 
 func TestTablePrinter_AddRow_NoSliceAliasing(t *testing.T) {
-	tui, _ := newTestTUI(t)
+	tui, _, _, _, _ := newTestTUI(t)
 	tp := tui.NewTable("NAME", "STATUS", "IMAGE")
 
 	// Pass a slice via spread — normalizeRow must copy, not alias the backing array.
@@ -216,10 +213,9 @@ func TestTablePrinter_AddRow_NoSliceAliasing(t *testing.T) {
 
 func TestTablePrinter_WithStyleOverrides_Partial(t *testing.T) {
 	forceColorProfile(t)
-	tui, tio := newTestTUI(t)
-	tio.SetInteractive(true)
+	tui, tio, _, out, _ := newTestTUI(t)
+	tio.SetStdoutTTY(true)
 	tio.SetColorEnabled(true)
-	tio.SetTerminalSize(80, 24)
 
 	// Only override header — primary and cell should use defaults
 	tp := tui.NewTable("NAME", "STATUS").
@@ -231,7 +227,7 @@ func TestTablePrinter_WithStyleOverrides_Partial(t *testing.T) {
 	err := tp.Render()
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := out.String()
 	assert.Contains(t, output, "[H:NAME]")
 	// Data should still render (default styles)
 	assert.Contains(t, output, "web")

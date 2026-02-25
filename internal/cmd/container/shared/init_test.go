@@ -16,7 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
-	"github.com/schmitthub/clawker/internal/logger/loggertest"
+	"github.com/schmitthub/clawker/internal/logger"
 	projectpkg "github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -78,7 +78,7 @@ func testCreateConfig(fake *dockertest.FakeClient, project *config.Project, cont
 		ProjectName: "testproject",
 		Options:     containerOpts,
 		Flags:       cmd.Flags(),
-		Logger:      loggertest.NewNop(),
+		Log:         logger.Nop(),
 		ProjectManager: func() (projectpkg.ProjectManager, error) {
 			return nil, fmt.Errorf("ProjectManager not available in test")
 		},
@@ -191,7 +191,7 @@ func TestCreateContainer_HostProxyFailure(t *testing.T) {
 		Config:  projectCfg,
 		Options: containerOpts,
 		Flags:   cmd.Flags(),
-		Logger:  loggertest.NewNop(),
+		Log:     logger.Nop(),
 		ProjectManager: func() (projectpkg.ProjectManager, error) {
 			return nil, fmt.Errorf("ProjectManager not available in test")
 		},

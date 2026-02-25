@@ -13,7 +13,8 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
@@ -21,10 +22,10 @@ import (
 )
 
 func TestNewCmdProjectInit(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		TUI:       tui.NewTUI(tio),
 	}
 
 	var gotOpts *ProjectInitOptions
@@ -43,7 +44,7 @@ func TestNewCmdProjectInit(t *testing.T) {
 		t.Fatal("expected runF to be called")
 	}
 
-	if gotOpts.IOStreams != tio.IOStreams {
+	if gotOpts.IOStreams != tio {
 		t.Error("expected IOStreams to be set from factory")
 	}
 
@@ -124,10 +125,10 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreamstest.New()
+			tio, _, _, _ := iostreams.Test()
 			f := &cmdutil.Factory{
-				IOStreams: tio.IOStreams,
-				TUI:       tui.NewTUI(tio.IOStreams),
+				IOStreams: tio,
+				TUI:       tui.NewTUI(tio),
 			}
 
 			var gotOpts *ProjectInitOptions
@@ -401,7 +402,7 @@ func TestPerformProjectSetup(t *testing.T) {
 	tmpDir, err := os.Getwd()
 	require.NoError(t, err)
 
-	tio := iostreamstest.New()
+	tio, _, out, _ := iostreams.Test()
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	mockPM := projectmocks.NewMockProjectManager()
 
@@ -413,8 +414,9 @@ func TestPerformProjectSetup(t *testing.T) {
 	}
 
 	opts := &ProjectInitOptions{
-		IOStreams:      tio.IOStreams,
+		IOStreams:      tio,
 		Config:         func() (config.Config, error) { return cfg, nil },
+		Logger:         func() (*logger.Logger, error) { return logger.Nop(), nil },
 		ProjectManager: func() (project.ProjectManager, error) { return mockPM, nil },
 		Prompter:       func() *prompterpkg.Prompter { return nil }, // not called in non-interactive setup
 		Yes:            true,                                        // prevent maybeOfferUserDefault from calling prompter
@@ -453,14 +455,14 @@ func TestPerformProjectSetup(t *testing.T) {
 	}
 
 	// Verify output
-	out := tio.OutBuf.String()
-	if !strings.Contains(out, "Created:") {
+	outStr := out.String()
+	if !strings.Contains(outStr, "Created:") {
 		t.Error("expected success output with 'Created:'")
 	}
-	if !strings.Contains(out, "test-project") {
+	if !strings.Contains(outStr, "test-project") {
 		t.Error("expected project name in output")
 	}
-	if !strings.Contains(out, "Next Steps:") {
+	if !strings.Contains(outStr, "Next Steps:") {
 		t.Error("expected next steps in output")
 	}
 }

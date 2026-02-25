@@ -13,6 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -28,6 +29,7 @@ type ExecOptions struct {
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
 	SocketBridge   func() socketbridge.SocketBridgeManager
+	Logger         func() (*logger.Logger, error)
 
 	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	Interactive bool
@@ -51,6 +53,7 @@ func NewCmdExec(f *cmdutil.Factory, runF func(context.Context, *ExecOptions) err
 		ProjectManager: f.ProjectManager,
 		HostProxy:      f.HostProxy,
 		SocketBridge:   f.SocketBridge,
+		Logger:         f.Logger,
 	}
 
 	cmd := &cobra.Command{
@@ -137,6 +140,11 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	containerName := opts.containerName
 	command := opts.command
 
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
+
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
@@ -166,19 +174,19 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	if p != nil && p.Security.HostProxyEnabled() && opts.HostProxy != nil {
 		hp := opts.HostProxy()
 		if hp == nil {
-			ios.Logger.Debug().Msg("host proxy function returned nil")
+			log.Debug().Msg("host proxy function returned nil")
 		} else if err := hp.EnsureRunning(); err != nil {
-			ios.Logger.Warn().Err(err).Msg("failed to start host proxy for exec")
+			log.Warn().Err(err).Msg("failed to start host proxy for exec")
 		} else if hp.IsRunning() {
 			hostProxyRunning = true
 			opts.Env = append(opts.Env, "CLAWKER_HOST_PROXY="+hp.ProxyURL())
-			ios.Logger.Debug().Str("url", hp.ProxyURL()).Msg("injected host proxy env for exec")
+			log.Debug().Str("url", hp.ProxyURL()).Msg("injected host proxy env for exec")
 		}
 	}
 
 	// Setup git credentials (includes GPG forwarding env vars)
 	if p != nil {
-		gitSetup := workspace.SetupGitCredentials(p.Security.GitCredentials, hostProxyRunning)
+		gitSetup := workspace.SetupGitCredentials(p.Security.GitCredentials, hostProxyRunning, log)
 		opts.Env = append(opts.Env, gitSetup.Env...)
 	}
 
@@ -187,7 +195,7 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	if shared.NeedsSocketBridge(p) && opts.SocketBridge != nil {
 		gpgEnabled := p.Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(c.ID, gpgEnabled); err != nil {
-			ios.Logger.Warn().Err(err).Msg("failed to ensure socket bridge for exec")
+			log.Warn().Err(err).Msg("failed to ensure socket bridge for exec")
 		}
 	}
 
@@ -231,7 +239,7 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	// Set up TTY if needed
 	var pty *docker.PTYHandler
 	if opts.TTY {
-		pty = docker.NewPTYHandler()
+		pty = docker.NewPTYHandler(nil)
 		if err := pty.Setup(); err != nil {
 			return fmt.Errorf("failed to set up terminal: %w", err)
 		}
@@ -269,14 +277,14 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 		if pty.IsTerminal() {
 			width, height, err := pty.GetSize()
 			if err != nil {
-				ios.Logger.Debug().Err(err).Msg("failed to get initial terminal size")
+				log.Debug().Err(err).Msg("failed to get initial terminal size")
 			} else {
 				// +1/-1 trick forces SIGWINCH to trigger TUI redraw
 				if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
-					ios.Logger.Debug().Err(err).Msg("failed to set artificial exec TTY size")
+					log.Debug().Err(err).Msg("failed to set artificial exec TTY size")
 				}
 				if err := resizeFunc(uint(height), uint(width)); err != nil {
-					ios.Logger.Debug().Err(err).Msg("failed to set actual exec TTY size")
+					log.Debug().Err(err).Msg("failed to set actual exec TTY size")
 				}
 			}
 
@@ -290,7 +298,7 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 			return err
 		}
 		// Check exit code after TTY mode completes
-		return checkExecExitCode(ctx, client, execID, ios.Logger)
+		return checkExecExitCode(ctx, client, execID, log)
 	}
 
 	// Non-TTY mode: demux the multiplexed stream
@@ -317,11 +325,11 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	}
 
 	// Check exit code
-	return checkExecExitCode(ctx, client, execID, ios.Logger)
+	return checkExecExitCode(ctx, client, execID, log)
 }
 
 // checkExecExitCode inspects the exec and returns an error if exit code is non-zero.
-func checkExecExitCode(ctx context.Context, client *docker.Client, execID string, log iostreams.Logger) error {
+func checkExecExitCode(ctx context.Context, client *docker.Client, execID string, log *logger.Logger) error {
 	inspect, err := client.ExecInspect(ctx, execID, docker.ExecInspectOptions{})
 	if err != nil {
 		// If we can't inspect, don't fail - the command may have completed

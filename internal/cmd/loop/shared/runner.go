@@ -12,7 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // Result represents the outcome of running the loop.
@@ -117,8 +117,8 @@ type Options struct {
 	// WorkDir is the host working directory for this session.
 	WorkDir string
 
-	// Logger is the diagnostic file logger (from IOStreams.Logger).
-	Logger iostreams.Logger
+	// Logger is the diagnostic file logger (from Factory).
+	Logger *logger.Logger
 
 	// Verbose enables verbose logging.
 	Verbose bool
@@ -549,7 +549,7 @@ mainLoop:
 // (tool starts, text deltas). Text deltas are also forwarded to onOutput
 // for simple text display. Complete assistant messages are accumulated
 // via TextAccumulator for LOOP_STATUS parsing.
-func (r *Runner) StartContainer(ctx context.Context, log iostreams.Logger, projectCfg *config.Project, containerConfig *ContainerStartConfig, onOutput func([]byte), onStreamEvent func(*StreamDeltaEvent)) (string, *ResultEvent, int, error) {
+func (r *Runner) StartContainer(ctx context.Context, log *logger.Logger, projectCfg *config.Project, containerConfig *ContainerStartConfig, onOutput func([]byte), onStreamEvent func(*StreamDeltaEvent)) (string, *ResultEvent, int, error) {
 	// Set up stream-json parsing pipeline: stdcopy → io.Pipe → ParseStream
 	pr, pw := io.Pipe()
 	textAcc, handler := NewTextAccumulator()
@@ -607,7 +607,7 @@ func (r *Runner) StartContainer(ctx context.Context, log iostreams.Logger, proje
 	}
 	parseDone := make(chan parseResult, 1)
 	go func() {
-		resultEvent, parseErr := ParseStream(ctx, pr, handler)
+		resultEvent, parseErr := ParseStream(ctx, pr, handler, log)
 		parseDone <- parseResult{resultEvent, parseErr}
 	}()
 
@@ -749,7 +749,7 @@ func (r *Runner) GetCircuitState(project, agent string) (*CircuitState, error) {
 }
 
 // waitForContainerExit sets up a channel that receives the container's exit status code.
-func waitForContainerExit(ctx context.Context, log iostreams.Logger, client *docker.Client, containerID string, autoRemove bool) <-chan int {
+func waitForContainerExit(ctx context.Context, log *logger.Logger, client *docker.Client, containerID string, autoRemove bool) <-chan int {
 	condition := container.WaitConditionNextExit
 	if autoRemove {
 		condition = container.WaitConditionRemoved

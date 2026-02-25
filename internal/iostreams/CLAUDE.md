@@ -28,30 +28,17 @@ fmt.Fprintln(ios.ErrOut, "Processing...")   // stderr for status (humans)
 
 ### IOStreams
 
-Main struct: `In io.Reader`, `Out io.Writer`, `ErrOut io.Writer`, `Logger Logger`. Constructors: `System()` (production), `iostreamstest.New()` (testing, non-TTY, no colors — in `internal/iostreams/iostreamstest/`). The `Logger` field is set by the factory during construction; commands access it via `ios.Logger.Debug()`, etc.
+Main struct: `In io.Reader`, `Out io.Writer`, `ErrOut io.Writer`. Constructors: `System()` (production), `Test()` (external testing — returns `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)`, uses `mocks.FakeTerm{}`).
 
-### Logger (interface, `logger.go`)
+**Logging**: IOStreams does NOT carry a logger. Commands access logger via `f.Logger` (Factory lazy noun). See `internal/logger/CLAUDE.md`.
 
-Defined in `internal/iostreams`, NOT `internal/logger`. Matches `*zerolog.Logger` method signatures so that `*zerolog.Logger` satisfies it directly (pointer receiver). Keeps IOStreams decoupled from the concrete logger package.
+### Test() (exported constructor)
 
-```go
-type Logger interface {
-    Debug() *zerolog.Event
-    Info()  *zerolog.Event
-    Warn()  *zerolog.Event
-    Error() *zerolog.Event
-}
-```
+`func Test() (*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` — For external packages needing test IOStreams. Returns raw `*bytes.Buffer` pointers for in/out/errOut. Uses `mocks.FakeTerm{}` (from `internal/term/mocks`). Non-TTY, no color by default.
 
-**Usage**: IOStreams has an exported `Logger Logger` field (no accessor method, no nop default). Set by factory during construction. Commands use `ios.Logger.Debug().Msg("...")` for file-based diagnostic logging.
+### testIOStreams (internal, unexported)
 
-**Import note**: `iostreams` imports `rs/zerolog` (the external library) for the `*zerolog.Event` return type. It does NOT import `internal/logger`.
-
-**Test utilities**: `loggertest.New()` returns a `*loggertest.TestLogger` that captures output to a buffer (with `Output() string` and `Reset()`). `loggertest.NewNop()` returns a no-op logger that discards all output. Both satisfy the `iostreams.Logger` interface. Package: `internal/logger/loggertest/`.
-
-### TestIOStreams
-
-Embeds `*IOStreams`. Fields: `InBuf`, `OutBuf`, `ErrBuf *testBuffer`. Setup: `SetInteractive(bool)`, `SetColorEnabled(bool)`, `SetTerminalSize(w, h)`, `SetProgressEnabled(bool)`, `SetSpinnerDisabled(bool)`. Buffers: `InBuf.SetInput(s)`, `OutBuf.String()`, `ErrBuf.String()`, `OutBuf.Reset()`.
+Package-private test double in `iostreams_test.go`, accessed via shim: `var iostreamstest iostreamstestShim`. Embeds `*IOStreams`. Fields: `InBuf`, `OutBuf`, `ErrBuf *testBuffer`. Setup: `SetInteractive(bool)`, `SetColorEnabled(bool)`, `SetTerminalSize(w, h)`, `SetProgressEnabled(bool)`, `SetSpinnerDisabled(bool)`. Buffers: `InBuf.SetInput(s)`, `OutBuf.String()`, `ErrBuf.String()`, `OutBuf.Reset()`.
 
 ### ColorScheme
 
@@ -182,7 +169,7 @@ Lipgloss-based pure functions for composing visual output:
 
 - Always use `f.IOStreams`, never create directly
 - Spinners/progress go to stderr, not stdout
-- `TestIOStreams`: colors disabled, non-TTY by default
+- `Test()` returns non-TTY, non-interactive IOStreams — set `SetStdinTTY(true)` + `SetStdoutTTY(true)` for interactive test scenarios
 - Call `StartPager()` before any output
 - `CanPrompt()` false when `neverPrompt` set (CI)
 - `Blue()` = BlueStyle (`ColorDeepSkyBlue`, no bold); `Primary()` = TitleStyle (`ColorPrimary` = `ColorBurntOrange`, bold)
@@ -194,4 +181,4 @@ Lipgloss-based pure functions for composing visual output:
 
 ## Import Boundary
 
-Canonical source for all visual styling. Can import: `lipgloss`, `lipgloss/table`, `rs/zerolog`, `internal/text`, stdlib. Cannot import: `bubbletea`, `bubbles`, `internal/tui`, `internal/logger`. Only `internal/iostreams` imports `lipgloss` and `lipgloss/table`. The `rs/zerolog` import is for the `Logger` interface return types only -- `iostreams` does NOT import `internal/logger`.
+Canonical source for all visual styling. Can import: `lipgloss`, `lipgloss/table`, `internal/text`, `internal/term/mocks`, stdlib. Cannot import: `bubbletea`, `bubbles`, `internal/tui`, `internal/logger`, `rs/zerolog`. Only `internal/iostreams` imports `lipgloss` and `lipgloss/table`. The `internal/term/mocks` import provides `FakeTerm` for the `Test()` constructor.

@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/logger/loggertest"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +28,7 @@ func TestInjectLoopHooks_DefaultHooks(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "abc123", "", copyFn, nil, loggertest.NewNop())
+	err := InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "abc123", "", copyFn, nil, logger.Nop())
 	require.NoError(t, err)
 
 	// Expect 2 copies: settings.json + hook script files
@@ -79,7 +79,7 @@ func TestInjectLoopHooks_CustomHooksFile(t *testing.T) {
 		return nil
 	}
 
-	err = InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "xyz789", hooksFile, copyFn, nil, loggertest.NewNop())
+	err = InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "xyz789", hooksFile, copyFn, nil, logger.Nop())
 	require.NoError(t, err)
 
 	// Custom hooks: only 1 copy (settings.json, no hook files)
@@ -98,7 +98,7 @@ func TestInjectLoopHooks_InvalidHooksFile(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "abc123", "/nonexistent/hooks.json", copyFn, nil, loggertest.NewNop())
+	err := InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "abc123", "/nonexistent/hooks.json", copyFn, nil, logger.Nop())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reading hooks file")
 }
@@ -113,7 +113,7 @@ func TestInjectLoopHooks_CopySettingsFails(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "abc123", "", copyFn, nil, loggertest.NewNop())
+	err := InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "abc123", "", copyFn, nil, logger.Nop())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "injecting settings.json")
 }
@@ -128,7 +128,7 @@ func TestInjectLoopHooks_CopyScriptsFails(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "abc123", "", copyFn, nil, loggertest.NewNop())
+	err := InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "abc123", "", copyFn, nil, logger.Nop())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "injecting hook scripts")
 }
@@ -160,7 +160,7 @@ func TestInjectLoopHooks_MergesExistingSettings(t *testing.T) {
 		return nil
 	}
 
-	err = InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "abc123", "", copyFn, readFn, loggertest.NewNop())
+	err = InjectLoopHooks(context.Background(), configmocks.NewBlankConfig(), "abc123", "", copyFn, readFn, logger.Nop())
 	require.NoError(t, err)
 
 	// Extract the written settings.json

@@ -5,12 +5,16 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 func TestNewCmdStatus(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 
 	var gotOpts *StatusOptions
 	cmd := NewCmdStatus(f, func(_ context.Context, opts *StatusOptions) error {
@@ -27,7 +31,7 @@ func TestNewCmdStatus(t *testing.T) {
 	if gotOpts == nil {
 		t.Fatal("expected runF to be called")
 	}
-	if gotOpts.IOStreams != tio.IOStreams {
+	if gotOpts.IOStreams != tio {
 		t.Error("expected IOStreams to be set from factory")
 	}
 }

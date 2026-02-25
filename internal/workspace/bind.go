@@ -14,11 +14,12 @@ import (
 // BindStrategy implements Strategy for direct host mount (live sync)
 type BindStrategy struct {
 	config Config
+	log    *logger.Logger
 }
 
 // NewBindStrategy creates a new bind mount strategy
-func NewBindStrategy(cfg Config) *BindStrategy {
-	return &BindStrategy{config: cfg}
+func NewBindStrategy(cfg Config, log *logger.Logger) *BindStrategy {
+	return &BindStrategy{config: cfg, log: log}
 }
 
 // Name returns the strategy name
@@ -33,7 +34,7 @@ func (s *BindStrategy) Mode() config.Mode {
 
 // Prepare sets up resources for bind mount (no-op for bind mode)
 func (s *BindStrategy) Prepare(ctx context.Context, cli *docker.Client) error {
-	logger.Debug().
+	s.log.Debug().
 		Str("strategy", s.Name()).
 		Str("host_path", s.config.HostPath).
 		Str("remote_path", s.config.RemotePath).
@@ -65,7 +66,7 @@ func (s *BindStrategy) GetMounts() ([]mount.Mount, error) {
 	// File-level patterns (*.env, *.pem) cannot be enforced with overlays.
 	if len(s.config.IgnorePatterns) > 0 {
 		staticDirs := docker.BindOverlayDirsFromPatterns(s.config.IgnorePatterns)
-		discoveredDirs, err := docker.FindIgnoredDirs(s.config.HostPath, s.config.IgnorePatterns)
+		discoveredDirs, err := docker.FindIgnoredDirs(nil, s.config.HostPath, s.config.IgnorePatterns)
 		if err != nil {
 			return nil, fmt.Errorf("scanning for ignored directories: %w", err)
 		}
@@ -97,7 +98,7 @@ func (s *BindStrategy) GetMounts() ([]mount.Mount, error) {
 			})
 		}
 		if len(dirs) > 0 {
-			logger.Debug().Int("overlays", len(dirs)).Msg("added tmpfs overlays for ignored directories")
+			s.log.Debug().Int("overlays", len(dirs)).Msg("added tmpfs overlays for ignored directories")
 		}
 	}
 
@@ -106,7 +107,7 @@ func (s *BindStrategy) GetMounts() ([]mount.Mount, error) {
 
 // Cleanup removes resources (no-op for bind mode)
 func (s *BindStrategy) Cleanup(ctx context.Context, cli *docker.Client) error {
-	logger.Debug().
+	s.log.Debug().
 		Str("strategy", s.Name()).
 		Msg("cleanup called (no-op for bind mode)")
 

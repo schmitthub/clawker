@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
 )
@@ -18,6 +19,7 @@ type UpOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
 	Config    func() (config.Config, error)
+	Logger    func() (*logger.Logger, error)
 
 	Detach bool
 }
@@ -27,6 +29,7 @@ func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) 
 		IOStreams: f.IOStreams,
 		Client:    f.Client,
 		Config:    f.Config,
+		Logger:    f.Logger,
 	}
 
 	cmd := &cobra.Command{
@@ -65,6 +68,11 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
+
 	cfg, err := opts.Config()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -77,7 +85,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
 
-	ios.Logger.Debug().Str("monitor_dir", monitorDir).Msg("starting monitor stack")
+	log.Debug().Str("monitor_dir", monitorDir).Msg("starting monitor stack")
 
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
@@ -101,7 +109,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	}); err != nil {
 		return fmt.Errorf("failed to ensure Docker network '%s': %w", networkName, err)
 	}
-	ios.Logger.Debug().Str("network", networkName).Msg("network ready")
+	log.Debug().Str("network", networkName).Msg("network ready")
 
 	// Build docker compose command
 	composeArgs := []string{"compose", "-f", composePath, "up"}
@@ -109,7 +117,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		composeArgs = append(composeArgs, "-d")
 	}
 
-	ios.Logger.Debug().Strs("args", composeArgs).Msg("running docker compose")
+	log.Debug().Strs("args", composeArgs).Msg("running docker compose")
 
 	cmd := exec.CommandContext(ctx, "docker", composeArgs...)
 	cmd.Stdout = ios.Out

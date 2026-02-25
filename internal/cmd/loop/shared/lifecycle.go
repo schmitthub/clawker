@@ -15,6 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/pflag"
@@ -65,6 +66,9 @@ type LoopContainerConfig struct {
 
 	// IOStreams is the I/O streams for spinner output during creation.
 	IOStreams *iostreams.IOStreams
+
+	// Log is the file logger for diagnostic output.
+	Log *logger.Logger
 }
 
 // LoopContainerResult holds outputs from container setup.
@@ -146,7 +150,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 				Version:        cfg.Version,
 				ProjectManager: cfg.ProjectManager,
 				HostProxy:      cfg.HostProxy,
-				Logger:         cfg.IOStreams.Logger,
+				Log:            cfg.Log,
 				Is256Color:     cfg.IOStreams.Is256ColorSupported(),
 				IsTrueColor:    cfg.IOStreams.IsTrueColorSupported(),
 			}, events)
@@ -165,7 +169,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 		containerID := o.result.ContainerID
 
 		// Inject hooks into the container
-		if err := InjectLoopHooks(ctx, cfg.Config, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), containershared.NewCopyFromContainerFn(cfg.Client), cfg.IOStreams.Logger); err != nil {
+		if err := InjectLoopHooks(ctx, cfg.Config, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), containershared.NewCopyFromContainerFn(cfg.Client), cfg.Log); err != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			_ = cfg.Client.RemoveContainerWithVolumes(cleanupCtx, containerID, true)
@@ -180,7 +184,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 				if len(shortID) > 12 {
 					shortID = shortID[:12]
 				}
-				cfg.IOStreams.Logger.Warn().Err(err).Str("container", shortID).Msg("failed to clean up iteration container")
+				cfg.Log.Warn().Err(err).Str("container", shortID).Msg("failed to clean up iteration container")
 			}
 		}
 
@@ -248,7 +252,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 			Version:        cfg.Version,
 			ProjectManager: cfg.ProjectManager,
 			HostProxy:      cfg.HostProxy,
-			Logger:         ios.Logger,
+			Log:            cfg.Log,
 			Is256Color:     ios.Is256ColorSupported(),
 			IsTrueColor:    ios.IsTrueColorSupported(),
 		}, events)
@@ -286,17 +290,17 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := cfg.Client.RemoveContainerWithVolumes(cleanupCtx, containerID, true); err != nil {
-			ios.Logger.Warn().Err(err).Str("container", containerName).Msg("failed to clean up loop container")
+			cfg.Log.Warn().Err(err).Str("container", containerName).Msg("failed to clean up loop container")
 			fmt.Fprintf(ios.ErrOut, "%s Failed to clean up container %s: %v\n",
 				cs.WarningIcon(), containerName, err)
 		} else {
-			ios.Logger.Debug().Str("container", containerName).Msg("cleaned up loop container")
+			cfg.Log.Debug().Str("container", containerName).Msg("cleaned up loop container")
 		}
 	}
 
 	// --- Phase C: Inject hooks ---
 	ios.StartSpinner("Injecting loop hooks")
-	if err := InjectLoopHooks(ctx, cfg.Config, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), containershared.NewCopyFromContainerFn(cfg.Client), ios.Logger); err != nil {
+	if err := InjectLoopHooks(ctx, cfg.Config, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), containershared.NewCopyFromContainerFn(cfg.Client), cfg.Log); err != nil {
 		ios.StopSpinner()
 		cleanup()
 		return nil, nil, fmt.Errorf("injecting hooks: %w", err)
@@ -328,7 +332,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 //
 // Hooks are merged into the existing settings.json to preserve any pre-existing
 // configuration (MCP servers, skills, extensions) set up by containerfs or post-init.
-func InjectLoopHooks(ctx context.Context, cfgGateway config.Config, containerID string, hooksFile string, copyFn containershared.CopyToContainerFn, readFn containershared.CopyFromContainerFn, log iostreams.Logger) error {
+func InjectLoopHooks(ctx context.Context, cfgGateway config.Config, containerID string, hooksFile string, copyFn containershared.CopyToContainerFn, readFn containershared.CopyFromContainerFn, log *logger.Logger) error {
 	hooks, hookFiles, err := ResolveHooks(hooksFile)
 	if err != nil {
 		return err
@@ -378,7 +382,7 @@ func InjectLoopHooks(ctx context.Context, cfgGateway config.Config, containerID 
 
 // readExistingSettings reads and parses the existing settings.json from the container.
 // Returns an empty map if the file doesn't exist or can't be read (non-fatal).
-func readExistingSettings(ctx context.Context, containerID string, readFn containershared.CopyFromContainerFn, log iostreams.Logger) map[string]any {
+func readExistingSettings(ctx context.Context, containerID string, readFn containershared.CopyFromContainerFn, log *logger.Logger) map[string]any {
 	if readFn == nil {
 		return make(map[string]any)
 	}

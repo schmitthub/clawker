@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 	"github.com/stretchr/testify/assert"
@@ -56,7 +57,7 @@ func TestProcessBuildOutputWithProgress_StepParsing(t *testing.T) {
 	)
 
 	collector := &eventCollector{}
-	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient())}
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
 	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
 	require.NoError(t, err)
 
@@ -90,7 +91,7 @@ func TestProcessBuildOutputWithProgress_CacheHit(t *testing.T) {
 	)
 
 	collector := &eventCollector{}
-	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient())}
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
 	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
 	require.NoError(t, err)
 
@@ -123,7 +124,7 @@ func TestProcessBuildOutputWithProgress_CachedStepTerminalStatus(t *testing.T) {
 	)
 
 	collector := &eventCollector{}
-	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient())}
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
 	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
 	require.NoError(t, err)
 
@@ -163,7 +164,7 @@ func TestProcessBuildOutputWithProgress_Error(t *testing.T) {
 	)
 
 	collector := &eventCollector{}
-	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient())}
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
 	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exit 1")
@@ -190,7 +191,7 @@ func TestProcessBuildOutputWithProgress_LogLines(t *testing.T) {
 	)
 
 	collector := &eventCollector{}
-	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient())}
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
 	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
 	require.NoError(t, err)
 
@@ -209,7 +210,7 @@ func TestProcessBuildOutputWithProgress_LogLines(t *testing.T) {
 func TestBuildImage_OnProgressThreadedToBuildKit(t *testing.T) {
 	fake := whailtest.NewFakeAPIClient()
 	engine := clawkerEngine(progressCfg, fake)
-	client := &Client{Engine: engine}
+	client := &Client{Engine: engine, log: logger.Nop()}
 
 	capture := &whailtest.BuildKitCapture{}
 	engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
@@ -245,7 +246,7 @@ func TestProcessBuildOutputWithProgress_MultiStep(t *testing.T) {
 	)
 
 	collector := &eventCollector{}
-	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient())}
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
 	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
 	require.NoError(t, err)
 

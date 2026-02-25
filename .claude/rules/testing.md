@@ -32,7 +32,7 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
-| `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
+| `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 
 ## Config Package Test Double How-To
 
@@ -116,17 +116,17 @@ Use `NewCmd(f, nil)` with `dockertest.NewFakeClient` — exercises full pipeline
 fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 fake.SetupContainerCreate()
 fake.SetupContainerStart()
-tio := iostreamstest.New()
+tio, _, _, _ := iostreams.Test()
 f := &cmdutil.Factory{
-    IOStreams: tio.IOStreams,
-    TUI:      tui.NewTUI(tio.IOStreams),
+    IOStreams: tio,
+    TUI:      tui.NewTUI(tio),
     Client:   func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 }
 cmd := NewCmdRun(f, nil)  // nil runF → real run function
 cmd.SetArgs([]string{"--detach", "alpine"})
 cmd.SetIn(&bytes.Buffer{})
-cmd.SetOut(tio.OutBuf)
-cmd.SetErr(tio.ErrBuf)
+cmd.SetOut(out)
+cmd.SetErr(errOut)
 err := cmd.Execute()
 ```
 
