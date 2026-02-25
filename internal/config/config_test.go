@@ -226,6 +226,12 @@ func TestSubdirPaths(t *testing.T) {
 	pidsDir, err := cfg.PidsSubdir()
 	require.NoError(t, err)
 	assert.DirExists(t, pidsDir)
+
+	// DockerfilesSubdir must nest under BuildSubdir (build/dockerfiles)
+	dockerfilesDir, err := cfg.DockerfilesSubdir()
+	require.NoError(t, err)
+	assert.DirExists(t, dockerfilesDir)
+	assert.Equal(t, filepath.Join(buildDir, "dockerfiles"), dockerfilesDir)
 }
 
 func TestNewConfig_isolatedWithDefaults(t *testing.T) {

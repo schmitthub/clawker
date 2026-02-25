@@ -201,9 +201,17 @@ func (c *configImpl) MonitorSubdir() (string, error) { return subdirPath(monitor
 // BuildSubdir ensures and returns the build subdirectory path under DataDir.
 func (c *configImpl) BuildSubdir() (string, error) { return subdirPath(buildSubdir, DataDir) }
 
-// DockerfilesSubdir ensures and returns the generated Dockerfiles subdirectory path under DataDir.
+// DockerfilesSubdir ensures and returns the generated Dockerfiles subdirectory path under BuildSubdir.
 func (c *configImpl) DockerfilesSubdir() (string, error) {
-	return subdirPath(dockerfilesSubdir, DataDir)
+	buildDir, err := c.BuildSubdir()
+	if err != nil {
+		return "", err
+	}
+	fullPath := filepath.Join(buildDir, dockerfilesSubdir)
+	if err := os.MkdirAll(fullPath, 0o755); err != nil {
+		return "", fmt.Errorf("creating config subdir %s: %w", fullPath, err)
+	}
+	return fullPath, nil
 }
 
 // ClawkerNetwork returns the shared Docker network name used by clawker resources.

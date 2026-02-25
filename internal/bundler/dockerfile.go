@@ -326,8 +326,10 @@ func (m *DockerfileManager) renderDockerfile(tmpl *template.Template, ctx *Docke
 }
 
 // DockerfilesDir returns the path to the dockerfiles directory.
+// Delegates to cfg.DockerfilesSubdir() as the single source of truth.
 func (m *DockerfileManager) DockerfilesDir() string {
-	return filepath.Join(m.outputDir, "dockerfiles")
+	dir, _ := m.cfg.DockerfilesSubdir()
+	return dir
 }
 
 // ProjectGenerator creates Dockerfiles dynamically from project configuration (clawker.yaml).

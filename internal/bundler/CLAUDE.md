@@ -54,7 +54,7 @@ Note: `DefaultImageTag` constant and `BuildDefaultImage` function have moved to 
 type DockerFileManagerOptions struct { OutputDir string; VariantCfg *VariantConfig }
 func NewDockerfileManager(cfg config.Config, opts *DockerFileManagerOptions) *DockerfileManager
 func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile) error
-func (m *DockerfileManager) DockerfilesDir() string  // outputDir/dockerfiles
+func (m *DockerfileManager) DockerfilesDir() string  // delegates to cfg.DockerfilesSubdir()
 ```
 
 `cfg config.Config` (interface) provides `DockerfilesSubdir()`, `MonitoringConfig()`, `ContainerUID()`, `ContainerGID()`. `BuildKitEnabled` field controls cache mount emission. Writes scripts once, renders Dockerfile per version/variant.
