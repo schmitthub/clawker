@@ -163,13 +163,7 @@ var _ config.Config = &ConfigMock{}
 //			RequiredFirewallDomainsFunc: func() []string {
 //				panic("mock out the RequiredFirewallDomains method")
 //			},
-//			SetProjectFunc: func(fn func(*config.Project))  {
-//				panic("mock out the SetProject method")
-//			},
-//			SetSettingsFunc: func(fn func(*config.Settings))  {
-//				panic("mock out the SetSettings method")
-//			},
-//			SettingsFunc: func() config.Settings {
+//			SettingsFunc: func() *config.Settings {
 //				panic("mock out the Settings method")
 //			},
 //			SettingsFileNameFunc: func() string {
@@ -189,12 +183,6 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			WorktreesSubdirFunc: func() (string, error) {
 //				panic("mock out the WorktreesSubdir method")
-//			},
-//			WriteProjectFunc: func(filename ...string) error {
-//				panic("mock out the WriteProject method")
-//			},
-//			WriteSettingsFunc: func(filename ...string) error {
-//				panic("mock out the WriteSettings method")
 //			},
 //		}
 //
@@ -347,14 +335,8 @@ type ConfigMock struct {
 	// RequiredFirewallDomainsFunc mocks the RequiredFirewallDomains method.
 	RequiredFirewallDomainsFunc func() []string
 
-	// SetProjectFunc mocks the SetProject method.
-	SetProjectFunc func(fn func(*config.Project))
-
-	// SetSettingsFunc mocks the SetSettings method.
-	SetSettingsFunc func(fn func(*config.Settings))
-
 	// SettingsFunc mocks the Settings method.
-	SettingsFunc func() config.Settings
+	SettingsFunc func() *config.Settings
 
 	// SettingsFileNameFunc mocks the SettingsFileName method.
 	SettingsFileNameFunc func() string
@@ -373,12 +355,6 @@ type ConfigMock struct {
 
 	// WorktreesSubdirFunc mocks the WorktreesSubdir method.
 	WorktreesSubdirFunc func() (string, error)
-
-	// WriteProjectFunc mocks the WriteProject method.
-	WriteProjectFunc func(filename ...string) error
-
-	// WriteSettingsFunc mocks the WriteSettings method.
-	WriteSettingsFunc func(filename ...string) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -540,16 +516,6 @@ type ConfigMock struct {
 		// RequiredFirewallDomains holds details about calls to the RequiredFirewallDomains method.
 		RequiredFirewallDomains []struct {
 		}
-		// SetProject holds details about calls to the SetProject method.
-		SetProject []struct {
-			// Fn is the fn argument value.
-			Fn func(*config.Project)
-		}
-		// SetSettings holds details about calls to the SetSettings method.
-		SetSettings []struct {
-			// Fn is the fn argument value.
-			Fn func(*config.Settings)
-		}
 		// Settings holds details about calls to the Settings method.
 		Settings []struct {
 		}
@@ -570,16 +536,6 @@ type ConfigMock struct {
 		}
 		// WorktreesSubdir holds details about calls to the WorktreesSubdir method.
 		WorktreesSubdir []struct {
-		}
-		// WriteProject holds details about calls to the WriteProject method.
-		WriteProject []struct {
-			// Filename is the filename argument value.
-			Filename []string
-		}
-		// WriteSettings holds details about calls to the WriteSettings method.
-		WriteSettings []struct {
-			// Filename is the filename argument value.
-			Filename []string
 		}
 	}
 	lockBridgePIDFilePath       sync.RWMutex
@@ -630,8 +586,6 @@ type ConfigMock struct {
 	lockProjectStore            sync.RWMutex
 	lockPrometheusURL           sync.RWMutex
 	lockRequiredFirewallDomains sync.RWMutex
-	lockSetProject              sync.RWMutex
-	lockSetSettings             sync.RWMutex
 	lockSettings                sync.RWMutex
 	lockSettingsFileName        sync.RWMutex
 	lockSettingsStore           sync.RWMutex
@@ -639,8 +593,6 @@ type ConfigMock struct {
 	lockStateDirEnvVar          sync.RWMutex
 	lockTestRepoDirEnvVar       sync.RWMutex
 	lockWorktreesSubdir         sync.RWMutex
-	lockWriteProject            sync.RWMutex
-	lockWriteSettings           sync.RWMutex
 }
 
 // BridgePIDFilePath calls BridgePIDFilePathFunc.
@@ -1971,72 +1923,8 @@ func (mock *ConfigMock) RequiredFirewallDomainsCalls() []struct {
 	return calls
 }
 
-// SetProject calls SetProjectFunc.
-func (mock *ConfigMock) SetProject(fn func(*config.Project)) {
-	if mock.SetProjectFunc == nil {
-		panic("ConfigMock.SetProjectFunc: method is nil but Config.SetProject was just called")
-	}
-	callInfo := struct {
-		Fn func(*config.Project)
-	}{
-		Fn: fn,
-	}
-	mock.lockSetProject.Lock()
-	mock.calls.SetProject = append(mock.calls.SetProject, callInfo)
-	mock.lockSetProject.Unlock()
-	mock.SetProjectFunc(fn)
-}
-
-// SetProjectCalls gets all the calls that were made to SetProject.
-// Check the length with:
-//
-//	len(mockedConfig.SetProjectCalls())
-func (mock *ConfigMock) SetProjectCalls() []struct {
-	Fn func(*config.Project)
-} {
-	var calls []struct {
-		Fn func(*config.Project)
-	}
-	mock.lockSetProject.RLock()
-	calls = mock.calls.SetProject
-	mock.lockSetProject.RUnlock()
-	return calls
-}
-
-// SetSettings calls SetSettingsFunc.
-func (mock *ConfigMock) SetSettings(fn func(*config.Settings)) {
-	if mock.SetSettingsFunc == nil {
-		panic("ConfigMock.SetSettingsFunc: method is nil but Config.SetSettings was just called")
-	}
-	callInfo := struct {
-		Fn func(*config.Settings)
-	}{
-		Fn: fn,
-	}
-	mock.lockSetSettings.Lock()
-	mock.calls.SetSettings = append(mock.calls.SetSettings, callInfo)
-	mock.lockSetSettings.Unlock()
-	mock.SetSettingsFunc(fn)
-}
-
-// SetSettingsCalls gets all the calls that were made to SetSettings.
-// Check the length with:
-//
-//	len(mockedConfig.SetSettingsCalls())
-func (mock *ConfigMock) SetSettingsCalls() []struct {
-	Fn func(*config.Settings)
-} {
-	var calls []struct {
-		Fn func(*config.Settings)
-	}
-	mock.lockSetSettings.RLock()
-	calls = mock.calls.SetSettings
-	mock.lockSetSettings.RUnlock()
-	return calls
-}
-
 // Settings calls SettingsFunc.
-func (mock *ConfigMock) Settings() config.Settings {
+func (mock *ConfigMock) Settings() *config.Settings {
 	if mock.SettingsFunc == nil {
 		panic("ConfigMock.SettingsFunc: method is nil but Config.Settings was just called")
 	}
@@ -2221,69 +2109,5 @@ func (mock *ConfigMock) WorktreesSubdirCalls() []struct {
 	mock.lockWorktreesSubdir.RLock()
 	calls = mock.calls.WorktreesSubdir
 	mock.lockWorktreesSubdir.RUnlock()
-	return calls
-}
-
-// WriteProject calls WriteProjectFunc.
-func (mock *ConfigMock) WriteProject(filename ...string) error {
-	if mock.WriteProjectFunc == nil {
-		panic("ConfigMock.WriteProjectFunc: method is nil but Config.WriteProject was just called")
-	}
-	callInfo := struct {
-		Filename []string
-	}{
-		Filename: filename,
-	}
-	mock.lockWriteProject.Lock()
-	mock.calls.WriteProject = append(mock.calls.WriteProject, callInfo)
-	mock.lockWriteProject.Unlock()
-	return mock.WriteProjectFunc(filename...)
-}
-
-// WriteProjectCalls gets all the calls that were made to WriteProject.
-// Check the length with:
-//
-//	len(mockedConfig.WriteProjectCalls())
-func (mock *ConfigMock) WriteProjectCalls() []struct {
-	Filename []string
-} {
-	var calls []struct {
-		Filename []string
-	}
-	mock.lockWriteProject.RLock()
-	calls = mock.calls.WriteProject
-	mock.lockWriteProject.RUnlock()
-	return calls
-}
-
-// WriteSettings calls WriteSettingsFunc.
-func (mock *ConfigMock) WriteSettings(filename ...string) error {
-	if mock.WriteSettingsFunc == nil {
-		panic("ConfigMock.WriteSettingsFunc: method is nil but Config.WriteSettings was just called")
-	}
-	callInfo := struct {
-		Filename []string
-	}{
-		Filename: filename,
-	}
-	mock.lockWriteSettings.Lock()
-	mock.calls.WriteSettings = append(mock.calls.WriteSettings, callInfo)
-	mock.lockWriteSettings.Unlock()
-	return mock.WriteSettingsFunc(filename...)
-}
-
-// WriteSettingsCalls gets all the calls that were made to WriteSettings.
-// Check the length with:
-//
-//	len(mockedConfig.WriteSettingsCalls())
-func (mock *ConfigMock) WriteSettingsCalls() []struct {
-	Filename []string
-} {
-	var calls []struct {
-		Filename []string
-	}
-	mock.lockWriteSettings.RLock()
-	calls = mock.calls.WriteSettings
-	mock.lockWriteSettings.RUnlock()
 	return calls
 }

@@ -312,9 +312,10 @@ func TestSetProject_mutation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Mutate build image
-	cfg.SetProject(func(p *Project) {
+	err = cfg.ProjectStore().Set(func(p *Project) {
 		p.Build.Image = "custom:latest"
 	})
+	require.NoError(t, err)
 
 	assert.Equal(t, "custom:latest", cfg.Project().Build.Image)
 
@@ -338,9 +339,10 @@ func TestSetSettings_mutation(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	cfg.SetSettings(func(s *Settings) {
+	err = cfg.SettingsStore().Set(func(s *Settings) {
 		s.Logging.MaxSizeMB = 100
 	})
+	require.NoError(t, err)
 
 	assert.Equal(t, 100, cfg.Settings().Logging.MaxSizeMB)
 
@@ -365,11 +367,12 @@ func TestWriteProject_persistsToFile(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	cfg.SetProject(func(p *Project) {
+	err = cfg.ProjectStore().Set(func(p *Project) {
 		p.Build.Image = "persisted:latest"
 	})
+	require.NoError(t, err)
 
-	err = cfg.WriteProject()
+	err = cfg.ProjectStore().Write()
 	require.NoError(t, err)
 
 	// Re-read and verify persistence
@@ -395,11 +398,12 @@ func TestWriteSettings_persistsToFile(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	cfg.SetSettings(func(s *Settings) {
+	err = cfg.SettingsStore().Set(func(s *Settings) {
 		s.Logging.MaxSizeMB = 200
 	})
+	require.NoError(t, err)
 
-	err = cfg.WriteSettings()
+	err = cfg.SettingsStore().Write()
 	require.NoError(t, err)
 
 	// Re-read and verify persistence

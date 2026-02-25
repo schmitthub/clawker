@@ -17,7 +17,7 @@ import (
 type Config interface {
 	ClawkerIgnoreName() string
 	Project() *Project
-	Settings() Settings
+	Settings() *Settings
 
 	// ProjectStore returns the underlying project config store.
 	// Prefer this over SetProject/WriteProject for direct store access.
@@ -27,26 +27,14 @@ type Config interface {
 	// Prefer this over SetSettings/WriteSettings for direct store access.
 	SettingsStore() *storage.Store[Settings]
 
-	// Deprecated: Use ProjectStore().Get().Logging instead.
+	// Deprecated: Use SettingsStore().Read().Logging instead.
 	LoggingConfig() LoggingConfig
 
-	// Deprecated: Use ProjectStore().Get().Monitoring instead.
+	// Deprecated: Use SettingsStore().Read().Monitoring instead.
 	MonitoringConfig() MonitoringConfig
 
-	// Deprecated: Use SettingsStore().Get().HostProxy instead.
+	// Deprecated: Use SettingsStore().Read().HostProxy instead.
 	HostProxyConfig() HostProxyConfig
-
-	// Deprecated: Use ProjectStore().Set() instead.
-	SetProject(fn func(*Project))
-
-	// Deprecated: Use SettingsStore().Set() instead.
-	SetSettings(fn func(*Settings))
-
-	// Deprecated: Use ProjectStore().Write() instead.
-	WriteProject(filename ...string) error
-
-	// Deprecated: Use SettingsStore().Write() instead.
-	WriteSettings(filename ...string) error
 
 	Domain() string
 	LabelDomain() string
@@ -190,8 +178,8 @@ func (c *configImpl) Project() *Project {
 	return c.project.Get()
 }
 
-func (c *configImpl) Settings() Settings {
-	return *c.settings.Get()
+func (c *configImpl) Settings() *Settings {
+	return c.settings.Get()
 }
 
 func (c *configImpl) LoggingConfig() LoggingConfig {
@@ -206,20 +194,3 @@ func (c *configImpl) MonitoringConfig() MonitoringConfig {
 	return c.settings.Get().Monitoring
 }
 
-// --- Typed mutation ---
-
-func (c *configImpl) SetProject(fn func(*Project)) {
-	c.project.Set(fn)
-}
-
-func (c *configImpl) SetSettings(fn func(*Settings)) {
-	c.settings.Set(fn)
-}
-
-func (c *configImpl) WriteProject(filename ...string) error {
-	return c.project.Write(filename...)
-}
-
-func (c *configImpl) WriteSettings(filename ...string) error {
-	return c.settings.Write(filename...)
-}

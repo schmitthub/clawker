@@ -475,17 +475,17 @@ func TestStore_WriteProvenance(t *testing.T) {
 	require.NoError(t, err)
 
 	store := &Store[testConfig]{
-		value:  value,
 		tree:   tree,
 		layers: layers,
 		prov:   prov,
 		tags:   tags,
 		opts:   options{filenames: []string{"global.yaml", "local.yaml"}},
 	}
+	store.value.Store(value)
 
-	store.Set(func(c *testConfig) {
+	require.NoError(t, store.Set(func(c *testConfig) {
 		c.Name = "provenance-test"
-	})
+	}))
 	require.NoError(t, store.Write())
 
 	// name came from local layer (highest priority) — verify it was written there.
@@ -518,8 +518,7 @@ func TestStore_WriteFilename(t *testing.T) {
 	require.NoError(t, err)
 
 	store := &Store[testConfig]{
-		value: value,
-		tree:  tree,
+		tree: tree,
 		layers: []layer{
 			{path: configPath, filename: "config.yaml", data: configData},
 		},
@@ -530,10 +529,11 @@ func TestStore_WriteFilename(t *testing.T) {
 			paths:     []string{dir},
 		},
 	}
+	store.value.Store(value)
 
-	store.Set(func(c *testConfig) {
+	require.NoError(t, store.Set(func(c *testConfig) {
 		c.Name = "targeted-write"
-	})
+	}))
 
 	// Write to explicit filename — should create config.local.yaml.
 	require.NoError(t, store.Write("config.local.yaml"))
