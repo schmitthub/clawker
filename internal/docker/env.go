@@ -144,6 +144,13 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 				"path": "/home/claude/.gnupg/S.gpg-agent",
 				"type": "gpg-agent",
 			})
+			// Override gpg.program via env vars so the container's gpg binary is used
+			// regardless of what the host's gitconfig (global or local) specifies.
+			// Env-based config overrides all file-based git config levels including
+			// local .git/config, which is bind-mounted from the host in bind mode.
+			m["GIT_CONFIG_COUNT"] = "1"
+			m["GIT_CONFIG_KEY_0"] = "gpg.program"
+			m["GIT_CONFIG_VALUE_0"] = "/usr/bin/gpg"
 		}
 		if opts.SSHForwardingEnabled {
 			sockets = append(sockets, map[string]string{
