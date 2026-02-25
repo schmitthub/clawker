@@ -130,6 +130,17 @@ cmd.SetErr(errOut)
 err := cmd.Execute()
 ```
 
+## Storage Oracle + Golden Test Strategy
+
+The `internal/storage` merge engine uses dual-guard testing — oracle (randomized) + golden (fixed baseline):
+
+| Layer | How it works | What it catches |
+|-------|-------------|-----------------|
+| Oracle (randomized) | Independent spec-based merge computation, new seed each run | Merge bugs across random file placements |
+| Golden (fixed seed) | Hardcoded struct literal blessed from known-correct state | Regressions from the blessed baseline |
+
+Golden values are code, not files — `STORAGE_GOLDEN_BLESS` env var + `make storage-golden` for interactive updates (no global sweep risk).
+
 ## Common Gotchas
 
 1. **Parallel test conflicts**: Use unique agent names with random suffixes

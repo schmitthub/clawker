@@ -178,6 +178,22 @@ h.ReadConfigFiles(&settingsBuf, &projectBuf, &registryBuf)
 require.Contains(t, registryBuf.String(), "name: Demo")
 ```
 
+## Storage Oracle + Golden Test Strategy
+
+The `internal/storage` package uses a **defense-in-depth** approach with two independent guards for merge correctness:
+
+| Layer | How it works | What it catches |
+|-------|-------------|-----------------|
+| Oracle (randomized) | Computes expected merge from spec rules (~15 lines), independent of prod code. Runs every time with a new seed. | Any merge bug that manifests for the random placement |
+| Golden (fixed seed) | Hardcoded struct literal blessed from known-correct state. No auto-update. | Any regression from the blessed baseline, including oracle bugs |
+
+Golden values are code (struct literals), not files — they must be hand-edited to change. `make storage-golden` prints new values with interactive confirmation. The `STORAGE_GOLDEN_BLESS` env var is specific to this one test (no global sweep risk).
+
+```bash
+go test ./internal/storage -v                       # Runs both oracle + golden
+make storage-golden                                  # Interactive golden update
+```
+
 ## Key Conventions
 
 1. **All tests must pass before any change is complete** — `make test` at minimum

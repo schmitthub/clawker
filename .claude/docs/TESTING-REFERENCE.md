@@ -1214,6 +1214,41 @@ if len(errs) > 0 {
 
 ---
 
+## Storage Oracle + Golden Test Strategy
+
+The `internal/storage` package uses a **defense-in-depth** approach with two independent guards for merge correctness:
+
+| Layer | How it works | What it catches |
+|-------|-------------|-----------------|
+| Oracle (randomized) | Computes expected merge from spec rules (~15 lines), independent of prod code. Runs every time with a new seed. | Any merge bug that manifests for the random placement |
+| Golden (fixed seed) | Hardcoded struct literal blessed from known-correct state. No auto-update. | Any regression from the blessed baseline, including oracle bugs |
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Deepest level forced to have both `config.local.yaml` and `config.yaml` | Guarantees filename priority is always exercised |
+| Main/local files have distinct names (`level3-main` vs `level3-local`) | Scalar assertions can distinguish which file won |
+| Golden values are code, not files | Must be hand-edited to change — no accidental `GOLDEN_UPDATE=1` sweep |
+| `make storage-golden` prints new values with interactive confirmation | Blocks CI — human must review and approve |
+| `STORAGE_GOLDEN_BLESS` env var is specific to this one test | No global sweep risk |
+
+### When to Use This Pattern
+
+The oracle+golden dual-guard pattern is appropriate when:
+- The system under test has **combinatorial inputs** (merge order, file placement, priority rules)
+- A single deterministic test cannot cover the full space
+- Regression protection and exploration serve **different purposes**
+
+```bash
+go test ./internal/storage -v                              # Runs both oracle + golden
+go test ./internal/storage -run TestMerge_Oracle -v        # Oracle only (randomized)
+go test ./internal/storage -run TestMerge_Golden -v        # Golden only (fixed baseline)
+make storage-golden                                        # Interactive golden update
+```
+
+---
+
 ## Cross-Phase Learnings (Testing Initiative)
 
 Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
