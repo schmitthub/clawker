@@ -51,10 +51,10 @@ Note: `DefaultImageTag` constant and `BuildDefaultImage` function have moved to 
 ### DockerfileManager -- multi-version/variant matrix builds
 
 ```go
-type DockerFileManagerOptions struct { OutputDir string; VariantCfg *VariantConfig }
+type DockerFileManagerOptions struct { VariantCfg *VariantConfig }
 func NewDockerfileManager(cfg config.Config, opts *DockerFileManagerOptions) *DockerfileManager
 func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile) error
-func (m *DockerfileManager) DockerfilesDir() string  // delegates to cfg.DockerfilesSubdir()
+func (m *DockerfileManager) DockerfilesDir() (string, error)  // delegates to cfg.DockerfilesSubdir()
 ```
 
 `cfg config.Config` (interface) provides `DockerfilesSubdir()`, `MonitoringConfig()`, `ContainerUID()`, `ContainerGID()`. `BuildKitEnabled` field controls cache mount emission. Writes scripts once, renders Dockerfile per version/variant.

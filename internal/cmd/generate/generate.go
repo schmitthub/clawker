@@ -24,7 +24,7 @@ type GenerateOptions struct {
 	Versions  []string // Positional args: version patterns
 	SkipFetch bool
 	Cleanup   bool
-	OutputDir string // Explicit output directory override
+	OutputDir string // Output directory for versions.json (Dockerfiles always go to cfg.DockerfilesSubdir())
 }
 
 // NewCmdGenerate creates a new generate command.
@@ -145,14 +145,15 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 	fmt.Fprintf(ios.ErrOut, "Saved %d version(s) to %s\n", len(*vf), versionsFile)
 
 	// Generate Dockerfiles
-	dfMgr := bundler.NewDockerfileManager(cfg, &bundler.DockerFileManagerOptions{
-		OutputDir:  outputDir,
-		VariantCfg: nil,
-	})
+	dfMgr := bundler.NewDockerfileManager(cfg, &bundler.DockerFileManagerOptions{})
 	if err := dfMgr.GenerateDockerfiles(vf); err != nil {
 		return fmt.Errorf("Failed to generate Dockerfiles: %w", err)
 	}
-	fmt.Fprintf(ios.ErrOut, "Generated Dockerfiles in %s\n", dfMgr.DockerfilesDir())
+	dockerfilesDir, err := dfMgr.DockerfilesDir()
+	if err != nil {
+		return fmt.Errorf("Failed to resolve Dockerfiles directory: %w", err)
+	}
+	fmt.Fprintf(ios.ErrOut, "Generated Dockerfiles in %s\n", dockerfilesDir)
 
 	return displayVersionsFile(vf, ios.ErrOut)
 }

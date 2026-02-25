@@ -138,7 +138,11 @@ const containerGID = 1001
 
 func subdirPath(subdir string, baseDirFunc func() string) (string, error) {
 	configDir := baseDirFunc()
-	fullPath := filepath.Join(configDir, subdir)
+	return subdirPathUnder(subdir, configDir)
+}
+
+func subdirPathUnder(subdir string, baseDir string) (string, error) {
+	fullPath := filepath.Join(baseDir, subdir)
 	if err := os.MkdirAll(fullPath, 0o755); err != nil {
 		return "", fmt.Errorf("creating config subdir %s: %w", fullPath, err)
 	}
@@ -207,11 +211,7 @@ func (c *configImpl) DockerfilesSubdir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	fullPath := filepath.Join(buildDir, dockerfilesSubdir)
-	if err := os.MkdirAll(fullPath, 0o755); err != nil {
-		return "", fmt.Errorf("creating config subdir %s: %w", fullPath, err)
-	}
-	return fullPath, nil
+	return subdirPathUnder(dockerfilesSubdir, buildDir)
 }
 
 // ClawkerNetwork returns the shared Docker network name used by clawker resources.
