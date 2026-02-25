@@ -98,7 +98,7 @@ type configImpl struct {
 // Both stores use defaults as the lowest-priority base layer.
 func NewConfig() (Config, error) {
 	projectStore, err := storage.NewStore[Project](
-		storage.WithFilenames("clawker.yaml", "clawker.local.yaml"),
+		storage.WithFilenames("clawker.local.yaml", "clawker.yaml"),
 		storage.WithDefaults(defaultProjectYAML),
 		storage.WithWalkUp(),
 		storage.WithConfigDir(),
