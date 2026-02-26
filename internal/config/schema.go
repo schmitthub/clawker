@@ -269,10 +269,10 @@ func (g *GitCredentialsConfig) CopyGitConfigEnabled() bool {
 }
 
 // GPGEnabled returns whether GPG agent forwarding should be enabled.
-// Returns true by default.
+// Returns false by default. GPG signing is opt-in; SSH key signing is the default.
 func (g *GitCredentialsConfig) GPGEnabled() bool {
 	if g == nil || g.ForwardGPG == nil {
-		return true // Default to enabled
+		return false // Default to disabled — SSH signing is the default
 	}
 	return *g.ForwardGPG
 }

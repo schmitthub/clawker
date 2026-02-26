@@ -497,7 +497,7 @@ firewall:
 |-------|------|---------|-------|-------------|
 | `git_credentials.forward_https` | bool | follows `enable_host_proxy` | runtime | HTTPS credential forwarding via host proxy. |
 | `git_credentials.forward_ssh` | bool | `true` | runtime | SSH agent forwarding. |
-| `git_credentials.forward_gpg` | bool | `true` | runtime | GPG agent forwarding. |
+| `git_credentials.forward_gpg` | bool | `false` | runtime | GPG agent forwarding. Opt-in; when enabled, overrides SSH key signing. |
 | `git_credentials.copy_git_config` | bool | `true` | runtime | Copy host `.gitconfig` (filtering `[credential]` section). |
 
 ### `loop` — Autonomous Loop Settings (Optional)

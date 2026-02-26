@@ -124,6 +124,11 @@ security:
     #add_domains: # additional allowed domains
     #  - "api.openai.com"
   docker_socket: false # mount Docker socket (security risk if enabled)
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+  #  forward_gpg: true
+    copy_git_config: true
 
 #loop: # autonomous loop settings (clawker loop iterate / clawker loop tasks)
 #  max_loops: 50 # maximum iterations per session

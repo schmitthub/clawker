@@ -260,7 +260,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		}
 		// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
 		if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
-			gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
+			gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
 			if err := opts.SocketBridge().EnsureBridge(o.result.ContainerID, gpgEnabled); err != nil {
 				log.Warn().Err(err).Msg("failed to start socket bridge for detached container")
 			}
@@ -355,7 +355,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	if sbCfg, sbErr := opts.Config(); sbErr == nil {
 		sbProject := sbCfg.Project()
 		if shared.NeedsSocketBridge(sbProject) && opts.SocketBridge != nil {
-			gpgEnabled := sbProject.Security.GitCredentials != nil && sbProject.Security.GitCredentials.GPGEnabled()
+			gpgEnabled := sbProject.Security.GitCredentials.GPGEnabled()
 			if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
 				log.Warn().Err(err).Msg("failed to start socket bridge")
 			} else {

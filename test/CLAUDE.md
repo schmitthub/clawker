@@ -6,19 +6,12 @@ Test infrastructure for all non-unit tests. Uses directory separation instead of
 
 ```
 test/
-├── harness/        # Shared test utilities (imported by all test packages)
-│   ├── golden/     # Golden file utilities (leaf — stdlib + testify only)
-│   ├── builders/   # ConfigBuilder, presets (MinimalValidConfig, FullFeaturedConfig)
-│   ├── harness.go  # NewHarness, HarnessOption, project/config setup
-│   ├── docker.go   # RequireDocker, NewTestClient, cleanup, readiness
-│   ├── client.go   # BuildLightImage, RunContainer, ExecResult
-│   ├── ready.go    # WaitFor* functions, timeout constants
-│   ├── factory.go  # NewTestFactory for integration tests
-│   └── hash.go     # ComputeTemplateHash, TemplateHashShort
+├── e2e/            # End-to-end tests (real Factory, real Docker, full Cobra pipeline)
+│   └── harness/    # In-process CLI harness: Factory + root.NewCmdRoot + isolated dirs
 ├── whail/          # Whail BuildKit integration tests (Docker + BuildKit)
 ├── cli/            # Testscript-based CLI workflow tests (Docker)
 ├── commands/       # Command integration tests (Docker)
-├── internals/      # Container script/service tests (Docker)
+├── internals/      # Container scripts/services tests (Docker)
 └── agents/         # Full agent E2E tests (Docker)
 ```
 
@@ -27,7 +20,8 @@ test/
 ```bash
 make test                                        # Unit tests only (no Docker)
 go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
-go test ./test/cli/... -v -timeout 15m           # CLI workflows
+go test ./test/e2e/... -v -timeout 15m           # E2E (full CLI pipeline, real Docker)
+go test ./test/cli/... -v -timeout 15m           # CLI workflow tests
 go test ./test/commands/... -v -timeout 10m      # Command integration
 go test ./test/internals/... -v -timeout 10m     # Internal integration
 go test ./test/agents/... -v -timeout 15m        # Agent E2E
@@ -38,92 +32,15 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E
 - **Golden files**: In `testdata/` next to tests. `GoldenAssert(t, name, actual)`, `CompareGolden(t, name, actual) error`. Update: `GOLDEN_UPDATE=1`
 - **Fakes**: `internal/docker/dockertest/`, `pkg/whail/whailtest/`
 - **Cleanup**: Always `t.Cleanup()` — never deferred functions
-- **TestMain**: All Docker test packages use `RunTestMain(m)` for exclusive lock + cleanup + SIGINT
-- **Labels**: `dev.clawker.test=true` on all resources; `dev.clawker.test.name=TestName` per test
+- **Self-cleaning tests**: Tests create their own projects via `h.Run("project", "init", ...)`, build their own images, and clean up their own containers/volumes via `h.Run("container", "stop/rm", ...)`
 - **Whail labels**: `test/whail/` uses `com.whail.test.managed=true`; self-contained cleanup
 
-## Harness API
+## E2E Philosophy
 
-### Core
+E2E tests (`test/e2e/`) exercise the **full Cobra command pipeline** via `h.Run()` → `root.NewCmdRoot(factory)`. Every command runs exactly as a user would — through the same root command, flag parsing, validation, and execution path. The only difference from the shipped binary is dependency wiring: tests construct a `cmdutil.Factory` struct literal with real production dependencies (real Docker client, real config, real project manager) plus test isolation (isolated XDG dirs, test labels, `iostreams.Test()` for output capture).
 
-`NewHarness(t, opts ...HarnessOption)` — Options: `WithProject(name)`, `WithConfig(cfg)`, `WithConfigBuilder(builder)`. Uses `text.Slugify` for project name normalization, `CLAWKER_CONFIG_DIR` env var for isolation, direct YAML string for registry construction.
-
-Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/NetworkName`, `ConfigPath`, `WriteFile/ReadFile/FileExists`, `UpdateConfig`
-
-`ParseYAML[T any](yamlStr string) (T, error)` — Generic YAML string parser for test config snippets
-
-### Docker Helpers (docker.go)
-
-| Function | Purpose |
-|----------|---------|
-| `RunTestMain(m)` | Lock + host-proxy cleanup + Docker cleanup + SIGINT |
-| `RequireDocker(t)` / `SkipIfNoDocker(t)` | Docker availability |
-| `NewTestClient(t)` | Label-injected `*docker.Client` |
-| `AddTestLabels(labels)` / `AddClawkerLabels(labels, project, agent, testName)` | Label injection |
-| `CleanupTestResources(ctx, cli)` / `CleanupProjectResources(ctx, cli, project)` | Label-filtered removal |
-| `ContainerExists/ContainerIsRunning(ctx, client, name)` | State checks |
-| `WaitForContainerRunning(ctx, client, name)` | Fails fast on exit |
-| `VolumeExists/NetworkExists(ctx, client, name)` | Resource checks |
-| `GetContainerExitDiagnostics(ctx, client, id, logLines)` | Debug info |
-| `StripDockerStreamHeaders(raw)` | Clean output |
-| `BuildTestImage(t, h, opts)` | Full clawker image |
-| `BuildSimpleTestImage(t, dockerfile, opts)` | Simple image via whail |
-| `BuildTestChownImage(t)` | Labeled busybox for CopyToVolume |
-| `UniqueContainerName(t)` / `UniqueAgentName(t)` | Unique name generation |
-
-**Image options**: `BuildTestImageOptions`, `BuildSimpleTestImageOptions` — config structs for image build helpers.
-
-**Package-level vars**: `TestLabel`, `TestLabelValue`, `ClawkerManagedLabel`, `LabelTestName` — initialized from `_blankCfg` (a `configmocks.NewBlankConfig()` instance). `TestChownImage` remains a `const`.
-
-**Internal**: `_blankCfg` — package-level blank config providing label constants and `ContainerUID()` for Dockerfile generation. Shared across `docker.go` and `client.go`.
-
-### Readiness (ready.go)
-
-| Constant | Value | Use |
-|----------|-------|-----|
-| `DefaultReadyTimeout` | 60s | Local dev |
-| `E2EReadyTimeout` | 120s | E2E tests |
-| `CIReadyTimeout` | 180s | CI (slower VMs) |
-| `BypassCommandTimeout` | 10s | Entrypoint bypass |
-| `ReadyFilePath` | `/var/run/clawker/ready` | Signal file |
-| `ReadyLogPrefix` / `ErrorLogPrefix` | `[clawker] ready/error` | Log patterns |
-
-**Wait functions** (all take `*docker.Client`): `WaitForReadyFile`, `WaitForContainerExit`, `WaitForContainerExitAny`, `WaitForContainerCompletion`, `WaitForHealthy`, `WaitForLogPattern`, `WaitForReadyLog`, `GetReadyTimeout`
-
-**Verification**: `VerifyProcessRunning`, `VerifyClaudeCodeRunning`, `CheckForErrorPattern`, `GetContainerLogs`, `ParseReadyFile`
-
-### Container Testing (client.go)
-
-`BuildLightImage(t, dc)` — content-addressed Alpine with all scripts. `RunContainer(t, dc, image, opts...)` — auto-cleanup.
-
-**Container opts**: `WithCapAdd(caps...)`, `WithUser(user)`, `WithCmd(cmd...)`, `WithEntrypoint(entrypoint...)`, `WithEnv(env...)`, `WithExtraHost(hosts...)`, `WithMounts(mounts...)`, `WithConfigVolume(name)`, `WithVolumeMount(name, path)`
-
-`RunningContainer{ID, Name}` — methods: `Exec(ctx, dc, cmd...)`, `ExecAsUser(ctx, dc, user, cmd...)`, `WaitForFile(ctx, dc, path, timeout)`, `GetLogs(ctx, dc)`, `FileExists(ctx, dc, path)`, `DirExists(ctx, dc, path)`, `ReadFile(ctx, dc, path)`. `ExecResult{ExitCode, Stdout, Stderr}` with `CleanOutput()`.
-
-### Factory Testing (factory.go)
-
-`NewTestFactory(t, h) (*cmdutil.Factory, *iostreams.IOStreams)` — fully-wired with cleanup. Uses `configFromProject()` to bridge `*config.Project` schema → `config.Config` interface via `configmocks.NewFromString`. Factory.Config closure returns `(config.Config, error)`.
-
-### Content-Addressed Caching (hash.go)
-
-`ComputeTemplateHash()`, `ComputeTemplateHashFromDir(root)`, `TemplateHashShort()`, `FindProjectRoot()`
-
-### Golden Files (golden/)
-
-Leaf subpackage — stdlib + testify only, no heavy transitive dependencies.
-
-`import "github.com/schmitthub/clawker/test/harness/golden"`
-
-`golden.GoldenAssert(t, name, actual)`, `golden.CompareGolden(t, name, actual)`, `golden.CompareGoldenString(t, name, actual)`, `golden.GoldenPath(t, name) string`. Errors: `golden.ErrGoldenMismatch`, `golden.ErrGoldenMissing`.
-
-### Socket Bridge Helpers
-
-`SocketBridgeConfig` — config for socket bridge test setup. `StartSocketBridge(t, cfg)` — starts bridge for tests. `BuildRemoteSocketsEnv(cfg) string` — env vars. `DefaultGPGSocketPath()`, `DefaultSSHSocketPath()` — default paths. `WithSocketForwarding(cfg)` — container opt.
-
-## Debugging Resource Leaks
-
-All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestName`. See `.claude/rules/testing.md` for lookup commands.
-
-## Dependencies
-
-Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/hostproxy`, `internal/socketbridge`, `internal/text`, `pkg/whail`
+Key principles:
+- **No Docker SDK for operations** — all container/image/volume operations through `h.Run("container", ...)`, never moby client calls
+- **Config via production flow** — `h.Run("project", "init", "name", "--yes")` scaffolds config, then `config.NewConfig()` + `ProjectStore().Set()` + `.Write()` for mutations
+- **Each test is fully isolated** — no shared TestMain, no global state
+- **`iostreams.Test()`** returns `*bytes.Buffer` backing stdout/stderr for output capture and assertion

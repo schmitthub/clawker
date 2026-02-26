@@ -621,7 +621,7 @@ func (r *Runner) StartContainer(ctx context.Context, log *logger.Logger, project
 
 	// Start socket bridge for GPG/SSH forwarding if needed
 	if containershared.NeedsSocketBridge(projectCfg) {
-		gpgEnabled := projectCfg.Security.GitCredentials != nil && projectCfg.Security.GitCredentials.GPGEnabled()
+		gpgEnabled := projectCfg.Security.GitCredentials.GPGEnabled()
 		// Socket bridge is accessed via the lifecycle config — the Runner no longer
 		// holds a socketBridge field since it's wired through CreateContainer.
 		// For now, log a warning if socket bridge is needed but not available.

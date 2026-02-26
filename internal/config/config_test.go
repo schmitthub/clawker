@@ -436,3 +436,40 @@ func TestParseMode(t *testing.T) {
 		})
 	}
 }
+
+func TestGitCredentialsConfig_Defaults(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+
+	t.Run("nil receiver defaults SSH enabled GPG disabled", func(t *testing.T) {
+		var g *GitCredentialsConfig
+		assert.True(t, g.GitSSHEnabled(), "SSH should default to enabled")
+		assert.False(t, g.GPGEnabled(), "GPG should default to disabled")
+		assert.True(t, g.GitHTTPSEnabled(true), "HTTPS should default to enabled when host proxy is on")
+		assert.False(t, g.GitHTTPSEnabled(false), "HTTPS should follow host proxy when off")
+		assert.True(t, g.CopyGitConfigEnabled(), "CopyGitConfig should default to enabled")
+	})
+
+	t.Run("zero value defaults SSH enabled GPG disabled", func(t *testing.T) {
+		g := &GitCredentialsConfig{}
+		assert.True(t, g.GitSSHEnabled(), "SSH should default to enabled")
+		assert.False(t, g.GPGEnabled(), "GPG should default to disabled")
+	})
+
+	t.Run("explicit true overrides defaults", func(t *testing.T) {
+		g := &GitCredentialsConfig{
+			ForwardSSH: boolPtr(true),
+			ForwardGPG: boolPtr(true),
+		}
+		assert.True(t, g.GitSSHEnabled())
+		assert.True(t, g.GPGEnabled())
+	})
+
+	t.Run("explicit false overrides defaults", func(t *testing.T) {
+		g := &GitCredentialsConfig{
+			ForwardSSH: boolPtr(false),
+			ForwardGPG: boolPtr(false),
+		}
+		assert.False(t, g.GitSSHEnabled())
+		assert.False(t, g.GPGEnabled())
+	})
+}

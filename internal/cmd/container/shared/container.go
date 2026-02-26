@@ -1829,10 +1829,8 @@ func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg
 		envOpts.FirewallDomains = projectCfg.Security.Firewall.GetFirewallDomains(cfg.Cfg.RequiredFirewallDomains())
 		envOpts.FirewallIPRangeSources = projectCfg.Security.Firewall.IPRangeSources
 	}
-	if projectCfg.Security.GitCredentials != nil {
-		envOpts.GPGForwardingEnabled = projectCfg.Security.GitCredentials.GPGEnabled()
-		envOpts.SSHForwardingEnabled = projectCfg.Security.GitCredentials.GitSSHEnabled()
-	}
+	envOpts.GPGForwardingEnabled = projectCfg.Security.GitCredentials.GPGEnabled()
+	envOpts.SSHForwardingEnabled = projectCfg.Security.GitCredentials.GitSSHEnabled()
 	if projectCfg.Build.Instructions != nil {
 		envOpts.InstructionEnv = projectCfg.Build.Instructions.Env
 	}
