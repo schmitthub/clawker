@@ -328,3 +328,12 @@ pre-commit-install:
 # Run all pre-commit hooks against all files
 pre-commit:
 	@pre-commit run --all-files
+
+# Print current storage golden values for manual review.
+# Interactive confirmation prevents accidental execution in CI.
+# After reviewing output, hand-edit the golden values in storage_test.go.
+storage-golden:
+	@printf '\033[33mThis will print new golden values for TestStore_WalkUpGolden.\033[0m\n'
+	@printf 'You must hand-edit storage_test.go with the printed values.\n'
+	@printf 'Continue? [y/N] ' && read ans && [ "$$ans" = "y" ] || (echo "Aborted." && exit 1)
+	STORAGE_GOLDEN_BLESS=1 go test ./internal/storage/... -run TestStore_WalkUpGolden -v -count=1

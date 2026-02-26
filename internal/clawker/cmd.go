@@ -46,7 +46,12 @@ func Main() int {
 	defer updateCancel()
 	updateMessageChan := make(chan *update.CheckResult, 1)
 	go func() {
-		rel, _ := checkForUpdate(updateCtx, buildVersion)
+		rel, err := checkForUpdate(updateCtx, buildVersion)
+		if err != nil {
+			if log, logErr := f.Logger(); logErr == nil {
+				log.Debug().Err(err).Msg("update check failed")
+			}
+		}
 		updateMessageChan <- rel
 	}()
 

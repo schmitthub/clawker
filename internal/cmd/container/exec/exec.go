@@ -239,7 +239,7 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	// Set up TTY if needed
 	var pty *docker.PTYHandler
 	if opts.TTY {
-		pty = docker.NewPTYHandler(nil)
+		pty = docker.NewPTYHandler(log)
 		if err := pty.Setup(); err != nil {
 			return fmt.Errorf("failed to set up terminal: %w", err)
 		}

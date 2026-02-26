@@ -13,6 +13,7 @@ import (
 
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
@@ -54,8 +55,17 @@ func NewCmdBridgeServe() *cobra.Command {
 				return fmt.Errorf("--container flag is required")
 			}
 
-			// Initialize daemon logger (nop — daemon output goes to bridge log file)
+			// Initialize daemon logger — the bridge runs as a detached subprocess
+			// with no terminal, so file logging is the only diagnostic channel.
 			log := logger.Nop()
+			if cfg, cfgErr := config.NewConfig(); cfgErr == nil {
+				if logsDir, dirErr := cfg.LogsSubdir(); dirErr == nil {
+					if l, lErr := logger.New(logger.Options{LogsDir: logsDir}); lErr == nil {
+						log = l
+						defer log.Close()
+					}
+				}
+			}
 
 			log.Debug().
 				Str("container", containerID).

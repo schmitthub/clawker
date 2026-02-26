@@ -154,10 +154,8 @@ func (s *Store[T]) Get() *T {
 
 // Layers returns information about the discovered configuration layers.
 // Layers are ordered from highest priority (index 0) to lowest.
+// No lock needed — layers are immutable after construction.
 func (s *Store[T]) Layers() []LayerInfo {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	infos := make([]LayerInfo, len(s.layers))
 	for i, l := range s.layers {
 		infos[i] = LayerInfo{Filename: l.filename, Path: l.path}
@@ -212,6 +210,10 @@ func mergeIntoTree(tree, fresh map[string]any) {
 	for key, val := range fresh {
 		if subMap, ok := val.(map[string]any); ok {
 			if treeMap, ok := tree[key].(map[string]any); ok {
+				if len(subMap) == 0 {
+					tree[key] = map[string]any{}
+					continue
+				}
 				mergeIntoTree(treeMap, subMap)
 				continue
 			}

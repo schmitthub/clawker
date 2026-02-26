@@ -63,9 +63,9 @@ func TestWorkdirOverride(t *testing.T) {
 
 	cfg, err := f.Config()
 	require.NoError(t, err)
-	cfg.ProjectStore().Set(func(p *config.Project) {
+	require.NoError(t, cfg.ProjectStore().Set(func(p *config.Project) {
 		p.Build.Image = "buildpack-deps:bookworm-scm"
-	})
+	}))
 	require.NoError(t, cfg.ProjectStore().Write())
 
 	// Build the image.

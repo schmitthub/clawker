@@ -1,13 +1,25 @@
 package storage
 
 import (
+	"bytes"
+	"fmt"
+	"maps"
+	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- deterministic seeds for oracle/golden tests
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"slices"
+	"sort"
+	"strings"
 	"testing"
+	"time"
 
+	tree "github.com/a8m/tree"
+	"github.com/a8m/tree/ostree"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // --- Test schema types ---
@@ -497,6 +509,65 @@ func TestStore_WriteProvenance(t *testing.T) {
 	assert.NotEmpty(t, globalResult.Build.Target) // target came from defaults/global
 }
 
+func TestStore_WriteProvenance_RoutesTopLevelKeysToOwningLayer(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+	localPath := filepath.Join(dir, "local.yaml")
+
+	globalYAML := `
+name: global
+tags:
+  - from-global
+`
+	localYAML := `
+name: local
+version: 2
+`
+
+	require.NoError(t, os.WriteFile(globalPath, []byte(globalYAML), 0o644))
+	require.NoError(t, os.WriteFile(localPath, []byte(localYAML), 0o644))
+
+	globalData, err := loadFile(globalPath, nil)
+	require.NoError(t, err)
+	localData, err := loadFile(localPath, nil)
+	require.NoError(t, err)
+
+	layers := []layer{
+		{path: localPath, filename: "local.yaml", data: localData},
+		{path: globalPath, filename: "global.yaml", data: globalData},
+	}
+
+	tags := buildTagRegistry[testConfig]()
+	tree, prov := merge(nil, layers, tags)
+
+	value, err := unmarshal[testConfig](tree)
+	require.NoError(t, err)
+
+	store := &Store[testConfig]{
+		tree:   tree,
+		layers: layers,
+		prov:   prov,
+		tags:   tags,
+		opts:   options{filenames: []string{"global.yaml", "local.yaml"}},
+	}
+	store.value.Store(value)
+
+	require.NoError(t, store.Set(func(c *testConfig) {
+		c.Name = "local-updated"
+		c.Tags = []string{"global-updated"}
+	}))
+	require.NoError(t, store.Write())
+
+	localResult := mustReadConfig(t, localPath)
+	globalResult := mustReadConfig(t, globalPath)
+
+	assert.Equal(t, "local-updated", localResult.Name)
+	assert.Nil(t, localResult.Tags, "tags should not be routed to local layer")
+
+	assert.Equal(t, "global", globalResult.Name, "name should not be routed to global layer")
+	assert.Equal(t, []string{"global-updated"}, globalResult.Tags)
+}
+
 func TestStore_WriteFilename(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
@@ -927,6 +998,787 @@ func TestStore_Dirs_MergePrecedence(t *testing.T) {
 	assert.Equal(t, "node:20", store.Get().Build.Image)
 }
 
+func TestWalkType_PointerToStruct(t *testing.T) {
+	// walkType must dereference pointer types before the struct check.
+	// Without this, passing *T (instead of T) silently returns an empty
+	// registry — merge tags are lost and union slices fall back to overwrite.
+
+	type inner struct {
+		Items []string `yaml:"items" merge:"union"`
+	}
+	type outer struct {
+		Name  string `yaml:"name"`
+		Inner inner  `yaml:"inner"`
+	}
+
+	// Value type — baseline.
+	valReg := make(tagRegistry)
+	walkType(reflect.TypeOf(outer{}), "", valReg)
+	require.Contains(t, valReg, "inner.items", "value type: merge tag must be registered")
+	assert.Equal(t, "union", valReg["inner.items"])
+
+	// Pointer type — must produce identical registry.
+	ptrReg := make(tagRegistry)
+	walkType(reflect.TypeOf(&outer{}), "", ptrReg)
+	require.Contains(t, ptrReg, "inner.items", "pointer type: merge tag must be registered")
+	assert.Equal(t, "union", ptrReg["inner.items"])
+
+	// Both registries must be identical.
+	assert.Equal(t, valReg, ptrReg, "value and pointer registries must match")
+}
+
+func TestStore_WalkUpLayerMerge(t *testing.T) {
+	// Property-based walk-up test. Each run randomizes the placement matrix:
+	//   - Whether each level uses dir form (.clawker/) or flat dotfile form
+	//   - Which filenames (config.yaml, config.local.yaml, both, or neither) exist
+	//   - Whether decoy files exist (flat dotfiles alongside .clawker/ dir — must be ignored)
+	//
+	// The seed is logged so failures are reproducible via: go test -run ... -seed=<N>
+	//
+	// Invariants asserted regardless of placement:
+	//   1. Walk-up layers are CWD-first; explicit path is last
+	//   2. Dir form (.clawker/) silences flat dotfiles at the same level
+	//   3. First filename in WithFilenames wins at same depth
+	//   4. Scalars: highest-priority discovered layer wins
+	//   5. Union slices: all discovered layers contribute
+	//   6. Map merge: keys accumulate, conflicts won by highest priority
+	//   7. Decoy files never appear in layers
+
+	seed := time.Now().UnixNano()
+	t.Logf("seed=%d (reproduce with: rng := rand.New(rand.NewPCG(0, %d)))", seed, uint64(seed))
+	rng := rand.New(rand.NewPCG(0, uint64(seed)))
+
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "project")
+	levels := []string{
+		projectDir,
+		filepath.Join(projectDir, "level1"),
+		filepath.Join(projectDir, "level1", "level2"),
+		filepath.Join(projectDir, "level1", "level2", "level3"),
+	}
+	levelNames := []string{"project", "level1", "level2", "level3"}
+	userConfigDir := filepath.Join(root, "user", "config")
+	dataDir := filepath.Join(root, "data")
+
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+
+	// --- Registry ---
+	registryYAML := fmt.Sprintf("projects:\n  - root: %s\n", projectDir)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dataDir, "registry.yaml"),
+		[]byte(registryYAML), 0o644,
+	))
+
+	// --- Value pools ---
+	imagePool := []string{"go:1.22", "node:20", "python:3", "rust:1.80", "ruby:3.3"}
+	pkgPool := []string{"git", "curl", "jq", "vim", "tmux", "rg", "fd", "bat", "fzf", "htop"}
+	envKeyPool := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+
+	pickN := func(pool []string, n int) []string {
+		if n > len(pool) {
+			n = len(pool)
+		}
+		perm := rng.Perm(len(pool))
+		out := make([]string, n)
+		for i := range n {
+			out[i] = pool[perm[i]]
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	// genContent holds the randomized values for one config file.
+	type genContent struct {
+		version  int
+		image    string
+		packages []string          // static "pkg-<level>" + random picks
+		env      map[string]string // static "<LEVEL>=yes" + random keys
+	}
+
+	genLayer := func(level string) genContent {
+		c := genContent{}
+		if rng.IntN(2) == 0 {
+			c.version = rng.IntN(999) + 1
+		}
+		if rng.IntN(2) == 0 {
+			c.image = imagePool[rng.IntN(len(imagePool))]
+		}
+		if rng.IntN(5) > 0 { // 80% — exercises union merge
+			c.packages = append([]string{"pkg-" + level}, pickN(pkgPool, rng.IntN(3))...)
+		}
+		if rng.IntN(2) == 0 { // 50% — exercises map merge
+			staticKey := strings.ToUpper(level)
+			c.env = map[string]string{staticKey: "yes"}
+			if rng.IntN(2) == 0 {
+				rk := pickN(envKeyPool, 1)[0]
+				c.env[rk] = level
+			}
+		}
+		return c
+	}
+
+	toYAML := func(level string, c genContent) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, "name: %s\n", level)
+		if c.version > 0 {
+			fmt.Fprintf(&b, "version: %d\n", c.version)
+		}
+		if c.image != "" {
+			fmt.Fprintf(&b, "build:\n  image: %s\n", c.image)
+		}
+		if len(c.packages) > 0 {
+			b.WriteString("packages:\n")
+			for _, p := range c.packages {
+				fmt.Fprintf(&b, "  - %s\n", p)
+			}
+		}
+		if len(c.env) > 0 {
+			b.WriteString("env:\n")
+			keys := make([]string, 0, len(c.env))
+			for k := range c.env {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				fmt.Fprintf(&b, "  %s: %s\n", k, c.env[k])
+			}
+		}
+		return b.String()
+	}
+
+	// --- Randomize placement per level ---
+	type levelPlacement struct {
+		name       string
+		dir        string
+		useDirForm bool
+		hasMain    bool
+		hasLocal   bool
+		hasDecoy   bool
+		mainGen    genContent
+		localGen   genContent
+	}
+
+	placements := make([]levelPlacement, len(levels))
+	for i, dir := range levels {
+		isDeepest := i == len(levels)-1
+		p := levelPlacement{
+			name:       levelNames[i],
+			dir:        dir,
+			useDirForm: rng.IntN(2) == 0,
+			hasMain:    rng.IntN(3) > 0, // 2/3 chance
+			hasLocal:   rng.IntN(3) > 0, // 2/3 chance
+		}
+		if isDeepest {
+			// Deepest level must have both files to exercise filename priority.
+			p.hasMain = true
+			p.hasLocal = true
+		} else if !p.hasMain && !p.hasLocal {
+			p.hasMain = true
+		}
+		if p.useDirForm {
+			p.hasDecoy = rng.IntN(2) == 0
+		}
+		if p.hasMain {
+			p.mainGen = genLayer(p.name)
+		}
+		if p.hasLocal {
+			p.localGen = genLayer(p.name)
+		}
+		placements[i] = p
+	}
+
+	// --- Create files ---
+	writeFile := func(path, content string) {
+		t.Helper()
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	}
+
+	// Map each file path back to (level, type, placement) for table rendering.
+	type fileTag struct {
+		level, kind, place string // kind: "main"/"local"/"-", place: "root"/"dir"/"-"
+	}
+	pathTag := make(map[string]fileTag)
+
+	var wantIgnored []string
+
+	for _, p := range placements {
+		require.NoError(t, os.MkdirAll(p.dir, 0o755))
+
+		if p.useDirForm {
+			clawkerDir := filepath.Join(p.dir, ".clawker")
+			require.NoError(t, os.MkdirAll(clawkerDir, 0o755))
+
+			if p.hasMain {
+				path := filepath.Join(clawkerDir, "config.yaml")
+				writeFile(path, toYAML(p.name+"-main", p.mainGen))
+				pathTag[path] = fileTag{p.name, "main", "dir"}
+			}
+			if p.hasLocal {
+				path := filepath.Join(clawkerDir, "config.local.yaml")
+				writeFile(path, toYAML(p.name+"-local", p.localGen))
+				pathTag[path] = fileTag{p.name, "local", "dir"}
+			}
+			if p.hasDecoy {
+				decoyPath := filepath.Join(p.dir, ".config.yaml")
+				writeFile(decoyPath, "name: DECOY\npackages:\n  - DECOY\n")
+				wantIgnored = append(wantIgnored, decoyPath)
+			}
+		} else {
+			if p.hasMain {
+				path := filepath.Join(p.dir, ".config.yaml")
+				writeFile(path, toYAML(p.name+"-main", p.mainGen))
+				pathTag[path] = fileTag{p.name, "main", "root"}
+			}
+			if p.hasLocal {
+				path := filepath.Join(p.dir, ".config.local.yaml")
+				writeFile(path, toYAML(p.name+"-local", p.localGen))
+				pathTag[path] = fileTag{p.name, "local", "root"}
+			}
+		}
+	}
+
+	// User-level config (explicit path, lowest priority).
+	userPath := filepath.Join(userConfigDir, "config.yaml")
+	writeFile(userPath, "name: user\nversion: 1\nbuild:\n  image: ubuntu\npackages:\n  - pkg-user\nenv:\n  EDITOR: vim\n")
+	pathTag[userPath] = fileTag{"user", "-", "-"}
+
+	// --- Print actual filesystem tree so ai agents can't make a forgery (a8m/tree reads the real FS) ---
+	{
+		var buf bytes.Buffer
+		tr := tree.New(root)
+		opts := &tree.Options{Fs: new(ostree.FS), OutFile: &buf, All: true}
+		tr.Visit(opts)
+		tr.Print(opts)
+		t.Logf("\n=== TREE ===\n%s", buf.String())
+	}
+
+	// --- Discover ---
+	t.Setenv("CLAWKER_DATA_DIR", dataDir)
+	t.Chdir(levels[len(levels)-1]) // CWD = deepest level
+
+	store, err := NewStore[testConfig](
+		WithFilenames("config.local.yaml", "config.yaml"),
+		WithWalkUp(),
+		WithPaths(userConfigDir),
+	)
+	require.NoError(t, err)
+
+	// --- Print values table ---
+	layers := store.Layers()
+	cfg := store.Read()
+
+	// Table helper: format a cell, "-" for empty.
+	cell := func(s string) string {
+		if s == "" {
+			return "-"
+		}
+		return s
+	}
+	listCell := func(ss []string) string {
+		if len(ss) == 0 {
+			return "-"
+		}
+		joined := strings.Join(ss, ",")
+		if len(joined) > 28 {
+			return joined[:25] + "..."
+		}
+		return joined
+	}
+	envCell := func(env map[string]string) string {
+		if len(env) == 0 {
+			return "-"
+		}
+		keys := make([]string, 0, len(env))
+		for k := range env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		pairs := make([]string, len(keys))
+		for i, k := range keys {
+			pairs[i] = k + "=" + env[k]
+		}
+		joined := strings.Join(pairs, ",")
+		if len(joined) > 30 {
+			return joined[:27] + "..."
+		}
+		return joined
+	}
+
+	// Build table rows from discovered layers.
+	type tableRow struct {
+		level, kind, place string
+		ver, image         string
+		pkgs, env          string
+	}
+
+	// Build rows in reverse discovery order (lowest priority first).
+	var rows []tableRow
+	for i := len(layers) - 1; i >= 0; i-- {
+		l := layers[i]
+		tag := pathTag[l.Path]
+		raw, _ := os.ReadFile(l.Path)
+		var lv testConfig
+		_ = yaml.Unmarshal(raw, &lv)
+
+		ver := "-"
+		if lv.Version != 0 {
+			ver = fmt.Sprintf("%d", lv.Version)
+		}
+		rows = append(rows, tableRow{
+			level: tag.level,
+			kind:  tag.kind,
+			place: tag.place,
+			ver:   ver,
+			image: cell(lv.Build.Image),
+			pkgs:  listCell(lv.Packages),
+			env:   envCell(lv.Env),
+		})
+	}
+
+	// Merged row at the bottom.
+	mergedVer := fmt.Sprintf("%d", cfg.Version)
+	rows = append(rows, tableRow{
+		level: "MERGED",
+		ver:   mergedVer,
+		image: cell(cfg.Build.Image),
+		pkgs:  listCell(cfg.Packages),
+		env:   envCell(cfg.Env),
+	})
+
+	// Compute column widths.
+	const cols = 7
+	colW := [cols]int{}
+	headers := [cols]string{"LAYER", "TYPE", "PLACE", "VER(scalar)", "IMAGE(scalar)", "PKGS(union)", "ENV(map)"}
+	for i, h := range headers {
+		colW[i] = len(h)
+	}
+	for _, r := range rows {
+		vals := [cols]string{r.level, r.kind, r.place, r.ver, r.image, r.pkgs, r.env}
+		for c, v := range vals {
+			if len(v) > colW[c] {
+				colW[c] = len(v)
+			}
+		}
+	}
+
+	fmtRow := func(vals [cols]string) string {
+		return fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %s",
+			colW[0], vals[0], colW[1], vals[1], colW[2], vals[2],
+			colW[3], vals[3], colW[4], vals[4], colW[5], vals[5], vals[6])
+	}
+
+	t.Logf("\n=== VALUES ===")
+	t.Log(fmtRow(headers))
+	sepLen := 0
+	for _, w := range colW {
+		sepLen += w + 2
+	}
+	for j, r := range rows {
+		if j == len(rows)-1 {
+			// Merged row: scalars inline, PKGS and ENV expanded as
+			// multi-line cells aligned under their column headers.
+			t.Logf("  %s", strings.Repeat("-", sepLen))
+
+			var pkgLines, envLines []string
+			for _, p := range cfg.Packages {
+				pkgLines = append(pkgLines, p)
+			}
+			envKeys := make([]string, 0, len(cfg.Env))
+			for k := range cfg.Env {
+				envKeys = append(envKeys, k)
+			}
+			sort.Strings(envKeys)
+			for _, k := range envKeys {
+				envLines = append(envLines, k+"="+cfg.Env[k])
+			}
+
+			// First line: scalars + first pkg + first env.
+			firstPkg, firstEnv := "-", "-"
+			if len(pkgLines) > 0 {
+				firstPkg = pkgLines[0]
+			}
+			if len(envLines) > 0 {
+				firstEnv = envLines[0]
+			}
+			t.Log(fmtRow([cols]string{r.level, r.kind, r.place, r.ver, r.image, firstPkg, firstEnv}))
+
+			// Continuation lines: pad scalar columns, align under PKGS and ENV.
+			pad := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s",
+				colW[0], "", colW[1], "", colW[2], "", colW[3], "", colW[4], "")
+			maxLines := len(pkgLines)
+			if len(envLines) > maxLines {
+				maxLines = len(envLines)
+			}
+			for k := 1; k < maxLines; k++ {
+				pk, ev := "", ""
+				if k < len(pkgLines) {
+					pk = pkgLines[k]
+				}
+				if k < len(envLines) {
+					ev = envLines[k]
+				}
+				t.Logf("%s  %-*s  %s", pad, colW[5], pk, ev)
+			}
+		} else {
+			t.Log(fmtRow([cols]string{r.level, r.kind, r.place, r.ver, r.image, r.pkgs, r.env}))
+		}
+	}
+
+	// --- Invariant: decoy files never appear in layers ---
+	layerPaths := make(map[string]bool, len(layers))
+	for _, l := range layers {
+		layerPaths[l.Path] = true
+	}
+	for _, ignored := range wantIgnored {
+		assert.False(t, layerPaths[ignored],
+			"decoy file must not be discovered: %s", ignored)
+	}
+	assert.NotContains(t, cfg.Name, "DECOY", "decoy name must not win merge")
+	for _, pkg := range cfg.Packages {
+		assert.NotContains(t, pkg, "DECOY", "decoy package must not appear in union")
+	}
+
+	// --- Invariant: explicit user path is last layer ---
+	assert.Equal(t, userPath, layers[len(layers)-1].Path,
+		"explicit user config is always lowest priority")
+
+	// --- Invariant: walk-up layers are CWD-first ---
+	walkUpDir := func(layerPath string) string {
+		dir := filepath.Dir(layerPath)
+		if filepath.Base(dir) == ".clawker" {
+			dir = filepath.Dir(dir)
+		}
+		return dir
+	}
+	for i := 0; i < len(layers)-2; i++ {
+		thisDir := walkUpDir(layers[i].Path)
+		nextDir := walkUpDir(layers[i+1].Path)
+		if thisDir != nextDir {
+			thisRel, _ := filepath.Rel(root, thisDir)
+			nextRel, _ := filepath.Rel(root, nextDir)
+			thisDepth := strings.Count(thisRel, string(filepath.Separator))
+			nextDepth := strings.Count(nextRel, string(filepath.Separator))
+			if thisDepth < nextDepth {
+				t.Errorf("walk-up ordering violated: layer[%d] (dir=%s) is shallower than layer[%d] (dir=%s)",
+					i, thisRel, i+1, nextRel)
+			}
+		}
+	}
+
+	// --- Oracle: compute expected merge from spec, independent of prod code ---
+	//
+	// Spec rules encoded:
+	//   - Depth:    deeper walk-up level = higher priority
+	//   - Filename: first in WithFilenames = higher priority at same depth
+	//              (test calls WithFilenames("config.local.yaml", "config.yaml")
+	//               → local wins over main at same depth)
+	//   - Scalars:  last writer wins (iterate low→high, overwrite)
+	//   - Union:    accumulate unique, preserving insertion order
+	//   - Map:      accumulate keys, conflicts won by higher priority
+	type oracleResult struct {
+		name     string
+		version  int
+		image    string
+		packages []string
+		env      map[string]string
+	}
+
+	applyOracle := func(o *oracleResult, gen genContent, name string) {
+		o.name = name // always set by toYAML
+		if gen.version > 0 {
+			o.version = gen.version
+		}
+		if gen.image != "" {
+			o.image = gen.image
+		}
+		for _, pkg := range gen.packages {
+			if !slices.Contains(o.packages, pkg) {
+				o.packages = append(o.packages, pkg)
+			}
+		}
+		maps.Copy(o.env, gen.env)
+	}
+
+	// Start with user config (lowest priority — explicit path layer).
+	oracle := oracleResult{
+		name:     "user",
+		version:  1,
+		image:    "ubuntu",
+		packages: []string{"pkg-user"},
+		env:      map[string]string{"EDITOR": "vim"},
+	}
+
+	// Apply walk-up layers: shallowest → deepest, main → local at each level.
+	// main applied first (lower priority), local applied second (overwrites).
+	for _, p := range placements {
+		if p.hasMain {
+			applyOracle(&oracle, p.mainGen, p.name+"-main")
+		}
+		if p.hasLocal {
+			applyOracle(&oracle, p.localGen, p.name+"-local")
+		}
+	}
+
+	// Print oracle expectation for debugging.
+	t.Logf("\n=== ORACLE (expected) ===")
+	t.Logf("  name:     %s", oracle.name)
+	t.Logf("  version:  %d", oracle.version)
+	t.Logf("  image:    %s", oracle.image)
+	t.Logf("  packages: %v", oracle.packages)
+	oracleEnvKeys := make([]string, 0, len(oracle.env))
+	for k := range oracle.env {
+		oracleEnvKeys = append(oracleEnvKeys, k)
+	}
+	sort.Strings(oracleEnvKeys)
+	for _, k := range oracleEnvKeys {
+		t.Logf("    %s=%s", k, oracle.env[k])
+	}
+
+	// --- Assert: prod merge matches oracle ---
+	assert.Equal(t, oracle.name, cfg.Name, "oracle: scalar name")
+	assert.Equal(t, oracle.version, cfg.Version, "oracle: scalar version")
+	assert.Equal(t, oracle.image, cfg.Build.Image, "oracle: scalar image")
+	assert.Equal(t, oracle.packages, cfg.Packages, "oracle: union packages (ordered)")
+	assert.Equal(t, oracle.env, cfg.Env, "oracle: map env")
+}
+
+// TestStore_WalkUpGolden is a fixed-seed regression guard for the walk-up
+// merge. It uses hardcoded golden values captured from a known-correct state.
+//
+// The golden values are struct literals in this source file — there is NO
+// auto-update mechanism. To re-bless after a legitimate behavior change:
+//
+//	make storage-golden
+//
+// That command prints the current merge result for manual review. The
+// developer must then hand-edit the golden values below and commit.
+func TestStore_WalkUpGolden(t *testing.T) {
+	const goldenSeed uint64 = 42
+
+	rng := rand.New(rand.NewPCG(0, goldenSeed))
+
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "project")
+	levels := []string{
+		projectDir,
+		filepath.Join(projectDir, "level1"),
+		filepath.Join(projectDir, "level1", "level2"),
+		filepath.Join(projectDir, "level1", "level2", "level3"),
+	}
+	levelNames := []string{"project", "level1", "level2", "level3"}
+	userConfigDir := filepath.Join(root, "user", "config")
+	dataDir := filepath.Join(root, "data")
+
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+
+	registryYAML := fmt.Sprintf("projects:\n  - root: %s\n", projectDir)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dataDir, "registry.yaml"),
+		[]byte(registryYAML), 0o644,
+	))
+
+	// --- Value pools (must match randomized test exactly) ---
+	imagePool := []string{"go:1.22", "node:20", "python:3", "rust:1.80", "ruby:3.3"}
+	pkgPool := []string{"git", "curl", "jq", "vim", "tmux", "rg", "fd", "bat", "fzf", "htop"}
+	envKeyPool := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+
+	pickN := func(pool []string, n int) []string {
+		if n > len(pool) {
+			n = len(pool)
+		}
+		perm := rng.Perm(len(pool))
+		out := make([]string, n)
+		for i := range n {
+			out[i] = pool[perm[i]]
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	type genContent struct {
+		version  int
+		image    string
+		packages []string
+		env      map[string]string
+	}
+
+	genLayer := func(level string) genContent {
+		c := genContent{}
+		if rng.IntN(2) == 0 {
+			c.version = rng.IntN(999) + 1
+		}
+		if rng.IntN(2) == 0 {
+			c.image = imagePool[rng.IntN(len(imagePool))]
+		}
+		if rng.IntN(5) > 0 {
+			c.packages = append([]string{"pkg-" + level}, pickN(pkgPool, rng.IntN(3))...)
+		}
+		if rng.IntN(2) == 0 {
+			staticKey := strings.ToUpper(level)
+			c.env = map[string]string{staticKey: "yes"}
+			if rng.IntN(2) == 0 {
+				rk := pickN(envKeyPool, 1)[0]
+				c.env[rk] = level
+			}
+		}
+		return c
+	}
+
+	toYAML := func(name string, c genContent) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, "name: %s\n", name)
+		if c.version > 0 {
+			fmt.Fprintf(&b, "version: %d\n", c.version)
+		}
+		if c.image != "" {
+			fmt.Fprintf(&b, "build:\n  image: %s\n", c.image)
+		}
+		if len(c.packages) > 0 {
+			b.WriteString("packages:\n")
+			for _, p := range c.packages {
+				fmt.Fprintf(&b, "  - %s\n", p)
+			}
+		}
+		if len(c.env) > 0 {
+			b.WriteString("env:\n")
+			keys := make([]string, 0, len(c.env))
+			for k := range c.env {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				fmt.Fprintf(&b, "  %s: %s\n", k, c.env[k])
+			}
+		}
+		return b.String()
+	}
+
+	type levelPlacement struct {
+		name       string
+		dir        string
+		useDirForm bool
+		hasMain    bool
+		hasLocal   bool
+		hasDecoy   bool
+		mainGen    genContent
+		localGen   genContent
+	}
+
+	placements := make([]levelPlacement, len(levels))
+	for i, dir := range levels {
+		isDeepest := i == len(levels)-1
+		p := levelPlacement{
+			name:       levelNames[i],
+			dir:        dir,
+			useDirForm: rng.IntN(2) == 0,
+			hasMain:    rng.IntN(3) > 0,
+			hasLocal:   rng.IntN(3) > 0,
+		}
+		if isDeepest {
+			p.hasMain = true
+			p.hasLocal = true
+		} else if !p.hasMain && !p.hasLocal {
+			p.hasMain = true
+		}
+		if p.useDirForm {
+			p.hasDecoy = rng.IntN(2) == 0
+		}
+		if p.hasMain {
+			p.mainGen = genLayer(p.name)
+		}
+		if p.hasLocal {
+			p.localGen = genLayer(p.name)
+		}
+		placements[i] = p
+	}
+
+	writeFile := func(path, content string) {
+		t.Helper()
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	}
+
+	for _, p := range placements {
+		require.NoError(t, os.MkdirAll(p.dir, 0o755))
+		if p.useDirForm {
+			clawkerDir := filepath.Join(p.dir, ".clawker")
+			require.NoError(t, os.MkdirAll(clawkerDir, 0o755))
+			if p.hasMain {
+				writeFile(filepath.Join(clawkerDir, "config.yaml"), toYAML(p.name+"-main", p.mainGen))
+			}
+			if p.hasLocal {
+				writeFile(filepath.Join(clawkerDir, "config.local.yaml"), toYAML(p.name+"-local", p.localGen))
+			}
+			if p.hasDecoy {
+				writeFile(filepath.Join(p.dir, ".config.yaml"), "name: DECOY\npackages:\n  - DECOY\n")
+			}
+		} else {
+			if p.hasMain {
+				writeFile(filepath.Join(p.dir, ".config.yaml"), toYAML(p.name+"-main", p.mainGen))
+			}
+			if p.hasLocal {
+				writeFile(filepath.Join(p.dir, ".config.local.yaml"), toYAML(p.name+"-local", p.localGen))
+			}
+		}
+	}
+
+	userPath := filepath.Join(userConfigDir, "config.yaml")
+	writeFile(userPath, "name: user\nversion: 1\nbuild:\n  image: ubuntu\npackages:\n  - pkg-user\nenv:\n  EDITOR: vim\n")
+
+	t.Setenv("CLAWKER_DATA_DIR", dataDir)
+	t.Chdir(levels[len(levels)-1])
+
+	store, err := NewStore[testConfig](
+		WithFilenames("config.local.yaml", "config.yaml"),
+		WithWalkUp(),
+		WithPaths(userConfigDir),
+	)
+	require.NoError(t, err)
+	cfg := store.Read()
+
+	// --- Bless mode: print current values for manual review ---
+	if os.Getenv("STORAGE_GOLDEN_BLESS") != "" {
+		t.Logf("=== GOLDEN BLESS (seed=%d) ===", goldenSeed)
+		t.Logf("Name:     %q", cfg.Name)
+		t.Logf("Version:  %d", cfg.Version)
+		t.Logf("Image:    %q", cfg.Build.Image)
+		t.Logf("Packages: %#v", cfg.Packages)
+		envKeys := make([]string, 0, len(cfg.Env))
+		for k := range cfg.Env {
+			envKeys = append(envKeys, k)
+		}
+		sort.Strings(envKeys)
+		t.Logf("Env:")
+		for _, k := range envKeys {
+			t.Logf("  %q: %q,", k, cfg.Env[k])
+		}
+		t.Skip("STORAGE_GOLDEN_BLESS: values printed above — hand-edit golden and commit")
+	}
+
+	// --- Golden: hardcoded values from seed=42, blessed at known-correct state ---
+	// To update: make storage-golden
+	goldenName := "level3-local"
+	goldenVersion := 710
+	goldenImage := "go:1.22"
+	goldenPackages := []string{"pkg-user", "pkg-project", "git", "vim", "pkg-level1", "pkg-level2", "jq", "pkg-level3"}
+	goldenEnv := map[string]string{
+		"B":       "project",
+		"EDITOR":  "vim",
+		"F":       "level1",
+		"LEVEL1":  "yes",
+		"PROJECT": "yes",
+	}
+
+	assert.Equal(t, goldenName, cfg.Name, "golden: name")
+	assert.Equal(t, goldenVersion, cfg.Version, "golden: version")
+	assert.Equal(t, goldenImage, cfg.Build.Image, "golden: image")
+	assert.Equal(t, goldenPackages, cfg.Packages, "golden: packages")
+	assert.Equal(t, goldenEnv, cfg.Env, "golden: env")
+}
+
 func TestStore_Dirs_DedupWithPaths(t *testing.T) {
 	// If the same directory is passed to both WithDirs and WithPaths,
 	// WithDirs (dual placement) discovers the dotfile form while WithPaths
@@ -950,4 +1802,204 @@ func TestStore_Dirs_DedupWithPaths(t *testing.T) {
 	// WithPaths probes dir/config.yaml (plain form) which doesn't exist.
 	assert.Len(t, store.Layers(), 1)
 	assert.Equal(t, "from-dotfile", store.Get().Name)
+}
+
+func TestStore_MutationWithoutSet(t *testing.T) {
+	// Two callers Read() the snapshot, mutate it directly (bypassing Set),
+	// then call Write(). Because Set() was never called, dirty is never
+	// set — Write() is a no-op and mutations are silently lost.
+	dir := t.TempDir()
+	store, err := NewFromString[testConfig](testFullData())
+	require.NoError(t, err)
+	store.opts.paths = []string{dir}
+	store.opts.filenames = []string{"config.yaml"}
+
+	// Writer A reads snapshot, mutates directly.
+	snapA := store.Read()
+	snapA.Name = "writer-A"
+	snapA.Version = 100
+	err = store.Write()
+	require.NoError(t, err)
+
+	// Writer B reads snapshot (same pointer), mutates directly.
+	snapB := store.Read()
+	snapB.Name = "writer-B"
+	snapB.Build.Image = "alpine:latest"
+	err = store.Write()
+	require.NoError(t, err)
+
+	// File was never created — Write() was a no-op both times.
+	_, statErr := os.Stat(filepath.Join(dir, "config.yaml"))
+	assert.True(t, os.IsNotExist(statErr),
+		"file should not exist — Write was no-op (dirty never set)")
+
+	// The canonical tree is completely untouched.
+	tree, treeErr := unmarshal[testConfig](store.tree)
+	require.NoError(t, treeErr)
+	assert.Equal(t, "myproject", tree.Name, "tree retains original name")
+	assert.Equal(t, 1, tree.Version, "tree retains original version")
+	assert.Equal(t, "node:20", tree.Build.Image, "tree retains original image")
+
+	t.Log("Direct mutation: snapshot dirty in-memory but tree + disk untouched.")
+}
+
+func TestStore_MutationWithSet(t *testing.T) {
+	t.Run("two Sets on different fields — both survive", func(t *testing.T) {
+		dir := t.TempDir()
+		store, err := NewFromString[testConfig](testFullData())
+		require.NoError(t, err)
+		store.opts.paths = []string{dir}
+		store.opts.filenames = []string{"config.yaml"}
+
+		// Caller A sets name.
+		require.NoError(t, store.Set(func(c *testConfig) {
+			c.Name = "set-by-A"
+		}))
+
+		// Caller B sets version.
+		require.NoError(t, store.Set(func(c *testConfig) {
+			c.Version = 999
+		}))
+
+		cfg := store.Read()
+		assert.Equal(t, "set-by-A", cfg.Name, "name from caller A")
+		assert.Equal(t, 999, cfg.Version, "version from caller B")
+		assert.Equal(t, "node:20", cfg.Build.Image, "untouched field preserved")
+
+		// Write and verify on disk.
+		require.NoError(t, store.Write())
+		disk := mustReadConfig(t, filepath.Join(dir, "config.yaml"))
+		assert.Equal(t, "set-by-A", disk.Name)
+		assert.Equal(t, 999, disk.Version)
+
+		t.Logf("Both mutations survived: Name=%q Version=%d", cfg.Name, cfg.Version)
+	})
+
+	t.Run("two Sets on same field — second wins", func(t *testing.T) {
+		dir := t.TempDir()
+		store, err := NewFromString[testConfig](testFullData())
+		require.NoError(t, err)
+		store.opts.paths = []string{dir}
+		store.opts.filenames = []string{"config.yaml"}
+
+		require.NoError(t, store.Set(func(c *testConfig) {
+			c.Name = "writer-A"
+		}))
+		require.NoError(t, store.Set(func(c *testConfig) {
+			c.Name = "writer-B"
+		}))
+
+		cfg := store.Read()
+		assert.Equal(t, "writer-B", cfg.Name, "second Set wins")
+		assert.Equal(t, 1, cfg.Version)
+		assert.Equal(t, "node:20", cfg.Build.Image)
+
+		// Verify disk round-trip.
+		require.NoError(t, store.Write())
+		disk := mustReadConfig(t, filepath.Join(dir, "config.yaml"))
+		assert.Equal(t, "writer-B", disk.Name, "disk matches second Set")
+
+		t.Logf("Same-field result: winner=%q (second Set wins deterministically)", cfg.Name)
+	})
+
+	t.Run("snapshot isolation — held Read unaffected by Set", func(t *testing.T) {
+		store, err := NewFromString[testConfig](testFullData())
+		require.NoError(t, err)
+
+		before := store.Read()
+		assert.Equal(t, "myproject", before.Name)
+
+		require.NoError(t, store.Set(func(c *testConfig) {
+			c.Name = "mutated"
+			c.Version = 42
+		}))
+
+		// Held snapshot is still the old value.
+		assert.Equal(t, "myproject", before.Name, "held snapshot is immutable")
+		assert.Equal(t, 1, before.Version, "held snapshot is immutable")
+
+		// Fresh Read() sees the new value.
+		after := store.Read()
+		assert.Equal(t, "mutated", after.Name)
+		assert.Equal(t, 42, after.Version)
+
+		t.Log("Snapshot isolation: old Read() unaffected by Set()")
+	})
+}
+
+func TestStore_Set_ClearMapPersistsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFromString[testConfig](testFullData())
+	require.NoError(t, err)
+
+	store.opts.paths = []string{dir}
+	store.opts.filenames = []string{"config.yaml"}
+
+	require.NoError(t, store.Set(func(c *testConfig) {
+		c.Env = map[string]string{}
+	}))
+	require.NoError(t, store.Write())
+
+	onDisk := mustReadConfig(t, filepath.Join(dir, "config.yaml"))
+	assert.Empty(t, onDisk.Env, "clearing map via Set should persist an empty map")
+}
+
+func TestStore_Merge_UnionHandlesNonComparableValues(t *testing.T) {
+	type cfg struct {
+		Items []map[string]string `yaml:"items" merge:"union"`
+	}
+
+	tags := buildTagRegistry[cfg]()
+
+	base := map[string]any{
+		"items": []any{
+			map[string]any{"name": "a"},
+		},
+	}
+	layers := []layer{
+		{
+			path:     "layer.yaml",
+			filename: "layer.yaml",
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"name": "b"},
+				},
+			},
+		},
+	}
+
+	require.NotPanics(t, func() {
+		result, _ := merge(base, layers, tags)
+		items, ok := result["items"].([]any)
+		require.True(t, ok)
+		assert.Len(t, items, 2)
+	})
+}
+
+func TestStore_Merge_UnionWithImplicitYAMLFieldName(t *testing.T) {
+	type cfg struct {
+		Items []string `yaml:",omitempty" merge:"union"`
+	}
+
+	tags := buildTagRegistry[cfg]()
+
+	base := map[string]any{
+		"items": []any{"a"},
+	}
+	layers := []layer{
+		{
+			path:     "layer.yaml",
+			filename: "layer.yaml",
+			data: map[string]any{
+				"items": []any{"b"},
+			},
+		},
+	}
+
+	result, _ := merge(base, layers, tags)
+	cfgResult, err := unmarshal[cfg](result)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"a", "b"}, cfgResult.Items,
+		"merge union should still apply when yaml tag uses implicit field name")
 }

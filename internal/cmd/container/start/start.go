@@ -193,7 +193,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.L
 	// Set up TTY if the container has it and we're interactive
 	var pty *docker.PTYHandler
 	if hasTTY && opts.Interactive {
-		pty = docker.NewPTYHandler(nil)
+		pty = docker.NewPTYHandler(log)
 		if err := pty.Setup(); err != nil {
 			return fmt.Errorf("failed to set up terminal: %w", err)
 		}

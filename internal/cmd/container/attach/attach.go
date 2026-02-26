@@ -153,7 +153,7 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 	// Set up TTY if container has one
 	var pty *docker.PTYHandler
 	if hasTTY && !opts.NoStdin {
-		pty = docker.NewPTYHandler(nil)
+		pty = docker.NewPTYHandler(log)
 		if err := pty.Setup(); err != nil {
 			return fmt.Errorf("failed to set up terminal: %w", err)
 		}

@@ -277,7 +277,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	// Set up TTY if enabled
 	var pty *docker.PTYHandler
 	if containerOpts.TTY && containerOpts.Stdin {
-		pty = docker.NewPTYHandler(nil)
+		pty = docker.NewPTYHandler(log)
 		if err := pty.Setup(); err != nil {
 			return fmt.Errorf("failed to set up terminal: %w", err)
 		}

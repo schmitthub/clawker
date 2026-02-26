@@ -60,7 +60,7 @@ All closures use `sync.Once` for lazy single-initialization within the `config.C
 Logger initialization happens inside `ioStreams(f)`:
 1. Reads `f.Config().UserSettings()` (Viper already resolved ENV > config > defaults)
 2. Calls `logger.NewLogger()` with file config (rotation, compression) and optional OTEL config
-3. Sets `ios.Logger = &logger.Log` (`*zerolog.Logger` satisfies `iostreams.Logger`)
+3. Logger is a separate Factory lazy noun (`f.Logger`), not part of IOStreams
 4. Falls back to `logger.Init()` (nop) if `LogsDir()` fails
 
 Previously, logger init lived in `root.go`'s `initializeLogger()` — now consolidated into the factory.

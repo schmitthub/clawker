@@ -2,6 +2,7 @@ package storage
 
 import (
 	"reflect"
+	"strings"
 )
 
 // provenance maps field paths to the index of the layer that provided the
@@ -125,20 +126,22 @@ func mergeTrees(dst, src map[string]any, prov provenance, layerIdx int, prefix s
 
 // unionAny merges two []any slices, deduplicating by value.
 func unionAny(dst, src []any) []any {
-	seen := make(map[any]bool)
 	result := make([]any, 0, len(dst)+len(src))
 
-	for _, v := range dst {
-		if !seen[v] {
-			seen[v] = true
-			result = append(result, v)
+	appendUnique := func(value any) {
+		for _, existing := range result {
+			if reflect.DeepEqual(existing, value) {
+				return
+			}
 		}
+		result = append(result, value)
+	}
+
+	for _, v := range dst {
+		appendUnique(v)
 	}
 	for _, v := range src {
-		if !seen[v] {
-			seen[v] = true
-			result = append(result, v)
-		}
+		appendUnique(v)
 	}
 
 	return result
@@ -175,7 +178,7 @@ func fieldPathKey(prefix string, field reflect.StructField) string {
 	tag := field.Tag.Get("yaml")
 	name := yamlTagName(tag)
 	if name == "" {
-		name = field.Name
+		name = strings.ToLower(field.Name)
 	}
 	if prefix == "" {
 		return name

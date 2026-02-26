@@ -17,7 +17,7 @@ import (
 	termocks "github.com/schmitthub/clawker/internal/term/mocks"
 )
 
-var DefaultWidth = 80
+const DefaultWidth = 80
 
 type fileWriter interface {
 	io.Writer

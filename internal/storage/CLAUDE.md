@@ -136,6 +136,22 @@ Consumer mock APIs stay unchanged. Callers never see `Store[T]` directly — the
 
 Test env vars: `CLAWKER_DATA_DIR` (isolate registry), `CLAWKER_TEST_REPO_DIR` (walk-up tests).
 
+### Recent Hardening (2026-02)
+
+The following regressions were reproduced with tests and fixed in package logic:
+
+- **Empty map clear persistence**: `Set` + `Write` now correctly persists explicit empty maps (e.g. `env: {}`) instead of retaining stale keys from prior tree state.
+- **Union panic on non-comparable elements**: `merge:"union"` no longer panics when slices contain unhashable values (e.g. maps inside `[]any`); dedupe is deep-equality based.
+- **Implicit YAML field-name tag mapping**: merge-tag lookup now correctly handles tags like `yaml:",omitempty"` by using YAML default field naming (`strings.ToLower(field.Name)`), so `merge:"union"` still applies.
+- **`walkType` pointer-dereference order**: `walkType` must dereference `reflect.Ptr` before the `reflect.Struct` guard. Flipped order silently returns an empty tag registry for pointer schema types (`*T`), causing union slices to fall back to overwrite. Not caught by oracle/golden tests because all callers pre-dereference before calling `walkType`.
+
+Regression tests added:
+
+- `TestStore_Set_ClearMapPersistsEmpty`
+- `TestStore_Merge_UnionHandlesNonComparableValues`
+- `TestStore_Merge_UnionWithImplicitYAMLFieldName`
+- `TestWalkType_PointerToStruct`
+
 ## Oracle and Golden Test Strategy
 
 Defense in depth — two independent guards for merge correctness:

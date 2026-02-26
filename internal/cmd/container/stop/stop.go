@@ -83,6 +83,10 @@ Container names can be:
 func stopRun(ctx context.Context, opts *StopOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
 
 	// Resolve container names
 	containers := opts.Containers
@@ -109,7 +113,7 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 
 	var errs []error
 	for _, name := range containers {
-		if err := stopContainer(ctx, client, name, opts); err != nil {
+		if err := stopContainer(ctx, client, name, opts, log); err != nil {
 			errs = append(errs, err)
 			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, err)
 		} else {
@@ -123,7 +127,7 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 	return nil
 }
 
-func stopContainer(ctx context.Context, client *docker.Client, name string, opts *StopOptions) error {
+func stopContainer(ctx context.Context, client *docker.Client, name string, opts *StopOptions, log *logger.Logger) error {
 	// Find container by name
 	container, err := client.FindContainerByName(ctx, name)
 	if err != nil {
@@ -137,9 +141,7 @@ func stopContainer(ctx context.Context, client *docker.Client, name string, opts
 	if opts.SocketBridge != nil {
 		if mgr := opts.SocketBridge(); mgr != nil {
 			if err := mgr.StopBridge(container.ID); err != nil {
-				if log, logErr := opts.Logger(); logErr == nil {
-					log.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
-				}
+				log.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
 			}
 		}
 	}

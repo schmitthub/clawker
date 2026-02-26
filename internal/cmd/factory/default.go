@@ -62,12 +62,19 @@ func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config: %w", err)
 	}
+	settings := cfg.SettingsStore().Read()
+	loggingCfg := settings.Logging
+
+	// File logging is on by default for user diagnostics.
+	// Only skip if explicitly disabled via settings.yaml.
+	if loggingCfg.FileEnabled != nil && !*loggingCfg.FileEnabled {
+		return logger.Nop(), nil
+	}
+
 	logsDir, err := cfg.LogsSubdir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get logs subdir: %w", err)
 	}
-	settings := cfg.SettingsStore().Read()
-	loggingCfg := settings.Logging
 	monitoringCfg := settings.Monitoring
 
 	// Build OTEL config from settings if enabled
@@ -162,8 +169,8 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 			}
 			log, logErr := f.Logger()
 			if logErr != nil {
-				// Non-fatal: use nop logger if logger initialization fails.
-				log = nil
+				clientErr = fmt.Errorf("failed to get logger: %w", logErr)
+				return
 			}
 			client, clientErr = docker.NewClient(ctx, cfg, log)
 			if clientErr == nil {
