@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	containershared "github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -230,7 +231,12 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 		cmd = append(cmd, "--append-system-prompt", opts.AppendSystemPrompt)
 	}
 
-	// 5. Build per-iteration container factory
+	// 5. Safety check: refuse to run loop mode from home directory or above
+	if containershared.IsOutsideHome(".") {
+		return fmt.Errorf("loop mode is not supported outside of, or in, the home directory")
+	}
+
+	// 6. Build per-iteration container factory
 	createContainer := shared.MakeCreateContainerFunc(&shared.LoopContainerConfig{
 		Client:         client,
 		Command:        cmd,

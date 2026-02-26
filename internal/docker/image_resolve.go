@@ -12,6 +12,7 @@ type ImageSource string
 const (
 	ImageSourceExplicit ImageSource = "explicit" // User specified via CLI or args
 	ImageSourceProject  ImageSource = "project"  // Found via project label search
+	ImageSourceConfig   ImageSource = "config"   // From merged config (build.image)
 )
 
 // ResolvedImage contains the result of image resolution with source tracking.
@@ -66,7 +67,11 @@ func (c *Client) ResolveImage(ctx context.Context, projectName string) (string, 
 
 // ResolveImageWithSource resolves the image to use for container operations.
 // projectName is the resolved project identity (from ProjectManager); empty for unregistered projects.
-// Resolution: finds a clawker-managed image matching the project label with :latest tag.
+//
+// Resolution order:
+//  1. Docker label lookup — clawker-managed image matching project label with :latest tag
+//  2. Config fallback — merged build.image from all config layers (project, user, defaults)
+//
 // Returns nil if no image could be resolved (caller decides what to do).
 func (c *Client) ResolveImageWithSource(ctx context.Context, projectName string) (*ResolvedImage, error) {
 	projectImage, err := c.findProjectImage(ctx, projectName)
@@ -75,6 +80,10 @@ func (c *Client) ResolveImageWithSource(ctx context.Context, projectName string)
 	}
 	if projectImage != "" {
 		return &ResolvedImage{Reference: projectImage, Source: ImageSourceProject}, nil
+	}
+
+	if configImage := c.cfg.Project().Build.Image; configImage != "" {
+		return &ResolvedImage{Reference: configImage, Source: ImageSourceConfig}, nil
 	}
 
 	return nil, nil

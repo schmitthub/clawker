@@ -151,6 +151,20 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		return fmt.Errorf("cannot use both --name and --agent")
 	}
 
+	// Warn if workspace mount would include the home directory or higher
+	if shared.IsOutsideHome(".") {
+		confirmed, promptErr := opts.Prompter().Confirm(
+			"WARNING: This will mount your entire home directory (or higher) into a container. Continue?",
+			false,
+		)
+		if promptErr != nil {
+			return promptErr
+		}
+		if !confirmed {
+			return cmdutil.SilentError
+		}
+	}
+
 	// --- Phase B: Create container with spinner ---
 
 	events := make(chan shared.CreateContainerEvent, 16)

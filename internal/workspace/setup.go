@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -92,14 +93,18 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		return nil, fmt.Errorf("invalid workspace mode: %w", err)
 	}
 
-	// Load .clawkerignore patterns
+	// Load .clawkerignore patterns (empty when no project is registered)
+	var ignorePatterns []string
 	ignoreFile, err := cfg.Cfg.GetProjectIgnoreFile()
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve ignore file: %w", err)
-	}
-	ignorePatterns, err := docker.LoadIgnorePatterns(ignoreFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load %s: %w", ignoreFile, err)
+		if !errors.Is(err, config.ErrNotInProject) {
+			return nil, fmt.Errorf("failed to resolve ignore file: %w", err)
+		}
+	} else {
+		ignorePatterns, err = docker.LoadIgnorePatterns(ignoreFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load %s: %w", ignoreFile, err)
+		}
 	}
 
 	// Create workspace strategy
