@@ -27,12 +27,14 @@ Each package in the dependency DAG must provide test utilities so dependents can
 
 | Package | Test Utils | Provides |
 |---------|------------|----------|
+| `internal/testenv` | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
+| `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
 
 ## Config Package Test Double How-To
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // Harness provides an isolated filesystem environment for integration tests.
@@ -24,67 +25,41 @@ type RunResult struct {
 	Err      error
 }
 
+// SetupResult holds the resolved paths from NewIsolatedFS.
 type SetupResult struct {
 	BaseDir    string
 	ProjectDir string
 	ConfigDir  string
 	DataDir    string
 	StateDir   string
+	CacheDir   string
 }
 
+// FSOptions allows overriding the project directory name.
 type FSOptions struct {
-	ProjectDir string
-	ConfigDir  string
-	DataDir    string
-	StateDir   string
+	ProjectDir string // subdirectory name under base (default: "testproject")
 }
 
-// New creates an isolated test environment and returns a Harness.
+// NewIsolatedFS creates an isolated test environment.
 //
-// The caller passes a pre-built *cmdutil.Factory. The harness:
-//  1. Creates temp dirs for config, data, state, and project
-//  2. Sets CLAWKER_CONFIG_DIR, CLAWKER_DATA_DIR, CLAWKER_STATE_DIR via t.Setenv
-//  3. Chdirs to projectDir (restored on cleanup)
+// Delegates XDG directory setup to testenv.New, then adds a project directory
+// and chdirs into it (restored on cleanup).
 func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 	h.T.Helper()
 
 	if opts == nil {
 		opts = &FSOptions{}
 	}
-
 	if opts.ProjectDir == "" {
 		opts.ProjectDir = "testproject"
 	}
-	if opts.ConfigDir == "" {
-		opts.ConfigDir = "config"
-	}
-	if opts.DataDir == "" {
-		opts.DataDir = "data"
-	}
-	if opts.StateDir == "" {
-		opts.StateDir = "state"
-	}
 
-	// Resolve symlinks on the base temp dir so registry paths match
-	// os.Getwd() after chdir (macOS: /var → /private/var).
-	base, err := filepath.EvalSymlinks(h.T.TempDir())
-	if err != nil {
-		h.T.Fatalf("harness: resolving temp dir symlinks: %v", err)
-	}
-	configDir := filepath.Join(base, opts.ConfigDir)
-	dataDir := filepath.Join(base, opts.DataDir)
-	stateDir := filepath.Join(base, opts.StateDir)
-	projectDir := filepath.Join(base, opts.ProjectDir)
+	env := testenv.New(h.T)
 
-	for _, dir := range []string{configDir, dataDir, stateDir, projectDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			h.T.Fatalf("harness: creating dir %s: %v", dir, err)
-		}
+	projectDir := filepath.Join(env.Dirs.Base, opts.ProjectDir)
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		h.T.Fatalf("harness: creating project dir %s: %v", projectDir, err)
 	}
-
-	h.T.Setenv("CLAWKER_CONFIG_DIR", configDir)
-	h.T.Setenv("CLAWKER_DATA_DIR", dataDir)
-	h.T.Setenv("CLAWKER_STATE_DIR", stateDir)
 
 	// Chdir to project directory so config discovery works from CWD.
 	prevDir, err := os.Getwd()
@@ -99,11 +74,12 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 	})
 
 	return &SetupResult{
-		BaseDir:    base,
+		BaseDir:    env.Dirs.Base,
 		ProjectDir: projectDir,
-		ConfigDir:  configDir,
-		DataDir:    dataDir,
-		StateDir:   stateDir,
+		ConfigDir:  env.Dirs.Config,
+		DataDir:    env.Dirs.Data,
+		StateDir:   env.Dirs.State,
+		CacheDir:   env.Dirs.Cache,
 	}
 }
 

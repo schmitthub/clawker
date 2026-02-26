@@ -345,6 +345,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |
 | `internal/project` | Project domain layer: owns `registry.yaml` (via `internal/storage`), project identity resolution, registration CRUD, worktree orchestration. Fully decoupled from `internal/config` |
 | `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
+| `internal/testenv` | Unified test environment: isolated XDG dirs + optional Config/ProjectManager. Delegates from `config/mocks`, `project/mocks`, `test/e2e/harness` |
 
 **Note:** `hostproxy/internals/` is a structurally-leaf subpackage (stdlib + embed only) that provides container-side scripts and binaries. It is imported by `internal/bundler` for embedding into Docker images, but does NOT import `internal/hostproxy` or any other internal package.
 
@@ -605,6 +606,7 @@ Test doubles follow a `<package>/<package>test/` naming convention. Each provide
 
 | Subpackage | Provides |
 |------------|----------|
+| `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
 | `config/` (stubs.go) | `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()` |
 | `docker/dockertest/` | `FakeClient`, test helpers |
 | `git/gittest/` | `InMemoryGitManager` |
@@ -613,6 +615,7 @@ Test doubles follow a `<package>/<package>test/` naming convention. Each provide
 | `term/mocks/` | `FakeTerm` — stub satisfying `iostreams.term` interface |
 | `logger/loggertest/` | `TestLogger` (captures output), `New()`, `NewNop()` |
 | `socketbridge/socketbridgetest/` | `MockManager` |
+| `storage` | `ValidateDirectories()` — XDG directory collision detection |
 
 ### Where `cmdutil` Fits
 

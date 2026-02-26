@@ -887,6 +887,77 @@ func TestStore_CacheDir(t *testing.T) {
 	}
 }
 
+func TestValidateDirectories(t *testing.T) {
+	t.Run("no collision with distinct dirs", func(t *testing.T) {
+		base := t.TempDir()
+		t.Setenv("CLAWKER_CONFIG_DIR", filepath.Join(base, "config"))
+		t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
+		t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
+		t.Setenv("CLAWKER_CACHE_DIR", filepath.Join(base, "cache"))
+
+		assert.NoError(t, ValidateDirectories())
+	})
+
+	t.Run("collision config and data", func(t *testing.T) {
+		base := t.TempDir()
+		shared := filepath.Join(base, "shared")
+		t.Setenv("CLAWKER_CONFIG_DIR", shared)
+		t.Setenv("CLAWKER_DATA_DIR", shared)
+		t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
+		t.Setenv("CLAWKER_CACHE_DIR", filepath.Join(base, "cache"))
+
+		err := ValidateDirectories()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "config and data")
+		assert.Contains(t, err.Error(), "directory collision")
+	})
+
+	t.Run("collision state and cache", func(t *testing.T) {
+		base := t.TempDir()
+		shared := filepath.Join(base, "shared")
+		t.Setenv("CLAWKER_CONFIG_DIR", filepath.Join(base, "config"))
+		t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
+		t.Setenv("CLAWKER_STATE_DIR", shared)
+		t.Setenv("CLAWKER_CACHE_DIR", shared)
+
+		err := ValidateDirectories()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "state and cache")
+	})
+
+	t.Run("multiple collisions reported", func(t *testing.T) {
+		base := t.TempDir()
+		shared := filepath.Join(base, "oops")
+		t.Setenv("CLAWKER_CONFIG_DIR", shared)
+		t.Setenv("CLAWKER_DATA_DIR", shared)
+		t.Setenv("CLAWKER_STATE_DIR", shared)
+		t.Setenv("CLAWKER_CACHE_DIR", filepath.Join(base, "cache"))
+
+		err := ValidateDirectories()
+		require.Error(t, err)
+		// config collides with data, then data (now the seen entry) collides with state
+		assert.Contains(t, err.Error(), "config and data")
+		assert.Contains(t, err.Error(), "data and state")
+	})
+
+	t.Run("no collision with XDG defaults", func(t *testing.T) {
+		base := t.TempDir()
+		// Clear all CLAWKER overrides, set XDG roots to same base —
+		// the resolver appends different suffixes so they won't collide.
+		t.Setenv("CLAWKER_CONFIG_DIR", "")
+		t.Setenv("CLAWKER_DATA_DIR", "")
+		t.Setenv("CLAWKER_STATE_DIR", "")
+		t.Setenv("CLAWKER_CACHE_DIR", "")
+		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("XDG_DATA_HOME", "")
+		t.Setenv("XDG_STATE_HOME", "")
+		t.Setenv("XDG_CACHE_HOME", "")
+		t.Setenv("HOME", base)
+
+		assert.NoError(t, ValidateDirectories())
+	})
+}
+
 func TestStore_Dirs(t *testing.T) {
 	tests := []struct {
 		name       string

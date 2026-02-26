@@ -77,7 +77,50 @@ make fawker
 ./bin/fawker container run --detach --agent test @  # Detached run
 ```
 
+## Local Development Environment
+
+The `make localenv` target creates an isolated XDG directory tree for manual UAT without polluting your real config:
+
+```bash
+# (Re)create .clawkerlocal/ with bare XDG parent dirs
+make localenv
+
+# Apply the exports to your shell
+eval "$(make localenv)"
+
+# Or copy-paste the printed export lines into your .env / shell profile
+```
+
+This creates bare XDG parent dirs only (`.config/`, `.local/share/`, `.local/state/`, `.cache/`). The CLI creates its own `clawker/` subdirectories on first use (e.g., `clawker project init`). The exported env vars point to the app-level paths so the storage resolver picks them up.
+
 ## Writing Tests
+
+### Isolated Test Environments (`internal/testenv`)
+
+The `testenv` package provides unified, progressively-configured test environments for any test that needs XDG directory isolation. It eliminates duplicated directory setup across test helpers.
+
+```go
+import "github.com/schmitthub/clawker/internal/testenv"
+
+// Just isolated dirs (storage/resolver tests):
+env := testenv.New(t)
+// env.Dirs.Config, env.Dirs.Data, env.Dirs.State, env.Dirs.Cache
+
+// With real config (config mutation tests):
+env := testenv.New(t, testenv.WithConfig())
+cfg := env.Config()
+
+// With real project manager (project registration round-trips):
+env := testenv.New(t, testenv.WithProjectManager(nil))
+pm := env.ProjectManager()
+cfg := env.Config() // also available — PM implies Config
+```
+
+Higher-level helpers delegate to testenv:
+
+- `configmocks.NewIsolatedTestConfig(t)` → `testenv.New(t, testenv.WithConfig())`
+- `projectmocks.NewTestProjectManager(t, gf)` → `testenv.New(t, testenv.WithProjectManager(gf))`
+- `test/e2e/harness.NewIsolatedFS()` → `testenv.New(h.T)` + project dir + chdir
 
 ### Test Infrastructure
 
@@ -85,12 +128,14 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 
 | Package | Test Utils | Provides |
 |---------|------------|----------|
+| `internal/testenv` | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `internal/project` | `mocks/` | `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
+| `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
 
 **Rule**: If a dependency node lacks test infrastructure, add it before writing tests that depend on it.
 

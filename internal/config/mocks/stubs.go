@@ -1,11 +1,10 @@
 package mocks
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // NewBlankConfig returns an in-memory *ConfigMock seeded with defaults.
@@ -109,31 +108,10 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 }
 
 // NewIsolatedTestConfig creates a file-backed config isolated to a temp directory.
-// It returns a real Config (backed by storage.Store) that supports Set/Write,
-// and a cleanup function. Use this for tests that need mutation or persistence.
+// It returns a real Config (backed by storage.Store) that supports Set/Write.
+// Delegates directory setup to testenv.New with WithConfig.
 func NewIsolatedTestConfig(t *testing.T) config.Config {
 	t.Helper()
-
-	base := t.TempDir()
-
-	configDir := filepath.Join(base, "config")
-	dataDir := filepath.Join(base, "data")
-	stateDir := filepath.Join(base, "state")
-
-	for _, dir := range []string{configDir, dataDir, stateDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("creating dir %s: %v", dir, err)
-		}
-	}
-
-	t.Setenv("CLAWKER_CONFIG_DIR", configDir)
-	t.Setenv("CLAWKER_DATA_DIR", dataDir)
-	t.Setenv("CLAWKER_STATE_DIR", stateDir)
-
-	cfg, err := config.NewConfig()
-	if err != nil {
-		t.Fatalf("creating isolated test config: %v", err)
-	}
-
-	return cfg
+	env := testenv.New(t, testenv.WithConfig())
+	return env.Config()
 }

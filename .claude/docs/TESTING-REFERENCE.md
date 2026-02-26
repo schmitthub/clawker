@@ -70,12 +70,14 @@ Each package with complex dependencies provides test infrastructure:
 
 | Package | Test Location | What It Provides |
 |---------|---------------|------------------|
+| `internal/testenv` | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
 | `internal/docker` | `dockertest/` | `FakeClient`, `SetupContainerList`, fixtures |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, function-field fake |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
+| `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
 
 ### The Agent Obligation
 
@@ -116,6 +118,28 @@ The DAG fills in, and eventually **any tier can mock/fake/stub the entire chain 
 ❌ **Skipping DI**: Directly instantiating concrete types instead of using Factory seams
 
 ✅ **Pattern to follow**: Use existing `*test/` packages, or create them if missing
+
+---
+
+## Isolated Test Environments (`internal/testenv`)
+
+Unified XDG directory isolation with progressive options. Eliminates duplicated dir setup across `config/mocks`, `project/mocks`, and `test/e2e/harness`.
+
+```go
+env := testenv.New(t)                                    // dirs only
+env := testenv.New(t, testenv.WithConfig())              // + real Config
+env := testenv.New(t, testenv.WithProjectManager(nil))   // + real PM (implies Config)
+```
+
+Higher-level helpers delegate here: `configmocks.NewIsolatedTestConfig(t)`, `projectmocks.NewTestProjectManager(t, gf)`, `test/e2e/harness.NewIsolatedFS()`.
+
+See `internal/testenv/CLAUDE.md` for full API reference.
+
+---
+
+## Directory Collision Detection (`storage.ValidateDirectories`)
+
+Resolves all four XDG dirs and checks for path collisions (e.g., config and data pointing to the same path due to env var typos). Wire into app init for early detection.
 
 ---
 

@@ -3,7 +3,8 @@
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean \
         licenses licenses-check \
         docs docs-check \
-        pre-commit pre-commit-install
+        pre-commit pre-commit-install \
+        localenv
 
 # Go Clawker variables
 BINARY_NAME := clawker
@@ -65,6 +66,9 @@ help:
 	@echo "Pre-commit targets:"
 	@echo "  pre-commit-install  Install pre-commit hooks (run once after clone)"
 	@echo "  pre-commit          Run all pre-commit hooks against all files"
+	@echo ""
+	@echo "Development targets:"
+	@echo "  localenv            (Re)create .clawkerlocal/ with XDG dirs and export env vars"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make clawker"
@@ -337,3 +341,34 @@ storage-golden:
 	@printf 'You must hand-edit storage_test.go with the printed values.\n'
 	@printf 'Continue? [y/N] ' && read ans && [ "$$ans" = "y" ] || (echo "Aborted." && exit 1)
 	STORAGE_GOLDEN_BLESS=1 go test ./internal/storage/... -run TestStore_WalkUpGolden -v -count=1
+
+# ============================================================================
+# Development Environment
+# ============================================================================
+
+LOCALENV_ROOT := .clawkerlocal
+
+# Parent XDG dirs (created by make localenv — bare skeleton).
+LOCALENV_XDG_CONFIG := $(LOCALENV_ROOT)/.config
+LOCALENV_XDG_DATA   := $(LOCALENV_ROOT)/.local/share
+LOCALENV_XDG_STATE  := $(LOCALENV_ROOT)/.local/state
+LOCALENV_XDG_CACHE  := $(LOCALENV_ROOT)/.cache
+
+# App-level dirs (created by the CLI on first use, NOT by make localenv).
+LOCALENV_CONFIG := $(LOCALENV_XDG_CONFIG)/clawker
+LOCALENV_DATA   := $(LOCALENV_XDG_DATA)/clawker
+LOCALENV_STATE  := $(LOCALENV_XDG_STATE)/clawker
+LOCALENV_CACHE  := $(LOCALENV_XDG_CACHE)/clawker
+
+# (Re)create the local development environment directory tree.
+# Creates bare XDG parent dirs only — the CLI creates app-level
+# subdirs (e.g. .config/clawker/) on first use.
+# Prints export commands so callers can eval or copy-paste them.
+#   eval "$(make localenv)"
+localenv:
+	@rm -rf $(LOCALENV_ROOT)
+	@mkdir -p $(LOCALENV_XDG_CONFIG) $(LOCALENV_XDG_DATA) $(LOCALENV_XDG_STATE) $(LOCALENV_XDG_CACHE)
+	@echo "export CLAWKER_CONFIG_DIR=$(CURDIR)/$(LOCALENV_CONFIG)"
+	@echo "export CLAWKER_DATA_DIR=$(CURDIR)/$(LOCALENV_DATA)"
+	@echo "export CLAWKER_STATE_DIR=$(CURDIR)/$(LOCALENV_STATE)"
+	@echo "export CLAWKER_CACHE_DIR=$(CURDIR)/$(LOCALENV_CACHE)"

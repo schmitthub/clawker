@@ -84,8 +84,10 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── signals/               # OS signal utilities (leaf — stdlib only)
 │   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
 │   │   └── socketbridgetest/  # MockManager for testing
+│   ├── storage/               # Multi-file YAML store: discovery, merge, provenance-aware write, dir validation
 │   ├── term/                  # Terminal capabilities + raw mode (leaf — sole x/term gateway)
 │   │   └── mocks/             # FakeTerm stub (satisfies iostreams.term interface)
+│   ├── testenv/               # Unified test environment: isolated dirs, config, project manager (test-only)
 │   ├── text/                  # Pure text utilities (leaf — stdlib only)
 │   ├── tui/                   # Interactive TUI layer: BubbleTea models, viewports, panels (imports iostreams for styles)
 │   ├── update/                # Background update checker — GitHub releases API, 24h cached notifications (foundation — no internal imports)
@@ -94,8 +96,8 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   └── whail/                 # Reusable Docker engine with label-based isolation
 │       └── buildkit/          # BuildKit client (moby/buildkit) — isolated heavy deps
 ├── test/
-│   ├── harness/               # Test harness, config builders, helpers (docker)
-│   │   └── golden/            # Golden file utilities (leaf — stdlib + testify only)
+│   ├── e2e/                   # E2E integration tests
+│   │   └── harness/           # CLI test harness (delegates dirs to testenv, adds chdir + Factory + Run)
 │   ├── whail/                 # Whail BuildKit integration tests (Docker + BuildKit)
 │   ├── cli/                   # Testscript-based CLI workflow tests (Docker)
 │   ├── commands/              # Command integration tests (Docker)
@@ -216,6 +218,8 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `config.Config` | Configuration and path-resolution contract. Owns config file I/O and path helpers (`GetProjectRoot`, `GetProjectIgnoreFile`, `ConfigDir`, `Write`). It does not own project CRUD/worktree lifecycle orchestration |
 | `build.Version` / `build.Date` | Build-time metadata injected via ldflags; `DEV` default with `debug.ReadBuildInfo` fallback |
 | `WorktreeStatus` | String enum for worktree health: `WorktreeHealthy`, `WorktreeRegistryOnly`, `WorktreeGitOnly`, `WorktreeBroken`, `WorktreeDotGitMissing`, `WorktreeGitMetadataMissing` |
+| `storage.ValidateDirectories` | Resolves all 4 XDG dirs (config/data/state/cache) and returns error if any pair collides — catches env var misconfiguration |
+| `testenv.Env` | Unified test environment: `New(t)` creates isolated dirs + env vars; `WithConfig()` adds config; `WithProjectManager(gf)` adds PM. Accessors: `Dirs`, `Config()`, `ProjectManager()` |
 
 Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API references.
 
