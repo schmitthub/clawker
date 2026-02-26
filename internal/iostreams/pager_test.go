@@ -1,6 +1,7 @@
 package iostreams
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"runtime"
@@ -69,9 +70,21 @@ func TestGetPagerCommand(t *testing.T) {
 	}
 }
 
-func TestIOStreams_pager(t *testing.T) {
-	t.Skip("TODO: fix this test in race detection mode") // TODO: A permanently skipped test can silently rot and reduce confidence in pager behavior. If this is expected to remain flaky under -race, consider converting it into a more targeted unit test (mocking the pager writer boundary) or gating it behind a build tag / explicit env var so it’s still runnable in CI under at least one configuration.
+// TestHelperProcess is the fake pager subprocess used by TestIOStreams_pager.
+// The test binary re-invokes itself with -test.run=TestHelperProcess; the env
+// guard ensures this function is a no-op during normal test discovery.
+func TestHelperProcess(t *testing.T) {
+	if os.Getenv("GH_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		fmt.Printf("pager: %s\n", scanner.Text())
+	}
+	os.Exit(0)
+}
 
+func TestIOStreams_pager(t *testing.T) {
 	ios, _, stdout, _ := Test()
 	ios.SetStdoutTTY(true)
 	ios.SetPager(fmt.Sprintf("%s -test.run=TestHelperProcess --", os.Args[0]))

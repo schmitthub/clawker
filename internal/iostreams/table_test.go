@@ -110,16 +110,18 @@ func TestRenderStyledTable_FitsTermWidth(t *testing.T) {
 
 	ios.SetColorEnabled(true)
 
+	// Test data whose natural width (~110 chars) exceeds FakeTerm's 80-col
+	// default, forcing the table to actually truncate/compress columns.
 	output := ios.RenderStyledTable(
 		[]string{"IMAGE", "ID", "CREATED", "SIZE"},
 		[][]string{
-			{"clawker-fawker-demo:latest", "a1b2c3d4e5f6", "2 months ago", "256.00MB"},
-			{"node:20-slim", "a1b2c3d4e5f6", "2 months ago", "256.00MB"},
+			{"clawker-super-long-project-name-demo:latest", "sha256:a1b2c3d4e5f6g7h8i9j0", "2 months ago", "1256.00MB"},
+			{"another-very-long-image-name-here:v2.3.1", "sha256:z9y8x7w6v5u4t3s2r1q0", "3 weeks ago", "512.00MB"},
 		},
 		nil,
 	)
 
-	// FakeTerm returns width=80; each line should not exceed that
+	// FakeTerm returns width=80; each line must not exceed that
 	for _, line := range strings.Split(output, "\n") {
 		if line == "" {
 			continue

@@ -76,7 +76,7 @@ type IOStreams struct {
 
 	// Pager state
 	pagerCommand string
-	pagerProcess *os.Process
+	pagerCmd     *exec.Cmd
 
 	// neverPrompt disables all interactive prompts (e.g., for CI)
 	neverPrompt bool
@@ -424,19 +424,19 @@ func (s *IOStreams) StartPager() error {
 	if err != nil {
 		return err
 	}
-	s.pagerProcess = pagerCmd.Process
+	s.pagerCmd = pagerCmd
 	return nil
 }
 
 func (s *IOStreams) StopPager() {
-	if s.pagerProcess == nil {
+	if s.pagerCmd == nil {
 		return
 	}
 
 	// if a pager was started, we're guaranteed to have a WriteCloser
 	_ = s.Out.(io.WriteCloser).Close()
-	_, _ = s.pagerProcess.Wait()
-	s.pagerProcess = nil
+	_ = s.pagerCmd.Wait()
+	s.pagerCmd = nil
 }
 
 // SetAlternateScreenBufferEnabled enables or disables alternate screen buffer usage.
