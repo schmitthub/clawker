@@ -86,6 +86,7 @@ type SessionStore struct {
 
 // NewSessionStore creates a new session store at the given base directory.
 func NewSessionStore(baseDir string, log ...*logger.Logger) *SessionStore {
+	// TODO: Using a variadic parameter for an optional dependency is a bit non-idiomatic and can make call sites ambiguous (especially if more options are ever needed). Consider taking log *logger.Logger explicitly (and defaulting nil to logger.Nop()), or switching to a small options struct / functional options if you anticipate more configuration later.
 	s := &SessionStore{baseDir: baseDir}
 	if len(log) > 0 && log[0] != nil {
 		s.log = log[0]

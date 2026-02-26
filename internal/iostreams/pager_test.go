@@ -70,7 +70,8 @@ func TestGetPagerCommand(t *testing.T) {
 }
 
 func TestIOStreams_pager(t *testing.T) {
-	t.Skip("TODO: fix this test in race detection mode")
+	t.Skip("TODO: fix this test in race detection mode") // TODO: A permanently skipped test can silently rot and reduce confidence in pager behavior. If this is expected to remain flaky under -race, consider converting it into a more targeted unit test (mocking the pager writer boundary) or gating it behind a build tag / explicit env var so it’s still runnable in CI under at least one configuration.
+
 	ios, _, stdout, _ := Test()
 	ios.SetStdoutTTY(true)
 	ios.SetPager(fmt.Sprintf("%s -test.run=TestHelperProcess --", os.Args[0]))
