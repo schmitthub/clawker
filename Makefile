@@ -363,11 +363,17 @@ LOCALENV_CACHE  := $(LOCALENV_XDG_CACHE)/clawker
 # (Re)create the local development environment directory tree.
 # Creates bare XDG parent dirs only — the CLI creates app-level
 # subdirs (e.g. .config/clawker/) on first use.
-# Prints export commands so callers can eval or copy-paste them.
+# Updates .env with CLAWKER_*_DIR vars (picked up by dotenv/direnv on cd).
+# Also prints export commands for manual eval:
 #   eval "$(make localenv)"
 localenv:
 	@rm -rf $(LOCALENV_ROOT)
 	@mkdir -p $(LOCALENV_XDG_CONFIG) $(LOCALENV_XDG_DATA) $(LOCALENV_XDG_STATE) $(LOCALENV_XDG_CACHE)
+	@bash scripts/localenv-dotenv.sh \
+		"CLAWKER_CONFIG_DIR=$(CURDIR)/$(LOCALENV_CONFIG)" \
+		"CLAWKER_DATA_DIR=$(CURDIR)/$(LOCALENV_DATA)" \
+		"CLAWKER_STATE_DIR=$(CURDIR)/$(LOCALENV_STATE)" \
+		"CLAWKER_CACHE_DIR=$(CURDIR)/$(LOCALENV_CACHE)"
 	@echo "export CLAWKER_CONFIG_DIR=$(CURDIR)/$(LOCALENV_CONFIG)"
 	@echo "export CLAWKER_DATA_DIR=$(CURDIR)/$(LOCALENV_DATA)"
 	@echo "export CLAWKER_STATE_DIR=$(CURDIR)/$(LOCALENV_STATE)"
