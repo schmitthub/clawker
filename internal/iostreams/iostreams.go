@@ -1,16 +1,33 @@
-// Package cmdutil provides utilities for command-line applications.
+// Big credit to the GitHub CLI project for the IOStreams pattern and Factory design.
 package iostreams
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"strings"
 	"sync"
 
-	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/google/shlex"
+	"github.com/mattn/go-colorable"
 	interm "github.com/schmitthub/clawker/internal/term"
+	termocks "github.com/schmitthub/clawker/internal/term/mocks"
 )
+
+const DefaultWidth = 80
+
+type fileWriter interface {
+	io.Writer
+	Fd() uintptr
+}
+
+type fileReader interface {
+	io.ReadCloser
+	Fd() uintptr
+}
 
 // term describes terminal capabilities. Unexported — commands access
 // terminal info through IOStreams methods, never directly.
@@ -19,30 +36,34 @@ type term interface {
 	IsColorEnabled() bool
 	Is256ColorSupported() bool
 	IsTrueColorSupported() bool
-	Width() int
+	Size() (int, int, error)
 }
 
 // IOStreams provides access to standard input/output/error streams.
 // It follows the GitHub CLI pattern for testable I/O.
 type IOStreams struct {
-	In     io.Reader
-	Out    io.Writer
-	ErrOut io.Writer
+	In     fileReader
+	Out    fileWriter
+	ErrOut fileWriter
 	term   term
 
-	// isInputTTY caches whether stdin is a terminal.
-	// -1 = unchecked, 0 = false, 1 = true
-	isInputTTY int
+	alternateScreenBufferEnabled bool
+	alternateScreenBufferActive  bool
+	alternateScreenBufferMu      sync.Mutex
 
-	// isOutputTTY caches whether stdout is a terminal.
-	isOutputTTY int
+	colorOverride bool
+
+	// isInputTTY caches whether stdin is a terminal.
+	isInputTTY bool
+
+	// isStdoutTTY caches whether stdout is a terminal.
+	isStdoutTTY bool
 
 	// isStderrTTY caches whether stderr is a terminal.
-	isStderrTTY int
+	isStderrTTY bool
 
 	// colorEnabled controls color output.
-	// -1 = auto (detect from TTY), 0 = disabled, 1 = enabled
-	colorEnabled int
+	colorEnabled bool
 
 	// terminalTheme is the detected terminal theme: "light", "dark", or "none"
 	terminalTheme string
@@ -55,94 +76,175 @@ type IOStreams struct {
 
 	// Pager state
 	pagerCommand string
-	pagerWriter  *pagerWriter
-	origOut      io.Writer
-
-	// Alternate screen buffer state
-	alternateScreenEnabled bool
-	alternateScreenActive  bool
+	pagerCmd     *exec.Cmd
 
 	// neverPrompt disables all interactive prompts (e.g., for CI)
 	neverPrompt bool
-
-	// Terminal size cache
-	termWidthCache  int
-	termHeightCache int
-	termSizeCached  bool
-
-	// Logger provides diagnostic file logging for the command layer.
-	// Set by factory, read by commands. zerolog.Logger satisfies this directly.
-	Logger Logger
 }
 
 // System creates an IOStreams wired to the real system terminal.
 // Reads terminal capabilities from the host environment via term.FromEnv().
 // The factory calls this, then may layer clawker config overrides.
 func System() *IOStreams {
-	ios := &IOStreams{
-		In:           os.Stdin,
-		Out:          os.Stdout,
-		ErrOut:       os.Stderr,
-		term:         interm.FromEnv(),
-		isInputTTY:   -1,
-		isOutputTTY:  -1,
-		isStderrTTY:  -1,
-		colorEnabled: -1,
+
+	terminal := interm.FromEnv()
+
+	var stdout fileWriter = os.Stdout
+	if colorableStdout := colorable.NewColorable(os.Stdout); colorableStdout != os.Stdout {
+		// Ensure that the file descriptor of the original stdout is preserved.
+		stdout = &fdWriter{
+			fd:     os.Stdout.Fd(),
+			Writer: colorableStdout,
+		}
 	}
 
+	var stderr fileWriter = os.Stderr
+	// On Windows with no virtual terminal processing support, translate ANSI escape
+	// sequences to console syscalls.
+	if colorableStderr := colorable.NewColorable(os.Stderr); colorableStderr != os.Stderr {
+		// Ensure that the file descriptor of the original stderr is preserved.
+		stderr = &fdWriter{
+			fd:     os.Stderr.Fd(),
+			Writer: colorableStderr,
+		}
+	}
+
+	io := &IOStreams{
+		In:           os.Stdin,
+		Out:          stdout,
+		ErrOut:       stderr,
+		pagerCommand: os.Getenv("PAGER"),
+		term:         &terminal,
+	}
+
+	stdoutIsTTY := io.IsStdoutTTY()
+	stderrIsTTY := io.IsStderrTTY()
+
 	// Progress indicator requires both stdout and stderr TTY
-	if ios.IsOutputTTY() && ios.IsStderrTTY() {
-		ios.progressIndicatorEnabled = true
+	if stdoutIsTTY && stderrIsTTY {
+		io.progressIndicatorEnabled = true
+	}
+
+	if stdoutIsTTY && hasAlternateScreenBuffer(terminal.IsTrueColorSupported()) {
+		io.alternateScreenBufferEnabled = true
 	}
 
 	// Detect terminal theme for color scheme selection
-	if ios.IsOutputTTY() {
-		ios.DetectTerminalTheme()
+	if io.IsStdoutTTY() {
+		io.DetectTerminalTheme()
 	}
 
-	return ios
+	return io
+}
+
+func Test() (*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+	in := &bytes.Buffer{}
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+	io := &IOStreams{
+		In: &fdReader{
+			fd:         0,
+			ReadCloser: io.NopCloser(in),
+		},
+		Out:    &fdWriter{fd: 1, Writer: out},
+		ErrOut: &fdWriter{fd: 2, Writer: errOut},
+		term:   &termocks.FakeTerm{},
+	}
+	io.SetStdinTTY(false)
+	io.SetStdoutTTY(false)
+	io.SetStderrTTY(false)
+	return io, in, out, errOut
+}
+
+func (s *IOStreams) StartAlternateScreenBuffer() {
+	if s.alternateScreenBufferEnabled {
+		s.alternateScreenBufferMu.Lock()
+		defer s.alternateScreenBufferMu.Unlock()
+
+		if _, err := fmt.Fprint(s.Out, "\x1b[?1049h"); err == nil {
+			s.alternateScreenBufferActive = true
+
+			ch := make(chan os.Signal, 1)
+			signal.Notify(ch, os.Interrupt)
+
+			go func() {
+				<-ch
+				s.StopAlternateScreenBuffer()
+
+				os.Exit(1)
+			}()
+		}
+	}
+}
+
+func (s *IOStreams) StopAlternateScreenBuffer() {
+	s.alternateScreenBufferMu.Lock()
+	defer s.alternateScreenBufferMu.Unlock()
+
+	if s.alternateScreenBufferActive {
+		fmt.Fprint(s.Out, "\x1b[?1049l")
+		s.alternateScreenBufferActive = false
+	}
+}
+
+func (s *IOStreams) RefreshScreen() {
+	if s.IsStdoutTTY() {
+		// Move cursor to 0,0
+		fmt.Fprint(s.Out, "\x1b[0;0H")
+		// Clear from cursor to bottom of screen
+		fmt.Fprint(s.Out, "\x1b[J")
+	}
+}
+
+// TerminalWidth returns the width of the terminal that controls the process
+func (s *IOStreams) TerminalWidth() int {
+	w, _, err := s.term.Size()
+	if err == nil && w > 0 {
+		return w
+	}
+	return DefaultWidth
 }
 
 // IsInputTTY returns true if stdin is a terminal.
 func (s *IOStreams) IsInputTTY() bool {
-	if s.isInputTTY == -1 {
+	if !s.isInputTTY {
 		if f, ok := s.In.(*os.File); ok {
-			s.isInputTTY = boolToInt(interm.IsTerminalFd(int(f.Fd())))
+			s.isInputTTY = interm.IsTerminalFd(int(f.Fd()))
 		} else {
-			s.isInputTTY = 0
+			s.isInputTTY = false
 		}
 	}
-	return s.isInputTTY == 1
+	return s.isInputTTY
 }
 
-// IsOutputTTY returns true if stdout is a terminal.
-func (s *IOStreams) IsOutputTTY() bool {
-	if s.isOutputTTY == -1 {
+// IsStdoutTTY returns true if stdout is a terminal.
+func (s *IOStreams) IsStdoutTTY() bool {
+	if !s.isStdoutTTY {
 		if f, ok := s.Out.(*os.File); ok {
-			s.isOutputTTY = boolToInt(interm.IsTerminalFd(int(f.Fd())))
+			s.isStdoutTTY = interm.IsTerminalFd(int(f.Fd()))
 		} else {
-			s.isOutputTTY = 0
+			s.isStdoutTTY = false
 		}
 	}
-	return s.isOutputTTY == 1
+	return s.isStdoutTTY
 }
 
 // IsInteractive returns true if both stdin and stdout are terminals.
 // When false, commands should behave as if --yes was passed (for CI).
 func (s *IOStreams) IsInteractive() bool {
-	return s.IsInputTTY() && s.IsOutputTTY()
+	return s.IsInputTTY() && s.IsStdoutTTY()
 }
 
 // IsStderrTTY returns true if stderr is a terminal.
 func (s *IOStreams) IsStderrTTY() bool {
-	if s.isStderrTTY == -1 {
+	if !s.isStderrTTY {
 		if f, ok := s.ErrOut.(*os.File); ok {
-			s.isStderrTTY = boolToInt(interm.IsTerminalFd(int(f.Fd())))
+			s.isStderrTTY = interm.IsTerminalFd(int(f.Fd()))
 		} else {
-			s.isStderrTTY = 0
+			s.isStderrTTY = false
 		}
 	}
-	return s.isStderrTTY == 1
+	return s.isStderrTTY
 }
 
 // ColorEnabled returns whether color output is enabled.
@@ -150,16 +252,16 @@ func (s *IOStreams) IsStderrTTY() bool {
 // - Explicitly enabled via SetColorEnabled(true)
 // - Auto-detect mode and stdout is a TTY
 func (s *IOStreams) ColorEnabled() bool {
-	if s.colorEnabled == -1 {
-		// Auto-detect based on TTY
-		return s.IsOutputTTY()
+	if s.colorOverride {
+		return s.colorEnabled
 	}
-	return s.colorEnabled == 1
+	return s.term.IsColorEnabled()
 }
 
 // SetColorEnabled explicitly enables or disables color output.
 func (s *IOStreams) SetColorEnabled(enabled bool) {
-	s.colorEnabled = boolToInt(enabled)
+	s.colorOverride = true
+	s.colorEnabled = enabled
 }
 
 // Is256ColorSupported returns whether the host terminal supports 256 colors.
@@ -175,7 +277,7 @@ func (s *IOStreams) IsTrueColorSupported() bool {
 // DetectTerminalTheme attempts to detect the terminal's color theme.
 // Sets terminalTheme to "light", "dark", or "none".
 func (s *IOStreams) DetectTerminalTheme() {
-	if !s.IsOutputTTY() {
+	if !s.IsStdoutTTY() {
 		s.terminalTheme = "none"
 		return
 	}
@@ -224,54 +326,6 @@ func (s *IOStreams) TerminalTheme() string {
 // ColorScheme returns a ColorScheme configured for this IOStreams.
 func (s *IOStreams) ColorScheme() *ColorScheme {
 	return NewColorScheme(s.ColorEnabled(), s.TerminalTheme())
-}
-
-// TerminalWidth returns the width of the terminal in columns.
-// Returns 80 as a default if detection fails.
-func (s *IOStreams) TerminalWidth() int {
-	w, _ := s.TerminalSize()
-	return w
-}
-
-// TerminalSize returns the width and height of the terminal.
-// Returns (80, 24) as defaults if detection fails.
-func (s *IOStreams) TerminalSize() (width, height int) {
-	if s.termSizeCached {
-		return s.termWidthCache, s.termHeightCache
-	}
-
-	// Default fallback values
-	width, height = 80, 24
-
-	// Try to get size from stdout
-	if f, ok := s.Out.(*os.File); ok {
-		w, h, err := interm.GetTerminalSize(int(f.Fd()))
-		if err == nil && w > 0 && h > 0 {
-			width, height = w, h
-		}
-	}
-
-	// Try stdin as fallback
-	if width == 80 && height == 24 {
-		if f, ok := s.In.(*os.File); ok {
-			w, h, err := interm.GetTerminalSize(int(f.Fd()))
-			if err == nil && w > 0 && h > 0 {
-				width, height = w, h
-			}
-		}
-	}
-
-	s.termWidthCache = width
-	s.termHeightCache = height
-	s.termSizeCached = true
-
-	return width, height
-}
-
-// InvalidateTerminalSizeCache clears the cached terminal size.
-// Call this after a window resize event.
-func (s *IOStreams) InvalidateTerminalSizeCache() {
-	s.termSizeCached = false
 }
 
 // StartProgressIndicator starts a spinner on stderr.
@@ -327,89 +381,67 @@ func (s *IOStreams) GetPager() string {
 	return getPagerCommand()
 }
 
-// StartPager starts piping stdout through a pager.
-// If stdout is not a TTY, this is a no-op.
 func (s *IOStreams) StartPager() error {
-	if !s.IsOutputTTY() {
+	if s.pagerCommand == "" || s.pagerCommand == "cat" || !s.IsStdoutTTY() {
 		return nil
 	}
 
-	pagerCmd := s.GetPager()
-	if pagerCmd == "" {
-		return nil
-	}
-
-	pw, err := newPagerWriter(pagerCmd, s.Out)
+	pagerArgs, err := shlex.Split(s.pagerCommand)
 	if err != nil {
 		return err
 	}
-	if pw == nil {
-		return nil
+
+	pagerEnv := os.Environ()
+	for i := len(pagerEnv) - 1; i >= 0; i-- {
+		if strings.HasPrefix(pagerEnv[i], "PAGER=") {
+			pagerEnv = append(pagerEnv[0:i], pagerEnv[i+1:]...)
+		}
+	}
+	if _, ok := os.LookupEnv("LESS"); !ok {
+		pagerEnv = append(pagerEnv, "LESS=FRX")
+	}
+	if _, ok := os.LookupEnv("LV"); !ok {
+		pagerEnv = append(pagerEnv, "LV=-c")
 	}
 
-	s.origOut = s.Out
-	s.pagerWriter = pw
-	s.Out = pw
-
+	pagerExe, err := exec.LookPath(pagerArgs[0])
+	if err != nil {
+		return err
+	}
+	pagerCmd := exec.Command(pagerExe, pagerArgs[1:]...)
+	pagerCmd.Env = pagerEnv
+	pagerCmd.Stdout = s.Out
+	pagerCmd.Stderr = s.ErrOut
+	pagedOut, err := pagerCmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	s.Out = &fdWriteCloser{
+		fd:          s.Out.Fd(),
+		WriteCloser: &pagerWriter{pagedOut},
+	}
+	err = pagerCmd.Start()
+	if err != nil {
+		return err
+	}
+	s.pagerCmd = pagerCmd
 	return nil
 }
 
-// StopPager stops the pager and restores the original stdout.
 func (s *IOStreams) StopPager() {
-	if s.pagerWriter == nil {
+	if s.pagerCmd == nil {
 		return
 	}
 
-	if err := s.pagerWriter.Close(); err != nil {
-		// Log but don't fail - pager errors are non-fatal
-		// Ignore "broken pipe" - expected if user quit pager early
-		if !strings.Contains(err.Error(), "broken pipe") {
-			logger.Debug().Err(err).Msg("pager close error")
-		}
-	}
-	s.Out = s.origOut
-	s.pagerWriter = nil
-	s.origOut = nil
+	// if a pager was started, we're guaranteed to have a WriteCloser
+	_ = s.Out.(io.WriteCloser).Close()
+	_ = s.pagerCmd.Wait()
+	s.pagerCmd = nil
 }
 
 // SetAlternateScreenBufferEnabled enables or disables alternate screen buffer usage.
 func (s *IOStreams) SetAlternateScreenBufferEnabled(enabled bool) {
-	s.alternateScreenEnabled = enabled
-}
-
-// StartAlternateScreenBuffer switches to the terminal's alternate screen buffer.
-// This is commonly used for full-screen terminal applications.
-func (s *IOStreams) StartAlternateScreenBuffer() {
-	if !s.alternateScreenEnabled || !s.IsOutputTTY() {
-		return
-	}
-	if s.alternateScreenActive {
-		return
-	}
-
-	// ANSI escape sequence to switch to alternate screen and hide cursor
-	fmt.Fprint(s.Out, "\x1b[?1049h\x1b[?25l")
-	s.alternateScreenActive = true
-}
-
-// StopAlternateScreenBuffer switches back to the main screen buffer.
-func (s *IOStreams) StopAlternateScreenBuffer() {
-	if !s.alternateScreenActive {
-		return
-	}
-
-	// ANSI escape sequence to switch back to main screen, show cursor, and reset
-	fmt.Fprint(s.Out, "\x1b[?1049l\x1b[?25h\x1b[0m\x1b(B")
-	s.alternateScreenActive = false
-}
-
-// RefreshScreen clears the screen and moves cursor to home position.
-func (s *IOStreams) RefreshScreen() {
-	if !s.IsOutputTTY() {
-		return
-	}
-	// Clear screen and move cursor to home
-	fmt.Fprint(s.Out, "\x1b[2J\x1b[H")
+	s.alternateScreenBufferEnabled = enabled
 }
 
 // CanPrompt returns whether interactive prompts should be shown.
@@ -433,29 +465,45 @@ func (s *IOStreams) GetNeverPrompt() bool {
 }
 
 // SetStdinTTY sets whether stdin is a terminal (for testing).
-func (s *IOStreams) SetStdinTTY(isTTY bool) { s.isInputTTY = boolToInt(isTTY) }
+func (s *IOStreams) SetStdinTTY(isTTY bool) { s.isInputTTY = isTTY }
 
 // SetStdoutTTY sets whether stdout is a terminal (for testing).
-func (s *IOStreams) SetStdoutTTY(isTTY bool) { s.isOutputTTY = boolToInt(isTTY) }
+func (s *IOStreams) SetStdoutTTY(isTTY bool) { s.isStdoutTTY = isTTY }
 
 // SetStderrTTY sets whether stderr is a terminal (for testing).
-func (s *IOStreams) SetStderrTTY(isTTY bool) { s.isStderrTTY = boolToInt(isTTY) }
-
-// SetTerminalSizeCache sets the cached terminal size (for testing).
-func (s *IOStreams) SetTerminalSizeCache(width, height int) {
-	s.termWidthCache = width
-	s.termHeightCache = height
-	s.termSizeCached = true
-}
+func (s *IOStreams) SetStderrTTY(isTTY bool) { s.isStderrTTY = isTTY }
 
 // SetProgressIndicatorEnabled enables or disables the progress indicator.
 func (s *IOStreams) SetProgressIndicatorEnabled(enabled bool) {
 	s.progressIndicatorEnabled = enabled
 }
 
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
+// fdReader represents a wrapped stdin ReadCloser that preserves the original file descriptor
+type fdReader struct {
+	io.ReadCloser
+	fd uintptr
+}
+
+func (r *fdReader) Fd() uintptr {
+	return r.fd
+}
+
+// fdWriter represents a wrapped stdout Writer that preserves the original file descriptor
+type fdWriter struct {
+	io.Writer
+	fd uintptr
+}
+
+func (w *fdWriter) Fd() uintptr {
+	return w.fd
+}
+
+// fdWriteCloser represents a wrapped stdout Writer that preserves the original file descriptor
+type fdWriteCloser struct {
+	io.WriteCloser
+	fd uintptr
+}
+
+func (w *fdWriteCloser) Fd() uintptr {
+	return w.fd
 }

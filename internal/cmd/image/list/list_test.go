@@ -7,7 +7,8 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,8 +53,11 @@ func TestNewCmdList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreamstest.New()
-			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+			tio, _, _, _ := iostreams.Test()
+			f := &cmdutil.Factory{
+				IOStreams: tio,
+				Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+			}
 
 			var gotOpts *ListOptions
 			cmd := NewCmdList(f, func(_ context.Context, opts *ListOptions) error {
@@ -116,8 +120,11 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreamstest.New()
-			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+			tio, _, _, _ := iostreams.Test()
+			f := &cmdutil.Factory{
+				IOStreams: tio,
+				Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+			}
 
 			cmd := NewCmdList(f, func(_ context.Context, _ *ListOptions) error {
 				return nil
@@ -142,8 +149,11 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 }
 
 func TestCmdList_Properties(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdList(f, nil)
 
 	require.Equal(t, "list", cmd.Use)

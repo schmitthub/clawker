@@ -30,6 +30,7 @@ func runNonInteractive(ctx, opts) // --yes / non-TTY path (no prompts, no build)
 func performSetup(ctx, opts, buildBaseImage, selectedFlavor) // shared setup logic
 func buildWizardFields() []tui.WizardField    // wizard field definitions
 func flavorFieldOptions() []tui.FieldOption   // converts bundler flavors to TUI field options
+func saveUserProjectConfig(imageTag) error    // writes/updates user-level clawker.yaml with build.image
 ```
 
 ## Flags
@@ -74,8 +75,12 @@ Run()
    - Progress displayed via `TUI.RunProgress("auto", ...)` with single "build" step; result checked for errors
 4. On progress display error (e.g., Ctrl+C): returns error immediately
 5. On build failure: prints error + manual recovery steps (does not return error)
-6. Ensures shared directory at `cfg.ShareSubdir()` exists
-7. Prints next steps guidance to stderr
+6. On build success: persists the built image tag to user-level `clawker.yaml` via `saveUserProjectConfig()`:
+   - Writes to `config.UserProjectConfigFilePath()` (`~/.config/clawker/clawker.yaml`)
+   - Only sets `build.image` — preserves existing keys on reruns
+   - Discovered by project store via `WithConfigDir()` as lowest-priority layer
+7. Ensures shared directory at `cfg.ShareSubdir()` exists
+8. Prints next steps guidance to stderr
 
 ## Factory Wiring
 
@@ -93,7 +98,8 @@ Tests use `runF` injection and dockertest fakes. Key patterns:
 - `performSetup()` tested directly for build/no-build/failure scenarios (avoids BubbleTea)
 - `buildWizardFields()` tested for field definitions, SkipIf logic
 - `flavorFieldOptions()` tested for correct conversion from bundler types
-- `configtest.NewInMemorySettingsLoader()` for in-memory settings (no temp dirs)
+- `saveUserProjectConfig()` tested for new file creation and existing file update (preserves keys)
+- `configmocks.NewIsolatedTestConfig(t)` for isolated config dir (no temp dir leaks)
 
 ```bash
 go test ./internal/cmd/init/... -v

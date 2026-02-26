@@ -27,12 +27,14 @@ Each package in the dependency DAG must provide test utilities so dependents can
 
 | Package | Test Utils | Provides |
 |---------|------------|----------|
+| `internal/testenv` | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
-| `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
+| `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
+| `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
 
 ## Config Package Test Double How-To
 
@@ -116,19 +118,30 @@ Use `NewCmd(f, nil)` with `dockertest.NewFakeClient` — exercises full pipeline
 fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 fake.SetupContainerCreate()
 fake.SetupContainerStart()
-tio := iostreamstest.New()
+tio, _, _, _ := iostreams.Test()
 f := &cmdutil.Factory{
-    IOStreams: tio.IOStreams,
-    TUI:      tui.NewTUI(tio.IOStreams),
+    IOStreams: tio,
+    TUI:      tui.NewTUI(tio),
     Client:   func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 }
 cmd := NewCmdRun(f, nil)  // nil runF → real run function
 cmd.SetArgs([]string{"--detach", "alpine"})
 cmd.SetIn(&bytes.Buffer{})
-cmd.SetOut(tio.OutBuf)
-cmd.SetErr(tio.ErrBuf)
+cmd.SetOut(out)
+cmd.SetErr(errOut)
 err := cmd.Execute()
 ```
+
+## Storage Oracle + Golden Test Strategy
+
+The `internal/storage` merge engine uses dual-guard testing — oracle (randomized) + golden (fixed baseline):
+
+| Layer | How it works | What it catches |
+|-------|-------------|-----------------|
+| Oracle (randomized) | Independent spec-based merge computation, new seed each run | Merge bugs across random file placements |
+| Golden (fixed seed) | Hardcoded struct literal blessed from known-correct state | Regressions from the blessed baseline |
+
+Golden values are code, not files — `STORAGE_GOLDEN_BLESS` env var + `make storage-golden` for interactive updates (no global sweep risk).
 
 ## Common Gotchas
 

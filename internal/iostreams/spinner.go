@@ -136,17 +136,19 @@ func (s *IOStreams) StartSpinner(label string) {
 
 // StartSpinnerWithType starts an animated spinner with the specified style.
 // In animated mode (TTY), calling again while a spinner is running updates the label.
-// In text fallback mode (non-TTY or spinnerDisabled), each call prints a new status line.
+// In text fallback mode (spinnerDisabled), each call prints a new status line unconditionally.
 func (s *IOStreams) StartSpinnerWithType(t SpinnerType, label string) {
-	if !s.progressIndicatorEnabled {
-		return
-	}
-
 	s.spinnerMu.Lock()
 	defer s.spinnerMu.Unlock()
 
+	// Text fallback fires unconditionally when spinnerDisabled is set.
+	// This lets tests (and CLAWKER_SPINNER_DISABLED=1) always get output.
 	if s.spinnerDisabled {
 		s.startTextualSpinnerLocked(label)
+		return
+	}
+
+	if !s.progressIndicatorEnabled {
 		return
 	}
 

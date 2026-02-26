@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -30,37 +30,37 @@ func (m testModel) View() string {
 }
 
 func TestRunProgram(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 
 	model := testModel{}
-	result, err := RunProgram(tio.IOStreams, model)
+	result, err := RunProgram(tio, model)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 }
 
 func TestRunProgram_WithAltScreen(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 
 	model := testModel{}
-	result, err := RunProgram(tio.IOStreams, model, WithAltScreen(true))
+	result, err := RunProgram(tio, model, WithAltScreen(true))
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 }
 
 func TestRunProgram_WithMouseMotion(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 
 	model := testModel{}
-	result, err := RunProgram(tio.IOStreams, model, WithMouseMotion(true))
+	result, err := RunProgram(tio, model, WithMouseMotion(true))
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 }
 
 func TestRunProgram_MultipleOptions(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 
 	model := testModel{}
-	result, err := RunProgram(tio.IOStreams, model,
+	result, err := RunProgram(tio, model,
 		WithAltScreen(true),
 		WithMouseMotion(true),
 	)

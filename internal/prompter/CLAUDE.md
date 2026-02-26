@@ -48,13 +48,14 @@ idx, err := prompter.Select("Choose base image", []prompter.SelectOption{
 ## Testing
 
 ```go
-ios := iostreamstest.New()
-ios.SetInteractive(true)
-ios.InBuf.SetInput("y\n")
+tio, in, _, errOut := iostreams.Test()
+tio.SetStdinTTY(true)
+tio.SetStdoutTTY(true)
+in.WriteString("y\n")
 
-prompter := prompter.NewPrompter(ios.IOStreams)
+prompter := prompter.NewPrompter(tio)
 result, err := prompter.Confirm("Continue?", false)
-// result == true, ios.ErrBuf.String() contains "Continue?"
+// result == true, errOut.String() contains "Continue?"
 ```
 
 ## Gotchas

@@ -9,12 +9,9 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/generate"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 )
 
 func main() {
-	// Initialize logger
-	logger.Init()
 
 	f := &cmdutil.Factory{
 		IOStreams: iostreams.System(),

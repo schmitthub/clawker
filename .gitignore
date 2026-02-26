@@ -89,3 +89,8 @@ go.work.sum
 RALPH-TEST.md
 
 .idea/
+
+# dev clawker file isolation set clawker env vars to 
+# this directory if you want to isolate dev files 
+# from your system's installation of clawker.
+.clawkerlocal/

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 
 // SetupMountsConfig holds configuration for workspace mount setup
 type SetupMountsConfig struct {
+	// Log is the logger instance for diagnostic file logging.
+	Log *logger.Logger
 	// ModeOverride is the CLI flag value (empty means use config default)
 	ModeOverride string
 	// Cfg is the config.Config interface for reading paths and constants.
@@ -90,14 +93,18 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		return nil, fmt.Errorf("invalid workspace mode: %w", err)
 	}
 
-	// Load .clawkerignore patterns
+	// Load .clawkerignore patterns (empty when no project is registered)
+	var ignorePatterns []string
 	ignoreFile, err := cfg.Cfg.GetProjectIgnoreFile()
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve ignore file: %w", err)
-	}
-	ignorePatterns, err := docker.LoadIgnorePatterns(ignoreFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load %s: %w", ignoreFile, err)
+		if !errors.Is(err, config.ErrNotInProject) {
+			return nil, fmt.Errorf("failed to resolve ignore file: %w", err)
+		}
+	} else {
+		ignorePatterns, err = docker.LoadIgnorePatterns(ignoreFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load %s: %w", ignoreFile, err)
+		}
 	}
 
 	// Create workspace strategy
@@ -109,12 +116,12 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		IgnorePatterns: ignorePatterns,
 	}
 
-	strategy, err := NewStrategy(mode, wsCfg)
+	strategy, err := NewStrategy(mode, wsCfg, cfg.Log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create workspace strategy: %w", err)
 	}
 
-	logger.Debug().
+	cfg.Log.Debug().
 		Str("mode", string(mode)).
 		Str("strategy", strategy.Name()).
 		Msg("using workspace strategy")
@@ -144,7 +151,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 			return nil, err
 		}
 		mounts = append(mounts, *gitMount)
-		logger.Debug().
+		cfg.Log.Debug().
 			Str("gitdir", gitMount.Source).
 			Msg("mounting main repo .git for worktree")
 	}

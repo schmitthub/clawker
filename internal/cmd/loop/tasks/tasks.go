@@ -9,12 +9,14 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	containershared "github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -34,6 +36,7 @@ type TasksOptions struct {
 	HostProxy      func() hostproxy.HostProxyService
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
+	Logger         func() (*logger.Logger, error)
 	Version        string
 
 	// Task file (required)
@@ -63,6 +66,7 @@ func NewCmdTasks(f *cmdutil.Factory, runF func(context.Context, *TasksOptions) e
 		HostProxy:      f.HostProxy,
 		SocketBridge:   f.SocketBridge,
 		Prompter:       f.Prompter,
+		Logger:         f.Logger,
 		Version:        f.Version,
 	}
 
@@ -137,6 +141,11 @@ The loop exits when:
 
 func tasksRun(ctx context.Context, opts *TasksOptions) error {
 	ios := opts.IOStreams
+
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
 
 	// 1. Resolve task prompt
 	prompt, err := shared.ResolveTasksPrompt(opts.TasksFile, opts.TaskPrompt, opts.TaskPromptFile)
@@ -224,7 +233,12 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 		cmd = append(cmd, "--dangerously-skip-permissions")
 	}
 
-	// 5. Build per-iteration container factory
+	// 5. Safety check: refuse to run loop mode from home directory or above
+	if containershared.IsOutsideHome(".") {
+		return fmt.Errorf("loop mode is not supported outside of, or in, the home directory")
+	}
+
+	// 6. Build per-iteration container factory
 	createContainer := shared.MakeCreateContainerFunc(&shared.LoopContainerConfig{
 		Client:         client,
 		Command:        cmd,
@@ -237,6 +251,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 		HostProxy:      opts.HostProxy,
 		SocketBridge:   opts.SocketBridge,
 		IOStreams:      ios,
+		Log:            log,
 	})
 
 	// 6. Create runner
@@ -248,7 +263,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 	// 7. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
 		opts.LoopOptions, projectCfg, projectName, opts.Agent, prompt, workDir,
-		createContainer, opts.flags, projectCfg.Loop, ios.Logger,
+		createContainer, opts.flags, projectCfg.Loop, log,
 	)
 
 	// Setup info for dashboard/monitor display (no container ID — per-iteration)

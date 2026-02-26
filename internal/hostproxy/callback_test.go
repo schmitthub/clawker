@@ -6,12 +6,14 @@ import (
 	"net/url"
 	"testing"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 func TestCallbackChannel_Register(t *testing.T) {
 	store := NewSessionStore()
 	defer store.Stop()
-	channel := NewCallbackChannel(store)
+	channel := NewCallbackChannel(store, logger.Nop())
 
 	session, err := channel.Register(8080, "/callback", 5*time.Minute)
 	if err != nil {
@@ -41,7 +43,7 @@ func TestCallbackChannel_Register(t *testing.T) {
 func TestCallbackChannel_RegisterInvalidPort(t *testing.T) {
 	store := NewSessionStore()
 	defer store.Stop()
-	channel := NewCallbackChannel(store)
+	channel := NewCallbackChannel(store, logger.Nop())
 
 	tests := []struct {
 		name string
@@ -65,7 +67,7 @@ func TestCallbackChannel_RegisterInvalidPort(t *testing.T) {
 func TestCallbackChannel_RegisterEmptyPath(t *testing.T) {
 	store := NewSessionStore()
 	defer store.Stop()
-	channel := NewCallbackChannel(store)
+	channel := NewCallbackChannel(store, logger.Nop())
 
 	session, err := channel.Register(8080, "", 5*time.Minute)
 	if err != nil {
@@ -81,7 +83,7 @@ func TestCallbackChannel_RegisterEmptyPath(t *testing.T) {
 func TestCallbackChannel_Capture(t *testing.T) {
 	store := NewSessionStore()
 	defer store.Stop()
-	channel := NewCallbackChannel(store)
+	channel := NewCallbackChannel(store, logger.Nop())
 
 	session, err := channel.Register(8080, "/callback", 5*time.Minute)
 	if err != nil {
@@ -126,7 +128,7 @@ func TestCallbackChannel_Capture(t *testing.T) {
 func TestCallbackChannel_CaptureWithBody(t *testing.T) {
 	store := NewSessionStore()
 	defer store.Stop()
-	channel := NewCallbackChannel(store)
+	channel := NewCallbackChannel(store, logger.Nop())
 
 	session, err := channel.Register(8080, "/callback", 5*time.Minute)
 	if err != nil {
@@ -166,7 +168,7 @@ func TestCallbackChannel_CaptureWithBody(t *testing.T) {
 func TestCallbackChannel_CaptureNotFound(t *testing.T) {
 	store := NewSessionStore()
 	defer store.Stop()
-	channel := NewCallbackChannel(store)
+	channel := NewCallbackChannel(store, logger.Nop())
 
 	reqURL, _ := url.Parse("http://localhost:18374/cb/nonexistent/callback")
 	req := &http.Request{
@@ -183,7 +185,7 @@ func TestCallbackChannel_CaptureNotFound(t *testing.T) {
 func TestCallbackChannel_CaptureSingleUse(t *testing.T) {
 	store := NewSessionStore()
 	defer store.Stop()
-	channel := NewCallbackChannel(store)
+	channel := NewCallbackChannel(store, logger.Nop())
 
 	session, err := channel.Register(8080, "/callback", 5*time.Minute)
 	if err != nil {
@@ -224,7 +226,7 @@ func TestCallbackChannel_CaptureSingleUse(t *testing.T) {
 func TestCallbackChannel_GetDataNotReceived(t *testing.T) {
 	store := NewSessionStore()
 	defer store.Stop()
-	channel := NewCallbackChannel(store)
+	channel := NewCallbackChannel(store, logger.Nop())
 
 	session, err := channel.Register(8080, "/callback", 5*time.Minute)
 	if err != nil {
@@ -244,7 +246,7 @@ func TestCallbackChannel_GetDataNotReceived(t *testing.T) {
 func TestCallbackChannel_IsReceived(t *testing.T) {
 	store := NewSessionStore()
 	defer store.Stop()
-	channel := NewCallbackChannel(store)
+	channel := NewCallbackChannel(store, logger.Nop())
 
 	session, err := channel.Register(8080, "/callback", 5*time.Minute)
 	if err != nil {
@@ -273,7 +275,7 @@ func TestCallbackChannel_IsReceived(t *testing.T) {
 func TestCallbackChannel_Delete(t *testing.T) {
 	store := NewSessionStore()
 	defer store.Stop()
-	channel := NewCallbackChannel(store)
+	channel := NewCallbackChannel(store, logger.Nop())
 
 	session, err := channel.Register(8080, "/callback", 5*time.Minute)
 	if err != nil {
@@ -291,7 +293,7 @@ func TestCallbackChannel_Delete(t *testing.T) {
 func TestCallbackChannel_CaptureSkipsSensitiveHeaders(t *testing.T) {
 	store := NewSessionStore()
 	defer store.Stop()
-	channel := NewCallbackChannel(store)
+	channel := NewCallbackChannel(store, logger.Nop())
 
 	session, err := channel.Register(8080, "/callback", 5*time.Minute)
 	if err != nil {

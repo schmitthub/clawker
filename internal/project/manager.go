@@ -102,11 +102,12 @@ type projectHandle struct {
 
 type projectManager struct {
 	cfg           config.Config
+	log           *logger.Logger
 	registryStore *storage.Store[config.ProjectRegistry]
 	newGitMgr     GitManagerFactory
 }
 
-func NewProjectManager(cfg config.Config, gitFactory GitManagerFactory) (ProjectManager, error) {
+func NewProjectManager(cfg config.Config, log *logger.Logger, gitFactory GitManagerFactory) (ProjectManager, error) {
 	if gitFactory == nil {
 		gitFactory = func(root string) (*git.GitManager, error) {
 			return git.NewGitManager(root)
@@ -116,7 +117,7 @@ func NewProjectManager(cfg config.Config, gitFactory GitManagerFactory) (Project
 	if err != nil {
 		return nil, fmt.Errorf("project: loading registry: %w", err)
 	}
-	return &projectManager{cfg: cfg, registryStore: registryStore, newGitMgr: gitFactory}, nil
+	return &projectManager{cfg: cfg, log: log, registryStore: registryStore, newGitMgr: gitFactory}, nil
 }
 
 // Register adds or updates a project registration and returns a project object.
@@ -238,12 +239,12 @@ func (s *projectManager) ListWorktrees(ctx context.Context) ([]WorktreeState, er
 	for _, entry := range entries {
 		proj, err := s.Get(ctx, entry.Root)
 		if err != nil {
-			logger.Debug().Err(err).Str("root", entry.Root).Msg("skipping project in worktree listing")
+			s.log.Debug().Err(err).Str("root", entry.Root).Msg("skipping project in worktree listing")
 			continue
 		}
 		states, err := proj.ListWorktrees(ctx)
 		if err != nil {
-			logger.Debug().Err(err).Str("root", entry.Root).Msg("skipping project worktrees due to listing error")
+			s.log.Debug().Err(err).Str("root", entry.Root).Msg("skipping project worktrees due to listing error")
 			continue
 		}
 		all = append(all, states...)
@@ -525,7 +526,7 @@ func (s *projectManager) registry() *projectRegistry {
 }
 
 func (s *projectManager) worktrees() *worktreeService {
-	return newWorktreeService(s.cfg, s.registryStore, s.newGitMgr)
+	return newWorktreeService(s.cfg, s.log, s.registryStore, s.newGitMgr)
 }
 
 func projectRecordFromEntry(entry config.ProjectEntry) ProjectRecord {

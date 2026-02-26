@@ -16,10 +16,10 @@ const HostGitConfigStagingPath = "/tmp/host-gitconfig"
 // can process it (filtering credential.helper lines) before copying to ~/.gitconfig.
 //
 // Returns nil if ~/.gitconfig doesn't exist on the host.
-func GetGitConfigMount() []mount.Mount {
+func GetGitConfigMount(log *logger.Logger) []mount.Mount {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		logger.Debug().Err(err).Msg("failed to get user home directory for gitconfig")
+		log.Debug().Err(err).Msg("failed to get user home directory for gitconfig")
 		return nil
 	}
 
@@ -29,20 +29,20 @@ func GetGitConfigMount() []mount.Mount {
 	info, err := os.Stat(gitconfigPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			logger.Debug().Str("path", gitconfigPath).Msg("host gitconfig not found, skipping mount")
+			log.Debug().Str("path", gitconfigPath).Msg("host gitconfig not found, skipping mount")
 		} else {
-			logger.Debug().Str("path", gitconfigPath).Err(err).Msg("failed to stat host gitconfig")
+			log.Debug().Str("path", gitconfigPath).Err(err).Msg("failed to stat host gitconfig")
 		}
 		return nil
 	}
 
 	// Ensure it's a regular file, not a directory
 	if info.IsDir() {
-		logger.Debug().Str("path", gitconfigPath).Msg("host gitconfig is a directory, skipping")
+		log.Debug().Str("path", gitconfigPath).Msg("host gitconfig is a directory, skipping")
 		return nil
 	}
 
-	logger.Debug().Str("path", gitconfigPath).Msg("mounting host gitconfig to staging location")
+	log.Debug().Str("path", gitconfigPath).Msg("mounting host gitconfig to staging location")
 
 	return []mount.Mount{
 		{

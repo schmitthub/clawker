@@ -67,7 +67,7 @@ func (tp *TablePrinter) Render() error {
 		return nil
 	}
 	ios := tp.tui.ios
-	if ios.IsOutputTTY() && ios.ColorEnabled() {
+	if ios.IsStdoutTTY() && ios.ColorEnabled() {
 		return tp.renderStyled()
 	}
 	return tp.renderPlain()

@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/keyring"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,6 +34,7 @@ func TestInitContainerConfig_FreshStrategy_NoHostAuth(t *testing.T) {
 			UseHostAuth: boolPtr(false),
 		},
 		CopyToVolume: tracker.copyToVolumeFn(),
+		Log:          logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
@@ -57,6 +59,7 @@ func TestInitContainerConfig_FreshStrategy_WithHostAuth(t *testing.T) {
 			UseHostAuth: boolPtr(true),
 		},
 		CopyToVolume: tracker.copyToVolumeFn(),
+		Log:          logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
@@ -85,6 +88,7 @@ func TestInitContainerConfig_CopyStrategy_NoHostAuth(t *testing.T) {
 			UseHostAuth: boolPtr(false),
 		},
 		CopyToVolume: tracker.copyToVolumeFn(),
+		Log:          logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
@@ -119,6 +123,7 @@ func TestInitContainerConfig_CopyStrategy_WithHostAuth(t *testing.T) {
 			UseHostAuth: boolPtr(true),
 		},
 		CopyToVolume: tracker.copyToVolumeFn(),
+		Log:          logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
@@ -151,6 +156,7 @@ func TestInitContainerConfig_NilClaudeCode_Defaults(t *testing.T) {
 		ContainerWorkDir: "/workspace",
 		ClaudeCode:       nil, // defaults: copy strategy, use_host_auth true
 		CopyToVolume:     tracker.copyToVolumeFn(),
+		Log:              logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
@@ -176,6 +182,7 @@ func TestInitContainerConfig_EmptyProject_VolumeNaming(t *testing.T) {
 			UseHostAuth: boolPtr(true),
 		},
 		CopyToVolume: tracker.copyToVolumeFn(),
+		Log:          logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
@@ -205,6 +212,7 @@ func TestInitContainerConfig_CopyToVolumeError(t *testing.T) {
 		CopyToVolume: func(_ context.Context, _, _, _ string, _ []string) error {
 			return assert.AnError
 		},
+		Log: logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
@@ -228,6 +236,7 @@ func TestInitContainerConfig_HostConfigDirNotFound(t *testing.T) {
 			UseHostAuth: boolPtr(false),
 		},
 		CopyToVolume: tracker.copyToVolumeFn(),
+		Log:          logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
@@ -246,6 +255,7 @@ func TestInjectPostInitScript(t *testing.T) {
 		Script:          "npm install -g typescript\n",
 		Cfg:             configmocks.NewBlankConfig(),
 		CopyToContainer: tracker.copyFn(),
+		Log:             logger.Nop(),
 	}
 
 	err := InjectPostInitScript(context.Background(), opts)
@@ -266,6 +276,7 @@ func TestInjectPostInitScript_CopyError(t *testing.T) {
 		CopyToContainer: func(_ context.Context, _, _ string, _ io.Reader) error {
 			return assert.AnError
 		},
+		Log: logger.Nop(),
 	}
 
 	err := InjectPostInitScript(context.Background(), opts)
@@ -277,6 +288,7 @@ func TestInjectPostInitScript_NilCopyFn(t *testing.T) {
 	opts := InjectPostInitOpts{
 		ContainerID: "abc123",
 		Script:      "echo hello\n",
+		Log:         logger.Nop(),
 	}
 
 	err := InjectPostInitScript(context.Background(), opts)

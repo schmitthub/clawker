@@ -7,7 +7,8 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,8 +67,11 @@ func TestNewCmdRemove(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreamstest.New()
-			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+			tio, _, _, _ := iostreams.Test()
+			f := &cmdutil.Factory{
+				IOStreams: tio,
+				Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+			}
 
 			var gotOpts *RemoveOptions
 			cmd := NewCmdRemove(f, func(_ context.Context, opts *RemoveOptions) error {
@@ -101,8 +105,11 @@ func TestNewCmdRemove(t *testing.T) {
 }
 
 func TestCmdRemove_Properties(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdRemove(f, nil)
 
 	require.Equal(t, "remove IMAGE [IMAGE...]", cmd.Use)

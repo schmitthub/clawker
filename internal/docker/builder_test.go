@@ -17,6 +17,7 @@ import (
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 	"github.com/stretchr/testify/assert"
@@ -144,7 +145,7 @@ func newTestClientWithConfig(cfg config.Config) (*Client, *whailtest.FakeAPIClie
 		LabelPrefix:  cfg.EngineLabelPrefix(),
 		ManagedLabel: cfg.EngineManagedLabel(),
 	})
-	return &Client{Engine: engine, cfg: cfg}, fakeAPI
+	return &Client{Engine: engine, cfg: cfg, log: logger.Nop()}, fakeAPI
 }
 
 // managedImageInspect returns an ImageInspectResult with the managed label set,

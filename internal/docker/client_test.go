@@ -11,6 +11,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 	"github.com/stretchr/testify/require"
@@ -21,7 +22,7 @@ func TestParseContainers(t *testing.T) {
 version: "1"
 name: "testproject"
 `)
-	c := &Client{cfg: cfg}
+	c := &Client{cfg: cfg, log: logger.Nop()}
 
 	tests := []struct {
 		name string
@@ -282,7 +283,7 @@ func TestBuildImage_RoutesToBuildKit(t *testing.T) {
 	cfg := testConfig(t, `version: "1"`)
 	fake := whailtest.NewFakeAPIClient()
 	engine := clawkerEngine(cfg, fake)
-	client := &Client{Engine: engine, cfg: cfg}
+	client := &Client{Engine: engine, cfg: cfg, log: logger.Nop()}
 
 	capture := &whailtest.BuildKitCapture{}
 	engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
@@ -321,7 +322,7 @@ func TestBuildImage_RoutesToLegacy(t *testing.T) {
 	cfg := testConfig(t, `version: "1"`)
 	fake := whailtest.NewFakeAPIClient()
 	engine := clawkerEngine(cfg, fake)
-	client := &Client{Engine: engine, cfg: cfg}
+	client := &Client{Engine: engine, cfg: cfg, log: logger.Nop()}
 
 	// Wire BuildKit to verify it's NOT called
 	capture := &whailtest.BuildKitCapture{}
@@ -355,7 +356,7 @@ func TestBuildImage_BuildKitWithoutContextDir_FallsToLegacy(t *testing.T) {
 	cfg := testConfig(t, `version: "1"`)
 	fake := whailtest.NewFakeAPIClient()
 	engine := clawkerEngine(cfg, fake)
-	client := &Client{Engine: engine, cfg: cfg}
+	client := &Client{Engine: engine, cfg: cfg, log: logger.Nop()}
 
 	capture := &whailtest.BuildKitCapture{}
 	engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)

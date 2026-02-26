@@ -102,7 +102,7 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 
 ### Factory Testing (factory.go)
 
-`NewTestFactory(t, h) (*cmdutil.Factory, *iostreamstest.TestIOStreams)` — fully-wired with cleanup. Uses `configFromProject()` to bridge `*config.Project` schema → `config.Config` interface via `configmocks.NewFromString`. Factory.Config closure returns `(config.Config, error)`.
+`NewTestFactory(t, h) (*cmdutil.Factory, *iostreams.IOStreams)` — fully-wired with cleanup. Uses `configFromProject()` to bridge `*config.Project` schema → `config.Config` interface via `configmocks.NewFromString`. Factory.Config closure returns `(config.Config, error)`.
 
 ### Content-Addressed Caching (hash.go)
 

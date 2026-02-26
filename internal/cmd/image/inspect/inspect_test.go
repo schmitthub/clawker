@@ -7,7 +7,8 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,8 +40,11 @@ func TestNewCmdInspect(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreamstest.New()
-			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+			tio, _, _, _ := iostreams.Test()
+			f := &cmdutil.Factory{
+				IOStreams: tio,
+				Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+			}
 
 			var gotOpts *InspectOptions
 			cmd := NewCmdInspect(f, func(_ context.Context, opts *InspectOptions) error {
@@ -73,8 +77,11 @@ func TestNewCmdInspect(t *testing.T) {
 }
 
 func TestCmdInspect_Properties(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdInspect(f, nil)
 
 	require.Equal(t, "inspect IMAGE [IMAGE...]", cmd.Use)

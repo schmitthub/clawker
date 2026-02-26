@@ -40,7 +40,7 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*Result, error) {
 		defer runCancel()
 
 		ch := make(chan LoopDashEvent, 16)
-		WireLoopDashboard(&runnerOpts, ch, cfg.Setup, runnerOpts.MaxLoops)
+		WireLoopDashboard(&runnerOpts, ch, cfg.Setup, runnerOpts.MaxLoops, runnerOpts.Logger)
 
 		var runErr error
 		go func() {
@@ -186,7 +186,7 @@ func formatMinimalDuration(d time.Duration) string {
 // WireLoopDashboard sets Runner callback options to send events on the dashboard channel.
 // It configures OnLoopStart, OnLoopEnd, and OnOutput callbacks. It does NOT close the
 // channel — the goroutine wrapping runner.Run() is responsible for that.
-func WireLoopDashboard(opts *Options, ch chan<- LoopDashEvent, setup *LoopContainerResult, maxLoops int) {
+func WireLoopDashboard(opts *Options, ch chan<- LoopDashEvent, setup *LoopContainerResult, maxLoops int, log *logger.Logger) {
 	ch <- LoopDashEvent{
 		Kind:          LoopDashEventStart,
 		AgentName:     setup.AgentName,
@@ -202,7 +202,7 @@ func WireLoopDashboard(opts *Options, ch chan<- LoopDashEvent, setup *LoopContai
 		sendEvent(ch, LoopDashEvent{
 			Kind:      LoopDashEventIterStart,
 			Iteration: loopNum,
-		})
+		}, log)
 	}
 
 	opts.OnLoopEnd = func(loopNum int, status *Status, resultEvent *ResultEvent, err error) {
@@ -237,7 +237,7 @@ func WireLoopDashboard(opts *Options, ch chan<- LoopDashEvent, setup *LoopContai
 		ev.TotalTasks = totalTasks
 		ev.TotalFiles = totalFiles
 
-		sendEvent(ch, ev)
+		sendEvent(ch, ev, log)
 	}
 
 	opts.OnStreamEvent = func(e *StreamDeltaEvent) {
@@ -246,14 +246,14 @@ func WireLoopDashboard(opts *Options, ch chan<- LoopDashEvent, setup *LoopContai
 				Kind:        LoopDashEventOutput,
 				OutputKind:  OutputToolStart,
 				OutputChunk: fmt.Sprintf("[Using %s...]", name),
-			})
+			}, log)
 		}
 		if text := e.TextDelta(); text != "" {
 			sendEvent(ch, LoopDashEvent{
 				Kind:        LoopDashEventOutput,
 				OutputKind:  OutputText,
 				OutputChunk: text,
-			})
+			}, log)
 		}
 	}
 
@@ -261,10 +261,10 @@ func WireLoopDashboard(opts *Options, ch chan<- LoopDashEvent, setup *LoopContai
 }
 
 // sendEvent sends an event on the channel without blocking.
-func sendEvent(ch chan<- LoopDashEvent, ev LoopDashEvent) {
+func sendEvent(ch chan<- LoopDashEvent, ev LoopDashEvent, log *logger.Logger) {
 	select {
 	case ch <- ev:
 	default:
-		logger.Warn().Str("event_kind", ev.Kind.String()).Msg("dashboard event dropped: channel full")
+		log.Warn().Str("event_kind", ev.Kind.String()).Msg("dashboard event dropped: channel full")
 	}
 }

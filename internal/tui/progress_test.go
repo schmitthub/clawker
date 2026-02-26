@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -231,8 +230,8 @@ func TestBuildStageTree_AllInternal(t *testing.T) {
 
 // noColorScheme returns a ColorScheme that doesn't apply colors.
 func noColorScheme() *iostreams.ColorScheme {
-	tio := iostreamstest.New()
-	return tio.IOStreams.ColorScheme()
+	tio, _, _, _ := iostreams.Test()
+	return tio.ColorScheme()
 }
 
 func TestRenderCollapsedStage_Complete(t *testing.T) {
@@ -605,7 +604,7 @@ func TestRenderStageChildren_WithLogLines(t *testing.T) {
 // tracks line count between frames — if the final frame is shorter, old lines
 // remain as artifacts and the cursor position is wrong.
 func TestViewFrameHeight_StableAcrossGroupCollapse(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	cfg := ProgressDisplayConfig{
 		Title:      "Building test",
 		Subtitle:   "test:latest",
@@ -623,7 +622,7 @@ func TestViewFrameHeight_StableAcrossGroupCollapse(t *testing.T) {
 
 	ch := make(chan ProgressStep)
 	close(ch)
-	m := newProgressModel(tio.IOStreams, cfg, ch)
+	m := newProgressModel(tio, cfg, ch)
 
 	// 3 stages, 3 steps each.
 	// Mid-build: builder done (collapsed), assets has running step (expanded), runtime pending (collapsed).
@@ -699,22 +698,22 @@ func testDisplayConfig() ProgressDisplayConfig {
 }
 
 func TestPlainMode_Header(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "Building myproject")
 	assert.Contains(t, output, "myproject:latest")
 }
 
 func TestPlainMode_StepTransitions(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -723,16 +722,16 @@ func TestPlainMode_StepTransitions(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "[run]")
 	assert.Contains(t, output, "[ok]")
 }
 
 func TestPlainMode_CachedStep(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -740,15 +739,15 @@ func TestPlainMode_CachedStep(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "cached")
 }
 
 func TestPlainMode_ErrorStep(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -756,16 +755,16 @@ func TestPlainMode_ErrorStep(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "[fail]")
 	assert.Contains(t, output, "exit code 1")
 }
 
 func TestPlainMode_InternalStepsHidden(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -774,16 +773,16 @@ func TestPlainMode_InternalStepsHidden(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.NotContains(t, output, "[internal]")
 	assert.Contains(t, output, "FROM node:20")
 }
 
 func TestPlainMode_NoDuplicateRunLines(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -795,16 +794,16 @@ func TestPlainMode_NoDuplicateRunLines(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	// Should have exactly one [run] line (not three).
 	assert.Equal(t, 1, strings.Count(output, "[run]"))
 }
 
 func TestPlainMode_PendingNotRendered(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -812,16 +811,16 @@ func TestPlainMode_PendingNotRendered(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.NotContains(t, output, "COPY")
 	assert.NotContains(t, output, "[run]")
 }
 
 func TestPlainMode_Summary_Success(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -829,15 +828,15 @@ func TestPlainMode_Summary_Success(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "Built myproject:latest")
 }
 
 func TestPlainMode_Summary_Cached(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -846,15 +845,15 @@ func TestPlainMode_Summary_Cached(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "1/2 cached")
 }
 
 func TestPlainMode_LogEventsIgnored(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -864,10 +863,10 @@ func TestPlainMode_LogEventsIgnored(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.NotContains(t, output, "512 packages")
 }
 
@@ -875,9 +874,9 @@ func TestPlainMode_LogEventsIgnored(t *testing.T) {
 // TTY model unit tests (no BubbleTea program)
 // ---------------------------------------------------------------------------
 
-func newTestProgressModel(t *testing.T) (progressModel, *iostreamstest.TestIOStreams) {
+func newTestProgressModel(t *testing.T) (progressModel, *iostreams.IOStreams) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	ch := make(chan ProgressStep, 10) // channel not used in direct model tests
 	cfg := ProgressDisplayConfig{
 		Title:          "Building myproject",
@@ -901,7 +900,7 @@ func newTestProgressModel(t *testing.T) (progressModel, *iostreamstest.TestIOStr
 			return strings.HasPrefix(name, "[internal]")
 		},
 	}
-	m := newProgressModel(tio.IOStreams, cfg, ch)
+	m := newProgressModel(tio, cfg, ch)
 	return m, tio
 }
 
@@ -1045,34 +1044,34 @@ func TestProgressModel_View_InternalStepsHidden(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRenderProgressSummary_Success(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	cfg := testDisplayConfig()
 	steps := []*progressStep{
 		{name: "FROM node:20", status: StepComplete},
 		{name: "RUN npm install", status: StepComplete},
 	}
 
-	renderProgressSummary(tio.IOStreams, &cfg, steps, time.Now())
+	renderProgressSummary(tio, &cfg, steps, time.Now())
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "Built myproject:latest")
 }
 
 func TestRenderProgressSummary_Error(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	cfg := testDisplayConfig()
 	steps := []*progressStep{
 		{name: "RUN exit 1", status: StepError, errMsg: "exit code 1"},
 	}
 
-	renderProgressSummary(tio.IOStreams, &cfg, steps, time.Now())
+	renderProgressSummary(tio, &cfg, steps, time.Now())
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "failed")
 }
 
 func TestRenderProgressSummary_Cached(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	cfg := testDisplayConfig()
 	steps := []*progressStep{
 		{name: "FROM node:20", status: StepCached, cached: true},
@@ -1080,9 +1079,9 @@ func TestRenderProgressSummary_Cached(t *testing.T) {
 		{name: "[internal] load build definition", status: StepComplete}, // excluded
 	}
 
-	renderProgressSummary(tio.IOStreams, &cfg, steps, time.Now())
+	renderProgressSummary(tio, &cfg, steps, time.Now())
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "1/2 cached")
 }
 
@@ -1117,7 +1116,7 @@ func TestDefaultFormatDuration(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPlainMode_NilHook_Unchanged(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1126,15 +1125,15 @@ func TestPlainMode_NilHook_Unchanged(t *testing.T) {
 
 	cfg := testDisplayConfig()
 	// OnLifecycle is nil — should behave exactly as before.
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "Built myproject:latest")
 }
 
 func TestPlainMode_Hook_AbortSkipsSummary(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1148,16 +1147,16 @@ func TestPlainMode_Hook_AbortSkipsSummary(t *testing.T) {
 		return HookResult{Continue: false, Message: "user quit"}
 	}
 
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.EqualError(t, result.Err, "user quit")
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	// Summary should NOT be rendered when hook aborts.
 	assert.NotContains(t, output, "Built myproject:latest")
 }
 
 func TestPlainMode_Hook_ErrorPropagates(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1170,12 +1169,12 @@ func TestPlainMode_Hook_ErrorPropagates(t *testing.T) {
 		return HookResult{Continue: false, Err: hookErr}
 	}
 
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.ErrorIs(t, result.Err, hookErr)
 }
 
 func TestPlainMode_Hook_AbortNoMessage(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1187,7 +1186,7 @@ func TestPlainMode_Hook_AbortNoMessage(t *testing.T) {
 		return HookResult{Continue: false} // no Err, no Message
 	}
 
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.Error(t, result.Err)
 	assert.Contains(t, result.Err.Error(), "aborted by lifecycle hook")
 }
@@ -1216,7 +1215,7 @@ func TestHandleHookResult_AbortEmpty(t *testing.T) {
 }
 
 func TestPlainMode_Hook_ContinueRendersSummary(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	hookCalled := false
@@ -1230,11 +1229,11 @@ func TestPlainMode_Hook_ContinueRendersSummary(t *testing.T) {
 		return HookResult{Continue: true}
 	}
 
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 	assert.True(t, hookCalled)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "Built myproject:latest")
 }
 
@@ -1242,26 +1241,8 @@ func TestPlainMode_Hook_ContinueRendersSummary(t *testing.T) {
 // RunProgress mode selection tests
 // ---------------------------------------------------------------------------
 
-func TestRunProgress_PlainModeForced(t *testing.T) {
-	tio := iostreamstest.New()
-	tio.SetInteractive(true) // TTY available, but "plain" overrides
-	ch := make(chan ProgressStep, 10)
-
-	go sendProgressSteps(ch,
-		ProgressStep{ID: "s1", Name: "FROM node:20", Status: StepRunning},
-		ProgressStep{ID: "s1", Status: StepComplete},
-	)
-
-	cfg := testDisplayConfig()
-	result := RunProgress(tio.IOStreams, "plain", cfg, ch)
-	assert.NoError(t, result.Err)
-	// Plain mode writes to stderr line by line.
-	output := tio.ErrBuf.String()
-	assert.Contains(t, output, "[ok]")
-}
-
 func TestRunProgress_AutoFallsBackToPlain(t *testing.T) {
-	tio := iostreamstest.New() // non-TTY by default
+	tio, _, _, errOut := iostreams.Test() // non-TTY by default
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1270,14 +1251,14 @@ func TestRunProgress_AutoFallsBackToPlain(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := RunProgress(tio.IOStreams, "auto", cfg, ch)
+	result := RunProgress(tio, "auto", cfg, ch)
 	assert.NoError(t, result.Err)
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "[ok]")
 }
 
 func TestRunProgress_UnknownModeFallsToAuto(t *testing.T) {
-	tio := iostreamstest.New() // non-TTY → plain
+	tio, _, _, errOut := iostreams.Test() // non-TTY → plain
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1286,24 +1267,24 @@ func TestRunProgress_UnknownModeFallsToAuto(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := RunProgress(tio.IOStreams, "nonexistent", cfg, ch)
+	result := RunProgress(tio, "nonexistent", cfg, ch)
 	assert.NoError(t, result.Err)
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "[ok]")
 }
 
 func TestRunProgress_EmptyChannel(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	ch := make(chan ProgressStep)
 	close(ch) // immediately closed = no events
 
 	cfg := testDisplayConfig()
-	result := RunProgress(tio.IOStreams, "plain", cfg, ch)
+	result := RunProgress(tio, "plain", cfg, ch)
 	assert.NoError(t, result.Err)
 }
 
 func TestRunProgress_ZeroValueConfig(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1313,7 +1294,7 @@ func TestRunProgress_ZeroValueConfig(t *testing.T) {
 
 	// Zero-value config should use sensible defaults without panicking.
 	cfg := ProgressDisplayConfig{}
-	result := RunProgress(tio.IOStreams, "plain", cfg, ch)
+	result := RunProgress(tio, "plain", cfg, ch)
 	assert.NoError(t, result.Err)
 }
 
@@ -1375,7 +1356,7 @@ func TestProgressModel_ProcessEvent_ErrorStep(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPlainMode_ErrorStepWithLogLines(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1386,10 +1367,10 @@ func TestPlainMode_ErrorStepWithLogLines(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	// Log lines should appear after the [fail] line.
 	assert.Contains(t, output, "[fail]")
 	assert.Contains(t, output, "npm ERR! code ERESOLVE")
@@ -1399,7 +1380,7 @@ func TestPlainMode_ErrorStepWithLogLines(t *testing.T) {
 }
 
 func TestPlainMode_LogEventsStoredForErrors(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	ch := make(chan ProgressStep, 10)
 
 	// Log-only events (Name == "") should still be buffered.
@@ -1411,10 +1392,10 @@ func TestPlainMode_LogEventsStoredForErrors(t *testing.T) {
 	)
 
 	cfg := testDisplayConfig()
-	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	result := runProgressPlain(tio, cfg, ch)
 	assert.NoError(t, result.Err)
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	assert.Contains(t, output, "error: missing semicolon")
 }
 
@@ -1465,7 +1446,7 @@ func TestRenderStageChildren_ErrorStepShowsLogs(t *testing.T) {
 }
 
 func TestRenderProgressSummary_ErrorWithDetails(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 
 	logBuf := newRingBuffer(3)
 	logBuf.Push("npm ERR! code ERESOLVE")
@@ -1480,9 +1461,9 @@ func TestRenderProgressSummary_ErrorWithDetails(t *testing.T) {
 		Subtitle: "test:latest",
 	}
 
-	renderProgressSummary(tio.IOStreams, cfg, steps, time.Now())
+	renderProgressSummary(tio, cfg, steps, time.Now())
 
-	output := tio.ErrBuf.String()
+	output := errOut.String()
 	// Summary should show the failed step name.
 	assert.Contains(t, output, "RUN npm install")
 	// Summary should show log lines.

@@ -76,17 +76,18 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   │   ├── hostproxytest/     # MockHostProxy for integration tests
 │   │   └── internals/         # Container-side hostproxy client scripts
 │   ├── iostreams/             # I/O streams, colors, styles, spinners, progress, layout
-│   │   └── iostreamstest/     # TestIOStreams constructor: New()
 │   ├── keyring/               # Keyring service for credential storage
-│   ├── logger/                # Zerolog setup (file + optional OTEL bridge)
-│   │   └── loggertest/        # Test doubles: TestLogger, New(), NewNop()
+│   ├── logger/                # Struct-based zerolog (file + optional OTEL bridge); Factory noun
 │   ├── monitor/               # Monitoring stack templates (Grafana, Prometheus, Loki)
 │   ├── project/               # Project registration in user registry
 │   ├── prompter/              # Interactive prompts (String, Confirm, Select)
 │   ├── signals/               # OS signal utilities (leaf — stdlib only)
 │   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
 │   │   └── socketbridgetest/  # MockManager for testing
+│   ├── storage/               # Multi-file YAML store: discovery, merge, provenance-aware write, dir validation
 │   ├── term/                  # Terminal capabilities + raw mode (leaf — sole x/term gateway)
+│   │   └── mocks/             # FakeTerm stub (satisfies iostreams.term interface)
+│   ├── testenv/               # Unified test environment: isolated dirs, config, project manager (test-only)
 │   ├── text/                  # Pure text utilities (leaf — stdlib only)
 │   ├── tui/                   # Interactive TUI layer: BubbleTea models, viewports, panels (imports iostreams for styles)
 │   ├── update/                # Background update checker — GitHub releases API, 24h cached notifications (foundation — no internal imports)
@@ -95,8 +96,8 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   └── whail/                 # Reusable Docker engine with label-based isolation
 │       └── buildkit/          # BuildKit client (moby/buildkit) — isolated heavy deps
 ├── test/
-│   ├── harness/               # Test harness, config builders, helpers (docker)
-│   │   └── golden/            # Golden file utilities (leaf — stdlib + testify only)
+│   ├── e2e/                   # E2E integration tests
+│   │   └── harness/           # CLI test harness (delegates dirs to testenv, adds chdir + Factory + Run)
 │   ├── whail/                 # Whail BuildKit integration tests (Docker + BuildKit)
 │   ├── cli/                   # Testscript-based CLI workflow tests (Docker)
 │   ├── commands/              # Command integration tests (Docker)
@@ -163,7 +164,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 
 | Abstraction | Purpose |
 |-------------|---------|
-| `Factory` | Slim DI struct with eager IO/TUI/version fields and lazy noun closures (`Config`, `Project`, `Client`, `GitManager`, etc.); constructor in `internal/cmd/factory` |
+| `Factory` | Slim DI struct with eager IO/TUI/version fields and lazy noun closures (`Config`, `Logger`, `Client`, `ProjectManager`, `GitManager`, etc.); constructor in `internal/cmd/factory` |
 | `git.GitManager` | Git repository operations, worktree management (leaf package, no internal imports) |
 | `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming. `cfg config.Config` (interface) provides all label keys. `NewClient(ctx, cfg, opts...)` (production), `NewClientFromEngine(engine, cfg)` (tests) |
 | `whail.Engine` | Reusable Docker engine with label-based resource isolation |
@@ -171,6 +172,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `PTYHandler` | Raw terminal mode, bidirectional streaming (in `docker` package) |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
 | `CreateContainer()` | Single entry point for container creation (workspace, config, env, create, inject); shared by `run` and `create` via events channel for progress |
+| `IsOutsideHome(dir)` | Pure bool function in `container/shared/safety.go` — returns true when dir is `$HOME` or not within `$HOME`. Used by `run`/`create` (prompt) and `loop` (hard error) |
 | `CreateContainerConfig` / `CreateContainerResult` | Input/output types for `CreateContainer()` — all deps and runtime values |
 | `CreateContainerEvent` | Channel event: Step, Status (`StepRunning`/`StepComplete`/`StepCached`), Type (`MessageInfo`/`MessageWarning`), Message |
 | `clawker-share` | Optional read-only bind mount from `cfg.ShareSubdir()` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker init`, re-created if missing during mount setup |
@@ -182,8 +184,8 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `hostproxy.Manager` | Concrete host proxy daemon manager (spawns subprocess); implements `HostProxyService` |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `sockebridgemocks.MockManager` |
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
-| `iostreams.IOStreams` | I/O streams, TTY detection, colors, styles, spinners, progress, layout. `Logger` field for diagnostic file logging |
-| `iostreams.Logger` | Interface matching `*zerolog.Logger` — `Debug/Info/Warn/Error() *zerolog.Event`. Decouples commands from `internal/logger` |
+| `iostreams.IOStreams` | I/O streams, TTY detection, colors, styles, spinners, progress, layout |
+| `logger.Logger` | Struct-based zerolog wrapper with file rotation + optional OTEL bridge. Factory lazy noun (`f.Logger`). Commands capture on Options, library packages accept in constructors. Tests use `logger.Nop()` |
 | `iostreams.ColorScheme` | Color palette + semantic colors + icons; canonical style source for all clawker output |
 | `iostreams.SpinnerFrame` | Pure spinner rendering function used by the iostreams goroutine spinner |
 | `text.*` | Pure ANSI-aware text utilities (leaf package): Truncate, PadRight, CountVisibleWidth, StripANSI, etc. |
@@ -217,6 +219,8 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `config.Config` | Configuration and path-resolution contract. Owns config file I/O and path helpers (`GetProjectRoot`, `GetProjectIgnoreFile`, `ConfigDir`, `Write`). It does not own project CRUD/worktree lifecycle orchestration |
 | `build.Version` / `build.Date` | Build-time metadata injected via ldflags; `DEV` default with `debug.ReadBuildInfo` fallback |
 | `WorktreeStatus` | String enum for worktree health: `WorktreeHealthy`, `WorktreeRegistryOnly`, `WorktreeGitOnly`, `WorktreeBroken`, `WorktreeDotGitMissing`, `WorktreeGitMetadataMissing` |
+| `storage.ValidateDirectories` | Resolves all 4 XDG dirs (config/data/state/cache) and returns error if any pair collides — catches env var misconfiguration |
+| `testenv.Env` | Unified test environment: `New(t)` creates isolated dirs + env vars; `WithConfig()` adds config; `WithProjectManager(gf)` adds PM. Accessors: `Dirs`, `Config()`, `ProjectManager()` |
 
 Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API references.
 
@@ -285,7 +289,7 @@ loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permis
 9.  Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
 10. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
 11. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
-12. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `ios.Logger` (IOStreams interface), library-layer code uses global `logger.Debug()`. Logger init happens in factory's `ioStreams(f)`, not in root.go
+12. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `f.Logger` (Factory lazy noun captured on Options struct), library-layer code accepts `*logger.Logger` in constructors. Logger init happens lazily on first `f.Logger()` call
 13. Package boundary rule: path resolution + config file I/O belongs to `internal/config`; project identity/CRUD/worktree lifecycle orchestration belongs to `internal/project`
 
 ## Important Gotchas

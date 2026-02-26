@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -359,8 +359,8 @@ func TestWizard_TextFieldInWizard(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWizard_EmptyFields(t *testing.T) {
-	ios := iostreamstest.New()
-	tui := NewTUI(ios.IOStreams)
+	ios, _, _, _ := iostreams.Test()
+	tui := NewTUI(ios)
 
 	result, err := tui.RunWizard(nil)
 	require.Error(t, err)

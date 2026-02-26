@@ -62,7 +62,7 @@ func NewFakeClient(cfg config.Config, opts ...FakeClientOption) *FakeClient {
 		ManagedLabel: cfg.EngineManagedLabel(),
 		Labels:       docker.TestLabelConfig(cfg),
 	})
-	client := docker.NewClientFromEngine(engine, cfg)
+	client := docker.NewClientFromEngine(engine, cfg, nil)
 
 	// Override whailtest's default ContainerInspect to return clawker labels
 	// instead of whailtest's "com.whailtest.managed" default. This prevents

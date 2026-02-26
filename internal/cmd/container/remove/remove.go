@@ -7,6 +7,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
@@ -18,6 +19,7 @@ type RemoveOptions struct {
 	Client         func(context.Context) (*docker.Client, error)
 	ProjectManager func() (project.ProjectManager, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
+	Logger         func() (*logger.Logger, error)
 
 	Agent   bool
 	Force   bool
@@ -33,6 +35,7 @@ func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions)
 		Client:         f.Client,
 		ProjectManager: f.ProjectManager,
 		SocketBridge:   f.SocketBridge,
+		Logger:         f.Logger,
 	}
 
 	cmd := &cobra.Command{
@@ -84,6 +87,10 @@ Container names can be:
 func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
 
 	// Resolve container names
 	containers := opts.Containers
@@ -111,7 +118,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 
 	var errs []error
 	for _, name := range containers {
-		if err := removeContainer(ctx, client, name, opts); err != nil {
+		if err := removeContainer(ctx, client, name, opts, log); err != nil {
 			errs = append(errs, err)
 			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, err)
 		} else {
@@ -125,7 +132,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	return nil
 }
 
-func removeContainer(ctx context.Context, client *docker.Client, name string, opts *RemoveOptions) error {
+func removeContainer(ctx context.Context, client *docker.Client, name string, opts *RemoveOptions, log *logger.Logger) error {
 	// Find container by name
 	container, err := client.FindContainerByName(ctx, name)
 	if err != nil {
@@ -139,7 +146,7 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 	if opts.SocketBridge != nil {
 		if mgr := opts.SocketBridge(); mgr != nil {
 			if err := mgr.StopBridge(container.ID); err != nil {
-				opts.IOStreams.Logger.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
+				log.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
 			}
 		}
 	}

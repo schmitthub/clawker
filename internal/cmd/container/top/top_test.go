@@ -12,7 +12,8 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -189,19 +190,20 @@ func TestCmdTop_ArgsParsing(t *testing.T) {
 
 // --- Tier 2 tests (Cobra+Factory, real run function) ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+		TUI:       tui.NewTUI(tio),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
 			return configmocks.NewBlankConfig(), nil
 		},
-	}, tio
+	}, in, out, errOut
 }
 
 func TestTopRun_HappyPath(t *testing.T) {
@@ -216,29 +218,30 @@ func TestTopRun_HappyPath(t *testing.T) {
 		},
 	)
 
-	f, tio := testFactory(t, fake)
+	f, in, out, errOut := testFactory(t, fake)
 	cmd := NewCmdTop(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	out := tio.OutBuf.String()
-	assert.Contains(t, out, "PID")
-	assert.Contains(t, out, "USER")
-	assert.Contains(t, out, "COMMAND")
-	assert.Contains(t, out, "/bin/sh")
-	assert.Contains(t, out, "node server.js")
+	outStr := out.String()
+	assert.Contains(t, outStr, "PID")
+	assert.Contains(t, outStr, "USER")
+	assert.Contains(t, outStr, "COMMAND")
+	assert.Contains(t, outStr, "/bin/sh")
+	assert.Contains(t, outStr, "node server.js")
 }
 
 func TestTopRun_DockerConnectionError(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+		TUI:       tui.NewTUI(tio),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
@@ -249,9 +252,9 @@ func TestTopRun_DockerConnectionError(t *testing.T) {
 
 	cmd := NewCmdTop(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -262,12 +265,12 @@ func TestTopRun_ContainerNotFound(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
-	f, tio := testFactory(t, fake)
+	f, in, out, errOut := testFactory(t, fake)
 	cmd := NewCmdTop(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.nonexistent"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)

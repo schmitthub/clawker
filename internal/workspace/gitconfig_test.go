@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 func TestHostGitConfigStagingPath(t *testing.T) {
@@ -63,7 +65,7 @@ func TestGetGitConfigMount_FileExists(t *testing.T) {
 
 	t.Setenv("HOME", tmpHome)
 
-	mounts := GetGitConfigMount()
+	mounts := GetGitConfigMount(logger.Nop())
 	if len(mounts) != 1 {
 		t.Fatalf("GetGitConfigMount() returned %d mounts, want 1", len(mounts))
 	}
@@ -85,7 +87,7 @@ func TestGetGitConfigMount_NoFile(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	mounts := GetGitConfigMount()
+	mounts := GetGitConfigMount(logger.Nop())
 	if mounts != nil {
 		t.Errorf("GetGitConfigMount() with no gitconfig = %v, want nil", mounts)
 	}
@@ -101,7 +103,7 @@ func TestGetGitConfigMount_Directory(t *testing.T) {
 
 	t.Setenv("HOME", tmpHome)
 
-	mounts := GetGitConfigMount()
+	mounts := GetGitConfigMount(logger.Nop())
 	if mounts != nil {
 		t.Errorf("GetGitConfigMount() when .gitconfig is directory = %v, want nil", mounts)
 	}

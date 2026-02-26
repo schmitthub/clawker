@@ -25,7 +25,7 @@ Heavy command helpers have been extracted to dedicated packages:
 
 ## Factory (`factory.go`)
 
-Pure dependency injection container struct. 9 fields total: 3 eager values + 6 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
+Pure dependency injection container struct. 3 eager values + 8 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
 
 ```go
 type Factory struct {
@@ -35,12 +35,14 @@ type Factory struct {
     TUI      *tui.TUI
 
     // Lazy nouns (each returns a thing; commands call methods on the thing)
-    Client       func(context.Context) (*docker.Client, error)
-    Config       func() config.Provider
-    GitManager   func() (*git.GitManager, error)
-    HostProxy    func() hostproxy.HostProxyService
-    SocketBridge func() socketbridge.SocketBridgeManager
-    Prompter     func() *prompter.Prompter
+    Client         func(context.Context) (*docker.Client, error)
+    Config         func() (config.Config, error)
+    Logger         func() (*logger.Logger, error)
+    ProjectManager func() (project.ProjectManager, error)
+    GitManager     func() (*git.GitManager, error)
+    HostProxy      func() hostproxy.HostProxyService
+    SocketBridge   func() socketbridge.SocketBridgeManager
+    Prompter       func() *prompter.Prompter
 }
 ```
 
@@ -48,24 +50,25 @@ type Factory struct {
 - `Version`, `IOStreams` -- set eagerly at construction
 - `TUI` -- eager `*tui.TUI` presentation layer noun; commands call `.RunProgress()` on it. Hooks are registered post-construction via `.RegisterHooks()` (pointer sharing ensures commands see hooks registered in PersistentPreRunE)
 - `Client(ctx)` -- lazy Docker client (connects on first call)
-- `Config()` -- returns `config.Provider` gateway interface (which lazy-loads project, settings, registry via `sync.Once`)
-- `GitManager()` -- lazy git manager for worktree operations; uses project root from Config.Project.RootDir()
+- `Config()` -- lazy config (loads project, settings, registry)
+- `Logger()` -- lazy `*logger.Logger` (file-only zerolog); commands capture on Options struct, resolve in run function. Tests: `func() (*logger.Logger, error) { return logger.Nop(), nil }`
+- `ProjectManager()` -- lazy project manager for registration, worktree lifecycle
+- `GitManager()` -- lazy git manager for worktree operations; uses project root from Config
 - `HostProxy()` -- returns `hostproxy.HostProxyService` (interface); commands call `.EnsureRunning()` / `.IsRunning()` / `.ProxyURL()` on it. Mock: `hostproxytest.MockManager`
 - `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `sockebridgemocks.MockManager`
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
 
-**Config gateway pattern:** Commands use `f.Config().ProjectCfg()`, `f.Config().UserSettings()`, `f.Config().ProjectKey()`, `f.Config().WorkDir()`, `f.Config().ProjectRegistry()`, `f.Config().SettingsLoader()`, etc.
-
 **Testing:** Construct minimal Factory structs directly:
 ```go
-tio := iostreamstest.New()
+tio, _, _, _ := iostreams.Test()
 f := &cmdutil.Factory{
-    IOStreams: tio.IOStreams,
-    TUI:      tui.NewTUI(tio.IOStreams),
+    IOStreams: tio,
+    Logger:   func() (*logger.Logger, error) { return logger.Nop(), nil },
+    TUI:      tui.NewTUI(tio),
 }
 ```
 
-Commands that use `opts.TUI.RunProgress()` require the `TUI` field. Commands that only use `f.IOStreams` for static output don't need it.
+Commands that use `opts.TUI.RunProgress()` require the `TUI` field. Commands that only use `f.IOStreams` for static output don't need TUI. All commands that log require the `Logger` field.
 
 ## Error Handling & Output (`output.go`, `errors.go`)
 

@@ -581,8 +581,8 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
     }
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            tio := iostreamstest.New()
-            f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+            tio, _, _, _ := iostreams.Test()
+            f := &cmdutil.Factory{IOStreams: tio}
             cmd := NewCmdList(f, func(_ context.Context, _ *ListOptions) error { return nil })
             argv, _ := shlex.Split(tt.input)
             cmd.SetArgs(argv)
@@ -609,11 +609,11 @@ t.Run("json_output", func(t *testing.T) {
     cmd := NewCmdList(f, nil)  // nil runF = real implementation
     cmd.SetArgs([]string{"--json"})
     cmd.SetIn(&bytes.Buffer{})
-    cmd.SetOut(tio.OutBuf)
-    cmd.SetErr(tio.ErrBuf)
+    cmd.SetOut(out)
+    cmd.SetErr(errOut)
     err := cmd.Execute()
     require.NoError(t, err)
-    assert.Contains(t, tio.OutBuf.String(), `"image": "myapp:latest"`)
+    assert.Contains(t, out.String(), `"image": "myapp:latest"`)
 })
 
 t.Run("filter_reference", func(t *testing.T) {
@@ -626,8 +626,8 @@ t.Run("filter_reference", func(t *testing.T) {
     cmd := NewCmdList(f, nil)
     cmd.SetArgs([]string{"--filter", "reference=clawker*"})
     // ...
-    assert.Contains(t, tio.OutBuf.String(), "clawker-demo:latest")
-    assert.NotContains(t, tio.OutBuf.String(), "node:20-slim")
+    assert.Contains(t, out.String(), "clawker-demo:latest")
+    assert.NotContains(t, out.String(), "node:20-slim")
 })
 ```
 
@@ -964,15 +964,15 @@ GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v  # r
 
 **Unit tests** (model-level, no BubbleTea program):
 ```go
-func newTestProgressModel(t *testing.T) (progressModel, *iostreamstest.TestIOStreams) {
-    tio := iostreamstest.New()
+func newTestProgressModel(t *testing.T) (progressModel, *iostreams.IOStreams) {
+    tio, _, _, _ := iostreams.Test()
     ch := make(chan ProgressStep, 10)
     cfg := ProgressDisplayConfig{
         Title: "Building myproject", Subtitle: "myproject:latest",
         CompletionVerb: "Built",
         // ... callbacks ...
     }
-    m := newProgressModel(tio.IOStreams, cfg, ch)
+    m := newProgressModel(tio, cfg, ch)
     return m, tio
 }
 ```
@@ -1207,10 +1207,10 @@ tp := f.TUI.NewTable(headers...)
 ### Test Setup
 
 ```go
-tio := iostreamstest.New()
-// tio.IOStreams — non-TTY, colors disabled by default
-// tio.OutBuf   — captures stdout
-// tio.ErrBuf   — captures stderr
+tio, _, _, _ := iostreams.Test()
+// tio — non-TTY, colors disabled by default
+// out   — captures stdout
+// errOut   — captures stderr
 // tio.InBuf    — provides stdin
 
 // Customize for specific tests:
@@ -1228,22 +1228,22 @@ func TestCmdRun(t *testing.T) {
     fake.SetupContainerCreate()
     fake.SetupContainerStart()
 
-    tio := iostreamstest.New()
+    tio, _, _, _ := iostreams.Test()
     f := &cmdutil.Factory{
-        IOStreams: tio.IOStreams,
-        TUI:      tui.NewTUI(tio.IOStreams),
+        IOStreams: tio,
+        TUI:      tui.NewTUI(tio),
         Client:   func(ctx context.Context) (*docker.Client, error) { return fake.Client, nil },
     }
 
     cmd := NewCmdRun(f, nil)  // nil runF = real implementation
     cmd.SetArgs([]string{"--detach", "alpine"})
     cmd.SetIn(tio.InBuf)
-    cmd.SetOut(tio.OutBuf)
-    cmd.SetErr(tio.ErrBuf)
+    cmd.SetOut(out)
+    cmd.SetErr(errOut)
 
     err := cmd.Execute()
     assert.NoError(t, err)
-    assert.Contains(t, tio.OutBuf.String(), "container-id")
+    assert.Contains(t, out.String(), "container-id")
 }
 ```
 
@@ -1251,11 +1251,11 @@ func TestCmdRun(t *testing.T) {
 
 ```go
 // Check stdout (data)
-assert.Contains(t, tio.OutBuf.String(), "expected-data")
+assert.Contains(t, out.String(), "expected-data")
 
 // Check stderr (status messages)
-assert.Contains(t, tio.ErrBuf.String(), "Container started")
+assert.Contains(t, errOut.String(), "Container started")
 
 // Check no output on wrong stream
-assert.Empty(t, tio.OutBuf.String(), "status messages should go to stderr")
+assert.Empty(t, out.String(), "status messages should go to stderr")
 ```

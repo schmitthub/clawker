@@ -315,7 +315,7 @@ type StreamHandler struct {
 // waitForReady scans lines until the ready signal is found, returning nil.
 // Returns an error if the error signal is found, the stream ends, or the
 // context is cancelled. Non-signal lines are debug-logged and skipped.
-func waitForReady(ctx context.Context, scanner *bufio.Scanner) error {
+func waitForReady(ctx context.Context, scanner *bufio.Scanner, log *logger.Logger) error {
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -325,10 +325,10 @@ func waitForReady(ctx context.Context, scanner *bufio.Scanner) error {
 		case strings.HasPrefix(line, ErrorLogPrefix):
 			return fmt.Errorf("container init failed: %s", line)
 		case strings.HasPrefix(line, ReadyLogPrefix):
-			logger.Debug().Str("line", line).Msg("ready signal received")
+			log.Debug().Str("line", line).Msg("ready signal received")
 			return nil
 		default:
-			logger.Debug().Str("line", line).Msg("pre-ready output (waiting for init)")
+			log.Debug().Str("line", line).Msg("pre-ready output (waiting for init)")
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -350,12 +350,12 @@ func waitForReady(ctx context.Context, scanner *bufio.Scanner) error {
 // are silently skipped for forward compatibility. Known event types that
 // fail to parse (system, assistant, user) are warn-logged and skipped.
 // A malformed result event returns an error (terminal event corruption).
-func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*ResultEvent, error) {
+func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler, log *logger.Logger) (*ResultEvent, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScannerBuffer)
 
 	// Wait for the container init ready signal before parsing NDJSON.
-	if err := waitForReady(ctx, scanner); err != nil {
+	if err := waitForReady(ctx, scanner, log); err != nil {
 		return nil, err
 	}
 
@@ -371,7 +371,7 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 
 		// Skip non-JSON lines (init script output that leaked past ready signal).
 		if line[0] != '{' {
-			logger.Debug().Str("line", string(line)).Msg("skipping non-JSON line in stream")
+			log.Debug().Str("line", string(line)).Msg("skipping non-JSON line in stream")
 			continue
 		}
 
@@ -380,7 +380,7 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 			Type EventType `json:"type"`
 		}
 		if err := json.Unmarshal(line, &envelope); err != nil {
-			logger.Debug().Err(err).Int("line_len", len(line)).Msg("skipping malformed JSON line")
+			log.Debug().Err(err).Int("line_len", len(line)).Msg("skipping malformed JSON line")
 			continue
 		}
 
@@ -388,7 +388,7 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 		case EventTypeSystem:
 			var event SystemEvent
 			if err := json.Unmarshal(line, &event); err != nil {
-				logger.Warn().Err(err).Str("type", "system").Msg("failed to parse known stream event")
+				log.Warn().Err(err).Str("type", "system").Msg("failed to parse known stream event")
 				continue
 			}
 			if handler != nil && handler.OnSystem != nil {
@@ -398,7 +398,7 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 		case EventTypeAssistant:
 			var event AssistantEvent
 			if err := json.Unmarshal(line, &event); err != nil {
-				logger.Warn().Err(err).Str("type", "assistant").Msg("failed to parse known stream event")
+				log.Warn().Err(err).Str("type", "assistant").Msg("failed to parse known stream event")
 				continue
 			}
 			if handler != nil && handler.OnAssistant != nil {
@@ -408,7 +408,7 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 		case EventTypeUser:
 			var event UserEvent
 			if err := json.Unmarshal(line, &event); err != nil {
-				logger.Warn().Err(err).Str("type", "user").Msg("failed to parse known stream event")
+				log.Warn().Err(err).Str("type", "user").Msg("failed to parse known stream event")
 				continue
 			}
 			if handler != nil && handler.OnUser != nil {
@@ -418,7 +418,7 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 		case EventTypeStreamEvent:
 			var event StreamDeltaEvent
 			if err := json.Unmarshal(line, &event); err != nil {
-				logger.Warn().Err(err).Str("type", "stream_event").Msg("failed to parse known stream event")
+				log.Warn().Err(err).Str("type", "stream_event").Msg("failed to parse known stream event")
 				continue
 			}
 			if handler != nil && handler.OnStreamEvent != nil {

@@ -6,8 +6,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // Status represents the parsed LOOP_STATUS block from Claude's output.
@@ -119,15 +117,11 @@ func ParseStatus(output string) *Status {
 		case "STATUS":
 			status.Status = value
 		case "TASKS_COMPLETED_THIS_LOOP":
-			if val, err := strconv.Atoi(value); err != nil {
-				logger.Debug().Str("value", value).Msg("failed to parse TASKS_COMPLETED_THIS_LOOP, defaulting to 0")
-			} else {
+			if val, err := strconv.Atoi(value); err == nil {
 				status.TasksCompleted = val
 			}
 		case "FILES_MODIFIED":
-			if val, err := strconv.Atoi(value); err != nil {
-				logger.Debug().Str("value", value).Msg("failed to parse FILES_MODIFIED, defaulting to 0")
-			} else {
+			if val, err := strconv.Atoi(value); err == nil {
 				status.FilesModified = val
 			}
 		case "TESTS_STATUS":

@@ -81,11 +81,17 @@ type CircuitState struct {
 // SessionStore manages session and circuit breaker persistence.
 type SessionStore struct {
 	baseDir string
+	log     *logger.Logger
 }
 
 // NewSessionStore creates a new session store at the given base directory.
-func NewSessionStore(baseDir string) *SessionStore {
-	return &SessionStore{baseDir: baseDir}
+func NewSessionStore(baseDir string, log ...*logger.Logger) *SessionStore {
+	// TODO: Using a variadic parameter for an optional dependency is a bit non-idiomatic and can make call sites ambiguous (especially if more options are ever needed). Consider taking log *logger.Logger explicitly (and defaulting nil to logger.Nop()), or switching to a small options struct / functional options if you anticipate more configuration later.
+	s := &SessionStore{baseDir: baseDir}
+	if len(log) > 0 && log[0] != nil {
+		s.log = log[0]
+	}
+	return s
 }
 
 // DefaultSessionStore returns a session store using the default clawker directory.
@@ -191,12 +197,16 @@ func (s *SessionStore) ListSessions(project string) ([]*Session, error) {
 	for _, path := range matches {
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
-			logger.Warn().Err(readErr).Str("path", path).Msg("skipping unreadable session file")
+			if s.log != nil {
+				s.log.Warn().Err(readErr).Str("path", path).Msg("skipping unreadable session file")
+			}
 			continue
 		}
 		var sess Session
 		if jsonErr := json.Unmarshal(data, &sess); jsonErr != nil {
-			logger.Warn().Err(jsonErr).Str("path", path).Msg("skipping malformed session file")
+			if s.log != nil {
+				s.log.Warn().Err(jsonErr).Str("path", path).Msg("skipping malformed session file")
+			}
 			continue
 		}
 		if sess.Project == project {

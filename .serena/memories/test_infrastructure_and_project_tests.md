@@ -60,17 +60,37 @@ The config mock system has three tiers:
 - Tests: `TestGitManager_GitDir`, `TestGitManager_IsWorktreeLocked`, `TestResolveWorkDir_WorktreeGetError`, `TestResolveWorkDir_UnhealthyStatuses`, project tests for dotgit_missing/git_metadata_missing/prune_skips_locked.
 - Files: `internal/git/git.go`, `internal/git/git_test.go`, `internal/project/manager.go`, `internal/project/worktree_service.go`, `internal/project/project_test.go`, `internal/cmd/worktree/prune/prune.go`, `internal/cmd/container/shared/container.go`, `internal/cmd/container/shared/workdir_test.go`.
 
+### 7. Unified testenv package (DONE)
+- **`internal/testenv/`** — unified, progressively-configured test environment package.
+- `testenv.New(t)` creates isolated dirs (config/data/state/cache) + sets all 4 `CLAWKER_*_DIR` env vars.
+- `testenv.New(t, testenv.WithConfig())` adds a real `config.Config`.
+- `testenv.New(t, testenv.WithProjectManager(gitFactory))` adds config + real `ProjectManager`.
+- `Env.Dirs` exposes `IsolatedDirs{Base, Config, Data, State, Cache}`.
+- `Env.Config()` / `Env.ProjectManager()` panic if capability wasn't requested.
+- **Refactored**: `config/mocks.NewIsolatedTestConfig` and `project/mocks.NewTestProjectManager` now delegate to `testenv`.
+- **Refactored**: `test/e2e/harness.NewIsolatedFS` delegates dir setup to `testenv.New`, keeps chdir + CLI execution concerns.
+
+### 8. storage.ValidateDirectories() collision check (DONE)
+- `storage.ValidateDirectories()` resolves all 4 XDG dirs and returns error if any pair collides.
+- Tests: 5 cases (distinct dirs, config/data collision, state/cache collision, multiple collisions, XDG defaults).
+- **Files**: `internal/storage/resolver.go`, `internal/storage/storage_test.go`
+
 ## Remaining TODOs (not started)
 - [ ] Add registry edge case tests (e.g. legacy map format decoding, symlink resolution)
 - [ ] Add worktree CRUD tests on Project (CreateWorktree, AddWorktree, RemoveWorktree, ListWorktrees, GetWorktree, PruneStaleWorktrees) — these require git repo setup
 - [ ] Add CurrentProject tests (requires setting cwd to a registered project root)
 - [ ] Review if any other packages use `NewBlankConfig()` where they should use `NewIsolatedTestConfig` (potential latent panics like socketbridge had)
+- [ ] Wire `storage.ValidateDirectories()` into app startup (factory init or PersistentPreRunE)
+- [ ] Write "files land where intended" integration test using `testenv` — verify registry.yaml goes to data dir, settings.yaml to config dir, logs to state dir
 
 ## Key Files
-- `internal/config/mocks/stubs.go` — NewIsolatedTestConfig (fixed)
+- `internal/testenv/testenv.go` — unified test environment (NEW)
+- `internal/storage/resolver.go` — ValidateDirectories() collision check (NEW)
+- `internal/config/mocks/stubs.go` — NewIsolatedTestConfig (delegates to testenv)
+- `internal/project/mocks/stubs.go` — NewTestProjectManager (delegates to testenv)
+- `test/e2e/harness/harness.go` — NewIsolatedFS (delegates to testenv)
 - `internal/socketbridge/mocks/stubs.go` — NewTestManager (fixed)
 - `internal/socketbridge/manager_test.go` — updated call sites
-- `internal/project/mocks/stubs.go` — new stubs
 - `internal/project/manager_test.go` — new tests
 - `internal/project/export_test.go` — existing test exports (RegistryForTest, NewProjectHandleForTest)
 

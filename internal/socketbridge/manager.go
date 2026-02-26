@@ -41,6 +41,7 @@ type SocketBridgeManager interface {
 // Manager implements SocketBridgeManager.
 type Manager struct {
 	cfg     config.Config
+	log     *logger.Logger
 	mu      sync.Mutex
 	bridges map[string]*bridgeProcess // containerID -> running bridge
 }
@@ -64,9 +65,10 @@ func shortID(id string) string {
 }
 
 // NewManager creates a new socket bridge Manager.
-func NewManager(cfg config.Config) *Manager {
+func NewManager(cfg config.Config, log *logger.Logger) *Manager {
 	return &Manager{
 		cfg:     cfg,
+		log:     log,
 		bridges: make(map[string]*bridgeProcess),
 	}
 }
@@ -80,7 +82,7 @@ func (m *Manager) EnsureBridge(containerID string, gpgEnabled bool) error {
 	// Check if we already track a running bridge
 	if bp, ok := m.bridges[containerID]; ok {
 		if isProcessAlive(bp.pid) {
-			logger.Debug().Str("container", shortID(containerID)).Int("pid", bp.pid).Msg("bridge already running")
+			m.log.Debug().Str("container", shortID(containerID)).Int("pid", bp.pid).Msg("bridge already running")
 			return nil
 		}
 		// Process died — clean up stale entry
@@ -94,7 +96,7 @@ func (m *Manager) EnsureBridge(containerID string, gpgEnabled bool) error {
 	}
 
 	if pid := readPIDFile(pidFile); pid > 0 && isProcessAlive(pid) {
-		logger.Debug().Str("container", shortID(containerID)).Int("pid", pid).Msg("found existing bridge via PID file")
+		m.log.Debug().Str("container", shortID(containerID)).Int("pid", pid).Msg("found existing bridge via PID file")
 		m.bridges[containerID] = &bridgeProcess{pid: pid, pidFile: pidFile}
 		return nil
 	}
@@ -120,7 +122,7 @@ func (m *Manager) StopBridge(containerID string) error {
 
 	// Also check PID file (handles cross-process cleanup)
 	if pid := readPIDFile(pidFile); pid > 0 {
-		killProcess(pid)
+		m.killProcess(pid)
 	}
 	os.Remove(pidFile)
 
@@ -154,7 +156,7 @@ func (m *Manager) StopAll() error {
 		}
 		pidFile := filepath.Join(bridgesDir, entry.Name())
 		if pid := readPIDFile(pidFile); pid > 0 {
-			killProcess(pid)
+			m.killProcess(pid)
 		}
 		os.Remove(pidFile)
 	}
@@ -209,7 +211,7 @@ func (m *Manager) startBridge(containerID string, gpgEnabled bool, pidFile strin
 	// Redirect output to log file
 	logFile, err := m.openBridgeLogFile(containerID)
 	if err != nil {
-		logger.Debug().Err(err).Msg("failed to open bridge log file, output will be discarded")
+		m.log.Debug().Err(err).Msg("failed to open bridge log file, output will be discarded")
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 	} else {
@@ -235,10 +237,10 @@ func (m *Manager) startBridge(containerID string, gpgEnabled bool, pidFile strin
 
 	// Release the child process so it can run independently
 	if err := cmd.Process.Release(); err != nil {
-		logger.Debug().Err(err).Msg("failed to release bridge process (non-fatal)")
+		m.log.Debug().Err(err).Msg("failed to release bridge process (non-fatal)")
 	}
 
-	logger.Debug().Str("container", shortID(containerID)).Int("pid", pid).Msg("started bridge daemon")
+	m.log.Debug().Str("container", shortID(containerID)).Int("pid", pid).Msg("started bridge daemon")
 
 	// Wait for PID file to appear (confirms bridge is initialized)
 	if err := waitForPIDFile(pidFile, 5*time.Second); err != nil {
@@ -253,7 +255,7 @@ func (m *Manager) startBridge(containerID string, gpgEnabled bool, pidFile strin
 // Must be called with m.mu held.
 func (m *Manager) cleanupBridgeLocked(containerID string, bp *bridgeProcess) {
 	if isProcessAlive(bp.pid) {
-		killProcess(bp.pid)
+		m.killProcess(bp.pid)
 	}
 	os.Remove(bp.pidFile)
 	delete(m.bridges, containerID)
@@ -301,13 +303,13 @@ func isProcessAlive(pid int) bool {
 }
 
 // killProcess sends SIGTERM to a process.
-func killProcess(pid int) {
+func (m *Manager) killProcess(pid int) {
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return
 	}
 	if err := process.Signal(syscall.SIGTERM); err != nil {
-		logger.Debug().Err(err).Int("pid", pid).Msg("failed to send SIGTERM to bridge")
+		m.log.Debug().Err(err).Int("pid", pid).Msg("failed to send SIGTERM to bridge")
 	}
 }
 

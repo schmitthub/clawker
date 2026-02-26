@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/mount"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 func assertTmpfsWritableForNonRoot(t *testing.T, m mount.Mount) {
@@ -28,7 +29,7 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 		s := NewBindStrategy(Config{
 			HostPath:   "/host/path",
 			RemotePath: "/workspace",
-		})
+		}, logger.Nop())
 
 		mounts, err := s.GetMounts()
 		if err != nil {
@@ -66,7 +67,7 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 			HostPath:       hostDir,
 			RemotePath:     "/workspace",
 			IgnorePatterns: []string{"node_modules/", "dist/", ".venv/"},
-		})
+		}, logger.Nop())
 
 		mounts, err := s.GetMounts()
 		if err != nil {
@@ -111,7 +112,7 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 			HostPath:       hostDir,
 			RemotePath:     "/workspace",
 			IgnorePatterns: []string{},
-		})
+		}, logger.Nop())
 
 		mounts, err := s.GetMounts()
 		if err != nil {
@@ -133,7 +134,7 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 			HostPath:       hostDir,
 			RemotePath:     "/workspace",
 			IgnorePatterns: []string{".git/"},
-		})
+		}, logger.Nop())
 
 		mounts, err := s.GetMounts()
 		if err != nil {
@@ -151,7 +152,7 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 			HostPath:       "/nonexistent/path/that/does/not/exist",
 			RemotePath:     "/workspace",
 			IgnorePatterns: []string{"node_modules/"},
-		})
+		}, logger.Nop())
 
 		_, err := s.GetMounts()
 		if err == nil {
@@ -166,7 +167,7 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 			HostPath:       hostDir,
 			RemotePath:     "/workspace",
 			IgnorePatterns: []string{"node_modules/"},
-		})
+		}, logger.Nop())
 
 		mounts, err := s.GetMounts()
 		if err != nil {
@@ -198,7 +199,7 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 			HostPath:       hostDir,
 			RemotePath:     "/workspace",
 			IgnorePatterns: []string{"node_modules/"},
-		})
+		}, logger.Nop())
 
 		mounts, err := s.GetMounts()
 		if err != nil {
@@ -225,6 +226,7 @@ func TestSnapshotStrategy_GetMounts(t *testing.T) {
 			config: Config{
 				RemotePath: "/workspace",
 			},
+			log:        logger.Nop(),
 			volumeName: "clawker.test.dev-workspace",
 		}
 

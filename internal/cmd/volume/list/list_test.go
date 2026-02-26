@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +36,9 @@ func TestNewCmdList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
+			f := &cmdutil.Factory{
+				Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+			}
 
 			var gotOpts *ListOptions
 			cmd := NewCmdList(f, func(_ context.Context, opts *ListOptions) error {
@@ -61,7 +64,9 @@ func TestNewCmdList(t *testing.T) {
 }
 
 func TestCmdList_Properties(t *testing.T) {
-	f := &cmdutil.Factory{}
+	f := &cmdutil.Factory{
+		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdList(f, nil)
 
 	require.Equal(t, "list", cmd.Use)

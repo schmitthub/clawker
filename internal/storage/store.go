@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 )
@@ -14,21 +15,23 @@ import (
 //
 // Internally, the store maintains a node tree (map[string]any) as the
 // merge engine and persistence layer. The typed struct T is deserialized
-// from the merged tree and serves as the read/write API for callers.
+// from the merged tree and published as an immutable snapshot via
+// atomic.Pointer. Readers get the current snapshot lock-free; writers
+// deep-copy, mutate the copy, sync the tree, and atomically swap.
 //
-//	Load:  file → node tree → merge → deserialize → typed struct
-//	Set:   typed struct → serialize back into node tree → mark dirty
+//	Load:  file → node tree → merge → deserialize → immutable snapshot
+//	Set:   deep copy → mutate copy → serialize into tree → atomic swap
 //	Write: node tree → file
 type Store[T any] struct {
-	value    *T             // deserialized view (read/write API)
-	tree     map[string]any // merged node tree (persistence layer)
-	dirty    bool           // true if Set has been called since last Write
-	layers   []layer        // discovered layers (internal)
-	prov     provenance     // field→layer mapping (internal)
-	defaults map[string]any // parsed defaults as map (internal)
-	opts     options        // construction options (internal)
-	tags     tagRegistry    // merge tags from T's struct type (internal)
-	mu       sync.RWMutex   // guards value + tree + dirty
+	value    atomic.Pointer[T] // immutable snapshot — lock-free reads
+	tree     map[string]any    // merged node tree (persistence layer)
+	dirty    bool              // true if Set has been called since last Write
+	layers   []layer           // discovered layers (internal)
+	prov     provenance        // field→layer mapping (internal)
+	defaults map[string]any    // parsed defaults as map (internal)
+	opts     options           // construction options (internal)
+	tags     tagRegistry       // merge tags from T's struct type (internal)
+	mu       sync.Mutex        // guards tree + dirty + layers (Set/Write)
 }
 
 // LayerInfo describes a discovered configuration layer.
@@ -46,7 +49,7 @@ type LayerInfo struct {
 // If walk-up fails (not in a project, registry missing), discovery falls
 // back to explicit paths only — this is not an error.
 //
-// The resulting store is immediately usable via Get/Set/Write.
+// The resulting store is immediately usable via Read/Set/Write.
 func NewStore[T any](opts ...Option) (*Store[T], error) {
 	o := options{}
 	for _, opt := range opts {
@@ -93,15 +96,16 @@ func NewStore[T any](opts ...Option) (*Store[T], error) {
 		return nil, fmt.Errorf("storage: deserializing merged tree: %w", err)
 	}
 
-	return &Store[T]{
-		value:    value,
+	s := &Store[T]{
 		tree:     tree,
 		layers:   layers,
 		prov:     prov,
 		defaults: defaults,
 		opts:     o,
 		tags:     tags,
-	}, nil
+	}
+	s.value.Store(value)
+	return s, nil
 }
 
 // NewFromString creates a store from a YAML string without any filesystem
@@ -124,27 +128,34 @@ func NewFromString[T any](raw string) (*Store[T], error) {
 		return nil, fmt.Errorf("storage: deserializing: %w", err)
 	}
 
-	return &Store[T]{
-		value: value,
-		tree:  tree,
-		tags:  buildTagRegistry[T](),
-	}, nil
+	s := &Store[T]{
+		tree: tree,
+		tags: buildTagRegistry[T](),
+	}
+	s.value.Store(value)
+	return s, nil
 }
 
-// Get returns the current merged value. The returned pointer is shared —
-// callers must not modify it directly. Use Set for mutations.
+// Read returns the current immutable snapshot. The returned pointer is
+// safe to hold, inspect, and pass around — it will never be mutated by
+// the store. Set publishes new snapshots via atomic swap; existing
+// readers are unaffected.
+//
+// Lock-free: uses atomic.Pointer.Load.
+func (s *Store[T]) Read() *T {
+	return s.value.Load()
+}
+
+// Deprecated: Use Read. Get returns the current snapshot pointer.
+// Identical to Read — exists only to ease migration of call sites.
 func (s *Store[T]) Get() *T {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.value
+	return s.value.Load()
 }
 
 // Layers returns information about the discovered configuration layers.
 // Layers are ordered from highest priority (index 0) to lowest.
+// No lock needed — layers are immutable after construction.
 func (s *Store[T]) Layers() []LayerInfo {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	infos := make([]LayerInfo, len(s.layers))
 	for i, l := range s.layers {
 		infos[i] = LayerInfo{Filename: l.filename, Path: l.path}
@@ -152,28 +163,43 @@ func (s *Store[T]) Layers() []LayerInfo {
 	return infos
 }
 
-// Set applies a mutation function to the in-memory value and updates
-// the node tree to reflect the change. The mutation is applied under
-// a write lock. Changes are not persisted until Write is called.
+// Set applies a mutation function to a deep copy of the current value,
+// syncs the change into the node tree, and atomically publishes the
+// new snapshot. Changes are not persisted until Write is called.
 //
-// After fn runs, the struct is serialized back into the tree using
-// structToMap (which ignores omitempty tags). This ensures that
+// The copy-on-write approach means existing Read callers holding the
+// old snapshot are unaffected — they see consistent (stale) data.
+//
+// After fn runs, the mutated copy is serialized back into the tree
+// using structToMap (which ignores omitempty tags). This ensures that
 // explicit zero-value assignments (e.g. setting a bool to false)
 // are captured in the tree for persistence.
-func (s *Store[T]) Set(fn func(*T)) {
+func (s *Store[T]) Set(fn func(*T)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	fn(s.value)
-
-	// Serialize the mutated struct back into the tree.
-	// structToMap ignores omitempty, so zero values set by fn are captured.
-	fresh := structToMap(s.value)
-	if fresh != nil {
-		mergeIntoTree(s.tree, fresh)
+	// Deep copy current tree and deserialize a fresh *T.
+	cp := make(map[string]any)
+	deepCopyMap(cp, s.tree)
+	fresh, err := unmarshal[T](cp)
+	if err != nil {
+		return fmt.Errorf("storage: Set: deserializing tree copy: %w", err)
 	}
 
+	// Apply the caller's mutation to the copy.
+	fn(fresh)
+
+	// Serialize the mutated copy back into the canonical tree.
+	// structToMap ignores omitempty, so zero values set by fn are captured.
+	serialized := structToMap(fresh)
+	if serialized != nil {
+		mergeIntoTree(s.tree, serialized)
+	}
+
+	// Atomically publish the new snapshot.
+	s.value.Store(fresh)
 	s.dirty = true
+	return nil
 }
 
 // mergeIntoTree updates tree entries with values from fresh.
@@ -184,6 +210,10 @@ func mergeIntoTree(tree, fresh map[string]any) {
 	for key, val := range fresh {
 		if subMap, ok := val.(map[string]any); ok {
 			if treeMap, ok := tree[key].(map[string]any); ok {
+				if len(subMap) == 0 {
+					tree[key] = map[string]any{}
+					continue
+				}
 				mergeIntoTree(treeMap, subMap)
 				continue
 			}

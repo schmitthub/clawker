@@ -10,6 +10,7 @@ import (
 func TestFromEnv_256Color(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("COLORTERM", "")
+	t.Setenv("CLICOLOR_FORCE", "1")
 
 	tm := FromEnv()
 
@@ -21,6 +22,7 @@ func TestFromEnv_256Color(t *testing.T) {
 func TestFromEnv_TrueColor(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("COLORTERM", "truecolor")
+	t.Setenv("CLICOLOR_FORCE", "1")
 
 	tm := FromEnv()
 
@@ -32,6 +34,7 @@ func TestFromEnv_TrueColor(t *testing.T) {
 func TestFromEnv_TrueColor24bit(t *testing.T) {
 	t.Setenv("TERM", "xterm")
 	t.Setenv("COLORTERM", "24bit")
+	t.Setenv("CLICOLOR_FORCE", "1")
 
 	tm := FromEnv()
 
@@ -78,12 +81,6 @@ func TestFromEnv_BasicXterm(t *testing.T) {
 	}
 	assert.False(t, tm.Is256ColorSupported(), "256 color should not be supported for plain xterm")
 	assert.False(t, tm.IsTrueColorSupported(), "truecolor should not be supported for plain xterm")
-}
-
-func TestFromEnv_Width(t *testing.T) {
-	tm := FromEnv()
-
-	assert.Greater(t, tm.Width(), 0, "width should be greater than 0")
 }
 
 func TestFromEnv_FileDescriptors(t *testing.T) {

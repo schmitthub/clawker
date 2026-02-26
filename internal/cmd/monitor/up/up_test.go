@@ -5,12 +5,16 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 func TestNewCmdUp(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 
 	var gotOpts *UpOptions
 	cmd := NewCmdUp(f, func(_ context.Context, opts *UpOptions) error {
@@ -27,7 +31,7 @@ func TestNewCmdUp(t *testing.T) {
 	if gotOpts == nil {
 		t.Fatal("expected runF to be called")
 	}
-	if gotOpts.IOStreams != tio.IOStreams {
+	if gotOpts.IOStreams != tio {
 		t.Error("expected IOStreams to be set from factory")
 	}
 	if !gotOpts.Detach {
@@ -36,8 +40,11 @@ func TestNewCmdUp(t *testing.T) {
 }
 
 func TestNewCmdUp_DetachFalse(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 
 	var gotOpts *UpOptions
 	cmd := NewCmdUp(f, func(_ context.Context, opts *UpOptions) error {

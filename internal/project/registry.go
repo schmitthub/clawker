@@ -85,8 +85,8 @@ func (r *projectRegistry) ProjectByRoot(root string) (config.ProjectEntry, bool,
 	return entry, ok, nil
 }
 
-func (r *projectRegistry) setProjects(entries []config.ProjectEntry) {
-	r.store.Set(func(reg *config.ProjectRegistry) {
+func (r *projectRegistry) setProjects(entries []config.ProjectEntry) error {
+	return r.store.Set(func(reg *config.ProjectRegistry) {
 		reg.Projects = entries
 	})
 }
@@ -102,8 +102,7 @@ func (r *projectRegistry) RemoveByRoot(root string) error {
 
 	entries := r.Projects()
 	entries = append(entries[:index], entries[index+1:]...)
-	r.setProjects(entries)
-	return nil
+	return r.setProjects(entries)
 }
 
 func (r *projectRegistry) registerWorktree(projectRoot, branch, path string) error {
@@ -131,8 +130,7 @@ func (r *projectRegistry) registerWorktree(projectRoot, branch, path string) err
 
 	entries := r.Projects()
 	entries[index] = entry
-	r.setProjects(entries)
-	return nil
+	return r.setProjects(entries)
 }
 
 func (r *projectRegistry) unregisterWorktree(projectRoot, branch string) error {
@@ -160,8 +158,7 @@ func (r *projectRegistry) unregisterWorktree(projectRoot, branch string) error {
 	delete(entry.Worktrees, branch)
 	entries := r.Projects()
 	entries[index] = entry
-	r.setProjects(entries)
-	return nil
+	return r.setProjects(entries)
 }
 
 // Save persists staged project registry changes to disk.
@@ -192,7 +189,9 @@ func (r *projectRegistry) Register(displayName, rootDir string) (config.ProjectE
 	entry := config.ProjectEntry{Name: displayName, Root: absRoot}
 	entries := r.Projects()
 	entries = append(entries, entry)
-	r.setProjects(entries)
+	if err := r.setProjects(entries); err != nil {
+		return config.ProjectEntry{}, err
+	}
 	if err := r.Save(); err != nil {
 		return config.ProjectEntry{}, err
 	}
@@ -222,7 +221,9 @@ func (r *projectRegistry) Update(entry config.ProjectEntry) (config.ProjectEntry
 
 	entries := r.Projects()
 	entries[index] = entry
-	r.setProjects(entries)
+	if err := r.setProjects(entries); err != nil {
+		return config.ProjectEntry{}, err
+	}
 	if err := r.Save(); err != nil {
 		return config.ProjectEntry{}, err
 	}

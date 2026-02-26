@@ -15,6 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/signals"
@@ -36,6 +37,7 @@ type RunOptions struct {
 	HostProxy      func() hostproxy.HostProxyService
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
+	Logger         func() (*logger.Logger, error)
 	Version        string
 
 	// Run-specific options
@@ -61,6 +63,7 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		HostProxy:        f.HostProxy,
 		SocketBridge:     f.SocketBridge,
 		Prompter:         f.Prompter,
+		Logger:           f.Logger,
 		Version:          f.Version,
 	}
 
@@ -178,6 +181,20 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		containerOpts.Image = resolvedImage.Reference
 	}
 
+	// Warn if workspace mount would include the home directory or higher
+	if shared.IsOutsideHome(".") {
+		confirmed, promptErr := opts.Prompter().Confirm(
+			"WARNING: This will mount your entire home directory (or higher) into a container. Continue?",
+			false,
+		)
+		if promptErr != nil {
+			return promptErr
+		}
+		if !confirmed {
+			return cmdutil.SilentError
+		}
+	}
+
 	// --- Phase B: Create container with spinner ---
 
 	events := make(chan shared.CreateContainerEvent, 16)
@@ -186,6 +203,11 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		err    error
 	}
 	done := make(chan outcome, 1)
+
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
 
 	go func() {
 		defer close(events)
@@ -199,7 +221,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			Version:        opts.Version,
 			ProjectManager: opts.ProjectManager,
 			HostProxy:      opts.HostProxy,
-			Logger:         ios.Logger,
+			Log:            log,
 			Is256Color:     ios.Is256ColorSupported(),
 			IsTrueColor:    ios.IsTrueColorSupported(),
 		}, events)
@@ -240,21 +262,21 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 			gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
 			if err := opts.SocketBridge().EnsureBridge(o.result.ContainerID, gpgEnabled); err != nil {
-				ios.Logger.Warn().Err(err).Msg("failed to start socket bridge for detached container")
+				log.Warn().Err(err).Msg("failed to start socket bridge for detached container")
 			}
 		}
 		fmt.Fprintln(ios.Out, o.result.ContainerID[:12])
 		return nil
 	}
 
-	return attachThenStart(ctx, client, o.result.ContainerID, opts)
+	return attachThenStart(ctx, client, o.result.ContainerID, opts, log)
 }
 
 // attachThenStart attaches to a container BEFORE starting it, then waits for it to exit.
 // This ensures we don't miss output from short-lived containers, especially with --rm.
 // The sequence follows Docker CLI's approach: attach -> start I/O streaming -> start container -> wait.
 // See: https://github.com/docker/cli/blob/master/cli/command/container/run.go
-func attachThenStart(ctx context.Context, client *docker.Client, containerID string, opts *RunOptions) error {
+func attachThenStart(ctx context.Context, client *docker.Client, containerID string, opts *RunOptions, log *logger.Logger) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
 
@@ -269,7 +291,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	// Set up TTY if enabled
 	var pty *docker.PTYHandler
 	if containerOpts.TTY && containerOpts.Stdin {
-		pty = docker.NewPTYHandler()
+		pty = docker.NewPTYHandler(log)
 		if err := pty.Setup(); err != nil {
 			return fmt.Errorf("failed to set up terminal: %w", err)
 		}
@@ -279,21 +301,21 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	// Attach to container BEFORE starting it
 	// This is critical for short-lived containers (especially with --rm) where the container
 	// might exit and be removed before we can attach if we start first.
-	ios.Logger.Debug().Msg("attaching to container before start")
+	log.Debug().Msg("attaching to container before start")
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
-		ios.Logger.Debug().Err(err).Msg("container attach failed")
+		log.Debug().Err(err).Msg("container attach failed")
 		return fmt.Errorf("attaching to container: %w", err)
 	}
 	defer hijacked.Close()
-	ios.Logger.Debug().Msg("container attach succeeded")
+	log.Debug().Msg("container attach succeeded")
 
 	// Set up wait channel for container exit following Docker CLI's waitExitOrRemoved pattern.
 	// This wraps the dual-channel ContainerWait into a single status channel.
 	// Must use WaitConditionNextExit (not WaitConditionNotRunning) because this is called
 	// before the container starts — a "created" container is already not-running.
-	ios.Logger.Debug().Msg("setting up container wait")
-	statusCh := waitForContainerExit(ctx, client, containerID, containerOpts.AutoRemove, ios.Logger)
+	log.Debug().Msg("setting up container wait")
+	statusCh := waitForContainerExit(ctx, client, containerID, containerOpts.AutoRemove, log)
 
 	// Start I/O streaming BEFORE starting the container.
 	// This ensures we're ready to receive output immediately when the container starts.
@@ -322,12 +344,12 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	}
 
 	// Now start the container — the I/O streaming goroutines are already running
-	ios.Logger.Debug().Msg("starting container")
+	log.Debug().Msg("starting container")
 	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
-		ios.Logger.Debug().Err(err).Msg("container start failed")
+		log.Debug().Err(err).Msg("container start failed")
 		return fmt.Errorf("starting container: %w", err)
 	}
-	ios.Logger.Debug().Msg("container started successfully")
+	log.Debug().Msg("container started successfully")
 
 	// Start socket bridge for GPG/SSH forwarding
 	if sbCfg, sbErr := opts.Config(); sbErr == nil {
@@ -335,7 +357,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 		if shared.NeedsSocketBridge(sbProject) && opts.SocketBridge != nil {
 			gpgEnabled := sbProject.Security.GitCredentials != nil && sbProject.Security.GitCredentials.GPGEnabled()
 			if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
-				ios.Logger.Warn().Err(err).Msg("failed to start socket bridge")
+				log.Warn().Err(err).Msg("failed to start socket bridge")
 			} else {
 				defer opts.SocketBridge().StopBridge(containerID)
 			}
@@ -353,13 +375,13 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 		if pty.IsTerminal() {
 			width, height, err := pty.GetSize()
 			if err != nil {
-				ios.Logger.Debug().Err(err).Msg("failed to get initial terminal size")
+				log.Debug().Err(err).Msg("failed to get initial terminal size")
 			} else {
 				if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
-					ios.Logger.Debug().Err(err).Msg("failed to set artificial container TTY size")
+					log.Debug().Err(err).Msg("failed to set artificial container TTY size")
 				}
 				if err := resizeFunc(uint(height), uint(width)); err != nil {
-					ios.Logger.Debug().Err(err).Msg("failed to set actual container TTY size")
+					log.Debug().Err(err).Msg("failed to set actual container TTY size")
 				}
 			}
 
@@ -375,7 +397,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	// when exit status arrives first, drain the stream.
 	select {
 	case err := <-streamDone:
-		ios.Logger.Debug().Err(err).Msg("stream completed")
+		log.Debug().Err(err).Msg("stream completed")
 		if err != nil {
 			return err
 		}
@@ -387,18 +409,18 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 		// detection (Docker CLI uses term.EscapeError for this).
 		select {
 		case status := <-statusCh:
-			ios.Logger.Debug().Int("exitCode", status).Msg("container exited")
+			log.Debug().Int("exitCode", status).Msg("container exited")
 			if status != 0 {
 				return &cmdutil.ExitError{Code: status}
 			}
 			return nil
 		case <-time.After(2 * time.Second):
 			// No exit status within timeout — stream ended due to detach, not exit.
-			ios.Logger.Debug().Msg("no exit status received after stream ended, assuming detach")
+			log.Debug().Msg("no exit status received after stream ended, assuming detach")
 			return nil
 		}
 	case status := <-statusCh:
-		ios.Logger.Debug().Int("exitCode", status).Msg("container exited before stream completed")
+		log.Debug().Int("exitCode", status).Msg("container exited before stream completed")
 		// Wait for stream to finish flushing buffered output.
 		// Docker CLI does the same: "we need to keep the streamer running
 		// until all output is read." The daemon closes the hijacked connection
@@ -417,7 +439,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 //     BEFORE the container starts without returning immediately for "created" containers.
 //   - Uses WaitConditionRemoved when autoRemove is true (--rm) so the wait doesn't fail
 //     when the container is removed after exit.
-func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, autoRemove bool, log iostreams.Logger) <-chan int {
+func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, autoRemove bool, log *logger.Logger) <-chan int {
 	condition := container.WaitConditionNextExit
 	if autoRemove {
 		condition = container.WaitConditionRemoved

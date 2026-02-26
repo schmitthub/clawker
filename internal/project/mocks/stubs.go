@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/project"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // NewMockProjectManager returns a ProjectManagerMock with safe no-op defaults.
@@ -77,15 +77,11 @@ func NewMockProject(name, repoPath string) *ProjectMock {
 }
 
 // NewTestProjectManager creates a real ProjectManager backed by a file-isolated
-// config via NewIsolatedTestConfig. Use this for tests that need actual registry
+// config via testenv. Use this for tests that need actual registry
 // persistence (Register, Remove, List round-trips).
 // Pass a GitManagerFactory to enable worktree operations, or nil for registry-only tests.
 func NewTestProjectManager(t *testing.T, gitFactory project.GitManagerFactory) project.ProjectManager {
 	t.Helper()
-	cfg := configmocks.NewIsolatedTestConfig(t)
-	mgr, err := project.NewProjectManager(cfg, gitFactory)
-	if err != nil {
-		t.Fatalf("creating test project manager: %v", err)
-	}
-	return mgr
+	env := testenv.New(t, testenv.WithProjectManager(gitFactory))
+	return env.ProjectManager()
 }

@@ -71,6 +71,79 @@ func TestResolveImageWithSource_ProjectOnly(t *testing.T) {
 	}
 }
 
+func TestResolveImageWithSource_ConfigFallback(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("falls back to build.image from config", func(t *testing.T) {
+		cfg := testConfig(t, `build:
+  image: "clawker-default:latest"`)
+		client, fakeAPI := newTestClientWithConfig(cfg)
+
+		fakeAPI.ImageListFn = func(_ context.Context, _ moby.ImageListOptions) (moby.ImageListResult, error) {
+			return moby.ImageListResult{}, nil
+		}
+
+		result, err := client.ResolveImageWithSource(ctx, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected non-nil result from config fallback")
+		}
+		if result.Reference != "clawker-default:latest" {
+			t.Errorf("Reference = %q, want %q", result.Reference, "clawker-default:latest")
+		}
+		if result.Source != ImageSourceConfig {
+			t.Errorf("Source = %q, want %q", result.Source, ImageSourceConfig)
+		}
+	})
+
+	t.Run("project image wins over config", func(t *testing.T) {
+		cfg := testConfig(t, `build:
+  image: "clawker-default:latest"`)
+		client, fakeAPI := newTestClientWithConfig(cfg)
+
+		fakeAPI.ImageListFn = func(_ context.Context, _ moby.ImageListOptions) (moby.ImageListResult, error) {
+			return moby.ImageListResult{
+				Items: []ImageSummary{
+					{RepoTags: []string{"myproject:latest"}},
+				},
+			}, nil
+		}
+
+		result, err := client.ResolveImageWithSource(ctx, "myproject")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+		if result.Reference != "myproject:latest" {
+			t.Errorf("Reference = %q, want %q", result.Reference, "myproject:latest")
+		}
+		if result.Source != ImageSourceProject {
+			t.Errorf("Source = %q, want %q", result.Source, ImageSourceProject)
+		}
+	})
+
+	t.Run("returns nil when no project image and no config image", func(t *testing.T) {
+		cfg := testConfig(t, `{}`)
+		client, fakeAPI := newTestClientWithConfig(cfg)
+
+		fakeAPI.ImageListFn = func(_ context.Context, _ moby.ImageListOptions) (moby.ImageListResult, error) {
+			return moby.ImageListResult{}, nil
+		}
+
+		result, err := client.ResolveImageWithSource(ctx, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil, got %+v", result)
+		}
+	})
+}
+
 func TestResolveImage_EmptyProject(t *testing.T) {
 	ctx := context.Background()
 	cfg := testConfig(t, `{}`)

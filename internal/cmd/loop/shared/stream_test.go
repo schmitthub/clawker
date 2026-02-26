@@ -6,9 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// nopLog returns a nop logger for tests.
+var nopLog = logger.Nop()
 
 // --- Helpers ---
 
@@ -45,7 +49,7 @@ func TestParseStream_FullConversation(t *testing.T) {
 		OnResult:    func(e *ResultEvent) { resultEvents = append(resultEvents, e) },
 	}
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -103,7 +107,7 @@ func TestParseStream_SystemInit(t *testing.T) {
 		OnSystem: func(e *SystemEvent) { sys = e },
 	}
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, sys)
@@ -128,7 +132,7 @@ func TestParseStream_CompactBoundary(t *testing.T) {
 		OnSystem: func(e *SystemEvent) { sys = e },
 	}
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, sys)
@@ -144,7 +148,7 @@ func TestParseStream_SuccessResult(t *testing.T) {
 		`{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":5432,"duration_api_ms":4200,"num_turns":3,"result":"All tasks completed successfully.","total_cost_usd":0.0234,"usage":{"input_tokens":3000,"output_tokens":500,"cache_read_input_tokens":1200}}`,
 	)
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -169,7 +173,7 @@ func TestParseStream_ErrorMaxTurns(t *testing.T) {
 		`{"type":"result","subtype":"error_max_turns","session_id":"s1","is_error":true,"duration_ms":60000,"duration_api_ms":55000,"num_turns":10,"total_cost_usd":0.15,"errors":["Maximum turns (10) reached"],"usage":{"input_tokens":5000,"output_tokens":2000}}`,
 	)
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -187,7 +191,7 @@ func TestParseStream_ErrorDuringExecution(t *testing.T) {
 		`{"type":"result","subtype":"error_during_execution","session_id":"s1","is_error":true,"duration_ms":1000,"duration_api_ms":800,"num_turns":1,"total_cost_usd":0.001,"errors":["API error: 500 Internal Server Error","Retry limit exceeded"]}`,
 	)
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -202,7 +206,7 @@ func TestParseStream_ErrorMaxBudget(t *testing.T) {
 		`{"type":"result","subtype":"error_max_budget_usd","session_id":"s1","is_error":true,"duration_ms":30000,"duration_api_ms":25000,"num_turns":5,"total_cost_usd":1.0,"errors":["Budget limit ($1.00) exceeded"]}`,
 	)
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -216,14 +220,14 @@ func TestParseStream_NoResultEvent(t *testing.T) {
 		`{"type":"assistant","session_id":"s1","parent_tool_use_id":null,"message":{"id":"msg_01","role":"assistant","model":"claude-opus-4-6","stop_reason":"end_turn","content":[{"type":"text","text":"hello"}]}}`,
 	)
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil, nopLog)
 	assert.Nil(t, result)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "stream ended without result event")
 }
 
 func TestParseStream_EmptyStream(t *testing.T) {
-	result, err := ParseStream(context.Background(), strings.NewReader(""), nil)
+	result, err := ParseStream(context.Background(), strings.NewReader(""), nil, nopLog)
 	assert.Nil(t, result)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "stream ended before ready signal")
@@ -241,7 +245,7 @@ func TestParseStream_ContextCancellation(t *testing.T) {
 		`{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}`,
 	)
 
-	result, err := ParseStream(ctx, strings.NewReader(stream), nil)
+	result, err := ParseStream(ctx, strings.NewReader(stream), nil, nopLog)
 	// The first scan succeeds (ready line), then context check triggers.
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, context.Canceled)
@@ -261,7 +265,7 @@ func TestParseStream_MalformedLinesSkipped(t *testing.T) {
 		OnSystem: func(e *SystemEvent) { systemCount++ },
 	}
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, systemCount)
@@ -271,7 +275,7 @@ func TestParseStream_MalformedLinesSkipped(t *testing.T) {
 func TestParseStream_EmptyLinesSkipped(t *testing.T) {
 	stream := readyLine + "\n\n" + `{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}` + "\n\n"
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.IsSuccess())
@@ -284,7 +288,7 @@ func TestParseStream_NilHandler(t *testing.T) {
 		`{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}`,
 	)
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.IsSuccess())
@@ -295,7 +299,7 @@ func TestParseStream_MalformedResultEventReturnsError(t *testing.T) {
 		`{"type":"result","subtype":123}`,
 	)
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil, nopLog)
 	assert.Nil(t, result)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse result event")
@@ -313,7 +317,7 @@ func TestParseStream_ParentToolUseID(t *testing.T) {
 		OnAssistant: func(e *AssistantEvent) { assistant = e },
 	}
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, assistant)
@@ -332,7 +336,7 @@ func TestParseStream_NullParentToolUseID(t *testing.T) {
 		OnAssistant: func(e *AssistantEvent) { assistant = e },
 	}
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, assistant)
@@ -350,7 +354,7 @@ func TestParseStream_ThinkingContentBlock(t *testing.T) {
 		OnAssistant: func(e *AssistantEvent) { assistant = e },
 	}
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, assistant)
@@ -376,7 +380,7 @@ func TestParseStream_MultipleToolUses(t *testing.T) {
 		OnAssistant: func(e *AssistantEvent) { assistant = e },
 	}
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -412,7 +416,7 @@ func TestParseStream_CallbackOrder(t *testing.T) {
 		OnResult:    func(e *ResultEvent) { order = append(order, "result") },
 	}
 
-	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"system", "assistant", "user", "assistant", "result"}, order)
@@ -432,7 +436,7 @@ func TestParseStream_WithLoopStatusBlock(t *testing.T) {
 		OnAssistant: func(e *AssistantEvent) { assistant = e },
 	}
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -614,7 +618,7 @@ func TestTextAccumulator_FullConversation(t *testing.T) {
 	)
 
 	acc, handler := NewTextAccumulator()
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -629,7 +633,7 @@ func TestTextAccumulator_NoText(t *testing.T) {
 	)
 
 	acc, handler := NewTextAccumulator()
-	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 
 	assert.Equal(t, "", acc.Text())
@@ -645,7 +649,7 @@ func TestTextAccumulator_WithLoopStatus(t *testing.T) {
 	)
 
 	acc, handler := NewTextAccumulator()
-	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 
 	// Verify accumulated text can be fed to AnalyzeOutput.
@@ -787,7 +791,7 @@ func TestStreamDeltaEvent_UUID(t *testing.T) {
 		OnStreamEvent: func(e *StreamDeltaEvent) { streamEvent = e },
 	}
 
-	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, streamEvent)
 
@@ -808,7 +812,7 @@ func TestStreamDeltaEvent_ToolUseBlock_Parse(t *testing.T) {
 		OnStreamEvent: func(e *StreamDeltaEvent) { streamEvent = e },
 	}
 
-	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, streamEvent)
 
@@ -829,7 +833,7 @@ func TestStreamDeltaEvent_MessageDelta_Parse(t *testing.T) {
 		OnStreamEvent: func(e *StreamDeltaEvent) { streamEvent = e },
 	}
 
-	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, streamEvent)
 
@@ -857,7 +861,7 @@ func TestParseStream_WaitsForReadySignal(t *testing.T) {
 		OnSystem: func(e *SystemEvent) { sys = e },
 	}
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, sys)
@@ -870,7 +874,7 @@ func TestParseStream_ErrorSignalDuringInit(t *testing.T) {
 		"[clawker] error: entrypoint failed: exit code 1\n" +
 		"[clawker] ready\n" // should never reach this
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil, nopLog)
 	assert.Nil(t, result)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "container init failed")
@@ -881,7 +885,7 @@ func TestParseStream_StreamEndsBeforeReady(t *testing.T) {
 	stream := "[clawker] installing packages...\n" +
 		"[clawker] setting up workspace\n"
 
-	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil, nopLog)
 	assert.Nil(t, result)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "stream ended before ready signal")
@@ -894,7 +898,7 @@ func TestParseStream_ContextCancelledDuringGate(t *testing.T) {
 	stream := "[clawker] installing packages...\n" +
 		"[clawker] ready\n"
 
-	result, err := ParseStream(ctx, strings.NewReader(stream), nil)
+	result, err := ParseStream(ctx, strings.NewReader(stream), nil, nopLog)
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, context.Canceled)
 }
@@ -912,7 +916,7 @@ func TestSystemEvent_UUID(t *testing.T) {
 		OnSystem: func(e *SystemEvent) { sys = e },
 	}
 
-	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, sys)
 	assert.Equal(t, "sys-uuid-1", sys.UUID)
@@ -929,7 +933,7 @@ func TestAssistantEvent_UUID(t *testing.T) {
 		OnAssistant: func(e *AssistantEvent) { ast = e },
 	}
 
-	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, ast)
 	assert.Equal(t, "ast-uuid-1", ast.UUID)
@@ -946,7 +950,7 @@ func TestUserEvent_UUID(t *testing.T) {
 		OnUser: func(e *UserEvent) { usr = e },
 	}
 
-	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler, nopLog)
 	require.NoError(t, err)
 	require.NotNil(t, usr)
 	assert.Equal(t, "usr-uuid-1", usr.UUID)

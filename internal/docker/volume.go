@@ -27,7 +27,7 @@ func (c *Client) EnsureVolume(ctx context.Context, name string, labels map[strin
 	}
 
 	if exists {
-		logger.Debug().Str("volume", name).Msg("volume already exists")
+		c.log.Debug().Str("volume", name).Msg("volume already exists")
 		return false, nil
 	}
 
@@ -40,13 +40,13 @@ func (c *Client) EnsureVolume(ctx context.Context, name string, labels map[strin
 		return false, err
 	}
 
-	logger.Debug().Str("volume", name).Msg("created volume")
+	c.log.Debug().Str("volume", name).Msg("created volume")
 	return true, nil
 }
 
 // CopyToVolume copies a directory to a Docker volume using a temporary container.
 func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath string, ignorePatterns []string) error {
-	logger.Debug().
+	c.log.Debug().
 		Str("volume", volumeName).
 		Str("src", srcDir).
 		Str("dest", destPath).
@@ -54,7 +54,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 
 	// Create a tar archive of the source directory
 	tarBuffer := new(bytes.Buffer)
-	if err := createTarArchive(srcDir, tarBuffer, ignorePatterns, c.cfg.ContainerUID(), c.cfg.ContainerGID()); err != nil {
+	if err := createTarArchive(c.log, srcDir, tarBuffer, ignorePatterns, c.cfg.ContainerUID(), c.cfg.ContainerGID()); err != nil {
 		return fmt.Errorf("failed to create tar archive: %w", err)
 	}
 
@@ -115,7 +115,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if _, err := c.ContainerRemove(cleanupCtx, resp.ID, true); err != nil {
-			logger.Warn().Err(err).Str("container", resp.ID).Msg("failed to cleanup temp container")
+			c.log.Warn().Err(err).Str("container", resp.ID).Msg("failed to cleanup temp container")
 		}
 	}()
 
@@ -166,7 +166,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 		return fmt.Errorf("context cancelled waiting for chown: %w", ctx.Err())
 	}
 
-	logger.Debug().
+	c.log.Debug().
 		Str("volume", volumeName).
 		Str("src", srcDir).
 		Msg("copied files to volume")
@@ -175,7 +175,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 }
 
 // createTarArchive creates a tar archive of a directory.
-func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string, uid, gid int) error {
+func createTarArchive(log *logger.Logger, srcDir string, buf io.Writer, ignorePatterns []string, uid, gid int) error {
 	tw := tar.NewWriter(buf)
 	defer tw.Close()
 
@@ -198,7 +198,7 @@ func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string, uid
 		}
 
 		// Check if should be ignored
-		if shouldIgnore(relPath, info.IsDir(), ignorePatterns) {
+		if shouldIgnore(log, relPath, info.IsDir(), ignorePatterns) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -249,7 +249,7 @@ func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string, uid
 }
 
 // shouldIgnore checks if a path should be ignored based on patterns.
-func shouldIgnore(path string, isDir bool, patterns []string) bool {
+func shouldIgnore(log *logger.Logger, path string, isDir bool, patterns []string) bool {
 	// Always ignore .git directory
 	if path == ".git" || strings.HasPrefix(path, ".git/") || strings.HasPrefix(path, ".git\\") {
 		return true
@@ -267,7 +267,7 @@ func shouldIgnore(path string, isDir bool, patterns []string) bool {
 		if strings.HasSuffix(pattern, "/") {
 			if isDir {
 				pattern = strings.TrimSuffix(pattern, "/")
-				if matchPattern(path, pattern) {
+				if matchPattern(log, path, pattern) {
 					return true
 				}
 			}
@@ -280,7 +280,7 @@ func shouldIgnore(path string, isDir bool, patterns []string) bool {
 			continue
 		}
 
-		if matchPattern(path, pattern) {
+		if matchPattern(log, path, pattern) {
 			return true
 		}
 	}
@@ -289,7 +289,7 @@ func shouldIgnore(path string, isDir bool, patterns []string) bool {
 }
 
 // matchPattern matches a path against a gitignore-style pattern.
-func matchPattern(path, pattern string) bool {
+func matchPattern(log *logger.Logger, path, pattern string) bool {
 	// Convert path separators
 	path = filepath.ToSlash(path)
 	pattern = filepath.ToSlash(pattern)
@@ -312,7 +312,7 @@ func matchPattern(path, pattern string) bool {
 			if strings.Contains(suffixPattern, "*") || strings.Contains(suffixPattern, "?") {
 				matched, err := filepath.Match(suffixPattern, filepath.Base(path))
 				if err != nil {
-					logger.Warn().Err(err).Str("pattern", suffixPattern).Msg("invalid ignore pattern")
+					log.Warn().Err(err).Str("pattern", suffixPattern).Msg("invalid ignore pattern")
 					return false
 				}
 				return matched
@@ -327,7 +327,7 @@ func matchPattern(path, pattern string) bool {
 	if strings.Contains(pattern, "*") {
 		matched, err := filepath.Match(pattern, filepath.Base(path))
 		if err != nil {
-			logger.Warn().Err(err).Str("pattern", pattern).Msg("invalid ignore pattern")
+			log.Warn().Err(err).Str("pattern", pattern).Msg("invalid ignore pattern")
 			return false
 		}
 		if matched {
@@ -336,7 +336,7 @@ func matchPattern(path, pattern string) bool {
 		// Also try matching the full path
 		matched, err = filepath.Match(pattern, path)
 		if err != nil {
-			logger.Warn().Err(err).Str("pattern", pattern).Msg("invalid ignore pattern")
+			log.Warn().Err(err).Str("pattern", pattern).Msg("invalid ignore pattern")
 			return false
 		}
 		return matched
@@ -457,7 +457,10 @@ func BindOverlayDirsFromPatterns(patterns []string) []string {
 //   - Only returns directories (file patterns like *.log are not actionable)
 //   - Does NOT mask .git/ (bind mode needs git for live development)
 //   - Skips recursion into matched directories (performance)
-func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
+func FindIgnoredDirs(log *logger.Logger, hostPath string, patterns []string) ([]string, error) {
+	if log == nil {
+		log = logger.Nop()
+	}
 	if len(patterns) == 0 {
 		return nil, nil
 	}
@@ -465,7 +468,7 @@ func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 	// fail fast if any negation patterns are present (not yet supported)
 	for _, p := range patterns {
 		if strings.HasPrefix(strings.TrimSpace(p), "!") {
-			logger.Error().Str("pattern", p).Msg("negation patterns in ignore file are not yet supported and will be ignored")
+			log.Error().Str("pattern", p).Msg("negation patterns in ignore file are not yet supported and will be ignored")
 			return nil, fmt.Errorf("negation patterns in ignore file are not yet supported: %q", p)
 		}
 	}
@@ -497,7 +500,7 @@ func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 		}
 
 		// Check user patterns (directory-aware matching)
-		if shouldIgnoreForBind(rel, patterns) {
+		if shouldIgnoreForBind(log, rel, patterns) {
 			dirs = append(dirs, filepath.ToSlash(rel))
 			return filepath.SkipDir // don't recurse into matched directories
 		}
@@ -511,7 +514,7 @@ func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 // shouldIgnoreForBind checks if a directory path matches any of the given patterns.
 // Unlike shouldIgnore, this skips the hardcoded .git check (caller handles it).
 // The caller is responsible for passing only directory paths.
-func shouldIgnoreForBind(path string, patterns []string) bool {
+func shouldIgnoreForBind(log *logger.Logger, path string, patterns []string) bool {
 	for _, pattern := range patterns {
 		pattern = strings.TrimSpace(pattern)
 
@@ -528,7 +531,7 @@ func shouldIgnoreForBind(path string, patterns []string) bool {
 		// Strip trailing slash for matching (directory patterns like "node_modules/")
 		cleanPattern := strings.TrimSuffix(pattern, "/")
 
-		if matchPattern(path, cleanPattern) {
+		if matchPattern(log, path, cleanPattern) {
 			return true
 		}
 	}

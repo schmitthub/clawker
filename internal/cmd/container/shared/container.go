@@ -28,7 +28,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
-	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/workspace"
@@ -1463,7 +1462,7 @@ type CreateContainerConfig struct {
 	Version        string
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
-	Logger         iostreams.Logger
+	Log            *logger.Logger
 	Is256Color     bool
 	IsTrueColor    bool
 }
@@ -1489,7 +1488,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	projectCfg := cfg.Config
 	containerOpts := cfg.Options
 	client := cfg.Client
-	log := cfg.Logger
+	log := cfg.Log
 
 	// --- Step 1: Prepare workspace ---
 	sendInfo(ctx, events, "workspace", "Preparing workspace")
@@ -1516,6 +1515,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		WorkDir:        wd,
 		ProjectRootDir: projectRootDir,
 		ContainerPath:  wd, // Mount at host absolute path for Claude Code /resume compatibility
+		Log:            log,
 	})
 	if err != nil {
 		return nil, err
@@ -1573,6 +1573,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 			ContainerWorkDir: wsResult.ContainerPath,
 			ClaudeCode:       projectCfg.Agent.ClaudeCode,
 			CopyToVolume:     client.CopyToVolume,
+			Log:              log,
 		}); err != nil {
 			return nil, fmt.Errorf("container init: %w", err)
 		}
@@ -1586,7 +1587,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 
 	hostProxyRunning := setupHostProxy(ctx, events, projectCfg, containerOpts, cfg.HostProxy, log)
 
-	gitSetup := workspace.SetupGitCredentials(projectCfg.Security.GitCredentials, hostProxyRunning)
+	gitSetup := workspace.SetupGitCredentials(projectCfg.Security.GitCredentials, hostProxyRunning, log)
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
@@ -1652,6 +1653,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 			Script:          projectCfg.Agent.PostInit,
 			Cfg:             cfg.Cfg,
 			CopyToContainer: copyFn,
+			Log:             log,
 		}); err != nil {
 			cleanupCtx := context.Background()
 			if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
@@ -1706,7 +1708,7 @@ func sendCached(ctx context.Context, ch chan<- CreateContainerEvent, step, msg s
 // resolveWorkDir determines the working directory for the container.
 // When --worktree is set, it routes through ProjectManager to ensure the worktree
 // is registered in the project registry (not just created at the git level).
-func resolveWorkDir(ctx context.Context, containerOpts *ContainerOptions, cfgGateway config.Config, agentName string, projectManager func() (project.ProjectManager, error), log iostreams.Logger) (wd string, projectRootDir string, err error) {
+func resolveWorkDir(ctx context.Context, containerOpts *ContainerOptions, cfgGateway config.Config, agentName string, projectManager func() (project.ProjectManager, error), log *logger.Logger) (wd string, projectRootDir string, err error) {
 	if containerOpts.Worktree != "" {
 		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, agentName)
 		if err != nil {
@@ -1749,7 +1751,7 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerOptions, cfgGat
 
 	wd, wdErr := cfgGateway.GetProjectRoot()
 	if wdErr != nil {
-		logger.Debug().Err(wdErr).Msg("could not resolve project root, falling back to working directory")
+		log.Debug().Err(wdErr).Msg("could not resolve project root, falling back to working directory")
 		wd = ""
 	}
 	if wd == "" {
@@ -1762,7 +1764,7 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerOptions, cfgGat
 }
 
 // setupHostProxy starts the host proxy if enabled. Non-fatal — failures produce warnings.
-func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg *config.Project, containerOpts *ContainerOptions, hostProxyFn func() hostproxy.HostProxyService, log iostreams.Logger) bool {
+func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg *config.Project, containerOpts *ContainerOptions, hostProxyFn func() hostproxy.HostProxyService, log *logger.Logger) bool {
 	if !cfg.Security.HostProxyEnabled() {
 		log.Debug().Msg("host proxy disabled by config")
 		return false
@@ -1795,13 +1797,13 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 
 // buildRuntimeEnv constructs container runtime environment variables.
 // Returns env vars, warnings (e.g. unset from_env vars), and error.
-func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg *config.Project, containerOpts *ContainerOptions, agentName, wd string, log iostreams.Logger) ([]string, []string, error) {
+func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg *config.Project, containerOpts *ContainerOptions, agentName, wd string, log *logger.Logger) ([]string, []string, error) {
 	workspaceMode := containerOpts.Mode
 	if workspaceMode == "" {
 		workspaceMode = projectCfg.Workspace.DefaultMode
 	}
 
-	agentEnv, warnings, err := ResolveAgentEnv(projectCfg.Agent, wd)
+	agentEnv, warnings, err := ResolveAgentEnv(projectCfg.Agent, wd, log)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving agent environment: %w", err)
 	}

@@ -1,13 +1,14 @@
 package shared
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,12 +21,12 @@ func TestCheckConcurrency_NoRunningContainers(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:    fake.Client,
 		Project:   "myproj",
 		WorkDir:   "/workspace",
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ActionProceed, action)
@@ -37,12 +38,12 @@ func TestCheckConcurrency_DifferentWorkDir(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:    fake.Client,
 		Project:   "myproj",
 		WorkDir:   "/workspace",
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ActionProceed, action)
@@ -54,24 +55,23 @@ func TestCheckConcurrency_SameWorkDir_NonInteractive(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	// Non-interactive: no Prompter set
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:    fake.Client,
 		Project:   "myproj",
 		WorkDir:   "/workspace",
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ActionProceed, action)
-	assert.Contains(t, tio.ErrBuf.String(), "already running")
+	assert.Contains(t, errOut.String(), "already running")
 }
 
-func testPrompterWithSelection(tio *iostreamstest.TestIOStreams, selection int) func() *prompter.Prompter {
-	tio.SetInteractive(true)
-	tio.InBuf.SetInput(selectionInput(selection))
+func testPrompterWithSelection(tio *iostreams.IOStreams, in *bytes.Buffer, selection int) func() *prompter.Prompter {
+	in.WriteString(selectionInput(selection))
 	return func() *prompter.Prompter {
-		return prompter.NewPrompter(tio.IOStreams)
+		return prompter.NewPrompter(tio)
 	}
 }
 
@@ -86,13 +86,15 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Worktree(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
-	tio := iostreamstest.New()
+	tio, in, _, _ := iostreams.Test()
+	tio.SetStdinTTY(true)
+	tio.SetStdoutTTY(true)
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:    fake.Client,
 		Project:   "myproj",
 		WorkDir:   "/workspace",
-		IOStreams: tio.IOStreams,
-		Prompter:  testPrompterWithSelection(tio, 0), // "Use a worktree"
+		IOStreams: tio,
+		Prompter:  testPrompterWithSelection(tio, in, 0), // "Use a worktree"
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ActionWorktree, action)
@@ -104,13 +106,15 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Proceed(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
-	tio := iostreamstest.New()
+	tio, in, _, _ := iostreams.Test()
+	tio.SetStdinTTY(true)
+	tio.SetStdoutTTY(true)
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:    fake.Client,
 		Project:   "myproj",
 		WorkDir:   "/workspace",
-		IOStreams: tio.IOStreams,
-		Prompter:  testPrompterWithSelection(tio, 1), // "Proceed anyway"
+		IOStreams: tio,
+		Prompter:  testPrompterWithSelection(tio, in, 1), // "Proceed anyway"
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ActionProceed, action)
@@ -122,13 +126,15 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Abort(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
-	tio := iostreamstest.New()
+	tio, in, _, _ := iostreams.Test()
+	tio.SetStdinTTY(true)
+	tio.SetStdoutTTY(true)
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:    fake.Client,
 		Project:   "myproj",
 		WorkDir:   "/workspace",
-		IOStreams: tio.IOStreams,
-		Prompter:  testPrompterWithSelection(tio, 2), // "Abort"
+		IOStreams: tio,
+		Prompter:  testPrompterWithSelection(tio, in, 2), // "Abort"
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ActionAbort, action)
@@ -138,12 +144,12 @@ func TestCheckConcurrency_DockerListError(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerListError(fmt.Errorf("docker daemon unavailable"))
 
-	tio := iostreamstest.New()
+	tio, _, _, _ := iostreams.Test()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:    fake.Client,
 		Project:   "myproj",
 		WorkDir:   "/workspace",
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
 	})
 	require.Error(t, err)
 	assert.Equal(t, ActionProceed, action)
@@ -158,15 +164,15 @@ func TestCheckConcurrency_MultipleRunning_WarnsAndProceeds(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr1, ctr2)
 
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	// Non-interactive should still warn and proceed
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:    fake.Client,
 		Project:   "myproj",
 		WorkDir:   "/workspace",
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ActionProceed, action)
-	assert.Contains(t, tio.ErrBuf.String(), "already running")
+	assert.Contains(t, errOut.String(), "already running")
 }

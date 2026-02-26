@@ -59,6 +59,7 @@ type Bridge struct {
 	containerID string
 	gpgEnabled  bool   // Whether GPG forwarding is enabled
 	gpgPubkey   []byte // GPG public key to send
+	log         *logger.Logger
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -80,10 +81,11 @@ type Bridge struct {
 
 // NewBridge creates a new socket bridge for the given container.
 // gpgEnabled indicates whether GPG agent forwarding is configured.
-func NewBridge(containerID string, gpgEnabled bool) *Bridge {
+func NewBridge(containerID string, gpgEnabled bool, log *logger.Logger) *Bridge {
 	return &Bridge{
 		containerID: containerID,
 		gpgEnabled:  gpgEnabled,
+		log:         log,
 		streams:     make(map[uint32]net.Conn),
 		done:        make(chan struct{}),
 		errCh:       make(chan error, 1),
@@ -216,7 +218,7 @@ func (b *Bridge) readLoop() {
 		msg, err := readMessage(reader)
 		if err != nil {
 			if err != io.EOF {
-				logger.Debug().Err(err).Msg("bridge read error")
+				b.log.Debug().Err(err).Msg("bridge read error")
 			}
 			return
 		}
@@ -232,7 +234,7 @@ func (b *Bridge) readLoop() {
 
 		case MsgError:
 			errMsg := string(msg.Payload)
-			logger.Error().Str("error", errMsg).Msg("socket-forwarder error")
+			b.log.Error().Str("error", errMsg).Msg("socket-forwarder error")
 			if !readyReceived {
 				select {
 				case b.errCh <- fmt.Errorf("forwarder error: %s", errMsg):
@@ -258,7 +260,7 @@ func (b *Bridge) handleOpen(msg Message) {
 
 	socketPath, err := resolveHostSocket(socketType)
 	if err != nil {
-		logger.Error().Err(err).Str("type", socketType).Msg("failed to resolve host socket")
+		b.log.Error().Err(err).Str("type", socketType).Msg("failed to resolve host socket")
 		if b.Warnings != nil {
 			fmt.Fprintf(b.Warnings, "Warning: %v\n", err)
 		}
@@ -268,7 +270,7 @@ func (b *Bridge) handleOpen(msg Message) {
 
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		logger.Error().Err(err).Str("socket", socketPath).Msg("failed to connect to host socket")
+		b.log.Error().Err(err).Str("socket", socketPath).Msg("failed to connect to host socket")
 		b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
 		return
 	}
@@ -280,7 +282,7 @@ func (b *Bridge) handleOpen(msg Message) {
 	// Start reading from the host socket
 	go b.readFromHostSocket(streamID, conn)
 
-	logger.Debug().Uint32("stream", streamID).Str("type", socketType).Msg("opened host socket")
+	b.log.Debug().Uint32("stream", streamID).Str("type", socketType).Msg("opened host socket")
 }
 
 // resolveHostSocket returns the host Unix socket path for the given type.

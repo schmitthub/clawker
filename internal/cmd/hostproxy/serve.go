@@ -31,12 +31,19 @@ func NewCmdServe() *cobra.Command {
   clawker host-proxy serve --port 18374
   clawker host-proxy serve --grace-period 2m`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Initialize daemon logger (debug mode disabled for background daemon)
-			logger.Init()
-
 			cfg, err := config.NewConfig()
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Create a logger for the daemon subprocess.
+			// Falls back to nop if logs directory is unavailable.
+			log := logger.Nop()
+			if logsDir, dirErr := cfg.LogsSubdir(); dirErr == nil {
+				if l, lErr := logger.New(logger.Options{LogsDir: logsDir}); lErr == nil {
+					log = l
+					defer l.Close()
+				}
 			}
 
 			// Collect flag overrides — these take precedence over config values
@@ -52,19 +59,19 @@ func NewCmdServe() *cobra.Command {
 				opts = append(opts, hostproxy.WithGracePeriod(gracePeriod))
 			}
 
-			daemon, err := hostproxy.NewDaemon(cfg, opts...)
+			daemon, err := hostproxy.NewDaemon(cfg, log, opts...)
 			if err != nil {
-				logger.Error().Err(err).Msg("failed to create daemon")
+				log.Error().Err(err).Msg("failed to create daemon")
 				return err
 			}
 
 			ctx := context.Background()
 			if err := daemon.Run(ctx); err != nil {
-				logger.Error().Err(err).Msg("daemon error")
+				log.Error().Err(err).Msg("daemon error")
 				return err
 			}
 
-			logger.Debug().Msg("host proxy daemon stopped")
+			log.Debug().Msg("host proxy daemon stopped")
 			return nil
 		},
 	}

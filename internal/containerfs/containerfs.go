@@ -53,7 +53,7 @@ func ResolveHostConfigDir() (string, error) {
 //
 // Handles: settings.json enabledPlugins merge, agents/, skills/, commands/,
 // plugins/ (excluding install-counts-cache.json), known_marketplaces.json path fixup, symlink resolution.
-func PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error) {
+func PrepareClaudeConfig(log *logger.Logger, hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error) {
 	tmpDir, err := os.MkdirTemp("", "clawker-config-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create staging dir: %w", err)
@@ -61,7 +61,7 @@ func PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir strin
 
 	cleanupFn := func() {
 		if err := os.RemoveAll(tmpDir); err != nil {
-			logger.Debug().Err(err).Str("path", tmpDir).Msg("failed to remove staging dir")
+			log.Debug().Err(err).Str("path", tmpDir).Msg("failed to remove staging dir")
 		}
 	}
 
@@ -72,21 +72,21 @@ func PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir strin
 	}
 
 	// settings.json — extract only enabledPlugins
-	if err := stageSettings(hostConfigDir, stagingClaudeDir); err != nil {
+	if err := stageSettings(log, hostConfigDir, stagingClaudeDir); err != nil {
 		cleanupFn()
 		return "", nil, fmt.Errorf("stage settings.json: %w", err)
 	}
 
 	// Copy directories: agents/, skills/, commands/
 	for _, dir := range []string{"agents", "skills", "commands"} {
-		if err := stageDirectory(hostConfigDir, stagingClaudeDir, dir); err != nil {
+		if err := stageDirectory(log, hostConfigDir, stagingClaudeDir, dir); err != nil {
 			cleanupFn()
 			return "", nil, fmt.Errorf("stage %s: %w", dir, err)
 		}
 	}
 
 	// plugins/ — copy with cache, rewrite JSON paths for container
-	if err := stagePlugins(hostConfigDir, stagingClaudeDir, containerHomeDir, containerWorkDir); err != nil {
+	if err := stagePlugins(log, hostConfigDir, stagingClaudeDir, containerHomeDir, containerWorkDir); err != nil {
 		cleanupFn()
 		return "", nil, fmt.Errorf("stage plugins: %w", err)
 	}
@@ -96,7 +96,7 @@ func PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir strin
 
 // PrepareCredentials creates a staging directory with credentials.json.
 // Sources: keyring first, then fallback to $CLAUDE_CONFIG_DIR/.credentials.json.
-func PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func(), err error) {
+func PrepareCredentials(log *logger.Logger, hostConfigDir string) (stagingDir string, cleanup func(), err error) {
 	tmpDir, err := os.MkdirTemp("", "clawker-creds-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create staging dir: %w", err)
@@ -104,7 +104,7 @@ func PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func()
 
 	cleanupFn := func() {
 		if err := os.RemoveAll(tmpDir); err != nil {
-			logger.Debug().Err(err).Str("path", tmpDir).Msg("failed to remove staging dir")
+			log.Debug().Err(err).Str("path", tmpDir).Msg("failed to remove staging dir")
 		}
 	}
 
@@ -128,11 +128,11 @@ func PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func()
 			cleanupFn()
 			return "", nil, fmt.Errorf("write credentials: %w", err)
 		}
-		logger.Debug().Msg("credentials sourced from OS keyring")
+		log.Debug().Msg("credentials sourced from OS keyring")
 		return tmpDir, cleanupFn, nil
 	}
 
-	logger.Debug().Err(keyringErr).Msg("keyring credentials not available, trying file fallback")
+	log.Debug().Err(keyringErr).Msg("keyring credentials not available, trying file fallback")
 
 	// Fallback to file.
 	filePath := filepath.Join(hostConfigDir, ".credentials.json")
@@ -142,7 +142,7 @@ func PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func()
 			cleanupFn()
 			return "", nil, fmt.Errorf("write credentials: %w", err)
 		}
-		logger.Debug().Str("path", filePath).Msg("credentials sourced from file fallback")
+		log.Debug().Str("path", filePath).Msg("credentials sourced from file fallback")
 		return tmpDir, cleanupFn, nil
 	}
 
@@ -208,12 +208,12 @@ func PreparePostInitTar(cfg config.Config, script string) (io.Reader, error) {
 
 // stageSettings reads settings.json from hostDir and writes only the
 // enabledPlugins key to stagingDir/settings.json.
-func stageSettings(hostDir, stagingDir string) error {
+func stageSettings(log *logger.Logger, hostDir, stagingDir string) error {
 	src := filepath.Join(hostDir, "settings.json")
 
 	data, err := os.ReadFile(src)
 	if os.IsNotExist(err) {
-		logger.Debug().Str("path", src).Msg("settings.json not found, skipping")
+		log.Debug().Str("path", src).Msg("settings.json not found, skipping")
 		return nil
 	}
 	if err != nil {
@@ -227,7 +227,7 @@ func stageSettings(hostDir, stagingDir string) error {
 
 	enabledPlugins, ok := full["enabledPlugins"]
 	if !ok {
-		logger.Debug().Msg("settings.json has no enabledPlugins key, skipping")
+		log.Debug().Msg("settings.json has no enabledPlugins key, skipping")
 		return nil
 	}
 
@@ -246,13 +246,13 @@ func stageSettings(hostDir, stagingDir string) error {
 
 // stageDirectory copies an entire directory from hostDir to stagingDir,
 // resolving symlinks at the source level.
-func stageDirectory(hostDir, stagingDir, name string) error {
+func stageDirectory(log *logger.Logger, hostDir, stagingDir, name string) error {
 	src := filepath.Join(hostDir, name)
 
 	// Resolve symlinks on the source directory itself.
 	resolved, err := filepath.EvalSymlinks(src)
 	if os.IsNotExist(err) {
-		logger.Debug().Str("dir", name).Msg("directory not found on host, skipping")
+		log.Debug().Str("dir", name).Msg("directory not found on host, skipping")
 		return nil
 	}
 	if err != nil {
@@ -265,12 +265,12 @@ func stageDirectory(hostDir, stagingDir, name string) error {
 
 // stagePlugins copies the plugins/ directory (including cache/) and rewrites
 // host-absolute paths in known_marketplaces.json and installed_plugins.json.
-func stagePlugins(hostDir, stagingDir, containerHomeDir, containerWorkDir string) error {
+func stagePlugins(log *logger.Logger, hostDir, stagingDir, containerHomeDir, containerWorkDir string) error {
 	src := filepath.Join(hostDir, "plugins")
 
 	resolved, err := filepath.EvalSymlinks(src)
 	if os.IsNotExist(err) {
-		logger.Debug().Msg("plugins/ directory not found on host, skipping")
+		log.Debug().Msg("plugins/ directory not found on host, skipping")
 		return nil
 	}
 	if err != nil {
@@ -339,7 +339,7 @@ func stagePlugins(hostDir, stagingDir, containerHomeDir, containerWorkDir string
 			return fmt.Errorf("rewrite known_marketplaces.json: %w", err)
 		}
 	} else if !os.IsNotExist(statErr) {
-		logger.Debug().Err(statErr).Str("path", mpPath).Msg("plugin file stat failed")
+		log.Debug().Err(statErr).Str("path", mpPath).Msg("plugin file stat failed")
 	}
 
 	// Rewrite installed_plugins.json if it exists.
@@ -352,7 +352,7 @@ func stagePlugins(hostDir, stagingDir, containerHomeDir, containerWorkDir string
 			return fmt.Errorf("rewrite installed_plugins.json: %w", err)
 		}
 	} else if !os.IsNotExist(statErr) {
-		logger.Debug().Err(statErr).Str("path", ipPath).Msg("plugin file stat failed")
+		log.Debug().Err(statErr).Str("path", ipPath).Msg("plugin file stat failed")
 	}
 
 	return nil

@@ -10,13 +10,14 @@
 
 Generic layered YAML store engine. Zero internal imports (leaf package). Both `internal/config` and `internal/project` compose a `Store[T]` with their own schema types. Replaces Viper.
 
-**Node tree architecture:** The node tree (`map[string]any`) is the merge engine and persistence layer. The typed struct `*T` is a deserialized view. Merge never touches the struct; it merges node trees, then deserializes to `*T`.
+**Copy-on-write architecture:** The node tree (`map[string]any`) is the merge engine and persistence layer. Immutable `*T` snapshots are published via `atomic.Pointer` — readers get lock-free access. Writers deep-copy the tree, deserialize a fresh `*T`, apply the mutation, sync back to the tree, and atomically swap the snapshot.
 
 ```
 Load:   file → node tree ─┐
-                           ├→ merge node trees → deserialize → *T
+                           ├→ merge node trees → deserialize → immutable *T snapshot
         string → node tree ─┘
-Set:    *T (mutated by fn) → structToMap → merge into node tree → mark dirty
+Read:   atomic.Load → *T (lock-free, zero alloc)
+Set:    deep copy tree → unmarshal → fn(copy) → structToMap → merge into tree → atomic.Store(copy)
 Write:  node tree → route by provenance → per-file atomic write
 ```
 
@@ -27,7 +28,7 @@ Write:  node tree → route by provenance → per-file atomic write
 | File | Purpose |
 | --- | --- |
 | `errors.go` | Package doc comment, `ErrNotInProject`, `ErrRegistryNotFound` |
-| `store.go` | `Store[T]` struct, `NewStore[T]`, `NewFromString[T]`, `Get`, `Set`, `Write`, `Layers`, `LayerInfo`, `mergeIntoTree` |
+| `store.go` | `Store[T]` struct, `NewStore[T]`, `NewFromString[T]`, `Read`, `Get` (deprecated), `Set`, `Write`, `Layers`, `LayerInfo`, `mergeIntoTree` |
 | `options.go` | `Option` type, `Migration` type, all `With*` constructors |
 | `discover.go` | Walk-up + explicit path discovery, `ResolveProjectRoot`, dual placement logic |
 | `load.go` | Per-file YAML load, migration runner, `unmarshal[T]` |
@@ -48,8 +49,9 @@ func NewFromString[T any](raw string) (*Store[T], error)  // Read-only: parse YA
 ### Store[T] Methods
 
 ```go
-func (s *Store[T]) Get() *T                    // Current merged value (shared pointer — do not mutate directly)
-func (s *Store[T]) Set(fn func(*T))            // Mutate under lock, serialize to tree, mark dirty
+func (s *Store[T]) Read() *T                   // Lock-free atomic load — returns current immutable snapshot
+func (s *Store[T]) Get() *T                    // Deprecated: identical to Read, exists for migration only
+func (s *Store[T]) Set(fn func(*T)) error      // COW: deep copy → mutate → sync tree → atomic swap
 func (s *Store[T]) Write(filename ...string) error  // Persist: no args = provenance routing, with arg = all to that file
 func (s *Store[T]) Layers() []LayerInfo        // Discovered layers, highest→lowest priority
 ```
@@ -134,8 +136,45 @@ Consumer mock APIs stay unchanged. Callers never see `Store[T]` directly — the
 
 Test env vars: `CLAWKER_DATA_DIR` (isolate registry), `CLAWKER_TEST_REPO_DIR` (walk-up tests).
 
+### Recent Hardening (2026-02)
+
+The following regressions were reproduced with tests and fixed in package logic:
+
+- **Empty map clear persistence**: `Set` + `Write` now correctly persists explicit empty maps (e.g. `env: {}`) instead of retaining stale keys from prior tree state.
+- **Union panic on non-comparable elements**: `merge:"union"` no longer panics when slices contain unhashable values (e.g. maps inside `[]any`); dedupe is deep-equality based.
+- **Implicit YAML field-name tag mapping**: merge-tag lookup now correctly handles tags like `yaml:",omitempty"` by using YAML default field naming (`strings.ToLower(field.Name)`), so `merge:"union"` still applies.
+- **`walkType` pointer-dereference order**: `walkType` must dereference `reflect.Ptr` before the `reflect.Struct` guard. Flipped order silently returns an empty tag registry for pointer schema types (`*T`), causing union slices to fall back to overwrite. Not caught by oracle/golden tests because all callers pre-dereference before calling `walkType`.
+
+Regression tests added:
+
+- `TestStore_Set_ClearMapPersistsEmpty`
+- `TestStore_Merge_UnionHandlesNonComparableValues`
+- `TestStore_Merge_UnionWithImplicitYAMLFieldName`
+- `TestWalkType_PointerToStruct`
+
+## Oracle and Golden Test Strategy
+
+Defense in depth — two independent guards for merge correctness:
+
+| Layer | How it works | What it catches |
+|-------|-------------|-----------------|
+| Oracle (randomized) | Computes expected merge from spec rules (~15 lines), independent of prod code. Runs every time with a new seed. | Any merge bug that manifests for the random placement |
+| Golden (fixed seed) | Hardcoded struct literal blessed from known-correct state. No auto-update. | Any regression from the blessed baseline, including oracle bugs |
+
+**Key design decisions:**
+
+| Decision | Rationale |
+|----------|-----------|
+| Deepest level forced to have both `config.local.yaml` and `config.yaml` | Guarantees filename priority is always exercised |
+| Main/local files have distinct names (`level3-main` vs `level3-local`) | Scalar assertions can distinguish which file won |
+| Golden values are code, not files | Must be hand-edited to change — no accidental `GOLDEN_UPDATE=1` sweep |
+| `make storage-golden` prints new values with interactive confirmation | Blocks CI — human must review and approve |
+| `STORAGE_GOLDEN_BLESS` env var is specific to this one test | No global sweep risk |
+
 ## Gotchas
 
+- **Use `Read()`, not `Get()`** — Both are now identical (lock-free atomic load of immutable snapshot), but `Get` is deprecated. Migrate call sites to `Read`. Snapshots are immutable by convention — the store never mutates a published `*T`; `Set` creates and swaps a new one.
+- **COW cost is on `Set`, not `Read`** — `Set` pays for deep copy + unmarshal + atomic swap. `Read` is a single atomic pointer load. This is optimal for config (read-often, write-rarely). Registry `Set` calls are also infrequent enough that the cost is negligible.
 - **`omitempty` is irrelevant** — node tree is the persistence layer; `structToMap` ignores it.
 - **Unknown keys survive** — `mergeIntoTree` preserves tree keys not in the struct schema.
 - **Walk-up is bounded** — never reaches `~/.config/clawker/`. Home-level configs added via `WithConfigDir()`.

@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
 )
@@ -16,6 +17,7 @@ import (
 type InitOptions struct {
 	IOStreams *iostreams.IOStreams
 	Config    func() (config.Config, error)
+	Logger    func() (*logger.Logger, error)
 
 	Force bool
 }
@@ -24,6 +26,7 @@ func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) err
 	opts := &InitOptions{
 		IOStreams: f.IOStreams,
 		Config:    f.Config,
+		Logger:    f.Logger,
 	}
 
 	cmd := &cobra.Command{
@@ -64,6 +67,11 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
+
 	cfg, err := opts.Config()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -75,7 +83,7 @@ func initRun(_ context.Context, opts *InitOptions) error {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
 
-	ios.Logger.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
+	log.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
 
 	// Get monitoring config for template rendering
 	monCfg := cfg.MonitoringConfig()

@@ -21,7 +21,7 @@ type options struct {
 
 // WithFilenames sets the ordered list of filenames to discover.
 // All filenames must share the same schema type T.
-// At each walk-up level the last filename in the list takes merge
+// At each walk-up level the first filename in the list takes merge
 // precedence when discovered at the same depth.
 func WithFilenames(names ...string) Option {
 	return func(o *options) {

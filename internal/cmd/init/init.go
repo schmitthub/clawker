@@ -3,16 +3,20 @@ package init
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // InitOptions contains the options for the init command.
@@ -21,6 +25,7 @@ type InitOptions struct {
 	TUI       *tui.TUI
 	Prompter  func() *prompterpkg.Prompter
 	Config    func() (config.Config, error)
+	Logger    func() (*logger.Logger, error)
 	Client    func(context.Context) (*docker.Client, error)
 
 	Yes bool // Non-interactive mode
@@ -33,6 +38,7 @@ func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) err
 		TUI:       f.TUI,
 		Prompter:  f.Prompter,
 		Config:    f.Config,
+		Logger:    f.Logger,
 		Client:    f.Client,
 	}
 
@@ -156,6 +162,11 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
+
 	// Print header
 	fmt.Fprintln(ios.ErrOut, "Setting up clawker user settings...")
 	fmt.Fprintln(ios.ErrOut)
@@ -165,13 +176,15 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	ios.Logger.Debug().
+	log.Debug().
 		Bool("build_base_image", buildBaseImage).
 		Str("flavor", selectedFlavor).
 		Msg("initializing user settings")
 
 	// Save initial settings — mark dirty so the store creates the file
-	cfg.SettingsStore().Set(func(s *config.Settings) {})
+	if err := cfg.SettingsStore().Set(func(s *config.Settings) {}); err != nil {
+		return fmt.Errorf("failed to initialize settings: %w", err)
+	}
 	if err := cfg.SettingsStore().Write(); err != nil {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
@@ -253,6 +266,12 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 			return nil // early return to avoid duplicate next steps
 		}
 
+		// Persist the built image as the user-level default so that
+		// "clawker run" finds it even without a per-project clawker.yaml.
+		if err := saveUserProjectConfig(docker.DefaultImageTag); err != nil {
+			return fmt.Errorf("saving user project config: %w", err)
+		}
+		fmt.Fprintf(ios.ErrOut, "%s Default image: %s\n", cs.SuccessIcon(), docker.DefaultImageTag)
 	}
 
 	fmt.Fprintln(ios.ErrOut)
@@ -277,4 +296,38 @@ func progressStatus(s whail.BuildStepStatus) tui.ProgressStepStatus {
 	default:
 		return tui.StepPending
 	}
+}
+
+// saveUserProjectConfig writes or updates the user-level clawker.yaml in the
+// config directory with the given image tag. Only the build.image field is set;
+// existing keys in the file are preserved on reruns.
+func saveUserProjectConfig(imageTag string) error {
+	cfgPath, err := config.UserProjectConfigFilePath()
+	if err != nil {
+		return fmt.Errorf("resolving user project config path: %w", err)
+	}
+
+	existing := make(map[string]any)
+	if data, readErr := os.ReadFile(cfgPath); readErr == nil && len(data) > 0 {
+		if err := yaml.Unmarshal(data, &existing); err != nil {
+			return fmt.Errorf("parsing existing %s: %w", cfgPath, err)
+		}
+	}
+
+	build, ok := existing["build"].(map[string]any)
+	if !ok {
+		build = make(map[string]any)
+	}
+	build["image"] = imageTag
+	existing["build"] = build
+
+	encoded, err := yaml.Marshal(existing)
+	if err != nil {
+		return fmt.Errorf("encoding user project config: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
+	}
+	return os.WriteFile(cfgPath, encoded, 0o644)
 }

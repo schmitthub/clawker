@@ -12,7 +12,8 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -266,19 +267,20 @@ func TestCmdCp_ArgsParsing(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests ---
 
-func testCpFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testCpFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 
 	return &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
 			return configmocks.NewBlankConfig(), nil
 		},
-	}, tio
+	}, in, out, errOut
 }
 
 func TestCpRun_CopyFromContainer_Stdout(t *testing.T) {
@@ -287,13 +289,13 @@ func TestCpRun_CopyFromContainer_Stdout(t *testing.T) {
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupCopyFromContainer()
 
-	f, tio := testCpFactory(t, fake)
+	f, _, out, errOut := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev:/app/file.txt", "-"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
@@ -306,13 +308,13 @@ func TestCpRun_CopyToContainer_Stdin(t *testing.T) {
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupCopyToContainer()
 
-	f, tio := testCpFactory(t, fake)
+	f, _, out, errOut := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
 	cmd.SetArgs([]string{"-", "clawker.myapp.dev:/app/file.txt"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
@@ -320,9 +322,10 @@ func TestCpRun_CopyToContainer_Stdin(t *testing.T) {
 }
 
 func TestCpRun_DockerConnectionError(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
@@ -334,8 +337,8 @@ func TestCpRun_DockerConnectionError(t *testing.T) {
 	cmd := NewCmdCp(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev:/app/file.txt", "-"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -346,13 +349,13 @@ func TestCpRun_ContainerNotFound_CopyFrom(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
-	f, tio := testCpFactory(t, fake)
+	f, _, out, errOut := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev:/app/file.txt", "-"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -363,13 +366,13 @@ func TestCpRun_ContainerNotFound_CopyTo(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
-	f, tio := testCpFactory(t, fake)
+	f, _, out, errOut := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
 	cmd.SetArgs([]string{"-", "clawker.myapp.dev:/app/file.txt"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -378,13 +381,13 @@ func TestCpRun_ContainerNotFound_CopyTo(t *testing.T) {
 
 func TestCpRun_BothPathsContainer(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	f, tio := testCpFactory(t, fake)
+	f, _, out, errOut := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
 	cmd.SetArgs([]string{"container1:/src", "container2:/dst"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -393,13 +396,13 @@ func TestCpRun_BothPathsContainer(t *testing.T) {
 
 func TestCpRun_BothPathsHost(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	f, tio := testCpFactory(t, fake)
+	f, _, out, errOut := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
 	cmd.SetArgs([]string{"./src", "./dst"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)

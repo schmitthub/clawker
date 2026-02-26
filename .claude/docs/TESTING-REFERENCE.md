@@ -37,7 +37,7 @@ Factory fields are closures that return dependencies. Tests inject fakes:
 
 ```go
 f := &cmdutil.Factory{
-    IOStreams: tio.IOStreams,
+    IOStreams: tio,
     Client: func(ctx context.Context) (*docker.Client, error) {
         return fake.Client, nil  // Fake from dockertest
     },
@@ -70,12 +70,14 @@ Each package with complex dependencies provides test infrastructure:
 
 | Package | Test Location | What It Provides |
 |---------|---------------|------------------|
+| `internal/testenv` | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
 | `internal/docker` | `dockertest/` | `FakeClient`, `SetupContainerList`, fixtures |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, function-field fake |
-| `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
+| `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
+| `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
 
 ### The Agent Obligation
 
@@ -116,6 +118,28 @@ The DAG fills in, and eventually **any tier can mock/fake/stub the entire chain 
 ❌ **Skipping DI**: Directly instantiating concrete types instead of using Factory seams
 
 ✅ **Pattern to follow**: Use existing `*test/` packages, or create them if missing
+
+---
+
+## Isolated Test Environments (`internal/testenv`)
+
+Unified XDG directory isolation with progressive options. Eliminates duplicated dir setup across `config/mocks`, `project/mocks`, and `test/e2e/harness`.
+
+```go
+env := testenv.New(t)                                    // dirs only
+env := testenv.New(t, testenv.WithConfig())              // + real Config
+env := testenv.New(t, testenv.WithProjectManager(nil))   // + real PM (implies Config)
+```
+
+Higher-level helpers delegate here: `configmocks.NewIsolatedTestConfig(t)`, `projectmocks.NewTestProjectManager(t, gf)`, `test/e2e/harness.NewIsolatedFS()`.
+
+See `internal/testenv/CLAUDE.md` for full API reference.
+
+---
+
+## Directory Collision Detection (`storage.ValidateDirectories`)
+
+Resolves all four XDG dirs and checks for path collisions (e.g., config and data pointing to the same path due to env var typos). Wire into app init for early detection.
 
 ---
 
@@ -262,9 +286,9 @@ Intercepts the Options struct *before* the run function executes. Verifies CLI f
 
 ```go
 func TestNewCmdStop_FlagParsing(t *testing.T) {
-    tio := iostreamstest.New()
+    tio, _, _, _ := iostreams.Test()
     f := &cmdutil.Factory{
-        IOStreams: tio.IOStreams,
+        IOStreams: tio,
         Config: func() (config.Config, error) {
             return configmocks.NewBlankConfig(), nil
         },
@@ -311,13 +335,13 @@ For Tier 2 (full pipeline) tests, define a private `runCommand` helper per comma
 
 ```go
 func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut, error) {
-    tio := iostreamstest.New()
-    tio.IOStreams.SetStdoutTTY(isTTY)
-    tio.IOStreams.SetStdinTTY(isTTY)
-    tio.IOStreams.SetStderrTTY(isTTY)
+    tio, _, _, _ := iostreams.Test()
+    tio.SetStdoutTTY(isTTY)
+    tio.SetStdinTTY(isTTY)
+    tio.SetStderrTTY(isTTY)
 
     factory := &cmdutil.Factory{
-        IOStreams: tio.IOStreams,
+        IOStreams: tio,
         Client: func(_ context.Context) (*docker.Client, error) {
             return mockClient, nil
         },
@@ -336,15 +360,15 @@ func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut,
 
     _, err := cmd.ExecuteC()
     return &testCmdOut{
-        OutBuf: tio.OutBuf,
-        ErrBuf: tio.ErrBuf,
+        OutBuf: out,
+        ErrBuf: errOut,
     }, err
 }
 ```
 
 **Key design choices**:
 - `nil` for `runF` → real run function executes the full pipeline
-- I/O capture via `iostreamstest.New()` → access `tio.IOStreams`, `tio.OutBuf`, `tio.ErrBuf`
+- I/O capture via `iostreams.Test()` → access `tio`, `in`, `out`, `errOut`
 - TTY toggling — tests both interactive and non-interactive paths
 - Cobra output discarded (`io.Discard`) — real output goes through `iostreams`
 - Docker mock client injected via Factory closure
@@ -367,12 +391,12 @@ The canonical pattern for Tier 2 (integration) command tests. Exercises the full
 
 ```go
 // testFactory constructs a minimal *cmdutil.Factory for command-level testing.
-func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemocks.MockManager) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemocks.MockManager) (*cmdutil.Factory, *iostreams.IOStreams) {
     t.Helper()
-    tio := iostreamstest.New()
+    tio, _, _, _ := iostreams.Test()
 
     f := &cmdutil.Factory{
-        IOStreams: tio.IOStreams,
+        IOStreams: tio,
         Client: func(_ context.Context) (*docker.Client, error) {
             return fake.Client, nil
         },
@@ -405,14 +429,14 @@ func TestRunRun(t *testing.T) {
 
         cmd.SetArgs([]string{"--detach", "alpine"})
         cmd.SetIn(&bytes.Buffer{})
-        cmd.SetOut(tio.OutBuf)
-        cmd.SetErr(tio.ErrBuf)
+        cmd.SetOut(out)
+        cmd.SetErr(errOut)
 
         err := cmd.Execute()
         require.NoError(t, err)
 
         // Assert output
-        out := tio.OutBuf.String()
+        out := out.String()
         require.Contains(t, out, "sha256:fakec")
 
         // Assert Docker calls
@@ -430,8 +454,8 @@ func TestRunRun(t *testing.T) {
         cmd := NewCmdRun(f, nil)
         cmd.SetArgs([]string{"--detach", "alpine"})
         cmd.SetIn(&bytes.Buffer{})
-        cmd.SetOut(tio.OutBuf)
-        cmd.SetErr(tio.ErrBuf)
+        cmd.SetOut(out)
+        cmd.SetErr(errOut)
 
         err := cmd.Execute()
         require.Error(t, err)
@@ -623,7 +647,7 @@ h := harness.NewHarness(t, harness.WithProject("test"))
 f, tio := harness.NewTestFactory(t, h)
 
 // Returns fully-wired Factory:
-// - f.IOStreams → tio.IOStreams
+// - f.IOStreams → tio
 // - f.Client → real Docker client
 // - f.Config → harness config
 // - f.HostProxy → no-op (for firewall-disabled tests)
@@ -632,10 +656,10 @@ f, tio := harness.NewTestFactory(t, h)
 **Per-package testFactory** — For command tests with fake Docker:
 
 ```go
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
-    tio := iostreamstest.New()
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.IOStreams) {
+    tio, _, _, _ := iostreams.Test()
     return &cmdutil.Factory{
-        IOStreams: tio.IOStreams,
+        IOStreams: tio,
         Client: func(_ context.Context) (*docker.Client, error) {
             return fake.Client, nil
         },
@@ -920,7 +944,7 @@ cfg, read := configmocks.NewIsolatedTestConfig(t)
 **Factory wiring in tests:**
 ```go
 f := &cmdutil.Factory{
-    IOStreams: tio.IOStreams,
+    IOStreams: tio,
     Config: func() (config.Config, error) {
         return configmocks.NewBlankConfig(), nil
     },
@@ -1210,6 +1234,41 @@ for _, c := range containers {
 if len(errs) > 0 {
     return errors.Join(errs...)
 }
+```
+
+---
+
+## Storage Oracle + Golden Test Strategy
+
+The `internal/storage` package uses a **defense-in-depth** approach with two independent guards for merge correctness:
+
+| Layer | How it works | What it catches |
+|-------|-------------|-----------------|
+| Oracle (randomized) | Computes expected merge from spec rules (~15 lines), independent of prod code. Runs every time with a new seed. | Any merge bug that manifests for the random placement |
+| Golden (fixed seed) | Hardcoded struct literal blessed from known-correct state. No auto-update. | Any regression from the blessed baseline, including oracle bugs |
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Deepest level forced to have both `config.local.yaml` and `config.yaml` | Guarantees filename priority is always exercised |
+| Main/local files have distinct names (`level3-main` vs `level3-local`) | Scalar assertions can distinguish which file won |
+| Golden values are code, not files | Must be hand-edited to change — no accidental `GOLDEN_UPDATE=1` sweep |
+| `make storage-golden` prints new values with interactive confirmation | Blocks CI — human must review and approve |
+| `STORAGE_GOLDEN_BLESS` env var is specific to this one test | No global sweep risk |
+
+### When to Use This Pattern
+
+The oracle+golden dual-guard pattern is appropriate when:
+- The system under test has **combinatorial inputs** (merge order, file placement, priority rules)
+- A single deterministic test cannot cover the full space
+- Regression protection and exploration serve **different purposes**
+
+```bash
+go test ./internal/storage -v                              # Runs both oracle + golden
+go test ./internal/storage -run TestMerge_Oracle -v        # Oracle only (randomized)
+go test ./internal/storage -run TestMerge_Golden -v        # Golden only (fixed baseline)
+make storage-golden                                        # Interactive golden update
 ```
 
 ---

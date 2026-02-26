@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // testClient returns a *Client with only cfg set (no engine).
@@ -16,7 +17,7 @@ func testClient(t *testing.T) (*Client, config.Config) {
 version: "1"
 name: "testproject"
 `)
-	return &Client{cfg: cfg}, cfg
+	return &Client{cfg: cfg, log: logger.Nop()}, cfg
 }
 
 func TestLabelConstants(t *testing.T) {

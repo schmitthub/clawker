@@ -119,12 +119,12 @@ Container commands in `internal/cmd/container/*/` are being migrated to canonica
 
 **Cobra+Factory Test Pattern (Tier 2):**
 ```go
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.IOStreams) {
     t.Helper()
-    tio := iostreamstest.New()
+    tio, _, _, _ := iostreams.Test()
     return &cmdutil.Factory{
-        IOStreams: tio.IOStreams,
-        TUI:      tui.NewTUI(tio.IOStreams),
+        IOStreams: tio,
+        TUI:      tui.NewTUI(tio),
         Client: func(ctx context.Context) (*docker.Client, error) {
             return fake.Client, nil
         },
@@ -303,9 +303,9 @@ These 3 commands already have Tier 2 tests. Migration is HandleError replacement
 6. Review existing Tier 2 tests — add a test for the Docker connection error path if missing:
    ```go
    func TestStopRun_DockerConnectionError(t *testing.T) {
-       tio := iostreamstest.New()
+       tio, _, _, _ := iostreams.Test()
        f := &cmdutil.Factory{
-           IOStreams: tio.IOStreams,
+           IOStreams: tio,
            Client: func(_ context.Context) (*docker.Client, error) {
                return nil, fmt.Errorf("cannot connect to Docker daemon")
            },
@@ -314,8 +314,8 @@ These 3 commands already have Tier 2 tests. Migration is HandleError replacement
        cmd := NewCmdStop(f, nil)
        cmd.SetArgs([]string{"mycontainer"})
        cmd.SetIn(&bytes.Buffer{})
-       cmd.SetOut(tio.OutBuf)
-       cmd.SetErr(tio.ErrBuf)
+       cmd.SetOut(out)
+       cmd.SetErr(errOut)
        err := cmd.Execute()
        require.Error(t, err)
        assert.Contains(t, err.Error(), "connecting to Docker")
@@ -365,11 +365,11 @@ These 4 commands have Tier 1 tests (flag parsing) but NO Tier 2 tests. Each need
 3. Replace `fmt.Fprintf(ios.ErrOut, "Error: %v\n", err)` → `cs.FailureIcon()` pattern
 4. Create a per-package `testFactory` helper (copy from `stop_test.go`, remove SocketBridge since these don't need it):
    ```go
-   func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+   func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.IOStreams) {
        t.Helper()
-       tio := iostreamstest.New()
+       tio, _, _, _ := iostreams.Test()
        return &cmdutil.Factory{
-           IOStreams: tio.IOStreams,
+           IOStreams: tio,
            Client: func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
            Config: func() (config.Config, error) { return config.NewBlankConfig(), nil },
        }, tio

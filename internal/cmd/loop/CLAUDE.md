@@ -59,7 +59,7 @@ Prompt resolution and option building helpers:
 
 - `ResolvePrompt(prompt, promptFile string) (string, error)` — returns inline prompt or reads from file, trims whitespace, errors on empty
 - `ResolveTasksPrompt(tasksFile, taskPrompt, taskPromptFile string) (string, error)` — reads tasks file, wraps in default template or applies custom template (`%s` placeholder or appended)
-- `BuildRunnerOptions(loopOpts, project, agent, prompt, workDir, createContainer, flags, loopCfg, log) Options` — maps CLI options to runner options with config override support (`flags.Changed()` pattern). The `log` parameter (`iostreams.Logger`) is required — `Runner.Run` returns an error if `opts.Logger` is nil.
+- `BuildRunnerOptions(loopOpts, project, agent, prompt, workDir, createContainer, flags, loopCfg, log) Options` — maps CLI options to runner options with config override support (`flags.Changed()` pattern). The `log` parameter (`*logger.Logger`) is required — `Runner.Run` returns an error if `opts.Logger` is nil.
 - `ApplyLoopConfigDefaults(loopOpts, flags, loopCfg)` — applies config overrides to `LoopOptions` for pre-runner fields (`hooks_file`, `append_system_prompt`). Called in iterate/tasks run functions after loading config but before `SetupLoopContainer` and `BuildRunnerOptions`.
 
 **Config override pattern**: Two layers of config-to-flag override:
@@ -157,6 +157,10 @@ Embeds `*shared.LoopOptions`. Adds `--tasks` (required), `--task-prompt` / `--ta
 - **tasks**: Agent reads a task file, picks an open task, completes it, marks it done. Clawker is the "dumb loop" — the agent LLM handles task selection. Default template wraps tasks in `<tasks>` block; custom templates use `%s` placeholder or append.
 
 Loop commands handle full container lifecycle: create → hooks → start → loop → cleanup. Containers are ephemeral — created at loop start, removed on exit.
+
+## Home Directory Requirement
+
+Loop commands (`iterate`, `tasks`) refuse to run when CWD is at or above `$HOME`. This is a hard error (not a prompt) because loop mode creates ephemeral containers that mount the workspace — mounting the entire home directory in a loop is dangerous. Check uses `containershared.IsOutsideHome(".")` from `internal/cmd/container/shared`. Error: `"loop mode is not supported outside of, or in, the home directory"`.
 
 ## Testing
 

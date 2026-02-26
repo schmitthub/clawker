@@ -41,6 +41,8 @@ type InitConfigOpts struct {
 	// CopyToVolume copies a directory to a Docker volume.
 	// In production, wire this to (*docker.Client).CopyToVolume.
 	CopyToVolume CopyToVolumeFn
+	// Log is the logger for diagnostic file logging.
+	Log *logger.Logger
 }
 
 // InitContainerConfig handles one-time claude config initialization for new containers.
@@ -69,7 +71,7 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 			return fmt.Errorf("cannot copy claude config: %w", err)
 		}
 
-		stagingDir, cleanup, err := containerfs.PrepareClaudeConfig(hostConfigDir, containerHomeDir, opts.ContainerWorkDir)
+		stagingDir, cleanup, err := containerfs.PrepareClaudeConfig(opts.Log, hostConfigDir, containerHomeDir, opts.ContainerWorkDir)
 		if err != nil {
 			return fmt.Errorf("failed to prepare claude config: %w", err)
 		}
@@ -83,7 +85,7 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 			return fmt.Errorf("failed to copy claude config to volume: %w", err)
 		}
 
-		logger.Debug().Msg("copied host claude config to container")
+		opts.Log.Debug().Msg("copied host claude config to container")
 	}
 
 	// Step 2: Copy credentials if use_host_auth is enabled
@@ -93,7 +95,7 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 			return fmt.Errorf("cannot prepare credentials: %w", err)
 		}
 
-		stagingDir, cleanup, err := containerfs.PrepareCredentials(hostConfigDir)
+		stagingDir, cleanup, err := containerfs.PrepareCredentials(opts.Log, hostConfigDir)
 		if err != nil {
 			return fmt.Errorf("failed to prepare credentials: %w", err)
 		}
@@ -105,7 +107,7 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 			return fmt.Errorf("failed to copy credentials to volume: %w", err)
 		}
 
-		logger.Debug().Msg("injected host credentials into container config volume")
+		opts.Log.Debug().Msg("injected host credentials into container config volume")
 	}
 
 	return nil
@@ -122,6 +124,8 @@ type InjectPostInitOpts struct {
 	// CopyToContainer copies a tar archive to the container at the given destination path.
 	// In production, wire this to a function that calls (*docker.Client).CopyToContainer.
 	CopyToContainer CopyToContainerFn
+	// Log is the logger for diagnostic file logging.
+	Log *logger.Logger
 }
 
 // InjectPostInitScript writes ~/.clawker/post-init.sh to a created (not started) container.
@@ -142,7 +146,7 @@ func InjectPostInitScript(ctx context.Context, opts InjectPostInitOpts) error {
 		return fmt.Errorf("failed to inject post-init script: %w", err)
 	}
 
-	logger.Debug().Msg("injected post-init script into container")
+	opts.Log.Debug().Msg("injected post-init script into container")
 	return nil
 }
 

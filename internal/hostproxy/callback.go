@@ -47,12 +47,14 @@ type CallbackData struct {
 // incoming callbacks from the browser.
 type CallbackChannel struct {
 	store *SessionStore
+	log   *logger.Logger
 }
 
 // NewCallbackChannel creates a new callback channel using the provided session store.
-func NewCallbackChannel(store *SessionStore) *CallbackChannel {
+func NewCallbackChannel(store *SessionStore, log *logger.Logger) *CallbackChannel {
 	return &CallbackChannel{
 		store: store,
+		log:   log,
 	}
 }
 
@@ -113,7 +115,7 @@ func (c *CallbackChannel) Capture(sessionID string, r *http.Request) error {
 		bodyBytes := make([]byte, 64*1024)
 		n, err := r.Body.Read(bodyBytes)
 		if err != nil && err != io.EOF {
-			logger.Warn().Err(err).Msg("error reading callback request body")
+			c.log.Warn().Err(err).Msg("error reading callback request body")
 		}
 		if n > 0 {
 			body = string(bodyBytes[:n])

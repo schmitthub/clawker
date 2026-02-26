@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
 )
@@ -16,6 +17,7 @@ import (
 type DownOptions struct {
 	IOStreams *iostreams.IOStreams
 	Config    func() (config.Config, error)
+	Logger    func() (*logger.Logger, error)
 
 	Volumes bool
 }
@@ -24,6 +26,7 @@ func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) err
 	opts := &DownOptions{
 		IOStreams: f.IOStreams,
 		Config:    f.Config,
+		Logger:    f.Logger,
 	}
 
 	cmd := &cobra.Command{
@@ -55,6 +58,11 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
+
 	cfg, err := opts.Config()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -66,7 +74,7 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
 
-	ios.Logger.Debug().Str("monitor_dir", monitorDir).Msg("stopping monitor stack")
+	log.Debug().Str("monitor_dir", monitorDir).Msg("stopping monitor stack")
 
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
@@ -82,7 +90,7 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 		composeArgs = append(composeArgs, "-v")
 	}
 
-	ios.Logger.Debug().Strs("args", composeArgs).Msg("running docker compose")
+	log.Debug().Strs("args", composeArgs).Msg("running docker compose")
 
 	cmd := exec.CommandContext(ctx, "docker", composeArgs...)
 	cmd.Stdout = ios.Out

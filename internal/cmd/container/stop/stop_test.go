@@ -13,7 +13,8 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	sockebridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 	"github.com/stretchr/testify/require"
@@ -163,13 +164,13 @@ func TestStopRun_StopsBridge(t *testing.T) {
 		require.False(t, dockerStopCalled, "bridge must stop before docker stop")
 		return nil
 	}
-	f, tio := testFactory(t, fake, mock)
+	f, in, out, errOut := testFactory(t, fake, mock)
 
 	cmd := NewCmdStop(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
@@ -192,13 +193,13 @@ func TestStopRun_BridgeErrorDoesNotFailStop(t *testing.T) {
 	mock.StopBridgeFunc = func(_ string) error {
 		return fmt.Errorf("bridge not found")
 	}
-	f, tio := testFactory(t, fake, mock)
+	f, in, out, errOut := testFactory(t, fake, mock)
 
 	cmd := NewCmdStop(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
@@ -218,13 +219,13 @@ func TestStopRun_NilSocketBridge(t *testing.T) {
 	}
 
 	// nil SocketBridge — no bridge configured
-	f, tio := testFactory(t, fake, nil)
+	f, in, out, errOut := testFactory(t, fake, nil)
 
 	cmd := NewCmdStop(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err) // no panic, stop succeeds
@@ -242,13 +243,13 @@ func TestStopRun_StopsBridgeWithSignal(t *testing.T) {
 	}
 
 	mock := sockebridgemocks.NewMockManager()
-	f, tio := testFactory(t, fake, mock)
+	f, in, out, errOut := testFactory(t, fake, mock)
 
 	cmd := NewCmdStop(f, nil)
 	cmd.SetArgs([]string{"--signal", "SIGKILL", "clawker.myapp.dev"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
@@ -259,9 +260,10 @@ func TestStopRun_StopsBridgeWithSignal(t *testing.T) {
 }
 
 func TestStopRun_DockerConnectionError(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
@@ -272,9 +274,9 @@ func TestStopRun_DockerConnectionError(t *testing.T) {
 
 	cmd := NewCmdStop(f, nil)
 	cmd.SetArgs([]string{"mycontainer"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -283,12 +285,13 @@ func TestStopRun_DockerConnectionError(t *testing.T) {
 
 // --- Per-package test helpers ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -303,5 +306,5 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemoc
 		}
 	}
 
-	return f, tio
+	return f, in, out, errOut
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -30,6 +31,7 @@ type CreateOptions struct {
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
 	Prompter       func() *prompter.Prompter
+	Logger         func() (*logger.Logger, error)
 	Version        string
 
 	// flags stores the pflag.FlagSet for detecting explicitly changed flags
@@ -48,6 +50,7 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions)
 		ProjectManager:   f.ProjectManager,
 		HostProxy:        f.HostProxy,
 		Prompter:         f.Prompter,
+		Logger:           f.Logger,
 		Version:          f.Version,
 	}
 
@@ -148,6 +151,20 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		return fmt.Errorf("cannot use both --name and --agent")
 	}
 
+	// Warn if workspace mount would include the home directory or higher
+	if shared.IsOutsideHome(".") {
+		confirmed, promptErr := opts.Prompter().Confirm(
+			"WARNING: This will mount your entire home directory (or higher) into a container. Continue?",
+			false,
+		)
+		if promptErr != nil {
+			return promptErr
+		}
+		if !confirmed {
+			return cmdutil.SilentError
+		}
+	}
+
 	// --- Phase B: Create container with spinner ---
 
 	events := make(chan shared.CreateContainerEvent, 16)
@@ -156,6 +173,11 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		err    error
 	}
 	done := make(chan outcome, 1)
+
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
 
 	go func() {
 		defer close(events)
@@ -169,7 +191,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 			Version:        opts.Version,
 			ProjectManager: opts.ProjectManager,
 			HostProxy:      opts.HostProxy,
-			Logger:         ios.Logger,
+			Log:            log,
 			Is256Color:     ios.Is256ColorSupported(),
 			IsTrueColor:    ios.IsTrueColorSupported(),
 		}, events)

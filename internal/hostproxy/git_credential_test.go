@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 func TestHandleGitCredential(t *testing.T) {
@@ -67,7 +69,7 @@ func TestHandleGitCredential(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &Server{}
+			s := &Server{log: logger.Nop()}
 			req := httptest.NewRequest(http.MethodPost, "/git/credential", bytes.NewBufferString(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
@@ -96,7 +98,7 @@ func TestHandleGitCredential(t *testing.T) {
 }
 
 func TestHandleGitCredentialBodySizeLimit(t *testing.T) {
-	s := &Server{}
+	s := &Server{log: logger.Nop()}
 
 	// Create a body larger than maxRequestBodySize (1MB)
 	largeBody := make([]byte, maxRequestBodySize+1)
@@ -274,7 +276,7 @@ func TestParseGitCredentialOutput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseGitCredentialOutput(tt.output)
+			result := parseGitCredentialOutput(tt.output, logger.Nop())
 
 			if result.Protocol != tt.expected.Protocol {
 				t.Errorf("Protocol: expected %q, got %q", tt.expected.Protocol, result.Protocol)

@@ -22,7 +22,8 @@ import (
 // Additional methods provide clawker-specific high-level operations.
 type Client struct {
 	*whail.Engine
-	cfg config.Config // lazily provides project and settings for image resolution
+	cfg config.Config  // lazily provides project and settings for image resolution
+	log *logger.Logger // structured file logger (never nil; Nop for tests)
 
 	// BuildDefaultImageFunc overrides BuildDefaultImage when non-nil.
 	// Used by fawker/tests to inject fake build behavior.
@@ -54,7 +55,11 @@ func WithLabels(labels whail.LabelConfig) ClientOption {
 	}
 }
 
-func NewClient(ctx context.Context, cfg config.Config, opts ...ClientOption) (*Client, error) {
+func NewClient(ctx context.Context, cfg config.Config, log *logger.Logger, opts ...ClientOption) (*Client, error) {
+	if log == nil {
+		log = logger.Nop()
+	}
+
 	var o clientOptions
 	for _, opt := range opts {
 		opt(&o)
@@ -71,13 +76,17 @@ func NewClient(ctx context.Context, cfg config.Config, opts ...ClientOption) (*C
 		return nil, err
 	}
 
-	return &Client{Engine: engine, cfg: cfg}, nil
+	return &Client{Engine: engine, cfg: cfg, log: log}, nil
 }
 
 // NewClientFromEngine creates a Client from an existing Engine and config.
 // Intended for testing — production code should use NewClient.
-func NewClientFromEngine(engine *whail.Engine, cfg config.Config) *Client {
-	return &Client{Engine: engine, cfg: cfg}
+// When log is nil, a Nop logger is used.
+func NewClientFromEngine(engine *whail.Engine, cfg config.Config, log *logger.Logger) *Client {
+	if log == nil {
+		log = logger.Nop()
+	}
+	return &Client{Engine: engine, cfg: cfg, log: log}
 }
 
 // Close closes the underlying Docker connection.
@@ -93,7 +102,7 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 		Filters: f,
 	})
 	if err != nil {
-		logger.Debug().Err(err).Msg("failed to check monitoring status")
+		c.log.Debug().Err(err).Msg("failed to check monitoring status")
 		return false
 	}
 
@@ -102,7 +111,7 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 		if ctr.NetworkSettings != nil {
 			for netName := range ctr.NetworkSettings.Networks {
 				if netName == c.cfg.ClawkerNetwork() {
-					logger.Debug().Msg("monitoring stack detected as active")
+					c.log.Debug().Msg("monitoring stack detected as active")
 					return true
 				}
 			}
@@ -245,7 +254,7 @@ func (c *Client) processBuildOutput(reader io.Reader) error {
 
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			parseErrors++
-			logger.Debug().
+			c.log.Debug().
 				Err(err).
 				Str("raw", string(scanner.Bytes())).
 				Msg("failed to parse build output event")
@@ -267,7 +276,7 @@ func (c *Client) processBuildOutput(reader io.Reader) error {
 
 		// Log build output (trimmed)
 		if stream := strings.TrimSpace(event.Stream); stream != "" {
-			logger.Debug().Msg(stream)
+			c.log.Debug().Msg(stream)
 		}
 	}
 
@@ -275,7 +284,7 @@ func (c *Client) processBuildOutput(reader io.Reader) error {
 		return fmt.Errorf("error reading build output: %w", err)
 	}
 
-	logger.Debug().Msg("image build complete")
+	c.log.Debug().Msg("image build complete")
 	return nil
 }
 
@@ -290,7 +299,7 @@ func (c *Client) processBuildOutputQuiet(reader io.Reader) error {
 
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			parseErrors++
-			logger.Debug().
+			c.log.Debug().
 				Err(err).
 				Str("raw", string(scanner.Bytes())).
 				Msg("failed to parse build output event")
@@ -336,7 +345,7 @@ func (c *Client) processBuildOutputWithProgress(reader io.Reader, onProgress wha
 
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			parseErrors++
-			logger.Debug().
+			c.log.Debug().
 				Err(err).
 				Str("raw", string(scanner.Bytes())).
 				Msg("failed to parse build output event")
@@ -460,7 +469,7 @@ func (c *Client) processBuildOutputWithProgress(reader io.Reader, onProgress wha
 		})
 	}
 
-	logger.Debug().Msg("image build complete")
+	c.log.Debug().Msg("image build complete")
 	return nil
 }
 
@@ -548,7 +557,7 @@ func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID str
 				return err
 			}
 			// Graceful stop failed, but force is true so we'll attempt forced removal
-			logger.Warn().Err(err).Msg("failed to stop container gracefully, proceeding with forced removal")
+			c.log.Warn().Err(err).Msg("failed to stop container gracefully, proceeding with forced removal")
 		}
 	}
 
@@ -564,7 +573,7 @@ func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID str
 				return fmt.Errorf("container removed but volume cleanup failed: %w", err)
 			}
 			// Force mode: log but don't fail
-			logger.Warn().Err(err).Msg("volume cleanup incomplete")
+			c.log.Warn().Err(err).Msg("volume cleanup incomplete")
 		}
 	}
 
@@ -588,7 +597,7 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 		c.cfg.LabelAgent():   agent,
 	})
 	if err != nil {
-		logger.Warn().Err(err).Msg("failed to list volumes for cleanup, trying fallback")
+		c.log.Warn().Err(err).Msg("failed to list volumes for cleanup, trying fallback")
 		// Continue to fallback - don't return yet
 	} else {
 		// Only iterate if VolumeList succeeded (volumes.Items is valid)
@@ -596,11 +605,11 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 			if _, err := c.VolumeRemove(ctx, vol.Name, force); err != nil {
 				// Check if it's a "not found" error (shouldn't happen but be safe)
 				if !isNotFoundError(err) {
-					logger.Warn().Err(err).Str("volume", vol.Name).Msg("failed to remove volume")
+					c.log.Warn().Err(err).Str("volume", vol.Name).Msg("failed to remove volume")
 					errs = append(errs, fmt.Sprintf("%s: %v", vol.Name, err))
 				}
 			} else {
-				logger.Debug().Str("volume", vol.Name).Msg("removed volume")
+				c.log.Debug().Str("volume", vol.Name).Msg("removed volume")
 				removedByLabel[vol.Name] = true
 			}
 		}
@@ -612,7 +621,7 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 	for _, purpose := range []string{"workspace", "config", "history"} {
 		vn, vnErr := VolumeName(project, agent, purpose)
 		if vnErr != nil {
-			logger.Warn().Err(vnErr).Str("purpose", purpose).Msg("skipping volume cleanup: invalid name")
+			c.log.Warn().Err(vnErr).Str("purpose", purpose).Msg("skipping volume cleanup: invalid name")
 			continue
 		}
 		knownVolumes = append(knownVolumes, vn)
@@ -624,13 +633,13 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 		if _, err := c.VolumeRemove(ctx, volName, force); err != nil {
 			// Only report errors that aren't "not found"
 			if !isNotFoundError(err) {
-				logger.Warn().Err(err).Str("volume", volName).Msg("failed to remove volume")
+				c.log.Warn().Err(err).Str("volume", volName).Msg("failed to remove volume")
 				errs = append(errs, fmt.Sprintf("%s: %v", volName, err))
 			} else {
-				logger.Debug().Str("volume", volName).Msg("volume does not exist, skipping")
+				c.log.Debug().Str("volume", volName).Msg("volume does not exist, skipping")
 			}
 		} else {
-			logger.Debug().Str("volume", volName).Msg("removed volume via name fallback")
+			c.log.Debug().Str("volume", volName).Msg("removed volume via name fallback")
 		}
 	}
 

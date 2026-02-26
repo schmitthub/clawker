@@ -11,7 +11,8 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -96,19 +97,20 @@ func TestCmdUnpause_Properties(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests ---
 
-func testUnpauseFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testUnpauseFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 
 	return &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
 			return configmocks.NewBlankConfig(), nil
 		},
-	}, tio
+	}, in, out, errOut
 }
 
 func TestUnpauseRun_Success(t *testing.T) {
@@ -117,25 +119,26 @@ func TestUnpauseRun_Success(t *testing.T) {
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerUnpause()
 
-	f, tio := testUnpauseFactory(t, fake)
+	f, in, out, errOut := testUnpauseFactory(t, fake)
 
 	cmd := NewCmdUnpause(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
+	require.Contains(t, out.String(), "clawker.myapp.dev")
 	fake.AssertCalled(t, "ContainerUnpause")
 }
 
 func TestUnpauseRun_DockerConnectionError(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, in, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
@@ -146,9 +149,9 @@ func TestUnpauseRun_DockerConnectionError(t *testing.T) {
 
 	cmd := NewCmdUnpause(f, nil)
 	cmd.SetArgs([]string{"mycontainer"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -159,17 +162,17 @@ func TestUnpauseRun_ContainerNotFound(t *testing.T) {
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
-	f, tio := testUnpauseFactory(t, fake)
+	f, in, out, errOut := testUnpauseFactory(t, fake)
 
 	cmd := NewCmdUnpause(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.ErrorIs(t, err, cmdutil.SilentError)
-	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.dev")
+	require.Contains(t, errOut.String(), "clawker.myapp.dev")
 }
 
 func TestUnpauseRun_PartialFailure(t *testing.T) {
@@ -178,19 +181,19 @@ func TestUnpauseRun_PartialFailure(t *testing.T) {
 	fake.SetupFindContainer("clawker.myapp.dev", fixture1)
 	fake.SetupContainerUnpause()
 
-	f, tio := testUnpauseFactory(t, fake)
+	f, in, out, errOut := testUnpauseFactory(t, fake)
 
 	cmd := NewCmdUnpause(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.missing"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
 
 	err := cmd.Execute()
 	require.ErrorIs(t, err, cmdutil.SilentError)
 
 	// First container succeeded
-	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
+	require.Contains(t, out.String(), "clawker.myapp.dev")
 	// Second container had error
-	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.missing")
+	require.Contains(t, errOut.String(), "clawker.myapp.missing")
 }

@@ -72,7 +72,7 @@ Clawker follows the GitHub CLI's three-layer Factory pattern for dependency inje
 ```
 
 **Why this pattern:**
-- **Testability**: Tests construct `&cmdutil.Factory{IOStreams: tio.IOStreams}` with only needed fields
+- **Testability**: Tests construct `&cmdutil.Factory{IOStreams: tio}` with only needed fields
 - **Decoupling**: cmdutil has no construction logic; factory/ imports the heavy deps
 - **Transparent**: `f.Client(ctx)` syntax is identical for methods and closure fields
 - **Assignable**: `opts.Client = f.Client` works naturally for Options injection
@@ -299,7 +299,7 @@ Testable I/O abstraction following the GitHub CLI pattern.
 - `IOStreams` - Core I/O with TTY detection, color support, progress indicators
 - `Logger` - Interface (`Debug/Info/Warn/Error() *zerolog.Event`) decoupling commands from `internal/logger`; set on IOStreams by factory
 - `ColorScheme` - Color formatting that bridges to `tui/styles.go`
-- `TestIOStreams` - Test helper with in-memory buffers (constructor: `iostreamstest.New()` in `iostreamstest/` subpackage)
+- `Test()` - Exported test constructor: `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` — nil Logger, uses `mocks.FakeTerm{}`
 
 **Features:**
 - TTY detection (`IsInputTTY`, `IsOutputTTY`, `IsInteractive`, `CanPrompt`)
@@ -345,6 +345,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |
 | `internal/project` | Project domain layer: owns `registry.yaml` (via `internal/storage`), project identity resolution, registration CRUD, worktree orchestration. Fully decoupled from `internal/config` |
 | `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
+| `internal/testenv` | Unified test environment: isolated XDG dirs + optional Config/ProjectManager. Delegates from `config/mocks`, `project/mocks`, `test/e2e/harness` |
 
 **Note:** `hostproxy/internals/` is a structurally-leaf subpackage (stdlib + embed only) that provides container-side scripts and binaries. It is imported by `internal/bundler` for embedding into Docker images, but does NOT import `internal/hostproxy` or any other internal package.
 
@@ -605,13 +606,16 @@ Test doubles follow a `<package>/<package>test/` naming convention. Each provide
 
 | Subpackage | Provides |
 |------------|----------|
+| `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
 | `config/` (stubs.go) | `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()` |
 | `docker/dockertest/` | `FakeClient`, test helpers |
 | `git/gittest/` | `InMemoryGitManager` |
 | `hostproxy/hostproxytest/` | `MockManager` (implements `HostProxyService`) |
-| `iostreams/iostreamstest/` | `New()` → `*TestIOStreams` constructor |
+| `iostreams` | `Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
+| `term/mocks/` | `FakeTerm` — stub satisfying `iostreams.term` interface |
 | `logger/loggertest/` | `TestLogger` (captures output), `New()`, `NewNop()` |
 | `socketbridge/socketbridgetest/` | `MockManager` |
+| `storage` | `ValidateDirectories()` — XDG directory collision detection |
 
 ### Where `cmdutil` Fits
 

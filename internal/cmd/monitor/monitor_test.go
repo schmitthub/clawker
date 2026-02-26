@@ -4,13 +4,17 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
 )
 
 func TestNewCmdMonitor(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdMonitor(f)
 
 	if cmd.Use != "monitor" {
@@ -34,8 +38,11 @@ func TestNewCmdMonitor(t *testing.T) {
 }
 
 func TestNewCmdMonitorInit(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdMonitor(f)
 
 	// Find init subcommand
@@ -64,8 +71,11 @@ func TestNewCmdMonitorInit(t *testing.T) {
 }
 
 func TestNewCmdMonitorUp(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdMonitor(f)
 
 	// Find up subcommand
@@ -94,8 +104,11 @@ func TestNewCmdMonitorUp(t *testing.T) {
 }
 
 func TestNewCmdMonitorDown(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdMonitor(f)
 
 	// Find down subcommand
@@ -124,8 +137,11 @@ func TestNewCmdMonitorDown(t *testing.T) {
 }
 
 func TestNewCmdMonitorStatus(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdMonitor(f)
 
 	// Find status subcommand

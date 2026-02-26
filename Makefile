@@ -3,7 +3,8 @@
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean \
         licenses licenses-check \
         docs docs-check \
-        pre-commit pre-commit-install
+        pre-commit pre-commit-install \
+        localenv
 
 # Go Clawker variables
 BINARY_NAME := clawker
@@ -65,6 +66,9 @@ help:
 	@echo "Pre-commit targets:"
 	@echo "  pre-commit-install  Install pre-commit hooks (run once after clone)"
 	@echo "  pre-commit          Run all pre-commit hooks against all files"
+	@echo ""
+	@echo "Development targets:"
+	@echo "  localenv            (Re)create .clawkerlocal/ with XDG dirs and export env vars"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make clawker"
@@ -189,7 +193,7 @@ clawker-clean:
 # ============================================================================
 
 # Package list for unit tests (excludes integration test directories)
-UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/cli' | grep -v '/test/commands' | grep -v '/test/whail' | grep -v '/test/internals' | grep -v '/test/agents')
+UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/cli' | grep -v '/test/commands' | grep -v '/test/whail' | grep -v '/test/internals' | grep -v '/test/agents' | grep -v '/test/e2e')
 
 # Unit tests only (fast, no Docker)
 # Excludes test/cli, test/internals, test/agents which require Docker
@@ -328,3 +332,49 @@ pre-commit-install:
 # Run all pre-commit hooks against all files
 pre-commit:
 	@pre-commit run --all-files
+
+# Print current storage golden values for manual review.
+# Interactive confirmation prevents accidental execution in CI.
+# After reviewing output, hand-edit the golden values in storage_test.go.
+storage-golden:
+	@printf '\033[33mThis will print new golden values for TestStore_WalkUpGolden.\033[0m\n'
+	@printf 'You must hand-edit storage_test.go with the printed values.\n'
+	@printf 'Continue? [y/N] ' && read ans && [ "$$ans" = "y" ] || (echo "Aborted." && exit 1)
+	STORAGE_GOLDEN_BLESS=1 go test ./internal/storage/... -run TestStore_WalkUpGolden -v -count=1
+
+# ============================================================================
+# Development Environment
+# ============================================================================
+
+LOCALENV_ROOT := .clawkerlocal
+
+# Parent XDG dirs (created by make localenv — bare skeleton).
+LOCALENV_XDG_CONFIG := $(LOCALENV_ROOT)/.config
+LOCALENV_XDG_DATA   := $(LOCALENV_ROOT)/.local/share
+LOCALENV_XDG_STATE  := $(LOCALENV_ROOT)/.local/state
+LOCALENV_XDG_CACHE  := $(LOCALENV_ROOT)/.cache
+
+# App-level dirs (created by the CLI on first use, NOT by make localenv).
+LOCALENV_CONFIG := $(LOCALENV_XDG_CONFIG)/clawker
+LOCALENV_DATA   := $(LOCALENV_XDG_DATA)/clawker
+LOCALENV_STATE  := $(LOCALENV_XDG_STATE)/clawker
+LOCALENV_CACHE  := $(LOCALENV_XDG_CACHE)/clawker
+
+# (Re)create the local development environment directory tree.
+# Creates bare XDG parent dirs only — the CLI creates app-level
+# subdirs (e.g. .config/clawker/) on first use.
+# Updates .env with CLAWKER_*_DIR vars (picked up by dotenv/direnv on cd).
+# Also prints export commands for manual eval:
+#   eval "$(make localenv)"
+localenv:
+	@rm -rf $(LOCALENV_ROOT)
+	@mkdir -p $(LOCALENV_XDG_CONFIG) $(LOCALENV_XDG_DATA) $(LOCALENV_XDG_STATE) $(LOCALENV_XDG_CACHE)
+	@bash scripts/localenv-dotenv.sh \
+		"CLAWKER_CONFIG_DIR=$(CURDIR)/$(LOCALENV_CONFIG)" \
+		"CLAWKER_DATA_DIR=$(CURDIR)/$(LOCALENV_DATA)" \
+		"CLAWKER_STATE_DIR=$(CURDIR)/$(LOCALENV_STATE)" \
+		"CLAWKER_CACHE_DIR=$(CURDIR)/$(LOCALENV_CACHE)"
+	@echo "export CLAWKER_CONFIG_DIR=$(CURDIR)/$(LOCALENV_CONFIG)"
+	@echo "export CLAWKER_DATA_DIR=$(CURDIR)/$(LOCALENV_DATA)"
+	@echo "export CLAWKER_STATE_DIR=$(CURDIR)/$(LOCALENV_STATE)"
+	@echo "export CLAWKER_CACHE_DIR=$(CURDIR)/$(LOCALENV_CACHE)"

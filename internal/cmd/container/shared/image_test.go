@@ -7,7 +7,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -18,41 +18,43 @@ import (
 // --- RebuildMissingDefaultImage tests ---
 
 func TestRebuildMissingImage_NonInteractive(t *testing.T) {
-	tio := iostreamstest.New()
+	tio, _, _, errOut := iostreams.Test()
 	// Non-interactive by default
 
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
 		ImageRef:    "test-image:latest",
-		IOStreams:   tio.IOStreams,
+		IOStreams:   tio,
 		CommandVerb: "run",
 	})
 
 	require.ErrorIs(t, err, cmdutil.SilentError)
-	assert.Contains(t, tio.ErrBuf.String(), "test-image:latest")
-	assert.Contains(t, tio.ErrBuf.String(), "not found")
-	assert.Contains(t, tio.ErrBuf.String(), "clawker init")
+	assert.Contains(t, errOut.String(), "test-image:latest")
+	assert.Contains(t, errOut.String(), "not found")
+	assert.Contains(t, errOut.String(), "clawker init")
 }
 
 func TestRebuildMissingImage_UserDeclines(t *testing.T) {
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
-	tio.InBuf.SetInput("2\n") // "No"
+	tio, in, _, errOut := iostreams.Test()
+	tio.SetStdinTTY(true)
+	tio.SetStdoutTTY(true)
+	in.WriteString("2\n") // "No"
 
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
 		ImageRef:    "test-image:latest",
-		IOStreams:   tio.IOStreams,
-		Prompter:    func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		IOStreams:   tio,
+		Prompter:    func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 		CommandVerb: "run",
 	})
 
 	require.ErrorIs(t, err, cmdutil.SilentError)
-	assert.Contains(t, tio.ErrBuf.String(), "clawker init")
+	assert.Contains(t, errOut.String(), "clawker init")
 }
 
 func TestRebuildMissingImage_BuildSuccess(t *testing.T) {
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
-	tio.InBuf.SetInput("1\n1\n") // "Yes" then "bookworm"
+	tio, in, _, errOut := iostreams.Test()
+	tio.SetStdinTTY(true)
+	tio.SetStdoutTTY(true)
+	in.WriteString("1\n1\n") // "Yes" then "bookworm"
 
 	var capturedFlavor string
 	buildFn := func(_ context.Context, flavor string, _ whail.BuildProgressFunc) error {
@@ -62,22 +64,23 @@ func TestRebuildMissingImage_BuildSuccess(t *testing.T) {
 
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
 		ImageRef:    "test-image:latest",
-		IOStreams:   tio.IOStreams,
+		IOStreams:   tio,
 		TUI:         nil, // spinner fallback
-		Prompter:    func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		Prompter:    func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 		BuildImage:  buildFn,
 		CommandVerb: "run",
 	})
 
 	require.NoError(t, err)
 	assert.Equal(t, "bookworm", capturedFlavor)
-	assert.Contains(t, tio.ErrBuf.String(), docker.DefaultImageTag)
+	assert.Contains(t, errOut.String(), docker.DefaultImageTag)
 }
 
 func TestRebuildMissingImage_BuildFailure(t *testing.T) {
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
-	tio.InBuf.SetInput("1\n1\n") // "Yes" then "bookworm"
+	tio, in, _, _ := iostreams.Test()
+	tio.SetStdinTTY(true)
+	tio.SetStdoutTTY(true)
+	in.WriteString("1\n1\n") // "Yes" then "bookworm"
 
 	buildFn := func(_ context.Context, _ string, _ whail.BuildProgressFunc) error {
 		return fmt.Errorf("build exploded")
@@ -85,9 +88,9 @@ func TestRebuildMissingImage_BuildFailure(t *testing.T) {
 
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
 		ImageRef:    "test-image:latest",
-		IOStreams:   tio.IOStreams,
+		IOStreams:   tio,
 		TUI:         nil,
-		Prompter:    func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		Prompter:    func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 		BuildImage:  buildFn,
 		CommandVerb: "run",
 	})

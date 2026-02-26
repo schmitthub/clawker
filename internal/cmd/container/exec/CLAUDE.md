@@ -78,7 +78,7 @@ All errors use `return fmt.Errorf("context: %w", err)` for centralized rendering
 - `internal/hostproxy` — Host proxy for credential forwarding
 - `internal/socketbridge` — SSH/GPG agent socket forwarding
 - `internal/workspace` — SetupGitCredentials for exec sessions
-- Logging via `ios.Logger` (iostreams interface) — `checkExecExitCode` takes `log iostreams.Logger` parameter
+- Logging via `*logger.Logger` (Factory lazy noun) — resolved eagerly in `execRun` via `opts.Logger()`
 
 ## Testing
 

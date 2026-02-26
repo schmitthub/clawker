@@ -16,117 +16,34 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var (
-	// Log is the global logger instance (file-only; nop before Init/NewLogger)
-	Log zerolog.Logger
+// Logger wraps zerolog with file rotation and optional OTEL export.
+// Create with New or Nop. Safe for concurrent use after construction.
+type Logger struct {
+	zl       zerolog.Logger
+	fw       *lumberjack.Logger
+	provider *sdklog.LoggerProvider
 
-	// fileWriter is the file output for logging (with rotation)
-	fileWriter *lumberjack.Logger
-
-	// loggerProvider is the OTEL log provider (nil when OTEL is not enabled)
-	loggerProvider *sdklog.LoggerProvider
-
-	// logContext holds project/agent context for log entries (optional, may be empty)
-	logContext   logContextData
-	logContextMu sync.RWMutex
-)
-
-// logContextData holds optional project and agent context for log entries.
-type logContextData struct {
-	Project string
-	Agent   string
+	mu     sync.Mutex // guards Close
+	closed bool
 }
 
-// SetContext sets project and agent context for all subsequent log entries.
-// Pass empty strings to clear. Thread-safe.
-func SetContext(project, agent string) {
-	logContextMu.Lock()
-	defer logContextMu.Unlock()
-	logContext = logContextData{
-		Project: project,
-		Agent:   agent,
-	}
+// Options configures the logger.
+type Options struct {
+	// LogsDir is the directory for log files. Required for file logging.
+	LogsDir string
+
+	// File rotation settings.
+	MaxSizeMB  int  // default: 50
+	MaxAgeDays int  // default: 7
+	MaxBackups int  // default: 3
+	Compress   bool // default: true
+
+	// Otel configures the OTEL zerolog bridge. Nil disables OTEL export.
+	Otel *OtelOptions
 }
 
-// ClearContext clears the project/agent context.
-func ClearContext() {
-	SetContext("", "")
-}
-
-// getContext returns current context (thread-safe read).
-func getContext() logContextData {
-	logContextMu.RLock()
-	defer logContextMu.RUnlock()
-	return logContext
-}
-
-// addContext adds project/agent fields to an event if set.
-func addContext(event *zerolog.Event) *zerolog.Event {
-	ctx := getContext()
-	if ctx.Project != "" {
-		event = event.Str("project", ctx.Project)
-	}
-	if ctx.Agent != "" {
-		event = event.Str("agent", ctx.Agent)
-	}
-	return event
-}
-
-// LoggingConfig holds configuration for file-based logging.
-// This matches internal/config.LoggingConfig but is duplicated here
-// to avoid circular imports.
-type LoggingConfig struct {
-	FileEnabled *bool
-	MaxSizeMB   int
-	MaxAgeDays  int
-	MaxBackups  int
-	Compress    *bool
-}
-
-// IsFileEnabled returns whether file logging is enabled.
-// Defaults to true if not explicitly set.
-func (c *LoggingConfig) IsFileEnabled() bool {
-	if c.FileEnabled == nil {
-		return true // enabled by default
-	}
-	return *c.FileEnabled
-}
-
-// IsCompressEnabled returns whether rotated log compression is enabled.
-// Defaults to true if not explicitly set.
-func (c *LoggingConfig) IsCompressEnabled() bool {
-	if c.Compress == nil {
-		return true
-	}
-	return *c.Compress
-}
-
-// GetMaxSizeMB returns the max size in MB, defaulting to 50 if not set.
-func (c *LoggingConfig) GetMaxSizeMB() int {
-	if c.MaxSizeMB <= 0 {
-		return 50
-	}
-	return c.MaxSizeMB
-}
-
-// GetMaxAgeDays returns the max age in days, defaulting to 7 if not set.
-func (c *LoggingConfig) GetMaxAgeDays() int {
-	if c.MaxAgeDays <= 0 {
-		return 7
-	}
-	return c.MaxAgeDays
-}
-
-// GetMaxBackups returns the max backups, defaulting to 3 if not set.
-func (c *LoggingConfig) GetMaxBackups() int {
-	if c.MaxBackups <= 0 {
-		return 3
-	}
-	return c.MaxBackups
-}
-
-// OtelLogConfig configures the OTEL zerolog bridge.
-type OtelLogConfig struct {
+// OtelOptions configures the OTLP HTTP log exporter.
+type OtelOptions struct {
 	Endpoint       string        // e.g. "localhost:4318"
 	Insecure       bool          // default: true (local collector)
 	Timeout        time.Duration // export timeout
@@ -134,96 +51,169 @@ type OtelLogConfig struct {
 	ExportInterval time.Duration // batch export interval
 }
 
-// Options configures the logger via NewLogger.
-type Options struct {
-	LogsDir    string         // directory for log files
-	FileConfig *LoggingConfig // file rotation settings
-	OtelConfig *OtelLogConfig // nil = file-only, no OTEL bridge
+func (o *Options) maxSizeMB() int {
+	if o.MaxSizeMB <= 0 {
+		return 50
+	}
+	return o.MaxSizeMB
 }
 
-// Init initializes the global logger as a nop logger.
-// This is the pre-file-logging placeholder — all log output is discarded
-// until InitWithFile or NewLogger is called.
-func Init() {
-	Log = zerolog.Nop()
+func (o *Options) maxAgeDays() int {
+	if o.MaxAgeDays <= 0 {
+		return 7
+	}
+	return o.MaxAgeDays
 }
 
-// InitWithFile initializes the logger with file-only output.
-//
-// Deprecated: Use NewLogger() for new code. This is retained for backwards compatibility.
-func InitWithFile(logsDir string, cfg *LoggingConfig) error {
-	return NewLogger(&Options{
-		LogsDir:    logsDir,
-		FileConfig: cfg,
-	})
+func (o *Options) maxBackups() int {
+	if o.MaxBackups <= 0 {
+		return 3
+	}
+	return o.MaxBackups
 }
 
-// NewLogger initializes the global logger with file output and optional OTEL bridge.
+// Nop returns a logger that discards all output.
+func Nop() *Logger {
+	return &Logger{zl: zerolog.Nop()}
+}
+
+// New creates a logger with file output and optional OTEL bridge.
 //
-// With OtelConfig nil: file-only logging via lumberjack.
-// With OtelConfig set: file logging + OTEL hook that streams to the collector.
-// OTEL SDK handles resilience natively — buffer, retry, drop on overflow.
-//
-// If opts is nil or file logging is disabled, the logger becomes a nop.
-func NewLogger(opts *Options) error {
-	if opts == nil || opts.LogsDir == "" || opts.FileConfig == nil || !opts.FileConfig.IsFileEnabled() {
-		Log = zerolog.Nop()
-		return nil
+// OTEL failure is non-fatal: the logger falls back to file-only and
+// the OTEL warning is written to the log file.
+func New(opts Options) (*Logger, error) {
+	if opts.LogsDir == "" {
+		return nil, fmt.Errorf("logger: LogsDir is required")
 	}
 
-	// Create logs directory
-	if err := os.MkdirAll(opts.LogsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create logs directory: %w", err)
+	if err := os.MkdirAll(opts.LogsDir, 0o755); err != nil {
+		return nil, fmt.Errorf("logger: create logs directory: %w", err)
 	}
 
-	logPath := filepath.Join(opts.LogsDir, "clawker.log")
-
-	// Configure lumberjack for rotation
-	fileWriter = &lumberjack.Logger{
-		Filename:   logPath,
-		MaxSize:    opts.FileConfig.GetMaxSizeMB(),
-		MaxAge:     opts.FileConfig.GetMaxAgeDays(),
-		MaxBackups: opts.FileConfig.GetMaxBackups(),
+	fw := &lumberjack.Logger{
+		Filename:   filepath.Join(opts.LogsDir, "clawker.log"),
+		MaxSize:    opts.maxSizeMB(),
+		MaxAge:     opts.maxAgeDays(),
+		MaxBackups: opts.maxBackups(),
 		LocalTime:  true,
-		Compress:   opts.FileConfig.IsCompressEnabled(),
+		Compress:   opts.Compress,
 	}
 
-	// Base logger writes to file
-	logger := zerolog.New(fileWriter).
+	zl := zerolog.New(fw).
 		Level(zerolog.DebugLevel).
 		With().
 		Timestamp().
 		Logger()
 
-	// Add OTEL hook if configured
-	if opts.OtelConfig != nil {
-		provider, err := createOtelProvider(opts.OtelConfig)
+	l := &Logger{zl: zl, fw: fw}
+
+	if opts.Otel != nil {
+		provider, err := newOtelProvider(opts.Otel, zl)
 		if err != nil {
-			// OTEL failure is non-fatal — log to file only
-			logger.Warn().Err(err).Msg("OTEL bridge unavailable, continuing with file-only logging")
+			// Non-fatal: log the failure and continue file-only.
+			zl.Warn().Err(err).Msg("OTEL bridge unavailable, continuing file-only")
 		} else {
-			loggerProvider = provider
+			l.provider = provider
 			hook := otelzerolog.NewHook("clawker",
 				otelzerolog.WithLoggerProvider(provider),
 			)
-			logger = logger.Hook(hook)
+			l.zl = zl.Hook(hook)
 		}
 	}
 
-	Log = logger
-	return nil
+	return l, nil
 }
 
-// createOtelProvider creates an OTLP HTTP log exporter and batch processor.
-func createOtelProvider(cfg *OtelLogConfig) (*sdklog.LoggerProvider, error) {
-	// Redirect OTEL SDK internal errors to the file logger instead of stderr.
-	// The closure captures Log by reference — at invocation time (async error),
-	// Log is already the file-backed logger set by NewLogger.
-	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
-		Log.Warn().Err(err).Msg("otel sdk error")
-	}))
+// With returns a new Logger with additional context fields.
+// Use this instead of per-call field injection for recurring context
+// like project or agent.
+//
+//	projectLog := log.With("project", "foo", "agent", "bar")
+//	projectLog.Info().Msg("started")
+func (l *Logger) With(keyvals ...interface{}) *Logger {
+	if len(keyvals)%2 != 0 {
+		panic("logger.With: odd number of key-value arguments")
+	}
+	ctx := l.zl.With()
+	for i := 0; i < len(keyvals); i += 2 {
+		key, ok := keyvals[i].(string)
+		if !ok {
+			panic(fmt.Sprintf("logger.With: key at index %d is %T, want string", i, keyvals[i]))
+		}
+		ctx = ctx.Interface(key, keyvals[i+1])
+	}
+	return &Logger{
+		zl:       ctx.Logger(),
+		fw:       l.fw,
+		provider: l.provider,
+	}
+}
 
-	ctx := context.Background()
+// Debug logs at debug level.
+func (l *Logger) Debug() *zerolog.Event { return l.zl.Debug() }
+
+// Info logs at info level.
+func (l *Logger) Info() *zerolog.Event { return l.zl.Info() }
+
+// Warn logs at warn level.
+func (l *Logger) Warn() *zerolog.Event { return l.zl.Warn() }
+
+// Error logs at error level.
+func (l *Logger) Error() *zerolog.Event { return l.zl.Error() }
+
+// Fatal logs at fatal level and exits.
+// Avoid in Cobra hooks — return errors instead.
+func (l *Logger) Fatal() *zerolog.Event { return l.zl.Fatal() }
+
+// Zerolog returns the underlying zerolog.Logger for interop with
+// libraries that accept one directly.
+func (l *Logger) Zerolog() zerolog.Logger { return l.zl }
+
+// LogFilePath returns the path to the current log file,
+// or empty string if this is a nop logger.
+func (l *Logger) LogFilePath() string {
+	if l.fw != nil {
+		return l.fw.Filename
+	}
+	return ""
+}
+
+// Close flushes pending OTEL batches and closes the file writer.
+// Safe to call multiple times. Safe to call on a Nop logger.
+func (l *Logger) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.closed {
+		return nil
+	}
+	l.closed = true
+
+	var firstErr error
+
+	if l.provider != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := l.provider.Shutdown(ctx); err != nil {
+			firstErr = fmt.Errorf("logger: shutdown OTEL provider: %w", err)
+		}
+	}
+
+	if l.fw != nil {
+		if err := l.fw.Close(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("logger: close file writer: %w", err)
+		}
+	}
+
+	return firstErr
+}
+
+// newOtelProvider creates an OTLP HTTP log exporter and batch processor.
+func newOtelProvider(cfg *OtelOptions, fileLogger zerolog.Logger) (*sdklog.LoggerProvider, error) {
+	// Route OTEL SDK internal errors to the file logger instead of stderr.
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		fileLogger.Warn().Err(err).Msg("otel sdk error")
+	}))
 
 	exporterOpts := []otlploghttp.Option{
 		otlploghttp.WithEndpoint(cfg.Endpoint),
@@ -235,12 +225,12 @@ func createOtelProvider(cfg *OtelLogConfig) (*sdklog.LoggerProvider, error) {
 		exporterOpts = append(exporterOpts, otlploghttp.WithTimeout(cfg.Timeout))
 	}
 
-	exporter, err := otlploghttp.New(ctx, exporterOpts...)
+	exporter, err := otlploghttp.New(context.Background(), exporterOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create OTLP log exporter: %w", err)
+		return nil, fmt.Errorf("create OTLP log exporter: %w", err)
 	}
 
-	processorOpts := []sdklog.BatchProcessorOption{}
+	var processorOpts []sdklog.BatchProcessorOption
 	if cfg.MaxQueueSize > 0 {
 		processorOpts = append(processorOpts, sdklog.WithMaxQueueSize(cfg.MaxQueueSize))
 	}
@@ -249,79 +239,5 @@ func createOtelProvider(cfg *OtelLogConfig) (*sdklog.LoggerProvider, error) {
 	}
 
 	processor := sdklog.NewBatchProcessor(exporter, processorOpts...)
-	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(processor))
-
-	return provider, nil
-}
-
-// Close shuts down the logger, flushing any pending OTEL logs and closing the file writer.
-// Call this on program shutdown for clean resource cleanup.
-func Close() error {
-	var firstErr error
-
-	// Flush OTEL provider first (may have pending batches)
-	if loggerProvider != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := loggerProvider.Shutdown(ctx); err != nil {
-			firstErr = fmt.Errorf("failed to shutdown OTEL provider: %w", err)
-		}
-		loggerProvider = nil
-	}
-
-	// Close file writer
-	if fileWriter != nil {
-		if err := fileWriter.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		fileWriter = nil
-	}
-
-	return firstErr
-}
-
-// CloseFileWriter closes the file writer if it exists.
-//
-// Deprecated: Use Close() which handles both file + OTEL shutdown.
-func CloseFileWriter() error {
-	return Close()
-}
-
-// GetLogFilePath returns the path to the current log file, or empty string if file logging is disabled.
-func GetLogFilePath() string {
-	if fileWriter != nil {
-		return fileWriter.Filename
-	}
-	return ""
-}
-
-// Debug logs a debug message (developer diagnostics, file-only)
-func Debug() *zerolog.Event {
-	return addContext(Log.Debug())
-}
-
-// Info logs an info message (file-only)
-func Info() *zerolog.Event {
-	return addContext(Log.Info())
-}
-
-// Warn logs a warning message (file-only)
-func Warn() *zerolog.Event {
-	return addContext(Log.Warn())
-}
-
-// Error logs an error message (file-only)
-func Error() *zerolog.Event {
-	return addContext(Log.Error())
-}
-
-// Fatal logs a fatal message and exits (file-only).
-// NEVER use in Cobra hooks — return errors instead.
-func Fatal() *zerolog.Event {
-	return addContext(Log.Fatal())
-}
-
-// WithField returns a logger with an additional field
-func WithField(key string, value interface{}) zerolog.Logger {
-	return Log.With().Interface(key, value).Logger()
+	return sdklog.NewLoggerProvider(sdklog.WithProcessor(processor)), nil
 }

@@ -23,14 +23,14 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 
 ## Boundary
 
-- `config` owns **path resolution primitives** and file-backed config I/O (`GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDir()`, `WriteProject()`).
+- `config` owns **path resolution primitives** and file-backed config I/O (`GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDir()`).
 - `config` does **not** own project CRUD, slug/key resolution, or worktree lifecycle — those belong in `internal/project`.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors, typed mutation (deprecated), write methods (deprecated) |
+| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors |
 | `consts.go` | Private constants exposed via `Config` methods. Only export: `Mode` type (`ModeBind`/`ModeSnapshot`) |
 | `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods |
 | `defaults.go` | `defaultProjectYAML`, `defaultSettingsYAML` constants, `requiredFirewallDomains`, scaffold templates |
@@ -65,15 +65,9 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`
 
-**Deprecated schema accessors**: `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` — use store accessors instead.
+**Deprecated schema accessors**: `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` — use `SettingsStore().Read()` instead.
 
-**Deprecated mutation methods** — use `ProjectStore().Set()` / `SettingsStore().Set()` instead:
-```go
-SetProject(fn func(*Project))              // Deprecated: Use ProjectStore().Set() instead
-SetSettings(fn func(*Settings))            // Deprecated: Use SettingsStore().Set() instead
-WriteProject(filename ...string) error     // Deprecated: Use ProjectStore().Write() instead
-WriteSettings(filename ...string) error    // Deprecated: Use SettingsStore().Write() instead
-```
+**Mutation**: Use `ProjectStore().Set(fn)` / `SettingsStore().Set(fn)` (returns error). Persist with `ProjectStore().Write()` / `SettingsStore().Write()`.
 
 **Filename accessors**: `ProjectConfigFileName()` (`"clawker.yaml"`), `SettingsFileName()` (`"settings.yaml"`), `ProjectRegistryFileName()` (`"projects.yaml"`)
 

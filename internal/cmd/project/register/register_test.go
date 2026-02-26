@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,7 +50,9 @@ func TestNewCmdProjectRegister(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
+			f := &cmdutil.Factory{
+				Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+			}
 
 			var gotOpts *RegisterOptions
 			cmd := NewCmdProjectRegister(f, func(_ context.Context, opts *RegisterOptions) error {
@@ -78,7 +81,9 @@ func TestNewCmdProjectRegister(t *testing.T) {
 }
 
 func TestCmdProjectRegister_Properties(t *testing.T) {
-	f := &cmdutil.Factory{}
+	f := &cmdutil.Factory{
+		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+	}
 	cmd := NewCmdProjectRegister(f, nil)
 
 	require.Equal(t, "register [project-name]", cmd.Use)

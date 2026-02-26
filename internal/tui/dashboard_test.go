@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 // testRenderer is a minimal DashboardRenderer for testing.
@@ -27,10 +26,10 @@ func (r *testRenderer) View(cs *iostreams.ColorScheme, width int) string {
 }
 
 func newTestDashboard(ch <-chan any) (dashboardModel, *testRenderer) {
-	ios := iostreamstest.New()
+	ios, _, _, _ := iostreams.Test()
 	renderer := &testRenderer{view: "  test content\n"}
 	cfg := DashboardConfig{HelpText: "q quit  ctrl+c stop"}
-	return newDashboardModel(ios.IOStreams, renderer, cfg, ch), renderer
+	return newDashboardModel(ios, renderer, cfg, ch), renderer
 }
 
 func TestDashboard_Init(t *testing.T) {
@@ -164,13 +163,13 @@ func TestDashboard_View_IncludesHelpText(t *testing.T) {
 }
 
 func TestDashboard_View_NoHelpText(t *testing.T) {
-	ios := iostreamstest.New()
+	ios, _, _, _ := iostreams.Test()
 	renderer := &testRenderer{view: "content\n"}
 	cfg := DashboardConfig{} // no help text
 	ch := make(chan any, 1)
 	defer close(ch)
 
-	m := newDashboardModel(ios.IOStreams, renderer, cfg, ch)
+	m := newDashboardModel(ios, renderer, cfg, ch)
 	view := m.View()
 
 	assert.Contains(t, view, "content")

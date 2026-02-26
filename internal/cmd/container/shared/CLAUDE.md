@@ -139,6 +139,16 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 
 The `--worktree` flag is idempotent (get-or-create). This differs from `clawker worktree add` which is strict (create-only, rejects duplicates).
 
+## Home Directory Safety (`safety.go`)
+
+`IsOutsideHome(dir string) bool` — pure function (no I/O, stdlib only) that returns `true` when `dir` is `$HOME` itself or any directory not within `$HOME`. Uses `filepath.EvalSymlinks` for consistent comparison (macOS `/var` → `/private/var`), then `filepath.Rel(home, dir)` — result of `"."` means dir IS home, prefix `".."` means outside.
+
+Returns `false` on any resolution error (conservative — don't block users when paths can't be resolved).
+
+**Callers**:
+- `run/create` commands: prompt for confirmation via `opts.Prompter().Confirm()` (default: No)
+- `loop iterate/tasks` commands: hard error (`fmt.Errorf("loop mode is not supported outside of, or in, the home directory")`)
+
 ## Dependencies
 
 Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/project`, `internal/workspace`, `pkg/whail`
@@ -150,4 +160,5 @@ Unit tests in `shared/container_test.go` — Flag parsing, BuildConfigs, Validat
 Unit tests in `shared/image_test.go` — `RebuildMissingDefaultImage` interactive flow, `progressStatus` mapping.
 Unit tests in `shared/containerfs_test.go` — uses mock CopyToVolume/CopyToContainer function trackers.
 Unit tests in `shared/workdir_test.go` — `resolveWorkDir` worktree idempotent reuse: create new, reuse healthy existing, error on stale.
+Unit tests in `shared/safety_test.go` — `IsOutsideHome` tests: home dir (true), parent of home (true), root (true), subdirectory (false), deeply nested (false), outside home (true).
 Integration tests in `test/internals/containerfs_test.go` — exercises full pipeline with real Docker containers.
