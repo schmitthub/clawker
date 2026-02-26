@@ -47,7 +47,7 @@ type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 
 **Methods**: `Close()`, `ResolveImage(ctx, projectName)`, `ResolveImageWithSource(ctx, projectName)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`, `IsMonitoringActive(ctx)`, `ListContainers(ctx, all)`, `ListContainersByProject(ctx, project, all)`, `FindContainerByAgent(ctx, project, agent)`, `RemoveContainerWithVolumes(ctx, id, force)`, `parseContainers(summaries)` (private).
 
-**Image resolution**: `ImageSource` enum (`Explicit`/`Project`). `ResolvedImage` struct (Reference + Source). `ResolveImageWithSource(ctx, projectName)` resolves from Docker images matching the project label with `:latest` tag; returns `nil, nil` when no project image found. `ResolveImage(ctx, projectName)` is a convenience wrapper returning just the reference string. `projectName` is the resolved project identity (from `project.ProjectManager.CurrentProject(ctx).Name()` at the command layer); empty string means no registered project.
+**Image resolution**: `ImageSource` enum (`Explicit`/`Project`/`Config`). `ResolvedImage` struct (Reference + Source). `ResolveImageWithSource(ctx, projectName)` resolves via a two-step chain: (1) Docker images matching the project label with `:latest` tag → `ImageSourceProject`, (2) fallback to `cfg.Project().Build.Image` → `ImageSourceConfig`. Returns `nil, nil` when neither source yields an image. `ResolveImage(ctx, projectName)` is a convenience wrapper returning just the reference string. `projectName` is the resolved project identity (from `project.ProjectManager.CurrentProject(ctx).Name()` at the command layer); empty string means no registered project.
 
 ## Builder (`builder.go`)
 

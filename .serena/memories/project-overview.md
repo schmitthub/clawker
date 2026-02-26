@@ -33,5 +33,7 @@ No build tags — directory separation only.
 - **Config**: `storage.Store[T]` typed layered YAML engine. `internal/config` composes `Store[Project]` + `Store[Settings]` with direct store accessors (`cfg.ProjectStore()`, `cfg.SettingsStore()`). `internal/project` owns `Store[ProjectRegistry]`. Old wrapper methods (`SetProject`, `WriteSettings`, etc.) deprecated.
 - **Labels**: `dev.clawker.*` prefix (OCI reverse-DNS). All label keys via `config.Config` methods.
 - **Container creation**: `shared.CreateContainer()` single entry point with events channel for progress.
+- **Home dir safety**: `shared.IsOutsideHome(".")` guards `run`/`create` (prompt) and `loop` (hard error) when CWD is at or above `$HOME`.
+- **Image resolution**: 3-source chain — Docker labels (`ImageSourceProject`) → config `build.image` (`ImageSourceConfig`) → nil. `clawker init` persists built image to user-level `clawker.yaml`.
 - **Loop system**: `loop iterate` (repeated prompt) + `loop tasks` (task-file-driven) with TUI dashboard.
 - **Test doubles**: `configmocks.NewBlankConfig()`, `configmocks.NewFromString()`, `configmocks.NewIsolatedTestConfig(t)`.

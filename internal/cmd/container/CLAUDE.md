@@ -86,7 +86,11 @@ Single entry point for container creation, shared by `run` and `create`. Perform
 
 ## Image Resolution (@ Symbol)
 
-`opts.Image == "@"` → `client.ResolveImageWithSource(ctx, projectName)`. Source types: `ImageSourceExplicit`, `ImageSourceProject`. Project name resolved via `project.ProjectManager.CurrentProject(ctx).Name()`. Returns `nil` when no project image found (caller decides next action).
+`opts.Image == "@"` → `client.ResolveImageWithSource(ctx, projectName)`. Source types: `ImageSourceExplicit`, `ImageSourceProject`, `ImageSourceConfig`. Resolution chain: Docker label lookup → `cfg.Project().Build.Image` fallback. Project name resolved via `project.ProjectManager.CurrentProject(ctx).Name()`. Returns `nil` when neither source yields an image (caller decides next action).
+
+## Home Directory Safety
+
+Before container creation, `run` and `create` check if CWD is at or above `$HOME` via `shared.IsOutsideHome(".")`. If true, the user is prompted for confirmation (default: No). Loop commands (`iterate`/`tasks`) hard-error instead of prompting — loop mode is not supported outside of, or in, the home directory.
 
 ## Workspace Setup
 
