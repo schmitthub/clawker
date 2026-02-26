@@ -3,6 +3,8 @@ package init
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
@@ -18,6 +20,7 @@ import (
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // testInitOpts builds a default InitOptions for testing with an isolated config.
@@ -140,10 +143,16 @@ func TestPerformSetup_NoBuild(t *testing.T) {
 	// Config should load without error (build was skipped)
 	_, cfgErr := opts.Config()
 	require.NoError(t, cfgErr)
+
+	// No build → no user-level clawker.yaml should be created
+	cfgPath, pathErr := config.UserProjectConfigFilePath()
+	require.NoError(t, pathErr)
+	_, statErr := os.Stat(cfgPath)
+	assert.True(t, os.IsNotExist(statErr), "user project config should not exist when build is skipped")
 }
 
 func TestPerformSetup_BuildSuccess(t *testing.T) {
-	tio, _, _, _ := iostreams.Test()
+	tio, _, _, errOut := iostreams.Test()
 	opts := testInitOpts(t, tio)
 
 	err := performSetup(context.Background(), opts, true, "bookworm")
@@ -152,6 +161,26 @@ func TestPerformSetup_BuildSuccess(t *testing.T) {
 	// Verify config loads without error after successful build
 	_, cfgErr := opts.Config()
 	require.NoError(t, cfgErr)
+
+	// User-level clawker.yaml should be created with build.image
+	cfgPath, pathErr := config.UserProjectConfigFilePath()
+	require.NoError(t, pathErr)
+
+	data, readErr := os.ReadFile(cfgPath)
+	require.NoError(t, readErr, "user project config should exist after successful build")
+
+	var parsed map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &parsed))
+
+	build, ok := parsed["build"].(map[string]any)
+	require.True(t, ok, "build key should be a map")
+	assert.Equal(t, docker.DefaultImageTag, build["image"], "build.image should be the default image tag")
+
+	// Should contain only the build key (minimal file)
+	assert.Len(t, parsed, 1, "user config should only contain the build key")
+
+	// Output should mention the default image
+	assert.Contains(t, errOut.String(), "Default image:")
 }
 
 func TestPerformSetup_BuildFailure(t *testing.T) {
@@ -182,6 +211,12 @@ func TestPerformSetup_BuildFailure(t *testing.T) {
 
 	// Build failure should not cause a crash — settings are still valid
 	assert.Equal(t, cfg.Settings().Logging.MaxSizeMB, cfg.Settings().Logging.MaxSizeMB)
+
+	// Build failure → no user-level clawker.yaml should be created
+	cfgPath, pathErr := config.UserProjectConfigFilePath()
+	require.NoError(t, pathErr)
+	_, statErr := os.Stat(cfgPath)
+	assert.True(t, os.IsNotExist(statErr), "user project config should not exist after build failure")
 }
 
 // --- Wizard field definition tests ---
@@ -266,4 +301,60 @@ func TestFlavorOptions(t *testing.T) {
 	for _, expected := range expectedFlavors {
 		assert.Contains(t, names, expected, "expected flavor %q to exist", expected)
 	}
+}
+
+// --- saveUserProjectConfig tests ---
+
+func TestSaveUserProjectConfig_NewFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("CLAWKER_CONFIG_DIR", tmpDir)
+
+	err := saveUserProjectConfig("clawker-default:latest")
+	require.NoError(t, err)
+
+	cfgPath := filepath.Join(tmpDir, "clawker.yaml")
+	data, readErr := os.ReadFile(cfgPath)
+	require.NoError(t, readErr, "config file should be created")
+
+	var parsed map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &parsed))
+
+	build, ok := parsed["build"].(map[string]any)
+	require.True(t, ok, "build key should be a map")
+	assert.Equal(t, "clawker-default:latest", build["image"])
+	assert.Len(t, parsed, 1, "file should only contain build key")
+}
+
+func TestSaveUserProjectConfig_ExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("CLAWKER_CONFIG_DIR", tmpDir)
+
+	// Pre-seed an existing config with other keys
+	cfgPath := filepath.Join(tmpDir, "clawker.yaml")
+	existing := []byte("agent:\n  env:\n    FOO: bar\nbuild:\n  packages:\n    - git\n")
+	require.NoError(t, os.WriteFile(cfgPath, existing, 0o644))
+
+	err := saveUserProjectConfig("clawker-default:latest")
+	require.NoError(t, err)
+
+	data, readErr := os.ReadFile(cfgPath)
+	require.NoError(t, readErr)
+
+	var parsed map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &parsed))
+
+	// build.image should be set
+	build, ok := parsed["build"].(map[string]any)
+	require.True(t, ok, "build key should be a map")
+	assert.Equal(t, "clawker-default:latest", build["image"])
+
+	// Existing build.packages should be preserved
+	assert.NotNil(t, build["packages"], "existing build.packages should be preserved")
+
+	// Existing agent key should be preserved
+	agent, ok := parsed["agent"].(map[string]any)
+	require.True(t, ok, "agent key should be preserved")
+	env, ok := agent["env"].(map[string]any)
+	require.True(t, ok, "agent.env should be preserved")
+	assert.Equal(t, "bar", env["FOO"])
 }

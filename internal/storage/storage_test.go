@@ -642,7 +642,8 @@ func TestStore_ConfigDir(t *testing.T) {
 		{
 			name: "XDG_CONFIG_HOME specified",
 			env: map[string]string{
-				"XDG_CONFIG_HOME": tempDir,
+				"CLAWKER_CONFIG_DIR": "",
+				"XDG_CONFIG_HOME":    tempDir,
 			},
 			output: filepath.Join(tempDir, "clawker"),
 		},
@@ -707,7 +708,8 @@ func TestStore_DataDir(t *testing.T) {
 		{
 			name: "XDG_DATA_HOME specified",
 			env: map[string]string{
-				"XDG_DATA_HOME": tempDir,
+				"CLAWKER_DATA_DIR": "",
+				"XDG_DATA_HOME":    tempDir,
 			},
 			output: filepath.Join(tempDir, "clawker"),
 		},
@@ -772,7 +774,8 @@ func TestStore_StateDir(t *testing.T) {
 		{
 			name: "XDG_STATE_HOME specified",
 			env: map[string]string{
-				"XDG_STATE_HOME": tempDir,
+				"CLAWKER_STATE_DIR": "",
+				"XDG_STATE_HOME":    tempDir,
 			},
 			output: filepath.Join(tempDir, "clawker"),
 		},
