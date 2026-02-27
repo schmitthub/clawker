@@ -3,6 +3,7 @@
 <p align="center">
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go" alt="Go"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
+  <a href="https://deepwiki.com/schmitthub/clawker"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
   <a href="#"><img src="https://img.shields.io/badge/Platform-macOS-lightgrey?logo=apple" alt="macOS"></a>
   <a href="#"><img src="https://img.shields.io/badge/Platform-Linux-4DA3FF?logo=linux&logoColor=fff&labelColor=0057B8" alt="Linux"></a>
   <a href="#"><img src="https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff" alt="Claude"></a>
