@@ -40,7 +40,7 @@ build:
     root_run:
       - cmd: |
           ARCH=$(dpkg --print-architecture) && \
-            curl -fsSL "https://golang.org/dl/go1.26.0.linux-${ARCH}.tar.gz" | tar -C /usr/local -xzf - \
+            curl -fsSL "https://golang.org/dl/go1.26.1.linux-${ARCH}.tar.gz" | tar -C /usr/local -xzf - \
             && echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile.d/go.sh
     user_run:
       - cmd: curl -LsSf https://astral.sh/uv/install.sh | sh
