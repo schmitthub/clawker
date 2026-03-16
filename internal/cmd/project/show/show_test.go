@@ -8,7 +8,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -16,23 +16,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testFactory(t *testing.T, mgr project.ProjectManager) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, mgr project.ProjectManager) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	ios, _, outBuf, errBuf := iostreams.Test()
 	return &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: ios,
+		TUI:       tui.NewTUI(ios),
 		ProjectManager: func() (project.ProjectManager, error) {
 			return mgr, nil
 		},
-	}, tio
+	}, outBuf, errBuf
 }
 
 // --- Tier 1: Flag parsing tests ---
 
 func TestNewCmdShow_RunFReceivesArgs(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	ios, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
 
 	called := false
 	cmd := NewCmdShow(f, func(_ context.Context, opts *ShowOptions) error {
@@ -52,8 +52,8 @@ func TestNewCmdShow_RunFReceivesArgs(t *testing.T) {
 }
 
 func TestNewCmdShow_RequiresExactlyOneArg(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	ios, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
 
 	cmd := NewCmdShow(f, func(_ context.Context, _ *ShowOptions) error {
 		return nil
@@ -76,9 +76,9 @@ func TestNewCmdShow_RequiresExactlyOneArg(t *testing.T) {
 // --- Tier 2: Run function tests ---
 
 func TestShowRun_ProjectManagerError(t *testing.T) {
-	tio := iostreamstest.New()
+	ios, _, _, _ := iostreams.Test()
 	opts := &ShowOptions{
-		IOStreams: tio.IOStreams,
+		IOStreams: ios,
 		ProjectManager: func() (project.ProjectManager, error) {
 			return nil, errors.New("boom")
 		},
@@ -99,9 +99,9 @@ func TestShowRun_ProjectNotFound(t *testing.T) {
 		}, nil
 	}
 
-	tio := iostreamstest.New()
+	ios, _, _, _ := iostreams.Test()
 	opts := &ShowOptions{
-		IOStreams:      tio.IOStreams,
+		IOStreams:      ios,
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Name:           "unknown",
 		Format:         &cmdutil.FormatFlags{},
@@ -126,9 +126,9 @@ func TestShowRun_Success(t *testing.T) {
 		}, nil
 	}
 
-	tio := iostreamstest.New()
+	ios, _, outBuf, _ := iostreams.Test()
 	opts := &ShowOptions{
-		IOStreams:      tio.IOStreams,
+		IOStreams:      ios,
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Name:           "alpha",
 		Format:         &cmdutil.FormatFlags{},
@@ -137,7 +137,7 @@ func TestShowRun_Success(t *testing.T) {
 	err := showRun(context.Background(), opts)
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := outBuf.String()
 	assert.Contains(t, output, "alpha")
 	assert.Contains(t, output, "/tmp")
 	assert.Contains(t, output, "feat-1")
@@ -151,9 +151,9 @@ func TestShowRun_MissingDirectory(t *testing.T) {
 		}, nil
 	}
 
-	tio := iostreamstest.New()
+	ios, _, outBuf, _ := iostreams.Test()
 	opts := &ShowOptions{
-		IOStreams:      tio.IOStreams,
+		IOStreams:      ios,
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Name:           "alpha",
 		Format:         &cmdutil.FormatFlags{},
@@ -162,7 +162,7 @@ func TestShowRun_MissingDirectory(t *testing.T) {
 	err := showRun(context.Background(), opts)
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := outBuf.String()
 	assert.Contains(t, output, "alpha")
 	assert.Contains(t, output, "missing")
 }
@@ -175,9 +175,9 @@ func TestShowRun_NoWorktrees(t *testing.T) {
 		}, nil
 	}
 
-	tio := iostreamstest.New()
+	ios, _, outBuf, _ := iostreams.Test()
 	opts := &ShowOptions{
-		IOStreams:      tio.IOStreams,
+		IOStreams:      ios,
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Name:           "alpha",
 		Format:         &cmdutil.FormatFlags{},
@@ -186,7 +186,7 @@ func TestShowRun_NoWorktrees(t *testing.T) {
 	err := showRun(context.Background(), opts)
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := outBuf.String()
 	assert.Contains(t, output, "none")
 }
 
@@ -198,17 +198,17 @@ func TestShowRun_JSON(t *testing.T) {
 		}, nil
 	}
 
-	f, tio := testFactory(t, mgr)
+	f, outBuf, errBuf := testFactory(t, mgr)
 	cmd := NewCmdShow(f, nil)
 	cmd.SetArgs([]string{"alpha", "--json"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(outBuf)
+	cmd.SetErr(errBuf)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := outBuf.String()
 	assert.Contains(t, output, `"name": "alpha"`)
 	assert.Contains(t, output, `"exists": false`)
 }

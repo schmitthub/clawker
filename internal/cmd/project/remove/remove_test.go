@@ -8,7 +8,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/schmitthub/clawker/internal/prompter"
@@ -19,8 +19,8 @@ import (
 // --- Tier 1: Flag parsing tests ---
 
 func TestNewCmdRemove_RunFReceivesArgsAndFlags(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	ios, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
 
 	called := false
 	cmd := NewCmdRemove(f, func(_ context.Context, opts *RemoveOptions) error {
@@ -41,8 +41,8 @@ func TestNewCmdRemove_RunFReceivesArgsAndFlags(t *testing.T) {
 }
 
 func TestNewCmdRemove_RequiresArgs(t *testing.T) {
-	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	ios, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
 
 	cmd := NewCmdRemove(f, func(_ context.Context, _ *RemoveOptions) error {
 		return nil
@@ -59,9 +59,9 @@ func TestNewCmdRemove_RequiresArgs(t *testing.T) {
 // --- Tier 2: Run function tests ---
 
 func TestRemoveRun_ProjectManagerError(t *testing.T) {
-	tio := iostreamstest.New()
+	ios, _, _, _ := iostreams.Test()
 	opts := &RemoveOptions{
-		IOStreams: tio.IOStreams,
+		IOStreams: ios,
 		ProjectManager: func() (project.ProjectManager, error) {
 			return nil, errors.New("boom")
 		},
@@ -82,9 +82,9 @@ func TestRemoveRun_UnknownProject(t *testing.T) {
 		}, nil
 	}
 
-	tio := iostreamstest.New()
+	ios, _, _, _ := iostreams.Test()
 	opts := &RemoveOptions{
-		IOStreams:      tio.IOStreams,
+		IOStreams:      ios,
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Names:          []string{"unknown"},
 		Yes:            true,
@@ -109,9 +109,9 @@ func TestRemoveRun_Success(t *testing.T) {
 		return nil
 	}
 
-	tio := iostreamstest.New()
+	ios, _, outBuf, _ := iostreams.Test()
 	opts := &RemoveOptions{
-		IOStreams:      tio.IOStreams,
+		IOStreams:      ios,
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Names:          []string{"alpha", "beta"},
 		Yes:            true,
@@ -120,8 +120,8 @@ func TestRemoveRun_Success(t *testing.T) {
 	err := removeRun(context.Background(), opts)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/tmp/alpha", "/tmp/beta"}, removedRoots)
-	assert.Contains(t, tio.OutBuf.String(), "alpha")
-	assert.Contains(t, tio.OutBuf.String(), "beta")
+	assert.Contains(t, outBuf.String(), "alpha")
+	assert.Contains(t, outBuf.String(), "beta")
 }
 
 func TestRemoveRun_PartialFailure(t *testing.T) {
@@ -141,9 +141,9 @@ func TestRemoveRun_PartialFailure(t *testing.T) {
 		return nil
 	}
 
-	tio := iostreamstest.New()
+	ios, _, outBuf, errBuf := iostreams.Test()
 	opts := &RemoveOptions{
-		IOStreams:      tio.IOStreams,
+		IOStreams:      ios,
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Names:          []string{"alpha", "beta"},
 		Yes:            true,
@@ -152,9 +152,9 @@ func TestRemoveRun_PartialFailure(t *testing.T) {
 	err := removeRun(context.Background(), opts)
 	require.ErrorIs(t, err, cmdutil.SilentError)
 	assert.Equal(t, 2, callCount)
-	assert.Contains(t, tio.OutBuf.String(), "alpha")
-	assert.Contains(t, tio.ErrBuf.String(), "beta")
-	assert.Contains(t, tio.ErrBuf.String(), "disk error")
+	assert.Contains(t, outBuf.String(), "alpha")
+	assert.Contains(t, errBuf.String(), "beta")
+	assert.Contains(t, errBuf.String(), "disk error")
 }
 
 func TestRemoveRun_ConfirmationDenied(t *testing.T) {
@@ -165,13 +165,14 @@ func TestRemoveRun_ConfirmationDenied(t *testing.T) {
 		}, nil
 	}
 
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
-	tio.InBuf.SetInput("n\n")
+	ios, inBuf, _, _ := iostreams.Test()
+	ios.SetStdinTTY(true)
+	ios.SetStdoutTTY(true)
+	inBuf.WriteString("n\n")
 
-	p := prompter.NewPrompter(tio.IOStreams)
+	p := prompter.NewPrompter(ios)
 	opts := &RemoveOptions{
-		IOStreams:      tio.IOStreams,
+		IOStreams:      ios,
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Prompter:       func() *prompter.Prompter { return p },
 		Names:          []string{"alpha"},
@@ -195,13 +196,14 @@ func TestRemoveRun_ConfirmationAccepted(t *testing.T) {
 		return nil
 	}
 
-	tio := iostreamstest.New()
-	tio.SetInteractive(true)
-	tio.InBuf.SetInput("y\n")
+	ios, inBuf, _, _ := iostreams.Test()
+	ios.SetStdinTTY(true)
+	ios.SetStdoutTTY(true)
+	inBuf.WriteString("y\n")
 
-	p := prompter.NewPrompter(tio.IOStreams)
+	p := prompter.NewPrompter(ios)
 	opts := &RemoveOptions{
-		IOStreams:      tio.IOStreams,
+		IOStreams:      ios,
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Prompter:       func() *prompter.Prompter { return p },
 		Names:          []string{"alpha"},
@@ -226,10 +228,10 @@ func TestRemoveRun_NonInteractiveSkipsPrompt(t *testing.T) {
 		return nil
 	}
 
-	tio := iostreamstest.New()
+	ios, _, _, _ := iostreams.Test()
 	// Default is non-interactive — should skip prompt without --yes.
 	opts := &RemoveOptions{
-		IOStreams:      tio.IOStreams,
+		IOStreams:      ios,
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Names:          []string{"alpha"},
 		Yes:            false,

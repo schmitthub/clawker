@@ -9,7 +9,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -17,16 +17,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testFactory(t *testing.T, mgr project.ProjectManager) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, mgr project.ProjectManager) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	tio := iostreamstest.New()
+	ios, _, outBuf, errBuf := iostreams.Test()
 	return &cmdutil.Factory{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: ios,
+		TUI:       tui.NewTUI(ios),
 		ProjectManager: func() (project.ProjectManager, error) {
 			return mgr, nil
 		},
-	}, tio
+	}, outBuf, errBuf
 }
 
 // --- Tier 1: Flag parsing tests ---
@@ -55,8 +55,8 @@ func TestNewCmdList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreamstest.New()
-			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+			ios, _, _, _ := iostreams.Test()
+			f := &cmdutil.Factory{IOStreams: ios}
 
 			var gotOpts *ListOptions
 			cmd := NewCmdList(f, func(_ context.Context, opts *ListOptions) error {
@@ -107,8 +107,8 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreamstest.New()
-			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+			ios, _, _, _ := iostreams.Test()
+			f := &cmdutil.Factory{IOStreams: ios}
 
 			cmd := NewCmdList(f, func(_ context.Context, _ *ListOptions) error {
 				return nil
@@ -136,25 +136,25 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 
 func TestListRun_Empty(t *testing.T) {
 	mgr := projectmocks.NewMockProjectManager()
-	_, tio := testFactory(t, mgr)
+	ios, _, _, errBuf := iostreams.Test()
 
 	opts := &ListOptions{
-		IOStreams:      tio.IOStreams,
-		TUI:            tui.NewTUI(tio.IOStreams),
+		IOStreams:      ios,
+		TUI:            tui.NewTUI(ios),
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Format:         &cmdutil.FormatFlags{},
 	}
 
 	err := listRun(context.Background(), opts)
 	require.NoError(t, err)
-	assert.Contains(t, tio.ErrBuf.String(), "No registered projects found")
+	assert.Contains(t, errBuf.String(), "No registered projects found")
 }
 
 func TestListRun_ProjectManagerError(t *testing.T) {
-	tio := iostreamstest.New()
+	ios, _, _, _ := iostreams.Test()
 	opts := &ListOptions{
-		IOStreams: tio.IOStreams,
-		TUI:       tui.NewTUI(tio.IOStreams),
+		IOStreams: ios,
+		TUI:       tui.NewTUI(ios),
 		ProjectManager: func() (project.ProjectManager, error) {
 			return nil, errors.New("boom")
 		},
@@ -177,10 +177,10 @@ func TestListRun_Table(t *testing.T) {
 		}, nil
 	}
 
-	_, tio := testFactory(t, mgr)
+	ios, _, outBuf, _ := iostreams.Test()
 	opts := &ListOptions{
-		IOStreams:      tio.IOStreams,
-		TUI:            tui.NewTUI(tio.IOStreams),
+		IOStreams:      ios,
+		TUI:            tui.NewTUI(ios),
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Format:         &cmdutil.FormatFlags{},
 	}
@@ -188,7 +188,7 @@ func TestListRun_Table(t *testing.T) {
 	err := listRun(context.Background(), opts)
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := outBuf.String()
 	assert.Contains(t, output, "alpha")
 	assert.Contains(t, output, "beta")
 	assert.Contains(t, output, "NAME")
@@ -204,10 +204,10 @@ func TestListRun_Quiet(t *testing.T) {
 		}, nil
 	}
 
-	_, tio := testFactory(t, mgr)
+	ios, _, outBuf, _ := iostreams.Test()
 	opts := &ListOptions{
-		IOStreams:      tio.IOStreams,
-		TUI:            tui.NewTUI(tio.IOStreams),
+		IOStreams:      ios,
+		TUI:            tui.NewTUI(ios),
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
 		Format:         &cmdutil.FormatFlags{Quiet: true},
 	}
@@ -215,7 +215,7 @@ func TestListRun_Quiet(t *testing.T) {
 	err := listRun(context.Background(), opts)
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := outBuf.String()
 	assert.Equal(t, "alpha\nbeta\n", output)
 }
 
@@ -227,17 +227,17 @@ func TestListRun_JSON(t *testing.T) {
 		}, nil
 	}
 
-	f, tio := testFactory(t, mgr)
+	f, outBuf, errBuf := testFactory(t, mgr)
 	cmd := NewCmdList(f, nil)
 	cmd.SetArgs([]string{"--json"})
 	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(tio.OutBuf)
-	cmd.SetErr(tio.ErrBuf)
+	cmd.SetOut(outBuf)
+	cmd.SetErr(errBuf)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	output := tio.OutBuf.String()
+	output := outBuf.String()
 	assert.Contains(t, output, `"name": "alpha"`)
 	assert.Contains(t, output, `"exists": false`)
 }
