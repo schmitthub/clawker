@@ -153,4 +153,4 @@ loop:
   max_consecutive_test_loops: 3   # Test-only loops before circuit trips (default: 3)
   loop_delay_seconds: 3           # Seconds to wait between loop iterations (default: 3)
   safety_completion_threshold: 5  # Force exit after N loops with completion indicators (default: 5)
-  skip_permissions: false         # Pass --dangerously-skip-permissions to claude (default: false)
+  skip_permissions: true         # Pass --dangerously-skip-permissions to claude (default: false)
