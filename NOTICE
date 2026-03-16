@@ -29,6 +29,7 @@ github.com/go-logr/logr                                                        A
 github.com/go-logr/stdr                                                        Apache-2.0
 github.com/golang/groupcache/lru                                               Apache-2.0
 github.com/google/shlex                                                        Apache-2.0
+github.com/in-toto/attestation/go/v1                                           Apache-2.0
 github.com/in-toto/in-toto-golang/in_toto                                      Apache-2.0
 github.com/klauspost/compress                                                  Apache-2.0
 github.com/moby/buildkit                                                       Apache-2.0
@@ -117,6 +118,8 @@ github.com/charmbracelet/lipgloss                                              M
 github.com/charmbracelet/x/ansi                                                MIT
 github.com/charmbracelet/x/cellbuf                                             MIT
 github.com/charmbracelet/x/term                                                MIT
+github.com/clipperhouse/displaywidth                                           MIT
+github.com/clipperhouse/uax29/v2/graphemes                                     MIT
 github.com/cpuguy83/go-md2man/v2/md2man                                        MIT
 github.com/felixge/httpsnoop                                                   MIT
 github.com/kevinburke/ssh_config                                               MIT

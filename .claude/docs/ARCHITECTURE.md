@@ -343,7 +343,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/bundler` | Image building, Dockerfile generation, semver, npm registry client |
 | `internal/docs` | CLI documentation generation (used by cmd/gen-docs) |
 | `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |
-| `internal/project` | Project domain layer: owns `registry.yaml` (via `internal/storage`), project identity resolution, registration CRUD, worktree orchestration. Fully decoupled from `internal/config` |
+| `internal/project` | Project domain layer: owns `registry.yaml` (via `internal/storage`), project identity resolution, registration CRUD, worktree orchestration, runtime health enrichment (`ProjectState`/`ProjectStatus`). Project commands (`internal/cmd/project/*`) are the primary UI — all domain logic (health checks, status) lives here, not in command code. Fully decoupled from `internal/config` |
 | `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
 | `internal/testenv` | Unified test environment: isolated XDG dirs + optional Config/ProjectManager. Delegates from `config/mocks`, `project/mocks`, `test/e2e/harness` |
 

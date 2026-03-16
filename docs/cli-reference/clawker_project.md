@@ -19,20 +19,26 @@ Use 'clawker project init' to set up a new project in the current directory.
   # Initialize a new project
   clawker project init
 
-  # Initialize with a specific project name
-  clawker project init my-project
-
-  # Initialize non-interactively with defaults
-  clawker project init --yes
-
   # Register an existing project
   clawker project register
+
+  # List all registered projects
+  clawker project list
+
+  # Show project details
+  clawker project info my-project
+
+  # Remove a project from registry
+  clawker project remove my-project
 ```
 
 ### Subcommands
 
+* [clawker project info](clawker_project_info) - Show details of a registered project
 * [clawker project init](clawker_project_init) - Initialize a new clawker project in the current directory
+* [clawker project list](clawker_project_list) - List registered projects
 * [clawker project register](clawker_project_register) - Register an existing clawker project in the local registry
+* [clawker project remove](clawker_project_remove) - Remove projects from the registry
 
 ### Options
 

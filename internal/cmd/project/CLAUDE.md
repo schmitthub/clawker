@@ -1,6 +1,8 @@
 # Project Command Package
 
-Project lifecycle management (initialization and registration).
+Project lifecycle management: initialization, registration, listing, inspection, and removal.
+
+Project commands are the primary user interface for working with the `ProjectManager` domain API.
 
 ## Files
 
@@ -9,6 +11,9 @@ Project lifecycle management (initialization and registration).
 | `project.go` | `NewCmdProject(f)` — parent command |
 | `init/init.go` | `NewCmdProjectInit(f, runF)` — initialize project via TUI wizard |
 | `register/register.go` | `NewCmdProjectRegister(f, runF)` — register existing project |
+| `list/list.go` | `NewCmdList(f, runF)` — list registered projects with format flags |
+| `info/info.go` | `NewCmdInfo(f, runF)` — show project details (name, root, worktrees, status) |
+| `remove/remove.go` | `NewCmdRemove(f, runF)` — remove projects from registry (with confirmation) |
 | `shared/discovery.go` | `HasLocalProjectConfig(cfg, dir)` — config existence check via storage layers + fallback probe |
 | `shared/discovery_test.go` | Table-driven tests: registered/unregistered × all config placements |
 
@@ -16,6 +21,9 @@ Project lifecycle management (initialization and registration).
 
 - `project init` — initialize new project in current directory (creates `.clawker.yaml` dotfile and `cfg.ClawkerIgnoreName()`). Uses TUI wizard for interactive prompts, `scaffoldProjectConfig()` based on `config.DefaultConfigYAML`. Optionally prompts to save as user-level default in configDir.
 - `project register` — register existing project in user's registry (`cfg.ProjectRegistryFileName()`)
+- `project list` (alias `ls`) — list all registered projects via `ProjectManager.ListProjects()`. Table output with NAME, ROOT, WORKTREES, STATUS columns. Supports `--format`/`--json`/`-q` flags via `FormatFlags`. Status reflects `ProjectState.Status` (ok, missing, inaccessible).
+- `project info NAME` — show detailed info for a single project via `ProjectManager.ListProjects()`: name, root, directory status, worktrees with health status. Supports `--json` output (no `--format`/`--quiet`).
+- `project remove NAME [NAME...]` (alias `rm`) — remove projects from registry by name. Prompts for confirmation in interactive mode; requires `--yes` in non-interactive mode. Does not delete files from disk.
 
 ## Key Symbols
 
@@ -35,14 +43,6 @@ type ProjectInitOptions struct {
 func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectInitOptions) error) *cobra.Command
 func Run(ctx context.Context, opts *ProjectInitOptions) error
 
-// Internal functions (unexported)
-func runInteractive(ctx, opts)       // wizard-based flow via TUI.RunWizard
-func runNonInteractive(ctx, opts)    // --yes / non-TTY path (no prompts)
-func performProjectSetup(ctx, opts, projectName, buildImage, workspaceMode)
-func buildProjectWizardFields(wctx wizardContext) []tui.WizardField
-func flavorFieldOptionsWithCustom() []tui.FieldOption
-func resolveImageFromWizard(values tui.WizardValues) string
-
 type RegisterOptions struct {
     IOStreams *iostreams.IOStreams
     Prompter  func() *prompter.Prompter
@@ -53,9 +53,11 @@ type RegisterOptions struct {
 func NewCmdProjectRegister(f *cmdutil.Factory, runF func(context.Context, *RegisterOptions) error) *cobra.Command
 ```
 
-`NewCmdProject` is the parent (no RunE). Both subcommands accept `runF` for test injection.
+`NewCmdProject` is the parent (no RunE). All subcommands accept `runF` for test injection.
 
 ## Architecture
+
+Project commands consume `ProjectManager.ListProjects()` for enriched views (`ProjectState`) with runtime health checks. `list` and `info` both use `ProjectState` — no ad-hoc `os.Stat` in command layer.
 
 `Run` dispatches to `runInteractive` (wizard) or `runNonInteractive` based on `--yes` flag and TTY detection. Both delegate to `performProjectSetup` for file creation and registration.
 
@@ -93,7 +95,7 @@ Filenames are derived from `cfg.ProjectConfigFileName()` (main + `.local` varian
 
 ## Config Access Pattern
 
-Both commands use `config.Config` interface. `project init` uses `config.DefaultConfigYAML` as scaffold template, `config.UserProjectConfigFilePath()` for user-level default, and `project.ProjectManager` for registry.
+All subcommands use the `config.Config` interface. `project init` uses `config.DefaultConfigYAML` as scaffold template, `config.UserProjectConfigFilePath()` for user-level default, and `project.ProjectManager` for registry.
 
 ## Testing
 
@@ -104,6 +106,5 @@ Tests use `runF` injection for flag/option capture. Key patterns:
 - `flavorFieldOptionsWithCustom()` and `resolveImageFromWizard()` tested as pure functions
 
 ```bash
-go test ./internal/cmd/project/init/... -v
-go test ./internal/cmd/project/shared/... -v
+go test ./internal/cmd/project/... -v
 ```
