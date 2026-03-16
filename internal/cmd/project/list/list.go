@@ -64,6 +64,7 @@ health status.`,
 	}
 
 	opts.Format = cmdutil.AddFormatFlags(cmd)
+	cmd.Flags().Lookup("quiet").Usage = "Only display project names"
 
 	return cmd
 }

@@ -46,7 +46,7 @@ clawker project list [flags]
       --format string   Output format: "json", "table", or a Go template
   -h, --help            help for list
       --json            Output as JSON (shorthand for --format json)
-  -q, --quiet           Only display IDs
+  -q, --quiet           Only display project names
 ```
 
 ### Options inherited from parent commands
