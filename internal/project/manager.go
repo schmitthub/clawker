@@ -195,6 +195,9 @@ func (s *projectManager) ListProjects(ctx context.Context) ([]ProjectState, erro
 			state.Status = ProjectOK
 		case statErr != nil && errors.Is(statErr, fs.ErrNotExist):
 			state.Status = ProjectMissing
+		case statErr == nil && !info.IsDir():
+			state.Status = ProjectInaccessible
+			state.StatusErr = fmt.Errorf("path exists but is not a directory: %s", e.Root)
 		default:
 			state.Status = ProjectInaccessible
 			state.StatusErr = statErr
