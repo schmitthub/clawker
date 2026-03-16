@@ -20,6 +20,25 @@ var ErrProjectExists = errors.New("project already exists")
 var ErrWorktreeNotFound = errors.New("worktree not found")
 var ErrProjectHandleNotInitialized = errors.New("project handle not initialized")
 
+// ProjectStatus captures the health of a project's root directory.
+type ProjectStatus string
+
+const (
+	ProjectOK           ProjectStatus = "ok"
+	ProjectMissing      ProjectStatus = "missing"
+	ProjectInaccessible ProjectStatus = "inaccessible"
+)
+
+// ProjectState is a caller-facing enriched project view.
+// Analogous to WorktreeState: combines registry data with runtime checks.
+type ProjectState struct {
+	Name      string
+	Root      string
+	Worktrees []WorktreeState
+	Status    ProjectStatus
+	StatusErr error // non-nil when Status is ProjectInaccessible
+}
+
 // ProjectManager provides the only external project-domain API:
 // registration/list/get/remove and path-based project resolution.
 
@@ -28,6 +47,7 @@ type ProjectManager interface {
 	Register(ctx context.Context, name string, repoPath string) (Project, error)
 	Update(ctx context.Context, entry config.ProjectEntry) (Project, error)
 	List(ctx context.Context) ([]config.ProjectEntry, error)
+	ListProjects(ctx context.Context) ([]ProjectState, error)
 	Remove(ctx context.Context, root string) error
 	Get(ctx context.Context, root string) (Project, error)
 	ResolvePath(ctx context.Context, cwd string) (Project, error)
@@ -152,6 +172,46 @@ func (s *projectManager) List(_ context.Context) ([]config.ProjectEntry, error) 
 	result := make([]config.ProjectEntry, len(projects))
 	copy(result, projects)
 	return result, nil
+}
+
+// ListProjects returns enriched project views with runtime health checks.
+func (s *projectManager) ListProjects(ctx context.Context) ([]ProjectState, error) {
+	entries, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	states := make([]ProjectState, 0, len(entries))
+	for _, e := range entries {
+		state := ProjectState{
+			Name: e.Name,
+			Root: e.Root,
+		}
+
+		// Check root directory health.
+		info, statErr := os.Stat(e.Root)
+		switch {
+		case statErr == nil && info.IsDir():
+			state.Status = ProjectOK
+		case statErr != nil && errors.Is(statErr, fs.ErrNotExist):
+			state.Status = ProjectMissing
+		default:
+			state.Status = ProjectInaccessible
+			state.StatusErr = statErr
+		}
+
+		// Enrich worktree state if project root is accessible.
+		if state.Status == ProjectOK {
+			proj, getErr := s.Get(ctx, e.Root)
+			if getErr == nil {
+				state.Worktrees, _ = proj.ListWorktrees(ctx)
+			}
+		}
+
+		states = append(states, state)
+	}
+
+	return states, nil
 }
 
 // Remove deletes a project registration.

@@ -155,6 +155,7 @@ func TestRemoveRun_PartialFailure(t *testing.T) {
 	assert.Contains(t, outBuf.String(), "alpha")
 	assert.Contains(t, errBuf.String(), "beta")
 	assert.Contains(t, errBuf.String(), "disk error")
+	assert.Contains(t, errBuf.String(), "1 of 2 project(s) could not be removed")
 }
 
 func TestRemoveRun_ConfirmationDenied(t *testing.T) {
@@ -215,21 +216,15 @@ func TestRemoveRun_ConfirmationAccepted(t *testing.T) {
 	assert.Equal(t, []string{"/tmp/alpha"}, removedRoots)
 }
 
-func TestRemoveRun_NonInteractiveSkipsPrompt(t *testing.T) {
-	var removedRoots []string
+func TestRemoveRun_NonInteractiveRequiresYes(t *testing.T) {
 	mgr := projectmocks.NewMockProjectManager()
 	mgr.ListFunc = func(_ context.Context) ([]config.ProjectEntry, error) {
 		return []config.ProjectEntry{
 			{Name: "alpha", Root: "/tmp/alpha"},
 		}, nil
 	}
-	mgr.RemoveFunc = func(_ context.Context, root string) error {
-		removedRoots = append(removedRoots, root)
-		return nil
-	}
 
 	ios, _, _, _ := iostreams.Test()
-	// Default is non-interactive — should skip prompt without --yes.
 	opts := &RemoveOptions{
 		IOStreams:      ios,
 		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
@@ -238,6 +233,6 @@ func TestRemoveRun_NonInteractiveSkipsPrompt(t *testing.T) {
 	}
 
 	err := removeRun(context.Background(), opts)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"/tmp/alpha"}, removedRoots)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--yes required in non-interactive mode")
 }

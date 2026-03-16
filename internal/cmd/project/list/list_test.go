@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
@@ -37,20 +36,9 @@ func TestNewCmdList(t *testing.T) {
 		input     string
 		wantQuiet bool
 	}{
-		{
-			name:  "no flags",
-			input: "",
-		},
-		{
-			name:      "quiet flag",
-			input:     "-q",
-			wantQuiet: true,
-		},
-		{
-			name:      "quiet flag long",
-			input:     "--quiet",
-			wantQuiet: true,
-		},
+		{name: "no flags", input: ""},
+		{name: "quiet flag", input: "-q", wantQuiet: true},
+		{name: "quiet flag long", input: "--quiet", wantQuiet: true},
 	}
 
 	for _, tt := range tests {
@@ -85,24 +73,10 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 		input   string
 		wantErr string
 	}{
-		{
-			name:  "json flag",
-			input: "--json",
-		},
-		{
-			name:  "format json",
-			input: "--format json",
-		},
-		{
-			name:    "json and format mutually exclusive",
-			input:   "--json --format table",
-			wantErr: "--format and --json are mutually exclusive",
-		},
-		{
-			name:    "quiet and json mutually exclusive",
-			input:   "-q --json",
-			wantErr: "--quiet and --format/--json are mutually exclusive",
-		},
+		{name: "json flag", input: "--json"},
+		{name: "format json", input: "--format json"},
+		{name: "json and format mutually exclusive", input: "--json --format table", wantErr: "--format and --json are mutually exclusive"},
+		{name: "quiet and json mutually exclusive", input: "-q --json", wantErr: "--quiet and --format/--json are mutually exclusive"},
 	}
 
 	for _, tt := range tests {
@@ -168,11 +142,11 @@ func TestListRun_ProjectManagerError(t *testing.T) {
 
 func TestListRun_Table(t *testing.T) {
 	mgr := projectmocks.NewMockProjectManager()
-	mgr.ListFunc = func(_ context.Context) ([]config.ProjectEntry, error) {
-		return []config.ProjectEntry{
-			{Name: "alpha", Root: "/tmp/does-not-exist-alpha"},
-			{Name: "beta", Root: "/tmp/does-not-exist-beta", Worktrees: map[string]config.WorktreeEntry{
-				"feat-1": {Path: "/tmp/wt1", Branch: "feat-1"},
+	mgr.ListProjectsFunc = func(_ context.Context) ([]project.ProjectState, error) {
+		return []project.ProjectState{
+			{Name: "alpha", Root: "/tmp/does-not-exist-alpha", Status: project.ProjectMissing},
+			{Name: "beta", Root: "/tmp/does-not-exist-beta", Status: project.ProjectOK, Worktrees: []project.WorktreeState{
+				{Branch: "feat-1", Path: "/tmp/wt1"},
 			}},
 		}, nil
 	}
@@ -197,10 +171,10 @@ func TestListRun_Table(t *testing.T) {
 
 func TestListRun_Quiet(t *testing.T) {
 	mgr := projectmocks.NewMockProjectManager()
-	mgr.ListFunc = func(_ context.Context) ([]config.ProjectEntry, error) {
-		return []config.ProjectEntry{
-			{Name: "alpha", Root: "/tmp/alpha"},
-			{Name: "beta", Root: "/tmp/beta"},
+	mgr.ListProjectsFunc = func(_ context.Context) ([]project.ProjectState, error) {
+		return []project.ProjectState{
+			{Name: "alpha", Root: "/tmp/alpha", Status: project.ProjectOK},
+			{Name: "beta", Root: "/tmp/beta", Status: project.ProjectOK},
 		}, nil
 	}
 
@@ -214,16 +188,14 @@ func TestListRun_Quiet(t *testing.T) {
 
 	err := listRun(context.Background(), opts)
 	require.NoError(t, err)
-
-	output := outBuf.String()
-	assert.Equal(t, "alpha\nbeta\n", output)
+	assert.Equal(t, "alpha\nbeta\n", outBuf.String())
 }
 
 func TestListRun_JSON(t *testing.T) {
 	mgr := projectmocks.NewMockProjectManager()
-	mgr.ListFunc = func(_ context.Context) ([]config.ProjectEntry, error) {
-		return []config.ProjectEntry{
-			{Name: "alpha", Root: "/tmp/does-not-exist-alpha"},
+	mgr.ListProjectsFunc = func(_ context.Context) ([]project.ProjectState, error) {
+		return []project.ProjectState{
+			{Name: "alpha", Root: "/tmp/does-not-exist-alpha", Status: project.ProjectMissing},
 		}, nil
 	}
 
@@ -239,34 +211,29 @@ func TestListRun_JSON(t *testing.T) {
 
 	output := outBuf.String()
 	assert.Contains(t, output, `"name": "alpha"`)
-	assert.Contains(t, output, `"exists": false`)
+	assert.Contains(t, output, `"status": "missing"`)
 }
 
 // --- Tier 3: Unit tests ---
 
 func TestBuildProjectRows(t *testing.T) {
-	entries := []config.ProjectEntry{
-		{Name: "foo", Root: "/tmp/does-not-exist-foo"},
-		{Name: "bar", Root: "/tmp", Worktrees: map[string]config.WorktreeEntry{
-			"w1": {Path: "/tmp/w1", Branch: "w1"},
+	states := []project.ProjectState{
+		{Name: "foo", Root: "/tmp/does-not-exist-foo", Status: project.ProjectMissing},
+		{Name: "bar", Root: "/tmp", Status: project.ProjectOK, Worktrees: []project.WorktreeState{
+			{Branch: "w1", Path: "/tmp/w1"},
 		}},
 	}
 
-	rows := buildProjectRows(entries)
+	rows := buildProjectRows(states)
 	require.Len(t, rows, 2)
 
 	assert.Equal(t, "foo", rows[0].Name)
 	assert.Equal(t, "/tmp/does-not-exist-foo", rows[0].Root)
 	assert.Equal(t, 0, rows[0].Worktrees)
-	assert.False(t, rows[0].Exists)
+	assert.Equal(t, "missing", rows[0].Status)
 
 	assert.Equal(t, "bar", rows[1].Name)
 	assert.Equal(t, "/tmp", rows[1].Root)
 	assert.Equal(t, 1, rows[1].Worktrees)
-	assert.True(t, rows[1].Exists)
-}
-
-func TestDirExists(t *testing.T) {
-	assert.True(t, dirExists("/tmp"))
-	assert.False(t, dirExists("/tmp/definitely-not-a-real-dir-xyz"))
+	assert.Equal(t, "ok", rows[1].Status)
 }

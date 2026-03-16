@@ -10,8 +10,8 @@ List registered projects
 
 Lists all projects registered in the clawker project registry.
 
-Shows the project name, root path, number of worktrees, and whether the
-project directory still exists on disk.
+Shows the project name, root path, number of worktrees, and directory
+health status.
 
 ```
 clawker project list [flags]

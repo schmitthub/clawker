@@ -1,4 +1,3 @@
-// Package remove provides the project remove command.
 package remove
 
 import (
@@ -12,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// RemoveOptions contains the options for the project remove command.
 type RemoveOptions struct {
 	IOStreams      *iostreams.IOStreams
 	ProjectManager func() (project.ProjectManager, error)
@@ -22,7 +20,6 @@ type RemoveOptions struct {
 	Yes   bool
 }
 
-// NewCmdRemove creates the project remove command.
 func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command {
 	opts := &RemoveOptions{
 		IOStreams:      f.IOStreams,
@@ -91,13 +88,16 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	for _, name := range opts.Names {
 		root, ok := nameToRoot[name]
 		if !ok {
-			return fmt.Errorf("project %q is not registered", name)
+			return fmt.Errorf("project %q is not registered; use 'clawker project list' to see registered projects", name)
 		}
 		targets = append(targets, target{name: name, root: root})
 	}
 
-	// Confirm unless --yes.
-	if !opts.Yes && ios.IsInteractive() {
+	// Require --yes in non-interactive mode.
+	if !opts.Yes {
+		if !ios.IsInteractive() {
+			return fmt.Errorf("--yes required in non-interactive mode")
+		}
 		p := opts.Prompter()
 		msg := fmt.Sprintf("Remove %d project(s) from registry?", len(targets))
 		if len(targets) == 1 {
@@ -123,6 +123,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	}
 
 	if len(errs) > 0 {
+		fmt.Fprintf(ios.ErrOut, "\n%d of %d project(s) could not be removed\n", len(errs), len(targets))
 		return cmdutil.SilentError
 	}
 	return nil

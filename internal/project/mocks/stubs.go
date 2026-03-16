@@ -35,6 +35,9 @@ func NewMockProjectManager() *ProjectManagerMock {
 		CurrentProjectFunc: func(ctx context.Context) (project.Project, error) {
 			return nil, project.ErrProjectNotFound
 		},
+		ListProjectsFunc: func(ctx context.Context) ([]project.ProjectState, error) {
+			return []project.ProjectState{}, nil
+		},
 		ListWorktreesFunc: func(ctx context.Context) ([]project.WorktreeState, error) {
 			return []project.WorktreeState{}, nil
 		},

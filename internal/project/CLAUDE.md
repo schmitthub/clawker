@@ -2,15 +2,19 @@
 
 Project domain layer for project registration (root identity), path resolution, and worktree orchestration.
 
+## Design Requirement
+
+Project commands (`internal/cmd/project/*`) are the primary user interface for working with `ProjectManager`. The command layer should delegate all domain logic (health checks, status enrichment, worktree state) to the project manager — never perform ad-hoc `os.Stat` or directory checks in command code.
+
 ## Boundary
 
 - `internal/config` owns config/path primitives (`GetProjectRoot`, `GetProjectIgnoreFile`, `Write`, env/path resolution).
-- `internal/project` owns project CRUD semantics, project resolution, and worktree lifecycle orchestration.
+- `internal/project` owns project CRUD semantics, project resolution, worktree lifecycle orchestration, and runtime health enrichment (`ProjectState`, `ProjectStatus`).
 - Callers should consume `ProjectManager`/`Project` interfaces instead of mutating registry data directly.
 
 ## Visibility Rules
 
-- Public: interfaces and DTO types (`ProjectManager`, `Project`, `ProjectRecord`, `WorktreeRecord`, `WorktreeState`, `WorktreeStatus`, `PruneStaleResult`, `GitManagerFactory`, error sentinels).
+- Public: interfaces and DTO types (`ProjectManager`, `Project`, `ProjectRecord`, `WorktreeRecord`, `WorktreeState`, `WorktreeStatus`, `ProjectState`, `ProjectStatus`, `PruneStaleResult`, `GitManagerFactory`, error sentinels).
 - Public helper: `NewWorktreeDirProvider(cfg, projectRoot)` — creates a `git.WorktreeDirProvider` for external callers (e.g. `container/shared`).
 - Private implementation: `projectManager`, `projectHandle`, `projectRegistry`, `worktreeService`, `flatWorktreeDirProvider`.
 
@@ -40,6 +44,7 @@ type ProjectManager interface {
     Register(ctx context.Context, name string, repoPath string) (Project, error)
     Update(ctx context.Context, entry config.ProjectEntry) (Project, error)
     List(ctx context.Context) ([]config.ProjectEntry, error)
+    ListProjects(ctx context.Context) ([]ProjectState, error)
     Remove(ctx context.Context, root string) error
     Get(ctx context.Context, root string) (Project, error)
     ResolvePath(ctx context.Context, cwd string) (Project, error)
@@ -50,6 +55,7 @@ type ProjectManager interface {
 
 - `List` sorts by root then name. `ResolvePath` normalizes with `Abs` + `EvalSymlinks` fallback.
 - `CurrentProject` tries `cfg.GetProjectRoot()`, then falls back to `os.Getwd()`.
+- `ListProjects` returns enriched `ProjectState` views with runtime health checks (directory status, worktree state).
 - `ListWorktrees` aggregates across all registered projects.
 
 ### `Project`
@@ -98,6 +104,17 @@ type WorktreeState struct {
 type WorktreeStatus string
 // WorktreeHealthy, WorktreeRegistryOnly, WorktreeGitOnly, WorktreeBroken,
 // WorktreeDotGitMissing, WorktreeGitMetadataMissing
+
+type ProjectState struct {
+    Name      string
+    Root      string
+    Worktrees []WorktreeState
+    Status    ProjectStatus
+    StatusErr error          // non-nil when Status is ProjectInaccessible
+}
+
+type ProjectStatus string
+// ProjectOK, ProjectMissing, ProjectInaccessible
 ```
 
 ## Error Sentinels
