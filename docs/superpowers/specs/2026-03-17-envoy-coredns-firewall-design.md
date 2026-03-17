@@ -606,6 +606,49 @@ Implementing agents MUST use these existing systems. Do NOT reimplement.
 
 ---
 
+## Testing Strategy
+
+Unit tests with mocks are NOT the testing strategy for this initiative. They don't prevent regressions and produce false confidence.
+
+### What to test and how
+
+**Config generation — golden file tests:**
+- Fixed rule sets → blessed `envoy.yaml` and `Corefile` outputs
+- Golden values are code or committed files that must be hand-edited to change — no `GOLDEN_UPDATE=1` auto-sweep
+- Validates syntax and structural correctness of generated configs
+- Run generated `envoy.yaml` through `envoy --mode validate` if available in CI
+- Follow `internal/storage/` oracle+golden pattern as reference
+
+**State management — oracle + golden tests with real filesystem:**
+- Use `testenv.New(t, testenv.WithConfig())` for isolated XDG dirs
+- Create real `storage.Store[EgressRulesFile]` against isolated config dir
+- Oracle: generate random rule sets, compute expected merge independently (~15 lines), assert `Update()` matches
+- Golden: fixed rule sets with blessed struct literals, no auto-update
+- Test: `Update()` with new rules → file written correctly
+- Test: `Update()` with same rules → no write, early return
+- Test: `Update()` with overlapping rules → only new rules appended
+- Test: `Remove()` → rule removed from file
+- Test: concurrent `Update()` with goroutines → flock serializes correctly
+- Test: `NormalizeRules()` expansion of `AddDomains` → `[]EgressRule`
+
+**Integration tests — real containers, real traffic:**
+- Location: `test/commands/` or `test/internals/` (Docker-required)
+- Spin up Envoy + CoreDNS containers on `clawker-net`
+- Create agent container with DNAT rules
+- Verify: `curl https://allowed-domain` succeeds from inside agent container
+- Verify: `curl https://blocked-domain` fails (NXDOMAIN or connection reset)
+- Verify: `clawker firewall add` → domain becomes accessible
+- Verify: `clawker firewall disable` → all traffic passes through
+- Verify: `clawker firewall enable` → firewall re-applied
+- Verify: MITM path rules → allowed paths succeed, denied paths get 403
+
+**What NOT to test:**
+- Do not mock Docker API calls to test container creation args — proves nothing
+- Do not mock the firewall manager interface to test CLI commands in isolation — the CLI is thin plumbing, the value is in the real system
+- Do not write unit tests that test mocks instead of real behavior
+
+---
+
 ## Standing Rules for Implementing Agents
 
 1. **Read before writing.** Before modifying any package, read its `CLAUDE.md`, the relevant `.claude/rules/` files, and explore existing code with Serena tools. Understand what exists.
