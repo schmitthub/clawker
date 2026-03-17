@@ -59,9 +59,11 @@ type (
 	// Volume operation options.
 	VolumeCreateOptions = whail.VolumeCreateOptions
 
-	// Network operation options.
+	// Network operation options and results.
 	NetworkCreateOptions  = whail.NetworkCreateOptions
+	NetworkCreateResult   = whail.NetworkCreateResult
 	NetworkInspectOptions = whail.NetworkInspectOptions
+	NetworkInspectResult  = whail.NetworkInspectResult
 
 	// Connection types.
 	HijackedResponse = whail.HijackedResponse
