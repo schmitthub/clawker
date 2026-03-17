@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -38,6 +39,7 @@ func New(version string) *cmdutil.Factory {
 	f.Client = clientFunc(f)                 // depends on Config
 	f.GitManager = gitManagerFunc(f)         // depends on Config
 	f.Prompter = prompterFunc(f)
+	f.Firewall = firewallFunc(f) // depends on Config, Logger, Client
 
 	return f
 }
@@ -178,6 +180,36 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 			}
 		})
 		return client, clientErr
+	}
+}
+
+// firewallFunc returns a lazy closure that creates a FirewallManager once.
+func firewallFunc(f *cmdutil.Factory) func(context.Context) (firewall.FirewallManager, error) {
+	var (
+		once sync.Once
+		mgr  firewall.FirewallManager
+		err  error
+	)
+	return func(ctx context.Context) (firewall.FirewallManager, error) {
+		once.Do(func() {
+			cfg, cfgErr := f.Config()
+			if cfgErr != nil {
+				err = fmt.Errorf("failed to get config: %w", cfgErr)
+				return
+			}
+			log, logErr := f.Logger()
+			if logErr != nil {
+				err = fmt.Errorf("failed to get logger: %w", logErr)
+				return
+			}
+			client, clientErr := f.Client(ctx)
+			if clientErr != nil {
+				err = fmt.Errorf("failed to get docker client: %w", clientErr)
+				return
+			}
+			mgr = firewall.NewDockerFirewallManager(client, cfg, log)
+		})
+		return mgr, err
 	}
 }
 

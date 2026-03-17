@@ -599,7 +599,7 @@ func TestCreateContainer_DisableFirewall(t *testing.T) {
 
 	// Verify no firewall env vars were injected
 	for _, e := range containerOpts.Env {
-		require.NotContains(t, e, "CLAWKER_FIREWALL_DOMAINS",
+		require.NotContains(t, e, "CLAWKER_FIREWALL_ENVOY_IP",
 			"firewall env var should not be set when DisableFirewall=true")
 		require.NotContains(t, e, "CLAWKER_FIREWALL_ENABLED",
 			"CLAWKER_FIREWALL_ENABLED should not be set when DisableFirewall=true")
@@ -627,18 +627,15 @@ func TestCreateContainer_DisableFirewallFalse(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// Verify firewall env vars were injected (firewall enabled, not disabled)
-	var firewallDomainsFound, firewallEnabledFound bool
+	// Verify firewall env vars were injected (firewall enabled, not disabled).
+	// Without a FirewallManager wired, only CLAWKER_FIREWALL_ENABLED is set
+	// (no Envoy/CoreDNS IPs because Firewall func is nil in test config).
+	var firewallEnabledFound bool
 	for _, e := range containerOpts.Env {
-		if strings.HasPrefix(e, "CLAWKER_FIREWALL_DOMAINS=") {
-			firewallDomainsFound = true
-		}
 		if e == "CLAWKER_FIREWALL_ENABLED=true" {
 			firewallEnabledFound = true
 		}
 	}
-	require.True(t, firewallDomainsFound,
-		"CLAWKER_FIREWALL_DOMAINS should be set when DisableFirewall=false and config has firewall enabled")
 	require.True(t, firewallEnabledFound,
 		"CLAWKER_FIREWALL_ENABLED=true should be set when DisableFirewall=false and config has firewall enabled")
 }

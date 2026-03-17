@@ -6,8 +6,6 @@ import (
 	"maps"
 	"sort"
 	"strings"
-
-	"github.com/schmitthub/clawker/internal/config"
 )
 
 // RuntimeEnvOpts describes the environment variables RuntimeEnv can produce.
@@ -25,9 +23,10 @@ type RuntimeEnvOpts struct {
 	Visual string
 
 	// Firewall
-	FirewallEnabled        bool
-	FirewallDomains        []string
-	FirewallIPRangeSources []config.IPRangeSource
+	FirewallEnabled   bool
+	FirewallEnvoyIP   string
+	FirewallCoreDNSIP string
+	FirewallNetCIDR   string
 
 	// Monitoring stack
 	MonitoringActive bool // Whether the monitoring stack (otel-collector) is running
@@ -91,27 +90,15 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	// Firewall (consumed by entrypoint/init-firewall.sh)
 	if opts.FirewallEnabled {
 		m["CLAWKER_FIREWALL_ENABLED"] = "true"
-
-		domains := opts.FirewallDomains
-		if domains == nil {
-			domains = []string{}
+		if opts.FirewallEnvoyIP != "" {
+			m["CLAWKER_FIREWALL_ENVOY_IP"] = opts.FirewallEnvoyIP
 		}
-		jsonBytes, err := json.Marshal(domains)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal firewall domains: %w", err)
+		if opts.FirewallCoreDNSIP != "" {
+			m["CLAWKER_FIREWALL_COREDNS_IP"] = opts.FirewallCoreDNSIP
 		}
-		m["CLAWKER_FIREWALL_DOMAINS"] = string(jsonBytes)
-
-		// IP range sources (consumed by entrypoint/init-firewall.sh)
-		ipSources := opts.FirewallIPRangeSources
-		if ipSources == nil {
-			ipSources = []config.IPRangeSource{}
+		if opts.FirewallNetCIDR != "" {
+			m["CLAWKER_FIREWALL_NET_CIDR"] = opts.FirewallNetCIDR
 		}
-		ipSourcesBytes, err := json.Marshal(ipSources)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal firewall IP range sources: %w", err)
-		}
-		m["CLAWKER_FIREWALL_IP_RANGE_SOURCES"] = string(ipSourcesBytes)
 	}
 
 	// Telemetry resource attributes for per-project/agent metric segmentation.

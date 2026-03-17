@@ -5,6 +5,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -39,4 +40,5 @@ type Factory struct {
 	HostProxy      func() hostproxy.HostProxyService
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
+	Firewall       func(context.Context) (firewall.FirewallManager, error)
 }

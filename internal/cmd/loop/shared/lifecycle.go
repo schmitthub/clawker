@@ -13,6 +13,7 @@ import (
 	containershared "github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -60,6 +61,9 @@ type LoopContainerConfig struct {
 
 	// HostProxy returns the host proxy service.
 	HostProxy func() hostproxy.HostProxyService
+
+	// Firewall returns the firewall manager.
+	Firewall func(context.Context) (firewall.FirewallManager, error)
 
 	// SocketBridge returns the socket bridge manager.
 	SocketBridge func() socketbridge.SocketBridgeManager
@@ -150,6 +154,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 				Version:        cfg.Version,
 				ProjectManager: cfg.ProjectManager,
 				HostProxy:      cfg.HostProxy,
+				Firewall:       cfg.Firewall,
 				Log:            cfg.Log,
 				Is256Color:     cfg.IOStreams.Is256ColorSupported(),
 				IsTrueColor:    cfg.IOStreams.IsTrueColorSupported(),
@@ -252,6 +257,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 			Version:        cfg.Version,
 			ProjectManager: cfg.ProjectManager,
 			HostProxy:      cfg.HostProxy,
+			Firewall:       cfg.Firewall,
 			Log:            cfg.Log,
 			Is256Color:     ios.Is256ColorSupported(),
 			IsTrueColor:    ios.IsTrueColorSupported(),

@@ -27,6 +27,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
@@ -1462,6 +1463,7 @@ type CreateContainerConfig struct {
 	Version        string
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
+	Firewall       func(context.Context) (firewall.FirewallManager, error)
 	Log            *logger.Logger
 	Is256Color     bool
 	IsTrueColor    bool
@@ -1591,7 +1593,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	runtimeEnv, envWarnings, err := buildRuntimeEnv(ctx, cfg, projectCfg, containerOpts, agentName, wd, log)
+	runtimeEnv, envWarnings, coreDNSIP, err := buildRuntimeEnv(ctx, cfg, projectCfg, containerOpts, agentName, wd, log)
 	if err != nil {
 		return nil, err
 	}
@@ -1612,6 +1614,16 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		cfg.Flags, workspaceMounts, projectCfg)
 	if err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// When the firewall is active, point container DNS at CoreDNS
+	// so only whitelisted domains resolve.
+	if coreDNSIP != "" {
+		addr, parseErr := netip.ParseAddr(coreDNSIP)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parsing CoreDNS IP %q: %w", coreDNSIP, parseErr)
+		}
+		hostConfig.DNS = append([]netip.Addr{addr}, hostConfig.DNS...)
 	}
 
 	// Set container WorkingDir to match the workspace mount target unless
@@ -1797,7 +1809,7 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 
 // buildRuntimeEnv constructs container runtime environment variables.
 // Returns env vars, warnings (e.g. unset from_env vars), and error.
-func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg *config.Project, containerOpts *ContainerOptions, agentName, wd string, log *logger.Logger) ([]string, []string, error) {
+func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg *config.Project, containerOpts *ContainerOptions, agentName, wd string, log *logger.Logger) (env []string, warnings []string, coreDNSIP string, retErr error) {
 	workspaceMode := containerOpts.Mode
 	if workspaceMode == "" {
 		workspaceMode = projectCfg.Workspace.DefaultMode
@@ -1805,7 +1817,7 @@ func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg
 
 	agentEnv, warnings, err := ResolveAgentEnv(projectCfg.Agent, wd, log)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolving agent environment: %w", err)
+		return nil, nil, "", fmt.Errorf("resolving agent environment: %w", err)
 	}
 
 	monitoringActive := cfg.Client.IsMonitoringActive(ctx)
@@ -1825,10 +1837,36 @@ func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg
 		MonitoringActive: monitoringActive,
 	}
 	if projectCfg.Security.FirewallEnabled() && !containerOpts.DisableFirewall {
-		envOpts.FirewallEnabled = true
-		envOpts.FirewallDomains = projectCfg.Security.Firewall.GetFirewallDomains(cfg.Cfg.RequiredFirewallDomains())
-		envOpts.FirewallIPRangeSources = projectCfg.Security.Firewall.IPRangeSources
+		if cfg.Firewall != nil {
+			fwMgr, fwErr := cfg.Firewall(ctx)
+			if fwErr != nil {
+				return nil, nil, "", fmt.Errorf("firewall manager: %w", fwErr)
+			}
+			if err := fwMgr.EnsureRunning(ctx); err != nil {
+				return nil, nil, "", fmt.Errorf("ensuring firewall running: %w", err)
+			}
+			rules := projectCfg.Security.Firewall.NormalizeRules(cfg.Cfg.RequiredFirewallRules())
+			if err := fwMgr.Update(ctx, rules); err != nil {
+				return nil, nil, "", fmt.Errorf("updating firewall rules: %w", err)
+			}
+			coreDNSIP = fwMgr.CoreDNSIP()
+			envOpts.FirewallEnabled = true
+			envOpts.FirewallEnvoyIP = fwMgr.EnvoyIP()
+			envOpts.FirewallCoreDNSIP = coreDNSIP
+			envOpts.FirewallNetCIDR = fwMgr.NetCIDR()
+		} else {
+			// Firewall enabled but no FirewallManager wired — should not happen in production.
+			log.Warn().Msg("firewall enabled but FirewallManager not wired — Envoy/CoreDNS IPs will not be passed")
+			envOpts.FirewallEnabled = true
+		}
 	}
+
+	// Deprecation warning for ip_range_sources
+	if projectCfg.Security.Firewall != nil && len(projectCfg.Security.Firewall.IPRangeSources) > 0 {
+		log.Warn().Msg("ip_range_sources in firewall config is deprecated and ignored")
+		warnings = append(warnings, "ip_range_sources is deprecated and ignored — use add_domains or rules instead")
+	}
+
 	if projectCfg.Security.GitCredentials != nil {
 		envOpts.GPGForwardingEnabled = projectCfg.Security.GitCredentials.GPGEnabled()
 		envOpts.SSHForwardingEnabled = projectCfg.Security.GitCredentials.GitSSHEnabled()
@@ -1837,9 +1875,9 @@ func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg
 		envOpts.InstructionEnv = projectCfg.Build.Instructions.Env
 	}
 
-	env, err := docker.RuntimeEnv(envOpts)
+	result, err := docker.RuntimeEnv(envOpts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
-	return env, warnings, nil
+	return result, warnings, coreDNSIP, nil
 }

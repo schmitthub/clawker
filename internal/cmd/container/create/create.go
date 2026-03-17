@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -30,6 +31,7 @@ type CreateOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
+	Firewall       func(context.Context) (firewall.FirewallManager, error)
 	Prompter       func() *prompter.Prompter
 	Logger         func() (*logger.Logger, error)
 	Version        string
@@ -49,6 +51,7 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions)
 		Config:           f.Config,
 		ProjectManager:   f.ProjectManager,
 		HostProxy:        f.HostProxy,
+		Firewall:         f.Firewall,
 		Prompter:         f.Prompter,
 		Logger:           f.Logger,
 		Version:          f.Version,
@@ -191,6 +194,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 			Version:        opts.Version,
 			ProjectManager: opts.ProjectManager,
 			HostProxy:      opts.HostProxy,
+			Firewall:       opts.Firewall,
 			Log:            log,
 			Is256Color:     ios.Is256ColorSupported(),
 			IsTrueColor:    ios.IsTrueColorSupported(),

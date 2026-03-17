@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -34,6 +35,7 @@ type TasksOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
+	Firewall       func(context.Context) (firewall.FirewallManager, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
 	Logger         func() (*logger.Logger, error)
@@ -64,6 +66,7 @@ func NewCmdTasks(f *cmdutil.Factory, runF func(context.Context, *TasksOptions) e
 		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
 		HostProxy:      f.HostProxy,
+		Firewall:       f.Firewall,
 		SocketBridge:   f.SocketBridge,
 		Prompter:       f.Prompter,
 		Logger:         f.Logger,
@@ -249,6 +252,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 		Version:        opts.Version,
 		ProjectManager: opts.ProjectManager,
 		HostProxy:      opts.HostProxy,
+		Firewall:       opts.Firewall,
 		SocketBridge:   opts.SocketBridge,
 		IOStreams:      ios,
 		Log:            log,
