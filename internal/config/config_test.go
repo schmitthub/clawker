@@ -436,3 +436,165 @@ func TestParseMode(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeRules_FromYAML(t *testing.T) {
+	cfg, err := NewFromString(`
+security:
+  firewall:
+    enable: true
+    add_domains: ["example.com"]
+    rules:
+      - dst: github.com
+        proto: tls
+        action: allow
+        path_rules:
+          - path: "/*/raw/*"
+            action: deny
+        path_default: allow
+`, "")
+	require.NoError(t, err)
+
+	rules := cfg.Project().Security.Firewall.NormalizeRules(cfg.RequiredFirewallRules())
+
+	// Required rules should be present
+	var foundAnthropicAPI, foundExampleCom, foundGitHub bool
+	for _, r := range rules {
+		switch r.Dst {
+		case "api.anthropic.com":
+			foundAnthropicAPI = true
+			assert.Equal(t, "tls", r.Proto)
+			assert.Equal(t, "allow", r.Action)
+		case "example.com":
+			foundExampleCom = true
+			assert.Equal(t, "tls", r.Proto)
+			assert.Equal(t, "allow", r.Action)
+		case "github.com":
+			foundGitHub = true
+			assert.Equal(t, "tls", r.Proto)
+			assert.Equal(t, "allow", r.Action)
+			require.Len(t, r.PathRules, 1)
+			assert.Equal(t, "/*/raw/*", r.PathRules[0].Path)
+			assert.Equal(t, "deny", r.PathRules[0].Action)
+			assert.Equal(t, "allow", r.PathDefault)
+		}
+	}
+	assert.True(t, foundAnthropicAPI, "required rule api.anthropic.com missing")
+	assert.True(t, foundExampleCom, "add_domains example.com missing")
+	assert.True(t, foundGitHub, "user rule github.com missing")
+}
+
+func TestNormalizeRules_DefaultsProtoAndAction(t *testing.T) {
+	cfg, err := NewFromString(`
+security:
+  firewall:
+    rules:
+      - dst: custom.example.com
+`, "")
+	require.NoError(t, err)
+
+	rules := cfg.Project().Security.Firewall.NormalizeRules(nil)
+	require.Len(t, rules, 1)
+	assert.Equal(t, "tls", rules[0].Proto, "proto should default to tls")
+	assert.Equal(t, "allow", rules[0].Action, "action should default to allow")
+}
+
+func TestNormalizeRules_DeduplicatesByDstProtoPort(t *testing.T) {
+	cfg, err := NewFromString(`
+security:
+  firewall:
+    add_domains: ["api.anthropic.com"]
+    rules:
+      - dst: api.anthropic.com
+        proto: tls
+        action: allow
+`, "")
+	require.NoError(t, err)
+
+	required := []EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Action: "allow"},
+	}
+	rules := cfg.Project().Security.Firewall.NormalizeRules(required)
+
+	// api.anthropic.com appears in required, rules, and add_domains — should deduplicate
+	count := 0
+	for _, r := range rules {
+		if r.Dst == "api.anthropic.com" {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "api.anthropic.com should appear exactly once after dedup")
+}
+
+func TestNormalizeRules_PathRulesOverrideSimpleRule(t *testing.T) {
+	cfg, err := NewFromString(`
+security:
+  firewall:
+    rules:
+      - dst: github.com
+        proto: tls
+        path_rules:
+          - path: "/*/raw/*"
+            action: deny
+        path_default: allow
+`, "")
+	require.NoError(t, err)
+
+	// Required rules have github.com without path rules
+	required := []EgressRule{
+		{Dst: "github.com", Proto: "tls", Action: "allow"},
+	}
+	rules := cfg.Project().Security.Firewall.NormalizeRules(required)
+
+	var found bool
+	for _, r := range rules {
+		if r.Dst == "github.com" {
+			found = true
+			assert.NotEmpty(t, r.PathRules, "should have path rules from user config")
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestFirewallEnabled_ExplicitFalse(t *testing.T) {
+	cfg, err := NewFromString(`
+security:
+  firewall:
+    enable: false
+`, "")
+	require.NoError(t, err)
+	assert.False(t, cfg.Project().Security.FirewallEnabled())
+}
+
+func TestFirewallEnabled_NilMeansEnabled(t *testing.T) {
+	// When firewall section is omitted entirely, FirewallEnabled returns true
+	cfg, err := NewFromString(`
+build:
+  image: "node:20"
+`, "")
+	require.NoError(t, err)
+	assert.True(t, cfg.Project().Security.FirewallEnabled(),
+		"nil FirewallConfig should default to enabled")
+}
+
+func TestRequiredFirewallRules(t *testing.T) {
+	cfg, err := NewBlankConfig()
+	require.NoError(t, err)
+
+	rules := cfg.RequiredFirewallRules()
+	assert.GreaterOrEqual(t, len(rules), 7)
+
+	// Verify all required rules have proper proto and action
+	for _, r := range rules {
+		assert.NotEmpty(t, r.Dst)
+		assert.Equal(t, "tls", r.Proto)
+		assert.Equal(t, "allow", r.Action)
+	}
+
+	// Verify domains accessor still works (backwards compat)
+	domains := cfg.RequiredFirewallDomains()
+	assert.Contains(t, domains, "api.anthropic.com")
+
+	// Returned slice is a copy
+	rules[0].Dst = "mutated.com"
+	assert.Equal(t, "api.anthropic.com", cfg.RequiredFirewallRules()[0].Dst)
+}

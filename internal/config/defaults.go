@@ -1,15 +1,27 @@
 package config
 
-// requiredFirewallDomains is the default list of domains allowed through the firewall.
-// These are essential for Claude Code and common development tools.
-var requiredFirewallDomains = []string{
-	"api.anthropic.com",
-	"sentry.io",
-	"statsig.anthropic.com",
-	"statsig.com",
-	"registry-1.docker.io",
-	"production.cloudflare.docker.com",
-	"docker.io",
+// requiredFirewallRules is the canonical list of required egress rules.
+// These are essential for Claude Code and container image pulls.
+var requiredFirewallRules = []EgressRule{
+	{Dst: "api.anthropic.com", Proto: "tls", Action: "allow"},
+	{Dst: "sentry.io", Proto: "tls", Action: "allow"},
+	{Dst: "statsig.anthropic.com", Proto: "tls", Action: "allow"},
+	{Dst: "statsig.com", Proto: "tls", Action: "allow"},
+	{Dst: "registry-1.docker.io", Proto: "tls", Action: "allow"},
+	{Dst: "production.cloudflare.docker.com", Proto: "tls", Action: "allow"},
+	{Dst: "docker.io", Proto: "tls", Action: "allow"},
+}
+
+// requiredFirewallDomains is derived from requiredFirewallRules for backwards compatibility.
+//
+// Deprecated: Use RequiredFirewallRules() instead.
+var requiredFirewallDomains []string
+
+func init() {
+	requiredFirewallDomains = make([]string, len(requiredFirewallRules))
+	for i, r := range requiredFirewallRules {
+		requiredFirewallDomains[i] = r.Dst
+	}
 }
 
 // defaultProjectYAML is the base-layer defaults for project configuration.

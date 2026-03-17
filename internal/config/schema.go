@@ -144,11 +144,23 @@ type WorkspaceConfig struct {
 	DefaultMode string `yaml:"default_mode"`
 }
 
-// SecurityConfig defines optional security hardening settings
+// PathRule defines an HTTP path-level filtering rule for MITM inspection.
+type PathRule struct {
+	Path   string `yaml:"path"`
+	Action string `yaml:"action"`
+}
 
-// IPRangeSource defines a source of IP CIDR ranges for the firewall.
-// Sources can be built-in (github, google-cloud, google, cloudflare, aws)
-// or custom with explicit URL and jq filter.
+// EgressRule defines a single egress firewall rule.
+// Dst is the domain or IP, Proto defaults to "tls", Action defaults to "allow".
+type EgressRule struct {
+	Dst         string     `yaml:"dst"`
+	Proto       string     `yaml:"proto,omitempty"`
+	Port        int        `yaml:"port,omitempty"`
+	Action      string     `yaml:"action,omitempty"`
+	PathRules   []PathRule `yaml:"path_rules,omitempty"`
+	PathDefault string     `yaml:"path_default,omitempty"`
+}
+
 type IPRangeSource struct {
 	// Name is the identifier (e.g., "github", "google-cloud", "cloudflare")
 	Name string `yaml:"name" json:"name"`
@@ -172,15 +184,19 @@ func (s *IPRangeSource) IsRequired() bool {
 
 // FirewallConfig defines network firewall settings
 type FirewallConfig struct {
-	Enable         bool            `yaml:"enable"`
-	AddDomains     []string        `yaml:"add_domains,omitempty"`
-	IPRangeSources []IPRangeSource `yaml:"ip_range_sources,omitempty"`
+	Enable         *bool           `yaml:"enable,omitempty"`
+	AddDomains     []string        `yaml:"add_domains,omitempty" merge:"union"`
+	Rules          []EgressRule    `yaml:"rules,omitempty" merge:"union"`
+	IPRangeSources []IPRangeSource `yaml:"ip_range_sources,omitempty"` // DEPRECATED: ignored at runtime
 }
 
 // FirewallEnabled returns whether the firewall should be enabled.
-// Returns true only if Firewall config exists and Enable is true.
+// Returns true when Enable is nil (default enabled) or explicitly true.
 func (f *FirewallConfig) FirewallEnabled() bool {
-	return f != nil && f.Enable
+	if f == nil || f.Enable == nil {
+		return true
+	}
+	return *f.Enable
 }
 
 // GetFirewallDomains returns required domains merged with user's add_domains.
@@ -207,6 +223,44 @@ func (f *FirewallConfig) GetFirewallDomains(requiredDomains []string) []string {
 	}
 	sort.Strings(result)
 
+	return result
+}
+
+// NormalizeRules merges required rules with user-configured rules and add_domains.
+// PathRules-aware dedup: if a new rule for the same dst+proto+port has PathRules
+// and the existing one does not, the new rule replaces it.
+func (f *FirewallConfig) NormalizeRules(requiredRules []EgressRule) []EgressRule {
+	if f == nil {
+		return requiredRules
+	}
+	index := make(map[string]int)
+	var result []EgressRule
+	addRule := func(r EgressRule) {
+		if r.Proto == "" {
+			r.Proto = "tls"
+		}
+		if r.Action == "" {
+			r.Action = "allow"
+		}
+		key := fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
+		if idx, ok := index[key]; ok {
+			if len(r.PathRules) > 0 && len(result[idx].PathRules) == 0 {
+				result[idx] = r
+			}
+			return
+		}
+		index[key] = len(result)
+		result = append(result, r)
+	}
+	for _, r := range requiredRules {
+		addRule(r)
+	}
+	for _, r := range f.Rules {
+		addRule(r)
+	}
+	for _, d := range f.AddDomains {
+		addRule(EgressRule{Dst: d, Proto: "tls", Action: "allow"})
+	}
 	return result
 }
 

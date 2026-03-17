@@ -52,11 +52,17 @@ var _ config.Config = &ConfigMock{}
 //			DomainFunc: func() string {
 //				panic("mock out the Domain method")
 //			},
+//			EgressRulesFileNameFunc: func() string {
+//				panic("mock out the EgressRulesFileName method")
+//			},
 //			EngineLabelPrefixFunc: func() string {
 //				panic("mock out the EngineLabelPrefix method")
 //			},
 //			EngineManagedLabelFunc: func() string {
 //				panic("mock out the EngineManagedLabel method")
+//			},
+//			FirewallDataSubdirFunc: func() (string, error) {
+//				panic("mock out the FirewallDataSubdir method")
 //			},
 //			GetProjectIgnoreFileFunc: func() (string, error) {
 //				panic("mock out the GetProjectIgnoreFile method")
@@ -163,6 +169,9 @@ var _ config.Config = &ConfigMock{}
 //			RequiredFirewallDomainsFunc: func() []string {
 //				panic("mock out the RequiredFirewallDomains method")
 //			},
+//			RequiredFirewallRulesFunc: func() []config.EgressRule {
+//				panic("mock out the RequiredFirewallRules method")
+//			},
 //			SettingsFunc: func() *config.Settings {
 //				panic("mock out the Settings method")
 //			},
@@ -224,11 +233,17 @@ type ConfigMock struct {
 	// DomainFunc mocks the Domain method.
 	DomainFunc func() string
 
+	// EgressRulesFileNameFunc mocks the EgressRulesFileName method.
+	EgressRulesFileNameFunc func() string
+
 	// EngineLabelPrefixFunc mocks the EngineLabelPrefix method.
 	EngineLabelPrefixFunc func() string
 
 	// EngineManagedLabelFunc mocks the EngineManagedLabel method.
 	EngineManagedLabelFunc func() string
+
+	// FirewallDataSubdirFunc mocks the FirewallDataSubdir method.
+	FirewallDataSubdirFunc func() (string, error)
 
 	// GetProjectIgnoreFileFunc mocks the GetProjectIgnoreFile method.
 	GetProjectIgnoreFileFunc func() (string, error)
@@ -335,6 +350,9 @@ type ConfigMock struct {
 	// RequiredFirewallDomainsFunc mocks the RequiredFirewallDomains method.
 	RequiredFirewallDomainsFunc func() []string
 
+	// RequiredFirewallRulesFunc mocks the RequiredFirewallRules method.
+	RequiredFirewallRulesFunc func() []config.EgressRule
+
 	// SettingsFunc mocks the Settings method.
 	SettingsFunc func() *config.Settings
 
@@ -393,11 +411,17 @@ type ConfigMock struct {
 		// Domain holds details about calls to the Domain method.
 		Domain []struct {
 		}
+		// EgressRulesFileName holds details about calls to the EgressRulesFileName method.
+		EgressRulesFileName []struct {
+		}
 		// EngineLabelPrefix holds details about calls to the EngineLabelPrefix method.
 		EngineLabelPrefix []struct {
 		}
 		// EngineManagedLabel holds details about calls to the EngineManagedLabel method.
 		EngineManagedLabel []struct {
+		}
+		// FirewallDataSubdir holds details about calls to the FirewallDataSubdir method.
+		FirewallDataSubdir []struct {
 		}
 		// GetProjectIgnoreFile holds details about calls to the GetProjectIgnoreFile method.
 		GetProjectIgnoreFile []struct {
@@ -516,6 +540,9 @@ type ConfigMock struct {
 		// RequiredFirewallDomains holds details about calls to the RequiredFirewallDomains method.
 		RequiredFirewallDomains []struct {
 		}
+		// RequiredFirewallRules holds details about calls to the RequiredFirewallRules method.
+		RequiredFirewallRules []struct {
+		}
 		// Settings holds details about calls to the Settings method.
 		Settings []struct {
 		}
@@ -549,8 +576,10 @@ type ConfigMock struct {
 	lockDataDirEnvVar           sync.RWMutex
 	lockDockerfilesSubdir       sync.RWMutex
 	lockDomain                  sync.RWMutex
+	lockEgressRulesFileName     sync.RWMutex
 	lockEngineLabelPrefix       sync.RWMutex
 	lockEngineManagedLabel      sync.RWMutex
+	lockFirewallDataSubdir      sync.RWMutex
 	lockGetProjectIgnoreFile    sync.RWMutex
 	lockGetProjectRoot          sync.RWMutex
 	lockGrafanaURL              sync.RWMutex
@@ -586,6 +615,7 @@ type ConfigMock struct {
 	lockProjectStore            sync.RWMutex
 	lockPrometheusURL           sync.RWMutex
 	lockRequiredFirewallDomains sync.RWMutex
+	lockRequiredFirewallRules   sync.RWMutex
 	lockSettings                sync.RWMutex
 	lockSettingsFileName        sync.RWMutex
 	lockSettingsStore           sync.RWMutex
@@ -897,6 +927,33 @@ func (mock *ConfigMock) DomainCalls() []struct {
 	return calls
 }
 
+// EgressRulesFileName calls EgressRulesFileNameFunc.
+func (mock *ConfigMock) EgressRulesFileName() string {
+	if mock.EgressRulesFileNameFunc == nil {
+		panic("ConfigMock.EgressRulesFileNameFunc: method is nil but Config.EgressRulesFileName was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEgressRulesFileName.Lock()
+	mock.calls.EgressRulesFileName = append(mock.calls.EgressRulesFileName, callInfo)
+	mock.lockEgressRulesFileName.Unlock()
+	return mock.EgressRulesFileNameFunc()
+}
+
+// EgressRulesFileNameCalls gets all the calls that were made to EgressRulesFileName.
+// Check the length with:
+//
+//	len(mockedConfig.EgressRulesFileNameCalls())
+func (mock *ConfigMock) EgressRulesFileNameCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEgressRulesFileName.RLock()
+	calls = mock.calls.EgressRulesFileName
+	mock.lockEgressRulesFileName.RUnlock()
+	return calls
+}
+
 // EngineLabelPrefix calls EngineLabelPrefixFunc.
 func (mock *ConfigMock) EngineLabelPrefix() string {
 	if mock.EngineLabelPrefixFunc == nil {
@@ -948,6 +1005,33 @@ func (mock *ConfigMock) EngineManagedLabelCalls() []struct {
 	mock.lockEngineManagedLabel.RLock()
 	calls = mock.calls.EngineManagedLabel
 	mock.lockEngineManagedLabel.RUnlock()
+	return calls
+}
+
+// FirewallDataSubdir calls FirewallDataSubdirFunc.
+func (mock *ConfigMock) FirewallDataSubdir() (string, error) {
+	if mock.FirewallDataSubdirFunc == nil {
+		panic("ConfigMock.FirewallDataSubdirFunc: method is nil but Config.FirewallDataSubdir was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockFirewallDataSubdir.Lock()
+	mock.calls.FirewallDataSubdir = append(mock.calls.FirewallDataSubdir, callInfo)
+	mock.lockFirewallDataSubdir.Unlock()
+	return mock.FirewallDataSubdirFunc()
+}
+
+// FirewallDataSubdirCalls gets all the calls that were made to FirewallDataSubdir.
+// Check the length with:
+//
+//	len(mockedConfig.FirewallDataSubdirCalls())
+func (mock *ConfigMock) FirewallDataSubdirCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockFirewallDataSubdir.RLock()
+	calls = mock.calls.FirewallDataSubdir
+	mock.lockFirewallDataSubdir.RUnlock()
 	return calls
 }
 
@@ -1920,6 +2004,33 @@ func (mock *ConfigMock) RequiredFirewallDomainsCalls() []struct {
 	mock.lockRequiredFirewallDomains.RLock()
 	calls = mock.calls.RequiredFirewallDomains
 	mock.lockRequiredFirewallDomains.RUnlock()
+	return calls
+}
+
+// RequiredFirewallRules calls RequiredFirewallRulesFunc.
+func (mock *ConfigMock) RequiredFirewallRules() []config.EgressRule {
+	if mock.RequiredFirewallRulesFunc == nil {
+		panic("ConfigMock.RequiredFirewallRulesFunc: method is nil but Config.RequiredFirewallRules was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockRequiredFirewallRules.Lock()
+	mock.calls.RequiredFirewallRules = append(mock.calls.RequiredFirewallRules, callInfo)
+	mock.lockRequiredFirewallRules.Unlock()
+	return mock.RequiredFirewallRulesFunc()
+}
+
+// RequiredFirewallRulesCalls gets all the calls that were made to RequiredFirewallRules.
+// Check the length with:
+//
+//	len(mockedConfig.RequiredFirewallRulesCalls())
+func (mock *ConfigMock) RequiredFirewallRulesCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockRequiredFirewallRules.RLock()
+	calls = mock.calls.RequiredFirewallRules
+	mock.lockRequiredFirewallRules.RUnlock()
 	return calls
 }
 

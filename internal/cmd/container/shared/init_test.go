@@ -28,20 +28,47 @@ type testNotFoundError struct{ msg string }
 func (e testNotFoundError) Error() string { return e.msg }
 func (e testNotFoundError) NotFound()     {}
 
-// testConfig returns a minimal *config.Project for init tests.
+// testConfigYAML is the base YAML for init test configs.
+// Loaded through NewFromString (real config pipeline, not direct struct construction).
+const testConfigYAML = `
+workspace:
+  default_mode: bind
+security:
+  enable_host_proxy: false
+  firewall:
+    enable: false
+`
+
+// testConfig returns a minimal *config.Project loaded through NewFromString.
 func testConfig() *config.Project {
-	hostProxyDisabled := false
-	return &config.Project{
-		Workspace: config.WorkspaceConfig{
-			DefaultMode: "bind",
-		},
-		Security: config.SecurityConfig{
-			EnableHostProxy: &hostProxyDisabled,
-			Firewall: &config.FirewallConfig{
-				Enable: false,
-			},
-		},
+	cfg, err := config.NewFromString(testConfigYAML, "")
+	if err != nil {
+		panic(fmt.Sprintf("testConfig: %v", err))
 	}
+	return cfg.Project()
+}
+
+// testConfigWithFirewall returns a *config.Project with firewall enabled and custom domains.
+func testConfigWithFirewall(domains ...string) *config.Project {
+	var b strings.Builder
+	for _, d := range domains {
+		b.WriteString("\n    - ")
+		b.WriteString(d)
+	}
+	yaml := fmt.Sprintf(`
+workspace:
+  default_mode: bind
+security:
+  enable_host_proxy: false
+  firewall:
+    enable: true
+    add_domains:%s
+`, b.String())
+	cfg, err := config.NewFromString(yaml, "")
+	if err != nil {
+		panic(fmt.Sprintf("testConfigWithFirewall: %v", err))
+	}
+	return cfg.Project()
 }
 
 // testFlags returns a FlagSet from a minimal cobra command with container flags registered.
@@ -562,11 +589,7 @@ func TestCreateContainer_DisableFirewall(t *testing.T) {
 	containerOpts.Agent = "test-agent"
 	containerOpts.DisableFirewall = true
 
-	cfg := testConfig()
-	cfg.Security.Firewall = &config.FirewallConfig{
-		Enable:     true,
-		AddDomains: []string{"example.com"},
-	}
+	cfg := testConfigWithFirewall("example.com")
 
 	result, err := CreateContainer(context.Background(),
 		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
@@ -596,11 +619,7 @@ func TestCreateContainer_DisableFirewallFalse(t *testing.T) {
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test-agent"
 
-	cfg := testConfig()
-	cfg.Security.Firewall = &config.FirewallConfig{
-		Enable:     true,
-		AddDomains: []string{"example.com"},
-	}
+	cfg := testConfigWithFirewall("example.com")
 
 	result, err := CreateContainer(context.Background(),
 		testCreateConfig(fake, cfg, containerOpts, cmd), nil)

@@ -78,6 +78,9 @@ type Config interface {
 	JaegerURL(host string, https bool) string
 	PrometheusURL(host string, https bool) string
 	RequiredFirewallDomains() []string
+	EgressRulesFileName() string
+	FirewallDataSubdir() (string, error)
+	RequiredFirewallRules() []EgressRule
 	ProjectConfigFileName() string
 	SettingsFileName() string
 	ProjectRegistryFileName() string

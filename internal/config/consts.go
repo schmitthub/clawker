@@ -39,6 +39,10 @@ const (
 	clawkerIgnoreFileName = ".clawkerignore"
 	// monitorSubdir is the subdirectory for monitoring stack configuration
 	monitorSubdir = "monitor"
+	// firewallSubdir is the subdirectory for firewall runtime data (CA certs, generated configs)
+	firewallSubdir = "firewall"
+	// egressRulesFileName is the filename for the egress rules state file
+	egressRulesFileName = "egress-rules.yaml"
 	// buildSubdir is the subdirectory for build artifacts (versions.json, dockerfiles)
 	buildSubdir = "build"
 	// dockerfilesSubdir is the subdirectory for generated Dockerfiles
@@ -201,6 +205,21 @@ func (c *configImpl) TestRepoDirEnvVar() string { return clawkerTestRepoDirEnv }
 
 // MonitorSubdir ensures and returns the monitor subdirectory path under DataDir.
 func (c *configImpl) MonitorSubdir() (string, error) { return subdirPath(monitorSubdir, DataDir) }
+
+// FirewallDataSubdir ensures and returns the firewall data subdirectory path under DataDir.
+func (c *configImpl) FirewallDataSubdir() (string, error) {
+	return subdirPath(firewallSubdir, DataDir)
+}
+
+// EgressRulesFileName returns the filename for the egress rules state file.
+func (c *configImpl) EgressRulesFileName() string { return egressRulesFileName }
+
+// RequiredFirewallRules returns a copy of the required firewall egress rules.
+func (c *configImpl) RequiredFirewallRules() []EgressRule {
+	result := make([]EgressRule, len(requiredFirewallRules))
+	copy(result, requiredFirewallRules)
+	return result
+}
 
 // BuildSubdir ensures and returns the build subdirectory path under DataDir.
 func (c *configImpl) BuildSubdir() (string, error) { return subdirPath(buildSubdir, DataDir) }

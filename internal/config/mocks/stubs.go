@@ -50,6 +50,9 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.MonitoringConfigFunc = cfg.MonitoringConfig
 	mock.HostProxyConfigFunc = cfg.HostProxyConfig
 	mock.RequiredFirewallDomainsFunc = cfg.RequiredFirewallDomains
+	mock.EgressRulesFileNameFunc = cfg.EgressRulesFileName
+	mock.FirewallDataSubdirFunc = cfg.FirewallDataSubdir
+	mock.RequiredFirewallRulesFunc = cfg.RequiredFirewallRules
 	mock.GetProjectRootFunc = cfg.GetProjectRoot
 	mock.GetProjectIgnoreFileFunc = cfg.GetProjectIgnoreFile
 
