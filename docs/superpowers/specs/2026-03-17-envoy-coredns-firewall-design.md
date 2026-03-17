@@ -86,7 +86,7 @@ Agent containers already have NET_ADMIN for the existing iptables firewall. The 
 ### 10. Docker Restart Policy + Hostproxy Lifecycle
 Envoy and CoreDNS containers use `--restart unless-stopped`. Docker handles crash recovery. The hostproxy daemon manages lifecycle bookkeeping: starts Envoy + CoreDNS containers on daemon startup (if firewall enabled), stops them on daemon teardown (when no agent containers running for 60s grace period). This piggybacks on the existing hostproxy auto-start/auto-stop mechanism — no new daemon or lifecycle manager needed. The firewall manager's `EnsureRunning()` handles health checks and config correctness, called during container creation.
 
-**Hostproxy dependency change:** Hostproxy gains a Docker dependency (`whail.Engine` or `docker.Client`) to start/stop Envoy and CoreDNS containers. This changes hostproxy's current package role (previously no Docker imports). Accepted trade-off — less work than a new lifecycle manager, future clawkerd daemon will own this properly.
+**Hostproxy already has Docker.** The daemon creates a raw moby `client.Client` internally and polls `ContainerList` via a `ContainerLister` interface. Extending the daemon to start/stop Envoy+CoreDNS containers on startup/teardown requires no new imports — just additional calls on the existing Docker client. The `ContainerLister` interface may need to be extended or a broader interface used for container lifecycle operations.
 
 ### 11. Agent Prompt via `/etc/claude-code/CLAUDE.md`
 Static skill document baked into the image at build time via the Dockerfile template. Teaches the agent how to operate in a clawker container: firewall awareness, troubleshooting, bypass instructions. List-agnostic — does NOT include specific domains or rules. Will grow over time to cover other clawker capabilities (hostproxy, socket bridge, monitoring, etc.). Uses Claude Code's managed policy location for Linux.
@@ -127,7 +127,7 @@ Implementing agents MUST NOT introduce these. They were considered and rejected 
 | Scanning all project configs on every container start | Unnecessary. The calling CLI process already has the merged config in memory. `Update()` is additive only. |
 | Firewall-specific subdirectory | Rules file is `egress-rules.yaml` in the config dir alongside `settings.yaml` and `projects.yaml`. |
 | Per-project rule isolation | Trust is orthogonal to need. Union policy. Door open for future via source-IP matching. |
-| Dedicated firewall lifecycle daemon | Piggyback on hostproxy's existing auto-start/auto-stop. Future clawkerd daemon will own this properly. |
+| Dedicated firewall lifecycle daemon | Piggyback on hostproxy's existing auto-start/auto-stop (already has Docker client). Future clawkerd daemon will own this properly. |
 | `clawker firewall stop` command | Lifecycle managed by hostproxy. Manual teardown via `docker stop` if needed. |
 
 ---
