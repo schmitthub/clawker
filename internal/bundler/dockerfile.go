@@ -50,6 +50,9 @@ var SettingsFile string
 //go:embed assets/claude-config.json
 var ConfigFile string
 
+//go:embed assets/clawker-agent-prompt.md
+var AgentPromptFile string
+
 // Re-export hostproxy container scripts from internal/hostproxy/internals.
 // These were previously embedded directly in this package but now live
 // alongside the hostproxy code they interact with.
@@ -134,6 +137,8 @@ type DockerfileContext struct {
 	OtelLogUserPrompts     bool // OTEL_LOG_USER_PROMPTS=1
 	OtelIncludeAccountUUID bool // OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
 	OtelIncludeSessionID   bool // OTEL_METRICS_INCLUDE_SESSION_ID=true
+
+	HasFirewallCA bool // CA cert exists for MITM inspection
 }
 
 // DockerfileInstructions contains type-safe Dockerfile instructions.
@@ -220,6 +225,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 	}{
 		{"entrypoint.sh", EntrypointScript, 0755},
 		{"init-firewall.sh", FirewallScript, 0755},
+		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
 		{"claude-config.json", ConfigFile, 0644},
@@ -409,6 +415,22 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
+	// Add agent prompt file for in-container agent awareness
+	if err := addFileToTar(tw, "clawker-agent-prompt.md", []byte(AgentPromptFile)); err != nil {
+		return nil, err
+	}
+
+	// Conditionally add firewall CA cert for MITM inspection
+	if caCertPath, err := g.firewallCACertPath(); err == nil && caCertPath != "" {
+		content, err := os.ReadFile(caCertPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read firewall CA cert: %w", err)
+		}
+		if err := addFileToTar(tw, "clawker-ca.crt", content); err != nil {
+			return nil, err
+		}
+	}
+
 	// Add host-open script for opening URLs on host machine
 	if err := addFileToTar(tw, "host-open.sh", []byte(HostOpenScript)); err != nil {
 		return nil, err
@@ -471,6 +493,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 	}{
 		{"entrypoint.sh", EntrypointScript, 0755},
 		{"init-firewall.sh", FirewallScript, 0755},
+		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
 		{"claude-config.json", ConfigFile, 0644},
@@ -483,6 +506,17 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 	for _, s := range scripts {
 		if err := os.WriteFile(filepath.Join(dir, s.name), []byte(s.content), s.mode); err != nil {
 			return fmt.Errorf("failed to write %s: %w", s.name, err)
+		}
+	}
+
+	// Conditionally write firewall CA cert for MITM inspection
+	if caCertPath, err := g.firewallCACertPath(); err == nil && caCertPath != "" {
+		content, err := os.ReadFile(caCertPath)
+		if err != nil {
+			return fmt.Errorf("failed to read firewall CA cert: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "clawker-ca.crt"), content, 0644); err != nil {
+			return fmt.Errorf("failed to write clawker-ca.crt: %w", err)
 		}
 	}
 
@@ -539,6 +573,7 @@ var basePackagesAlpine = map[string]bool{
 	"iptables": true, "ipset": true, "iproute2": true, "bind-tools": true,
 	"jq": true, "nano": true, "vim": true, "wget": true, "curl": true,
 	"github-cli": true, "musl-locales": true, "musl-locales-lang": true,
+	"dante": true, "proxychains-ng": true,
 }
 
 // basePackagesDebian are packages already included in the template for Debian.
@@ -548,6 +583,7 @@ var basePackagesDebian = map[string]bool{
 	"iptables": true, "ipset": true, "iproute2": true, "dnsutils": true,
 	"aggregate": true, "jq": true, "nano": true, "vim": true, "wget": true,
 	"curl": true, "gh": true, "locales": true, "locales-all": true,
+	"dante-server": true, "proxychains4": true,
 }
 
 // filterBasePackages removes packages that are already in the template.
@@ -579,6 +615,12 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	// OTEL telemetry from monitoring config
 	mon := g.cfg.MonitoringConfig()
 
+	// Check if firewall CA cert exists for MITM inspection
+	hasFirewallCA := false
+	if caCertPath, err := g.firewallCACertPath(); err == nil && caCertPath != "" {
+		hasFirewallCA = true
+	}
+
 	ctx := &DockerfileContext{
 		BaseImage:                baseImage,
 		Packages:                 filterBasePackages(p.Build.Packages, isAlpine),
@@ -590,6 +632,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		ClaudeVersion:            DefaultClaudeCodeVersion,
 		IsAlpine:                 isAlpine,
 		BuildKitEnabled:          g.BuildKitEnabled,
+		HasFirewallCA:            hasFirewallCA,
 		OtelMetricsEndpoint:      otelBaseEndpoint(mon) + mon.Telemetry.MetricsPath,
 		OtelLogsEndpoint:         otelBaseEndpoint(mon) + mon.Telemetry.LogsPath,
 		OtelLogsExportInterval:   mon.Telemetry.LogsExportIntervalMs,
@@ -672,6 +715,20 @@ func convertRunInstructions(src []config.RunInstruction) []RunInstruction {
 		}
 	}
 	return result
+}
+
+// firewallCACertPath returns the path to the firewall CA cert if it exists.
+// Returns empty string if no CA cert is available.
+func (g *ProjectGenerator) firewallCACertPath() (string, error) {
+	dataDir, err := g.cfg.FirewallDataSubdir()
+	if err != nil {
+		return "", err
+	}
+	caCertPath := filepath.Join(dataDir, "ca-cert.pem")
+	if _, err := os.Stat(caCertPath); err != nil {
+		return "", nil //nolint:nilerr // missing CA cert is not an error
+	}
+	return caCertPath, nil
 }
 
 // addFileToTar adds a file to a tar archive.

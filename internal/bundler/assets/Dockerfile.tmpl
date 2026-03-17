@@ -77,6 +77,8 @@ RUN apk add \
     github-cli \
     musl-locales \
     musl-locales-lang \
+    dante \
+    proxychains-ng \
     {{- range .Packages}}
     {{.}} \
     {{- end}}
@@ -114,6 +116,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gh \
     locales \
     locales-all \
+    dante-server \
+    proxychains4 \
     {{- range .Packages}}
     {{.}} \
     {{- end}}
@@ -243,6 +247,16 @@ COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh && \
     echo "${USERNAME} ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/${USERNAME}-firewall && \
     chmod 0440 /etc/sudoers.d/${USERNAME}-firewall
+
+# Clawker agent environment awareness
+RUN mkdir -p /etc/claude-code
+COPY clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
+{{- if .HasFirewallCA}}
+
+# Firewall CA cert for MITM inspection
+COPY clawker-ca.crt /usr/local/share/ca-certificates/clawker-firewall-ca.crt
+RUN update-ca-certificates
+{{- end}}
 
 # Host proxy client scripts for container-to-host communication
 COPY host-open.sh /usr/local/bin/host-open

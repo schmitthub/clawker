@@ -82,7 +82,7 @@ emit_error() {
 }
 
 # Initialize firewall if enabled at runtime
-if [ "$CLAWKER_FIREWALL_ENABLED" = "true" ]; then
+if [ "$CLAWKER_FIREWALL_ENABLED" = "true" ] && [ -n "${CLAWKER_FIREWALL_ENVOY_IP:-}" ]; then
     emit_step "firewall"
 
     # Fail fast if prerequisites are missing — silent degradation of a security control is dangerous
@@ -93,11 +93,12 @@ if [ "$CLAWKER_FIREWALL_ENABLED" = "true" ]; then
         emit_error "firewall" "iptables not available (missing NET_ADMIN/NET_RAW capabilities)"
     fi
 
-    # Write firewall config to file since sudo strips environment variables
-    mkdir -p /tmp/clawker
-    echo "${CLAWKER_FIREWALL_IP_RANGE_SOURCES:-}" > /tmp/clawker/firewall-ip-range-sources
-    echo "${CLAWKER_FIREWALL_DOMAINS:-}" > /tmp/clawker/firewall-domains
-    if ! sudo /usr/local/bin/init-firewall.sh; then
+    # Pass firewall env vars through sudo — init-firewall.sh reads them directly
+    if ! sudo \
+        CLAWKER_FIREWALL_ENVOY_IP="${CLAWKER_FIREWALL_ENVOY_IP}" \
+        CLAWKER_FIREWALL_COREDNS_IP="${CLAWKER_FIREWALL_COREDNS_IP}" \
+        CLAWKER_FIREWALL_NET_CIDR="${CLAWKER_FIREWALL_NET_CIDR}" \
+        /usr/local/bin/init-firewall.sh; then
         emit_error "firewall" "initialization failed"
     fi
 fi
