@@ -696,10 +696,12 @@ func TestUpdate_ConcurrentAppend(t *testing.T) {
 - Verify: `clawker firewall enable` → firewall re-applied
 - Verify: MITM path rules → allowed paths succeed, denied paths get 403
 
-**What NOT to test:**
-- Do not mock Docker API calls to test container creation args — proves nothing
-- Do not mock the firewall manager interface to test CLI commands in isolation — the CLI is thin plumbing, the value is in the real system
-- Do not write unit tests that test mocks instead of real behavior
+**NO UNIT TESTS. Zero.**
+- Do not write unit tests for this initiative. No mocks, no stubs, no isolated function tests.
+- Config generation tests (golden files) and state management tests (oracle+golden) use real filesystems via `testenv` — these are NOT unit tests, they are component tests against real infrastructure.
+- Everything else is integration/e2e tests in `test/` with real Docker containers.
+- CLI command tests go in `test/commands/` or `test/e2e/` — exercise real end-to-end flows.
+- If a test doesn't touch the real filesystem or real Docker, it shouldn't exist.
 
 ---
 
