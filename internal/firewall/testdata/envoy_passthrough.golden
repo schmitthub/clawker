@@ -1,0 +1,74 @@
+admin:
+    address:
+        socket_address:
+            address: 127.0.0.1
+            port_value: 9901
+static_resources:
+    clusters:
+        - cluster_type:
+            name: envoy.clusters.dynamic_forward_proxy
+            typed_config:
+                '@type': type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+                dns_cache_config:
+                    dns_lookup_family: V4_ONLY
+                    name: dynamic_forward_proxy_cache_config
+          connect_timeout: 10s
+          lb_policy: CLUSTER_PROVIDED
+          name: dynamic_forward_proxy_cluster
+        - connect_timeout: 1s
+          load_assignment:
+            cluster_name: deny_cluster
+            endpoints: []
+          name: deny_cluster
+          type: STATIC
+    listeners:
+        - address:
+            socket_address:
+                address: 0.0.0.0
+                port_value: 10000
+          filter_chains:
+            - filter_chain_match:
+                server_names:
+                    - github.com
+              filters:
+                - name: envoy.filters.network.sni_dynamic_forward_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.sni_dynamic_forward_proxy.v3.FilterConfig
+                    dns_cache_config:
+                        dns_lookup_family: V4_ONLY
+                        name: dynamic_forward_proxy_cache_config
+                    port_value: 443
+            - filter_chain_match:
+                server_names:
+                    - api.github.com
+              filters:
+                - name: envoy.filters.network.sni_dynamic_forward_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.sni_dynamic_forward_proxy.v3.FilterConfig
+                    dns_cache_config:
+                        dns_lookup_family: V4_ONLY
+                        name: dynamic_forward_proxy_cache_config
+                    port_value: 443
+            - filter_chain_match:
+                server_names:
+                    - registry.npmjs.org
+              filters:
+                - name: envoy.filters.network.sni_dynamic_forward_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.sni_dynamic_forward_proxy.v3.FilterConfig
+                    dns_cache_config:
+                        dns_lookup_family: V4_ONLY
+                        name: dynamic_forward_proxy_cache_config
+                    port_value: 443
+            - filter_chain_match: {}
+              filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    cluster: deny_cluster
+                    stat_prefix: deny_all
+          listener_filters:
+            - name: envoy.filters.listener.tls_inspector
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
+          name: tls_egress
