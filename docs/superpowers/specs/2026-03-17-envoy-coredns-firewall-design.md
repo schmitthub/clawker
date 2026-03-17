@@ -620,16 +620,70 @@ Unit tests with mocks are NOT the testing strategy for this initiative. They don
 - Follow `internal/storage/` oracle+golden pattern as reference
 
 **State management — oracle + golden tests with real filesystem:**
-- Use `testenv.New(t, testenv.WithConfig())` for isolated XDG dirs
-- Create real `storage.Store[EgressRulesFile]` against isolated config dir
-- Oracle: generate random rule sets, compute expected merge independently (~15 lines), assert `Update()` matches
-- Golden: fixed rule sets with blessed struct literals, no auto-update
-- Test: `Update()` with new rules → file written correctly
-- Test: `Update()` with same rules → no write, early return
-- Test: `Update()` with overlapping rules → only new rules appended
-- Test: `Remove()` → rule removed from file
-- Test: concurrent `Update()` with goroutines → flock serializes correctly
-- Test: `NormalizeRules()` expansion of `AddDomains` → `[]EgressRule`
+
+Use `testenv.New(t, testenv.WithConfig())` for isolated XDG dirs. Create real `storage.Store[EgressRulesFile]` against isolated config dir. Follow storage layer's oracle+golden dual-layer pattern exactly.
+
+**Oracle test (randomized):**
+
+Randomize `clawker.yaml` firewall configs the same way storage does — random placement across walk-up layers, random `add_domains` and `rules` values with varying `Proto`, `Port`, `Action`, `PathRules`, `PathDefault` combinations. Then:
+
+1. Load config via real `config.Config` (uses `storage.Store[Project]` with merge)
+2. Call `NormalizeRules()` on the merged `FirewallConfig`
+3. Pass normalized rules to `Update()` on a real `storage.Store[EgressRulesFile]`
+4. Oracle independently computes expected result: union incoming rules into existing file contents, dedup by `dst+proto+port` (~10-15 lines, independent of prod code)
+5. Assert `store.Read().Rules` matches oracle expectation
+
+Run with a new random seed every time. Catches any merge/dedup/append bug that manifests for the random placement.
+
+**Golden test (fixed seed):**
+
+Hardcoded struct literals blessed from known-correct state. No auto-update. Fixed `clawker.yaml` configs → fixed `NormalizeRules()` output → fixed `Update()` result. Golden values are code, not files — must be hand-edited to change.
+
+**Concurrent access test (goroutines simulate cross-process):**
+
+`flock` advisory locks work across goroutines because `storage.Store[T]` opens a new file descriptor per `Set`/`Write` call. Goroutines contending on the same file serialize just like separate processes.
+
+```go
+func TestUpdate_ConcurrentAppend(t *testing.T) {
+    env := testenv.New(t, testenv.WithConfig())
+    store := storage.NewStore[EgressRulesFile](
+        storage.WithConfigDir(),
+        storage.WithLock(),
+    )
+
+    // Seed with initial rules
+    // ...
+
+    // N goroutines each try to add unique rules concurrently
+    var wg sync.WaitGroup
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            rule := EgressRule{
+                Dst: fmt.Sprintf("domain-%d.com", id),
+                Proto: "tls", Action: "allow",
+            }
+            // flock → read → diff → append → write → unlock
+            update(store, []EgressRule{rule})
+        }(i)
+    }
+    wg.Wait()
+
+    // Assert: all 10 rules present, no duplicates, no lost writes
+    final := store.Read()
+    assert.Len(t, final.Rules, 10 + initialCount)
+}
+```
+
+**Individual behavior tests (real filesystem, no mocks):**
+- `Update()` with new rules → file written, rules present
+- `Update()` with same rules → no write, early return (verify file mtime unchanged)
+- `Update()` with overlapping + new rules → only new rules appended
+- `Remove()` → rule removed from file
+- `NormalizeRules()` expansion: `AddDomains` → `[]EgressRule` with `Proto: "tls", Action: "allow"`
+- `NormalizeRules()` dedup: overlapping `AddDomains` and `Rules` → no duplicates
+- `NormalizeRules()` nil receiver → empty slice (not panic)
 
 **Integration tests — real containers, real traffic:**
 - Location: `test/commands/` or `test/internals/` (Docker-required)
