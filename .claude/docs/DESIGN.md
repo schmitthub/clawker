@@ -649,15 +649,27 @@ Note: Environment variables are visible in `docker inspect`. This is accepted fo
 the config volume. The `docker.CopyToVolume` two-phase chown ensures UID 1001 ownership.
 This supplements environment variable passing for persistent credential storage.
 
-### 7.2 Firewall
+### 7.2 Firewall — Envoy+CoreDNS Sidecar Architecture
 
-Firewall configuration is **out of scope** for the core design. Users implement firewall via:
+The firewall uses an **Envoy proxy + CoreDNS** sidecar pair running as managed Docker containers, not per-container iptables rules.
 
-- Custom Dockerfile with iptables rules
-- Entrypoint scripts
-- Network policies
+**Why this architecture:**
+- **DNS deny-by-default**: CoreDNS returns NXDOMAIN for unlisted domains — agents can't even resolve blocked hosts. Upstream: Cloudflare malware-blocking (`1.1.1.2`, `1.0.0.2`).
+- **TLS inspection**: Envoy terminates TLS with per-domain MITM certificates (ECDSA P256 CA), enabling path-level filtering. Passthrough mode for domains without path rules.
+- **Hot reload**: Rule changes regenerate `envoy.yaml` and `Corefile` — Envoy picks up config via restart, CoreDNS via reload plugin (2s).
+- **Shared infrastructure**: One Envoy+CoreDNS pair serves all agent containers, rather than per-container iptables (which requires `CAP_NET_ADMIN` inside the container for rule management).
 
-The `security.enable_firewall` config option triggers inclusion of a firewall init script in the generated Dockerfile.
+**Daemon isolation**: The firewall runs as a separate detached process (`EnsureDaemon()`), not as part of the CLI command. The daemon manages container lifecycle and runs dual health check loops (Envoy TCP + CoreDNS HTTP, 5s interval). A container watcher loop (30s) exits the daemon when no clawker containers are running.
+
+**Network design**: All firewall containers and agent containers share a `clawker-net` Docker bridge network. Envoy and CoreDNS get static IPs computed from the network gateway (`.2` and `.3`). Agent containers use iptables DNAT rules (set up by `init-firewall.sh` running as root before privilege drop) to redirect DNS to CoreDNS and HTTPS to Envoy.
+
+**Rule merge strategy**: System-required rules (Claude API, Docker registry) are always present. Project rules from `.clawker.yaml` (`add_domains`, `rules`) merge additively — project rules never replace system rules. Dedup key: `destination:protocol:port`. The rules store uses `storage.Store[EgressRulesFile]` with file-level locking.
+
+**Certificate PKI**: A persistent ECDSA P256 CA is generated on first run. Per-domain certificates are generated for domains requiring MITM inspection (path rules). The CA cert is injected into agent containers at creation time via `containerfs`. `clawker firewall rotate-ca` regenerates everything.
+
+**Bypass escape hatch**: `clawker firewall bypass` grants temporary unrestricted egress via a Dante SOCKS proxy, auto-expiring after a configurable timeout.
+
+**Entrypoint privilege model**: Container entrypoint runs as root → `init-firewall.sh` sets up iptables DNAT rules → `gosu` drops to unprivileged `claude` user. Containers still need `NET_ADMIN` + `NET_RAW` capabilities for the DNAT setup.
 
 ### 7.3 Strict Label Ownership
 

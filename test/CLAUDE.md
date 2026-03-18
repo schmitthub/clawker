@@ -15,6 +15,7 @@ test/
 │   ├── ready.go    # WaitFor* functions, timeout constants
 │   ├── factory.go  # NewTestFactory for integration tests
 │   └── hash.go     # ComputeTemplateHash, TemplateHashShort
+├── e2e/            # End-to-end integration tests (Docker + real infra)
 ├── whail/          # Whail BuildKit integration tests (Docker + BuildKit)
 ├── cli/            # Testscript-based CLI workflow tests (Docker)
 ├── commands/       # Command integration tests (Docker)
@@ -26,6 +27,7 @@ test/
 
 ```bash
 make test                                        # Unit tests only (no Docker)
+go test ./test/e2e/... -v -timeout 10m            # E2E integration (firewall, mounts)
 go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
 go test ./test/cli/... -v -timeout 15m           # CLI workflows
 go test ./test/commands/... -v -timeout 10m      # Command integration
@@ -120,10 +122,30 @@ Leaf subpackage — stdlib + testify only, no heavy transitive dependencies.
 
 `SocketBridgeConfig` — config for socket bridge test setup. `StartSocketBridge(t, cfg)` — starts bridge for tests. `BuildRemoteSocketsEnv(cfg) string` — env vars. `DefaultGPGSocketPath()`, `DefaultSSHSocketPath()` — default paths. `WithSocketForwarding(cfg)` — container opt.
 
+## Firewall E2E Tests
+
+Tests in `test/e2e/firewall_test.go` exercise the full Envoy+CoreDNS firewall stack with real Docker infrastructure.
+
+### Test Functions
+
+| Test | Verifies |
+|------|----------|
+| `TestFirewall_BlockedDomain` | Unlisted domains (e.g. `example.com`) are blocked by the firewall |
+| `TestFirewall_AllowedDomain` | Required domains (e.g. `api.anthropic.com`) are reachable through Envoy proxy |
+| `TestFirewall_AddRemove` | Dynamic rule management: add rule allows traffic, remove rule blocks it again |
+| `TestFirewall_Status` | `firewall status --json` reports `running: true` and correct rule count |
+
+### Harness
+
+- `newFirewallHarness(t)` — creates an isolated project with firewall enabled, registers it, and builds the image. Uses `harness.FactoryOptions.Firewall` set to `firewall.NewManager` (real manager, not mock).
+- `runInContainer(h, agent, cmd...)` — runs a command inside a container via `container run --rm --agent <agent> @`.
+- `harness.FactoryOptions.Firewall` — factory option that accepts a real `firewall.NewManager` constructor or falls back to `FirewallManagerMock` from `internal/firewall/mocks`.
+- Cleanup in `harness.cleanupTestResources` runs `firewall down` to tear down Envoy+CoreDNS containers before removing test-labeled resources.
+
 ## Debugging Resource Leaks
 
 All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestName`. See `.claude/rules/testing.md` for lookup commands.
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/hostproxy`, `internal/socketbridge`, `internal/text`, `pkg/whail`
+Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/firewall`, `internal/firewall/mocks`, `internal/hostproxy`, `internal/socketbridge`, `internal/text`, `pkg/whail`

@@ -19,26 +19,25 @@
 ┌─────────────────────▼───────────────────────────────────────┐
 │                  internal/cmd/*                              │
 │            (Command implementations)                         │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────┐
-│                  internal/docker                             │
-│            (Clawker-specific middleware)                     │
-│         - Label conventions (dev.clawker.*)                  │
-│         - Naming schemes (clawker.project.agent)             │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────┐
-│                   pkg/whail                                  │
-│              (Reusable Docker engine library)                │
-│         - Label-based selector injection                     │
-│         - Managed resource isolation                         │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────┐
-│              github.com/moby/moby                            │
-│                  (Docker SDK)                                │
-└─────────────────────────────────────────────────────────────┘
+└──────────┬──────────────────────────────────┬───────────────┘
+           │                                  │
+┌──────────▼──────────────────┐  ┌────────────▼──────────────┐
+│     internal/docker          │  │   internal/firewall        │
+│  (Clawker middleware)        │  │  (Envoy+CoreDNS stack)     │
+│  - Labels, naming            │  │  - Daemon lifecycle        │
+│  - Container orchestration   │  │  - Config generators       │
+└──────────┬──────────────────┘  │  - Certificate PKI         │
+           │                     │  - Rule management          │
+┌──────────▼──────────────────┐  └────────────┬──────────────┘
+│        pkg/whail             │               │
+│  (Docker engine library)     │◄──────────────┘
+│  - Label-based isolation     │  (uses whail for containers)
+└──────────┬──────────────────┘
+           │
+┌──────────▼──────────────────┐
+│    github.com/moby/moby      │
+│       (Docker SDK)           │
+└─────────────────────────────┘
 ```
 
 ## Factory Dependency Injection (gh CLI Pattern)
@@ -344,6 +343,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/docs` | CLI documentation generation (used by cmd/gen-docs) |
 | `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |
 | `internal/project` | Project domain layer: owns `registry.yaml` (via `internal/storage`), project identity resolution, registration CRUD, worktree orchestration, runtime health enrichment (`ProjectState`/`ProjectStatus`). Project commands (`internal/cmd/project/*`) are the primary UI — all domain logic (health checks, status) lives here, not in command code. Fully decoupled from `internal/config` |
+| `internal/firewall` | Envoy+CoreDNS firewall stack: manager interface, config generators, certificate PKI, daemon lifecycle, rules store |
 | `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
 | `internal/testenv` | Unified test environment: isolated XDG dirs + optional Config/ProjectManager. Delegates from `config/mocks`, `project/mocks`, `test/e2e/harness` |
 
@@ -401,6 +401,35 @@ Runs Claude Code in per-iteration Docker containers with stream-json parsing and
 - `StreamHandler` / `ParseStream` - NDJSON stream-json parser for real-time output
 - `TextAccumulator` - Aggregates assistant text across stream events
 - `ResultEvent` - Cost, tokens, turns from Claude API result
+
+### internal/firewall - Firewall Stack
+
+Envoy+CoreDNS sidecar architecture providing DNS-level blocking and TLS inspection for agent containers.
+
+**Architecture:**
+```
+Daemon Process          Envoy Container (.2)     CoreDNS Container (.3)
+    │                        │                        │
+    ├── Health check (5s) ──►│ TCP :18901             │
+    ├── Health check (5s) ──────────────────────────►│ HTTP :18902/health
+    ├── Container watcher (30s) — exits when no clawker containers running
+    │
+    ├── ensureConfigs() ────►│ envoy.yaml (bind mount) │ Corefile (bind mount)
+    ├── ensureContainer() ──►│ envoyproxy/envoy        │ coredns/coredns
+    └── syncProjectRules() — merges required + project rules → regenerate configs
+```
+
+**Components:**
+- `FirewallManager` interface — 16 methods (lifecycle, rules, container control, bypass, status)
+- `Manager` — Docker implementation using whail.Engine
+- `Daemon` — detached process with dual-loop (health 5s + watcher 30s), PID file management
+- Config generators: `GenerateEnvoyConfig()`, `GenerateCorefile()`
+- Certificate PKI: `EnsureCA()`, `GenerateDomainCert()`, ECDSA P256
+- Rules store: `storage.Store[EgressRulesFile]` with dedup via `dst:proto:port`
+
+**Network topology:** `clawker-net` Docker bridge with IPAM. Static IPs computed from gateway: Envoy=.2, CoreDNS=.3. Agent containers join network with `--dns` pointing to CoreDNS.
+
+**Integration:** `EnsureDaemon()` called during container creation. Factory exposes `f.Firewall()` lazy noun.
 
 ## Command Dependency Injection Pattern
 
@@ -576,6 +605,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │                                                                 │
 │  Clawker examples:                                              │
 │    docker/ → bundler, config, logger, pkg/whail, pkg/whail/buildkit│
+│    firewall/ → config, logger, storage, moby/client (daemon exception)│
 │    workspace/ → config, docker, logger                          │
 │    cmd/loop/shared/ → docker, config, logger                    │
 └─────────────────────────────────────────────────────────────────┘
@@ -614,6 +644,7 @@ Test doubles follow a `<package>/<package>test/` naming convention. Each provide
 | `iostreams` | `Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `term/mocks/` | `FakeTerm` — stub satisfying `iostreams.term` interface |
 | `logger/loggertest/` | `TestLogger` (captures output), `New()`, `NewNop()` |
+| `firewall/mocks/` | `FirewallManagerMock` (moq-generated) |
 | `socketbridge/socketbridgetest/` | `MockManager` |
 | `storage` | `ValidateDirectories()` — XDG directory collision detection |
 

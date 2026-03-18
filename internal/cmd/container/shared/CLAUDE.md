@@ -108,6 +108,7 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 | `NetworkOpt` | pflag.Value for advanced network flags with `NetworkAttachmentOpts` |
 | `CopyToVolumeFn` | Function type matching `(*docker.Client).CopyToVolume` |
 | `CopyToContainerFn` | Simplified function type for tar-to-container copy |
+| `CopyFromContainerFn` | Function type for reading a tar stream from a container |
 | `InitConfigOpts` | Project/agent names, `ContainerWorkDir`, `*config.ClaudeCodeConfig`, `CopyToVolumeFn` |
 | `InjectPostInitOpts` | Container ID, Script content, `CopyToContainerFn` — injects `~/.clawker/post-init.sh` |
 | `RebuildMissingImageOpts` | Image ref, IOStreams, TUI, Prompter, BuildImage fn, CommandVerb |
@@ -125,6 +126,10 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 | `InjectPostInitScript(ctx, InjectPostInitOpts)` | Write `~/.clawker/post-init.sh` to a created container; entrypoint runs it once on first start |
 | `ResolveAgentEnv(agent, projectDir) (map[string]string, []string, error)` | Merges `env_file` + `from_env` + `env` into env map. Precedence: env_file < from_env < env |
 | `RebuildMissingDefaultImage(ctx, RebuildMissingImageOpts)` | Interactive rebuild flow for missing default images with TUI progress |
+| `NewListOpts(validator) *ListOpts` | Create ListOpts with optional validation function |
+| `NewListOptsRef(values, validator) *ListOpts` | Create ListOpts backed by an existing slice |
+| `NewMapOpts(validator) *MapOpts` | Create MapOpts with optional validation function |
+| `NewPortOpts() *PortOpts` | Create PortOpts for port mapping flags |
 | `NewCopyToContainerFn(client *docker.Client) CopyToContainerFn` | Creates a `CopyToContainerFn` closure wrapping `docker.Client.CopyToContainer` |
 
 ## Worktree Resolution (`resolveWorkDir`)

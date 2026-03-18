@@ -1,0 +1,283 @@
+---
+title: "Firewall Guide"
+description: "Envoy + CoreDNS network firewall architecture, configuration, CLI commands, and troubleshooting"
+icon: "fire-flame-curved"
+---
+
+Clawker ships a **deny-by-default network firewall** that restricts all container egress to explicitly allowed domains and IP ranges. The firewall runs as a pair of sidecar containers (Envoy proxy + CoreDNS) on a shared Docker bridge network, providing DNS-level blocking and TLS-level inspection without modifying your agent containers.
+
+## Architecture
+
+The firewall uses two infrastructure containers managed automatically by the Clawker daemon:
+
+- **CoreDNS** (port `53`) --- DNS-level deny-by-default. Only explicitly allowed domains resolve successfully. All other queries return NXDOMAIN. Uses Cloudflare malware-blocking upstream (`1.1.1.2`, `1.0.0.2`).
+- **Envoy** (port `10000` TLS, `10001+` TCP) --- TLS inspection with per-domain MITM certificates for path-level filtering. SNI passthrough for allowed domains without path rules. Default deny (connection reset) for unrecognized SNI.
+
+Both containers run on the `clawker-net` bridge network with static IPs: Envoy at `.2`, CoreDNS at `.3`. Agent containers join the same network, use CoreDNS for DNS resolution, and route HTTPS through Envoy via iptables DNAT rules configured during container init.
+
+```
+Agent Container          CoreDNS (.3)         Envoy (.2)          Internet
+    |                        |                    |                   |
+    |--- DNS query --------->|                    |                   |
+    |<-- NXDOMAIN (blocked)--|                    |                   |
+    |<-- resolved IP (allow)-|                    |                   |
+    |                        |                    |                   |
+    |--- HTTPS (iptables DNAT) ----------------->|                   |
+    |                        |                    |--- TLS inspect -->|
+    |                        |                    |<-- response ------|
+    |<--------------------------------------------+                   |
+```
+
+## How It Works
+
+1. When you run `clawker run` or `clawker container create` with the firewall enabled, the **firewall daemon** starts automatically via `EnsureDaemon()`
+2. The daemon creates the `clawker-net` bridge network and launches the Envoy and CoreDNS containers
+3. Project rules from `.clawker.yaml` are merged with system-required rules (additive merge, dedup by `destination:protocol:port`)
+4. Envoy and CoreDNS configs are regenerated from the merged ruleset
+5. Agent containers join the firewall network with DNS pointing to CoreDNS
+6. The daemon runs health checks every 5 seconds --- TCP on Envoy (`:18901`), HTTP on CoreDNS (`:18902/health`)
+7. A container watcher polls every 30 seconds and exits the daemon when no Clawker containers are running
+
+## Default Allowed Domains
+
+These domains are always allowed when the firewall is enabled (system-required rules):
+
+| Domain | Purpose |
+|--------|---------|
+| `api.anthropic.com` | Claude API |
+| `sentry.io` | Error tracking |
+| `statsig.anthropic.com` | Feature flags |
+| `statsig.com` | Feature flags |
+| `registry-1.docker.io` | Docker image registry |
+| `production.cloudflare.docker.com` | Docker CDN |
+| `docker.io` | Docker image resolution |
+
+## Configuration
+
+The firewall is configured in the `security.firewall` section of your `.clawker.yaml`:
+
+```yaml
+security:
+  firewall:
+    enable: true
+    add_domains:
+      - "api.openai.com"
+      - "registry.npmjs.org"
+    rules:
+      - destination: "api.example.com"
+        protocol: tls
+        port: 443
+        action: allow
+        paths:
+          - "/v1/chat/*"
+    ip_range_sources:
+      - name: github
+      - name: google-cloud
+```
+
+### `add_domains`
+
+A convenience shorthand for allowlisting entire domains. Each entry is automatically converted to a TLS allow rule on port 443 with no path restrictions (SNI passthrough).
+
+```yaml
+security:
+  firewall:
+    add_domains:
+      - "api.openai.com"
+      - "registry.npmjs.org"
+      - "pypi.org"
+```
+
+### `rules`
+
+Full rule specification for fine-grained control:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `destination` | string | Domain name or IP address |
+| `protocol` | string | `tls`, `tcp`, or `ssh` |
+| `port` | int | Destination port number |
+| `action` | string | `allow` or `deny` |
+| `paths` | list | Optional path patterns for TLS MITM inspection (glob syntax) |
+
+When `paths` is specified, Envoy performs TLS interception (MITM) for that domain --- it terminates the TLS connection, inspects the HTTP path, and only forwards requests matching the path patterns. Without `paths`, the domain uses SNI passthrough (no inspection).
+
+```yaml
+security:
+  firewall:
+    rules:
+      - destination: "api.example.com"
+        protocol: tls
+        port: 443
+        action: allow
+        paths:
+          - "/v1/chat/*"
+          - "/v1/models"
+      - destination: "git.internal.corp"
+        protocol: ssh
+        port: 22
+        action: allow
+      - destination: "10.0.0.5"
+        protocol: tcp
+        port: 8080
+        action: allow
+```
+
+### `ip_range_sources`
+
+For cloud providers that use large IP ranges, Clawker can fetch and allowlist entire CIDR blocks:
+
+| Source | What It Covers | Required by Default |
+|--------|---------------|:---:|
+| `github` | GitHub API, Git, Copilot, Actions, Packages, Pages | Yes |
+| `google-cloud` | Google Cloud Platform IPs | No |
+| `google` | All Google IPs (includes GCS, Firebase) | No |
+| `cloudflare` | Cloudflare edge network | No |
+| `aws` | All AWS IP ranges | No |
+
+Custom IP range sources are also supported:
+
+```yaml
+security:
+  firewall:
+    ip_range_sources:
+      - name: github
+      - name: custom-internal
+        url: "https://internal.example.com/ip-ranges.json"
+        jq_filter: ".cidrs[]"
+        required: false
+```
+
+The `jq_filter` field extracts CIDR strings from the JSON response. The `required` field controls whether a fetch failure aborts container startup (default: `false`, except `github` which defaults to `true`).
+
+<Warning>
+The `google` IP range source allows traffic to **all** Google IPs, including Google Cloud Storage and Firebase Hosting which can serve user-generated content. This creates a prompt injection risk --- an attacker could host malicious content on a public GCS bucket or Firebase site that the agent fetches. Only add `google` if your project requires it (e.g., Go modules via `proxy.golang.org`). Use `google-cloud` for a more targeted allowlist.
+</Warning>
+
+## Global vs Project Rules
+
+- **System-required rules** (from `cfg.RequiredFirewallRules()`) are always present --- Claude API, Docker registry, error tracking, and feature flags
+- **Project rules** come from `add_domains` and `rules` in your `.clawker.yaml`
+- Rules merge **additively** --- project rules add to (never replace) system rules
+- Dedup key: `destination:protocol:port` --- duplicate rules are silently ignored
+- This means you cannot accidentally override or remove a system-required rule
+
+## CLI Commands
+
+All firewall operations are available under `clawker firewall`:
+
+| Command | Purpose |
+|---------|---------|
+| `clawker firewall status` | Show firewall health, running containers, rule count |
+| `clawker firewall list` | List all active egress rules |
+| `clawker firewall add DOMAIN` | Add a domain allow rule |
+| `clawker firewall remove DOMAIN` | Remove a domain rule |
+| `clawker firewall reload` | Force regenerate Envoy/CoreDNS configs |
+| `clawker firewall up` | Start the firewall daemon (usually automatic) |
+| `clawker firewall down` | Stop the firewall daemon |
+| `clawker firewall enable CONTAINER` | Attach a container to the firewall network |
+| `clawker firewall disable CONTAINER` | Remove a container from the firewall network |
+| `clawker firewall bypass` | Temporary unrestricted egress (Dante SOCKS proxy) |
+| `clawker firewall rotate-ca` | Regenerate CA and all domain certificates |
+
+## Certificate Management
+
+The firewall uses a self-signed certificate authority for TLS inspection:
+
+- A **ECDSA P256 CA** is generated on first run and persisted in the firewall data directory
+- Per-domain MITM certificates are generated on demand for domains with `paths` rules (TLS inspection)
+- Domains without `paths` use SNI passthrough --- no certificate needed
+- The CA certificate is injected into agent containers at creation time so they trust the MITM certificates
+- Use `clawker firewall rotate-ca` to regenerate the CA and all domain certs
+
+<Note>
+After rotating the CA, you must restart any running agent containers for them to pick up the new certificate.
+</Note>
+
+## Bypass (Escape Hatch)
+
+For situations where you need temporary unrestricted network access:
+
+```bash
+# Grant unrestricted egress for 5 minutes
+clawker firewall bypass --agent dev --timeout 5m
+
+# Cancel bypass early
+clawker firewall bypass --agent dev --stop
+```
+
+Bypass mode routes traffic through a Dante SOCKS proxy, completely bypassing both DNS filtering and TLS inspection. The bypass auto-expires after the specified timeout.
+
+<Warning>
+Bypass mode removes all network restrictions for the specified agent. Use it sparingly and with short timeouts. The agent has full internet access during a bypass.
+</Warning>
+
+## Disabling the Firewall
+
+To disable the firewall entirely:
+
+```yaml
+security:
+  firewall:
+    enable: false
+```
+
+<Warning>
+Disabling the firewall removes **all** outbound network restrictions. The agent can reach any endpoint on the internet. Only do this in trusted environments where you accept the risk of unrestricted egress.
+</Warning>
+
+## Troubleshooting
+
+### Health check failures
+
+Run `clawker firewall status` to see the health of Envoy and CoreDNS. The daemon checks Envoy on port `18901` (TCP) and CoreDNS on port `18902` (`/health` HTTP endpoint) every 5 seconds.
+
+If a container is unhealthy, try:
+
+```bash
+clawker firewall down
+clawker firewall up
+```
+
+### Blocked domains
+
+Check which rules are active with `clawker firewall list`. If a domain you need is missing, add it:
+
+```bash
+clawker firewall add api.openai.com
+```
+
+Or add it permanently in `.clawker.yaml`:
+
+```yaml
+security:
+  firewall:
+    add_domains:
+      - "api.openai.com"
+```
+
+### DNS resolution failures
+
+CoreDNS returns NXDOMAIN for any domain not in the allowlist. If an agent reports DNS failures for a domain it should be able to reach, verify the domain is in your rules with `clawker firewall list`.
+
+### Certificate trust errors
+
+If an agent reports TLS certificate errors for a domain with path rules (MITM inspection), the CA certificate may not have been injected properly. Try:
+
+```bash
+clawker firewall rotate-ca
+```
+
+Then restart the affected containers.
+
+### GitHub IP range fetch fails
+
+The `github` IP range source is required by default. If the GitHub API is unreachable (e.g., behind a corporate proxy), container startup will fail. You can make it optional:
+
+```yaml
+security:
+  firewall:
+    ip_range_sources:
+      - name: github
+        required: false
+```

@@ -225,6 +225,14 @@ security:
     #   - name: custom
     #     url: "https://example.com/ranges.json"
     #     jq_filter: ".cidrs[]"
+    # Full rule specification (for path-level filtering)
+    # rules:
+    #   - destination: "api.example.com"
+    #     protocol: tls
+    #     port: 443
+    #     action: allow
+    #     paths:
+    #       - "/v1/*"
   # Mount Docker socket (security risk if enabled)
   docker_socket: false
   # Linux capabilities to add (default: NET_ADMIN, NET_RAW for firewall)
@@ -336,7 +344,11 @@ Built-in IP range sources: `github`, `google-cloud`, `google`, `cloudflare`, `aw
 The `google` IP range source allows traffic to all Google IPs, including Google Cloud Storage and Firebase Hosting which can serve user-generated content. Only add it if your project requires it (e.g., Go modules via `proxy.golang.org`).
 </Warning>
 
-The `cap_add` field adds Linux capabilities to the container. The defaults (`NET_ADMIN`, `NET_RAW`) are required for the firewall's iptables rules. Only modify this if you know what you're doing.
+The `cap_add` field adds Linux capabilities to the container. The defaults (`NET_ADMIN`, `NET_RAW`) are required for iptables DNAT rules that redirect traffic to the firewall proxy. Only modify this if you know what you're doing.
+
+<Note>
+See the [Firewall](/firewall) guide for details on how rules work, the Envoy+CoreDNS architecture, and CLI management commands.
+</Note>
 
 The `enable_host_proxy` field controls whether the host proxy daemon runs. The host proxy enables HTTPS credential forwarding from your host into the container. It's enabled by default.
 

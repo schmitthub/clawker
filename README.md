@@ -67,7 +67,7 @@ When I began experimenting with Claude Code to keep up with the Agentic AI trend
 - **Host proxy service** copies git ssh keys into the container and sends events like "browser open" from the container to your host for browser authentication, then proxies the callback back to the container. Great for when you have to authenticate with `claude` or `gh`
 - **Configurable environment variables**: set or copy environment variables and env files from the host into containers at runtime
 - **Injectable post-initialization bash script** that runs after the container starts but before Claude Code launches, letting you set up MCPs, etc.
-- **Default-configured firewall** to prevent agents from accessing most of the internet except GitHub and common package managers; add domains, IP list services, and pre-created addons (GCP) per project, or disable it entirely. This is a great security layer to mitigate runaway agents or prompt injections from doing damage while still giving them the network access they need to be useful.
+- **Envoy+CoreDNS network firewall** enabled by default — an Envoy proxy and CoreDNS sidecar run as managed Docker containers on a shared network, providing DNS-level deny-by-default (unlisted domains return NXDOMAIN) and TLS inspection with per-domain MITM certificates for path-level filtering. System-required rules (Claude API, Docker registry, GitHub) are always present; project rules merge additively. Manage rules dynamically with `clawker firewall add/remove/list/status`, temporarily bypass with `clawker firewall bypass --timeout 5m`, or disable entirely. A great security layer to mitigate runaway agents or prompt injections while giving them the network access they need.
 - **Toggleable read-only global share**: volume mount from the host giving all containers real-time access to files you place in it
 - **Project-based namespace isolation** of container resources. Clawker detects if it's in a project directory and automatically, via docker label prefixes, lets you filter for resources with re-usable names like "dev" or "main" that are scoped to the project. So you can have a "dev" container in multiple projects without conflict, and you can easily filter `clawker ps --filter agent=dev` to see all your dev containers across projects or `clawker ps --project myapp` to see all containers for a specific project.
 - **Dedicated Docker network** that all containers run in
@@ -329,6 +329,13 @@ clawker container ls                # Same thing
 clawker container stop --agent NAME
 clawker image ls                    # List clawker images
 clawker volume ls                   # List clawker volumes
+
+# Firewall management
+clawker firewall status             # Health, rule count, running containers
+clawker firewall list               # List active egress rules
+clawker firewall add api.openai.com # Allow a domain
+clawker firewall remove api.openai.com
+clawker firewall bypass --agent dev --timeout 5m  # Temporary unrestricted egress
 ```
 
 ## Monitoring 
@@ -368,8 +375,8 @@ See `clawker loop --help` for all options and configuration.
 
 ## Roadmap / Known Issues
 
-- Currently, clawker containers use stdout/stderr as a poor man's event transport for monitoring and looping mode. I am working on a control plane and container agent daemon to properly manage container lifecycles, configs, and events via gRPC. The clawker cli will just be the scheduler to control plane, and handle user UI direct with the containers. This will keep container stdout/err sacred and allow for more robust features, better monitoring, better loop control, peering communications, and a more seamless experience overall. This is the main focus of my next set of work on clawker. See: [control plane notes](.serena/memories/clawkerd-container-control-plane.md)
-- Linux might have a bug involving accessing the keychain for creds, I haven't focused on linux I'll do this in parallel with control plane work
+- Currently, clawker containers use stdout/stderr as a poor man's event transport for monitoring and looping mode. A proper control plane with container agent daemon for managing container lifecycles, configs, and events via gRPC is on the roadmap. This will keep container stdout/err sacred and allow for more robust features, better monitoring, better loop control, peering communications, and a more seamless experience overall
+- Linux might have a bug involving accessing the keychain for creds, I haven't focused on linux extensively yet
 - The TUI/UI formatting is mainly a polished turd currently, I'm aware of this. It's functional, but it'll be the last thing I really care about 
 - Being my first vibe coding experience, I come across some utterly insane, often painful, sometimes funny quality issues from good ole claude boy.  
 - I'm realizing it's probably trivial (just jinxed myself) to swap out different AI agents as the container entrypoint beyond claude code. So I am considering adding options for what AI agent you want. Making clawker essentially a general "harness for the harness" / agent-in-container solution  
