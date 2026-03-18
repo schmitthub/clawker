@@ -6,25 +6,29 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // BypassOptions holds the options for the firewall bypass command.
 type BypassOptions struct {
-	IOStreams *iostreams.IOStreams
-	Firewall  func(context.Context) (firewall.FirewallManager, error)
-	Agent     string
-	Duration  time.Duration
-	Stop      bool
+	IOStreams      *iostreams.IOStreams
+	ProjectManager func() (project.ProjectManager, error)
+	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	Agent          string
+	Duration       time.Duration
+	Stop           bool
 }
 
 // NewCmdBypass creates the firewall bypass command.
 func NewCmdBypass(f *cmdutil.Factory, runF func(context.Context, *BypassOptions) error) *cobra.Command {
 	opts := &BypassOptions{
-		IOStreams: f.IOStreams,
-		Firewall:  f.Firewall,
+		IOStreams:      f.IOStreams,
+		ProjectManager: f.ProjectManager,
+		Firewall:       f.Firewall,
 	}
 
 	cmd := &cobra.Command{
@@ -85,20 +89,34 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	var projectName string
+	if opts.ProjectManager != nil {
+		if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+			if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+				projectName = p.Name()
+			}
+		}
+	}
+
+	containerName, err := docker.ContainerName(projectName, opts.Agent)
+	if err != nil {
+		return fmt.Errorf("resolving container name: %w", err)
+	}
+
 	fwMgr, err := opts.Firewall(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to firewall: %w", err)
 	}
 
 	if opts.Stop {
-		if err := fwMgr.StopBypass(ctx, opts.Agent); err != nil {
+		if err := fwMgr.StopBypass(ctx, containerName); err != nil {
 			return fmt.Errorf("stopping bypass for %s: %w", opts.Agent, err)
 		}
 		fmt.Fprintf(ios.Out, "%s Bypass stopped for agent %s\n", cs.SuccessIcon(), opts.Agent)
 		return nil
 	}
 
-	if err := fwMgr.Bypass(ctx, opts.Agent, opts.Duration); err != nil {
+	if err := fwMgr.Bypass(ctx, containerName, opts.Duration); err != nil {
 		return fmt.Errorf("starting bypass for %s: %w", opts.Agent, err)
 	}
 

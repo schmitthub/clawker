@@ -56,12 +56,56 @@ func runInContainer(h *harness.Harness, agent string, cmd ...string) *harness.Ru
 	return h.Run(args...)
 }
 
+// execInContainer runs a command inside an existing container for the specified agent and returns the result.
+func execInContainer(h *harness.Harness, agent string, cmd ...string) *harness.RunResult {
+	h.T.Helper()
+	args := []string{"container", "exec", "--agent", agent}
+	args = append(args, cmd...)
+	return h.Run(args...)
+}
+
 func TestFirewall_BlockedDomain(t *testing.T) {
 	h := newFirewallHarness(t)
 
 	// Blocked: example.com is NOT in the allowed rules.
 	res := runInContainer(h, "firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, res.Err, "curl to blocked domain should fail")
+}
+
+func TestFirewall_Bypass(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	// Start a long-lived container in detached mode so we can exec into it.
+	startRes := h.Run("container", "run", "--detach", "--agent", "firewall-test", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+
+	// Blocked: example.com is NOT in the allowed rules.
+	blockRes := execInContainer(h, "firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
+	assert.NotNil(t, blockRes.Err, "curl to blocked domain should fail")
+
+	bypassRes := h.Run("firewall", "bypass", "30s", "--agent", "firewall-test")
+	require.NoError(t, bypassRes.Err, "firewall bypass failed\nstdout: %s\nstderr: %s",
+		bypassRes.Stdout, bypassRes.Stderr)
+
+	// Should succeed now that it's bypassed — proxychains4 uses system default config.
+	allowedRes := execInContainer(h, "firewall-test", "proxychains4",
+		"curl", "-s", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}", "https://example.com")
+	require.NoError(t, allowedRes.Err, "curl after bypass should succeed\nstdout: %s\nstderr: %s",
+		allowedRes.Stdout, allowedRes.Stderr)
+	assert.NotEmpty(t, strings.TrimSpace(allowedRes.Stdout), "should get HTTP response code")
+
+	stopRes := h.Run("firewall", "bypass", "--stop", "--agent", "firewall-test")
+	require.NoError(t, stopRes.Err, "firewall bypass stop failed\nstdout: %s\nstderr: %s",
+		stopRes.Stdout, stopRes.Stderr)
+
+	// Should be blocked again after stopping bypass.
+	blockAgainRes := execInContainer(h, "firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
+	assert.NotNil(t, blockAgainRes.Err, "curl should be blocked again after stopping bypass")
+
+	stopAgentRes := h.Run("container", "stop", "--agent", "firewall-test")
+	require.NoError(t, stopAgentRes.Err, "container stop failed\nstdout: %s\nstderr: %s",
+		stopAgentRes.Stdout, stopAgentRes.Stderr)
 }
 
 func TestFirewall_AllowedDomain(t *testing.T) {

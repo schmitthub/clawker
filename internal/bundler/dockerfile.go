@@ -41,6 +41,9 @@ var EntrypointScript string
 //go:embed assets/init-firewall.sh
 var FirewallScript string
 
+//go:embed assets/firewall-bypass.sh
+var FirewallBypassScript string
+
 //go:embed assets/statusline.sh
 var StatuslineScript string
 
@@ -225,6 +228,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 	}{
 		{"entrypoint.sh", EntrypointScript, 0755},
 		{"init-firewall.sh", FirewallScript, 0755},
+		{"firewall-bypass.sh", FirewallBypassScript, 0755},
 		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
@@ -410,8 +414,11 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
-	// Add firewall script (always included; execution gated at runtime)
+	// Add firewall scripts (always included; execution gated at runtime)
 	if err := addFileToTar(tw, "init-firewall.sh", []byte(FirewallScript)); err != nil {
+		return nil, err
+	}
+	if err := addFileToTar(tw, "firewall-bypass.sh", []byte(FirewallBypassScript)); err != nil {
 		return nil, err
 	}
 
@@ -493,6 +500,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 	}{
 		{"entrypoint.sh", EntrypointScript, 0755},
 		{"init-firewall.sh", FirewallScript, 0755},
+		{"firewall-bypass.sh", FirewallBypassScript, 0755},
 		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},

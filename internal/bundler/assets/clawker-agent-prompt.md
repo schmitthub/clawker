@@ -15,9 +15,9 @@ The user can temporarily open unrestricted access:
 `clawker firewall bypass <duration> --agent <name>`
 
 When bypass is active:
-- Use `proxychains4 -f /run/firewall-bypass-proxychains.conf <command>` for CLI tools
-- Or configure `socks5h://localhost:9100` for applications supporting SOCKS
-- Bypass config files only exist while the proxy is running
+- Use `proxychains4 <command>` to route any CLI tool through the bypass proxy
+- Or configure `socks5h://localhost:9100` for applications supporting SOCKS directly
+- Bypass automatically expires after the specified duration
 
 ## Notes
 

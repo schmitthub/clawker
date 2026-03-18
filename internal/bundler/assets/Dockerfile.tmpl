@@ -244,10 +244,12 @@ RUN ARCH=$(dpkg --print-architecture) && \
     dpkg -i "/tmp/downloads/$DEB"
 {{end}}
 
-# Copy firewall script (always included; execution gated at runtime via CLAWKER_FIREWALL_ENABLED).
-# Runs as root in entrypoint before privilege drop — no sudoers entry needed.
+# Copy firewall scripts (always included; execution gated at runtime via CLAWKER_FIREWALL_ENABLED).
+# init-firewall.sh runs as root in entrypoint before privilege drop — no sudoers entry needed.
+# firewall-bypass.sh is called by host via docker exec for temporary unrestricted egress.
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
-RUN chmod +x /usr/local/bin/init-firewall.sh
+COPY firewall-bypass.sh /usr/local/bin/firewall-bypass
+RUN chmod 700 /usr/local/bin/init-firewall.sh /usr/local/bin/firewall-bypass
 
 # Clawker agent environment awareness
 RUN mkdir -p /etc/claude-code

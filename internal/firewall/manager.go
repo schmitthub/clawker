@@ -42,12 +42,8 @@ const (
 	healthCheckInterval = 500 * time.Millisecond
 )
 
-// Dante SOCKS proxy paths for firewall bypass.
-const (
-	danteConfPath       = "/run/firewall-bypass-danted.conf"
-	proxychainsConfPath = "/run/firewall-bypass-proxychains.conf"
-	dantePIDPath        = "/run/firewall-bypass-danted.pid"
-)
+// Firewall bypass script path — baked into the image at build time.
+const firewallBypassScript = "/usr/local/bin/firewall-bypass"
 
 // Compile-time interface compliance check.
 var _ FirewallManager = (*Manager)(nil)
@@ -347,51 +343,19 @@ func (m *Manager) Enable(_ context.Context, _ string) error {
 	return fmt.Errorf("firewall enable: not yet implemented")
 }
 
-// Bypass starts a Dante SOCKS proxy inside the container, giving it unrestricted
-// egress for the specified duration. Root (uid 0) bypasses iptables RETURN rules
-// installed by init-firewall.sh, so danted traffic flows directly.
+// Bypass starts temporary unrestricted egress for a container by executing the
+// firewall-bypass script baked into the image at build time. The script starts a
+// Dante SOCKS5 proxy as root (uid 0 bypasses iptables DNAT rules) and writes
+// proxychains config to the system default so `proxychains4 <cmd>` just works.
 func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.Duration) error {
-	const (
-		danteConf = `logoutput: stderr
-internal: 127.0.0.1 port = 9100
-external: eth0
-socksmethod: none
-client pass {
-    from: 127.0.0.0/8 to: 0.0.0.0/0
-}
-socks pass {
-    from: 127.0.0.0/8 to: 0.0.0.0/0
-}
-`
-		proxychainsConf = `strict_chain
-proxy_dns
-[ProxyList]
-socks5 127.0.0.1 9100
-`
-	)
-
 	timeoutSecs := int(timeout.Seconds())
 	if timeoutSecs <= 0 {
-		timeoutSecs = 300 // default 5 minutes
+		timeoutSecs = 30
 	}
-
-	// Single shell script: write configs, start danted, schedule timeout cleanup.
-	// Runs as root (uid 0 bypasses iptables RETURN rule installed by init-firewall.sh).
-	script := fmt.Sprintf(
-		`printf '%%s' %s > %s && `+
-			`printf '%%s' %s > %s && `+
-			`danted -f %s -p %s && `+
-			`(sleep %d && kill $(cat %s) 2>/dev/null && rm -f %s %s %s) &`,
-		shellQuote(danteConf), danteConfPath,
-		shellQuote(proxychainsConf), proxychainsConfPath,
-		danteConfPath, dantePIDPath,
-		timeoutSecs, dantePIDPath,
-		danteConfPath, proxychainsConfPath, dantePIDPath,
-	)
 
 	execResp, err := m.client.ExecCreate(ctx, containerID, docker.ExecCreateOptions{
 		User: "root",
-		Cmd:  []string{"sh", "-c", script},
+		Cmd:  []string{firewallBypassScript, strconv.Itoa(timeoutSecs)},
 	})
 	if err != nil {
 		return fmt.Errorf("firewall bypass: creating exec: %w", err)
@@ -401,7 +365,7 @@ socks5 127.0.0.1 9100
 		Detach: true,
 	})
 	if err != nil {
-		return fmt.Errorf("firewall bypass: starting danted: %w", err)
+		return fmt.Errorf("firewall bypass: starting: %w", err)
 	}
 
 	m.log.Debug().
@@ -412,17 +376,11 @@ socks5 127.0.0.1 9100
 	return nil
 }
 
-// StopBypass kills the Dante SOCKS proxy and removes config files.
+// StopBypass stops an active bypass by executing the firewall-bypass script with "stop".
 func (m *Manager) StopBypass(ctx context.Context, containerID string) error {
-	// Kill danted via PID file (ignore errors if already dead) and remove config files.
-	script := fmt.Sprintf(
-		`kill $(cat %s 2>/dev/null) 2>/dev/null; rm -f %s %s %s`,
-		dantePIDPath, danteConfPath, proxychainsConfPath, dantePIDPath,
-	)
-
 	execResp, err := m.client.ExecCreate(ctx, containerID, docker.ExecCreateOptions{
 		User: "root",
-		Cmd:  []string{"sh", "-c", script},
+		Cmd:  []string{firewallBypassScript, "stop"},
 	})
 	if err != nil {
 		return fmt.Errorf("firewall stop bypass: creating exec: %w", err)
@@ -432,7 +390,7 @@ func (m *Manager) StopBypass(ctx context.Context, containerID string) error {
 		Detach: true,
 	})
 	if err != nil {
-		return fmt.Errorf("firewall stop bypass: killing danted: %w", err)
+		return fmt.Errorf("firewall stop bypass: stopping: %w", err)
 	}
 
 	m.log.Debug().
@@ -804,10 +762,4 @@ func (m *Manager) restartContainer(ctx context.Context, name string) error {
 	}
 
 	return nil
-}
-
-// shellQuote wraps s in single quotes, escaping any embedded single quotes
-// so the result is safe to embed in a sh -c script.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
