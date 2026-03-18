@@ -109,11 +109,10 @@ If IMAGE is "@", clawker will resolve the project's built image with :latest tag
 func createRun(ctx context.Context, opts *CreateOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
-	cfgGateway, err := opts.Config()
+	cfg, err := opts.Config()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	cfg := cfgGateway.Project()
 
 	// --- Phase A: Pre-progress (synchronous) ---
 
@@ -184,9 +183,8 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 
 	go func() {
 		defer close(events)
-		r, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
+		r, err := shared.CreateContainer(ctx, &shared.CreateContainerOptions{
 			Client:         client,
-			Cfg:            cfgGateway,
 			Config:         cfg,
 			ProjectName:    projectName,
 			Options:        containerOpts,

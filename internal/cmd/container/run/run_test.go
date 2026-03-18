@@ -794,7 +794,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 			mock := configmocks.NewFromString(`
 version: "1"
 workspace: { default_mode: "bind" }
-security: { enable_host_proxy: false, firewall: { enable: false } }
+security: { enable_host_proxy: false }
 `, "")
 			mock.GetProjectIgnoreFileFunc = func() (string, error) {
 				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
@@ -884,7 +884,7 @@ func TestRunRun(t *testing.T) {
 		// with a "no image found" message guiding the user.
 		testCfg := configmocks.NewFromString(`
 workspace: { default_mode: "bind" }
-security: { enable_host_proxy: false, firewall: { enable: false } }
+security: { enable_host_proxy: false }
 `, "")
 		testCfg.GetProjectIgnoreFileFunc = func() (string, error) {
 			return filepath.Join(os.TempDir(), testCfg.ClawkerIgnoreName()), nil

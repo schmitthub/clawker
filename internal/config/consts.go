@@ -59,6 +59,10 @@ const (
 	hostProxyPIDFileName = "hostproxy.pid"
 	// hostProxyLogFileName is the filename for the host proxy log file
 	hostProxyLogFileName = "hostproxy.log"
+	// firewallPIDFileName is the filename for the firewall daemon PID file
+	firewallPIDFileName = "firewall.pid"
+	// firewallLogFileName is the filename for the firewall daemon log file
+	firewallLogFileName = "firewall.log"
 	// shareSubdir is the subdirectory for the shared directory (mounted read-only into containers)
 	shareSubdir = ".clawker-share"
 )
@@ -270,6 +274,24 @@ func (c *configImpl) HostProxyPIDFilePath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(pidsDir, hostProxyPIDFileName), nil
+}
+
+// FirewallPIDFilePath ensures the PID subdirectory and returns the firewall daemon PID file path.
+func (c *configImpl) FirewallPIDFilePath() (string, error) {
+	pidsDir, err := c.PidsSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(pidsDir, firewallPIDFileName), nil
+}
+
+// FirewallLogFilePath ensures the logs subdirectory and returns the firewall daemon log file path.
+func (c *configImpl) FirewallLogFilePath() (string, error) {
+	logsDir, err := c.LogsSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(logsDir, firewallLogFileName), nil
 }
 
 // ShareSubdir ensures and returns the shared directory path under DataDir.

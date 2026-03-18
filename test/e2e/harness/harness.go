@@ -1,10 +1,17 @@
 package harness
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -12,27 +19,24 @@ import (
 )
 
 // Harness provides an isolated filesystem environment for integration tests.
-// It creates temp directories, sets XDG env vars, registers a project, and
-// optionally persists config — all driven by what the caller wired into the Factory.
+// Each Run() creates a fresh Factory from Opts — mirroring a real CLI process.
 type Harness struct {
-	T       *testing.T
-	Factory *cmdutil.Factory
+	T    *testing.T
+	Opts *FactoryOptions
 }
 
 // RunResult holds the outcome of a CLI command execution.
 type RunResult struct {
 	ExitCode int
 	Err      error
+	Stdout   string
+	Stderr   string
 }
 
 // SetupResult holds the resolved paths from NewIsolatedFS.
 type SetupResult struct {
-	BaseDir    string
+	*testenv.Env
 	ProjectDir string
-	ConfigDir  string
-	DataDir    string
-	StateDir   string
-	CacheDir   string
 }
 
 // FSOptions allows overriding the project directory name.
@@ -41,9 +45,6 @@ type FSOptions struct {
 }
 
 // NewIsolatedFS creates an isolated test environment.
-//
-// Delegates XDG directory setup to testenv.New, then adds a project directory
-// and chdirs into it (restored on cleanup).
 func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 	h.T.Helper()
 
@@ -54,6 +55,9 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 		opts.ProjectDir = "testproject"
 	}
 
+	// Build the clawker binary so the hostproxy daemon can spawn it.
+	ensureClawkerBinary(h.T)
+
 	env := testenv.New(h.T)
 
 	projectDir := filepath.Join(env.Dirs.Base, opts.ProjectDir)
@@ -61,7 +65,6 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 		h.T.Fatalf("harness: creating project dir %s: %v", projectDir, err)
 	}
 
-	// Chdir to project directory so config discovery works from CWD.
 	prevDir, err := os.Getwd()
 	if err != nil {
 		h.T.Fatalf("harness: getting cwd: %v", err)
@@ -73,18 +76,32 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 		_ = os.Chdir(prevDir)
 	})
 
+	// Dump log file on test failure (registered before Docker cleanup so it runs after).
+	logDir := filepath.Join(env.Dirs.State, "logs")
+	h.T.Cleanup(func() {
+		if !h.T.Failed() {
+			return
+		}
+		logPath := filepath.Join(logDir, "clawker.log")
+		data, err := os.ReadFile(logPath)
+		if err != nil {
+			return
+		}
+		h.T.Logf("=== clawker.log ===\n%s", string(data))
+	})
+
+	// Single cleanup: daemons, firewall infra, then test-labeled resources.
+	h.T.Cleanup(func() {
+		cleanupTestEnvironment(h.T, h)
+	})
+
 	return &SetupResult{
-		BaseDir:    env.Dirs.Base,
+		Env:        env,
 		ProjectDir: projectDir,
-		ConfigDir:  env.Dirs.Config,
-		DataDir:    env.Dirs.Data,
-		StateDir:   env.Dirs.State,
-		CacheDir:   env.Dirs.Cache,
 	}
 }
 
-// Chdir changes the working directory and registers a cleanup to restore it
-// to ProjectDir when the test ends.
+// Chdir changes the working directory and registers a cleanup to restore it.
 func (r *SetupResult) Chdir(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.Chdir(dir); err != nil {
@@ -93,22 +110,139 @@ func (r *SetupResult) Chdir(t *testing.T, dir string) {
 	t.Cleanup(func() { _ = os.Chdir(r.ProjectDir) })
 }
 
-// Run executes a CLI command through the full root.NewCmdRoot Cobra pipeline
-// using the stored factory. IO is whatever the caller wired into the factory.
+// clawkerBinaryOnce ensures the clawker binary is built exactly once per test process.
+var clawkerBinaryOnce sync.Once
+
+// ensureClawkerBinary builds the clawker binary and sets CLAWKER_EXECUTABLE
+// so the hostproxy daemon can spawn it. Built once per test process.
+func ensureClawkerBinary(t *testing.T) {
+	t.Helper()
+	clawkerBinaryOnce.Do(func() {
+		// Find the repo root (test/e2e/harness → ../../..).
+		_, thisFile, _, _ := runtime.Caller(0)
+		repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
+
+		binPath := filepath.Join(repoRoot, "bin", "clawker")
+		cmd := exec.CommandContext(context.Background(), "go", "build", "-o", binPath, "./cmd/clawker")
+		cmd.Dir = repoRoot
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("harness: building clawker binary: %s (%v)", string(out), err)
+		}
+	})
+
+	_, thisFile, _, _ := runtime.Caller(0)
+	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
+	t.Setenv("CLAWKER_EXECUTABLE", filepath.Join(repoRoot, "bin", "clawker"))
+}
+
+// cleanupTestEnvironment is the single cleanup entrypoint for all e2e tests.
+// Order: stop daemons → remove firewall infra → remove test-labeled resources.
+func cleanupTestEnvironment(t *testing.T, h *Harness) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// 1. Stop daemons (via CLI so they use the test's isolated env vars).
+	h.Run("firewall", "down")
+	h.Run("host-proxy", "stop")
+
+	// 2. Remove shared firewall infrastructure containers (not test-labeled).
+	for _, name := range []string{"clawker-envoy", "clawker-coredns"} {
+		//nolint:gosec // name is hardcoded
+		if out, err := exec.CommandContext(ctx, "docker", "rm", "-f", name).CombinedOutput(); err != nil {
+			t.Logf("cleanup: docker rm %s: %s (%v)", name, strings.TrimSpace(string(out)), err)
+		}
+	}
+
+	// 3. Remove test-labeled containers, volumes, networks.
+	label := fmt.Sprintf("dev.clawker.test.name=%s", t.Name())
+
+	if ids := dockerListByLabel(ctx, "container", label); len(ids) > 0 {
+		//nolint:gosec // label is derived from t.Name(), not user input
+		args := append([]string{"rm", "-f"}, ids...)
+		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
+			t.Logf("cleanup: docker rm: %s (%v)", strings.TrimSpace(string(out)), err)
+		}
+	}
+
+	if ids := dockerListByLabel(ctx, "volume", label); len(ids) > 0 {
+		//nolint:gosec // label is derived from t.Name(), not user input
+		args := append([]string{"volume", "rm", "-f"}, ids...)
+		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
+			t.Logf("cleanup: docker volume rm: %s (%v)", strings.TrimSpace(string(out)), err)
+		}
+	}
+
+	if ids := dockerListByLabel(ctx, "network", label); len(ids) > 0 {
+		for _, id := range ids {
+			//nolint:gosec // id comes from docker ls output
+			if out, err := exec.CommandContext(ctx, "docker", "network", "rm", id).CombinedOutput(); err != nil {
+				t.Logf("cleanup: docker network rm %s: %s (%v)", id, strings.TrimSpace(string(out)), err)
+			}
+		}
+	}
+}
+
+// dockerListByLabel returns IDs of Docker resources matching a label filter.
+func dockerListByLabel(ctx context.Context, resourceType, label string) []string {
+	var cmd *exec.Cmd
+	switch resourceType {
+	case "container":
+		cmd = exec.CommandContext(ctx, "docker", "ps", "-aq", "--filter", "label="+label)
+	case "volume":
+		cmd = exec.CommandContext(ctx, "docker", "volume", "ls", "-q", "--filter", "label="+label)
+	case "network":
+		cmd = exec.CommandContext(ctx, "docker", "network", "ls", "-q", "--filter", "label="+label)
+	default:
+		return nil
+	}
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var ids []string
+	for _, line := range lines {
+		if id := strings.TrimSpace(line); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// Run creates a fresh Factory and executes a CLI command through the full
+// root.NewCmdRoot Cobra pipeline — each call is a fresh process.
 func (h *Harness) Run(args ...string) *RunResult {
 	h.T.Helper()
 
-	cmd, err := root.NewCmdRoot(h.Factory, "test", "test")
+	f, _, out, errOut := NewFactory(h.T, h.Opts)
+
+	rootCmd, err := root.NewCmdRoot(f, "test", "test")
 	if err != nil {
-		return &RunResult{ExitCode: 1, Err: err}
+		return &RunResult{ExitCode: 1, Err: err, Stderr: err.Error()}
 	}
 
-	cmd.SetArgs(args)
+	rootCmd.SilenceErrors = true
+	rootCmd.SetArgs(args)
 
-	err = cmd.Execute()
+	cmd, err := rootCmd.ExecuteC()
 
 	exitCode := 0
 	if err != nil {
+		if errors.Is(err, cmdutil.SilentError) {
+			// Already displayed
+		} else {
+			cs := f.IOStreams.ColorScheme()
+			fmt.Fprintf(f.IOStreams.ErrOut, "%s %s\n", cs.FailureIcon(), err)
+			if cmd != nil {
+				var flagErr *cmdutil.FlagError
+				if errors.As(err, &flagErr) {
+					fmt.Fprintln(f.IOStreams.ErrOut, cmd.UsageString())
+				}
+			}
+		}
+
 		var exitErr *cmdutil.ExitError
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.Code
@@ -117,5 +251,10 @@ func (h *Harness) Run(args ...string) *RunResult {
 		}
 	}
 
-	return &RunResult{ExitCode: exitCode, Err: err}
+	return &RunResult{
+		ExitCode: exitCode,
+		Err:      err,
+		Stdout:   out.String(),
+		Stderr:   errOut.String(),
+	}
 }

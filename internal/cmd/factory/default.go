@@ -175,9 +175,6 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 				return
 			}
 			client, clientErr = docker.NewClient(ctx, cfg, log)
-			if clientErr == nil {
-				docker.WireBuildKit(client)
-			}
 		})
 		return client, clientErr
 	}
@@ -207,7 +204,11 @@ func firewallFunc(f *cmdutil.Factory) func(context.Context) (firewall.FirewallMa
 				err = fmt.Errorf("failed to get docker client: %w", clientErr)
 				return
 			}
-			mgr = firewall.NewDockerFirewallManager(client, cfg, log)
+			mgr, err = firewall.NewManager(client, cfg, log)
+			if err != nil {
+				err = fmt.Errorf("failed to create firewall manager: %w", err)
+				return
+			}
 		})
 		return mgr, err
 	}

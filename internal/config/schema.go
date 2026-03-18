@@ -182,21 +182,12 @@ func (s *IPRangeSource) IsRequired() bool {
 	return s.Name == "github"
 }
 
-// FirewallConfig defines network firewall settings
+// FirewallConfig defines per-project firewall rules in clawker.yaml.
+// Global lifecycle control (enable/disable) lives in settings.yaml via FirewallSettings.
 type FirewallConfig struct {
-	Enable         *bool           `yaml:"enable,omitempty"`
 	AddDomains     []string        `yaml:"add_domains,omitempty" merge:"union"`
 	Rules          []EgressRule    `yaml:"rules,omitempty" merge:"union"`
 	IPRangeSources []IPRangeSource `yaml:"ip_range_sources,omitempty"` // DEPRECATED: ignored at runtime
-}
-
-// FirewallEnabled returns whether the firewall should be enabled.
-// Returns true when Enable is nil (default enabled) or explicitly true.
-func (f *FirewallConfig) FirewallEnabled() bool {
-	if f == nil || f.Enable == nil {
-		return true
-	}
-	return *f.Enable
 }
 
 // GetFirewallDomains returns required domains merged with user's add_domains.
@@ -226,44 +217,6 @@ func (f *FirewallConfig) GetFirewallDomains(requiredDomains []string) []string {
 	return result
 }
 
-// NormalizeRules merges required rules with user-configured rules and add_domains.
-// PathRules-aware dedup: if a new rule for the same dst+proto+port has PathRules
-// and the existing one does not, the new rule replaces it.
-func (f *FirewallConfig) NormalizeRules(requiredRules []EgressRule) []EgressRule {
-	if f == nil {
-		return requiredRules
-	}
-	index := make(map[string]int)
-	var result []EgressRule
-	addRule := func(r EgressRule) {
-		if r.Proto == "" {
-			r.Proto = "tls"
-		}
-		if r.Action == "" {
-			r.Action = "allow"
-		}
-		key := fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
-		if idx, ok := index[key]; ok {
-			if len(r.PathRules) > 0 && len(result[idx].PathRules) == 0 {
-				result[idx] = r
-			}
-			return
-		}
-		index[key] = len(result)
-		result = append(result, r)
-	}
-	for _, r := range requiredRules {
-		addRule(r)
-	}
-	for _, r := range f.Rules {
-		addRule(r)
-	}
-	for _, d := range f.AddDomains {
-		addRule(EgressRule{Dst: d, Proto: "tls", Action: "allow"})
-	}
-	return result
-}
-
 type SecurityConfig struct {
 	Firewall        *FirewallConfig       `yaml:"firewall,omitempty"`
 	DockerSocket    bool                  `yaml:"docker_socket"`
@@ -279,12 +232,6 @@ func (s *SecurityConfig) HostProxyEnabled() bool {
 		return true // Default to enabled
 	}
 	return *s.EnableHostProxy
-}
-
-// FirewallEnabled returns whether the firewall should be enabled.
-// Convenience method that delegates to FirewallConfig.
-func (s *SecurityConfig) FirewallEnabled() bool {
-	return s.Firewall.FirewallEnabled()
 }
 
 // GitCredentialsConfig defines git credential forwarding settings
@@ -413,6 +360,22 @@ type Settings struct {
 	Logging    LoggingConfig    `yaml:"logging,omitempty"`
 	Monitoring MonitoringConfig `yaml:"monitoring,omitempty"`
 	HostProxy  HostProxyConfig  `yaml:"host_proxy,omitempty"`
+	Firewall   FirewallSettings `yaml:"firewall,omitempty"`
+}
+
+// FirewallSettings controls global firewall lifecycle in settings.yaml.
+// Per-project rules live in FirewallConfig (clawker.yaml).
+type FirewallSettings struct {
+	Enable *bool `yaml:"enable,omitempty"`
+}
+
+// FirewallEnabled returns whether the global firewall is enabled.
+// Returns true when Enable is nil (default enabled) or explicitly true.
+func (f *FirewallSettings) FirewallEnabled() bool {
+	if f == nil || f.Enable == nil {
+		return true
+	}
+	return *f.Enable
 }
 
 // HostProxyConfig configures the host proxy.

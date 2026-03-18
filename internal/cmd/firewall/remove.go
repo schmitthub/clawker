@@ -67,7 +67,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		Port:  opts.Port,
 	}
 
-	if err := fwMgr.Remove(ctx, []config.EgressRule{rule}); err != nil {
+	if err := fwMgr.RemoveRules(ctx, []config.EgressRule{rule}); err != nil {
 		return fmt.Errorf("removing firewall rule: %w", err)
 	}
 

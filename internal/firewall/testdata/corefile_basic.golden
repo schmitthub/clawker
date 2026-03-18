@@ -18,6 +18,6 @@ proxy.golang.org {
     template IN ANY . {
         rcode NXDOMAIN
     }
-    health :8080
-    reload
+    health :18902
+    reload 2s
 }

@@ -7,6 +7,10 @@ paths:
 
 > For detailed examples, harness API, and patterns, see `.claude/docs/TESTING-REFERENCE.md`.
 
+## Docker Integration Testing is First-Class
+
+Docker is always available on this machine. It is a widely available free resource. **Never defer, skip, or treat Docker-based tests as optional or secondary.** Integration tests with real Docker containers are the primary testing approach — they catch real bugs that unit tests miss. When implementing features that touch containers, networks, or volumes, write the integration test as part of the same task, not as a separate deferred task.
+
 ## CRITICAL: All Tests Must Pass
 
 **No code change is complete until ALL tests pass.** This is non-negotiable.

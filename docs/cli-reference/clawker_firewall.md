@@ -39,12 +39,14 @@ CoreDNS (DNS-level allow/deny).
 * [clawker firewall add](clawker_firewall_add) - Add an egress rule
 * [clawker firewall bypass](clawker_firewall_bypass) - Temporarily bypass firewall for a container
 * [clawker firewall disable](clawker_firewall_disable) - Disable firewall for a container
+* [clawker firewall down](clawker_firewall_down) - Stop the firewall daemon
 * [clawker firewall enable](clawker_firewall_enable) - Enable firewall for a container
 * [clawker firewall list](clawker_firewall_list) - List active egress rules
 * [clawker firewall reload](clawker_firewall_reload) - Force-reload firewall configuration
 * [clawker firewall remove](clawker_firewall_remove) - Remove an egress rule
 * [clawker firewall rotate-ca](clawker_firewall_rotate-ca) - Rotate the firewall CA certificate
 * [clawker firewall status](clawker_firewall_status) - Show firewall health and status
+* [clawker firewall up](clawker_firewall_up) - Run the firewall daemon
 
 ### Options
 

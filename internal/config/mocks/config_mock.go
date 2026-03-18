@@ -64,6 +64,12 @@ var _ config.Config = &ConfigMock{}
 //			FirewallDataSubdirFunc: func() (string, error) {
 //				panic("mock out the FirewallDataSubdir method")
 //			},
+//			FirewallLogFilePathFunc: func() (string, error) {
+//				panic("mock out the FirewallLogFilePath method")
+//			},
+//			FirewallPIDFilePathFunc: func() (string, error) {
+//				panic("mock out the FirewallPIDFilePath method")
+//			},
 //			GetProjectIgnoreFileFunc: func() (string, error) {
 //				panic("mock out the GetProjectIgnoreFile method")
 //			},
@@ -245,6 +251,12 @@ type ConfigMock struct {
 	// FirewallDataSubdirFunc mocks the FirewallDataSubdir method.
 	FirewallDataSubdirFunc func() (string, error)
 
+	// FirewallLogFilePathFunc mocks the FirewallLogFilePath method.
+	FirewallLogFilePathFunc func() (string, error)
+
+	// FirewallPIDFilePathFunc mocks the FirewallPIDFilePath method.
+	FirewallPIDFilePathFunc func() (string, error)
+
 	// GetProjectIgnoreFileFunc mocks the GetProjectIgnoreFile method.
 	GetProjectIgnoreFileFunc func() (string, error)
 
@@ -423,6 +435,12 @@ type ConfigMock struct {
 		// FirewallDataSubdir holds details about calls to the FirewallDataSubdir method.
 		FirewallDataSubdir []struct {
 		}
+		// FirewallLogFilePath holds details about calls to the FirewallLogFilePath method.
+		FirewallLogFilePath []struct {
+		}
+		// FirewallPIDFilePath holds details about calls to the FirewallPIDFilePath method.
+		FirewallPIDFilePath []struct {
+		}
 		// GetProjectIgnoreFile holds details about calls to the GetProjectIgnoreFile method.
 		GetProjectIgnoreFile []struct {
 		}
@@ -580,6 +598,8 @@ type ConfigMock struct {
 	lockEngineLabelPrefix       sync.RWMutex
 	lockEngineManagedLabel      sync.RWMutex
 	lockFirewallDataSubdir      sync.RWMutex
+	lockFirewallLogFilePath     sync.RWMutex
+	lockFirewallPIDFilePath     sync.RWMutex
 	lockGetProjectIgnoreFile    sync.RWMutex
 	lockGetProjectRoot          sync.RWMutex
 	lockGrafanaURL              sync.RWMutex
@@ -1032,6 +1052,60 @@ func (mock *ConfigMock) FirewallDataSubdirCalls() []struct {
 	mock.lockFirewallDataSubdir.RLock()
 	calls = mock.calls.FirewallDataSubdir
 	mock.lockFirewallDataSubdir.RUnlock()
+	return calls
+}
+
+// FirewallLogFilePath calls FirewallLogFilePathFunc.
+func (mock *ConfigMock) FirewallLogFilePath() (string, error) {
+	if mock.FirewallLogFilePathFunc == nil {
+		panic("ConfigMock.FirewallLogFilePathFunc: method is nil but Config.FirewallLogFilePath was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockFirewallLogFilePath.Lock()
+	mock.calls.FirewallLogFilePath = append(mock.calls.FirewallLogFilePath, callInfo)
+	mock.lockFirewallLogFilePath.Unlock()
+	return mock.FirewallLogFilePathFunc()
+}
+
+// FirewallLogFilePathCalls gets all the calls that were made to FirewallLogFilePath.
+// Check the length with:
+//
+//	len(mockedConfig.FirewallLogFilePathCalls())
+func (mock *ConfigMock) FirewallLogFilePathCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockFirewallLogFilePath.RLock()
+	calls = mock.calls.FirewallLogFilePath
+	mock.lockFirewallLogFilePath.RUnlock()
+	return calls
+}
+
+// FirewallPIDFilePath calls FirewallPIDFilePathFunc.
+func (mock *ConfigMock) FirewallPIDFilePath() (string, error) {
+	if mock.FirewallPIDFilePathFunc == nil {
+		panic("ConfigMock.FirewallPIDFilePathFunc: method is nil but Config.FirewallPIDFilePath was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockFirewallPIDFilePath.Lock()
+	mock.calls.FirewallPIDFilePath = append(mock.calls.FirewallPIDFilePath, callInfo)
+	mock.lockFirewallPIDFilePath.Unlock()
+	return mock.FirewallPIDFilePathFunc()
+}
+
+// FirewallPIDFilePathCalls gets all the calls that were made to FirewallPIDFilePath.
+// Check the length with:
+//
+//	len(mockedConfig.FirewallPIDFilePathCalls())
+func (mock *ConfigMock) FirewallPIDFilePathCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockFirewallPIDFilePath.RLock()
+	calls = mock.calls.FirewallPIDFilePath
+	mock.lockFirewallPIDFilePath.RUnlock()
 	return calls
 }
 

@@ -33,6 +33,8 @@ CoreDNS (DNS-level allow/deny).`,
 	}
 
 	cmd.AddCommand(
+		NewCmdUp(f, nil),
+		NewCmdDown(f, nil),
 		NewCmdStatus(f, nil),
 		NewCmdList(f, nil),
 		NewCmdAdd(f, nil),

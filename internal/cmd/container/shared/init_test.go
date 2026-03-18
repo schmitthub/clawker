@@ -96,12 +96,11 @@ func testMockConfig(project *config.Project) *configmocks.ConfigMock {
 	return mock
 }
 
-// testCreateConfig builds a CreateContainerConfig with test defaults.
-func testCreateConfig(fake *dockertest.FakeClient, project *config.Project, containerOpts *ContainerOptions, cmd *cobra.Command) *CreateContainerConfig {
-	return &CreateContainerConfig{
+// testCreateConfig builds a CreateContainerOptions with test defaults.
+func testCreateConfig(fake *dockertest.FakeClient, project *config.Project, containerOpts *ContainerOptions, cmd *cobra.Command) *CreateContainerOptions {
+	return &CreateContainerOptions{
 		Client:      fake.Client,
-		Cfg:         testMockConfig(project),
-		Config:      project,
+		Config:      testMockConfig(project),
 		ProjectName: "testproject",
 		Options:     containerOpts,
 		Flags:       cmd.Flags(),
@@ -212,10 +211,9 @@ func TestCreateContainer_HostProxyFailure(t *testing.T) {
 	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 
-	ccfg := &CreateContainerConfig{
+	ccfg := &CreateContainerOptions{
 		Client:  fake.Client,
-		Cfg:     testMockConfig(projectCfg),
-		Config:  projectCfg,
+		Config:  testMockConfig(projectCfg),
 		Options: containerOpts,
 		Flags:   cmd.Flags(),
 		Log:     logger.Nop(),
@@ -576,9 +574,9 @@ func TestCreateContainer_InvalidAgentName(t *testing.T) {
 	fake.AssertNotCalled(t, "ContainerCreate")
 }
 
-func TestCreateContainer_DisableFirewall(t *testing.T) {
-	// When DisableFirewall=true, firewall env vars should NOT be set
-	// even when the config has firewall enabled.
+func TestCreateContainer_NoFirewallEnvWithoutManager(t *testing.T) {
+	// Without a FirewallManager wired, no firewall env vars should be set
+	// regardless of project config.
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -587,7 +585,6 @@ func TestCreateContainer_DisableFirewall(t *testing.T) {
 	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test-agent"
-	containerOpts.DisableFirewall = true
 
 	cfg := testConfigWithFirewall("example.com")
 
@@ -597,47 +594,12 @@ func TestCreateContainer_DisableFirewall(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// Verify no firewall env vars were injected
+	// Verify no firewall env vars were injected (no FirewallManager wired).
 	for _, e := range containerOpts.Env {
-		require.NotContains(t, e, "CLAWKER_FIREWALL_ENVOY_IP",
-			"firewall env var should not be set when DisableFirewall=true")
-		require.NotContains(t, e, "CLAWKER_FIREWALL_ENABLED",
-			"CLAWKER_FIREWALL_ENABLED should not be set when DisableFirewall=true")
+		require.NotContains(t, e, "CLAWKER_FIREWALL",
+			"firewall env vars should not be set without a FirewallManager")
 	}
 	fake.AssertCalled(t, "ContainerCreate")
-}
-
-func TestCreateContainer_DisableFirewallFalse(t *testing.T) {
-	// When DisableFirewall=false (default), firewall env vars should be set
-	// when the config has firewall enabled.
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fake.SetupContainerCreate()
-	fake.SetupCopyToContainer()
-
-	cmd := testFlags()
-	containerOpts := NewContainerOptions()
-	containerOpts.Image = "alpine"
-	containerOpts.Agent = "test-agent"
-
-	cfg := testConfigWithFirewall("example.com")
-
-	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	// Verify firewall env vars were injected (firewall enabled, not disabled).
-	// Without a FirewallManager wired, only CLAWKER_FIREWALL_ENABLED is set
-	// (no Envoy/CoreDNS IPs because Firewall func is nil in test config).
-	var firewallEnabledFound bool
-	for _, e := range containerOpts.Env {
-		if e == "CLAWKER_FIREWALL_ENABLED=true" {
-			firewallEnabledFound = true
-		}
-	}
-	require.True(t, firewallEnabledFound,
-		"CLAWKER_FIREWALL_ENABLED=true should be set when DisableFirewall=false and config has firewall enabled")
 }
 
 func TestCreateContainer_WorkingDirDefault(t *testing.T) {

@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+# Entrypoint runs as root. Privileged init (iptables) runs directly.
+# User-level init and the final exec run via gosu $CLAWKER_USER.
+_USER="${CLAWKER_USER:-claude}"
+_HOME="/home/${_USER}"
+
 # --- FD redirection: suppress all subcommand noise ---
 # fd 3 = original stdout pipe (Docker stream type 1) — emit_ready writes here
 # fd 4 = original stderr pipe (Docker stream type 2) — emit_error/spinner write here
@@ -81,6 +86,10 @@ emit_error() {
     exit 1
 }
 
+# =============================================================================
+# Root-level init (iptables)
+# =============================================================================
+
 # Initialize firewall if enabled at runtime
 if [ "$CLAWKER_FIREWALL_ENABLED" = "true" ] && [ -n "${CLAWKER_FIREWALL_ENVOY_IP:-}" ]; then
     emit_step "firewall"
@@ -93,41 +102,39 @@ if [ "$CLAWKER_FIREWALL_ENABLED" = "true" ] && [ -n "${CLAWKER_FIREWALL_ENVOY_IP
         emit_error "firewall" "iptables not available (missing NET_ADMIN/NET_RAW capabilities)"
     fi
 
-    # Pass firewall env vars through sudo — init-firewall.sh reads them directly
-    if ! sudo \
-        CLAWKER_FIREWALL_ENVOY_IP="${CLAWKER_FIREWALL_ENVOY_IP}" \
-        CLAWKER_FIREWALL_COREDNS_IP="${CLAWKER_FIREWALL_COREDNS_IP}" \
-        CLAWKER_FIREWALL_NET_CIDR="${CLAWKER_FIREWALL_NET_CIDR}" \
-        /usr/local/bin/init-firewall.sh; then
-        emit_error "firewall" "initialization failed"
-    fi
+    fw_output=$(/usr/local/bin/init-firewall.sh 2>&1) || \
+        emit_error "firewall" "initialization failed: ${fw_output}"
 fi
 
+# =============================================================================
+# User-level init (config, git, ssh, post-init) — all via gosu
+# =============================================================================
+
 # Initialize config volume with image defaults if missing
-INIT_DIR="$HOME/.claude-init"
-CONFIG_DIR="$HOME/.claude"
+INIT_DIR="${_HOME}/.claude-init"
+CONFIG_DIR="${_HOME}/.claude"
 
 if [ -d "$INIT_DIR" ]; then
     emit_step "config"
 
     # Copy statusline.sh if missing
-    [ ! -f "$CONFIG_DIR/statusline.sh" ] && cp "$INIT_DIR/statusline.sh" "$CONFIG_DIR/statusline.sh"
+    [ ! -f "$CONFIG_DIR/statusline.sh" ] && gosu "$_USER" cp "$INIT_DIR/statusline.sh" "$CONFIG_DIR/statusline.sh"
 
     # Seed .config.json if missing or empty (onboarding bypass + session pointer persistence).
     # Claude Code stores onboarding state and session pointers in this file.
     # On the persistent config volume, it accumulates session data across restarts.
     if [ ! -f "$CONFIG_DIR/.config.json" ] || [ ! -s "$CONFIG_DIR/.config.json" ]; then
-        if ! cp "$INIT_DIR/.config.json" "$CONFIG_DIR/.config.json"; then
+        if ! gosu "$_USER" cp "$INIT_DIR/.config.json" "$CONFIG_DIR/.config.json"; then
             emit_error "config" "failed to seed .config.json"
         fi
     fi
 
     # Initialize or merge settings.json
     if [ ! -f "$CONFIG_DIR/settings.json" ]; then
-        cp "$INIT_DIR/settings.json" "$CONFIG_DIR/settings.json"
+        gosu "$_USER" cp "$INIT_DIR/settings.json" "$CONFIG_DIR/settings.json"
     else
         # Merge: init defaults first, user settings override
-        jq -s '.[0] * .[1]' "$INIT_DIR/settings.json" "$CONFIG_DIR/settings.json" > "$CONFIG_DIR/settings.json.tmp" 2>/dev/null \
+        gosu "$_USER" jq -s '.[0] * .[1]' "$INIT_DIR/settings.json" "$CONFIG_DIR/settings.json" > "$CONFIG_DIR/settings.json.tmp" 2>/dev/null \
             && mv "$CONFIG_DIR/settings.json.tmp" "$CONFIG_DIR/settings.json" \
             || true
     fi
@@ -145,27 +152,28 @@ if [ -f "$HOST_GITCONFIG" ]; then
         /^\[credential/ { in_cred=1; next }
         /^\[/ { in_cred=0 }
         !in_cred { print }
-    ' "$HOST_GITCONFIG" > "$HOME/.gitconfig.tmp" 2>/dev/null; then
-        cp "$HOST_GITCONFIG" "$HOME/.gitconfig" 2>/dev/null || true
-    elif [ -s "$HOME/.gitconfig.tmp" ]; then
-        mv "$HOME/.gitconfig.tmp" "$HOME/.gitconfig"
+    ' "$HOST_GITCONFIG" > "${_HOME}/.gitconfig.tmp" 2>/dev/null; then
+        cp "$HOST_GITCONFIG" "${_HOME}/.gitconfig" 2>/dev/null || true
+    elif [ -s "${_HOME}/.gitconfig.tmp" ]; then
+        mv "${_HOME}/.gitconfig.tmp" "${_HOME}/.gitconfig"
     else
-        rm -f "$HOME/.gitconfig.tmp"
+        rm -f "${_HOME}/.gitconfig.tmp"
     fi
+    chown "$_USER:$_USER" "${_HOME}/.gitconfig" 2>/dev/null || true
 fi
 
 # Configure git credential helper if HTTPS forwarding is enabled
 if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_GIT_HTTPS" = "true" ]; then
     emit_step "git-credentials"
 
-    git config --global credential.helper clawker 2>&1 || true
+    gosu "$_USER" git config --global credential.helper clawker 2>&1 || true
 fi
 
 # Setup SSH known hosts for common git hosting services
 ssh_setup_known_hosts() {
-    mkdir -p "$HOME/.ssh"
-    chmod 700 "$HOME/.ssh"
-    cat >> "$HOME/.ssh/known_hosts" << 'KNOWN_HOSTS'
+    mkdir -p "${_HOME}/.ssh"
+    chmod 700 "${_HOME}/.ssh"
+    cat >> "${_HOME}/.ssh/known_hosts" << 'KNOWN_HOSTS'
 github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
 github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
 github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
@@ -176,7 +184,8 @@ bitbucket.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIazEu89wgQZ4bqs3d63QSMzYVa0Mu
 bitbucket.org ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPIQmuzMBuKdWeF4+a2sjSSpBK0iqitSQ+5BM9KhpexuGt20JpTVM7u5BDZngncgrqDMbWdxMWWOGtZ9UgbqgZE=
 bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2qOCsIsD1Xw0xSeiPDlCr7kq97NLmMbpKTX6Esc30NuoqEEHCuc7yWtwp8dI76EEEB1VqY9QJq6vk+aySyboD5QF61I/1WeTwu+deCbgKMGbUijeXhtfbxSxm6JwGrXrhBdofTsbKRUsrN1WoNgUa8uqN1Vx6WAJw1JHPhglEGGHea6QICwJOAr/6mrui/oB7pkaWKHj3z7d1IC4KWLtY47elvjbaTlkN04Kc/5LFEirorGYVbt15kAUlqGM65pk6ZBxtaO3+30LVlORZkxOh+LKL/BvbZ/iRNhItLqNyieoQj/uj/4PXhq0r2tVoBqXJCmLk7k+zpcaoprJBFQDa5A7SjqPQK0pCwBvhOT0hHpF0sWH4AIQHvYAWVTD0tBFPF1yENBxnVJpfL0L2qgGxLbQCWgOG0/1ygM+Gf9n0AIksE1h/uoLERBHQXE30XuP4pHV3n+7kO5+nw5VVFIsMfrQ3oT89Si/NvvmM=
 KNOWN_HOSTS
-    chmod 600 "$HOME/.ssh/known_hosts"
+    chown -R "$_USER:$_USER" "${_HOME}/.ssh"
+    chmod 600 "${_HOME}/.ssh/known_hosts"
 }
 
 # Setup SSH known hosts unconditionally — socketbridge handles SSH/GPG agent forwarding
@@ -187,19 +196,23 @@ ssh_setup_known_hosts
 # Run post-init script once if it exists and hasn't been run yet
 # Marker lives on config volume (~/.claude) — persists across container recreations
 # with same config volume. To re-run post-init, delete the marker or the config volume.
-POST_INIT="$HOME/.clawker/post-init.sh"
-POST_INIT_DONE="$HOME/.claude/post-initialized"
+POST_INIT="${_HOME}/.clawker/post-init.sh"
+POST_INIT_DONE="${_HOME}/.claude/post-initialized"
 if [ -x "$POST_INIT" ] && [ ! -f "$POST_INIT_DONE" ]; then
     emit_step "post-init"
     if [ "$_IS_TTY" != true ]; then
         printf '[clawker] running post-init\n' >&4
     fi
-    if "$POST_INIT"; then
+    if gosu "$_USER" "$POST_INIT"; then
         touch "$POST_INIT_DONE"
     else
         emit_error "post-init" "script failed"
     fi
 fi
+
+# =============================================================================
+# Drop privileges and exec
+# =============================================================================
 
 # If first argument starts with "-" or isn't a command, prepend "claude"
 if [ "${1#-}" != "${1}" ] || [ -z "$(command -v "${1}" 2>/dev/null)" ]; then
@@ -209,6 +222,6 @@ fi
 # Signal readiness before handing off to the main process
 emit_ready
 
-# Restore fds for exec'd process and close saved fds
+# Restore fds for exec'd process, close saved fds, drop to non-root user
 exec 1>&3 2>&4 3>&- 4>&-
-exec "$@"
+exec gosu "$_USER" "$@"

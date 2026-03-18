@@ -46,8 +46,8 @@ func GenerateCorefile(rules []config.EgressRule) ([]byte, error) {
 	b.WriteString("    template IN ANY . {\n")
 	b.WriteString("        rcode NXDOMAIN\n")
 	b.WriteString("    }\n")
-	b.WriteString("    health :8080\n")
-	b.WriteString("    reload\n")
+	fmt.Fprintf(&b, "    health :%d\n", corednsHealthPort)
+	b.WriteString("    reload 2s\n")
 	b.WriteString("}\n")
 
 	return []byte(b.String()), nil

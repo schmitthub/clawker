@@ -482,7 +482,6 @@ func TestScaffoldProjectConfig(t *testing.T) {
 			wantContains: []string{
 				`image: "buildpack-deps:bookworm-scm"`,
 				`default_mode: "bind"`,
-				"enable: true", // nested firewall.enable
 				"docker_socket: false",
 			},
 			wantNotContain: []string{
@@ -516,15 +515,15 @@ func TestScaffoldProjectConfig(t *testing.T) {
 			},
 		},
 		{
-			name:          "uses nested firewall schema",
+			name:          "firewall section has rules not enablement",
 			buildImage:    "debian:latest",
 			workspaceMode: "bind",
 			wantContains: []string{
 				"firewall:",
-				"enable: true",
 			},
 			wantNotContain: []string{
 				"enable_firewall:",
+				"enable: true", // enablement is in settings.yaml, not project config
 			},
 		},
 	}

@@ -76,7 +76,9 @@ func NewClient(ctx context.Context, cfg config.Config, log *logger.Logger, opts 
 		return nil, err
 	}
 
-	return &Client{Engine: engine, cfg: cfg, log: log}, nil
+	c := &Client{Engine: engine, cfg: cfg, log: log}
+	WireBuildKit(c)
+	return c, nil
 }
 
 // NewClientFromEngine creates a Client from an existing Engine and config.

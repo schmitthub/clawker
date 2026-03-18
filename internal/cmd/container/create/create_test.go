@@ -431,7 +431,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 			mock := configmocks.NewFromString(`
 version: "1"
 workspace: { default_mode: "bind" }
-security: { enable_host_proxy: false, firewall: { enable: false } }
+security: { enable_host_proxy: false }
 `, "")
 			mock.GetProjectIgnoreFileFunc = func() (string, error) {
 				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
@@ -538,7 +538,7 @@ func TestCreateRun(t *testing.T) {
 		useHostAuthCfg := configmocks.NewFromString(`
 version: "1"
 workspace: { default_mode: "bind" }
-security: { enable_host_proxy: false, firewall: { enable: false } }
+security: { enable_host_proxy: false }
 agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 `, "")
 		useHostAuthCfg.GetProjectIgnoreFileFunc = func() (string, error) {

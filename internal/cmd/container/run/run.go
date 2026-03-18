@@ -214,10 +214,9 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 
 	go func() {
 		defer close(events)
-		r, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
+		r, err := shared.CreateContainer(ctx, &shared.CreateContainerOptions{
 			Client:         client,
-			Cfg:            cfgGateway,
-			Config:         cfg,
+			Config:         cfgGateway,
 			ProjectName:    projectName,
 			Options:        containerOpts,
 			Flags:          opts.flags,

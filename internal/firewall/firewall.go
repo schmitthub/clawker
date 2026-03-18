@@ -2,13 +2,35 @@ package firewall
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
 )
 
+// Sentinel errors for health check failures.
+var (
+	ErrEnvoyUnhealthy   = errors.New("envoy not healthy")
+	ErrCoreDNSUnhealthy = errors.New("coredns not healthy")
+)
+
+// HealthTimeoutError is returned when WaitForHealthy exceeds its deadline.
+type HealthTimeoutError struct {
+	Timeout time.Duration
+	Err     error // wraps one or both sentinel errors
+}
+
+func (e *HealthTimeoutError) Error() string {
+	return fmt.Sprintf("%v after %s", e.Err, e.Timeout)
+}
+
+func (e *HealthTimeoutError) Unwrap() error { return e.Err }
+
 // FirewallManager is the interface for managing the Envoy+CoreDNS firewall stack.
-// Concrete implementation: DockerFirewallManager. Mock: firewalltest.MockManager.
+// Concrete implementation: DockerFirewallManager. Mock: mocks.FirewallManagerMock.
+//
+//go:generate moq -rm -pkg mocks -out mocks/manager_mock.go . FirewallManager
 type FirewallManager interface {
 	// EnsureRunning starts the firewall stack (Envoy + CoreDNS containers) if not already running.
 	EnsureRunning(ctx context.Context) error
@@ -19,11 +41,15 @@ type FirewallManager interface {
 	// IsRunning reports whether the firewall stack is currently running.
 	IsRunning(ctx context.Context) bool
 
-	// Update adds or updates egress rules in the running Envoy config.
-	Update(ctx context.Context, rules []config.EgressRule) error
+	// WaitForHealthy polls until both firewall services pass health probes (TCP+HTTP)
+	// or the context expires. Timeout should be set on the context by the caller.
+	WaitForHealthy(ctx context.Context) error
 
-	// Remove deletes egress rules from the running Envoy config.
-	Remove(ctx context.Context, rules []config.EgressRule) error
+	// AddRules adds individual egress rules (CLI "firewall add").
+	AddRules(ctx context.Context, rules []config.EgressRule) error
+
+	// RemoveRules deletes egress rules (CLI "firewall remove").
+	RemoveRules(ctx context.Context, rules []config.EgressRule) error
 
 	// Reload force-regenerates envoy.yaml and Corefile from current rules
 	// and restarts the Envoy container. CoreDNS auto-reloads via reload plugin.

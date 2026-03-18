@@ -52,6 +52,8 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.RequiredFirewallDomainsFunc = cfg.RequiredFirewallDomains
 	mock.EgressRulesFileNameFunc = cfg.EgressRulesFileName
 	mock.FirewallDataSubdirFunc = cfg.FirewallDataSubdir
+	mock.FirewallPIDFilePathFunc = cfg.FirewallPIDFilePath
+	mock.FirewallLogFilePathFunc = cfg.FirewallLogFilePath
 	mock.RequiredFirewallRulesFunc = cfg.RequiredFirewallRules
 	mock.GetProjectRootFunc = cfg.GetProjectRoot
 	mock.GetProjectIgnoreFileFunc = cfg.GetProjectIgnoreFile

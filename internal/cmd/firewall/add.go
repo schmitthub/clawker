@@ -71,7 +71,7 @@ func addRun(ctx context.Context, opts *AddOptions) error {
 		Action: "allow",
 	}
 
-	if err := fwMgr.Update(ctx, []config.EgressRule{rule}); err != nil {
+	if err := fwMgr.AddRules(ctx, []config.EgressRule{rule}); err != nil {
 		return fmt.Errorf("adding firewall rule: %w", err)
 	}
 

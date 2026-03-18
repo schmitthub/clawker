@@ -144,10 +144,9 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 
 		go func() {
 			defer close(events)
-			r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerConfig{
+			r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerOptions{
 				Client:         cfg.Client,
-				Cfg:            cfg.Config,
-				Config:         cfg.Config.Project(),
+				Config:         cfg.Config,
 				ProjectName:    cfg.ProjectName,
 				Options:        containerOpts,
 				Flags:          cfg.Flags,
@@ -248,9 +247,9 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 
 	go func() {
 		defer close(events)
-		r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerConfig{
+		r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerOptions{
 			Client:         cfg.Client,
-			Config:         projectCfg,
+			Config:         cfg.Config,
 			ProjectName:    cfg.ProjectName,
 			Options:        containerOpts,
 			Flags:          cfg.Flags,

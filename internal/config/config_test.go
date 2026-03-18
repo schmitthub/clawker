@@ -20,7 +20,7 @@ func TestNewBlankConfig(t *testing.T) {
 	assert.Empty(t, p.Build.Image)
 	assert.Contains(t, p.Build.Packages, "git")
 	assert.Equal(t, "bind", p.Workspace.DefaultMode)
-	assert.True(t, p.Security.Firewall.FirewallEnabled())
+	assert.False(t, p.Security.DockerSocket)
 }
 
 func TestNewBlankConfig_settingsDefaults(t *testing.T) {
@@ -253,8 +253,8 @@ func TestNewConfig_isolatedWithDefaults(t *testing.T) {
 
 	// NewConfig loads defaults — verify critical values are present
 	p := cfg.Project()
-	assert.True(t, p.Security.Firewall.FirewallEnabled())
 	assert.Equal(t, "bind", p.Workspace.DefaultMode)
+	assert.True(t, cfg.Settings().Firewall.FirewallEnabled())
 
 	mon := cfg.MonitoringConfig()
 	assert.Equal(t, 4318, mon.OtelCollectorPort)
@@ -437,143 +437,21 @@ func TestParseMode(t *testing.T) {
 	}
 }
 
-func TestNormalizeRules_FromYAML(t *testing.T) {
-	cfg, err := NewFromString(`
-security:
-  firewall:
-    enable: true
-    add_domains: ["example.com"]
-    rules:
-      - dst: github.com
-        proto: tls
-        action: allow
-        path_rules:
-          - path: "/*/raw/*"
-            action: deny
-        path_default: allow
-`, "")
-	require.NoError(t, err)
-
-	rules := cfg.Project().Security.Firewall.NormalizeRules(cfg.RequiredFirewallRules())
-
-	// Required rules should be present
-	var foundAnthropicAPI, foundExampleCom, foundGitHub bool
-	for _, r := range rules {
-		switch r.Dst {
-		case "api.anthropic.com":
-			foundAnthropicAPI = true
-			assert.Equal(t, "tls", r.Proto)
-			assert.Equal(t, "allow", r.Action)
-		case "example.com":
-			foundExampleCom = true
-			assert.Equal(t, "tls", r.Proto)
-			assert.Equal(t, "allow", r.Action)
-		case "github.com":
-			foundGitHub = true
-			assert.Equal(t, "tls", r.Proto)
-			assert.Equal(t, "allow", r.Action)
-			require.Len(t, r.PathRules, 1)
-			assert.Equal(t, "/*/raw/*", r.PathRules[0].Path)
-			assert.Equal(t, "deny", r.PathRules[0].Action)
-			assert.Equal(t, "allow", r.PathDefault)
-		}
-	}
-	assert.True(t, foundAnthropicAPI, "required rule api.anthropic.com missing")
-	assert.True(t, foundExampleCom, "add_domains example.com missing")
-	assert.True(t, foundGitHub, "user rule github.com missing")
-}
-
-func TestNormalizeRules_DefaultsProtoAndAction(t *testing.T) {
-	cfg, err := NewFromString(`
-security:
-  firewall:
-    rules:
-      - dst: custom.example.com
-`, "")
-	require.NoError(t, err)
-
-	rules := cfg.Project().Security.Firewall.NormalizeRules(nil)
-	require.Len(t, rules, 1)
-	assert.Equal(t, "tls", rules[0].Proto, "proto should default to tls")
-	assert.Equal(t, "allow", rules[0].Action, "action should default to allow")
-}
-
-func TestNormalizeRules_DeduplicatesByDstProtoPort(t *testing.T) {
-	cfg, err := NewFromString(`
-security:
-  firewall:
-    add_domains: ["api.anthropic.com"]
-    rules:
-      - dst: api.anthropic.com
-        proto: tls
-        action: allow
-`, "")
-	require.NoError(t, err)
-
-	required := []EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Action: "allow"},
-	}
-	rules := cfg.Project().Security.Firewall.NormalizeRules(required)
-
-	// api.anthropic.com appears in required, rules, and add_domains — should deduplicate
-	count := 0
-	for _, r := range rules {
-		if r.Dst == "api.anthropic.com" {
-			count++
-		}
-	}
-	assert.Equal(t, 1, count, "api.anthropic.com should appear exactly once after dedup")
-}
-
-func TestNormalizeRules_PathRulesOverrideSimpleRule(t *testing.T) {
-	cfg, err := NewFromString(`
-security:
-  firewall:
-    rules:
-      - dst: github.com
-        proto: tls
-        path_rules:
-          - path: "/*/raw/*"
-            action: deny
-        path_default: allow
-`, "")
-	require.NoError(t, err)
-
-	// Required rules have github.com without path rules
-	required := []EgressRule{
-		{Dst: "github.com", Proto: "tls", Action: "allow"},
-	}
-	rules := cfg.Project().Security.Firewall.NormalizeRules(required)
-
-	var found bool
-	for _, r := range rules {
-		if r.Dst == "github.com" {
-			found = true
-			assert.NotEmpty(t, r.PathRules, "should have path rules from user config")
-		}
-	}
-	assert.True(t, found)
-}
-
 func TestFirewallEnabled_ExplicitFalse(t *testing.T) {
-	cfg, err := NewFromString(`
-security:
-  firewall:
-    enable: false
-`, "")
+	cfg, err := NewFromString("", `
+firewall:
+  enable: false
+`)
 	require.NoError(t, err)
-	assert.False(t, cfg.Project().Security.FirewallEnabled())
+	assert.False(t, cfg.Settings().Firewall.FirewallEnabled())
 }
 
 func TestFirewallEnabled_NilMeansEnabled(t *testing.T) {
 	// When firewall section is omitted entirely, FirewallEnabled returns true
-	cfg, err := NewFromString(`
-build:
-  image: "node:20"
-`, "")
+	cfg, err := NewFromString("", "")
 	require.NoError(t, err)
-	assert.True(t, cfg.Project().Security.FirewallEnabled(),
-		"nil FirewallConfig should default to enabled")
+	assert.True(t, cfg.Settings().Firewall.FirewallEnabled(),
+		"nil FirewallSettings should default to enabled")
 }
 
 func TestRequiredFirewallRules(t *testing.T) {

@@ -12,8 +12,7 @@ import (
 
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
-	dockerpkg "github.com/schmitthub/clawker/internal/docker"
-	firewallpkg "github.com/schmitthub/clawker/internal/firewall"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -32,14 +31,12 @@ type ContainerLister interface {
 
 // Daemon manages the host proxy server as a background process.
 // It polls Docker for clawker containers and auto-exits when none are running.
-// If the firewall is enabled in config, it also manages the Envoy+CoreDNS
-// firewall lifecycle: starting them on daemon startup and stopping them on teardown.
 type Daemon struct {
 	cfg                config.Config
 	log                *logger.Logger
 	server             *Server
-	docker             ContainerLister
-	firewall           firewallpkg.FirewallManager // nil if firewall disabled; injected for tests
+	docker             ContainerLister // used by container watcher; satisfied by *docker.Client
+	dockerClient       *docker.Client  // shared client for container ops
 	pidFile            string
 	pollInterval       time.Duration
 	gracePeriod        time.Duration
@@ -71,15 +68,6 @@ func WithGracePeriod(period time.Duration) DaemonOption {
 	}
 }
 
-// WithFirewallManager injects a FirewallManager for testing.
-// In production, the daemon constructs its own DockerFirewallManager in Run()
-// when firewall is enabled. This option allows tests to inject a mock.
-func WithFirewallManager(fm firewallpkg.FirewallManager) DaemonOption {
-	return func(d *Daemon) {
-		d.firewall = fm
-	}
-}
-
 // NewDaemon creates a new daemon that reads all settings from cfg.HostProxyConfig().
 // Optional DaemonOption values override individual config settings (used by CLI flags).
 // It creates a Docker client internally. Tests that need a mock docker client
@@ -105,7 +93,8 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 		return nil, fmt.Errorf("failed to resolve host proxy PID file path: %w", err)
 	}
 
-	dockerClient, err := client.New(client.FromEnv)
+	ctx := context.Background()
+	dockerClient, err := docker.NewClient(ctx, cfg, log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
@@ -115,6 +104,7 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 		log:                log,
 		server:             NewServer(daemonCfg.Port, log),
 		docker:             dockerClient,
+		dockerClient:       dockerClient,
 		pidFile:            pidFile,
 		pollInterval:       daemonCfg.PollInterval,
 		gracePeriod:        daemonCfg.GracePeriod,
@@ -139,27 +129,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Start the server
 	if err := d.server.Start(); err != nil {
 		return fmt.Errorf("failed to start server: %w", err)
-	}
-
-	// Start firewall if enabled. Create DockerFirewallManager lazily here (requires ctx).
-	// If a manager was injected via WithFirewallManager (tests), use it directly.
-	if d.cfg.Project().Security.FirewallEnabled() {
-		if d.firewall == nil {
-			dockerClient, err := dockerpkg.NewClient(ctx, d.cfg, d.log)
-			if err != nil {
-				d.log.Warn().Err(err).Msg("firewall enabled but failed to create docker client — firewall will not be managed by hostproxy daemon")
-			} else {
-				d.firewall = firewallpkg.NewDockerFirewallManager(dockerClient, d.cfg, d.log)
-			}
-		}
-		if d.firewall != nil {
-			if err := d.firewall.EnsureRunning(ctx); err != nil {
-				// Log but do not fail — container creation path will retry EnsureRunning.
-				d.log.Warn().Err(err).Msg("firewall EnsureRunning failed at daemon startup — will retry on next container creation")
-			} else {
-				d.log.Debug().Msg("firewall started successfully")
-			}
-		}
 	}
 
 	// Set up signal handling
@@ -192,15 +161,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	if err := d.server.Stop(shutdownCtx); err != nil {
 		d.log.Warn().Err(err).Msg("error during server shutdown")
-	}
-
-	// Stop firewall containers on daemon teardown.
-	if d.firewall != nil {
-		if err := d.firewall.Stop(shutdownCtx); err != nil {
-			d.log.Warn().Err(err).Msg("error stopping firewall on daemon teardown")
-		} else {
-			d.log.Debug().Msg("firewall stopped successfully")
-		}
 	}
 
 	if d.docker != nil {

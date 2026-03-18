@@ -43,8 +43,6 @@ workspace:
   default_mode: "bind"
 
 security:
-  firewall:
-    enable: true
   docker_socket: false
   cap_add:
     - NET_ADMIN
@@ -75,6 +73,9 @@ host_proxy:
     poll_interval: 30s
     grace_period: 60s
     max_consecutive_errs: 10
+
+firewall:
+  enable: true
 
 monitoring:
   otel_collector_port: 4318
@@ -132,7 +133,6 @@ workspace:
 
 security:
   firewall:
-    enable: true # blocks outbound traffic by default
     #add_domains: # additional allowed domains
     #  - "api.openai.com"
   docker_socket: false # mount Docker socket (security risk if enabled)
@@ -157,6 +157,9 @@ security:
 // DefaultSettingsYAML is the commented template written to disk by clawker init.
 const DefaultSettingsYAML = `# Clawker User Settings
 # Documentation: https://github.com/schmitthub/clawker
+
+firewall:
+  enable: true # enables container network firewall
 
 #logging:
 #  file_enabled: true

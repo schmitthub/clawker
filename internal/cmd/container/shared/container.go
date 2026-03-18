@@ -133,7 +133,7 @@ type ContainerOptions struct {
 	CapDrop         []string // Drop Linux capabilities
 	Privileged      bool     // Give extended privileges to container
 	SecurityOpt     []string // Security options (e.g., seccomp, apparmor, label)
-	DisableFirewall bool     // Override project config: disable firewall
+	DisableFirewall bool     // DEPRECATED: no-op, use "clawker firewall bypass" instead
 
 	// Health check
 	HealthCmd           string        // Command to run to check health
@@ -293,7 +293,8 @@ func AddFlags(flags *pflag.FlagSet, opts *ContainerOptions) {
 	flags.StringArrayVar(&opts.CapDrop, "cap-drop", nil, "Drop Linux capabilities")
 	flags.BoolVar(&opts.Privileged, "privileged", false, "Give extended privileges to this container")
 	flags.StringArrayVar(&opts.SecurityOpt, "security-opt", nil, "Security options")
-	flags.BoolVar(&opts.DisableFirewall, "disable-firewall", false, "Disable container firewall regardless of project config")
+	flags.BoolVar(&opts.DisableFirewall, "disable-firewall", false, "")
+	_ = flags.MarkDeprecated("disable-firewall", "use 'clawker firewall bypass' instead")
 
 	// Health check flags
 	flags.StringVar(&opts.HealthCmd, "health-cmd", "", "Command to run to check health")
@@ -1452,11 +1453,10 @@ type CreateContainerEvent struct {
 	Type    MessageType // Info or Warning
 }
 
-// CreateContainerConfig holds all inputs for CreateContainer.
-type CreateContainerConfig struct {
+// CreateContainerOptions holds all inputs for CreateContainer.
+type CreateContainerOptions struct {
 	Client         *docker.Client
-	Cfg            config.Config
-	Config         *config.Project
+	Config         config.Config
 	ProjectName    string
 	Options        *ContainerOptions
 	Flags          *pflag.FlagSet
@@ -1486,11 +1486,11 @@ type CreateContainerResult struct {
 // Developer diagnostics go to zerolog. Callers own all terminal output.
 //
 // Uses named return retErr so deferred volume cleanup can inspect the error.
-func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events chan<- CreateContainerEvent) (_ *CreateContainerResult, retErr error) {
-	projectCfg := cfg.Config
-	containerOpts := cfg.Options
-	client := cfg.Client
-	log := cfg.Log
+func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events chan<- CreateContainerEvent) (_ *CreateContainerResult, retErr error) {
+	projectCfg := opts.Config.Project()
+	containerOpts := opts.Options
+	client := opts.Client
+	log := opts.Log
 
 	// --- Step 1: Prepare workspace ---
 	sendInfo(ctx, events, "workspace", "Preparing workspace")
@@ -1499,20 +1499,20 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	if agentName == "" {
 		agentName = docker.GenerateRandomName()
 	}
-	containerName, err := docker.ContainerName(cfg.ProjectName, agentName)
+	containerName, err := docker.ContainerName(opts.ProjectName, agentName)
 	if err != nil {
 		return nil, err
 	}
 
-	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, cfg.Cfg, agentName, cfg.ProjectManager, log)
+	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, opts.Config, agentName, opts.ProjectManager, log)
 	if err != nil {
 		return nil, err
 	}
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride:   containerOpts.Mode,
-		Cfg:            cfg.Cfg,
-		ProjectName:    cfg.ProjectName,
+		Cfg:            opts.Config,
+		ProjectName:    opts.ProjectName,
 		AgentName:      agentName,
 		WorkDir:        wd,
 		ProjectRootDir: projectRootDir,
@@ -1528,7 +1528,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	// (with user session data) are never touched.
 	var createdVolumes []string
 	if wsResult.ConfigVolumeResult.ConfigCreated {
-		if vn, vnErr := docker.VolumeName(cfg.ProjectName, agentName, "config"); vnErr != nil {
+		if vn, vnErr := docker.VolumeName(opts.ProjectName, agentName, "config"); vnErr != nil {
 			log.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track config volume for cleanup: %v", vnErr))
 		} else {
@@ -1536,7 +1536,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		}
 	}
 	if wsResult.ConfigVolumeResult.HistoryCreated {
-		if vn, vnErr := docker.VolumeName(cfg.ProjectName, agentName, "history"); vnErr != nil {
+		if vn, vnErr := docker.VolumeName(opts.ProjectName, agentName, "history"); vnErr != nil {
 			log.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track history volume for cleanup: %v", vnErr))
 		} else {
@@ -1570,7 +1570,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	if wsResult.ConfigVolumeResult.ConfigCreated {
 		sendInfo(ctx, events, "config", "Initializing config")
 		if err := InitContainerConfig(ctx, InitConfigOpts{
-			ProjectName:      cfg.ProjectName,
+			ProjectName:      opts.ProjectName,
 			AgentName:        agentName,
 			ContainerWorkDir: wsResult.ContainerPath,
 			ClaudeCode:       projectCfg.Agent.ClaudeCode,
@@ -1587,13 +1587,13 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	// --- Step 3: Setup environment ---
 	sendInfo(ctx, events, "environment", "Setting up environment")
 
-	hostProxyRunning := setupHostProxy(ctx, events, projectCfg, containerOpts, cfg.HostProxy, log)
+	hostProxyRunning := setupHostProxy(ctx, events, projectCfg, containerOpts, opts.HostProxy, log)
 
 	gitSetup := workspace.SetupGitCredentials(projectCfg.Security.GitCredentials, hostProxyRunning, log)
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	runtimeEnv, envWarnings, coreDNSIP, err := buildRuntimeEnv(ctx, cfg, projectCfg, containerOpts, agentName, wd, log)
+	runtimeEnv, envWarnings, coreDNSIP, err := buildRuntimeEnv(ctx, opts, projectCfg, containerOpts, agentName, wd, log)
 	if err != nil {
 		return nil, err
 	}
@@ -1611,7 +1611,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	}
 
 	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(
-		cfg.Flags, workspaceMounts, projectCfg)
+		opts.Flags, workspaceMounts, projectCfg)
 	if err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
@@ -1633,9 +1633,9 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	}
 
 	extraLabels := map[string]string{
-		cfg.Cfg.LabelProject(): cfg.ProjectName,
-		cfg.Cfg.LabelAgent():   agentName,
-		cfg.Cfg.LabelWorkdir(): wd,
+		opts.Config.LabelProject(): opts.ProjectName,
+		opts.Config.LabelAgent():   agentName,
+		opts.Config.LabelWorkdir(): wd,
 	}
 
 	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
@@ -1645,7 +1645,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		Name:             containerName,
 		ExtraLabels:      docker.Labels{extraLabels},
 		EnsureNetwork: &docker.EnsureNetworkOptions{
-			Name: cfg.Cfg.ClawkerNetwork(),
+			Name: opts.Config.ClawkerNetwork(),
 		},
 	})
 	if err != nil {
@@ -1663,7 +1663,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		if err := InjectPostInitScript(ctx, InjectPostInitOpts{
 			ContainerID:     resp.ID,
 			Script:          projectCfg.Agent.PostInit,
-			Cfg:             cfg.Cfg,
+			Cfg:             opts.Config,
 			CopyToContainer: copyFn,
 			Log:             log,
 		}); err != nil {
@@ -1809,7 +1809,7 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 
 // buildRuntimeEnv constructs container runtime environment variables.
 // Returns env vars, warnings (e.g. unset from_env vars), and error.
-func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg *config.Project, containerOpts *ContainerOptions, agentName, wd string, log *logger.Logger) (env []string, warnings []string, coreDNSIP string, retErr error) {
+func buildRuntimeEnv(ctx context.Context, opts *CreateContainerOptions, projectCfg *config.Project, containerOpts *ContainerOptions, agentName, wd string, log *logger.Logger) (env []string, warnings []string, coreDNSIP string, retErr error) {
 	workspaceMode := containerOpts.Mode
 	if workspaceMode == "" {
 		workspaceMode = projectCfg.Workspace.DefaultMode
@@ -1820,45 +1820,45 @@ func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg
 		return nil, nil, "", fmt.Errorf("resolving agent environment: %w", err)
 	}
 
-	monitoringActive := cfg.Client.IsMonitoringActive(ctx)
+	monitoringActive := opts.Client.IsMonitoringActive(ctx)
 	log.Debug().Bool("monitoring_active", monitoringActive).Msg("telemetry state")
 
 	envOpts := docker.RuntimeEnvOpts{
-		Version:          cfg.Version,
-		Project:          cfg.ProjectName,
+		Version:          opts.Version,
+		Project:          opts.ProjectName,
 		Agent:            agentName,
 		WorkspaceMode:    workspaceMode,
 		WorkspaceSource:  wd,
 		Editor:           projectCfg.Agent.Editor,
 		Visual:           projectCfg.Agent.Visual,
-		Is256Color:       cfg.Is256Color,
-		TrueColor:        cfg.IsTrueColor,
+		Is256Color:       opts.Is256Color,
+		TrueColor:        opts.IsTrueColor,
 		AgentEnv:         agentEnv,
 		MonitoringActive: monitoringActive,
 	}
-	if projectCfg.Security.FirewallEnabled() && !containerOpts.DisableFirewall {
-		if cfg.Firewall != nil {
-			fwMgr, fwErr := cfg.Firewall(ctx)
-			if fwErr != nil {
-				return nil, nil, "", fmt.Errorf("firewall manager: %w", fwErr)
-			}
-			if err := fwMgr.EnsureRunning(ctx); err != nil {
-				return nil, nil, "", fmt.Errorf("ensuring firewall running: %w", err)
-			}
-			rules := projectCfg.Security.Firewall.NormalizeRules(cfg.Cfg.RequiredFirewallRules())
-			if err := fwMgr.Update(ctx, rules); err != nil {
-				return nil, nil, "", fmt.Errorf("updating firewall rules: %w", err)
-			}
-			coreDNSIP = fwMgr.CoreDNSIP()
-			envOpts.FirewallEnabled = true
-			envOpts.FirewallEnvoyIP = fwMgr.EnvoyIP()
-			envOpts.FirewallCoreDNSIP = coreDNSIP
-			envOpts.FirewallNetCIDR = fwMgr.NetCIDR()
-		} else {
-			// Firewall enabled but no FirewallManager wired — should not happen in production.
-			log.Warn().Msg("firewall enabled but FirewallManager not wired — Envoy/CoreDNS IPs will not be passed")
-			envOpts.FirewallEnabled = true
+	// Firewall: ensure the daemon process is running (spawns if needed, returns immediately),
+	// wait for the stack to be ready, then query container IPs.
+	// Fatal if enabled but fails — starting a container without firewall when
+	// the user expects one is a security hole.
+	if opts.Firewall != nil {
+		if err := firewall.EnsureDaemon(opts.Config, log); err != nil {
+			return nil, nil, "", fmt.Errorf("firewall daemon: %w", err)
 		}
+		fwMgr, fwErr := opts.Firewall(ctx)
+		if fwErr != nil {
+			return nil, nil, "", fmt.Errorf("firewall: %w", fwErr)
+		}
+		// Wait for the daemon to bring up envoy+coredns (may have just been spawned).
+		waitCtx, waitCancel := context.WithTimeout(ctx, 60*time.Second)
+		defer waitCancel()
+		if err := fwMgr.WaitForHealthy(waitCtx); err != nil {
+			return nil, nil, "", fmt.Errorf("firewall: %w", err)
+		}
+		coreDNSIP = fwMgr.CoreDNSIP()
+		envOpts.FirewallEnabled = true
+		envOpts.FirewallEnvoyIP = fwMgr.EnvoyIP()
+		envOpts.FirewallCoreDNSIP = coreDNSIP
+		envOpts.FirewallNetCIDR = fwMgr.NetCIDR()
 	}
 
 	// Deprecation warning for ip_range_sources

@@ -245,6 +245,7 @@ func buildHTTPRoutes(r config.EgressRule) []any {
 }
 
 // buildPassthroughFilterChain creates an SNI passthrough filter chain for an allowed domain.
+// sni_dynamic_forward_proxy is non-terminal — tcp_proxy must follow it.
 func buildPassthroughFilterChain(r config.EgressRule) map[string]any {
 	domain := normalizeDomain(r.Dst)
 	port := r.Port
@@ -268,6 +269,15 @@ func buildPassthroughFilterChain(r config.EgressRule) map[string]any {
 					"port_value": port,
 				},
 			},
+			map[string]any{
+				"name": "envoy.filters.network.tcp_proxy",
+				"typed_config": map[string]any{
+					"@type":        "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
+					"stat_prefix":  fmt.Sprintf("passthrough_%s", sanitizeName(domain)),
+					"cluster":      "dynamic_forward_proxy_cluster",
+					"idle_timeout": "0s",
+				},
+			},
 		},
 	}
 }
@@ -280,9 +290,10 @@ func buildDenyFilterChain() map[string]any {
 			map[string]any{
 				"name": "envoy.filters.network.tcp_proxy",
 				"typed_config": map[string]any{
-					"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
-					"stat_prefix": "deny_all",
-					"cluster":     "deny_cluster",
+					"@type":        "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
+					"stat_prefix":  "deny_all",
+					"cluster":      "deny_cluster",
+					"idle_timeout": "0s",
 				},
 			},
 		},
