@@ -68,10 +68,12 @@ Sentinel errors: `ErrEnvoyUnhealthy`, `ErrCoreDNSUnhealthy`.
 Docker implementation of `FirewallManager`. Creates and manages Envoy + CoreDNS containers on an isolated Docker network with static IPs.
 
 ```go
-func NewManager(client *docker.Client, cfg config.Config, log *logger.Logger) (*Manager, error)
+func NewManager(client client.APIClient, cfg config.Config, log *logger.Logger) (*Manager, error)
 ```
 
-`Manager` holds a `*docker.Client`, `config.Config`, `*logger.Logger`, and a `*storage.Store[EgressRulesFile]`. All `FirewallManager` methods are implemented as `*Manager` receivers.
+`Manager` holds a `client.APIClient` (raw moby — **not** `docker.Client`/whail, to avoid jail label filtering), `config.Config`, `*logger.Logger`, and a `*storage.Store[EgressRulesFile]`. All `FirewallManager` methods are implemented as `*Manager` receivers.
+
+Container name arguments use the `firewallContainer` typed constant (`envoyContainer`, `corednsContainer`) for type safety.
 
 Key internal methods: `ensureNetwork`, `ensureContainer`, `ensureConfigs`, `regenerateAndRestart`, `syncProjectRules`.
 
@@ -170,7 +172,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule) ([]byte, []string, error)
 
 - **`internal/config`** — `EgressRule` and `PathRule` types come from the config schema. The firewall package imports config; config does NOT import firewall.
 - **`internal/storage`** — `EgressRulesFile` is the document type passed to `storage.Store[EgressRulesFile]` for persisting active rules.
-- **`internal/docker`** — imports firewall for container creation; `Manager` receives `*docker.Client` in its constructor.
+- **`github.com/moby/moby/client`** — `Manager` receives `client.APIClient` (raw moby) in its constructor. Does NOT use `internal/docker` or `pkg/whail` — avoids jail label filtering that hides containers from the daemon's watcher.
 - **`internal/cmd/factory`** — Factory exposes `f.Firewall()` as a lazy noun returning `FirewallManager`.
 - **`internal/logger`** — `Manager` and `Daemon` accept `*logger.Logger` in constructors.
 
