@@ -126,7 +126,7 @@ start_bypass() {
     # user.unprivileged must be root — Dante forks child processes that create outbound sockets,
     # and those sockets must be owned by uid 0 to bypass the iptables RETURN rule.
     cat > "$DANTED_CONF" <<DEOF
-logoutput: stderr
+logoutput: stdout
 internal: 127.0.0.1 port = $SOCKS_PORT
 external: $ext_iface
 clientmethod: none
@@ -193,8 +193,6 @@ PCEOF
 
     echo "$DANTED_PID" > "$PIDFILE"
 
-    echo "[firewall-bypass] proxy started on localhost:$SOCKS_PORT (PID $DANTED_PID, timeout ${timeout_secs}s)"
-    echo "[firewall-bypass] use 'proxychains4 <command>' for unrestricted egress"
 
     # Background timeout killer — sends SIGTERM to danted after timeout.
     (sleep "$timeout_secs" && kill "$DANTED_PID" 2>/dev/null) &

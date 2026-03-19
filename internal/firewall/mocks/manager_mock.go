@@ -7,6 +7,7 @@ import (
 	"context"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/firewall"
+	"io"
 	"sync"
 	"time"
 )
@@ -24,7 +25,7 @@ var _ firewall.FirewallManager = &FirewallManagerMock{}
 //			AddRulesFunc: func(ctx context.Context, rules []config.EgressRule) error {
 //				panic("mock out the AddRules method")
 //			},
-//			BypassFunc: func(ctx context.Context, containerID string, timeout time.Duration) error {
+//			BypassFunc: func(ctx context.Context, containerID string, timeout time.Duration, detach bool) (io.ReadCloser, error) {
 //				panic("mock out the Bypass method")
 //			},
 //			CoreDNSIPFunc: func() string {
@@ -80,7 +81,7 @@ type FirewallManagerMock struct {
 	AddRulesFunc func(ctx context.Context, rules []config.EgressRule) error
 
 	// BypassFunc mocks the Bypass method.
-	BypassFunc func(ctx context.Context, containerID string, timeout time.Duration) error
+	BypassFunc func(ctx context.Context, containerID string, timeout time.Duration, detach bool) (io.ReadCloser, error)
 
 	// CoreDNSIPFunc mocks the CoreDNSIP method.
 	CoreDNSIPFunc func() string
@@ -141,6 +142,8 @@ type FirewallManagerMock struct {
 			ContainerID string
 			// Timeout is the timeout argument value.
 			Timeout time.Duration
+			// Detach is the detach argument value.
+			Detach bool
 		}
 		// CoreDNSIP holds details about calls to the CoreDNSIP method.
 		CoreDNSIP []struct {
@@ -270,7 +273,7 @@ func (mock *FirewallManagerMock) AddRulesCalls() []struct {
 }
 
 // Bypass calls BypassFunc.
-func (mock *FirewallManagerMock) Bypass(ctx context.Context, containerID string, timeout time.Duration) error {
+func (mock *FirewallManagerMock) Bypass(ctx context.Context, containerID string, timeout time.Duration, detach bool) (io.ReadCloser, error) {
 	if mock.BypassFunc == nil {
 		panic("FirewallManagerMock.BypassFunc: method is nil but FirewallManager.Bypass was just called")
 	}
@@ -278,15 +281,17 @@ func (mock *FirewallManagerMock) Bypass(ctx context.Context, containerID string,
 		Ctx         context.Context
 		ContainerID string
 		Timeout     time.Duration
+		Detach      bool
 	}{
 		Ctx:         ctx,
 		ContainerID: containerID,
 		Timeout:     timeout,
+		Detach:      detach,
 	}
 	mock.lockBypass.Lock()
 	mock.calls.Bypass = append(mock.calls.Bypass, callInfo)
 	mock.lockBypass.Unlock()
-	return mock.BypassFunc(ctx, containerID, timeout)
+	return mock.BypassFunc(ctx, containerID, timeout, detach)
 }
 
 // BypassCalls gets all the calls that were made to Bypass.
@@ -297,11 +302,13 @@ func (mock *FirewallManagerMock) BypassCalls() []struct {
 	Ctx         context.Context
 	ContainerID string
 	Timeout     time.Duration
+	Detach      bool
 } {
 	var calls []struct {
 		Ctx         context.Context
 		ContainerID string
 		Timeout     time.Duration
+		Detach      bool
 	}
 	mock.lockBypass.RLock()
 	calls = mock.calls.Bypass

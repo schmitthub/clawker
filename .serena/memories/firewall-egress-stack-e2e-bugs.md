@@ -14,6 +14,7 @@
 - [ ] Consider restoring domain groups for conveninence (ie python, github, google cloud, etc) - pain in the ass to keep on top of tho
 - [ ] Merged egress rules in clawker state all say port 0 ex `.clawkerlocal/.local/share/clawker/firewall/egress-rules.yaml`
 - [ ] Never testing firewall disable
+- [ ] clawker firewall up hangs on the process and blocks instead of starting it in the background as a daemon
 
 ## Session Progress
 

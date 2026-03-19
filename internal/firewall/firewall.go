@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -66,7 +67,10 @@ type FirewallManager interface {
 
 	// Bypass grants a container unrestricted egress for the given duration.
 	// After timeout elapses, rules are re-applied automatically.
-	Bypass(ctx context.Context, containerID string, timeout time.Duration) error
+	// When detach is false, returns an io.ReadCloser streaming dante logs
+	// (the caller must read until EOF or close it to stop early).
+	// When detach is true, returns nil (fire-and-forget, use StopBypass to cancel).
+	Bypass(ctx context.Context, containerID string, timeout time.Duration, detach bool) (io.ReadCloser, error)
 
 	// StopBypass cancels an active bypass, immediately re-applying egress rules.
 	StopBypass(ctx context.Context, containerID string) error

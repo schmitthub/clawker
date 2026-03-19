@@ -30,21 +30,21 @@ Always attempt connections first — the domain may already be whitelisted. Only
 
 ### When a connection is blocked
 
-Present **all** of the following options to the user so they can choose:
+Present **all** of the following options to the user so they can choose. These are `clawker firewall` commands the user runs on the **host** — you cannot modify the firewall from inside this container.
 
 1. **Whitelist the domain** (permanent, recommended for recurring needs):
    ```
    clawker firewall add <hostname>
    ```
 
-2. **Temporary bypass** (time-limited unrestricted egress):
+2. **SOCKS proxy bypass** (escape hatch — firewall stays active):
    ```
    clawker firewall bypass <duration> --agent <name>
    ```
-   While bypass is active, route traffic through the SOCKS proxy:
-   - `proxychains4 <command>` — wraps any CLI tool (pre-configured, no flags needed)
-   - `socks5h://localhost:9100` — for applications that accept a SOCKS proxy directly
-   - Bypass auto-expires after the specified duration
+   - By default the command blocks with a countdown timer; Ctrl+C stops the bypass early
+   - Use `--non-interactive` to run in the background: `clawker firewall bypass <duration> --agent <name> --non-interactive`
+   - Stop a background bypass: `clawker firewall bypass --stop --agent <name>`
+   - Auto-expires after the specified duration
 
 3. **Disable firewall for this container** (until re-enabled):
    ```
@@ -52,7 +52,27 @@ Present **all** of the following options to the user so they can choose:
    ```
    Re-enable later with `clawker firewall enable --agent <name>`
 
-> **Important**: These `clawker firewall` commands are run by the user on the **host**, not inside this container. You cannot modify the firewall from inside the container.
+### How the bypass works (agent reference)
+
+The bypass does **not** disable the firewall. The firewall uses iptables rules targeting your UID (`claude:1001`) to route traffic through Envoy/CoreDNS — the container's root user is not subject to these rules. The bypass opens a time-limited SOCKS5 proxy from root within this container to your user, letting you tunnel traffic out without going through the firewall. The firewall remains fully active for all non-proxied traffic.
+
+**When a bypass is active, you must route your own traffic through the SOCKS proxy:**
+- `proxychains4 <command>` — wraps any CLI tool (pre-configured, no flags needed)
+- `socks5h://localhost:9100` — for applications that accept a SOCKS proxy directly
+
+**Built-in tools (WebFetch, etc.) do not use the SOCKS proxy and will still fail during a bypass.** Always use CLI equivalents instead: `proxychains4 curl <url>`, `proxychains4 wget <url>`, etc. If the user needs a domain accessible to built-in tools, recommend whitelisting it instead of using bypass.
+
+### How rules are managed (agent reference)
+
+Firewall rules are stored in a persistent `egress-rules.yaml` file in clawker's data directory. All rule sources are **purely additive** — they merge into this file and never remove existing entries:
+
+- **`add_domains`** in `clawker.yaml` — simple domain list, converted to TLS allow rules at startup
+- **`security.firewall.rules`** in `clawker.yaml` — full rule definitions (custom proto/port/action), synced at startup
+- **`clawker firewall add <domain>`** — appends to the same store at runtime
+
+Duplicates are silently ignored (deduped by `dst:proto:port`). Rules persist across container restarts. Removing a domain from `clawker.yaml` does **not** remove it from the store — it gets re-synced on next startup.
+
+**The only way to remove a rule is `clawker firewall remove <domain>`.** No other command (`reload`, `disable`, `stop`) removes rules from the store.
 
 ### Other firewall commands available to the user
 

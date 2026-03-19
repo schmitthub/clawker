@@ -68,7 +68,7 @@ func TestFirewall_Bypass(t *testing.T) {
 	blockRes := h.ExecInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, blockRes.Err, "curl to blocked domain should fail")
 
-	bypassRes := h.Run("firewall", "bypass", "30s", "--agent", "firewall-test")
+	bypassRes := h.Run("firewall", "bypass", "30s", "--agent", "firewall-test", "--non-interactive")
 	require.NoError(t, bypassRes.Err, "firewall bypass failed\nstdout: %s\nstderr: %s",
 		bypassRes.Stdout, bypassRes.Stderr)
 

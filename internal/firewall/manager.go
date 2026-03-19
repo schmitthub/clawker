@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -348,33 +349,70 @@ func (m *Manager) Enable(_ context.Context, _ string) error {
 // firewall-bypass script baked into the image at build time. The script starts a
 // Dante SOCKS5 proxy as root (uid 0 bypasses iptables DNAT rules) and writes
 // proxychains config to the system default so `proxychains4 <cmd>` just works.
-func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.Duration) error {
+func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.Duration, detach bool) (io.ReadCloser, error) {
 	timeoutSecs := int(timeout.Seconds())
 	if timeoutSecs <= 0 {
 		timeoutSecs = 30
 	}
 
-	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
-		User: "root",
-		Cmd:  []string{firewallBypassScript, strconv.Itoa(timeoutSecs)},
-	})
-	if err != nil {
-		return fmt.Errorf("firewall bypass: creating exec: %w", err)
+	if detach {
+		execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
+			User: "root",
+			Cmd:  []string{firewallBypassScript, strconv.Itoa(timeoutSecs)},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("firewall bypass: creating exec: %w", err)
+		}
+
+		_, err = m.client.ExecStart(ctx, execResp.ID, client.ExecStartOptions{
+			Detach: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("firewall bypass: starting: %w", err)
+		}
+
+		m.log.Debug().
+			Str("container", containerID).
+			Int("timeout_secs", timeoutSecs).
+			Msg("firewall bypass started (detached)")
+
+		return nil, nil
 	}
 
-	_, err = m.client.ExecStart(ctx, execResp.ID, client.ExecStartOptions{
-		Detach: true,
+	// Attached mode: stream dante logs (stdout only) back to caller.
+	// Dante logs to stdout; script errors go to stderr (not captured).
+	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
+		User:         "root",
+		AttachStdout: true,
+		Cmd:          []string{firewallBypassScript, strconv.Itoa(timeoutSecs)},
 	})
 	if err != nil {
-		return fmt.Errorf("firewall bypass: starting: %w", err)
+		return nil, fmt.Errorf("firewall bypass: creating exec: %w", err)
+	}
+
+	hijack, err := m.client.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("firewall bypass: attaching: %w", err)
 	}
 
 	m.log.Debug().
 		Str("container", containerID).
 		Int("timeout_secs", timeoutSecs).
-		Msg("firewall bypass started")
+		Msg("firewall bypass started (attached)")
 
-	return nil
+	return &hijackedReadCloser{Reader: hijack.Reader, conn: hijack.Conn}, nil
+}
+
+// hijackedReadCloser wraps a bufio.Reader from a Docker exec attach with a
+// net.Conn for cleanup. Reading returns the multiplexed stdout/stderr stream.
+// Close releases the underlying connection.
+type hijackedReadCloser struct {
+	*bufio.Reader
+	conn net.Conn
+}
+
+func (h *hijackedReadCloser) Close() error {
+	return h.conn.Close()
 }
 
 // StopBypass stops an active bypass by executing the firewall-bypass script with "stop".
