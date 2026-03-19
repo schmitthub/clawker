@@ -1,7 +1,10 @@
 package e2e
 
 import (
+	"context"
 	"fmt"
+	"net"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/firewall"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/test/e2e/harness"
@@ -264,4 +268,105 @@ func TestFirewall_Status(t *testing.T) {
 		statusRes.Stdout, statusRes.Stderr)
 	assert.Contains(t, statusRes.Stdout, `"running": true`)
 	assert.Contains(t, statusRes.Stdout, `"rule_count": 7`)
+}
+
+func TestFirewall_IntraNetworkBypass(t *testing.T) {
+	h := newFirewallHarness(t)
+	ctx := context.Background()
+
+	// Boot a container to trigger firewall startup and create clawker-net.
+	bootRes := h.RunInContainer("intra-net-boot", "echo", "started")
+	require.NoError(t, bootRes.Err, "boot container failed\nstdout: %s\nstderr: %s",
+		bootRes.Stdout, bootRes.Stderr)
+
+	// Start a simple HTTP listener on clawker-net — no firewall rule for this service.
+	listenerName := fmt.Sprintf("clawker-test-listener-%d", time.Now().UnixNano())
+	//nolint:gosec // args are test-controlled
+	startCmd := exec.CommandContext(ctx, "docker", "run", "-d",
+		"--name", listenerName,
+		"--network", "clawker-net",
+		"busybox", "sh", "-c",
+		"mkdir -p /www && echo OK > /www/index.html && httpd -f -p 8080 -h /www")
+	startOut, err := startCmd.CombinedOutput()
+	require.NoError(t, err, "start listener failed: %s", string(startOut))
+	t.Cleanup(func() {
+		_ = exec.CommandContext(context.Background(), "docker", "rm", "-f", listenerName).Run()
+	})
+
+	// Get the listener's IP on clawker-net.
+	//nolint:gosec // args are test-controlled
+	ipOut, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
+		`{{(index .NetworkSettings.Networks "clawker-net").IPAddress}}`,
+		listenerName).Output()
+	require.NoError(t, err, "inspect listener IP failed")
+	listenerIP := strings.TrimSpace(string(ipOut))
+	require.NotEmpty(t, listenerIP, "listener should have an IP on clawker-net")
+	t.Logf("listener IP: %s", listenerIP)
+
+	// Wait for httpd to start.
+	time.Sleep(1 * time.Second)
+
+	// Agent container can reach intra-network service via CIDR bypass (no firewall rule).
+	connectRes := h.RunInContainer("intra-net-test",
+		"curl", "-s", "--max-time", "5", "--connect-timeout", "3",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"http://"+net.JoinHostPort(listenerIP, "8080")+"/")
+
+	require.NoError(t, connectRes.Err,
+		"intra-network should succeed via CIDR bypass\nstdout: %s\nstderr: %s",
+		connectRes.Stdout, connectRes.Stderr)
+	assert.Contains(t, connectRes.Stdout, "200",
+		"should get HTTP 200 from listener on clawker-net")
+
+	// Sanity: external domain still blocked by firewall.
+	blockedRes := h.RunInContainer("intra-net-test",
+		"curl", "-s", "--max-time", "5", "https://example.com")
+	assert.NotNil(t, blockedRes.Err, "external domain should still be blocked")
+}
+
+func TestFirewall_HostProxyReachable(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			Firewall:       firewall.NewManager,
+			HostProxy:      hostproxy.NewManager,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
+
+	// Agent container with real host proxy — should reach /health via targeted iptables RETURN.
+	healthRes := h.RunInContainer("hp-test",
+		"sh", "-c",
+		`curl -s --max-time 5 --connect-timeout 3 -o /dev/null -w "%{http_code}" "$CLAWKER_HOST_PROXY/health"`)
+	require.NoError(t, healthRes.Err,
+		"host proxy /health should be reachable through firewall\nstdout: %s\nstderr: %s",
+		healthRes.Stdout, healthRes.Stderr)
+	assert.Contains(t, healthRes.Stdout, "200",
+		"should get HTTP 200 from host proxy health endpoint")
+
+	// Non-proxy host port should still be blocked (CIDR bypass doesn't cover host).
+	blockedRes := h.RunInContainer("hp-test",
+		"curl", "-s", "--max-time", "3", "--connect-timeout", "2",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"http://host.docker.internal:9999")
+	assert.NotNil(t, blockedRes.Err, "non-proxy host port should be blocked by firewall")
 }
