@@ -5,7 +5,7 @@
 ## Bugs
 
 - [ ] **Bypass incomplete**: Adding the bypass script is not finished or passing tests
-- [ ] **Stack shutsdown unexpectedly**: The daemon is not properly tracking clawker container uptimes like hostproxy does. It shuts down the envoy and coredns containers even though clawker containers are running
+- [x] **Stack shutsdown unexpectedly**: The daemon is not properly tracking clawker container uptimes like hostproxy does. It shuts down the envoy and coredns containers even though clawker containers are running
 - [ ] **Rules not tested**: We have not tested config firewall.rules only config firewall.add_domain
 - [ ] **CA Certs wrong dir**: CA certs are not being created in the certs directory, they are being created alongside it
 
