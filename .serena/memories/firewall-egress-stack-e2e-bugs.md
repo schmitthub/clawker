@@ -6,15 +6,14 @@
 
 - [x] **Bypass incomplete**: Fixed — three root causes: (1) Dante hardcoded `external: eth0` but container interface varies; now detects via `/proc/net/route`. (2) `hostConfig.DNS = CoreDNS` made Docker forward ALL DNS through CoreDNS including root's; removed — iptables handles DNS filtering. (3) init-firewall.sh used catch-all rules instead of targeting container user UID; now targets `CLAWKER_USER` UID specifically (matching openclaw-deploy reference).
 - [x] **Stack shuts down unexpectedly**: Fixed — daemon was not properly tracking clawker containers.
-- [ ] **Rules not tested**: We have not tested config firewall.rules only config firewall.add_domain
-- [x] **CA Certs wrong dir**: Fixed — EnsureCA was writing ca-cert.pem/ca-key.pem to dataDir instead of dataDir/certsDir. RotateCA cleanup simplified to single RemoveAll.
-- [x] **IP collision with monitoring stack**: Envoy (.2) and CoreDNS (.3) collided with monitoring DHCP containers. Fixed: moved to .200/.201. All port/IP consts centralised in config/consts.go.
-- [x] **ensureContainer recreated unnecessarily**: Was removing and recreating stopped containers instead of just starting them. Fixed.
-- [ ] Test if monitoring stack containers blocked by firewall/iptables (ie allow for docker internal networking still)
-- [ ] Consider restoring domain groups for conveninence (ie python, github, google cloud, etc) - pain in the ass to keep on top of tho
-- [ ] Merged egress rules in clawker state all say port 0 ex `.clawkerlocal/.local/share/clawker/firewall/egress-rules.yaml`
-- [ ] Never testing firewall disable
+- [x] **Rules not tested**: Fixed — `TestFirewall_ConfigRules` tests TLS rules, TCP rules (otel-collector:4317), concurrent config sync (container start + CLI firewall add), and verifies rules in global list
+- [x] **Merged egress rules all port 0**: Fixed — `normalizeRule()` in rules.go sets TLS→443, SSH→22. TCP port 0 = any port (intentional). All store writes go through normalization.
+- [x] **Monitoring stack blocked by firewall**: Partially fixed — TCP rules now work via per-rule iptables DNAT to dedicated Envoy listeners. otel-collector:4317 verified in E2E. Remaining: clawker-net subnet traffic should bypass Envoy entirely (add iptables RETURN for subnet CIDR), or bake monitoring stack domains/ports into required rules like api.anthropic.com.
+- [x] **Project rules not synced after daemon start**: Fixed — container creation calls `AddRules` with fresh project config. `regenerateAndRestart` skips container restart if stack not running (configs written to disk, daemon picks them up on start).
 - [ ] clawker firewall up hangs on the process and blocks instead of starting it in the background as a daemon
+- [ ] Never tested firewall disable command
+- [ ] never tested firewall disabled setting 
+
 
 ## Session Progress
 

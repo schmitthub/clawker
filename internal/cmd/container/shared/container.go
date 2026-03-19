@@ -1832,24 +1832,45 @@ func buildRuntimeEnv(ctx context.Context, opts *CreateContainerOptions, projectC
 	// Fatal if enabled but fails — starting a container without firewall when
 	// the user expects one is a security hole.
 	if opts.Firewall != nil {
-		if err := firewall.EnsureDaemon(opts.Config, log); err != nil {
-			return nil, nil, "", fmt.Errorf("firewall daemon: %w", err)
-		}
 		fwMgr, fwErr := opts.Firewall(ctx)
 		if fwErr != nil {
 			return nil, nil, "", fmt.Errorf("firewall: %w", fwErr)
 		}
-		// Wait for the daemon to bring up envoy+coredns (may have just been spawned).
+
+		// Sync project rules — writes configs, restarts containers only if running.
+		projectRules := firewall.ProjectRules(projectCfg.Security.Firewall, opts.Config.RequiredFirewallRules())
+		if err := fwMgr.AddRules(ctx, projectRules); err != nil {
+			return nil, nil, "", fmt.Errorf("firewall add rules: %w", err)
+		}
+
+		// Ensure daemon is running and wait for healthy.
+		if err := firewall.EnsureDaemon(opts.Config, log); err != nil {
+			return nil, nil, "", fmt.Errorf("firewall daemon: %w", err)
+		}
 		waitCtx, waitCancel := context.WithTimeout(ctx, 60*time.Second)
 		defer waitCancel()
 		if err := fwMgr.WaitForHealthy(waitCtx); err != nil {
 			return nil, nil, "", fmt.Errorf("firewall: %w", err)
 		}
+
 		coreDNSIP = fwMgr.CoreDNSIP()
 		envOpts.FirewallEnabled = true
 		envOpts.FirewallEnvoyIP = fwMgr.EnvoyIP()
 		envOpts.FirewallCoreDNSIP = coreDNSIP
 		envOpts.FirewallNetCIDR = fwMgr.NetCIDR()
+
+		// Step 5: Compute TCP rule → Envoy port mappings for per-rule iptables DNAT.
+		allRules, listErr := fwMgr.List(ctx)
+		if listErr != nil {
+			return nil, nil, "", fmt.Errorf("firewall list rules: %w", listErr)
+		}
+		tcpMappings := firewall.TCPPortMappings(allRules, firewall.EnvoyPorts{
+			TLSPort:     opts.Config.EnvoyTLSPort(),
+			TCPPortBase: opts.Config.EnvoyTCPPortBase(),
+		})
+		if len(tcpMappings) > 0 {
+			envOpts.FirewallTCPRules = firewall.EncodeTCPMappings(tcpMappings)
+		}
 	}
 
 	// Deprecation warning for ip_range_sources

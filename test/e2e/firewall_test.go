@@ -1,7 +1,9 @@
 package e2e
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -136,6 +138,115 @@ func TestFirewall_AddRemove(t *testing.T) {
 	// Verify blocked again after remove.
 	blockedAgain := h.RunInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, blockedAgain.Err, "example.com should be blocked after remove")
+}
+
+func TestFirewall_ConfigRules(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			Firewall:       firewall.NewManager,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	// Use security.firewall.rules (explicit EgressRule list) instead of add_domains.
+	// Includes both a TLS rule (example.com:443) and a TCP rule (otel-collector:4317).
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+security:
+  firewall:
+    rules:
+      - dst: "example.com"
+        proto: "tls"
+        port: 443
+        action: "allow"
+      - dst: "otel-collector"
+        proto: "tcp"
+        port: 4317
+        action: "allow"
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
+
+	// Concurrent config sync: goroutine A starts a container (full AddRules →
+	// EnsureDaemon → regenerateAndRestart path with config rules including
+	// example.com TLS + otel-collector TCP), goroutine B adds httpbin.org via
+	// CLI (AddRules → regenerateAndRestart). Both write to the store and
+	// restart Envoy/CoreDNS concurrently.
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+
+	// Goroutine A: container start path — first container triggers daemon startup,
+	// syncs config rules, starts stack, then curls example.com through the firewall.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		res := h.RunInContainer("config-rules-test",
+			"curl", "-s", "--max-time", "15", "-o", "/dev/null", "-w", "%{http_code}",
+			"https://example.com")
+		if res.Err != nil {
+			errs[0] = fmt.Errorf("container start: %w\nstdout: %s\nstderr: %s",
+				res.Err, res.Stdout, res.Stderr)
+		}
+	}()
+
+	// Goroutine B: CLI firewall add — hits AddRules on the same stack.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		res := h.Run("firewall", "add", "httpbin.org")
+		if res.Err != nil {
+			errs[1] = fmt.Errorf("firewall add: %w\nstdout: %s\nstderr: %s",
+				res.Err, res.Stdout, res.Stderr)
+		}
+	}()
+
+	wg.Wait()
+	for i, err := range errs {
+		require.NoError(t, err, "concurrent operation %d failed", i)
+	}
+
+	// All three domains should be in the global list after concurrent sync.
+	finalList := h.Run("firewall", "list")
+	require.NoError(t, finalList.Err, "list failed after concurrent sync")
+	assert.Contains(t, finalList.Stdout, "example.com", "TLS config rule should survive concurrent sync")
+	assert.Contains(t, finalList.Stdout, "otel-collector", "TCP config rule should survive concurrent sync")
+	assert.Contains(t, finalList.Stdout, "httpbin.org", "CLI-added rule should survive concurrent sync")
+
+	// Verify both TLS and TCP rules actually work through the firewall.
+	httpbinRes := h.RunInContainer("verify-test",
+		"curl", "-s", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}",
+		"https://httpbin.org")
+	require.NoError(t, httpbinRes.Err,
+		"httpbin.org should be allowed after concurrent add\nstdout: %s\nstderr: %s",
+		httpbinRes.Stdout, httpbinRes.Stderr)
+
+	tcpRes := h.RunInContainer("verify-test",
+		"curl", "-s", "--max-time", "5", "--connect-timeout", "3",
+		"--http2-prior-knowledge",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"http://otel-collector:4317")
+	require.NoError(t, tcpRes.Err,
+		"otel-collector TCP rule should work after concurrent sync\nstdout: %s\nstderr: %s",
+		tcpRes.Stdout, tcpRes.Stderr)
+
+	// Stack should still be healthy.
+	statusRes := h.Run("firewall", "status", "--json")
+	require.NoError(t, statusRes.Err, "status failed after concurrent sync")
+	assert.Contains(t, statusRes.Stdout, `"running": true`)
 }
 
 func TestFirewall_Status(t *testing.T) {

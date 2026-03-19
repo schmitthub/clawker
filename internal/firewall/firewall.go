@@ -47,6 +47,7 @@ type FirewallManager interface {
 	WaitForHealthy(ctx context.Context) error
 
 	// AddRules adds individual egress rules (CLI "firewall add").
+	// Writes to store, regenerates configs, restarts containers if running.
 	AddRules(ctx context.Context, rules []config.EgressRule) error
 
 	// RemoveRules deletes egress rules (CLI "firewall remove").

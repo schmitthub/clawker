@@ -77,8 +77,9 @@ func NewManager(client client.APIClient, cfg config.Config, log *logger.Logger) 
 }
 
 // EnsureRunning starts the firewall stack if not already running.
-// It syncs project rules from config (additive merge with existing state),
-// regenerates Envoy/CoreDNS configs, and ensures containers are running.
+// Generates Envoy/CoreDNS configs from whatever rules are in the store,
+// and ensures containers are running. Rule syncing is a CLI responsibility
+// (call SyncRules before EnsureDaemon).
 // Idempotent — safe to call on every container startup.
 func (m *Manager) EnsureRunning(ctx context.Context) error {
 	// Step 1: Ensure the shared Docker network exists.
@@ -98,18 +99,13 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 		Str("cidr", netInfo.CIDR).
 		Msg("firewall network discovered")
 
-	// Step 3: Sync project rules from config into state (additive).
-	if err := m.syncProjectRules(); err != nil {
-		return fmt.Errorf("firewall: syncing project rules: %w", err)
-	}
-
-	// Step 4: Ensure config files exist (envoy.yaml, Corefile, certs).
+	// Step 3: Generate config files (envoy.yaml, Corefile, certs) from the rules store.
 	dataDir, err := m.ensureConfigs(ctx)
 	if err != nil {
 		return fmt.Errorf("firewall: %w", err)
 	}
 
-	// Step 5: Ensure containers are running.
+	// Step 4: Ensure containers are running.
 	if err := m.ensureContainer(ctx, envoyContainer, m.envoyContainerConfig(netInfo, dataDir)); err != nil {
 		return fmt.Errorf("firewall: ensuring envoy: %w", err)
 	}
@@ -118,7 +114,7 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 		return fmt.Errorf("firewall: ensuring coredns: %w", err)
 	}
 
-	// Step 6: Wait for services to be healthy before declaring ready.
+	// Step 5: Wait for services to be healthy before declaring ready.
 	if err := m.WaitForHealthy(ctx); err != nil {
 		return fmt.Errorf("firewall: %w", err)
 	}
@@ -223,28 +219,18 @@ func (m *Manager) RemoveRules(ctx context.Context, rules []config.EgressRule) er
 	return m.regenerateAndRestart(ctx)
 }
 
-// syncProjectRules reads project rules (AddDomains + Rules) and required rules from
-// config, normalizes them, and additively merges into the rules store.
-func (m *Manager) syncProjectRules() error {
-	projectFw := m.cfg.Project().Security.Firewall
-	required := m.cfg.RequiredFirewallRules()
-
-	var incoming []config.EgressRule
-
-	// Required rules first.
-	incoming = append(incoming, required...)
-
-	// Project rules.
+// ProjectRules builds the full rule set from project config and required rules.
+// Used by CLI code to sync rules into the store before the daemon starts.
+func ProjectRules(projectFw *config.FirewallConfig, required []config.EgressRule) []config.EgressRule {
+	var rules []config.EgressRule
+	rules = append(rules, required...)
 	if projectFw != nil {
-		incoming = append(incoming, projectFw.Rules...)
-		// Convert AddDomains to EgressRules.
+		rules = append(rules, projectFw.Rules...)
 		for _, d := range projectFw.AddDomains {
-			incoming = append(incoming, config.EgressRule{Dst: d, Proto: "tls", Action: "allow"})
+			rules = append(rules, config.EgressRule{Dst: d, Proto: "tls", Action: "allow"})
 		}
 	}
-
-	_, err := m.addRulesToStore(incoming)
-	return err
+	return rules
 }
 
 // addRulesToStore deduplicates and writes rules to the store. Returns true if any new rules were added.
@@ -258,12 +244,7 @@ func (m *Manager) addRulesToStore(rules []config.EgressRule) (bool, error) {
 
 	var newRules []config.EgressRule
 	for _, r := range rules {
-		if r.Proto == "" {
-			r.Proto = "tls"
-		}
-		if r.Action == "" {
-			r.Action = "allow"
-		}
+		r = normalizeRule(r)
 		key := ruleKey(r)
 		if _, exists := known[key]; exists {
 			continue
@@ -297,7 +278,7 @@ func (m *Manager) removeRulesFromStore(toRemove []config.EgressRule) error {
 
 	removeSet := make(map[string]struct{}, len(toRemove))
 	for _, r := range toRemove {
-		removeSet[ruleKey(r)] = struct{}{}
+		removeSet[ruleKey(normalizeRule(r))] = struct{}{}
 	}
 
 	current := m.store.Read()
@@ -552,6 +533,12 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 func (m *Manager) regenerateAndRestart(ctx context.Context) error {
 	if _, err := m.ensureConfigs(ctx); err != nil {
 		return fmt.Errorf("regenerating configs: %w", err)
+	}
+
+	// Only restart containers if they're running. If not, the daemon will
+	// start them with the fresh configs when it brings the stack up.
+	if !m.IsRunning(ctx) {
+		return nil
 	}
 
 	if err := m.restartContainer(ctx, envoyContainer); err != nil {

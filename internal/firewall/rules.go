@@ -2,6 +2,7 @@ package firewall
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -20,11 +21,28 @@ func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {
 	)
 }
 
+// normalizeRule fills in defaults so stored rules are explicit and unambiguous.
+// TLS/empty → port 443, SSH → port 22, TCP → port 0 stays (means "any port").
+func normalizeRule(r config.EgressRule) config.EgressRule {
+	if r.Proto == "" {
+		r.Proto = "tls"
+	}
+	if r.Action == "" {
+		r.Action = "allow"
+	}
+	if r.Port == 0 {
+		switch strings.ToLower(r.Proto) {
+		case "tls":
+			r.Port = 443
+		case "ssh":
+			r.Port = 22
+		}
+		// tcp: port 0 = any port, intentional
+	}
+	return r
+}
+
 // ruleKey returns the dedup key for an egress rule: dst:proto:port.
 func ruleKey(r config.EgressRule) string {
-	proto := r.Proto
-	if proto == "" {
-		proto = "tls"
-	}
-	return fmt.Sprintf("%s:%s:%d", r.Dst, proto, r.Port)
+	return fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
 }
