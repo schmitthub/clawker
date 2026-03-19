@@ -12,11 +12,12 @@ import (
 var upstreamDNS = []string{"1.1.1.2", "1.0.0.2"}
 
 // GenerateCorefile produces a CoreDNS Corefile from the given egress rules.
+// healthPort is the port the CoreDNS health plugin listens on (inside the container).
 //
 // Only "allow" rules with domain destinations (not IPs/CIDRs) get forward zones.
 // Each allowed domain gets its own zone forwarding to Cloudflare malware-blocking DNS.
 // The catch-all "." zone returns NXDOMAIN for everything else.
-func GenerateCorefile(rules []config.EgressRule) ([]byte, error) {
+func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error) {
 	var b strings.Builder
 
 	// Collect unique allowed domains (skip IPs, CIDRs, deny rules).
@@ -46,7 +47,7 @@ func GenerateCorefile(rules []config.EgressRule) ([]byte, error) {
 	b.WriteString("    template IN ANY . {\n")
 	b.WriteString("        rcode NXDOMAIN\n")
 	b.WriteString("    }\n")
-	fmt.Fprintf(&b, "    health :%d\n", corednsHealthPort)
+	fmt.Fprintf(&b, "    health :%d\n", healthPort)
 	b.WriteString("    reload 2s\n")
 	b.WriteString("}\n")
 

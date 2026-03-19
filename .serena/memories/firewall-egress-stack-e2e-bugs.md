@@ -4,8 +4,17 @@
 
 ## Bugs
 
-- [ ] **Bypass incomplete**: Adding the bypass script is not finished or passing tests
-- [x] **Stack shutsdown unexpectedly**: The daemon is not properly tracking clawker container uptimes like hostproxy does. It shuts down the envoy and coredns containers even though clawker containers are running
+- [ ] **Bypass incomplete**: Bypass script runs, Dante starts, proxychains connects to 127.0.0.1:9100 but outbound traffic times out. Root cause likely in the bypass script's iptables RETURN rule or Dante's external interface routing.
+- [x] **Stack shuts down unexpectedly**: Fixed — daemon was not properly tracking clawker containers.
 - [ ] **Rules not tested**: We have not tested config firewall.rules only config firewall.add_domain
 - [ ] **CA Certs wrong dir**: CA certs are not being created in the certs directory, they are being created alongside it
-- [ ] **Container init script says hostproxy is starting when its the firewall being waited on** script progress step says "Configuring host proxy" when its actually wait on the firewall containers to start
+- [x] **IP collision with monitoring stack**: Envoy (.2) and CoreDNS (.3) collided with monitoring DHCP containers. Fixed: moved to .200/.201. All port/IP consts centralised in config/consts.go.
+- [x] **ensureContainer recreated unnecessarily**: Was removing and recreating stopped containers instead of just starting them. Fixed.
+
+## Session Progress
+
+- Centralised all clawker-net port/IP assignments in `internal/config/consts.go` with Config interface accessors
+- Regenerated config mock, wired stubs
+- Updated firewall package (manager, daemon, network, envoy, coredns) to use config accessors
+- `TestFirewall_Status`, `TestFirewall_AllowedDomain`, `TestFirewall_AddRemove` all pass
+- `TestFirewall_Bypass` reaches the bypass script but Dante times out — this is the bypass script logic itself

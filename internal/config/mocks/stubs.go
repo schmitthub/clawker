@@ -78,6 +78,13 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.GrafanaURLFunc = cfg.GrafanaURL
 	mock.JaegerURLFunc = cfg.JaegerURL
 	mock.PrometheusURLFunc = cfg.PrometheusURL
+	mock.EnvoyIPLastOctetFunc = cfg.EnvoyIPLastOctet
+	mock.CoreDNSIPLastOctetFunc = cfg.CoreDNSIPLastOctet
+	mock.EnvoyTLSPortFunc = cfg.EnvoyTLSPort
+	mock.EnvoyTCPPortBaseFunc = cfg.EnvoyTCPPortBase
+	mock.EnvoyHealthHostPortFunc = cfg.EnvoyHealthHostPort
+	mock.CoreDNSHealthHostPortFunc = cfg.CoreDNSHealthHostPort
+	mock.CoreDNSHealthPathFunc = cfg.CoreDNSHealthPath
 
 	// Path helpers
 	mock.MonitorSubdirFunc = cfg.MonitorSubdir

@@ -162,8 +162,8 @@ func (d *Daemon) healthCheckLoop(ctx context.Context) {
 	defer ticker.Stop()
 
 	consecutiveFailures := 0
-	envoyAddr := fmt.Sprintf("localhost:%d", envoyHealthHostPort)
-	corednsURL := fmt.Sprintf("http://localhost:%d%s", corednsHealthPort, corednsHealthPath)
+	envoyAddr := fmt.Sprintf("localhost:%d", d.cfg.EnvoyHealthHostPort())
+	corednsURL := fmt.Sprintf("http://localhost:%d%s", d.cfg.CoreDNSHealthHostPort(), d.cfg.CoreDNSHealthPath())
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
 	for {

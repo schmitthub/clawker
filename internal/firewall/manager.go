@@ -38,12 +38,7 @@ const (
 	envoyImage   = "envoyproxy/envoy:distroless-v1.37.1@sha256:4d9226b9fd4d1449887de7cde785beb24b12e47d6e79021dec3c79e362609432"
 	corednsImage = "coredns/coredns:1.14.2@sha256:e7e6440cfd1e919280958f5b5a6ab2b184d385bba774c12ad2a9e1e4183f90d9"
 
-	// Health check settings.
-	// Published to localhost so the host-side CLI and daemon can probe health.
-	// TODO: move to config/consts.go behind interface accessors.
-	envoyHealthHostPort = 18901 // Envoy TLS port published to host
-	corednsHealthPort   = 18902 // CoreDNS health port (inside container + published)
-	corednsHealthPath   = "/health"
+	// Health check timing.
 	healthCheckTimeout  = 30 * time.Second
 	healthCheckInterval = 500 * time.Millisecond
 )
@@ -159,8 +154,8 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 	deadline := time.Now().Add(healthCheckTimeout)
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
-	envoyAddr := fmt.Sprintf("localhost:%d", envoyHealthHostPort)
-	corednsURL := fmt.Sprintf("http://localhost:%d%s", corednsHealthPort, corednsHealthPath)
+	envoyAddr := fmt.Sprintf("localhost:%d", m.cfg.EnvoyHealthHostPort())
+	corednsURL := fmt.Sprintf("http://localhost:%d%s", m.cfg.CoreDNSHealthHostPort(), m.cfg.CoreDNSHealthPath())
 
 	var envoyReady, corednsReady bool
 
@@ -483,7 +478,10 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 	}
 
 	// Generate Envoy config.
-	envoyYAML, warnings, err := GenerateEnvoyConfig(allRules)
+	envoyYAML, warnings, err := GenerateEnvoyConfig(allRules, EnvoyPorts{
+		TLSPort:     m.cfg.EnvoyTLSPort(),
+		TCPPortBase: m.cfg.EnvoyTCPPortBase(),
+	})
 	if err != nil {
 		return "", fmt.Errorf("generating envoy config: %w", err)
 	}
@@ -496,7 +494,7 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 	}
 
 	// Generate Corefile.
-	corefile, err := GenerateCorefile(allRules)
+	corefile, err := GenerateCorefile(allRules, m.cfg.CoreDNSHealthHostPort())
 	if err != nil {
 		return "", fmt.Errorf("generating Corefile: %w", err)
 	}
@@ -556,8 +554,8 @@ func (m *Manager) envoyContainerConfig(net *NetworkInfo, dataDir string) contain
 		},
 		// Publish TLS listener for host-side health probes (TCP connect).
 		portBindings: network.PortMap{
-			network.MustParsePort(fmt.Sprintf("%d/tcp", EnvoyTLSPort)): {
-				{HostPort: strconv.Itoa(envoyHealthHostPort)},
+			network.MustParsePort(fmt.Sprintf("%d/tcp", m.cfg.EnvoyTLSPort())): {
+				{HostPort: strconv.Itoa(m.cfg.EnvoyHealthHostPort())},
 			},
 		},
 	}
@@ -566,6 +564,7 @@ func (m *Manager) envoyContainerConfig(net *NetworkInfo, dataDir string) contain
 // corednsContainerConfig returns the container creation config for the CoreDNS resolver.
 // dataDir must be pre-validated (ensureConfigs checks FirewallDataSubdir before this is called).
 func (m *Manager) corednsContainerConfig(net *NetworkInfo, dataDir string) containerSpec {
+	healthPort := m.cfg.CoreDNSHealthHostPort()
 	return containerSpec{
 		image:       corednsImage,
 		networkName: m.cfg.ClawkerNetwork(),
@@ -586,8 +585,8 @@ func (m *Manager) corednsContainerConfig(net *NetworkInfo, dataDir string) conta
 		},
 		// Publish health endpoint for host-side health probes.
 		portBindings: network.PortMap{
-			network.MustParsePort(fmt.Sprintf("%d/tcp", corednsHealthPort)): {
-				{HostPort: strconv.Itoa(corednsHealthPort)},
+			network.MustParsePort(fmt.Sprintf("%d/tcp", healthPort)): {
+				{HostPort: strconv.Itoa(healthPort)},
 			},
 		},
 	}
@@ -606,8 +605,9 @@ type containerSpec struct {
 }
 
 // ensureContainer ensures a named container exists and is running.
-// Cross-process safe: handles name conflicts (daemon vs CLI race) and
-// stale stopped containers (bind mounts may reference deleted paths).
+// If a stopped container exists, it is started rather than recreated —
+// firewall containers are long-lived and only need recreation on config/image changes.
+// Cross-process safe: handles name conflicts (daemon vs CLI race).
 func (m *Manager) ensureContainer(ctx context.Context, name firewallContainer, spec containerSpec) error {
 	n := string(name)
 	filters := client.Filters{}.Add("name", n)
@@ -630,14 +630,13 @@ func (m *Manager) ensureContainer(ctx context.Context, name firewallContainer, s
 		return nil
 	}
 
-	// Stopped container — remove and recreate. Bind mounts may reference
-	// deleted host paths, so restarting is not safe.
-	m.log.Debug().Str("container", n).Str("state", string(ctr.State)).Msg("removing stale firewall container")
-	if _, rmErr := m.client.ContainerRemove(ctx, ctr.ID, client.ContainerRemoveOptions{Force: true}); rmErr != nil {
-		m.log.Warn().Err(rmErr).Str("container", n).Msg("failed to remove stale container, will attempt create anyway")
+	// Container exists but is stopped/created — just start it.
+	m.log.Debug().Str("container", n).Str("state", string(ctr.State)).Msg("starting existing firewall container")
+	_, startErr := m.client.ContainerStart(ctx, ctr.ID, client.ContainerStartOptions{})
+	if startErr != nil {
+		return fmt.Errorf("starting existing container %s: %w", n, startErr)
 	}
-
-	return m.runContainer(ctx, name, spec)
+	return nil
 }
 
 // runContainer pulls the image if needed, creates the container, and starts it.

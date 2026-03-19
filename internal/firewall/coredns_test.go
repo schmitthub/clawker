@@ -35,7 +35,7 @@ func TestGenerateCorefile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := firewall.GenerateCorefile(tt.rules)
+			got, err := firewall.GenerateCorefile(tt.rules, 18902)
 			require.NoError(t, err)
 
 			goldenPath := filepath.Join("testdata", tt.goldenFile)

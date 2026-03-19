@@ -82,12 +82,13 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 		if !h.T.Failed() {
 			return
 		}
-		logPath := filepath.Join(logDir, "clawker.log")
-		data, err := os.ReadFile(logPath)
-		if err != nil {
-			return
+		for _, name := range []string{"clawker.log", "firewall.log"} {
+			data, err := os.ReadFile(filepath.Join(logDir, name))
+			if err != nil {
+				continue
+			}
+			h.T.Logf("=== %s ===\n%s", name, string(data))
 		}
-		h.T.Logf("=== clawker.log ===\n%s", string(data))
 	})
 
 	// Single cleanup: daemons, firewall infra, then test-labeled resources.

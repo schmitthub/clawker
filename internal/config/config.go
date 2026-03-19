@@ -83,6 +83,13 @@ type Config interface {
 	EgressRulesFileName() string
 	FirewallDataSubdir() (string, error)
 	RequiredFirewallRules() []EgressRule
+	EnvoyIPLastOctet() byte
+	CoreDNSIPLastOctet() byte
+	EnvoyTLSPort() int
+	EnvoyTCPPortBase() int
+	EnvoyHealthHostPort() int
+	CoreDNSHealthHostPort() int
+	CoreDNSHealthPath() string
 	ProjectConfigFileName() string
 	SettingsFileName() string
 	ProjectRegistryFileName() string

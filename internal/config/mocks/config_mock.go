@@ -43,6 +43,15 @@ var _ config.Config = &ConfigMock{}
 //			ContainerUIDFunc: func() int {
 //				panic("mock out the ContainerUID method")
 //			},
+//			CoreDNSHealthHostPortFunc: func() int {
+//				panic("mock out the CoreDNSHealthHostPort method")
+//			},
+//			CoreDNSHealthPathFunc: func() string {
+//				panic("mock out the CoreDNSHealthPath method")
+//			},
+//			CoreDNSIPLastOctetFunc: func() byte {
+//				panic("mock out the CoreDNSIPLastOctet method")
+//			},
 //			DataDirEnvVarFunc: func() string {
 //				panic("mock out the DataDirEnvVar method")
 //			},
@@ -60,6 +69,18 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			EngineManagedLabelFunc: func() string {
 //				panic("mock out the EngineManagedLabel method")
+//			},
+//			EnvoyHealthHostPortFunc: func() int {
+//				panic("mock out the EnvoyHealthHostPort method")
+//			},
+//			EnvoyIPLastOctetFunc: func() byte {
+//				panic("mock out the EnvoyIPLastOctet method")
+//			},
+//			EnvoyTCPPortBaseFunc: func() int {
+//				panic("mock out the EnvoyTCPPortBase method")
+//			},
+//			EnvoyTLSPortFunc: func() int {
+//				panic("mock out the EnvoyTLSPort method")
 //			},
 //			FirewallDataSubdirFunc: func() (string, error) {
 //				panic("mock out the FirewallDataSubdir method")
@@ -230,6 +251,15 @@ type ConfigMock struct {
 	// ContainerUIDFunc mocks the ContainerUID method.
 	ContainerUIDFunc func() int
 
+	// CoreDNSHealthHostPortFunc mocks the CoreDNSHealthHostPort method.
+	CoreDNSHealthHostPortFunc func() int
+
+	// CoreDNSHealthPathFunc mocks the CoreDNSHealthPath method.
+	CoreDNSHealthPathFunc func() string
+
+	// CoreDNSIPLastOctetFunc mocks the CoreDNSIPLastOctet method.
+	CoreDNSIPLastOctetFunc func() byte
+
 	// DataDirEnvVarFunc mocks the DataDirEnvVar method.
 	DataDirEnvVarFunc func() string
 
@@ -247,6 +277,18 @@ type ConfigMock struct {
 
 	// EngineManagedLabelFunc mocks the EngineManagedLabel method.
 	EngineManagedLabelFunc func() string
+
+	// EnvoyHealthHostPortFunc mocks the EnvoyHealthHostPort method.
+	EnvoyHealthHostPortFunc func() int
+
+	// EnvoyIPLastOctetFunc mocks the EnvoyIPLastOctet method.
+	EnvoyIPLastOctetFunc func() byte
+
+	// EnvoyTCPPortBaseFunc mocks the EnvoyTCPPortBase method.
+	EnvoyTCPPortBaseFunc func() int
+
+	// EnvoyTLSPortFunc mocks the EnvoyTLSPort method.
+	EnvoyTLSPortFunc func() int
 
 	// FirewallDataSubdirFunc mocks the FirewallDataSubdir method.
 	FirewallDataSubdirFunc func() (string, error)
@@ -414,6 +456,15 @@ type ConfigMock struct {
 		// ContainerUID holds details about calls to the ContainerUID method.
 		ContainerUID []struct {
 		}
+		// CoreDNSHealthHostPort holds details about calls to the CoreDNSHealthHostPort method.
+		CoreDNSHealthHostPort []struct {
+		}
+		// CoreDNSHealthPath holds details about calls to the CoreDNSHealthPath method.
+		CoreDNSHealthPath []struct {
+		}
+		// CoreDNSIPLastOctet holds details about calls to the CoreDNSIPLastOctet method.
+		CoreDNSIPLastOctet []struct {
+		}
 		// DataDirEnvVar holds details about calls to the DataDirEnvVar method.
 		DataDirEnvVar []struct {
 		}
@@ -431,6 +482,18 @@ type ConfigMock struct {
 		}
 		// EngineManagedLabel holds details about calls to the EngineManagedLabel method.
 		EngineManagedLabel []struct {
+		}
+		// EnvoyHealthHostPort holds details about calls to the EnvoyHealthHostPort method.
+		EnvoyHealthHostPort []struct {
+		}
+		// EnvoyIPLastOctet holds details about calls to the EnvoyIPLastOctet method.
+		EnvoyIPLastOctet []struct {
+		}
+		// EnvoyTCPPortBase holds details about calls to the EnvoyTCPPortBase method.
+		EnvoyTCPPortBase []struct {
+		}
+		// EnvoyTLSPort holds details about calls to the EnvoyTLSPort method.
+		EnvoyTLSPort []struct {
 		}
 		// FirewallDataSubdir holds details about calls to the FirewallDataSubdir method.
 		FirewallDataSubdir []struct {
@@ -591,12 +654,19 @@ type ConfigMock struct {
 	lockConfigDirEnvVar         sync.RWMutex
 	lockContainerGID            sync.RWMutex
 	lockContainerUID            sync.RWMutex
+	lockCoreDNSHealthHostPort   sync.RWMutex
+	lockCoreDNSHealthPath       sync.RWMutex
+	lockCoreDNSIPLastOctet      sync.RWMutex
 	lockDataDirEnvVar           sync.RWMutex
 	lockDockerfilesSubdir       sync.RWMutex
 	lockDomain                  sync.RWMutex
 	lockEgressRulesFileName     sync.RWMutex
 	lockEngineLabelPrefix       sync.RWMutex
 	lockEngineManagedLabel      sync.RWMutex
+	lockEnvoyHealthHostPort     sync.RWMutex
+	lockEnvoyIPLastOctet        sync.RWMutex
+	lockEnvoyTCPPortBase        sync.RWMutex
+	lockEnvoyTLSPort            sync.RWMutex
 	lockFirewallDataSubdir      sync.RWMutex
 	lockFirewallLogFilePath     sync.RWMutex
 	lockFirewallPIDFilePath     sync.RWMutex
@@ -866,6 +936,87 @@ func (mock *ConfigMock) ContainerUIDCalls() []struct {
 	return calls
 }
 
+// CoreDNSHealthHostPort calls CoreDNSHealthHostPortFunc.
+func (mock *ConfigMock) CoreDNSHealthHostPort() int {
+	if mock.CoreDNSHealthHostPortFunc == nil {
+		panic("ConfigMock.CoreDNSHealthHostPortFunc: method is nil but Config.CoreDNSHealthHostPort was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockCoreDNSHealthHostPort.Lock()
+	mock.calls.CoreDNSHealthHostPort = append(mock.calls.CoreDNSHealthHostPort, callInfo)
+	mock.lockCoreDNSHealthHostPort.Unlock()
+	return mock.CoreDNSHealthHostPortFunc()
+}
+
+// CoreDNSHealthHostPortCalls gets all the calls that were made to CoreDNSHealthHostPort.
+// Check the length with:
+//
+//	len(mockedConfig.CoreDNSHealthHostPortCalls())
+func (mock *ConfigMock) CoreDNSHealthHostPortCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockCoreDNSHealthHostPort.RLock()
+	calls = mock.calls.CoreDNSHealthHostPort
+	mock.lockCoreDNSHealthHostPort.RUnlock()
+	return calls
+}
+
+// CoreDNSHealthPath calls CoreDNSHealthPathFunc.
+func (mock *ConfigMock) CoreDNSHealthPath() string {
+	if mock.CoreDNSHealthPathFunc == nil {
+		panic("ConfigMock.CoreDNSHealthPathFunc: method is nil but Config.CoreDNSHealthPath was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockCoreDNSHealthPath.Lock()
+	mock.calls.CoreDNSHealthPath = append(mock.calls.CoreDNSHealthPath, callInfo)
+	mock.lockCoreDNSHealthPath.Unlock()
+	return mock.CoreDNSHealthPathFunc()
+}
+
+// CoreDNSHealthPathCalls gets all the calls that were made to CoreDNSHealthPath.
+// Check the length with:
+//
+//	len(mockedConfig.CoreDNSHealthPathCalls())
+func (mock *ConfigMock) CoreDNSHealthPathCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockCoreDNSHealthPath.RLock()
+	calls = mock.calls.CoreDNSHealthPath
+	mock.lockCoreDNSHealthPath.RUnlock()
+	return calls
+}
+
+// CoreDNSIPLastOctet calls CoreDNSIPLastOctetFunc.
+func (mock *ConfigMock) CoreDNSIPLastOctet() byte {
+	if mock.CoreDNSIPLastOctetFunc == nil {
+		panic("ConfigMock.CoreDNSIPLastOctetFunc: method is nil but Config.CoreDNSIPLastOctet was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockCoreDNSIPLastOctet.Lock()
+	mock.calls.CoreDNSIPLastOctet = append(mock.calls.CoreDNSIPLastOctet, callInfo)
+	mock.lockCoreDNSIPLastOctet.Unlock()
+	return mock.CoreDNSIPLastOctetFunc()
+}
+
+// CoreDNSIPLastOctetCalls gets all the calls that were made to CoreDNSIPLastOctet.
+// Check the length with:
+//
+//	len(mockedConfig.CoreDNSIPLastOctetCalls())
+func (mock *ConfigMock) CoreDNSIPLastOctetCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockCoreDNSIPLastOctet.RLock()
+	calls = mock.calls.CoreDNSIPLastOctet
+	mock.lockCoreDNSIPLastOctet.RUnlock()
+	return calls
+}
+
 // DataDirEnvVar calls DataDirEnvVarFunc.
 func (mock *ConfigMock) DataDirEnvVar() string {
 	if mock.DataDirEnvVarFunc == nil {
@@ -1025,6 +1176,114 @@ func (mock *ConfigMock) EngineManagedLabelCalls() []struct {
 	mock.lockEngineManagedLabel.RLock()
 	calls = mock.calls.EngineManagedLabel
 	mock.lockEngineManagedLabel.RUnlock()
+	return calls
+}
+
+// EnvoyHealthHostPort calls EnvoyHealthHostPortFunc.
+func (mock *ConfigMock) EnvoyHealthHostPort() int {
+	if mock.EnvoyHealthHostPortFunc == nil {
+		panic("ConfigMock.EnvoyHealthHostPortFunc: method is nil but Config.EnvoyHealthHostPort was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEnvoyHealthHostPort.Lock()
+	mock.calls.EnvoyHealthHostPort = append(mock.calls.EnvoyHealthHostPort, callInfo)
+	mock.lockEnvoyHealthHostPort.Unlock()
+	return mock.EnvoyHealthHostPortFunc()
+}
+
+// EnvoyHealthHostPortCalls gets all the calls that were made to EnvoyHealthHostPort.
+// Check the length with:
+//
+//	len(mockedConfig.EnvoyHealthHostPortCalls())
+func (mock *ConfigMock) EnvoyHealthHostPortCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEnvoyHealthHostPort.RLock()
+	calls = mock.calls.EnvoyHealthHostPort
+	mock.lockEnvoyHealthHostPort.RUnlock()
+	return calls
+}
+
+// EnvoyIPLastOctet calls EnvoyIPLastOctetFunc.
+func (mock *ConfigMock) EnvoyIPLastOctet() byte {
+	if mock.EnvoyIPLastOctetFunc == nil {
+		panic("ConfigMock.EnvoyIPLastOctetFunc: method is nil but Config.EnvoyIPLastOctet was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEnvoyIPLastOctet.Lock()
+	mock.calls.EnvoyIPLastOctet = append(mock.calls.EnvoyIPLastOctet, callInfo)
+	mock.lockEnvoyIPLastOctet.Unlock()
+	return mock.EnvoyIPLastOctetFunc()
+}
+
+// EnvoyIPLastOctetCalls gets all the calls that were made to EnvoyIPLastOctet.
+// Check the length with:
+//
+//	len(mockedConfig.EnvoyIPLastOctetCalls())
+func (mock *ConfigMock) EnvoyIPLastOctetCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEnvoyIPLastOctet.RLock()
+	calls = mock.calls.EnvoyIPLastOctet
+	mock.lockEnvoyIPLastOctet.RUnlock()
+	return calls
+}
+
+// EnvoyTCPPortBase calls EnvoyTCPPortBaseFunc.
+func (mock *ConfigMock) EnvoyTCPPortBase() int {
+	if mock.EnvoyTCPPortBaseFunc == nil {
+		panic("ConfigMock.EnvoyTCPPortBaseFunc: method is nil but Config.EnvoyTCPPortBase was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEnvoyTCPPortBase.Lock()
+	mock.calls.EnvoyTCPPortBase = append(mock.calls.EnvoyTCPPortBase, callInfo)
+	mock.lockEnvoyTCPPortBase.Unlock()
+	return mock.EnvoyTCPPortBaseFunc()
+}
+
+// EnvoyTCPPortBaseCalls gets all the calls that were made to EnvoyTCPPortBase.
+// Check the length with:
+//
+//	len(mockedConfig.EnvoyTCPPortBaseCalls())
+func (mock *ConfigMock) EnvoyTCPPortBaseCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEnvoyTCPPortBase.RLock()
+	calls = mock.calls.EnvoyTCPPortBase
+	mock.lockEnvoyTCPPortBase.RUnlock()
+	return calls
+}
+
+// EnvoyTLSPort calls EnvoyTLSPortFunc.
+func (mock *ConfigMock) EnvoyTLSPort() int {
+	if mock.EnvoyTLSPortFunc == nil {
+		panic("ConfigMock.EnvoyTLSPortFunc: method is nil but Config.EnvoyTLSPort was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEnvoyTLSPort.Lock()
+	mock.calls.EnvoyTLSPort = append(mock.calls.EnvoyTLSPort, callInfo)
+	mock.lockEnvoyTLSPort.Unlock()
+	return mock.EnvoyTLSPortFunc()
+}
+
+// EnvoyTLSPortCalls gets all the calls that were made to EnvoyTLSPort.
+// Check the length with:
+//
+//	len(mockedConfig.EnvoyTLSPortCalls())
+func (mock *ConfigMock) EnvoyTLSPortCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEnvoyTLSPort.RLock()
+	calls = mock.calls.EnvoyTLSPort
+	mock.lockEnvoyTLSPort.RUnlock()
 	return calls
 }
 

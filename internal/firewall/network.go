@@ -18,7 +18,7 @@ type NetworkInfo struct {
 }
 
 // discoverNetwork inspects the firewall network and computes static IPs
-// for Envoy (.2) and CoreDNS (.3) from the gateway address.
+// for Envoy and CoreDNS from the gateway address using config-defined octets.
 func (m *Manager) discoverNetwork(ctx context.Context) (*NetworkInfo, error) {
 	networkName := m.cfg.ClawkerNetwork()
 
@@ -37,11 +37,11 @@ func (m *Manager) discoverNetwork(ctx context.Context) (*NetworkInfo, error) {
 		return nil, fmt.Errorf("network %s has no gateway", networkName)
 	}
 
-	envoyIP, err := computeStaticIP(gateway, 2)
+	envoyIP, err := computeStaticIP(gateway, m.cfg.EnvoyIPLastOctet())
 	if err != nil {
 		return nil, fmt.Errorf("computing envoy IP: %w", err)
 	}
-	corednsIP, err := computeStaticIP(gateway, 3)
+	corednsIP, err := computeStaticIP(gateway, m.cfg.CoreDNSIPLastOctet())
 	if err != nil {
 		return nil, fmt.Errorf("computing coredns IP: %w", err)
 	}

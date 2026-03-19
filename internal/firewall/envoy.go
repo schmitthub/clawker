@@ -8,13 +8,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	// EnvoyTLSPort is the listener port for TLS egress (SNI passthrough + MITM).
-	EnvoyTLSPort = 10000
-
-	// EnvoyTCPPortBase is the starting port for TCP/SSH listeners.
-	EnvoyTCPPortBase = 10001
-)
+// EnvoyPorts holds the port configuration for the Envoy proxy, sourced from config.Config.
+type EnvoyPorts struct {
+	TLSPort     int // Listener port for TLS egress (SNI passthrough + MITM).
+	TCPPortBase int // Starting port for TCP/SSH listeners.
+}
 
 // Cert path formats inside the Envoy container (mounted volume).
 const (
@@ -27,7 +25,7 @@ const dnsCacheName = "dynamic_forward_proxy_cache_config"
 
 // GenerateEnvoyConfig produces an Envoy static bootstrap YAML from egress rules.
 // Returns the YAML bytes and a list of warnings (non-fatal issues).
-func GenerateEnvoyConfig(rules []config.EgressRule) ([]byte, []string, error) {
+func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, []string, error) {
 	var warnings []string
 
 	// Classify rules.
@@ -66,7 +64,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule) ([]byte, []string, error) {
 			},
 		},
 		"static_resources": map[string]any{
-			"listeners": buildListeners(mitmRules, passthroughRules, tcpRules),
+			"listeners": buildListeners(mitmRules, passthroughRules, tcpRules, ports),
 			"clusters":  buildClusters(tcpRules),
 		},
 	}
@@ -79,25 +77,25 @@ func GenerateEnvoyConfig(rules []config.EgressRule) ([]byte, []string, error) {
 }
 
 // buildListeners constructs all Envoy listeners.
-func buildListeners(mitm, passthrough, tcp []config.EgressRule) []any {
+func buildListeners(mitm, passthrough, tcp []config.EgressRule, ports EnvoyPorts) []any {
 	var listeners []any
 
-	// Main TLS listener (port 10000) — handles both MITM and passthrough.
+	// Main TLS listener — handles both MITM and passthrough.
 	if len(mitm) > 0 || len(passthrough) > 0 {
-		listeners = append(listeners, buildTLSListener(mitm, passthrough))
+		listeners = append(listeners, buildTLSListener(mitm, passthrough, ports.TLSPort))
 	}
 
 	// Per-rule TCP/SSH listeners on sequential ports.
 	for i, r := range tcp {
-		port := EnvoyTCPPortBase + i
+		port := ports.TCPPortBase + i
 		listeners = append(listeners, buildTCPListener(r, port))
 	}
 
 	return listeners
 }
 
-// buildTLSListener creates the main TLS listener on EnvoyTLSPort.
-func buildTLSListener(mitm, passthrough []config.EgressRule) map[string]any {
+// buildTLSListener creates the main TLS listener on the given port.
+func buildTLSListener(mitm, passthrough []config.EgressRule, tlsPort int) map[string]any {
 	var filterChains []any
 
 	// 1. MITM filter chains (TLS termination + HTTP path matching).
@@ -118,7 +116,7 @@ func buildTLSListener(mitm, passthrough []config.EgressRule) map[string]any {
 		"address": map[string]any{
 			"socket_address": map[string]any{
 				"address":    "0.0.0.0",
-				"port_value": EnvoyTLSPort,
+				"port_value": tlsPort,
 			},
 		},
 		"listener_filters": []any{

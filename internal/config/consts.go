@@ -1,3 +1,5 @@
+//TODO refactor: this file was a bit of a catch-all for consts mainly to help agents stay on track. It is becoming inconvenient because callers need a config instance to access them
+
 package config
 
 import (
@@ -65,6 +67,53 @@ const (
 	firewallLogFileName = "firewall.log"
 	// shareSubdir is the subdirectory for the shared directory (mounted read-only into containers)
 	shareSubdir = ".clawker-share"
+)
+
+// clawker-net static IP assignments (last octet).
+// Docker DHCP assigns from .2 upward, so monitoring containers (which use DHCP)
+// get .2-.6+. Firewall infrastructure uses high octets to avoid collisions.
+//
+// Monitoring stack (DHCP, no static IPs):
+//
+//	otel-collector  — assigned by Docker (typically .2-.6)
+//	jaeger          — assigned by Docker
+//	prometheus      — assigned by Docker
+//	loki            — assigned by Docker
+//	grafana         — assigned by Docker
+//
+// Firewall stack (static IPs):
+//
+//	envoy           — .200
+//	coredns         — .201
+const (
+	envoyIPLastOctet   = 200
+	corednsIPLastOctet = 201
+)
+
+// clawker-net port assignments.
+// All host-published ports and container-internal ports for services on clawker-net.
+// Centralised here to prevent collisions between firewall and monitoring stacks.
+//
+// Monitoring stack ports (configurable via settings.yaml monitoring section):
+//
+//	otel-collector  — 4317 (gRPC), 4318 (HTTP)
+//	jaeger          — 16686 (UI)
+//	prometheus      — 9090
+//	loki            — 3100
+//	grafana         — 3000
+//
+// Firewall stack ports (fixed):
+const (
+	// envoyTLSPort is the Envoy TLS listener port (inside container).
+	envoyTLSPort = 10000
+	// envoyTCPPortBase is the starting port for TCP/SSH listeners (inside container).
+	envoyTCPPortBase = 10001
+	// envoyHealthHostPort is the host port published for Envoy health probes (TCP connect).
+	envoyHealthHostPort = 18901
+	// corednsHealthHostPort is the host port published for CoreDNS health probes (HTTP /health).
+	corednsHealthHostPort = 18902
+	// corednsHealthPath is the HTTP path for CoreDNS health checks.
+	corednsHealthPath = "/health"
 )
 
 type Mode string
@@ -217,6 +266,27 @@ func (c *configImpl) FirewallDataSubdir() (string, error) {
 
 // EgressRulesFileName returns the filename for the egress rules state file.
 func (c *configImpl) EgressRulesFileName() string { return egressRulesFileName }
+
+// EnvoyIPLastOctet returns the last octet for Envoy's static IP on clawker-net.
+func (c *configImpl) EnvoyIPLastOctet() byte { return envoyIPLastOctet }
+
+// CoreDNSIPLastOctet returns the last octet for CoreDNS's static IP on clawker-net.
+func (c *configImpl) CoreDNSIPLastOctet() byte { return corednsIPLastOctet }
+
+// EnvoyTLSPort returns the Envoy TLS listener port (inside container).
+func (c *configImpl) EnvoyTLSPort() int { return envoyTLSPort }
+
+// EnvoyTCPPortBase returns the starting port for TCP/SSH listeners (inside container).
+func (c *configImpl) EnvoyTCPPortBase() int { return envoyTCPPortBase }
+
+// EnvoyHealthHostPort returns the host port published for Envoy health probes.
+func (c *configImpl) EnvoyHealthHostPort() int { return envoyHealthHostPort }
+
+// CoreDNSHealthHostPort returns the host port published for CoreDNS health probes.
+func (c *configImpl) CoreDNSHealthHostPort() int { return corednsHealthHostPort }
+
+// CoreDNSHealthPath returns the HTTP path for CoreDNS health checks.
+func (c *configImpl) CoreDNSHealthPath() string { return corednsHealthPath }
 
 // RequiredFirewallRules returns a copy of the required firewall egress rules.
 func (c *configImpl) RequiredFirewallRules() []EgressRule {

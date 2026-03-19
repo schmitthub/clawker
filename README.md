@@ -333,8 +333,8 @@ clawker volume ls                   # List clawker volumes
 # Firewall management
 clawker firewall status             # Health, rule count, running containers
 clawker firewall list               # List active egress rules
-clawker firewall add api.openai.com # Allow a domain
-clawker firewall remove api.openai.com
+clawker firewall add docs.clawker.dev # Allow a domain
+clawker firewall remove docs.clawker.dev 
 clawker firewall bypass --agent dev --timeout 5m  # Temporary unrestricted egress
 ```
 
