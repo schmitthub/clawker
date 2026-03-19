@@ -13,6 +13,7 @@
 - [ ] Test if monitoring stack containers blocked by firewall/iptables (ie allow for docker internal networking still)
 - [ ] Consider restoring domain groups for conveninence (ie python, github, google cloud, etc) - pain in the ass to keep on top of tho
 - [ ] Merged egress rules in clawker state all say port 0 ex `.clawkerlocal/.local/share/clawker/firewall/egress-rules.yaml`
+- [ ] Never testing firewall disable
 
 ## Session Progress
 
