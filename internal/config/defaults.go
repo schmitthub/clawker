@@ -133,8 +133,10 @@ workspace:
 
 security:
   firewall:
-    #add_domains: # additional allowed domains
-    #  - "api.openai.com"
+    add_domains: # additional allowed domains
+      - "github.com"
+      - "gitlab.com"
+      - "bitbucket.org"
   docker_socket: false # mount Docker socket (security risk if enabled)
 
 #loop: # autonomous loop settings (clawker loop iterate / clawker loop tasks)

@@ -1632,11 +1632,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		containerConfig.WorkingDir = wsResult.ContainerPath
 	}
 
-	extraLabels := map[string]string{
-		opts.Config.LabelProject(): opts.ProjectName,
-		opts.Config.LabelAgent():   agentName,
-		opts.Config.LabelWorkdir(): wd,
-	}
+	extraLabels := client.ContainerLabels(opts.ProjectName, agentName, opts.Version, containerOpts.Image, wd)
 
 	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
 		Config:           containerConfig,

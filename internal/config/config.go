@@ -58,7 +58,6 @@ type Config interface {
 	WorktreesSubdir() (string, error)
 	LabelPrefix() string
 	LabelManaged() string
-	LabelMonitoringStack() string
 	LabelProject() string
 	LabelAgent() string
 	LabelVersion() string
@@ -66,6 +65,9 @@ type Config interface {
 	LabelCreated() string
 	LabelWorkdir() string
 	LabelPurpose() string
+	PurposeAgent() string
+	PurposeMonitoring() string
+	PurposeFirewall() string
 	LabelTestName() string
 	LabelBaseImage() string
 	LabelFlavor() string

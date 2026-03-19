@@ -5,6 +5,7 @@
 ## MANTRA
 
 This is an in-development alpha project. Features are sometimes made quickly or in haste, architecture and design can change Legacy code that no longer fits the big picture can be encountered often therefore...
+
 * we don't write bad hackish code just to get a single task or feature done. that is a sure fire way to create massive technical debt.
 * you must always be thinking about the big picture.
 * when we find gaps and bad patterns we pivot and address them before continuing so that the project can scale painlessly
@@ -23,25 +24,24 @@ Finding and fixing greater issues is fun, its more important than the task at ha
 ### MUST USE
 
 1. **Serena** - Code exploration, symbol search, semantic editing:
-   - `initial_instructions` → `check_onboarding_performed` → `list_memories`
-   - `search_for_pattern`,`find_symbol`,`get_symbols_overview`,`find_referencing_symbols` for navigation
-   - `think_about_collected_information` after research
-   - `think_about_task_adherence` before changes
-   - `replace_symbol_body`, `insert_after_symbol`,`insert_before_symbol`,`rename_symbol` for edits
-   - `think_about_whether_you_are_done` after task
-   - `write_memory`, `edit_memory`, `delete_memory` to update memories with current status before completion
+   * `initial_instructions` → `check_onboarding_performed` → `list_memories`
+   * `search_for_pattern`,`find_symbol`,`get_symbols_overview`,`find_referencing_symbols` for navigation
+   * `think_about_collected_information` after research
+   * `think_about_task_adherence` before changes
+   * `replace_symbol_body`, `insert_after_symbol`,`insert_before_symbol`,`rename_symbol` for edits
+   * `think_about_whether_you_are_done` after task
+   * `write_memory`, `edit_memory`, `delete_memory` to update memories with current status before completion
 
 2. **deepwiki** - Always use deepwiki MCP for documentation about GitHub repositories and open source software configurations, functionality, features, code architecture, infrastructure, and code design without the user having to ask for it. If you can't find an answer use context7. If that fails then use default tools. Use the following commands:
-   - read_wiki_structure - Get a list of documentation topics for a GitHub repository
-   - read_wiki_contents - View documentation about a GitHub repository
-   - ask_question - Ask any question about a GitHub repository and get an AI-powered, context-grounded response
+   * read_wiki_structure - Get a list of documentation topics for a GitHub repository
+   * read_wiki_contents - View documentation about a GitHub repository
+   * ask_question - Ask any question about a GitHub repository and get an AI-powered, context-grounded response
 
 3. **Context7** - When I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
-   - `resolve-library-id` first, then `get-library-docs`
-   - For: Docker SDK, spf13/cobra, spf13/viper, rs/zerolog, gopkg.in/yaml.v3
-   
-4. **github mcp** - Use github's mcp for repository-specific information like PR status, issues, code search, and commit history. Use the following commands:
+   * `resolve-library-id` first, then `get-library-docs`
+   * For: Docker SDK, spf13/cobra, spf13/viper, rs/zerolog, gopkg.in/yaml.v3
 
+4. **github mcp** - Use github's mcp for repository-specific information like PR status, issues, code search, and commit history. Use the following commands:
 
 ### Workflow Requirements
 
@@ -278,7 +278,6 @@ loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permis
 
 ### Firewall IP Range Sources
 
-
 **Security warning**: The `google` source allows traffic to all Google IPs, including Google Cloud Storage and Firebase Hosting which can serve user-generated content. This creates a prompt injection risk — an attacker could host malicious content on a public GCS bucket or Firebase site that the agent fetches. Only add `google` if your project requires it (e.g., Go modules via `proxy.golang.org`).
 
 ## Design Decisions
@@ -291,7 +290,7 @@ loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permis
 6. Empty project → 2-segment names (`clawker.agent`), labels omit `dev.clawker.project`
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
 8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
-9.  Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
+9. Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
 10. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
 11. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
 12. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `f.Logger` (Factory lazy noun captured on Options struct), library-layer code accepts `*logger.Logger` in constructors. Logger init happens lazily on first `f.Logger()` call
@@ -309,18 +308,19 @@ Generated mocks live in `<package>/mocks/` and are prefixed with `// Code genera
 
 ## Important Gotchas
 
-- `os.Exit()` does NOT run deferred functions — restore terminal state explicitly
-- Raw terminal mode: Ctrl+C goes to container, not as SIGINT
-- Never use `logger.Fatal()` in Cobra hooks — return errors instead
-- Don't wait for stdin goroutine on container exit (may block on Read)
-- Docker hijacked connections need cleanup of both read and write sides
-- Terminal visual state (alternate screen, cursor visibility, colors) must be reset separately from termios mode — `term.Restore()` sends escape sequences before restoring raw/cooked mode
-- Terminal resize +1/-1 trick: Resize to (height+1, width+1) then actual size to force SIGWINCH for TUI redraw
-- CLI test assertions (test/cli/) are case-sensitive; tests need `mkdir $HOME/.local/clawker` and `security.firewall.enable: false`
-- Container flag types and domain logic consolidated in `internal/cmd/container/shared/` — `CreateContainer()` is the single creation entry point
-- After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
-- Empty projects generate 2-segment names (`clawker.dev`), not 3 (`clawker..dev`)
-- Docker Desktop socket mounting: SDK `HostConfig.Mounts` (mount.Mount) behaves differently from `HostConfig.Binds` (CLI `-v`) for Unix sockets on macOS. The SDK may fail with `/socket_mnt` path errors while CLI works. Integration tests that mount sockets should skip on macOS or use Binds.
+* `os.Exit()` does NOT run deferred functions — restore terminal state explicitly
+* Raw terminal mode: Ctrl+C goes to container, not as SIGINT
+* Never use `logger.Fatal()` in Cobra hooks — return errors instead
+* Don't wait for stdin goroutine on container exit (may block on Read)
+* Docker hijacked connections need cleanup of both read and write sides
+* Terminal visual state (alternate screen, cursor visibility, colors) must be reset separately from termios mode — `term.Restore()` sends escape sequences before restoring raw/cooked mode
+* Terminal resize +1/-1 trick: Resize to (height+1, width+1) then actual size to force SIGWINCH for TUI redraw
+* CLI test assertions (test/cli/) are case-sensitive; tests need `mkdir $HOME/.local/clawker` and `security.firewall.enable: false`
+* Container flag types and domain logic consolidated in `internal/cmd/container/shared/` — `CreateContainer()` is the single creation entry point
+* After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
+* Empty projects generate 2-segment names (`clawker.dev`), not 3 (`clawker..dev`)
+* Docker Desktop socket mounting: SDK `HostConfig.Mounts` (mount.Mount) behaves differently from `HostConfig.Binds` (CLI `-v`) for Unix sockets on macOS. The SDK may fail with `/socket_mnt` path errors while CLI works. Integration tests that mount sockets should skip on macOS or use Binds.
+* Clawker files can be in `./.clawkerlocal/` during local development. Check here first before the defaults when the user needs you to debug problems. UAT testing is often done using local repository config dirs (see: `make localenv`).
 
 ## Context Management (Critical)
 
@@ -332,10 +332,10 @@ Generated mocks live in `<package>/mocks/` and are prefixed with `// Code genera
 
 ## Documentation
 
-- `.claude/rules/` — Auto-loaded guidelines (code style, testing, path-scoped package rules)
-- `.claude/docs/` — On-demand reference docs (architecture, CLI verbs, design)
-- `internal/*/CLAUDE.md` — Package-specific API references (lazy-loaded)
-- `.serena/memories/` — Active work-in-progress tracking
+* `.claude/rules/` — Auto-loaded guidelines (code style, testing, path-scoped package rules)
+* `.claude/docs/` — On-demand reference docs (architecture, CLI verbs, design)
+* `internal/*/CLAUDE.md` — Package-specific API references (lazy-loaded)
+* `.serena/memories/` — Active work-in-progress tracking
 
 **Critical**: After code changes, update README.md (user-facing), CLAUDE.md (developer-facing), and memories as appropriate.
 
@@ -343,19 +343,19 @@ Generated mocks live in `<package>/mocks/` and are prefixed with `// Code genera
 
 User-facing docs are powered by [Mintlify](https://mintlify.com/) and live in the `docs/` directory.
 
-- `docs/docs.json` — Mintlify site config (theme, nav, colors, integrations)
-- `docs/custom.css` — Dark terminal theme overrides (surface colors, glassmorphism navbar, amber hover glow)
-- `docs/favicon.svg` — `>_` terminal prompt favicon (amber on dark)
-- `docs/assets/` — Image assets directory
-- `docs/index.mdx` — Homepage
-- `docs/*.mdx` — Hand-authored pages (quickstart, installation, configuration)
-- `docs/cli-reference/*.md` — Auto-generated via Makefile, checked in, freshness verified separately in CI (**never edit directly**)
-- `docs/architecture.md`, `docs/design.md`, `docs/testing.md` — Developer docs with Mintlify frontmatter
-- See `.claude/rules/mintlify-docs.md` for full conventions (theming, MDX parsing, navigation)
+* `docs/docs.json` — Mintlify site config (theme, nav, colors, integrations)
+* `docs/custom.css` — Dark terminal theme overrides (surface colors, glassmorphism navbar, amber hover glow)
+* `docs/favicon.svg` — `>_` terminal prompt favicon (amber on dark)
+* `docs/assets/` — Image assets directory
+* `docs/index.mdx` — Homepage
+* `docs/*.mdx` — Hand-authored pages (quickstart, installation, configuration)
+* `docs/cli-reference/*.md` — Auto-generated via Makefile, checked in, freshness verified separately in CI (**never edit directly**)
+* `docs/architecture.md`, `docs/design.md`, `docs/testing.md` — Developer docs with Mintlify frontmatter
+* See `.claude/rules/mintlify-docs.md` for full conventions (theming, MDX parsing, navigation)
 
 **Regenerating CLI reference**: `go run ./cmd/gen-docs --doc-path docs --markdown --website`
-- `--website` flag produces MDX-safe output (escapes bare `<word>` angle brackets) with Mintlify frontmatter
-- Source: `internal/docs/markdown.go` (`GenMarkdownTreeWebsite`, `EscapeMDXProse`)
+* `--website` flag produces MDX-safe output (escapes bare `<word>` angle brackets) with Mintlify frontmatter
+* Source: `internal/docs/markdown.go` (`GenMarkdownTreeWebsite`, `EscapeMDXProse`)
 
 **Local preview**: `npx mintlify dev --docs-directory docs` (requires Node.js)
 
@@ -363,6 +363,6 @@ User-facing docs are powered by [Mintlify](https://mintlify.com/) and live in th
 
 ## Documentation Maintenance
 
-- `bash scripts/check-claude-freshness.sh` — Check if CLAUDE.md files are stale vs Go source
-- `/audit-memory` — Comprehensive documentation health audit (in Claude Code)
-- `bash scripts/install-hooks.sh` — Install pre-commit hooks (all CI quality gates)
+* `bash scripts/check-claude-freshness.sh` — Check if CLAUDE.md files are stale vs Go source
+* `/audit-memory` — Comprehensive documentation health audit (in Claude Code)
+* `bash scripts/install-hooks.sh` — Install pre-commit hooks (all CI quality gates)

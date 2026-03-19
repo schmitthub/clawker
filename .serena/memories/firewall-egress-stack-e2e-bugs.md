@@ -10,6 +10,8 @@
 - [ ] **CA Certs wrong dir**: CA certs are not being created in the certs directory, they are being created alongside it
 - [x] **IP collision with monitoring stack**: Envoy (.2) and CoreDNS (.3) collided with monitoring DHCP containers. Fixed: moved to .200/.201. All port/IP consts centralised in config/consts.go.
 - [x] **ensureContainer recreated unnecessarily**: Was removing and recreating stopped containers instead of just starting them. Fixed.
+- [ ] Test if monitoring stack containers blocked by firewall/iptables (ie allow for docker internal networking still)
+- [ ] Consider restoring domain groups for conveninence (ie python, github, google cloud, etc) - pain in the ass to keep on top of tho
 
 ## Session Progress
 

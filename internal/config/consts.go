@@ -135,9 +135,6 @@ const (
 	// labelManaged marks a resource as managed by clawker.
 	labelManaged = labelPrefix + "managed"
 
-	// labelMonitoringStack marks monitoring stack resources.
-	labelMonitoringStack = labelPrefix + "monitoring"
-
 	// labelProject identifies the project name.
 	labelProject = labelPrefix + "project"
 
@@ -156,7 +153,9 @@ const (
 	// labelWorkdir stores the host working directory.
 	labelWorkdir = labelPrefix + "workdir"
 
-	// labelPurpose identifies the purpose of a volume.
+	// labelPurpose identifies the purpose of a resource (container or volume).
+	// Container values: "agent", "monitoring", "firewall".
+	// Volume values: "workspace", "config", "history", "copy-to-volume", etc.
 	labelPurpose = labelPrefix + "purpose"
 
 	// labelTestName identifies the test function that created a resource.
@@ -177,6 +176,13 @@ const (
 
 // managedLabelValue is the value for the managed label.
 const managedLabelValue = "true"
+
+// Purpose label values for containers.
+const (
+	purposeAgent      = "agent"
+	purposeMonitoring = "monitoring"
+	purposeFirewall   = "firewall"
+)
 
 // engineLabelPrefix is the label prefix for whail.EngineOptions (without trailing dot).
 // Use this when configuring the whail Engine; it adds its own dot separator.
@@ -376,10 +382,14 @@ func (c *configImpl) LabelPrefix() string { return labelPrefix }
 // LabelManaged returns the managed-resource label key.
 func (c *configImpl) LabelManaged() string { return labelManaged }
 
-// LabelMonitoringStack returns the monitoring-stack label key.
-func (c *configImpl) LabelMonitoringStack() string {
-	return labelMonitoringStack
-}
+// PurposeAgent returns the purpose label value for agent containers.
+func (c *configImpl) PurposeAgent() string { return purposeAgent }
+
+// PurposeMonitoring returns the purpose label value for monitoring containers.
+func (c *configImpl) PurposeMonitoring() string { return purposeMonitoring }
+
+// PurposeFirewall returns the purpose label value for firewall containers.
+func (c *configImpl) PurposeFirewall() string { return purposeFirewall }
 
 // LabelProject returns the project label key.
 func (c *configImpl) LabelProject() string { return labelProject }

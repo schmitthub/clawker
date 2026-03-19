@@ -25,7 +25,7 @@ func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) 
 	opts := &UpOptions{
 		IOStreams: f.IOStreams,
 		Config:    f.Config,
-		Logger:    f.Logger,
+		Logger:    firewallLogger(f.Config),
 	}
 
 	cmd := &cobra.Command{
@@ -49,15 +49,33 @@ Can also be started manually for debugging.`,
 	return cmd
 }
 
-func upRun(ctx context.Context, opts *UpOptions) error {
-	cfg, err := opts.Config()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+// firewallLogger returns a logger closure that writes to firewall.log
+// instead of the shared clawker.log. The daemon is a long-lived subprocess
+// whose logs must be isolated for debugging.
+func firewallLogger(cfgFn func() (config.Config, error)) func() (*logger.Logger, error) {
+	return func() (*logger.Logger, error) {
+		cfg, err := cfgFn()
+		if err != nil {
+			return nil, fmt.Errorf("loading config for firewall logger: %w", err)
+		}
+		logsDir, err := cfg.LogsSubdir()
+		if err != nil {
+			return nil, fmt.Errorf("resolving logs directory: %w", err)
+		}
+		return logger.New(logger.Options{LogsDir: logsDir, Filename: "firewall.log"})
 	}
+}
 
+func upRun(ctx context.Context, opts *UpOptions) error {
 	log, err := opts.Logger()
 	if err != nil {
 		return fmt.Errorf("initializing logger: %w", err)
+	}
+	defer log.Close()
+
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
 	}
 
 	daemon, err := fw.NewDaemon(cfg, log)

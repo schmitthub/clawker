@@ -36,11 +36,11 @@ func NewCmdServe() *cobra.Command {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			// Create a logger for the daemon subprocess.
-			// Falls back to nop if logs directory is unavailable.
+			// Create a dedicated logger that writes to hostproxy.log,
+			// not the shared clawker.log. Falls back to nop if unavailable.
 			log := logger.Nop()
 			if logsDir, dirErr := cfg.LogsSubdir(); dirErr == nil {
-				if l, lErr := logger.New(logger.Options{LogsDir: logsDir}); lErr == nil {
+				if l, lErr := logger.New(logger.Options{LogsDir: logsDir, Filename: "hostproxy.log"}); lErr == nil {
 					log = l
 					defer l.Close()
 				}

@@ -97,17 +97,28 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 
 // Run starts the firewall stack, then blocks until signal, healthcheck failure, or auto-exit.
 func (d *Daemon) Run(ctx context.Context) error {
+	d.log.Info().
+		Int("pid", os.Getpid()).
+		Str("pid_file", d.pidFile).
+		Dur("health_interval", d.healthCheckInterval).
+		Dur("poll_interval", d.pollInterval).
+		Dur("grace_period", d.gracePeriod).
+		Int("missed_threshold", missedCheckThreshold).
+		Msg("firewall daemon starting")
+
 	if err := writePIDFile(d.pidFile); err != nil {
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
 	defer removePIDFile(d.pidFile, d.log)
 
 	// Start the firewall stack (pulls images, creates containers, waits for healthy).
+	d.log.Debug().Msg("calling EnsureRunning to start firewall stack")
 	if err := d.manager.EnsureRunning(ctx); err != nil {
+		d.log.Error().Err(err).Msg("firewall stack failed to start")
 		return fmt.Errorf("firewall startup failed: %w", err)
 	}
 
-	d.log.Debug().Msg("firewall daemon started, stack healthy")
+	d.log.Info().Msg("firewall daemon started, stack healthy")
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -223,54 +234,64 @@ func (d *Daemon) probeHealth(envoyAddr, corednsURL string, httpClient *http.Clie
 // watchContainers polls Docker for clawker containers and exits when none are found
 // after missedCheckThreshold consecutive empty checks.
 func (d *Daemon) watchContainers(ctx context.Context) {
+	d.log.Debug().Dur("grace_period", d.gracePeriod).Msg("container watcher: waiting for grace period")
 	select {
 	case <-ctx.Done():
+		d.log.Debug().Msg("container watcher: context cancelled during grace period")
 		return
 	case <-time.After(d.gracePeriod):
 	}
+	d.log.Debug().Dur("poll_interval", d.pollInterval).Msg("container watcher: grace period elapsed, starting polling")
 
 	ticker := time.NewTicker(d.pollInterval)
 	defer ticker.Stop()
 
 	missedChecks := 0
+	pollCount := 0
 
 	for {
 		select {
 		case <-ctx.Done():
+			d.log.Debug().Msg("container watcher: context cancelled")
 			return
 		case <-ticker.C:
+			pollCount++
 			count, err := d.countClawkerContainers(ctx)
 			if err != nil {
-				d.log.Warn().Err(err).Msg("failed to count containers")
+				d.log.Warn().Err(err).Int("poll", pollCount).Msg("container watcher: failed to count containers")
 				continue
 			}
-			d.log.Debug().Int("count", count).Msg("checked clawker containers")
 			if count == 0 {
 				missedChecks++
+				d.log.Warn().
+					Int("poll", pollCount).
+					Int("missed", missedChecks).
+					Int("threshold", missedCheckThreshold).
+					Msg("container watcher: no clawker containers found")
 				if missedChecks >= missedCheckThreshold {
-					d.log.Debug().Int("missed", missedChecks).Msg("no containers after threshold, exiting")
+					d.log.Warn().Int("missed", missedChecks).Msg("container watcher: threshold reached, daemon will exit")
 					return
 				}
 			} else {
+				if missedChecks > 0 {
+					d.log.Debug().Int("count", count).Msg("container watcher: containers recovered after missed checks")
+				}
 				missedChecks = 0
+				d.log.Debug().Int("poll", pollCount).Int("count", count).Msg("container watcher: containers alive")
 			}
 		}
 	}
 }
 
-// countClawkerContainers returns the number of running clawker containers
-// (excluding monitoring stack and firewall infrastructure containers).
+// countClawkerContainers returns the number of running agent containers.
+// Filters directly on purpose=agent — every managed container now has an
+// explicit purpose label ("agent", "monitoring", "firewall").
 func (d *Daemon) countClawkerContainers(ctx context.Context) (int, error) {
-	labelManaged := d.cfg.LabelManaged()
-	managedValue := d.cfg.ManagedLabelValue()
-	labelMonStack := d.cfg.LabelMonitoringStack()
-	labelPurpose := d.cfg.LabelPurpose()
+	f := purposeFilter(d.cfg, d.cfg.PurposeAgent())
 
-	f := client.Filters{}
-	f = f.Add("label", labelManaged+"="+managedValue).
-		Add("label", labelMonStack+"!="+managedValue).
-		Add("label", labelPurpose+"!=firewall-envoy").
-		Add("label", labelPurpose+"!=firewall-coredns")
+	d.log.Debug().
+		Str("filter", fmt.Sprintf("managed=%s, purpose=%s", d.cfg.ManagedLabelValue(), d.cfg.PurposeAgent())).
+		Msg("container count: querying Docker")
 
 	result, err := d.docker.ContainerList(ctx, client.ContainerListOptions{
 		Filters: f,
@@ -278,6 +299,19 @@ func (d *Daemon) countClawkerContainers(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+
+	for _, ctr := range result.Items {
+		names := ""
+		if len(ctr.Names) > 0 {
+			names = ctr.Names[0]
+		}
+		d.log.Debug().
+			Str("id", ctr.ID[:12]).
+			Str("name", names).
+			Str("state", string(ctr.State)).
+			Msg("container count: matched agent container")
+	}
+
 	return len(result.Items), nil
 }
 
@@ -423,4 +457,13 @@ func StopDaemon(pidFile string) error {
 		return fmt.Errorf("finding process %d: %w", pid, err)
 	}
 	return process.Signal(syscall.SIGTERM)
+}
+
+// purposeFilter builds a Docker label filter for managed containers with a
+// specific purpose (e.g. "agent", "firewall", "monitoring").
+func purposeFilter(cfg config.Config, purpose string) client.Filters {
+	f := client.Filters{}
+	return f.
+		Add("label", cfg.LabelManaged()+"="+cfg.ManagedLabelValue()).
+		Add("label", cfg.LabelPurpose()+"="+purpose)
 }

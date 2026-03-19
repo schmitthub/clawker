@@ -32,6 +32,10 @@ type Options struct {
 	// LogsDir is the directory for log files. Required for file logging.
 	LogsDir string
 
+	// Filename overrides the log file name within LogsDir.
+	// Defaults to "clawker.log" when empty.
+	Filename string
+
 	// File rotation settings.
 	MaxSizeMB  int  // default: 50
 	MaxAgeDays int  // default: 7
@@ -90,8 +94,13 @@ func New(opts Options) (*Logger, error) {
 		return nil, fmt.Errorf("logger: create logs directory: %w", err)
 	}
 
+	filename := opts.Filename
+	if filename == "" {
+		filename = "clawker.log"
+	}
+
 	fw := &lumberjack.Logger{
-		Filename:   filepath.Join(opts.LogsDir, "clawker.log"),
+		Filename:   filepath.Join(opts.LogsDir, filename),
 		MaxSize:    opts.maxSizeMB(),
 		MaxAge:     opts.maxAgeDays(),
 		MaxBackups: opts.maxBackups(),

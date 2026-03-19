@@ -207,14 +207,14 @@ func (d *Daemon) watchContainers(ctx context.Context) {
 	}
 }
 
-// countClawkerContainers returns the number of running clawker containers.
+// countClawkerContainers returns the number of running agent containers.
+// Filters directly on purpose=agent — every managed container now has an
+// explicit purpose label ("agent", "monitoring", "firewall").
 func (d *Daemon) countClawkerContainers(ctx context.Context) (int, error) {
-	labelManaged := d.cfg.LabelManaged()
-	managedValue := d.cfg.ManagedLabelValue()
-	labelMonStack := d.cfg.LabelMonitoringStack()
-
 	f := client.Filters{}
-	f = f.Add("label", labelManaged+"="+managedValue).Add("label", labelMonStack+"!="+managedValue)
+	f = f.
+		Add("label", d.cfg.LabelManaged()+"="+d.cfg.ManagedLabelValue()).
+		Add("label", d.cfg.LabelPurpose()+"="+d.cfg.PurposeAgent())
 
 	result, err := d.docker.ContainerList(ctx, client.ContainerListOptions{
 		Filters: f,

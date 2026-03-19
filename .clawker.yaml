@@ -134,6 +134,8 @@ security:
       - pypi.org
       - semgrep.dev
       - registry.npmjs.org
+      - github.com
+      - api.github.com
   # Git credential forwarding
   git_credentials:
     forward_https: true

@@ -102,7 +102,6 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	// Labels
 	mock.LabelPrefixFunc = cfg.LabelPrefix
 	mock.LabelManagedFunc = cfg.LabelManaged
-	mock.LabelMonitoringStackFunc = cfg.LabelMonitoringStack
 	mock.LabelProjectFunc = cfg.LabelProject
 	mock.LabelAgentFunc = cfg.LabelAgent
 	mock.LabelVersionFunc = cfg.LabelVersion
@@ -110,6 +109,9 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.LabelCreatedFunc = cfg.LabelCreated
 	mock.LabelWorkdirFunc = cfg.LabelWorkdir
 	mock.LabelPurposeFunc = cfg.LabelPurpose
+	mock.PurposeAgentFunc = cfg.PurposeAgent
+	mock.PurposeMonitoringFunc = cfg.PurposeMonitoring
+	mock.PurposeFirewallFunc = cfg.PurposeFirewall
 	mock.LabelTestNameFunc = cfg.LabelTestName
 	mock.LabelBaseImageFunc = cfg.LabelBaseImage
 	mock.LabelFlavorFunc = cfg.LabelFlavor

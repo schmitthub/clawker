@@ -536,7 +536,7 @@ func (m *Manager) envoyContainerConfig(net *NetworkInfo, dataDir string) contain
 		staticIP:    net.EnvoyIP,
 		labels: map[string]string{
 			m.cfg.LabelManaged(): "true",
-			m.cfg.LabelPurpose(): "firewall-envoy",
+			m.cfg.LabelPurpose(): m.cfg.PurposeFirewall(),
 		},
 		mounts: []mount.Mount{
 			{
@@ -572,7 +572,7 @@ func (m *Manager) corednsContainerConfig(net *NetworkInfo, dataDir string) conta
 		staticIP:    net.CoreDNSIP,
 		labels: map[string]string{
 			m.cfg.LabelManaged(): "true",
-			m.cfg.LabelPurpose(): "firewall-coredns",
+			m.cfg.LabelPurpose(): m.cfg.PurposeFirewall(),
 		},
 		cmd: []string{"-conf", "/etc/coredns/Corefile"},
 		mounts: []mount.Mount{

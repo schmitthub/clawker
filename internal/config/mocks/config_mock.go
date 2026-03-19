@@ -136,9 +136,6 @@ var _ config.Config = &ConfigMock{}
 //			LabelManagedFunc: func() string {
 //				panic("mock out the LabelManaged method")
 //			},
-//			LabelMonitoringStackFunc: func() string {
-//				panic("mock out the LabelMonitoringStack method")
-//			},
 //			LabelPrefixFunc: func() string {
 //				panic("mock out the LabelPrefix method")
 //			},
@@ -192,6 +189,15 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			PrometheusURLFunc: func(host string, https bool) string {
 //				panic("mock out the PrometheusURL method")
+//			},
+//			PurposeAgentFunc: func() string {
+//				panic("mock out the PurposeAgent method")
+//			},
+//			PurposeFirewallFunc: func() string {
+//				panic("mock out the PurposeFirewall method")
+//			},
+//			PurposeMonitoringFunc: func() string {
+//				panic("mock out the PurposeMonitoring method")
 //			},
 //			RequiredFirewallDomainsFunc: func() []string {
 //				panic("mock out the RequiredFirewallDomains method")
@@ -344,9 +350,6 @@ type ConfigMock struct {
 	// LabelManagedFunc mocks the LabelManaged method.
 	LabelManagedFunc func() string
 
-	// LabelMonitoringStackFunc mocks the LabelMonitoringStack method.
-	LabelMonitoringStackFunc func() string
-
 	// LabelPrefixFunc mocks the LabelPrefix method.
 	LabelPrefixFunc func() string
 
@@ -400,6 +403,15 @@ type ConfigMock struct {
 
 	// PrometheusURLFunc mocks the PrometheusURL method.
 	PrometheusURLFunc func(host string, https bool) string
+
+	// PurposeAgentFunc mocks the PurposeAgent method.
+	PurposeAgentFunc func() string
+
+	// PurposeFirewallFunc mocks the PurposeFirewall method.
+	PurposeFirewallFunc func() string
+
+	// PurposeMonitoringFunc mocks the PurposeMonitoring method.
+	PurposeMonitoringFunc func() string
 
 	// RequiredFirewallDomainsFunc mocks the RequiredFirewallDomains method.
 	RequiredFirewallDomainsFunc func() []string
@@ -557,9 +569,6 @@ type ConfigMock struct {
 		// LabelManaged holds details about calls to the LabelManaged method.
 		LabelManaged []struct {
 		}
-		// LabelMonitoringStack holds details about calls to the LabelMonitoringStack method.
-		LabelMonitoringStack []struct {
-		}
 		// LabelPrefix holds details about calls to the LabelPrefix method.
 		LabelPrefix []struct {
 		}
@@ -617,6 +626,15 @@ type ConfigMock struct {
 			Host string
 			// HTTPS is the https argument value.
 			HTTPS bool
+		}
+		// PurposeAgent holds details about calls to the PurposeAgent method.
+		PurposeAgent []struct {
+		}
+		// PurposeFirewall holds details about calls to the PurposeFirewall method.
+		PurposeFirewall []struct {
+		}
+		// PurposeMonitoring holds details about calls to the PurposeMonitoring method.
+		PurposeMonitoring []struct {
 		}
 		// RequiredFirewallDomains holds details about calls to the RequiredFirewallDomains method.
 		RequiredFirewallDomains []struct {
@@ -685,7 +703,6 @@ type ConfigMock struct {
 	lockLabelFlavor             sync.RWMutex
 	lockLabelImage              sync.RWMutex
 	lockLabelManaged            sync.RWMutex
-	lockLabelMonitoringStack    sync.RWMutex
 	lockLabelPrefix             sync.RWMutex
 	lockLabelProject            sync.RWMutex
 	lockLabelPurpose            sync.RWMutex
@@ -704,6 +721,9 @@ type ConfigMock struct {
 	lockProjectRegistryFileName sync.RWMutex
 	lockProjectStore            sync.RWMutex
 	lockPrometheusURL           sync.RWMutex
+	lockPurposeAgent            sync.RWMutex
+	lockPurposeFirewall         sync.RWMutex
+	lockPurposeMonitoring       sync.RWMutex
 	lockRequiredFirewallDomains sync.RWMutex
 	lockRequiredFirewallRules   sync.RWMutex
 	lockSettings                sync.RWMutex
@@ -1791,33 +1811,6 @@ func (mock *ConfigMock) LabelManagedCalls() []struct {
 	return calls
 }
 
-// LabelMonitoringStack calls LabelMonitoringStackFunc.
-func (mock *ConfigMock) LabelMonitoringStack() string {
-	if mock.LabelMonitoringStackFunc == nil {
-		panic("ConfigMock.LabelMonitoringStackFunc: method is nil but Config.LabelMonitoringStack was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockLabelMonitoringStack.Lock()
-	mock.calls.LabelMonitoringStack = append(mock.calls.LabelMonitoringStack, callInfo)
-	mock.lockLabelMonitoringStack.Unlock()
-	return mock.LabelMonitoringStackFunc()
-}
-
-// LabelMonitoringStackCalls gets all the calls that were made to LabelMonitoringStack.
-// Check the length with:
-//
-//	len(mockedConfig.LabelMonitoringStackCalls())
-func (mock *ConfigMock) LabelMonitoringStackCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockLabelMonitoringStack.RLock()
-	calls = mock.calls.LabelMonitoringStack
-	mock.lockLabelMonitoringStack.RUnlock()
-	return calls
-}
-
 // LabelPrefix calls LabelPrefixFunc.
 func (mock *ConfigMock) LabelPrefix() string {
 	if mock.LabelPrefixFunc == nil {
@@ -2310,6 +2303,87 @@ func (mock *ConfigMock) PrometheusURLCalls() []struct {
 	mock.lockPrometheusURL.RLock()
 	calls = mock.calls.PrometheusURL
 	mock.lockPrometheusURL.RUnlock()
+	return calls
+}
+
+// PurposeAgent calls PurposeAgentFunc.
+func (mock *ConfigMock) PurposeAgent() string {
+	if mock.PurposeAgentFunc == nil {
+		panic("ConfigMock.PurposeAgentFunc: method is nil but Config.PurposeAgent was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockPurposeAgent.Lock()
+	mock.calls.PurposeAgent = append(mock.calls.PurposeAgent, callInfo)
+	mock.lockPurposeAgent.Unlock()
+	return mock.PurposeAgentFunc()
+}
+
+// PurposeAgentCalls gets all the calls that were made to PurposeAgent.
+// Check the length with:
+//
+//	len(mockedConfig.PurposeAgentCalls())
+func (mock *ConfigMock) PurposeAgentCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockPurposeAgent.RLock()
+	calls = mock.calls.PurposeAgent
+	mock.lockPurposeAgent.RUnlock()
+	return calls
+}
+
+// PurposeFirewall calls PurposeFirewallFunc.
+func (mock *ConfigMock) PurposeFirewall() string {
+	if mock.PurposeFirewallFunc == nil {
+		panic("ConfigMock.PurposeFirewallFunc: method is nil but Config.PurposeFirewall was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockPurposeFirewall.Lock()
+	mock.calls.PurposeFirewall = append(mock.calls.PurposeFirewall, callInfo)
+	mock.lockPurposeFirewall.Unlock()
+	return mock.PurposeFirewallFunc()
+}
+
+// PurposeFirewallCalls gets all the calls that were made to PurposeFirewall.
+// Check the length with:
+//
+//	len(mockedConfig.PurposeFirewallCalls())
+func (mock *ConfigMock) PurposeFirewallCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockPurposeFirewall.RLock()
+	calls = mock.calls.PurposeFirewall
+	mock.lockPurposeFirewall.RUnlock()
+	return calls
+}
+
+// PurposeMonitoring calls PurposeMonitoringFunc.
+func (mock *ConfigMock) PurposeMonitoring() string {
+	if mock.PurposeMonitoringFunc == nil {
+		panic("ConfigMock.PurposeMonitoringFunc: method is nil but Config.PurposeMonitoring was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockPurposeMonitoring.Lock()
+	mock.calls.PurposeMonitoring = append(mock.calls.PurposeMonitoring, callInfo)
+	mock.lockPurposeMonitoring.Unlock()
+	return mock.PurposeMonitoringFunc()
+}
+
+// PurposeMonitoringCalls gets all the calls that were made to PurposeMonitoring.
+// Check the length with:
+//
+//	len(mockedConfig.PurposeMonitoringCalls())
+func (mock *ConfigMock) PurposeMonitoringCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockPurposeMonitoring.RLock()
+	calls = mock.calls.PurposeMonitoring
+	mock.lockPurposeMonitoring.RUnlock()
 	return calls
 }
 
