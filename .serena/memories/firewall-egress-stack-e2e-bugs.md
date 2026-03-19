@@ -4,7 +4,7 @@
 
 ## Bugs
 
-- [ ] **Bypass incomplete**: Bypass script runs, Dante starts, proxychains connects to 127.0.0.1:9100 but outbound traffic times out. Root cause likely in the bypass script's iptables RETURN rule or Dante's external interface routing.
+- [x] **Bypass incomplete**: Fixed — three root causes: (1) Dante hardcoded `external: eth0` but container interface varies; now detects via `/proc/net/route`. (2) `hostConfig.DNS = CoreDNS` made Docker forward ALL DNS through CoreDNS including root's; removed — iptables handles DNS filtering. (3) init-firewall.sh used catch-all rules instead of targeting container user UID; now targets `CLAWKER_USER` UID specifically (matching openclaw-deploy reference).
 - [x] **Stack shuts down unexpectedly**: Fixed — daemon was not properly tracking clawker containers.
 - [ ] **Rules not tested**: We have not tested config firewall.rules only config firewall.add_domain
 - [ ] **CA Certs wrong dir**: CA certs are not being created in the certs directory, they are being created alongside it

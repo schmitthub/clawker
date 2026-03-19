@@ -3,6 +3,7 @@ package e2e
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,28 +48,11 @@ agent:
 	return h
 }
 
-// runInContainer runs a command inside a fresh container and returns the result.
-// The container starts, runs the command, and is automatically removed.
-func runInContainer(h *harness.Harness, agent string, cmd ...string) *harness.RunResult {
-	h.T.Helper()
-	args := []string{"container", "run", "--rm", "--agent", agent, "@"}
-	args = append(args, cmd...)
-	return h.Run(args...)
-}
-
-// execInContainer runs a command inside an existing container for the specified agent and returns the result.
-func execInContainer(h *harness.Harness, agent string, cmd ...string) *harness.RunResult {
-	h.T.Helper()
-	args := []string{"container", "exec", "--agent", agent}
-	args = append(args, cmd...)
-	return h.Run(args...)
-}
-
 func TestFirewall_BlockedDomain(t *testing.T) {
 	h := newFirewallHarness(t)
 
 	// Blocked: example.com is NOT in the allowed rules.
-	res := runInContainer(h, "firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
+	res := h.RunInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, res.Err, "curl to blocked domain should fail")
 }
 
@@ -81,15 +65,18 @@ func TestFirewall_Bypass(t *testing.T) {
 		startRes.Stdout, startRes.Stderr)
 
 	// Blocked: example.com is NOT in the allowed rules.
-	blockRes := execInContainer(h, "firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
+	blockRes := h.ExecInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, blockRes.Err, "curl to blocked domain should fail")
 
 	bypassRes := h.Run("firewall", "bypass", "30s", "--agent", "firewall-test")
 	require.NoError(t, bypassRes.Err, "firewall bypass failed\nstdout: %s\nstderr: %s",
 		bypassRes.Stdout, bypassRes.Stderr)
 
+	// Give danted a moment to start listening.
+	time.Sleep(2 * time.Second)
+
 	// Should succeed now that it's bypassed — proxychains4 uses system default config.
-	allowedRes := execInContainer(h, "firewall-test", "proxychains4",
+	allowedRes := h.ExecInContainer("firewall-test", "proxychains4",
 		"curl", "-s", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}", "https://example.com")
 	require.NoError(t, allowedRes.Err, "curl after bypass should succeed\nstdout: %s\nstderr: %s",
 		allowedRes.Stdout, allowedRes.Stderr)
@@ -100,7 +87,7 @@ func TestFirewall_Bypass(t *testing.T) {
 		stopRes.Stdout, stopRes.Stderr)
 
 	// Should be blocked again after stopping bypass.
-	blockAgainRes := execInContainer(h, "firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
+	blockAgainRes := h.ExecInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, blockAgainRes.Err, "curl should be blocked again after stopping bypass")
 
 	stopAgentRes := h.Run("container", "stop", "--agent", "firewall-test")
@@ -112,7 +99,7 @@ func TestFirewall_AllowedDomain(t *testing.T) {
 	h := newFirewallHarness(t)
 
 	// Allowed: api.anthropic.com is a required rule.
-	res := runInContainer(h, "firewall-test",
+	res := h.RunInContainer("firewall-test",
 		"curl", "-s", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}",
 		"https://api.anthropic.com")
 	require.NoError(t, res.Err, "curl to allowed domain failed\nstdout: %s\nstderr: %s",
@@ -125,7 +112,7 @@ func TestFirewall_AddRemove(t *testing.T) {
 	h := newFirewallHarness(t)
 
 	// Verify blocked before add.
-	blocked := runInContainer(h, "firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
+	blocked := h.RunInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, blocked.Err, "example.com should be blocked initially")
 
 	// Add example.com.
@@ -134,7 +121,7 @@ func TestFirewall_AddRemove(t *testing.T) {
 		addRes.Stdout, addRes.Stderr)
 
 	// Verify allowed after add.
-	allowed := runInContainer(h, "firewall-test",
+	allowed := h.RunInContainer("firewall-test",
 		"curl", "-s", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}",
 		"https://example.com")
 	require.NoError(t, allowed.Err, "curl after add should succeed\nstdout: %s\nstderr: %s",
@@ -147,7 +134,7 @@ func TestFirewall_AddRemove(t *testing.T) {
 		removeRes.Stdout, removeRes.Stderr)
 
 	// Verify blocked again after remove.
-	blockedAgain := runInContainer(h, "firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
+	blockedAgain := h.RunInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, blockedAgain.Err, "example.com should be blocked after remove")
 }
 
@@ -155,7 +142,7 @@ func TestFirewall_Status(t *testing.T) {
 	h := newFirewallHarness(t)
 
 	// Run a container to trigger firewall startup.
-	res := runInContainer(h, "firewall-test", "echo", "started")
+	res := h.RunInContainer("firewall-test", "echo", "started")
 	t.Logf("run stdout: %s", res.Stdout)
 	t.Logf("run stderr: %s", res.Stderr)
 	require.NoError(t, res.Err, "container run failed\nstdout: %s\nstderr: %s",

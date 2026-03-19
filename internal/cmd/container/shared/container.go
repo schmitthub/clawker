@@ -1593,7 +1593,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	runtimeEnv, envWarnings, coreDNSIP, err := buildRuntimeEnv(ctx, opts, projectCfg, containerOpts, agentName, wd, log)
+	runtimeEnv, envWarnings, _, err := buildRuntimeEnv(ctx, opts, projectCfg, containerOpts, agentName, wd, log)
 	if err != nil {
 		return nil, err
 	}
@@ -1616,15 +1616,10 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// When the firewall is active, point container DNS at CoreDNS
-	// so only whitelisted domains resolve.
-	if coreDNSIP != "" {
-		addr, parseErr := netip.ParseAddr(coreDNSIP)
-		if parseErr != nil {
-			return nil, fmt.Errorf("parsing CoreDNS IP %q: %w", coreDNSIP, parseErr)
-		}
-		hostConfig.DNS = append([]netip.Addr{addr}, hostConfig.DNS...)
-	}
+	// DNS filtering is handled entirely by iptables DNAT rules in init-firewall.sh:
+	// non-root DNS (port 53) is redirected to CoreDNS, root (uid 0) bypasses via RETURN.
+	// Do NOT set hostConfig.DNS here — it would make Docker forward ALL DNS (including
+	// root's) through CoreDNS, breaking the firewall bypass escape hatch.
 
 	// Set container WorkingDir to match the workspace mount target unless
 	// the user explicitly provided --workdir.

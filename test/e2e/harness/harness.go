@@ -259,3 +259,28 @@ func (h *Harness) Run(args ...string) *RunResult {
 		Stderr:   errOut.String(),
 	}
 }
+
+// RunInContainer runs a command inside a fresh container and returns the result.
+// The container starts, runs the command, and is automatically removed.
+func (h *Harness) RunInContainer(agent string, cmd ...string) *RunResult {
+	h.T.Helper()
+	args := []string{"container", "run", "--rm", "--agent", agent, "@"}
+	args = append(args, cmd...)
+	return h.Run(args...)
+}
+
+// ExecInContainer runs a command inside an existing container as the container user (claude).
+func (h *Harness) ExecInContainer(agent string, cmd ...string) *RunResult {
+	h.T.Helper()
+	args := []string{"container", "exec", "--user", "claude", "--agent", agent}
+	args = append(args, cmd...)
+	return h.Run(args...)
+}
+
+// ExecInContainerAsRoot runs a command inside an existing container as root.
+func (h *Harness) ExecInContainerAsRoot(agent string, cmd ...string) *RunResult {
+	h.T.Helper()
+	args := []string{"container", "exec", "--agent", agent}
+	args = append(args, cmd...)
+	return h.Run(args...)
+}
