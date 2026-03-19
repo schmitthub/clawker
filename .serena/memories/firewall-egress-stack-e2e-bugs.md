@@ -25,6 +25,7 @@
   - `callback-forwarder` processes spawned by `host-open.sh` during real OAuth flow appear as zombies (defunct) — PIDs 317, 801, 3120
   - Claude Code reports: `"OAuth error: The socket connection was closed unexpectedly"` on `fetch()` to `http://localhost:38987/callback...`
   - Worked before the Envoy+CoreDNS firewall was added
+  - Hostproxy code may have been overwitten or removed during firewall work. Part of troubleshooting should involve comparing with main. any file related to the hostproxy flow. 
 
 
 ## Session Progress
