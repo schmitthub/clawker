@@ -24,8 +24,8 @@ func TestEnsureCA_CreatesNew(t *testing.T) {
 	assert.Equal(t, x509.KeyUsageCertSign|x509.KeyUsageCRLSign, caCert.KeyUsage)
 	assert.NotNil(t, caKey)
 
-	assert.FileExists(t, filepath.Join(dataDir, "ca-cert.pem"))
-	assert.FileExists(t, filepath.Join(dataDir, "ca-key.pem"))
+	assert.FileExists(t, filepath.Join(dataDir, "certs", "ca-cert.pem"))
+	assert.FileExists(t, filepath.Join(dataDir, "certs", "ca-key.pem"))
 }
 
 func TestEnsureCA_LoadsExisting(t *testing.T) {

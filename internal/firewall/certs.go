@@ -27,12 +27,15 @@ const (
 	domainCertValidYears = 1
 )
 
-// EnsureCA creates a self-signed CA keypair if none exists at dataDir,
-// or loads the existing one. The CA is persisted as ca-cert.pem and
-// ca-key.pem in dataDir.
+// EnsureCA creates a self-signed CA keypair if none exists under the certsDir
+// subdirectory of dataDir, or loads the existing one.
 func EnsureCA(dataDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
-	certPath := filepath.Join(dataDir, caCertFile)
-	keyPath := filepath.Join(dataDir, caKeyFile)
+	dir := filepath.Join(dataDir, certsDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, nil, fmt.Errorf("creating certs directory: %w", err)
+	}
+	certPath := filepath.Join(dir, caCertFile)
+	keyPath := filepath.Join(dir, caKeyFile)
 
 	// If both files exist, load and return.
 	if fileExists(certPath) && fileExists(keyPath) {
@@ -159,15 +162,8 @@ func RegenerateDomainCerts(rules []config.EgressRule, dataDir string, caCert *x5
 // The old CA files are overwritten. Any running containers will need
 // the new CA injected to trust the regenerated domain certs.
 func RotateCA(dataDir string, rules []config.EgressRule) error {
-	// Remove existing CA files so EnsureCA generates fresh ones.
-	certPath := filepath.Join(dataDir, caCertFile)
-	keyPath := filepath.Join(dataDir, caKeyFile)
-	_ = os.Remove(certPath)
-	_ = os.Remove(keyPath)
-
-	// Remove existing domain certs.
-	certsPath := filepath.Join(dataDir, certsDir)
-	_ = os.RemoveAll(certsPath)
+	// Remove entire certs directory (CA + domain certs) so EnsureCA generates fresh ones.
+	_ = os.RemoveAll(filepath.Join(dataDir, certsDir))
 
 	caCert, caKey, err := EnsureCA(dataDir)
 	if err != nil {
