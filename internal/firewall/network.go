@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"strings"
 
-	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/moby/moby/client"
 )
 
 // NetworkInfo holds discovered state about the firewall Docker network.
@@ -21,7 +22,7 @@ type NetworkInfo struct {
 func (m *Manager) discoverNetwork(ctx context.Context) (*NetworkInfo, error) {
 	networkName := m.cfg.ClawkerNetwork()
 
-	result, err := m.client.NetworkInspect(ctx, networkName, docker.NetworkInspectOptions{})
+	result, err := m.client.NetworkInspect(ctx, networkName, client.NetworkInspectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("inspecting network %s: %w", networkName, err)
 	}
@@ -58,14 +59,25 @@ func (m *Manager) discoverNetwork(ctx context.Context) (*NetworkInfo, error) {
 func (m *Manager) ensureNetwork(ctx context.Context) (string, error) {
 	networkName := m.cfg.ClawkerNetwork()
 
-	id, err := m.client.EnsureNetwork(ctx, docker.EnsureNetworkOptions{
-		Name: networkName,
-	})
-	if err != nil {
-		return "", fmt.Errorf("ensuring network %s: %w", networkName, err)
+	// Check if network already exists.
+	result, err := m.client.NetworkInspect(ctx, networkName, client.NetworkInspectOptions{})
+	if err == nil {
+		return result.Network.ID, nil
 	}
 
-	return id, nil
+	// Only proceed to create if the error is "not found".
+	if !strings.Contains(err.Error(), "not found") {
+		return "", fmt.Errorf("inspecting network %s: %w", networkName, err)
+	}
+
+	resp, err := m.client.NetworkCreate(ctx, networkName, client.NetworkCreateOptions{
+		Driver: "bridge",
+	})
+	if err != nil {
+		return "", fmt.Errorf("creating network %s: %w", networkName, err)
+	}
+
+	return resp.ID, nil
 }
 
 // computeStaticIP replaces the last octet of an IPv4 address with the given value.

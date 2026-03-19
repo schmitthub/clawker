@@ -1,23 +1,30 @@
 package firewall_test
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 )
 
 func newTestManager(t *testing.T) (*firewall.Manager, config.Config) {
 	t.Helper()
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	fake := dockertest.NewFakeClient(cfg)
-	mgr, err := firewall.NewManager(fake.Client, cfg, logger.Nop())
+	fake := &whailtest.FakeAPIClient{}
+	// Stub container ops so AddRules/RemoveRules error instead of panic.
+	fake.ContainerListFn = func(_ context.Context, _ client.ContainerListOptions) (client.ContainerListResult, error) {
+		return client.ContainerListResult{}, fmt.Errorf("no docker in rules tests")
+	}
+	mgr, err := firewall.NewManager(fake, cfg, logger.Nop())
 	require.NoError(t, err)
 	return mgr, cfg
 }

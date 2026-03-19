@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	mobyclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -34,7 +35,7 @@ type FactoryOptions struct {
 	GitManager     func(string) (*git.GitManager, error)
 	HostProxy      func(config.Config, *logger.Logger) (*hostproxy.Manager, error)
 	SocketBridge   func(config.Config, *logger.Logger) socketbridge.SocketBridgeManager
-	Firewall       func(*docker.Client, config.Config, *logger.Logger) (*firewall.Manager, error)
+	Firewall       func(mobyclient.APIClient, config.Config, *logger.Logger) (*firewall.Manager, error)
 }
 
 // NewFactory constructs a *cmdutil.Factory with lazy singletons.
@@ -186,17 +187,17 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	f.Firewall = func(ctx context.Context) (firewall.FirewallManager, error) {
 		fwOnce.Do(func() {
 			if opts.Firewall != nil {
-				cl, clErr := resolveClient(ctx)
-				if clErr != nil {
-					fwErr = clErr
-					return
-				}
 				c, cErr := resolveConfig()
 				if cErr != nil {
 					fwErr = cErr
 					return
 				}
-				fwMgr, fwErr = opts.Firewall(cl, c, logger.Nop())
+				dockerClient, clErr := mobyclient.New(mobyclient.FromEnv)
+				if clErr != nil {
+					fwErr = clErr
+					return
+				}
+				fwMgr, fwErr = opts.Firewall(dockerClient, c, logger.Nop())
 			} else {
 				fwMgr = &firewallmocks.FirewallManagerMock{
 					IsRunningFunc: func(_ context.Context) bool { return false },

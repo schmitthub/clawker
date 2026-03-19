@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	mobyclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -199,12 +200,12 @@ func firewallFunc(f *cmdutil.Factory) func(context.Context) (firewall.FirewallMa
 				err = fmt.Errorf("failed to get logger: %w", logErr)
 				return
 			}
-			client, clientErr := f.Client(ctx)
+			dockerClient, clientErr := mobyclient.New(mobyclient.FromEnv)
 			if clientErr != nil {
 				err = fmt.Errorf("failed to get docker client: %w", clientErr)
 				return
 			}
-			mgr, err = firewall.NewManager(client, cfg, log)
+			mgr, err = firewall.NewManager(dockerClient, cfg, log)
 			if err != nil {
 				err = fmt.Errorf("failed to create firewall manager: %w", err)
 				return

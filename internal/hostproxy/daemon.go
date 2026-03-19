@@ -12,7 +12,6 @@ import (
 
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -35,8 +34,7 @@ type Daemon struct {
 	cfg                config.Config
 	log                *logger.Logger
 	server             *Server
-	docker             ContainerLister // used by container watcher; satisfied by *docker.Client
-	dockerClient       *docker.Client  // shared client for container ops
+	docker             ContainerLister
 	pidFile            string
 	pollInterval       time.Duration
 	gracePeriod        time.Duration
@@ -93,8 +91,7 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 		return nil, fmt.Errorf("failed to resolve host proxy PID file path: %w", err)
 	}
 
-	ctx := context.Background()
-	dockerClient, err := docker.NewClient(ctx, cfg, log)
+	dockerClient, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
@@ -104,7 +101,6 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 		log:                log,
 		server:             NewServer(daemonCfg.Port, log),
 		docker:             dockerClient,
-		dockerClient:       dockerClient,
 		pidFile:            pidFile,
 		pollInterval:       daemonCfg.PollInterval,
 		gracePeriod:        daemonCfg.GracePeriod,

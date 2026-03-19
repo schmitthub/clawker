@@ -14,7 +14,6 @@ import (
 
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -33,16 +32,11 @@ type Daemon struct {
 	cfg                 config.Config
 	log                 *logger.Logger
 	manager             *Manager
-	docker              containerLister
+	docker              client.APIClient
 	pidFile             string
 	healthCheckInterval time.Duration
 	pollInterval        time.Duration
 	gracePeriod         time.Duration
-}
-
-// containerLister is the minimal interface for container polling.
-type containerLister interface {
-	ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error)
 }
 
 // DaemonOption is a functional option for overriding daemon config values.
@@ -70,10 +64,12 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 		return nil, fmt.Errorf("resolving PID file path: %w", err)
 	}
 
-	ctx := context.Background()
-	dockerClient, err := docker.NewClient(ctx, cfg, log)
+	// Raw moby client for container polling — the daemon needs an unfiltered
+	// view of all Docker containers. docker.Client wraps whail which injects
+	// managed-label filters, hiding containers from the count.
+	dockerClient, err := client.New(client.FromEnv)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to Docker: %w", err)
+		return nil, fmt.Errorf("connecting to Docker for container polling: %w", err)
 	}
 
 	fwMgr, err := NewManager(dockerClient, cfg, log)

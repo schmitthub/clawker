@@ -17,18 +17,24 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
+// firewallContainer is a typed constant restricting container name arguments
+// to the known firewall infrastructure containers.
+type firewallContainer string
+
+const (
+	envoyContainer   firewallContainer = "clawker-envoy"
+	corednsContainer firewallContainer = "clawker-coredns"
+)
+
 // Infrastructure container constants.
 const (
-	envoyContainerName   = "clawker-envoy"
-	corednsContainerName = "clawker-coredns"
-
 	envoyImage   = "envoyproxy/envoy:distroless-v1.37.1@sha256:4d9226b9fd4d1449887de7cde785beb24b12e47d6e79021dec3c79e362609432"
 	corednsImage = "coredns/coredns:1.14.2@sha256:e7e6440cfd1e919280958f5b5a6ab2b184d385bba774c12ad2a9e1e4183f90d9"
 
@@ -51,14 +57,14 @@ var _ FirewallManager = (*Manager)(nil)
 // Manager implements FirewallManager using the Docker API.
 // It manages Envoy and CoreDNS containers on the clawker-net Docker network.
 type Manager struct {
-	client *docker.Client
+	client client.APIClient
 	cfg    config.Config
 	log    *logger.Logger
 	store  *storage.Store[EgressRulesFile]
 }
 
 // NewManager creates a new DockerFirewallManager.
-func NewManager(client *docker.Client, cfg config.Config, log *logger.Logger) (*Manager, error) {
+func NewManager(client client.APIClient, cfg config.Config, log *logger.Logger) (*Manager, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -108,11 +114,11 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 	}
 
 	// Step 5: Ensure containers are running.
-	if err := m.ensureContainer(ctx, envoyContainerName, m.envoyContainerConfig(netInfo, dataDir)); err != nil {
+	if err := m.ensureContainer(ctx, envoyContainer, m.envoyContainerConfig(netInfo, dataDir)); err != nil {
 		return fmt.Errorf("firewall: ensuring envoy: %w", err)
 	}
 
-	if err := m.ensureContainer(ctx, corednsContainerName, m.corednsContainerConfig(netInfo, dataDir)); err != nil {
+	if err := m.ensureContainer(ctx, corednsContainer, m.corednsContainerConfig(netInfo, dataDir)); err != nil {
 		return fmt.Errorf("firewall: ensuring coredns: %w", err)
 	}
 
@@ -128,8 +134,8 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 // Stop tears down the firewall stack (containers only, not the network).
 // The network is left in place because monitoring or agent containers may be attached.
 func (m *Manager) Stop(ctx context.Context) error {
-	envoyErr := m.stopAndRemove(ctx, envoyContainerName)
-	corednsErr := m.stopAndRemove(ctx, corednsContainerName)
+	envoyErr := m.stopAndRemove(ctx, envoyContainer)
+	corednsErr := m.stopAndRemove(ctx, corednsContainer)
 
 	if err := errors.Join(envoyErr, corednsErr); err != nil {
 		return fmt.Errorf("firewall stop: %w", err)
@@ -139,8 +145,8 @@ func (m *Manager) Stop(ctx context.Context) error {
 
 // IsRunning reports whether both firewall containers are running.
 func (m *Manager) IsRunning(ctx context.Context) bool {
-	return m.isContainerRunning(ctx, envoyContainerName) &&
-		m.isContainerRunning(ctx, corednsContainerName)
+	return m.isContainerRunning(ctx, envoyContainer) &&
+		m.isContainerRunning(ctx, corednsContainer)
 }
 
 // WaitForHealthy polls until both firewall services pass health probes (TCP+HTTP)
@@ -353,7 +359,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 		timeoutSecs = 30
 	}
 
-	execResp, err := m.client.ExecCreate(ctx, containerID, docker.ExecCreateOptions{
+	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		User: "root",
 		Cmd:  []string{firewallBypassScript, strconv.Itoa(timeoutSecs)},
 	})
@@ -361,7 +367,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 		return fmt.Errorf("firewall bypass: creating exec: %w", err)
 	}
 
-	_, err = m.client.ExecStart(ctx, execResp.ID, docker.ExecStartOptions{
+	_, err = m.client.ExecStart(ctx, execResp.ID, client.ExecStartOptions{
 		Detach: true,
 	})
 	if err != nil {
@@ -378,7 +384,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 
 // StopBypass stops an active bypass by executing the firewall-bypass script with "stop".
 func (m *Manager) StopBypass(ctx context.Context, containerID string) error {
-	execResp, err := m.client.ExecCreate(ctx, containerID, docker.ExecCreateOptions{
+	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		User: "root",
 		Cmd:  []string{firewallBypassScript, "stop"},
 	})
@@ -386,7 +392,7 @@ func (m *Manager) StopBypass(ctx context.Context, containerID string) error {
 		return fmt.Errorf("firewall stop bypass: creating exec: %w", err)
 	}
 
-	_, err = m.client.ExecStart(ctx, execResp.ID, docker.ExecStartOptions{
+	_, err = m.client.ExecStart(ctx, execResp.ID, client.ExecStartOptions{
 		Detach: true,
 	})
 	if err != nil {
@@ -407,8 +413,8 @@ func (m *Manager) Status(ctx context.Context) (*FirewallStatus, error) {
 	// Discover network state from Docker (best-effort; fields stay empty if network doesn't exist).
 	netInfo, _ := m.discoverNetwork(ctx)
 
-	envoyRunning := m.isContainerRunning(ctx, envoyContainerName)
-	corednsRunning := m.isContainerRunning(ctx, corednsContainerName)
+	envoyRunning := m.isContainerRunning(ctx, envoyContainer)
+	corednsRunning := m.isContainerRunning(ctx, corednsContainer)
 
 	status := &FirewallStatus{
 		Running:       envoyRunning && corednsRunning,
@@ -512,10 +518,10 @@ func (m *Manager) regenerateAndRestart(ctx context.Context) error {
 		return fmt.Errorf("regenerating configs: %w", err)
 	}
 
-	if err := m.restartContainer(ctx, envoyContainerName); err != nil {
+	if err := m.restartContainer(ctx, envoyContainer); err != nil {
 		return err
 	}
-	if err := m.restartContainer(ctx, corednsContainerName); err != nil {
+	if err := m.restartContainer(ctx, corednsContainer); err != nil {
 		return err
 	}
 
@@ -602,20 +608,33 @@ type containerSpec struct {
 // ensureContainer ensures a named container exists and is running.
 // Cross-process safe: handles name conflicts (daemon vs CLI race) and
 // stale stopped containers (bind mounts may reference deleted paths).
-func (m *Manager) ensureContainer(ctx context.Context, name string, spec containerSpec) error {
-	ctr, err := m.client.FindContainerByName(ctx, name)
-	if err == nil && ctr != nil {
-		if ctr.State == container.StateRunning {
-			m.log.Debug().Str("container", name).Msg("firewall container already running")
-			return nil
-		}
+func (m *Manager) ensureContainer(ctx context.Context, name firewallContainer, spec containerSpec) error {
+	n := string(name)
+	filters := client.Filters{}.Add("name", n)
+	listResp, err := m.client.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: filters,
+	})
+	if err != nil {
+		return fmt.Errorf("listing containers for %s: %w", n, err)
+	}
 
-		// Stopped container — remove and recreate. Bind mounts may reference
-		// deleted host paths, so restarting is not safe.
-		m.log.Debug().Str("container", name).Str("state", string(ctr.State)).Msg("removing stale firewall container")
-		if _, rmErr := m.client.ContainerRemove(ctx, ctr.ID, true); rmErr != nil {
-			m.log.Warn().Err(rmErr).Str("container", name).Msg("failed to remove stale container, will attempt create anyway")
-		}
+	if len(listResp.Items) == 0 {
+		m.log.Debug().Str("container", n).Msg("container not found, creating")
+		return m.runContainer(ctx, name, spec)
+	}
+
+	ctr := listResp.Items[0]
+	if ctr.State == container.StateRunning {
+		m.log.Debug().Str("container", n).Msg("firewall container already running")
+		return nil
+	}
+
+	// Stopped container — remove and recreate. Bind mounts may reference
+	// deleted host paths, so restarting is not safe.
+	m.log.Debug().Str("container", n).Str("state", string(ctr.State)).Msg("removing stale firewall container")
+	if _, rmErr := m.client.ContainerRemove(ctx, ctr.ID, client.ContainerRemoveOptions{Force: true}); rmErr != nil {
+		m.log.Warn().Err(rmErr).Str("container", n).Msg("failed to remove stale container, will attempt create anyway")
 	}
 
 	return m.runContainer(ctx, name, spec)
@@ -624,11 +643,12 @@ func (m *Manager) ensureContainer(ctx context.Context, name string, spec contain
 // runContainer pulls the image if needed, creates the container, and starts it.
 // On "name already in use" conflict (another process created it concurrently),
 // it looks up the existing container and uses it if running.
-func (m *Manager) runContainer(ctx context.Context, name string, spec containerSpec) error {
-	m.log.Debug().Str("container", name).Str("image", spec.image).Msg("creating firewall container")
+func (m *Manager) runContainer(ctx context.Context, name firewallContainer, spec containerSpec) error {
+	n := string(name)
+	m.log.Debug().Str("container", n).Str("image", spec.image).Msg("creating firewall container")
 
 	if err := m.ensureImage(ctx, spec.image); err != nil {
-		return fmt.Errorf("pulling image for %s: %w", name, err)
+		return fmt.Errorf("pulling image for %s: %w", n, err)
 	}
 
 	ip, _ := netip.ParseAddr(spec.staticIP)
@@ -663,36 +683,37 @@ func (m *Manager) runContainer(ctx context.Context, name string, spec containerS
 		},
 	}
 
-	createResult, err := m.client.ContainerCreate(ctx, docker.ContainerCreateOptions{
+	createResult, err := m.client.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config:           containerConfig,
 		HostConfig:       hostConfig,
 		NetworkingConfig: networkingConfig,
-		Name:             name,
+		Name:             n,
 	})
 	if err != nil {
 		// Name conflict — another process (daemon or CLI) created it concurrently.
 		if strings.Contains(err.Error(), "is already in use") {
-			m.log.Debug().Str("container", name).Msg("container created by another process, looking up")
-			ctr, lookupErr := m.client.FindContainerByName(ctx, name)
-			if lookupErr != nil {
-				return fmt.Errorf("name conflict for %s but lookup failed: %w", name, lookupErr)
+			m.log.Debug().Str("container", n).Msg("container created by another process, looking up")
+			filters := client.Filters{}.Add("name", n)
+			listResp, lookupErr := m.client.ContainerList(ctx, client.ContainerListOptions{
+				All:     true,
+				Filters: filters,
+			})
+			if lookupErr != nil || len(listResp.Items) == 0 {
+				return fmt.Errorf("name conflict for %s but lookup failed: %w", n, lookupErr)
 			}
+			ctr := listResp.Items[0]
 			if ctr.State == container.StateRunning {
 				return nil
 			}
-			_, startErr := m.client.ContainerStart(ctx, docker.ContainerStartOptions{
-				ContainerID: ctr.ID,
-			})
+			_, startErr := m.client.ContainerStart(ctx, ctr.ID, client.ContainerStartOptions{})
 			return startErr
 		}
-		return fmt.Errorf("creating container %s: %w", name, err)
+		return fmt.Errorf("creating container %s: %w", n, err)
 	}
 
-	_, err = m.client.ContainerStart(ctx, docker.ContainerStartOptions{
-		ContainerID: createResult.ID,
-	})
+	_, err = m.client.ContainerStart(ctx, createResult.ID, client.ContainerStartOptions{})
 	if err != nil {
-		return fmt.Errorf("starting container %s: %w", name, err)
+		return fmt.Errorf("starting container %s: %w", n, err)
 	}
 
 	return nil
@@ -700,11 +721,12 @@ func (m *Manager) runContainer(ctx context.Context, name string, spec containerS
 
 // ensureImage pulls the image if it doesn't exist locally.
 func (m *Manager) ensureImage(ctx context.Context, image string) error {
-	if exists, _ := m.client.ImageExists(ctx, image); exists {
-		return nil
+	_, err := m.client.ImageInspect(ctx, image)
+	if err == nil {
+		return nil // image exists locally
 	}
 	m.log.Debug().Str("image", image).Msg("pulling firewall image")
-	reader, err := m.client.ImagePull(ctx, image, docker.ImagePullOptions{})
+	reader, err := m.client.ImagePull(ctx, image, client.ImagePullOptions{})
 	if err != nil {
 		return err
 	}
@@ -714,51 +736,70 @@ func (m *Manager) ensureImage(ctx context.Context, image string) error {
 	return nil
 }
 
-// stopAndRemove stops and removes a container by name.
-// Not-found errors are silently ignored.
-func (m *Manager) stopAndRemove(ctx context.Context, name string) error {
-	ctr, err := m.client.FindContainerByName(ctx, name)
+// stopAndRemove stops and removes a firewall container.
+// Not-found is silently ignored.
+func (m *Manager) stopAndRemove(ctx context.Context, name firewallContainer) error {
+	n := string(name)
+	filters := client.Filters{}.Add("name", n)
+	result, err := m.client.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: filters,
+	})
 	if err != nil {
-		m.log.Debug().Str("container", name).Err(err).Msg("container not found or lookup failed, skipping stop")
+		m.log.Debug().Str("container", n).Err(err).Msg("container lookup failed, skipping stop")
+		return nil
+	}
+	if len(result.Items) == 0 {
+		m.log.Debug().Str("container", n).Msg("container not found, skipping stop")
 		return nil
 	}
 
+	ctr := result.Items[0]
 	if ctr.State == container.StateRunning {
 		timeout := 10
-		if _, err := m.client.ContainerStop(ctx, ctr.ID, &timeout); err != nil {
-			m.log.Warn().Err(err).Str("container", name).Msg("failed to stop container gracefully")
+		if _, err := m.client.ContainerStop(ctx, ctr.ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
+			m.log.Warn().Err(err).Str("container", n).Msg("failed to stop container gracefully")
 		}
 	}
 
-	_, err = m.client.ContainerRemove(ctx, ctr.ID, true)
+	_, err = m.client.ContainerRemove(ctx, ctr.ID, client.ContainerRemoveOptions{Force: true})
 	if err != nil {
-		return fmt.Errorf("removing container %s: %w", name, err)
+		return fmt.Errorf("removing container %s: %w", n, err)
 	}
 
-	m.log.Debug().Str("container", name).Msg("container removed")
+	m.log.Debug().Str("container", n).Msg("container removed")
 	return nil
 }
 
-// isContainerRunning checks whether a named container exists and is running.
-func (m *Manager) isContainerRunning(ctx context.Context, name string) bool {
-	ctr, err := m.client.FindContainerByName(ctx, name)
+// isContainerRunning checks whether a firewall container is running.
+func (m *Manager) isContainerRunning(ctx context.Context, name firewallContainer) bool {
+	n := string(name)
+	filters := client.Filters{}.Add("name", n)
+	result, err := m.client.ContainerList(ctx, client.ContainerListOptions{
+		Filters: filters, // default: running only
+	})
 	if err != nil {
 		return false
 	}
-	return ctr.State == container.StateRunning
+	return len(result.Items) > 0
 }
 
-// restartContainer restarts a running container by name.
-func (m *Manager) restartContainer(ctx context.Context, name string) error {
-	ctr, err := m.client.FindContainerByName(ctx, name)
-	if err != nil {
-		return fmt.Errorf("finding container %s: %w", name, err)
+// restartContainer restarts a firewall container.
+func (m *Manager) restartContainer(ctx context.Context, name firewallContainer) error {
+	n := string(name)
+	filters := client.Filters{}.Add("name", n)
+	result, err := m.client.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: filters,
+	})
+	if err != nil || len(result.Items) == 0 {
+		return fmt.Errorf("finding container %s: %w", n, err)
 	}
 
 	timeout := 10
-	_, err = m.client.ContainerRestart(ctx, ctr.ID, &timeout)
+	_, err = m.client.ContainerRestart(ctx, result.Items[0].ID, client.ContainerRestartOptions{Timeout: &timeout})
 	if err != nil {
-		return fmt.Errorf("restarting container %s: %w", name, err)
+		return fmt.Errorf("restarting container %s: %w", n, err)
 	}
 
 	return nil
