@@ -149,7 +149,7 @@ security:
         dst: github.com
         path_default: ""
         port: 22
-        proto: ssh 
+        proto: ssh
   docker_socket: false # mount Docker socket (security risk if enabled)
   git_credentials:
     forward_https: true

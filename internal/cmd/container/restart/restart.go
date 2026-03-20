@@ -10,8 +10,11 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/firewall"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
+	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
 )
 
@@ -21,7 +24,10 @@ type RestartOptions struct {
 	Client         func(context.Context) (*docker.Client, error)
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
+	HostProxy      func() hostproxy.HostProxyService
 	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	SocketBridge   func() socketbridge.SocketBridgeManager
+	Logger         func() (*logger.Logger, error)
 
 	Agent      bool // treat arguments as agents names
 	Timeout    int
@@ -36,7 +42,10 @@ func NewCmdRestart(f *cmdutil.Factory, runF func(context.Context, *RestartOption
 		Client:         f.Client,
 		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
+		HostProxy:      f.HostProxy,
 		Firewall:       f.Firewall,
+		SocketBridge:   f.SocketBridge,
+		Logger:         f.Logger,
 	}
 
 	cmd := &cobra.Command{
@@ -148,6 +157,10 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 				Client:         opts.Client,
 				Config:         opts.Config,
 				ProjectManager: opts.ProjectManager,
+				HostProxy:      opts.HostProxy,
+				Firewall:       opts.Firewall,
+				SocketBridge:   opts.SocketBridge,
+				Logger:         opts.Logger,
 			},
 			docker.ContainerStartOptions{
 				ContainerID: c.ID,
@@ -165,7 +178,10 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 			Client:         opts.Client,
 			Config:         opts.Config,
 			ProjectManager: opts.ProjectManager,
+			HostProxy:      opts.HostProxy,
 			Firewall:       opts.Firewall,
+			SocketBridge:   opts.SocketBridge,
+			Logger:         opts.Logger,
 		})
 	if errBootstrapPre != nil {
 		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPre)
@@ -176,7 +192,10 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 			Client:         opts.Client,
 			Config:         opts.Config,
 			ProjectManager: opts.ProjectManager,
+			HostProxy:      opts.HostProxy,
 			Firewall:       opts.Firewall,
+			SocketBridge:   opts.SocketBridge,
+			Logger:         opts.Logger,
 		})
 	if errBootstrapPost != nil {
 		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPost)

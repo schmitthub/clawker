@@ -73,7 +73,7 @@ func (m *Manager) ensureNetwork(ctx context.Context) (string, error) {
 	resp, err := m.client.NetworkCreate(ctx, networkName, client.NetworkCreateOptions{
 		Driver: "bridge",
 		Labels: map[string]string{
-			m.cfg.EngineManagedLabel(): m.cfg.ManagedLabelValue(),
+			m.cfg.LabelManaged(): m.cfg.ManagedLabelValue(),
 		},
 	})
 	if err != nil {
