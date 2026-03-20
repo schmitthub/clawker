@@ -60,6 +60,91 @@ The hardcoded allowlist is deliberately **bare-bones** — only domains required
 You must explicitly configure every external domain your agent needs. This is by design — an AI agent should not have unrestricted internet access. Review your project's network dependencies and add them to `add_domains` or `rules` in your `.clawker.yaml`.
 </Warning>
 
+### Common Setups
+
+Here are examples for common services your agent will likely need. **None of these are included by default** — add what you need to your `.clawker.yaml`.
+
+#### Git SSH (GitHub, GitLab, Bitbucket)
+
+SSH git operations (`git clone git@github.com:...`) require an explicit SSH rule. The `add_domains` shorthand only covers HTTPS (port 443) — SSH needs a dedicated `rules` entry on port 22:
+
+```yaml
+security:
+  firewall:
+    add_domains:
+      - github.com       # HTTPS git + API
+      - api.github.com   # GitHub API (needed for gh CLI)
+    rules:
+      - dst: github.com
+        proto: ssh
+        port: 22
+        action: allow
+```
+
+Without the SSH rule, `git push` and `git clone` over SSH will fail with a connection reset. The agent's SSH keys are forwarded from your host (see [Credential Forwarding](/credentials)), but the firewall still needs to allow the traffic through.
+
+For GitLab or Bitbucket, add equivalent rules:
+
+```yaml
+security:
+  firewall:
+    add_domains:
+      - gitlab.com
+      - bitbucket.org
+    rules:
+      - dst: gitlab.com
+        proto: ssh
+        port: 22
+        action: allow
+      - dst: bitbucket.org
+        proto: ssh
+        port: 22
+        action: allow
+```
+
+#### Package Registries
+
+```yaml
+security:
+  firewall:
+    add_domains:
+      # Node.js / npm
+      - registry.npmjs.org
+      - registry.yarnpkg.com
+      # Python / pip
+      - pypi.org
+      - files.pythonhosted.org
+      # Go modules
+      - proxy.golang.org
+      - sum.golang.org
+      - storage.googleapis.com
+      # Rust / cargo
+      - crates.io
+      - static.crates.io
+```
+
+#### Full Working Example
+
+A typical project that uses GitHub and npm:
+
+```yaml
+security:
+  firewall:
+    add_domains:
+      - github.com
+      - api.github.com
+      - registry.npmjs.org
+    rules:
+      - dst: github.com
+        proto: ssh
+        port: 22
+        action: allow
+```
+
+<Tip>
+The `clawker project init` template pre-populates GitHub domains and SSH rules for you. If you're starting from the template, Git should work out of the box. These examples are for understanding what's required if you're building a config from scratch or adding new services.
+</Tip>
+
 ## Configuration
 
 The firewall is configured in two places:
