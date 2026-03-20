@@ -142,9 +142,15 @@ func (m *Manager) isDaemonRunning() bool {
 
 // startDaemon spawns a daemon subprocess.
 func (m *Manager) startDaemon() error {
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
+	// CLAWKER_EXECUTABLE overrides os.Executable() for test environments
+	// where the running binary is a Go test binary, not the clawker CLI.
+	exe := os.Getenv("CLAWKER_EXECUTABLE")
+	if exe == "" {
+		var err error
+		exe, err = os.Executable()
+		if err != nil {
+			return fmt.Errorf("failed to get executable path: %w", err)
+		}
 	}
 
 	// Build command arguments — port passed explicitly to ensure manager and daemon agree

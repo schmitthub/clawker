@@ -32,7 +32,7 @@ version: "1"
 name: test-project
 build: { image: "node:20-slim" }
 workspace: { default_mode: "bind" }
-security: { firewall: { enable: false } }
+security: {}
 `, `
 monitoring:
   otel_collector_port: 4318
@@ -100,7 +100,7 @@ version: "1"
 name: test-project
 build: { image: "node:20-slim" }
 workspace: { default_mode: "bind" }
-security: { firewall: { enable: false } }
+security: {}
 `, `
 monitoring:
   otel_collector_port: 4318
@@ -158,7 +158,7 @@ version: "1"
 name: test-project
 build: { image: "node:20-slim" }
 workspace: { default_mode: "bind" }
-security: { firewall: { enable: false } }
+security: {}
 `, `
 monitoring:
   otel_collector_port: 4318
@@ -211,7 +211,7 @@ version: "1"
 name: test-project
 build: { image: "node:20-slim" }
 workspace: { default_mode: "bind" }
-security: { firewall: { enable: false } }
+security: {}
 `, `
 monitoring:
   otel_collector_port: 4318

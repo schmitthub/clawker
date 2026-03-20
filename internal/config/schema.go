@@ -144,11 +144,23 @@ type WorkspaceConfig struct {
 	DefaultMode string `yaml:"default_mode"`
 }
 
-// SecurityConfig defines optional security hardening settings
+// PathRule defines an HTTP path-level filtering rule for MITM inspection.
+type PathRule struct {
+	Path   string `yaml:"path"`
+	Action string `yaml:"action"`
+}
 
-// IPRangeSource defines a source of IP CIDR ranges for the firewall.
-// Sources can be built-in (github, google-cloud, google, cloudflare, aws)
-// or custom with explicit URL and jq filter.
+// EgressRule defines a single egress firewall rule.
+// Dst is the domain or IP, Proto defaults to "tls", Action defaults to "allow".
+type EgressRule struct {
+	Dst         string     `yaml:"dst"`
+	Proto       string     `yaml:"proto,omitempty"`
+	Port        int        `yaml:"port,omitempty"`
+	Action      string     `yaml:"action,omitempty"`
+	PathRules   []PathRule `yaml:"path_rules,omitempty"`
+	PathDefault string     `yaml:"path_default,omitempty"`
+}
+
 type IPRangeSource struct {
 	// Name is the identifier (e.g., "github", "google-cloud", "cloudflare")
 	Name string `yaml:"name" json:"name"`
@@ -170,17 +182,12 @@ func (s *IPRangeSource) IsRequired() bool {
 	return s.Name == "github"
 }
 
-// FirewallConfig defines network firewall settings
+// FirewallConfig defines per-project firewall rules in clawker.yaml.
+// Global lifecycle control (enable/disable) lives in settings.yaml via FirewallSettings.
 type FirewallConfig struct {
-	Enable         bool            `yaml:"enable"`
-	AddDomains     []string        `yaml:"add_domains,omitempty"`
-	IPRangeSources []IPRangeSource `yaml:"ip_range_sources,omitempty"`
-}
-
-// FirewallEnabled returns whether the firewall should be enabled.
-// Returns true only if Firewall config exists and Enable is true.
-func (f *FirewallConfig) FirewallEnabled() bool {
-	return f != nil && f.Enable
+	AddDomains     []string        `yaml:"add_domains,omitempty" merge:"union"`
+	Rules          []EgressRule    `yaml:"rules,omitempty" merge:"union"`
+	IPRangeSources []IPRangeSource `yaml:"ip_range_sources,omitempty"` // DEPRECATED: ignored at runtime
 }
 
 // GetFirewallDomains returns required domains merged with user's add_domains.
@@ -225,12 +232,6 @@ func (s *SecurityConfig) HostProxyEnabled() bool {
 		return true // Default to enabled
 	}
 	return *s.EnableHostProxy
-}
-
-// FirewallEnabled returns whether the firewall should be enabled.
-// Convenience method that delegates to FirewallConfig.
-func (s *SecurityConfig) FirewallEnabled() bool {
-	return s.Firewall.FirewallEnabled()
 }
 
 // GitCredentialsConfig defines git credential forwarding settings
@@ -359,6 +360,22 @@ type Settings struct {
 	Logging    LoggingConfig    `yaml:"logging,omitempty"`
 	Monitoring MonitoringConfig `yaml:"monitoring,omitempty"`
 	HostProxy  HostProxyConfig  `yaml:"host_proxy,omitempty"`
+	Firewall   FirewallSettings `yaml:"firewall,omitempty"`
+}
+
+// FirewallSettings controls global firewall lifecycle in settings.yaml.
+// Per-project rules live in FirewallConfig (clawker.yaml).
+type FirewallSettings struct {
+	Enable *bool `yaml:"enable,omitempty"`
+}
+
+// FirewallEnabled returns whether the global firewall is enabled.
+// Returns true when Enable is nil (default enabled) or explicitly true.
+func (f *FirewallSettings) FirewallEnabled() bool {
+	if f == nil || f.Enable == nil {
+		return true
+	}
+	return *f.Enable
 }
 
 // HostProxyConfig configures the host proxy.

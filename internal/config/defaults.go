@@ -1,15 +1,37 @@
 package config
 
-// requiredFirewallDomains is the default list of domains allowed through the firewall.
-// These are essential for Claude Code and common development tools.
-var requiredFirewallDomains = []string{
-	"api.anthropic.com",
-	"sentry.io",
-	"statsig.anthropic.com",
-	"statsig.com",
-	"registry-1.docker.io",
-	"production.cloudflare.docker.com",
-	"docker.io",
+// requiredFirewallRules is the canonical list of required egress rules.
+// These are essential for Claude Code and container image pulls.
+//
+// Claude Code OAuth requires platform.claude.com (token exchange) and
+// claude.ai (alternative authorize URL). These use SNI-based filtering,
+// so each domain must be listed explicitly even if they share IPs with
+// api.anthropic.com.
+var requiredFirewallRules = []EgressRule{
+	// Claude Code — API and OAuth
+	{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "platform.claude.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+	// Claude Code — telemetry
+	{Dst: "sentry.io", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "statsig.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "statsig.com", Proto: "tls", Port: 443, Action: "allow"},
+	// Container image pulls
+	{Dst: "registry-1.docker.io", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "production.cloudflare.docker.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "docker.io", Proto: "tls", Port: 443, Action: "allow"},
+}
+
+// requiredFirewallDomains is derived from requiredFirewallRules for backwards compatibility.
+//
+// Deprecated: Use RequiredFirewallRules() instead.
+var requiredFirewallDomains []string
+
+func init() {
+	requiredFirewallDomains = make([]string, len(requiredFirewallRules))
+	for i, r := range requiredFirewallRules {
+		requiredFirewallDomains[i] = r.Dst
+	}
 }
 
 // defaultProjectYAML is the base-layer defaults for project configuration.
@@ -31,8 +53,6 @@ workspace:
   default_mode: "bind"
 
 security:
-  firewall:
-    enable: true
   docker_socket: false
   cap_add:
     - NET_ADMIN
@@ -63,6 +83,9 @@ host_proxy:
     poll_interval: 30s
     grace_period: 60s
     max_consecutive_errs: 10
+
+firewall:
+  enable: true
 
 monitoring:
   otel_collector_port: 4318
@@ -103,8 +126,7 @@ agent:
   #  - ".env"
   #  - "~/.secrets/api-keys.env"
   #from_env: # passthrough host env vars by name (warns if unset)
-  #  - "ANTHROPIC_API_KEY"
-  #  - "GITHUB_TOKEN"
+  #  - "GH_TOKEN"
   env: {}
   claude_code:
     config:
@@ -112,18 +134,28 @@ agent:
     use_host_auth: true # keyring or ~/.claude/.credentials.json
   enable_shared_dir: false # read-only mount at ~/.clawker-share
   #post_init: | # runs once after init (set -e), failure aborts startup
-  #  claude mcp add -- npx -y @anthropic-ai/claude-code-mcp
-  #  npm install -g typescript
+  #  claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
 
 workspace:
   default_mode: "bind" # "bind" (live sync) or "snapshot" (isolated copy)
 
 security:
   firewall:
-    enable: true # blocks outbound traffic by default
-    #add_domains: # additional allowed domains
-    #  - "api.openai.com"
+    add_domains: # additional allowed domains
+      - github.com
+      - api.github.com
+    rules:
+      - action: allow
+        dst: github.com
+        path_default: ""
+        port: 22
+        proto: ssh
   docker_socket: false # mount Docker socket (security risk if enabled)
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    forward_gpg: true
+    copy_git_config: true
 
 #loop: # autonomous loop settings (clawker loop iterate / clawker loop tasks)
 #  max_loops: 50 # maximum iterations per session
@@ -145,6 +177,9 @@ security:
 // DefaultSettingsYAML is the commented template written to disk by clawker init.
 const DefaultSettingsYAML = `# Clawker User Settings
 # Documentation: https://github.com/schmitthub/clawker
+
+firewall:
+  enable: true # enables container network firewall
 
 #logging:
 #  file_enabled: true

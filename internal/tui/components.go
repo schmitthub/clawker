@@ -36,6 +36,36 @@ func RenderHeader(cfg HeaderConfig) string {
 	return left
 }
 
+// DashHeaderConfig configures a full-width dashboard header bar.
+type DashHeaderConfig struct {
+	Title    string // e.g., "Firewall Bypass"
+	Subtitle string // e.g., agent name — rendered muted on the right
+	Width    int
+}
+
+// RenderDashHeader renders a full-width dashboard header bar:
+//
+//	━━ Title ━━━━━━━━━━━━━━━━━━━━ subtitle ━━
+//
+// Title is bold+primary, fill and subtitle are muted.
+func RenderDashHeader(cs *iostreams.ColorScheme, cfg DashHeaderConfig) string {
+	title := fmt.Sprintf("  ━━ %s ", cfg.Title)
+	subtitle := fmt.Sprintf(" %s ━━", cfg.Subtitle)
+
+	titleRendered := cs.Bold(cs.Primary(title))
+	subtitleRendered := iostreams.MutedStyle.Render(subtitle)
+
+	titleWidth := cltext.CountVisibleWidth(titleRendered)
+	subtitleWidth := cltext.CountVisibleWidth(subtitleRendered)
+	fillWidth := cfg.Width - titleWidth - subtitleWidth
+	if fillWidth < 3 {
+		fillWidth = 3
+	}
+	fill := iostreams.MutedStyle.Render(strings.Repeat("━", fillWidth))
+
+	return titleRendered + fill + subtitleRendered
+}
+
 // StatusConfig configures a status indicator.
 type StatusConfig struct {
 	Status string

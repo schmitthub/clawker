@@ -538,6 +538,15 @@ func TestServer_DynamicListenerStartStop(t *testing.T) {
 	}
 	conn.Close()
 
+	if ln, err := net.Listen("tcp", "[::1]:0"); err == nil {
+		ln.Close()
+		conn6, err := net.DialTimeout("tcp", fmt.Sprintf("[::1]:%d", port), 1*time.Second)
+		if err != nil {
+			t.Fatalf("expected dynamic listener to be listening on IPv6 port %d: %v", port, err)
+		}
+		conn6.Close()
+	}
+
 	// Delete the session which should stop the listener
 	delReq := httptest.NewRequest(http.MethodDelete, "/callback/"+result.SessionID, nil)
 	delReq.SetPathValue("session", result.SessionID)
@@ -552,6 +561,15 @@ func TestServer_DynamicListenerStartStop(t *testing.T) {
 	if err == nil {
 		conn.Close()
 		t.Errorf("expected dynamic listener to be stopped, but port %d is still open", port)
+	}
+
+	if ln, err := net.Listen("tcp", "[::1]:0"); err == nil {
+		ln.Close()
+		conn6, err := net.DialTimeout("tcp", fmt.Sprintf("[::1]:%d", port), 100*time.Millisecond)
+		if err == nil {
+			conn6.Close()
+			t.Errorf("expected IPv6 dynamic listener to be stopped, but port %d is still open", port)
+		}
 	}
 }
 
@@ -604,5 +622,60 @@ func TestServer_DynamicListenerCapture(t *testing.T) {
 	}
 	if !strings.Contains(data.Query, "state=RANDOM_STATE") {
 		t.Errorf("expected query to contain 'state=RANDOM_STATE', got %q", data.Query)
+	}
+}
+
+func TestServer_DynamicListenerCaptureIPv6(t *testing.T) {
+	s := NewServer(18374, logger.Nop())
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	})
+
+	if ln, err := net.Listen("tcp", "[::1]:0"); err != nil {
+		t.Skip("IPv6 loopback not available")
+	} else {
+		ln.Close()
+	}
+
+	port := getFreePort(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/callback/register", bytes.NewBufferString(fmt.Sprintf(`{"port": %d}`, port)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.handleCallbackRegister(w, req)
+
+	var result callbackRegisterResponse
+	json.NewDecoder(w.Result().Body).Decode(&result)
+	if !result.Success || result.SessionID == "" {
+		t.Fatalf("expected successful registration, got error: %s", result.Error)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	callbackURL := fmt.Sprintf("http://[::1]:%d/callback?code=AUTH_CODE_V6&state=RANDOM_STATE_V6", port)
+	resp, err := http.Get(callbackURL)
+	if err != nil {
+		t.Fatalf("failed to make IPv6 callback request: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 from IPv6 callback, got %d", resp.StatusCode)
+	}
+
+	data, received := s.callbackChannel.GetData(result.SessionID)
+	if !received {
+		t.Error("expected IPv6 callback to be captured")
+	}
+	if data == nil {
+		t.Fatal("expected IPv6 callback data")
+	}
+	if !strings.Contains(data.Query, "code=AUTH_CODE_V6") {
+		t.Errorf("expected query to contain 'code=AUTH_CODE_V6', got %q", data.Query)
+	}
+	if !strings.Contains(data.Query, "state=RANDOM_STATE_V6") {
+		t.Errorf("expected query to contain 'state=RANDOM_STATE_V6', got %q", data.Query)
 	}
 }

@@ -46,6 +46,7 @@ f := &cmdutil.Factory{IOStreams: tio, TUI: tui.NewTUI(tio), Version: "1.0.0"}
 - `configFunc()` -- returns lazy `config.Provider` gateway constructor (the `Config` implementation uses `os.Getwd()` internally and lazy-loads project, settings, registry via `sync.Once`)
 - `gitManagerFunc(f)` -- returns lazy git manager constructor; uses project root from `f.Config().ProjectCfg().RootDir()`
 - `hostProxyFunc()` -- returns lazy host proxy manager constructor
+- `firewallFunc(f)` -- returns lazy `firewall.FirewallManager` constructor; closes over `f.Config()` and `f.Logger()`, constructs a raw `mobyclient.New(FromEnv)` Docker client (not whail — firewall manages infrastructure containers outside label isolation), and calls `firewall.NewManager(client, cfg, log)`
 - `socketBridgeFunc()` -- returns lazy `socketbridge.SocketBridgeManager` constructor (wraps `socketbridge.NewManager()`)
 - `prompterFunc(ios)` -- returns lazy prompter constructor
 

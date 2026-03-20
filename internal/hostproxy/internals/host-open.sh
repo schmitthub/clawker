@@ -21,6 +21,7 @@ if [ -z "$CLAWKER_HOST_PROXY" ]; then
     exit 1
 fi
 
+
 # Function to URL decode a string
 url_decode() {
     printf '%s' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g' | xargs -0 printf '%b'
@@ -112,25 +113,6 @@ register_callback() {
     fi
 
     echo "$session_id"
-}
-
-# Rewrite URL with new callback
-rewrite_oauth_url() {
-    local original_url="$1"
-    local old_callback="$2"
-    local new_callback="$3"
-
-    # URL encode both callbacks for safe replacement
-    local old_encoded=$(url_encode "$old_callback")
-    local new_encoded=$(url_encode "$new_callback")
-
-    # Replace the old callback with the new one
-    # Try both encoded and unencoded versions
-    local new_url="$original_url"
-    new_url=$(echo "$new_url" | sed "s|redirect_uri=$old_encoded|redirect_uri=$new_encoded|g")
-    new_url=$(echo "$new_url" | sed "s|redirect_uri=$old_callback|redirect_uri=$new_encoded|g")
-
-    echo "$new_url"
 }
 
 # Main logic

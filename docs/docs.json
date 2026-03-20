@@ -81,6 +81,7 @@
         "pages": [
           "configuration",
           "security",
+          "firewall",
           "credentials",
           "custom-images",
           "container-internals",
@@ -215,6 +216,23 @@
               "cli-reference/clawker_project",
               "cli-reference/clawker_project_init",
               "cli-reference/clawker_project_register"
+            ]
+          },
+          {
+            "group": "Firewall",
+            "pages": [
+              "cli-reference/clawker_firewall",
+              "cli-reference/clawker_firewall_status",
+              "cli-reference/clawker_firewall_list",
+              "cli-reference/clawker_firewall_add",
+              "cli-reference/clawker_firewall_remove",
+              "cli-reference/clawker_firewall_reload",
+              "cli-reference/clawker_firewall_up",
+              "cli-reference/clawker_firewall_down",
+              "cli-reference/clawker_firewall_enable",
+              "cli-reference/clawker_firewall_disable",
+              "cli-reference/clawker_firewall_bypass",
+              "cli-reference/clawker_firewall_rotate-ca"
             ]
           },
           {

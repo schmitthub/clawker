@@ -60,7 +60,10 @@ func NewCmdBridgeServe() *cobra.Command {
 			log := logger.Nop()
 			if cfg, cfgErr := config.NewConfig(); cfgErr == nil {
 				if logsDir, dirErr := cfg.LogsSubdir(); dirErr == nil {
-					if l, lErr := logger.New(logger.Options{LogsDir: logsDir}); lErr == nil {
+					if l, lErr := logger.New(logger.Options{
+						LogsDir:  logsDir,
+						Filename: fmt.Sprintf("bridge-%s.log", containerID[:12]),
+					}); lErr == nil {
 						log = l
 						defer log.Close()
 					}

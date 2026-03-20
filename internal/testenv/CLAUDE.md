@@ -15,6 +15,7 @@ Import: `"github.com/schmitthub/clawker/internal/testenv"`
 | `IsolatedDirs` | Holds resolved paths: `Base`, `Config`, `Data`, `State`, `Cache` |
 | `Env` | Unified environment with dirs + optional config/project manager |
 | `Option` | Functional option: `func(t *testing.T, e *Env)` |
+| `ConfigFile` | Enum identifying a config file type and its canonical location |
 
 ## Constructor
 
@@ -37,11 +38,22 @@ func New(t *testing.T, opts ...Option) *Env
 
 Pass `nil` for `gitFactory` if worktree operations are not needed.
 
+## ConfigFile Constants
+
+| Constant | Target |
+|----------|--------|
+| `ProjectConfig` | `.clawker.yaml` in caller-provided project dir |
+| `ProjectConfigLocal` | `.clawker.local.yaml` in caller-provided project dir |
+| `Settings` | `settings.yaml` in config dir |
+| `EgressRules` | `egress-rules.yaml` in state dir |
+| `ProjectRegistry` | `projects.yaml` in data dir |
+
 ## Accessors
 
 - `env.Config()` — panics if `WithConfig()` was not applied
 - `env.ProjectManager()` — panics if `WithProjectManager()` was not applied
 - `env.Dirs` — always available (struct field, not method)
+- `env.WriteYAML(t, file, dir, content)` — writes YAML content to the canonical location for the given `ConfigFile`. For project configs (`ProjectConfig`, `ProjectConfigLocal`), `dir` is the project directory; for others, `dir` is ignored and the appropriate XDG directory is used
 
 ## Usage Patterns
 

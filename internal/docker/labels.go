@@ -8,10 +8,11 @@ import (
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
-// ContainerLabels returns labels for a new container.
+// ContainerLabels returns labels for a new agent container.
 func (c *Client) ContainerLabels(project, agent, version, image, workdir string) map[string]string {
 	labels := map[string]string{
 		c.cfg.LabelManaged(): c.cfg.ManagedLabelValue(),
+		c.cfg.LabelPurpose(): c.cfg.PurposeAgent(),
 		c.cfg.LabelAgent():   agent,
 		c.cfg.LabelVersion(): version,
 		c.cfg.LabelImage():   image,

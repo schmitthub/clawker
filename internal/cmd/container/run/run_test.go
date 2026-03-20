@@ -371,22 +371,22 @@ func TestNewCmdRun(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
 
-			require.Equal(t, tt.wantAgent, gotOpts.ContainerOptions.Agent)
-			require.Equal(t, tt.wantName, gotOpts.ContainerOptions.Name)
+			require.Equal(t, tt.wantAgent, gotOpts.ContainerCreateOptions.Agent)
+			require.Equal(t, tt.wantName, gotOpts.ContainerCreateOptions.Name)
 			require.Equal(t, tt.wantDetach, gotOpts.Detach)
-			require.Equal(t, tt.wantMode, gotOpts.ContainerOptions.Mode)
-			require.Equal(t, tt.wantImage, gotOpts.ContainerOptions.Image)
-			require.Equal(t, tt.wantCommand, gotOpts.ContainerOptions.Command)
-			requireSliceEqual(t, tt.wantEnv, gotOpts.ContainerOptions.Env)
-			requireSliceEqual(t, tt.wantVolumes, gotOpts.ContainerOptions.Volumes)
-			requireSliceEqual(t, tt.wantPublish, gotOpts.ContainerOptions.Publish.GetAsStrings())
-			require.Equal(t, tt.wantUser, gotOpts.ContainerOptions.User)
-			require.Equal(t, tt.wantEntrypoint, gotOpts.ContainerOptions.Entrypoint)
-			require.Equal(t, tt.wantTTY, gotOpts.ContainerOptions.TTY)
-			require.Equal(t, tt.wantStdin, gotOpts.ContainerOptions.Stdin)
-			require.Equal(t, tt.wantNetwork, gotOpts.ContainerOptions.NetMode.NetworkMode())
-			requireSliceEqual(t, tt.wantLabels, gotOpts.ContainerOptions.Labels)
-			require.Equal(t, tt.wantAutoRemove, gotOpts.ContainerOptions.AutoRemove)
+			require.Equal(t, tt.wantMode, gotOpts.ContainerCreateOptions.Mode)
+			require.Equal(t, tt.wantImage, gotOpts.ContainerCreateOptions.Image)
+			require.Equal(t, tt.wantCommand, gotOpts.ContainerCreateOptions.Command)
+			requireSliceEqual(t, tt.wantEnv, gotOpts.ContainerCreateOptions.Env)
+			requireSliceEqual(t, tt.wantVolumes, gotOpts.ContainerCreateOptions.Volumes)
+			requireSliceEqual(t, tt.wantPublish, gotOpts.ContainerCreateOptions.Publish.GetAsStrings())
+			require.Equal(t, tt.wantUser, gotOpts.ContainerCreateOptions.User)
+			require.Equal(t, tt.wantEntrypoint, gotOpts.ContainerCreateOptions.Entrypoint)
+			require.Equal(t, tt.wantTTY, gotOpts.ContainerCreateOptions.TTY)
+			require.Equal(t, tt.wantStdin, gotOpts.ContainerCreateOptions.Stdin)
+			require.Equal(t, tt.wantNetwork, gotOpts.ContainerCreateOptions.NetMode.NetworkMode())
+			requireSliceEqual(t, tt.wantLabels, gotOpts.ContainerCreateOptions.Labels)
+			require.Equal(t, tt.wantAutoRemove, gotOpts.ContainerCreateOptions.AutoRemove)
 		})
 	}
 }
@@ -404,19 +404,19 @@ func TestCmdRun_NoDetachShorthand(t *testing.T) {
 func TestBuildConfigs(t *testing.T) {
 	tests := []struct {
 		name    string
-		opts    *shared.ContainerOptions
+		opts    *shared.ContainerCreateOptions
 		wantErr bool
 	}{
 		{
 			name: "basic config",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with tty and stdin",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				TTY:     true,
 				Stdin:   true,
@@ -425,7 +425,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with command",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Command: []string{"echo", "hello"},
 				Publish: shared.NewPortOpts(),
@@ -433,7 +433,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with env vars",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Env:     []string{"FOO=bar", "BAZ=qux"},
 				Publish: shared.NewPortOpts(),
@@ -441,7 +441,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with valid port",
-			opts: func() *shared.ContainerOptions {
+			opts: func() *shared.ContainerCreateOptions {
 				o := shared.NewContainerOptions()
 				o.Image = "alpine"
 				o.Publish.Set("8080:80")
@@ -452,7 +452,7 @@ func TestBuildConfigs(t *testing.T) {
 		// See TestPortOpts in internal/cmd/container/shared/container_test.go for port validation tests.
 		{
 			name: "with labels",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Labels:  []string{"foo=bar", "baz"},
 				Publish: shared.NewPortOpts(),
@@ -460,7 +460,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with network",
-			opts: func() *shared.ContainerOptions {
+			opts: func() *shared.ContainerCreateOptions {
 				o := shared.NewContainerOptions()
 				o.Image = "alpine"
 				o.NetMode.Set("mynet")
@@ -469,7 +469,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with auto-remove",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:      "alpine",
 				AutoRemove: true,
 				Publish:    shared.NewPortOpts(),
@@ -477,7 +477,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with entrypoint",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:      "alpine",
 				Entrypoint: "/custom/entrypoint",
 				Publish:    shared.NewPortOpts(),
@@ -485,7 +485,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with volumes/binds",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Volumes: []string{"/host/path:/container/path", "/another:/mount"},
 				Publish: shared.NewPortOpts(),
@@ -493,7 +493,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with user",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				User:    "nobody",
 				Publish: shared.NewPortOpts(),
@@ -501,7 +501,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with workdir",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Workdir: "/custom/workdir",
 				Publish: shared.NewPortOpts(),
@@ -574,7 +574,7 @@ func TestBuildConfigs(t *testing.T) {
 }
 
 func TestBuildConfigs_CapAdd(t *testing.T) {
-	opts := &shared.ContainerOptions{
+	opts := &shared.ContainerCreateOptions{
 		Image:   "alpine",
 		Publish: shared.NewPortOpts(),
 	}
@@ -739,7 +739,7 @@ func TestImageArg(t *testing.T) {
 				_, err := cmd.ExecuteC()
 				require.NoError(t, err)
 				require.NotNil(t, gotOpts)
-				require.Equal(t, tt.wantImage, gotOpts.ContainerOptions.Image, "explicit image should pass through unchanged")
+				require.Equal(t, tt.wantImage, gotOpts.ContainerCreateOptions.Image, "explicit image should pass through unchanged")
 			})
 		}
 	})
@@ -794,8 +794,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 			mock := configmocks.NewFromString(`
 version: "1"
 workspace: { default_mode: "bind" }
-security: { enable_host_proxy: false, firewall: { enable: false } }
-`, "")
+security: { enable_host_proxy: false }
+`, `firewall: { enable: false }`)
 			mock.GetProjectIgnoreFileFunc = func() (string, error) {
 				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
 			}
@@ -884,7 +884,7 @@ func TestRunRun(t *testing.T) {
 		// with a "no image found" message guiding the user.
 		testCfg := configmocks.NewFromString(`
 workspace: { default_mode: "bind" }
-security: { enable_host_proxy: false, firewall: { enable: false } }
+security: { enable_host_proxy: false }
 `, "")
 		testCfg.GetProjectIgnoreFileFunc = func() (string, error) {
 			return filepath.Join(os.TempDir(), testCfg.ClawkerIgnoreName()), nil

@@ -50,6 +50,10 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.MonitoringConfigFunc = cfg.MonitoringConfig
 	mock.HostProxyConfigFunc = cfg.HostProxyConfig
 	mock.RequiredFirewallDomainsFunc = cfg.RequiredFirewallDomains
+	mock.EgressRulesFileNameFunc = cfg.EgressRulesFileName
+	mock.FirewallPIDFilePathFunc = cfg.FirewallPIDFilePath
+	mock.FirewallLogFilePathFunc = cfg.FirewallLogFilePath
+	mock.RequiredFirewallRulesFunc = cfg.RequiredFirewallRules
 	mock.GetProjectRootFunc = cfg.GetProjectRoot
 	mock.GetProjectIgnoreFileFunc = cfg.GetProjectIgnoreFile
 
@@ -73,6 +77,14 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.GrafanaURLFunc = cfg.GrafanaURL
 	mock.JaegerURLFunc = cfg.JaegerURL
 	mock.PrometheusURLFunc = cfg.PrometheusURL
+	mock.EnvoyIPLastOctetFunc = cfg.EnvoyIPLastOctet
+	mock.CoreDNSIPLastOctetFunc = cfg.CoreDNSIPLastOctet
+	mock.EnvoyTLSPortFunc = cfg.EnvoyTLSPort
+	mock.EnvoyTCPPortBaseFunc = cfg.EnvoyTCPPortBase
+	mock.EnvoyHTTPPortFunc = cfg.EnvoyHTTPPort
+	mock.EnvoyHealthHostPortFunc = cfg.EnvoyHealthHostPort
+	mock.CoreDNSHealthHostPortFunc = cfg.CoreDNSHealthHostPort
+	mock.CoreDNSHealthPathFunc = cfg.CoreDNSHealthPath
 
 	// Path helpers
 	mock.MonitorSubdirFunc = cfg.MonitorSubdir
@@ -81,6 +93,8 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.LogsSubdirFunc = cfg.LogsSubdir
 	mock.BridgesSubdirFunc = cfg.BridgesSubdir
 	mock.PidsSubdirFunc = cfg.PidsSubdir
+	mock.FirewallDataSubdirFunc = cfg.FirewallDataSubdir
+	mock.FirewallCertSubdirFunc = cfg.FirewallCertSubdir
 	mock.ShareSubdirFunc = cfg.ShareSubdir
 	mock.WorktreesSubdirFunc = cfg.WorktreesSubdir
 	mock.BridgePIDFilePathFunc = cfg.BridgePIDFilePath
@@ -90,7 +104,6 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	// Labels
 	mock.LabelPrefixFunc = cfg.LabelPrefix
 	mock.LabelManagedFunc = cfg.LabelManaged
-	mock.LabelMonitoringStackFunc = cfg.LabelMonitoringStack
 	mock.LabelProjectFunc = cfg.LabelProject
 	mock.LabelAgentFunc = cfg.LabelAgent
 	mock.LabelVersionFunc = cfg.LabelVersion
@@ -98,6 +111,9 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.LabelCreatedFunc = cfg.LabelCreated
 	mock.LabelWorkdirFunc = cfg.LabelWorkdir
 	mock.LabelPurposeFunc = cfg.LabelPurpose
+	mock.PurposeAgentFunc = cfg.PurposeAgent
+	mock.PurposeMonitoringFunc = cfg.PurposeMonitoring
+	mock.PurposeFirewallFunc = cfg.PurposeFirewall
 	mock.LabelTestNameFunc = cfg.LabelTestName
 	mock.LabelBaseImageFunc = cfg.LabelBaseImage
 	mock.LabelFlavorFunc = cfg.LabelFlavor

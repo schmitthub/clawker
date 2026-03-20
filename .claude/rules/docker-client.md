@@ -7,9 +7,9 @@ paths: ["internal/docker/**", "pkg/whail/**"]
 
 - Never import `APIClient` from `github.com/moby/moby/client` outside `pkg/whail`
 - Never import `pkg/whail` outside `internal/docker`
-- **Exception**: Standalone daemon packages (`internal/hostproxy`, `internal/cmd/bridge`) may import
-  `github.com/moby/moby/client` directly. These are long-running daemon processes that need lightweight
-  Docker API access (events, exec) without whail's label isolation overhead.
+- **Exception**: Standalone daemon packages (`internal/hostproxy`, `internal/cmd/bridge`, `internal/firewall`) may import
+  `github.com/moby/moby/client` directly. These are long-running daemon or infrastructure processes that need lightweight
+  Docker API access (events, exec, container lifecycle) without whail's label isolation overhead.
 - **Logging**: Docker operations use file-only zerolog for diagnostics — never user-visible output. Status/errors go through `iostreams` or returned errors.
 - Per-operation `context.Context` as first parameter — never store context in structs
 - Use `context.Background()` in deferred cleanup (original context may be cancelled)

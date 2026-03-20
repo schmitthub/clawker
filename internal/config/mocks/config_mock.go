@@ -43,6 +43,15 @@ var _ config.Config = &ConfigMock{}
 //			ContainerUIDFunc: func() int {
 //				panic("mock out the ContainerUID method")
 //			},
+//			CoreDNSHealthHostPortFunc: func() int {
+//				panic("mock out the CoreDNSHealthHostPort method")
+//			},
+//			CoreDNSHealthPathFunc: func() string {
+//				panic("mock out the CoreDNSHealthPath method")
+//			},
+//			CoreDNSIPLastOctetFunc: func() byte {
+//				panic("mock out the CoreDNSIPLastOctet method")
+//			},
 //			DataDirEnvVarFunc: func() string {
 //				panic("mock out the DataDirEnvVar method")
 //			},
@@ -52,11 +61,41 @@ var _ config.Config = &ConfigMock{}
 //			DomainFunc: func() string {
 //				panic("mock out the Domain method")
 //			},
+//			EgressRulesFileNameFunc: func() string {
+//				panic("mock out the EgressRulesFileName method")
+//			},
 //			EngineLabelPrefixFunc: func() string {
 //				panic("mock out the EngineLabelPrefix method")
 //			},
 //			EngineManagedLabelFunc: func() string {
 //				panic("mock out the EngineManagedLabel method")
+//			},
+//			EnvoyHTTPPortFunc: func() int {
+//				panic("mock out the EnvoyHTTPPort method")
+//			},
+//			EnvoyHealthHostPortFunc: func() int {
+//				panic("mock out the EnvoyHealthHostPort method")
+//			},
+//			EnvoyIPLastOctetFunc: func() byte {
+//				panic("mock out the EnvoyIPLastOctet method")
+//			},
+//			EnvoyTCPPortBaseFunc: func() int {
+//				panic("mock out the EnvoyTCPPortBase method")
+//			},
+//			EnvoyTLSPortFunc: func() int {
+//				panic("mock out the EnvoyTLSPort method")
+//			},
+//			FirewallCertSubdirFunc: func() (string, error) {
+//				panic("mock out the FirewallCertSubdir method")
+//			},
+//			FirewallDataSubdirFunc: func() (string, error) {
+//				panic("mock out the FirewallDataSubdir method")
+//			},
+//			FirewallLogFilePathFunc: func() (string, error) {
+//				panic("mock out the FirewallLogFilePath method")
+//			},
+//			FirewallPIDFilePathFunc: func() (string, error) {
+//				panic("mock out the FirewallPIDFilePath method")
 //			},
 //			GetProjectIgnoreFileFunc: func() (string, error) {
 //				panic("mock out the GetProjectIgnoreFile method")
@@ -102,9 +141,6 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			LabelManagedFunc: func() string {
 //				panic("mock out the LabelManaged method")
-//			},
-//			LabelMonitoringStackFunc: func() string {
-//				panic("mock out the LabelMonitoringStack method")
 //			},
 //			LabelPrefixFunc: func() string {
 //				panic("mock out the LabelPrefix method")
@@ -160,8 +196,20 @@ var _ config.Config = &ConfigMock{}
 //			PrometheusURLFunc: func(host string, https bool) string {
 //				panic("mock out the PrometheusURL method")
 //			},
+//			PurposeAgentFunc: func() string {
+//				panic("mock out the PurposeAgent method")
+//			},
+//			PurposeFirewallFunc: func() string {
+//				panic("mock out the PurposeFirewall method")
+//			},
+//			PurposeMonitoringFunc: func() string {
+//				panic("mock out the PurposeMonitoring method")
+//			},
 //			RequiredFirewallDomainsFunc: func() []string {
 //				panic("mock out the RequiredFirewallDomains method")
+//			},
+//			RequiredFirewallRulesFunc: func() []config.EgressRule {
+//				panic("mock out the RequiredFirewallRules method")
 //			},
 //			SettingsFunc: func() *config.Settings {
 //				panic("mock out the Settings method")
@@ -215,6 +263,15 @@ type ConfigMock struct {
 	// ContainerUIDFunc mocks the ContainerUID method.
 	ContainerUIDFunc func() int
 
+	// CoreDNSHealthHostPortFunc mocks the CoreDNSHealthHostPort method.
+	CoreDNSHealthHostPortFunc func() int
+
+	// CoreDNSHealthPathFunc mocks the CoreDNSHealthPath method.
+	CoreDNSHealthPathFunc func() string
+
+	// CoreDNSIPLastOctetFunc mocks the CoreDNSIPLastOctet method.
+	CoreDNSIPLastOctetFunc func() byte
+
 	// DataDirEnvVarFunc mocks the DataDirEnvVar method.
 	DataDirEnvVarFunc func() string
 
@@ -224,11 +281,41 @@ type ConfigMock struct {
 	// DomainFunc mocks the Domain method.
 	DomainFunc func() string
 
+	// EgressRulesFileNameFunc mocks the EgressRulesFileName method.
+	EgressRulesFileNameFunc func() string
+
 	// EngineLabelPrefixFunc mocks the EngineLabelPrefix method.
 	EngineLabelPrefixFunc func() string
 
 	// EngineManagedLabelFunc mocks the EngineManagedLabel method.
 	EngineManagedLabelFunc func() string
+
+	// EnvoyHTTPPortFunc mocks the EnvoyHTTPPort method.
+	EnvoyHTTPPortFunc func() int
+
+	// EnvoyHealthHostPortFunc mocks the EnvoyHealthHostPort method.
+	EnvoyHealthHostPortFunc func() int
+
+	// EnvoyIPLastOctetFunc mocks the EnvoyIPLastOctet method.
+	EnvoyIPLastOctetFunc func() byte
+
+	// EnvoyTCPPortBaseFunc mocks the EnvoyTCPPortBase method.
+	EnvoyTCPPortBaseFunc func() int
+
+	// EnvoyTLSPortFunc mocks the EnvoyTLSPort method.
+	EnvoyTLSPortFunc func() int
+
+	// FirewallCertSubdirFunc mocks the FirewallCertSubdir method.
+	FirewallCertSubdirFunc func() (string, error)
+
+	// FirewallDataSubdirFunc mocks the FirewallDataSubdir method.
+	FirewallDataSubdirFunc func() (string, error)
+
+	// FirewallLogFilePathFunc mocks the FirewallLogFilePath method.
+	FirewallLogFilePathFunc func() (string, error)
+
+	// FirewallPIDFilePathFunc mocks the FirewallPIDFilePath method.
+	FirewallPIDFilePathFunc func() (string, error)
 
 	// GetProjectIgnoreFileFunc mocks the GetProjectIgnoreFile method.
 	GetProjectIgnoreFileFunc func() (string, error)
@@ -274,9 +361,6 @@ type ConfigMock struct {
 
 	// LabelManagedFunc mocks the LabelManaged method.
 	LabelManagedFunc func() string
-
-	// LabelMonitoringStackFunc mocks the LabelMonitoringStack method.
-	LabelMonitoringStackFunc func() string
 
 	// LabelPrefixFunc mocks the LabelPrefix method.
 	LabelPrefixFunc func() string
@@ -332,8 +416,20 @@ type ConfigMock struct {
 	// PrometheusURLFunc mocks the PrometheusURL method.
 	PrometheusURLFunc func(host string, https bool) string
 
+	// PurposeAgentFunc mocks the PurposeAgent method.
+	PurposeAgentFunc func() string
+
+	// PurposeFirewallFunc mocks the PurposeFirewall method.
+	PurposeFirewallFunc func() string
+
+	// PurposeMonitoringFunc mocks the PurposeMonitoring method.
+	PurposeMonitoringFunc func() string
+
 	// RequiredFirewallDomainsFunc mocks the RequiredFirewallDomains method.
 	RequiredFirewallDomainsFunc func() []string
+
+	// RequiredFirewallRulesFunc mocks the RequiredFirewallRules method.
+	RequiredFirewallRulesFunc func() []config.EgressRule
 
 	// SettingsFunc mocks the Settings method.
 	SettingsFunc func() *config.Settings
@@ -384,6 +480,15 @@ type ConfigMock struct {
 		// ContainerUID holds details about calls to the ContainerUID method.
 		ContainerUID []struct {
 		}
+		// CoreDNSHealthHostPort holds details about calls to the CoreDNSHealthHostPort method.
+		CoreDNSHealthHostPort []struct {
+		}
+		// CoreDNSHealthPath holds details about calls to the CoreDNSHealthPath method.
+		CoreDNSHealthPath []struct {
+		}
+		// CoreDNSIPLastOctet holds details about calls to the CoreDNSIPLastOctet method.
+		CoreDNSIPLastOctet []struct {
+		}
 		// DataDirEnvVar holds details about calls to the DataDirEnvVar method.
 		DataDirEnvVar []struct {
 		}
@@ -393,11 +498,41 @@ type ConfigMock struct {
 		// Domain holds details about calls to the Domain method.
 		Domain []struct {
 		}
+		// EgressRulesFileName holds details about calls to the EgressRulesFileName method.
+		EgressRulesFileName []struct {
+		}
 		// EngineLabelPrefix holds details about calls to the EngineLabelPrefix method.
 		EngineLabelPrefix []struct {
 		}
 		// EngineManagedLabel holds details about calls to the EngineManagedLabel method.
 		EngineManagedLabel []struct {
+		}
+		// EnvoyHTTPPort holds details about calls to the EnvoyHTTPPort method.
+		EnvoyHTTPPort []struct {
+		}
+		// EnvoyHealthHostPort holds details about calls to the EnvoyHealthHostPort method.
+		EnvoyHealthHostPort []struct {
+		}
+		// EnvoyIPLastOctet holds details about calls to the EnvoyIPLastOctet method.
+		EnvoyIPLastOctet []struct {
+		}
+		// EnvoyTCPPortBase holds details about calls to the EnvoyTCPPortBase method.
+		EnvoyTCPPortBase []struct {
+		}
+		// EnvoyTLSPort holds details about calls to the EnvoyTLSPort method.
+		EnvoyTLSPort []struct {
+		}
+		// FirewallCertSubdir holds details about calls to the FirewallCertSubdir method.
+		FirewallCertSubdir []struct {
+		}
+		// FirewallDataSubdir holds details about calls to the FirewallDataSubdir method.
+		FirewallDataSubdir []struct {
+		}
+		// FirewallLogFilePath holds details about calls to the FirewallLogFilePath method.
+		FirewallLogFilePath []struct {
+		}
+		// FirewallPIDFilePath holds details about calls to the FirewallPIDFilePath method.
+		FirewallPIDFilePath []struct {
 		}
 		// GetProjectIgnoreFile holds details about calls to the GetProjectIgnoreFile method.
 		GetProjectIgnoreFile []struct {
@@ -451,9 +586,6 @@ type ConfigMock struct {
 		}
 		// LabelManaged holds details about calls to the LabelManaged method.
 		LabelManaged []struct {
-		}
-		// LabelMonitoringStack holds details about calls to the LabelMonitoringStack method.
-		LabelMonitoringStack []struct {
 		}
 		// LabelPrefix holds details about calls to the LabelPrefix method.
 		LabelPrefix []struct {
@@ -513,8 +645,20 @@ type ConfigMock struct {
 			// HTTPS is the https argument value.
 			HTTPS bool
 		}
+		// PurposeAgent holds details about calls to the PurposeAgent method.
+		PurposeAgent []struct {
+		}
+		// PurposeFirewall holds details about calls to the PurposeFirewall method.
+		PurposeFirewall []struct {
+		}
+		// PurposeMonitoring holds details about calls to the PurposeMonitoring method.
+		PurposeMonitoring []struct {
+		}
 		// RequiredFirewallDomains holds details about calls to the RequiredFirewallDomains method.
 		RequiredFirewallDomains []struct {
+		}
+		// RequiredFirewallRules holds details about calls to the RequiredFirewallRules method.
+		RequiredFirewallRules []struct {
 		}
 		// Settings holds details about calls to the Settings method.
 		Settings []struct {
@@ -546,11 +690,24 @@ type ConfigMock struct {
 	lockConfigDirEnvVar         sync.RWMutex
 	lockContainerGID            sync.RWMutex
 	lockContainerUID            sync.RWMutex
+	lockCoreDNSHealthHostPort   sync.RWMutex
+	lockCoreDNSHealthPath       sync.RWMutex
+	lockCoreDNSIPLastOctet      sync.RWMutex
 	lockDataDirEnvVar           sync.RWMutex
 	lockDockerfilesSubdir       sync.RWMutex
 	lockDomain                  sync.RWMutex
+	lockEgressRulesFileName     sync.RWMutex
 	lockEngineLabelPrefix       sync.RWMutex
 	lockEngineManagedLabel      sync.RWMutex
+	lockEnvoyHTTPPort           sync.RWMutex
+	lockEnvoyHealthHostPort     sync.RWMutex
+	lockEnvoyIPLastOctet        sync.RWMutex
+	lockEnvoyTCPPortBase        sync.RWMutex
+	lockEnvoyTLSPort            sync.RWMutex
+	lockFirewallCertSubdir      sync.RWMutex
+	lockFirewallDataSubdir      sync.RWMutex
+	lockFirewallLogFilePath     sync.RWMutex
+	lockFirewallPIDFilePath     sync.RWMutex
 	lockGetProjectIgnoreFile    sync.RWMutex
 	lockGetProjectRoot          sync.RWMutex
 	lockGrafanaURL              sync.RWMutex
@@ -566,7 +723,6 @@ type ConfigMock struct {
 	lockLabelFlavor             sync.RWMutex
 	lockLabelImage              sync.RWMutex
 	lockLabelManaged            sync.RWMutex
-	lockLabelMonitoringStack    sync.RWMutex
 	lockLabelPrefix             sync.RWMutex
 	lockLabelProject            sync.RWMutex
 	lockLabelPurpose            sync.RWMutex
@@ -585,7 +741,11 @@ type ConfigMock struct {
 	lockProjectRegistryFileName sync.RWMutex
 	lockProjectStore            sync.RWMutex
 	lockPrometheusURL           sync.RWMutex
+	lockPurposeAgent            sync.RWMutex
+	lockPurposeFirewall         sync.RWMutex
+	lockPurposeMonitoring       sync.RWMutex
 	lockRequiredFirewallDomains sync.RWMutex
+	lockRequiredFirewallRules   sync.RWMutex
 	lockSettings                sync.RWMutex
 	lockSettingsFileName        sync.RWMutex
 	lockSettingsStore           sync.RWMutex
@@ -816,6 +976,87 @@ func (mock *ConfigMock) ContainerUIDCalls() []struct {
 	return calls
 }
 
+// CoreDNSHealthHostPort calls CoreDNSHealthHostPortFunc.
+func (mock *ConfigMock) CoreDNSHealthHostPort() int {
+	if mock.CoreDNSHealthHostPortFunc == nil {
+		panic("ConfigMock.CoreDNSHealthHostPortFunc: method is nil but Config.CoreDNSHealthHostPort was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockCoreDNSHealthHostPort.Lock()
+	mock.calls.CoreDNSHealthHostPort = append(mock.calls.CoreDNSHealthHostPort, callInfo)
+	mock.lockCoreDNSHealthHostPort.Unlock()
+	return mock.CoreDNSHealthHostPortFunc()
+}
+
+// CoreDNSHealthHostPortCalls gets all the calls that were made to CoreDNSHealthHostPort.
+// Check the length with:
+//
+//	len(mockedConfig.CoreDNSHealthHostPortCalls())
+func (mock *ConfigMock) CoreDNSHealthHostPortCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockCoreDNSHealthHostPort.RLock()
+	calls = mock.calls.CoreDNSHealthHostPort
+	mock.lockCoreDNSHealthHostPort.RUnlock()
+	return calls
+}
+
+// CoreDNSHealthPath calls CoreDNSHealthPathFunc.
+func (mock *ConfigMock) CoreDNSHealthPath() string {
+	if mock.CoreDNSHealthPathFunc == nil {
+		panic("ConfigMock.CoreDNSHealthPathFunc: method is nil but Config.CoreDNSHealthPath was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockCoreDNSHealthPath.Lock()
+	mock.calls.CoreDNSHealthPath = append(mock.calls.CoreDNSHealthPath, callInfo)
+	mock.lockCoreDNSHealthPath.Unlock()
+	return mock.CoreDNSHealthPathFunc()
+}
+
+// CoreDNSHealthPathCalls gets all the calls that were made to CoreDNSHealthPath.
+// Check the length with:
+//
+//	len(mockedConfig.CoreDNSHealthPathCalls())
+func (mock *ConfigMock) CoreDNSHealthPathCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockCoreDNSHealthPath.RLock()
+	calls = mock.calls.CoreDNSHealthPath
+	mock.lockCoreDNSHealthPath.RUnlock()
+	return calls
+}
+
+// CoreDNSIPLastOctet calls CoreDNSIPLastOctetFunc.
+func (mock *ConfigMock) CoreDNSIPLastOctet() byte {
+	if mock.CoreDNSIPLastOctetFunc == nil {
+		panic("ConfigMock.CoreDNSIPLastOctetFunc: method is nil but Config.CoreDNSIPLastOctet was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockCoreDNSIPLastOctet.Lock()
+	mock.calls.CoreDNSIPLastOctet = append(mock.calls.CoreDNSIPLastOctet, callInfo)
+	mock.lockCoreDNSIPLastOctet.Unlock()
+	return mock.CoreDNSIPLastOctetFunc()
+}
+
+// CoreDNSIPLastOctetCalls gets all the calls that were made to CoreDNSIPLastOctet.
+// Check the length with:
+//
+//	len(mockedConfig.CoreDNSIPLastOctetCalls())
+func (mock *ConfigMock) CoreDNSIPLastOctetCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockCoreDNSIPLastOctet.RLock()
+	calls = mock.calls.CoreDNSIPLastOctet
+	mock.lockCoreDNSIPLastOctet.RUnlock()
+	return calls
+}
+
 // DataDirEnvVar calls DataDirEnvVarFunc.
 func (mock *ConfigMock) DataDirEnvVar() string {
 	if mock.DataDirEnvVarFunc == nil {
@@ -897,6 +1138,33 @@ func (mock *ConfigMock) DomainCalls() []struct {
 	return calls
 }
 
+// EgressRulesFileName calls EgressRulesFileNameFunc.
+func (mock *ConfigMock) EgressRulesFileName() string {
+	if mock.EgressRulesFileNameFunc == nil {
+		panic("ConfigMock.EgressRulesFileNameFunc: method is nil but Config.EgressRulesFileName was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEgressRulesFileName.Lock()
+	mock.calls.EgressRulesFileName = append(mock.calls.EgressRulesFileName, callInfo)
+	mock.lockEgressRulesFileName.Unlock()
+	return mock.EgressRulesFileNameFunc()
+}
+
+// EgressRulesFileNameCalls gets all the calls that were made to EgressRulesFileName.
+// Check the length with:
+//
+//	len(mockedConfig.EgressRulesFileNameCalls())
+func (mock *ConfigMock) EgressRulesFileNameCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEgressRulesFileName.RLock()
+	calls = mock.calls.EgressRulesFileName
+	mock.lockEgressRulesFileName.RUnlock()
+	return calls
+}
+
 // EngineLabelPrefix calls EngineLabelPrefixFunc.
 func (mock *ConfigMock) EngineLabelPrefix() string {
 	if mock.EngineLabelPrefixFunc == nil {
@@ -948,6 +1216,249 @@ func (mock *ConfigMock) EngineManagedLabelCalls() []struct {
 	mock.lockEngineManagedLabel.RLock()
 	calls = mock.calls.EngineManagedLabel
 	mock.lockEngineManagedLabel.RUnlock()
+	return calls
+}
+
+// EnvoyHTTPPort calls EnvoyHTTPPortFunc.
+func (mock *ConfigMock) EnvoyHTTPPort() int {
+	if mock.EnvoyHTTPPortFunc == nil {
+		panic("ConfigMock.EnvoyHTTPPortFunc: method is nil but Config.EnvoyHTTPPort was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEnvoyHTTPPort.Lock()
+	mock.calls.EnvoyHTTPPort = append(mock.calls.EnvoyHTTPPort, callInfo)
+	mock.lockEnvoyHTTPPort.Unlock()
+	return mock.EnvoyHTTPPortFunc()
+}
+
+// EnvoyHTTPPortCalls gets all the calls that were made to EnvoyHTTPPort.
+// Check the length with:
+//
+//	len(mockedConfig.EnvoyHTTPPortCalls())
+func (mock *ConfigMock) EnvoyHTTPPortCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEnvoyHTTPPort.RLock()
+	calls = mock.calls.EnvoyHTTPPort
+	mock.lockEnvoyHTTPPort.RUnlock()
+	return calls
+}
+
+// EnvoyHealthHostPort calls EnvoyHealthHostPortFunc.
+func (mock *ConfigMock) EnvoyHealthHostPort() int {
+	if mock.EnvoyHealthHostPortFunc == nil {
+		panic("ConfigMock.EnvoyHealthHostPortFunc: method is nil but Config.EnvoyHealthHostPort was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEnvoyHealthHostPort.Lock()
+	mock.calls.EnvoyHealthHostPort = append(mock.calls.EnvoyHealthHostPort, callInfo)
+	mock.lockEnvoyHealthHostPort.Unlock()
+	return mock.EnvoyHealthHostPortFunc()
+}
+
+// EnvoyHealthHostPortCalls gets all the calls that were made to EnvoyHealthHostPort.
+// Check the length with:
+//
+//	len(mockedConfig.EnvoyHealthHostPortCalls())
+func (mock *ConfigMock) EnvoyHealthHostPortCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEnvoyHealthHostPort.RLock()
+	calls = mock.calls.EnvoyHealthHostPort
+	mock.lockEnvoyHealthHostPort.RUnlock()
+	return calls
+}
+
+// EnvoyIPLastOctet calls EnvoyIPLastOctetFunc.
+func (mock *ConfigMock) EnvoyIPLastOctet() byte {
+	if mock.EnvoyIPLastOctetFunc == nil {
+		panic("ConfigMock.EnvoyIPLastOctetFunc: method is nil but Config.EnvoyIPLastOctet was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEnvoyIPLastOctet.Lock()
+	mock.calls.EnvoyIPLastOctet = append(mock.calls.EnvoyIPLastOctet, callInfo)
+	mock.lockEnvoyIPLastOctet.Unlock()
+	return mock.EnvoyIPLastOctetFunc()
+}
+
+// EnvoyIPLastOctetCalls gets all the calls that were made to EnvoyIPLastOctet.
+// Check the length with:
+//
+//	len(mockedConfig.EnvoyIPLastOctetCalls())
+func (mock *ConfigMock) EnvoyIPLastOctetCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEnvoyIPLastOctet.RLock()
+	calls = mock.calls.EnvoyIPLastOctet
+	mock.lockEnvoyIPLastOctet.RUnlock()
+	return calls
+}
+
+// EnvoyTCPPortBase calls EnvoyTCPPortBaseFunc.
+func (mock *ConfigMock) EnvoyTCPPortBase() int {
+	if mock.EnvoyTCPPortBaseFunc == nil {
+		panic("ConfigMock.EnvoyTCPPortBaseFunc: method is nil but Config.EnvoyTCPPortBase was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEnvoyTCPPortBase.Lock()
+	mock.calls.EnvoyTCPPortBase = append(mock.calls.EnvoyTCPPortBase, callInfo)
+	mock.lockEnvoyTCPPortBase.Unlock()
+	return mock.EnvoyTCPPortBaseFunc()
+}
+
+// EnvoyTCPPortBaseCalls gets all the calls that were made to EnvoyTCPPortBase.
+// Check the length with:
+//
+//	len(mockedConfig.EnvoyTCPPortBaseCalls())
+func (mock *ConfigMock) EnvoyTCPPortBaseCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEnvoyTCPPortBase.RLock()
+	calls = mock.calls.EnvoyTCPPortBase
+	mock.lockEnvoyTCPPortBase.RUnlock()
+	return calls
+}
+
+// EnvoyTLSPort calls EnvoyTLSPortFunc.
+func (mock *ConfigMock) EnvoyTLSPort() int {
+	if mock.EnvoyTLSPortFunc == nil {
+		panic("ConfigMock.EnvoyTLSPortFunc: method is nil but Config.EnvoyTLSPort was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEnvoyTLSPort.Lock()
+	mock.calls.EnvoyTLSPort = append(mock.calls.EnvoyTLSPort, callInfo)
+	mock.lockEnvoyTLSPort.Unlock()
+	return mock.EnvoyTLSPortFunc()
+}
+
+// EnvoyTLSPortCalls gets all the calls that were made to EnvoyTLSPort.
+// Check the length with:
+//
+//	len(mockedConfig.EnvoyTLSPortCalls())
+func (mock *ConfigMock) EnvoyTLSPortCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEnvoyTLSPort.RLock()
+	calls = mock.calls.EnvoyTLSPort
+	mock.lockEnvoyTLSPort.RUnlock()
+	return calls
+}
+
+// FirewallCertSubdir calls FirewallCertSubdirFunc.
+func (mock *ConfigMock) FirewallCertSubdir() (string, error) {
+	if mock.FirewallCertSubdirFunc == nil {
+		panic("ConfigMock.FirewallCertSubdirFunc: method is nil but Config.FirewallCertSubdir was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockFirewallCertSubdir.Lock()
+	mock.calls.FirewallCertSubdir = append(mock.calls.FirewallCertSubdir, callInfo)
+	mock.lockFirewallCertSubdir.Unlock()
+	return mock.FirewallCertSubdirFunc()
+}
+
+// FirewallCertSubdirCalls gets all the calls that were made to FirewallCertSubdir.
+// Check the length with:
+//
+//	len(mockedConfig.FirewallCertSubdirCalls())
+func (mock *ConfigMock) FirewallCertSubdirCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockFirewallCertSubdir.RLock()
+	calls = mock.calls.FirewallCertSubdir
+	mock.lockFirewallCertSubdir.RUnlock()
+	return calls
+}
+
+// FirewallDataSubdir calls FirewallDataSubdirFunc.
+func (mock *ConfigMock) FirewallDataSubdir() (string, error) {
+	if mock.FirewallDataSubdirFunc == nil {
+		panic("ConfigMock.FirewallDataSubdirFunc: method is nil but Config.FirewallDataSubdir was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockFirewallDataSubdir.Lock()
+	mock.calls.FirewallDataSubdir = append(mock.calls.FirewallDataSubdir, callInfo)
+	mock.lockFirewallDataSubdir.Unlock()
+	return mock.FirewallDataSubdirFunc()
+}
+
+// FirewallDataSubdirCalls gets all the calls that were made to FirewallDataSubdir.
+// Check the length with:
+//
+//	len(mockedConfig.FirewallDataSubdirCalls())
+func (mock *ConfigMock) FirewallDataSubdirCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockFirewallDataSubdir.RLock()
+	calls = mock.calls.FirewallDataSubdir
+	mock.lockFirewallDataSubdir.RUnlock()
+	return calls
+}
+
+// FirewallLogFilePath calls FirewallLogFilePathFunc.
+func (mock *ConfigMock) FirewallLogFilePath() (string, error) {
+	if mock.FirewallLogFilePathFunc == nil {
+		panic("ConfigMock.FirewallLogFilePathFunc: method is nil but Config.FirewallLogFilePath was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockFirewallLogFilePath.Lock()
+	mock.calls.FirewallLogFilePath = append(mock.calls.FirewallLogFilePath, callInfo)
+	mock.lockFirewallLogFilePath.Unlock()
+	return mock.FirewallLogFilePathFunc()
+}
+
+// FirewallLogFilePathCalls gets all the calls that were made to FirewallLogFilePath.
+// Check the length with:
+//
+//	len(mockedConfig.FirewallLogFilePathCalls())
+func (mock *ConfigMock) FirewallLogFilePathCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockFirewallLogFilePath.RLock()
+	calls = mock.calls.FirewallLogFilePath
+	mock.lockFirewallLogFilePath.RUnlock()
+	return calls
+}
+
+// FirewallPIDFilePath calls FirewallPIDFilePathFunc.
+func (mock *ConfigMock) FirewallPIDFilePath() (string, error) {
+	if mock.FirewallPIDFilePathFunc == nil {
+		panic("ConfigMock.FirewallPIDFilePathFunc: method is nil but Config.FirewallPIDFilePath was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockFirewallPIDFilePath.Lock()
+	mock.calls.FirewallPIDFilePath = append(mock.calls.FirewallPIDFilePath, callInfo)
+	mock.lockFirewallPIDFilePath.Unlock()
+	return mock.FirewallPIDFilePathFunc()
+}
+
+// FirewallPIDFilePathCalls gets all the calls that were made to FirewallPIDFilePath.
+// Check the length with:
+//
+//	len(mockedConfig.FirewallPIDFilePathCalls())
+func (mock *ConfigMock) FirewallPIDFilePathCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockFirewallPIDFilePath.RLock()
+	calls = mock.calls.FirewallPIDFilePath
+	mock.lockFirewallPIDFilePath.RUnlock()
 	return calls
 }
 
@@ -1371,33 +1882,6 @@ func (mock *ConfigMock) LabelManagedCalls() []struct {
 	mock.lockLabelManaged.RLock()
 	calls = mock.calls.LabelManaged
 	mock.lockLabelManaged.RUnlock()
-	return calls
-}
-
-// LabelMonitoringStack calls LabelMonitoringStackFunc.
-func (mock *ConfigMock) LabelMonitoringStack() string {
-	if mock.LabelMonitoringStackFunc == nil {
-		panic("ConfigMock.LabelMonitoringStackFunc: method is nil but Config.LabelMonitoringStack was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockLabelMonitoringStack.Lock()
-	mock.calls.LabelMonitoringStack = append(mock.calls.LabelMonitoringStack, callInfo)
-	mock.lockLabelMonitoringStack.Unlock()
-	return mock.LabelMonitoringStackFunc()
-}
-
-// LabelMonitoringStackCalls gets all the calls that were made to LabelMonitoringStack.
-// Check the length with:
-//
-//	len(mockedConfig.LabelMonitoringStackCalls())
-func (mock *ConfigMock) LabelMonitoringStackCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockLabelMonitoringStack.RLock()
-	calls = mock.calls.LabelMonitoringStack
-	mock.lockLabelMonitoringStack.RUnlock()
 	return calls
 }
 
@@ -1896,6 +2380,87 @@ func (mock *ConfigMock) PrometheusURLCalls() []struct {
 	return calls
 }
 
+// PurposeAgent calls PurposeAgentFunc.
+func (mock *ConfigMock) PurposeAgent() string {
+	if mock.PurposeAgentFunc == nil {
+		panic("ConfigMock.PurposeAgentFunc: method is nil but Config.PurposeAgent was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockPurposeAgent.Lock()
+	mock.calls.PurposeAgent = append(mock.calls.PurposeAgent, callInfo)
+	mock.lockPurposeAgent.Unlock()
+	return mock.PurposeAgentFunc()
+}
+
+// PurposeAgentCalls gets all the calls that were made to PurposeAgent.
+// Check the length with:
+//
+//	len(mockedConfig.PurposeAgentCalls())
+func (mock *ConfigMock) PurposeAgentCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockPurposeAgent.RLock()
+	calls = mock.calls.PurposeAgent
+	mock.lockPurposeAgent.RUnlock()
+	return calls
+}
+
+// PurposeFirewall calls PurposeFirewallFunc.
+func (mock *ConfigMock) PurposeFirewall() string {
+	if mock.PurposeFirewallFunc == nil {
+		panic("ConfigMock.PurposeFirewallFunc: method is nil but Config.PurposeFirewall was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockPurposeFirewall.Lock()
+	mock.calls.PurposeFirewall = append(mock.calls.PurposeFirewall, callInfo)
+	mock.lockPurposeFirewall.Unlock()
+	return mock.PurposeFirewallFunc()
+}
+
+// PurposeFirewallCalls gets all the calls that were made to PurposeFirewall.
+// Check the length with:
+//
+//	len(mockedConfig.PurposeFirewallCalls())
+func (mock *ConfigMock) PurposeFirewallCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockPurposeFirewall.RLock()
+	calls = mock.calls.PurposeFirewall
+	mock.lockPurposeFirewall.RUnlock()
+	return calls
+}
+
+// PurposeMonitoring calls PurposeMonitoringFunc.
+func (mock *ConfigMock) PurposeMonitoring() string {
+	if mock.PurposeMonitoringFunc == nil {
+		panic("ConfigMock.PurposeMonitoringFunc: method is nil but Config.PurposeMonitoring was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockPurposeMonitoring.Lock()
+	mock.calls.PurposeMonitoring = append(mock.calls.PurposeMonitoring, callInfo)
+	mock.lockPurposeMonitoring.Unlock()
+	return mock.PurposeMonitoringFunc()
+}
+
+// PurposeMonitoringCalls gets all the calls that were made to PurposeMonitoring.
+// Check the length with:
+//
+//	len(mockedConfig.PurposeMonitoringCalls())
+func (mock *ConfigMock) PurposeMonitoringCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockPurposeMonitoring.RLock()
+	calls = mock.calls.PurposeMonitoring
+	mock.lockPurposeMonitoring.RUnlock()
+	return calls
+}
+
 // RequiredFirewallDomains calls RequiredFirewallDomainsFunc.
 func (mock *ConfigMock) RequiredFirewallDomains() []string {
 	if mock.RequiredFirewallDomainsFunc == nil {
@@ -1920,6 +2485,33 @@ func (mock *ConfigMock) RequiredFirewallDomainsCalls() []struct {
 	mock.lockRequiredFirewallDomains.RLock()
 	calls = mock.calls.RequiredFirewallDomains
 	mock.lockRequiredFirewallDomains.RUnlock()
+	return calls
+}
+
+// RequiredFirewallRules calls RequiredFirewallRulesFunc.
+func (mock *ConfigMock) RequiredFirewallRules() []config.EgressRule {
+	if mock.RequiredFirewallRulesFunc == nil {
+		panic("ConfigMock.RequiredFirewallRulesFunc: method is nil but Config.RequiredFirewallRules was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockRequiredFirewallRules.Lock()
+	mock.calls.RequiredFirewallRules = append(mock.calls.RequiredFirewallRules, callInfo)
+	mock.lockRequiredFirewallRules.Unlock()
+	return mock.RequiredFirewallRulesFunc()
+}
+
+// RequiredFirewallRulesCalls gets all the calls that were made to RequiredFirewallRules.
+// Check the length with:
+//
+//	len(mockedConfig.RequiredFirewallRulesCalls())
+func (mock *ConfigMock) RequiredFirewallRulesCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockRequiredFirewallRules.RLock()
+	calls = mock.calls.RequiredFirewallRules
+	mock.lockRequiredFirewallRules.RUnlock()
 	return calls
 }
 

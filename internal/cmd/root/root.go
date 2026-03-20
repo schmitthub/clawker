@@ -3,6 +3,7 @@ package root
 import (
 	bridgecmd "github.com/schmitthub/clawker/internal/cmd/bridge"
 	"github.com/schmitthub/clawker/internal/cmd/container"
+	firewallcmd "github.com/schmitthub/clawker/internal/cmd/firewall"
 	"github.com/schmitthub/clawker/internal/cmd/generate"
 	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
 	"github.com/schmitthub/clawker/internal/cmd/image"
@@ -65,6 +66,7 @@ Workspace modes:
 
 	// Add management commands
 	cmd.AddCommand(container.NewCmdContainer(f))
+	cmd.AddCommand(firewallcmd.NewCmdFirewall(f))
 	cmd.AddCommand(image.NewCmdImage(f))
 	cmd.AddCommand(volume.NewCmdVolume(f))
 	cmd.AddCommand(network.NewCmdNetwork(f))

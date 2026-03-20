@@ -201,7 +201,7 @@ func main() {
 
 		// Callback received! Forward it
 		if *verbose {
-			fmt.Fprintf(os.Stderr, "Callback received, forwarding to localhost:%d\n", *port)
+			fmt.Fprintf(os.Stderr, "Callback received, forwarding to local callback listener on port %d\n", *port)
 		}
 
 		forwardErr := forwardCallback(client, *port, dataResp.Callback)
@@ -253,19 +253,29 @@ func forwardCallback(client *http.Client, port int, data *CallbackData) error {
 		return fmt.Errorf("no callback data")
 	}
 
-	// Build the local URL
-	localURL := fmt.Sprintf("http://localhost:%d%s", port, data.Path)
-	if data.Query != "" {
-		localURL += "?" + data.Query
+	if data.Method == "" {
+		return fmt.Errorf("callback data has empty HTTP method")
 	}
+
+	hosts := []string{"localhost", "127.0.0.1", "::1"}
+	var errs []string
+	for _, host := range hosts {
+		attemptErr := forwardCallbackToHost(client, host, port, data)
+		if attemptErr == nil {
+			return nil
+		}
+		errs = append(errs, fmt.Sprintf("%s: %v", host, attemptErr))
+	}
+
+	return fmt.Errorf("failed to forward callback to local listener (%s)", strings.Join(errs, "; "))
+}
+
+func forwardCallbackToHost(client *http.Client, host string, port int, data *CallbackData) error {
+	localURL := buildLocalCallbackURL(host, port, data)
 
 	var body io.Reader
 	if data.Body != "" {
 		body = strings.NewReader(data.Body)
-	}
-
-	if data.Method == "" {
-		return fmt.Errorf("callback data has empty HTTP method")
 	}
 
 	req, err := http.NewRequest(data.Method, localURL, body)
@@ -273,7 +283,6 @@ func forwardCallback(client *http.Client, port int, data *CallbackData) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Set captured headers
 	for k, v := range data.Headers {
 		req.Header.Set(k, v)
 	}
@@ -293,4 +302,17 @@ func forwardCallback(client *http.Client, port int, data *CallbackData) error {
 	}
 
 	return nil
+}
+
+func buildLocalCallbackURL(host string, port int, data *CallbackData) string {
+	hostPort := fmt.Sprintf("%s:%d", host, port)
+	if strings.Contains(host, ":") {
+		hostPort = fmt.Sprintf("[%s]:%d", host, port)
+	}
+
+	localURL := fmt.Sprintf("http://%s%s", hostPort, data.Path)
+	if data.Query != "" {
+		localURL += "?" + data.Query
+	}
+	return localURL
 }

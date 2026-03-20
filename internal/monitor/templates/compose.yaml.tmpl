@@ -12,7 +12,7 @@ services:
       - "host.docker.internal:host-gateway"
     labels:
       dev.clawker.managed: "true"
-      dev.clawker.monitoring: "true"
+      dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
 
@@ -26,7 +26,7 @@ services:
       - COLLECTOR_OTLP_ENABLED=true
     labels:
       dev.clawker.managed: "true"
-      dev.clawker.monitoring: "true"
+      dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
 
@@ -42,7 +42,7 @@ services:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml
     labels:
       dev.clawker.managed: "true"
-      dev.clawker.monitoring: "true"
+      dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
 
@@ -54,7 +54,7 @@ services:
     command: -config.file=/etc/loki/local-config.yaml
     labels:
       dev.clawker.managed: "true"
-      dev.clawker.monitoring: "true"
+      dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
 
@@ -78,7 +78,7 @@ services:
       - "host.docker.internal:host-gateway"
     labels:
       dev.clawker.managed: "true"
-      dev.clawker.monitoring: "true"
+      dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
 

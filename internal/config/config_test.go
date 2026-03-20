@@ -20,7 +20,7 @@ func TestNewBlankConfig(t *testing.T) {
 	assert.Empty(t, p.Build.Image)
 	assert.Contains(t, p.Build.Packages, "git")
 	assert.Equal(t, "bind", p.Workspace.DefaultMode)
-	assert.True(t, p.Security.Firewall.FirewallEnabled())
+	assert.False(t, p.Security.DockerSocket)
 }
 
 func TestNewBlankConfig_settingsDefaults(t *testing.T) {
@@ -253,8 +253,8 @@ func TestNewConfig_isolatedWithDefaults(t *testing.T) {
 
 	// NewConfig loads defaults — verify critical values are present
 	p := cfg.Project()
-	assert.True(t, p.Security.Firewall.FirewallEnabled())
 	assert.Equal(t, "bind", p.Workspace.DefaultMode)
+	assert.True(t, cfg.Settings().Firewall.FirewallEnabled())
 
 	mon := cfg.MonitoringConfig()
 	assert.Equal(t, 4318, mon.OtelCollectorPort)
@@ -435,4 +435,46 @@ func TestParseMode(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFirewallEnabled_ExplicitFalse(t *testing.T) {
+	cfg, err := NewFromString("", `
+firewall:
+  enable: false
+`)
+	require.NoError(t, err)
+	assert.False(t, cfg.Settings().Firewall.FirewallEnabled())
+}
+
+func TestFirewallEnabled_NilMeansEnabled(t *testing.T) {
+	// When firewall section is omitted entirely, FirewallEnabled returns true
+	cfg, err := NewFromString("", "")
+	require.NoError(t, err)
+	assert.True(t, cfg.Settings().Firewall.FirewallEnabled(),
+		"nil FirewallSettings should default to enabled")
+}
+
+func TestRequiredFirewallRules(t *testing.T) {
+	cfg, err := NewBlankConfig()
+	require.NoError(t, err)
+
+	rules := cfg.RequiredFirewallRules()
+	assert.GreaterOrEqual(t, len(rules), 9)
+
+	// Verify all required rules have proper proto and action
+	for _, r := range rules {
+		assert.NotEmpty(t, r.Dst)
+		assert.Equal(t, "tls", r.Proto)
+		assert.Equal(t, "allow", r.Action)
+	}
+
+	// Verify OAuth domains are included (SNI filtering requires each domain explicitly)
+	domains := cfg.RequiredFirewallDomains()
+	assert.Contains(t, domains, "api.anthropic.com")
+	assert.Contains(t, domains, "platform.claude.com")
+	assert.Contains(t, domains, "claude.ai")
+
+	// Returned slice is a copy
+	rules[0].Dst = "mutated.com"
+	assert.Equal(t, "api.anthropic.com", cfg.RequiredFirewallRules()[0].Dst)
 }

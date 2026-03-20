@@ -52,11 +52,12 @@ type Config interface {
 	BridgePIDFilePath(containerID string) (string, error)
 	HostProxyLogFilePath() (string, error)
 	HostProxyPIDFilePath() (string, error)
+	FirewallPIDFilePath() (string, error)
+	FirewallLogFilePath() (string, error)
 	ShareSubdir() (string, error)
 	WorktreesSubdir() (string, error)
 	LabelPrefix() string
 	LabelManaged() string
-	LabelMonitoringStack() string
 	LabelProject() string
 	LabelAgent() string
 	LabelVersion() string
@@ -64,6 +65,9 @@ type Config interface {
 	LabelCreated() string
 	LabelWorkdir() string
 	LabelPurpose() string
+	PurposeAgent() string
+	PurposeMonitoring() string
+	PurposeFirewall() string
 	LabelTestName() string
 	LabelBaseImage() string
 	LabelFlavor() string
@@ -78,6 +82,18 @@ type Config interface {
 	JaegerURL(host string, https bool) string
 	PrometheusURL(host string, https bool) string
 	RequiredFirewallDomains() []string
+	EgressRulesFileName() string
+	FirewallDataSubdir() (string, error)
+	FirewallCertSubdir() (string, error)
+	RequiredFirewallRules() []EgressRule
+	EnvoyIPLastOctet() byte
+	CoreDNSIPLastOctet() byte
+	EnvoyTLSPort() int
+	EnvoyTCPPortBase() int
+	EnvoyHTTPPort() int
+	EnvoyHealthHostPort() int
+	CoreDNSHealthHostPort() int
+	CoreDNSHealthPath() string
 	ProjectConfigFileName() string
 	SettingsFileName() string
 	ProjectRegistryFileName() string

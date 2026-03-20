@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,27 +27,13 @@ func TestRuntimeEnv_EditorOverride(t *testing.T) {
 	assert.Contains(t, env, "VISUAL=code")
 }
 
-func TestRuntimeEnv_FirewallDomains(t *testing.T) {
+func TestRuntimeEnv_FirewallEnabled(t *testing.T) {
 	env, err := RuntimeEnv(RuntimeEnvOpts{
 		FirewallEnabled: true,
-		FirewallDomains: []string{"custom.com", "registry.npmjs.org"},
 	})
 	require.NoError(t, err)
 
-	// CLAWKER_FIREWALL_ENABLED should be set
-	assert.Contains(t, env, "CLAWKER_FIREWALL_ENABLED=true",
-		"CLAWKER_FIREWALL_ENABLED should be set when firewall is enabled")
-
-	var found bool
-	for _, e := range env {
-		if val, ok := strings.CutPrefix(e, "CLAWKER_FIREWALL_DOMAINS="); ok {
-			found = true
-			assert.Contains(t, val, "custom.com")
-			assert.Contains(t, val, "registry.npmjs.org")
-		}
-	}
-	require.True(t, found, "expected CLAWKER_FIREWALL_DOMAINS env var")
-
+	assert.Contains(t, env, "CLAWKER_FIREWALL_ENABLED=true")
 }
 
 func TestRuntimeEnv_FirewallDisabled(t *testing.T) {
@@ -58,8 +43,6 @@ func TestRuntimeEnv_FirewallDisabled(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, e := range env {
-		assert.NotContains(t, e, "CLAWKER_FIREWALL_DOMAINS=",
-			"should not set firewall domains when disabled")
 		assert.False(t, strings.HasPrefix(e, "CLAWKER_FIREWALL_ENABLED="),
 			"should not set CLAWKER_FIREWALL_ENABLED when disabled")
 	}
@@ -95,7 +78,6 @@ func TestRuntimeEnv_Deterministic(t *testing.T) {
 	opts := RuntimeEnvOpts{
 		Editor:          "vim",
 		FirewallEnabled: true,
-		FirewallDomains: []string{"example.com"},
 		AgentEnv:        map[string]string{"A": "1", "B": "2"},
 	}
 
@@ -179,120 +161,6 @@ func TestRuntimeEnv_TrueColorWithout256Color(t *testing.T) {
 	for _, e := range env {
 		assert.False(t, strings.HasPrefix(e, "TERM="),
 			"should not set TERM when Is256Color=false")
-	}
-}
-
-func TestRuntimeEnv_FirewallEnabledWithNilDomains(t *testing.T) {
-	// Edge case: FirewallEnabled=true with FirewallDomains=nil
-	env, err := RuntimeEnv(RuntimeEnvOpts{
-		FirewallEnabled: true,
-		FirewallDomains: nil,
-	})
-	require.NoError(t, err)
-
-	// Should produce valid JSON (empty array)
-	var found bool
-	for _, e := range env {
-		if val, ok := strings.CutPrefix(e, "CLAWKER_FIREWALL_DOMAINS="); ok {
-			found = true
-			assert.Equal(t, "[]", val, "nil domains should serialize as empty JSON array")
-		}
-	}
-	require.True(t, found, "expected CLAWKER_FIREWALL_DOMAINS env var")
-}
-
-func TestRuntimeEnv_FirewallEnabledWithEmptyDomains(t *testing.T) {
-	// Edge case: FirewallEnabled=true with FirewallDomains=[]string{}
-	env, err := RuntimeEnv(RuntimeEnvOpts{
-		FirewallEnabled: true,
-		FirewallDomains: []string{},
-	})
-	require.NoError(t, err)
-
-	// Should produce valid JSON (empty array)
-	var found bool
-	for _, e := range env {
-		if val, ok := strings.CutPrefix(e, "CLAWKER_FIREWALL_DOMAINS="); ok {
-			found = true
-			assert.Equal(t, "[]", val, "empty domains should serialize as empty JSON array")
-		}
-	}
-	require.True(t, found, "expected CLAWKER_FIREWALL_DOMAINS env var")
-}
-
-func TestRuntimeEnv_FirewallIPRangeSources(t *testing.T) {
-	env, err := RuntimeEnv(RuntimeEnvOpts{
-		FirewallEnabled: true,
-		FirewallIPRangeSources: []config.IPRangeSource{
-			{Name: "github"},
-			{Name: "google-cloud"},
-		},
-	})
-	require.NoError(t, err)
-
-	var found bool
-	for _, e := range env {
-		if val, ok := strings.CutPrefix(e, "CLAWKER_FIREWALL_IP_RANGE_SOURCES="); ok {
-			found = true
-			assert.Contains(t, val, `"name":"github"`)
-			assert.Contains(t, val, `"name":"google-cloud"`)
-		}
-	}
-	require.True(t, found, "expected CLAWKER_FIREWALL_IP_RANGE_SOURCES env var")
-}
-
-func TestRuntimeEnv_FirewallIPRangeSourcesWithCustomURL(t *testing.T) {
-	env, err := RuntimeEnv(RuntimeEnvOpts{
-		FirewallEnabled: true,
-		FirewallIPRangeSources: []config.IPRangeSource{
-			{Name: "custom", URL: "https://example.com/ranges.json", JQFilter: ".cidrs[]"},
-		},
-	})
-	require.NoError(t, err)
-
-	var found bool
-	for _, e := range env {
-		if val, ok := strings.CutPrefix(e, "CLAWKER_FIREWALL_IP_RANGE_SOURCES="); ok {
-			found = true
-			assert.Contains(t, val, `"name":"custom"`)
-			assert.Contains(t, val, `"url":"https://example.com/ranges.json"`)
-			assert.Contains(t, val, `"jq_filter":".cidrs[]"`)
-		}
-	}
-	require.True(t, found, "expected CLAWKER_FIREWALL_IP_RANGE_SOURCES env var")
-}
-
-func TestRuntimeEnv_FirewallIPRangeSourcesNil(t *testing.T) {
-	// When firewall is enabled but IP range sources is nil, should serialize as empty array
-	env, err := RuntimeEnv(RuntimeEnvOpts{
-		FirewallEnabled:        true,
-		FirewallIPRangeSources: nil,
-	})
-	require.NoError(t, err)
-
-	var found bool
-	for _, e := range env {
-		if val, ok := strings.CutPrefix(e, "CLAWKER_FIREWALL_IP_RANGE_SOURCES="); ok {
-			found = true
-			assert.Equal(t, "[]", val, "nil sources should serialize as empty JSON array")
-		}
-	}
-	require.True(t, found, "expected CLAWKER_FIREWALL_IP_RANGE_SOURCES env var")
-}
-
-func TestRuntimeEnv_FirewallDisabledNoIPRangeSources(t *testing.T) {
-	// When firewall is disabled, IP range sources env var should not be set
-	env, err := RuntimeEnv(RuntimeEnvOpts{
-		FirewallEnabled: false,
-		FirewallIPRangeSources: []config.IPRangeSource{
-			{Name: "github"},
-		},
-	})
-	require.NoError(t, err)
-
-	for _, e := range env {
-		assert.NotContains(t, e, "CLAWKER_FIREWALL_IP_RANGE_SOURCES=",
-			"should not set IP range sources when firewall disabled")
 	}
 }
 

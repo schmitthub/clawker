@@ -23,8 +23,8 @@ const maxRequestBodySize = 1 << 20 // 1MB
 type dynamicListener struct {
 	port      int
 	sessionID string
-	listener  net.Listener
-	server    *http.Server
+	listeners []net.Listener
+	servers   []*http.Server
 }
 
 // Server is an HTTP server that handles requests from containers to perform
@@ -195,7 +195,7 @@ func (s *Server) Stop(ctx context.Context) error {
 	return nil
 }
 
-// startDynamicListener starts a temporary HTTP listener on the specified port
+// startDynamicListener starts temporary HTTP listeners on loopback addresses
 // to capture OAuth callbacks.
 func (s *Server) startDynamicListener(port int, sessionID string) error {
 	s.mu.Lock()
@@ -206,10 +206,9 @@ func (s *Server) startDynamicListener(port int, sessionID string) error {
 		return fmt.Errorf("listener already exists on port %d", port)
 	}
 
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	addresses := []string{
+		fmt.Sprintf("127.0.0.1:%d", port),
+		fmt.Sprintf("[::1]:%d", port),
 	}
 
 	// Create a handler that captures all requests on this port
@@ -217,30 +216,53 @@ func (s *Server) startDynamicListener(port int, sessionID string) error {
 		s.handleDynamicCallback(port, w, r)
 	})
 
-	server := &http.Server{
-		Handler:      handler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+	var listeners []net.Listener
+	var servers []*http.Server
+	var listenedAddrs []string
+	for _, addr := range addresses {
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			s.log.Debug().Str("addr", addr).Int("port", port).Err(err).Msg("failed to listen for dynamic callback (may be expected if protocol not available)")
+			continue
+		}
+
+		server := &http.Server{
+			Handler:      handler,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+		}
+
+		listeners = append(listeners, listener)
+		servers = append(servers, server)
+		listenedAddrs = append(listenedAddrs, addr)
+	}
+
+	if len(listeners) == 0 {
+		return fmt.Errorf("failed to listen on any dynamic callback address for port %d (tried %v)", port, addresses)
 	}
 
 	dl := &dynamicListener{
 		port:      port,
 		sessionID: sessionID,
-		listener:  listener,
-		server:    server,
+		listeners: listeners,
+		servers:   servers,
 	}
 
 	s.dynamicListeners[port] = dl
 	s.portToSession[port] = sessionID
 
-	go func() {
-		s.log.Debug().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener starting")
-		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			s.log.Error().Err(err).Int("port", port).Msg("dynamic listener error")
-		}
-	}()
+	for i, listener := range listeners {
+		server := servers[i]
+		addr := listenedAddrs[i]
+		go func(l net.Listener, srv *http.Server, a string) {
+			s.log.Debug().Int("port", port).Str("session_id", sessionID).Str("addr", a).Msg("dynamic listener starting")
+			if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
+				s.log.Error().Err(err).Int("port", port).Str("addr", a).Msg("dynamic listener error")
+			}
+		}(listener, server, addr)
+	}
 
-	s.log.Debug().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener started")
+	s.log.Debug().Int("port", port).Str("session_id", sessionID).Strs("addrs", listenedAddrs).Msg("dynamic listener started")
 	return nil
 }
 
@@ -260,14 +282,20 @@ func (s *Server) closeDynamicListenerLocked(port int) {
 
 	s.log.Debug().Int("port", port).Msg("closing dynamic listener")
 
-	// Shutdown the server gracefully with a short timeout
+	// Shutdown the servers gracefully with a short timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	if err := dl.server.Shutdown(ctx); err != nil {
-		// Timeout during cleanup is expected - just force close
-		s.log.Debug().Int("port", port).Msg("force closing dynamic listener")
-		dl.listener.Close()
+	for i, server := range dl.servers {
+		if err := server.Shutdown(ctx); err != nil {
+			// Timeout during cleanup is expected - just force close
+			s.log.Debug().Int("port", port).Int("listener_index", i).Msg("force closing dynamic listener")
+			if i < len(dl.listeners) {
+				if closeErr := dl.listeners[i].Close(); closeErr != nil {
+					s.log.Debug().Err(closeErr).Int("port", port).Int("listener_index", i).Msg("dynamic listener close returned error")
+				}
+			}
+		}
 	}
 
 	delete(s.dynamicListeners, port)

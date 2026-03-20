@@ -45,7 +45,25 @@ type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 
 `Client` embeds `*whail.Engine`. Fields: `cfg config.Config` (interface, always set), `BuildDefaultImageFunc BuildDefaultImageFn`, `ChownImage string`.
 
-**Methods**: `Close()`, `ResolveImage(ctx, projectName)`, `ResolveImageWithSource(ctx, projectName)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`, `IsMonitoringActive(ctx)`, `ListContainers(ctx, all)`, `ListContainersByProject(ctx, project, all)`, `FindContainerByAgent(ctx, project, agent)`, `RemoveContainerWithVolumes(ctx, id, force)`, `parseContainers(summaries)` (private).
+**Image methods**: `Close()`, `ResolveImage(ctx, projectName)`, `ResolveImageWithSource(ctx, projectName)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`.
+
+### Container type
+
+```go
+type Container struct {
+    ID, Name, Project, Agent, Image, Workdir, Status string; Created int64
+}
+```
+
+### Container query/management methods (all on `*Client`)
+
+| Method | Signature |
+|--------|-----------|
+| `IsMonitoringActive` | `(ctx context.Context) bool` — checks for otel-collector on clawker-net |
+| `ListContainers` | `(ctx context.Context, includeAll bool) ([]Container, error)` — all managed containers |
+| `ListContainersByProject` | `(ctx context.Context, project string, includeAll bool) ([]Container, error)` — project-scoped |
+| `FindContainerByAgent` | `(ctx context.Context, project, agent string) (string, *container.Summary, error)` — returns (name, summary, err); not-found = `(name, nil, nil)` |
+| `RemoveContainerWithVolumes` | `(ctx context.Context, containerID string, force bool) error` — stops + removes container + associated volumes |
 
 **Image resolution**: `ImageSource` enum (`Explicit`/`Project`/`Config`). `ResolvedImage` struct (Reference + Source). `ResolveImageWithSource(ctx, projectName)` resolves via a two-step chain: (1) Docker images matching the project label with `:latest` tag → `ImageSourceProject`, (2) fallback to `cfg.Project().Build.Image` → `ImageSourceConfig`. Returns `nil, nil` when neither source yields an image. `ResolveImage(ctx, projectName)` is a convenience wrapper returning just the reference string. `projectName` is the resolved project identity (from `project.ProjectManager.CurrentProject(ctx).Name()` at the command layer); empty string means no registered project.
 

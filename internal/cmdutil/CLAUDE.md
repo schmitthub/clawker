@@ -25,7 +25,7 @@ Heavy command helpers have been extracted to dedicated packages:
 
 ## Factory (`factory.go`)
 
-Pure dependency injection container struct. 3 eager values + 8 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
+Pure dependency injection container struct. 3 eager values + 9 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
 
 ```go
 type Factory struct {
@@ -43,6 +43,7 @@ type Factory struct {
     HostProxy      func() hostproxy.HostProxyService
     SocketBridge   func() socketbridge.SocketBridgeManager
     Prompter       func() *prompter.Prompter
+    Firewall       func(context.Context) (firewall.FirewallManager, error)
 }
 ```
 
@@ -57,6 +58,7 @@ type Factory struct {
 - `HostProxy()` -- returns `hostproxy.HostProxyService` (interface); commands call `.EnsureRunning()` / `.IsRunning()` / `.ProxyURL()` on it. Mock: `hostproxytest.MockManager`
 - `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `sockebridgemocks.MockManager`
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
+- `Firewall(ctx)` -- lazy `firewall.FirewallManager` (connects Docker client + loads config/logger on first call); commands call `.EnsureRunning()` / `.Stop()` on it
 
 **Testing:** Construct minimal Factory structs directly:
 ```go

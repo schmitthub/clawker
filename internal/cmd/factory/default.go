@@ -7,9 +7,11 @@ import (
 	"sync"
 	"time"
 
+	mobyclient "github.com/moby/moby/client" // Exception: firewall Manager needs raw moby, not whail — see firewallFunc
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -38,6 +40,7 @@ func New(version string) *cmdutil.Factory {
 	f.Client = clientFunc(f)                 // depends on Config
 	f.GitManager = gitManagerFunc(f)         // depends on Config
 	f.Prompter = prompterFunc(f)
+	f.Firewall = firewallFunc(f) // depends on Config, Logger, Client
 
 	return f
 }
@@ -173,11 +176,49 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 				return
 			}
 			client, clientErr = docker.NewClient(ctx, cfg, log)
-			if clientErr == nil {
-				docker.WireBuildKit(client)
-			}
 		})
 		return client, clientErr
+	}
+}
+
+// firewallFunc returns a lazy closure that creates a FirewallManager once.
+//
+// INTENTIONALLY uses raw moby client (mobyclient.New) instead of f.Client(ctx)/whail.Engine.
+// The firewall Manager is an infrastructure container orchestrator — it manages Envoy and
+// CoreDNS sidecar containers that live OUTSIDE whail's label-isolated scope. These containers
+// carry dev.clawker.purpose=firewall and must be visible to the daemon's container watcher
+// without whail's managed-label filter hiding them.
+// See .claude/rules/docker-client.md for the exception policy.
+func firewallFunc(f *cmdutil.Factory) func(context.Context) (firewall.FirewallManager, error) {
+	var (
+		once sync.Once
+		mgr  firewall.FirewallManager
+		err  error
+	)
+	return func(ctx context.Context) (firewall.FirewallManager, error) {
+		once.Do(func() {
+			cfg, cfgErr := f.Config()
+			if cfgErr != nil {
+				err = fmt.Errorf("failed to get config: %w", cfgErr)
+				return
+			}
+			log, logErr := f.Logger()
+			if logErr != nil {
+				err = fmt.Errorf("failed to get logger: %w", logErr)
+				return
+			}
+			dockerClient, clientErr := mobyclient.New(mobyclient.FromEnv)
+			if clientErr != nil {
+				err = fmt.Errorf("failed to get docker client: %w", clientErr)
+				return
+			}
+			mgr, err = firewall.NewManager(dockerClient, cfg, log)
+			if err != nil {
+				err = fmt.Errorf("failed to create firewall manager: %w", err)
+				return
+			}
+		})
+		return mgr, err
 	}
 }
 

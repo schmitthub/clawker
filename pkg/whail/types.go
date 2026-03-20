@@ -56,9 +56,11 @@ type (
 	// Volume operation options.
 	VolumeCreateOptions = client.VolumeCreateOptions
 
-	// Network operation options.
+	// Network operation options and results.
 	NetworkCreateOptions  = client.NetworkCreateOptions
+	NetworkCreateResult   = client.NetworkCreateResult
 	NetworkInspectOptions = client.NetworkInspectOptions
+	NetworkInspectResult  = client.NetworkInspectResult
 
 	// Connection types.
 	HijackedResponse = client.HijackedResponse

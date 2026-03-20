@@ -2806,26 +2806,6 @@ func TestContainerOptions_NewFlags(t *testing.T) {
 		assert.Equal(t, "/app", opts.Workdir)
 	})
 
-	t.Run("disable-firewall flag parsing", func(t *testing.T) {
-		opts := NewContainerOptions()
-		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-		AddFlags(flags, opts)
-
-		err := flags.Parse([]string{"--disable-firewall"})
-		require.NoError(t, err)
-		assert.True(t, opts.DisableFirewall)
-	})
-
-	t.Run("disable-firewall defaults to false", func(t *testing.T) {
-		opts := NewContainerOptions()
-		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-		AddFlags(flags, opts)
-
-		err := flags.Parse([]string{})
-		require.NoError(t, err)
-		assert.False(t, opts.DisableFirewall)
-	})
-
 	t.Run("workdir defaults to empty", func(t *testing.T) {
 		opts := NewContainerOptions()
 		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)

@@ -36,10 +36,7 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 		return fmt.Errorf("failed to resolve latest version: %w", err)
 	}
 
-	// 3. Ensure BuildKit is wired on this client
-	WireBuildKit(c)
-
-	// 4. Check BuildKit availability (cache mounts require it)
+	// 3. Check BuildKit availability (cache mounts require it)
 	buildkitEnabled, bkErr := BuildKitEnabled(ctx, c.APIClient)
 	if bkErr != nil {
 		c.log.Warn().Err(bkErr).Msg("BuildKit detection failed")

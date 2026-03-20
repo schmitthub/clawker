@@ -5,11 +5,16 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
+	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +24,10 @@ type RestartOptions struct {
 	Client         func(context.Context) (*docker.Client, error)
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
+	HostProxy      func() hostproxy.HostProxyService
+	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	SocketBridge   func() socketbridge.SocketBridgeManager
+	Logger         func() (*logger.Logger, error)
 
 	Agent      bool // treat arguments as agents names
 	Timeout    int
@@ -33,6 +42,10 @@ func NewCmdRestart(f *cmdutil.Factory, runF func(context.Context, *RestartOption
 		Client:         f.Client,
 		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
+		HostProxy:      f.HostProxy,
+		Firewall:       f.Firewall,
+		SocketBridge:   f.SocketBridge,
+		Logger:         f.Logger,
 	}
 
 	cmd := &cobra.Command{
@@ -139,17 +152,53 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 		if _, err := client.ContainerKill(ctx, c.ID, opts.Signal); err != nil {
 			return err
 		}
-		_, err = client.ContainerStart(ctx, docker.ContainerStartOptions{
-			ContainerID: c.ID,
-			EnsureNetwork: &docker.EnsureNetworkOptions{
-				Name: cfg.ClawkerNetwork(),
+		_, err = shared.ContainerStart(ctx,
+			shared.CommandOpts{
+				Client:         opts.Client,
+				Config:         opts.Config,
+				ProjectManager: opts.ProjectManager,
+				HostProxy:      opts.HostProxy,
+				Firewall:       opts.Firewall,
+				SocketBridge:   opts.SocketBridge,
+				Logger:         opts.Logger,
 			},
-		})
+			docker.ContainerStartOptions{
+				ContainerID: c.ID,
+				EnsureNetwork: &docker.EnsureNetworkOptions{
+					Name: cfg.ClawkerNetwork(),
+				},
+			})
 		return err
 	}
 
 	// Restart the container with timeout
 	timeout := opts.Timeout
+	errBootstrapPre := shared.BootstrapServicesPreStart(
+		ctx, c.ID, shared.CommandOpts{
+			Client:         opts.Client,
+			Config:         opts.Config,
+			ProjectManager: opts.ProjectManager,
+			HostProxy:      opts.HostProxy,
+			Firewall:       opts.Firewall,
+			SocketBridge:   opts.SocketBridge,
+			Logger:         opts.Logger,
+		})
+	if errBootstrapPre != nil {
+		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPre)
+	}
 	_, err = client.ContainerRestart(ctx, c.ID, &timeout)
+	errBootstrapPost := shared.BootstrapServicesPostStart(
+		ctx, c.ID, shared.CommandOpts{
+			Client:         opts.Client,
+			Config:         opts.Config,
+			ProjectManager: opts.ProjectManager,
+			HostProxy:      opts.HostProxy,
+			Firewall:       opts.Firewall,
+			SocketBridge:   opts.SocketBridge,
+			Logger:         opts.Logger,
+		})
+	if errBootstrapPost != nil {
+		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPost)
+	}
 	return err
 }

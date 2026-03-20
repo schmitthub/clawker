@@ -66,7 +66,6 @@ clawker create [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]
       --device-read-iops throttle-device    Limit read rate (IO per second) from a device
       --device-write-bps throttle-device    Limit write rate (bytes per second) to a device
       --device-write-iops throttle-device   Limit write rate (IO per second) to a device
-      --disable-firewall                    Disable container firewall regardless of project config
       --dns stringArray                     Set custom DNS servers
       --dns-option stringArray              Set DNS options
       --dns-search stringArray              Set custom DNS search domains

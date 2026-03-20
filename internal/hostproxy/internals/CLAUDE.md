@@ -9,12 +9,19 @@ Container-side scripts and binaries that communicate with the clawker host proxy
 | `embed.go` | `go:embed` directives + exported vars + `AllScripts()` |
 | `host-open.sh` | BROWSER handler — opens URLs via host proxy, intercepts OAuth callbacks |
 | `git-credential-clawker.sh` | Git credential helper — forwards to host proxy `/git/credential` |
-| `cmd/callback-forwarder/main.go` | OAuth callback polling — polls host proxy, forwards to local port |
+| `cmd/callback-forwarder/main.go` | OAuth callback polling — polls host proxy, forwards to local port with dual-stack fallback |
+| `cmd/callback-forwarder/main_test.go` | Unit tests for callback-forwarder (URL building, IPv4/IPv6 fallback, error aggregation) |
 | `cmd/clawker-socket-server/main.go` | Unix socket server — creates SSH/GPG sockets, forwards via muxrpc protocol over stdin/stdout |
 
 ## API
 
 ```go
+// Embedded script/source variables
+var HostOpenScript string           // host-open.sh
+var GitCredentialScript string      // git-credential-clawker.sh
+var CallbackForwarderSource string  // cmd/callback-forwarder/main.go
+var SocketForwarderSource string    // cmd/clawker-socket-server/main.go
+
 // AllScripts returns all embedded script contents for content hashing.
 // Used by bundler.EmbeddedScripts() to ensure image rebuilds when scripts change.
 func AllScripts() []string
@@ -28,6 +35,41 @@ This is a **leaf package** (stdlib + embed only). It exports embedded content as
 
 The Go binaries under `cmd/` are standalone `package main` programs compiled inside the Docker image during multi-stage builds. They use only stdlib — no imports from the clawker module.
 
+## Callback Forwarder (`cmd/callback-forwarder/main.go`)
+
+The callback forwarder polls the host proxy for captured OAuth callbacks and forwards them to a local HTTP server inside the container. Key types and behavior:
+
+### Types
+
+```go
+type CallbackData struct {
+    Method, Path, Query string
+    Headers map[string]string
+    Body, ReceivedAt string
+}
+
+type CallbackDataResponse struct {
+    Received bool
+    Callback *CallbackData
+    Error    string
+}
+```
+
+### Dual-Stack IPv4/IPv6 Fallback
+
+`forwardCallback` tries forwarding to three hosts sequentially: `localhost`, `127.0.0.1`, `::1`. This ensures OAuth callbacks reach local servers regardless of whether they bind to IPv4, IPv6, or both. `buildLocalCallbackURL` handles IPv6 bracket notation (e.g., `[::1]:8080`).
+
+If all three hosts fail, errors are aggregated into a single message listing each host's failure.
+
+### Functions
+
+| Function | Purpose |
+|----------|---------|
+| `forwardCallback(client, port, data)` | Tries localhost, 127.0.0.1, ::1 sequentially |
+| `forwardCallbackToHost(client, host, port, data)` | Forwards to a single host, reconstructs the HTTP request |
+| `buildLocalCallbackURL(host, port, data)` | Builds URL with IPv6 bracket notation support |
+| `flagWasSet(name)` | Checks if a CLI flag was explicitly provided |
+
 ## Socket Server (`cmd/clawker-socket-server/main.go`)
 
 The socket server is the container-side component of the socketbridge system. It:
@@ -39,6 +81,39 @@ The socket server is the container-side component of the socketbridge system. It
 6. Logs to both stderr AND `/var/log/clawker/socket-server.log` (simple 1MB rotation)
 
 The host-side bridge (`internal/socketbridge`) launches this binary via `docker exec` and communicates using a binary muxrpc protocol.
+
+### Muxrpc Protocol Constants
+
+```go
+const ProtocolVersion = 1
+
+// Message types
+const (
+    MsgData   = 0x01  // Stream data
+    MsgOpen   = 0x02  // Open stream
+    MsgClose  = 0x03  // Close stream
+    MsgPubkey = 0x04  // GPG public key transfer
+    MsgReady  = 0x05  // Server ready signal
+    MsgError  = 0x06  // Error message
+)
+```
+
+### Key Types
+
+```go
+type SocketConfig struct {
+    Path string  // Unix socket path
+    Type string  // "ssh-agent" or "gpg-agent"
+}
+
+type Message struct {
+    Type     byte
+    StreamID uint32
+    Payload  []byte
+}
+
+type Forwarder struct { /* manages streams, socket listeners, muxrpc I/O */ }
+```
 
 ### GPG Socket Conflict Prevention (Multi-Layered)
 

@@ -13,6 +13,7 @@ import (
 	containershared "github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -60,6 +61,9 @@ type LoopContainerConfig struct {
 
 	// HostProxy returns the host proxy service.
 	HostProxy func() hostproxy.HostProxyService
+
+	// Firewall returns the firewall manager.
+	Firewall func(context.Context) (firewall.FirewallManager, error)
 
 	// SocketBridge returns the socket bridge manager.
 	SocketBridge func() socketbridge.SocketBridgeManager
@@ -140,19 +144,19 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 
 		go func() {
 			defer close(events)
-			r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerConfig{
+			r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerOptions{
 				Client:         cfg.Client,
-				Cfg:            cfg.Config,
-				Config:         cfg.Config.Project(),
+				Config:         cfg.Config,
 				ProjectName:    cfg.ProjectName,
 				Options:        containerOpts,
 				Flags:          cfg.Flags,
 				Version:        cfg.Version,
 				ProjectManager: cfg.ProjectManager,
 				HostProxy:      cfg.HostProxy,
-				Log:            cfg.Log,
-				Is256Color:     cfg.IOStreams.Is256ColorSupported(),
-				IsTrueColor:    cfg.IOStreams.IsTrueColorSupported(),
+
+				Log:         cfg.Log,
+				Is256Color:  cfg.IOStreams.Is256ColorSupported(),
+				IsTrueColor: cfg.IOStreams.IsTrueColorSupported(),
 			}, events)
 			done <- outcome{r, err}
 		}()
@@ -243,18 +247,19 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 
 	go func() {
 		defer close(events)
-		r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerConfig{
+		r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerOptions{
 			Client:         cfg.Client,
-			Config:         projectCfg,
+			Config:         cfg.Config,
 			ProjectName:    cfg.ProjectName,
 			Options:        containerOpts,
 			Flags:          cfg.Flags,
 			Version:        cfg.Version,
 			ProjectManager: cfg.ProjectManager,
 			HostProxy:      cfg.HostProxy,
-			Log:            cfg.Log,
-			Is256Color:     ios.Is256ColorSupported(),
-			IsTrueColor:    ios.IsTrueColorSupported(),
+
+			Log:         cfg.Log,
+			Is256Color:  ios.Is256ColorSupported(),
+			IsTrueColor: ios.IsTrueColorSupported(),
 		}, events)
 		done <- outcome{r, err}
 	}()
@@ -309,7 +314,15 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 
 	// --- Phase D: Start container ---
 	ios.StartSpinner("Starting loop container")
-	if _, err := cfg.Client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
+	if _, err := containershared.ContainerStart(ctx, containershared.CommandOpts{
+		Client:         func(ctx context.Context) (*docker.Client, error) { return cfg.Client, nil },
+		Config:         func() (config.Config, error) { return cfg.Config, nil },
+		ProjectManager: cfg.ProjectManager,
+		HostProxy:      cfg.HostProxy,
+		Firewall:       cfg.Firewall,
+		SocketBridge:   cfg.SocketBridge,
+		Logger:         func() (*logger.Logger, error) { return cfg.Log, nil },
+	}, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 		ios.StopSpinner()
 		cleanup()
 		return nil, nil, fmt.Errorf("starting loop container: %w", err)

@@ -149,7 +149,7 @@ func (n *NetworkOpt) NetworkMode() string {
 // parseNetworkOpts converts the NetworkOpt advanced options to endpoint-specs,
 // combining them with legacy --network-alias, --link, --ip, --ip6, --link-local-ip,
 // and --mac-address flags. Returns an error if conflicting options are found.
-func parseNetworkOpts(copts *ContainerOptions) (map[string]*network.EndpointSettings, error) {
+func parseNetworkOpts(copts *ContainerCreateOptions) (map[string]*network.EndpointSettings, error) {
 	netOpts := copts.NetMode.Value()
 	endpoints := make(map[string]*network.EndpointSettings, len(netOpts))
 
@@ -217,7 +217,7 @@ func parseNetworkOpts(copts *ContainerOptions) (map[string]*network.EndpointSett
 
 // applyLegacyNetworkOpts applies the legacy --network-alias, --link, --ip, --ip6,
 // --mac-address, and --link-local-ip flags to the network attachment opts.
-func applyLegacyNetworkOpts(n *NetworkAttachmentOpts, copts *ContainerOptions) error {
+func applyLegacyNetworkOpts(n *NetworkAttachmentOpts, copts *ContainerCreateOptions) error {
 	if len(n.Aliases) > 0 && len(copts.Aliases) > 0 {
 		return fmt.Errorf("conflicting options: cannot specify both --network-alias and per-network alias")
 	}

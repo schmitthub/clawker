@@ -101,6 +101,8 @@ Domain helpers for build progress display. These live in `whail` (bottom of the 
 
 `NetworkCreate(ctx, name, opts, extraLabels...)`, `NetworkRemove(ctx, name)`, `NetworkInspect(ctx, name, opts)`, `NetworkExists(ctx, name)`, `NetworkList(ctx, extraFilters...)`, `EnsureNetwork(ctx, EnsureNetworkOptions)`, `IsNetworkManaged(ctx, name)`, `NetworksPrune(ctx)`, `NetworkConnect(ctx, network, containerID, endpointSettings)`, `NetworkDisconnect(ctx, network, containerID, force)`
 
+**`EnsureNetworkOptions`**: embeds `client.NetworkCreateOptions` + `Name string`, `Verbose bool`, `ExtraLabels Labels`. Used by `EnsureNetwork` (create-if-not-exists, idempotent) and optionally embedded in `ContainerCreateOptions`/`ContainerStartOptions` for auto-network-ensure on container lifecycle.
+
 **Note:** `NetworkExists` delegates to `IsNetworkManaged` — same pattern as `VolumeExists`.
 
 ## DockerError

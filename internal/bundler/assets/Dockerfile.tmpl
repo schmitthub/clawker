@@ -56,6 +56,7 @@ RUN apk add \
     less \
     procps \
     sudo \
+    gosu \
     fzf \
     gcc \
     git \
@@ -92,6 +93,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     less \
     procps \
     sudo \
+    gosu \
     fzf \
     gcc \
     git \
@@ -238,11 +240,20 @@ RUN ARCH=$(dpkg --print-architecture) && \
     dpkg -i "/tmp/downloads/$DEB"
 {{end}}
 
-# Copy and set up firewall script (always included; execution gated at runtime via CLAWKER_FIREWALL_ENABLED)
-COPY init-firewall.sh /usr/local/bin/init-firewall.sh
-RUN chmod +x /usr/local/bin/init-firewall.sh && \
-    echo "${USERNAME} ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/${USERNAME}-firewall && \
-    chmod 0440 /etc/sudoers.d/${USERNAME}-firewall
+# Copy firewall script (always included; execution gated at runtime via CLAWKER_FIREWALL_ENABLED).
+# firewall.sh is called as root in entrypoint and by host via docker exec for enable/disable.
+COPY firewall.sh /usr/local/bin/firewall.sh
+RUN chmod 700 /usr/local/bin/firewall.sh
+
+# Clawker agent environment awareness
+RUN mkdir -p /etc/claude-code
+COPY clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
+{{- if .HasFirewallCA}}
+
+# Firewall CA cert for MITM inspection
+COPY clawker-ca.crt /usr/local/share/ca-certificates/clawker-firewall-ca.crt
+RUN update-ca-certificates
+{{- end}}
 
 # Host proxy client scripts for container-to-host communication
 COPY host-open.sh /usr/local/bin/host-open
@@ -254,8 +265,10 @@ RUN chmod +x /usr/local/bin/host-open /usr/local/bin/callback-forwarder /usr/loc
 COPY --from=socket-server-builder /build/clawker-socket-server /usr/local/bin/clawker-socket-server
 RUN chmod +x /usr/local/bin/clawker-socket-server
 
-# Switch to non-root user
+# Switch to non-root user for ENV/WORKDIR resolution.
+# Entrypoint runs as root (USER root before ENTRYPOINT) and drops to this user via gosu.
 USER ${USERNAME}
+ENV CLAWKER_USER=${USERNAME}
 
 # Set static environment (PATH, SHELL, BROWSER — not config-dependent)
 ENV SHELL={{.Shell}}
@@ -381,7 +394,8 @@ HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=3 \
 {{- end}}
 {{- end}}
 
-# Copy and set up entrypoint script
+# Entrypoint runs as root for privileged init (iptables, chown), then drops to $USERNAME via gosu.
+USER root
 COPY entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["claude"]

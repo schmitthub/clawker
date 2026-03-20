@@ -313,19 +313,19 @@ func TestCmdCreate_MutuallyExclusiveFlags(t *testing.T) {
 func TestBuildConfigs(t *testing.T) {
 	tests := []struct {
 		name    string
-		opts    *shared.ContainerOptions
+		opts    *shared.ContainerCreateOptions
 		wantErr bool
 	}{
 		{
 			name: "basic config",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with tty and stdin",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				TTY:     true,
 				Stdin:   true,
@@ -334,7 +334,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with command",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Command: []string{"echo", "hello"},
 				Publish: shared.NewPortOpts(),
@@ -342,7 +342,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with env vars",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Env:     []string{"FOO=bar", "BAZ=qux"},
 				Publish: shared.NewPortOpts(),
@@ -350,7 +350,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with labels",
-			opts: &shared.ContainerOptions{
+			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Labels:  []string{"foo=bar", "baz"},
 				Publish: shared.NewPortOpts(),
@@ -358,7 +358,7 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with network",
-			opts: func() *shared.ContainerOptions {
+			opts: func() *shared.ContainerCreateOptions {
 				o := shared.NewContainerOptions()
 				o.Image = "alpine"
 				o.NetMode.Set("mynet")
@@ -431,7 +431,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 			mock := configmocks.NewFromString(`
 version: "1"
 workspace: { default_mode: "bind" }
-security: { enable_host_proxy: false, firewall: { enable: false } }
+security: { enable_host_proxy: false }
 `, "")
 			mock.GetProjectIgnoreFileFunc = func() (string, error) {
 				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
@@ -538,7 +538,7 @@ func TestCreateRun(t *testing.T) {
 		useHostAuthCfg := configmocks.NewFromString(`
 version: "1"
 workspace: { default_mode: "bind" }
-security: { enable_host_proxy: false, firewall: { enable: false } }
+security: { enable_host_proxy: false }
 agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 `, "")
 		useHostAuthCfg.GetProjectIgnoreFileFunc = func() (string, error) {

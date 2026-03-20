@@ -171,7 +171,7 @@ func testRestartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Fac
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
-			return configmocks.NewBlankConfig(), nil
+			return configmocks.NewFromString("", `firewall: { enable: false }`), nil
 		},
 	}, in, out, errOut
 }
@@ -206,7 +206,7 @@ func TestRestartRun_DockerConnectionError(t *testing.T) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
 		Config: func() (config.Config, error) {
-			return configmocks.NewBlankConfig(), nil
+			return configmocks.NewFromString("", `firewall: { enable: false }`), nil
 		},
 	}
 

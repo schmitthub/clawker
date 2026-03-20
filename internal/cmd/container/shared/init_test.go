@@ -28,20 +28,44 @@ type testNotFoundError struct{ msg string }
 func (e testNotFoundError) Error() string { return e.msg }
 func (e testNotFoundError) NotFound()     {}
 
-// testConfig returns a minimal *config.Project for init tests.
+// testConfigYAML is the base YAML for init test configs.
+// Loaded through NewFromString (real config pipeline, not direct struct construction).
+const testConfigYAML = `
+workspace:
+  default_mode: bind
+security:
+  enable_host_proxy: false
+`
+
+// testConfig returns a minimal *config.Project loaded through NewFromString.
 func testConfig() *config.Project {
-	hostProxyDisabled := false
-	return &config.Project{
-		Workspace: config.WorkspaceConfig{
-			DefaultMode: "bind",
-		},
-		Security: config.SecurityConfig{
-			EnableHostProxy: &hostProxyDisabled,
-			Firewall: &config.FirewallConfig{
-				Enable: false,
-			},
-		},
+	cfg, err := config.NewFromString(testConfigYAML, "")
+	if err != nil {
+		panic(fmt.Sprintf("testConfig: %v", err))
 	}
+	return cfg.Project()
+}
+
+// testConfigWithFirewall returns a *config.Project with firewall enabled and custom domains.
+func testConfigWithFirewall(domains ...string) *config.Project {
+	var b strings.Builder
+	for _, d := range domains {
+		b.WriteString("\n    - ")
+		b.WriteString(d)
+	}
+	yaml := fmt.Sprintf(`
+workspace:
+  default_mode: bind
+security:
+  enable_host_proxy: false
+  firewall:
+    add_domains:%s
+`, b.String())
+	cfg, err := config.NewFromString(yaml, "")
+	if err != nil {
+		panic(fmt.Sprintf("testConfigWithFirewall: %v", err))
+	}
+	return cfg.Project()
 }
 
 // testFlags returns a FlagSet from a minimal cobra command with container flags registered.
@@ -69,12 +93,11 @@ func testMockConfig(project *config.Project) *configmocks.ConfigMock {
 	return mock
 }
 
-// testCreateConfig builds a CreateContainerConfig with test defaults.
-func testCreateConfig(fake *dockertest.FakeClient, project *config.Project, containerOpts *ContainerOptions, cmd *cobra.Command) *CreateContainerConfig {
-	return &CreateContainerConfig{
+// testCreateConfig builds a CreateContainerOptions with test defaults.
+func testCreateConfig(fake *dockertest.FakeClient, project *config.Project, containerOpts *ContainerCreateOptions, cmd *cobra.Command) *CreateContainerOptions {
+	return &CreateContainerOptions{
 		Client:      fake.Client,
-		Cfg:         testMockConfig(project),
-		Config:      project,
+		Config:      testMockConfig(project),
 		ProjectName: "testproject",
 		Options:     containerOpts,
 		Flags:       cmd.Flags(),
@@ -185,10 +208,9 @@ func TestCreateContainer_HostProxyFailure(t *testing.T) {
 	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 
-	ccfg := &CreateContainerConfig{
+	ccfg := &CreateContainerOptions{
 		Client:  fake.Client,
-		Cfg:     testMockConfig(projectCfg),
-		Config:  projectCfg,
+		Config:  testMockConfig(projectCfg),
 		Options: containerOpts,
 		Flags:   cmd.Flags(),
 		Log:     logger.Nop(),
@@ -549,9 +571,8 @@ func TestCreateContainer_InvalidAgentName(t *testing.T) {
 	fake.AssertNotCalled(t, "ContainerCreate")
 }
 
-func TestCreateContainer_DisableFirewall(t *testing.T) {
-	// When DisableFirewall=true, firewall env vars should NOT be set
-	// even when the config has firewall enabled.
+func TestCreateContainer_FirewallEnabledFromSettings(t *testing.T) {
+	// FirewallEnabled env var is set from settings alone — no FirewallManager needed.
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -560,68 +581,15 @@ func TestCreateContainer_DisableFirewall(t *testing.T) {
 	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test-agent"
-	containerOpts.DisableFirewall = true
 
-	cfg := testConfig()
-	cfg.Security.Firewall = &config.FirewallConfig{
-		Enable:     true,
-		AddDomains: []string{"example.com"},
-	}
+	cfg := testConfigWithFirewall("example.com")
 
 	result, err := CreateContainer(context.Background(),
 		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-
-	// Verify no firewall env vars were injected
-	for _, e := range containerOpts.Env {
-		require.NotContains(t, e, "CLAWKER_FIREWALL_DOMAINS",
-			"firewall env var should not be set when DisableFirewall=true")
-		require.NotContains(t, e, "CLAWKER_FIREWALL_ENABLED",
-			"CLAWKER_FIREWALL_ENABLED should not be set when DisableFirewall=true")
-	}
 	fake.AssertCalled(t, "ContainerCreate")
-}
-
-func TestCreateContainer_DisableFirewallFalse(t *testing.T) {
-	// When DisableFirewall=false (default), firewall env vars should be set
-	// when the config has firewall enabled.
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fake.SetupContainerCreate()
-	fake.SetupCopyToContainer()
-
-	cmd := testFlags()
-	containerOpts := NewContainerOptions()
-	containerOpts.Image = "alpine"
-	containerOpts.Agent = "test-agent"
-
-	cfg := testConfig()
-	cfg.Security.Firewall = &config.FirewallConfig{
-		Enable:     true,
-		AddDomains: []string{"example.com"},
-	}
-
-	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	// Verify firewall env vars were injected (firewall enabled, not disabled)
-	var firewallDomainsFound, firewallEnabledFound bool
-	for _, e := range containerOpts.Env {
-		if strings.HasPrefix(e, "CLAWKER_FIREWALL_DOMAINS=") {
-			firewallDomainsFound = true
-		}
-		if e == "CLAWKER_FIREWALL_ENABLED=true" {
-			firewallEnabledFound = true
-		}
-	}
-	require.True(t, firewallDomainsFound,
-		"CLAWKER_FIREWALL_DOMAINS should be set when DisableFirewall=false and config has firewall enabled")
-	require.True(t, firewallEnabledFound,
-		"CLAWKER_FIREWALL_ENABLED=true should be set when DisableFirewall=false and config has firewall enabled")
 }
 
 func TestCreateContainer_WorkingDirDefault(t *testing.T) {

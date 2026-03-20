@@ -63,7 +63,7 @@ ProjectStore() *storage.Store[Project]     // Direct access to project config st
 SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 ```
 
-**Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`
+**Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`, `RequiredFirewallRules()`, `EgressRulesFileName()`
 
 **Deprecated schema accessors**: `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` — use `SettingsStore().Read()` instead.
 
@@ -73,9 +73,9 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Path resolution**: `GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`, `TestRepoDirEnvVar()`
 
-**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `WorktreesSubdir()`
+**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `WorktreesSubdir()`, `FirewallDataSubdir()`
 
-**PID/log file helpers**: `BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`
+**PID/log file helpers**: `BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`, `FirewallPIDFilePath()`, `FirewallLogFilePath()`
 
 **Domain/network**: `Domain()` ("clawker.dev"), `LabelDomain()` ("dev.clawker"), `ClawkerNetwork()` ("clawker-net")
 

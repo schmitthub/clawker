@@ -1,3 +1,5 @@
+//TODO refactor: this file was a bit of a catch-all for consts mainly to help agents stay on track. It is becoming inconvenient because callers need a config instance to access them
+
 package config
 
 import (
@@ -39,6 +41,12 @@ const (
 	clawkerIgnoreFileName = ".clawkerignore"
 	// monitorSubdir is the subdirectory for monitoring stack configuration
 	monitorSubdir = "monitor"
+	// firewallSubdir is the subdirectory for firewall runtime data (CA certs, generated configs)
+	firewallSubdir = "firewall"
+	// firewallCertSubdir is the subdirectory for firewall TLS certificates
+	firewallCertSubdir = firewallSubdir + "/certs"
+	// egressRulesFileName is the filename for the egress rules state file
+	egressRulesFileName = "egress-rules.yaml"
 	// buildSubdir is the subdirectory for build artifacts (versions.json, dockerfiles)
 	buildSubdir = "build"
 	// dockerfilesSubdir is the subdirectory for generated Dockerfiles
@@ -55,8 +63,61 @@ const (
 	hostProxyPIDFileName = "hostproxy.pid"
 	// hostProxyLogFileName is the filename for the host proxy log file
 	hostProxyLogFileName = "hostproxy.log"
+	// firewallPIDFileName is the filename for the firewall daemon PID file
+	firewallPIDFileName = "firewall.pid"
+	// firewallLogFileName is the filename for the firewall daemon log file
+	firewallLogFileName = "firewall.log"
 	// shareSubdir is the subdirectory for the shared directory (mounted read-only into containers)
 	shareSubdir = ".clawker-share"
+)
+
+// clawker-net static IP assignments (last octet).
+// Docker DHCP assigns from .2 upward, so monitoring containers (which use DHCP)
+// get .2-.6+. Firewall infrastructure uses high octets to avoid collisions.
+//
+// Monitoring stack (DHCP, no static IPs):
+//
+//	otel-collector  — assigned by Docker (typically .2-.6)
+//	jaeger          — assigned by Docker
+//	prometheus      — assigned by Docker
+//	loki            — assigned by Docker
+//	grafana         — assigned by Docker
+//
+// Firewall stack (static IPs):
+//
+//	envoy           — .200
+//	coredns         — .201
+const (
+	envoyIPLastOctet   = 200
+	corednsIPLastOctet = 201
+)
+
+// clawker-net port assignments.
+// All host-published ports and container-internal ports for services on clawker-net.
+// Centralised here to prevent collisions between firewall and monitoring stacks.
+//
+// Monitoring stack ports (configurable via settings.yaml monitoring section):
+//
+//	otel-collector  — 4317 (gRPC), 4318 (HTTP)
+//	jaeger          — 16686 (UI)
+//	prometheus      — 9090
+//	loki            — 3100
+//	grafana         — 3000
+//
+// Firewall stack ports (fixed):
+const (
+	// envoyTLSPort is the Envoy TLS listener port (inside container).
+	envoyTLSPort = 10000
+	// envoyTCPPortBase is the starting port for TCP/SSH listeners (inside container).
+	envoyTCPPortBase = 10001
+	// envoyHTTPPort is the Envoy HTTP listener port for plain HTTP domain detection (inside container).
+	envoyHTTPPort = 10080
+	// envoyHealthHostPort is the host port published for Envoy health probes (TCP connect).
+	envoyHealthHostPort = 18901
+	// corednsHealthHostPort is the host port published for CoreDNS health probes (HTTP /health).
+	corednsHealthHostPort = 18902
+	// corednsHealthPath is the HTTP path for CoreDNS health checks.
+	corednsHealthPath = "/health"
 )
 
 type Mode string
@@ -78,9 +139,6 @@ const (
 	// labelManaged marks a resource as managed by clawker.
 	labelManaged = labelPrefix + "managed"
 
-	// labelMonitoringStack marks monitoring stack resources.
-	labelMonitoringStack = labelPrefix + "monitoring"
-
 	// labelProject identifies the project name.
 	labelProject = labelPrefix + "project"
 
@@ -99,7 +157,9 @@ const (
 	// labelWorkdir stores the host working directory.
 	labelWorkdir = labelPrefix + "workdir"
 
-	// labelPurpose identifies the purpose of a volume.
+	// labelPurpose identifies the purpose of a resource (container or volume).
+	// Container values: "agent", "monitoring", "firewall".
+	// Volume values: "workspace", "config", "history", "copy-to-volume", etc.
 	labelPurpose = labelPrefix + "purpose"
 
 	// labelTestName identifies the test function that created a resource.
@@ -120,6 +180,13 @@ const (
 
 // managedLabelValue is the value for the managed label.
 const managedLabelValue = "true"
+
+// Purpose label values for containers.
+const (
+	purposeAgent      = "agent"
+	purposeMonitoring = "monitoring"
+	purposeFirewall   = "firewall"
+)
 
 // engineLabelPrefix is the label prefix for whail.EngineOptions (without trailing dot).
 // Use this when configuring the whail Engine; it adds its own dot separator.
@@ -202,6 +269,50 @@ func (c *configImpl) TestRepoDirEnvVar() string { return clawkerTestRepoDirEnv }
 // MonitorSubdir ensures and returns the monitor subdirectory path under DataDir.
 func (c *configImpl) MonitorSubdir() (string, error) { return subdirPath(monitorSubdir, DataDir) }
 
+// FirewallDataSubdir ensures and returns the firewall data subdirectory path under DataDir.
+func (c *configImpl) FirewallDataSubdir() (string, error) {
+	return subdirPath(firewallSubdir, DataDir)
+}
+
+// FirewallCertSubdir ensures and returns the firewall certificate subdirectory path under DataDir.
+func (c *configImpl) FirewallCertSubdir() (string, error) {
+	return subdirPath(firewallCertSubdir, DataDir)
+}
+
+// EgressRulesFileName returns the filename for the egress rules state file.
+func (c *configImpl) EgressRulesFileName() string { return egressRulesFileName }
+
+// EnvoyIPLastOctet returns the last octet for Envoy's static IP on clawker-net.
+func (c *configImpl) EnvoyIPLastOctet() byte { return envoyIPLastOctet }
+
+// CoreDNSIPLastOctet returns the last octet for CoreDNS's static IP on clawker-net.
+func (c *configImpl) CoreDNSIPLastOctet() byte { return corednsIPLastOctet }
+
+// EnvoyTLSPort returns the Envoy TLS listener port (inside container).
+func (c *configImpl) EnvoyTLSPort() int { return envoyTLSPort }
+
+// EnvoyTCPPortBase returns the starting port for TCP/SSH listeners (inside container).
+func (c *configImpl) EnvoyTCPPortBase() int { return envoyTCPPortBase }
+
+// EnvoyHTTPPort returns the Envoy HTTP listener port for plain HTTP domain detection (inside container).
+func (c *configImpl) EnvoyHTTPPort() int { return envoyHTTPPort }
+
+// EnvoyHealthHostPort returns the host port published for Envoy health probes.
+func (c *configImpl) EnvoyHealthHostPort() int { return envoyHealthHostPort }
+
+// CoreDNSHealthHostPort returns the host port published for CoreDNS health probes.
+func (c *configImpl) CoreDNSHealthHostPort() int { return corednsHealthHostPort }
+
+// CoreDNSHealthPath returns the HTTP path for CoreDNS health checks.
+func (c *configImpl) CoreDNSHealthPath() string { return corednsHealthPath }
+
+// RequiredFirewallRules returns a copy of the required firewall egress rules.
+func (c *configImpl) RequiredFirewallRules() []EgressRule {
+	result := make([]EgressRule, len(requiredFirewallRules))
+	copy(result, requiredFirewallRules)
+	return result
+}
+
 // BuildSubdir ensures and returns the build subdirectory path under DataDir.
 func (c *configImpl) BuildSubdir() (string, error) { return subdirPath(buildSubdir, DataDir) }
 
@@ -253,6 +364,24 @@ func (c *configImpl) HostProxyPIDFilePath() (string, error) {
 	return filepath.Join(pidsDir, hostProxyPIDFileName), nil
 }
 
+// FirewallPIDFilePath ensures the PID subdirectory and returns the firewall daemon PID file path.
+func (c *configImpl) FirewallPIDFilePath() (string, error) {
+	pidsDir, err := c.PidsSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(pidsDir, firewallPIDFileName), nil
+}
+
+// FirewallLogFilePath ensures the logs subdirectory and returns the firewall daemon log file path.
+func (c *configImpl) FirewallLogFilePath() (string, error) {
+	logsDir, err := c.LogsSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(logsDir, firewallLogFileName), nil
+}
+
 // ShareSubdir ensures and returns the shared directory path under DataDir.
 func (c *configImpl) ShareSubdir() (string, error) { return subdirPath(shareSubdir, DataDir) }
 
@@ -265,10 +394,14 @@ func (c *configImpl) LabelPrefix() string { return labelPrefix }
 // LabelManaged returns the managed-resource label key.
 func (c *configImpl) LabelManaged() string { return labelManaged }
 
-// LabelMonitoringStack returns the monitoring-stack label key.
-func (c *configImpl) LabelMonitoringStack() string {
-	return labelMonitoringStack
-}
+// PurposeAgent returns the purpose label value for agent containers.
+func (c *configImpl) PurposeAgent() string { return purposeAgent }
+
+// PurposeMonitoring returns the purpose label value for monitoring containers.
+func (c *configImpl) PurposeMonitoring() string { return purposeMonitoring }
+
+// PurposeFirewall returns the purpose label value for firewall containers.
+func (c *configImpl) PurposeFirewall() string { return purposeFirewall }
 
 // LabelProject returns the project label key.
 func (c *configImpl) LabelProject() string { return labelProject }
