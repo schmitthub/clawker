@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	mobyclient "github.com/moby/moby/client"
+	mobyclient "github.com/moby/moby/client" // Exception: firewall Manager needs raw moby, not whail — see firewallFunc
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -182,6 +182,13 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 }
 
 // firewallFunc returns a lazy closure that creates a FirewallManager once.
+//
+// INTENTIONALLY uses raw moby client (mobyclient.New) instead of f.Client(ctx)/whail.Engine.
+// The firewall Manager is an infrastructure container orchestrator — it manages Envoy and
+// CoreDNS sidecar containers that live OUTSIDE whail's label-isolated scope. These containers
+// carry dev.clawker.purpose=firewall and must be visible to the daemon's container watcher
+// without whail's managed-label filter hiding them.
+// See .claude/rules/docker-client.md for the exception policy.
 func firewallFunc(f *cmdutil.Factory) func(context.Context) (firewall.FirewallManager, error) {
 	var (
 		once sync.Once

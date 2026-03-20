@@ -75,7 +75,7 @@ func rotateCA(ctx context.Context, opts *RotateCAOptions) error {
 	}
 
 	fmt.Fprintf(ios.Out, "%s CA certificate rotated\n", cs.SuccessIcon())
-	fmt.Fprintf(ios.ErrOut, "%s Rebuild images and recreate containers for changes to take effect\n",
+	fmt.Fprintf(ios.Out, "%s Rebuild images and recreate containers for changes to take effect\n",
 		cs.WarningIcon())
 
 	return nil

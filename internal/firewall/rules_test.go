@@ -66,7 +66,7 @@ func TestAddRules_Deduplication(t *testing.T) {
 func TestAddRules_DefaultProto(t *testing.T) {
 	mgr, _ := newTestManager(t)
 
-	// Empty proto should be normalized to "tls"
+	// Empty proto defaults to "tls" before storage.
 	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
 		{Dst: "example.com"},
 	}))
@@ -75,6 +75,7 @@ func TestAddRules_DefaultProto(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rules, 1)
 	assert.Equal(t, "tls", rules[0].Proto)
+	assert.Equal(t, 443, rules[0].Port)
 	assert.Equal(t, "allow", rules[0].Action)
 }
 
@@ -134,10 +135,11 @@ func TestAddRules_MultipleCallsAdditive(t *testing.T) {
 func TestAddRules_NormalizesEmptyFields(t *testing.T) {
 	mgr, _ := newTestManager(t)
 
-	// Empty proto and action should be normalized
+	// Normalization fills in defaults before storage: proto→tls, action→allow,
+	// TLS port→443. Explicit values (ssh, port 22) are never overridden.
 	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
 		{Dst: "a.com"},
-		{Dst: "b.com", Proto: "ssh"},
+		{Dst: "b.com", Proto: "ssh", Port: 22},
 	}))
 
 	rules, err := mgr.List(t.Context())
@@ -145,7 +147,9 @@ func TestAddRules_NormalizesEmptyFields(t *testing.T) {
 	require.Len(t, rules, 2)
 
 	assert.Equal(t, "tls", rules[0].Proto)
+	assert.Equal(t, 443, rules[0].Port)
 	assert.Equal(t, "allow", rules[0].Action)
 	assert.Equal(t, "ssh", rules[1].Proto)
+	assert.Equal(t, 22, rules[1].Port)
 	assert.Equal(t, "allow", rules[1].Action)
 }

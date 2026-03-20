@@ -77,17 +77,20 @@ func NewCmdServe(f *cmdutil.Factory, runF func(context.Context, *UpOptions) erro
 // firewallLogger returns a logger closure that writes to firewall.log
 // instead of the shared clawker.log. The daemon is a long-lived subprocess
 // whose logs must be isolated for debugging.
+// Falls back to logger.Nop() if file logging cannot be initialized,
+// matching the pattern used by hostproxy and bridge daemons — a running
+// firewall without logging is preferable to no firewall at all.
 func firewallLogger(cfgFn func() (config.Config, error)) func() (*logger.Logger, error) {
 	return func() (*logger.Logger, error) {
-		cfg, err := cfgFn()
-		if err != nil {
-			return nil, fmt.Errorf("loading config for firewall logger: %w", err)
+		log := logger.Nop()
+		if cfg, cfgErr := cfgFn(); cfgErr == nil {
+			if logsDir, dirErr := cfg.LogsSubdir(); dirErr == nil {
+				if l, lErr := logger.New(logger.Options{LogsDir: logsDir, Filename: "firewall.log"}); lErr == nil {
+					log = l
+				}
+			}
 		}
-		logsDir, err := cfg.LogsSubdir()
-		if err != nil {
-			return nil, fmt.Errorf("resolving logs directory: %w", err)
-		}
-		return logger.New(logger.Options{LogsDir: logsDir, Filename: "firewall.log"})
+		return log, nil
 	}
 }
 

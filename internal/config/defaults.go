@@ -9,17 +9,17 @@ package config
 // api.anthropic.com.
 var requiredFirewallRules = []EgressRule{
 	// Claude Code — API and OAuth
-	{Dst: "api.anthropic.com", Proto: "tls", Action: "allow"},
-	{Dst: "platform.claude.com", Proto: "tls", Action: "allow"},
-	{Dst: "claude.ai", Proto: "tls", Action: "allow"},
+	{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "platform.claude.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
 	// Claude Code — telemetry
-	{Dst: "sentry.io", Proto: "tls", Action: "allow"},
-	{Dst: "statsig.anthropic.com", Proto: "tls", Action: "allow"},
-	{Dst: "statsig.com", Proto: "tls", Action: "allow"},
+	{Dst: "sentry.io", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "statsig.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "statsig.com", Proto: "tls", Port: 443, Action: "allow"},
 	// Container image pulls
-	{Dst: "registry-1.docker.io", Proto: "tls", Action: "allow"},
-	{Dst: "production.cloudflare.docker.com", Proto: "tls", Action: "allow"},
-	{Dst: "docker.io", Proto: "tls", Action: "allow"},
+	{Dst: "registry-1.docker.io", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "production.cloudflare.docker.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "docker.io", Proto: "tls", Port: 443, Action: "allow"},
 }
 
 // requiredFirewallDomains is derived from requiredFirewallRules for backwards compatibility.

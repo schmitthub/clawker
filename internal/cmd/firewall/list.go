@@ -76,7 +76,7 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 	}
 
 	if len(rules) == 0 {
-		fmt.Fprintln(ios.ErrOut, "No active firewall rules.")
+		fmt.Fprintln(ios.Out, "No active firewall rules.")
 		return nil
 	}
 

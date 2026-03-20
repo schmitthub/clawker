@@ -21,9 +21,10 @@ func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {
 	)
 }
 
-// normalizeRule fills in defaults so stored rules are explicit and unambiguous.
-// Only add_domains convenience rules get proto/port defaults (TLS/443).
-// Explicit rules (ssh, http, tcp) require the user to set port in config.
+// normalizeRule fills in missing fields before storage so rules are explicit and
+// unambiguous. Empty proto defaults to "tls", empty action to "allow", and TLS
+// rules with no port default to 443. Existing non-zero values are never overridden.
+// Users should set full rules — this is a storage safety net, not a feature.
 func normalizeRule(r config.EgressRule) config.EgressRule {
 	if r.Proto == "" {
 		r.Proto = "tls"
