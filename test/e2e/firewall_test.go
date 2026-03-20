@@ -571,3 +571,338 @@ firewall:
 	require.False(t, stack, "firewall stack should not be running when firewall is disabled")
 
 }
+
+func TestFirewall_PathRulesDefaultDeny(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			Firewall:       firewall.NewManager,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	// Allow example.com on HTTP with path rules: only /test is allowed, default deny.
+	// Path: DNS → CoreDNS → iptables --dport 80 → DNAT envoy:10080
+	// → http_connection_manager → Host header → virtual host → path prefix match
+	// /test → forward to upstream; anything else → 403 (path_default: deny)
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+security:
+  firewall:
+    rules:
+      - dst: "example.com"
+        proto: "http"
+        port: 80
+        action: "allow"
+        path_rules:
+          - path: "/test"
+            action: "allow"
+        path_default: "deny"
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", "path-default-deny", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() {
+		h.Run("container", "stop", "--agent", "path-default-deny")
+	})
+
+	// Allowed path: /test should reach upstream through firewall.
+	// example.com may return 200 or 404 for /test — either is fine, it means traffic got through.
+	allowedRes := h.ExecInContainer("path-default-deny",
+		"curl", "-s", "--max-time", "15", "--connect-timeout", "10",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"http://example.com/test")
+	require.NoError(t, allowedRes.Err,
+		"curl to allowed path /test should succeed\nstdout: %s\nstderr: %s",
+		allowedRes.Stdout, allowedRes.Stderr)
+	httpCode := strings.TrimSpace(allowedRes.Stdout)
+	assert.NotEqual(t, "403", httpCode,
+		"allowed path /test should not return 403 (Envoy block), got %q", httpCode)
+
+	// Denied path: /evil should be blocked by Envoy with 403 (path_default: deny).
+	deniedRes := h.ExecInContainer("path-default-deny",
+		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"http://example.com/evil")
+	require.NoError(t, deniedRes.Err,
+		"curl to denied path should get HTTP 403 (not connection error)\nstdout: %s\nstderr: %s",
+		deniedRes.Stdout, deniedRes.Stderr)
+	deniedCode := strings.TrimSpace(deniedRes.Stdout)
+	assert.Equal(t, "403", deniedCode,
+		"denied path /evil should return 403 from Envoy, got %q", deniedCode)
+
+	// Verify the 403 body contains the firewall block message.
+	bodyRes := h.ExecInContainer("path-default-deny",
+		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+		"http://example.com/evil")
+	require.NoError(t, bodyRes.Err, "body check curl should succeed")
+	assert.Contains(t, bodyRes.Stdout, "Blocked by clawker firewall",
+		"denied path should return firewall block message in body")
+}
+
+func TestFirewall_PathRulesExplicitDeny(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			Firewall:       firewall.NewManager,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	// Allow example.com on HTTP with path rules: /evil is explicitly denied, default allow.
+	// Path: DNS → CoreDNS → iptables --dport 80 → DNAT envoy:10080
+	// → http_connection_manager → Host header → virtual host → path prefix match
+	// /evil → 403; anything else → forward to upstream (path_default: allow)
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+security:
+  firewall:
+    rules:
+      - dst: "example.com"
+        proto: "http"
+        port: 80
+        action: "allow"
+        path_rules:
+          - path: "/evil"
+            action: "deny"
+        path_default: "allow"
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", "path-explicit-deny", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() {
+		h.Run("container", "stop", "--agent", "path-explicit-deny")
+	})
+
+	// Allowed path: / should reach upstream (path_default: allow).
+	allowedRes := h.ExecInContainer("path-explicit-deny",
+		"curl", "-s", "--max-time", "15", "--connect-timeout", "10",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"http://example.com/")
+	require.NoError(t, allowedRes.Err,
+		"curl to allowed path / should succeed\nstdout: %s\nstderr: %s",
+		allowedRes.Stdout, allowedRes.Stderr)
+	httpCode := strings.TrimSpace(allowedRes.Stdout)
+	assert.Contains(t, []string{"200", "301", "302"}, httpCode,
+		"allowed path / should get valid response from example.com, got %q", httpCode)
+
+	// Explicitly denied path: /evil should be blocked by Envoy with 403.
+	deniedRes := h.ExecInContainer("path-explicit-deny",
+		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"http://example.com/evil")
+	require.NoError(t, deniedRes.Err,
+		"curl to denied path should get HTTP 403 (not connection error)\nstdout: %s\nstderr: %s",
+		deniedRes.Stdout, deniedRes.Stderr)
+	deniedCode := strings.TrimSpace(deniedRes.Stdout)
+	assert.Equal(t, "403", deniedCode,
+		"explicitly denied path /evil should return 403 from Envoy, got %q", deniedCode)
+
+	// Verify the 403 body contains the firewall block message.
+	bodyRes := h.ExecInContainer("path-explicit-deny",
+		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+		"http://example.com/evil")
+	require.NoError(t, bodyRes.Err, "body check curl should succeed")
+	assert.Contains(t, bodyRes.Stdout, "Blocked by clawker firewall",
+		"denied path should return firewall block message in body")
+}
+
+func TestFirewall_TLSPathRulesDefaultDeny(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			Firewall:       firewall.NewManager,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	// TLS rule with MITM path inspection: only /test allowed, default deny.
+	// Path: DNS → CoreDNS → iptables --dport 443 → DNAT envoy:10000
+	// → tls_inspector (SNI) → MITM filter chain (TLS termination + domain cert)
+	// → http_connection_manager → path prefix match → allow or 403
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+security:
+  firewall:
+    rules:
+      - dst: "example.com"
+        proto: "tls"
+        port: 443
+        action: "allow"
+        path_rules:
+          - path: "/test"
+            action: "allow"
+        path_default: "deny"
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", "tls-path-default", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() {
+		h.Run("container", "stop", "--agent", "tls-path-default")
+	})
+
+	// Allowed path: /test should reach upstream through MITM proxy.
+	allowedRes := h.ExecInContainer("tls-path-default",
+		"curl", "-s", "--max-time", "15", "--connect-timeout", "10",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"https://example.com/test")
+	require.NoError(t, allowedRes.Err,
+		"curl to allowed path /test should succeed\nstdout: %s\nstderr: %s",
+		allowedRes.Stdout, allowedRes.Stderr)
+	httpCode := strings.TrimSpace(allowedRes.Stdout)
+	assert.NotEqual(t, "403", httpCode,
+		"allowed path /test should not return 403 (Envoy block), got %q", httpCode)
+
+	// Denied path: /evil should be blocked by Envoy MITM with 403.
+	deniedRes := h.ExecInContainer("tls-path-default",
+		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"https://example.com/evil")
+	require.NoError(t, deniedRes.Err,
+		"curl to denied path should get HTTP 403 (not connection error)\nstdout: %s\nstderr: %s",
+		deniedRes.Stdout, deniedRes.Stderr)
+	deniedCode := strings.TrimSpace(deniedRes.Stdout)
+	assert.Equal(t, "403", deniedCode,
+		"denied path /evil should return 403 from Envoy MITM, got %q", deniedCode)
+
+	// Verify block message in body.
+	bodyRes := h.ExecInContainer("tls-path-default",
+		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+		"https://example.com/evil")
+	require.NoError(t, bodyRes.Err, "body check curl should succeed")
+	assert.Contains(t, bodyRes.Stdout, "Blocked by clawker firewall",
+		"denied path should return firewall block message in body")
+}
+
+func TestFirewall_TLSPathRulesExplicitDeny(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			Firewall:       firewall.NewManager,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	// TLS rule with MITM: /evil explicitly denied, default allow.
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+security:
+  firewall:
+    rules:
+      - dst: "example.com"
+        proto: "tls"
+        port: 443
+        action: "allow"
+        path_rules:
+          - path: "/evil"
+            action: "deny"
+        path_default: "allow"
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	// Start firewall before build so CA cert gets baked into the image.
+	upRes := h.Run("firewall", "up")
+	require.NoError(t, upRes.Err, "firewall up failed\nstdout: %s\nstderr: %s",
+		upRes.Stdout, upRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", "tls-path-explicit", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() {
+		h.Run("container", "stop", "--agent", "tls-path-explicit")
+	})
+
+	// Allowed path: / should reach upstream through MITM proxy.
+	allowedRes := h.ExecInContainer("tls-path-explicit",
+		"curl", "-s", "--max-time", "15", "--connect-timeout", "10",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"https://example.com/")
+	require.NoError(t, allowedRes.Err,
+		"curl to allowed path / should succeed\nstdout: %s\nstderr: %s",
+		allowedRes.Stdout, allowedRes.Stderr)
+	httpCode := strings.TrimSpace(allowedRes.Stdout)
+	assert.Contains(t, []string{"200", "301", "302"}, httpCode,
+		"allowed path / should get valid response from example.com, got %q", httpCode)
+
+	// Explicitly denied path: /evil should be blocked by Envoy MITM with 403.
+	deniedRes := h.ExecInContainer("tls-path-explicit",
+		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"https://example.com/evil")
+	require.NoError(t, deniedRes.Err,
+		"curl to denied path should get HTTP 403 (not connection error)\nstdout: %s\nstderr: %s",
+		deniedRes.Stdout, deniedRes.Stderr)
+	deniedCode := strings.TrimSpace(deniedRes.Stdout)
+	assert.Equal(t, "403", deniedCode,
+		"explicitly denied path /evil should return 403 from Envoy MITM, got %q", deniedCode)
+
+	// Verify block message in body.
+	bodyRes := h.ExecInContainer("tls-path-explicit",
+		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+		"https://example.com/evil")
+	require.NoError(t, bodyRes.Err, "body check curl should succeed")
+	assert.Contains(t, bodyRes.Stdout, "Blocked by clawker firewall",
+		"denied path should return firewall block message in body")
+}

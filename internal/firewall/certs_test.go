@@ -14,9 +14,9 @@ import (
 )
 
 func TestEnsureCA_CreatesNew(t *testing.T) {
-	dataDir := t.TempDir()
+	certDir := t.TempDir()
 
-	caCert, caKey, err := firewall.EnsureCA(dataDir)
+	caCert, caKey, err := firewall.EnsureCA(certDir)
 	require.NoError(t, err)
 
 	assert.True(t, caCert.IsCA)
@@ -24,17 +24,17 @@ func TestEnsureCA_CreatesNew(t *testing.T) {
 	assert.Equal(t, x509.KeyUsageCertSign|x509.KeyUsageCRLSign, caCert.KeyUsage)
 	assert.NotNil(t, caKey)
 
-	assert.FileExists(t, filepath.Join(dataDir, "certs", "ca-cert.pem"))
-	assert.FileExists(t, filepath.Join(dataDir, "certs", "ca-key.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "ca-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "ca-key.pem"))
 }
 
 func TestEnsureCA_LoadsExisting(t *testing.T) {
-	dataDir := t.TempDir()
+	certDir := t.TempDir()
 
-	cert1, key1, err := firewall.EnsureCA(dataDir)
+	cert1, key1, err := firewall.EnsureCA(certDir)
 	require.NoError(t, err)
 
-	cert2, key2, err := firewall.EnsureCA(dataDir)
+	cert2, key2, err := firewall.EnsureCA(certDir)
 	require.NoError(t, err)
 
 	// Same CA loaded — serial numbers and keys must match.
@@ -43,8 +43,8 @@ func TestEnsureCA_LoadsExisting(t *testing.T) {
 }
 
 func TestGenerateDomainCert_Valid(t *testing.T) {
-	dataDir := t.TempDir()
-	caCert, caKey, err := firewall.EnsureCA(dataDir)
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
 	require.NoError(t, err)
 
 	certPEM, keyPEM, err := firewall.GenerateDomainCert(caCert, caKey, "github.com")
@@ -80,8 +80,8 @@ func TestGenerateDomainCert_Valid(t *testing.T) {
 }
 
 func TestRegenerateDomainCerts_OnlyForPathRules(t *testing.T) {
-	dataDir := t.TempDir()
-	caCert, caKey, err := firewall.EnsureCA(dataDir)
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
 	require.NoError(t, err)
 
 	rules := []config.EgressRule{
@@ -108,25 +108,23 @@ func TestRegenerateDomainCerts_OnlyForPathRules(t *testing.T) {
 		},
 	}
 
-	err = firewall.RegenerateDomainCerts(rules, dataDir, caCert, caKey)
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
 	require.NoError(t, err)
 
-	certsPath := filepath.Join(dataDir, "certs")
-
 	// github.com should NOT have certs (no PathRules).
-	assert.NoFileExists(t, filepath.Join(certsPath, "github.com-cert.pem"))
-	assert.NoFileExists(t, filepath.Join(certsPath, "github.com-key.pem"))
+	assert.NoFileExists(t, filepath.Join(certDir, "github.com-cert.pem"))
+	assert.NoFileExists(t, filepath.Join(certDir, "github.com-key.pem"))
 
 	// api.openai.com SHOULD have certs (has PathRules).
-	assert.FileExists(t, filepath.Join(certsPath, "api.openai.com-cert.pem"))
-	assert.FileExists(t, filepath.Join(certsPath, "api.openai.com-key.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "api.openai.com-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "api.openai.com-key.pem"))
 
 	// storage.googleapis.com SHOULD have certs (has PathRules).
-	assert.FileExists(t, filepath.Join(certsPath, "storage.googleapis.com-cert.pem"))
-	assert.FileExists(t, filepath.Join(certsPath, "storage.googleapis.com-key.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "storage.googleapis.com-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "storage.googleapis.com-key.pem"))
 
 	// Verify one of the generated certs is valid and CA-signed.
-	certPEM, err := os.ReadFile(filepath.Join(certsPath, "api.openai.com-cert.pem"))
+	certPEM, err := os.ReadFile(filepath.Join(certDir, "api.openai.com-cert.pem"))
 	require.NoError(t, err)
 	block, _ := pem.Decode(certPEM)
 	require.NotNil(t, block)
@@ -144,10 +142,10 @@ func TestRegenerateDomainCerts_OnlyForPathRules(t *testing.T) {
 }
 
 func TestRotateCA_RegeneratesAll(t *testing.T) {
-	dataDir := t.TempDir()
+	certDir := t.TempDir()
 
 	// Create initial CA and domain certs.
-	oldCACert, oldCAKey, err := firewall.EnsureCA(dataDir)
+	oldCACert, oldCAKey, err := firewall.EnsureCA(certDir)
 	require.NoError(t, err)
 
 	rules := []config.EgressRule{
@@ -160,24 +158,24 @@ func TestRotateCA_RegeneratesAll(t *testing.T) {
 			PathDefault: "deny",
 		},
 	}
-	err = firewall.RegenerateDomainCerts(rules, dataDir, oldCACert, oldCAKey)
+	err = firewall.RegenerateDomainCerts(rules, certDir, oldCACert, oldCAKey)
 	require.NoError(t, err)
 
 	// Read old domain cert for comparison.
-	oldDomainCertPEM, err := os.ReadFile(filepath.Join(dataDir, "certs", "api.openai.com-cert.pem"))
+	oldDomainCertPEM, err := os.ReadFile(filepath.Join(certDir, "api.openai.com-cert.pem"))
 	require.NoError(t, err)
 
 	// Rotate.
-	err = firewall.RotateCA(dataDir, rules)
+	err = firewall.RotateCA(certDir, rules)
 	require.NoError(t, err)
 
 	// New CA should exist and be different.
-	newCACert, _, err := firewall.EnsureCA(dataDir)
+	newCACert, _, err := firewall.EnsureCA(certDir)
 	require.NoError(t, err)
 	assert.NotEqual(t, oldCACert.SerialNumber, newCACert.SerialNumber, "CA serial should change after rotation")
 
 	// New domain cert should exist and be different.
-	newDomainCertPEM, err := os.ReadFile(filepath.Join(dataDir, "certs", "api.openai.com-cert.pem"))
+	newDomainCertPEM, err := os.ReadFile(filepath.Join(certDir, "api.openai.com-cert.pem"))
 	require.NoError(t, err)
 	assert.NotEqual(t, oldDomainCertPEM, newDomainCertPEM, "domain cert should be regenerated")
 

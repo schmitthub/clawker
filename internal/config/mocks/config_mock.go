@@ -85,6 +85,9 @@ var _ config.Config = &ConfigMock{}
 //			EnvoyTLSPortFunc: func() int {
 //				panic("mock out the EnvoyTLSPort method")
 //			},
+//			FirewallCertSubdirFunc: func() (string, error) {
+//				panic("mock out the FirewallCertSubdir method")
+//			},
 //			FirewallDataSubdirFunc: func() (string, error) {
 //				panic("mock out the FirewallDataSubdir method")
 //			},
@@ -302,6 +305,9 @@ type ConfigMock struct {
 	// EnvoyTLSPortFunc mocks the EnvoyTLSPort method.
 	EnvoyTLSPortFunc func() int
 
+	// FirewallCertSubdirFunc mocks the FirewallCertSubdir method.
+	FirewallCertSubdirFunc func() (string, error)
+
 	// FirewallDataSubdirFunc mocks the FirewallDataSubdir method.
 	FirewallDataSubdirFunc func() (string, error)
 
@@ -516,6 +522,9 @@ type ConfigMock struct {
 		// EnvoyTLSPort holds details about calls to the EnvoyTLSPort method.
 		EnvoyTLSPort []struct {
 		}
+		// FirewallCertSubdir holds details about calls to the FirewallCertSubdir method.
+		FirewallCertSubdir []struct {
+		}
 		// FirewallDataSubdir holds details about calls to the FirewallDataSubdir method.
 		FirewallDataSubdir []struct {
 		}
@@ -695,6 +704,7 @@ type ConfigMock struct {
 	lockEnvoyIPLastOctet        sync.RWMutex
 	lockEnvoyTCPPortBase        sync.RWMutex
 	lockEnvoyTLSPort            sync.RWMutex
+	lockFirewallCertSubdir      sync.RWMutex
 	lockFirewallDataSubdir      sync.RWMutex
 	lockFirewallLogFilePath     sync.RWMutex
 	lockFirewallPIDFilePath     sync.RWMutex
@@ -1341,6 +1351,33 @@ func (mock *ConfigMock) EnvoyTLSPortCalls() []struct {
 	mock.lockEnvoyTLSPort.RLock()
 	calls = mock.calls.EnvoyTLSPort
 	mock.lockEnvoyTLSPort.RUnlock()
+	return calls
+}
+
+// FirewallCertSubdir calls FirewallCertSubdirFunc.
+func (mock *ConfigMock) FirewallCertSubdir() (string, error) {
+	if mock.FirewallCertSubdirFunc == nil {
+		panic("ConfigMock.FirewallCertSubdirFunc: method is nil but Config.FirewallCertSubdir was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockFirewallCertSubdir.Lock()
+	mock.calls.FirewallCertSubdir = append(mock.calls.FirewallCertSubdir, callInfo)
+	mock.lockFirewallCertSubdir.Unlock()
+	return mock.FirewallCertSubdirFunc()
+}
+
+// FirewallCertSubdirCalls gets all the calls that were made to FirewallCertSubdir.
+// Check the length with:
+//
+//	len(mockedConfig.FirewallCertSubdirCalls())
+func (mock *ConfigMock) FirewallCertSubdirCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockFirewallCertSubdir.RLock()
+	calls = mock.calls.FirewallCertSubdir
+	mock.lockFirewallCertSubdir.RUnlock()
 	return calls
 }
 

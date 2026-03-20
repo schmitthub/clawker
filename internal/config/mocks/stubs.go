@@ -51,7 +51,6 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.HostProxyConfigFunc = cfg.HostProxyConfig
 	mock.RequiredFirewallDomainsFunc = cfg.RequiredFirewallDomains
 	mock.EgressRulesFileNameFunc = cfg.EgressRulesFileName
-	mock.FirewallDataSubdirFunc = cfg.FirewallDataSubdir
 	mock.FirewallPIDFilePathFunc = cfg.FirewallPIDFilePath
 	mock.FirewallLogFilePathFunc = cfg.FirewallLogFilePath
 	mock.RequiredFirewallRulesFunc = cfg.RequiredFirewallRules
@@ -94,6 +93,8 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.LogsSubdirFunc = cfg.LogsSubdir
 	mock.BridgesSubdirFunc = cfg.BridgesSubdir
 	mock.PidsSubdirFunc = cfg.PidsSubdir
+	mock.FirewallDataSubdirFunc = cfg.FirewallDataSubdir
+	mock.FirewallCertSubdirFunc = cfg.FirewallCertSubdir
 	mock.ShareSubdirFunc = cfg.ShareSubdir
 	mock.WorktreesSubdirFunc = cfg.WorktreesSubdir
 	mock.BridgePIDFilePathFunc = cfg.BridgePIDFilePath

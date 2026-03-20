@@ -15,7 +15,7 @@
 - [x] Never tested firewall disable command
 - [x] never tested firewall disabled setting 
 - [x] firewall disable doesn't do agent selection "clawker firewall disable --agent dev" fails
-- [ ] no path rules e2e tests
+- [x] **Path rules e2e tests**: Fixed (2026-03-20) — Four tests added: `TestFirewall_PathRulesDefaultDeny` and `TestFirewall_PathRulesExplicitDeny` (HTTP), `TestFirewall_TLSPathRulesDefaultDeny` and `TestFirewall_TLSPathRulesExplicitDeny` (TLS MITM). Also fixed: `FirewallCertSubdir` accessor wired everywhere (replaced hardcoded `"certs"` paths), CA cert auto-generated at image build time by bundler's `generateCA` (bundler stays leaf — no firewall import).
 - [ ] No TCP support. Transparent tcp for random ports (like tls to 4443, http to 8080) not working. need to update envoy config
 - [x] **HTTP domain detection via Envoy listener**: Fixed (2026-03-20) — new `http_egress` listener on port 10080 uses `http_connection_manager` with per-domain virtual hosts (Host header = domain detection, mirrors TLS listener's SNI approach). Path rules supported via `buildHTTPRoutes`. HTTP port mappings flow through existing `tcp_mappings` iptables mechanism (deduplicated by port, all redirect to single HTTP listener). `normalizeRule` no longer defaults SSH to port 22 — all non-TLS protos require explicit port. New config: `EnvoyHTTPPort() = 10080`. New test: `TestFirewall_HTTPDomainDetection` (curls `http://example.com/` through firewall).
 - [ ] Never tested http over raw IP with no domain. should have been implemented but may have been skipped by you lazy eager agents who love to cut corners and avoid features you find icky instead of just googling it

@@ -597,8 +597,14 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 		return "", fmt.Errorf("resolving firewall data dir: %w", err)
 	}
 
+	// Resolve cert directory via config accessor.
+	certDir, err := m.cfg.FirewallCertSubdir()
+	if err != nil {
+		return "", fmt.Errorf("resolving firewall cert dir: %w", err)
+	}
+
 	// Ensure certs exist (CA + domain certs for MITM rules).
-	caCert, caKey, err := EnsureCA(dataDir)
+	caCert, caKey, err := EnsureCA(certDir)
 	if err != nil {
 		return "", fmt.Errorf("ensuring CA: %w", err)
 	}
@@ -607,7 +613,7 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 	allRules := m.store.Read().Rules
 
 	// Regenerate domain certs for any MITM rules.
-	if err := RegenerateDomainCerts(allRules, dataDir, caCert, caKey); err != nil {
+	if err := RegenerateDomainCerts(allRules, certDir, caCert, caKey); err != nil {
 		return "", fmt.Errorf("regenerating domain certs: %w", err)
 	}
 
@@ -666,6 +672,7 @@ func (m *Manager) regenerateAndRestart(ctx context.Context) error {
 // envoyContainerConfig returns the container creation config for the Envoy proxy.
 // dataDir must be pre-validated (ensureConfigs checks FirewallDataSubdir before this is called).
 func (m *Manager) envoyContainerConfig(net *NetworkInfo, dataDir string) containerSpec {
+	certDir, _ := m.cfg.FirewallCertSubdir() // already validated in ensureConfigs
 	return containerSpec{
 		image:       envoyImage,
 		networkName: m.cfg.ClawkerNetwork(),
@@ -684,7 +691,7 @@ func (m *Manager) envoyContainerConfig(net *NetworkInfo, dataDir string) contain
 			},
 			{
 				Type:     mount.TypeBind,
-				Source:   filepath.Join(dataDir, "certs"),
+				Source:   certDir,
 				Target:   "/etc/envoy/certs",
 				ReadOnly: true,
 			},

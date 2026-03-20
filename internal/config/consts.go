@@ -43,6 +43,8 @@ const (
 	monitorSubdir = "monitor"
 	// firewallSubdir is the subdirectory for firewall runtime data (CA certs, generated configs)
 	firewallSubdir = "firewall"
+	// firewallCertSubdir is the subdirectory for firewall TLS certificates
+	firewallCertSubdir = firewallSubdir + "/certs"
 	// egressRulesFileName is the filename for the egress rules state file
 	egressRulesFileName = "egress-rules.yaml"
 	// buildSubdir is the subdirectory for build artifacts (versions.json, dockerfiles)
@@ -270,6 +272,11 @@ func (c *configImpl) MonitorSubdir() (string, error) { return subdirPath(monitor
 // FirewallDataSubdir ensures and returns the firewall data subdirectory path under DataDir.
 func (c *configImpl) FirewallDataSubdir() (string, error) {
 	return subdirPath(firewallSubdir, DataDir)
+}
+
+// FirewallCertSubdir ensures and returns the firewall certificate subdirectory path under DataDir.
+func (c *configImpl) FirewallCertSubdir() (string, error) {
+	return subdirPath(firewallCertSubdir, DataDir)
 }
 
 // EgressRulesFileName returns the filename for the egress rules state file.

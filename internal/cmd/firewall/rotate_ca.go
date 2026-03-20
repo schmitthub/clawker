@@ -65,12 +65,12 @@ func rotateCA(ctx context.Context, opts *RotateCAOptions) error {
 		return fmt.Errorf("listing rules for cert regeneration: %w", err)
 	}
 
-	dataDir, err := cfg.FirewallDataSubdir()
+	certDir, err := cfg.FirewallCertSubdir()
 	if err != nil {
-		return fmt.Errorf("resolving firewall data directory: %w", err)
+		return fmt.Errorf("resolving firewall cert directory: %w", err)
 	}
 
-	if err := fwpkg.RotateCA(dataDir, rules); err != nil {
+	if err := fwpkg.RotateCA(certDir, rules); err != nil {
 		return fmt.Errorf("rotating CA: %w", err)
 	}
 

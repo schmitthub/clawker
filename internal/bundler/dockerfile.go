@@ -3,10 +3,17 @@ package bundler
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"embed"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"io/fs"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/schmitthub/clawker/internal/config"
@@ -715,21 +723,83 @@ func convertRunInstructions(src []config.RunInstruction) []RunInstruction {
 	return result
 }
 
-// firewallCACertPath returns the path to the firewall CA cert if it exists.
-// Returns empty string if no CA cert is available.
+// firewallCACertPath ensures the firewall CA certificate exists and returns its path.
+// If the CA cert doesn't exist yet, it generates a new self-signed CA keypair.
+// This guarantees the CA is always available for baking into agent container images,
+// regardless of whether the firewall stack has been started before the build.
 func (g *ProjectGenerator) firewallCACertPath() (string, error) {
-	dataDir, err := g.cfg.FirewallDataSubdir()
+	certDir, err := g.cfg.FirewallCertSubdir()
 	if err != nil {
 		return "", err
 	}
-	caCertPath := filepath.Join(dataDir, "certs", "ca-cert.pem")
-	if _, err := os.Stat(caCertPath); err != nil {
-		if os.IsNotExist(err) {
-			return "", nil // CA cert not yet generated (firewall not started)
+
+	caCertPath := filepath.Join(certDir, "ca-cert.pem")
+	caKeyPath := filepath.Join(certDir, "ca-key.pem")
+
+	// If both files exist, return the cert path.
+	if _, err := os.Stat(caCertPath); err == nil {
+		if _, err := os.Stat(caKeyPath); err == nil {
+			return caCertPath, nil
 		}
-		return "", fmt.Errorf("checking firewall CA cert: %w", err)
 	}
+
+	// Generate a new CA keypair — the firewall hasn't created one yet.
+	if err := os.MkdirAll(certDir, 0o700); err != nil {
+		return "", fmt.Errorf("creating firewall cert dir: %w", err)
+	}
+
+	if err := generateCA(caCertPath, caKeyPath); err != nil {
+		return "", fmt.Errorf("generating firewall CA: %w", err)
+	}
+
 	return caCertPath, nil
+}
+
+// generateCA creates a self-signed CA keypair for Envoy MITM inspection.
+// The firewall package has its own EnsureCA that loads/creates the same files;
+// this is a standalone copy so the bundler stays a leaf package.
+func generateCA(certPath, keyPath string) error {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generating CA key: %w", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generating serial: %w", err)
+	}
+
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "Clawker Firewall CA"},
+		NotBefore:             now,
+		NotAfter:              now.AddDate(10, 0, 0),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return fmt.Errorf("creating CA certificate: %w", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		return fmt.Errorf("writing CA cert: %w", err)
+	}
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return fmt.Errorf("marshalling CA key: %w", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return fmt.Errorf("writing CA key: %w", err)
+	}
+
+	return nil
 }
 
 // addFileToTar adds a file to a tar archive.

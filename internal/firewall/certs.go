@@ -19,7 +19,6 @@ import (
 const (
 	caCertFile = "ca-cert.pem"
 	caKeyFile  = "ca-key.pem"
-	certsDir   = "certs"
 
 	caCommonName = "Clawker Firewall CA"
 	caValidYears = 10
@@ -27,15 +26,14 @@ const (
 	domainCertValidYears = 1
 )
 
-// EnsureCA creates a self-signed CA keypair if none exists under the certsDir
-// subdirectory of dataDir, or loads the existing one.
-func EnsureCA(dataDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
-	dir := filepath.Join(dataDir, certsDir)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+// EnsureCA creates a self-signed CA keypair if none exists under certDir,
+// or loads the existing one.
+func EnsureCA(certDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+	if err := os.MkdirAll(certDir, 0o700); err != nil {
 		return nil, nil, fmt.Errorf("creating certs directory: %w", err)
 	}
-	certPath := filepath.Join(dir, caCertFile)
-	keyPath := filepath.Join(dir, caKeyFile)
+	certPath := filepath.Join(certDir, caCertFile)
+	keyPath := filepath.Join(certDir, caKeyFile)
 
 	// If both files exist, load and return.
 	if fileExists(certPath) && fileExists(keyPath) {
@@ -126,11 +124,10 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 }
 
 // RegenerateDomainCerts generates certificates for all rules that have PathRules,
-// storing them in dataDir/certs/<domain>-cert.pem and <domain>-key.pem.
+// storing them in certDir/<domain>-cert.pem and <domain>-key.pem.
 // Rules without PathRules are skipped (SNI passthrough, no MITM needed).
-func RegenerateDomainCerts(rules []config.EgressRule, dataDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error {
-	dir := filepath.Join(dataDir, certsDir)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error {
+	if err := os.MkdirAll(certDir, 0o700); err != nil {
 		return fmt.Errorf("creating certs directory: %w", err)
 	}
 
@@ -144,8 +141,8 @@ func RegenerateDomainCerts(rules []config.EgressRule, dataDir string, caCert *x5
 			return fmt.Errorf("generating cert for %s: %w", rule.Dst, err)
 		}
 
-		certPath := filepath.Join(dir, rule.Dst+"-cert.pem")
-		keyPath := filepath.Join(dir, rule.Dst+"-key.pem")
+		certPath := filepath.Join(certDir, rule.Dst+"-cert.pem")
+		keyPath := filepath.Join(certDir, rule.Dst+"-key.pem")
 
 		if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
 			return fmt.Errorf("writing cert for %s: %w", rule.Dst, err)
@@ -161,18 +158,18 @@ func RegenerateDomainCerts(rules []config.EgressRule, dataDir string, caCert *x5
 // RotateCA regenerates the CA keypair and all domain certificates.
 // The old CA files are overwritten. Any running containers will need
 // the new CA injected to trust the regenerated domain certs.
-func RotateCA(dataDir string, rules []config.EgressRule) error {
+func RotateCA(certDir string, rules []config.EgressRule) error {
 	// Remove entire certs directory (CA + domain certs) so EnsureCA generates fresh ones.
-	if err := os.RemoveAll(filepath.Join(dataDir, certsDir)); err != nil {
+	if err := os.RemoveAll(certDir); err != nil {
 		return fmt.Errorf("removing old certs directory: %w", err)
 	}
 
-	caCert, caKey, err := EnsureCA(dataDir)
+	caCert, caKey, err := EnsureCA(certDir)
 	if err != nil {
 		return fmt.Errorf("regenerating CA: %w", err)
 	}
 
-	if err := RegenerateDomainCerts(rules, dataDir, caCert, caKey); err != nil {
+	if err := RegenerateDomainCerts(rules, certDir, caCert, caKey); err != nil {
 		return fmt.Errorf("regenerating domain certs: %w", err)
 	}
 

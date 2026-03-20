@@ -84,6 +84,7 @@ type Config interface {
 	RequiredFirewallDomains() []string
 	EgressRulesFileName() string
 	FirewallDataSubdir() (string, error)
+	FirewallCertSubdir() (string, error)
 	RequiredFirewallRules() []EgressRule
 	EnvoyIPLastOctet() byte
 	CoreDNSIPLastOctet() byte

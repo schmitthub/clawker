@@ -99,13 +99,26 @@ Full rule specification for fine-grained control:
 | Field | Type | Description |
 |-------|------|-------------|
 | `dst` | string | Domain name or IP address |
-| `proto` | string | `tls`, `tcp`, or `ssh` (default: `tls`) |
-| `port` | int | Destination port (default: 443 for TLS, 22 for SSH) |
+| `proto` | string | `tls`, `http`, `tcp`, or `ssh` |
+| `port` | int | Destination port |
 | `action` | string | `allow` or `deny` (default: `allow`) |
-| `path_rules` | list | Optional path patterns for TLS MITM inspection (each entry has `path` and `action`) |
-| `path_default` | string | Default action for paths not matching any `path_rules` entry |
+| `path_rules` | list | Optional path prefix rules (each entry has `path` and `action`). Supported on `tls` and `http` protocols |
+| `path_default` | string | Default action for paths not matching any `path_rules` entry (default: `deny`) |
 
-When `path_rules` is specified, Envoy performs TLS interception (MITM) for that domain --- it terminates the TLS connection, inspects the HTTP path, and only forwards requests matching the path patterns. Without `path_rules`, the domain uses SNI passthrough (no inspection).
+#### Protocol behavior
+
+- **`tls`** (default) --- HTTPS traffic. Without `path_rules`, uses SNI passthrough (no inspection). With `path_rules`, Envoy terminates TLS (MITM), inspects the HTTP path, and forwards or blocks based on path prefix matching.
+- **`http`** --- Plain HTTP traffic. Envoy inspects the Host header for domain matching and applies path rules directly. No TLS involved.
+- **`tcp`** --- Raw TCP forwarding to a specific port. No domain or path inspection.
+- **`ssh`** --- SSH traffic forwarding. Functionally identical to `tcp` but semantically distinct.
+
+#### Path rules
+
+Path rules give you fine-grained control over which URL paths are allowed for a domain. Envoy uses **prefix matching** --- a rule for `/api/v1` matches `/api/v1`, `/api/v1/users`, `/api/v1/models/list`, etc.
+
+When `path_rules` is specified, `path_default` controls what happens to paths that don't match any rule. It defaults to `deny`, meaning only explicitly allowed paths get through.
+
+**Pattern 1: Allow specific paths, deny everything else** (default deny)
 
 ```yaml
 security:
@@ -116,9 +129,45 @@ security:
         port: 443
         action: allow
         path_rules:
-          - path: "/v1/chat/*"
+          - path: "/v1/chat"
             action: allow
           - path: "/v1/models"
+            action: allow
+        path_default: deny  # this is the default, shown for clarity
+```
+
+Requests to `/v1/chat/completions` and `/v1/models` are forwarded. Everything else (e.g., `/admin`, `/internal`) gets a `403 Blocked by clawker firewall` response.
+
+**Pattern 2: Deny specific paths, allow everything else**
+
+```yaml
+security:
+  firewall:
+    rules:
+      - dst: "example.com"
+        proto: http
+        port: 80
+        action: allow
+        path_rules:
+          - path: "/evil"
+            action: deny
+        path_default: allow
+```
+
+All paths are forwarded except those starting with `/evil`, which get a `403`.
+
+**Mixed protocol examples:**
+
+```yaml
+security:
+  firewall:
+    rules:
+      - dst: "api.example.com"
+        proto: tls
+        port: 443
+        action: allow
+        path_rules:
+          - path: "/v1/chat"
             action: allow
         path_default: deny
       - dst: "git.internal.corp"
@@ -128,6 +177,10 @@ security:
       - dst: "10.0.0.5"
         proto: tcp
         port: 8080
+        action: allow
+      - dst: "example.com"
+        proto: http
+        port: 80
         action: allow
 ```
 
@@ -167,10 +220,10 @@ All firewall operations are available under `clawker firewall`:
 
 The firewall uses a self-signed certificate authority for TLS inspection:
 
-- A **ECDSA P256 CA** is generated on first run and persisted in the firewall data directory
+- An **ECDSA P256 CA** is auto-generated during `clawker build` and baked into agent container images via `update-ca-certificates`
 - Per-domain MITM certificates are generated on demand for domains with `path_rules` (TLS inspection)
 - Domains without `path_rules` use SNI passthrough --- no certificate needed
-- The CA certificate is injected into agent containers at creation time so they trust the MITM certificates
+- The CA keypair is persisted in the firewall data directory and shared between the bundler and firewall manager
 - Use `clawker firewall rotate-ca` to regenerate the CA and all domain certs
 
 <Note>
