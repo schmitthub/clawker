@@ -233,11 +233,13 @@ func ProjectRules(cfg config.Config) []config.EgressRule {
 
 // addRulesToStore deduplicates and writes rules to the store. Returns true if any new rules were added.
 func (m *Manager) addRulesToStore(rules []config.EgressRule) (bool, error) {
-	current := m.store.Read()
+	// Normalize and dedup existing rules so legacy port:0 entries are
+	// healed on disk and dedup comparisons work against clean keys.
+	existing := normalizeAndDedup(m.store.Read().Rules)
 
-	known := make(map[string]struct{}, len(current.Rules))
-	for _, r := range current.Rules {
-		known[ruleKey(normalizeRule(r))] = struct{}{}
+	known := make(map[string]struct{}, len(existing))
+	for _, r := range existing {
+		known[ruleKey(r)] = struct{}{}
 	}
 
 	var newRules []config.EgressRule
@@ -256,7 +258,7 @@ func (m *Manager) addRulesToStore(rules []config.EgressRule) (bool, error) {
 	}
 
 	if err := m.store.Set(func(f *EgressRulesFile) {
-		f.Rules = append(f.Rules, newRules...)
+		f.Rules = append(existing, newRules...)
 	}); err != nil {
 		return false, fmt.Errorf("updating rules: %w", err)
 	}
@@ -279,15 +281,17 @@ func (m *Manager) removeRulesFromStore(toRemove []config.EgressRule) error {
 		removeSet[ruleKey(normalizeRule(r))] = struct{}{}
 	}
 
-	current := m.store.Read()
-	filtered := make([]config.EgressRule, 0, len(current.Rules))
-	for _, r := range current.Rules {
+	// Normalize and dedup before filtering so legacy port:0 entries are
+	// cleaned up on disk and comparisons work against normalized keys.
+	normalized := normalizeAndDedup(m.store.Read().Rules)
+	filtered := make([]config.EgressRule, 0, len(normalized))
+	for _, r := range normalized {
 		if _, remove := removeSet[ruleKey(r)]; !remove {
 			filtered = append(filtered, r)
 		}
 	}
 
-	if len(filtered) == len(current.Rules) {
+	if len(filtered) == len(normalized) {
 		return nil
 	}
 
@@ -609,10 +613,30 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 		return "", fmt.Errorf("ensuring CA: %w", err)
 	}
 
-	// Read current rules from store, normalizing and deduplicating.
-	// Legacy store files may contain port:0 rules written before normalizeRule
-	// defaulted TLS to 443, causing both duplicates and invalid Envoy configs.
-	allRules := normalizeAndDedup(m.store.Read().Rules)
+	// Normalize, dedup, and heal the store. Legacy files may contain port:0
+	// rules written before normalizeRule defaulted TLS to 443.
+	raw := m.store.Read().Rules
+	allRules := normalizeAndDedup(raw)
+
+	// Detect dirty store: port:0 entries need normalization, length mismatch
+	// means normalizeAndDedup collapsed duplicates. Either condition triggers
+	// a write-back so the on-disk file is healed for future reads.
+	hasPort0 := false
+	for _, r := range raw {
+		if r.Port == 0 {
+			hasPort0 = true
+			break
+		}
+	}
+	if hasPort0 || len(allRules) != len(raw) {
+		if err := m.store.Set(func(f *EgressRulesFile) { f.Rules = allRules }); err != nil {
+			return "", fmt.Errorf("healing rules store: %w", err)
+		}
+		if err := m.store.Write(); err != nil {
+			return "", fmt.Errorf("writing healed rules: %w", err)
+		}
+		m.log.Info().Int("before", len(raw)).Int("after", len(allRules)).Msg("healed legacy rules in store")
+	}
 
 	// Regenerate domain certs for any MITM rules.
 	if err := RegenerateDomainCerts(allRules, certDir, caCert, caKey); err != nil {
