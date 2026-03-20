@@ -175,11 +175,14 @@ func TestMyCommand(t *testing.T) {
 
 ### E2E Test Harness (`test/e2e/harness/`)
 
-For integration tests with real Docker:
+For E2E tests exercising the full stack with real Docker:
 
 ```go
 h := &harness.Harness{T: t, Opts: &harness.FactoryOptions{
-    Config: func() (config.Config, error) { return testCfg, nil },
+    Config:         config.NewConfig,
+    Client:         docker.NewClient,
+    ProjectManager: project.NewProjectManager,
+    Firewall:       firewall.NewManager,
 }}
 setup := h.NewIsolatedFS(nil)
 
@@ -187,7 +190,7 @@ result := h.Run("firewall", "status", "--json")
 require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
 ```
 
-The `FactoryOptions` struct allows overriding individual dependencies. Nil fields use test fakes automatically (`configmocks`, `logger.Nop`, `dockertest.FakeClient`, etc.).
+Pass real constructors for any dependency you want to exercise against Docker. Nil fields default to test fakes (`configmocks`, `logger.Nop`, `dockertest.FakeClient`, etc.) — useful for tests that only need to exercise specific parts of the stack.
 
 ### Project Test Double Scenarios
 

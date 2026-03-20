@@ -4,7 +4,7 @@ description: "Set up the Grafana, Prometheus, Loki, and Jaeger monitoring stack 
 icon: "chart-mixed"
 ---
 
-Clawker includes an optional monitoring stack that collects telemetry from Claude Code agents running in containers. It provides real-time dashboards for metrics, logs, and traces — giving you visibility into what every agent is doing, how much it costs, what tools it's calling, and whether it's making progress.
+Clawker includes an optional monitoring stack that collects telemetry from Claude Code agents running in containers. It provides real-time dashboards for metrics and logs — giving you visibility into what every agent is doing, how much it costs, what tools it's calling, and whether it's making progress.
 
 <img src="/assets/monitor-top.png" alt="Grafana monitoring dashboard overview" />
 
@@ -39,11 +39,11 @@ The monitoring stack runs as five Docker Compose services on the `clawker-net` n
 ```
 Claude Code (in container)
     |
-    | OTLP (HTTP/gRPC)
+    | OTLP (HTTP/gRPC) — metrics & logs
     v
 OTEL Collector ──┬──> Prometheus (metrics)
                  ├──> Loki (logs)
-                 └──> Jaeger (traces)
+                 └──> Jaeger (traces — collector-ready, not yet emitted by agents)
                           |
                           v
                       Grafana (unified dashboards)
@@ -56,21 +56,23 @@ OTEL Collector ──┬──> Prometheus (metrics)
 | **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC) | Receives telemetry from agents and routes it to storage backends |
 | **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage — resource utilization, request counts, durations |
 | **Loki** | `grafana/loki` | 3100 | Log aggregation — structured events with tool details, prompts, decisions |
-| **Jaeger** | `jaegertracing/all-in-one` | 16686 | Distributed tracing — full call stacks and timing for each agent interaction |
+| **Jaeger** | `jaegertracing/all-in-one` | 16686 | Distributed tracing — collector pipeline is configured but agents don't emit traces yet |
 | **Grafana** | `grafana/grafana` | 3000 | Unified dashboards — pre-configured with all data sources and a Claude Code dashboard |
 
 All containers are pre-configured with labels and attached to the `clawker-net` network. Grafana starts with anonymous login enabled (no credentials required) and data sources pre-provisioned.
 
 ### How Agents Connect
 
-All Clawker containers have OTEL environment variables set automatically at creation time. These tell Claude Code where to send telemetry:
+OTEL endpoints are baked into every Clawker image at build time. At container creation, Clawker checks whether the monitoring stack is running and conditionally enables telemetry:
 
-- `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` — points to the collector's metrics endpoint
-- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` — points to the collector's logs endpoint
-- `CLAUDE_CODE_ENABLE_TELEMETRY=1` — enables Claude Code's built-in telemetry
+- `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` — points to the collector's metrics endpoint (baked into image)
+- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` — points to the collector's logs endpoint (baked into image)
+- `CLAUDE_CODE_ENABLE_TELEMETRY` — set to `1` when the `otel-collector` container is detected as running on `clawker-net`, set to `0` otherwise
 - `OTEL_RESOURCE_ATTRIBUTES` — tags with `project=` and `agent=` for filtering
 
-These variables are always set, regardless of whether the monitoring stack is running. If the collector isn't reachable, telemetry is silently dropped. This means you should **start the monitoring stack before starting your agents** — Claude Code doesn't retry failed collector connections.
+**Key behavior:** Telemetry is **only active when the monitoring stack is running** at the time the container is created. If the stack isn't up, Clawker explicitly disables telemetry so agents don't waste time attempting exports to an unreachable collector. You can force-enable telemetry via `agent.env` in your `.clawker.yaml` even when the stack is down, but Claude Code won't retry failed collector connections.
+
+**Start the monitoring stack before starting your agents** to ensure telemetry is captured.
 
 ## Setup
 
@@ -114,7 +116,7 @@ clawker run -it --agent dev @
 
 ### 4. View Dashboards
 
-Open Grafana at `http://localhost:3000`. The pre-configured Claude Code dashboard shows metrics, logs, and traces with per-project and per-agent filtering.
+Open Grafana at `http://localhost:3000`. The pre-configured Claude Code dashboard shows metrics and logs with per-project and per-agent filtering.
 
 ## Telemetry Controls
 
