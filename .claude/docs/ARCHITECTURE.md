@@ -71,6 +71,7 @@ Clawker follows the GitHub CLI's three-layer Factory pattern for dependency inje
 ```
 
 **Why this pattern:**
+
 - **Testability**: Tests construct `&cmdutil.Factory{IOStreams: tio}` with only needed fields
 - **Decoupling**: cmdutil has no construction logic; factory/ imports the heavy deps
 - **Transparent**: `f.Client(ctx)` syntax is identical for methods and closure fields
@@ -83,6 +84,7 @@ Clawker follows the GitHub CLI's three-layer Factory pattern for dependency inje
 Reusable library with label-based resource isolation. Standalone for use in other projects.
 
 **Core behavior:**
+
 - Injects managed label filter on list operations
 - Refuses to operate on resources without managed label
 - Wraps Docker SDK methods with label enforcement
@@ -92,6 +94,7 @@ Reusable library with label-based resource isolation. Standalone for use in othe
 Thin layer configuring whail with clawker's conventions.
 
 **Key abstractions:**
+
 - Labels: `dev.clawker.managed`, `dev.clawker.project`, `dev.clawker.agent`
 - Names: `clawker.project.agent` (containers), `clawker.project.agent-purpose` (volumes)
 - Client embeds `whail.Engine`, adding clawker-specific operations
@@ -149,6 +152,7 @@ Three packages form the configuration subsystem. `storage` is the engine, `confi
 ```
 
 **Key relationships:**
+
 - Commands never see `storage` — they use `Config` and `ProjectManager` interfaces
 - `config` and `project` are thin wrappers — they compose `Store[T]`, provide schemas/filenames/migrations, expose domain APIs
 - `storage` is the engine — discovery, load, migrate, merge, provenance, write
@@ -182,6 +186,7 @@ Write:  tree → route by provenance → per-file atomic write
 **XDG convenience options:** `WithConfigDir()`, `WithDataDir()`, `WithStateDir()`, `WithCacheDir()` resolve directory paths and add them to the explicit path list. Precedence: `CLAWKER_*_DIR` > `XDG_*_HOME` > default. Explicit paths check `{dir}/{filename}` directly (no dir/flat form).
 
 **Pipeline** (per file, before merge):
+
 1. Read YAML → `map[string]any`
 2. Run caller-provided migrations (precondition-based, idempotent)
 3. Atomic re-save if any migration fired
@@ -203,11 +208,13 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 **Design principle**: If a caller needs information from the config package, it must use an existing `Config` method or propose a new one on the interface. No reaching into package internals.
 
 **Two independent schemas, one interface:**
+
 - `Settings` — host infrastructure (logging, host_proxy, monitoring)
 - `Project` — project defaults (build, workspace, security, agent, loop). Tiered via walk-up.
 - Callers access both through namespaced sub-accessors: `cfg.Settings().Logging`, `cfg.Project().Build.Image`, `cfg.ConfigDir()`
 
 **File layout (full XDG — walk-up bounded at project root, never reaches HOME):**
+
 ```
 ~/.config/clawker/                   ← config (XDG_CONFIG_HOME)
   clawker.yaml                       ← ConfigFile (global project defaults)
@@ -232,12 +239,14 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 **Walk-up dual placement:** At each level, check for `.clawker/` dir first → use `clawker.yaml` inside it. No dir → fall back to `.clawker.yaml` flat dotfile. Mutually exclusive per directory.
 
 **What `configImpl` provides to `Store[T]`:**
+
 - Filenames (e.g., `"clawker.yaml"`, `"clawker.local.yaml"`) — ordered, same schema
 - Migration functions (schema evolution)
 - Schema types (`ConfigFile`, `SettingsFile`)
 - Discovery options (`WithWalkUp`, `WithConfig`) — anchors locked in at construction
 
 **What `configImpl` adds on top of `Store[T]`:**
+
 - `Config` interface with namespaced accessors
 - Path/constant helpers (`ConfigDir()`, `Domain()`, `LabelDomain()`, ~40 methods)
 - `SetProject`/`SetSettings` + `WriteProject`/`WriteSettings` — typed mutation wrappers around `Store[T].Set`/`Write`
@@ -245,6 +254,7 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 **Testing**: See `internal/config/CLAUDE.md` for test helpers and mocks.
 
 **Boundary:**
+
 - `config` defines schemas, filenames, migrations, and the domain interface.
 - `storage` does all the mechanical work — discovery, load, migrate, merge, write.
 - `project` owns project identity, CRUD, worktree lifecycle, and registry I/O.
@@ -257,6 +267,7 @@ Two parallel command interfaces:
 2. **Management Commands** (`clawker container/volume/network/image *`) - Docker CLI mimicry, positional args
 
 Management command structure:
+
 ```
 clawker container [list|inspect|logs|start|stop|kill|pause|unpause|restart|rename|wait|top|stats|update|exec|attach|cp|remove]
 clawker volume    [list|inspect|create|remove|prune]
@@ -271,6 +282,7 @@ clawker image     [list|inspect|build|remove|prune]
 Shared toolkit importable by all command packages.
 
 **Key abstractions:**
+
 - `Factory` — Pure struct with closure fields (no methods, no construction logic). Defines the dependency contract. Constructor lives in `internal/cmd/factory/default.go`.
 - Error types (`FlagError`, `SilentError`, `ExitError`) — centralized rendering in Main()
 - Format/filter flags (`FormatFlags`, `FilterFlags`, `WriteJSON`, `ExecuteTemplate`)
@@ -283,9 +295,11 @@ Shared toolkit importable by all command packages.
 Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy dependencies (config, project, docker, hostproxy, iostreams, logger, prompts) and wires `sync.Once` closures.
 
 **Key function:**
+
 - `New(version string) *cmdutil.Factory` — called exactly once at CLI entry point
 
 **Dependency wiring order:**
+
 1. Config (lazy, `config.NewConfig()` via `sync.Once` — walk-up + settings load) → 2. HostProxy (lazy, reads Config) → 3. SocketBridge (lazy, reads Config) → 4. IOStreams (eager, logger initialized from Config) → 5. TUI (eager, wraps IOStreams) → 6. Project (lazy, owns registry.yaml independently from Config) → 7. Client (lazy, reads Config) → 8. GitManager (lazy, reads Config) → 9. Prompter (lazy)
 
 Tests never import this package — they construct minimal `&cmdutil.Factory{}` structs directly.
@@ -295,12 +309,14 @@ Tests never import this package — they construct minimal `&cmdutil.Factory{}` 
 Testable I/O abstraction following the GitHub CLI pattern.
 
 **Key types:**
+
 - `IOStreams` - Core I/O with TTY detection, color support, progress indicators
 - `Logger` - Interface (`Debug/Info/Warn/Error() *zerolog.Event`) decoupling commands from `internal/logger`; set on IOStreams by factory
 - `ColorScheme` - Color formatting that bridges to `tui/styles.go`
 - `Test()` - Exported test constructor: `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` — nil Logger, uses `mocks.FakeTerm{}`
 
 **Features:**
+
 - TTY detection (`IsInputTTY`, `IsOutputTTY`, `IsInteractive`, `CanPrompt`)
 - Color support with `NO_COLOR` env var compliance
 - Progress indicators (spinners) for long operations
@@ -313,11 +329,13 @@ Testable I/O abstraction following the GitHub CLI pattern.
 User interaction utilities with TTY and CI awareness.
 
 **Key types:**
+
 - `Prompter` - Interactive prompts using IOStreams
 - `PromptConfig` - Configuration for string prompts
 - `SelectOption` - Options for selection prompts
 
 **Methods:**
+
 - `String(cfg)` - Text input with default and validation
 - `Confirm(msg, defaultYes)` - Yes/no confirmation
 - `Select(msg, options, defaultIdx)` - Selection from list
@@ -349,8 +367,6 @@ User interaction utilities with TTY and CI awareness.
 
 **Note:** `hostproxy/internals/` is a structurally-leaf subpackage (stdlib + embed only) that provides container-side scripts and binaries. It is imported by `internal/bundler` for embedding into Docker images, but does NOT import `internal/hostproxy` or any other internal package.
 
-**Note:** `cmd/fawker/` is the demo CLI — faked dependencies, recorded scenarios, no Docker required. Used for visual UAT (`make fawker && ./bin/fawker image build`).
-
 ### Presentation Layer
 
 Commands follow a **4-scenario output model** — each command picks the simplest scenario that fits:
@@ -363,6 +379,7 @@ Commands follow a **4-scenario output model** — each command picks the simples
 | Live-interactive | Full keyboard/mouse input, stateful navigation | `iostreams` + `tui` | `monitor up` |
 
 **Import boundaries** (enforced by tests):
+
 - Only `internal/iostreams` imports `lipgloss`
 - Only `internal/tui` imports `bubbletea` and `bubbles`
 - Only `internal/term` imports `golang.org/x/term`
@@ -376,6 +393,7 @@ See `cli-output-style-guide` Serena memory for full scenario details and renderi
 HTTP service mesh mediating container-to-host interactions. See `internal/hostproxy/CLAUDE.md` for detailed architecture diagrams.
 
 **Components:**
+
 - `Server` - HTTP server on localhost (:18374)
 - `SessionStore` - Generic session management with TTL
 - `CallbackChannel` - OAuth callback interception/forwarding
@@ -383,6 +401,7 @@ HTTP service mesh mediating container-to-host interactions. See `internal/hostpr
 - `GitCredential` - HTTPS credential forwarding handler
 
 **Key flows:**
+
 - URL opening: Container → `host-open` script → POST /open/url → host browser
 - OAuth: Container detects auth URL → registers callback session → rewrites URL → captures redirect
 - Git HTTPS: `git-credential-clawker` → POST /git/credential → host credential store
@@ -393,6 +412,7 @@ HTTP service mesh mediating container-to-host interactions. See `internal/hostpr
 Runs Claude Code in per-iteration Docker containers with stream-json parsing and circuit breaker protection. See `internal/cmd/loop/CLAUDE.md` for implementation details.
 
 **Core types:**
+
 - `Runner` - Main loop orchestrator (per-iteration container lifecycle)
 - `CircuitBreaker` - CLOSED/TRIPPED with multiple trip conditions
 - `Session` / `SessionStore` - Persistent session state
@@ -407,6 +427,7 @@ Runs Claude Code in per-iteration Docker containers with stream-json parsing and
 Envoy+CoreDNS sidecar architecture providing DNS-level egress blocking and TLS inspection for agent containers. The firewall is enabled by default (`security.firewall.enable: true`) and managed as a shared singleton across all clawker containers on the host.
 
 **Architecture overview:**
+
 ```
 Daemon Process (host)       Envoy Container (.2)       CoreDNS Container (.3)
     │                             │                          │
@@ -438,6 +459,7 @@ Daemon Process (host)       Envoy Container (.2)       CoreDNS Container (.3)
 Commands follow the gh CLI's NewCmd/Options/runF pattern. Factory closure fields flow through three steps:
 
 **Step 1**: NewCmd receives Factory, cherry-picks closures into Options:
+
 ```go
 func NewCmdStop(f *cmdutil.Factory, runF func(context.Context, *StopOptions) error) *cobra.Command {
     opts := &StopOptions{
@@ -449,6 +471,7 @@ func NewCmdStop(f *cmdutil.Factory, runF func(context.Context, *StopOptions) err
 ```
 
 **Step 2**: Options struct declares only what this command needs:
+
 ```go
 type StopOptions struct {
     IOStreams     *iostreams.IOStreams
@@ -460,6 +483,7 @@ type StopOptions struct {
 ```
 
 **Step 3**: Run function receives only Options (never Factory):
+
 ```go
 func stopRun(opts *StopOptions) error {
     client, err := opts.Client(context.Background())

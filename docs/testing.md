@@ -64,19 +64,6 @@ GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v
 GOLDEN_UPDATE=1 go test ./internal/cmd/image/build/... -run TestBuildProgress_Golden -v
 ```
 
-## Fawker Demo CLI
-
-Fawker is a demo CLI with faked dependencies and recorded scenarios — no Docker required. Use it for visual UAT:
-
-```bash
-make fawker
-./bin/fawker image build                            # Default build scenario
-./bin/fawker image build --scenario error           # Error scenario
-./bin/fawker image build --progress plain           # Plain mode
-./bin/fawker container run -it --agent test @       # Interactive run
-./bin/fawker container run --detach --agent test @  # Detached run
-```
-
 ## Local Development Environment
 
 The `make localenv` target creates an isolated XDG directory tree for manual UAT without polluting your real config:

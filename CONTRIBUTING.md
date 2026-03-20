@@ -19,16 +19,6 @@ go build -o bin/clawker ./cmd/clawker
 export PATH="$PWD/bin:$PATH"
 ```
 
-### Fawker Demo CLI
-
-For visual testing without Docker:
-
-```bash
-make fawker
-./bin/fawker image build                    # Default build scenario
-./bin/fawker container run -it --agent test @ # Interactive run scenario
-```
-
 ## Running Tests
 
 Clawker has multiple test tiers. **All relevant tests must pass before submitting a PR.**
@@ -85,6 +75,7 @@ See `docs/architecture.md` for the full pattern with examples.
 ### Branch Naming
 
 Use descriptive branch names:
+
 - `feat/description` — New features
 - `fix/description` — Bug fixes
 - `refactor/description` — Code improvements
