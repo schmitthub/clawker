@@ -182,8 +182,11 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `ConfigVolumeResult` | Bool flags tracking which config volumes were freshly created (`ConfigCreated`, `HistoryCreated`) — returned by `workspace.EnsureConfigVolumes` |
 | `InitConfigOpts` | Options for `shared.InitContainerConfig` — project/agent names, container work dir, ClaudeCodeConfig, CopyToVolumeFn (DI) |
 | `InjectPostInitOpts` | Options for `shared.InjectPostInitScript` — container ID, script content, CopyToContainerFn (DI) |
-| `firewall.FirewallManager` | Interface for Envoy+CoreDNS firewall stack (16 methods: lifecycle, rules, container control, bypass, status); mock: `firewall/mocks/FirewallManagerMock` |
+| `firewall.FirewallManager` | Interface for Envoy+CoreDNS firewall stack (15 methods: lifecycle, rules, container control, bypass, status); mock: `firewall/mocks/FirewallManagerMock` |
 | `firewall.Daemon` | Detached firewall process with dual-loop (health 5s + container watcher 30s), PID file management. `EnsureDaemon()` called during container creation |
+| `firewall.ProjectRules()` | Builds complete rule set from project config (security.firewall rules + required internal rules like Claude API, Docker registry) |
+| `shared.CommandOpts` | DI container for container start orchestration — function closures: Client, Config, ProjectManager, HostProxy, Firewall, SocketBridge, Logger |
+| `shared.ContainerStart()` | Three-phase container start: `BootstrapServicesPreStart` → docker start → `BootstrapServicesPostStart`. Used by `run` and `start` |
 | `firewall.Manager` | Docker implementation of `FirewallManager` — manages Envoy/CoreDNS containers, config generation, certificate PKI, rule persistence |
 | `hostproxy.HostProxyService` | Interface for host proxy operations (EnsureRunning, IsRunning, ProxyURL); mock: `hostproxytest.MockManager` |
 | `hostproxy.Manager` | Concrete host proxy daemon manager (spawns subprocess); implements `HostProxyService` |

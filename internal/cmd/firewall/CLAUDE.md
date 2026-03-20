@@ -6,7 +6,7 @@ Cobra commands for the `clawker firewall` command group. Manages the Envoy+CoreD
 
 | File | Purpose |
 |------|---------|
-| `firewall.go` | Parent command `NewCmdFirewall(f)` — registers all 11 subcommands |
+| `firewall.go` | Parent command `NewCmdFirewall(f)` — registers all 12 subcommands |
 | `up.go` | `firewall up` — start the firewall daemon (blocks) |
 | `down.go` | `firewall down` — stop the firewall daemon (SIGTERM) |
 | `status.go` | `firewall status` — show firewall health, container IPs, rule count |

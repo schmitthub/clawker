@@ -92,11 +92,41 @@ err := shared.RebuildMissingDefaultImage(ctx, shared.RebuildMissingImageOpts{
 
 Non-interactive mode prints instructions and returns an error. Interactive mode prompts for rebuild confirmation, flavor selection, then builds with TUI progress display (or spinner fallback when TUI is nil).
 
+### Container Start Orchestration (`container_start.go`)
+
+Three-phase orchestration for container start: pre-start bootstrap, Docker start, post-start bootstrap. Used by `run`, `start`, and `exec` commands.
+
+**`CommandOpts`** — DI container with lazy function closures for service providers:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `Client` | `func(ctx) (*docker.Client, error)` | Docker client provider |
+| `Config` | `func() (config.Config, error)` | Config provider (required) |
+| `ProjectManager` | `func() (project.ProjectManager, error)` | Project manager provider |
+| `HostProxy` | `func() hostproxy.HostProxyService` | Host proxy provider |
+| `Firewall` | `func(ctx) (firewall.FirewallManager, error)` | Firewall manager provider |
+| `SocketBridge` | `func() socketbridge.SocketBridgeManager` | Socket bridge provider |
+| `Logger` | `func() (*logger.Logger, error)` | Logger provider |
+
+Nil providers are safely skipped (debug logged). `Config` is the only required provider.
+
+**`BootstrapServicesPreStart(ctx, container, cmdOpts) error`** — Pre-start phase: syncs firewall project rules, ensures firewall daemon, waits for healthy (60s timeout), starts host proxy. Runs before Docker start so the network stack is ready.
+
+**`BootstrapServicesPostStart(ctx, container, cmdOpts) error`** — Post-start phase: enables firewall iptables inside the container, starts socket bridge for GPG/SSH forwarding. Runs after Docker start because the container must be running.
+
+**`ContainerStart(ctx, cmdOpts, startOpts) (ContainerStartResult, error)`** — Three-phase orchestrator:
+1. `BootstrapServicesPreStart` — firewall daemon + rules + health + host proxy
+2. `client.ContainerStart` — Docker container start
+3. `BootstrapServicesPostStart` — firewall enable + socket bridge
+
+Returns `mobyClient.ContainerStartResult` from the Docker start call. Errors at any phase abort immediately.
+
 ### Types
 
 | Type | Purpose |
 |------|---------|
 | `ContainerOptions` | All container CLI flags — basic, env, volumes, networking, resources, security, health, runtime, devices |
+| `CommandOpts` | DI container with lazy function closures: Client, Config, ProjectManager, HostProxy, Firewall, SocketBridge, Logger |
 | `CreateContainerConfig` | All inputs: Client, Config, Options, Flags, ProjectManager, HostProxy, Logger, Version, color flags |
 | `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
 | `CreateContainerEvent` | Channel event: Step, Status, Type, Message |
@@ -121,7 +151,10 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 | `AddFlags(flags, opts)` | Register all container flags on a pflag.FlagSet |
 | `MarkMutuallyExclusive(cmd)` | Mark `--agent` and `--name` as mutually exclusive |
 | `CreateContainer(ctx, cfg, events)` | Single entry point — workspace, config, env, create, inject. Events channel for progress (nil = silent) |
-| `NeedsSocketBridge(cfg)` | Check if GPG/SSH socket bridge is needed |
+| `NeedsSocketBridge(cfg)` | Check if GPG/SSH socket bridge is needed based on project config |
+| `BootstrapServicesPreStart(ctx, container, cmdOpts)` | Pre-start: firewall daemon + rules sync + health wait + host proxy |
+| `BootstrapServicesPostStart(ctx, container, cmdOpts)` | Post-start: firewall enable in container + socket bridge |
+| `ContainerStart(ctx, cmdOpts, startOpts)` | Three-phase orchestrator: pre-start bootstrap, Docker start, post-start bootstrap |
 | `InitContainerConfig(ctx, InitConfigOpts)` | Copy host Claude config (strategy=copy) and/or credentials (use_host_auth) to config volume |
 | `InjectPostInitScript(ctx, InjectPostInitOpts)` | Write `~/.clawker/post-init.sh` to a created container; entrypoint runs it once on first start |
 | `ResolveAgentEnv(agent, projectDir) (map[string]string, []string, error)` | Merges `env_file` + `from_env` + `env` into env map. Precedence: env_file < from_env < env |
@@ -156,7 +189,7 @@ Returns `false` on any resolution error (conservative — don't block users when
 
 ## Dependencies
 
-Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/project`, `internal/workspace`, `pkg/whail`
+Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/docker`, `internal/firewall`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/project`, `internal/socketbridge`, `internal/workspace`, `pkg/whail`
 
 ## Testing
 

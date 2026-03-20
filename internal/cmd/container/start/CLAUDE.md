@@ -27,13 +27,20 @@ Local helper wrapping `ContainerWait` dual channels into a single `<-chan int`. 
 ## Phase Structure
 
 ```
-Phase A: Config + Docker connect + host proxy
-Phase B: Start containers (attach or detached)
+Phase A: Config + Docker connect + agent name resolution
+Phase B: Container start via shared.ContainerStart()
+         ├── BootstrapServicesPreStart (firewall daemon, host proxy)
+         ├── client.ContainerStart (Docker engine start)
+         └── BootstrapServicesPostStart (firewall iptables enable, socket bridge)
 ```
+
+Both attach and non-attach paths delegate to `shared.ContainerStart()`, passing a `shared.CommandOpts` for DI. The `CommandOpts` wires: Config, Client, ProjectManager, HostProxy, SocketBridge, Logger. Firewall iptables are handled by the container entrypoint (`firewall.sh`), not the start command.
+
+See `shared/CLAUDE.md` for `ContainerStart`, `BootstrapServicesPreStart`, and `BootstrapServicesPostStart` docs.
 
 ## Non-Attach Path
 
-`startContainersWithoutAttach` — iterates containers, prints names to stdout on success, errors to stderr. Socket bridge started per-container (fire-and-forget).
+`startContainersWithoutAttach` — iterates containers, calls `shared.ContainerStart()` per container, prints names to stdout on success, errors to stderr.
 
 ## Testing
 

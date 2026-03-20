@@ -81,10 +81,10 @@ Key internal methods: `ensureNetwork`, `ensureContainer`, `ensureConfigs`, `rege
 Self-signed CA and per-domain TLS certificates for Envoy MITM inspection of path-rule traffic.
 
 ```go
-func EnsureCA(dataDir string) (*x509.Certificate, *ecdsa.PrivateKey, error)
+func EnsureCA(certDir string) (*x509.Certificate, *ecdsa.PrivateKey, error)
 func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domain string) (certPEM []byte, keyPEM []byte, err error)
-func RegenerateDomainCerts(rules []config.EgressRule, dataDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error
-func RotateCA(dataDir string, rules []config.EgressRule) error
+func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error
+func RotateCA(certDir string, rules []config.EgressRule) error
 ```
 
 - `EnsureCA` — creates or loads CA keypair (`ca-cert.pem`, `ca-key.pem`) in `dataDir`

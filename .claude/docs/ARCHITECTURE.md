@@ -30,14 +30,14 @@
            │                     │  - Rule management          │
 ┌──────────▼──────────────────┐  └────────────┬──────────────┘
 │        pkg/whail             │               │
-│  (Docker engine library)     │◄──────────────┘
-│  - Label-based isolation     │  (uses whail for containers)
-└──────────┬──────────────────┘
-           │
-┌──────────▼──────────────────┐
-│    github.com/moby/moby      │
-│       (Docker SDK)           │
-└─────────────────────────────┘
+│  (Docker engine library)     │               │
+│  - Label-based isolation     │               │
+└──────────┬──────────────────┘               │
+           │                                  │
+┌──────────▼──────────────────────────────────▼──────────────┐
+│                  github.com/moby/moby                       │
+│                     (Docker SDK)                            │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Factory Dependency Injection (gh CLI Pattern)
@@ -404,32 +404,34 @@ Runs Claude Code in per-iteration Docker containers with stream-json parsing and
 
 ### internal/firewall - Firewall Stack
 
-Envoy+CoreDNS sidecar architecture providing DNS-level blocking and TLS inspection for agent containers.
+Envoy+CoreDNS sidecar architecture providing DNS-level egress blocking and TLS inspection for agent containers. The firewall is enabled by default (`security.firewall.enable: true`) and managed as a shared singleton across all clawker containers on the host.
 
-**Architecture:**
+**Architecture overview:**
 ```
-Daemon Process          Envoy Container (.2)     CoreDNS Container (.3)
-    │                        │                        │
-    ├── Health check (5s) ──►│ TCP :18901             │
-    ├── Health check (5s) ──────────────────────────►│ HTTP :18902/health
-    ├── Container watcher (30s) — exits when no clawker containers running
+Daemon Process (host)       Envoy Container (.2)       CoreDNS Container (.3)
+    │                             │                          │
+    ├── Health probe (5s) ──────►│ TCP :18901               │
+    ├── Health probe (5s) ─────────────────────────────────►│ HTTP :18902/health
+    ├── Container watcher (30s) — auto-stops when no clawker containers remain
     │
-    ├── ensureConfigs() ────►│ envoy.yaml (bind mount) │ Corefile (bind mount)
-    ├── ensureContainer() ──►│ envoyproxy/envoy        │ coredns/coredns
+    ├── ensureConfigs() ────────►│ envoy.yaml (bind mount)  │ Corefile (bind mount)
+    ├── ensureContainer() ──────►│ envoyproxy/envoy         │ coredns/coredns
     └── syncProjectRules() — merges required + project rules → regenerate configs
 ```
 
-**Components:**
-- `FirewallManager` interface — 16 methods (lifecycle, rules, container control, bypass, status)
-- `Manager` — Docker implementation using whail.Engine
-- `Daemon` — detached process with dual-loop (health 5s + watcher 30s), PID file management
-- Config generators: `GenerateEnvoyConfig()`, `GenerateCorefile()`
-- Certificate PKI: `EnsureCA()`, `GenerateDomainCert()`, ECDSA P256
-- Rules store: `storage.Store[EgressRulesFile]` with dedup via `dst:proto:port`
+**Manager interface + Docker implementation:** `FirewallManager` defines the full contract — 16 methods spanning lifecycle (`EnsureRunning`, `Stop`, `WaitForHealthy`), rule management (`AddRules`, `RemoveRules`, `Reload`, `List`), per-container control (`Enable`, `Disable`, `Bypass`), and status (`Status`, `EnvoyIP`, `CoreDNSIP`, `NetCIDR`). The concrete `Manager` receives a raw `client.APIClient` (moby SDK) — deliberately NOT `docker.Client`/whail, because the daemon's container watcher must see all Docker containers including non-clawker ones, which whail's jail label filtering would hide.
 
-**Network topology:** `clawker-net` Docker bridge with IPAM. Static IPs computed from gateway: Envoy=.2, CoreDNS=.3. Agent containers join network with `--dns` pointing to CoreDNS.
+**Config generation:** Two pure functions translate egress rules into sidecar configs. `GenerateEnvoyConfig(rules)` produces an Envoy bootstrap YAML with a TLS listener (`:10000`, TLS Inspector) ordered as MITM chains (path rules) → SNI passthrough chains (domain-allow) → default deny, plus sequential TCP listeners (`:10001+`) for non-HTTP protocols. `GenerateCorefile(rules)` produces a CoreDNS Corefile with per-domain forward zones (Cloudflare malware-blocking `1.1.1.2`/`1.0.0.2`), Docker internal zones forwarding to `127.0.0.11`, and a catch-all NXDOMAIN template. Both are deterministic — same rules always produce the same config.
 
-**Integration:** `EnsureDaemon()` called during container creation. Factory exposes `f.Firewall()` lazy noun.
+**Certificate PKI:** Path-based egress rules (e.g., allow `api.github.com/repos/*` but deny other paths) require TLS interception. `EnsureCA` creates or loads a self-signed ECDSA P-256 CA keypair (`ca-cert.pem`, `ca-key.pem`) in the firewall data directory. `GenerateDomainCert` signs per-domain certificates with the CA for Envoy's MITM termination. `RegenerateDomainCerts` regenerates all domain certs when rules change. `RotateCA` replaces the CA and re-signs all domain certs. The CA certificate is injected into agent containers at build time so TLS verification succeeds through the proxy.
+
+**Daemon:** A detached host process (`EnsureDaemon`) with PID file management and dual-loop architecture. The health probe loop (default 5s) monitors Envoy and CoreDNS container health. The container watcher loop (default 30s) lists running clawker containers and auto-stops the firewall stack after a grace period when none remain. `EnsureDaemon` is called during container creation — if already running, it returns immediately.
+
+**Rule persistence:** Active egress rules are stored via `storage.Store[EgressRulesFile]` backed by `egress-rules.yaml` in the firewall data subdirectory. Rules are deduped by `dst:proto:port` composite key. The `Manager` merges required rules (from clawker's own infrastructure needs) with project-specific rules from `clawker.yaml` and persists the union.
+
+**Network isolation:** The firewall creates an isolated Docker bridge network (`clawker-net`) with deterministic static IPs computed from the gateway address — gateway+1 for Envoy, gateway+2 for CoreDNS. Agent containers join this network with `--dns` pointing to the CoreDNS IP, ensuring all DNS resolution routes through the firewall. The network uses label-based discovery to find or create the bridge idempotently.
+
+**Integration points:** Factory exposes `f.Firewall()` as a lazy noun returning `FirewallManager`. Container creation calls `EnsureDaemon()` to guarantee the firewall is running before starting agent containers. Firewall CLI commands (`clawker firewall status/list/add/remove/reload/up/down/enable/disable/bypass/rotate-ca`) delegate to the `FirewallManager` interface.
 
 ## Command Dependency Injection Pattern
 

@@ -1,6 +1,6 @@
 # Envoy + CoreDNS Firewall Initiative
 
-**Branch:** `feat/sidecar`
+**Branch:** `feat/global-firewall`
 **Parent memory:** `brainstorm_envoy-coredns-firewall`
 
 ---
@@ -18,7 +18,7 @@
 | Task 5: Rule state management (storage.Store) | `pending` | — |
 | Task 6: DockerFirewallManager implementation | `complete` | Opus 4.6 |
 | Task 7: Factory wiring + container creation integration | `complete` | Opus 4.6 |
-| Task 8: init-firewall.sh rewrite + bundler changes | `pending` | — |
+| Task 8: firewall.sh rewrite + bundler changes | `pending` | — |
 | Task 9: CLI command group (`clawker firewall`) | `pending` | — |
 | Task 10: Dante bypass implementation | `pending` | — |
 | Task 11: Hostproxy lifecycle integration | `pending` | — |
@@ -60,7 +60,7 @@ This ensures each task gets a fresh context window. Each task is designed to be 
 
 ### Background
 
-Replacing clawker's brittle IP-based firewall (DNS resolution + IP range API fetches at container startup via init-firewall.sh) with a shared Envoy + CoreDNS architecture on `clawker-net`. Key decisions from brainstorm:
+Replacing clawker's brittle IP-based firewall (DNS resolution + IP range API fetches at container startup via firewall.sh) with a shared Envoy + CoreDNS architecture on `clawker-net`. Key decisions from brainstorm:
 
 - **Shared global firewall:** Envoy and CoreDNS run as separate containers on `clawker-net` with static IPs. Union egress policy across all projects. N+2 scaling.
 - **iptables DNAT in agent containers** redirects traffic to Envoy. Root gets RETURN rule for escape hatch. NET_ADMIN on agent container, only root can exercise.
@@ -71,7 +71,7 @@ Replacing clawker's brittle IP-based firewall (DNS resolution + IP range API fet
 - **Escape hatch:** `clawker firewall bypass 30s --agent dev` — starts Dante (pre-installed) in target agent container via docker exec, root RETURN rule, auto-timeout.
 - **FirewallManager interface:** v1=Docker API, future=gRPC impl swap for clawkerd control plane.
 - **CA keypair:** Generated once, persisted in XDG data dir. Per-domain MITM certs signed by CA when rules have `paths`. CA injected into agent containers at creation time.
-- **dante-server + proxychains4:** Must become native base packages in every clawker image.
+- **dante-server + proxychains4:** Originally planned as native base packages. Removed (commit 44281cb) in favor of pure iptables bypass — neither package is needed.
 
 ### Key Files
 
@@ -86,7 +86,7 @@ Replacing clawker's brittle IP-based firewall (DNS resolution + IP range API fet
 
 **Bundler/assets:**
 - `internal/bundler/dockerfile.go` — basePackagesDebian/Alpine, Dockerfile generation
-- `internal/bundler/assets/init-firewall.sh` — current iptables script (368 lines, to be replaced)
+- `internal/bundler/assets/firewall.sh` — current iptables script (368 lines, to be replaced)
 - `internal/bundler/assets/entrypoint.sh` — container entry point, firewall init block
 
 **Factory/DI:**
@@ -294,12 +294,12 @@ make test
 
 ## Task 4: Agent Container iptables Integration
 
-**Creates/modifies:** `internal/bundler/assets/init-firewall.sh` (rewrite), `internal/bundler/assets/entrypoint.sh`, `internal/docker/env.go`, `internal/cmd/container/shared/container.go`
+**Creates/modifies:** `internal/bundler/assets/firewall.sh` (rewrite), `internal/bundler/assets/entrypoint.sh`, `internal/docker/env.go`, `internal/cmd/container/shared/container.go`
 **Depends on:** Task 3
 
 ### Implementation Phase
 
-1. **Rewrite init-firewall.sh:**
+1. **Rewrite firewall.sh:**
    - Strip all IP range fetching, domain DNS resolution, ipset logic
    - New script: receive Envoy IP + CoreDNS IP as env vars
    - Set up iptables DNAT: agent user TCP → Envoy IP:10000
@@ -326,7 +326,7 @@ make test
    - Agent container must be on `clawker-net` to reach Envoy/CoreDNS
    - Set `--dns` flag to CoreDNS container IP
 
-6. **Tests:** Unit tests for new init-firewall.sh logic. Integration test for iptables rules.
+6. **Tests:** Unit tests for new firewall.sh logic. Integration test for iptables rules.
 
 ### Acceptance Criteria
 
@@ -484,20 +484,18 @@ make test
 4. Commit all changes from this task with a descriptive commit message.
 5. **STOP.** Do not proceed to Task 8. Inform the user you are done and present this handoff prompt:
 
-> **Next agent prompt:** "Continue the Envoy+CoreDNS Firewall initiative. Read the Serena memory `initiative_envoy-coredns-firewall` — Task 7 is complete. Begin Task 8: Bundler + init-firewall.sh migration."
+> **Next agent prompt:** "Continue the Envoy+CoreDNS Firewall initiative. Read the Serena memory `initiative_envoy-coredns-firewall` — Task 7 is complete. Begin Task 8: Bundler + firewall.sh migration."
 
 ---
 
-## Task 8: Bundler + init-firewall.sh Migration
+## Task 8: Bundler + firewall.sh Migration
 
-**Creates/modifies:** `internal/bundler/dockerfile.go`, `internal/bundler/assets/init-firewall.sh`, docs, CLAUDE.md files
+**Creates/modifies:** `internal/bundler/dockerfile.go`, `internal/bundler/assets/firewall.sh`, docs, CLAUDE.md files
 **Depends on:** Task 4, Task 7
 
 ### Implementation Phase
 
-1. **Add dante-server + proxychains4 to base packages:**
-   - Add to `basePackagesDebian` in `dockerfile.go`
-   - Add Alpine equivalents to `basePackagesAlpine` (dante, proxychains-ng)
+1. **~~Add dante-server + proxychains4 to base packages~~** — REMOVED (commit 44281cb). Bypass now uses pure iptables flush; neither dante nor proxychains is needed.
 
 2. **Deprecation handling for ip_range_sources:**
    - If `IPRangeSources` is non-empty in config, log a deprecation warning during config load
@@ -512,7 +510,7 @@ make test
 4. **Update `.claude/rules/`** if firewall-related rules exist
 
 5. **Clean up old code:**
-   - Remove IP range source fetching logic from init-firewall.sh (already rewritten in Task 4)
+   - Remove IP range source fetching logic from firewall.sh (already rewritten in Task 4)
    - Remove `FirewallIPRangeSources` from RuntimeEnvOpts if not already done
    - Mark `IPRangeSource` type as deprecated
 

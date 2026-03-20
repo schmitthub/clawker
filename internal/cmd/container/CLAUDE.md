@@ -54,7 +54,7 @@ Separate I/O from resize — `pty.Stream(ctx, hijacked)` in goroutine, `signals.
 - `attach/CLAUDE.md` — Stream+resize pattern
 - `exec/CLAUDE.md` — Credential injection, TTY/non-TTY, detach
 - `start/CLAUDE.md` — Attach-then-start, waitForContainerExit
-- `shared/CLAUDE.md` — CreateContainer, container flag types, domain orchestration
+- `shared/CLAUDE.md` — CreateContainer, ContainerStart, container flag types, domain orchestration
 
 ## Parent Command (`container.go`)
 
@@ -62,7 +62,17 @@ Separate I/O from resize — `pty.Stream(ctx, hijacked)` in goroutine, `signals.
 
 ## Shared Package (`shared/`)
 
-Container flag types, domain logic, and container creation — all in one package. See `shared/CLAUDE.md` for full API.
+Container flag types, domain logic, container creation, and container start orchestration — all in one package. See `shared/CLAUDE.md` for full API.
+
+### Daemon Bootstrap Pattern
+
+`shared.ContainerStart()` is the unified container start mechanism used by `run` and `start`. It accepts a `CommandOpts` struct (DI container with lazy function closures for all service providers) and implements a three-phase daemon bootstrap:
+
+1. **Pre-start** (`BootstrapServicesPreStart`) — firewall rules sync + daemon ensure + health wait (60s) + host proxy start
+2. **Docker start** — `client.ContainerStart` (the actual Docker API call)
+3. **Post-start** (`BootstrapServicesPostStart`) — firewall iptables enable inside the container + socket bridge for GPG/SSH forwarding
+
+Errors at any phase abort immediately. See `shared/CLAUDE.md` section "Container Start Orchestration" for `CommandOpts` fields, function signatures, and full details.
 
 ### Container Options (`container.go`)
 
@@ -106,7 +116,7 @@ Auto-injects git credential env vars into exec'd processes. HTTPS via host proxy
 
 ## SocketBridge Wiring
 
-`run/start/exec` call `EnsureBridge` (idempotent). `stop/remove` call `StopBridge` before Docker ops (best-effort, nil-safe).
+`BootstrapServicesPostStart` calls `EnsureBridge` as part of the post-start phase (used by `run` and `start`). `exec` calls `EnsureBridge` directly (idempotent). `stop/remove` call `StopBridge` before Docker ops (best-effort, nil-safe).
 
 ## Testing
 
