@@ -237,7 +237,7 @@ func (m *Manager) addRulesToStore(rules []config.EgressRule) (bool, error) {
 
 	known := make(map[string]struct{}, len(current.Rules))
 	for _, r := range current.Rules {
-		known[ruleKey(r)] = struct{}{}
+		known[ruleKey(normalizeRule(r))] = struct{}{}
 	}
 
 	var newRules []config.EgressRule
@@ -562,7 +562,7 @@ func (m *Manager) NetCIDR() string {
 // HTTP mappings are appended after TCP mappings — all HTTP ports redirect to the
 // single HTTP listener, while TCP ports get per-rule dedicated listeners.
 func (m *Manager) formatPortMappings() string {
-	rules := m.store.Read().Rules
+	rules := normalizeAndDedup(m.store.Read().Rules)
 	ports := m.envoyPorts()
 	tcpMappings := TCPMappings(rules, ports)
 	httpMappings := HTTPMappings(rules, ports.HTTPPort)
