@@ -12,6 +12,7 @@ import (
 type EnvoyPorts struct {
 	TLSPort     int // Listener port for TLS egress (SNI passthrough + MITM).
 	TCPPortBase int // Starting port for TCP/SSH listeners.
+	HTTPPort    int // Listener port for plain HTTP egress (Host header domain detection).
 }
 
 // TCPMapping describes a per-destination iptables DNAT entry for non-TLS traffic.
@@ -50,6 +51,41 @@ func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 	return mappings
 }
 
+// HTTPMappings computes HTTP port mappings from egress rules.
+// Unlike TCP mappings (one listener per rule), all HTTP rules share a single listener
+// because the Host header provides domain detection. Multiple rules on the same port
+// produce a single DNAT entry.
+func HTTPMappings(rules []config.EgressRule, httpPort int) []TCPMapping {
+	seen := make(map[int]bool)
+	var mappings []TCPMapping
+	for _, r := range rules {
+		if strings.ToLower(r.Proto) != "http" {
+			continue
+		}
+		action := strings.ToLower(r.Action)
+		if action != "allow" && action != "" {
+			continue
+		}
+		if isIPOrCIDR(r.Dst) {
+			continue
+		}
+		port := r.Port
+		if port == 0 {
+			continue // HTTP rules require explicit port.
+		}
+		if seen[port] {
+			continue // Deduplicate — multiple domains on same port share one DNAT entry.
+		}
+		seen[port] = true
+		mappings = append(mappings, TCPMapping{
+			Dst:       "http",
+			DstPort:   port,
+			EnvoyPort: httpPort,
+		})
+	}
+	return mappings
+}
+
 // Cert path formats inside the Envoy container (mounted volume).
 const (
 	envoyCertFileFmt = "/etc/envoy/certs/%s-cert.pem"
@@ -69,6 +105,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 		mitmRules        []config.EgressRule
 		passthroughRules []config.EgressRule
 		tcpRules         []config.EgressRule
+		httpRules        []config.EgressRule
 	)
 	for _, r := range rules {
 		action := strings.ToLower(r.Action)
@@ -76,7 +113,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 			continue // Only allow rules generate proxy config; deny/unknown handled by default deny chain.
 		}
 		if isIPOrCIDR(r.Dst) {
-			warnings = append(warnings, fmt.Sprintf("skipping IP/CIDR rule %q (not supported in Envoy SNI proxy)", r.Dst))
+			warnings = append(warnings, fmt.Sprintf("skipping IP/CIDR rule %q (not supported in Envoy proxy)", r.Dst))
 			continue
 		}
 		proto := strings.ToLower(r.Proto)
@@ -84,6 +121,11 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 			tcpRules = append(tcpRules, r)
 			continue
 		}
+		if proto == "http" {
+			httpRules = append(httpRules, r)
+			continue
+		}
+		// Default: TLS (MITM with path rules, or SNI passthrough).
 		if len(r.PathRules) > 0 {
 			mitmRules = append(mitmRules, r)
 		} else {
@@ -104,7 +146,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 			},
 		},
 		"static_resources": map[string]any{
-			"listeners": buildListeners(mitmRules, passthroughRules, tcpRules, tcpMappings, ports),
+			"listeners": buildListeners(mitmRules, passthroughRules, tcpRules, httpRules, tcpMappings, ports),
 			"clusters":  buildClusters(tcpRules),
 		},
 	}
@@ -117,12 +159,17 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 }
 
 // buildListeners constructs all Envoy listeners.
-func buildListeners(mitm, passthrough, tcp []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts) []any {
+func buildListeners(mitm, passthrough, tcp, http []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts) []any {
 	var listeners []any
 
 	// Main TLS listener — handles both MITM and passthrough.
 	if len(mitm) > 0 || len(passthrough) > 0 {
 		listeners = append(listeners, buildTLSListener(mitm, passthrough, ports.TLSPort))
+	}
+
+	// HTTP listener — domain detection via Host header.
+	if len(http) > 0 {
+		listeners = append(listeners, buildHTTPListener(http, ports.HTTPPort))
 	}
 
 	// Per-rule TCP/SSH listeners from the port mappings.
@@ -169,6 +216,99 @@ func buildTLSListener(mitm, passthrough []config.EgressRule, tlsPort int) map[st
 			},
 		},
 		"filter_chains": filterChains,
+	}
+}
+
+// buildHTTPListener creates a plain HTTP listener that detects destination domains
+// via the Host header — the HTTP equivalent of the TLS listener's SNI detection.
+// Each allowed domain gets a virtual host; unknown domains get a 403 deny response.
+// Rules with PathRules get per-path route matching; rules without get allow-all.
+func buildHTTPListener(rules []config.EgressRule, httpPort int) map[string]any {
+	var virtualHosts []any
+
+	for _, r := range rules {
+		domain := normalizeDomain(r.Dst)
+		var routes []any
+
+		if len(r.PathRules) > 0 {
+			// Path-level access control — same logic as MITM.
+			routes = buildHTTPRoutes(r)
+		} else {
+			// No path rules — allow all traffic to this domain.
+			routes = []any{
+				map[string]any{
+					"match": map[string]any{"prefix": "/"},
+					"route": map[string]any{"cluster": "dynamic_forward_proxy_cluster"},
+				},
+			}
+		}
+
+		virtualHosts = append(virtualHosts, map[string]any{
+			"name":    domain,
+			"domains": []string{domain},
+			"routes":  routes,
+		})
+	}
+
+	// Default deny for unknown domains.
+	virtualHosts = append(virtualHosts, map[string]any{
+		"name":    "deny_all",
+		"domains": []string{"*"},
+		"routes": []any{
+			map[string]any{
+				"match": map[string]any{"prefix": "/"},
+				"direct_response": map[string]any{
+					"status": 403,
+					"body":   map[string]any{"inline_string": "Blocked by clawker firewall\n"},
+				},
+			},
+		},
+	})
+
+	return map[string]any{
+		"name": "http_egress",
+		"address": map[string]any{
+			"socket_address": map[string]any{
+				"address":    "0.0.0.0",
+				"port_value": httpPort,
+			},
+		},
+		"filter_chains": []any{
+			map[string]any{
+				"filters": []any{
+					map[string]any{
+						"name": "envoy.filters.network.http_connection_manager",
+						"typed_config": map[string]any{
+							"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+							"stat_prefix": "http_egress",
+							"codec_type":  "AUTO",
+							"route_config": map[string]any{
+								"name":          "http_egress_routes",
+								"virtual_hosts": virtualHosts,
+							},
+							"http_filters": []any{
+								map[string]any{
+									"name": "envoy.filters.http.dynamic_forward_proxy",
+									"typed_config": map[string]any{
+										"@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
+										"dns_cache_config": map[string]any{
+											"name":              dnsCacheName,
+											"dns_lookup_family": "V4_ONLY",
+										},
+									},
+								},
+								map[string]any{
+									"name": "envoy.filters.http.router",
+									"typed_config": map[string]any{
+										"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 }
 

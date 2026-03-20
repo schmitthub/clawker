@@ -445,6 +445,80 @@ func TestFirewall_DockerInternalDNS(t *testing.T) {
 	assert.NotNil(t, blockedRes.Err, "non-whitelisted domain should not resolve")
 }
 
+func TestFirewall_HTTPDomainDetection(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			Firewall:       firewall.NewManager,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	// Configure an HTTP rule for example.com — exercises the HTTP listener path:
+	// iptables --dport 80 → DNAT envoy:10080 → http_connection_manager → Host header → domain match
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+security:
+  firewall:
+    rules:
+      - dst: "example.com"
+        proto: "http"
+        port: 80
+        action: "allow"
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
+
+	// Start a long-lived container so we can exec into it.
+	startRes := h.Run("container", "run", "--detach", "--agent", "http-test", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() {
+		h.Run("container", "stop", "--agent", "http-test")
+	})
+
+	// Verify the HTTP rule is in the global list.
+	listRes := h.Run("firewall", "list")
+	require.NoError(t, listRes.Err, "list failed\nstdout: %s\nstderr: %s",
+		listRes.Stdout, listRes.Stderr)
+	assert.Contains(t, listRes.Stdout, "example.com", "HTTP rule should be in firewall list")
+
+	// Plain HTTP request to example.com — full path:
+	// DNS → CoreDNS allows example.com → iptables --dport 80 → DNAT envoy:10080
+	// → http_connection_manager → Host header "example.com" → virtual host match → allow
+	// → dynamic_forward_proxy → upstream example.com:80
+	httpRes := h.ExecInContainer("http-test",
+		"curl", "-s", "--max-time", "15", "--connect-timeout", "10",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"http://example.com/")
+	require.NoError(t, httpRes.Err,
+		"plain HTTP to example.com should succeed via HTTP listener\nstdout: %s\nstderr: %s",
+		httpRes.Stdout, httpRes.Stderr)
+	httpCode := strings.TrimSpace(httpRes.Stdout)
+	assert.Contains(t, []string{"200", "301", "302"}, httpCode,
+		"should get a valid HTTP response code from example.com, got %q", httpCode)
+
+	// Verify plain HTTP to a non-allowed domain is blocked.
+	blockedRes := h.ExecInContainer("http-test",
+		"curl", "-s", "--max-time", "5", "--connect-timeout", "3",
+		"http://httpbin.org/")
+	assert.NotNil(t, blockedRes.Err,
+		"plain HTTP to non-allowed domain should be blocked")
+}
+
 func TestFirewall_FirewallDisabled(t *testing.T) {
 	h := &harness.Harness{
 		T: t,

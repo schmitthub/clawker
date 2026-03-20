@@ -22,7 +22,8 @@ func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {
 }
 
 // normalizeRule fills in defaults so stored rules are explicit and unambiguous.
-// TLS/empty → port 443, SSH → port 22, TCP → port 0 stays (means "any port").
+// Only add_domains convenience rules get proto/port defaults (TLS/443).
+// Explicit rules (ssh, http, tcp) require the user to set port in config.
 func normalizeRule(r config.EgressRule) config.EgressRule {
 	if r.Proto == "" {
 		r.Proto = "tls"
@@ -30,14 +31,8 @@ func normalizeRule(r config.EgressRule) config.EgressRule {
 	if r.Action == "" {
 		r.Action = "allow"
 	}
-	if r.Port == 0 {
-		switch strings.ToLower(r.Proto) {
-		case "tls":
-			r.Port = 443
-		case "ssh":
-			r.Port = 22
-		}
-		// tcp: port 0 = any port, intentional
+	if r.Port == 0 && strings.ToLower(r.Proto) == "tls" {
+		r.Port = 443
 	}
 	return r
 }

@@ -368,7 +368,7 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 	}
 
 	// Compute TCP port mappings from the current rule state.
-	tcpMappingsArg := m.formatTCPMappings()
+	tcpMappingsArg := m.formatPortMappings()
 
 	args := []string{"/usr/local/bin/firewall.sh", "enable",
 		netInfo.EnvoyIP, netInfo.CoreDNSIP, netInfo.CIDR}
@@ -468,7 +468,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 	}
 
 	// Build the re-enable command: sleep <timeout> && firewall.sh enable <args>
-	tcpMappingsArg := m.formatTCPMappings()
+	tcpMappingsArg := m.formatPortMappings()
 	hostProxyArg := hostProxy
 	if hostProxyArg == "" && tcpMappingsArg != "" {
 		hostProxyArg = "''" // placeholder so tcp_mappings lands in $5
@@ -557,22 +557,33 @@ func (m *Manager) NetCIDR() string {
 	return netInfo.CIDR
 }
 
-// formatTCPMappings reads rules from the store, computes TCP port mappings,
+// formatPortMappings reads rules from the store, computes TCP and HTTP port mappings,
 // and returns the firewall.sh argument string (format: "dst_port|envoy_port;...").
-func (m *Manager) formatTCPMappings() string {
+// HTTP mappings are appended after TCP mappings — all HTTP ports redirect to the
+// single HTTP listener, while TCP ports get per-rule dedicated listeners.
+func (m *Manager) formatPortMappings() string {
 	rules := m.store.Read().Rules
-	mappings := TCPMappings(rules, EnvoyPorts{
-		TLSPort:     m.cfg.EnvoyTLSPort(),
-		TCPPortBase: m.cfg.EnvoyTCPPortBase(),
-	})
-	if len(mappings) == 0 {
+	ports := m.envoyPorts()
+	tcpMappings := TCPMappings(rules, ports)
+	httpMappings := HTTPMappings(rules, ports.HTTPPort)
+	allMappings := append(tcpMappings, httpMappings...)
+	if len(allMappings) == 0 {
 		return ""
 	}
 	var parts []string
-	for _, mp := range mappings {
+	for _, mp := range allMappings {
 		parts = append(parts, fmt.Sprintf("%d|%d", mp.DstPort, mp.EnvoyPort))
 	}
 	return strings.Join(parts, ";")
+}
+
+// envoyPorts returns the EnvoyPorts config from the manager's config.
+func (m *Manager) envoyPorts() EnvoyPorts {
+	return EnvoyPorts{
+		TLSPort:     m.cfg.EnvoyTLSPort(),
+		TCPPortBase: m.cfg.EnvoyTCPPortBase(),
+		HTTPPort:    m.cfg.EnvoyHTTPPort(),
+	}
 }
 
 // --- Internal helpers ---
@@ -601,10 +612,7 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 	}
 
 	// Generate Envoy config.
-	envoyYAML, warnings, err := GenerateEnvoyConfig(allRules, EnvoyPorts{
-		TLSPort:     m.cfg.EnvoyTLSPort(),
-		TCPPortBase: m.cfg.EnvoyTCPPortBase(),
-	})
+	envoyYAML, warnings, err := GenerateEnvoyConfig(allRules, m.envoyPorts())
 	if err != nil {
 		return "", fmt.Errorf("generating envoy config: %w", err)
 	}
