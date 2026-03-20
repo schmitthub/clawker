@@ -173,33 +173,21 @@ func TestMyCommand(t *testing.T) {
 | **2. Integration** | `nil` runF + fake Docker | Full pipeline (flags + Docker calls + output) |
 | **3. Unit** | Direct function call | Domain logic without Cobra or Factory |
 
-### Test Harness (`test/harness/`)
+### E2E Test Harness (`test/e2e/harness/`)
 
 For integration tests with real Docker:
 
 ```go
-h := harness.NewHarness(t, harness.WithProject("test"),
-    harness.WithConfigBuilder(builders.MinimalValidConfig()))
+h := &harness.Harness{T: t, Opts: &harness.FactoryOptions{
+    Config: func() (config.Config, error) { return testCfg, nil },
+}}
+setup := h.NewIsolatedFS(nil)
 
-client := harness.NewTestClient(t)
-image := harness.BuildLightImage(t, client)
-ctr := harness.RunContainer(t, client, image,
-    harness.WithCapAdd("NET_ADMIN"),
-    harness.WithUser("root"),
-)
-
-result, err := ctr.Exec(ctx, client, "echo", "hello")
-require.Equal(t, 0, result.ExitCode)
+result := h.Run("firewall", "status", "--json")
+require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
 ```
 
-### Config Builder Presets
-
-```go
-builders.MinimalValidConfig()         // Bare minimum
-builders.FullFeaturedConfig()         // All features enabled
-builders.DefaultBuild()               // buildpack-deps with git/curl
-builders.SecurityFirewallDisabled()   // For tests that don't need firewall
-```
+The `FactoryOptions` struct allows overriding individual dependencies. Nil fields use test fakes automatically (`configmocks`, `logger.Nop`, `dockertest.FakeClient`, etc.).
 
 ### Project Test Double Scenarios
 

@@ -4,26 +4,73 @@ description: "Set up the Grafana, Prometheus, Loki, and Jaeger monitoring stack 
 icon: "chart-mixed"
 ---
 
-Clawker includes an optional monitoring stack that collects telemetry from Claude Code agents running in containers. It provides real-time dashboards for metrics, logs, and traces.
+Clawker includes an optional monitoring stack that collects telemetry from Claude Code agents running in containers. It provides real-time dashboards for metrics, logs, and traces — giving you visibility into what every agent is doing, how much it costs, what tools it's calling, and whether it's making progress.
+
+<img src="/assets/monitor-top.png" alt="Grafana monitoring dashboard overview" />
+
+## What You Get
+
+The pre-built Grafana dashboard gives you per-agent and per-project visibility into:
+
+- **Cost and token usage** — API call costs, input/output tokens, rate limiting
+- **Coding activity** — file edits, tool invocations, command executions
+- **Tool usage** — which tools the agent calls, how often, and how long they take
+- **Session detail** — full event timeline for individual agent sessions
+
+<CardGroup cols={2}>
+  <Card>
+    <img src="/assets/monitor-cost-usage.png" alt="Cost and token usage dashboard" />
+  </Card>
+  <Card>
+    <img src="/assets/monitor-coding-activity.png" alt="Coding activity dashboard" />
+  </Card>
+  <Card>
+    <img src="/assets/monitor-tool-usage.png" alt="Tool usage breakdown" />
+  </Card>
+  <Card>
+    <img src="/assets/monitor-session-detail-events.png" alt="Session detail events" />
+  </Card>
+</CardGroup>
 
 ## Architecture
+
+The monitoring stack runs as five Docker Compose services on the `clawker-net` network:
 
 ```
 Claude Code (in container)
     |
     | OTLP (HTTP/gRPC)
     v
-OTEL Collector (port 4318/4317)
-    |
-    +---> Prometheus (port 9090) -- metrics
-    +---> Loki (port 3100) -- logs
-    +---> Jaeger (port 16686) -- traces
-    |
-    v
-Grafana (port 3000) -- unified dashboards
+OTEL Collector ──┬──> Prometheus (metrics)
+                 ├──> Loki (logs)
+                 └──> Jaeger (traces)
+                          |
+                          v
+                      Grafana (unified dashboards)
 ```
 
-All services run on the `clawker-net` Docker network alongside your agent containers.
+### Services
+
+| Service | Image | Default Port | Purpose |
+|---------|-------|:---:|---------|
+| **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC) | Receives telemetry from agents and routes it to storage backends |
+| **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage — resource utilization, request counts, durations |
+| **Loki** | `grafana/loki` | 3100 | Log aggregation — structured events with tool details, prompts, decisions |
+| **Jaeger** | `jaegertracing/all-in-one` | 16686 | Distributed tracing — full call stacks and timing for each agent interaction |
+| **Grafana** | `grafana/grafana` | 3000 | Unified dashboards — pre-configured with all data sources and a Claude Code dashboard |
+
+All containers are pre-configured with labels and attached to the `clawker-net` network. Grafana starts with anonymous login enabled (no credentials required) and data sources pre-provisioned.
+
+### How Agents Connect
+
+All Clawker containers have OTEL environment variables set automatically at creation time. These tell Claude Code where to send telemetry:
+
+- `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` — points to the collector's metrics endpoint
+- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` — points to the collector's logs endpoint
+- `CLAUDE_CODE_ENABLE_TELEMETRY=1` — enables Claude Code's built-in telemetry
+- `OTEL_RESOURCE_ATTRIBUTES` — tags with `project=` and `agent=` for filtering
+
+These variables are always set, regardless of whether the monitoring stack is running. If the collector isn't reachable, telemetry is silently dropped. This means you should **start the monitoring stack before starting your agents** — Claude Code doesn't retry failed collector connections.
 
 ## Setup
 
@@ -34,12 +81,12 @@ clawker monitor init
 ```
 
 This scaffolds configuration files in your data directory (`~/.local/share/clawker/monitor/`):
-- `compose.yaml` -- Docker Compose definition for all services
-- `otel-config.yaml` -- OpenTelemetry Collector pipeline configuration
-- `prometheus.yaml` -- Prometheus scrape targets
-- `grafana-datasources.yaml` -- Auto-provisioned Grafana data sources
-- `grafana-dashboards.yaml` -- Dashboard provisioning config
-- `grafana-dashboard.json` -- Pre-built Claude Code dashboard
+- `compose.yaml` — Docker Compose definition for all five services
+- `otel-config.yaml` — OpenTelemetry Collector pipeline configuration
+- `prometheus.yaml` — Prometheus scrape targets
+- `grafana-datasources.yaml` — Auto-provisioned Grafana data sources
+- `grafana-dashboards.yaml` — Dashboard provisioning config
+- `grafana-dashboard.json` — Pre-built Claude Code dashboard
 
 Use `--force` to regenerate files if they already exist.
 
@@ -49,7 +96,7 @@ Use `--force` to regenerate files if they already exist.
 clawker monitor up
 ```
 
-The stack runs in the background by default. Service URLs are printed on startup:
+The stack runs in the background. Service URLs are printed on startup:
 
 ```
 Grafana:    http://localhost:3000
@@ -57,9 +104,9 @@ Jaeger:     http://localhost:16686
 Prometheus: http://localhost:9090
 ```
 
-### 3. Run an Agent
+### 3. Run Agents
 
-Run agents as usual. When the monitoring stack is running, telemetry is automatically enabled in agent containers:
+Start agents as usual — telemetry flows automatically:
 
 ```bash
 clawker run -it --agent dev @
@@ -67,17 +114,9 @@ clawker run -it --agent dev @
 
 ### 4. View Dashboards
 
-Open Grafana at `http://localhost:3000`. Anonymous login is enabled -- no credentials required. The pre-configured Claude Code dashboard shows metrics, logs, and traces with per-project and per-agent filtering.
+Open Grafana at `http://localhost:3000`. The pre-configured Claude Code dashboard shows metrics, logs, and traces with per-project and per-agent filtering.
 
-## What Is Collected
-
-| Signal | Destination | What |
-|--------|------------|------|
-| Metrics | Prometheus | Resource utilization, request counts, durations |
-| Traces | Jaeger | Full call stacks and timing |
-| Logs | Loki | Structured events with tool details, prompts |
-
-### Telemetry Controls
+## Telemetry Controls
 
 Fine-tune what telemetry is collected via `settings.yaml`:
 
@@ -85,14 +124,10 @@ Fine-tune what telemetry is collected via `settings.yaml`:
 monitoring:
   telemetry:
     log_tool_details: true       # Include tool invocation details
-    log_user_prompts: true       # Include user prompts
+    log_user_prompts: true       # Include user prompts in logs
     include_account_uuid: true   # Include account identifier
     include_session_id: true     # Include session identifier
 ```
-
-### Resource Attributes
-
-Each agent's telemetry is tagged with `project` and `agent` resource attributes, enabling per-project and per-agent filtering in Grafana.
 
 ## Port Configuration
 
@@ -135,4 +170,4 @@ clawker monitor down
 clawker monitor down --volumes
 ```
 
-Without `--volumes`, monitoring data persists across restarts. The `clawker-net` network is preserved for other Clawker services.
+Without `--volumes`, monitoring data persists across restarts. The `clawker-net` network is preserved for other Clawker services (firewall, agents).

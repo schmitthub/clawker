@@ -95,9 +95,9 @@ Commands mirror Docker's CLI structure:
 | `clawker <verb>` | `run`, `stop`, `build` |
 | `clawker <noun> <verb>` | `container ls`, `volume rm`, `image build` |
 
-Top-level shortcuts: `init`, `build`, `run`, `start`, `config check`, `monitor *`, `loop *`, `version`
+Top-level shortcuts: `init`, `build`, `run`, `start`, `generate`, `monitor *`, `loop *`, `version`
 
-Management commands: `container`, `volume`, `network`, `image`, `project`, `worktree`
+Management commands: `container`, `volume`, `network`, `image`, `project`, `worktree`, `firewall`
 
 ## Multi-Agent Operations
 

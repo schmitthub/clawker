@@ -157,20 +157,57 @@ Clawker builds custom Docker images tailored to your project. The image includes
 - A base image (default: `buildpack-deps:bookworm-scm`)
 - System packages you've specified (`build.packages`)
 - Claude Code (installed via npm)
-- An entrypoint script that handles init, firewall setup, and Claude Code startup
+- An agent awareness prompt at `/etc/claude-code/CLAUDE.md`
+- An entrypoint script that handles init, firewall readiness, and privilege drop
+- Firewall and credential helper scripts
 - A non-root user (`claude`) with sudo access
 
-The entrypoint handles several responsibilities on container start:
-
-1. Runs the firewall setup (if enabled)
-2. Seeds the Claude Code config if it's a fresh config volume
-3. Copies the host git config (filtering credential sections)
-4. Configures the git credential helper (if HTTPS forwarding enabled)
-5. Always adds GitHub, GitLab, and Bitbucket to SSH known hosts (unconditional — runs regardless of credential forwarding settings)
-6. Executes the post-init script (first start only)
-7. Launches Claude Code
-
 See [Custom Images](/custom-images) for details on customizing the build.
+
+## Agent Awareness Prompt
+
+Every Clawker image includes a prompt file baked in at `/etc/claude-code/CLAUDE.md`. Claude Code automatically loads this file, giving the agent awareness of its containerized environment without any user configuration.
+
+The prompt tells the agent:
+
+- **What it can do** — read/write workspace files, run commands, install packages, use git (credentials forwarded from host)
+- **What it cannot do** — modify firewall rules, access the host filesystem outside the workspace, manage other containers
+- **How the firewall works** — DNS queries for unlisted domains return NXDOMAIN, connection failures mean the domain isn't allowlisted
+- **How to help the user** — when the agent hits a blocked domain, it explains the problem and suggests the correct `clawker firewall add`, `clawker firewall bypass`, or `clawker firewall disable` command for the user to run on the host
+- **Environment diagnostics** — lists environment variables (`CLAWKER_PROJECT`, `CLAWKER_AGENT`, `CLAWKER_WORKSPACE_MODE`, `CLAWKER_FIREWALL_ENABLED`, etc.) the agent can inspect for troubleshooting
+
+This creates a self-service experience: when a network connection fails, the agent diagnoses it and tells the user exactly what to do — no manual troubleshooting required.
+
+## Entrypoint
+
+The entrypoint script (`entrypoint.sh`) runs as root on every container start. It performs initialization, then drops privileges to the `claude` user before launching the main process. All output is suppressed except for structured progress signals — a spinner shows each step in TTY mode, plain log lines in non-TTY mode.
+
+### Initialization Steps
+
+1. **Firewall readiness** (if `CLAWKER_FIREWALL_ENABLED=true`) — The entrypoint waits for the host-side firewall manager to apply iptables rules inside the container. The manager runs `firewall.sh enable` via `docker exec` after the container starts, then touches a signal file. The entrypoint polls for this file with a 30-second timeout. This ensures the agent's first network request goes through the firewall, not around it.
+
+2. **Config seeding** — If the config volume (`~/.claude`) doesn't have a `.config.json`, the entrypoint seeds it from the image's init directory. This bypasses Claude Code's first-run onboarding wizard. The `settings.json` is merged: image defaults first, then any existing user settings override.
+
+3. **Git config** — Copies the host's `.gitconfig` (bind-mounted at `/tmp/host-gitconfig`) into the container, filtering out `[credential]` sections so the container uses Clawker's forwarded credential helpers instead of host-side stores that don't exist in the container.
+
+4. **Git credential helper** — If HTTPS forwarding is enabled (`CLAWKER_HOST_PROXY` set + `CLAWKER_GIT_HTTPS=true`), configures `git-credential-clawker` as the global credential helper.
+
+5. **SSH known hosts** — Unconditionally adds GitHub, GitLab, and Bitbucket SSH host keys to `~/.ssh/known_hosts`. This runs regardless of credential forwarding settings because SSH operations need known hosts even without agent forwarding.
+
+6. **Post-init script** — If `agent.post_init` is configured and hasn't been run yet (tracked by a marker file on the config volume), executes it as the container user. Failure aborts startup. The marker persists across container recreations — to re-run, delete `~/.claude/post-initialized` or the config volume.
+
+7. **Privilege drop + exec** — Signals readiness, restores stdout/stderr, and execs `gosu claude <command>` (default: `claude`).
+
+### Firewall Decoupling
+
+The firewall is intentionally **not** configured by the entrypoint. Instead:
+
+1. The container starts with default network connectivity
+2. The host-side firewall manager execs `firewall.sh enable` into the running container, which configures iptables DNAT rules to redirect traffic through Envoy and DNS queries through CoreDNS
+3. The manager touches `/var/run/clawker/firewall-ready` as a signal
+4. The entrypoint unblocks and proceeds with user-level init
+
+This decoupled design means the container image has no baked-in network addresses. The firewall manager passes the Envoy and CoreDNS IPs at enable time, making the image portable across different Docker network configurations.
 
 ## Shared Directory
 
@@ -178,9 +215,10 @@ When `agent.enable_shared_dir` is set to `true`, Clawker mounts a shared directo
 
 ## Security Controls
 
-Every container runs with a network firewall enabled by default. See [Security & Firewall](/security) for the full details on:
+Every container runs with a deny-by-default network firewall. See [Security](/security) for the full details on:
 
-- Domain and IP allowlisting
+- The bare-bones hardcoded allowlist and why you must configure your own domains
 - Docker socket access
-- Capability management
+- Linux capabilities
+- Agent awareness prompt
 - Credential isolation

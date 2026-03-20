@@ -83,7 +83,7 @@ clawker project register
 
 If CWD is not within a registered project, walk-up is skipped entirely and only the user config directory and defaults are used.
 
-The registry lives at `~/.local/share/clawker/registry.yaml` and maps project names to filesystem paths:
+The registry lives at `~/.local/share/clawker/registry.yaml` and maps project names to filesystem paths (managed via `clawker project` commands):
 
 ```yaml
 projects:
@@ -160,6 +160,7 @@ build:
     #   cmd: ["CMD", "curl", "-f", "http://localhost/health"]
     #   interval: "30s"
     #   timeout: "10s"
+    #   start_period: "5s"
     #   retries: 3
     # Override the default shell
     # shell: ["/bin/bash", "-c"]
@@ -213,18 +214,13 @@ workspace:
 
 security:
   firewall:
-    # Enable network firewall (blocks outbound by default)
-    enable: true
+    # Per-project firewall rules (global enable/disable is in settings.yaml)
     # Add domains to the default allowed list
     # add_domains:
     #   - "api.openai.com"
-    # IP range sources for cloud provider allowlisting
+    # IP range sources (DEPRECATED — ignored at runtime, has no effect)
     # ip_range_sources:
-    #   - name: github        # Required by default
-    #   - name: google-cloud  # For Go proxy
-    #   - name: custom
-    #     url: "https://example.com/ranges.json"
-    #     jq_filter: ".cidrs[]"
+    #   - name: github
     # Full rule specification (for path-level filtering)
     # rules:
     #   - dst: "api.example.com"
@@ -383,6 +379,10 @@ Advanced circuit breaker fields for fine-tuning loop behavior:
 Global settings live at `~/.config/clawker/settings.yaml`:
 
 ```yaml
+# Global firewall toggle (per-project rules are in .clawker.yaml)
+firewall:
+  enable: true
+
 # Logging configuration
 # logging:
 #   file_enabled: true
