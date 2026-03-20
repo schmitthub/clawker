@@ -160,7 +160,7 @@ All firewall operations are available under `clawker firewall`:
 | `clawker firewall down` | Stop the firewall daemon |
 | `clawker firewall enable --agent AGENT` | Attach a container to the firewall network |
 | `clawker firewall disable --agent AGENT` | Remove a container from the firewall network |
-| `clawker firewall bypass` | Temporary unrestricted egress (Dante SOCKS proxy) |
+| `clawker firewall bypass` | Temporary unrestricted egress (iptables flush + timed re-enable) |
 | `clawker firewall rotate-ca` | Regenerate CA and all domain certificates |
 
 ## Certificate Management
@@ -189,7 +189,7 @@ clawker firewall bypass 5m --agent dev
 clawker firewall bypass --stop --agent dev
 ```
 
-Bypass mode routes traffic through a Dante SOCKS proxy, completely bypassing both DNS filtering and TLS inspection. The bypass auto-expires after the specified timeout.
+Bypass mode flushes the container's iptables rules, completely bypassing both DNS filtering and TLS inspection. A detached timer re-enables the firewall after the specified timeout.
 
 <Warning>
 Bypass mode removes all network restrictions for the specified agent. Use it sparingly and with short timeouts. The agent has full internet access during a bypass.

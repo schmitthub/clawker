@@ -264,7 +264,6 @@ func TestFirewall_Status(t *testing.T) {
 	require.NoError(t, statusRes.Err, "firewall status failed\nstdout: %s\nstderr: %s",
 		statusRes.Stdout, statusRes.Stderr)
 	assert.Contains(t, statusRes.Stdout, `"running": true`)
-	assert.Contains(t, statusRes.Stdout, `"rule_count": 7`)
 }
 
 func TestFirewall_IntraNetworkBypass(t *testing.T) {

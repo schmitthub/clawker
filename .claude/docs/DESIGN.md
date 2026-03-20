@@ -667,7 +667,7 @@ The firewall uses an **Envoy proxy + CoreDNS** sidecar pair running as managed D
 
 **Certificate PKI**: A persistent ECDSA P256 CA is generated on first run. Per-domain certificates are generated for domains requiring MITM inspection (path rules). The CA cert is injected into agent containers at creation time via `containerfs`. `clawker firewall rotate-ca` regenerates everything.
 
-**Bypass escape hatch**: `clawker firewall bypass` grants temporary unrestricted egress via a Dante SOCKS proxy, auto-expiring after a configurable timeout.
+**Bypass escape hatch**: `clawker firewall bypass` grants temporary unrestricted egress by flushing iptables rules, auto-re-enabling after a configurable timeout.
 
 **Entrypoint privilege model**: Container entrypoint runs as root → `init-firewall.sh` sets up iptables DNAT rules → `gosu` drops to unprivileged `claude` user. Containers still need `NET_ADMIN` + `NET_RAW` capabilities for the DNAT setup.
 

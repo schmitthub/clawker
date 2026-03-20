@@ -17,7 +17,7 @@
 - [ ] no path rules e2e tests
 - [ ] No TCP support. Transparent tcp for random ports (like tls to 4443, http to 8080) not working. need to update envoy config 
 - [ ] Never tested http over raw IP with no domain. should have been implemented but may have been skipped by you lazy eager agents who love to cut corners and avoid features you find icky instead of just googling it
-- [ ] Proxychains was never fully removed. artifacts still in container. also dante should be scrubbed too if not 
+- [x] Proxychains and dante removed from Dockerfile template (Alpine + Debian). Bypass uses pure iptables flush — neither package was referenced by any Go code or script.
 - [x] **Host proxy OAuth callback broken with firewall enabled**: OAuth browser kickoff works (container→host proxy `POST /open/url` succeeds, browser opens). Callback does not arrive back to Claude Code. Diagnostics so far:
 
 ## Session Progress

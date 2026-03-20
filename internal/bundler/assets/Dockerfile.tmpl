@@ -78,8 +78,6 @@ RUN apk add \
     github-cli \
     musl-locales \
     musl-locales-lang \
-    dante \
-    proxychains-ng \
     {{- range .Packages}}
     {{.}} \
     {{- end}}
@@ -118,8 +116,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gh \
     locales \
     locales-all \
-    dante-server \
-    proxychains4 \
     {{- range .Packages}}
     {{.}} \
     {{- end}}
