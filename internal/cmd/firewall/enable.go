@@ -5,23 +5,27 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // EnableOptions holds the options for the firewall enable command.
 type EnableOptions struct {
-	IOStreams *iostreams.IOStreams
-	Firewall  func(context.Context) (firewall.FirewallManager, error)
-	Agent     string
+	IOStreams      *iostreams.IOStreams
+	ProjectManager func() (project.ProjectManager, error)
+	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	Agent          string
 }
 
 // NewCmdEnable creates the firewall enable command.
 func NewCmdEnable(f *cmdutil.Factory, runF func(context.Context, *EnableOptions) error) *cobra.Command {
 	opts := &EnableOptions{
-		IOStreams: f.IOStreams,
-		Firewall:  f.Firewall,
+		IOStreams:      f.IOStreams,
+		ProjectManager: f.ProjectManager,
+		Firewall:       f.Firewall,
 	}
 
 	cmd := &cobra.Command{
@@ -50,17 +54,31 @@ restoring egress restrictions. Use after 'clawker firewall disable'.`,
 
 func enableRun(ctx context.Context, opts *EnableOptions) error {
 	ios := opts.IOStreams
+	cs := ios.ColorScheme()
+
+	var projectName string
+	if opts.ProjectManager != nil {
+		if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+			if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+				projectName = p.Name()
+			}
+		}
+	}
+
+	containerName, err := docker.ContainerName(projectName, opts.Agent)
+	if err != nil {
+		return fmt.Errorf("resolving container name: %w", err)
+	}
 
 	fwMgr, err := opts.Firewall(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to firewall: %w", err)
 	}
 
-	if err := fwMgr.Enable(ctx, opts.Agent); err != nil {
+	if err := fwMgr.Enable(ctx, containerName); err != nil {
 		return fmt.Errorf("enabling firewall for %s: %w", opts.Agent, err)
 	}
 
-	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.Out, "%s Firewall enabled for agent %s\n", cs.SuccessIcon(), opts.Agent)
 
 	return nil

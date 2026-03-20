@@ -5,23 +5,27 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // DisableOptions holds the options for the firewall disable command.
 type DisableOptions struct {
-	IOStreams *iostreams.IOStreams
-	Firewall  func(context.Context) (firewall.FirewallManager, error)
-	Agent     string
+	IOStreams      *iostreams.IOStreams
+	ProjectManager func() (project.ProjectManager, error)
+	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	Agent          string
 }
 
 // NewCmdDisable creates the firewall disable command.
 func NewCmdDisable(f *cmdutil.Factory, runF func(context.Context, *DisableOptions) error) *cobra.Command {
 	opts := &DisableOptions{
-		IOStreams: f.IOStreams,
-		Firewall:  f.Firewall,
+		IOStreams:      f.IOStreams,
+		ProjectManager: f.ProjectManager,
+		Firewall:       f.Firewall,
 	}
 
 	cmd := &cobra.Command{
@@ -50,17 +54,31 @@ giving it unrestricted outbound access. Use 'clawker firewall enable' to re-appl
 
 func disableRun(ctx context.Context, opts *DisableOptions) error {
 	ios := opts.IOStreams
+	cs := ios.ColorScheme()
+
+	var projectName string
+	if opts.ProjectManager != nil {
+		if pm, pmErr := opts.ProjectManager(); pmErr == nil {
+			if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+				projectName = p.Name()
+			}
+		}
+	}
+
+	containerName, err := docker.ContainerName(projectName, opts.Agent)
+	if err != nil {
+		return fmt.Errorf("resolving container name: %w", err)
+	}
 
 	fwMgr, err := opts.Firewall(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to firewall: %w", err)
 	}
 
-	if err := fwMgr.Disable(ctx, opts.Agent); err != nil {
+	if err := fwMgr.Disable(ctx, containerName); err != nil {
 		return fmt.Errorf("disabling firewall for %s: %w", opts.Agent, err)
 	}
 
-	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.Out, "%s Firewall disabled for agent %s\n", cs.SuccessIcon(), opts.Agent)
 
 	return nil
