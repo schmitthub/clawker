@@ -126,8 +126,7 @@ agent:
   #  - ".env"
   #  - "~/.secrets/api-keys.env"
   #from_env: # passthrough host env vars by name (warns if unset)
-  #  - "ANTHROPIC_API_KEY"
-  #  - "GITHUB_TOKEN"
+  #  - "GH_TOKEN"
   env: {}
   claude_code:
     config:
@@ -135,8 +134,7 @@ agent:
     use_host_auth: true # keyring or ~/.claude/.credentials.json
   enable_shared_dir: false # read-only mount at ~/.clawker-share
   #post_init: | # runs once after init (set -e), failure aborts startup
-  #  claude mcp add -- npx -y @anthropic-ai/claude-code-mcp
-  #  npm install -g typescript
+  #  claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
 
 workspace:
   default_mode: "bind" # "bind" (live sync) or "snapshot" (isolated copy)
@@ -144,10 +142,20 @@ workspace:
 security:
   firewall:
     add_domains: # additional allowed domains
-      - "github.com"
-      - "gitlab.com"
-      - "bitbucket.org"
+      - github.com
+      - api.github.com
+    rules:
+      - action: allow
+        dst: github.com
+        path_default: ""
+        port: 22
+        proto: ssh 
   docker_socket: false # mount Docker socket (security risk if enabled)
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    forward_gpg: true
+    copy_git_config: true
 
 #loop: # autonomous loop settings (clawker loop iterate / clawker loop tasks)
 #  max_loops: 50 # maximum iterations per session
