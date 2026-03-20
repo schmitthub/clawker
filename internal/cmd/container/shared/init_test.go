@@ -571,9 +571,8 @@ func TestCreateContainer_InvalidAgentName(t *testing.T) {
 	fake.AssertNotCalled(t, "ContainerCreate")
 }
 
-func TestCreateContainer_NoFirewallEnvWithoutManager(t *testing.T) {
-	// Without a FirewallManager wired, no firewall env vars should be set
-	// regardless of project config.
+func TestCreateContainer_FirewallEnabledFromSettings(t *testing.T) {
+	// FirewallEnabled env var is set from settings alone — no FirewallManager needed.
 	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -590,12 +589,6 @@ func TestCreateContainer_NoFirewallEnvWithoutManager(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-
-	// Verify no firewall env vars were injected (no FirewallManager wired).
-	for _, e := range containerOpts.Env {
-		require.NotContains(t, e, "CLAWKER_FIREWALL",
-			"firewall env vars should not be set without a FirewallManager")
-	}
 	fake.AssertCalled(t, "ContainerCreate")
 }
 

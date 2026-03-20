@@ -222,7 +222,6 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			Version:        opts.Version,
 			ProjectManager: opts.ProjectManager,
 			HostProxy:      opts.HostProxy,
-			Firewall:       opts.Firewall,
 			Log:            log,
 			Is256Color:     ios.Is256ColorSupported(),
 			IsTrueColor:    ios.IsTrueColorSupported(),

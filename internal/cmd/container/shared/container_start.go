@@ -48,7 +48,6 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	}
 
 	projectCfg := cfg.Project()
-	settings := cfg.Settings()
 
 	var log *logger.Logger
 	if cmdOpts.Logger != nil {
@@ -61,47 +60,6 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	}
 	if log != nil {
 		defer log.Close()
-	}
-
-	// Ensure firewall is running (if enabled)
-	if settings != nil && settings.Firewall.FirewallEnabled() {
-		if cmdOpts.Firewall == nil {
-			if log != nil {
-				log.Debug().Msg("firewall manager provider is nil, skipping")
-			}
-		} else {
-			fwMgr, fwMgrErr := cmdOpts.Firewall(ctx)
-			if fwMgrErr != nil {
-				if log != nil {
-					log.Error().Err(fwMgrErr).Msg("initialize firewall manager error")
-				}
-				return fmt.Errorf("bootstrapping services: initializing firewall manager: %w", fwMgrErr)
-			}
-			if fwMgr == nil {
-				if log != nil {
-					log.Debug().Msg("firewall manager is nil, skipping")
-				}
-			} else {
-				// Sync project rules — writes configs, restarts containers only if running.
-				projectRules := firewall.ProjectRules(cfg)
-				if err := fwMgr.AddRules(ctx, projectRules); err != nil {
-					return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
-				}
-
-				fwDaemonErr := firewall.EnsureDaemon(cfg, log)
-				if fwDaemonErr != nil {
-					if log != nil {
-						log.Error().Err(fwDaemonErr).Msg("ensure firewall daemon error")
-					}
-					return fmt.Errorf("bootstrapping services: ensuring firewall daemon: %w", fwDaemonErr)
-				}
-				waitCtx, waitCancel := context.WithTimeout(ctx, 60*time.Second)
-				defer waitCancel()
-				if err := fwMgr.WaitForHealthy(waitCtx); err != nil {
-					return fmt.Errorf("bootstrapping services: waiting for firewall health: %w", err)
-				}
-			}
-		}
 	}
 
 	// Ensure host proxy is running (if enabled)
@@ -158,21 +116,39 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 		defer log.Close()
 	}
 
-	// Enable firewall iptables inside the container (if enabled).
+	// Ensure firewall is running and enable iptables in the container.
 	if settings != nil && settings.Firewall.FirewallEnabled() {
-		if cmdOpts.Firewall != nil {
-			fwMgr, fwMgrErr := cmdOpts.Firewall(ctx)
-			if fwMgrErr != nil {
-				return fmt.Errorf("bootstrapping services: initializing firewall manager: %w", fwMgrErr)
-			}
-			if fwMgr != nil {
-				if err := fwMgr.Enable(ctx, container); err != nil {
-					return fmt.Errorf("bootstrapping services: enabling firewall: %w", err)
-				}
-				if log != nil {
-					log.Debug().Str("container", container).Msg("firewall enabled in container")
-				}
-			}
+		if cmdOpts.Firewall == nil {
+			return fmt.Errorf("bootstrapping services: firewall is enabled but no firewall manager provided")
+		}
+
+		fwMgr, err := cmdOpts.Firewall(ctx)
+		if err != nil {
+			return fmt.Errorf("bootstrapping services: initializing firewall manager: %w", err)
+		}
+
+		// Sync project rules — writes configs, restarts containers only if running.
+		projectRules := firewall.ProjectRules(cfg)
+		if err := fwMgr.AddRules(ctx, projectRules); err != nil {
+			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
+		}
+
+		if err := firewall.EnsureDaemon(cfg, log); err != nil {
+			return fmt.Errorf("bootstrapping services: ensuring firewall daemon: %w", err)
+		}
+
+		waitCtx, waitCancel := context.WithTimeout(ctx, 60*time.Second)
+		defer waitCancel()
+		if err := fwMgr.WaitForHealthy(waitCtx); err != nil {
+			return fmt.Errorf("bootstrapping services: waiting for firewall health: %w", err)
+		}
+
+		// Apply iptables DNAT rules inside the container (docker exec → firewall.sh enable).
+		if err := fwMgr.Enable(ctx, container); err != nil {
+			return fmt.Errorf("bootstrapping services: enabling firewall in container: %w", err)
+		}
+		if log != nil {
+			log.Debug().Str("container", container).Msg("firewall enabled in container")
 		}
 	}
 

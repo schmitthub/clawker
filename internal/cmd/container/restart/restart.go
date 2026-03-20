@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
@@ -20,6 +21,7 @@ type RestartOptions struct {
 	Client         func(context.Context) (*docker.Client, error)
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
+	Firewall       func(context.Context) (firewall.FirewallManager, error)
 
 	Agent      bool // treat arguments as agents names
 	Timeout    int
@@ -34,6 +36,7 @@ func NewCmdRestart(f *cmdutil.Factory, runF func(context.Context, *RestartOption
 		Client:         f.Client,
 		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
+		Firewall:       f.Firewall,
 	}
 
 	cmd := &cobra.Command{
@@ -162,6 +165,7 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 			Client:         opts.Client,
 			Config:         opts.Config,
 			ProjectManager: opts.ProjectManager,
+			Firewall:       opts.Firewall,
 		})
 	if errBootstrapPre != nil {
 		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPre)
@@ -172,6 +176,7 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 			Client:         opts.Client,
 			Config:         opts.Config,
 			ProjectManager: opts.ProjectManager,
+			Firewall:       opts.Firewall,
 		})
 	if errBootstrapPost != nil {
 		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPost)

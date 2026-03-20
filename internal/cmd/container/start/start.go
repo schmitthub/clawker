@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -28,6 +29,7 @@ type StartOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
+	Firewall       func(context.Context) (firewall.FirewallManager, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Logger         func() (*logger.Logger, error)
 
@@ -45,6 +47,7 @@ func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) e
 		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
 		HostProxy:      f.HostProxy,
+		Firewall:       f.Firewall,
 		SocketBridge:   f.SocketBridge,
 		Logger:         f.Logger,
 	}
@@ -234,6 +237,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.L
 			Config:         opts.Config,
 			ProjectManager: opts.ProjectManager,
 			HostProxy:      opts.HostProxy,
+			Firewall:       opts.Firewall,
 			SocketBridge:   opts.SocketBridge,
 			Logger:         opts.Logger,
 		},

@@ -27,7 +27,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/firewall"
+
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
@@ -1463,7 +1463,6 @@ type CreateContainerOptions struct {
 	Version        string
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
-	Firewall       func(context.Context) (firewall.FirewallManager, error)
 	Log            *logger.Logger
 	Is256Color     bool
 	IsTrueColor    bool
@@ -1593,7 +1592,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	runtimeEnv, envWarnings, _, err := buildCreateTimeEnv(ctx, opts, containerOpts, agentName, wd, log)
+	runtimeEnv, envWarnings, err := buildCreateTimeEnv(ctx, opts, containerOpts, agentName, wd, log)
 	if err != nil {
 		return nil, err
 	}
@@ -1807,7 +1806,7 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 
 // buildCreateTimeEnv constructs container runtime environment variables.
 // Returns env vars, warnings (e.g. unset from_env vars), and error.
-func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, containerOpts *ContainerCreateOptions, agentName, wd string, log *logger.Logger) (env []string, warnings []string, coreDNSIP string, retErr error) {
+func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, containerOpts *ContainerCreateOptions, agentName, wd string, log *logger.Logger) (env []string, warnings []string, retErr error) {
 	projectCfg := opts.Config.Project()
 	workspaceMode := containerOpts.Mode
 	if workspaceMode == "" {
@@ -1816,7 +1815,7 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 
 	agentEnv, warnings, err := ResolveAgentEnv(projectCfg.Agent, wd, log)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("resolving agent environment: %w", err)
+		return nil, nil, fmt.Errorf("resolving agent environment: %w", err)
 	}
 
 	monitoringActive := opts.Client.IsMonitoringActive(ctx)
@@ -1835,14 +1834,8 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		AgentEnv:         agentEnv,
 		MonitoringActive: monitoringActive,
 	}
-	// Firewall: set the enabled flag (iptables applied post-start via manager.Enable)
-	if opts.Config.Settings().Firewall.FirewallEnabled() && opts.Firewall != nil {
-		fwMgr, fwErr := opts.Firewall(ctx)
-		if fwErr != nil {
-			return nil, nil, "", fmt.Errorf("firewall: %w", fwErr)
-		}
-
-		coreDNSIP = fwMgr.CoreDNSIP()
+	// Firewall: set the enabled flag (iptables applied post-start via BootstrapServicesPostStart)
+	if opts.Config.Settings().Firewall.FirewallEnabled() {
 		envOpts.FirewallEnabled = true
 	}
 
@@ -1862,7 +1855,7 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 
 	result, err := docker.RuntimeEnv(envOpts)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
-	return result, warnings, coreDNSIP, nil
+	return result, warnings, nil
 }

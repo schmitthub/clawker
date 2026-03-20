@@ -795,7 +795,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 version: "1"
 workspace: { default_mode: "bind" }
 security: { enable_host_proxy: false }
-`, "")
+`, `firewall: { enable: false }`)
 			mock.GetProjectIgnoreFileFunc = func() (string, error) {
 				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
 			}

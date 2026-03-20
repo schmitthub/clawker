@@ -153,10 +153,10 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 				Version:        cfg.Version,
 				ProjectManager: cfg.ProjectManager,
 				HostProxy:      cfg.HostProxy,
-				Firewall:       cfg.Firewall,
-				Log:            cfg.Log,
-				Is256Color:     cfg.IOStreams.Is256ColorSupported(),
-				IsTrueColor:    cfg.IOStreams.IsTrueColorSupported(),
+
+				Log:         cfg.Log,
+				Is256Color:  cfg.IOStreams.Is256ColorSupported(),
+				IsTrueColor: cfg.IOStreams.IsTrueColorSupported(),
 			}, events)
 			done <- outcome{r, err}
 		}()
@@ -256,10 +256,10 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 			Version:        cfg.Version,
 			ProjectManager: cfg.ProjectManager,
 			HostProxy:      cfg.HostProxy,
-			Firewall:       cfg.Firewall,
-			Log:            cfg.Log,
-			Is256Color:     ios.Is256ColorSupported(),
-			IsTrueColor:    ios.IsTrueColorSupported(),
+
+			Log:         cfg.Log,
+			Is256Color:  ios.Is256ColorSupported(),
+			IsTrueColor: ios.IsTrueColorSupported(),
 		}, events)
 		done <- outcome{r, err}
 	}()
@@ -314,7 +314,15 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 
 	// --- Phase D: Start container ---
 	ios.StartSpinner("Starting loop container")
-	if _, err := cfg.Client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
+	if _, err := containershared.ContainerStart(ctx, containershared.CommandOpts{
+		Client:         func(ctx context.Context) (*docker.Client, error) { return cfg.Client, nil },
+		Config:         func() (config.Config, error) { return cfg.Config, nil },
+		ProjectManager: cfg.ProjectManager,
+		HostProxy:      cfg.HostProxy,
+		Firewall:       cfg.Firewall,
+		SocketBridge:   cfg.SocketBridge,
+		Logger:         func() (*logger.Logger, error) { return cfg.Log, nil },
+	}, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 		ios.StopSpinner()
 		cleanup()
 		return nil, nil, fmt.Errorf("starting loop container: %w", err)
