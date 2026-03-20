@@ -157,15 +157,24 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 
 	// Restart the container with timeout
 	timeout := opts.Timeout
-	errBootstrap := shared.BootstrapServices(
+	errBootstrapPre := shared.BootstrapServicesPreStart(
 		ctx, c.ID, shared.CommandOpts{
 			Client:         opts.Client,
 			Config:         opts.Config,
 			ProjectManager: opts.ProjectManager,
 		})
-	if errBootstrap != nil {
-		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrap)
+	if errBootstrapPre != nil {
+		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPre)
 	}
 	_, err = client.ContainerRestart(ctx, c.ID, &timeout)
+	errBootstrapPost := shared.BootstrapServicesPostStart(
+		ctx, c.ID, shared.CommandOpts{
+			Client:         opts.Client,
+			Config:         opts.Config,
+			ProjectManager: opts.ProjectManager,
+		})
+	if errBootstrapPost != nil {
+		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPost)
+	}
 	return err
 }

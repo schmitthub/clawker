@@ -54,7 +54,7 @@ func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := BootstrapServices(context.Background(), "ctr", tt.cmdOpts)
+			err := BootstrapServicesPreStart(context.Background(), "ctr", tt.cmdOpts)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
 			}
@@ -65,7 +65,7 @@ func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 func TestBootstrapServices_MissingOptionalProvidersAreSkipped(t *testing.T) {
 	t.Parallel()
 
-	err := BootstrapServices(context.Background(), "ctr", CommandOpts{
+	err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
 		Config: testRuntimeConfig("", ""),
 	})
 	if err != nil {
@@ -80,7 +80,7 @@ func TestBootstrapServices_NilProjectAndSettingsDoNotPanic(t *testing.T) {
 	cfg.ProjectFunc = func() *config.Project { return nil }
 	cfg.SettingsFunc = func() *config.Settings { return nil }
 
-	err := BootstrapServices(context.Background(), "ctr", CommandOpts{
+	err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
 		Config: func() (config.Config, error) { return cfg, nil },
 	})
 	if err != nil {

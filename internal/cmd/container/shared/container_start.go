@@ -34,7 +34,7 @@ func NeedsSocketBridge(cfg *config.Project) bool {
 	return cfg.Security.GitCredentials.GPGEnabled() || cfg.Security.GitCredentials.GitSSHEnabled()
 }
 
-func BootstrapServices(ctx context.Context, container string, cmdOpts CommandOpts) error {
+func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts CommandOpts) error {
 	if cmdOpts.Config == nil {
 		return fmt.Errorf("bootstrapping services: config provider is nil")
 	}
@@ -61,30 +61,6 @@ func BootstrapServices(ctx context.Context, container string, cmdOpts CommandOpt
 	}
 	if log != nil {
 		defer log.Close()
-	}
-
-	// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
-	if NeedsSocketBridge(projectCfg) {
-		if cmdOpts.SocketBridge == nil {
-			if log != nil {
-				log.Debug().Msg("socket bridge provider is nil, skipping")
-			}
-		} else {
-			sb := cmdOpts.SocketBridge()
-			if sb == nil {
-				if log != nil {
-					log.Debug().Msg("socket bridge manager is nil, skipping")
-				}
-			} else {
-				gpgEnabled := projectCfg.Security.GitCredentials != nil && projectCfg.Security.GitCredentials.GPGEnabled()
-				if err := sb.EnsureBridge(container, gpgEnabled); err != nil {
-					if log != nil {
-						log.Error().Err(err).Msg("failed to start socket bridge")
-					}
-					return fmt.Errorf("bootstrapping services: starting socket bridge: %w", err)
-				}
-			}
-		}
 	}
 
 	// Ensure firewall is running (if enabled)
@@ -153,8 +129,70 @@ func BootstrapServices(ctx context.Context, container string, cmdOpts CommandOpt
 	return nil
 }
 
+func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts CommandOpts) error {
+	// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
+	if cmdOpts.Config == nil {
+		return fmt.Errorf("bootstrapping services: config provider is nil")
+	}
+
+	cfg, err := cmdOpts.Config()
+	if err != nil {
+		return fmt.Errorf("bootstrapping services: loading config: %w", err)
+	}
+	if cfg == nil {
+		return fmt.Errorf("bootstrapping services: config is nil")
+	}
+
+	projectCfg := cfg.Project()
+
+	var log *logger.Logger
+	if cmdOpts.Logger != nil {
+		log, err = cmdOpts.Logger()
+		if err != nil {
+			return fmt.Errorf("bootstrapping services: initializing logger: %w", err)
+		}
+	} else {
+		log = logger.Nop()
+	}
+	if log != nil {
+		defer log.Close()
+	}
+
+	if NeedsSocketBridge(projectCfg) {
+		if cmdOpts.SocketBridge == nil {
+			if log != nil {
+				log.Debug().Msg("socket bridge provider is nil, skipping")
+			}
+		} else {
+			sb := cmdOpts.SocketBridge()
+			if sb == nil {
+				if log != nil {
+					log.Debug().Msg("socket bridge manager is nil, skipping")
+				}
+			} else {
+				gpgEnabled := projectCfg.Security.GitCredentials != nil && projectCfg.Security.GitCredentials.GPGEnabled()
+				if err := sb.EnsureBridge(container, gpgEnabled); err != nil {
+					if log != nil {
+						log.Error().Err(err).Msg("failed to start socket bridge")
+					}
+					return fmt.Errorf("bootstrapping services: starting socket bridge: %w", err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.ContainerStartOptions) (mobyClient.ContainerStartResult, error) {
-	err := BootstrapServices(ctx, startOpts.ContainerID, cmdOpts)
+	defer func(ctx context.Context, container string, cmdOpts CommandOpts) {
+		err := BootstrapServicesPostStart(ctx, container, cmdOpts)
+		if err != nil {
+
+		}
+	}(ctx, startOpts.ContainerID, cmdOpts)
+
+	err := BootstrapServicesPreStart(ctx, startOpts.ContainerID, cmdOpts)
+
 	if err != nil {
 		return mobyClient.ContainerStartResult{}, err
 	}
