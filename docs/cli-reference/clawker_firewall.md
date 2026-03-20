@@ -46,7 +46,7 @@ CoreDNS (DNS-level allow/deny).
 * [clawker firewall remove](clawker_firewall_remove) - Remove an egress rule
 * [clawker firewall rotate-ca](clawker_firewall_rotate-ca) - Rotate the firewall CA certificate
 * [clawker firewall status](clawker_firewall_status) - Show firewall health and status
-* [clawker firewall up](clawker_firewall_up) - Run the firewall daemon
+* [clawker firewall up](clawker_firewall_up) - Start the firewall daemon
 
 ### Options
 

@@ -10,7 +10,7 @@
 - [x] **Merged egress rules all port 0**: Fixed — `normalizeRule()` in rules.go sets TLS→443, SSH→22. TCP port 0 = any port (intentional). All store writes go through normalization.
 - [x] **Monitoring stack blocked by firewall**: Fixed — added iptables RETURN rules for `CLAWKER_NET_CIDR` (Docker-assigned clawker-net subnet) in init-firewall.sh. Intra-network traffic is not egress and bypasses Envoy entirely. The CIDR was already wired end-to-end (`Manager.discoverNetwork()` → `env.go` → container env var) but unused. New test: `TestFirewall_IntraNetworkBypass` verifies agent→clawker-net connectivity without explicit rules.
 - [x] **Project rules not synced after daemon start**: Fixed — container creation calls `AddRules` with fresh project config. `regenerateAndRestart` skips container restart if stack not running (configs written to disk, daemon picks them up on start).
-- [ ] clawker firewall up hangs on the process and blocks instead of starting it in the background as a daemon
+- [x] clawker firewall up hangs on the process and blocks instead of starting it in the background as a daemon
 - [x] Never tested firewall disable command
 - [x] never tested firewall disabled setting 
 - [x] firewall disable doesn't do agent selection "clawker firewall disable --agent dev" fails

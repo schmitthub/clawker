@@ -4,15 +4,15 @@ title: "clawker firewall up"
 
 ## clawker firewall up
 
-Run the firewall daemon
+Start the firewall daemon
 
 ### Synopsis
 
-Start the firewall daemon process. This manages the Envoy+CoreDNS container
+Start the firewall daemon process in the background. This manages the Envoy+CoreDNS container
 lifecycle, monitors their health, and auto-exits when no clawker containers are running.
 
 Normally started automatically by container commands when firewall is enabled.
-Can also be started manually for debugging.
+Can also be started manually for debugging or pre-warming.
 
 ```
 clawker firewall up [flags]
@@ -21,7 +21,7 @@ clawker firewall up [flags]
 ### Examples
 
 ```
-  # Start the firewall daemon (blocks)
+  # Start the firewall daemon in the background
   clawker firewall up
 ```
 

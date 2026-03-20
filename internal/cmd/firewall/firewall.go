@@ -34,6 +34,7 @@ CoreDNS (DNS-level allow/deny).`,
 
 	cmd.AddCommand(
 		NewCmdUp(f, nil),
+		NewCmdServe(f, nil),
 		NewCmdDown(f, nil),
 		NewCmdStatus(f, nil),
 		NewCmdList(f, nil),

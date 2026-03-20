@@ -346,7 +346,7 @@ func startDaemonProcess(cfg config.Config, log *logger.Logger) error {
 		}
 	}
 
-	cmd := exec.Command(exe, "firewall", "up")
+	cmd := exec.Command(exe, "firewall", "serve")
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid: true, // Detach from parent session.
 	}
@@ -365,7 +365,7 @@ func startDaemonProcess(cfg config.Config, log *logger.Logger) error {
 
 	if err := cmd.Start(); err != nil {
 		if logFile != nil {
-			logFile.Close()
+			_ = logFile.Close()
 		}
 		return fmt.Errorf("failed to start firewall daemon: %w", err)
 	}
@@ -448,7 +448,9 @@ func StopDaemon(pidFile string) error {
 	}
 
 	if !isProcessAlive(pid) {
-		removePIDFile(pidFile, nil)
+		if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove stale PID file: %w", err)
+		}
 		return nil
 	}
 
