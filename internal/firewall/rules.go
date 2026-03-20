@@ -18,6 +18,7 @@ func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {
 	return storage.NewStore[EgressRulesFile](
 		storage.WithFilenames(cfg.EgressRulesFileName()),
 		storage.WithPaths(dataDir),
+		storage.WithLock(), // Cross-process flock — multiple CLI/daemon instances share this file.
 	)
 }
 
@@ -41,4 +42,23 @@ func normalizeRule(r config.EgressRule) config.EgressRule {
 // ruleKey returns the dedup key for an egress rule: dst:proto:port.
 func ruleKey(r config.EgressRule) string {
 	return fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
+}
+
+// normalizeAndDedup normalizes all rules and removes duplicates.
+// This handles legacy store files that contain port:0 rules written before
+// normalizeRule defaulted TLS to 443 — after normalization those become
+// duplicates of the correctly-ported entries.
+func normalizeAndDedup(rules []config.EgressRule) []config.EgressRule {
+	seen := make(map[string]struct{}, len(rules))
+	out := make([]config.EgressRule, 0, len(rules))
+	for _, r := range rules {
+		r = normalizeRule(r)
+		key := ruleKey(r)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, r)
+	}
+	return out
 }

@@ -233,32 +233,41 @@ func ProjectRules(cfg config.Config) []config.EgressRule {
 
 // addRulesToStore deduplicates and writes rules to the store. Returns true if any new rules were added.
 func (m *Manager) addRulesToStore(rules []config.EgressRule) (bool, error) {
-	current := m.store.Read()
-
-	known := make(map[string]struct{}, len(current.Rules))
-	for _, r := range current.Rules {
-		known[ruleKey(r)] = struct{}{}
-	}
-
-	var newRules []config.EgressRule
+	// Normalize incoming rules before the Set closure so we can do an early
+	// return if nothing is new — but all store reads happen inside Set to
+	// avoid TOCTOU races with concurrent CLI/daemon processes.
+	var normalized []config.EgressRule
 	for _, r := range rules {
-		r = normalizeRule(r)
-		key := ruleKey(r)
-		if _, exists := known[key]; exists {
-			continue
-		}
-		known[key] = struct{}{}
-		newRules = append(newRules, r)
+		normalized = append(normalized, normalizeRule(r))
 	}
 
-	if len(newRules) == 0 {
-		return false, nil
-	}
-
+	var added bool
 	if err := m.store.Set(func(f *EgressRulesFile) {
-		f.Rules = append(f.Rules, newRules...)
+		// Normalize and dedup existing rules inside the closure so we
+		// operate on the authoritative COW copy, not a stale snapshot.
+		existing := normalizeAndDedup(f.Rules)
+
+		known := make(map[string]struct{}, len(existing))
+		for _, r := range existing {
+			known[ruleKey(r)] = struct{}{}
+		}
+
+		for _, r := range normalized {
+			key := ruleKey(r)
+			if _, exists := known[key]; exists {
+				continue
+			}
+			known[key] = struct{}{}
+			existing = append(existing, r)
+			added = true
+		}
+		f.Rules = existing
 	}); err != nil {
 		return false, fmt.Errorf("updating rules: %w", err)
+	}
+
+	if !added {
+		return false, nil
 	}
 
 	if err := m.store.Write(); err != nil {
@@ -279,22 +288,25 @@ func (m *Manager) removeRulesFromStore(toRemove []config.EgressRule) error {
 		removeSet[ruleKey(normalizeRule(r))] = struct{}{}
 	}
 
-	current := m.store.Read()
-	filtered := make([]config.EgressRule, 0, len(current.Rules))
-	for _, r := range current.Rules {
-		if _, remove := removeSet[ruleKey(r)]; !remove {
-			filtered = append(filtered, r)
-		}
-	}
-
-	if len(filtered) == len(current.Rules) {
-		return nil
-	}
-
+	var changed bool
 	if err := m.store.Set(func(f *EgressRulesFile) {
+		// Normalize and dedup inside the closure to operate on the
+		// authoritative COW copy, not a stale snapshot.
+		normalized := normalizeAndDedup(f.Rules)
+		filtered := make([]config.EgressRule, 0, len(normalized))
+		for _, r := range normalized {
+			if _, remove := removeSet[ruleKey(r)]; !remove {
+				filtered = append(filtered, r)
+			}
+		}
+		changed = len(filtered) != len(normalized)
 		f.Rules = filtered
 	}); err != nil {
 		return fmt.Errorf("removing rules: %w", err)
+	}
+
+	if !changed {
+		return nil
 	}
 
 	return m.store.Write()
@@ -308,7 +320,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 
 // List returns all currently active egress rules.
 func (m *Manager) List(_ context.Context) ([]config.EgressRule, error) {
-	return m.store.Read().Rules, nil
+	return normalizeAndDedup(m.store.Read().Rules), nil
 }
 
 // Disable disconnects a container from the firewall network, blocking all egress
@@ -508,7 +520,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 
 // Status returns a health snapshot of the firewall stack.
 func (m *Manager) Status(ctx context.Context) (*FirewallStatus, error) {
-	rules := m.store.Read()
+	rules := normalizeAndDedup(m.store.Read().Rules)
 
 	// Discover network state from Docker (best-effort; fields stay empty if network doesn't exist).
 	netInfo, _ := m.discoverNetwork(ctx)
@@ -520,7 +532,7 @@ func (m *Manager) Status(ctx context.Context) (*FirewallStatus, error) {
 		Running:       envoyRunning && corednsRunning,
 		EnvoyHealth:   envoyRunning,
 		CoreDNSHealth: corednsRunning,
-		RuleCount:     len(rules.Rules),
+		RuleCount:     len(rules),
 	}
 	if netInfo != nil {
 		status.EnvoyIP = netInfo.EnvoyIP
@@ -562,7 +574,7 @@ func (m *Manager) NetCIDR() string {
 // HTTP mappings are appended after TCP mappings — all HTTP ports redirect to the
 // single HTTP listener, while TCP ports get per-rule dedicated listeners.
 func (m *Manager) formatPortMappings() string {
-	rules := m.store.Read().Rules
+	rules := normalizeAndDedup(m.store.Read().Rules)
 	ports := m.envoyPorts()
 	tcpMappings := TCPMappings(rules, ports)
 	httpMappings := HTTPMappings(rules, ports.HTTPPort)
@@ -609,8 +621,37 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 		return "", fmt.Errorf("ensuring CA: %w", err)
 	}
 
-	// Read current rules from store.
-	allRules := m.store.Read().Rules
+	// Normalize, dedup, and heal the store inside the Set closure to avoid
+	// TOCTOU races with concurrent CLI/daemon processes. Legacy files may
+	// contain port:0 or empty proto/action rules that need normalization.
+	var allRules []config.EgressRule
+	var healed bool
+	if err := m.store.Set(func(f *EgressRulesFile) {
+		allRules = normalizeAndDedup(f.Rules)
+		// Dirty if count changed (dedup) or any normalizable field differs.
+		if len(allRules) != len(f.Rules) {
+			healed = true
+		} else {
+			for i, r := range f.Rules {
+				n := allRules[i]
+				if r.Proto != n.Proto || r.Action != n.Action || r.Port != n.Port {
+					healed = true
+					break
+				}
+			}
+		}
+		if healed {
+			f.Rules = allRules
+		}
+	}); err != nil {
+		return "", fmt.Errorf("healing rules store: %w", err)
+	}
+	if healed {
+		if err := m.store.Write(); err != nil {
+			return "", fmt.Errorf("writing healed rules: %w", err)
+		}
+		m.log.Info().Int("rules", len(allRules)).Msg("healed legacy rules in store")
+	}
 
 	// Regenerate domain certs for any MITM rules.
 	if err := RegenerateDomainCerts(allRules, certDir, caCert, caKey); err != nil {

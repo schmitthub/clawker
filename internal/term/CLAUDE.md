@@ -107,11 +107,12 @@ func GetTerminalSize(fd int) (width, height int, err error)    // wraps x/term.G
 ## Import Boundary (Critical)
 
 **`internal/term` is the sole `golang.org/x/term` gateway.** No other package may import `x/term` directly. Use:
+
 - `term.IsTerminal(f)` or `term.IsTerminalFd(fd)` instead of `goterm.IsTerminal(fd)`
 - `term.GetTerminalSize(fd)` instead of `goterm.GetSize(fd)`
 - `term.NewRawMode(fd)` for raw mode control
 
 **Consumers**:
+
 - `internal/iostreams` — uses `FromEnv`, `IsTerminalFd`, `GetTerminalSize`, `mocks.FakeTerm`
 - `internal/docker` — uses `RawMode`, `NewRawModeStdin`, `NewRawMode`, `IsTerminalFd`
-- `cmd/fawker` — uses `NewRawModeStdin`

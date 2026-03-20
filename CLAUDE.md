@@ -57,7 +57,6 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 
 ```
 ├── cmd/clawker/              # Main CLI binary
-├── cmd/fawker/               # Demo CLI — faked deps, recorded scenarios, no Docker
 ├── internal/
 │   ├── build/                 # Build-time metadata (version, date) — leaf, stdlib only
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
@@ -122,22 +121,11 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/ins
 bash scripts/install.sh --version v0.1.3 --dir $HOME/.local/bin  # Pin version + custom dir
 
 go build -o bin/clawker ./cmd/clawker  # Build CLI
-make fawker                               # Build fawker demo CLI (faked deps, no Docker)
 make test                                 # Unit tests (no Docker, excludes test/cli,internals,agents)
 ./bin/clawker --debug run @              # Debug logging
 go run ./cmd/gen-docs --doc-path docs --markdown            # Regenerate CLI docs
 go run ./cmd/gen-docs --doc-path docs --markdown --website   # Regenerate CLI docs for Mintlify (MDX-safe + frontmatter)
 npx mintlify dev --docs-directory docs                       # Local Mintlify preview (http://localhost:3000)
-
-# Fawker demo CLI (visual UAT without Docker)
-./bin/fawker image build                          # Default scenario (multi-stage)
-./bin/fawker image build --scenario error         # Error scenario
-./bin/fawker image build --progress plain         # Plain mode
-./bin/fawker container run -it --agent test @      # Interactive run with init progress tree
-./bin/fawker container run --detach --agent test @ # Detached run with init progress tree
-./bin/fawker container create --agent test @       # Create container (real flow)
-./bin/fawker container ls                         # List fake containers
-./bin/fawker image ls                             # List fake images
 
 # Golden file tests
 GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeed -v          # Regenerate JSON testdata
@@ -357,6 +345,7 @@ User-facing docs are powered by [Mintlify](https://mintlify.com/) and live in th
 * See `.claude/rules/mintlify-docs.md` for full conventions (theming, MDX parsing, navigation)
 
 **Regenerating CLI reference**: `go run ./cmd/gen-docs --doc-path docs --markdown --website`
+
 * `--website` flag produces MDX-safe output (escapes bare `<word>` angle brackets) with Mintlify frontmatter
 * Source: `internal/docs/markdown.go` (`GenMarkdownTreeWebsite`, `EscapeMDXProse`)
 

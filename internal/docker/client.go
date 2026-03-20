@@ -26,7 +26,7 @@ type Client struct {
 	log *logger.Logger // structured file logger (never nil; Nop for tests)
 
 	// BuildDefaultImageFunc overrides BuildDefaultImage when non-nil.
-	// Used by fawker/tests to inject fake build behavior.
+	// Used by tests to inject fake build behavior.
 	// Follows the same pattern as whail.Engine.BuildKitImageBuilder.
 	BuildDefaultImageFunc BuildDefaultImageFn
 

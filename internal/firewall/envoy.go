@@ -125,7 +125,10 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 			httpRules = append(httpRules, r)
 			continue
 		}
-		// Default: TLS (MITM with path rules, or SNI passthrough).
+		// Default: TLS — normalize port defensively (Envoy rejects port_value 0).
+		if r.Port == 0 {
+			r.Port = 443
+		}
 		if len(r.PathRules) > 0 {
 			mitmRules = append(mitmRules, r)
 		} else {
@@ -427,7 +430,10 @@ func buildHTTPRoutes(r config.EgressRule) []any {
 // sni_dynamic_forward_proxy is non-terminal — tcp_proxy must follow it.
 func buildPassthroughFilterChain(r config.EgressRule) map[string]any {
 	domain := normalizeDomain(r.Dst)
-	port := r.Port // Already normalized by addRulesToStore (TLS defaults to 443).
+	port := r.Port
+	if port == 0 {
+		port = 443 // Defensive default — Envoy requires port_value in (0, 65535].
+	}
 
 	return map[string]any{
 		"filter_chain_match": map[string]any{

@@ -554,8 +554,7 @@ func (f *FakeClient) SetupBuildKitWithRecordedProgress(events []whailtest.Record
 }
 
 // SetupPingBuildKit wires PingFn to report BuildKit as the preferred builder.
-// Use this when exercising code paths that call BuildKitEnabled() for detection
-// (e.g. real buildRun in the fawker demo CLI).
+// Use this when exercising code paths that call BuildKitEnabled() for detection.
 func (f *FakeClient) SetupPingBuildKit() {
 	f.FakeAPI.PingFn = func(_ context.Context, _ client.PingOptions) (client.PingResult, error) {
 		return client.PingResult{

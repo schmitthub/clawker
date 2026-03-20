@@ -17,7 +17,7 @@ const DefaultImageTag = "clawker-default:latest"
 // It resolves the latest Claude Code version from npm, generates a Dockerfile,
 // and builds the image with clawker's managed labels.
 func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgress whail.BuildProgressFunc) error {
-	// Allow override for fawker/tests.
+	// Allow override for tests.
 	if c.BuildDefaultImageFunc != nil {
 		return c.BuildDefaultImageFunc(ctx, flavor, onProgress)
 	}

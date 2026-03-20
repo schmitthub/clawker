@@ -50,6 +50,7 @@ build:
       - cmd: /usr/local/go/bin/go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
       - cmd: /usr/local/go/bin/go install golang.org/x/vuln/cmd/govulncheck@latest
       - cmd: /usr/local/go/bin/go install golang.org/x/tools/cmd/goimports@latest
+      - cmd: /usr/local/go/bin/go install honnef.co/go/tools/cmd/staticcheck@latest
       - cmd: uv tool install semgrep
 
   inject:

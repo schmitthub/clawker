@@ -21,6 +21,7 @@ fmt.Fprintf(ios.ErrOut, "%s Built image %s\n", cs.SuccessIcon(), cs.Bold(imageTa
 | **stderr** | `ios.ErrOut` | Status messages, warnings, errors, diagnostics |
 
 Per output type:
+
 - **Data** (tables, IDs, JSON, command results) → `ios.Out` (stdout) — always
 - **Status** ("Created container X", "Removed 3 volumes") → `ios.ErrOut` (stderr) — visible to user, not captured by pipes
 - **Errors** → `ios.ErrOut` (stderr) — via `printError()` in Main(), or pre-printed before `SilentError`
@@ -35,16 +36,19 @@ These base rules apply to **static** (non-TUI) output. Live/interactive scenario
 Format/filter flags are for **static list commands only** (Scenario 1). They produce one-shot tabular data that users pipe, grep, or script against. Do NOT add these to live-display or live-interactive commands — streaming output has its own `--progress` flag.
 
 **When to add format/filter flags:**
+
 - `* list` / `* ls` commands — `container list`, `image list`, `volume list`, `network list`, `worktree list`
 - Any command whose primary output is a table of resources
 
 **When NOT to add:**
+
 - `* build`, `* run`, `* start` — these are live-display (Scenario 3) with streaming progress
 - `* inspect`, `* logs` — single-resource detail or streaming logs, not tabular lists
 - `* remove`, `* prune` — action commands, not data queries
 - Live-interactive commands (Scenario 4) — BubbleTea owns the terminal
 
 **Flag registration** (via `cmdutil`):
+
 - `cmdutil.AddFormatFlags(cmd)` → registers `--format`, `--json`, `-q`/`--quiet` with PreRunE mutual exclusivity
 - `cmdutil.AddFilterFlags(cmd)` → registers repeatable `--filter key=value`
 
@@ -60,6 +64,7 @@ Format/filter flags are for **static list commands only** (Scenario 1). They pro
 | `-q` / `--quiet` | IDs only, one per line | `fmt.Fprintln(ios.Out, id)` |
 
 **Mutual exclusivity** (enforced in PreRunE):
+
 - `--quiet` vs `--format`/`--json` → `FlagError`
 - `--format` vs `--json` → `FlagError`
 
@@ -81,6 +86,7 @@ See Section 7 for the complete list command wiring pattern.
 Print and done. Data, status, results.
 
 **Stream strategy:**
+
 - Data output (tables, IDs, results) → `ios.Out` (stdout)
 - Status messages, success confirmations → `ios.ErrOut` (stderr)
 - Warnings, next steps → `ios.ErrOut` (stderr)
@@ -116,6 +122,7 @@ func runRemove(opts *RemoveOptions) error {
 Static output with y/n prompts mid-flow.
 
 **Stream strategy:**
+
 - Same as Static — data → stdout, status → stderr
 - Prompts render to stderr (visible when stdout is piped)
 - Confirmation results influence what data goes to stdout
@@ -140,6 +147,7 @@ func runPrune(opts *PruneOptions) error {
 Some commands combine an interactive wizard (Scenario 4) with live progress display (Scenario 3). The `init` command is the canonical example: it runs a multi-step wizard for user choices, then a TUI progress display for the image build.
 
 **Stream strategy:**
+
 - Wizard phase: BubbleTea owns terminal (alt screen), wizard manages all rendering
 - Progress phase: same as Scenario 3 (TUI manages terminal, summary to stderr)
 - After both phases: static next steps to stderr
@@ -177,11 +185,13 @@ func Run(ctx context.Context, opts *InitOptions) error {
 No user input, but continuous rendering with layout management.
 
 **Stream strategy (TTY mode):**
+
 - BubbleTea manages the terminal — live progress renders via the TUI framework
 - After TUI exits, final summary renders as status (stderr)
 - If the command produces capturable data (e.g., image tag), write to stdout separately
 
 **Stream strategy (plain/non-TTY fallback):**
+
 - Progress lines (`[run]`/`[ok]`/`[fail]`) → `ios.ErrOut` (stderr) — ephemeral status
 - Final summary → `ios.ErrOut` (stderr) — status
 - Capturable data → `ios.Out` (stdout)
@@ -211,6 +221,7 @@ func runBuild(opts *BuildOptions) error {
 Full keyboard/mouse input, stateful navigation. Uses `tui.RunProgram`.
 
 **Stream strategy:**
+
 - BubbleTea owns the full terminal (alternate screen)
 - All rendering managed by the TUI framework
 - Not pipeable — interactive commands require a TTY
@@ -390,6 +401,7 @@ type imageRow struct {
 ```
 
 Build rows from domain objects:
+
 ```go
 func buildRows(items []whail.ImageSummary) []imageRow {
     var rows []imageRow
@@ -464,6 +476,7 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 ```
 
 **Key rules for the switch:**
+
 - Quiet first (cheapest path, no row construction needed in theory, but rows are built before switch for simplicity)
 - JSON second (structured data)
 - Template third (user-defined format)
@@ -484,10 +497,12 @@ return tp.Render()
 ```
 
 **Rendering modes:**
+
 - **TTY + color (styled)**: `lipgloss/table` with `StyleFunc`. Muted uppercase headers (`TableHeaderStyle`), primary color first column (`TablePrimaryColumnStyle`), no borders. Column widths auto-sized by median-based resizer.
 - **Non-TTY / piped (plain)**: `text/tabwriter` with 2-space column gaps, no styling — machine-parseable.
 
 **Style overrides** (optional, for commands needing custom column colors):
+
 ```go
 tp := opts.TUI.NewTable("NAME", "STATUS")
 tp.WithPrimaryStyle(func(s string) string { return cs.Success(s) })
@@ -525,6 +540,7 @@ func matchesFilters(item Item, filters []cmdutil.Filter) bool {
 ```
 
 Glob matching (trailing `*` only, Docker CLI convention):
+
 ```go
 func matchGlob(s, pattern string) bool {
     if prefix, ok := strings.CutSuffix(pattern, "*"); ok {
@@ -563,12 +579,14 @@ opts.Format = cmdutil.AddFormatFlags(cmd)
 ```
 
 **Remaining raw tabwriter usages** (7 files, migration needed):
+
 - `container/list`, `container/top`, `container/stats` (x2)
 - `volume/list`, `network/list`, `worktree/list`
 
 ### 7.8 Testing List Commands
 
 **Flag parsing tests** (no Docker, no fakes):
+
 ```go
 func TestNewCmdList_FormatFlags(t *testing.T) {
     tests := []struct {
@@ -601,6 +619,7 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 ```
 
 **Rendering tests** (uses dockertest fakes, exercises full listRun):
+
 ```go
 t.Run("json_output", func(t *testing.T) {
     fake := dockertest.NewFakeClient()
@@ -632,6 +651,7 @@ t.Run("filter_reference", func(t *testing.T) {
 ```
 
 **Golden file tests** (for table output stability):
+
 ```bash
 GOLDEN_UPDATE=1 go test ./internal/cmd/image/list/... -run TestImageList_Golden -v
 ```
@@ -664,6 +684,7 @@ idx, err := prompter.Select("Base image", []prompter.SelectOption{
 ### Non-Interactive Fallback
 
 In CI/non-TTY (checked via `ios.IsInteractive()`):
+
 - `String` → returns `Default` (or error if `Required` with no default)
 - `Confirm` → returns `defaultYes`
 - `Select` → returns `defaultIdx`
@@ -736,6 +757,7 @@ Use `RunProgress` (the "tree display") when a command has **streaming, multi-ste
 4. **Dual rendering matters** — TTY users see a live tree; CI/piped output gets sequential `[run]`/`[ok]`/`[fail]` lines
 
 **Do NOT use for**:
+
 - Single-operation wait (use `ios.RunWithSpinner` instead)
 - Measurable byte progress (use `ios.NewProgressBar` instead)
 - Static output with no streaming (use `fmt.Fprintf` directly)
@@ -768,6 +790,7 @@ Is work streaming + multi-step?
 ```
 
 Key elements:
+
 - Stages are parent nodes, steps are children with tree connectors (`├─`/`└─`)
 - Active stages expand; complete/pending/error stages collapse to `✓ name ── N steps`
 - Running steps show a pulsing spinner; inline `⎿` log lines stream beneath
@@ -957,12 +980,14 @@ For multi-step interactive forms see `prompter-wizard` memory.
 ### Testing Tree Display
 
 **Golden file tests** (plain mode — deterministic):
+
 ```bash
 go test ./internal/tui/... -run TestProgressPlain_Golden -v
 GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v  # regenerate
 ```
 
 **Unit tests** (model-level, no BubbleTea program):
+
 ```go
 func newTestProgressModel(t *testing.T) (progressModel, *iostreams.IOStreams) {
     tio, _, _, _ := iostreams.Test()
@@ -978,15 +1003,9 @@ func newTestProgressModel(t *testing.T) (progressModel, *iostreams.IOStreams) {
 ```
 
 **Integration tests** (full pipeline — plays recorded events through RunProgress):
+
 ```bash
 go test ./internal/cmd/image/build/... -run TestBuildProgress -v
-```
-
-**Visual verification** (fawker demo CLI):
-```bash
-make fawker && ./bin/fawker image build              # default multi-stage
-./bin/fawker image build --scenario error             # error scenario
-./bin/fawker image build --progress plain             # plain mode
 ```
 
 ## 10. Deprecated Methods & Migration Guide
@@ -1009,6 +1028,7 @@ make fawker && ./bin/fawker image build              # default multi-stage
 ### Migration Recipe: `cmdutil.HandleError`
 
 This is the largest migration. The pattern is:
+
 ```go
 // BEFORE (deprecated)
 result, err := client.DoSomething(ctx)
@@ -1025,6 +1045,7 @@ if err != nil {
 ```
 
 For cases where `HandleError` is used after a partial success (some items succeeded, some failed), use `SilentError` with explicit formatting:
+
 ```go
 // AFTER (partial failure)
 if len(errors) > 0 {
@@ -1036,6 +1057,7 @@ if len(errors) > 0 {
 ```
 
 **Priority files** (highest call count):
+
 - `container/exec/exec.go` (6 calls)
 - `container/run/run.go` (5 calls)
 - `container/start/start.go` (4 calls)
@@ -1057,6 +1079,7 @@ return cmdutil.SilentError
 ```
 
 **Priority files** (highest call count):
+
 - `loop/run/run.go` (5 calls)
 - `generate/generate.go` (4 calls)
 - `loop/status/status.go` (4 calls)
@@ -1094,6 +1117,7 @@ fmt.Fprintln(ios.ErrOut, "  2. Run 'clawker config check' to verify your configu
 ```
 
 **Priority files**:
+
 - `container/create/create.go` (4 calls)
 - `container/run/run.go` (4 calls)
 - `config/check/check.go` (3 calls)
@@ -1160,6 +1184,7 @@ Zero production usages remain.
 ## 11. Anti-Patterns
 
 ### Direct Error Printing
+
 ```go
 // BAD — bypass centralized error rendering
 fmt.Fprintf(ios.ErrOut, "Error: %s\n", err)
@@ -1170,6 +1195,7 @@ return fmt.Errorf("context: %w", err)
 ```
 
 ### Direct `os.Exit` in Commands
+
 ```go
 // BAD — skips defers (terminal restore, container cleanup)
 os.Exit(1)
@@ -1179,6 +1205,7 @@ return &cmdutil.ExitError{Code: exitCode}
 ```
 
 ### Logger for User Output
+
 ```go
 // BAD — zerolog is for file logging only
 logger.Warn().Msg("image not found")
@@ -1188,12 +1215,12 @@ fmt.Fprintf(ios.ErrOut, "%s Image not found\n", cs.WarningIcon())
 ```
 
 Logger methods are now purely to write to logfile for developers and users to provide developers:
-* `logger.Debug` write to `cfg.LogsSubdir()/clawker.log`. We always write debug logs to file no matter what. the `--debug|-D` flag is for a future feature to additionally print the debug statements to stdout for power users and developers who want to see debug logs in real time, but its not a toggle for whether debug logs get written at all. We want to capture debug logs in the field by default to make it easier to troubleshoot issues that users are having without requiring them to enable debug mode ahead of time.
-* `logger.error` write panics / failures / stacktraces (if available) to `cfg.LogsSubdir()/clawker.log`. Concise user facing error messages get returned to Main() and handled. Main() will eventually have a decision tree on how to handle/print errors based on error type with a catchall printError. But currently only the catchall is in existence. if you don't know which error type to choose default to cmdutii.ExitError or ask the user for clarifying questions
-* Existing (`logger.Warn`, `logger.Info`) get converted to using stdout(info)/stderr(warn) with appropriate icons and formatting as per the new guidelines for non-interactive mode, for live interactive modes they get integrated into whatever TUI component is appropriate
-
+- `logger.Debug` write to `cfg.LogsSubdir()/clawker.log`. We always write debug logs to file no matter what. the `--debug|-D` flag is for a future feature to additionally print the debug statements to stdout for power users and developers who want to see debug logs in real time, but its not a toggle for whether debug logs get written at all. We want to capture debug logs in the field by default to make it easier to troubleshoot issues that users are having without requiring them to enable debug mode ahead of time.
+- `logger.error` write panics / failures / stacktraces (if available) to `cfg.LogsSubdir()/clawker.log`. Concise user facing error messages get returned to Main() and handled. Main() will eventually have a decision tree on how to handle/print errors based on error type with a catchall printError. But currently only the catchall is in existence. if you don't know which error type to choose default to cmdutii.ExitError or ask the user for clarifying questions
+- Existing (`logger.Warn`, `logger.Info`) get converted to using stdout(info)/stderr(warn) with appropriate icons and formatting as per the new guidelines for non-interactive mode, for live interactive modes they get integrated into whatever TUI component is appropriate
 
 ### Raw `tabwriter` in Commands
+
 ```go
 // BAD — no TTY-aware styling, inconsistent with rest of CLI
 w := tabwriter.NewWriter(ios.Out, 0, 0, 2, ' ', 0)
