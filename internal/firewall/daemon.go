@@ -114,7 +114,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Start the firewall stack (pulls images, creates containers, waits for healthy).
 	d.log.Debug().Msg("calling EnsureRunning to start firewall stack")
 	if err := d.manager.EnsureRunning(ctx); err != nil {
-		d.log.Error().Err(err).Msg("firewall stack failed to start")
+		d.log.Error().Err(err).Msg("firewall stack failed to start, tearing down")
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stopCancel()
+		if stopErr := d.manager.Stop(stopCtx); stopErr != nil {
+			d.log.Warn().Err(stopErr).Msg("failed to clean up after startup failure")
+		}
 		return fmt.Errorf("firewall startup failed: %w", err)
 	}
 
