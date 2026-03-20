@@ -4,7 +4,8 @@
 
 ## Bugs
 
-- [x] **Bypass incomplete**: Fixed — three root causes: (1) Dante hardcoded `external: eth0` but container interface varies; now detects via `/proc/net/route`. (2) `hostConfig.DNS = CoreDNS` made Docker forward ALL DNS through CoreDNS including root's; removed — iptables handles DNS filtering. (3) init-firewall.sh used catch-all rules instead of targeting container user UID; now targets `CLAWKER_USER` UID specifically (matching openclaw-deploy reference).
+- [x] **Bypass incomplete**: Fixed — originally Dante + proxychains based, now pure iptables. Container UID targeting via `CLAWKER_USER`.
+- [x] **Docker internal DNS broken with firewall**: Fixed (2026-03-20) — agent containers created with `--dns 1.1.1.2 1.0.0.2` (Cloudflare). Enable flips resolv.conf to CoreDNS; disable restores 127.0.0.11 (Docker DNS → Cloudflare). CoreDNS has forward zones for `docker.internal` and monitoring stack names (`otel-collector`, `jaeger`, `prometheus`, `loki`, `grafana`) that delegate to Docker's 127.0.0.11, preserving internal networking. New test: `TestFirewall_DockerInternalDNS`.
 - [x] **Stack shuts down unexpectedly**: Fixed — daemon was not properly tracking clawker containers.
 - [x] **Rules not tested**: Fixed — `TestFirewall_ConfigRules` tests TLS rules, TCP rules (otel-collector:4317), concurrent config sync (container start + CLI firewall add), and verifies rules in global list
 - [x] **Merged egress rules all port 0**: Fixed — `normalizeRule()` in rules.go sets TLS→443, SSH→22. TCP port 0 = any port (intentional). All store writes go through normalization.

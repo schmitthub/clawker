@@ -27,19 +27,13 @@ func TestRuntimeEnv_EditorOverride(t *testing.T) {
 	assert.Contains(t, env, "VISUAL=code")
 }
 
-func TestRuntimeEnv_FirewallEnvoyCoreDNS(t *testing.T) {
+func TestRuntimeEnv_FirewallEnabled(t *testing.T) {
 	env, err := RuntimeEnv(RuntimeEnvOpts{
-		FirewallEnabled:   true,
-		FirewallEnvoyIP:   "172.28.0.2",
-		FirewallCoreDNSIP: "172.28.0.3",
-		FirewallNetCIDR:   "172.28.0.0/16",
+		FirewallEnabled: true,
 	})
 	require.NoError(t, err)
 
 	assert.Contains(t, env, "CLAWKER_FIREWALL_ENABLED=true")
-	assert.Contains(t, env, "CLAWKER_FIREWALL_ENVOY_IP=172.28.0.2")
-	assert.Contains(t, env, "CLAWKER_FIREWALL_COREDNS_IP=172.28.0.3")
-	assert.Contains(t, env, "CLAWKER_FIREWALL_NET_CIDR=172.28.0.0/16")
 }
 
 func TestRuntimeEnv_FirewallDisabled(t *testing.T) {
@@ -49,10 +43,6 @@ func TestRuntimeEnv_FirewallDisabled(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, e := range env {
-		assert.NotContains(t, e, "CLAWKER_FIREWALL_ENVOY_IP=",
-			"should not set firewall envoy IP when disabled")
-		assert.NotContains(t, e, "CLAWKER_FIREWALL_COREDNS_IP=",
-			"should not set firewall coredns IP when disabled")
 		assert.False(t, strings.HasPrefix(e, "CLAWKER_FIREWALL_ENABLED="),
 			"should not set CLAWKER_FIREWALL_ENABLED when disabled")
 	}
@@ -86,11 +76,9 @@ func TestRuntimeEnv_NilMaps(t *testing.T) {
 
 func TestRuntimeEnv_Deterministic(t *testing.T) {
 	opts := RuntimeEnvOpts{
-		Editor:            "vim",
-		FirewallEnabled:   true,
-		FirewallEnvoyIP:   "172.28.0.2",
-		FirewallCoreDNSIP: "172.28.0.3",
-		AgentEnv:          map[string]string{"A": "1", "B": "2"},
+		Editor:          "vim",
+		FirewallEnabled: true,
+		AgentEnv:        map[string]string{"A": "1", "B": "2"},
 	}
 
 	env1, err := RuntimeEnv(opts)

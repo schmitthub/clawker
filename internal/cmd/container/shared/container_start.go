@@ -130,7 +130,6 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 }
 
 func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts CommandOpts) error {
-	// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
 	if cmdOpts.Config == nil {
 		return fmt.Errorf("bootstrapping services: config provider is nil")
 	}
@@ -144,6 +143,7 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 	}
 
 	projectCfg := cfg.Project()
+	settings := cfg.Settings()
 
 	var log *logger.Logger
 	if cmdOpts.Logger != nil {
@@ -158,6 +158,25 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 		defer log.Close()
 	}
 
+	// Enable firewall iptables inside the container (if enabled).
+	if settings != nil && settings.Firewall.FirewallEnabled() {
+		if cmdOpts.Firewall != nil {
+			fwMgr, fwMgrErr := cmdOpts.Firewall(ctx)
+			if fwMgrErr != nil {
+				return fmt.Errorf("bootstrapping services: initializing firewall manager: %w", fwMgrErr)
+			}
+			if fwMgr != nil {
+				if err := fwMgr.Enable(ctx, container); err != nil {
+					return fmt.Errorf("bootstrapping services: enabling firewall: %w", err)
+				}
+				if log != nil {
+					log.Debug().Str("container", container).Msg("firewall enabled in container")
+				}
+			}
+		}
+	}
+
+	// Start socket bridge for GPG/SSH forwarding.
 	if NeedsSocketBridge(projectCfg) {
 		if cmdOpts.SocketBridge == nil {
 			if log != nil {
@@ -184,15 +203,7 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 }
 
 func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.ContainerStartOptions) (mobyClient.ContainerStartResult, error) {
-	defer func(ctx context.Context, container string, cmdOpts CommandOpts) {
-		err := BootstrapServicesPostStart(ctx, container, cmdOpts)
-		if err != nil {
-
-		}
-	}(ctx, startOpts.ContainerID, cmdOpts)
-
 	err := BootstrapServicesPreStart(ctx, startOpts.ContainerID, cmdOpts)
-
 	if err != nil {
 		return mobyClient.ContainerStartResult{}, err
 	}
@@ -206,5 +217,16 @@ func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.C
 	if client == nil {
 		return mobyClient.ContainerStartResult{}, fmt.Errorf("starting container: docker client is nil")
 	}
-	return client.ContainerStart(ctx, startOpts)
+
+	result, err := client.ContainerStart(ctx, startOpts)
+	if err != nil {
+		return result, err
+	}
+
+	// Post-start services (firewall enable, socket bridge) — must run after container is up.
+	if postErr := BootstrapServicesPostStart(ctx, startOpts.ContainerID, cmdOpts); postErr != nil {
+		return result, postErr
+	}
+
+	return result, nil
 }

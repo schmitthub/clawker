@@ -13,7 +13,7 @@ The firewall uses two infrastructure containers managed automatically by the Cla
 - **CoreDNS** (port `53`) --- DNS-level deny-by-default. Only explicitly allowed domains resolve successfully. All other queries return NXDOMAIN. Uses Cloudflare malware-blocking upstream (`1.1.1.2`, `1.0.0.2`).
 - **Envoy** (port `10000` TLS, `10001+` TCP) --- TLS inspection with per-domain MITM certificates for path-level filtering. SNI passthrough for allowed domains without path rules. Default deny (connection reset) for unrecognized SNI.
 
-Both containers run on the `clawker-net` bridge network with static IPs: Envoy at `.200`, CoreDNS at `.201`. Agent containers join the same network, use CoreDNS for DNS resolution, and route HTTPS through Envoy via iptables DNAT rules configured during container init.
+Both containers run on the `clawker-net` bridge network with static IPs: Envoy at `.200`, CoreDNS at `.201`. Agent containers join the same network with Cloudflare DNS (`1.1.1.2`, `1.0.0.2`) as Docker's default external forwarders. When the firewall is enabled, `resolv.conf` is flipped to point to CoreDNS for filtered resolution. CoreDNS forwards Docker internal names (`host.docker.internal`, monitoring stack containers) back to Docker's embedded DNS at `127.0.0.11`, preserving internal networking. HTTPS is routed through Envoy via iptables DNAT rules.
 
 ```
 Agent Container        CoreDNS (.201)       Envoy (.200)         Internet
@@ -34,7 +34,7 @@ Agent Container        CoreDNS (.201)       Envoy (.200)         Internet
 2. The daemon creates the `clawker-net` bridge network and launches the Envoy and CoreDNS containers
 3. Project rules from `.clawker.yaml` are merged with system-required rules (additive merge, dedup by `destination:protocol:port`)
 4. Envoy and CoreDNS configs are regenerated from the merged ruleset
-5. Agent containers join the firewall network with DNS pointing to CoreDNS
+5. Agent containers join the firewall network; `firewall.sh enable` flips `resolv.conf` to CoreDNS
 6. The daemon runs health checks every 5 seconds --- TCP on Envoy (`:18901`), HTTP on CoreDNS (`:18902/health`)
 7. A container watcher polls every 30 seconds and exits the daemon when no Clawker containers are running
 
@@ -242,6 +242,8 @@ security:
 ### DNS resolution failures
 
 CoreDNS returns NXDOMAIN for any domain not in the allowlist. If an agent reports DNS failures for a domain it should be able to reach, verify the domain is in your rules with `clawker firewall list`.
+
+Docker internal names (`host.docker.internal`, monitoring stack containers like `otel-collector`) are forwarded by CoreDNS back to Docker's embedded DNS and should resolve automatically. If they don't, check that CoreDNS is running on `clawker-net` with `clawker firewall status`.
 
 ### Certificate trust errors
 

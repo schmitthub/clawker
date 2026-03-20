@@ -14,6 +14,42 @@ type EnvoyPorts struct {
 	TCPPortBase int // Starting port for TCP/SSH listeners.
 }
 
+// TCPMapping describes a per-destination iptables DNAT entry for non-TLS traffic.
+// Each TCP/SSH rule gets a dedicated Envoy listener port.
+type TCPMapping struct {
+	Dst       string // Destination domain or IP.
+	DstPort   int    // Original destination port (e.g. 22, 8080).
+	EnvoyPort int    // Envoy listener port (TCPPortBase + index).
+}
+
+// TCPMappings computes TCP port mappings from egress rules.
+// The result is deterministic for a given rule set — same rules produce same mappings.
+// Used by both GenerateEnvoyConfig (to build listeners) and Enable (to build iptables args).
+func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
+	var mappings []TCPMapping
+	idx := 0
+	for _, r := range rules {
+		action := strings.ToLower(r.Action)
+		if action != "allow" && action != "" {
+			continue
+		}
+		if isIPOrCIDR(r.Dst) {
+			continue
+		}
+		proto := strings.ToLower(r.Proto)
+		if proto != "ssh" && proto != "tcp" {
+			continue
+		}
+		mappings = append(mappings, TCPMapping{
+			Dst:       r.Dst,
+			DstPort:   tcpDefaultPort(r),
+			EnvoyPort: ports.TCPPortBase + idx,
+		})
+		idx++
+	}
+	return mappings
+}
+
 // Cert path formats inside the Envoy container (mounted volume).
 const (
 	envoyCertFileFmt = "/etc/envoy/certs/%s-cert.pem"
@@ -55,6 +91,9 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 		}
 	}
 
+	// Compute TCP port mappings (same function used by manager.Enable for iptables args).
+	tcpMappings := TCPMappings(rules, ports)
+
 	cfg := map[string]any{
 		"admin": map[string]any{
 			"address": map[string]any{
@@ -65,7 +104,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 			},
 		},
 		"static_resources": map[string]any{
-			"listeners": buildListeners(mitmRules, passthroughRules, tcpRules, ports),
+			"listeners": buildListeners(mitmRules, passthroughRules, tcpRules, tcpMappings, ports),
 			"clusters":  buildClusters(tcpRules),
 		},
 	}
@@ -78,7 +117,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 }
 
 // buildListeners constructs all Envoy listeners.
-func buildListeners(mitm, passthrough, tcp []config.EgressRule, ports EnvoyPorts) []any {
+func buildListeners(mitm, passthrough, tcp []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts) []any {
 	var listeners []any
 
 	// Main TLS listener — handles both MITM and passthrough.
@@ -86,10 +125,11 @@ func buildListeners(mitm, passthrough, tcp []config.EgressRule, ports EnvoyPorts
 		listeners = append(listeners, buildTLSListener(mitm, passthrough, ports.TLSPort))
 	}
 
-	// Per-rule TCP/SSH listeners on sequential ports.
+	// Per-rule TCP/SSH listeners from the port mappings.
 	for i, r := range tcp {
-		port := ports.TCPPortBase + i
-		listeners = append(listeners, buildTCPListener(r, port))
+		if i < len(tcpMappings) {
+			listeners = append(listeners, buildTCPListener(r, tcpMappings[i].EnvoyPort))
+		}
 	}
 
 	return listeners

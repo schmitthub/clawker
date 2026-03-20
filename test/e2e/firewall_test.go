@@ -154,7 +154,6 @@ func TestFirewall_ConfigRules(t *testing.T) {
 	setup := h.NewIsolatedFS(nil)
 
 	// Use security.firewall.rules (explicit EgressRule list) instead of add_domains.
-	// Includes both a TLS rule (example.com:443) and a TCP rule (otel-collector:4317).
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
@@ -167,10 +166,6 @@ security:
       - dst: "example.com"
         proto: "tls"
         port: 443
-        action: "allow"
-      - dst: "otel-collector"
-        proto: "tcp"
-        port: 4317
         action: "allow"
 `)
 
@@ -224,25 +219,15 @@ security:
 	finalList := h.Run("firewall", "list")
 	require.NoError(t, finalList.Err, "list failed after concurrent sync")
 	assert.Contains(t, finalList.Stdout, "example.com", "TLS config rule should survive concurrent sync")
-	assert.Contains(t, finalList.Stdout, "otel-collector", "TCP config rule should survive concurrent sync")
 	assert.Contains(t, finalList.Stdout, "httpbin.org", "CLI-added rule should survive concurrent sync")
 
-	// Verify both TLS and TCP rules actually work through the firewall.
+	// Verify TLS rules actually work through the firewall.
 	httpbinRes := h.RunInContainer("verify-test",
 		"curl", "-s", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}",
 		"https://httpbin.org")
 	require.NoError(t, httpbinRes.Err,
 		"httpbin.org should be allowed after concurrent add\nstdout: %s\nstderr: %s",
 		httpbinRes.Stdout, httpbinRes.Stderr)
-
-	tcpRes := h.RunInContainer("verify-test",
-		"curl", "-s", "--max-time", "5", "--connect-timeout", "3",
-		"--http2-prior-knowledge",
-		"-o", "/dev/null", "-w", "%{http_code}",
-		"http://otel-collector:4317")
-	require.NoError(t, tcpRes.Err,
-		"otel-collector TCP rule should work after concurrent sync\nstdout: %s\nstderr: %s",
-		tcpRes.Stdout, tcpRes.Stderr)
 
 	// Stack should still be healthy.
 	statusRes := h.Run("firewall", "status", "--json")
@@ -365,6 +350,99 @@ agent:
 		"-o", "/dev/null", "-w", "%{http_code}",
 		"http://host.docker.internal:9999")
 	assert.NotNil(t, blockedRes.Err, "non-proxy host port should be blocked by firewall")
+}
+
+func TestFirewall_SSHTCPMapping(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			Firewall:       firewall.NewManager,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	// Configure an SSH rule for github.com — exercises the TCP mapping path:
+	// iptables --dport 22 → DNAT envoy:10001 → LOGICAL_DNS cluster github.com:22
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+security:
+  firewall:
+    rules:
+      - dst: "github.com"
+        proto: "ssh"
+        port: 22
+        action: "allow"
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
+
+	// Start a long-lived container so we can exec into it.
+	startRes := h.Run("container", "run", "--detach", "--agent", "ssh-test", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+
+	// ssh-keyscan fetches host keys over SSH (port 22) without authentication.
+	// Full path: DNS → CoreDNS → iptables --dport 22 → DNAT envoy:10001 → LOGICAL_DNS cluster → github.com:22
+	scanRes := h.ExecInContainer("ssh-test", "ssh-keyscan", "-T", "10", "github.com")
+	require.NoError(t, scanRes.Err,
+		"ssh-keyscan should succeed via TCP mapping\nstdout: %s\nstderr: %s",
+		scanRes.Stdout, scanRes.Stderr)
+	assert.Contains(t, scanRes.Stdout, "github.com", "should return github.com host keys")
+
+	// Verify DNS blocks non-allowed domains (CoreDNS returns NXDOMAIN).
+	// This is the sole domain gate for non-TLS protocols with port-only iptables matching.
+	digRes := h.ExecInContainer("ssh-test", "dig", "+short", "+timeout=3", "gitlab.com")
+	t.Logf("dig gitlab.com result: stdout=%q stderr=%q err=%v", digRes.Stdout, digRes.Stderr, digRes.Err)
+	assert.Empty(t, strings.TrimSpace(digRes.Stdout), "gitlab.com should not resolve (CoreDNS NXDOMAIN)")
+
+	h.Run("container", "stop", "--agent", "ssh-test")
+
+}
+
+func TestFirewall_DockerInternalDNS(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	// Start a detached agent container (firewall enabled).
+	startRes := h.Run("container", "run", "--detach", "--agent", "dns-test", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() {
+		h.Run("container", "stop", "--agent", "dns-test")
+	})
+
+	// Verify host.docker.internal resolves (docker.internal zone → Docker DNS).
+	hostRes := h.ExecInContainer("dns-test", "getent", "hosts", "host.docker.internal")
+	t.Logf("host.docker.internal: stdout=%q stderr=%q err=%v", hostRes.Stdout, hostRes.Stderr, hostRes.Err)
+	require.NoError(t, hostRes.Err,
+		"host.docker.internal should resolve through CoreDNS → Docker DNS\nstdout: %s\nstderr: %s",
+		hostRes.Stdout, hostRes.Stderr)
+	assert.NotEmpty(t, strings.TrimSpace(hostRes.Stdout), "should get an IP for host.docker.internal")
+
+	// If monitoring stack is running (otel-collector on clawker-net), verify it resolves.
+	otelRes := h.ExecInContainer("dns-test", "getent", "hosts", "otel-collector")
+	t.Logf("otel-collector: stdout=%q stderr=%q err=%v", otelRes.Stdout, otelRes.Stderr, otelRes.Err)
+	if otelRes.Err == nil {
+		assert.NotEmpty(t, strings.TrimSpace(otelRes.Stdout), "should get an IP for otel-collector")
+	} else {
+		t.Log("otel-collector not running on clawker-net, skipping monitoring DNS check")
+	}
+
+	// Sanity: blocked domain still fails.
+	blockedRes := h.ExecInContainer("dns-test", "getent", "hosts", "evil.example.com")
+	assert.NotNil(t, blockedRes.Err, "non-whitelisted domain should not resolve")
 }
 
 func TestFirewall_FirewallDisabled(t *testing.T) {

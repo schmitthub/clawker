@@ -147,6 +147,7 @@ func GenerateCorefile(rules []config.EgressRule) ([]byte, error)
 
 - Only "allow" rules with domain destinations produce forward zones
 - Each domain gets `forward . 1.1.1.2 1.0.0.2` (Cloudflare malware-blocking)
+- Docker internal forward zones (`docker.internal`, `otel-collector`, `jaeger`, `prometheus`, `loki`, `grafana`) delegate to `127.0.0.11` (Docker's embedded DNS). CoreDNS is on `clawker-net` so its 127.0.0.11 resolves container names and `host.docker.internal`
 - Catch-all `.` zone: `template IN ANY . { rcode NXDOMAIN }` + `health :8080` + `reload`
 - IP/CIDR destinations and deny rules are excluded
 

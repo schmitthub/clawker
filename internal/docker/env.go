@@ -23,10 +23,7 @@ type RuntimeEnvOpts struct {
 	Visual string
 
 	// Firewall
-	FirewallEnabled   bool
-	FirewallEnvoyIP   string
-	FirewallCoreDNSIP string
-	FirewallNetCIDR   string
+	FirewallEnabled bool
 
 	// Monitoring stack
 	MonitoringActive bool // Whether the monitoring stack (otel-collector) is running
@@ -87,18 +84,9 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m["COLORTERM"] = "truecolor"
 	}
 
-	// Firewall (consumed by entrypoint/firewall.sh)
+	// Firewall (simple flag — iptables applied post-start via manager.Enable)
 	if opts.FirewallEnabled {
 		m["CLAWKER_FIREWALL_ENABLED"] = "true"
-		if opts.FirewallEnvoyIP != "" {
-			m["CLAWKER_FIREWALL_ENVOY_IP"] = opts.FirewallEnvoyIP
-		}
-		if opts.FirewallCoreDNSIP != "" {
-			m["CLAWKER_FIREWALL_COREDNS_IP"] = opts.FirewallCoreDNSIP
-		}
-		if opts.FirewallNetCIDR != "" {
-			m["CLAWKER_FIREWALL_NET_CIDR"] = opts.FirewallNetCIDR
-		}
 	}
 
 	// Telemetry resource attributes for per-project/agent metric segmentation.

@@ -1616,10 +1616,17 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// DNS filtering is handled entirely by iptables DNAT rules in firewall.sh:
-	// non-root DNS (port 53) is redirected to CoreDNS, root (uid 0) bypasses via RETURN.
-	// Do NOT set hostConfig.DNS here — it would make Docker forward ALL DNS (including
-	// root's) through CoreDNS, breaking the firewall bypass escape hatch.
+	// Set Cloudflare malware-blocking DNS as Docker's external forwarders.
+	// Docker's internal DNS (127.0.0.11) remains the container's nameserver and
+	// handles internal name resolution (container names, host.docker.internal).
+	// When the firewall is enabled, firewall.sh flips resolv.conf to CoreDNS;
+	// when disabled, it restores 127.0.0.11 which forwards here.
+	if len(hostConfig.DNS) == 0 {
+		hostConfig.DNS = []netip.Addr{
+			netip.MustParseAddr("1.1.1.2"),
+			netip.MustParseAddr("1.0.0.2"),
+		}
+	}
 
 	// Set container WorkingDir to match the workspace mount target unless
 	// the user explicitly provided --workdir.
@@ -1828,7 +1835,7 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		AgentEnv:         agentEnv,
 		MonitoringActive: monitoringActive,
 	}
-	// Firewall: add resolved network data
+	// Firewall: set the enabled flag (iptables applied post-start via manager.Enable)
 	if opts.Config.Settings().Firewall.FirewallEnabled() && opts.Firewall != nil {
 		fwMgr, fwErr := opts.Firewall(ctx)
 		if fwErr != nil {
@@ -1837,9 +1844,6 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 
 		coreDNSIP = fwMgr.CoreDNSIP()
 		envOpts.FirewallEnabled = true
-		envOpts.FirewallEnvoyIP = fwMgr.EnvoyIP()
-		envOpts.FirewallCoreDNSIP = coreDNSIP
-		envOpts.FirewallNetCIDR = fwMgr.NetCIDR()
 	}
 
 	// Deprecation warning for ip_range_sources

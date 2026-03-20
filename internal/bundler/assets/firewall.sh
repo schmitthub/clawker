@@ -2,8 +2,13 @@
 # firewall.sh — unified iptables management for clawker agent containers.
 #
 # Usage:
-#   firewall.sh enable <envoy_ip> <coredns_ip> <net_cidr> [host_proxy_url]
+#   firewall.sh enable <envoy_ip> <coredns_ip> <net_cidr> [host_proxy_url] [tcp_mappings]
 #   firewall.sh disable
+#
+# tcp_mappings is a semicolon-separated list of dst_port|envoy_port entries
+# for non-TLS traffic (SSH, raw TCP). Each entry creates a per-port DNAT rule
+# before the catch-all TLS DNAT. DNS (CoreDNS) is the domain gate.
+#   Example: "22|10001;5432|10002"
 #
 # The enable command applies iptables rules that redirect the container user's
 # outbound traffic through Envoy (TCP) and CoreDNS (DNS). The disable command
@@ -62,6 +67,7 @@ enable_firewall() {
     local coredns_ip="$2"
     local net_cidr="$3"
     local host_proxy="${4:-}"
+    local tcp_mappings="${5:-}"
 
     # Idempotent: flush existing rules before re-applying.
     flush_rules
@@ -72,7 +78,16 @@ enable_firewall() {
     ip6tables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN 2>/dev/null || true
     ip6tables -t nat -A OUTPUT -p udp -m owner --uid-owner 0 -j RETURN 2>/dev/null || true
 
-    # DNS: redirect container user's DNS queries to CoreDNS allowlist proxy.
+    # DNS: point resolv.conf to CoreDNS for domain filtering.
+    # Container was created with --dns 1.1.1.2,1.0.0.2 (Cloudflare) so Docker's
+    # internal DNS (127.0.0.11) forwards external queries there by default.
+    # Flipping the nameserver to CoreDNS activates firewall DNS filtering.
+    # CoreDNS has forward zones for docker.internal and monitoring stack names
+    # that delegate back to Docker's DNS (127.0.0.11) for internal resolution.
+    # Disable reverses this by restoring 127.0.0.11 (Docker → Cloudflare).
+    sed "s/^nameserver .*/nameserver ${coredns_ip}/" /etc/resolv.conf > /tmp/resolv.clawker.tmp && cat /tmp/resolv.clawker.tmp > /etc/resolv.conf && rm -f /tmp/resolv.clawker.tmp
+
+    # Also keep iptables DNAT as defense-in-depth (catches hardcoded DNS servers).
     iptables -t nat -A OUTPUT -p udp --dport 53 -m owner --uid-owner "${CONTAINER_UID}" -j DNAT --to-destination "${coredns_ip}:53"
     iptables -t nat -A OUTPUT -p tcp --dport 53 -m owner --uid-owner "${CONTAINER_UID}" -j DNAT --to-destination "${coredns_ip}:53"
 
@@ -97,6 +112,23 @@ enable_firewall() {
         fi
     fi
 
+    # Per-port TCP/SSH DNAT rules (before catch-all).
+    # Each mapping routes a destination port to a dedicated Envoy TCP listener.
+    # Format: "dst_port|envoy_port;dst_port|envoy_port;..."
+    # Port-only matching — DNS (CoreDNS) is the domain gate, iptables just routes by port.
+    # Limitation: two different domains on the same non-TLS port share one Envoy listener.
+    if [ -n "${tcp_mappings}" ]; then
+        IFS=';' read -ra MAPPINGS <<< "${tcp_mappings}"
+        for mapping in "${MAPPINGS[@]}"; do
+            [ -z "${mapping}" ] && continue
+            IFS='|' read -r dst_port envoy_port <<< "${mapping}"
+            [ -z "${dst_port}" ] || [ -z "${envoy_port}" ] && continue
+            iptables -t nat -A OUTPUT -p tcp --dport "${dst_port}" \
+                -m owner --uid-owner "${CONTAINER_UID}" \
+                -j DNAT --to-destination "${envoy_ip}:${envoy_port}"
+        done
+    fi
+
     # TCP catch-all: redirect container user's outbound TCP to Envoy TLS listener (SNI filtering).
     iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner "${CONTAINER_UID}" ! -d 127.0.0.0/8 -j DNAT --to-destination "${envoy_ip}:10000"
 
@@ -107,13 +139,15 @@ enable_firewall() {
 
 disable_firewall() {
     flush_rules
+    # Restore Docker's nameserver (reverse of enable's sed).
+    sed "s/^nameserver .*/nameserver 127.0.0.11/" /etc/resolv.conf > /tmp/resolv.clawker.tmp && cat /tmp/resolv.clawker.tmp > /etc/resolv.conf && rm -f /tmp/resolv.clawker.tmp
 }
 
 case "${1:-}" in
     enable)
         shift
         if [ $# -lt 3 ]; then
-            echo "Usage: firewall.sh enable <envoy_ip> <coredns_ip> <net_cidr> [host_proxy_url]" >&2
+            echo "Usage: firewall.sh enable <envoy_ip> <coredns_ip> <net_cidr> [host_proxy_url] [tcp_mappings]" >&2
             exit 1
         fi
         enable_firewall "$@"
@@ -123,7 +157,7 @@ case "${1:-}" in
         ;;
     *)
         echo "Usage: firewall.sh {enable|disable}" >&2
-        echo "  enable <envoy_ip> <coredns_ip> <net_cidr> [host_proxy_url]" >&2
+        echo "  enable <envoy_ip> <coredns_ip> <net_cidr> [host_proxy_url] [tcp_mappings]" >&2
         echo "  disable" >&2
         exit 1
         ;;

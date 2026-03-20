@@ -334,8 +334,11 @@ clawker volume ls                   # List clawker volumes
 clawker firewall status             # Health, rule count, running containers
 clawker firewall list               # List active egress rules
 clawker firewall add docs.clawker.dev # Allow a domain
-clawker firewall remove docs.clawker.dev 
-clawker firewall bypass --agent dev --timeout 5m  # Temporary unrestricted egress
+clawker firewall remove docs.clawker.dev
+clawker firewall disable --agent dev   # Unrestricted egress for one agent
+clawker firewall enable --agent dev    # Re-apply firewall rules
+clawker firewall bypass 5m --agent dev      # Temporary unrestricted egress with auto-re-enable
+clawker firewall bypass --stop --agent dev  # End bypass early, re-enable firewall
 ```
 
 ## Monitoring 

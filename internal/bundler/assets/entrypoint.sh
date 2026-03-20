@@ -87,27 +87,24 @@ emit_error() {
 }
 
 # =============================================================================
-# Root-level init (iptables)
+# Firewall (decoupled — iptables applied post-start via manager.Enable)
 # =============================================================================
-
-# Initialize firewall if enabled at runtime
-if [ "$CLAWKER_FIREWALL_ENABLED" = "true" ] && [ -n "${CLAWKER_FIREWALL_ENVOY_IP:-}" ]; then
+# The host-side manager execs "firewall.sh enable ..." after container start,
+# then touches the signal file. We wait here so CMD doesn't run until the
+# firewall is applied. No network IPs baked into env vars.
+if [ "${CLAWKER_FIREWALL_ENABLED:-}" = "true" ]; then
     emit_step "firewall"
 
-    # Fail fast if prerequisites are missing — silent degradation of a security control is dangerous
-    if [ ! -x /usr/local/bin/firewall.sh ]; then
-        emit_error "firewall" "firewall.sh not found or not executable"
+    FIREWALL_READY="/var/run/clawker/firewall-ready"
+    FIREWALL_TIMEOUT=30
+    elapsed=0
+    while [ ! -f "${FIREWALL_READY}" ] && [ "${elapsed}" -lt "${FIREWALL_TIMEOUT}" ]; do
+        sleep 0.2
+        elapsed=$((elapsed + 1))
+    done
+    if [ ! -f "${FIREWALL_READY}" ]; then
+        emit_error "firewall" "timed out waiting for firewall enable (${FIREWALL_TIMEOUT}s)"
     fi
-    if [ ! -f /proc/net/ip_tables_names ]; then
-        emit_error "firewall" "iptables not available (missing NET_ADMIN/NET_RAW capabilities)"
-    fi
-
-    fw_output=$(/usr/local/bin/firewall.sh enable \
-        "${CLAWKER_FIREWALL_ENVOY_IP}" \
-        "${CLAWKER_FIREWALL_COREDNS_IP}" \
-        "${CLAWKER_FIREWALL_NET_CIDR}" \
-        "${CLAWKER_HOST_PROXY:-}" 2>&1) || \
-        emit_error "firewall" "initialization failed: ${fw_output}"
 fi
 
 # =============================================================================

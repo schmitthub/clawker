@@ -348,6 +348,7 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 }
 
 // Enable re-applies DNAT + firewall DNS in an agent container via docker exec.
+// Reads the current rules from the store to compute TCP port mappings.
 func (m *Manager) Enable(ctx context.Context, containerID string) error {
 	netInfo, err := m.discoverNetwork(ctx)
 	if err != nil {
@@ -366,10 +367,18 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		}
 	}
 
+	// Compute TCP port mappings from the current rule state.
+	tcpMappingsArg := m.formatTCPMappings()
+
 	args := []string{"/usr/local/bin/firewall.sh", "enable",
 		netInfo.EnvoyIP, netInfo.CoreDNSIP, netInfo.CIDR}
 	if hostProxy != "" {
 		args = append(args, hostProxy)
+	} else {
+		args = append(args, "") // placeholder so tcp_mappings lands in $5
+	}
+	if tcpMappingsArg != "" {
+		args = append(args, tcpMappingsArg)
 	}
 
 	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
@@ -398,11 +407,33 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		return fmt.Errorf("firewall enable: script exited %d: %s", inspectExec.ExitCode, strings.TrimSpace(string(output)))
 	}
 
+	// Signal the entrypoint that firewall is ready (unblocks CMD).
+	if err := m.touchSignalFile(ctx, containerID); err != nil {
+		m.log.Warn().Err(err).Msg("failed to touch firewall-ready signal file")
+	}
+
 	m.log.Debug().
 		Str("container", containerID).
 		Msg("firewall enabled")
 
 	return nil
+}
+
+// firewallReadyPath is the signal file the entrypoint waits for before running CMD.
+const firewallReadyPath = "/var/run/clawker/firewall-ready"
+
+// touchSignalFile creates the firewall-ready signal file inside the container,
+// unblocking the entrypoint's wait loop.
+func (m *Manager) touchSignalFile(ctx context.Context, containerID string) error {
+	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
+		User: "root",
+		Cmd:  []string{"touch", firewallReadyPath},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = m.client.ExecStart(ctx, execResp.ID, client.ExecStartOptions{})
+	return err
 }
 
 // Bypass disables iptables rules and schedules re-enable after timeout.
@@ -437,10 +468,18 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 	}
 
 	// Build the re-enable command: sleep <timeout> && firewall.sh enable <args>
+	tcpMappingsArg := m.formatTCPMappings()
+	hostProxyArg := hostProxy
+	if hostProxyArg == "" && tcpMappingsArg != "" {
+		hostProxyArg = "''" // placeholder so tcp_mappings lands in $5
+	}
 	enableCmd := fmt.Sprintf("/usr/local/bin/firewall.sh enable %s %s %s",
 		netInfo.EnvoyIP, netInfo.CoreDNSIP, netInfo.CIDR)
-	if hostProxy != "" {
-		enableCmd += " " + hostProxy
+	if hostProxyArg != "" {
+		enableCmd += " " + hostProxyArg
+	}
+	if tcpMappingsArg != "" {
+		enableCmd += " '" + tcpMappingsArg + "'"
 	}
 	shellCmd := fmt.Sprintf("sleep %d && %s", timeoutSecs, enableCmd)
 
@@ -516,6 +555,24 @@ func (m *Manager) NetCIDR() string {
 		return ""
 	}
 	return netInfo.CIDR
+}
+
+// formatTCPMappings reads rules from the store, computes TCP port mappings,
+// and returns the firewall.sh argument string (format: "dst_port|envoy_port;...").
+func (m *Manager) formatTCPMappings() string {
+	rules := m.store.Read().Rules
+	mappings := TCPMappings(rules, EnvoyPorts{
+		TLSPort:     m.cfg.EnvoyTLSPort(),
+		TCPPortBase: m.cfg.EnvoyTCPPortBase(),
+	})
+	if len(mappings) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, mp := range mappings {
+		parts = append(parts, fmt.Sprintf("%d|%d", mp.DstPort, mp.EnvoyPort))
+	}
+	return strings.Join(parts, ";")
 }
 
 // --- Internal helpers ---

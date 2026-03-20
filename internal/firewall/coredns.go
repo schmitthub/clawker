@@ -42,6 +42,24 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 		fmt.Fprintf(&b, "}\n\n")
 	}
 
+	// Docker internal names: forward to Docker's own embedded DNS (127.0.0.11).
+	// CoreDNS runs on clawker-net, so its 127.0.0.11 can resolve container names
+	// and host.docker.internal for all containers on the same network.
+	// These zones ensure Docker networking works when resolv.conf points to CoreDNS.
+	internalHosts := []string{
+		"docker.internal", // host.docker.internal, gateway.docker.internal
+		"otel-collector",  // monitoring: OpenTelemetry collector
+		"jaeger",          // monitoring: Jaeger tracing
+		"prometheus",      // monitoring: Prometheus metrics
+		"loki",            // monitoring: Loki log aggregation
+		"grafana",         // monitoring: Grafana dashboards
+	}
+	for _, host := range internalHosts {
+		fmt.Fprintf(&b, "%s {\n", host)
+		b.WriteString("    forward . 127.0.0.11\n")
+		b.WriteString("}\n\n")
+	}
+
 	// Catch-all zone: NXDOMAIN for everything not explicitly allowed.
 	b.WriteString(". {\n")
 	b.WriteString("    template IN ANY . {\n")
