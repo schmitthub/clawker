@@ -20,18 +20,40 @@ var upstreamDNS = []string{"1.1.1.2", "1.0.0.2"}
 func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error) {
 	var b strings.Builder
 
-	// Collect unique allowed domains (skip IPs, CIDRs, deny rules).
-	seen := make(map[string]bool)
+	// Docker internal names: forward to Docker's own embedded DNS (127.0.0.11).
+	// CoreDNS runs on clawker-net, so its 127.0.0.11 can resolve container names
+	// and host.docker.internal for all containers on the same network.
+	// These zones ensure Docker networking works when resolv.conf points to CoreDNS.
+	// They are reserved — egress rules matching these names are skipped from the
+	// per-domain zones to avoid duplicate zone definitions that crash CoreDNS.
+	internalHosts := []string{
+		"docker.internal", // host.docker.internal, gateway.docker.internal
+		"otel-collector",  // monitoring: OpenTelemetry collector
+		"jaeger",          // monitoring: Jaeger tracing
+		"prometheus",      // monitoring: Prometheus metrics
+		"loki",            // monitoring: Loki log aggregation
+		"grafana",         // monitoring: Grafana dashboards
+	}
+
+	// Reserved zones — internal hosts get their own zones forwarding to Docker DNS.
+	// Egress rules matching these names are skipped to avoid duplicate CoreDNS zones.
+	reserved := make(map[string]bool, len(internalHosts))
+	for _, host := range internalHosts {
+		reserved[host] = true
+	}
+
+	// Collect unique allowed domains (skip IPs, CIDRs, deny rules, reserved names).
+	emitted := make(map[string]bool)
 	var domains []string
 	for _, r := range rules {
 		if !isAllowDomain(r) {
 			continue
 		}
 		domain := normalizeDomain(r.Dst)
-		if seen[domain] {
+		if reserved[domain] || emitted[domain] {
 			continue
 		}
-		seen[domain] = true
+		emitted[domain] = true
 		domains = append(domains, domain)
 	}
 
@@ -42,18 +64,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 		fmt.Fprintf(&b, "}\n\n")
 	}
 
-	// Docker internal names: forward to Docker's own embedded DNS (127.0.0.11).
-	// CoreDNS runs on clawker-net, so its 127.0.0.11 can resolve container names
-	// and host.docker.internal for all containers on the same network.
-	// These zones ensure Docker networking works when resolv.conf points to CoreDNS.
-	internalHosts := []string{
-		"docker.internal", // host.docker.internal, gateway.docker.internal
-		"otel-collector",  // monitoring: OpenTelemetry collector
-		"jaeger",          // monitoring: Jaeger tracing
-		"prometheus",      // monitoring: Prometheus metrics
-		"loki",            // monitoring: Loki log aggregation
-		"grafana",         // monitoring: Grafana dashboards
-	}
+	// Internal host forward zones (Docker DNS).
 	for _, host := range internalHosts {
 		fmt.Fprintf(&b, "%s {\n", host)
 		b.WriteString("    forward . 127.0.0.11\n")
