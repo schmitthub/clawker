@@ -95,7 +95,7 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 				wantPath = tt.setup(t, proj)
 			}
 
-			containerOpts := &ContainerOptions{Worktree: tt.branch}
+			containerOpts := &ContainerCreateOptions{Worktree: tt.branch}
 			pmFunc := func() (project.ProjectManager, error) { return mgr, nil }
 
 			wd, projectRootDir, err := resolveWorkDir(
@@ -136,7 +136,7 @@ func TestResolveWorkDir_WorktreeGetError(t *testing.T) {
 		},
 	}
 
-	containerOpts := &ContainerOptions{Worktree: "feature/broken"}
+	containerOpts := &ContainerCreateOptions{Worktree: "feature/broken"}
 	pmFunc := func() (project.ProjectManager, error) { return mockMgr, nil }
 	cfg := configmocks.NewBlankConfig()
 
@@ -197,7 +197,7 @@ func TestResolveWorkDir_UnhealthyStatuses(t *testing.T) {
 				},
 			}
 
-			containerOpts := &ContainerOptions{Worktree: "feature/test"}
+			containerOpts := &ContainerCreateOptions{Worktree: "feature/test"}
 			pmFunc := func() (project.ProjectManager, error) { return mockMgr, nil }
 			cfg := configmocks.NewBlankConfig()
 

@@ -28,7 +28,7 @@ import (
 
 // RunOptions holds options for the run command.
 type RunOptions struct {
-	*shared.ContainerOptions
+	*shared.ContainerCreateOptions
 
 	IOStreams      *iostreams.IOStreams
 	TUI            *tui.TUI
@@ -56,18 +56,18 @@ type RunOptions struct {
 func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error) *cobra.Command {
 	containerOpts := shared.NewContainerOptions()
 	opts := &RunOptions{
-		ContainerOptions: containerOpts,
-		IOStreams:        f.IOStreams,
-		TUI:              f.TUI,
-		Client:           f.Client,
-		Config:           f.Config,
-		ProjectManager:   f.ProjectManager,
-		HostProxy:        f.HostProxy,
-		Firewall:         f.Firewall,
-		SocketBridge:     f.SocketBridge,
-		Prompter:         f.Prompter,
-		Logger:           f.Logger,
-		Version:          f.Version,
+		ContainerCreateOptions: containerOpts,
+		IOStreams:              f.IOStreams,
+		TUI:                    f.TUI,
+		Client:                 f.Client,
+		Config:                 f.Config,
+		ProjectManager:         f.ProjectManager,
+		HostProxy:              f.HostProxy,
+		Firewall:               f.Firewall,
+		SocketBridge:           f.SocketBridge,
+		Prompter:               f.Prompter,
+		Logger:                 f.Logger,
+		Version:                f.Version,
 	}
 
 	cmd := &cobra.Command{
@@ -142,12 +142,11 @@ If IMAGE is "@", clawker will resolve the project's built image with :latest tag
 
 func runRun(ctx context.Context, opts *RunOptions) error {
 	ios := opts.IOStreams
-	containerOpts := opts.ContainerOptions
-	cfgGateway, err := opts.Config()
+	containerOpts := opts.ContainerCreateOptions
+	cfg, err := opts.Config()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	cfg := cfgGateway.Project()
 
 	// --- Phase A: Pre-progress (synchronous) ---
 	// Config + Docker connect + image resolution — may trigger interactive prompts.
@@ -216,7 +215,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		defer close(events)
 		r, err := shared.CreateContainer(ctx, &shared.CreateContainerOptions{
 			Client:         client,
-			Config:         cfgGateway,
+			Config:         cfg,
 			ProjectName:    projectName,
 			Options:        containerOpts,
 			Flags:          opts.flags,
@@ -258,16 +257,18 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 
 	if opts.Detach {
 		// Start container for detached mode
-		if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: o.result.ContainerID}); err != nil {
+		if _, err := shared.ContainerStart(ctx, shared.CommandOpts{
+			Client:         opts.Client,
+			Config:         opts.Config,
+			ProjectManager: opts.ProjectManager,
+			HostProxy:      opts.HostProxy,
+			Firewall:       opts.Firewall,
+			SocketBridge:   opts.SocketBridge,
+			Logger:         opts.Logger,
+		}, docker.ContainerStartOptions{ContainerID: o.result.ContainerID}); err != nil {
 			return fmt.Errorf("starting container: %w", err)
 		}
-		// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
-		if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
-			gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
-			if err := opts.SocketBridge().EnsureBridge(o.result.ContainerID, gpgEnabled); err != nil {
-				log.Warn().Err(err).Msg("failed to start socket bridge for detached container")
-			}
-		}
+
 		fmt.Fprintln(ios.Out, o.result.ContainerID[:12])
 		return nil
 	}
@@ -281,7 +282,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 // See: https://github.com/docker/cli/blob/master/cli/command/container/run.go
 func attachThenStart(ctx context.Context, client *docker.Client, containerID string, opts *RunOptions, log *logger.Logger) error {
 	ios := opts.IOStreams
-	containerOpts := opts.ContainerOptions
+	containerOpts := opts.ContainerCreateOptions
 
 	// Create attach options
 	attachOpts := docker.ContainerAttachOptions{
@@ -348,24 +349,21 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 
 	// Now start the container — the I/O streaming goroutines are already running
 	log.Debug().Msg("starting container")
-	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
+	if _, err := shared.ContainerStart(ctx,
+		shared.CommandOpts{
+			Client:         opts.Client,
+			Config:         opts.Config,
+			ProjectManager: opts.ProjectManager,
+			HostProxy:      opts.HostProxy,
+			Firewall:       opts.Firewall,
+			SocketBridge:   opts.SocketBridge,
+			Logger:         opts.Logger,
+		},
+		docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 		log.Debug().Err(err).Msg("container start failed")
 		return fmt.Errorf("starting container: %w", err)
 	}
 	log.Debug().Msg("container started successfully")
-
-	// Start socket bridge for GPG/SSH forwarding
-	if sbCfg, sbErr := opts.Config(); sbErr == nil {
-		sbProject := sbCfg.Project()
-		if shared.NeedsSocketBridge(sbProject) && opts.SocketBridge != nil {
-			gpgEnabled := sbProject.Security.GitCredentials != nil && sbProject.Security.GitCredentials.GPGEnabled()
-			if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
-				log.Warn().Err(err).Msg("failed to start socket bridge")
-			} else {
-				defer opts.SocketBridge().StopBridge(containerID)
-			}
-		}
-	}
 
 	// Set up TTY resize AFTER container is running (Docker CLI's MonitorTtySize pattern).
 	// The +1/-1 trick forces a SIGWINCH to trigger TUI redraw on re-attach.

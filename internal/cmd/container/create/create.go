@@ -21,9 +21,9 @@ import (
 )
 
 // CreateOptions holds options for the create command.
-// It embeds ContainerOptions for shared container configuration.
+// It embeds ContainerCreateOptions for shared container configuration.
 type CreateOptions struct {
-	*shared.ContainerOptions
+	*shared.ContainerCreateOptions
 
 	IOStreams      *iostreams.IOStreams
 	TUI            *tui.TUI
@@ -44,17 +44,17 @@ type CreateOptions struct {
 func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions) error) *cobra.Command {
 	containerOpts := shared.NewContainerOptions()
 	opts := &CreateOptions{
-		ContainerOptions: containerOpts,
-		IOStreams:        f.IOStreams,
-		TUI:              f.TUI,
-		Client:           f.Client,
-		Config:           f.Config,
-		ProjectManager:   f.ProjectManager,
-		HostProxy:        f.HostProxy,
-		Firewall:         f.Firewall,
-		Prompter:         f.Prompter,
-		Logger:           f.Logger,
-		Version:          f.Version,
+		ContainerCreateOptions: containerOpts,
+		IOStreams:              f.IOStreams,
+		TUI:                    f.TUI,
+		Client:                 f.Client,
+		Config:                 f.Config,
+		ProjectManager:         f.ProjectManager,
+		HostProxy:              f.HostProxy,
+		Firewall:               f.Firewall,
+		Prompter:               f.Prompter,
+		Logger:                 f.Logger,
+		Version:                f.Version,
 	}
 
 	cmd := &cobra.Command{
@@ -108,7 +108,7 @@ If IMAGE is "@", clawker will resolve the project's built image with :latest tag
 
 func createRun(ctx context.Context, opts *CreateOptions) error {
 	ios := opts.IOStreams
-	containerOpts := opts.ContainerOptions
+	containerOpts := opts.ContainerCreateOptions
 	cfg, err := opts.Config()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)

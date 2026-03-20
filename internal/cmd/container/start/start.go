@@ -108,24 +108,6 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
-	// Ensure host proxy is running (if enabled)
-	if cfg.Project().Security.HostProxyEnabled() {
-		hp := opts.HostProxy()
-		if hp == nil {
-			log.Debug().Msg("host proxy factory returned nil, skipping")
-		} else if err := hp.EnsureRunning(); err != nil {
-			log.Warn().Err(err).Msg("failed to start host proxy server")
-			cs := ios.ColorScheme()
-			fmt.Fprintf(ios.ErrOut, "%s Host proxy failed to start. Browser authentication may not work.\n", cs.WarningIcon())
-			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
-			fmt.Fprintln(ios.ErrOut, "  1. To disable: set 'security.enable_host_proxy: false' in .clawker.yaml")
-		} else {
-			log.Debug().Msg("host proxy started successfully")
-		}
-	} else {
-		log.Debug().Msg("host proxy disabled by config")
-	}
-
 	// Resolve container names if --agent provided
 	containers := opts.Containers
 	if opts.Agent {
@@ -246,27 +228,26 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.L
 
 	// Now start the container — I/O streaming goroutines are already running
 	log.Debug().Msg("starting container")
-	_, err = client.ContainerStart(ctx, docker.ContainerStartOptions{
-		ContainerID: containerID,
-		EnsureNetwork: &docker.EnsureNetworkOptions{
-			Name: cfg.ClawkerNetwork(),
+	_, err = shared.ContainerStart(ctx,
+		shared.CommandOpts{
+			Client:         opts.Client,
+			Config:         opts.Config,
+			ProjectManager: opts.ProjectManager,
+			HostProxy:      opts.HostProxy,
+			SocketBridge:   opts.SocketBridge,
+			Logger:         opts.Logger,
 		},
-	})
+		docker.ContainerStartOptions{
+			ContainerID: containerID,
+			EnsureNetwork: &docker.EnsureNetworkOptions{
+				Name: cfg.ClawkerNetwork(),
+			},
+		})
 	if err != nil {
 		log.Debug().Err(err).Msg("container start failed")
 		return fmt.Errorf("starting container: %w", err)
 	}
 	log.Debug().Msg("container started successfully")
-
-	// Start socket bridge for GPG/SSH forwarding
-	if shared.NeedsSocketBridge(cfg.Project()) && opts.SocketBridge != nil {
-		gpgEnabled := cfg.Project().Security.GitCredentials.GPGEnabled()
-		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
-			log.Warn().Err(err).Msg("failed to start socket bridge")
-		} else {
-			defer opts.SocketBridge().StopBridge(containerID)
-		}
-	}
 
 	// Set up TTY resize AFTER container is running (Docker CLI's MonitorTtySize pattern).
 	// The +1/-1 trick forces a SIGWINCH to trigger TUI redraw on re-attach.
@@ -379,12 +360,21 @@ func waitForContainerExit(ctx context.Context, client *docker.Client, containerI
 func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams, log *logger.Logger, client *docker.Client, containers []string, cfg config.Config, opts *StartOptions) error {
 	var errs []error
 	for _, name := range containers {
-		_, err := client.ContainerStart(ctx, docker.ContainerStartOptions{
-			ContainerID: name,
-			EnsureNetwork: &docker.EnsureNetworkOptions{
-				Name: cfg.ClawkerNetwork(),
+		_, err := shared.ContainerStart(ctx,
+			shared.CommandOpts{
+				Client:         opts.Client,
+				Config:         opts.Config,
+				ProjectManager: opts.ProjectManager,
+				HostProxy:      opts.HostProxy,
+				SocketBridge:   opts.SocketBridge,
+				Logger:         opts.Logger,
 			},
-		})
+			docker.ContainerStartOptions{
+				ContainerID: name,
+				EnsureNetwork: &docker.EnsureNetworkOptions{
+					Name: cfg.ClawkerNetwork(),
+				},
+			})
 		if err != nil {
 			cs := ios.ColorScheme()
 			fmt.Fprintf(ios.ErrOut, "%s Failed to start %s: %v\n", cs.FailureIcon(), name, err)
@@ -392,19 +382,6 @@ func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams,
 		} else {
 			// Print container name on success
 			fmt.Fprintln(ios.Out, name)
-
-			// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
-			if shared.NeedsSocketBridge(cfg.Project()) && opts.SocketBridge != nil {
-				gpgEnabled := cfg.Project().Security.GitCredentials.GPGEnabled()
-				// Inspect to get full container ID — EnsureBridge must use the same key
-				// as exec/run commands (which use the container ID, not name).
-				info, inspErr := client.ContainerInspect(ctx, name, docker.ContainerInspectOptions{})
-				if inspErr != nil {
-					log.Warn().Err(inspErr).Str("container", name).Msg("failed to inspect container for socket bridge")
-				} else if err := opts.SocketBridge().EnsureBridge(info.Container.ID, gpgEnabled); err != nil {
-					log.Warn().Err(err).Str("container", name).Msg("failed to start socket bridge")
-				}
-			}
 		}
 	}
 

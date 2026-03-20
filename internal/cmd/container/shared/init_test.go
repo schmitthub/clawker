@@ -97,7 +97,7 @@ func testMockConfig(project *config.Project) *configmocks.ConfigMock {
 }
 
 // testCreateConfig builds a CreateContainerOptions with test defaults.
-func testCreateConfig(fake *dockertest.FakeClient, project *config.Project, containerOpts *ContainerOptions, cmd *cobra.Command) *CreateContainerOptions {
+func testCreateConfig(fake *dockertest.FakeClient, project *config.Project, containerOpts *ContainerCreateOptions, cmd *cobra.Command) *CreateContainerOptions {
 	return &CreateContainerOptions{
 		Client:      fake.Client,
 		Config:      testMockConfig(project),

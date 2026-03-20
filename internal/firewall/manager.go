@@ -221,8 +221,10 @@ func (m *Manager) RemoveRules(ctx context.Context, rules []config.EgressRule) er
 
 // ProjectRules builds the full rule set from project config and required rules.
 // Used by CLI code to sync rules into the store before the daemon starts.
-func ProjectRules(projectFw *config.FirewallConfig, required []config.EgressRule) []config.EgressRule {
+func ProjectRules(cfg config.Config) []config.EgressRule {
 	var rules []config.EgressRule
+	projectFw := cfg.Project().Security.Firewall
+	required := cfg.RequiredFirewallRules() // TODO: terrible way to boostrap these
 	rules = append(rules, required...)
 	if projectFw != nil {
 		rules = append(rules, projectFw.Rules...)

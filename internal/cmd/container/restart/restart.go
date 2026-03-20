@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -139,17 +140,32 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 		if _, err := client.ContainerKill(ctx, c.ID, opts.Signal); err != nil {
 			return err
 		}
-		_, err = client.ContainerStart(ctx, docker.ContainerStartOptions{
-			ContainerID: c.ID,
-			EnsureNetwork: &docker.EnsureNetworkOptions{
-				Name: cfg.ClawkerNetwork(),
+		_, err = shared.ContainerStart(ctx,
+			shared.CommandOpts{
+				Client:         opts.Client,
+				Config:         opts.Config,
+				ProjectManager: opts.ProjectManager,
 			},
-		})
+			docker.ContainerStartOptions{
+				ContainerID: c.ID,
+				EnsureNetwork: &docker.EnsureNetworkOptions{
+					Name: cfg.ClawkerNetwork(),
+				},
+			})
 		return err
 	}
 
 	// Restart the container with timeout
 	timeout := opts.Timeout
+	errBootstrap := shared.BootstrapServices(
+		ctx, c.ID, shared.CommandOpts{
+			Client:         opts.Client,
+			Config:         opts.Config,
+			ProjectManager: opts.ProjectManager,
+		})
+	if errBootstrap != nil {
+		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrap)
+	}
 	_, err = client.ContainerRestart(ctx, c.ID, &timeout)
 	return err
 }

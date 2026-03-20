@@ -370,3 +370,56 @@ agent:
 		"http://host.docker.internal:9999")
 	assert.NotNil(t, blockedRes.Err, "non-proxy host port should be blocked by firewall")
 }
+
+func TestFirewall_FirewallDisabled(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			Firewall:       firewall.NewManager,
+			HostProxy:      hostproxy.NewManager,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+`)
+	setup.WriteYAML(t, testenv.Settings, setup.Dirs.Config, `
+firewall:
+    enable: false
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
+
+	agent := "firewall-disabled-test"
+
+	runTest := h.RunInContainer(agent,
+		"sh", "-c",
+		"curl -s --max-time 5 --connect-timeout 3 -o /dev/null -w \"%{http_code}\" https://example.com")
+
+	require.NoError(t, runTest.Err, "curl should succeed when firewall is disabled\nstdout: %s\nstderr: %s",
+		runTest.Stdout, runTest.Stderr)
+	assert.Contains(t, runTest.Stdout, "200", "should get HTTP 200 when firewall is disabled")
+
+	ctx := context.Background()
+
+	fwMgr, err := runTest.Factory.Firewall(ctx)
+	require.NoError(t, err, "getting firewall manager from factory should not error")
+
+	stack := fwMgr.IsRunning(ctx)
+	require.False(t, stack, "firewall stack should not be running when firewall is disabled")
+
+}

@@ -31,6 +31,7 @@ type RunResult struct {
 	Err      error
 	Stdout   string
 	Stderr   string
+	Factory  *cmdutil.Factory
 }
 
 // SetupResult holds the resolved paths from NewIsolatedFS.
@@ -257,6 +258,7 @@ func (h *Harness) Run(args ...string) *RunResult {
 		Err:      err,
 		Stdout:   out.String(),
 		Stderr:   errOut.String(),
+		Factory:  f,
 	}
 }
 
