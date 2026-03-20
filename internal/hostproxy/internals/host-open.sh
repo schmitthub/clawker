@@ -21,6 +21,7 @@ if [ -z "$CLAWKER_HOST_PROXY" ]; then
     exit 1
 fi
 
+
 # Function to URL decode a string
 url_decode() {
     printf '%s' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g' | xargs -0 printf '%b'

@@ -35,8 +35,6 @@ workspace:
   default_mode: bind
 security:
   enable_host_proxy: false
-  firewall:
-    enable: false
 `
 
 // testConfig returns a minimal *config.Project loaded through NewFromString.
@@ -61,7 +59,6 @@ workspace:
 security:
   enable_host_proxy: false
   firewall:
-    enable: true
     add_domains:%s
 `, b.String())
 	cfg, err := config.NewFromString(yaml, "")

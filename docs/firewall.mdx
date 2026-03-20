@@ -13,10 +13,10 @@ The firewall uses two infrastructure containers managed automatically by the Cla
 - **CoreDNS** (port `53`) --- DNS-level deny-by-default. Only explicitly allowed domains resolve successfully. All other queries return NXDOMAIN. Uses Cloudflare malware-blocking upstream (`1.1.1.2`, `1.0.0.2`).
 - **Envoy** (port `10000` TLS, `10001+` TCP) --- TLS inspection with per-domain MITM certificates for path-level filtering. SNI passthrough for allowed domains without path rules. Default deny (connection reset) for unrecognized SNI.
 
-Both containers run on the `clawker-net` bridge network with static IPs: Envoy at `.2`, CoreDNS at `.3`. Agent containers join the same network, use CoreDNS for DNS resolution, and route HTTPS through Envoy via iptables DNAT rules configured during container init.
+Both containers run on the `clawker-net` bridge network with static IPs: Envoy at `.200`, CoreDNS at `.201`. Agent containers join the same network, use CoreDNS for DNS resolution, and route HTTPS through Envoy via iptables DNAT rules configured during container init.
 
 ```
-Agent Container          CoreDNS (.3)         Envoy (.2)          Internet
+Agent Container        CoreDNS (.201)       Envoy (.200)         Internet
     |                        |                    |                   |
     |--- DNS query --------->|                    |                   |
     |<-- NXDOMAIN (blocked)--|                    |                   |
@@ -45,6 +45,8 @@ These domains are always allowed when the firewall is enabled (system-required r
 | Domain | Purpose |
 |--------|---------|
 | `api.anthropic.com` | Claude API |
+| `platform.claude.com` | OAuth token exchange |
+| `claude.ai` | OAuth authorization |
 | `sentry.io` | Error tracking |
 | `statsig.anthropic.com` | Feature flags |
 | `statsig.com` | Feature flags |
@@ -59,21 +61,23 @@ The firewall is configured in the `security.firewall` section of your `.clawker.
 ```yaml
 security:
   firewall:
-    enable: true
     add_domains:
       - "api.openai.com"
       - "registry.npmjs.org"
     rules:
-      - destination: "api.example.com"
-        protocol: tls
+      - dst: "api.example.com"
+        proto: tls
         port: 443
         action: allow
-        paths:
-          - "/v1/chat/*"
-    ip_range_sources:
-      - name: github
-      - name: google-cloud
+        path_rules:
+          - path: "/v1/chat/*"
+            action: allow
+        path_default: deny
 ```
+
+<Note>
+Global firewall enablement is controlled in `settings.yaml` via `firewall.enable`, not in the project config.
+</Note>
 
 ### `add_domains`
 
@@ -94,64 +98,43 @@ Full rule specification for fine-grained control:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `destination` | string | Domain name or IP address |
-| `protocol` | string | `tls`, `tcp`, or `ssh` |
-| `port` | int | Destination port number |
-| `action` | string | `allow` or `deny` |
-| `paths` | list | Optional path patterns for TLS MITM inspection (glob syntax) |
+| `dst` | string | Domain name or IP address |
+| `proto` | string | `tls`, `tcp`, or `ssh` (default: `tls`) |
+| `port` | int | Destination port (default: 443 for TLS, 22 for SSH) |
+| `action` | string | `allow` or `deny` (default: `allow`) |
+| `path_rules` | list | Optional path patterns for TLS MITM inspection (each entry has `path` and `action`) |
+| `path_default` | string | Default action for paths not matching any `path_rules` entry |
 
-When `paths` is specified, Envoy performs TLS interception (MITM) for that domain --- it terminates the TLS connection, inspects the HTTP path, and only forwards requests matching the path patterns. Without `paths`, the domain uses SNI passthrough (no inspection).
+When `path_rules` is specified, Envoy performs TLS interception (MITM) for that domain --- it terminates the TLS connection, inspects the HTTP path, and only forwards requests matching the path patterns. Without `path_rules`, the domain uses SNI passthrough (no inspection).
 
 ```yaml
 security:
   firewall:
     rules:
-      - destination: "api.example.com"
-        protocol: tls
+      - dst: "api.example.com"
+        proto: tls
         port: 443
         action: allow
-        paths:
-          - "/v1/chat/*"
-          - "/v1/models"
-      - destination: "git.internal.corp"
-        protocol: ssh
+        path_rules:
+          - path: "/v1/chat/*"
+            action: allow
+          - path: "/v1/models"
+            action: allow
+        path_default: deny
+      - dst: "git.internal.corp"
+        proto: ssh
         port: 22
         action: allow
-      - destination: "10.0.0.5"
-        protocol: tcp
+      - dst: "10.0.0.5"
+        proto: tcp
         port: 8080
         action: allow
 ```
 
-### `ip_range_sources`
-
-For cloud providers that use large IP ranges, Clawker can fetch and allowlist entire CIDR blocks:
-
-| Source | What It Covers | Required by Default |
-|--------|---------------|:---:|
-| `github` | GitHub API, Git, Copilot, Actions, Packages, Pages | Yes |
-| `google-cloud` | Google Cloud Platform IPs | No |
-| `google` | All Google IPs (includes GCS, Firebase) | No |
-| `cloudflare` | Cloudflare edge network | No |
-| `aws` | All AWS IP ranges | No |
-
-Custom IP range sources are also supported:
-
-```yaml
-security:
-  firewall:
-    ip_range_sources:
-      - name: github
-      - name: custom-internal
-        url: "https://internal.example.com/ip-ranges.json"
-        jq_filter: ".cidrs[]"
-        required: false
-```
-
-The `jq_filter` field extracts CIDR strings from the JSON response. The `required` field controls whether a fetch failure aborts container startup (default: `false`, except `github` which defaults to `true`).
+### `ip_range_sources` (deprecated)
 
 <Warning>
-The `google` IP range source allows traffic to **all** Google IPs, including Google Cloud Storage and Firebase Hosting which can serve user-generated content. This creates a prompt injection risk --- an attacker could host malicious content on a public GCS bucket or Firebase site that the agent fetches. Only add `google` if your project requires it (e.g., Go modules via `proxy.golang.org`). Use `google-cloud` for a more targeted allowlist.
+The `ip_range_sources` field is recognized by the YAML parser but **ignored at runtime**. IP range allowlisting via cloud provider CIDR blocks is not currently implemented. Remove any `ip_range_sources` entries from your configuration --- they have no effect.
 </Warning>
 
 ## Global vs Project Rules
@@ -175,8 +158,8 @@ All firewall operations are available under `clawker firewall`:
 | `clawker firewall reload` | Force regenerate Envoy/CoreDNS configs |
 | `clawker firewall up` | Start the firewall daemon (usually automatic) |
 | `clawker firewall down` | Stop the firewall daemon |
-| `clawker firewall enable CONTAINER` | Attach a container to the firewall network |
-| `clawker firewall disable CONTAINER` | Remove a container from the firewall network |
+| `clawker firewall enable --agent AGENT` | Attach a container to the firewall network |
+| `clawker firewall disable --agent AGENT` | Remove a container from the firewall network |
 | `clawker firewall bypass` | Temporary unrestricted egress (Dante SOCKS proxy) |
 | `clawker firewall rotate-ca` | Regenerate CA and all domain certificates |
 
@@ -185,8 +168,8 @@ All firewall operations are available under `clawker firewall`:
 The firewall uses a self-signed certificate authority for TLS inspection:
 
 - A **ECDSA P256 CA** is generated on first run and persisted in the firewall data directory
-- Per-domain MITM certificates are generated on demand for domains with `paths` rules (TLS inspection)
-- Domains without `paths` use SNI passthrough --- no certificate needed
+- Per-domain MITM certificates are generated on demand for domains with `path_rules` (TLS inspection)
+- Domains without `path_rules` use SNI passthrough --- no certificate needed
 - The CA certificate is injected into agent containers at creation time so they trust the MITM certificates
 - Use `clawker firewall rotate-ca` to regenerate the CA and all domain certs
 
@@ -200,10 +183,10 @@ For situations where you need temporary unrestricted network access:
 
 ```bash
 # Grant unrestricted egress for 5 minutes
-clawker firewall bypass --agent dev --timeout 5m
+clawker firewall bypass 5m --agent dev
 
 # Cancel bypass early
-clawker firewall bypass --agent dev --stop
+clawker firewall bypass --stop --agent dev
 ```
 
 Bypass mode routes traffic through a Dante SOCKS proxy, completely bypassing both DNS filtering and TLS inspection. The bypass auto-expires after the specified timeout.

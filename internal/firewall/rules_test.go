@@ -37,14 +37,11 @@ func TestAddRules_NewRulesWritten(t *testing.T) {
 		{Dst: "api.example.com", Proto: "tls", Action: "allow"},
 	}
 
-	// AddRules needs containers running — but we only care about store state.
-	// Use the store directly via List.
+	// AddRules writes to the store first, then calls regenerateAndRestart.
+	// regenerateAndRestart checks IsRunning → ContainerList returns error →
+	// IsRunning returns false → early return nil. Store write succeeds.
 	err := mgr.AddRules(t.Context(), incoming)
-	// Will fail on regenerateAndRestart (no containers) — but rules should be in store.
-	// Actually, let's check if the store was written before the restart fails.
-	// The manager writes to store then calls regenerateAndRestart which needs Docker.
-	// This will error — we need a different approach.
-	_ = err
+	require.NoError(t, err)
 
 	rules, listErr := mgr.List(t.Context())
 	require.NoError(t, listErr)
@@ -58,8 +55,8 @@ func TestAddRules_Deduplication(t *testing.T) {
 
 	rule := config.EgressRule{Dst: "example.com", Proto: "tls", Action: "allow"}
 
-	_ = mgr.AddRules(t.Context(), []config.EgressRule{rule})
-	_ = mgr.AddRules(t.Context(), []config.EgressRule{rule}) // duplicate
+	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{rule}))
+	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{rule})) // duplicate
 
 	rules, err := mgr.List(t.Context())
 	require.NoError(t, err)
@@ -70,9 +67,9 @@ func TestAddRules_DefaultProto(t *testing.T) {
 	mgr, _ := newTestManager(t)
 
 	// Empty proto should be normalized to "tls"
-	_ = mgr.AddRules(t.Context(), []config.EgressRule{
+	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
 		{Dst: "example.com"},
-	})
+	}))
 
 	rules, err := mgr.List(t.Context())
 	require.NoError(t, err)
@@ -84,10 +81,10 @@ func TestAddRules_DefaultProto(t *testing.T) {
 func TestAddRules_DifferentPortsNotDuplicate(t *testing.T) {
 	mgr, _ := newTestManager(t)
 
-	_ = mgr.AddRules(t.Context(), []config.EgressRule{
+	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
 		{Dst: "example.com", Proto: "tcp", Port: 80, Action: "allow"},
 		{Dst: "example.com", Proto: "tcp", Port: 443, Action: "allow"},
-	})
+	}))
 
 	rules, err := mgr.List(t.Context())
 	require.NoError(t, err)
@@ -97,14 +94,14 @@ func TestAddRules_DifferentPortsNotDuplicate(t *testing.T) {
 func TestRemoveRules(t *testing.T) {
 	mgr, _ := newTestManager(t)
 
-	_ = mgr.AddRules(t.Context(), []config.EgressRule{
+	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
 		{Dst: "keep.com", Proto: "tls", Action: "allow"},
 		{Dst: "remove.com", Proto: "tls", Action: "allow"},
-	})
+	}))
 
-	_ = mgr.RemoveRules(t.Context(), []config.EgressRule{
+	require.NoError(t, mgr.RemoveRules(t.Context(), []config.EgressRule{
 		{Dst: "remove.com", Proto: "tls"},
-	})
+	}))
 
 	rules, err := mgr.List(t.Context())
 	require.NoError(t, err)
@@ -115,12 +112,12 @@ func TestRemoveRules(t *testing.T) {
 func TestAddRules_MultipleCallsAdditive(t *testing.T) {
 	mgr, _ := newTestManager(t)
 
-	_ = mgr.AddRules(t.Context(), []config.EgressRule{
+	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
 		{Dst: "first.com", Proto: "tls", Action: "allow"},
-	})
-	_ = mgr.AddRules(t.Context(), []config.EgressRule{
+	}))
+	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
 		{Dst: "second.com", Proto: "tls", Action: "allow"},
-	})
+	}))
 
 	rules, err := mgr.List(t.Context())
 	require.NoError(t, err)
@@ -138,10 +135,10 @@ func TestAddRules_NormalizesEmptyFields(t *testing.T) {
 	mgr, _ := newTestManager(t)
 
 	// Empty proto and action should be normalized
-	_ = mgr.AddRules(t.Context(), []config.EgressRule{
+	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
 		{Dst: "a.com"},
 		{Dst: "b.com", Proto: "ssh"},
-	})
+	}))
 
 	rules, err := mgr.List(t.Context())
 	require.NoError(t, err)

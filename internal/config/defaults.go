@@ -2,11 +2,21 @@ package config
 
 // requiredFirewallRules is the canonical list of required egress rules.
 // These are essential for Claude Code and container image pulls.
+//
+// Claude Code OAuth requires platform.claude.com (token exchange) and
+// claude.ai (alternative authorize URL). These use SNI-based filtering,
+// so each domain must be listed explicitly even if they share IPs with
+// api.anthropic.com.
 var requiredFirewallRules = []EgressRule{
+	// Claude Code — API and OAuth
 	{Dst: "api.anthropic.com", Proto: "tls", Action: "allow"},
+	{Dst: "platform.claude.com", Proto: "tls", Action: "allow"},
+	{Dst: "claude.ai", Proto: "tls", Action: "allow"},
+	// Claude Code — telemetry
 	{Dst: "sentry.io", Proto: "tls", Action: "allow"},
 	{Dst: "statsig.anthropic.com", Proto: "tls", Action: "allow"},
 	{Dst: "statsig.com", Proto: "tls", Action: "allow"},
+	// Container image pulls
 	{Dst: "registry-1.docker.io", Proto: "tls", Action: "allow"},
 	{Dst: "production.cloudflare.docker.com", Proto: "tls", Action: "allow"},
 	{Dst: "docker.io", Proto: "tls", Action: "allow"},

@@ -35,8 +35,9 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 		tcpRules         []config.EgressRule
 	)
 	for _, r := range rules {
-		if strings.EqualFold(r.Action, "deny") {
-			continue // Deny rules are handled by the default deny chain.
+		action := strings.ToLower(r.Action)
+		if action != "allow" && action != "" {
+			continue // Only allow rules generate proxy config; deny/unknown handled by default deny chain.
 		}
 		if isIPOrCIDR(r.Dst) {
 			warnings = append(warnings, fmt.Sprintf("skipping IP/CIDR rule %q (not supported in Envoy SNI proxy)", r.Dst))

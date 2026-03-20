@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
-	"strings"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 )
 
@@ -65,8 +65,8 @@ func (m *Manager) ensureNetwork(ctx context.Context) (string, error) {
 		return result.Network.ID, nil
 	}
 
-	// Only proceed to create if the error is "not found".
-	if !strings.Contains(err.Error(), "not found") {
+	// Only proceed to create if the network doesn't exist.
+	if !cerrdefs.IsNotFound(err) {
 		return "", fmt.Errorf("inspecting network %s: %w", networkName, err)
 	}
 

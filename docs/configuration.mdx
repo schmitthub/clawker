@@ -227,12 +227,14 @@ security:
     #     jq_filter: ".cidrs[]"
     # Full rule specification (for path-level filtering)
     # rules:
-    #   - destination: "api.example.com"
-    #     protocol: tls
+    #   - dst: "api.example.com"
+    #     proto: tls
     #     port: 443
     #     action: allow
-    #     paths:
-    #       - "/v1/*"
+    #     path_rules:
+    #       - path: "/v1/*"
+    #         action: allow
+    #     path_default: deny
   # Mount Docker socket (security risk if enabled)
   docker_socket: false
   # Linux capabilities to add (default: NET_ADMIN, NET_RAW for firewall)

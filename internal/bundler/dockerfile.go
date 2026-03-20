@@ -722,9 +722,12 @@ func (g *ProjectGenerator) firewallCACertPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	caCertPath := filepath.Join(dataDir, "ca-cert.pem")
+	caCertPath := filepath.Join(dataDir, "certs", "ca-cert.pem")
 	if _, err := os.Stat(caCertPath); err != nil {
-		return "", nil //nolint:nilerr // missing CA cert is not an error
+		if os.IsNotExist(err) {
+			return "", nil // CA cert not yet generated (firewall not started)
+		}
+		return "", fmt.Errorf("checking firewall CA cert: %w", err)
 	}
 	return caCertPath, nil
 }

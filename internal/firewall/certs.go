@@ -163,7 +163,9 @@ func RegenerateDomainCerts(rules []config.EgressRule, dataDir string, caCert *x5
 // the new CA injected to trust the regenerated domain certs.
 func RotateCA(dataDir string, rules []config.EgressRule) error {
 	// Remove entire certs directory (CA + domain certs) so EnsureCA generates fresh ones.
-	_ = os.RemoveAll(filepath.Join(dataDir, certsDir))
+	if err := os.RemoveAll(filepath.Join(dataDir, certsDir)); err != nil {
+		return fmt.Errorf("removing old certs directory: %w", err)
+	}
 
 	caCert, caKey, err := EnsureCA(dataDir)
 	if err != nil {

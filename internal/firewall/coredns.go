@@ -57,7 +57,8 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 // isAllowDomain returns true if the rule is an allow rule targeting a domain
 // (not an IP address or CIDR range).
 func isAllowDomain(r config.EgressRule) bool {
-	if strings.EqualFold(r.Action, "deny") {
+	action := strings.ToLower(r.Action)
+	if action != "allow" && action != "" {
 		return false
 	}
 	return !isIPOrCIDR(r.Dst)

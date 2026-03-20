@@ -459,7 +459,7 @@ func TestRequiredFirewallRules(t *testing.T) {
 	require.NoError(t, err)
 
 	rules := cfg.RequiredFirewallRules()
-	assert.GreaterOrEqual(t, len(rules), 7)
+	assert.GreaterOrEqual(t, len(rules), 9)
 
 	// Verify all required rules have proper proto and action
 	for _, r := range rules {
@@ -468,9 +468,11 @@ func TestRequiredFirewallRules(t *testing.T) {
 		assert.Equal(t, "allow", r.Action)
 	}
 
-	// Verify domains accessor still works (backwards compat)
+	// Verify OAuth domains are included (SNI filtering requires each domain explicitly)
 	domains := cfg.RequiredFirewallDomains()
 	assert.Contains(t, domains, "api.anthropic.com")
+	assert.Contains(t, domains, "platform.claude.com")
+	assert.Contains(t, domains, "claude.ai")
 
 	// Returned slice is a copy
 	rules[0].Dst = "mutated.com"

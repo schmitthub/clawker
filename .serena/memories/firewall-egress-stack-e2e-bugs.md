@@ -14,21 +14,11 @@
 - [x] Never tested firewall disable command
 - [x] never tested firewall disabled setting 
 - [x] firewall disable doesn't do agent selection "clawker firewall disable --agent dev" fails
+- [ ] no path rules e2e tests
 - [ ] No TCP support. Transparent tcp for random ports (like tls to 4443, http to 8080) not working. need to update envoy config 
 - [ ] Never tested http over raw IP with no domain. should have been implemented but may have been skipped by you lazy eager agents who love to cut corners and avoid features you find icky instead of just googling it
-- [ ] **Host proxy OAuth callback broken with firewall enabled**: OAuth browser kickoff works (container→host proxy `POST /open/url` succeeds, browser opens). Callback does not arrive back to Claude Code. Diagnostics so far:
-  - iptables RETURN rule for host proxy IP+port is present and matching packets (verified via `iptables -t nat -L OUTPUT -n -v`)
-  - `host.docker.internal` resolves to `192.168.65.254` (IPv4 via `getent ahosts`; `getent hosts` returns IPv6 only — use `ahosts`)
-  - Host proxy `/health` returns HTTP 200 from inside firewalled container
-  - Callback registration (`POST /callback/register`) succeeds from inside container
-  - Callback polling (`GET /callback/{session}/data`) works manually from inside container
-  - Full round-trip test (register → trigger callback on host → poll from container) returns `received: true` with correct data
-  - `callback-forwarder` binary runs correctly when invoked manually with `-v` flag — connects, polls, times out normally
-  - `callback-forwarder` processes spawned by `host-open.sh` during real OAuth flow appear as zombies (defunct) — PIDs 317, 801, 3120
-  - Claude Code reports: `"OAuth error: The socket connection was closed unexpectedly"` on `fetch()` to `http://localhost:38987/callback...`
-  - Worked before the Envoy+CoreDNS firewall was added
-  - Hostproxy code may have been overwitten or removed during firewall work. Part of troubleshooting should involve comparing with main. any file related to the hostproxy flow. 
-
+- [ ] Proxychains was never fully removed. artifacts still in container. also dante should be scrubbed too if not 
+- [x] **Host proxy OAuth callback broken with firewall enabled**: OAuth browser kickoff works (container→host proxy `POST /open/url` succeeds, browser opens). Callback does not arrive back to Claude Code. Diagnostics so far:
 
 ## Session Progress
 

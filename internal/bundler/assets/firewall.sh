@@ -69,6 +69,8 @@ enable_firewall() {
     # Root (uid 0) bypasses all rules — escape hatch.
     iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
     iptables -t nat -A OUTPUT -p udp -m owner --uid-owner 0 -j RETURN
+    ip6tables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN 2>/dev/null || true
+    ip6tables -t nat -A OUTPUT -p udp -m owner --uid-owner 0 -j RETURN 2>/dev/null || true
 
     # DNS: redirect container user's DNS queries to CoreDNS allowlist proxy.
     iptables -t nat -A OUTPUT -p udp --dport 53 -m owner --uid-owner "${CONTAINER_UID}" -j DNAT --to-destination "${coredns_ip}:53"
@@ -79,12 +81,19 @@ enable_firewall() {
 
     # Host proxy: allow container user to reach the host proxy for git credentials, browser auth, etc.
     if [ -n "${host_proxy}" ]; then
-        local hp_host hp_port hp_ip
+        local hp_host hp_port hp_addrs hp_ip
         hp_host=$(echo "${host_proxy}" | sed -E 's|https?://||' | cut -d: -f1)
         hp_port=$(echo "${host_proxy}" | sed -E 's|https?://||' | cut -d: -f2 | cut -d/ -f1)
-        hp_ip=$(getent ahosts "${hp_host}" | awk '{print $1}' | head -1)
-        if [ -n "${hp_ip}" ] && [ -n "${hp_port}" ]; then
-            iptables -t nat -A OUTPUT -p tcp -d "${hp_ip}" --dport "${hp_port}" -m owner --uid-owner "${CONTAINER_UID}" -j RETURN
+        hp_addrs=$( { getent ahosts "${hp_host}" 2>/dev/null || true; getent ahostsv4 "${hp_host}" 2>/dev/null || true; } | awk '{print $1}' | sort -u )
+        if [ -n "${hp_addrs}" ] && [ -n "${hp_port}" ]; then
+            while read -r hp_ip; do
+                [ -z "${hp_ip}" ] && continue
+                if [[ "${hp_ip}" =~ : ]]; then
+                    ip6tables -t nat -A OUTPUT -p tcp -d "${hp_ip}" --dport "${hp_port}" -m owner --uid-owner "${CONTAINER_UID}" -j RETURN 2>/dev/null || true
+                else
+                    iptables -t nat -A OUTPUT -p tcp -d "${hp_ip}" --dport "${hp_port}" -m owner --uid-owner "${CONTAINER_UID}" -j RETURN
+                fi
+            done <<< "${hp_addrs}"
         fi
     fi
 
