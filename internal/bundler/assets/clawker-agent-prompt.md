@@ -30,6 +30,8 @@ Always attempt connections first — the domain may already be whitelisted. Only
 
 ### When a connection is blocked
 
+Before presenting options, look up your agent name by reading the `CLAWKER_AGENT` environment variable. Use this value in the `--agent` flag of all commands below.
+
 Present **all** of the following options to the user so they can choose. These are `clawker firewall` commands the user runs on the **host** — you cannot modify the firewall from inside this container.
 
 1. **Whitelist the domain** (permanent, recommended for recurring needs):
@@ -39,18 +41,18 @@ Present **all** of the following options to the user so they can choose. These a
 
 2. **Temporary bypass** (escape hatch — temporarily disables iptables rules):
    ```
-   clawker firewall bypass <duration> --agent <name>
+   clawker firewall bypass <duration> --agent $CLAWKER_AGENT
    ```
    - By default the command blocks with a countdown timer; Ctrl+C stops the bypass early (re-enables firewall)
-   - Use `--non-interactive` to run in the background: `clawker firewall bypass <duration> --agent <name> --non-interactive`
-   - Stop a background bypass: `clawker firewall bypass --stop --agent <name>`
+   - Use `--non-interactive` to run in the background: `clawker firewall bypass <duration> --agent $CLAWKER_AGENT --non-interactive`
+   - Stop a background bypass: `clawker firewall bypass --stop --agent $CLAWKER_AGENT`
    - Auto-expires after the specified duration — firewall rules are automatically re-applied
 
 3. **Disable firewall for this container** (until re-enabled):
    ```
-   clawker firewall disable --agent <name>
+   clawker firewall disable --agent $CLAWKER_AGENT
    ```
-   Re-enable later with `clawker firewall enable --agent <name>`
+   Re-enable later with `clawker firewall enable --agent $CLAWKER_AGENT`
 
 ### How the bypass works (agent reference)
 
