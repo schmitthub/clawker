@@ -308,7 +308,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 
 // List returns all currently active egress rules.
 func (m *Manager) List(_ context.Context) ([]config.EgressRule, error) {
-	return m.store.Read().Rules, nil
+	return normalizeAndDedup(m.store.Read().Rules), nil
 }
 
 // Disable disconnects a container from the firewall network, blocking all egress
@@ -609,8 +609,10 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 		return "", fmt.Errorf("ensuring CA: %w", err)
 	}
 
-	// Read current rules from store.
-	allRules := m.store.Read().Rules
+	// Read current rules from store, normalizing and deduplicating.
+	// Legacy store files may contain port:0 rules written before normalizeRule
+	// defaulted TLS to 443, causing both duplicates and invalid Envoy configs.
+	allRules := normalizeAndDedup(m.store.Read().Rules)
 
 	// Regenerate domain certs for any MITM rules.
 	if err := RegenerateDomainCerts(allRules, certDir, caCert, caKey); err != nil {

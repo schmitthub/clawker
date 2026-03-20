@@ -297,3 +297,46 @@ func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {
 	assert.Contains(t, out, "/admin")
 	assert.Contains(t, out, "Blocked by clawker firewall")
 }
+
+func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
+	t.Parallel()
+
+	// Legacy store files may contain TLS rules with port:0 written before
+	// normalizeRule defaulted TLS to 443. GenerateEnvoyConfig must handle this
+	// defensively — Envoy rejects port_value:0 with a validation error.
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 0, Action: "allow"},
+		{Dst: "github.com", Proto: "tls", Port: 0, Action: "allow"},
+	}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+
+	out := string(yamlBytes)
+	assert.Contains(t, out, "tls_egress")
+	assert.Contains(t, out, "api.anthropic.com")
+	assert.Contains(t, out, "github.com")
+	// port_value:0 must never appear — Envoy requires (0, 65535].
+	assert.NotContains(t, out, "port_value: 0")
+	assert.Contains(t, out, "port_value: 443")
+}
+
+func TestNormalizeAndDedup(t *testing.T) {
+	t.Parallel()
+
+	// Simulates a legacy store with port:0 and port:443 duplicates.
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 0, Action: "allow"},
+		{Dst: "github.com", Proto: "tls", Port: 0, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "github.com", Proto: "tls", Port: 443, Action: "allow"},
+	}
+
+	result := normalizeAndDedup(rules)
+	assert.Len(t, result, 2)
+	for _, r := range result {
+		assert.Equal(t, 443, r.Port, "rule for %s should have port 443", r.Dst)
+	}
+}
