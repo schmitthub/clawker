@@ -1,15 +1,18 @@
 ---
-title: "Quick Start"
-description: "Get up and running with Clawker in under 5 minutes"
+title: "Getting Started"
+description: "A complete walkthrough from installation to running your first containerized Claude Code agent"
 icon: "rocket"
 ---
 
+This guide takes you from zero to a fully working containerized Claude Code setup. By the end you'll have an isolated agent running in a Docker container with your credentials forwarded, a network firewall active, and your project code mounted.
+
 ## Prerequisites
 
-- **Docker** must be installed and running on your machine
-- An **Anthropic API key** or Claude subscription for Claude Code
+- **Docker** must be installed and running
+- An **Anthropic API key** or Claude Pro/Team subscription
+- macOS or Linux (Windows is not currently supported)
 
-## Install Clawker
+## 1. Install Clawker
 
 <CodeGroup>
 ```bash Homebrew
@@ -21,69 +24,242 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/ins
 ```
 </CodeGroup>
 
-## Initialize Clawker
+Verify it's installed:
+
+```bash
+clawker version
+```
+
+## 2. Initialize Clawker
 
 ```bash
 clawker init
 ```
 
-This creates the Clawker directory structure (`~/.config/clawker/` for settings, `~/.local/share/clawker/` for data, `~/.local/state/clawker/` for logs) and prompts you to build a default fallback image.
+This creates the Clawker directory structure following the XDG spec (`~/.config/clawker/` for settings, `~/.local/share/clawker/` for data, `~/.local/state/clawker/` for logs). It also asks if you want to build a default fallback image — this is optional but useful as a sandbox for quick experiments outside of a project.
 
-## Start a Project
+## 3. Set Up Your Project
 
 ```bash
 cd your-project
-clawker project init    # Creates .clawker.yaml, .clawkerignore, registers project
-clawker build           # Builds your project's Docker image
+clawker project init
 ```
 
-## Run Your First Agent
+This does three things:
+- Creates a `.clawker.yaml` config file with sensible defaults
+- Creates a `.clawkerignore` file (like `.dockerignore` for snapshot mode)
+- Registers your project in Clawker's registry so it always knows the project root
 
-An **agent** is a named container instance running Claude Code. The `--agent` flag gives it a name so you can manage multiple agents per project (e.g., `dev`, `review`, `refactor`).
+<Tip>
+The generated `.clawker.yaml` template includes GitHub domains and an SSH rule as a starting point. If your project needs npm, PyPI, or other services, add their domains to `security.firewall.add_domains`. See the [Firewall guide](/firewall#common-setups) for examples.
+</Tip>
+
+## 4. Build the Image
+
+```bash
+clawker build
+```
+
+This builds a Docker image tagged `clawker-<project>:latest` using the settings in your `.clawker.yaml` — base image, system packages, Claude Code, and any custom instructions. The image is content-addressed, so rebuilds only happen when the config changes.
+
+## 5. Run Your First Agent
+
+An **agent** is a named container instance running Claude Code. The `--agent` flag gives it a name for management.
 
 ```bash
 clawker run -it --agent dev @
 ```
 
-<Tip>
-The `@` shortcut resolves to your project's built image (`clawker-<project>:latest`). It saves you from typing the full image name every time.
-</Tip>
+- `-it` — interactive mode with a terminal attached
+- `--agent dev` — names this container `clawker.<project>.dev`
+- `@` — shortcut that resolves to your project's built image
 
-This creates and attaches to a new Claude Code agent running in an isolated container.
+You're now inside a containerized Claude Code session. Your project code is bind-mounted (live sync), your Git credentials are forwarded, and the network firewall is active.
 
-<Steps>
-  <Step title="Interact with Claude Code">
-    You're now inside a containerized Claude Code session. Work as you normally would — your code is mounted, credentials forwarded, and the firewall is active.
-  </Step>
-  <Step title="Detach without stopping">
-    Press `Ctrl+P`, then `Ctrl+Q` to detach from the container while keeping it running.
-  </Step>
-  <Step title="Re-attach later">
-    ```bash
-    clawker attach --agent dev
-    ```
-  </Step>
-  <Step title="Stop the agent">
-    Exit Claude Code with `/exit`, or from another terminal:
-    ```bash
-    clawker stop --agent dev
-    ```
-  </Step>
-</Steps>
+### What Happens Behind the Scenes
+
+When you run this command, Clawker:
+
+1. Creates the container with your project directory mounted at its real host path
+2. Creates persistent volumes for Claude Code config (`~/.claude`) and shell history
+3. Starts the firewall daemon (Envoy + CoreDNS) if it isn't already running
+4. Applies iptables rules inside the container to redirect traffic through the firewall
+5. Copies your host Claude Code settings, plugins, and authentication into the container
+6. Forwards SSH/GPG agent sockets and Git HTTPS credentials from your host
+7. Runs any `post_init` script you've configured
+8. Launches Claude Code
+
+The agent prompt at `/etc/claude-code/CLAUDE.md` is automatically loaded, so the agent knows it's in a container and can help troubleshoot firewall blocks.
+
+## 6. Working With Your Agent
+
+### Detach Without Stopping
+
+Press `Ctrl+P`, then `Ctrl+Q` to detach. The container keeps running in the background.
+
+### Re-attach
+
+```bash
+clawker attach --agent dev
+```
+
+### Stop the Agent
+
+Exit Claude Code with `/exit`, or from another terminal:
+
+```bash
+clawker stop --agent dev
+```
+
+### Restart a Stopped Agent
+
+```bash
+clawker start -a -i --agent dev
+```
+
+The `-a` (attach) and `-i` (interactive) flags reconnect your terminal. Your session data, config, and command history are preserved across restarts because they live in persistent volumes.
+
+### One-off Disposable Agent
+
+Use `--rm` to automatically remove the container when it stops — good for quick tasks:
+
+```bash
+clawker run -it --rm --agent scratch @ --dangerously-skip-permissions
+```
+
+Arguments after the image (`@`) are passed directly to Claude Code inside the container.
+
+## 7. Customize Your Config
+
+Edit `.clawker.yaml` to tailor the environment. Here's a typical setup for a Node.js project:
+
+```yaml
+build:
+  image: "node:20-slim"
+  packages:
+    - git
+    - curl
+    - ripgrep
+
+agent:
+  env:
+    NODE_ENV: "development"
+  post_init: |
+    npm install -g typescript
+
+security:
+  firewall:
+    add_domains:
+      - github.com
+      - api.github.com
+      - registry.npmjs.org
+    rules:
+      - dst: github.com
+        proto: ssh
+        port: 22
+        action: allow
+```
+
+After changing the config, rebuild:
+
+```bash
+clawker build
+```
+
+See the [Configuration](/configuration) guide for the full reference.
+
+## 8. Parallel Agents with Worktrees
+
+Run multiple agents on separate branches using Git worktrees:
+
+```bash
+# Agent on a feature branch (creates worktree automatically)
+clawker run -it --agent auth --worktree feature/auth:main @ --dangerously-skip-permissions
+
+# Another agent on a different branch
+clawker run -it --agent cache --worktree feature/cache:main @ --dangerously-skip-permissions
+```
+
+The `--worktree branch:base` flag creates a Git worktree off the base branch and mounts it into the container. Each agent works on its own branch with no conflicts.
+
+```bash
+# See all worktrees
+clawker worktree list
+
+# Clean up when done
+clawker worktree remove --delete-branch feature/auth
+```
+
+See the [Worktrees](/worktrees) guide for more.
+
+## 9. Monitoring (Optional)
+
+Start the monitoring stack before your agents to get real-time dashboards:
+
+```bash
+clawker monitor init    # Scaffold configs (one-time)
+clawker monitor up      # Start Grafana, Prometheus, Loki, Jaeger
+```
+
+Open Grafana at `http://localhost:3000` to see costs, token usage, tool calls, and session timelines for every agent.
+
+```bash
+clawker monitor down    # Stop when done
+```
+
+See the [Monitoring](/monitoring) guide for details.
+
+## 10. Autonomous Loops (Experimental)
+
+Run Claude Code in iterative loops with a fresh container per iteration:
+
+```bash
+clawker loop iterate \
+  --prompt "Fix all failing tests and open a PR" \
+  --max-loops 10 \
+  --skip-permissions \
+  --worktree fix/tests:main
+```
+
+A TUI dashboard shows progress, tool calls, costs, and circuit breaker status in real time. See the [Loop Mode](/loops) guide for configuration.
+
+## Managing Resources
+
+Clawker mirrors Docker CLI patterns but only operates on Clawker-managed resources:
+
+```bash
+clawker ps                            # List containers
+clawker image ls                      # List images
+clawker volume ls                     # List volumes
+
+clawker stop --agent dev              # Stop a container
+clawker rm --agent dev                # Remove a container
+clawker volume prune                  # Clean up orphaned volumes
+```
+
+### Firewall Management
+
+```bash
+clawker firewall status               # Health check
+clawker firewall list                 # Show active rules
+clawker firewall add pypi.org         # Allow a domain at runtime
+clawker firewall remove pypi.org      # Revoke access
+clawker firewall bypass 5m --agent dev  # Temporary unrestricted access
+```
 
 ## What's Next
 
 <CardGroup cols={2}>
   <Card title="Configuration" icon="gear" href="/configuration">
-    Customize your .clawker.yaml for your project's needs
+    Full `.clawker.yaml` reference with layered config and monorepo support
   </Card>
   <Card title="Security & Firewall" icon="shield" href="/security">
-    Understand the network firewall and security controls
+    Understand the deny-by-default firewall and how to configure domain access
   </Card>
   <Card title="Custom Images" icon="layer-group" href="/custom-images">
-    Build images with custom packages and Dockerfile instructions
+    Packages, Dockerfile instructions, injection points, and custom Dockerfiles
   </Card>
-  <Card title="CLI Reference" icon="terminal" href="/cli-reference/clawker">
-    Explore the full command reference
+  <Card title="Credential Forwarding" icon="key" href="/credentials">
+    SSH, GPG, Git HTTPS, and Claude Code authentication forwarding
   </Card>
 </CardGroup>

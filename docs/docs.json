@@ -215,7 +215,10 @@
             "pages": [
               "cli-reference/clawker_project",
               "cli-reference/clawker_project_init",
-              "cli-reference/clawker_project_register"
+              "cli-reference/clawker_project_register",
+              "cli-reference/clawker_project_list",
+              "cli-reference/clawker_project_info",
+              "cli-reference/clawker_project_remove"
             ]
           },
           {
@@ -233,13 +236,6 @@
               "cli-reference/clawker_firewall_disable",
               "cli-reference/clawker_firewall_bypass",
               "cli-reference/clawker_firewall_rotate-ca"
-            ]
-          },
-          {
-            "group": "Config",
-            "pages": [
-              "cli-reference/clawker_config",
-              "cli-reference/clawker_config_check"
             ]
           }
         ]

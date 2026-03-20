@@ -40,7 +40,7 @@ Agent Container        CoreDNS (.201)       Envoy (.200)         Internet
 
 ## Default Allowed Domains
 
-These domains are always allowed when the firewall is enabled (system-required rules):
+The hardcoded allowlist is deliberately **bare-bones** — only domains required for Claude Code itself and container image pulls are included:
 
 | Domain | Purpose |
 |--------|---------|
@@ -54,9 +54,105 @@ These domains are always allowed when the firewall is enabled (system-required r
 | `production.cloudflare.docker.com` | Docker CDN |
 | `docker.io` | Docker image resolution |
 
+<Warning>
+**GitHub, npm, PyPI, and all other services are NOT in this list.** When you run `clawker project init`, the generated `.clawker.yaml` template includes `github.com` and `api.github.com` as a convenience starting point — but these are project-level config entries, not system defaults. If you start from a blank config, GitHub SSH and HTTPS will be blocked.
+
+You must explicitly configure every external domain your agent needs. This is by design — an AI agent should not have unrestricted internet access. Review your project's network dependencies and add them to `add_domains` or `rules` in your `.clawker.yaml`.
+</Warning>
+
+### Common Setups
+
+Here are examples for common services your agent will likely need. **None of these are included by default** — add what you need to your `.clawker.yaml`.
+
+#### Git SSH (GitHub, GitLab, Bitbucket)
+
+SSH git operations (`git clone git@github.com:...`) require an explicit SSH rule. The `add_domains` shorthand only covers HTTPS (port 443) — SSH needs a dedicated `rules` entry on port 22:
+
+```yaml
+security:
+  firewall:
+    add_domains:
+      - github.com       # HTTPS git + API
+      - api.github.com   # GitHub API (needed for gh CLI)
+    rules:
+      - dst: github.com
+        proto: ssh
+        port: 22
+        action: allow
+```
+
+Without the SSH rule, `git push` and `git clone` over SSH will fail with a connection reset. The agent's SSH keys are forwarded from your host (see [Credential Forwarding](/credentials)), but the firewall still needs to allow the traffic through.
+
+For GitLab or Bitbucket, add equivalent rules:
+
+```yaml
+security:
+  firewall:
+    add_domains:
+      - gitlab.com
+      - bitbucket.org
+    rules:
+      - dst: gitlab.com
+        proto: ssh
+        port: 22
+        action: allow
+      - dst: bitbucket.org
+        proto: ssh
+        port: 22
+        action: allow
+```
+
+#### Package Registries
+
+```yaml
+security:
+  firewall:
+    add_domains:
+      # Node.js / npm
+      - registry.npmjs.org
+      - registry.yarnpkg.com
+      # Python / pip
+      - pypi.org
+      - files.pythonhosted.org
+      # Go modules
+      - proxy.golang.org
+      - sum.golang.org
+      - storage.googleapis.com
+      # Rust / cargo
+      - crates.io
+      - static.crates.io
+```
+
+#### Full Working Example
+
+A typical project that uses GitHub and npm:
+
+```yaml
+security:
+  firewall:
+    add_domains:
+      - github.com
+      - api.github.com
+      - registry.npmjs.org
+    rules:
+      - dst: github.com
+        proto: ssh
+        port: 22
+        action: allow
+```
+
+<Tip>
+The `clawker project init` template pre-populates GitHub domains and SSH rules for you. If you're starting from the template, Git should work out of the box. These examples are for understanding what's required if you're building a config from scratch or adding new services.
+</Tip>
+
 ## Configuration
 
-The firewall is configured in the `security.firewall` section of your `.clawker.yaml`:
+The firewall is configured in two places:
+
+- **Global toggle**: `firewall.enable` in `settings.yaml` (enable/disable the entire firewall)
+- **Per-project rules**: `security.firewall` section of `.clawker.yaml` (which domains to allow)
+
+Project-level firewall configuration in `.clawker.yaml`:
 
 ```yaml
 security:
@@ -74,10 +170,6 @@ security:
             action: allow
         path_default: deny
 ```
-
-<Note>
-Global firewall enablement is controlled in `settings.yaml` via `firewall.enable`, not in the project config.
-</Note>
 
 ### `add_domains`
 
@@ -250,12 +342,12 @@ Bypass mode removes all network restrictions for the specified agent. Use it spa
 
 ## Disabling the Firewall
 
-To disable the firewall entirely:
+To disable the firewall entirely, set `firewall.enable` to `false` in your **settings.yaml** (not the project config):
 
 ```yaml
-security:
-  firewall:
-    enable: false
+# ~/.config/clawker/settings.yaml
+firewall:
+  enable: false
 ```
 
 <Warning>
@@ -310,12 +402,6 @@ Then restart the affected containers.
 
 ### GitHub IP range fetch fails
 
-The `github` IP range source is required by default. If the GitHub API is unreachable (e.g., behind a corporate proxy), container startup will fail. You can make it optional:
-
-```yaml
-security:
-  firewall:
-    ip_range_sources:
-      - name: github
-        required: false
-```
+<Note>
+The `ip_range_sources` feature is deprecated and ignored at runtime. If you see errors related to IP range fetching, remove any `ip_range_sources` entries from your configuration — they have no effect.
+</Note>
