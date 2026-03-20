@@ -1,7 +1,6 @@
 package firewall
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -43,9 +42,6 @@ const (
 	healthCheckTimeout  = 30 * time.Second
 	healthCheckInterval = 500 * time.Millisecond
 )
-
-// Firewall bypass script path — baked into the image at build time.
-const firewallBypassScript = "/usr/local/bin/firewall-bypass"
 
 // Compile-time interface compliance check.
 var _ FirewallManager = (*Manager)(nil)
@@ -317,107 +313,156 @@ func (m *Manager) List(_ context.Context) ([]config.EgressRule, error) {
 
 // Disable disconnects a container from the firewall network, blocking all egress
 // through the firewall stack.
-func (m *Manager) Disable(_ context.Context, _ string) error {
-	// Requires docker exec iptables flush — depends on init-firewall.sh (Task 8).
-	return fmt.Errorf("firewall disable: not yet implemented")
+func (m *Manager) Disable(ctx context.Context, containerID string) error {
+	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
+		User:         "root",
+		AttachStderr: true,
+		Cmd:          []string{"/usr/local/bin/firewall.sh", "disable"},
+	})
+	if err != nil {
+		return fmt.Errorf("firewall disable: creating exec: %w", err)
+	}
+
+	hijack, err := m.client.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
+	if err != nil {
+		return fmt.Errorf("firewall disable: attaching: %w", err)
+	}
+	defer hijack.Conn.Close()
+
+	// Read all output (blocks until exec completes).
+	output, _ := io.ReadAll(hijack.Reader)
+
+	inspectExec, err := m.client.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("firewall disable: inspecting exec: %w", err)
+	}
+	if inspectExec.ExitCode != 0 {
+		return fmt.Errorf("firewall disable: script exited %d: %s", inspectExec.ExitCode, strings.TrimSpace(string(output)))
+	}
+
+	m.log.Debug().
+		Str("container", containerID).
+		Msg("firewall disabled")
+
+	return nil
 }
 
 // Enable re-applies DNAT + firewall DNS in an agent container via docker exec.
-func (m *Manager) Enable(_ context.Context, _ string) error {
-	// Requires docker exec iptables restore — depends on init-firewall.sh (Task 8).
-	return fmt.Errorf("firewall enable: not yet implemented")
+func (m *Manager) Enable(ctx context.Context, containerID string) error {
+	netInfo, err := m.discoverNetwork(ctx)
+	if err != nil {
+		return fmt.Errorf("firewall enable: discovering network: %w", err)
+	}
+
+	// Best-effort: read host proxy URL from container env.
+	var hostProxy string
+	inspect, inspectErr := m.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if inspectErr == nil {
+		for _, env := range inspect.Container.Config.Env {
+			if val, ok := strings.CutPrefix(env, "CLAWKER_HOST_PROXY="); ok {
+				hostProxy = val
+				break
+			}
+		}
+	}
+
+	args := []string{"/usr/local/bin/firewall.sh", "enable",
+		netInfo.EnvoyIP, netInfo.CoreDNSIP, netInfo.CIDR}
+	if hostProxy != "" {
+		args = append(args, hostProxy)
+	}
+
+	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
+		User:         "root",
+		AttachStderr: true,
+		Cmd:          args,
+	})
+	if err != nil {
+		return fmt.Errorf("firewall enable: creating exec: %w", err)
+	}
+
+	hijack, err := m.client.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
+	if err != nil {
+		return fmt.Errorf("firewall enable: attaching: %w", err)
+	}
+	defer hijack.Conn.Close()
+
+	// Read all output (blocks until exec completes).
+	output, _ := io.ReadAll(hijack.Reader)
+
+	inspectExec, err := m.client.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("firewall enable: inspecting exec: %w", err)
+	}
+	if inspectExec.ExitCode != 0 {
+		return fmt.Errorf("firewall enable: script exited %d: %s", inspectExec.ExitCode, strings.TrimSpace(string(output)))
+	}
+
+	m.log.Debug().
+		Str("container", containerID).
+		Msg("firewall enabled")
+
+	return nil
 }
 
-// Bypass starts temporary unrestricted egress for a container by executing the
-// firewall-bypass script baked into the image at build time. The script starts a
-// Dante SOCKS5 proxy as root (uid 0 bypasses iptables DNAT rules) and writes
-// proxychains config to the system default so `proxychains4 <cmd>` just works.
-func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.Duration, detach bool) (io.ReadCloser, error) {
+// Bypass disables iptables rules and schedules re-enable after timeout.
+// Uses detached docker exec: sleep <timeout> && firewall.sh enable <args>.
+func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.Duration) error {
+	// Step 1: Disable firewall (flush iptables rules).
+	if err := m.Disable(ctx, containerID); err != nil {
+		return fmt.Errorf("firewall bypass: %w", err)
+	}
+
+	// Step 2: Schedule re-enable via detached exec inside the container.
+	netInfo, err := m.discoverNetwork(ctx)
+	if err != nil {
+		return fmt.Errorf("firewall bypass: discovering network: %w", err)
+	}
+
+	// Best-effort: read host proxy URL from container env.
+	var hostProxy string
+	inspect, inspectErr := m.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if inspectErr == nil {
+		for _, env := range inspect.Container.Config.Env {
+			if val, ok := strings.CutPrefix(env, "CLAWKER_HOST_PROXY="); ok {
+				hostProxy = val
+				break
+			}
+		}
+	}
+
 	timeoutSecs := int(timeout.Seconds())
 	if timeoutSecs <= 0 {
 		timeoutSecs = 30
 	}
 
-	if detach {
-		execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
-			User: "root",
-			Cmd:  []string{firewallBypassScript, strconv.Itoa(timeoutSecs)},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("firewall bypass: creating exec: %w", err)
-		}
-
-		_, err = m.client.ExecStart(ctx, execResp.ID, client.ExecStartOptions{
-			Detach: true,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("firewall bypass: starting: %w", err)
-		}
-
-		m.log.Debug().
-			Str("container", containerID).
-			Int("timeout_secs", timeoutSecs).
-			Msg("firewall bypass started (detached)")
-
-		return nil, nil
+	// Build the re-enable command: sleep <timeout> && firewall.sh enable <args>
+	enableCmd := fmt.Sprintf("/usr/local/bin/firewall.sh enable %s %s %s",
+		netInfo.EnvoyIP, netInfo.CoreDNSIP, netInfo.CIDR)
+	if hostProxy != "" {
+		enableCmd += " " + hostProxy
 	}
+	shellCmd := fmt.Sprintf("sleep %d && %s", timeoutSecs, enableCmd)
 
-	// Attached mode: stream dante logs (stdout only) back to caller.
-	// Dante logs to stdout; script errors go to stderr (not captured).
-	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
-		User:         "root",
-		AttachStdout: true,
-		Cmd:          []string{firewallBypassScript, strconv.Itoa(timeoutSecs)},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("firewall bypass: creating exec: %w", err)
-	}
-
-	hijack, err := m.client.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("firewall bypass: attaching: %w", err)
-	}
-
-	m.log.Debug().
-		Str("container", containerID).
-		Int("timeout_secs", timeoutSecs).
-		Msg("firewall bypass started (attached)")
-
-	return &hijackedReadCloser{Reader: hijack.Reader, conn: hijack.Conn}, nil
-}
-
-// hijackedReadCloser wraps a bufio.Reader from a Docker exec attach with a
-// net.Conn for cleanup. Reading returns the multiplexed stdout/stderr stream.
-// Close releases the underlying connection.
-type hijackedReadCloser struct {
-	*bufio.Reader
-	conn net.Conn
-}
-
-func (h *hijackedReadCloser) Close() error {
-	return h.conn.Close()
-}
-
-// StopBypass stops an active bypass by executing the firewall-bypass script with "stop".
-func (m *Manager) StopBypass(ctx context.Context, containerID string) error {
 	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		User: "root",
-		Cmd:  []string{firewallBypassScript, "stop"},
+		Cmd:  []string{"sh", "-c", shellCmd},
 	})
 	if err != nil {
-		return fmt.Errorf("firewall stop bypass: creating exec: %w", err)
+		return fmt.Errorf("firewall bypass: creating timer exec: %w", err)
 	}
 
 	_, err = m.client.ExecStart(ctx, execResp.ID, client.ExecStartOptions{
 		Detach: true,
 	})
 	if err != nil {
-		return fmt.Errorf("firewall stop bypass: stopping: %w", err)
+		return fmt.Errorf("firewall bypass: starting timer: %w", err)
 	}
 
 	m.log.Debug().
 		Str("container", containerID).
-		Msg("firewall bypass stopped")
+		Int("timeout_secs", timeoutSecs).
+		Msg("firewall bypass started (re-enable scheduled)")
 
 	return nil
 }

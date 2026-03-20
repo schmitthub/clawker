@@ -37,14 +37,14 @@ Present **all** of the following options to the user so they can choose. These a
    clawker firewall add <hostname>
    ```
 
-2. **SOCKS proxy bypass** (escape hatch — firewall stays active):
+2. **Temporary bypass** (escape hatch — temporarily disables iptables rules):
    ```
    clawker firewall bypass <duration> --agent <name>
    ```
-   - By default the command blocks with a countdown timer; Ctrl+C stops the bypass early
+   - By default the command blocks with a countdown timer; Ctrl+C stops the bypass early (re-enables firewall)
    - Use `--non-interactive` to run in the background: `clawker firewall bypass <duration> --agent <name> --non-interactive`
    - Stop a background bypass: `clawker firewall bypass --stop --agent <name>`
-   - Auto-expires after the specified duration
+   - Auto-expires after the specified duration — firewall rules are automatically re-applied
 
 3. **Disable firewall for this container** (until re-enabled):
    ```
@@ -54,13 +54,7 @@ Present **all** of the following options to the user so they can choose. These a
 
 ### How the bypass works (agent reference)
 
-The bypass does **not** disable the firewall. The firewall uses iptables rules targeting your UID (`claude:1001`) to route traffic through Envoy/CoreDNS — the container's root user is not subject to these rules. The bypass opens a time-limited SOCKS5 proxy from root within this container to your user, letting you tunnel traffic out without going through the firewall. The firewall remains fully active for all non-proxied traffic.
-
-**When a bypass is active, you must route your own traffic through the SOCKS proxy:**
-- `proxychains4 <command>` — wraps any CLI tool (pre-configured, no flags needed)
-- `socks5h://localhost:9100` — for applications that accept a SOCKS proxy directly
-
-**Built-in tools (WebFetch, etc.) do not use the SOCKS proxy and will still fail during a bypass.** Always use CLI equivalents instead: `proxychains4 curl <url>`, `proxychains4 wget <url>`, etc. If the user needs a domain accessible to built-in tools, recommend whitelisting it instead of using bypass.
+The bypass temporarily disables the iptables rules that redirect your traffic through Envoy/CoreDNS. During a bypass, all outbound traffic from your user goes directly to the network without filtering. After the specified timeout, the iptables rules are automatically re-applied, restoring firewall enforcement. No proxy routing is needed — all tools (including built-in ones like WebFetch) work normally during an active bypass.
 
 ### How rules are managed (agent reference)
 
@@ -90,7 +84,7 @@ Duplicates are silently ignored (deduped by `dst:proto:port`). Rules persist acr
 - Run shell commands, install packages (with `sudo` if needed)
 - Use git (credentials and signing are forwarded from the host)
 - Access whitelisted network destinations
-- Use `proxychains4` during an active bypass for unrestricted access
+- Access any network destination during an active bypass
 
 **You cannot:**
 - Modify firewall rules (user must run `clawker firewall` commands on the host)

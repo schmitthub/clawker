@@ -17,25 +17,15 @@ type bypassTickEvent struct {
 	remaining time.Duration
 }
 
-type bypassLogEvent struct {
-	line string
-}
-
 // ---------------------------------------------------------------------------
 // Dashboard renderer (implements tui.DashboardRenderer)
 // ---------------------------------------------------------------------------
-
-const (
-	maxLogLines     = 200
-	visibleLogLines = 15
-)
 
 type bypassDashRenderer struct {
 	agent     string
 	duration  time.Duration
 	remaining time.Duration
 	startTime time.Time
-	logLines  []string
 }
 
 func newBypassDashRenderer(agent string, duration time.Duration) *bypassDashRenderer {
@@ -48,14 +38,8 @@ func newBypassDashRenderer(agent string, duration time.Duration) *bypassDashRend
 }
 
 func (r *bypassDashRenderer) ProcessEvent(ev any) {
-	switch e := ev.(type) {
-	case bypassTickEvent:
+	if e, ok := ev.(bypassTickEvent); ok {
 		r.remaining = e.remaining
-	case bypassLogEvent:
-		r.logLines = append(r.logLines, e.line)
-		if len(r.logLines) > maxLogLines {
-			r.logLines = r.logLines[len(r.logLines)-maxLogLines:]
-		}
 	}
 }
 
@@ -78,14 +62,6 @@ func (r *bypassDashRenderer) View(cs *iostreams.ColorScheme, width int) string {
 		tui.TimerIndicator("Duration", r.duration.String()),
 	)
 
-	buf.WriteByte('\n')
-
-	// Proxy log panel — auto-scroll to bottom
-	offset := 0
-	if len(r.logLines) > visibleLogLines {
-		offset = len(r.logLines) - visibleLogLines
-	}
-	buf.WriteString(tui.RenderScrollablePanel("Proxy Log", r.logLines, offset, visibleLogLines, width-4))
 	buf.WriteByte('\n')
 
 	return buf.String()

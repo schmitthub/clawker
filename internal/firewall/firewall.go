@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -60,21 +59,17 @@ type FirewallManager interface {
 	// List returns all currently active egress rules.
 	List(ctx context.Context) ([]config.EgressRule, error)
 
-	// Disable removes a container from the firewall network, blocking all egress.
+	// Disable flushes iptables rules in the container, giving unrestricted egress.
 	Disable(ctx context.Context, containerID string) error
 
-	// Enable attaches a container to the firewall network, enforcing egress rules.
+	// Enable applies iptables rules in the container with current network info.
 	Enable(ctx context.Context, containerID string) error
 
-	// Bypass grants a container unrestricted egress for the given duration.
-	// After timeout elapses, rules are re-applied automatically.
-	// When detach is false, returns an io.ReadCloser streaming dante logs
-	// (the caller must read until EOF or close it to stop early).
-	// When detach is true, returns nil (fire-and-forget, use StopBypass to cancel).
-	Bypass(ctx context.Context, containerID string, timeout time.Duration, detach bool) (io.ReadCloser, error)
-
-	// StopBypass cancels an active bypass, immediately re-applying egress rules.
-	StopBypass(ctx context.Context, containerID string) error
+	// Bypass disables firewall and schedules re-enable after timeout.
+	// Uses detached docker exec: sleep <timeout> && firewall.sh enable <args>.
+	// Returns immediately — timer runs inside the container.
+	// To cancel early: call Enable() directly (idempotent, re-applies rules).
+	Bypass(ctx context.Context, containerID string, timeout time.Duration) error
 
 	// Status returns a health snapshot of the firewall stack.
 	Status(ctx context.Context) (*FirewallStatus, error)

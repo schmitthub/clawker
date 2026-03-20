@@ -78,11 +78,8 @@ func TestFirewall_Bypass(t *testing.T) {
 	require.NoError(t, bypassRes.Err, "firewall bypass failed\nstdout: %s\nstderr: %s",
 		bypassRes.Stdout, bypassRes.Stderr)
 
-	// Give danted a moment to start listening.
-	time.Sleep(2 * time.Second)
-
-	// Should succeed now that it's bypassed — proxychains4 uses system default config.
-	allowedRes := h.ExecInContainer("firewall-test", "proxychains4",
+	// Should succeed now — bypass disables iptables rules, all traffic goes direct.
+	allowedRes := h.ExecInContainer("firewall-test",
 		"curl", "-s", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}", "https://example.com")
 	require.NoError(t, allowedRes.Err, "curl after bypass should succeed\nstdout: %s\nstderr: %s",
 		allowedRes.Stdout, allowedRes.Stderr)

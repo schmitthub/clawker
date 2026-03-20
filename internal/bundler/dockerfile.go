@@ -38,11 +38,8 @@ var DockerfileTemplate string
 //go:embed assets/entrypoint.sh
 var EntrypointScript string
 
-//go:embed assets/init-firewall.sh
+//go:embed assets/firewall.sh
 var FirewallScript string
-
-//go:embed assets/firewall-bypass.sh
-var FirewallBypassScript string
 
 //go:embed assets/statusline.sh
 var StatuslineScript string
@@ -227,8 +224,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		mode    os.FileMode
 	}{
 		{"entrypoint.sh", EntrypointScript, 0755},
-		{"init-firewall.sh", FirewallScript, 0755},
-		{"firewall-bypass.sh", FirewallBypassScript, 0755},
+		{"firewall.sh", FirewallScript, 0755},
 		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
@@ -414,11 +410,8 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
-	// Add firewall scripts (always included; execution gated at runtime)
-	if err := addFileToTar(tw, "init-firewall.sh", []byte(FirewallScript)); err != nil {
-		return nil, err
-	}
-	if err := addFileToTar(tw, "firewall-bypass.sh", []byte(FirewallBypassScript)); err != nil {
+	// Add firewall script (always included; execution gated at runtime)
+	if err := addFileToTar(tw, "firewall.sh", []byte(FirewallScript)); err != nil {
 		return nil, err
 	}
 
@@ -499,8 +492,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		mode    os.FileMode
 	}{
 		{"entrypoint.sh", EntrypointScript, 0755},
-		{"init-firewall.sh", FirewallScript, 0755},
-		{"firewall-bypass.sh", FirewallBypassScript, 0755},
+		{"firewall.sh", FirewallScript, 0755},
 		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
@@ -581,7 +573,6 @@ var basePackagesAlpine = map[string]bool{
 	"iptables": true, "ipset": true, "iproute2": true, "bind-tools": true,
 	"jq": true, "nano": true, "vim": true, "wget": true, "curl": true,
 	"github-cli": true, "musl-locales": true, "musl-locales-lang": true,
-	"dante": true, "proxychains-ng": true,
 }
 
 // basePackagesDebian are packages already included in the template for Debian.
@@ -591,7 +582,6 @@ var basePackagesDebian = map[string]bool{
 	"iptables": true, "ipset": true, "iproute2": true, "dnsutils": true,
 	"aggregate": true, "jq": true, "nano": true, "vim": true, "wget": true,
 	"curl": true, "gh": true, "locales": true, "locales-all": true,
-	"dante-server": true, "proxychains4": true,
 }
 
 // filterBasePackages removes packages that are already in the template.

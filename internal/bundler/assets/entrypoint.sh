@@ -95,14 +95,18 @@ if [ "$CLAWKER_FIREWALL_ENABLED" = "true" ] && [ -n "${CLAWKER_FIREWALL_ENVOY_IP
     emit_step "firewall"
 
     # Fail fast if prerequisites are missing — silent degradation of a security control is dangerous
-    if [ ! -x /usr/local/bin/init-firewall.sh ]; then
-        emit_error "firewall" "init-firewall.sh not found or not executable"
+    if [ ! -x /usr/local/bin/firewall.sh ]; then
+        emit_error "firewall" "firewall.sh not found or not executable"
     fi
     if [ ! -f /proc/net/ip_tables_names ]; then
         emit_error "firewall" "iptables not available (missing NET_ADMIN/NET_RAW capabilities)"
     fi
 
-    fw_output=$(/usr/local/bin/init-firewall.sh 2>&1) || \
+    fw_output=$(/usr/local/bin/firewall.sh enable \
+        "${CLAWKER_FIREWALL_ENVOY_IP}" \
+        "${CLAWKER_FIREWALL_COREDNS_IP}" \
+        "${CLAWKER_FIREWALL_NET_CIDR}" \
+        "${CLAWKER_HOST_PROXY:-}" 2>&1) || \
         emit_error "firewall" "initialization failed: ${fw_output}"
 fi
 

@@ -1,13 +1,10 @@
 package firewall
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"time"
 
-	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/firewall"
@@ -43,19 +40,22 @@ func NewCmdBypass(f *cmdutil.Factory, runF func(context.Context, *BypassOptions)
 		Short: "Temporarily bypass firewall for a container",
 		Long: `Grant a container unrestricted egress for a specified duration.
 
+Disables iptables rules for the container and schedules automatic
+re-enable after the timeout. The timer runs inside the container.
+
 By default the command blocks with a countdown timer. Press Ctrl+C to
-stop the bypass early. When the timer expires, firewall rules are
-automatically re-applied.
+stop the bypass early (re-enables firewall). Press q/Esc to detach
+(leave timer running in background).
 
 Use --non-interactive to start the bypass in the background. In this
-mode, use --stop to cancel an active bypass.`,
+mode, use --stop to cancel early (re-enables firewall immediately).`,
 		Example: `  # Bypass firewall for 5 minutes (blocks with countdown)
   clawker firewall bypass 5m --agent dev
 
   # Bypass in background (fire-and-forget)
   clawker firewall bypass 5m --agent dev --non-interactive
 
-  # Stop a background bypass
+  # Stop a background bypass (re-enables firewall immediately)
   clawker firewall bypass --stop --agent dev`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.Agent == "" {
@@ -90,7 +90,7 @@ mode, use --stop to cancel an active bypass.`,
 	}
 
 	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name to identify the container")
-	cmd.Flags().BoolVar(&opts.Stop, "stop", false, "Stop an active bypass")
+	cmd.Flags().BoolVar(&opts.Stop, "stop", false, "Stop an active bypass (re-enables firewall)")
 	cmd.Flags().BoolVar(&opts.NonInteractive, "non-interactive", false, "Start bypass in background (use --stop to cancel)")
 	_ = cmd.MarkFlagRequired("agent")
 
@@ -120,19 +120,22 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 		return fmt.Errorf("connecting to firewall: %w", err)
 	}
 
+	// --stop: re-enable firewall immediately (cancels any running bypass timer).
 	if opts.Stop {
-		if err := fwMgr.StopBypass(ctx, containerName); err != nil {
+		if err := fwMgr.Enable(ctx, containerName); err != nil {
 			return fmt.Errorf("stopping bypass for %s: %w", opts.Agent, err)
 		}
 		fmt.Fprintf(ios.Out, "%s Bypass stopped for agent %s\n", cs.SuccessIcon(), opts.Agent)
 		return nil
 	}
 
-	// Non-interactive: detached, fire-and-forget.
+	// Start bypass: disable firewall + schedule re-enable after timeout.
+	if err := fwMgr.Bypass(ctx, containerName, opts.Duration); err != nil {
+		return fmt.Errorf("starting bypass for %s: %w", opts.Agent, err)
+	}
+
+	// Non-interactive: fire-and-forget.
 	if opts.NonInteractive {
-		if _, err := fwMgr.Bypass(ctx, containerName, opts.Duration, true); err != nil {
-			return fmt.Errorf("starting bypass for %s: %w", opts.Agent, err)
-		}
 		fmt.Fprintf(ios.Out, "%s Bypass active for agent %s (expires in %s)\n",
 			cs.SuccessIcon(), opts.Agent, opts.Duration)
 		fmt.Fprintf(ios.ErrOut, "%s Use --stop to cancel: clawker firewall bypass --stop --agent %s\n",
@@ -140,50 +143,24 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 		return nil
 	}
 
-	// Interactive: attached, stream dante logs via TUI dashboard.
-	stream, err := fwMgr.Bypass(ctx, containerName, opts.Duration, false)
-	if err != nil {
-		return fmt.Errorf("starting bypass for %s: %w", opts.Agent, err)
-	}
-
+	// Interactive: client-side countdown dashboard.
 	eventCh := make(chan any, 64)
 
-	// Feed dante log lines into the event channel.
 	go func() {
 		defer close(eventCh)
-		// Demux the Docker multiplexed stream into a pipe we can scan line-by-line.
-		pr, pw := io.Pipe()
-		go func() {
-			_, _ = stdcopy.StdCopy(pw, pw, stream)
-			pw.Close()
-		}()
-		// Tick every second for countdown updates.
 		deadline := time.Now().Add(opts.Duration)
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
-		scanner := bufio.NewScanner(pr)
-		lineCh := make(chan string)
-		go func() {
-			defer close(lineCh)
-			for scanner.Scan() {
-				lineCh <- scanner.Text()
-			}
-		}()
-
 		for {
-			select {
-			case line, ok := <-lineCh:
-				if !ok {
-					return // stream EOF — exec exited
-				}
-				eventCh <- bypassLogEvent{line: line}
-			case <-ticker.C:
-				remaining := time.Until(deadline)
-				if remaining < 0 {
-					remaining = 0
-				}
-				eventCh <- bypassTickEvent{remaining: remaining}
+			<-ticker.C
+			remaining := time.Until(deadline)
+			if remaining < 0 {
+				remaining = 0
+			}
+			eventCh <- bypassTickEvent{remaining: remaining}
+			if remaining <= 0 {
+				return
 			}
 		}
 	}()
@@ -194,15 +171,13 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 	}, eventCh)
 
 	if result.Err != nil {
-		stream.Close()
 		return result.Err
 	}
 
 	if result.Interrupted {
-		// Ctrl+C: stop bypass immediately.
-		stream.Close()
+		// Ctrl+C: re-enable firewall immediately.
 		fmt.Fprintf(ios.Out, "%s Stopping bypass for agent %s...\n", cs.WarningIcon(), opts.Agent)
-		if err := fwMgr.StopBypass(context.Background(), containerName); err != nil {
+		if err := fwMgr.Enable(context.Background(), containerName); err != nil {
 			return fmt.Errorf("stopping bypass for %s: %w", opts.Agent, err)
 		}
 		fmt.Fprintf(ios.Out, "%s Bypass stopped for agent %s\n", cs.SuccessIcon(), opts.Agent)
@@ -210,8 +185,7 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 	}
 
 	if result.Detached {
-		// q/Esc: detach to background, leave bypass running.
-		stream.Close()
+		// q/Esc: detach, leave timer running in container.
 		fmt.Fprintf(ios.Out, "%s Detached — bypass continues in background for agent %s\n",
 			cs.InfoIcon(), opts.Agent)
 		fmt.Fprintf(ios.ErrOut, "%s Use --stop to cancel: clawker firewall bypass --stop --agent %s\n",
@@ -219,8 +193,7 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 		return nil
 	}
 
-	// Channel closed: exec exited (timeout expired).
-	stream.Close()
+	// Timer expired.
 	fmt.Fprintf(ios.Out, "%s Bypass expired for agent %s\n", cs.SuccessIcon(), opts.Agent)
 	return nil
 }

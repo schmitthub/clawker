@@ -1616,7 +1616,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// DNS filtering is handled entirely by iptables DNAT rules in init-firewall.sh:
+	// DNS filtering is handled entirely by iptables DNAT rules in firewall.sh:
 	// non-root DNS (port 53) is redirected to CoreDNS, root (uid 0) bypasses via RETURN.
 	// Do NOT set hostConfig.DNS here — it would make Docker forward ALL DNS (including
 	// root's) through CoreDNS, breaking the firewall bypass escape hatch.
@@ -1840,19 +1840,6 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		envOpts.FirewallEnvoyIP = fwMgr.EnvoyIP()
 		envOpts.FirewallCoreDNSIP = coreDNSIP
 		envOpts.FirewallNetCIDR = fwMgr.NetCIDR()
-
-		// Step 5: Compute TCP rule → Envoy port mappings for per-rule iptables DNAT.
-		allRules, listErr := fwMgr.List(ctx)
-		if listErr != nil {
-			return nil, nil, "", fmt.Errorf("firewall list rules: %w", listErr)
-		}
-		tcpMappings := firewall.TCPPortMappings(allRules, firewall.EnvoyPorts{
-			TLSPort:     opts.Config.EnvoyTLSPort(),
-			TCPPortBase: opts.Config.EnvoyTCPPortBase(),
-		})
-		if len(tcpMappings) > 0 {
-			envOpts.FirewallTCPRules = firewall.EncodeTCPMappings(tcpMappings)
-		}
 	}
 
 	// Deprecation warning for ip_range_sources

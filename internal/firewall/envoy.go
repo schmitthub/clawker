@@ -14,47 +14,6 @@ type EnvoyPorts struct {
 	TCPPortBase int // Starting port for TCP/SSH listeners.
 }
 
-// TCPPortMapping describes a TCP rule's Envoy listener port assignment.
-// Used to generate per-rule iptables DNAT entries in init-firewall.sh.
-type TCPPortMapping struct {
-	Dst   string // Destination hostname or IP.
-	Port  int    // Destination port (0 = any port).
-	Envoy int    // Envoy listener port for this rule.
-}
-
-// TCPPortMappings returns the port assignments for all TCP rules.
-// Each TCP rule gets a dedicated Envoy listener starting at ports.TCPPortBase.
-func TCPPortMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPPortMapping {
-	var mappings []TCPPortMapping
-	envoyPort := ports.TCPPortBase
-	for _, r := range rules {
-		proto := strings.ToLower(r.Proto)
-		if proto != "ssh" && proto != "tcp" {
-			continue
-		}
-		if strings.EqualFold(r.Action, "deny") {
-			continue
-		}
-		mappings = append(mappings, TCPPortMapping{
-			Dst:   r.Dst,
-			Port:  r.Port,
-			Envoy: envoyPort,
-		})
-		envoyPort++
-	}
-	return mappings
-}
-
-// EncodeTCPMappings serializes TCP port mappings for the CLAWKER_FIREWALL_TCP_RULES env var.
-// Format: "dst:port:envoyPort,dst:port:envoyPort,..." where port=0 means any port.
-func EncodeTCPMappings(mappings []TCPPortMapping) string {
-	parts := make([]string, len(mappings))
-	for i, m := range mappings {
-		parts[i] = fmt.Sprintf("%s:%d:%d", m.Dst, m.Port, m.Envoy)
-	}
-	return strings.Join(parts, ",")
-}
-
 // Cert path formats inside the Envoy container (mounted volume).
 const (
 	envoyCertFileFmt = "/etc/envoy/certs/%s-cert.pem"

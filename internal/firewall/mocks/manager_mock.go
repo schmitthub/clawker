@@ -7,7 +7,6 @@ import (
 	"context"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/firewall"
-	"io"
 	"sync"
 	"time"
 )
@@ -25,7 +24,7 @@ var _ firewall.FirewallManager = &FirewallManagerMock{}
 //			AddRulesFunc: func(ctx context.Context, rules []config.EgressRule) error {
 //				panic("mock out the AddRules method")
 //			},
-//			BypassFunc: func(ctx context.Context, containerID string, timeout time.Duration, detach bool) (io.ReadCloser, error) {
+//			BypassFunc: func(ctx context.Context, containerID string, timeout time.Duration) error {
 //				panic("mock out the Bypass method")
 //			},
 //			CoreDNSIPFunc: func() string {
@@ -64,9 +63,6 @@ var _ firewall.FirewallManager = &FirewallManagerMock{}
 //			StopFunc: func(ctx context.Context) error {
 //				panic("mock out the Stop method")
 //			},
-//			StopBypassFunc: func(ctx context.Context, containerID string) error {
-//				panic("mock out the StopBypass method")
-//			},
 //			WaitForHealthyFunc: func(ctx context.Context) error {
 //				panic("mock out the WaitForHealthy method")
 //			},
@@ -81,7 +77,7 @@ type FirewallManagerMock struct {
 	AddRulesFunc func(ctx context.Context, rules []config.EgressRule) error
 
 	// BypassFunc mocks the Bypass method.
-	BypassFunc func(ctx context.Context, containerID string, timeout time.Duration, detach bool) (io.ReadCloser, error)
+	BypassFunc func(ctx context.Context, containerID string, timeout time.Duration) error
 
 	// CoreDNSIPFunc mocks the CoreDNSIP method.
 	CoreDNSIPFunc func() string
@@ -119,9 +115,6 @@ type FirewallManagerMock struct {
 	// StopFunc mocks the Stop method.
 	StopFunc func(ctx context.Context) error
 
-	// StopBypassFunc mocks the StopBypass method.
-	StopBypassFunc func(ctx context.Context, containerID string) error
-
 	// WaitForHealthyFunc mocks the WaitForHealthy method.
 	WaitForHealthyFunc func(ctx context.Context) error
 
@@ -142,8 +135,6 @@ type FirewallManagerMock struct {
 			ContainerID string
 			// Timeout is the timeout argument value.
 			Timeout time.Duration
-			// Detach is the detach argument value.
-			Detach bool
 		}
 		// CoreDNSIP holds details about calls to the CoreDNSIP method.
 		CoreDNSIP []struct {
@@ -205,13 +196,6 @@ type FirewallManagerMock struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 		}
-		// StopBypass holds details about calls to the StopBypass method.
-		StopBypass []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// ContainerID is the containerID argument value.
-			ContainerID string
-		}
 		// WaitForHealthy holds details about calls to the WaitForHealthy method.
 		WaitForHealthy []struct {
 			// Ctx is the ctx argument value.
@@ -232,7 +216,6 @@ type FirewallManagerMock struct {
 	lockRemoveRules    sync.RWMutex
 	lockStatus         sync.RWMutex
 	lockStop           sync.RWMutex
-	lockStopBypass     sync.RWMutex
 	lockWaitForHealthy sync.RWMutex
 }
 
@@ -273,7 +256,7 @@ func (mock *FirewallManagerMock) AddRulesCalls() []struct {
 }
 
 // Bypass calls BypassFunc.
-func (mock *FirewallManagerMock) Bypass(ctx context.Context, containerID string, timeout time.Duration, detach bool) (io.ReadCloser, error) {
+func (mock *FirewallManagerMock) Bypass(ctx context.Context, containerID string, timeout time.Duration) error {
 	if mock.BypassFunc == nil {
 		panic("FirewallManagerMock.BypassFunc: method is nil but FirewallManager.Bypass was just called")
 	}
@@ -281,17 +264,15 @@ func (mock *FirewallManagerMock) Bypass(ctx context.Context, containerID string,
 		Ctx         context.Context
 		ContainerID string
 		Timeout     time.Duration
-		Detach      bool
 	}{
 		Ctx:         ctx,
 		ContainerID: containerID,
 		Timeout:     timeout,
-		Detach:      detach,
 	}
 	mock.lockBypass.Lock()
 	mock.calls.Bypass = append(mock.calls.Bypass, callInfo)
 	mock.lockBypass.Unlock()
-	return mock.BypassFunc(ctx, containerID, timeout, detach)
+	return mock.BypassFunc(ctx, containerID, timeout)
 }
 
 // BypassCalls gets all the calls that were made to Bypass.
@@ -302,13 +283,11 @@ func (mock *FirewallManagerMock) BypassCalls() []struct {
 	Ctx         context.Context
 	ContainerID string
 	Timeout     time.Duration
-	Detach      bool
 } {
 	var calls []struct {
 		Ctx         context.Context
 		ContainerID string
 		Timeout     time.Duration
-		Detach      bool
 	}
 	mock.lockBypass.RLock()
 	calls = mock.calls.Bypass
@@ -694,42 +673,6 @@ func (mock *FirewallManagerMock) StopCalls() []struct {
 	mock.lockStop.RLock()
 	calls = mock.calls.Stop
 	mock.lockStop.RUnlock()
-	return calls
-}
-
-// StopBypass calls StopBypassFunc.
-func (mock *FirewallManagerMock) StopBypass(ctx context.Context, containerID string) error {
-	if mock.StopBypassFunc == nil {
-		panic("FirewallManagerMock.StopBypassFunc: method is nil but FirewallManager.StopBypass was just called")
-	}
-	callInfo := struct {
-		Ctx         context.Context
-		ContainerID string
-	}{
-		Ctx:         ctx,
-		ContainerID: containerID,
-	}
-	mock.lockStopBypass.Lock()
-	mock.calls.StopBypass = append(mock.calls.StopBypass, callInfo)
-	mock.lockStopBypass.Unlock()
-	return mock.StopBypassFunc(ctx, containerID)
-}
-
-// StopBypassCalls gets all the calls that were made to StopBypass.
-// Check the length with:
-//
-//	len(mockedFirewallManager.StopBypassCalls())
-func (mock *FirewallManagerMock) StopBypassCalls() []struct {
-	Ctx         context.Context
-	ContainerID string
-} {
-	var calls []struct {
-		Ctx         context.Context
-		ContainerID string
-	}
-	mock.lockStopBypass.RLock()
-	calls = mock.calls.StopBypass
-	mock.lockStopBypass.RUnlock()
 	return calls
 }
 

@@ -53,7 +53,7 @@ security:
 		"callback-forwarder.go",
 		"git-credential-clawker.sh",
 		"clawker-socket-server.go",
-		"init-firewall.sh", // firewall enabled
+		"firewall.sh", // firewall script (always included)
 	}
 	for _, name := range expectedFiles {
 		_, err := os.Stat(filepath.Join(dir, name))
@@ -61,7 +61,7 @@ security:
 	}
 
 	// Verify scripts are executable
-	for _, name := range []string{"entrypoint.sh", "host-open.sh", "init-firewall.sh"} {
+	for _, name := range []string{"entrypoint.sh", "host-open.sh", "firewall.sh"} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		require.NoError(t, err)
 		assert.NotZero(t, info.Mode()&0111, "%s should be executable", name)
@@ -85,9 +85,9 @@ security:
 	require.NoError(t, err)
 
 	// Firewall script should always be written (runtime-gated, not build-gated)
-	info, err := os.Stat(filepath.Join(dir, "init-firewall.sh"))
-	require.NoError(t, err, "init-firewall.sh should always exist in build context")
-	assert.NotZero(t, info.Mode()&0111, "init-firewall.sh should be executable")
+	info, err := os.Stat(filepath.Join(dir, "firewall.sh"))
+	require.NoError(t, err, "firewall.sh should always exist in build context")
+	assert.NotZero(t, info.Mode()&0111, "firewall.sh should be executable")
 }
 
 func TestWriteBuildContextToDir_WithIncludes(t *testing.T) {

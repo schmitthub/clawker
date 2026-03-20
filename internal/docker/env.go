@@ -27,7 +27,6 @@ type RuntimeEnvOpts struct {
 	FirewallEnvoyIP   string
 	FirewallCoreDNSIP string
 	FirewallNetCIDR   string
-	FirewallTCPRules  string // Comma-separated "dst:port:envoyPort" mappings for iptables
 
 	// Monitoring stack
 	MonitoringActive bool // Whether the monitoring stack (otel-collector) is running
@@ -88,7 +87,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m["COLORTERM"] = "truecolor"
 	}
 
-	// Firewall (consumed by entrypoint/init-firewall.sh)
+	// Firewall (consumed by entrypoint/firewall.sh)
 	if opts.FirewallEnabled {
 		m["CLAWKER_FIREWALL_ENABLED"] = "true"
 		if opts.FirewallEnvoyIP != "" {
@@ -99,9 +98,6 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		}
 		if opts.FirewallNetCIDR != "" {
 			m["CLAWKER_FIREWALL_NET_CIDR"] = opts.FirewallNetCIDR
-		}
-		if opts.FirewallTCPRules != "" {
-			m["CLAWKER_FIREWALL_TCP_RULES"] = opts.FirewallTCPRules
 		}
 	}
 

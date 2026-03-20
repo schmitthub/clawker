@@ -32,7 +32,6 @@ type FirewallManager interface {
     Disable(ctx context.Context, containerID string) error
     Enable(ctx context.Context, containerID string) error
     Bypass(ctx context.Context, containerID string, timeout time.Duration) error
-    StopBypass(ctx context.Context, containerID string) error
     Status(ctx context.Context) (*FirewallStatus, error)
     EnvoyIP() string
     CoreDNSIP() string
