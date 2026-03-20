@@ -18,6 +18,7 @@ func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {
 	return storage.NewStore[EgressRulesFile](
 		storage.WithFilenames(cfg.EgressRulesFileName()),
 		storage.WithPaths(dataDir),
+		storage.WithLock(), // Cross-process flock — multiple CLI/daemon instances share this file.
 	)
 }
 
