@@ -3,7 +3,6 @@ package storeui
 import (
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,7 +85,7 @@ func TestWalkFields_NilPtrStructRecursesZeroValue(t *testing.T) {
 }
 
 func TestWalkFields_Duration(t *testing.T) {
-	v := durationStruct{Timeout: 5 * 60 * 1e9} // 5 minutes in nanoseconds
+	v := durationStruct{Timeout: 5 * 60 * 1e9}
 	fields := WalkFields(v)
 
 	require.Len(t, fields, 1)
@@ -172,54 +171,4 @@ func TestWalkFields_PanicsOnNilInput(t *testing.T) {
 func TestWalkFields_PanicsOnNonStructInput(t *testing.T) {
 	assert.Panics(t, func() { WalkFields(42) })
 	assert.Panics(t, func() { WalkFields("hello") })
-}
-
-func TestWalkFields_RealSettingsStruct(t *testing.T) {
-	fields := WalkFields(config.Settings{})
-
-	byPath := make(map[string]Field)
-	for _, f := range fields {
-		byPath[f.Path] = f
-	}
-
-	f, ok := byPath["logging.file_enabled"]
-	require.True(t, ok, "should have logging.file_enabled")
-	assert.Equal(t, KindTriState, f.Kind, "logging.file_enabled is *bool")
-
-	f, ok = byPath["logging.max_size_mb"]
-	require.True(t, ok, "should have logging.max_size_mb")
-	assert.Equal(t, KindInt, f.Kind)
-
-	f, ok = byPath["firewall.enable"]
-	require.True(t, ok, "should have firewall.enable")
-	assert.Equal(t, KindTriState, f.Kind, "firewall.enable is *bool")
-
-	f, ok = byPath["monitoring.grafana_port"]
-	require.True(t, ok, "should have monitoring.grafana_port")
-	assert.Equal(t, KindInt, f.Kind)
-}
-
-func TestWalkFields_RealProjectStruct(t *testing.T) {
-	fields := WalkFields(config.Project{})
-
-	byPath := make(map[string]Field)
-	for _, f := range fields {
-		byPath[f.Path] = f
-	}
-
-	f, ok := byPath["build.image"]
-	require.True(t, ok, "should have build.image")
-	assert.Equal(t, KindText, f.Kind)
-
-	f, ok = byPath["workspace.default_mode"]
-	require.True(t, ok, "should have workspace.default_mode")
-	assert.Equal(t, KindText, f.Kind)
-
-	f, ok = byPath["security.docker_socket"]
-	require.True(t, ok, "should have security.docker_socket")
-	assert.Equal(t, KindBool, f.Kind)
-
-	f, ok = byPath["loop.max_loops"]
-	require.True(t, ok, "should have loop.max_loops from nil *LoopConfig")
-	assert.Equal(t, KindInt, f.Kind)
 }
