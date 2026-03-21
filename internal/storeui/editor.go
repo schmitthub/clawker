@@ -378,7 +378,7 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.selField, cmd = m.selField.Update(msg)
 		if m.selField.IsConfirmed() {
-			m.modified[f.Path] = m.selField.Value()
+			m.trackModified(f.Path, m.selField.Value())
 			m.state = stateBrowse
 			return m, nil
 		}
@@ -392,7 +392,7 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.textField, cmd = m.textField.Update(msg)
 		if m.textField.IsConfirmed() {
-			m.modified[f.Path] = m.textField.Value()
+			m.trackModified(f.Path, m.textField.Value())
 			m.state = stateBrowse
 			return m, nil
 		}
@@ -402,7 +402,7 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.listEditor, cmd = m.listEditor.Update(msg)
 		if m.listEditor.IsConfirmed() {
-			m.modified[f.Path] = m.listEditor.Value()
+			m.trackModified(f.Path, m.listEditor.Value())
 			m.state = stateBrowse
 			return m, nil
 		}
@@ -416,7 +416,7 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.taEditor, cmd = m.taEditor.Update(msg)
 		if m.taEditor.IsConfirmed() {
-			m.modified[f.Path] = m.taEditor.Value()
+			m.trackModified(f.Path, m.taEditor.Value())
 			m.state = stateBrowse
 			return m, nil
 		}
@@ -651,6 +651,23 @@ func (m *editorModel) viewEdit(b *strings.Builder) {
 	case editTextarea:
 		b.WriteString(m.taEditor.View())
 	}
+}
+
+// trackModified records a field change only if the value actually differs from the original.
+func (m *editorModel) trackModified(path string, newVal string) {
+	// Find the original value from the field.
+	for i := range m.fields {
+		if m.fields[i].Path == path {
+			if newVal == m.fields[i].Value {
+				// Value unchanged — remove from modified if it was there.
+				delete(m.modified, path)
+			} else {
+				m.modified[path] = newVal
+			}
+			return
+		}
+	}
+	m.modified[path] = newVal
 }
 
 // selectedTarget returns the SaveTarget the user chose (or the only available target).
