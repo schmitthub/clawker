@@ -21,7 +21,7 @@ func testFields() []Field {
 func testSaveTargets() []SaveTarget {
 	return []SaveTarget{
 		{Label: "Original locations", Description: "Save each value to the file it came from"},
-		{Label: "Project local", Description: ".clawker.yaml", Filename: "clawker.yaml"},
+		{Label: "Project local", Description: ".clawker.yaml", Path: "/project/.clawker.yaml"},
 	}
 }
 
@@ -144,15 +144,30 @@ func TestEditorModel_SaveWithNoModificationsIgnored(t *testing.T) {
 	assert.Equal(t, stateBrowse, result.state)
 }
 
-func TestEditorModel_SaveWithModifications(t *testing.T) {
+func TestEditorModel_SaveShowsDialogWithMultipleTargets(t *testing.T) {
 	m := newEditorModel("Test", testFields(), testSaveTargets())
+	m.modified["build.image"] = "alpine:latest"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	result := updated.(*editorModel)
+	assert.Equal(t, stateSave, result.state)
+
+	// Confirm selection → saves.
+	updated, cmd := result.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result = updated.(*editorModel)
+	assert.True(t, result.saved)
+	assert.NotNil(t, cmd)
+}
+
+func TestEditorModel_SaveAutoWithSingleTarget(t *testing.T) {
+	targets := []SaveTarget{{Label: "Local", Path: "/project/.clawker.yaml"}}
+	m := newEditorModel("Test", testFields(), targets)
 	m.modified["build.image"] = "alpine:latest"
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	result := updated.(*editorModel)
-
 	assert.True(t, result.saved)
-	assert.NotNil(t, cmd) // tea.Quit
+	assert.NotNil(t, cmd)
 }
 
 func TestEditorModel_SaveDirectly(t *testing.T) {

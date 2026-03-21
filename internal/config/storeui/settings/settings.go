@@ -75,7 +75,7 @@ func SaveTargets(store *storage.Store[config.Settings]) []storeui.SaveTarget {
 		targets[i] = storeui.SaveTarget{
 			Label:       "User settings",
 			Description: shortenPath(l.Path),
-			Filename:    l.Filename,
+			Path:        l.Path,
 		}
 	}
 	return targets

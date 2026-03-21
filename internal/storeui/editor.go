@@ -23,8 +23,8 @@ const (
 // SaveTarget represents a location where changes can be persisted.
 type SaveTarget struct {
 	Label       string // Display label (e.g. "User settings", "Project local")
-	Description string // Path or explanation
-	Filename    string // Filename to pass to store.Write(filename), or "" for provenance routing
+	Description string // Short description shown in the save dialog
+	Path        string // Full filesystem path for store.WriteTo(), or "" for provenance routing
 }
 
 // editFieldKind identifies which sub-editor is active during stateEdit.
@@ -431,10 +431,20 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *editorModel) enterSaveState() tea.Cmd {
-	// Save directly — provenance routing handles writing each section
-	// back to the file it came from.
-	m.saved = true
-	return tea.Quit
+	if len(m.saveTargets) <= 1 {
+		// Single or no target — save directly.
+		m.saved = true
+		return tea.Quit
+	}
+
+	// Multiple targets — ask the user.
+	m.state = stateSave
+	options := make([]tui.FieldOption, len(m.saveTargets))
+	for i, t := range m.saveTargets {
+		options[i] = tui.FieldOption{Label: t.Label, Description: t.Description}
+	}
+	m.saveField = tui.NewSelectField("save", "Save changes to:", options, 0)
+	return nil
 }
 
 func (m *editorModel) updateSave(msg tea.Msg) (tea.Model, tea.Cmd) {

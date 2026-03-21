@@ -32,8 +32,8 @@ func TestWithSkipPaths(t *testing.T) {
 
 func TestWithSaveTargets(t *testing.T) {
 	targets := []SaveTarget{
-		{Label: "Local", Filename: "clawker.yaml"},
-		{Label: "User", Filename: "settings.yaml"},
+		{Label: "Local", Path: "/tmp/clawker.yaml"},
+		{Label: "User", Path: "/tmp/settings.yaml"},
 	}
 	opts := editOptions{skipPaths: make(map[string]bool)}
 	WithSaveTargets(targets)(&opts)

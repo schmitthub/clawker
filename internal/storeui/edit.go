@@ -100,7 +100,7 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 			saveTargets = append(saveTargets, SaveTarget{
 				Label:       l.Filename,
 				Description: l.Path,
-				Filename:    l.Filename,
+				Path:        l.Path,
 			})
 		}
 	}
@@ -139,11 +139,18 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 		return result, fmt.Errorf("failed to apply %d field change(s): %w", len(setErrs), errors.Join(setErrs...))
 	}
 
-	// Write using provenance routing — each top-level key goes back to the
-	// layer it originally came from. New keys without provenance go to the
-	// highest-priority (most local) layer.
-	if err := store.Write(); err != nil {
-		return result, err
+	// Persist: provenance routing by default (each section goes back to
+	// its original file). When the user selected a specific target path,
+	// write the entire tree to that path via WriteTo.
+	target := editor.selectedTarget()
+	if target.Path != "" {
+		if err := store.WriteTo(target.Path); err != nil {
+			return result, err
+		}
+	} else {
+		if err := store.Write(); err != nil {
+			return result, err
+		}
 	}
 
 	return result, nil

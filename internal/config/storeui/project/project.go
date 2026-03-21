@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -95,12 +96,26 @@ func SaveTargets(store *storage.Store[config.Project]) []storeui.SaveTarget {
 		})
 	}
 
+	// Add discovered layers with human-readable labels.
+	seenPaths := make(map[string]bool)
 	for _, l := range layers {
 		label, desc := layerLabel(l, configDir, cwd)
 		targets = append(targets, storeui.SaveTarget{
 			Label:       label,
 			Description: desc,
-			Filename:    l.Filename,
+			Path:        l.Path,
+		})
+		seenPaths[l.Path] = true
+	}
+
+	// Offer user-level config dir even if no file exists there yet.
+	// The user may want to save settings as user-wide defaults.
+	userConfigPath := filepath.Join(configDir, "clawker.yaml")
+	if !seenPaths[userConfigPath] {
+		targets = append(targets, storeui.SaveTarget{
+			Label:       "User config (create)",
+			Description: shortenPath(userConfigPath),
+			Path:        userConfigPath,
 		})
 	}
 

@@ -269,3 +269,27 @@ func (s *Store[T]) Write(filename ...string) error {
 	s.dirty = false
 	return nil
 }
+
+// WriteTo persists the entire node tree to an explicit filesystem path.
+// Unlike Write (which resolves by filename against discovered layers),
+// WriteTo takes a full absolute path — useful when the caller knows
+// the exact target file, especially when multiple layers share the same
+// filename (e.g. clawker.yaml at project root vs config dir).
+//
+// The target directory is created if it does not exist.
+// After a successful write, dirty tracking is cleared.
+func (s *Store[T]) WriteTo(path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.dirty {
+		return nil
+	}
+
+	if err := writeToPath(path, s.tree, s.opts.lock); err != nil {
+		return err
+	}
+
+	s.dirty = false
+	return nil
+}
