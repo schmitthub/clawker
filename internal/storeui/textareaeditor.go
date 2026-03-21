@@ -22,8 +22,18 @@ func newTextareaEditor(label string, value string) textareaEditorModel {
 	ta.SetValue(value)
 	ta.Focus()
 	ta.SetWidth(76)
-	ta.SetHeight(15)
-	ta.ShowLineNumbers = true
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 0 // no limit
+
+	// Size to content — min 3 lines, grows with content.
+	lines := strings.Count(value, "\n") + 1
+	if lines < 3 {
+		lines = 3
+	}
+	if lines > 20 {
+		lines = 20
+	}
+	ta.SetHeight(lines)
 
 	return textareaEditorModel{
 		label: label,
@@ -39,11 +49,19 @@ func (m textareaEditorModel) Update(msg tea.Msg) (textareaEditorModel, tea.Cmd) 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.ta.SetWidth(msg.Width - 6)
-		h := msg.Height - 8
-		if h < 5 {
-			h = 5
+		// Let height follow content, capped by terminal.
+		maxH := msg.Height - 8
+		if maxH < 3 {
+			maxH = 3
 		}
-		m.ta.SetHeight(h)
+		lines := strings.Count(m.ta.Value(), "\n") + 2
+		if lines < 3 {
+			lines = 3
+		}
+		if lines > maxH {
+			lines = maxH
+		}
+		m.ta.SetHeight(lines)
 		return m, nil
 
 	case tea.KeyMsg:
