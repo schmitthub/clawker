@@ -20,8 +20,8 @@ func testFields() []Field {
 
 func testSaveTargets() []SaveTarget {
 	return []SaveTarget{
+		{Label: "Original locations", Description: "Save each value to the file it came from"},
 		{Label: "Project local", Description: ".clawker.yaml", Filename: "clawker.yaml"},
-		{Label: "User settings", Description: "~/.config/clawker/clawker.yaml", Filename: "clawker.yaml"},
 	}
 }
 
@@ -124,6 +124,7 @@ func TestEditorModel_EnterTransitionsToEdit(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(*editorModel)
 	assert.Equal(t, stateEdit, result.state)
+	assert.Equal(t, 0, result.editIdx)
 }
 
 func TestEditorModel_EscFromEditReturnsToBrowse(t *testing.T) {
@@ -133,6 +134,7 @@ func TestEditorModel_EscFromEditReturnsToBrowse(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	result := updated.(*editorModel)
 	assert.Equal(t, stateBrowse, result.state)
+	assert.Empty(t, result.modified)
 }
 
 func TestEditorModel_SaveWithNoModificationsIgnored(t *testing.T) {
@@ -162,6 +164,17 @@ func TestEditorModel_MultipleTargetsShowsSaveSelect(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	result := updated.(*editorModel)
 	assert.Equal(t, stateSave, result.state)
+}
+
+func TestEditorModel_SaveSelectEscReturnsToBrowse(t *testing.T) {
+	m := newEditorModel("Test", testFields(), testSaveTargets())
+	m.modified["build.image"] = "alpine:latest"
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // enter save
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	result := updated.(*editorModel)
+	assert.Equal(t, stateBrowse, result.state)
+	assert.False(t, result.saved)
 }
 
 func TestEditorModel_ZeroTargetsSaveIgnored(t *testing.T) {

@@ -30,6 +30,17 @@ func TestWithSkipPaths(t *testing.T) {
 	assert.False(t, opts.skipPaths["e.f"])
 }
 
+func TestWithSaveTargets(t *testing.T) {
+	targets := []SaveTarget{
+		{Label: "Local", Filename: "clawker.yaml"},
+		{Label: "User", Filename: "settings.yaml"},
+	}
+	opts := editOptions{skipPaths: make(map[string]bool)}
+	WithSaveTargets(targets)(&opts)
+	assert.Len(t, opts.saveTargets, 2)
+	assert.Equal(t, "Local", opts.saveTargets[0].Label)
+}
+
 func TestEditOptions_Defaults(t *testing.T) {
 	opts := editOptions{
 		title:     "Configuration Editor",

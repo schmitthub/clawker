@@ -77,11 +77,13 @@ func Overrides() []storeui.Override {
 
 // SaveTargets builds the save target options from store layers.
 // Project configs can have multiple layers (CWD, user-level, etc.).
-func SaveTargets(store *storage.Store[config.Project], cfg config.Config) []storeui.SaveTarget {
+// When more than one layer exists, a provenance-routing option is prepended so
+// the user can save each value back to the file it originally came from.
+func SaveTargets(store *storage.Store[config.Project]) []storeui.SaveTarget {
 	layers := store.Layers()
 	targets := make([]storeui.SaveTarget, 0, len(layers)+1)
 
-	// Always offer provenance-based routing as the first option.
+	// With multiple layers, offer provenance routing as the first option.
 	if len(layers) > 1 {
 		targets = append(targets, storeui.SaveTarget{
 			Label:       "Original locations",
@@ -89,13 +91,10 @@ func SaveTargets(store *storage.Store[config.Project], cfg config.Config) []stor
 		})
 	}
 
-	// Add each discovered layer as a named target.
 	for _, l := range layers {
-		label := l.Filename
-		desc := l.Path
 		targets = append(targets, storeui.SaveTarget{
-			Label:       label,
-			Description: desc,
+			Label:       l.Filename,
+			Description: l.Path,
 			Filename:    l.Filename,
 		})
 	}
@@ -104,11 +103,11 @@ func SaveTargets(store *storage.Store[config.Project], cfg config.Config) []stor
 }
 
 // Edit runs an interactive project config editor.
-func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Project], cfg config.Config) (storeui.Result, error) {
+func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Project]) (storeui.Result, error) {
 	return storeui.Edit(ios, store,
 		storeui.WithTitle("Project Configuration Editor"),
 		storeui.WithOverrides(Overrides()),
-		storeui.WithSaveTargets(SaveTargets(store, cfg)),
+		storeui.WithSaveTargets(SaveTargets(store)),
 	)
 }
 

@@ -27,6 +27,16 @@ type SaveTarget struct {
 	Filename    string // Filename to pass to store.Write(filename), or "" for provenance routing
 }
 
+// editFieldKind identifies which sub-editor is active during stateEdit.
+type editFieldKind int
+
+const (
+	editSelect   editFieldKind = iota // tui.SelectField (bool, tristate, enum)
+	editText                          // tui.TextField (simple string, int, duration)
+	editList                          // listEditorModel ([]string)
+	editTextarea                      // textareaEditorModel (multiline string)
+)
+
 // tabRow is either a section heading or an editable field within a tab.
 type tabRow struct {
 	isHeading bool
@@ -57,10 +67,13 @@ type editorModel struct {
 	activeRow int // index into current tab's rows (only stops on non-heading rows)
 	scrollOff int // scroll offset for visible area
 
-	// Edit state
-	editIdx   int
-	textField tui.TextField
-	selField  tui.SelectField
+	// Edit state — which sub-editor is active depends on field kind.
+	editIdx    int
+	editKind   editFieldKind
+	textField  tui.TextField
+	selField   tui.SelectField
+	listEditor listEditorModel
+	taEditor   textareaEditorModel
 
 	// Save state
 	saveField tui.SelectField
@@ -79,6 +92,8 @@ func newEditorModel(title string, fields []Field, saveTargets []SaveTarget) *edi
 		saveTargets: saveTargets,
 		modified:    make(map[string]string),
 		state:       stateBrowse,
+		width:       80,
+		height:      24,
 	}
 	m.tabs = m.buildTabs()
 	if len(m.tabs) > 0 {
@@ -87,75 +102,66 @@ func newEditorModel(title string, fields []Field, saveTargets []SaveTarget) *edi
 	return m
 }
 
-// buildTabs groups fields into tabbed pages by top-level path key.
-func (m *editorModel) buildTabs() []tabPage {
-	type sectionEntry struct {
-		section string
-		fields  []struct {
-			field    *Field
-			fieldIdx int
-		}
-	}
+// fieldEntry holds a pointer into m.fields plus its original index.
+type fieldEntry struct {
+	field    *Field
+	fieldIdx int
+}
 
-	// Group fields by top-level key → section key.
-	tabMap := make(map[string][]sectionEntry)
+// sectionEntry groups fields under a named sub-key within a tab.
+type sectionEntry struct {
+	section string
+	fields  []fieldEntry
+}
+
+// buildTabs groups fields into tabbed pages by top-level path key.
+// Fields with 3+ path segments (e.g. "security.git_credentials.forward_ssh") are
+// grouped into a sub-section named after the 2nd segment within the tab.
+func (m *editorModel) buildTabs() []tabPage {
+	// tabSections preserves insertion order per tab.
+	tabSections := make(map[string][]sectionEntry)
+	// sectionPos tracks each section's index within its tab for O(1) appends.
+	sectionPos := make(map[string]map[string]int) // tab → section → slice index
 	var tabOrder []string
-	sectionIdx := make(map[string]map[string]int) // tab → section → index in slice
 
 	for i := range m.fields {
 		f := &m.fields[i]
 		parts := strings.SplitN(f.Path, ".", 3)
 		tabName := parts[0]
 
-		// Determine section name from 2nd path segment if field has 3+ segments.
+		// Use the 2nd path segment as a sub-section header when there are 3+ segments.
 		section := ""
-		if len(parts) >= 3 {
+		if len(parts) == 3 {
 			section = parts[1]
 		}
 
-		if _, exists := sectionIdx[tabName]; !exists {
-			sectionIdx[tabName] = make(map[string]int)
+		if _, exists := sectionPos[tabName]; !exists {
+			sectionPos[tabName] = make(map[string]int)
 			tabOrder = append(tabOrder, tabName)
 		}
 
-		si, exists := sectionIdx[tabName][section]
+		si, exists := sectionPos[tabName][section]
 		if !exists {
-			si = len(tabMap[tabName])
-			sectionIdx[tabName][section] = si
-			tabMap[tabName] = append(tabMap[tabName], sectionEntry{section: section})
+			si = len(tabSections[tabName])
+			sectionPos[tabName][section] = si
+			tabSections[tabName] = append(tabSections[tabName], sectionEntry{section: section})
 		}
 
-		tabMap[tabName][si].fields = append(tabMap[tabName][si].fields, struct {
-			field    *Field
-			fieldIdx int
-		}{field: f, fieldIdx: i})
+		tabSections[tabName][si].fields = append(tabSections[tabName][si].fields, fieldEntry{field: f, fieldIdx: i})
 	}
 
-	// Build tab pages with rows.
 	tabs := make([]tabPage, 0, len(tabOrder))
 	for _, tabName := range tabOrder {
-		sections := tabMap[tabName]
 		var rows []tabRow
-
-		for _, sec := range sections {
+		for _, sec := range tabSections[tabName] {
 			if sec.section != "" {
-				rows = append(rows, tabRow{
-					isHeading: true,
-					heading:   formatHeading(sec.section),
-				})
+				rows = append(rows, tabRow{isHeading: true, heading: formatHeading(sec.section)})
 			}
-			for _, entry := range sec.fields {
-				rows = append(rows, tabRow{
-					field:    entry.field,
-					fieldIdx: entry.fieldIdx,
-				})
+			for _, e := range sec.fields {
+				rows = append(rows, tabRow{field: e.field, fieldIdx: e.fieldIdx})
 			}
 		}
-
-		tabs = append(tabs, tabPage{
-			name: formatTabName(tabName),
-			rows: rows,
-		})
+		tabs = append(tabs, tabPage{name: formatTabName(tabName), rows: rows})
 	}
 
 	return tabs
@@ -174,29 +180,26 @@ func (m *editorModel) firstFieldRow(tabIdx int) int {
 	return 0
 }
 
-// nextFieldRow finds the next non-heading row after current, wrapping.
+// nextFieldRow finds the next non-heading row after the current one, wrapping.
 func (m *editorModel) nextFieldRow() int {
-	if m.activeTab >= len(m.tabs) {
-		return 0
-	}
-	rows := m.tabs[m.activeTab].rows
-	for i := 1; i < len(rows); i++ {
-		idx := (m.activeRow + i) % len(rows)
-		if !rows[idx].isHeading {
-			return idx
-		}
-	}
-	return m.activeRow
+	return m.adjacentFieldRow(+1)
 }
 
-// prevFieldRow finds the previous non-heading row before current, wrapping.
+// prevFieldRow finds the previous non-heading row before the current one, wrapping.
 func (m *editorModel) prevFieldRow() int {
+	return m.adjacentFieldRow(-1)
+}
+
+// adjacentFieldRow walks rows in the given direction (+1 or -1), wrapping around,
+// and returns the index of the first non-heading row found. Returns activeRow if none found.
+func (m *editorModel) adjacentFieldRow(dir int) int {
 	if m.activeTab >= len(m.tabs) {
 		return 0
 	}
 	rows := m.tabs[m.activeTab].rows
-	for i := 1; i < len(rows); i++ {
-		idx := (m.activeRow - i + len(rows)) % len(rows)
+	n := len(rows)
+	for i := 1; i < n; i++ {
+		idx := (m.activeRow + dir*i + n) % n
 		if !rows[idx].isHeading {
 			return idx
 		}
@@ -297,22 +300,18 @@ func (m *editorModel) enterEditState(idx int) tea.Cmd {
 
 	switch f.Kind {
 	case KindBool:
-		options := []tui.FieldOption{
-			{Label: "true"},
-			{Label: "false"},
-		}
+		m.editKind = editSelect
+		options := []tui.FieldOption{{Label: "true"}, {Label: "false"}}
 		defaultIdx := 1
 		if currentVal == "true" {
 			defaultIdx = 0
 		}
 		m.selField = tui.NewSelectField("edit", f.Label, options, defaultIdx)
+		return nil
 
 	case KindTriState:
-		options := []tui.FieldOption{
-			{Label: "true"},
-			{Label: "false"},
-			{Label: "<unset>"},
-		}
+		m.editKind = editSelect
+		options := []tui.FieldOption{{Label: "true"}, {Label: "false"}, {Label: "<unset>"}}
 		defaultIdx := 2
 		switch currentVal {
 		case "true":
@@ -321,12 +320,14 @@ func (m *editorModel) enterEditState(idx int) tea.Cmd {
 			defaultIdx = 1
 		}
 		m.selField = tui.NewSelectField("edit", f.Label, options, defaultIdx)
+		return nil
 
 	case KindSelect:
 		if len(f.Options) == 0 {
 			m.state = stateBrowse
 			return nil
 		}
+		m.editKind = editSelect
 		options := make([]tui.FieldOption, len(f.Options))
 		defaultIdx := 0
 		for i, opt := range f.Options {
@@ -336,18 +337,28 @@ func (m *editorModel) enterEditState(idx int) tea.Cmd {
 			}
 		}
 		m.selField = tui.NewSelectField("edit", f.Label, options, defaultIdx)
+		return nil
+
+	case KindStringSlice:
+		m.editKind = editList
+		m.listEditor = newListEditor(f.Label, currentVal)
+		return m.listEditor.Init()
 
 	default:
-		opts := []tui.TextFieldOption{
-			tui.WithDefault(currentVal),
+		// Text, Int, Duration — check if multiline.
+		if strings.Contains(currentVal, "\n") {
+			m.editKind = editTextarea
+			m.taEditor = newTextareaEditor(f.Label, currentVal)
+			return m.taEditor.Init()
 		}
+		m.editKind = editText
+		opts := []tui.TextFieldOption{tui.WithDefault(currentVal)}
 		if f.Validator != nil {
 			opts = append(opts, tui.WithValidator(f.Validator))
 		}
 		m.textField = tui.NewTextField("edit", f.Label, opts...)
 		return m.textField.Init()
 	}
-	return nil
 }
 
 func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -357,13 +368,13 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	f := m.fields[m.editIdx]
 
-	if msg, ok := msg.(tea.KeyMsg); ok && tui.IsEscape(msg) {
-		m.state = stateBrowse
-		return m, nil
-	}
-
-	switch f.Kind {
-	case KindBool, KindTriState, KindSelect:
+	switch m.editKind {
+	case editSelect:
+		// Esc handled by the caller; select field uses Enter to confirm.
+		if msg, ok := msg.(tea.KeyMsg); ok && tui.IsEscape(msg) {
+			m.state = stateBrowse
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.selField, cmd = m.selField.Update(msg)
 		if m.selField.IsConfirmed() {
@@ -373,7 +384,11 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, filterQuit(cmd)
 
-	default:
+	case editText:
+		if msg, ok := msg.(tea.KeyMsg); ok && tui.IsEscape(msg) {
+			m.state = stateBrowse
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.textField, cmd = m.textField.Update(msg)
 		if m.textField.IsConfirmed() {
@@ -382,7 +397,37 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, filterQuit(cmd)
+
+	case editList:
+		var cmd tea.Cmd
+		m.listEditor, cmd = m.listEditor.Update(msg)
+		if m.listEditor.IsConfirmed() {
+			m.modified[f.Path] = m.listEditor.Value()
+			m.state = stateBrowse
+			return m, nil
+		}
+		if m.listEditor.IsCancelled() {
+			m.state = stateBrowse
+			return m, nil
+		}
+		return m, cmd
+
+	case editTextarea:
+		var cmd tea.Cmd
+		m.taEditor, cmd = m.taEditor.Update(msg)
+		if m.taEditor.IsConfirmed() {
+			m.modified[f.Path] = m.taEditor.Value()
+			m.state = stateBrowse
+			return m, nil
+		}
+		if m.taEditor.IsCancelled() {
+			m.state = stateBrowse
+			return m, nil
+		}
+		return m, cmd
 	}
+
+	return m, nil
 }
 
 func (m *editorModel) enterSaveState() tea.Cmd {
@@ -572,11 +617,23 @@ func (m *editorModel) renderFieldRow(b *strings.Builder, row tabRow, selected bo
 		b.WriteString("    ")
 		b.WriteString(paddedLabel)
 	}
+	// Truncate long values to fit the terminal width.
+	maxVal := m.width - maxLabel - 8
+	if maxVal < 10 {
+		maxVal = 40
+	}
+	displayVal := value
+	if strings.Contains(displayVal, "\n") {
+		// Show first line only for multiline values.
+		displayVal = strings.SplitN(displayVal, "\n", 2)[0] + "..."
+	}
+	displayVal = text.Truncate(displayVal, maxVal)
+
 	b.WriteString("  ")
 	if f.ReadOnly {
-		b.WriteString(iostreams.MutedStyle.Render(value))
+		b.WriteString(iostreams.MutedStyle.Render(displayVal))
 	} else {
-		b.WriteString(value)
+		b.WriteString(displayVal)
 	}
 }
 
@@ -584,23 +641,26 @@ func (m *editorModel) viewEdit(b *strings.Builder) {
 	if m.editIdx < 0 || m.editIdx >= len(m.fields) {
 		return
 	}
-	f := m.fields[m.editIdx]
-	switch f.Kind {
-	case KindBool, KindTriState, KindSelect:
+	switch m.editKind {
+	case editSelect:
 		b.WriteString(m.selField.View())
-	default:
+	case editText:
 		b.WriteString(m.textField.View())
+	case editList:
+		b.WriteString(m.listEditor.View())
+	case editTextarea:
+		b.WriteString(m.taEditor.View())
 	}
 }
 
-// selectedTarget returns the SaveTarget the user chose to save to.
+// selectedTarget returns the SaveTarget the user chose (or the only available target).
 func (m *editorModel) selectedTarget() SaveTarget {
-	if len(m.saveTargets) == 1 {
-		return m.saveTargets[0]
-	}
 	idx := m.saveField.SelectedIndex()
 	if idx >= 0 && idx < len(m.saveTargets) {
 		return m.saveTargets[idx]
+	}
+	if len(m.saveTargets) == 1 {
+		return m.saveTargets[0]
 	}
 	return SaveTarget{}
 }

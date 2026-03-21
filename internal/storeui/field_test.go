@@ -173,6 +173,27 @@ func TestApplyOverrides_ComplexKindForcesReadOnly(t *testing.T) {
 	assert.True(t, result[0].ReadOnly, "KindComplex fields must always be read-only")
 }
 
+func TestApplyOverrides_PrefixHidingHidesChildren(t *testing.T) {
+	fields := []Field{
+		{Path: "build.image", Label: "image", Kind: KindText},
+		{Path: "build.instructions", Label: "instructions", Kind: KindComplex},
+		{Path: "build.instructions.env", Label: "env", Kind: KindComplex},
+		{Path: "build.instructions.copy", Label: "copy", Kind: KindComplex},
+		{Path: "build.inject.after_from", Label: "after_from", Kind: KindStringSlice},
+	}
+	overrides := []Override{
+		{Path: "build.instructions", Hidden: true},
+	}
+
+	result := ApplyOverrides(fields, overrides)
+
+	// "build.instructions" exact match + "build.instructions.*" prefix = all hidden.
+	// Only "build.image" and "build.inject.after_from" remain.
+	require.Len(t, result, 2)
+	assert.Equal(t, "build.image", result[0].Path)
+	assert.Equal(t, "build.inject.after_from", result[1].Path)
+}
+
 func TestApplyOverrides_DuplicatePathsPanics(t *testing.T) {
 	fields := []Field{
 		{Path: "build.image", Label: "image", Kind: KindText},

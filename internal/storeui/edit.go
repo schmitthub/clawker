@@ -1,6 +1,9 @@
 package storeui
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -121,13 +124,19 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 	}
 
 	// 5. Apply changes via store.Set and persist.
+	var setErrs []error
 	err = store.Set(func(t *T) {
 		for path, val := range editor.modified {
-			_ = SetFieldValue(t, path, val)
+			if err := SetFieldValue(t, path, val); err != nil {
+				setErrs = append(setErrs, err)
+			}
 		}
 	})
 	if err != nil {
 		return result, err
+	}
+	if len(setErrs) > 0 {
+		return result, fmt.Errorf("failed to apply %d field change(s): %w", len(setErrs), errors.Join(setErrs...))
 	}
 
 	target := editor.selectedTarget()
