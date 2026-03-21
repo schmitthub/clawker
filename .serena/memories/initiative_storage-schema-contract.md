@@ -30,12 +30,10 @@
 1. Run acceptance criteria for the completed task
 2. Update the Progress Tracker in this memory
 3. Append any key learnings to the Key Learnings section
-4. Run `code-reviewer`, `silent-failure-hunter`, `test-hunter`, `code-simplifier`, `comment-analyzer`,`type-design-analyzer` subagents to review this task's changes, then fix any and all findings
-5. Commit all changes from this task with a descriptive commit message
-6. Present the handoff prompt from the task's Wrap Up section to the user
-7. Wait for the user to start a new conversation with the handoff prompt
-
-This ensures each task gets a fresh context window. Each task is designed to be self-contained — the handoff prompt provides all context the next agent needs.
+4. Run `code-reviewer`, `silent-failure-hunter`, `code-simplifier`, `comment-analyzer`,`type-design-analyzer` subagents to review this task's changes, then fix any and all findings
+5. **IMPERATIVE — test-hunter**: After addressing all findings from the first wave of review agents, run the `test-hunter` subagent as the ABSOLUTE FINAL review step. Its findings MUST be addressed before committing. This step CANNOT be skipped.
+6. Commit all changes from this task with a descriptive commit message. All pre-commit hooks MUST pass — never use `--no-verify`.
+7. Push the branch and continue to the next task immediately — do NOT stop, do NOT present a handoff prompt, do NOT wait for a new conversation.
 
 ---
 
@@ -128,11 +126,8 @@ go vet ./internal/storage/...
 
 1. Update Progress Tracker: Task 1 -> `complete`
 2. Append key learnings
-3. Run `code-reviewer`, `silent-failure-hunter`, `test-hunter`, `code-simplifier`, `comment-analyzer`,`type-design-analyzer` subagents to review this task's changes, then fix any and all findings.
-4. Commit all changes from this task with a descriptive commit message.
-5. **STOP.** Do not proceed to Task 2. Inform the user you are done and present this handoff prompt:
-
-> **Next agent prompt:** "Continue the storage-schema-contract initiative. Read the Serena memory `initiative_storage-schema-contract` — Task 1 is complete. Begin Task 2: Config schema annotations."
+3. Run review agents, then test-hunter as final step (see Context Window Management above).
+4. Commit and push. Continue to Task 2.
 
 ---
 
@@ -182,11 +177,8 @@ go test ./internal/storeui/... -v  # Ensure existing storeui tests still pass
 
 1. Update Progress Tracker: Task 2 -> `complete`
 2. Append key learnings
-3. Run `code-reviewer`, `silent-failure-hunter`, `test-hunter`, `code-simplifier`, `comment-analyzer`,`type-design-analyzer` subagents to review this task's changes, then fix any and all findings.
-4. Commit all changes from this task with a descriptive commit message.
-5. **STOP.** Do not proceed to Task 3. Inform the user you are done and present this handoff prompt:
-
-> **Next agent prompt:** "Continue the storage-schema-contract initiative. Read the Serena memory `initiative_storage-schema-contract` — Task 2 is complete. Begin Task 3: Remaining types."
+3. Run review agents, then test-hunter as final step (see Context Window Management above).
+4. Commit and push. Continue to Task 3.
 
 ---
 
@@ -224,11 +216,8 @@ go test ./internal/config/... -v -run TestProjectRegistry
 
 1. Update Progress Tracker: Task 3 -> `complete`
 2. Append key learnings
-3. Run `code-reviewer`, `silent-failure-hunter`, `test-hunter`, `code-simplifier`, `comment-analyzer`,`type-design-analyzer` subagents to review this task's changes, then fix any and all findings.
-4. Commit all changes from this task with a descriptive commit message.
-5. **STOP.** Do not proceed to Task 4. Inform the user you are done and present this handoff prompt:
-
-> **Next agent prompt:** "Continue the storage-schema-contract initiative. Read the Serena memory `initiative_storage-schema-contract` — Task 3 is complete. Begin Task 4: Storeui refactor."
+3. Run review agents, then test-hunter as final step (see Context Window Management above).
+4. Commit and push. Continue to Task 4.
 
 ---
 
@@ -286,11 +275,8 @@ make test  # Full unit test suite
 
 1. Update Progress Tracker: Task 4 -> `complete`
 2. Append key learnings
-3. Run `code-reviewer`, `silent-failure-hunter`, `test-hunter`, `code-simplifier`, `comment-analyzer`,`type-design-analyzer` subagents to review this task's changes, then fix any and all findings.
-4. Commit all changes from this task with a descriptive commit message.
-5. **STOP.** Do not proceed to Task 5. Inform the user you are done and present this handoff prompt:
-
-> **Next agent prompt:** "Continue the storage-schema-contract initiative. Read the Serena memory `initiative_storage-schema-contract` — Task 4 is complete. Begin Task 5: Enforcement, documentation, brainstorm wrap-up."
+3. Run review agents, then test-hunter as final step (see Context Window Management above).
+4. Commit and push. Continue to Task 5.
 
 ---
 
@@ -329,6 +315,6 @@ grep -l "Schema" internal/storage/CLAUDE.md internal/config/CLAUDE.md internal/s
 
 1. Update Progress Tracker: Task 5 -> `complete`
 2. Append key learnings
-3. Run `code-reviewer`, `silent-failure-hunter`, `test-hunter`, `code-simplifier`, `comment-analyzer`,`type-design-analyzer` subagents to review this task's changes, then fix any and all findings.
-4. Commit all changes from this task with a descriptive commit message.
+3. Run review agents, then test-hunter as final step (see Context Window Management above).
+4. Commit and push.
 5. **DONE.** Inform the user the initiative is complete. Present summary of all changes.
