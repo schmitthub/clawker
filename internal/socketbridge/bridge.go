@@ -435,7 +435,10 @@ func getGPGExtraSocket() (string, error) {
 	}
 
 	if _, err := os.Stat(path); err != nil {
-		return "", fmt.Errorf("gpg-agent extra socket not found at %s — is gpg-agent running? try: gpgconf --launch gpg-agent", path)
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("gpg-agent extra socket not found at %s — is gpg-agent running? try: gpgconf --launch gpg-agent", path)
+		}
+		return "", fmt.Errorf("cannot access gpg-agent extra socket at %s: %w", path, err)
 	}
 
 	return path, nil

@@ -573,11 +573,7 @@ func (m *FieldBrowserModel) visibleRows() int {
 	if len(m.layers) > 0 {
 		chrome += len(m.layers) + 2 // divider + entries
 	}
-	available := m.height - chrome
-	if available < 3 {
-		available = 3
-	}
-	return available
+	return max(m.height-chrome, 3)
 }
 
 // ---------------------------------------------------------------------------
@@ -613,10 +609,7 @@ func (m *FieldBrowserModel) viewBrowse(b *strings.Builder) {
 	if m.activeTab < len(m.tabs) {
 		tab := m.tabs[m.activeTab]
 		visible := m.visibleRows()
-		end := m.scrollOff + visible
-		if end > len(tab.rows) {
-			end = len(tab.rows)
-		}
+		end := min(m.scrollOff+visible, len(tab.rows))
 
 		for i := m.scrollOff; i < end; i++ {
 			row := tab.rows[i]
@@ -636,11 +629,20 @@ func (m *FieldBrowserModel) viewBrowse(b *strings.Builder) {
 			b.WriteString("\n")
 		}
 
-		// Scroll indicator
+		// Scroll indicator (count only field rows, not section headings)
 		if len(tab.rows) > visible {
+			fieldIdx, fieldTotal := 0, 0
+			for i, r := range tab.rows {
+				if !r.isHeading {
+					fieldTotal++
+					if i <= m.activeRow {
+						fieldIdx++
+					}
+				}
+			}
 			b.WriteString("  ")
 			b.WriteString(iostreams.MutedStyle.Render(
-				fmt.Sprintf("[%d/%d]", m.activeRow+1, len(tab.rows))))
+				fmt.Sprintf("[%d/%d]", fieldIdx, fieldTotal)))
 			b.WriteString("\n")
 		}
 	}
@@ -765,9 +767,12 @@ func (m *FieldBrowserModel) renderLayerBreakdown(b *strings.Builder, f *BrowserF
 	var entries []layerValue
 
 	for _, layer := range m.layers {
-		val := lookupMapPath(layer.Data, segments)
-		if val == "" {
+		val, found := lookupMapPath(layer.Data, segments)
+		if !found {
 			continue
+		}
+		if val == "" {
+			val = `""`
 		}
 		entries = append(entries, layerValue{label: layer.Label, value: val})
 	}
@@ -811,23 +816,25 @@ func (m *FieldBrowserModel) renderLayerBreakdown(b *strings.Builder, f *BrowserF
 }
 
 // lookupMapPath walks a dotted path through nested map[string]any.
-// Returns the formatted value at the leaf, or "" if not found.
-func lookupMapPath(data map[string]any, segments []string) string {
+// Returns the formatted value at the leaf and whether the path was found.
+// A found path with an empty-string or nil value still returns found=true
+// so callers can distinguish "key absent" from "key present but empty".
+func lookupMapPath(data map[string]any, segments []string) (string, bool) {
 	current := any(data)
 	for _, seg := range segments {
 		m, ok := current.(map[string]any)
 		if !ok {
-			return ""
+			return "", false
 		}
 		current, ok = m[seg]
 		if !ok {
-			return ""
+			return "", false
 		}
 	}
 	if current == nil {
-		return ""
+		return "", true
 	}
-	return fmt.Sprintf("%v", current)
+	return fmt.Sprintf("%v", current), true
 }
 
 func (m *FieldBrowserModel) viewEdit(b *strings.Builder) {
@@ -850,12 +857,9 @@ func (m *FieldBrowserModel) viewEdit(b *strings.Builder) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// fbFormatTabName capitalizes a yaml key for tab display.
+// fbFormatTabName formats a yaml key for tab display (e.g. "host_proxy" → "Host Proxy").
 func fbFormatTabName(key string) string {
-	if len(key) == 0 {
-		return key
-	}
-	return strings.ToUpper(key[:1]) + key[1:]
+	return fbFormatHeading(key)
 }
 
 // fbFormatHeading turns a yaml key like "git_credentials" into "Git Credentials".

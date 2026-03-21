@@ -272,14 +272,42 @@ func TestLookupMapPath(t *testing.T) {
 		"build": map[string]any{
 			"image":    "ubuntu",
 			"packages": []any{"git", "curl"},
+			"context":  "",
 		},
-		"name": "test",
+		"name":  "test",
+		"empty": nil,
 	}
-	assert.Equal(t, "ubuntu", lookupMapPath(data, []string{"build", "image"}))
-	assert.Equal(t, "[git curl]", lookupMapPath(data, []string{"build", "packages"}))
-	assert.Equal(t, "test", lookupMapPath(data, []string{"name"}))
-	assert.Equal(t, "", lookupMapPath(data, []string{"missing"}))
-	assert.Equal(t, "", lookupMapPath(data, []string{"build", "missing"}))
+
+	val, found := lookupMapPath(data, []string{"build", "image"})
+	assert.True(t, found)
+	assert.Equal(t, "ubuntu", val)
+
+	val, found = lookupMapPath(data, []string{"build", "packages"})
+	assert.True(t, found)
+	assert.Equal(t, "[git curl]", val)
+
+	val, found = lookupMapPath(data, []string{"name"})
+	assert.True(t, found)
+	assert.Equal(t, "test", val)
+
+	// Missing keys return found=false.
+	val, found = lookupMapPath(data, []string{"missing"})
+	assert.False(t, found)
+	assert.Equal(t, "", val)
+
+	val, found = lookupMapPath(data, []string{"build", "missing"})
+	assert.False(t, found)
+	assert.Equal(t, "", val)
+
+	// Explicitly set empty string returns found=true with empty value.
+	val, found = lookupMapPath(data, []string{"build", "context"})
+	assert.True(t, found)
+	assert.Equal(t, "", val)
+
+	// Explicitly set nil returns found=true with empty value.
+	val, found = lookupMapPath(data, []string{"empty"})
+	assert.True(t, found)
+	assert.Equal(t, "", val)
 }
 
 func TestFbFormatHeading(t *testing.T) {
@@ -291,6 +319,8 @@ func TestFbFormatHeading(t *testing.T) {
 func TestFbFormatTabName(t *testing.T) {
 	assert.Equal(t, "Build", fbFormatTabName("build"))
 	assert.Equal(t, "Security", fbFormatTabName("security"))
+	assert.Equal(t, "Host Proxy", fbFormatTabName("host_proxy"))
+	assert.Equal(t, "Git Credentials", fbFormatTabName("git_credentials"))
 	assert.Equal(t, "", fbFormatTabName(""))
 }
 
