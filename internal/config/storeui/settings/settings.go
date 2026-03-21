@@ -2,6 +2,9 @@
 package settings
 
 import (
+	"os"
+	"strings"
+
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -58,27 +61,36 @@ func Overrides() []storeui.Override {
 	}
 }
 
-// SaveTargets builds the save target options from store layers.
-// Settings only have a user-scope layer (config dir).
-// When no layers are discovered (no file on disk yet), a single provenance-routing
-// target is returned so the user can still save to the default location.
+// SaveTargets builds human-readable save target options from store layers.
 func SaveTargets(store *storage.Store[config.Settings]) []storeui.SaveTarget {
 	layers := store.Layers()
 	if len(layers) == 0 {
 		return []storeui.SaveTarget{
-			{Label: "Default", Description: "Auto-route to original locations"},
+			{Label: "User settings", Description: "Default settings location"},
 		}
 	}
 
 	targets := make([]storeui.SaveTarget, len(layers))
 	for i, l := range layers {
 		targets[i] = storeui.SaveTarget{
-			Label:       l.Filename,
-			Description: l.Path,
+			Label:       "User settings",
+			Description: shortenPath(l.Path),
 			Filename:    l.Filename,
 		}
 	}
 	return targets
+}
+
+// shortenPath replaces $HOME with ~ for display.
+func shortenPath(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if strings.HasPrefix(p, home) {
+		return "~" + p[len(home):]
+	}
+	return p
 }
 
 // Edit runs an interactive settings editor.

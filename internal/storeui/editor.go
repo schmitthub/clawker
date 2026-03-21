@@ -434,10 +434,6 @@ func (m *editorModel) enterSaveState() tea.Cmd {
 	if len(m.saveTargets) == 0 {
 		return nil
 	}
-	if len(m.saveTargets) == 1 {
-		m.saved = true
-		return tea.Quit
-	}
 
 	m.state = stateSave
 	options := make([]tui.FieldOption, len(m.saveTargets))

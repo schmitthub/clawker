@@ -2,6 +2,10 @@
 package project
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -75,31 +79,61 @@ func Overrides() []storeui.Override {
 	}
 }
 
-// SaveTargets builds the save target options from store layers.
-// Project configs can have multiple layers (CWD, user-level, etc.).
-// When more than one layer exists, a provenance-routing option is prepended so
-// the user can save each value back to the file it originally came from.
+// SaveTargets builds human-readable save target options from store layers.
 func SaveTargets(store *storage.Store[config.Project]) []storeui.SaveTarget {
 	layers := store.Layers()
+	configDir := config.ConfigDir()
+	cwd, _ := os.Getwd()
+
 	targets := make([]storeui.SaveTarget, 0, len(layers)+1)
 
 	// With multiple layers, offer provenance routing as the first option.
 	if len(layers) > 1 {
 		targets = append(targets, storeui.SaveTarget{
 			Label:       "Original locations",
-			Description: "Save each value to the file it came from",
+			Description: "Route each section back to the file it came from",
 		})
 	}
 
 	for _, l := range layers {
+		label, desc := layerLabel(l, configDir, cwd)
 		targets = append(targets, storeui.SaveTarget{
-			Label:       l.Filename,
-			Description: l.Path,
+			Label:       label,
+			Description: desc,
 			Filename:    l.Filename,
 		})
 	}
 
 	return targets
+}
+
+// layerLabel produces a human-readable label for a layer based on its path.
+func layerLabel(l storage.LayerInfo, configDir, cwd string) (label, desc string) {
+	dir := filepath.Dir(l.Path)
+
+	switch {
+	case dir == configDir || strings.HasPrefix(dir, configDir+string(os.PathSeparator)):
+		return "User config", shortenPath(l.Path)
+	case cwd != "" && dir == cwd:
+		return "Current directory", shortenPath(l.Path)
+	case cwd != "" && strings.HasPrefix(dir, cwd+string(os.PathSeparator)):
+		rel, _ := filepath.Rel(cwd, l.Path)
+		return "Local (" + rel + ")", shortenPath(l.Path)
+	default:
+		return "Project root", shortenPath(l.Path)
+	}
+}
+
+// shortenPath replaces $HOME with ~ for display.
+func shortenPath(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if strings.HasPrefix(p, home) {
+		return "~" + p[len(home):]
+	}
+	return p
 }
 
 // Edit runs an interactive project config editor.

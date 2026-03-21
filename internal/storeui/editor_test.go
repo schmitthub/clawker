@@ -144,17 +144,16 @@ func TestEditorModel_SaveWithNoModificationsIgnored(t *testing.T) {
 	assert.Equal(t, stateBrowse, result.state)
 }
 
-func TestEditorModel_SingleTargetAutoSaves(t *testing.T) {
+func TestEditorModel_SingleTargetShowsSaveDialog(t *testing.T) {
 	targets := []SaveTarget{{Label: "Local", Filename: "clawker.yaml"}}
 	m := newEditorModel("Test", testFields(), targets)
 	m.modified["build.image"] = "alpine:latest"
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	result := updated.(*editorModel)
 
-	assert.True(t, result.saved)
-	assert.Equal(t, "clawker.yaml", result.selectedTarget().Filename)
-	assert.NotNil(t, cmd)
+	// Even with one target, the save dialog is shown so the user sees where changes go.
+	assert.Equal(t, stateSave, result.state)
 }
 
 func TestEditorModel_MultipleTargetsShowsSaveSelect(t *testing.T) {
