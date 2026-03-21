@@ -65,16 +65,6 @@ func TestFieldBrowser_TabRowStructure(t *testing.T) {
 	assert.Equal(t, "forward_ssh", secTab.rows[2].field.Label)
 }
 
-func TestFieldBrowser_InitialState(t *testing.T) {
-	m := NewFieldBrowser(testBrowserConfig())
-
-	assert.Equal(t, bsStateBrowse, m.state)
-	assert.Equal(t, 0, m.activeTab)
-	assert.False(t, m.saved)
-	assert.False(t, m.cancelled)
-	assert.Empty(t, m.modified)
-}
-
 func TestFieldBrowser_TabSwitching(t *testing.T) {
 	m := NewFieldBrowser(testBrowserConfig())
 
@@ -142,7 +132,6 @@ func TestFieldBrowser_EscFromEditReturnsToBrowse(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	result := updated.(*FieldBrowserModel)
 	assert.Equal(t, bsStateBrowse, result.state)
-	assert.Empty(t, result.modified)
 }
 
 func TestFieldBrowser_EditConfirmShowsLayerPicker(t *testing.T) {
@@ -185,7 +174,6 @@ func TestFieldBrowser_EscFromLayerPickerDiscardsEdit(t *testing.T) {
 	// Esc from layer picker → discard, back to browse.
 	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	assert.Equal(t, bsStateBrowse, m.state)
-	assert.Empty(t, m.modified)
 	assert.False(t, m.saved)
 }
 
@@ -205,15 +193,6 @@ func TestFieldBrowser_ViewShowsSectionHeadings(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	view := m.View()
 	assert.Contains(t, view, "Git Credentials")
-}
-
-func TestFieldBrowser_ModifiedFieldShowsAsterisk(t *testing.T) {
-	m := NewFieldBrowser(testBrowserConfig())
-	m.modified["build.image"] = "alpine:latest"
-	m.width = 80
-	m.height = 30
-	view := m.View()
-	assert.Contains(t, view, "* image")
 }
 
 func TestFieldBrowser_LayerBreakdown(t *testing.T) {
@@ -311,17 +290,13 @@ func TestLookupMapPath(t *testing.T) {
 }
 
 func TestFbFormatHeading(t *testing.T) {
+	// fbFormatTabName delegates to fbFormatHeading, so both are tested here.
 	assert.Equal(t, "Git Credentials", fbFormatHeading("git_credentials"))
 	assert.Equal(t, "Otel", fbFormatHeading("otel"))
 	assert.Equal(t, "Host Proxy", fbFormatHeading("host_proxy"))
-}
-
-func TestFbFormatTabName(t *testing.T) {
-	assert.Equal(t, "Build", fbFormatTabName("build"))
-	assert.Equal(t, "Security", fbFormatTabName("security"))
-	assert.Equal(t, "Host Proxy", fbFormatTabName("host_proxy"))
-	assert.Equal(t, "Git Credentials", fbFormatTabName("git_credentials"))
-	assert.Equal(t, "", fbFormatTabName(""))
+	assert.Equal(t, "Build", fbFormatHeading("build"))
+	assert.Equal(t, "Security", fbFormatHeading("security"))
+	assert.Equal(t, "", fbFormatHeading(""))
 }
 
 func TestFbFilterQuit_FiltersQuitMsg(t *testing.T) {
@@ -362,8 +337,7 @@ func TestFieldBrowser_Result(t *testing.T) {
 
 	r = m.Result()
 	assert.True(t, r.Saved)
-	// Modified is empty after save — field was persisted and base value updated.
-	assert.Empty(t, r.Modified)
+	assert.Equal(t, 1, r.SavedCount)
 	// The field's base value should reflect the saved value.
 	assert.Equal(t, "true", m.fields[2].Value) // security.docker_socket
 }

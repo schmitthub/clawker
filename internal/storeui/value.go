@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// durationKind is the reflected type of time.Duration, cached to avoid repeated allocations.
+// durationKind is the reflected type of time.Duration, stored for comparison convenience.
 var durationKind = reflect.TypeOf(time.Duration(0))
 
 // SetFieldValue sets a field on a struct pointer by its dotted YAML path.

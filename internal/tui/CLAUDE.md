@@ -173,15 +173,15 @@ Navigation: Enter advance, Esc back, Ctrl+C cancel. `SkipIf` predicates respecte
 
 Generic tabbed field browser/editor. Domain-agnostic — knows nothing about stores, reflection, or config schemas. Used by `internal/storeui` to provide interactive editing for any `Store[T]`.
 
-**Types**: `BrowserFieldKind` (`BrowserText/Bool/TriState/Select/Int/StringSlice/Duration/Complex`), `BrowserField`, `BrowserLayerTarget`, `BrowserLayer`, `BrowserResult`, `BrowserConfig`, `BrowserSaveTarget` (deprecated)
+**Types**: `BrowserFieldKind` (`BrowserText/Bool/TriState/Select/Int/StringSlice/Duration/Complex`), `BrowserField`, `BrowserLayerTarget`, `BrowserLayer`, `BrowserResult`, `BrowserConfig`
 
 **Constructor**: `NewFieldBrowser(cfg BrowserConfig) *FieldBrowserModel`
 
-**Result**: `(*FieldBrowserModel).Result() BrowserResult` — `{Saved, Cancelled bool; Modified map[string]string}`
+**Result**: `(*FieldBrowserModel).Result() BrowserResult` — `{Saved, Cancelled bool; SavedCount int}`
 
-**Features**: Tabbed navigation (fields grouped by top-level path key), sub-section headings (3+ segment paths), inline editing via SelectField/TextField/ListEditorModel/TextareaEditorModel, scroll, modified tracking, save target dialog.
+**Features**: Tabbed navigation (fields grouped by top-level path key), sub-section headings (3+ segment paths), inline editing via SelectField/TextField/ListEditorModel/TextareaEditorModel, scroll, per-field save with layer picker.
 
-**Key bindings**: `←/→` tab switch, `↑/↓` navigate, `enter` edit, `s` save, `esc/q/ctrl+c` quit.
+**Key bindings**: `←/→` tab switch, `↑/↓` navigate, `enter` edit, `esc/q/ctrl+c` quit.
 
 ## ListEditorModel (`listeditor.go`)
 

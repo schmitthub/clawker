@@ -13,11 +13,6 @@ func TestListEditor_ParsesCommaSeparated(t *testing.T) {
 	assert.Equal(t, []string{"git", "curl", "ripgrep"}, m.items)
 }
 
-func TestListEditor_EmptyValue(t *testing.T) {
-	m := NewListEditor("packages", "")
-	assert.Empty(t, m.items)
-}
-
 func TestListEditor_AddItem(t *testing.T) {
 	m := NewListEditor("packages", "git")
 

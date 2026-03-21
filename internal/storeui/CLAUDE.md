@@ -21,7 +21,7 @@ cmd/settings/edit, cmd/project/edit
 | `field.go` | `FieldKind`, `Field`, `Override`, `ApplyOverrides` — core types |
 | `reflect.go` | `WalkFields(v)` — reflection-based struct walker |
 | `value.go` | `SetFieldValue(v, path, val)` — reverse reflection writer |
-| `edit.go` | `Edit[T](ios, store, opts...)` — orchestration entry point, `LayerTarget`, `Result` |
+| `edit.go` | `Edit[T](ios, store, opts...)` — orchestration entry point, `LayerTarget`, `Result`, shared helpers |
 
 ## Public API
 
@@ -53,7 +53,7 @@ type Override struct {
 }
 
 type LayerTarget struct { Label, Description, Path string }
-type Result struct { Saved, Cancelled bool; Modified map[string]string }
+type Result struct { Saved, Cancelled bool; SavedCount int }
 type Option func(*editOptions)
 ```
 
@@ -69,6 +69,11 @@ func WithTitle(title string) Option
 func WithOverrides(overrides []Override) Option
 func WithSkipPaths(paths ...string) Option
 func WithLayerTargets(targets []LayerTarget) Option
+
+// Shared helpers (used by domain adapters)
+func ShortenHome(path string) string                     // Replace $HOME with ~
+func ResolveLocalPath(cwd, filename string) string       // Dual-placement CWD dot-file
+func Ptr[T any](v T) *T                                 // Pointer helper for Override fields
 ```
 
 ## Domain Adapters
@@ -78,29 +83,31 @@ func WithLayerTargets(targets []LayerTarget) Option
 | `config/storeui/settings` | `config.Settings` | Labels, host_proxy read-only |
 | `config/storeui/project` | `config.Project` | Labels, complex types hidden, workspace mode as Select |
 
-Each adapter exports `Overrides() []storeui.Override` and `Edit(ios, store) (Result, error)`.
+Each adapter exports `Overrides() []storeui.Override`, `LayerTargets(store, cfg) []storeui.LayerTarget`, and `Edit(ios, store, cfg) (storeui.Result, error)`.
 
 ## Data Flow
 
 ```
 Edit[T](ios, store, opts...):
-  1. store.Read() → *T snapshot
-  2. WalkFields(snapshot) → []Field (reflection)
-  3. Filter skip paths, ApplyOverrides (domain overrides)
-  4. fieldsToBrowserFields() → []tui.BrowserField (type mapping)
-  5. tui.NewFieldBrowser(cfg) → tui.RunProgram (presentation)
-  6. tui.BrowserResult → store.Set(func(t *T) { SetFieldValue... }) (mutation)
-  7. store.WriteTo(path) or store.Write() (persistence)
+  1. Validate layer targets (absolute paths)
+  2. store.Read() → *T snapshot
+  3. WalkFields(snapshot) → []Field (reflection)
+  4. Filter skip paths, ApplyOverrides (domain overrides)
+  5. fieldsToBrowserFields() → []tui.BrowserField (type mapping)
+  6. tui.NewFieldBrowser(cfg) → tui.RunProgram (presentation)
+  7. OnFieldSaved callback per field: store.Set(SetFieldValue...) + writeFieldToFile(target)
+  8. Return Result (Saved, SavedCount)
 ```
 
 ## Key Design Decisions
 
-1. `KindSelect` separated from `KindTriState` — distinct widget semantics
+1. `KindTriState` deprecated and mapped to `KindBool` — retained only for iota stability
 2. `KindComplex` auto-enforces `ReadOnly` in `ApplyOverrides`
 3. Nil `*struct` recursion in `WalkFields` — produces zero-value fields (domain adapters hide via overrides)
 4. `yamlTagName` re-implemented locally (5-line helper, conscious trade-off vs. storage API change)
-5. `LayerTarget.Path` maps to `store.WriteTo()` for explicit path targeting; empty path falls back to provenance routing via `store.Write()`
+5. `LayerTarget.Path` used by `writeFieldToFile()` for direct per-field YAML writes to the chosen target file
 6. Type mapping between `storeui.FieldKind` and `tui.BrowserFieldKind` happens in `edit.go` — tui knows nothing about storeui types
+7. Per-field save model: each edit is persisted immediately via layer picker → `onFieldSaved` callback. No batch save.
 
 ## Gotchas
 
@@ -108,3 +115,4 @@ Edit[T](ios, store, opts...):
 - `ApplyOverrides` panics on duplicate override paths
 - `[]string` fields use comma-separated format — entries with commas will break
 - `time.Duration` uses `time.ParseDuration` — accepts formats like `5m30s`, `1h`, `300ms`
+- `writeFieldToFile` uses atomic temp+rename; `enc.Close()` error is checked to prevent corrupt writes

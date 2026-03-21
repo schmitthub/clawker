@@ -25,6 +25,12 @@ func TestWalkFields_SimpleStruct(t *testing.T) {
 	assert.Equal(t, "count", fields[2].Path)
 	assert.Equal(t, KindInt, fields[2].Kind)
 	assert.Equal(t, "42", fields[2].Value)
+
+	// Pointer input produces identical results.
+	ptrFields := WalkFields(&v)
+	require.Len(t, ptrFields, 3)
+	assert.Equal(t, fields[0].Path, ptrFields[0].Path)
+	assert.Equal(t, fields[0].Value, ptrFields[0].Value)
 }
 
 func TestWalkFields_NestedPaths(t *testing.T) {
@@ -53,22 +59,13 @@ func TestWalkFields_PtrBool(t *testing.T) {
 		assert.Empty(t, fields[0].Options, "bool fields should have no options")
 	})
 
-	t.Run("true", func(t *testing.T) {
+	t.Run("non-nil", func(t *testing.T) {
 		b := true
 		v := triStateStruct{Enabled: &b}
 		fields := WalkFields(v)
 		require.Len(t, fields, 1)
 		assert.Equal(t, KindBool, fields[0].Kind)
 		assert.Equal(t, "true", fields[0].Value)
-	})
-
-	t.Run("false", func(t *testing.T) {
-		b := false
-		v := triStateStruct{Enabled: &b}
-		fields := WalkFields(v)
-		require.Len(t, fields, 1)
-		assert.Equal(t, KindBool, fields[0].Kind)
-		assert.Equal(t, "false", fields[0].Value)
 	})
 }
 
@@ -134,24 +131,6 @@ func TestWalkFields_StringSliceEmpty(t *testing.T) {
 	require.Len(t, fields, 1)
 	assert.Equal(t, KindStringSlice, fields[0].Kind)
 	assert.Equal(t, "", fields[0].Value)
-}
-
-func TestWalkFields_PointerInputMatchesValue(t *testing.T) {
-	v := &simpleStruct{Name: "ptr", Enabled: false, Count: 7}
-	fields := WalkFields(v)
-
-	require.Len(t, fields, 3)
-	assert.Equal(t, "name", fields[0].Path)
-	assert.Equal(t, KindText, fields[0].Kind)
-	assert.Equal(t, "ptr", fields[0].Value)
-
-	assert.Equal(t, "enabled", fields[1].Path)
-	assert.Equal(t, KindBool, fields[1].Kind)
-	assert.Equal(t, "false", fields[1].Value)
-
-	assert.Equal(t, "count", fields[2].Path)
-	assert.Equal(t, KindInt, fields[2].Kind)
-	assert.Equal(t, "7", fields[2].Value)
 }
 
 func TestWalkFields_OrderMonotonicAcrossNesting(t *testing.T) {

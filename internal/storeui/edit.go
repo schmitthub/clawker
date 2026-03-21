@@ -14,8 +14,8 @@ import (
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
-// shortenHome replaces $HOME prefix with ~ for display.
-func shortenHome(p string) string {
+// ShortenHome replaces $HOME prefix with ~ for display.
+func ShortenHome(p string) string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return p
@@ -29,11 +29,27 @@ func shortenHome(p string) string {
 	return p
 }
 
+// ResolveLocalPath determines the CWD dot-file path using dual-placement:
+// if .clawker/ dir exists → .clawker/{filename}, otherwise → .{filename}.
+func ResolveLocalPath(cwd, filename string) string {
+	clawkerDir := filepath.Join(cwd, ".clawker")
+	if info, err := os.Stat(clawkerDir); err == nil && info.IsDir() {
+		return filepath.Join(clawkerDir, filename)
+	}
+	return filepath.Join(cwd, "."+filename)
+}
+
+// Ptr returns a pointer to a copy of the given value.
+// Useful for constructing Override fields.
+func Ptr[T any](v T) *T {
+	return &v
+}
+
 // Result holds the outcome of an interactive edit session.
 type Result struct {
-	Saved     bool              // True if any field was persisted
-	Cancelled bool              // True if the user cancelled
-	Modified  map[string]string // Path→value of all modified fields
+	Saved      bool // True if any field was persisted
+	Cancelled  bool // True if the user cancelled
+	SavedCount int  // Number of fields successfully saved
 }
 
 // LayerTarget represents a save destination for a single field.
@@ -104,6 +120,13 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 		opt(&cfg)
 	}
 
+	// Validate layer targets early.
+	for _, t := range cfg.layerTargets {
+		if t.Path != "" && !filepath.IsAbs(t.Path) {
+			return Result{}, fmt.Errorf("layer target %q has non-absolute path: %s", t.Label, t.Path)
+		}
+	}
+
 	// 1. Read current snapshot.
 	snapshot := store.Read()
 
@@ -157,7 +180,7 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 		// Persist single field to the target file.
 		kind := fieldKinds[fieldPath]
 		if err := writeFieldToFile(target.Path, fieldPath, value, kind); err != nil {
-			return fmt.Errorf("writing to %s: %w", shortenHome(target.Path), err)
+			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
 		}
 
 		return nil
@@ -175,12 +198,15 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 		return Result{}, err
 	}
 
-	browser := finalModel.(*tui.FieldBrowserModel)
+	browser, ok := finalModel.(*tui.FieldBrowserModel)
+	if !ok {
+		return Result{}, fmt.Errorf("unexpected model type from TUI: %T", finalModel)
+	}
 	br := browser.Result()
 	return Result{
-		Saved:     br.Saved,
-		Cancelled: br.Cancelled,
-		Modified:  br.Modified,
+		Saved:      br.Saved,
+		Cancelled:  br.Cancelled,
+		SavedCount: br.SavedCount,
 	}, nil
 }
 
@@ -222,7 +248,7 @@ func writeFieldToFile(filePath, fieldPath, value string, kind FieldKind) error {
 	// Atomic write: temp + rename.
 	tmp, err := os.CreateTemp(dir, ".clawker-*.yaml")
 	if err != nil {
-		return err
+		return fmt.Errorf("creating temp file in %s: %w", dir, err)
 	}
 	tmpName := tmp.Name()
 
@@ -233,22 +259,26 @@ func writeFieldToFile(filePath, fieldPath, value string, kind FieldKind) error {
 		os.Remove(tmpName)
 		return fmt.Errorf("marshaling YAML: %w", err)
 	}
-	enc.Close()
+	if err := enc.Close(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("flushing YAML encoder: %w", err)
+	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		return err
+		return fmt.Errorf("syncing %s: %w", tmpName, err)
 	}
 	tmp.Close()
 
 	if err := os.Chmod(tmpName, perm); err != nil {
 		os.Remove(tmpName)
-		return err
+		return fmt.Errorf("setting permissions on %s: %w", tmpName, err)
 	}
 
 	if err := os.Rename(tmpName, filePath); err != nil {
 		os.Remove(tmpName)
-		return err
+		return fmt.Errorf("renaming %s to %s: %w", tmpName, filePath, err)
 	}
 
 	return nil
@@ -287,6 +317,10 @@ func mergeMap(dst, src map[string]any) {
 
 // typedYAMLValue converts a string value to the appropriate Go type based on
 // the field's known kind, so YAML output uses native types (bool, int, []string).
+//
+// SetFieldValue validates the value before this function is called, so the
+// parse-failure fallthrough (returning the raw string) should be unreachable.
+// If it is reached, the raw string is still valid YAML — just not the expected type.
 func typedYAMLValue(s string, kind FieldKind) any {
 	switch kind {
 	case KindBool:
@@ -341,7 +375,7 @@ func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.Brow
 func resolveFieldSource(fieldPath string, provMap map[string]string) string {
 	// Exact match.
 	if src, ok := provMap[fieldPath]; ok {
-		return shortenHome(src)
+		return ShortenHome(src)
 	}
 	// Walk up the path segments looking for a parent match.
 	for path := fieldPath; path != ""; {
@@ -351,7 +385,7 @@ func resolveFieldSource(fieldPath string, provMap map[string]string) string {
 			break
 		}
 		if src, ok := provMap[path]; ok {
-			return shortenHome(src)
+			return ShortenHome(src)
 		}
 	}
 	return ""
@@ -363,7 +397,7 @@ func layersToBrowserLayers(layers []storage.LayerInfo) []tui.BrowserLayer {
 	out := make([]tui.BrowserLayer, len(layers))
 	for i, l := range layers {
 		out[i] = tui.BrowserLayer{
-			Label: shortenHome(l.Path),
+			Label: ShortenHome(l.Path),
 			Data:  l.Data,
 		}
 	}

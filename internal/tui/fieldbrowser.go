@@ -40,14 +40,6 @@ type BrowserField struct {
 	Order       int                // Sort order (lower = first)
 }
 
-// BrowserSaveTarget represents a save destination shown in the save dialog.
-//
-// Deprecated: Use BrowserLayerTarget for per-field saves.
-type BrowserSaveTarget struct {
-	Label       string // Display label
-	Description string // Short description
-}
-
 // BrowserLayerTarget represents a save destination for a single field.
 type BrowserLayerTarget struct {
 	Label       string // "Original", "Local", "User"
@@ -56,9 +48,9 @@ type BrowserLayerTarget struct {
 
 // BrowserResult holds the outcome of a field browser session.
 type BrowserResult struct {
-	Saved     bool              // True if any field was persisted
-	Cancelled bool              // True if the user cancelled
-	Modified  map[string]string // Path→value of all modified fields
+	Saved      bool // True if any field was persisted
+	Cancelled  bool // True if the user cancelled
+	SavedCount int  // Number of fields successfully saved
 }
 
 // BrowserLayer represents a discovered configuration layer with its raw data.
@@ -79,9 +71,6 @@ type BrowserConfig struct {
 	// fieldPath is the dotted path, value is the new string value,
 	// targetIdx is the index into LayerTargets. Return error to show to user.
 	OnFieldSaved func(fieldPath, value string, targetIdx int) error
-
-	// Deprecated: Use LayerTargets + OnFieldSaved for per-field saves.
-	SaveTargets []BrowserSaveTarget
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +125,7 @@ type FieldBrowserModel struct {
 	layerTargets []BrowserLayerTarget
 	layers       []BrowserLayer
 	onFieldSaved func(fieldPath, value string, targetIdx int) error
-	modified     map[string]string
+	savedCount   int
 	state        browserState
 
 	// Tab navigation
@@ -174,7 +163,6 @@ func NewFieldBrowser(cfg BrowserConfig) *FieldBrowserModel {
 		layerTargets: cfg.LayerTargets,
 		layers:       cfg.Layers,
 		onFieldSaved: cfg.OnFieldSaved,
-		modified:     make(map[string]string),
 		state:        bsStateBrowse,
 		width:        80,
 		height:       24,
@@ -189,9 +177,9 @@ func NewFieldBrowser(cfg BrowserConfig) *FieldBrowserModel {
 // Result returns the browser result after the program exits.
 func (m *FieldBrowserModel) Result() BrowserResult {
 	return BrowserResult{
-		Saved:     m.saved,
-		Cancelled: m.cancelled,
-		Modified:  m.modified,
+		Saved:      m.saved,
+		Cancelled:  m.cancelled,
+		SavedCount: m.savedCount,
 	}
 }
 
@@ -377,9 +365,6 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 	f := m.fields[idx]
 
 	currentVal := f.Value
-	if v, ok := m.modified[f.Path]; ok {
-		currentVal = v
-	}
 
 	switch f.Kind {
 	case BrowserBool, BrowserTriState:
@@ -500,6 +485,12 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // enterPickLayer transitions to the layer picker after a field edit is confirmed.
 func (m *FieldBrowserModel) enterPickLayer(fieldPath, value string) tea.Cmd {
+	if len(m.layerTargets) == 0 {
+		m.lastSaveError = "no save destinations available"
+		m.state = bsStateBrowse
+		return nil
+	}
+
 	m.pendingPath = fieldPath
 	m.pendingValue = value
 	m.state = bsStatePickLayer
@@ -526,22 +517,28 @@ func (m *FieldBrowserModel) updatePickLayer(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.layerField.IsConfirmed() {
 		idx := m.layerField.SelectedIndex()
 		// Persist via callback.
-		if m.onFieldSaved != nil && idx >= 0 && idx < len(m.layerTargets) {
+		if m.onFieldSaved == nil {
+			m.lastSaveError = "save not available (no save handler configured)"
+			m.state = bsStateBrowse
+			return m, nil
+		}
+		if idx >= 0 && idx < len(m.layerTargets) {
 			if err := m.onFieldSaved(m.pendingPath, m.pendingValue, idx); err != nil {
 				m.lastSaveError = err.Error()
 				m.state = bsStateBrowse
 				return m, nil
 			}
 		}
-		// Update the field's base value so it no longer shows as modified.
+		// Update the field's displayed value.
 		for i := range m.fields {
 			if m.fields[i].Path == m.pendingPath {
 				m.fields[i].Value = m.pendingValue
 				break
 			}
 		}
-		delete(m.modified, m.pendingPath)
+		m.lastSaveError = "" // Clear any previous error on success.
 		m.saved = true
+		m.savedCount++
 		m.pendingPath = ""
 		m.pendingValue = ""
 		m.state = bsStateBrowse
@@ -568,7 +565,7 @@ func (m *FieldBrowserModel) ensureVisible() {
 }
 
 func (m *FieldBrowserModel) visibleRows() int {
-	// Title(2) + tabbar(2) + help(3) + layer breakdown(~layers+2) = chrome.
+	// Chrome: title(2) + tabbar(2) + status/help(3: newline + optional error + help bar).
 	chrome := 7
 	if len(m.layers) > 0 {
 		chrome += len(m.layers) + 2 // divider + entries
@@ -662,12 +659,6 @@ func (m *FieldBrowserModel) viewBrowse(b *strings.Builder) {
 		b.WriteString(iostreams.ErrorStyle.Render("Error: " + m.lastSaveError))
 		b.WriteString("\n")
 	}
-	modified := len(m.modified)
-	if modified > 0 {
-		b.WriteString("  ")
-		b.WriteString(iostreams.MutedStyle.Render(fmt.Sprintf("%d unsaved", modified)))
-		b.WriteString("\n")
-	}
 
 	// Help bar
 	b.WriteString("  ")
@@ -704,10 +695,6 @@ func (m *FieldBrowserModel) renderFieldRow(b *strings.Builder, row browserRow, s
 	f := row.field
 	label := f.Label
 	value := f.Value
-	if v, ok := m.modified[f.Path]; ok {
-		value = v
-		label = "* " + label
-	}
 	// Show effective default when value is unset.
 	if (value == "<unset>" || value == "") && f.Default != "" {
 		value = f.Default + " (default)"

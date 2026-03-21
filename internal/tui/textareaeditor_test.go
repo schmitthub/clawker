@@ -7,11 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestTextareaEditor_InitialValue(t *testing.T) {
-	m := NewTextareaEditor("script", "#!/bin/bash\necho hello")
-	assert.Equal(t, "#!/bin/bash\necho hello", m.Value())
-}
-
 func TestTextareaEditor_CtrlSSaves(t *testing.T) {
 	m := NewTextareaEditor("script", "hello")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})

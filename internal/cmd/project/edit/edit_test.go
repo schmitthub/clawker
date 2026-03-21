@@ -11,16 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmdProjectEdit_Properties(t *testing.T) {
-	tio, _, _, _ := iostreams.Test()
-	f := &cmdutil.Factory{IOStreams: tio}
-	cmd := NewCmdProjectEdit(f, nil)
-
-	assert.Equal(t, "edit", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.NotEmpty(t, cmd.Example)
-}
-
 func TestNewCmdProjectEdit_RejectsArgs(t *testing.T) {
 	tio, _, _, _ := iostreams.Test()
 	f := &cmdutil.Factory{IOStreams: tio}

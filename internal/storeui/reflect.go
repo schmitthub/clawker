@@ -178,7 +178,6 @@ func walkStruct(val reflect.Value, typ reflect.Type, prefix string, fields *[]Fi
 
 // yamlTagName extracts the field name from a yaml struct tag.
 // E.g. "image,omitempty" → "image", "" → "", "-" → "".
-// Re-implemented locally since storage's yamlTagName is unexported.
 func yamlTagName(tag string) string {
 	if tag == "" || tag == "-" {
 		return ""

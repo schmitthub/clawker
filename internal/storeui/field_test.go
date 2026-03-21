@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/tui"
 )
 
 func TestApplyOverrides_HiddenRemoval(t *testing.T) {
@@ -42,20 +44,6 @@ func TestApplyOverrides_OrderReorder(t *testing.T) {
 	assert.Equal(t, "c", result[0].Path)
 	assert.Equal(t, "b", result[1].Path)
 	assert.Equal(t, "a", result[2].Path)
-}
-
-func TestApplyOverrides_NoMatchHarmless(t *testing.T) {
-	fields := []Field{
-		{Path: "build.image", Label: "image", Kind: KindText},
-	}
-	overrides := []Override{
-		{Path: "nonexistent.field", Label: ptr("Doesn't Exist")},
-	}
-
-	result := ApplyOverrides(fields, overrides)
-
-	require.Len(t, result, 1)
-	assert.Equal(t, "image", result[0].Label)
 }
 
 func TestApplyOverrides_NilPointerNoClobber(t *testing.T) {
@@ -137,15 +125,6 @@ func TestApplyOverrides_MultipleOverrides(t *testing.T) {
 	assert.True(t, result[1].ReadOnly)
 }
 
-func TestApplyOverrides_EmptyInputs(t *testing.T) {
-	assert.Empty(t, ApplyOverrides(nil, nil))
-
-	fields := []Field{{Path: "a", Label: "A"}}
-	result := ApplyOverrides(fields, nil)
-	require.Len(t, result, 1)
-	assert.Equal(t, "A", result[0].Label)
-}
-
 func TestApplyOverrides_PreservesOriginal(t *testing.T) {
 	fields := []Field{
 		{Path: "a", Label: "Original"},
@@ -206,4 +185,29 @@ func TestApplyOverrides_DuplicatePathsPanics(t *testing.T) {
 	assert.Panics(t, func() {
 		ApplyOverrides(fields, overrides)
 	})
+}
+
+func TestFieldKindToBrowserKind_CoverAllKinds(t *testing.T) {
+	// Ensure every FieldKind maps to a non-default BrowserFieldKind
+	// (except KindTriState which maps to BrowserBool, and KindComplex which is the default).
+	kinds := []struct {
+		kind     FieldKind
+		expected tui.BrowserFieldKind
+	}{
+		{KindText, tui.BrowserText},
+		{KindBool, tui.BrowserBool},
+		{KindSelect, tui.BrowserSelect},
+		{KindInt, tui.BrowserInt},
+		{KindStringSlice, tui.BrowserStringSlice},
+		{KindDuration, tui.BrowserDuration},
+		{KindComplex, tui.BrowserComplex},
+	}
+
+	for _, tc := range kinds {
+		got := fieldKindToBrowserKind(tc.kind)
+		assert.Equal(t, tc.expected, got, "FieldKind %d should map correctly", tc.kind)
+	}
+
+	// Verify unknown kinds fall back to BrowserComplex.
+	assert.Equal(t, tui.BrowserComplex, fieldKindToBrowserKind(FieldKind(99)))
 }

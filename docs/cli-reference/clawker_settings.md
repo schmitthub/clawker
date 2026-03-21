@@ -10,8 +10,9 @@ Manage clawker user settings
 
 Manage clawker user settings.
 
-User settings are stored in ~/.config/clawker/settings.yaml and control
-global behavior like logging, monitoring, and firewall settings.
+User settings control global behavior like logging, monitoring, and
+firewall configuration. The settings file location depends on your
+config directory (settings.yaml).
 
 ### Examples
 
