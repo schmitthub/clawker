@@ -665,7 +665,7 @@ func (m *FieldBrowserModel) viewBrowse(b *strings.Builder) {
 	modified := len(m.modified)
 	if modified > 0 {
 		b.WriteString("  ")
-		b.WriteString(iostreams.MutedStyle.Render(fmt.Sprintf("%d saved", modified)))
+		b.WriteString(iostreams.MutedStyle.Render(fmt.Sprintf("%d unsaved", modified)))
 		b.WriteString("\n")
 	}
 

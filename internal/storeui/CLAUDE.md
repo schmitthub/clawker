@@ -21,7 +21,7 @@ cmd/settings/edit, cmd/project/edit
 | `field.go` | `FieldKind`, `Field`, `Override`, `ApplyOverrides` — core types |
 | `reflect.go` | `WalkFields(v)` — reflection-based struct walker |
 | `value.go` | `SetFieldValue(v, path, val)` — reverse reflection writer |
-| `edit.go` | `Edit[T](ios, store, opts...)` — orchestration entry point, `SaveTarget`, `Result` |
+| `edit.go` | `Edit[T](ios, store, opts...)` — orchestration entry point, `LayerTarget`, `Result` |
 
 ## Public API
 
@@ -52,7 +52,7 @@ type Override struct {
     Hidden      bool
 }
 
-type SaveTarget struct { Label, Description, Path string }
+type LayerTarget struct { Label, Description, Path string }
 type Result struct { Saved, Cancelled bool; Modified map[string]string }
 type Option func(*editOptions)
 ```
@@ -68,7 +68,7 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 func WithTitle(title string) Option
 func WithOverrides(overrides []Override) Option
 func WithSkipPaths(paths ...string) Option
-func WithSaveTargets(targets []SaveTarget) Option
+func WithLayerTargets(targets []LayerTarget) Option
 ```
 
 ## Domain Adapters
@@ -99,7 +99,7 @@ Edit[T](ios, store, opts...):
 2. `KindComplex` auto-enforces `ReadOnly` in `ApplyOverrides`
 3. Nil `*struct` recursion in `WalkFields` — produces zero-value fields (domain adapters hide via overrides)
 4. `yamlTagName` re-implemented locally (5-line helper, conscious trade-off vs. storage API change)
-5. `SaveTarget.Path` maps to `store.WriteTo()` for explicit path targeting; empty path falls back to provenance routing via `store.Write()`
+5. `LayerTarget.Path` maps to `store.WriteTo()` for explicit path targeting; empty path falls back to provenance routing via `store.Write()`
 6. Type mapping between `storeui.FieldKind` and `tui.BrowserFieldKind` happens in `edit.go` — tui knows nothing about storeui types
 
 ## Gotchas

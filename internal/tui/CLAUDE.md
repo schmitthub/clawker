@@ -173,11 +173,11 @@ Navigation: Enter advance, Esc back, Ctrl+C cancel. `SkipIf` predicates respecte
 
 Generic tabbed field browser/editor. Domain-agnostic — knows nothing about stores, reflection, or config schemas. Used by `internal/storeui` to provide interactive editing for any `Store[T]`.
 
-**Types**: `BrowserFieldKind` (`BrowserText/Bool/TriState/Select/Int/StringSlice/Duration/Complex`), `BrowserField`, `BrowserSaveTarget`, `BrowserResult`, `BrowserConfig`
+**Types**: `BrowserFieldKind` (`BrowserText/Bool/TriState/Select/Int/StringSlice/Duration/Complex`), `BrowserField`, `BrowserLayerTarget`, `BrowserLayer`, `BrowserResult`, `BrowserConfig`, `BrowserSaveTarget` (deprecated)
 
 **Constructor**: `NewFieldBrowser(cfg BrowserConfig) *FieldBrowserModel`
 
-**Result**: `(*FieldBrowserModel).Result() BrowserResult` — `{Saved, Cancelled bool; Modified map[string]string; SaveTargetIndex int}`
+**Result**: `(*FieldBrowserModel).Result() BrowserResult` — `{Saved, Cancelled bool; Modified map[string]string}`
 
 **Features**: Tabbed navigation (fields grouped by top-level path key), sub-section headings (3+ segment paths), inline editing via SelectField/TextField/ListEditorModel/TextareaEditorModel, scroll, modified tracking, save target dialog.
 

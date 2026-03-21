@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -129,6 +128,12 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 	browserLayers := layersToBrowserLayers(store.Layers())
 	browserTargets := layerTargetsToBrowserTargets(cfg.layerTargets)
 
+	// Build field kind lookup for type-aware YAML writes.
+	fieldKinds := make(map[string]FieldKind, len(fields))
+	for _, f := range fields {
+		fieldKinds[f.Path] = f.Kind
+	}
+
 	// Wire per-field save callback.
 	onFieldSaved := func(fieldPath, value string, targetIdx int) error {
 		if targetIdx < 0 || targetIdx >= len(cfg.layerTargets) {
@@ -137,17 +142,21 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 		target := cfg.layerTargets[targetIdx]
 
 		// Update in-memory store.
+		var setFieldErr error
 		if err := store.Set(func(t *T) {
 			if err := SetFieldValue(t, fieldPath, value); err != nil {
-				// Log but don't block — the field walker validated this value already.
-				_ = err
+				setFieldErr = err
 			}
 		}); err != nil {
 			return fmt.Errorf("updating store: %w", err)
 		}
+		if setFieldErr != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, setFieldErr)
+		}
 
 		// Persist single field to the target file.
-		if err := writeFieldToFile(target.Path, fieldPath, value); err != nil {
+		kind := fieldKinds[fieldPath]
+		if err := writeFieldToFile(target.Path, fieldPath, value, kind); err != nil {
 			return fmt.Errorf("writing to %s: %w", shortenHome(target.Path), err)
 		}
 
@@ -178,7 +187,7 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 // writeFieldToFile persists a single field value to a YAML file.
 // If the file doesn't exist, it is created with just that field.
 // If it exists, the field is merged into the existing content.
-func writeFieldToFile(filePath, fieldPath, value string) error {
+func writeFieldToFile(filePath, fieldPath, value string, kind FieldKind) error {
 	// Ensure parent directory exists.
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -188,6 +197,9 @@ func writeFieldToFile(filePath, fieldPath, value string) error {
 	// Read existing file (or start with empty map).
 	existing := make(map[string]any)
 	data, err := os.ReadFile(filePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading existing %s: %w", filePath, err)
+	}
 	if err == nil && len(data) > 0 {
 		if err := yaml.Unmarshal(data, &existing); err != nil {
 			return fmt.Errorf("parsing existing %s: %w", filePath, err)
@@ -198,8 +210,14 @@ func writeFieldToFile(filePath, fieldPath, value string) error {
 	}
 
 	// Build nested map from dotted path and merge.
-	nested := buildNestedMap(fieldPath, coerceYAMLValue(value))
+	nested := buildNestedMap(fieldPath, typedYAMLValue(value, kind))
 	mergeMap(existing, nested)
+
+	// Preserve existing file permissions, default to 0644 for new files.
+	perm := os.FileMode(0o644)
+	if info, err := os.Stat(filePath); err == nil {
+		perm = info.Mode().Perm()
+	}
 
 	// Atomic write: temp + rename.
 	tmp, err := os.CreateTemp(dir, ".clawker-*.yaml")
@@ -222,6 +240,11 @@ func writeFieldToFile(filePath, fieldPath, value string) error {
 		return err
 	}
 	tmp.Close()
+
+	if err := os.Chmod(tmpName, perm); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
 
 	if err := os.Rename(tmpName, filePath); err != nil {
 		os.Remove(tmpName)
@@ -262,23 +285,19 @@ func mergeMap(dst, src map[string]any) {
 	}
 }
 
-// coerceYAMLValue converts a string value to the appropriate Go type
-// so that YAML output uses native types (bool, int) instead of quoted strings.
-func coerceYAMLValue(s string) any {
-	// Bool
-	if b, err := strconv.ParseBool(s); err == nil {
-		return b
-	}
-	// Int
-	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return n
-	}
-	// Duration (stored as string in YAML)
-	if _, err := time.ParseDuration(s); err == nil {
-		return s
-	}
-	// Comma-separated list → []string
-	if strings.Contains(s, ",") {
+// typedYAMLValue converts a string value to the appropriate Go type based on
+// the field's known kind, so YAML output uses native types (bool, int, []string).
+func typedYAMLValue(s string, kind FieldKind) any {
+	switch kind {
+	case KindBool:
+		if b, err := strconv.ParseBool(s); err == nil {
+			return b
+		}
+	case KindInt:
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return n
+		}
+	case KindStringSlice:
 		parts := strings.Split(s, ",")
 		result := make([]string, 0, len(parts))
 		for _, p := range parts {
@@ -286,10 +305,9 @@ func coerceYAMLValue(s string) any {
 				result = append(result, t)
 			}
 		}
-		if len(result) > 0 {
-			return result
-		}
+		return result
 	}
+	// KindText, KindSelect, KindDuration, KindComplex — all stored as strings.
 	return s
 }
 
