@@ -75,6 +75,7 @@ When I began experimenting with Claude Code to keep up with the Agentic AI trend
 - **Docker CLI-esque commands** for managing containers, Clawker isn't a passthrough to Docker CLI; it uses the moby SDK (via `pkg/whail`). This allowed me to add more flags, modify the behavior, etc over what docker cli offers
 - **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees created by clawker, uses `go-git` under the hood to avoid relying on the host git binary
 - **Optional monitoring stack** with Prometheus, Loki, and Grafana to monitor agents and containers; every container has the environment variables needed to communicate with it
+- **Interactive configuration editing**: TUI-based editors for project config (`clawker project edit`) and user settings (`clawker settings edit`) with tabbed field browsing, per-field type-appropriate editors (text, boolean, list, multiline), layer-aware provenance display showing which file each value comes from, and per-field save targeting to choose which config layer to write to
 - **Looping mode (experimental)**: pass a prompt, file, or task list to Clawker and it runs an autonomous loop with a fresh container each iteration with stagnation detection, circuit breaker protection, max loops, tracking container agent output, progress, costs, token usage, etc.
 
 ## Installation
@@ -339,6 +340,10 @@ clawker firewall disable --agent dev   # Unrestricted egress for one agent
 clawker firewall enable --agent dev    # Re-apply firewall rules
 clawker firewall bypass 5m --agent dev      # Temporary unrestricted egress with auto-re-enable
 clawker firewall bypass --stop --agent dev  # End bypass early, re-enable firewall
+
+# Configuration editing
+clawker project edit                    # Interactive TUI editor for .clawker.yaml
+clawker settings edit                   # Interactive TUI editor for settings.yaml
 ```
 
 ## Monitoring 
