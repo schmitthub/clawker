@@ -81,10 +81,11 @@ func TestListEditor_EnterConfirms(t *testing.T) {
 	assert.Equal(t, "git", m.Value())
 }
 
-func TestListEditor_EscCancels(t *testing.T) {
+func TestListEditor_EscConfirms(t *testing.T) {
 	m := newListEditor("packages", "git")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	assert.True(t, m.IsCancelled())
+	assert.True(t, m.IsConfirmed())
+	assert.Equal(t, "git", m.Value())
 }
 
 func TestListEditor_EscFromEditReturnsToBrowse(t *testing.T) {

@@ -84,12 +84,12 @@ func (m listEditorModel) updateBrowsing(msg tea.Msg) (listEditorModel, tea.Cmd) 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
-		case tui.IsEnter(msg):
-			// Accept the list and return to the field browser.
+		case tui.IsEnter(msg), tui.IsEscape(msg):
+			// Both Enter and Esc save changes and return to browse.
 			m.confirmed = true
 			return m, nil
 
-		case tui.IsEscape(msg):
+		case msg.String() == "ctrl+c":
 			m.cancelled = true
 			return m, nil
 
@@ -221,11 +221,8 @@ func (m listEditorModel) View() string {
 			b.WriteString(helpDescStyle.Render(" delete"))
 			b.WriteString("  ")
 		}
-		b.WriteString(helpKeyStyle.Render("enter"))
-		b.WriteString(helpDescStyle.Render(" done"))
-		b.WriteString("  ")
 		b.WriteString(helpKeyStyle.Render("esc"))
-		b.WriteString(helpDescStyle.Render(" cancel"))
+		b.WriteString(helpDescStyle.Render(" done"))
 	case listEditing, listAdding:
 		b.WriteString(helpKeyStyle.Render("enter"))
 		b.WriteString(helpDescStyle.Render(" confirm"))

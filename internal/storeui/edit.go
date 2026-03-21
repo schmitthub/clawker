@@ -139,14 +139,10 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 		return result, fmt.Errorf("failed to apply %d field change(s): %w", len(setErrs), errors.Join(setErrs...))
 	}
 
-	target := editor.selectedTarget()
-	if target.Filename != "" {
-		err = store.Write(target.Filename)
-	} else {
-		// Empty filename = provenance-based routing.
-		err = store.Write()
-	}
-	if err != nil {
+	// Write using provenance routing — each top-level key goes back to the
+	// layer it originally came from. New keys without provenance go to the
+	// highest-priority (most local) layer.
+	if err := store.Write(); err != nil {
 		return result, err
 	}
 

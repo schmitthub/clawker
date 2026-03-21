@@ -24,10 +24,10 @@ func newTextareaEditor(label string, value string) textareaEditorModel {
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 
-	// Full width, no artificial constraint — resize handler sets actual width.
+	// Full width — resize handler sets actual width.
 	ta.SetWidth(200)
 
-	// Height: content + 2 breathing room, min 5, expand up to 30 before scrolling.
+	// Height: content + breathing room, min 5, cap at 30.
 	lines := strings.Count(value, "\n") + 3
 	if lines < 5 {
 		lines = 5
@@ -50,9 +50,7 @@ func (m textareaEditorModel) Init() tea.Cmd {
 func (m textareaEditorModel) Update(msg tea.Msg) (textareaEditorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// Full width minus indent.
 		m.ta.SetWidth(msg.Width - 4)
-		// Use most of the terminal height, leave room for header + help bar.
 		maxH := msg.Height - 6
 		if maxH < 5 {
 			maxH = 5
@@ -65,7 +63,7 @@ func (m textareaEditorModel) Update(msg tea.Msg) (textareaEditorModel, tea.Cmd) 
 		case msg.String() == "ctrl+s":
 			m.confirmed = true
 			return m, nil
-		case msg.String() == "ctrl+c":
+		case msg.String() == "esc":
 			m.cancelled = true
 			return m, nil
 		}
@@ -90,7 +88,6 @@ func (m textareaEditorModel) View() string {
 	b.WriteString(mutedStyle.Render("(multiline editor)"))
 	b.WriteString("\n\n")
 
-	// Indent every line of the textarea view.
 	for i, line := range strings.Split(m.ta.View(), "\n") {
 		if i > 0 {
 			b.WriteString("\n")
@@ -104,12 +101,12 @@ func (m textareaEditorModel) View() string {
 	b.WriteString(helpKeyStyle.Render("ctrl+s"))
 	b.WriteString(helpDescStyle.Render(" save"))
 	b.WriteString("  ")
-	b.WriteString(helpKeyStyle.Render("ctrl+c"))
+	b.WriteString(helpKeyStyle.Render("esc"))
 	b.WriteString(helpDescStyle.Render(" cancel"))
 
 	return b.String()
 }
 
-func (m textareaEditorModel) Value() string        { return m.ta.Value() }
-func (m textareaEditorModel) IsConfirmed() bool     { return m.confirmed }
-func (m textareaEditorModel) IsCancelled() bool     { return m.cancelled }
+func (m textareaEditorModel) Value() string    { return m.ta.Value() }
+func (m textareaEditorModel) IsConfirmed() bool { return m.confirmed }
+func (m textareaEditorModel) IsCancelled() bool { return m.cancelled }

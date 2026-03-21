@@ -431,17 +431,10 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *editorModel) enterSaveState() tea.Cmd {
-	if len(m.saveTargets) == 0 {
-		return nil
-	}
-
-	m.state = stateSave
-	options := make([]tui.FieldOption, len(m.saveTargets))
-	for i, t := range m.saveTargets {
-		options[i] = tui.FieldOption{Label: t.Label, Description: t.Description}
-	}
-	m.saveField = tui.NewSelectField("save", "Save changes to:", options, 0)
-	return nil
+	// Save directly — provenance routing handles writing each section
+	// back to the file it came from.
+	m.saved = true
+	return tea.Quit
 }
 
 func (m *editorModel) updateSave(msg tea.Msg) (tea.Model, tea.Cmd) {

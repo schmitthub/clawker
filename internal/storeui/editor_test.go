@@ -144,46 +144,26 @@ func TestEditorModel_SaveWithNoModificationsIgnored(t *testing.T) {
 	assert.Equal(t, stateBrowse, result.state)
 }
 
-func TestEditorModel_SingleTargetShowsSaveDialog(t *testing.T) {
-	targets := []SaveTarget{{Label: "Local", Filename: "clawker.yaml"}}
-	m := newEditorModel("Test", testFields(), targets)
-	m.modified["build.image"] = "alpine:latest"
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	result := updated.(*editorModel)
-
-	// Even with one target, the save dialog is shown so the user sees where changes go.
-	assert.Equal(t, stateSave, result.state)
-}
-
-func TestEditorModel_MultipleTargetsShowsSaveSelect(t *testing.T) {
+func TestEditorModel_SaveWithModifications(t *testing.T) {
 	m := newEditorModel("Test", testFields(), testSaveTargets())
 	m.modified["build.image"] = "alpine:latest"
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	result := updated.(*editorModel)
-	assert.Equal(t, stateSave, result.state)
+
+	assert.True(t, result.saved)
+	assert.NotNil(t, cmd) // tea.Quit
 }
 
-func TestEditorModel_SaveSelectEscReturnsToBrowse(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testSaveTargets())
-	m.modified["build.image"] = "alpine:latest"
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // enter save
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	result := updated.(*editorModel)
-	assert.Equal(t, stateBrowse, result.state)
-	assert.False(t, result.saved)
-}
-
-func TestEditorModel_ZeroTargetsSaveIgnored(t *testing.T) {
+func TestEditorModel_SaveDirectly(t *testing.T) {
+	// Save uses provenance routing — no dialog, just saves and quits.
 	m := newEditorModel("Test", testFields(), nil)
 	m.modified["build.image"] = "alpine:latest"
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	result := updated.(*editorModel)
-	assert.Equal(t, stateBrowse, result.state)
-	assert.False(t, result.saved)
+	assert.True(t, result.saved)
+	assert.NotNil(t, cmd)
 }
 
 func TestEditorModel_ViewRendersTabBar(t *testing.T) {
