@@ -186,8 +186,3 @@ func TestApplyOverrides_DuplicatePathsPanics(t *testing.T) {
 		ApplyOverrides(fields, overrides)
 	})
 }
-
-// ptr is a generic helper for creating pointer values in tests.
-func ptr[T any](v T) *T {
-	return &v
-}

@@ -2,18 +2,11 @@ package storeui
 
 import (
 	"testing"
-	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type simpleStruct struct {
-	Name    string `yaml:"name"`
-	Enabled bool   `yaml:"enabled"`
-	Count   int    `yaml:"count"`
-}
 
 func TestWalkFields_SimpleStruct(t *testing.T) {
 	v := simpleStruct{Name: "test", Enabled: true, Count: 42}
@@ -35,15 +28,6 @@ func TestWalkFields_SimpleStruct(t *testing.T) {
 	assert.Equal(t, "42", fields[2].Value)
 }
 
-type nestedStruct struct {
-	Build buildSection `yaml:"build"`
-}
-
-type buildSection struct {
-	Image    string   `yaml:"image"`
-	Packages []string `yaml:"packages,omitempty"`
-}
-
 func TestWalkFields_NestedPaths(t *testing.T) {
 	v := nestedStruct{
 		Build: buildSection{Image: "ubuntu:22.04", Packages: []string{"git", "curl"}},
@@ -58,10 +42,6 @@ func TestWalkFields_NestedPaths(t *testing.T) {
 	assert.Equal(t, "build.packages", fields[1].Path)
 	assert.Equal(t, KindStringSlice, fields[1].Kind)
 	assert.Equal(t, "git, curl", fields[1].Value)
-}
-
-type triStateStruct struct {
-	Enabled *bool `yaml:"enabled,omitempty"`
 }
 
 func TestWalkFields_TriState(t *testing.T) {
@@ -91,15 +71,6 @@ func TestWalkFields_TriState(t *testing.T) {
 	})
 }
 
-type nilPtrStructParent struct {
-	Loop *loopSection `yaml:"loop,omitempty"`
-}
-
-type loopSection struct {
-	MaxLoops  int    `yaml:"max_loops,omitempty"`
-	HooksFile string `yaml:"hooks_file,omitempty"`
-}
-
 func TestWalkFields_NilPtrStructRecursesZeroValue(t *testing.T) {
 	v := nilPtrStructParent{Loop: nil}
 	fields := WalkFields(v)
@@ -114,23 +85,14 @@ func TestWalkFields_NilPtrStructRecursesZeroValue(t *testing.T) {
 	assert.Equal(t, "", fields[1].Value)
 }
 
-type durationStruct struct {
-	Timeout time.Duration `yaml:"timeout,omitempty"`
-}
-
 func TestWalkFields_Duration(t *testing.T) {
-	v := durationStruct{Timeout: 5 * time.Minute}
+	v := durationStruct{Timeout: 5 * 60 * 1e9} // 5 minutes in nanoseconds
 	fields := WalkFields(v)
 
 	require.Len(t, fields, 1)
 	assert.Equal(t, "timeout", fields[0].Path)
 	assert.Equal(t, KindDuration, fields[0].Kind)
 	assert.Equal(t, "5m0s", fields[0].Value)
-}
-
-type complexStruct struct {
-	Name string            `yaml:"name"`
-	Env  map[string]string `yaml:"env,omitempty"`
 }
 
 func TestWalkFields_ComplexTypes(t *testing.T) {
@@ -147,12 +109,6 @@ func TestWalkFields_ComplexTypes(t *testing.T) {
 	assert.Equal(t, "env", fields[1].Path)
 	assert.Equal(t, KindComplex, fields[1].Kind)
 	assert.True(t, fields[1].ReadOnly)
-}
-
-type yamlTagStruct struct {
-	ImageName string `yaml:"image,omitempty"`
-	NoTag     string
-	Skipped   string `yaml:"-"`
 }
 
 func TestWalkFields_YAMLTags(t *testing.T) {
@@ -198,8 +154,6 @@ func TestWalkFields_PointerInputMatchesValue(t *testing.T) {
 }
 
 func TestWalkFields_OrderMonotonicAcrossNesting(t *testing.T) {
-	// Nested structs don't get their own Order — only leaf fields do.
-	// Verify Order is monotonically increasing across nesting boundaries.
 	v := nestedStruct{Build: buildSection{Image: "alpine", Packages: []string{"git"}}}
 	fields := WalkFields(v)
 
@@ -228,7 +182,6 @@ func TestWalkFields_RealSettingsStruct(t *testing.T) {
 		byPath[f.Path] = f
 	}
 
-	// Verify known paths exist with correct kinds.
 	f, ok := byPath["logging.file_enabled"]
 	require.True(t, ok, "should have logging.file_enabled")
 	assert.Equal(t, KindTriState, f.Kind, "logging.file_enabled is *bool")
@@ -266,7 +219,6 @@ func TestWalkFields_RealProjectStruct(t *testing.T) {
 	require.True(t, ok, "should have security.docker_socket")
 	assert.Equal(t, KindBool, f.Kind)
 
-	// Loop is a *LoopConfig — nil pointer struct recursion should produce fields.
 	f, ok = byPath["loop.max_loops"]
 	require.True(t, ok, "should have loop.max_loops from nil *LoopConfig")
 	assert.Equal(t, KindInt, f.Kind)
