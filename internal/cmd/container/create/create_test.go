@@ -419,6 +419,9 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // testFactory builds a *cmdutil.Factory backed by a FakeClient for Tier 2 create tests.
 func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
+	// Ensure CWD is inside $HOME so IsOutsideHome returns false (matters in containers).
+	cwd, _ := os.Getwd()
+	t.Setenv("HOME", filepath.Dir(cwd))
 	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
 		IOStreams: tio,
@@ -444,7 +447,7 @@ security: { enable_host_proxy: false }
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()
 		},
-		Prompter: func() *prompter.Prompter { return nil },
+		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 	}, in, out, errOut
 }
 
@@ -551,6 +554,10 @@ agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 		fake.SetupContainerCreate()
 		// No CopyToContainer setup — if called, it would panic
 
+		// Ensure CWD is inside $HOME so IsOutsideHome returns false (matters in containers).
+		cwd, _ := os.Getwd()
+		t.Setenv("HOME", filepath.Dir(cwd))
+
 		tio, _, out, errOut := iostreams.Test()
 		f := &cmdutil.Factory{
 			IOStreams: tio,
@@ -565,7 +572,7 @@ agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 			HostProxy: func() hostproxy.HostProxyService {
 				return hostproxytest.NewMockManager()
 			},
-			Prompter: func() *prompter.Prompter { return nil },
+			Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 		}
 
 		cmd := NewCmdCreate(f, nil)
