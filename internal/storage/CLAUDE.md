@@ -35,9 +35,57 @@ Write:  node tree → route by provenance → per-file atomic write
 | `merge.go` | N-way map fold, `tagRegistry`, `mergeTrees`, `provenance` |
 | `write.go` | `structToMap`, `encodeValue`, provenance-based routing, atomic I/O, flock |
 | `resolver.go` | XDG directory resolution: `configDir`, `dataDir`, `stateDir`, `cacheDir` |
+| `field.go` | `Field`, `FieldSet`, `Schema` interfaces, `FieldKind` constants, `NormalizeFields[T]` normalizer, `NewField`, `NewFieldSet` constructors |
+| `field_test.go` | Tests for normalizer type mapping, struct tag reading, FieldSet operations, constructors |
 | `storage_test.go` | Comprehensive tests: load, merge, write, provenance, discovery, migrations |
 
 ## Public API
+
+### Schema Contract
+
+Interfaces for describing configuration field metadata. Types that implement `Schema` expose their field structure for consumption by TUI editors, doc generators, and CLI help.
+
+```go
+type FieldKind int  // KindText, KindBool, KindSelect, KindInt, KindStringSlice, KindDuration, KindComplex
+
+type Field interface {
+    Path() string        // Dotted YAML path (e.g. "build.image")
+    Kind() FieldKind     // Data type classification
+    Label() string       // Human-readable name (from `label` tag or YAML key)
+    Description() string // Help text (from `desc` tag)
+    Default() string     // Default value hint (from `default` tag)
+}
+
+type FieldSet interface {
+    All() []Field                // All fields in discovery order
+    Get(path string) Field       // Lookup by dotted path; nil if not found
+    Group(prefix string) []Field // Fields whose path starts with prefix + "."
+    Len() int
+}
+
+type Schema interface {
+    Fields() FieldSet
+}
+```
+
+**Struct tag contract**: Schema types use these struct tags as the single source of truth:
+
+| Tag | Purpose | Fallback |
+|-----|---------|----------|
+| `yaml:"name"` | Dotted path key | Lowercased field name |
+| `label:"Display Name"` | Human-readable label | YAML key |
+| `desc:"Help text"` | Field description | Empty |
+| `default:"value"` | Default value hint | Empty |
+
+**Constructors:**
+
+```go
+func NewField(path string, kind FieldKind, label, desc, def string) Field  // Manual field creation
+func NewFieldSet(fields []Field) FieldSet                                   // Build from slice
+func NormalizeFields[T any](v T) FieldSet                                  // Reflect struct tags → FieldSet
+```
+
+`NormalizeFields` reads struct tags and maps Go types to `FieldKind`. It does NOT extract runtime values. Panics on non-struct input. Handles: nested structs, `*struct`, `*bool`, `time.Duration`, `[]string`, maps (→ KindComplex).
 
 ### Constructors
 
