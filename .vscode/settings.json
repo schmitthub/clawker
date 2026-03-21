@@ -36,5 +36,6 @@
     "ui.diagnostic.staticcheck": false,
     "formatting.gofumpt": false
   },
-  "sarif-viewer.connectToGithubCodeScanning": "off"
+  "sarif-viewer.connectToGithubCodeScanning": "off",
+  "makefile.configureOnOpen": false
 }
