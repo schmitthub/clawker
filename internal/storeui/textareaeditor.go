@@ -21,7 +21,7 @@ func newTextareaEditor(label string, value string) textareaEditorModel {
 	ta := textarea.New()
 	ta.SetValue(value)
 	ta.Focus()
-	ta.SetWidth(76)
+	ta.SetWidth(72) // 76 minus 4 for "  " indent on each side
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0 // no limit
 
@@ -48,7 +48,7 @@ func (m textareaEditorModel) Init() tea.Cmd {
 func (m textareaEditorModel) Update(msg tea.Msg) (textareaEditorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.ta.SetWidth(msg.Width - 6)
+		m.ta.SetWidth(msg.Width - 4) // account for "  " indent
 		// Let height follow content, capped by terminal.
 		maxH := msg.Height - 8
 		if maxH < 3 {
@@ -94,8 +94,14 @@ func (m textareaEditorModel) View() string {
 	b.WriteString(mutedStyle.Render("(multiline editor)"))
 	b.WriteString("\n\n")
 
-	b.WriteString("  ")
-	b.WriteString(m.ta.View())
+	// Indent every line of the textarea view.
+	for i, line := range strings.Split(m.ta.View(), "\n") {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("  ")
+		b.WriteString(line)
+	}
 	b.WriteString("\n\n")
 
 	b.WriteString("  ")
