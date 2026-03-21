@@ -16,7 +16,7 @@ type BrowserFieldKind int
 const (
 	BrowserText        BrowserFieldKind = iota // Single-line text input
 	BrowserBool                                // true/false select
-	BrowserTriState                            // true/false/<unset> select
+	BrowserTriState                            // Deprecated: mapped to BrowserBool. Retained for iota stability.
 	BrowserSelect                              // Bounded enum with Options
 	BrowserInt                                 // Integer text input
 	BrowserStringSlice                         // List editor (comma-separated)
@@ -33,7 +33,7 @@ type BrowserField struct {
 	Value       string             // Formatted current value
 	Default     string             // Shown when Value is empty or "<unset>"
 	Source      string             // Where this value came from (e.g. "~/.config/clawker/clawker.yaml")
-	Options     []string           // For Select/TriState fields
+	Options     []string           // For Select fields
 	Validator   func(string) error // Optional input validation
 	Required    bool               // Whether the field must have a value
 	ReadOnly    bool               // Whether the field is not editable
@@ -291,6 +291,10 @@ func (m *FieldBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Forward resize to active editor so it can adjust its dimensions.
+		if m.state == bsStateEdit {
+			return m.updateEdit(msg)
+		}
 		return m, nil
 	}
 
@@ -374,25 +378,12 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 	}
 
 	switch f.Kind {
-	case BrowserBool:
+	case BrowserBool, BrowserTriState:
 		m.editKind = ekSelect
 		options := []FieldOption{{Label: "true"}, {Label: "false"}}
 		defaultIdx := 1
 		if currentVal == "true" {
 			defaultIdx = 0
-		}
-		m.selField = NewSelectField("edit", f.Label, options, defaultIdx)
-		return nil
-
-	case BrowserTriState:
-		m.editKind = ekSelect
-		options := []FieldOption{{Label: "true"}, {Label: "false"}, {Label: "<unset>"}}
-		defaultIdx := 2
-		switch currentVal {
-		case "true":
-			defaultIdx = 0
-		case "false":
-			defaultIdx = 1
 		}
 		m.selField = NewSelectField("edit", f.Label, options, defaultIdx)
 		return nil
@@ -417,6 +408,9 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 	case BrowserStringSlice:
 		m.editKind = ekList
 		m.listEditor = NewListEditor(f.Label, currentVal)
+		if m.width > 0 && m.height > 0 {
+			m.listEditor, _ = m.listEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		}
 		return m.listEditor.Init()
 
 	default:
@@ -424,6 +418,10 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 		if strings.Contains(currentVal, "\n") {
 			m.editKind = ekTextarea
 			m.taEditor = NewTextareaEditor(f.Label, currentVal)
+			// Size to the browser's known dimensions so wrapping works immediately.
+			if m.width > 0 && m.height > 0 {
+				m.taEditor, _ = m.taEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+			}
 			return m.taEditor.Init()
 		}
 		m.editKind = ekText

@@ -43,14 +43,14 @@ func TestWalkFields_NestedPaths(t *testing.T) {
 	assert.Equal(t, "git, curl", fields[1].Value)
 }
 
-func TestWalkFields_TriState(t *testing.T) {
-	t.Run("nil", func(t *testing.T) {
+func TestWalkFields_PtrBool(t *testing.T) {
+	t.Run("nil defaults to false", func(t *testing.T) {
 		v := triStateStruct{Enabled: nil}
 		fields := WalkFields(v)
 		require.Len(t, fields, 1)
-		assert.Equal(t, KindTriState, fields[0].Kind)
-		assert.Equal(t, "<unset>", fields[0].Value)
-		assert.Equal(t, []string{"true", "false", "<unset>"}, fields[0].Options)
+		assert.Equal(t, KindBool, fields[0].Kind)
+		assert.Equal(t, "false", fields[0].Value)
+		assert.Empty(t, fields[0].Options, "bool fields should have no options")
 	})
 
 	t.Run("true", func(t *testing.T) {
@@ -58,6 +58,7 @@ func TestWalkFields_TriState(t *testing.T) {
 		v := triStateStruct{Enabled: &b}
 		fields := WalkFields(v)
 		require.Len(t, fields, 1)
+		assert.Equal(t, KindBool, fields[0].Kind)
 		assert.Equal(t, "true", fields[0].Value)
 	})
 
@@ -66,6 +67,7 @@ func TestWalkFields_TriState(t *testing.T) {
 		v := triStateStruct{Enabled: &b}
 		fields := WalkFields(v)
 		require.Len(t, fields, 1)
+		assert.Equal(t, KindBool, fields[0].Kind)
 		assert.Equal(t, "false", fields[0].Value)
 	})
 }

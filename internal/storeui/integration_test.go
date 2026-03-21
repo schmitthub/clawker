@@ -82,8 +82,8 @@ func TestStringSlice_RoundTrip(t *testing.T) {
 	assert.Equal(t, []string{"git", "ripgrep"}, got.Build.Packages)
 }
 
-// TestTriState_RoundTrip verifies *bool set/unset → persist → reload.
-func TestTriState_RoundTrip(t *testing.T) {
+// TestPtrBool_RoundTrip verifies *bool toggle persists and reloads correctly.
+func TestPtrBool_RoundTrip(t *testing.T) {
 	env := testenv.New(t)
 	store, dir := newTestStore[triStateStruct](t, env, "enabled: true\n")
 
@@ -100,16 +100,15 @@ func TestTriState_RoundTrip(t *testing.T) {
 	require.NotNil(t, fresh.Read().Enabled)
 	assert.False(t, *fresh.Read().Enabled)
 
-	// Set to unset (nil) — in-memory the pointer is nil.
+	// Toggle back to true.
 	require.NoError(t, store.Set(func(s *triStateStruct) {
-		require.NoError(t, SetFieldValue(s, "enabled", "<unset>"))
+		require.NoError(t, SetFieldValue(s, "enabled", "true"))
 	}))
-	assert.Nil(t, store.Read().Enabled, "in-memory snapshot should be nil")
+	require.NoError(t, store.Write())
 
-	// NOTE: Known storage limitation — mergeIntoTree does not delete keys
-	// that structToMap excludes (nil pointers). The tree retains the old value.
-	// A future storage enhancement could track deletions. For now, unsetting
-	// a *bool field works in-memory but the old value may persist on disk.
+	fresh2 := reloadStore[triStateStruct](t, dir)
+	require.NotNil(t, fresh2.Read().Enabled)
+	assert.True(t, *fresh2.Read().Enabled)
 }
 
 // TestNilPtrStruct_RoundTrip verifies that editing a field inside a nil *struct

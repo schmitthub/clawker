@@ -97,12 +97,8 @@ func setLeaf(f reflect.Value, val string, path string) error {
 
 	// Handle pointer types.
 	if ft.Kind() == reflect.Ptr {
-		// *bool → TriState
+		// *bool → Bool (always allocate a non-nil pointer)
 		if ft.Elem().Kind() == reflect.Bool {
-			if val == "<unset>" {
-				f.Set(reflect.Zero(ft))
-				return nil
-			}
 			b, err := strconv.ParseBool(val)
 			if err != nil {
 				return fmt.Errorf("storeui.SetFieldValue: invalid bool for %q: %w", path, err)

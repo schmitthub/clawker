@@ -31,7 +31,7 @@ type ListEditorModel struct {
 	state     listEditorState
 	input     textinput.Model
 	confirmed bool // user pressed Enter to accept the list
-	cancelled bool // user pressed Esc to discard
+	cancelled bool // user pressed Esc or Ctrl+C to discard
 	width     int
 	height    int
 }
@@ -72,7 +72,11 @@ func (m ListEditorModel) Update(msg tea.Msg) (ListEditorModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.input.Width = msg.Width - 8
+		inputWidth := msg.Width - 8
+		if inputWidth < 1 {
+			inputWidth = 1
+		}
+		m.input.Width = inputWidth
 		return m, nil
 	}
 
@@ -89,12 +93,11 @@ func (m ListEditorModel) updateBrowsing(msg tea.Msg) (ListEditorModel, tea.Cmd) 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
-		case IsEnter(msg), IsEscape(msg):
-			// Both Enter and Esc save changes and return to caller.
+		case IsEnter(msg):
 			m.confirmed = true
 			return m, nil
 
-		case msg.String() == "ctrl+c":
+		case IsEscape(msg), msg.String() == "ctrl+c":
 			m.cancelled = true
 			return m, nil
 
@@ -227,8 +230,11 @@ func (m ListEditorModel) View() string {
 			b.WriteString(helpDescStyle.Render(" delete"))
 			b.WriteString("  ")
 		}
-		b.WriteString(helpKeyStyle.Render("esc"))
+		b.WriteString(helpKeyStyle.Render("enter"))
 		b.WriteString(helpDescStyle.Render(" done"))
+		b.WriteString("  ")
+		b.WriteString(helpKeyStyle.Render("esc"))
+		b.WriteString(helpDescStyle.Render(" cancel"))
 	case listEditing, listAdding:
 		b.WriteString(helpKeyStyle.Render("enter"))
 		b.WriteString(helpDescStyle.Render(" confirm"))

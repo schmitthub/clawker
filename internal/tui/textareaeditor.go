@@ -25,8 +25,8 @@ func NewTextareaEditor(label string, value string) TextareaEditorModel {
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 
-	// Full width — resize handler sets actual width.
-	ta.SetWidth(200)
+	// Default width — resize handler sets actual width from terminal size.
+	ta.SetWidth(80)
 
 	// Height: content + breathing room, min 5, cap at 30.
 	lines := strings.Count(value, "\n") + 3
@@ -53,10 +53,17 @@ func (m TextareaEditorModel) Init() tea.Cmd {
 func (m TextareaEditorModel) Update(msg tea.Msg) (TextareaEditorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.ta.SetWidth(msg.Width - 4)
+		w := msg.Width - 4
+		if w < 1 {
+			w = 1
+		}
+		m.ta.SetWidth(w)
 		maxH := msg.Height - 6
 		if maxH < 5 {
 			maxH = 5
+		}
+		if maxH > 30 {
+			maxH = 30
 		}
 		m.ta.SetHeight(maxH)
 		return m, nil

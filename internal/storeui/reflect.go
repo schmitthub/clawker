@@ -8,7 +8,7 @@ import (
 )
 
 // WalkFields uses reflection to discover editable fields from a struct value.
-// It maps Go types to FieldKind: string→Text, bool→Bool, *bool→TriState, int→Int,
+// It maps Go types to FieldKind: string→Text, bool→Bool, *bool→Bool, int→Int,
 // []string→StringSlice, time.Duration→Duration, nested struct→recurse,
 // nil *struct→recurse zero value, everything else→Complex (read-only).
 //
@@ -65,21 +65,19 @@ func walkStruct(val reflect.Value, typ reflect.Type, prefix string, fields *[]Fi
 
 		// Handle pointer types.
 		if ft.Kind() == reflect.Ptr {
-			// *bool → TriState
+			// *bool → Bool (nil treated as false; system handles defaults via nil guards)
 			if ft.Elem().Kind() == reflect.Bool {
-				f := Field{
-					Path:    path,
-					Label:   name,
-					Kind:    KindTriState,
-					Options: []string{"true", "false", "<unset>"},
-					Order:   *order,
+				val := "false"
+				if !fv.IsNil() {
+					val = fmt.Sprintf("%v", fv.Elem().Bool())
 				}
-				if fv.IsNil() {
-					f.Value = "<unset>"
-				} else {
-					f.Value = fmt.Sprintf("%v", fv.Elem().Bool())
-				}
-				*fields = append(*fields, f)
+				*fields = append(*fields, Field{
+					Path:  path,
+					Label: name,
+					Kind:  KindBool,
+					Value: val,
+					Order: *order,
+				})
 				*order++
 				continue
 			}

@@ -31,7 +31,7 @@ func TestSetFieldValue_Int(t *testing.T) {
 	assert.Equal(t, 42, v.Count)
 }
 
-func TestSetFieldValue_TriState(t *testing.T) {
+func TestSetFieldValue_PtrBool(t *testing.T) {
 	v := &triStateStruct{}
 
 	require.NoError(t, SetFieldValue(v, "enabled", "true"))
@@ -41,9 +41,6 @@ func TestSetFieldValue_TriState(t *testing.T) {
 	require.NoError(t, SetFieldValue(v, "enabled", "false"))
 	require.NotNil(t, v.Enabled)
 	assert.False(t, *v.Enabled)
-
-	require.NoError(t, SetFieldValue(v, "enabled", "<unset>"))
-	assert.Nil(t, v.Enabled)
 }
 
 func TestSetFieldValue_StringSlice(t *testing.T) {

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
@@ -313,6 +314,10 @@ func (s *Store[T]) Write(filename ...string) error {
 // The target directory is created if it does not exist.
 // After a successful write, dirty tracking is cleared.
 func (s *Store[T]) WriteTo(path string) error {
+	if path == "" || !filepath.IsAbs(path) {
+		return fmt.Errorf("storage: WriteTo requires an absolute path, got %q", path)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

@@ -17,7 +17,7 @@ type FieldKind int
 const (
 	KindText        FieldKind = iota // Single-line string
 	KindBool                         // true/false
-	KindTriState                     // *bool: true/false/unset
+	KindTriState                     // Deprecated: mapped to KindBool. Retained for iota stability.
 	KindSelect                       // Bounded enum with Options
 	KindInt                          // Integer
 	KindStringSlice                  // Comma-separated string list
@@ -33,7 +33,7 @@ type Field struct {
 	Kind        FieldKind          // Widget type
 	Value       string             // Formatted current value
 	Default     string             // Effective default shown when Value is "<unset>" or empty
-	Options     []string           // For Select/TriState fields
+	Options     []string           // For Select fields
 	Validator   func(string) error // Optional input validation
 	Required    bool               // Whether the field must have a value
 	ReadOnly    bool               // Whether the field is not editable

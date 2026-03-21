@@ -421,6 +421,8 @@ func readMessage(r *bufio.Reader) (Message, error) {
 }
 
 // getGPGExtraSocket returns the path to the GPG agent's extra socket.
+// Returns an error if the socket doesn't exist — on macOS the agent is
+// lazy-started and may not be running after a reboot.
 func getGPGExtraSocket() (string, error) {
 	cmd := exec.Command("gpgconf", "--list-dir", "agent-extra-socket")
 	output, err := cmd.Output()
@@ -431,6 +433,11 @@ func getGPGExtraSocket() (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("gpgconf returned empty socket path")
 	}
+
+	if _, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("gpg-agent extra socket not found at %s — is gpg-agent running? try: gpgconf --launch gpg-agent", path)
+	}
+
 	return path, nil
 }
 

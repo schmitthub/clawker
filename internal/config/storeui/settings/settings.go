@@ -87,7 +87,10 @@ func shortenPath(p string) string {
 	if err != nil || home == "" {
 		return p
 	}
-	if strings.HasPrefix(p, home) {
+	if p == home {
+		return "~"
+	}
+	if strings.HasPrefix(p, home+string(os.PathSeparator)) {
 		return "~" + p[len(home):]
 	}
 	return p

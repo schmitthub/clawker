@@ -17,7 +17,10 @@ func shortenHome(p string) string {
 	if err != nil || home == "" {
 		return p
 	}
-	if strings.HasPrefix(p, home) {
+	if p == home {
+		return "~"
+	}
+	if strings.HasPrefix(p, home+string(os.PathSeparator)) {
 		return "~" + p[len(home):]
 	}
 	return p
@@ -275,8 +278,6 @@ func fieldKindToBrowserKind(k FieldKind) tui.BrowserFieldKind {
 		return tui.BrowserText
 	case KindBool:
 		return tui.BrowserBool
-	case KindTriState:
-		return tui.BrowserTriState
 	case KindSelect:
 		return tui.BrowserSelect
 	case KindInt:
