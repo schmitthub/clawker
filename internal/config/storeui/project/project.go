@@ -35,7 +35,7 @@ func Overrides() []storeui.Override {
 		{Path: "agent.editor", Label: ptr("Editor"), Description: ptr("Default editor inside the container")},
 		{Path: "agent.visual", Label: ptr("Visual Editor"), Description: ptr("Default visual editor")},
 		{Path: "agent.shell", Label: ptr("Shell"), Description: ptr("Default shell inside the container")},
-		{Path: "agent.enable_shared_dir", Label: ptr("Enable Shared Dir"), Description: ptr("Mount ~/.clawker-share into the container")},
+		{Path: "agent.enable_shared_dir", Label: ptr("Enable Shared Dir"), Description: ptr("Mount ~/.clawker-share into the container"), Default: ptr("false")},
 		{Path: "agent.post_init", Label: ptr("Post-Init Script"), Description: ptr("Script to run after container initialization")},
 
 		// Agent — complex types hidden
@@ -44,18 +44,18 @@ func Overrides() []storeui.Override {
 
 		// Workspace
 		{Path: "workspace.default_mode", Label: ptr("Default Mode"), Description: ptr("Workspace mounting mode"),
-			Kind: ptr(storeui.KindSelect), Options: []string{"bind", "snapshot"}},
+			Kind: ptr(storeui.KindSelect), Options: []string{"bind", "snapshot"}, Default: ptr("bind")},
 
-		// Security — editable
-		{Path: "security.docker_socket", Label: ptr("Docker Socket"), Description: ptr("Mount Docker socket inside the container")},
-		{Path: "security.enable_host_proxy", Label: ptr("Host Proxy"), Description: ptr("Enable host proxy for browser auth and credential forwarding")},
+		// Security — editable (defaults match SecurityConfig convenience methods)
+		{Path: "security.docker_socket", Label: ptr("Docker Socket"), Description: ptr("Mount Docker socket inside the container"), Default: ptr("false")},
+		{Path: "security.enable_host_proxy", Label: ptr("Host Proxy"), Description: ptr("Enable host proxy for browser auth and credential forwarding"), Default: ptr("true")},
 		{Path: "security.firewall.add_domains", Label: ptr("Firewall Domains"), Description: ptr("Additional domains to whitelist (comma-separated)")},
 
-		// Security — git credentials (editable as individual fields)
-		{Path: "security.git_credentials.forward_https", Label: ptr("Forward HTTPS"), Description: ptr("Enable HTTPS credential forwarding")},
-		{Path: "security.git_credentials.forward_ssh", Label: ptr("Forward SSH"), Description: ptr("Enable SSH agent forwarding")},
-		{Path: "security.git_credentials.forward_gpg", Label: ptr("Forward GPG"), Description: ptr("Enable GPG agent forwarding")},
-		{Path: "security.git_credentials.copy_git_config", Label: ptr("Copy Git Config"), Description: ptr("Copy host .gitconfig into the container")},
+		// Security — git credentials (defaults match GitCredentialsConfig convenience methods)
+		{Path: "security.git_credentials.forward_https", Label: ptr("Forward HTTPS"), Description: ptr("Enable HTTPS credential forwarding"), Default: ptr("follows host_proxy")},
+		{Path: "security.git_credentials.forward_ssh", Label: ptr("Forward SSH"), Description: ptr("Enable SSH agent forwarding"), Default: ptr("true")},
+		{Path: "security.git_credentials.forward_gpg", Label: ptr("Forward GPG"), Description: ptr("Enable GPG agent forwarding"), Default: ptr("true")},
+		{Path: "security.git_credentials.copy_git_config", Label: ptr("Copy Git Config"), Description: ptr("Copy host .gitconfig into the container"), Default: ptr("true")},
 
 		// Security — complex types hidden
 		{Path: "security.firewall.rules", Hidden: true},

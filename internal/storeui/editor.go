@@ -598,6 +598,10 @@ func (m *editorModel) renderFieldRow(b *strings.Builder, row tabRow, selected bo
 		value = v
 		label = "* " + label
 	}
+	// Show effective default when value is unset.
+	if (value == "<unset>" || value == "") && f.Default != "" {
+		value = f.Default + " (default)"
+	}
 	if f.ReadOnly {
 		label = label + " (read-only)"
 	}

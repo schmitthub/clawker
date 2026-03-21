@@ -32,6 +32,7 @@ type Field struct {
 	Description string             // Help text
 	Kind        FieldKind          // Widget type
 	Value       string             // Formatted current value
+	Default     string             // Effective default shown when Value is "<unset>" or empty
 	Options     []string           // For Select/TriState fields
 	Validator   func(string) error // Optional input validation
 	Required    bool               // Whether the field must have a value
@@ -45,6 +46,7 @@ type Override struct {
 	Path        string
 	Label       *string
 	Description *string
+	Default     *string            // Effective default shown when value is "<unset>"
 	Kind        *FieldKind
 	Options     []string           // Replaces options when non-nil
 	Validator   func(string) error // Replaces validator when non-nil
@@ -110,6 +112,9 @@ func ApplyOverrides(fields []Field, overrides []Override) []Field {
 			}
 			if ov.Description != nil {
 				out.Description = *ov.Description
+			}
+			if ov.Default != nil {
+				out.Default = *ov.Default
 			}
 			if ov.Kind != nil {
 				out.Kind = *ov.Kind
