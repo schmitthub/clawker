@@ -1,0 +1,81 @@
+// Package project provides the domain adapter for editing config.Project via storeui.
+package project
+
+import (
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/storage"
+	"github.com/schmitthub/clawker/internal/storeui"
+)
+
+// Overrides returns field overrides for config.Project.
+func Overrides() []storeui.Override {
+	return []storeui.Override{
+		// Build
+		{Path: "build.image", Label: ptr("Base Image"), Description: ptr("Docker base image for the container")},
+		{Path: "build.dockerfile", Label: ptr("Dockerfile"), Description: ptr("Custom Dockerfile path (overrides image)")},
+		{Path: "build.packages", Label: ptr("Packages"), Description: ptr("System packages to install (comma-separated)")},
+		{Path: "build.context", Label: ptr("Build Context"), Description: ptr("Docker build context directory")},
+
+		// Build — complex types hidden
+		{Path: "build.build_args", Hidden: true},
+		{Path: "build.instructions", Hidden: true},
+		{Path: "build.inject", Hidden: true},
+
+		// Agent
+		{Path: "agent.includes", Label: ptr("Includes"), Description: ptr("Files to include in the build context")},
+		{Path: "agent.env_file", Label: ptr("Env Files"), Description: ptr("Environment files to load")},
+		{Path: "agent.from_env", Label: ptr("Forward Env Vars"), Description: ptr("Host env vars to forward to the container")},
+		{Path: "agent.memory", Label: ptr("Memory"), Description: ptr("Container memory limit")},
+		{Path: "agent.editor", Label: ptr("Editor"), Description: ptr("Default editor inside the container")},
+		{Path: "agent.visual", Label: ptr("Visual Editor"), Description: ptr("Default visual editor")},
+		{Path: "agent.shell", Label: ptr("Shell"), Description: ptr("Default shell inside the container")},
+		{Path: "agent.enable_shared_dir", Label: ptr("Enable Shared Dir"), Description: ptr("Mount ~/.clawker-share into the container")},
+		{Path: "agent.post_init", Label: ptr("Post-Init Script"), Description: ptr("Script to run after container initialization")},
+
+		// Agent — complex types hidden
+		{Path: "agent.env", Hidden: true},
+		{Path: "agent.claude_code", Hidden: true},
+
+		// Workspace
+		{Path: "workspace.default_mode", Label: ptr("Default Mode"), Description: ptr("Workspace mounting mode"),
+			Kind: ptr(storeui.KindSelect), Options: []string{"bind", "snapshot"}},
+
+		// Security
+		{Path: "security.docker_socket", Label: ptr("Docker Socket"), Description: ptr("Mount Docker socket inside the container")},
+		{Path: "security.enable_host_proxy", Label: ptr("Host Proxy"), Description: ptr("Enable host proxy for browser auth and credential forwarding")},
+
+		// Security — complex types hidden
+		{Path: "security.firewall", Hidden: true},
+		{Path: "security.cap_add", Hidden: true},
+		{Path: "security.git_credentials", Hidden: true},
+
+		// Loop
+		{Path: "loop.max_loops", Label: ptr("Max Loops"), Description: ptr("Maximum number of autonomous loops")},
+		{Path: "loop.stagnation_threshold", Label: ptr("Stagnation Threshold"), Description: ptr("Loops without progress before stopping")},
+		{Path: "loop.timeout_minutes", Label: ptr("Timeout (min)"), Description: ptr("Maximum runtime in minutes")},
+		{Path: "loop.calls_per_hour", Label: ptr("Calls per Hour"), Description: ptr("Rate limit for API calls")},
+		{Path: "loop.completion_threshold", Label: ptr("Completion Threshold"), Description: ptr("Score threshold to consider task complete")},
+		{Path: "loop.session_expiration_hours", Label: ptr("Session Expiration (hrs)")},
+		{Path: "loop.same_error_threshold", Label: ptr("Same Error Threshold")},
+		{Path: "loop.output_decline_threshold", Label: ptr("Output Decline Threshold")},
+		{Path: "loop.max_consecutive_test_loops", Label: ptr("Max Consecutive Test Loops")},
+		{Path: "loop.loop_delay_seconds", Label: ptr("Loop Delay (sec)")},
+		{Path: "loop.safety_completion_threshold", Label: ptr("Safety Completion Threshold")},
+		{Path: "loop.skip_permissions", Label: ptr("Skip Permissions"), Description: ptr("Skip permission prompts in loops")},
+		{Path: "loop.hooks_file", Label: ptr("Hooks File"), Description: ptr("Path to hooks file for loop events")},
+		{Path: "loop.append_system_prompt", Label: ptr("Append System Prompt"), Description: ptr("Additional system prompt for loops")},
+	}
+}
+
+// Edit runs an interactive project config editor.
+func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Project]) (storeui.Result, error) {
+	return storeui.Edit(ios, store,
+		storeui.WithTitle("Project Configuration Editor"),
+		storeui.WithOverrides(Overrides()),
+	)
+}
+
+func ptr[T any](v T) *T {
+	return &v
+}
