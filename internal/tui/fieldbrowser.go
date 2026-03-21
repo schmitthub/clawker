@@ -32,6 +32,7 @@ type BrowserField struct {
 	Kind        BrowserFieldKind   // Widget type for editing
 	Value       string             // Formatted current value
 	Default     string             // Shown when Value is empty or "<unset>"
+	Source      string             // Where this value came from (e.g. "~/.config/clawker/clawker.yaml")
 	Options     []string           // For Select/TriState fields
 	Validator   func(string) error // Optional input validation
 	Required    bool               // Whether the field must have a value
@@ -703,6 +704,12 @@ func (m *FieldBrowserModel) renderFieldRow(b *strings.Builder, row browserRow, s
 		b.WriteString(iostreams.MutedStyle.Render(displayVal))
 	} else {
 		b.WriteString(displayVal)
+	}
+
+	// Show source provenance when selected.
+	if selected && f.Source != "" {
+		b.WriteString("  ")
+		b.WriteString(iostreams.MutedStyle.Render("← " + f.Source))
 	}
 }
 

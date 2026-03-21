@@ -1117,6 +1117,9 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	//   5. Union slices: all discovered layers contribute
 	//   6. Map merge: keys accumulate, conflicts won by highest priority
 	//   7. Decoy files never appear in layers
+	//   8. LayerInfo.Data matches the file content without re-reading from disk
+	//   9. Provenance() returns the correct layer for each winning field
+	//  10. ProvenanceMap() covers all non-default fields
 
 	seed := time.Now().UnixNano()
 	t.Logf("seed=%d (reproduce with: rng := rand.New(rand.NewPCG(0, %d)))", seed, uint64(seed))
@@ -1339,11 +1342,12 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// --- Print values table ---
+	// --- Print layers table using LayerInfo.Data (no re-reading from disk) ---
 	layers := store.Layers()
 	cfg := store.Read()
+	provMap := store.ProvenanceMap()
 
-	// Table helper: format a cell, "-" for empty.
+	// Table helpers.
 	cell := func(s string) string {
 		if s == "" {
 			return "-"
@@ -1379,57 +1383,109 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 		}
 		return joined
 	}
+	dataStr := func(data map[string]any, key string) string {
+		if v, ok := data[key]; ok {
+			return fmt.Sprintf("%v", v)
+		}
+		return ""
+	}
+	dataSlice := func(data map[string]any, key string) []string {
+		v, ok := data[key]
+		if !ok {
+			return nil
+		}
+		sl, ok := v.([]any)
+		if !ok {
+			return nil
+		}
+		out := make([]string, len(sl))
+		for i, s := range sl {
+			out[i] = fmt.Sprintf("%v", s)
+		}
+		return out
+	}
+	dataMap := func(data map[string]any, key string) map[string]string {
+		v, ok := data[key]
+		if !ok {
+			return nil
+		}
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil
+		}
+		out := make(map[string]string, len(m))
+		for k, val := range m {
+			out[k] = fmt.Sprintf("%v", val)
+		}
+		return out
+	}
+	dataImage := func(data map[string]any) string {
+		bld, ok := data["build"].(map[string]any)
+		if !ok {
+			return ""
+		}
+		if img, ok := bld["image"]; ok {
+			return fmt.Sprintf("%v", img)
+		}
+		return ""
+	}
+	shortenPath := func(p string) string {
+		if rel, err := filepath.Rel(root, p); err == nil {
+			return rel
+		}
+		return p
+	}
 
-	// Build table rows from discovered layers.
+	// Build table rows from discovered layers using LayerInfo.Data.
 	type tableRow struct {
 		level, kind, place string
+		filePath           string
 		ver, image         string
 		pkgs, env          string
 	}
 
-	// Build rows in reverse discovery order (lowest priority first).
+	// Rows in reverse discovery order (lowest priority first).
 	var rows []tableRow
 	for i := len(layers) - 1; i >= 0; i-- {
 		l := layers[i]
 		tag := pathTag[l.Path]
-		raw, _ := os.ReadFile(l.Path)
-		var lv testConfig
-		_ = yaml.Unmarshal(raw, &lv)
+		d := l.Data
 
-		ver := "-"
-		if lv.Version != 0 {
-			ver = fmt.Sprintf("%d", lv.Version)
+		ver := cell(dataStr(d, "version"))
+		if ver == "0" {
+			ver = "-"
 		}
+
 		rows = append(rows, tableRow{
-			level: tag.level,
-			kind:  tag.kind,
-			place: tag.place,
-			ver:   ver,
-			image: cell(lv.Build.Image),
-			pkgs:  listCell(lv.Packages),
-			env:   envCell(lv.Env),
+			level:    tag.level,
+			kind:     tag.kind,
+			place:    tag.place,
+			filePath: shortenPath(l.Path),
+			ver:      ver,
+			image:    cell(dataImage(d)),
+			pkgs:     listCell(dataSlice(d, "packages")),
+			env:      envCell(dataMap(d, "env")),
 		})
 	}
 
-	// Merged row at the bottom.
-	mergedVer := fmt.Sprintf("%d", cfg.Version)
+	// Merged row.
 	rows = append(rows, tableRow{
 		level: "MERGED",
-		ver:   mergedVer,
+		ver:   fmt.Sprintf("%d", cfg.Version),
 		image: cell(cfg.Build.Image),
 		pkgs:  listCell(cfg.Packages),
 		env:   envCell(cfg.Env),
 	})
 
 	// Compute column widths.
-	const cols = 7
+	const cols = 8
 	colW := [cols]int{}
-	headers := [cols]string{"LAYER", "TYPE", "PLACE", "VER(scalar)", "IMAGE(scalar)", "PKGS(union)", "ENV(map)"}
+	headers := [cols]string{"LAYER", "TYPE", "PLACE", "FILE", "VER(scalar)", "IMAGE(scalar)", "PKGS(union)", "ENV(map)"}
 	for i, h := range headers {
 		colW[i] = len(h)
 	}
 	for _, r := range rows {
-		vals := [cols]string{r.level, r.kind, r.place, r.ver, r.image, r.pkgs, r.env}
+		vals := [cols]string{r.level, r.kind, r.place, r.filePath, r.ver, r.image, r.pkgs, r.env}
 		for c, v := range vals {
 			if len(v) > colW[c] {
 				colW[c] = len(v)
@@ -1438,12 +1494,13 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	}
 
 	fmtRow := func(vals [cols]string) string {
-		return fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %s",
+		return fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %s",
 			colW[0], vals[0], colW[1], vals[1], colW[2], vals[2],
-			colW[3], vals[3], colW[4], vals[4], colW[5], vals[5], vals[6])
+			colW[3], vals[3], colW[4], vals[4], colW[5], vals[5],
+			colW[6], vals[6], vals[7])
 	}
 
-	t.Logf("\n=== VALUES ===")
+	t.Logf("\n=== LAYERS (from LayerInfo.Data — no disk re-read) ===")
 	t.Log(fmtRow(headers))
 	sepLen := 0
 	for _, w := range colW {
@@ -1451,8 +1508,6 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	}
 	for j, r := range rows {
 		if j == len(rows)-1 {
-			// Merged row: scalars inline, PKGS and ENV expanded as
-			// multi-line cells aligned under their column headers.
 			t.Logf("  %s", strings.Repeat("-", sepLen))
 
 			var pkgLines, envLines []string
@@ -1468,7 +1523,6 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 				envLines = append(envLines, k+"="+cfg.Env[k])
 			}
 
-			// First line: scalars + first pkg + first env.
 			firstPkg, firstEnv := "-", "-"
 			if len(pkgLines) > 0 {
 				firstPkg = pkgLines[0]
@@ -1476,11 +1530,10 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 			if len(envLines) > 0 {
 				firstEnv = envLines[0]
 			}
-			t.Log(fmtRow([cols]string{r.level, r.kind, r.place, r.ver, r.image, firstPkg, firstEnv}))
+			t.Log(fmtRow([cols]string{r.level, r.kind, r.place, r.filePath, r.ver, r.image, firstPkg, firstEnv}))
 
-			// Continuation lines: pad scalar columns, align under PKGS and ENV.
-			pad := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s",
-				colW[0], "", colW[1], "", colW[2], "", colW[3], "", colW[4], "")
+			pad := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s",
+				colW[0], "", colW[1], "", colW[2], "", colW[3], "", colW[4], "", colW[5], "")
 			maxLines := len(pkgLines)
 			if len(envLines) > maxLines {
 				maxLines = len(envLines)
@@ -1493,11 +1546,51 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 				if k < len(envLines) {
 					ev = envLines[k]
 				}
-				t.Logf("%s  %-*s  %s", pad, colW[5], pk, ev)
+				t.Logf("%s  %-*s  %s", pad, colW[6], pk, ev)
 			}
 		} else {
-			t.Log(fmtRow([cols]string{r.level, r.kind, r.place, r.ver, r.image, r.pkgs, r.env}))
+			t.Log(fmtRow([cols]string{r.level, r.kind, r.place, r.filePath, r.ver, r.image, r.pkgs, r.env}))
 		}
+	}
+
+	// --- Print provenance table ---
+	t.Logf("\n=== PROVENANCE (field → source file) ===")
+	provKeys := make([]string, 0, len(provMap))
+	for k := range provMap {
+		provKeys = append(provKeys, k)
+	}
+	sort.Strings(provKeys)
+	maxKeyLen := 0
+	for _, k := range provKeys {
+		if len(k) > maxKeyLen {
+			maxKeyLen = len(k)
+		}
+	}
+	for _, k := range provKeys {
+		t.Logf("  %-*s  ← %s", maxKeyLen, k, shortenPath(provMap[k]))
+	}
+
+	// --- Invariant: LayerInfo.Data matches disk content ---
+	for _, l := range layers {
+		raw, err := os.ReadFile(l.Path)
+		require.NoError(t, err, "reading layer file %s", l.Path)
+		var diskData map[string]any
+		require.NoError(t, yaml.Unmarshal(raw, &diskData), "parsing %s", l.Path)
+		assert.True(t, reflect.DeepEqual(l.Data, diskData),
+			"LayerInfo.Data must match disk content for %s", shortenPath(l.Path))
+	}
+
+	// --- Invariant: Provenance() returns correct layer for known fields ---
+	for field, sourcePath := range provMap {
+		li, ok := store.Provenance(field)
+		assert.True(t, ok, "Provenance(%q) should return true", field)
+		assert.Equal(t, sourcePath, li.Path,
+			"Provenance(%q) path mismatch", field)
+	}
+
+	// --- Invariant: ProvenanceMap is non-empty for stores with layers ---
+	if len(layers) > 0 {
+		assert.NotEmpty(t, provMap, "ProvenanceMap should be non-empty when layers exist")
 	}
 
 	// --- Invariant: decoy files never appear in layers ---

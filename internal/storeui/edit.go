@@ -3,11 +3,25 @@ package storeui
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/tui"
 )
+
+// shortenHome replaces $HOME prefix with ~ for display.
+func shortenHome(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if strings.HasPrefix(p, home) {
+		return "~" + p[len(home):]
+	}
+	return p
+}
 
 // Result holds the outcome of an interactive edit session.
 type Result struct {
@@ -116,7 +130,8 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 	}
 
 	// 4. Map to tui types and run the interactive browser.
-	browserFields := fieldsToBrowserFields(fields)
+	provMap := store.ProvenanceMap()
+	browserFields := fieldsToBrowserFields(fields, provMap)
 	browserTargets := targetsToBrowserTargets(saveTargets)
 
 	model := tui.NewFieldBrowser(tui.BrowserConfig{
@@ -181,9 +196,11 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 }
 
 // fieldsToBrowserFields maps storeui fields to tui browser fields.
-func fieldsToBrowserFields(fields []Field) []tui.BrowserField {
+// provMap provides field path → source file path for provenance display.
+func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.BrowserField {
 	out := make([]tui.BrowserField, len(fields))
 	for i, f := range fields {
+		source := resolveFieldSource(f.Path, provMap)
 		out[i] = tui.BrowserField{
 			Path:        f.Path,
 			Label:       f.Label,
@@ -191,6 +208,7 @@ func fieldsToBrowserFields(fields []Field) []tui.BrowserField {
 			Kind:        fieldKindToBrowserKind(f.Kind),
 			Value:       f.Value,
 			Default:     f.Default,
+			Source:      source,
 			Options:     f.Options,
 			Validator:   f.Validator,
 			Required:    f.Required,
@@ -199,6 +217,28 @@ func fieldsToBrowserFields(fields []Field) []tui.BrowserField {
 		}
 	}
 	return out
+}
+
+// resolveFieldSource finds the source file for a field path by checking
+// the provenance map for an exact match, then for a parent path match
+// (e.g. "build.image" matches provenance for "build").
+func resolveFieldSource(fieldPath string, provMap map[string]string) string {
+	// Exact match.
+	if src, ok := provMap[fieldPath]; ok {
+		return shortenHome(src)
+	}
+	// Walk up the path segments looking for a parent match.
+	for path := fieldPath; path != ""; {
+		if idx := strings.LastIndex(path, "."); idx >= 0 {
+			path = path[:idx]
+		} else {
+			break
+		}
+		if src, ok := provMap[path]; ok {
+			return shortenHome(src)
+		}
+	}
+	return ""
 }
 
 // targetsToBrowserTargets maps storeui save targets to tui browser targets.
