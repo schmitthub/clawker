@@ -15,14 +15,14 @@ import (
 // EditOptions holds dependencies for the settings edit command.
 type EditOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config   func() (config.Config, error)
+	Config    func() (config.Config, error)
 }
 
 // NewCmdSettingsEdit creates the `clawker settings edit` command.
 func NewCmdSettingsEdit(f *cmdutil.Factory, runF func(context.Context, *EditOptions) error) *cobra.Command {
 	opts := &EditOptions{
 		IOStreams: f.IOStreams,
-		Config:   f.Config,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{

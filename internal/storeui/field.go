@@ -46,7 +46,7 @@ type Override struct {
 	Path        string
 	Label       *string
 	Description *string
-	Default     *string            // Effective default shown when value is "<unset>"
+	Default     *string // Effective default shown when value is "<unset>"
 	Kind        *FieldKind
 	Options     []string           // Replaces options when non-nil
 	Validator   func(string) error // Replaces validator when non-nil

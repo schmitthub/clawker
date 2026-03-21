@@ -15,14 +15,14 @@ import (
 // EditOptions holds dependencies for the project edit command.
 type EditOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config   func() (config.Config, error)
+	Config    func() (config.Config, error)
 }
 
 // NewCmdProjectEdit creates the `clawker project edit` command.
 func NewCmdProjectEdit(f *cmdutil.Factory, runF func(context.Context, *EditOptions) error) *cobra.Command {
 	opts := &EditOptions{
 		IOStreams: f.IOStreams,
-		Config:   f.Config,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{

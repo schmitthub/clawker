@@ -3,8 +3,8 @@ package storeui
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/text"
@@ -16,8 +16,8 @@ type listEditorState int
 
 const (
 	listBrowsing listEditorState = iota
-	listEditing                          // editing an existing item inline
-	listAdding                           // adding a new item at the bottom
+	listEditing                  // editing an existing item inline
+	listAdding                   // adding a new item at the bottom
 )
 
 // listEditorModel lets the user manage a []string field by navigating,

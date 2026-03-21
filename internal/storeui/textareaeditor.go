@@ -107,6 +107,6 @@ func (m textareaEditorModel) View() string {
 	return b.String()
 }
 
-func (m textareaEditorModel) Value() string    { return m.ta.Value() }
+func (m textareaEditorModel) Value() string     { return m.ta.Value() }
 func (m textareaEditorModel) IsConfirmed() bool { return m.confirmed }
 func (m textareaEditorModel) IsCancelled() bool { return m.cancelled }
