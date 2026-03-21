@@ -54,11 +54,19 @@ type BrowserResult struct {
 	SaveTargetIndex int               // Index of selected save target (-1 if none)
 }
 
+// BrowserLayer represents a discovered configuration layer with its raw data.
+// Used to show per-layer value breakdowns for the selected field.
+type BrowserLayer struct {
+	Label string         // Human-readable label (e.g. "~/.config/clawker/clawker.yaml")
+	Data  map[string]any // Raw YAML data from this layer
+}
+
 // BrowserConfig configures the field browser.
 type BrowserConfig struct {
 	Title       string              // Title displayed at the top
 	Fields      []BrowserField      // Fields to display
 	SaveTargets []BrowserSaveTarget // Save destinations (shown when >1)
+	Layers      []BrowserLayer      // Discovered layers for per-field provenance display
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +119,7 @@ type FieldBrowserModel struct {
 	title       string
 	fields      []BrowserField
 	saveTargets []BrowserSaveTarget
+	layers      []BrowserLayer
 	modified    map[string]string
 	state       browserState
 
@@ -144,6 +153,7 @@ func NewFieldBrowser(cfg BrowserConfig) *FieldBrowserModel {
 		title:       cfg.Title,
 		fields:      cfg.Fields,
 		saveTargets: cfg.SaveTargets,
+		layers:      cfg.Layers,
 		modified:    make(map[string]string),
 		state:       bsStateBrowse,
 		width:       80,
@@ -542,8 +552,12 @@ func (m *FieldBrowserModel) ensureVisible() {
 }
 
 func (m *FieldBrowserModel) visibleRows() int {
-	// Title(2) + tabbar(2) + help(3) = 7 lines of chrome.
-	available := m.height - 7
+	// Title(2) + tabbar(2) + help(3) + layer breakdown(~layers+2) = chrome.
+	chrome := 7
+	if len(m.layers) > 0 {
+		chrome += len(m.layers) + 2 // divider + entries
+	}
+	available := m.height - chrome
 	if available < 3 {
 		available = 3
 	}
@@ -612,6 +626,14 @@ func (m *FieldBrowserModel) viewBrowse(b *strings.Builder) {
 			b.WriteString(iostreams.MutedStyle.Render(
 				fmt.Sprintf("[%d/%d]", m.activeRow+1, len(tab.rows))))
 			b.WriteString("\n")
+		}
+	}
+
+	// Layer breakdown for selected field
+	if len(m.layers) > 0 && m.activeTab < len(m.tabs) {
+		rows := m.tabs[m.activeTab].rows
+		if m.activeRow < len(rows) && !rows[m.activeRow].isHeading {
+			m.renderLayerBreakdown(b, rows[m.activeRow].field)
 		}
 	}
 
@@ -711,6 +733,83 @@ func (m *FieldBrowserModel) renderFieldRow(b *strings.Builder, row browserRow, s
 		b.WriteString("  ")
 		b.WriteString(iostreams.MutedStyle.Render("← " + f.Source))
 	}
+}
+
+// renderLayerBreakdown shows what each layer has for the given field.
+// Walks the field's dotted path through each layer's raw data map.
+func (m *FieldBrowserModel) renderLayerBreakdown(b *strings.Builder, f *BrowserField) {
+	segments := strings.Split(f.Path, ".")
+
+	type layerValue struct {
+		label string
+		value string
+	}
+	var entries []layerValue
+
+	for _, layer := range m.layers {
+		val := lookupMapPath(layer.Data, segments)
+		if val == "" {
+			continue
+		}
+		entries = append(entries, layerValue{label: layer.Label, value: val})
+	}
+
+	if len(entries) == 0 {
+		return
+	}
+
+	b.WriteString("\n")
+	w := m.width - 4
+	if w < 10 {
+		w = 40
+	}
+	b.WriteString("  ")
+	b.WriteString(RenderLabeledDivider("layers", w))
+	b.WriteString("\n")
+
+	// Find max label width for alignment.
+	maxLabel := 0
+	for _, e := range entries {
+		if len(e.label) > maxLabel {
+			maxLabel = len(e.label)
+		}
+	}
+
+	for i, e := range entries {
+		isWinner := i == 0 // first layer with a value = highest priority = winner
+		b.WriteString("    ")
+		label := text.PadRight(e.label, maxLabel)
+		if isWinner {
+			b.WriteString(iostreams.ListItemSelectedStyle.Render(label))
+			b.WriteString("  ")
+			b.WriteString(e.value)
+		} else {
+			b.WriteString(iostreams.MutedStyle.Render(label))
+			b.WriteString("  ")
+			b.WriteString(iostreams.MutedStyle.Render(e.value))
+		}
+		b.WriteString("\n")
+	}
+}
+
+// lookupMapPath walks a dotted path through nested map[string]any.
+// Returns the formatted value at the leaf, or "" if not found.
+func lookupMapPath(data map[string]any, segments []string) string {
+	current := any(data)
+	for _, seg := range segments {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current, ok = m[seg]
+		if !ok {
+			return ""
+		}
+	}
+	if current == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v", current)
 }
 
 func (m *FieldBrowserModel) viewEdit(b *strings.Builder) {

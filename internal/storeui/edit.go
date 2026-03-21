@@ -133,11 +133,13 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 	provMap := store.ProvenanceMap()
 	browserFields := fieldsToBrowserFields(fields, provMap)
 	browserTargets := targetsToBrowserTargets(saveTargets)
+	browserLayers := layersToBrowserLayers(store.Layers())
 
 	model := tui.NewFieldBrowser(tui.BrowserConfig{
 		Title:       cfg.title,
 		Fields:      browserFields,
 		SaveTargets: browserTargets,
+		Layers:      browserLayers,
 	})
 	finalModel, err := tui.RunProgram(ios, model, tui.WithAltScreen(true))
 	if err != nil {
@@ -239,6 +241,19 @@ func resolveFieldSource(fieldPath string, provMap map[string]string) string {
 		}
 	}
 	return ""
+}
+
+// layersToBrowserLayers maps storage LayerInfo to tui BrowserLayers.
+// Layers are ordered highest→lowest priority (matching store.Layers() order).
+func layersToBrowserLayers(layers []storage.LayerInfo) []tui.BrowserLayer {
+	out := make([]tui.BrowserLayer, len(layers))
+	for i, l := range layers {
+		out[i] = tui.BrowserLayer{
+			Label: shortenHome(l.Path),
+			Data:  l.Data,
+		}
+	}
+	return out
 }
 
 // targetsToBrowserTargets maps storeui save targets to tui browser targets.

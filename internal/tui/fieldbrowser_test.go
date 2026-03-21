@@ -207,6 +207,72 @@ func TestFieldBrowser_ModifiedFieldShowsAsterisk(t *testing.T) {
 	assert.Contains(t, view, "* image")
 }
 
+func TestFieldBrowser_LayerBreakdown(t *testing.T) {
+	layers := []BrowserLayer{
+		{Label: "project/clawker.yaml", Data: map[string]any{
+			"build": map[string]any{"image": "alpine:3.19"},
+		}},
+		{Label: "~/.config/clawker/clawker.yaml", Data: map[string]any{
+			"build": map[string]any{"image": "ubuntu:22.04"},
+		}},
+	}
+	m := NewFieldBrowser(BrowserConfig{
+		Title:  "Test",
+		Fields: testBrowserFields(),
+		Layers: layers,
+	})
+	m.width = 80
+	m.height = 40
+	view := m.View()
+
+	// Should show layer breakdown with both layer values for build.image.
+	assert.Contains(t, view, "layers")
+	assert.Contains(t, view, "project/clawker.yaml")
+	assert.Contains(t, view, "alpine:3.19")
+	assert.Contains(t, view, "~/.config/clawker/clawker.yaml")
+	assert.Contains(t, view, "ubuntu:22.04")
+}
+
+func TestFieldBrowser_LayerBreakdownSkipsLayersWithoutField(t *testing.T) {
+	layers := []BrowserLayer{
+		{Label: "project/clawker.yaml", Data: map[string]any{
+			"build": map[string]any{"image": "alpine:3.19"},
+		}},
+		{Label: "~/.config/clawker/clawker.yaml", Data: map[string]any{
+			"security": map[string]any{"docker_socket": true},
+		}},
+	}
+	m := NewFieldBrowser(BrowserConfig{
+		Title:  "Test",
+		Fields: testBrowserFields(),
+		Layers: layers,
+	})
+	m.width = 80
+	m.height = 40
+	view := m.View()
+
+	// build.image is selected by default — only the layer that has it should show.
+	assert.Contains(t, view, "project/clawker.yaml")
+	assert.Contains(t, view, "alpine:3.19")
+	// The other layer doesn't have build.image, so it shouldn't appear in breakdown.
+	assert.NotContains(t, view, "~/.config/clawker/clawker.yaml")
+}
+
+func TestLookupMapPath(t *testing.T) {
+	data := map[string]any{
+		"build": map[string]any{
+			"image":    "ubuntu",
+			"packages": []any{"git", "curl"},
+		},
+		"name": "test",
+	}
+	assert.Equal(t, "ubuntu", lookupMapPath(data, []string{"build", "image"}))
+	assert.Equal(t, "[git curl]", lookupMapPath(data, []string{"build", "packages"}))
+	assert.Equal(t, "test", lookupMapPath(data, []string{"name"}))
+	assert.Equal(t, "", lookupMapPath(data, []string{"missing"}))
+	assert.Equal(t, "", lookupMapPath(data, []string{"build", "missing"}))
+}
+
 func TestFbFormatHeading(t *testing.T) {
 	assert.Equal(t, "Git Credentials", fbFormatHeading("git_credentials"))
 	assert.Equal(t, "Otel", fbFormatHeading("otel"))
