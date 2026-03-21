@@ -16,7 +16,7 @@ type tagRegistry map[string]string
 // buildTagRegistry walks the struct type T and extracts merge tags
 // for slice fields. Used during map-based merge to determine whether
 // a slice should be unioned or overwritten.
-func buildTagRegistry[T any]() tagRegistry {
+func buildTagRegistry[T Schema]() tagRegistry {
 	reg := make(tagRegistry)
 	var zero T
 	walkType(reflect.TypeOf(zero), "", reg)

@@ -73,7 +73,7 @@ func runMigrations(path string, raw map[string]any, migrations []Migration) (boo
 
 // unmarshal converts a raw map to a typed struct T via YAML round-trip.
 // Used at the end of construction to produce the typed read API.
-func unmarshal[T any](raw map[string]any) (*T, error) {
+func unmarshal[T Schema](raw map[string]any) (*T, error) {
 	encoded, err := yaml.Marshal(raw)
 	if err != nil {
 		return nil, fmt.Errorf("storage: re-encoding raw map: %w", err)

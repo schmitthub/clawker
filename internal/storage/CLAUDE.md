@@ -82,7 +82,7 @@ type Schema interface {
 ```go
 func NewField(path string, kind FieldKind, label, desc, def string) Field  // Manual field creation
 func NewFieldSet(fields []Field) FieldSet                                   // Build from slice
-func NormalizeFields[T any](v T) FieldSet                                  // Reflect struct tags → FieldSet
+func NormalizeFields[T Schema](v T) FieldSet                                  // Reflect struct tags → FieldSet
 ```
 
 `NormalizeFields` reads struct tags and maps Go types to `FieldKind`. It does NOT extract runtime values. Panics on non-struct input. Handles: nested structs, `*struct`, `*bool`, `time.Duration`, `[]string`, maps (→ KindComplex).
@@ -90,8 +90,8 @@ func NormalizeFields[T any](v T) FieldSet                                  // Re
 ### Constructors
 
 ```go
-func NewStore[T any](opts ...Option) (*Store[T], error)   // Full pipeline: discover → load → migrate → merge → deserialize
-func NewFromString[T any](raw string) (*Store[T], error)  // Read-only: parse YAML, no discovery/write paths
+func NewStore[T Schema](opts ...Option) (*Store[T], error)   // Full pipeline: discover → load → migrate → merge → deserialize
+func NewFromString[T Schema](raw string) (*Store[T], error)  // Read-only: parse YAML, no discovery/write paths
 ```
 
 ### Store[T] Methods

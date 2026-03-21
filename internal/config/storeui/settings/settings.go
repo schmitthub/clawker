@@ -12,52 +12,16 @@ import (
 )
 
 // Overrides returns field overrides for config.Settings.
+// Labels and descriptions come from schema struct tags (desc/label).
+// Overrides here are limited to TUI-specific concerns: ReadOnly.
 func Overrides() []storeui.Override {
 	return []storeui.Override{
-		// Logging
-		{Path: "logging.file_enabled", Label: storeui.Ptr("Enable File Logging"), Description: storeui.Ptr("Write log output to a file")},
-		{Path: "logging.max_size_mb", Label: storeui.Ptr("Max Log Size (MB)"), Description: storeui.Ptr("Maximum log file size before rotation")},
-		{Path: "logging.max_age_days", Label: storeui.Ptr("Max Log Age (days)"), Description: storeui.Ptr("Days to retain old log files")},
-		{Path: "logging.max_backups", Label: storeui.Ptr("Max Backups"), Description: storeui.Ptr("Maximum number of old log files to retain")},
-		{Path: "logging.compress", Label: storeui.Ptr("Compress Logs"), Description: storeui.Ptr("Compress rotated log files")},
-
-		// Logging OTEL
-		{Path: "logging.otel.enabled", Label: storeui.Ptr("OTEL Logging"), Description: storeui.Ptr("Enable OpenTelemetry log bridge")},
-		{Path: "logging.otel.timeout_seconds", Label: storeui.Ptr("OTEL Timeout (sec)"), Description: storeui.Ptr("OTEL exporter timeout")},
-		{Path: "logging.otel.max_queue_size", Label: storeui.Ptr("OTEL Queue Size"), Description: storeui.Ptr("Maximum queued log records")},
-		{Path: "logging.otel.export_interval_seconds", Label: storeui.Ptr("OTEL Export Interval (sec)"), Description: storeui.Ptr("Seconds between OTEL exports")},
-
-		// Firewall
-		{Path: "firewall.enable", Label: storeui.Ptr("Enable Firewall"), Description: storeui.Ptr("Global firewall on/off")},
-
-		// Monitoring ports
-		{Path: "monitoring.otel_collector_endpoint", Label: storeui.Ptr("OTEL Collector Endpoint")},
-		{Path: "monitoring.otel_collector_port", Label: storeui.Ptr("OTEL Collector Port")},
-		{Path: "monitoring.otel_collector_host", Label: storeui.Ptr("OTEL Collector Host")},
-		{Path: "monitoring.otel_collector_internal", Label: storeui.Ptr("OTEL Collector Internal")},
-		{Path: "monitoring.otel_grpc_port", Label: storeui.Ptr("OTEL gRPC Port")},
-		{Path: "monitoring.loki_port", Label: storeui.Ptr("Loki Port")},
-		{Path: "monitoring.prometheus_port", Label: storeui.Ptr("Prometheus Port")},
-		{Path: "monitoring.jaeger_port", Label: storeui.Ptr("Jaeger Port")},
-		{Path: "monitoring.grafana_port", Label: storeui.Ptr("Grafana Port")},
-		{Path: "monitoring.prometheus_metrics_port", Label: storeui.Ptr("Prometheus Metrics Port")},
-
-		// Telemetry
-		{Path: "monitoring.telemetry.metrics_path", Label: storeui.Ptr("Metrics Path")},
-		{Path: "monitoring.telemetry.logs_path", Label: storeui.Ptr("Logs Path")},
-		{Path: "monitoring.telemetry.metric_export_interval_ms", Label: storeui.Ptr("Metric Export Interval (ms)")},
-		{Path: "monitoring.telemetry.logs_export_interval_ms", Label: storeui.Ptr("Logs Export Interval (ms)")},
-		{Path: "monitoring.telemetry.log_tool_details", Label: storeui.Ptr("Log Tool Details")},
-		{Path: "monitoring.telemetry.log_user_prompts", Label: storeui.Ptr("Log User Prompts")},
-		{Path: "monitoring.telemetry.include_account_uuid", Label: storeui.Ptr("Include Account UUID")},
-		{Path: "monitoring.telemetry.include_session_id", Label: storeui.Ptr("Include Session ID")},
-
 		// Host proxy — internals are read-only
-		{Path: "host_proxy.manager.port", Label: storeui.Ptr("Manager Port"), ReadOnly: storeui.Ptr(true)},
-		{Path: "host_proxy.daemon.port", Label: storeui.Ptr("Daemon Port"), ReadOnly: storeui.Ptr(true)},
-		{Path: "host_proxy.daemon.poll_interval", Label: storeui.Ptr("Poll Interval"), ReadOnly: storeui.Ptr(true)},
-		{Path: "host_proxy.daemon.grace_period", Label: storeui.Ptr("Grace Period"), ReadOnly: storeui.Ptr(true)},
-		{Path: "host_proxy.daemon.max_consecutive_errs", Label: storeui.Ptr("Max Consecutive Errors"), ReadOnly: storeui.Ptr(true)},
+		{Path: "host_proxy.manager.port", ReadOnly: storeui.Ptr(true)},
+		{Path: "host_proxy.daemon.port", ReadOnly: storeui.Ptr(true)},
+		{Path: "host_proxy.daemon.poll_interval", ReadOnly: storeui.Ptr(true)},
+		{Path: "host_proxy.daemon.grace_period", ReadOnly: storeui.Ptr(true)},
+		{Path: "host_proxy.daemon.max_consecutive_errs", ReadOnly: storeui.Ptr(true)},
 	}
 }
 

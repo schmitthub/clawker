@@ -23,7 +23,7 @@ import (
 //	Load:  file → node tree → merge → deserialize → immutable snapshot
 //	Set:   deep copy → mutate copy → serialize into tree → atomic swap
 //	Write: node tree → file
-type Store[T any] struct {
+type Store[T Schema] struct {
 	value    atomic.Pointer[T] // immutable snapshot — lock-free reads
 	tree     map[string]any    // merged node tree (persistence layer)
 	dirty    bool              // true if Set has been called since last Write
@@ -52,7 +52,7 @@ type LayerInfo struct {
 // back to explicit paths only — this is not an error.
 //
 // The resulting store is immediately usable via Read/Set/Write.
-func NewStore[T any](opts ...Option) (*Store[T], error) {
+func NewStore[T Schema](opts ...Option) (*Store[T], error) {
 	o := options{}
 	for _, opt := range opts {
 		opt(&o)
@@ -114,7 +114,7 @@ func NewStore[T any](opts ...Option) (*Store[T], error) {
 // discovery, migration, or layering. The parsed string becomes the sole
 // node tree, deserialized into a typed value.
 // Useful for building test doubles. Write is a no-op (no paths configured).
-func NewFromString[T any](raw string) (*Store[T], error) {
+func NewFromString[T Schema](raw string) (*Store[T], error) {
 	var tree map[string]any
 	if raw != "" {
 		if err := yaml.Unmarshal([]byte(raw), &tree); err != nil {

@@ -3,6 +3,7 @@ package storeui
 import (
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -152,4 +153,39 @@ func TestWalkFields_PanicsOnNilInput(t *testing.T) {
 func TestWalkFields_PanicsOnNonStructInput(t *testing.T) {
 	assert.Panics(t, func() { WalkFields(42) })
 	assert.Panics(t, func() { WalkFields("hello") })
+}
+
+// --- enrichWithSchema tests ---
+
+type taggedStruct struct {
+	Name string `yaml:"name" label:"Display Name" desc:"Help text" default:"foo"`
+	Raw  string `yaml:"raw"`
+}
+
+func (t taggedStruct) Fields() storage.FieldSet { return storage.NormalizeFields(t) }
+
+func TestEnrichWithSchema_ReplacesMetadata(t *testing.T) {
+	walked := WalkFields(taggedStruct{Name: "val", Raw: "bar"})
+	schema := storage.NormalizeFields(taggedStruct{})
+	enrichWithSchema(walked, schema)
+
+	byPath := make(map[string]Field, len(walked))
+	for _, f := range walked {
+		byPath[f.Path] = f
+	}
+
+	// Schema metadata should replace WalkFields defaults.
+	require.Contains(t, byPath, "name")
+	assert.Equal(t, "Display Name", byPath["name"].Label)
+	assert.Equal(t, "Help text", byPath["name"].Description)
+	assert.Equal(t, "foo", byPath["name"].Default)
+
+	// Runtime values from WalkFields should be preserved.
+	assert.Equal(t, "val", byPath["name"].Value)
+
+	// Field without label/desc tags gets label from schema (yaml key fallback).
+	require.Contains(t, byPath, "raw")
+	assert.Equal(t, "raw", byPath["raw"].Label)
+	assert.Equal(t, "", byPath["raw"].Description)
+	assert.Equal(t, "bar", byPath["raw"].Value)
 }

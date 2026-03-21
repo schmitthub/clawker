@@ -1,6 +1,10 @@
 package storeui
 
-import "time"
+import (
+	"time"
+
+	"github.com/schmitthub/clawker/internal/storage"
+)
 
 // Shared test fixture types used by reflect_test.go and value_test.go.
 
@@ -46,6 +50,15 @@ type yamlTagStruct struct {
 	NoTag     string
 	Skipped   string `yaml:"-"`
 }
+
+// Schema implementations for test fixture types (required by Store[T Schema] constraint).
+func (s simpleStruct) Fields() storage.FieldSet       { return storage.NormalizeFields(s) }
+func (n nestedStruct) Fields() storage.FieldSet       { return storage.NormalizeFields(n) }
+func (t triStateStruct) Fields() storage.FieldSet     { return storage.NormalizeFields(t) }
+func (n nilPtrStructParent) Fields() storage.FieldSet { return storage.NormalizeFields(n) }
+func (d durationStruct) Fields() storage.FieldSet     { return storage.NormalizeFields(d) }
+func (c complexStruct) Fields() storage.FieldSet      { return storage.NormalizeFields(c) }
+func (y yamlTagStruct) Fields() storage.FieldSet      { return storage.NormalizeFields(y) }
 
 // ptr is a generic helper for creating pointer values in tests.
 func ptr[T any](v T) *T {

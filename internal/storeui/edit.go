@@ -111,7 +111,7 @@ func WithLayerTargets(targets []LayerTarget) Option {
 //  4. Map storeui.Field → tui.BrowserField, run tui.FieldBrowserModel
 //  5. OnFieldSaved callback: store.Set + writeFieldToFile per field
 //  6. Return Result
-func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error) {
+func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error) {
 	cfg := editOptions{
 		title:     "Configuration Editor",
 		skipPaths: make(map[string]bool),
@@ -130,8 +130,9 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 	// 1. Read current snapshot.
 	snapshot := store.Read()
 
-	// 2. Discover fields via reflection.
+	// 2. Discover fields via reflection, enriched with schema metadata.
 	fields := WalkFields(snapshot)
+	enrichWithSchema(fields, (*snapshot).Fields())
 
 	// 3. Filter and apply overrides.
 	if len(cfg.skipPaths) > 0 {
@@ -208,6 +209,22 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 		Cancelled:  br.Cancelled,
 		SavedCount: br.SavedCount,
 	}, nil
+}
+
+// enrichWithSchema replaces the schema metadata (Label, Description, Default, Kind)
+// on walked fields with authoritative values from the storage.Schema.
+// Runtime values (Value, Order) are preserved from the walked fields.
+func enrichWithSchema(fields []Field, schema storage.FieldSet) {
+	for i := range fields {
+		sf := schema.Get(fields[i].Path)
+		if sf == nil {
+			continue
+		}
+		fields[i].Label = sf.Label()
+		fields[i].Description = sf.Description()
+		fields[i].Default = sf.Default()
+		fields[i].Kind = sf.Kind()
+	}
 }
 
 // writeFieldToFile persists a single field value to a YAML file.

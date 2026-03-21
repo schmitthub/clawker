@@ -28,7 +28,8 @@ cmd/settings/edit, cmd/project/edit
 ### Types
 
 ```go
-type FieldKind int  // KindText, KindBool, KindTriState, KindSelect, KindInt, KindStringSlice, KindDuration, KindComplex
+type FieldKind = storage.FieldKind  // Alias; constants: KindText, KindBool, KindSelect, KindInt, KindStringSlice, KindDuration, KindComplex
+// KindTriState is deprecated — maps to KindBool, retained for backward compatibility
 
 type Field struct {
     Path, Label, Description string
@@ -64,7 +65,7 @@ func WalkFields(v any) []Field                           // Reflect struct → f
 func SetFieldValue(v any, path string, val string) error // Set field by dotted path
 func ApplyOverrides(fields []Field, overrides []Override) []Field
 
-func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error)
+func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error)
 func WithTitle(title string) Option
 func WithOverrides(overrides []Override) Option
 func WithSkipPaths(paths ...string) Option
@@ -91,8 +92,9 @@ Each adapter exports `Overrides() []storeui.Override`, `LayerTargets(store, cfg)
 Edit[T](ios, store, opts...):
   1. Validate layer targets (absolute paths)
   2. store.Read() → *T snapshot
-  3. WalkFields(snapshot) → []Field (reflection)
-  4. Filter skip paths, ApplyOverrides (domain overrides)
+  3. WalkFields(snapshot) → []Field (reflection + runtime values)
+  3b. enrichWithSchema(fields, snapshot.Fields()) — replace labels/descriptions/kinds with schema metadata
+  4. Filter skip paths, ApplyOverrides (domain overrides — TUI-specific only)
   5. fieldsToBrowserFields() → []tui.BrowserField (type mapping)
   6. tui.NewFieldBrowser(cfg) → tui.RunProgram (presentation)
   7. OnFieldSaved callback per field: store.Set(SetFieldValue...) + writeFieldToFile(target)
@@ -101,7 +103,7 @@ Edit[T](ios, store, opts...):
 
 ## Key Design Decisions
 
-1. `KindTriState` deprecated and mapped to `KindBool` — retained only for iota stability
+1. `KindTriState` deprecated and mapped to `KindBool` — retained for backward compatibility
 2. `KindComplex` auto-enforces `ReadOnly` in `ApplyOverrides`
 3. Nil `*struct` recursion in `WalkFields` — produces zero-value fields (domain adapters hide via overrides)
 4. `yamlTagName` re-implemented locally (5-line helper, conscious trade-off vs. storage API change)

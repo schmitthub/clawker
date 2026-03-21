@@ -10,9 +10,7 @@ import (
 // FieldKind classifies a configuration field's data type for schema consumers
 // (TUI editors, doc generators, CLI help).
 //
-// NOTE: These iota values intentionally differ from storeui.FieldKind, which
-// includes a deprecated KindTriState placeholder. When storeui migrates to use
-// storage.FieldKind (Task 4), mapping must be done by name, not by integer cast.
+// storeui.FieldKind is a type alias for this type.
 type FieldKind int
 
 const (
@@ -66,8 +64,8 @@ type FieldSet interface {
 }
 
 // Schema is the contract that configuration types implement to expose their
-// field metadata. [Store] will be constrained to Schema in a future change,
-// making field descriptions a compile-time requirement.
+// field metadata. [Store] is constrained to Schema, making field descriptions
+// a compile-time requirement for all stored types.
 type Schema interface {
 	Fields() FieldSet
 }

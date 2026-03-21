@@ -34,10 +34,25 @@ type testConfig struct {
 	Env      map[string]string `yaml:"env"`
 }
 
+func (t testConfig) Fields() FieldSet { return NormalizeFields(t) }
+
 type testBuild struct {
 	Image  string `yaml:"image"`
 	Target string `yaml:"target"`
 }
+
+// Test types for merge union edge cases (promoted from local types to support Schema constraint).
+type testUnionMapCfg struct {
+	Items []map[string]string `yaml:"items" merge:"union"`
+}
+
+func (t testUnionMapCfg) Fields() FieldSet { return NormalizeFields(t) }
+
+type testUnionImplicitCfg struct {
+	Items []string `yaml:",omitempty" merge:"union"`
+}
+
+func (t testUnionImplicitCfg) Fields() FieldSet { return NormalizeFields(t) }
 
 // --- Test data helpers ---
 
@@ -2112,11 +2127,7 @@ func TestStore_Set_ClearMapPersistsEmpty(t *testing.T) {
 }
 
 func TestStore_Merge_UnionHandlesNonComparableValues(t *testing.T) {
-	type cfg struct {
-		Items []map[string]string `yaml:"items" merge:"union"`
-	}
-
-	tags := buildTagRegistry[cfg]()
+	tags := buildTagRegistry[testUnionMapCfg]()
 
 	base := map[string]any{
 		"items": []any{
@@ -2144,11 +2155,7 @@ func TestStore_Merge_UnionHandlesNonComparableValues(t *testing.T) {
 }
 
 func TestStore_Merge_UnionWithImplicitYAMLFieldName(t *testing.T) {
-	type cfg struct {
-		Items []string `yaml:",omitempty" merge:"union"`
-	}
-
-	tags := buildTagRegistry[cfg]()
+	tags := buildTagRegistry[testUnionImplicitCfg]()
 
 	base := map[string]any{
 		"items": []any{"a"},
@@ -2164,7 +2171,7 @@ func TestStore_Merge_UnionWithImplicitYAMLFieldName(t *testing.T) {
 	}
 
 	result, _ := merge(base, layers, tags)
-	cfgResult, err := unmarshal[cfg](result)
+	cfgResult, err := unmarshal[testUnionImplicitCfg](result)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"a", "b"}, cfgResult.Items,

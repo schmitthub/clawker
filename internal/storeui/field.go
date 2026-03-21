@@ -9,21 +9,28 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/storage"
 )
 
-// FieldKind identifies the type of a configuration field for widget selection.
-type FieldKind int
+// FieldKind is an alias for [storage.FieldKind]. Consumers should use the
+// storage constants (KindText, KindBool, etc.) directly.
+type FieldKind = storage.FieldKind
 
+// Re-export storage.FieldKind constants for backward compatibility.
 const (
-	KindText        FieldKind = iota // Single-line string
-	KindBool                         // true/false
-	KindTriState                     // Deprecated: mapped to KindBool. Retained for iota stability.
-	KindSelect                       // Bounded enum with Options
-	KindInt                          // Integer
-	KindStringSlice                  // Comma-separated string list
-	KindDuration                     // time.Duration
-	KindComplex                      // Unsupported type — always read-only
+	KindText        = storage.KindText
+	KindBool        = storage.KindBool
+	KindSelect      = storage.KindSelect
+	KindInt         = storage.KindInt
+	KindStringSlice = storage.KindStringSlice
+	KindDuration    = storage.KindDuration
+	KindComplex     = storage.KindComplex
 )
+
+// KindTriState is deprecated. Use KindBool instead. Retained for backward
+// compatibility — maps to the same underlying type as KindBool.
+const KindTriState FieldKind = KindBool
 
 // Field represents a single editable configuration field discovered via reflection.
 type Field struct {

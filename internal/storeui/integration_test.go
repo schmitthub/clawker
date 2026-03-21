@@ -12,7 +12,7 @@ import (
 )
 
 // newTestStore creates a store backed by a real YAML file in a temp dir.
-func newTestStore[T any](t *testing.T, env *testenv.Env, yaml string) (*storage.Store[T], string) {
+func newTestStore[T storage.Schema](t *testing.T, env *testenv.Env, yaml string) (*storage.Store[T], string) {
 	t.Helper()
 	dir := filepath.Join(env.Dirs.Base, "project")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
@@ -27,7 +27,7 @@ func newTestStore[T any](t *testing.T, env *testenv.Env, yaml string) (*storage.
 }
 
 // reloadStore creates a fresh store from the same file to verify persistence.
-func reloadStore[T any](t *testing.T, dir string) *storage.Store[T] {
+func reloadStore[T storage.Schema](t *testing.T, dir string) *storage.Store[T] {
 	t.Helper()
 	store, err := storage.NewStore[T](
 		storage.WithFilenames("test.yaml"),
