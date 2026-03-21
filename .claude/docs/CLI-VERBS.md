@@ -194,6 +194,28 @@ clawker project register --yes
 
 ---
 
+### `clawker project edit`
+
+Interactively edit project configuration (clawker.yaml) using a TUI field editor.
+
+**Usage:**
+```bash
+clawker project edit
+```
+
+---
+
+### `clawker settings edit`
+
+Interactively edit user settings (settings.yaml) using a TUI field editor.
+
+**Usage:**
+```bash
+clawker settings edit
+```
+
+---
+
 ### `clawker run`
 
 Build and run a container with Claude Code. Alias for `clawker container run`.

@@ -62,9 +62,12 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
 │   ├── clawker/               # Main application lifecycle
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, version/, loop/, worktree/, firewall/, root/)
-│   │   └── factory/           # Factory constructor — wires real dependencies
+│   │   ├── factory/           # Factory constructor — wires real dependencies
+│   │   ├── settings/          # Settings parent command + edit subcommand
+│   │   └── project/edit/      # Project edit subcommand
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
 │   ├── config/                # Storage.Store[T] config engine: schema types, multi-file loading, constants (see internal/config/CLAUDE.md)
+│   │   └── storeui/           # Domain adapters for storeui: settings/, project/
 │   ├── containerfs/           # Host Claude config preparation for container init
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
 │   │   └── dockertest/        # FakeClient, test helpers
@@ -86,6 +89,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
 │   │   └── socketbridgetest/  # MockManager for testing
 │   ├── storage/               # Multi-file YAML store: discovery, merge, provenance-aware write, dir validation
+│   ├── storeui/               # Generic TUI for browsing/editing Store[T] instances (bridges storage + tui)
 │   ├── term/                  # Terminal capabilities + raw mode (leaf — sole x/term gateway)
 │   │   └── mocks/             # FakeTerm stub (satisfies iostreams.term interface)
 │   ├── testenv/               # Unified test environment: isolated dirs, config, project manager (test-only)
@@ -209,6 +213,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |
 | `update.CheckForUpdate` | Background GitHub release check — 24h cached, suppressed in CI/DEV; wired into `Main()` via goroutine + channel |
 | `update.CheckResult` | Returned when newer version available: `CurrentVersion`, `LatestVersion`, `ReleaseURL` |
+| `storeui.Edit[T]` | Generic TUI for browsing/editing `Store[T]` — bridges storage + tui. Domain adapters in `config/storeui/settings` and `config/storeui/project` provide overrides |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map (`cfg.ProjectRegistryFileName()`); CRUD/orchestration is owned by `internal/project` |
 | `project.ProjectManager` | Project-layer domain API: registration, resolution, worktree lifecycle. Constructor: `NewProjectManager(cfg, gitFactory)`. `ListWorktrees(ctx)` aggregates across all projects; `Project.ListWorktrees(ctx)` returns enriched state for one project |
@@ -226,7 +231,7 @@ See `.claude/docs/CLI-VERBS.md` for complete command reference.
 
 **Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `generate`, `loop iterate/tasks/status/reset`, `version`
 
-**Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`), `worktree *`, `firewall *` (status/list/add/remove/reload/up/down/enable/disable/bypass/rotate-ca)
+**Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`, `project edit`), `worktree *`, `firewall *` (status/list/add/remove/reload/up/down/enable/disable/bypass/rotate-ca), `settings *` (`settings edit`)
 
 Commands use positional arguments for resource names (e.g., `clawker container stop clawker.myapp.dev`) matching Docker's interface.
 
