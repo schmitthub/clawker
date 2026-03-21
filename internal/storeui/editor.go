@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/text"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
@@ -19,18 +20,35 @@ const (
 	stateSave
 )
 
-// editorModel is the BubbleTea model for the store field editor.
+// tabRow is either a section heading or an editable field within a tab.
+type tabRow struct {
+	isHeading bool
+	heading   string // set when isHeading
+	field     *Field // set when !isHeading
+	fieldIdx  int    // index into m.fields
+}
+
+// tabPage groups fields under a top-level config key.
+type tabPage struct {
+	name string
+	rows []tabRow
+}
+
+// editorModel is the BubbleTea model for the tabbed store field editor.
 var _ tea.Model = (*editorModel)(nil)
 
 type editorModel struct {
 	title    string
 	fields   []Field
-	layers   []string // layer filenames for save target
+	layers   []string
 	modified map[string]string
 	state    editorState
 
-	// Browse state
-	list tui.ListModel
+	// Tab navigation
+	tabs      []tabPage
+	activeTab int
+	activeRow int // index into current tab's rows (only stops on non-heading rows)
+	scrollOff int // scroll offset for visible area
 
 	// Edit state
 	editIdx   int
@@ -55,48 +73,128 @@ func newEditorModel(title string, fields []Field, layers []string) *editorModel 
 		modified: make(map[string]string),
 		state:    stateBrowse,
 	}
-	m.list = m.buildFieldList()
+	m.tabs = m.buildTabs()
+	if len(m.tabs) > 0 {
+		m.activeRow = m.firstFieldRow(0)
+	}
 	return m
 }
 
-func (m *editorModel) buildFieldList() tui.ListModel {
-	items := make([]tui.ListItem, len(m.fields))
-	for i, f := range m.fields {
-		label := f.Label
-		value := f.Value
-		if v, ok := m.modified[f.Path]; ok {
-			value = v
-			label = "* " + label
-		}
-		if f.ReadOnly {
-			label = label + " (read-only)"
-		}
-		items[i] = tui.SimpleListItem{
-			ItemTitle:       label,
-			ItemDescription: value,
+// buildTabs groups fields into tabbed pages by top-level path key.
+func (m *editorModel) buildTabs() []tabPage {
+	type sectionEntry struct {
+		section string
+		fields  []struct {
+			field    *Field
+			fieldIdx int
 		}
 	}
 
-	cfg := tui.DefaultListConfig()
-	cfg.ShowDescriptions = true
-	cfg.Wrap = false
-	if m.height > 6 {
-		cfg.Height = m.height - 6
-	}
-	if m.width > 4 {
-		cfg.Width = m.width - 4
+	// Group fields by top-level key → section key.
+	tabMap := make(map[string][]sectionEntry)
+	var tabOrder []string
+	sectionIdx := make(map[string]map[string]int) // tab → section → index in slice
+
+	for i := range m.fields {
+		f := &m.fields[i]
+		parts := strings.SplitN(f.Path, ".", 3)
+		tabName := parts[0]
+
+		// Determine section name from 2nd path segment if field has 3+ segments.
+		section := ""
+		if len(parts) >= 3 {
+			section = parts[1]
+		}
+
+		if _, exists := sectionIdx[tabName]; !exists {
+			sectionIdx[tabName] = make(map[string]int)
+			tabOrder = append(tabOrder, tabName)
+		}
+
+		si, exists := sectionIdx[tabName][section]
+		if !exists {
+			si = len(tabMap[tabName])
+			sectionIdx[tabName][section] = si
+			tabMap[tabName] = append(tabMap[tabName], sectionEntry{section: section})
+		}
+
+		tabMap[tabName][si].fields = append(tabMap[tabName][si].fields, struct {
+			field    *Field
+			fieldIdx int
+		}{field: f, fieldIdx: i})
 	}
 
-	list := tui.NewList(cfg)
-	list = list.SetItems(items)
-	if m.list.Len() > 0 {
-		idx := m.list.SelectedIndex()
-		if idx >= len(items) {
-			idx = len(items) - 1
+	// Build tab pages with rows.
+	tabs := make([]tabPage, 0, len(tabOrder))
+	for _, tabName := range tabOrder {
+		sections := tabMap[tabName]
+		var rows []tabRow
+
+		for _, sec := range sections {
+			if sec.section != "" {
+				rows = append(rows, tabRow{
+					isHeading: true,
+					heading:   formatHeading(sec.section),
+				})
+			}
+			for _, entry := range sec.fields {
+				rows = append(rows, tabRow{
+					field:    entry.field,
+					fieldIdx: entry.fieldIdx,
+				})
+			}
 		}
-		list = list.Select(idx)
+
+		tabs = append(tabs, tabPage{
+			name: formatTabName(tabName),
+			rows: rows,
+		})
 	}
-	return list
+
+	return tabs
+}
+
+// firstFieldRow returns the index of the first non-heading row in a tab.
+func (m *editorModel) firstFieldRow(tabIdx int) int {
+	if tabIdx >= len(m.tabs) {
+		return 0
+	}
+	for i, r := range m.tabs[tabIdx].rows {
+		if !r.isHeading {
+			return i
+		}
+	}
+	return 0
+}
+
+// nextFieldRow finds the next non-heading row after current, wrapping.
+func (m *editorModel) nextFieldRow() int {
+	if m.activeTab >= len(m.tabs) {
+		return 0
+	}
+	rows := m.tabs[m.activeTab].rows
+	for i := 1; i < len(rows); i++ {
+		idx := (m.activeRow + i) % len(rows)
+		if !rows[idx].isHeading {
+			return idx
+		}
+	}
+	return m.activeRow
+}
+
+// prevFieldRow finds the previous non-heading row before current, wrapping.
+func (m *editorModel) prevFieldRow() int {
+	if m.activeTab >= len(m.tabs) {
+		return 0
+	}
+	rows := m.tabs[m.activeTab].rows
+	for i := 1; i < len(rows); i++ {
+		idx := (m.activeRow - i + len(rows)) % len(rows)
+		if !rows[idx].isHeading {
+			return idx
+		}
+	}
+	return m.activeRow
 }
 
 func (m *editorModel) Init() tea.Cmd {
@@ -108,7 +206,6 @@ func (m *editorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.list = m.buildFieldList()
 		return m, nil
 	}
 
@@ -138,21 +235,47 @@ func (m *editorModel) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.enterSaveState()
 
 		case tui.IsEnter(msg):
-			idx := m.list.SelectedIndex()
-			if idx < 0 || idx >= len(m.fields) {
+			if m.activeTab >= len(m.tabs) {
 				return m, nil
 			}
-			f := m.fields[idx]
+			rows := m.tabs[m.activeTab].rows
+			if m.activeRow >= len(rows) || rows[m.activeRow].isHeading {
+				return m, nil
+			}
+			f := rows[m.activeRow].field
 			if f.ReadOnly {
 				return m, nil
 			}
-			return m, m.enterEditState(idx)
+			return m, m.enterEditState(rows[m.activeRow].fieldIdx)
+
+		case tui.IsLeft(msg):
+			if len(m.tabs) > 1 {
+				m.activeTab = (m.activeTab - 1 + len(m.tabs)) % len(m.tabs)
+				m.activeRow = m.firstFieldRow(m.activeTab)
+				m.scrollOff = 0
+			}
+			return m, nil
+
+		case tui.IsRight(msg), tui.IsTab(msg):
+			if len(m.tabs) > 1 {
+				m.activeTab = (m.activeTab + 1) % len(m.tabs)
+				m.activeRow = m.firstFieldRow(m.activeTab)
+				m.scrollOff = 0
+			}
+			return m, nil
+
+		case tui.IsDown(msg):
+			m.activeRow = m.nextFieldRow()
+			m.ensureVisible()
+			return m, nil
+
+		case tui.IsUp(msg):
+			m.activeRow = m.prevFieldRow()
+			m.ensureVisible()
+			return m, nil
 		}
 	}
-
-	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
-	return m, cmd
+	return m, nil
 }
 
 func (m *editorModel) enterEditState(idx int) tea.Cmd {
@@ -194,7 +317,6 @@ func (m *editorModel) enterEditState(idx int) tea.Cmd {
 
 	case KindSelect:
 		if len(f.Options) == 0 {
-			// No options — cannot edit. Return to browse.
 			m.state = stateBrowse
 			return nil
 		}
@@ -209,7 +331,6 @@ func (m *editorModel) enterEditState(idx int) tea.Cmd {
 		m.selField = tui.NewSelectField("edit", f.Label, options, defaultIdx)
 
 	default:
-		// Text, Int, Duration, StringSlice all use TextField.
 		opts := []tui.TextFieldOption{
 			tui.WithDefault(currentVal),
 		}
@@ -241,7 +362,6 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.selField.IsConfirmed() {
 			m.modified[f.Path] = m.selField.Value()
 			m.state = stateBrowse
-			m.list = m.buildFieldList()
 			return m, nil
 		}
 		return m, filterQuit(cmd)
@@ -252,7 +372,6 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.textField.IsConfirmed() {
 			m.modified[f.Path] = m.textField.Value()
 			m.state = stateBrowse
-			m.list = m.buildFieldList()
 			return m, nil
 		}
 		return m, filterQuit(cmd)
@@ -261,11 +380,9 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *editorModel) enterSaveState() tea.Cmd {
 	if len(m.layers) == 0 {
-		// No layers to save to — stay in browse.
 		return nil
 	}
 	if len(m.layers) == 1 {
-		// Auto-select the only layer.
 		m.saved = true
 		return tea.Quit
 	}
@@ -294,39 +411,43 @@ func (m *editorModel) updateSave(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, filterQuit(cmd)
 }
 
+// ensureVisible adjusts scrollOff so activeRow is visible.
+func (m *editorModel) ensureVisible() {
+	visible := m.visibleRows()
+	if visible <= 0 {
+		return
+	}
+	if m.activeRow < m.scrollOff {
+		m.scrollOff = m.activeRow
+	}
+	if m.activeRow >= m.scrollOff+visible {
+		m.scrollOff = m.activeRow - visible + 1
+	}
+}
+
+// visibleRows returns how many rows fit in the content area.
+func (m *editorModel) visibleRows() int {
+	// Title(2) + tabbar(2) + help(3) = 7 lines of chrome.
+	available := m.height - 7
+	if available < 3 {
+		available = 3
+	}
+	return available
+}
+
 func (m *editorModel) View() string {
 	var b strings.Builder
 
+	// Title
 	b.WriteString("  ")
 	b.WriteString(iostreams.TitleStyle.Render(m.title))
 	b.WriteString("\n\n")
 
 	switch m.state {
 	case stateBrowse:
-		b.WriteString(m.list.View())
-		b.WriteString("\n\n")
-
-		modified := len(m.modified)
-		if modified > 0 {
-			b.WriteString("  ")
-			b.WriteString(iostreams.MutedStyle.Render(fmt.Sprintf("%d modified", modified)))
-			b.WriteString("\n")
-		}
-		b.WriteString("  ")
-		b.WriteString(iostreams.HelpKeyStyle.Render("enter"))
-		b.WriteString(iostreams.HelpDescStyle.Render(" edit"))
-		b.WriteString("  ")
-		if modified > 0 {
-			b.WriteString(iostreams.HelpKeyStyle.Render("s"))
-			b.WriteString(iostreams.HelpDescStyle.Render(" save"))
-			b.WriteString("  ")
-		}
-		b.WriteString(iostreams.HelpKeyStyle.Render("esc"))
-		b.WriteString(iostreams.HelpDescStyle.Render(" cancel"))
-
+		m.viewBrowse(&b)
 	case stateEdit:
-		b.WriteString(m.editView())
-
+		m.viewEdit(&b)
 	case stateSave:
 		b.WriteString(m.saveField.View())
 	}
@@ -334,16 +455,134 @@ func (m *editorModel) View() string {
 	return b.String()
 }
 
-func (m *editorModel) editView() string {
+func (m *editorModel) viewBrowse(b *strings.Builder) {
+	// Tab bar
+	m.renderTabBar(b)
+	b.WriteString("\n")
+
+	// Field list for active tab
+	if m.activeTab < len(m.tabs) {
+		tab := m.tabs[m.activeTab]
+		visible := m.visibleRows()
+		end := m.scrollOff + visible
+		if end > len(tab.rows) {
+			end = len(tab.rows)
+		}
+
+		for i := m.scrollOff; i < end; i++ {
+			row := tab.rows[i]
+			if row.isHeading {
+				b.WriteString("  ")
+				w := m.width - 4
+				if w < 10 {
+					w = 40
+				}
+				b.WriteString(tui.RenderLabeledDivider(row.heading, w))
+				b.WriteString("\n")
+				continue
+			}
+
+			selected := i == m.activeRow
+			m.renderFieldRow(b, row, selected)
+			b.WriteString("\n")
+		}
+
+		// Scroll indicator
+		if len(tab.rows) > visible {
+			b.WriteString("  ")
+			b.WriteString(iostreams.MutedStyle.Render(
+				fmt.Sprintf("[%d/%d]", m.activeRow+1, len(tab.rows))))
+			b.WriteString("\n")
+		}
+	}
+
+	// Help bar
+	b.WriteString("\n")
+	modified := len(m.modified)
+	if modified > 0 {
+		b.WriteString("  ")
+		b.WriteString(iostreams.MutedStyle.Render(fmt.Sprintf("%d modified", modified)))
+		b.WriteString("\n")
+	}
+	b.WriteString("  ")
+	b.WriteString(iostreams.HelpKeyStyle.Render("←/→"))
+	b.WriteString(iostreams.HelpDescStyle.Render(" tab"))
+	b.WriteString("  ")
+	b.WriteString(iostreams.HelpKeyStyle.Render("↑/↓"))
+	b.WriteString(iostreams.HelpDescStyle.Render(" navigate"))
+	b.WriteString("  ")
+	b.WriteString(iostreams.HelpKeyStyle.Render("enter"))
+	b.WriteString(iostreams.HelpDescStyle.Render(" edit"))
+	if modified > 0 {
+		b.WriteString("  ")
+		b.WriteString(iostreams.HelpKeyStyle.Render("s"))
+		b.WriteString(iostreams.HelpDescStyle.Render(" save"))
+	}
+	b.WriteString("  ")
+	b.WriteString(iostreams.HelpKeyStyle.Render("esc"))
+	b.WriteString(iostreams.HelpDescStyle.Render(" quit"))
+}
+
+func (m *editorModel) renderTabBar(b *strings.Builder) {
+	b.WriteString("  ")
+	for i, tab := range m.tabs {
+		if i > 0 {
+			b.WriteString(iostreams.MutedStyle.Render(" │ "))
+		}
+		label := tab.name
+		if i == m.activeTab {
+			b.WriteString(iostreams.ListItemSelectedStyle.Render(label))
+		} else {
+			b.WriteString(iostreams.MutedStyle.Render(label))
+		}
+	}
+	b.WriteString("\n")
+}
+
+func (m *editorModel) renderFieldRow(b *strings.Builder, row tabRow, selected bool) {
+	f := row.field
+	label := f.Label
+	value := f.Value
+	if v, ok := m.modified[f.Path]; ok {
+		value = v
+		label = "* " + label
+	}
+	if f.ReadOnly {
+		label = label + " (read-only)"
+	}
+
+	// Pad label to fixed width for alignment.
+	maxLabel := 30
+	if m.width > 60 {
+		maxLabel = m.width / 3
+	}
+	paddedLabel := text.PadRight(label, maxLabel)
+
+	if selected {
+		b.WriteString("  > ")
+		b.WriteString(iostreams.ListItemSelectedStyle.Render(paddedLabel))
+	} else {
+		b.WriteString("    ")
+		b.WriteString(paddedLabel)
+	}
+	b.WriteString("  ")
+	if f.ReadOnly {
+		b.WriteString(iostreams.MutedStyle.Render(value))
+	} else {
+		b.WriteString(value)
+	}
+}
+
+func (m *editorModel) viewEdit(b *strings.Builder) {
 	if m.editIdx < 0 || m.editIdx >= len(m.fields) {
-		return ""
+		return
 	}
 	f := m.fields[m.editIdx]
 	switch f.Kind {
 	case KindBool, KindTriState, KindSelect:
-		return m.selField.View()
+		b.WriteString(m.selField.View())
 	default:
-		return m.textField.View()
+		b.WriteString(m.textField.View())
 	}
 }
 
@@ -353,6 +592,25 @@ func (m *editorModel) selectedLayer() string {
 		return m.layers[0]
 	}
 	return m.saveField.Value()
+}
+
+// formatTabName capitalizes a yaml key for tab display.
+func formatTabName(key string) string {
+	if len(key) == 0 {
+		return key
+	}
+	return strings.ToUpper(key[:1]) + key[1:]
+}
+
+// formatHeading turns a yaml key like "git_credentials" into "Git Credentials".
+func formatHeading(key string) string {
+	parts := strings.Split(key, "_")
+	for i, p := range parts {
+		if len(p) > 0 {
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // filterQuit filters out tea.Quit commands from child widgets to prevent
