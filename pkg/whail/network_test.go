@@ -593,7 +593,6 @@ func TestNetworksPrune(t *testing.T) {
 	}
 }
 
-
 func TestNetworkConnect(t *testing.T) {
 	tests := []struct {
 		name          string

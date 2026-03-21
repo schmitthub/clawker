@@ -1,6 +1,7 @@
 package project
 
 import (
+	projectedit "github.com/schmitthub/clawker/internal/cmd/project/edit"
 	projectinfo "github.com/schmitthub/clawker/internal/cmd/project/info"
 	projectinit "github.com/schmitthub/clawker/internal/cmd/project/init"
 	projectlist "github.com/schmitthub/clawker/internal/cmd/project/list"
@@ -31,10 +32,14 @@ Use 'clawker project init' to set up a new project in the current directory.`,
   clawker project info my-project
 
   # Remove a project from registry
-  clawker project remove my-project`,
+  clawker project remove my-project
+
+  # Interactively edit project configuration
+  clawker project edit`,
 	}
 
 	cmd.AddCommand(projectinit.NewCmdProjectInit(f, nil))
+	cmd.AddCommand(projectedit.NewCmdProjectEdit(f, nil))
 	cmd.AddCommand(projectregister.NewCmdProjectRegister(f, nil))
 	cmd.AddCommand(projectlist.NewCmdList(f, nil))
 	cmd.AddCommand(projectinfo.NewCmdInfo(f, nil))

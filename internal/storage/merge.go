@@ -147,13 +147,26 @@ func unionAny(dst, src []any) []any {
 	return result
 }
 
-// copyAnySlice creates a shallow copy of a []any slice.
+// copyAnySlice creates a deep copy of a []any slice.
+// Nested maps and slices are recursively copied so that the
+// returned slice shares no mutable state with src.
 func copyAnySlice(src []any) []any {
 	if src == nil {
 		return nil
 	}
 	cp := make([]any, len(src))
-	copy(cp, src)
+	for i, v := range src {
+		switch sv := v.(type) {
+		case map[string]any:
+			inner := make(map[string]any, len(sv))
+			deepCopyMap(inner, sv)
+			cp[i] = inner
+		case []any:
+			cp[i] = copyAnySlice(sv)
+		default:
+			cp[i] = v
+		}
+	}
 	return cp
 }
 

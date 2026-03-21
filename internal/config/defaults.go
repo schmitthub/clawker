@@ -48,15 +48,26 @@ build:
 agent:
   includes: []
   env: {}
+  enable_shared_dir: false
+  claude_code:
+    config:
+      strategy: copy
+    use_host_auth: true
 
 workspace:
   default_mode: "bind"
 
 security:
   docker_socket: false
+  enable_host_proxy: true
   cap_add:
     - NET_ADMIN
     - NET_RAW
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    forward_gpg: true
+    copy_git_config: true
 `
 
 // defaultSettingsYAML is the base-layer defaults for settings configuration.

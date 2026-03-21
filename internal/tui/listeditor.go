@@ -1,0 +1,258 @@
+package tui
+
+import (
+	"strings"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/text"
+)
+
+// listEditorState tracks what the user is doing in the list editor.
+type listEditorState int
+
+const (
+	listBrowsing listEditorState = iota
+	listEditing                  // editing an existing item inline
+	listAdding                   // adding a new item at the bottom
+)
+
+// ListEditorModel lets the user manage a string list by navigating,
+// editing, deleting, and adding individual items.
+//
+// Input: a label and a comma-separated string value.
+// Output: Value() returns the edited comma-separated string.
+type ListEditorModel struct {
+	label     string
+	items     []string
+	cursor    int
+	state     listEditorState
+	input     textinput.Model
+	confirmed bool // user pressed Enter to accept the list
+	cancelled bool // user pressed Esc or Ctrl+C to discard
+	width     int
+	height    int
+}
+
+// NewListEditor creates a list editor from a label and comma-separated value.
+func NewListEditor(label string, value string) ListEditorModel {
+	var items []string
+	if value != "" {
+		for _, s := range strings.Split(value, ",") {
+			trimmed := strings.TrimSpace(s)
+			if trimmed != "" {
+				items = append(items, trimmed)
+			}
+		}
+	}
+
+	ti := textinput.New()
+	ti.Focus()
+	ti.Width = 60
+
+	return ListEditorModel{
+		label: label,
+		items: items,
+		state: listBrowsing,
+		input: ti,
+		width: 80,
+	}
+}
+
+// Init returns nil — no initial command is needed.
+func (m ListEditorModel) Init() tea.Cmd {
+	return nil
+}
+
+// Update handles key messages for list browsing and inline editing.
+func (m ListEditorModel) Update(msg tea.Msg) (ListEditorModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		inputWidth := msg.Width - 8
+		if inputWidth < 1 {
+			inputWidth = 1
+		}
+		m.input.Width = inputWidth
+		return m, nil
+	}
+
+	switch m.state {
+	case listBrowsing:
+		return m.updateBrowsing(msg)
+	case listEditing, listAdding:
+		return m.updateEditing(msg)
+	}
+	return m, nil
+}
+
+func (m ListEditorModel) updateBrowsing(msg tea.Msg) (ListEditorModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch {
+		case IsEnter(msg):
+			m.confirmed = true
+			return m, nil
+
+		case IsEscape(msg), msg.String() == "ctrl+c":
+			m.cancelled = true
+			return m, nil
+
+		case IsUp(msg):
+			if m.cursor > 0 {
+				m.cursor--
+			}
+
+		case IsDown(msg):
+			if m.cursor < len(m.items)-1 {
+				m.cursor++
+			}
+
+		case msg.String() == "e":
+			if len(m.items) > 0 {
+				m.state = listEditing
+				m.input.SetValue(m.items[m.cursor])
+				m.input.CursorEnd()
+				return m, textinput.Blink
+			}
+
+		case msg.String() == "a":
+			m.state = listAdding
+			m.input.SetValue("")
+			return m, textinput.Blink
+
+		case msg.String() == "d", msg.String() == "backspace":
+			if len(m.items) > 0 {
+				m.items = append(m.items[:m.cursor], m.items[m.cursor+1:]...)
+				if m.cursor >= len(m.items) && m.cursor > 0 {
+					m.cursor--
+				}
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m ListEditorModel) updateEditing(msg tea.Msg) (ListEditorModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch {
+		case IsEnter(msg):
+			val := strings.TrimSpace(m.input.Value())
+			if val != "" {
+				if m.state == listAdding {
+					m.items = append(m.items, val)
+					m.cursor = len(m.items) - 1
+				} else {
+					m.items[m.cursor] = val
+				}
+			}
+			m.state = listBrowsing
+			return m, nil
+
+		case IsEscape(msg):
+			m.state = listBrowsing
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// View renders the list editor with items, inline input, and help bar.
+func (m ListEditorModel) View() string {
+	promptStyle := iostreams.PanelTitleStyle
+	selectedStyle := iostreams.ListItemSelectedStyle
+	mutedStyle := iostreams.MutedStyle
+	helpKeyStyle := iostreams.HelpKeyStyle
+	helpDescStyle := iostreams.HelpDescStyle
+
+	var b strings.Builder
+
+	// Header
+	b.WriteString("  ")
+	b.WriteString(promptStyle.Render(m.label))
+	b.WriteString("  ")
+	b.WriteString(mutedStyle.Render("(list editor)"))
+	b.WriteString("\n\n")
+
+	if len(m.items) == 0 && m.state == listBrowsing {
+		b.WriteString("    ")
+		b.WriteString(mutedStyle.Render("(empty list)"))
+		b.WriteString("\n")
+	}
+
+	for i, item := range m.items {
+		selected := i == m.cursor
+
+		if m.state == listEditing && selected {
+			// Show inline text input for the item being edited.
+			b.WriteString("  > ")
+			b.WriteString(m.input.View())
+			b.WriteString("\n")
+			continue
+		}
+
+		label := text.PadRight(item, 40)
+		if selected {
+			b.WriteString("  > ")
+			b.WriteString(selectedStyle.Render(label))
+		} else {
+			b.WriteString("    ")
+			b.WriteString(label)
+		}
+		b.WriteString("\n")
+	}
+
+	if m.state == listAdding {
+		b.WriteString("  + ")
+		b.WriteString(m.input.View())
+		b.WriteString("\n")
+	}
+
+	// Help bar
+	b.WriteString("\n  ")
+	switch m.state {
+	case listBrowsing:
+		b.WriteString(helpKeyStyle.Render("a"))
+		b.WriteString(helpDescStyle.Render(" add"))
+		b.WriteString("  ")
+		if len(m.items) > 0 {
+			b.WriteString(helpKeyStyle.Render("e"))
+			b.WriteString(helpDescStyle.Render(" edit"))
+			b.WriteString("  ")
+			b.WriteString(helpKeyStyle.Render("d"))
+			b.WriteString(helpDescStyle.Render(" delete"))
+			b.WriteString("  ")
+		}
+		b.WriteString(helpKeyStyle.Render("enter"))
+		b.WriteString(helpDescStyle.Render(" done"))
+		b.WriteString("  ")
+		b.WriteString(helpKeyStyle.Render("esc"))
+		b.WriteString(helpDescStyle.Render(" cancel"))
+	case listEditing, listAdding:
+		b.WriteString(helpKeyStyle.Render("enter"))
+		b.WriteString(helpDescStyle.Render(" confirm"))
+		b.WriteString("  ")
+		b.WriteString(helpKeyStyle.Render("esc"))
+		b.WriteString(helpDescStyle.Render(" cancel"))
+	}
+
+	return b.String()
+}
+
+// Value returns the current items as a comma-separated string.
+func (m ListEditorModel) Value() string {
+	return strings.Join(m.items, ", ")
+}
+
+// IsConfirmed returns true if the user accepted the list.
+func (m ListEditorModel) IsConfirmed() bool { return m.confirmed }
+
+// IsCancelled returns true if the user cancelled editing.
+func (m ListEditorModel) IsCancelled() bool { return m.cancelled }

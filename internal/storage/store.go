@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
@@ -36,8 +37,9 @@ type Store[T any] struct {
 
 // LayerInfo describes a discovered configuration layer.
 type LayerInfo struct {
-	Filename string // which filename matched (e.g., "clawker.yaml")
-	Path     string // resolved absolute path
+	Filename string         // which filename matched (e.g., "clawker.yaml")
+	Path     string         // resolved absolute path
+	Data     map[string]any // raw YAML data from this file only (read-only copy)
 }
 
 // NewStore constructs a store by discovering files, loading each as a
@@ -158,9 +160,42 @@ func (s *Store[T]) Get() *T {
 func (s *Store[T]) Layers() []LayerInfo {
 	infos := make([]LayerInfo, len(s.layers))
 	for i, l := range s.layers {
-		infos[i] = LayerInfo{Filename: l.filename, Path: l.path}
+		cp := make(map[string]any, len(l.data))
+		deepCopyMap(cp, l.data)
+		infos[i] = LayerInfo{Filename: l.filename, Path: l.path, Data: cp}
 	}
 	return infos
+}
+
+// Provenance returns the layer that provided the winning value for the given
+// dotted field path (e.g. "build.image", "security.firewall.enable").
+// Returns the LayerInfo and true if provenance is known, or zero value and
+// false for fields that came from defaults or have no provenance record.
+//
+// No lock needed — provenance is immutable after construction.
+func (s *Store[T]) Provenance(path string) (LayerInfo, bool) {
+	idx, ok := s.prov[path]
+	if !ok || idx < 0 || idx >= len(s.layers) {
+		return LayerInfo{}, false
+	}
+	l := s.layers[idx]
+	cp := make(map[string]any, len(l.data))
+	deepCopyMap(cp, l.data)
+	return LayerInfo{Filename: l.filename, Path: l.path, Data: cp}, true
+}
+
+// ProvenanceMap returns a mapping of dotted field paths to their source layer
+// paths. Fields that came from defaults are not included.
+//
+// No lock needed — provenance is immutable after construction.
+func (s *Store[T]) ProvenanceMap() map[string]string {
+	result := make(map[string]string, len(s.prov))
+	for path, idx := range s.prov {
+		if idx >= 0 && idx < len(s.layers) {
+			result[path] = s.layers[idx].path
+		}
+	}
+	return result
 }
 
 // Set applies a mutation function to a deep copy of the current value,
@@ -264,6 +299,34 @@ func (s *Store[T]) Write(filename ...string) error {
 		if err := writeToPath(path, fields, s.opts.lock); err != nil {
 			return err
 		}
+	}
+
+	s.dirty = false
+	return nil
+}
+
+// WriteTo persists the entire node tree to an explicit filesystem path.
+// Unlike Write (which resolves by filename against discovered layers),
+// WriteTo takes a full absolute path — useful when the caller knows
+// the exact target file, especially when multiple layers share the same
+// filename (e.g. clawker.yaml at project root vs config dir).
+//
+// The target directory is created if it does not exist.
+// After a successful write, dirty tracking is cleared.
+func (s *Store[T]) WriteTo(path string) error {
+	if path == "" || !filepath.IsAbs(path) {
+		return fmt.Errorf("storage: WriteTo requires an absolute path, got %q", path)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.dirty {
+		return nil
+	}
+
+	if err := writeToPath(path, s.tree, s.opts.lock); err != nil {
+		return err
 	}
 
 	s.dirty = false

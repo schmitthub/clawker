@@ -356,7 +356,10 @@ User interaction utilities with TTY and CI awareness.
 | `internal/cmd/factory` | Factory constructor — wires real dependencies (sync.Once closures) |
 | `internal/iostreams` | Testable I/O with TTY detection, colors, progress, pager |
 | `internal/prompter` | Interactive prompts (String, Confirm, Select) |
-| `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts, tables |
+| `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts, tables, field browser, list editor, textarea editor |
+| `internal/storeui` | Generic orchestration layer bridging `Store[T]` and TUI field editing: reflection-based field discovery, domain override merging, per-field save with layer targeting. See `internal/storeui/CLAUDE.md` |
+| `internal/config/storeui/settings` | Domain adapter for `storeui.Edit[Settings]`: field overrides (labels, descriptions, hidden complex types), layer targets (local/user/original) |
+| `internal/config/storeui/project` | Domain adapter for `storeui.Edit[Project]`: field overrides for build/agent/workspace/security/loop sections, layer targets |
 | `internal/bundler` | Image building, Dockerfile generation, semver, npm registry client |
 | `internal/docs` | CLI documentation generation (used by cmd/gen-docs) |
 | `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |

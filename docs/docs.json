@@ -211,6 +211,13 @@
             ]
           },
           {
+            "group": "Settings",
+            "pages": [
+              "cli-reference/clawker_settings",
+              "cli-reference/clawker_settings_edit"
+            ]
+          },
+          {
             "group": "Project",
             "pages": [
               "cli-reference/clawker_project",
@@ -218,7 +225,8 @@
               "cli-reference/clawker_project_register",
               "cli-reference/clawker_project_list",
               "cli-reference/clawker_project_info",
-              "cli-reference/clawker_project_remove"
+              "cli-reference/clawker_project_remove",
+              "cli-reference/clawker_project_edit"
             ]
           },
           {

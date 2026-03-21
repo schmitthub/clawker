@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/monitor"
 	"github.com/schmitthub/clawker/internal/cmd/network"
 	"github.com/schmitthub/clawker/internal/cmd/project"
+	"github.com/schmitthub/clawker/internal/cmd/settings"
 	versioncmd "github.com/schmitthub/clawker/internal/cmd/version"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
 	"github.com/schmitthub/clawker/internal/cmd/worktree"
@@ -60,6 +61,7 @@ Workspace modes:
 	// Add non-alias top-level commands
 	cmd.AddCommand(initcmd.NewCmdInit(f, nil))
 	cmd.AddCommand(project.NewCmdProject(f))
+	cmd.AddCommand(settings.NewCmdSettings(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
 	cmd.AddCommand(generate.NewCmdGenerate(f, nil))
 	cmd.AddCommand(loop.NewCmdLoop(f))

@@ -169,6 +169,40 @@ Multi-step form via `TUI.RunWizard(fields)`. Returns `WizardResult{Values Wizard
 
 Navigation: Enter advance, Esc back, Ctrl+C cancel. `SkipIf` predicates respected in both directions.
 
+## FieldBrowserModel (`fieldbrowser.go`)
+
+Generic tabbed field browser/editor. Domain-agnostic — knows nothing about stores, reflection, or config schemas. Used by `internal/storeui` to provide interactive editing for any `Store[T]`.
+
+**Types**: `BrowserFieldKind` (`BrowserText/Bool/TriState/Select/Int/StringSlice/Duration/Complex`), `BrowserField`, `BrowserLayerTarget`, `BrowserLayer`, `BrowserResult`, `BrowserConfig`
+
+**Constructor**: `NewFieldBrowser(cfg BrowserConfig) *FieldBrowserModel`
+
+**Result**: `(*FieldBrowserModel).Result() BrowserResult` — `{Saved, Cancelled bool; SavedCount int}`
+
+**Features**: Tabbed navigation (fields grouped by top-level path key), sub-section headings (3+ segment paths), inline editing via SelectField/TextField/ListEditorModel/TextareaEditorModel, scroll, per-field save with layer picker.
+
+**Key bindings**: `←/→` tab switch, `↑/↓` navigate, `enter` edit, `esc/q/ctrl+c` quit.
+
+## ListEditorModel (`listeditor.go`)
+
+Generic list editor for managing string lists. Parses comma-separated input, provides add/edit/delete with inline `textinput`.
+
+**Constructor**: `NewListEditor(label, value string) ListEditorModel`
+
+**Methods**: `Value() string` (comma-separated), `IsConfirmed() bool`, `IsCancelled() bool`
+
+**Key bindings (browsing)**: `a` add, `e` edit, `d/backspace` delete, `↑/↓` navigate, `enter/esc` done. **Editing**: `enter` confirm, `esc` cancel.
+
+## TextareaEditorModel (`textareaeditor.go`)
+
+Generic multiline text editor wrapping `bubbles/textarea`.
+
+**Constructor**: `NewTextareaEditor(label, value string) TextareaEditorModel`
+
+**Methods**: `Value() string`, `IsConfirmed() bool`, `IsCancelled() bool`
+
+**Key bindings**: `ctrl+s` save, `esc` cancel.
+
 ## Golden Tests
 
 - Progress: `GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v`
