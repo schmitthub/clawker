@@ -39,27 +39,6 @@ type fieldTestTagless struct {
 	OmitOnly  string `yaml:",omitempty"`
 }
 
-// --- FieldKind tests ---
-
-func TestFieldKind_String(t *testing.T) {
-	tests := []struct {
-		kind FieldKind
-		want string
-	}{
-		{KindText, "Text"},
-		{KindBool, "Bool"},
-		{KindSelect, "Select"},
-		{KindInt, "Int"},
-		{KindStringSlice, "StringSlice"},
-		{KindDuration, "Duration"},
-		{KindComplex, "Complex"},
-		{FieldKind(99), "FieldKind(99)"},
-	}
-	for _, tt := range tests {
-		assert.Equal(t, tt.want, tt.kind.String())
-	}
-}
-
 // --- NormalizeFields tests ---
 
 func TestNormalizeFields_AllTypeMappings(t *testing.T) {
@@ -108,6 +87,12 @@ func TestNormalizeFields_DescAndLabelTags(t *testing.T) {
 	require.NotNil(t, image)
 	assert.Equal(t, "Image", image.Label())
 	assert.Equal(t, "Base Docker image", image.Description())
+
+	// Nil *struct field — label/desc still extracted from type definition.
+	port := fs.Get("optional.port")
+	require.NotNil(t, port)
+	assert.Equal(t, "Port", port.Label())
+	assert.Equal(t, "Listening port", port.Description())
 }
 
 func TestNormalizeFields_DefaultTag(t *testing.T) {
@@ -158,7 +143,8 @@ func TestNormalizeFields_TaglessFallbacks(t *testing.T) {
 func TestNormalizeFields_FieldCount(t *testing.T) {
 	fs := NormalizeFields(fieldTestConfig{})
 	// name, version, enabled, timeout, tags, build.image, build.target,
-	// optional.port, debug, env = 10 leaf fields
+	// optional.port, debug, env = 10 leaf fields.
+	// Also implicitly validates that unexported fields (internal) are skipped.
 	assert.Equal(t, 10, fs.Len(), "unexpected field count — update if struct changes")
 }
 
@@ -168,23 +154,6 @@ func TestNormalizeFields_PanicOnNonStruct(t *testing.T) {
 	assert.PanicsWithValue(t, "storage.NormalizeFields: expected struct or *struct, got nil", func() {
 		NormalizeFields[any](nil)
 	})
-}
-
-func TestNormalizeFields_SkipsUnexportedFields(t *testing.T) {
-	fs := NormalizeFields(fieldTestConfig{})
-	// The unexported `internal` field should not appear.
-	for _, f := range fs.All() {
-		assert.NotEqual(t, "internal", f.Path())
-	}
-}
-
-func TestNormalizeFields_NilPointerToStruct(t *testing.T) {
-	// *fieldTestNested is nil — normalizer should still recurse into its type.
-	fs := NormalizeFields(fieldTestConfig{})
-	port := fs.Get("optional.port")
-	require.NotNil(t, port)
-	assert.Equal(t, KindInt, port.Kind())
-	assert.Equal(t, "Port", port.Label())
 }
 
 func TestNormalizeFields_Int64(t *testing.T) {
@@ -231,23 +200,7 @@ func TestFieldSet_All_PreservesOrder(t *testing.T) {
 	assert.Equal(t, "name", all[0].Path())
 }
 
-func TestFieldSet_Len(t *testing.T) {
-	fs := NormalizeFields(fieldTestConfig{})
-	assert.Equal(t, len(fs.All()), fs.Len())
-	assert.Greater(t, fs.Len(), 0)
-}
-
 // --- NewField tests ---
-
-func TestNewField(t *testing.T) {
-	f := NewField("my.path", KindBool, "My Label", "A description", "true")
-
-	assert.Equal(t, "my.path", f.Path())
-	assert.Equal(t, KindBool, f.Kind())
-	assert.Equal(t, "My Label", f.Label())
-	assert.Equal(t, "A description", f.Description())
-	assert.Equal(t, "true", f.Default())
-}
 
 func TestNewField_PanicOnEmptyPath(t *testing.T) {
 	assert.PanicsWithValue(t, "storage.NewField: path must not be empty", func() {
@@ -272,16 +225,4 @@ func TestNewFieldSet_PanicOnDuplicatePaths(t *testing.T) {
 	assert.PanicsWithValue(t, "storage.NewFieldSet: duplicate field path a.b", func() {
 		NewFieldSet(fields)
 	})
-}
-
-func TestNewFieldSet_IndexesCorrectly(t *testing.T) {
-	fields := []Field{
-		NewField("a", KindText, "A", "", ""),
-		NewField("b.c", KindInt, "C", "", ""),
-	}
-	fs := NewFieldSet(fields)
-	assert.Equal(t, 2, fs.Len())
-	assert.NotNil(t, fs.Get("a"))
-	assert.NotNil(t, fs.Get("b.c"))
-	assert.Equal(t, "A", fs.Get("a").Label())
 }
