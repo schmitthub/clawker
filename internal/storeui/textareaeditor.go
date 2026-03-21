@@ -21,17 +21,19 @@ func newTextareaEditor(label string, value string) textareaEditorModel {
 	ta := textarea.New()
 	ta.SetValue(value)
 	ta.Focus()
-	ta.SetWidth(72) // 76 minus 4 for "  " indent on each side
 	ta.ShowLineNumbers = false
-	ta.CharLimit = 0 // no limit
+	ta.CharLimit = 0
 
-	// Size to content — min 3 lines, grows with content.
-	lines := strings.Count(value, "\n") + 1
-	if lines < 3 {
-		lines = 3
+	// Full width, no artificial constraint — resize handler sets actual width.
+	ta.SetWidth(200)
+
+	// Height: content + 2 breathing room, min 5, expand up to 30 before scrolling.
+	lines := strings.Count(value, "\n") + 3
+	if lines < 5 {
+		lines = 5
 	}
-	if lines > 20 {
-		lines = 20
+	if lines > 30 {
+		lines = 30
 	}
 	ta.SetHeight(lines)
 
@@ -48,20 +50,14 @@ func (m textareaEditorModel) Init() tea.Cmd {
 func (m textareaEditorModel) Update(msg tea.Msg) (textareaEditorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.ta.SetWidth(msg.Width - 4) // account for "  " indent
-		// Let height follow content, capped by terminal.
-		maxH := msg.Height - 8
-		if maxH < 3 {
-			maxH = 3
+		// Full width minus indent.
+		m.ta.SetWidth(msg.Width - 4)
+		// Use most of the terminal height, leave room for header + help bar.
+		maxH := msg.Height - 6
+		if maxH < 5 {
+			maxH = 5
 		}
-		lines := strings.Count(m.ta.Value(), "\n") + 2
-		if lines < 3 {
-			lines = 3
-		}
-		if lines > maxH {
-			lines = maxH
-		}
-		m.ta.SetHeight(lines)
+		m.ta.SetHeight(maxH)
 		return m, nil
 
 	case tea.KeyMsg:
