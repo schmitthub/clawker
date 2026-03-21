@@ -53,9 +53,9 @@ func TestOverrides_ComplexTypesHidden(t *testing.T) {
 		"build.inject",
 		"agent.env",
 		"agent.claude_code",
-		"security.firewall",
+		"security.firewall.rules",
+		"security.firewall.ip_range_sources",
 		"security.cap_add",
-		"security.git_credentials",
 	}
 
 	overrides := Overrides()

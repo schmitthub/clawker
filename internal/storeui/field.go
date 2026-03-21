@@ -8,6 +8,7 @@ package storeui
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // FieldKind identifies the type of a configuration field for widget selection.
@@ -70,11 +71,33 @@ func ApplyOverrides(fields []Field, overrides []Override) []Field {
 		idx[overrides[i].Path] = &overrides[i]
 	}
 
+	// Collect hidden prefixes for parent-path hiding.
+	// A Hidden override for "build.instructions" hides all fields with paths
+	// starting with "build.instructions" (exact match or "build.instructions.").
+	var hiddenPrefixes []string
+	for _, ov := range overrides {
+		if ov.Hidden {
+			hiddenPrefixes = append(hiddenPrefixes, ov.Path)
+		}
+	}
+
 	// Build result by copying fields and applying matching overrides.
 	result := make([]Field, 0, len(fields))
 	for _, f := range fields {
 		ov, ok := idx[f.Path]
 		if ok && ov.Hidden {
+			continue
+		}
+
+		// Check if field path is under a hidden parent prefix.
+		hidden := false
+		for _, prefix := range hiddenPrefixes {
+			if f.Path == prefix || strings.HasPrefix(f.Path, prefix+".") {
+				hidden = true
+				break
+			}
+		}
+		if hidden {
 			continue
 		}
 

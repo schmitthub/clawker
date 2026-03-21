@@ -11,18 +11,18 @@ import (
 // Overrides returns field overrides for config.Project.
 func Overrides() []storeui.Override {
 	return []storeui.Override{
-		// Build
+		// Build — editable
 		{Path: "build.image", Label: ptr("Base Image"), Description: ptr("Docker base image for the container")},
 		{Path: "build.dockerfile", Label: ptr("Dockerfile"), Description: ptr("Custom Dockerfile path (overrides image)")},
 		{Path: "build.packages", Label: ptr("Packages"), Description: ptr("System packages to install (comma-separated)")},
 		{Path: "build.context", Label: ptr("Build Context"), Description: ptr("Docker build context directory")},
 
-		// Build — complex types hidden
+		// Build — complex types hidden (prefix-based: hides all children)
 		{Path: "build.build_args", Hidden: true},
 		{Path: "build.instructions", Hidden: true},
 		{Path: "build.inject", Hidden: true},
 
-		// Agent
+		// Agent — editable
 		{Path: "agent.includes", Label: ptr("Includes"), Description: ptr("Files to include in the build context")},
 		{Path: "agent.env_file", Label: ptr("Env Files"), Description: ptr("Environment files to load")},
 		{Path: "agent.from_env", Label: ptr("Forward Env Vars"), Description: ptr("Host env vars to forward to the container")},
@@ -41,16 +41,23 @@ func Overrides() []storeui.Override {
 		{Path: "workspace.default_mode", Label: ptr("Default Mode"), Description: ptr("Workspace mounting mode"),
 			Kind: ptr(storeui.KindSelect), Options: []string{"bind", "snapshot"}},
 
-		// Security
+		// Security — editable
 		{Path: "security.docker_socket", Label: ptr("Docker Socket"), Description: ptr("Mount Docker socket inside the container")},
 		{Path: "security.enable_host_proxy", Label: ptr("Host Proxy"), Description: ptr("Enable host proxy for browser auth and credential forwarding")},
+		{Path: "security.firewall.add_domains", Label: ptr("Firewall Domains"), Description: ptr("Additional domains to whitelist (comma-separated)")},
+
+		// Security — git credentials (editable as individual fields)
+		{Path: "security.git_credentials.forward_https", Label: ptr("Forward HTTPS"), Description: ptr("Enable HTTPS credential forwarding")},
+		{Path: "security.git_credentials.forward_ssh", Label: ptr("Forward SSH"), Description: ptr("Enable SSH agent forwarding")},
+		{Path: "security.git_credentials.forward_gpg", Label: ptr("Forward GPG"), Description: ptr("Enable GPG agent forwarding")},
+		{Path: "security.git_credentials.copy_git_config", Label: ptr("Copy Git Config"), Description: ptr("Copy host .gitconfig into the container")},
 
 		// Security — complex types hidden
-		{Path: "security.firewall", Hidden: true},
+		{Path: "security.firewall.rules", Hidden: true},
+		{Path: "security.firewall.ip_range_sources", Hidden: true},
 		{Path: "security.cap_add", Hidden: true},
-		{Path: "security.git_credentials", Hidden: true},
 
-		// Loop
+		// Loop — editable
 		{Path: "loop.max_loops", Label: ptr("Max Loops"), Description: ptr("Maximum number of autonomous loops")},
 		{Path: "loop.stagnation_threshold", Label: ptr("Stagnation Threshold"), Description: ptr("Loops without progress before stopping")},
 		{Path: "loop.timeout_minutes", Label: ptr("Timeout (min)"), Description: ptr("Maximum runtime in minutes")},
