@@ -3,6 +3,7 @@ package settings
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -61,24 +62,56 @@ func Overrides() []storeui.Override {
 	}
 }
 
-// SaveTargets builds human-readable save target options from store layers.
-func SaveTargets(store *storage.Store[config.Settings]) []storeui.SaveTarget {
-	layers := store.Layers()
-	if len(layers) == 0 {
-		return []storeui.SaveTarget{
-			{Label: "User settings", Description: "Default settings location"},
+// LayerTargets builds the per-field save destinations for settings.
+func LayerTargets(store *storage.Store[config.Settings], cfg config.Config) []storeui.LayerTarget {
+	filename := cfg.SettingsFileName()
+	cwd, _ := os.Getwd()
+
+	var targets []storeui.LayerTarget
+	seen := make(map[string]bool)
+
+	// Local: CWD dot-file.
+	localPath := resolveLocalPath(cwd, filename)
+	targets = append(targets, storeui.LayerTarget{
+		Label:       "Local",
+		Description: shortenPath(localPath),
+		Path:        localPath,
+	})
+	seen[localPath] = true
+
+	// User: config dir file.
+	userPath := filepath.Join(config.ConfigDir(), filename)
+	if !seen[userPath] {
+		targets = append(targets, storeui.LayerTarget{
+			Label:       "User",
+			Description: shortenPath(userPath),
+			Path:        userPath,
+		})
+		seen[userPath] = true
+	}
+
+	// Original: add any discovered layers not already in the list.
+	for _, l := range store.Layers() {
+		if !seen[l.Path] {
+			targets = append(targets, storeui.LayerTarget{
+				Label:       "Settings",
+				Description: shortenPath(l.Path),
+				Path:        l.Path,
+			})
+			seen[l.Path] = true
 		}
 	}
 
-	targets := make([]storeui.SaveTarget, len(layers))
-	for i, l := range layers {
-		targets[i] = storeui.SaveTarget{
-			Label:       "User settings",
-			Description: shortenPath(l.Path),
-			Path:        l.Path,
-		}
-	}
 	return targets
+}
+
+// resolveLocalPath determines the CWD dot-file path using dual-placement.
+func resolveLocalPath(cwd, filename string) string {
+	clawkerDir := filepath.Join(cwd, ".clawker")
+	if info, err := os.Stat(clawkerDir); err == nil && info.IsDir() {
+		return filepath.Join(clawkerDir, filename)
+	}
+	return filepath.Join(cwd, "."+filename)
 }
 
 // shortenPath replaces $HOME with ~ for display.
@@ -97,11 +130,11 @@ func shortenPath(p string) string {
 }
 
 // Edit runs an interactive settings editor.
-func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Settings]) (storeui.Result, error) {
+func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Settings], cfg config.Config) (storeui.Result, error) {
 	return storeui.Edit(ios, store,
 		storeui.WithTitle("Settings Editor"),
 		storeui.WithOverrides(Overrides()),
-		storeui.WithSaveTargets(SaveTargets(store)),
+		storeui.WithLayerTargets(LayerTargets(store, cfg)),
 	)
 }
 

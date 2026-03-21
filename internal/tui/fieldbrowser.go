@@ -41,17 +41,24 @@ type BrowserField struct {
 }
 
 // BrowserSaveTarget represents a save destination shown in the save dialog.
+//
+// Deprecated: Use BrowserLayerTarget for per-field saves.
 type BrowserSaveTarget struct {
 	Label       string // Display label
 	Description string // Short description
 }
 
+// BrowserLayerTarget represents a save destination for a single field.
+type BrowserLayerTarget struct {
+	Label       string // "Original", "Local", "User"
+	Description string // Shortened path for display
+}
+
 // BrowserResult holds the outcome of a field browser session.
 type BrowserResult struct {
-	Saved           bool              // True if the user saved changes
-	Cancelled       bool              // True if the user cancelled
-	Modified        map[string]string // Path→value of all modified fields
-	SaveTargetIndex int               // Index of selected save target (-1 if none)
+	Saved     bool              // True if any field was persisted
+	Cancelled bool              // True if the user cancelled
+	Modified  map[string]string // Path→value of all modified fields
 }
 
 // BrowserLayer represents a discovered configuration layer with its raw data.
@@ -63,10 +70,18 @@ type BrowserLayer struct {
 
 // BrowserConfig configures the field browser.
 type BrowserConfig struct {
-	Title       string              // Title displayed at the top
-	Fields      []BrowserField      // Fields to display
-	SaveTargets []BrowserSaveTarget // Save destinations (shown when >1)
-	Layers      []BrowserLayer      // Discovered layers for per-field provenance display
+	Title        string               // Title displayed at the top
+	Fields       []BrowserField       // Fields to display
+	LayerTargets []BrowserLayerTarget // Per-field save destinations (Local, User, etc.)
+	Layers       []BrowserLayer       // Discovered layers for per-field provenance display
+
+	// OnFieldSaved is called when the user saves a single field to a layer.
+	// fieldPath is the dotted path, value is the new string value,
+	// targetIdx is the index into LayerTargets. Return error to show to user.
+	OnFieldSaved func(fieldPath, value string, targetIdx int) error
+
+	// Deprecated: Use LayerTargets + OnFieldSaved for per-field saves.
+	SaveTargets []BrowserSaveTarget
 }
 
 // ---------------------------------------------------------------------------
@@ -78,7 +93,7 @@ type browserState int
 const (
 	bsStateBrowse browserState = iota
 	bsStateEdit
-	bsStateSave
+	bsStatePickLayer // layer picker after field edit confirmation
 )
 
 // editKind identifies which sub-editor is active during bsStateEdit.
@@ -116,12 +131,13 @@ var _ tea.Model = (*FieldBrowserModel)(nil)
 // FieldBrowserModel is a generic tabbed field browser/editor.
 // It knows nothing about stores, reflection, or config schemas.
 type FieldBrowserModel struct {
-	title       string
-	fields      []BrowserField
-	saveTargets []BrowserSaveTarget
-	layers      []BrowserLayer
-	modified    map[string]string
-	state       browserState
+	title        string
+	fields       []BrowserField
+	layerTargets []BrowserLayerTarget
+	layers       []BrowserLayer
+	onFieldSaved func(fieldPath, value string, targetIdx int) error
+	modified     map[string]string
+	state        browserState
 
 	// Tab navigation
 	tabs      []browserTab
@@ -137,11 +153,14 @@ type FieldBrowserModel struct {
 	listEditor ListEditorModel
 	taEditor   TextareaEditorModel
 
-	// Save state
-	saveField SelectField
+	// Layer picker state (after edit confirmation)
+	layerField    SelectField
+	pendingPath   string // field path being saved
+	pendingValue  string // value being saved
+	lastSaveError string // error from OnFieldSaved, shown briefly
 
 	// Result
-	saved     bool
+	saved     bool // true if any field was persisted
 	cancelled bool
 	width     int
 	height    int
@@ -150,14 +169,15 @@ type FieldBrowserModel struct {
 // NewFieldBrowser creates a field browser from the given config.
 func NewFieldBrowser(cfg BrowserConfig) *FieldBrowserModel {
 	m := &FieldBrowserModel{
-		title:       cfg.Title,
-		fields:      cfg.Fields,
-		saveTargets: cfg.SaveTargets,
-		layers:      cfg.Layers,
-		modified:    make(map[string]string),
-		state:       bsStateBrowse,
-		width:       80,
-		height:      24,
+		title:        cfg.Title,
+		fields:       cfg.Fields,
+		layerTargets: cfg.LayerTargets,
+		layers:       cfg.Layers,
+		onFieldSaved: cfg.OnFieldSaved,
+		modified:     make(map[string]string),
+		state:        bsStateBrowse,
+		width:        80,
+		height:       24,
 	}
 	m.tabs = m.buildTabs()
 	if len(m.tabs) > 0 {
@@ -168,20 +188,10 @@ func NewFieldBrowser(cfg BrowserConfig) *FieldBrowserModel {
 
 // Result returns the browser result after the program exits.
 func (m *FieldBrowserModel) Result() BrowserResult {
-	targetIdx := -1
-	if m.saved {
-		idx := m.saveField.SelectedIndex()
-		if idx >= 0 && idx < len(m.saveTargets) {
-			targetIdx = idx
-		} else if len(m.saveTargets) == 1 {
-			targetIdx = 0
-		}
-	}
 	return BrowserResult{
-		Saved:           m.saved,
-		Cancelled:       m.cancelled,
-		Modified:        m.modified,
-		SaveTargetIndex: targetIdx,
+		Saved:     m.saved,
+		Cancelled: m.cancelled,
+		Modified:  m.modified,
 	}
 }
 
@@ -303,8 +313,8 @@ func (m *FieldBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateBrowse(msg)
 	case bsStateEdit:
 		return m.updateEdit(msg)
-	case bsStateSave:
-		return m.updateSave(msg)
+	case bsStatePickLayer:
+		return m.updatePickLayer(msg)
 	}
 	return m, nil
 }
@@ -316,12 +326,6 @@ func (m *FieldBrowserModel) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case IsQuit(msg), IsEscape(msg):
 			m.cancelled = true
 			return m, tea.Quit
-
-		case msg.String() == "s":
-			if len(m.modified) == 0 {
-				return m, nil
-			}
-			return m, m.enterSaveState()
 
 		case IsEnter(msg):
 			if m.activeTab >= len(m.tabs) {
@@ -450,9 +454,7 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.selField, cmd = m.selField.Update(msg)
 		if m.selField.IsConfirmed() {
-			m.trackModified(f.Path, m.selField.Value())
-			m.state = bsStateBrowse
-			return m, nil
+			return m, m.enterPickLayer(f.Path, m.selField.Value())
 		}
 		return m, fbFilterQuit(cmd)
 
@@ -464,9 +466,7 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.textField, cmd = m.textField.Update(msg)
 		if m.textField.IsConfirmed() {
-			m.trackModified(f.Path, m.textField.Value())
-			m.state = bsStateBrowse
-			return m, nil
+			return m, m.enterPickLayer(f.Path, m.textField.Value())
 		}
 		return m, fbFilterQuit(cmd)
 
@@ -474,9 +474,7 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.listEditor, cmd = m.listEditor.Update(msg)
 		if m.listEditor.IsConfirmed() {
-			m.trackModified(f.Path, m.listEditor.Value())
-			m.state = bsStateBrowse
-			return m, nil
+			return m, m.enterPickLayer(f.Path, m.listEditor.Value())
 		}
 		if m.listEditor.IsCancelled() {
 			m.state = bsStateBrowse
@@ -488,9 +486,7 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.taEditor, cmd = m.taEditor.Update(msg)
 		if m.taEditor.IsConfirmed() {
-			m.trackModified(f.Path, m.taEditor.Value())
-			m.state = bsStateBrowse
-			return m, nil
+			return m, m.enterPickLayer(f.Path, m.taEditor.Value())
 		}
 		if m.taEditor.IsCancelled() {
 			m.state = bsStateBrowse
@@ -502,32 +498,54 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *FieldBrowserModel) enterSaveState() tea.Cmd {
-	if len(m.saveTargets) <= 1 {
-		m.saved = true
-		return tea.Quit
-	}
+// enterPickLayer transitions to the layer picker after a field edit is confirmed.
+func (m *FieldBrowserModel) enterPickLayer(fieldPath, value string) tea.Cmd {
+	m.pendingPath = fieldPath
+	m.pendingValue = value
+	m.state = bsStatePickLayer
 
-	m.state = bsStateSave
-	options := make([]FieldOption, len(m.saveTargets))
-	for i, t := range m.saveTargets {
+	options := make([]FieldOption, len(m.layerTargets))
+	for i, t := range m.layerTargets {
 		options[i] = FieldOption{Label: t.Label, Description: t.Description}
 	}
-	m.saveField = NewSelectField("save", "Save changes to:", options, 0)
+	m.layerField = NewSelectField("layer", "Save to:", options, 0)
 	return nil
 }
 
-func (m *FieldBrowserModel) updateSave(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *FieldBrowserModel) updatePickLayer(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(tea.KeyMsg); ok && IsEscape(msg) {
+		// Discard the edit, return to browse.
+		m.pendingPath = ""
+		m.pendingValue = ""
 		m.state = bsStateBrowse
 		return m, nil
 	}
 
 	var cmd tea.Cmd
-	m.saveField, cmd = m.saveField.Update(msg)
-	if m.saveField.IsConfirmed() {
+	m.layerField, cmd = m.layerField.Update(msg)
+	if m.layerField.IsConfirmed() {
+		idx := m.layerField.SelectedIndex()
+		// Persist via callback.
+		if m.onFieldSaved != nil && idx >= 0 && idx < len(m.layerTargets) {
+			if err := m.onFieldSaved(m.pendingPath, m.pendingValue, idx); err != nil {
+				m.lastSaveError = err.Error()
+				m.state = bsStateBrowse
+				return m, nil
+			}
+		}
+		// Update the field's base value so it no longer shows as modified.
+		for i := range m.fields {
+			if m.fields[i].Path == m.pendingPath {
+				m.fields[i].Value = m.pendingValue
+				break
+			}
+		}
+		delete(m.modified, m.pendingPath)
 		m.saved = true
-		return m, tea.Quit
+		m.pendingPath = ""
+		m.pendingValue = ""
+		m.state = bsStateBrowse
+		return m, nil
 	}
 	return m, fbFilterQuit(cmd)
 }
@@ -579,8 +597,8 @@ func (m *FieldBrowserModel) View() string {
 		m.viewBrowse(&b)
 	case bsStateEdit:
 		m.viewEdit(&b)
-	case bsStateSave:
-		b.WriteString(m.saveField.View())
+	case bsStatePickLayer:
+		b.WriteString(m.layerField.View())
 	}
 
 	return b.String()
@@ -635,14 +653,21 @@ func (m *FieldBrowserModel) viewBrowse(b *strings.Builder) {
 		}
 	}
 
-	// Help bar
+	// Status line
 	b.WriteString("\n")
+	if m.lastSaveError != "" {
+		b.WriteString("  ")
+		b.WriteString(iostreams.ErrorStyle.Render("Error: " + m.lastSaveError))
+		b.WriteString("\n")
+	}
 	modified := len(m.modified)
 	if modified > 0 {
 		b.WriteString("  ")
-		b.WriteString(iostreams.MutedStyle.Render(fmt.Sprintf("%d modified", modified)))
+		b.WriteString(iostreams.MutedStyle.Render(fmt.Sprintf("%d saved", modified)))
 		b.WriteString("\n")
 	}
+
+	// Help bar
 	b.WriteString("  ")
 	b.WriteString(iostreams.HelpKeyStyle.Render("←/→"))
 	b.WriteString(iostreams.HelpDescStyle.Render(" tab"))
@@ -652,11 +677,6 @@ func (m *FieldBrowserModel) viewBrowse(b *strings.Builder) {
 	b.WriteString("  ")
 	b.WriteString(iostreams.HelpKeyStyle.Render("enter"))
 	b.WriteString(iostreams.HelpDescStyle.Render(" edit"))
-	if modified > 0 {
-		b.WriteString("  ")
-		b.WriteString(iostreams.HelpKeyStyle.Render("s"))
-		b.WriteString(iostreams.HelpDescStyle.Render(" save"))
-	}
 	b.WriteString("  ")
 	b.WriteString(iostreams.HelpKeyStyle.Render("esc"))
 	b.WriteString(iostreams.HelpDescStyle.Render(" quit"))
@@ -824,21 +844,6 @@ func (m *FieldBrowserModel) viewEdit(b *strings.Builder) {
 	case ekTextarea:
 		b.WriteString(m.taEditor.View())
 	}
-}
-
-// trackModified records a field change only if it differs from the original.
-func (m *FieldBrowserModel) trackModified(path string, newVal string) {
-	for i := range m.fields {
-		if m.fields[i].Path == path {
-			if newVal == m.fields[i].Value {
-				delete(m.modified, path)
-			} else {
-				m.modified[path] = newVal
-			}
-			return
-		}
-	}
-	m.modified[path] = newVal
 }
 
 // ---------------------------------------------------------------------------

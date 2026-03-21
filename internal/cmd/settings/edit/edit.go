@@ -50,7 +50,7 @@ func editRun(_ context.Context, opts *EditOptions) error {
 	}
 
 	store := cfg.SettingsStore()
-	result, err := settingsui.Edit(opts.IOStreams, store)
+	result, err := settingsui.Edit(opts.IOStreams, store, cfg)
 	if err != nil {
 		return err
 	}

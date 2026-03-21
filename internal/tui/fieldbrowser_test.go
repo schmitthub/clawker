@@ -18,15 +18,23 @@ func testBrowserFields() []BrowserField {
 	}
 }
 
-func testBrowserSaveTargets() []BrowserSaveTarget {
-	return []BrowserSaveTarget{
-		{Label: "Original locations", Description: "Save each value to the file it came from"},
-		{Label: "Project local", Description: ".clawker.yaml"},
+func testLayerTargets() []BrowserLayerTarget {
+	return []BrowserLayerTarget{
+		{Label: "Local", Description: ".clawker.yaml"},
+		{Label: "User", Description: "~/.config/clawker/clawker.yaml"},
+	}
+}
+
+func testBrowserConfig() BrowserConfig {
+	return BrowserConfig{
+		Title:        "Test",
+		Fields:       testBrowserFields(),
+		LayerTargets: testLayerTargets(),
 	}
 }
 
 func TestFieldBrowser_BuildsTabs(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+	m := NewFieldBrowser(testBrowserConfig())
 
 	require.Len(t, m.tabs, 2, "should have 2 tabs: build, security")
 	assert.Equal(t, "Build", m.tabs[0].name)
@@ -34,7 +42,7 @@ func TestFieldBrowser_BuildsTabs(t *testing.T) {
 }
 
 func TestFieldBrowser_TabRowStructure(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+	m := NewFieldBrowser(testBrowserConfig())
 
 	// Build tab: image, packages, instructions (no sub-sections)
 	buildTab := m.tabs[0]
@@ -58,7 +66,7 @@ func TestFieldBrowser_TabRowStructure(t *testing.T) {
 }
 
 func TestFieldBrowser_InitialState(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test Editor", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+	m := NewFieldBrowser(testBrowserConfig())
 
 	assert.Equal(t, bsStateBrowse, m.state)
 	assert.Equal(t, 0, m.activeTab)
@@ -68,7 +76,7 @@ func TestFieldBrowser_InitialState(t *testing.T) {
 }
 
 func TestFieldBrowser_TabSwitching(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+	m := NewFieldBrowser(testBrowserConfig())
 
 	assert.Equal(t, 0, m.activeTab)
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
@@ -80,7 +88,7 @@ func TestFieldBrowser_TabSwitching(t *testing.T) {
 }
 
 func TestFieldBrowser_UpDownSkipsHeadings(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+	m := NewFieldBrowser(testBrowserConfig())
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	require.Equal(t, 1, m.activeTab)
 
@@ -100,7 +108,7 @@ func TestFieldBrowser_CancelKeys(t *testing.T) {
 	}
 	for _, key := range keys {
 		t.Run(key.String(), func(t *testing.T) {
-			m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+			m := NewFieldBrowser(testBrowserConfig())
 			updated, cmd := m.Update(key)
 			result := updated.(*FieldBrowserModel)
 			assert.True(t, result.cancelled)
@@ -110,7 +118,7 @@ func TestFieldBrowser_CancelKeys(t *testing.T) {
 }
 
 func TestFieldBrowser_EnterOnReadOnlyStaysInBrowse(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+	m := NewFieldBrowser(testBrowserConfig())
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 
@@ -120,7 +128,7 @@ func TestFieldBrowser_EnterOnReadOnlyStaysInBrowse(t *testing.T) {
 }
 
 func TestFieldBrowser_EnterTransitionsToEdit(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+	m := NewFieldBrowser(testBrowserConfig())
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(*FieldBrowserModel)
 	assert.Equal(t, bsStateEdit, result.state)
@@ -128,7 +136,7 @@ func TestFieldBrowser_EnterTransitionsToEdit(t *testing.T) {
 }
 
 func TestFieldBrowser_EscFromEditReturnsToBrowse(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+	m := NewFieldBrowser(testBrowserConfig())
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -137,51 +145,52 @@ func TestFieldBrowser_EscFromEditReturnsToBrowse(t *testing.T) {
 	assert.Empty(t, result.modified)
 }
 
-func TestFieldBrowser_SaveWithNoModificationsIgnored(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	result := updated.(*FieldBrowserModel)
-	assert.Equal(t, bsStateBrowse, result.state)
+func TestFieldBrowser_EditConfirmShowsLayerPicker(t *testing.T) {
+	var savedPath, savedValue string
+	var savedIdx int
+	cfg := testBrowserConfig()
+	cfg.OnFieldSaved = func(fieldPath, value string, targetIdx int) error {
+		savedPath = fieldPath
+		savedValue = value
+		savedIdx = targetIdx
+		return nil
+	}
+	m := NewFieldBrowser(cfg)
+
+	// Enter edit on build.image (text field).
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, bsStateEdit, m.state)
+
+	// Type a new value and confirm — should show layer picker.
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, bsStatePickLayer, m.state)
+
+	// Confirm the default layer (index 0 = Local).
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.Equal(t, bsStateBrowse, m.state)
+	assert.True(t, m.saved)
+	assert.Equal(t, "build.image", savedPath)
+	assert.Equal(t, 0, savedIdx)
+	assert.NotEmpty(t, savedValue)
 }
 
-func TestFieldBrowser_SaveShowsDialogWithMultipleTargets(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
-	m.modified["build.image"] = "alpine:latest"
+func TestFieldBrowser_EscFromLayerPickerDiscardsEdit(t *testing.T) {
+	m := NewFieldBrowser(testBrowserConfig())
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	result := updated.(*FieldBrowserModel)
-	assert.Equal(t, bsStateSave, result.state)
+	// Enter edit → confirm value → layer picker.
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, bsStatePickLayer, m.state)
 
-	// Confirm selection → saves.
-	updated, cmd := result.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	result = updated.(*FieldBrowserModel)
-	assert.True(t, result.saved)
-	assert.NotNil(t, cmd)
-}
-
-func TestFieldBrowser_SaveAutoWithSingleTarget(t *testing.T) {
-	targets := []BrowserSaveTarget{{Label: "Local", Description: ".clawker.yaml"}}
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: targets})
-	m.modified["build.image"] = "alpine:latest"
-
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	result := updated.(*FieldBrowserModel)
-	assert.True(t, result.saved)
-	assert.NotNil(t, cmd)
-}
-
-func TestFieldBrowser_SaveDirectly(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields()})
-	m.modified["build.image"] = "alpine:latest"
-
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	result := updated.(*FieldBrowserModel)
-	assert.True(t, result.saved)
-	assert.NotNil(t, cmd)
+	// Esc from layer picker → discard, back to browse.
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	assert.Equal(t, bsStateBrowse, m.state)
+	assert.Empty(t, m.modified)
+	assert.False(t, m.saved)
 }
 
 func TestFieldBrowser_ViewRendersTabBar(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+	m := NewFieldBrowser(testBrowserConfig())
 	m.width = 80
 	m.height = 30
 	view := m.View()
@@ -190,7 +199,7 @@ func TestFieldBrowser_ViewRendersTabBar(t *testing.T) {
 }
 
 func TestFieldBrowser_ViewShowsSectionHeadings(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+	m := NewFieldBrowser(testBrowserConfig())
 	m.width = 80
 	m.height = 30
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
@@ -199,7 +208,7 @@ func TestFieldBrowser_ViewShowsSectionHeadings(t *testing.T) {
 }
 
 func TestFieldBrowser_ModifiedFieldShowsAsterisk(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
+	m := NewFieldBrowser(testBrowserConfig())
 	m.modified["build.image"] = "alpine:latest"
 	m.width = 80
 	m.height = 30
@@ -300,20 +309,31 @@ func TestFbFilterQuit_PassesThroughOtherMsgs(t *testing.T) {
 }
 
 func TestFieldBrowser_Result(t *testing.T) {
-	m := NewFieldBrowser(BrowserConfig{Title: "Test", Fields: testBrowserFields(), SaveTargets: testBrowserSaveTargets()})
-	m.modified["build.image"] = "alpine:latest"
+	cfg := testBrowserConfig()
+	cfg.OnFieldSaved = func(fieldPath, value string, targetIdx int) error { return nil }
+	m := NewFieldBrowser(cfg)
 
 	// Not saved yet.
 	r := m.Result()
 	assert.False(t, r.Saved)
-	assert.Equal(t, -1, r.SaveTargetIndex)
 
-	// Trigger save → dialog → confirm.
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// Navigate to docker_socket (bool field, currently "false").
+	m.Update(tea.KeyMsg{Type: tea.KeyRight}) // switch to Security tab
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // enter edit on docker_socket (bool select, default idx=1=false)
+
+	require.Equal(t, bsStateEdit, m.state)
+
+	// Select "true" (move up to index 0) then confirm.
+	m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // confirm → layer picker
+	require.Equal(t, bsStatePickLayer, m.state)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // confirm layer
 
 	r = m.Result()
 	assert.True(t, r.Saved)
-	assert.Equal(t, 0, r.SaveTargetIndex)
-	assert.Equal(t, "alpine:latest", r.Modified["build.image"])
+	// Modified is empty after save — field was persisted and base value updated.
+	assert.Empty(t, r.Modified)
+	// The field's base value should reflect the saved value.
+	assert.Equal(t, "true", m.fields[2].Value) // security.docker_socket
 }

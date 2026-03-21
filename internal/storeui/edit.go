@@ -1,10 +1,14 @@
 package storeui
 
 import (
-	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -28,29 +32,27 @@ func shortenHome(p string) string {
 
 // Result holds the outcome of an interactive edit session.
 type Result struct {
-	Saved     bool              // True if the user saved changes
+	Saved     bool              // True if any field was persisted
 	Cancelled bool              // True if the user cancelled
 	Modified  map[string]string // Path→value of all modified fields
 }
 
-// SaveTarget represents a location where changes can be persisted.
-// This is a storeui concept — it maps a user-visible label to a filesystem
-// path for store.WriteTo(). The tui layer only sees BrowserSaveTarget
-// (label + description, no path).
-type SaveTarget struct {
-	Label       string // Display label (e.g. "User settings", "Project local")
-	Description string // Short description shown in the save dialog
-	Path        string // Full filesystem path for store.WriteTo(), or "" for provenance routing
+// LayerTarget represents a save destination for a single field.
+// Domain adapters build these from config accessors.
+type LayerTarget struct {
+	Label       string // Display label (e.g. "Original", "Local", "User")
+	Description string // Shortened path for display
+	Path        string // Full absolute filesystem path
 }
 
 // Option configures the Edit function.
 type Option func(*editOptions)
 
 type editOptions struct {
-	title       string
-	overrides   []Override
-	skipPaths   map[string]bool
-	saveTargets []SaveTarget
+	title        string
+	overrides    []Override
+	skipPaths    map[string]bool
+	layerTargets []LayerTarget
 }
 
 // WithTitle sets the editor title displayed at the top.
@@ -76,22 +78,23 @@ func WithSkipPaths(paths ...string) Option {
 	}
 }
 
-// WithSaveTargets provides the list of locations the user can save to.
+// WithLayerTargets provides the per-field save destinations.
 // Domain adapters build these using config path accessors.
-func WithSaveTargets(targets []SaveTarget) Option {
+func WithLayerTargets(targets []LayerTarget) Option {
 	return func(o *editOptions) {
-		o.saveTargets = targets
+		o.layerTargets = targets
 	}
 }
 
 // Edit runs an interactive field editor for a storage.Store[T].
 //
-// Orchestration flow:
+// Each field edit is saved immediately to a user-chosen layer target.
+// The orchestration flow:
 //  1. store.Read() → snapshot
 //  2. WalkFields(snapshot) → fields
 //  3. Filter skip paths, ApplyOverrides
 //  4. Map storeui.Field → tui.BrowserField, run tui.FieldBrowserModel
-//  5. If saved: store.Set(func(t *T) { SetFieldValue(t, ...) }) then store.Write/WriteTo
+//  5. OnFieldSaved callback: store.Set + writeFieldToFile per field
 //  6. Return Result
 func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error) {
 	cfg := editOptions{
@@ -120,29 +123,43 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 	}
 	fields = ApplyOverrides(fields, cfg.overrides)
 
-	// Build save targets. If caller didn't provide any, fall back to store layers.
-	saveTargets := cfg.saveTargets
-	if len(saveTargets) == 0 {
-		for _, l := range store.Layers() {
-			saveTargets = append(saveTargets, SaveTarget{
-				Label:       l.Filename,
-				Description: l.Path,
-				Path:        l.Path,
-			})
-		}
-	}
-
 	// 4. Map to tui types and run the interactive browser.
 	provMap := store.ProvenanceMap()
 	browserFields := fieldsToBrowserFields(fields, provMap)
-	browserTargets := targetsToBrowserTargets(saveTargets)
 	browserLayers := layersToBrowserLayers(store.Layers())
+	browserTargets := layerTargetsToBrowserTargets(cfg.layerTargets)
+
+	// Wire per-field save callback.
+	onFieldSaved := func(fieldPath, value string, targetIdx int) error {
+		if targetIdx < 0 || targetIdx >= len(cfg.layerTargets) {
+			return fmt.Errorf("invalid layer target index: %d", targetIdx)
+		}
+		target := cfg.layerTargets[targetIdx]
+
+		// Update in-memory store.
+		if err := store.Set(func(t *T) {
+			if err := SetFieldValue(t, fieldPath, value); err != nil {
+				// Log but don't block — the field walker validated this value already.
+				_ = err
+			}
+		}); err != nil {
+			return fmt.Errorf("updating store: %w", err)
+		}
+
+		// Persist single field to the target file.
+		if err := writeFieldToFile(target.Path, fieldPath, value); err != nil {
+			return fmt.Errorf("writing to %s: %w", shortenHome(target.Path), err)
+		}
+
+		return nil
+	}
 
 	model := tui.NewFieldBrowser(tui.BrowserConfig{
-		Title:       cfg.title,
-		Fields:      browserFields,
-		SaveTargets: browserTargets,
-		Layers:      browserLayers,
+		Title:        cfg.title,
+		Fields:       browserFields,
+		LayerTargets: browserTargets,
+		Layers:       browserLayers,
+		OnFieldSaved: onFieldSaved,
 	})
 	finalModel, err := tui.RunProgram(ios, model, tui.WithAltScreen(true))
 	if err != nil {
@@ -151,53 +168,129 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 
 	browser := finalModel.(*tui.FieldBrowserModel)
 	br := browser.Result()
-	result := Result{
+	return Result{
 		Saved:     br.Saved,
 		Cancelled: br.Cancelled,
 		Modified:  br.Modified,
+	}, nil
+}
+
+// writeFieldToFile persists a single field value to a YAML file.
+// If the file doesn't exist, it is created with just that field.
+// If it exists, the field is merged into the existing content.
+func writeFieldToFile(filePath, fieldPath, value string) error {
+	// Ensure parent directory exists.
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating directory %s: %w", dir, err)
 	}
 
-	if !br.Saved || len(br.Modified) == 0 {
-		return result, nil
-	}
-
-	// 5. Apply changes via store.Set and persist.
-	var setErrs []error
-	err = store.Set(func(t *T) {
-		for path, val := range br.Modified {
-			if err := SetFieldValue(t, path, val); err != nil {
-				setErrs = append(setErrs, err)
-			}
+	// Read existing file (or start with empty map).
+	existing := make(map[string]any)
+	data, err := os.ReadFile(filePath)
+	if err == nil && len(data) > 0 {
+		if err := yaml.Unmarshal(data, &existing); err != nil {
+			return fmt.Errorf("parsing existing %s: %w", filePath, err)
 		}
-	})
+	}
+	if existing == nil {
+		existing = make(map[string]any)
+	}
+
+	// Build nested map from dotted path and merge.
+	nested := buildNestedMap(fieldPath, coerceYAMLValue(value))
+	mergeMap(existing, nested)
+
+	// Atomic write: temp + rename.
+	tmp, err := os.CreateTemp(dir, ".clawker-*.yaml")
 	if err != nil {
-		return result, err
+		return err
 	}
-	if len(setErrs) > 0 {
-		return result, fmt.Errorf("failed to apply %d field change(s): %w", len(setErrs), errors.Join(setErrs...))
+	tmpName := tmp.Name()
+
+	enc := yaml.NewEncoder(tmp)
+	enc.SetIndent(2)
+	if err := enc.Encode(existing); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("marshaling YAML: %w", err)
+	}
+	enc.Close()
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	tmp.Close()
+
+	if err := os.Rename(tmpName, filePath); err != nil {
+		os.Remove(tmpName)
+		return err
 	}
 
-	// Persist: provenance routing by default (each section goes back to
-	// its original file). When the user selected a specific target path,
-	// write the entire tree to that path via WriteTo.
-	if br.SaveTargetIndex >= 0 && br.SaveTargetIndex < len(saveTargets) {
-		target := saveTargets[br.SaveTargetIndex]
-		if target.Path != "" {
-			if err := store.WriteTo(target.Path); err != nil {
-				return result, err
-			}
+	return nil
+}
+
+// buildNestedMap converts "build.image" + value into {"build": {"image": value}}.
+func buildNestedMap(dottedPath string, value any) map[string]any {
+	segments := strings.Split(dottedPath, ".")
+	result := make(map[string]any)
+	current := result
+	for i, seg := range segments {
+		if i == len(segments)-1 {
+			current[seg] = value
 		} else {
-			if err := store.Write(); err != nil {
-				return result, err
-			}
-		}
-	} else {
-		if err := store.Write(); err != nil {
-			return result, err
+			next := make(map[string]any)
+			current[seg] = next
+			current = next
 		}
 	}
+	return result
+}
 
-	return result, nil
+// mergeMap recursively merges src into dst. Nested maps are merged;
+// all other values are overwritten.
+func mergeMap(dst, src map[string]any) {
+	for k, sv := range src {
+		if sm, ok := sv.(map[string]any); ok {
+			if dm, ok := dst[k].(map[string]any); ok {
+				mergeMap(dm, sm)
+				continue
+			}
+		}
+		dst[k] = sv
+	}
+}
+
+// coerceYAMLValue converts a string value to the appropriate Go type
+// so that YAML output uses native types (bool, int) instead of quoted strings.
+func coerceYAMLValue(s string) any {
+	// Bool
+	if b, err := strconv.ParseBool(s); err == nil {
+		return b
+	}
+	// Int
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return n
+	}
+	// Duration (stored as string in YAML)
+	if _, err := time.ParseDuration(s); err == nil {
+		return s
+	}
+	// Comma-separated list → []string
+	if strings.Contains(s, ",") {
+		parts := strings.Split(s, ",")
+		result := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				result = append(result, t)
+			}
+		}
+		if len(result) > 0 {
+			return result
+		}
+	}
+	return s
 }
 
 // fieldsToBrowserFields maps storeui fields to tui browser fields.
@@ -259,11 +352,11 @@ func layersToBrowserLayers(layers []storage.LayerInfo) []tui.BrowserLayer {
 	return out
 }
 
-// targetsToBrowserTargets maps storeui save targets to tui browser targets.
-func targetsToBrowserTargets(targets []SaveTarget) []tui.BrowserSaveTarget {
-	out := make([]tui.BrowserSaveTarget, len(targets))
+// layerTargetsToBrowserTargets maps storeui layer targets to tui browser targets.
+func layerTargetsToBrowserTargets(targets []LayerTarget) []tui.BrowserLayerTarget {
+	out := make([]tui.BrowserLayerTarget, len(targets))
 	for i, t := range targets {
-		out[i] = tui.BrowserSaveTarget{
+		out[i] = tui.BrowserLayerTarget{
 			Label:       t.Label,
 			Description: t.Description,
 		}

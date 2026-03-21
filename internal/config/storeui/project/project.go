@@ -79,62 +79,75 @@ func Overrides() []storeui.Override {
 	}
 }
 
-// SaveTargets builds human-readable save target options from store layers.
-func SaveTargets(store *storage.Store[config.Project]) []storeui.SaveTarget {
-	layers := store.Layers()
-	configDir := config.ConfigDir()
+// LayerTargets builds the per-field save destinations for project config.
+// Targets: Local (CWD dot-file), User (config dir), plus Original if provenance exists.
+// Paths and filenames come from config accessors, never hardcoded.
+func LayerTargets(store *storage.Store[config.Project], cfg config.Config) []storeui.LayerTarget {
+	filename := cfg.ProjectConfigFileName()
 	cwd, _ := os.Getwd()
 
-	targets := make([]storeui.SaveTarget, 0, len(layers)+1)
+	var targets []storeui.LayerTarget
+	seen := make(map[string]bool)
 
-	// With multiple layers, offer provenance routing as the first option.
-	if len(layers) > 1 {
-		targets = append(targets, storeui.SaveTarget{
-			Label:       "Original locations",
-			Description: "Route each section back to the file it came from",
+	// Local: CWD dot-file using dual-placement convention.
+	localPath := resolveLocalPath(cwd, filename)
+	targets = append(targets, storeui.LayerTarget{
+		Label:       "Local",
+		Description: shortenPath(localPath),
+		Path:        localPath,
+	})
+	seen[localPath] = true
+
+	// User: config dir file.
+	userPath := filepath.Join(config.ConfigDir(), filename)
+	if !seen[userPath] {
+		targets = append(targets, storeui.LayerTarget{
+			Label:       "User",
+			Description: shortenPath(userPath),
+			Path:        userPath,
 		})
+		seen[userPath] = true
 	}
 
-	// Add discovered layers with human-readable labels.
-	seenPaths := make(map[string]bool)
-	for _, l := range layers {
-		label, desc := layerLabel(l, configDir, cwd)
-		targets = append(targets, storeui.SaveTarget{
-			Label:       label,
-			Description: desc,
-			Path:        l.Path,
-		})
-		seenPaths[l.Path] = true
-	}
-
-	// Offer user-level config dir even if no file exists there yet.
-	// The user may want to save settings as user-wide defaults.
-	userConfigPath := filepath.Join(configDir, "clawker.yaml")
-	if !seenPaths[userConfigPath] {
-		targets = append(targets, storeui.SaveTarget{
-			Label:       "User config (create)",
-			Description: shortenPath(userConfigPath),
-			Path:        userConfigPath,
-		})
+	// Original: add any discovered layers not already in the list.
+	for _, l := range store.Layers() {
+		if !seen[l.Path] {
+			targets = append(targets, storeui.LayerTarget{
+				Label:       layerLabel(l, config.ConfigDir(), cwd),
+				Description: shortenPath(l.Path),
+				Path:        l.Path,
+			})
+			seen[l.Path] = true
+		}
 	}
 
 	return targets
 }
 
+// resolveLocalPath determines the CWD dot-file path using dual-placement:
+// if .clawker/ dir exists → .clawker/{filename}, otherwise → .{filename}.
+func resolveLocalPath(cwd, filename string) string {
+	clawkerDir := filepath.Join(cwd, ".clawker")
+	if info, err := os.Stat(clawkerDir); err == nil && info.IsDir() {
+		return filepath.Join(clawkerDir, filename)
+	}
+	return filepath.Join(cwd, "."+filename)
+}
+
 // layerLabel produces a human-readable label for a layer based on its path.
-func layerLabel(l storage.LayerInfo, configDir, cwd string) (label, desc string) {
+func layerLabel(l storage.LayerInfo, configDir, cwd string) string {
 	dir := filepath.Dir(l.Path)
 
 	switch {
 	case dir == configDir || strings.HasPrefix(dir, configDir+string(os.PathSeparator)):
-		return "User config", shortenPath(l.Path)
+		return "User"
 	case cwd != "" && dir == cwd:
-		return "Current directory", shortenPath(l.Path)
+		return "Local"
 	case cwd != "" && strings.HasPrefix(dir, cwd+string(os.PathSeparator)):
 		rel, _ := filepath.Rel(cwd, l.Path)
-		return "Local (" + rel + ")", shortenPath(l.Path)
+		return "Local (" + rel + ")"
 	default:
-		return "Project root", shortenPath(l.Path)
+		return "Project"
 	}
 }
 
@@ -154,11 +167,11 @@ func shortenPath(p string) string {
 }
 
 // Edit runs an interactive project config editor.
-func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Project]) (storeui.Result, error) {
+func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Project], cfg config.Config) (storeui.Result, error) {
 	return storeui.Edit(ios, store,
 		storeui.WithTitle("Project Configuration Editor"),
 		storeui.WithOverrides(Overrides()),
-		storeui.WithSaveTargets(SaveTargets(store)),
+		storeui.WithLayerTargets(LayerTargets(store, cfg)),
 	)
 }
 
