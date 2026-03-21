@@ -18,12 +18,15 @@ func testFields() []Field {
 	}
 }
 
-func testLayers() []string {
-	return []string{"clawker.yaml", "clawker.local.yaml"}
+func testSaveTargets() []SaveTarget {
+	return []SaveTarget{
+		{Label: "Project local", Description: ".clawker.yaml", Filename: "clawker.yaml"},
+		{Label: "User settings", Description: "~/.config/clawker/clawker.yaml", Filename: "clawker.yaml"},
+	}
 }
 
 func TestEditorModel_BuildsTabs(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 
 	require.Len(t, m.tabs, 2, "should have 2 tabs: build, security")
 	assert.Equal(t, "Build", m.tabs[0].name)
@@ -31,9 +34,9 @@ func TestEditorModel_BuildsTabs(t *testing.T) {
 }
 
 func TestEditorModel_TabRowStructure(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 
-	// Build tab: image, packages, instructions (no sub-sections, all direct children)
+	// Build tab: image, packages, instructions (no sub-sections)
 	buildTab := m.tabs[0]
 	fieldCount := 0
 	for _, r := range buildTab.rows {
@@ -45,23 +48,17 @@ func TestEditorModel_TabRowStructure(t *testing.T) {
 
 	// Security tab: docker_socket (direct) + Git Credentials heading + forward_ssh
 	secTab := m.tabs[1]
-	assert.True(t, len(secTab.rows) >= 3, "security tab should have heading + fields")
-
-	// First non-heading should be docker_socket (direct child of security)
+	assert.True(t, len(secTab.rows) >= 3)
 	assert.False(t, secTab.rows[0].isHeading)
 	assert.Equal(t, "docker_socket", secTab.rows[0].field.Label)
-
-	// Second row should be the "Git Credentials" heading
 	assert.True(t, secTab.rows[1].isHeading)
 	assert.Equal(t, "Git Credentials", secTab.rows[1].heading)
-
-	// Third should be forward_ssh under that heading
 	assert.False(t, secTab.rows[2].isHeading)
 	assert.Equal(t, "forward_ssh", secTab.rows[2].field.Label)
 }
 
 func TestEditorModel_InitialState(t *testing.T) {
-	m := newEditorModel("Test Editor", testFields(), testLayers())
+	m := newEditorModel("Test Editor", testFields(), testSaveTargets())
 
 	assert.Equal(t, stateBrowse, m.state)
 	assert.Equal(t, 0, m.activeTab)
@@ -71,35 +68,25 @@ func TestEditorModel_InitialState(t *testing.T) {
 }
 
 func TestEditorModel_TabSwitching(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 
 	assert.Equal(t, 0, m.activeTab)
-
-	// Right arrow → next tab
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	assert.Equal(t, 1, m.activeTab)
-
-	// Right again → wraps to first tab
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	assert.Equal(t, 0, m.activeTab)
-
-	// Left arrow → wraps to last tab
 	m.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	assert.Equal(t, 1, m.activeTab)
 }
 
 func TestEditorModel_UpDownSkipsHeadings(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
-
-	// Switch to security tab which has a heading
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	require.Equal(t, 1, m.activeTab)
 
-	// Should start on first field (docker_socket), not the heading
 	secTab := m.tabs[1]
 	assert.False(t, secTab.rows[m.activeRow].isHeading)
 
-	// Navigate down — should skip heading and land on forward_ssh
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	assert.False(t, secTab.rows[m.activeRow].isHeading)
 	assert.Equal(t, "forward_ssh", secTab.rows[m.activeRow].field.Label)
@@ -113,10 +100,9 @@ func TestEditorModel_CancelKeys(t *testing.T) {
 	}
 	for _, key := range keys {
 		t.Run(key.String(), func(t *testing.T) {
-			m := newEditorModel("Test", testFields(), testLayers())
+			m := newEditorModel("Test", testFields(), testSaveTargets())
 			updated, cmd := m.Update(key)
 			result := updated.(*editorModel)
-
 			assert.True(t, result.cancelled)
 			assert.NotNil(t, cmd)
 		})
@@ -124,108 +110,93 @@ func TestEditorModel_CancelKeys(t *testing.T) {
 }
 
 func TestEditorModel_EnterOnReadOnlyStaysInBrowse(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
-
-	// Navigate to the read-only field (instructions, 3rd field in build tab)
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(*editorModel)
-
 	assert.Equal(t, stateBrowse, result.state)
 }
 
 func TestEditorModel_EnterTransitionsToEdit(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
-
-	// First field in first tab is "image" (KindText)
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(*editorModel)
-
 	assert.Equal(t, stateEdit, result.state)
 }
 
 func TestEditorModel_EscFromEditReturnsToBrowse(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	result := updated.(*editorModel)
-
 	assert.Equal(t, stateBrowse, result.state)
 }
 
 func TestEditorModel_SaveWithNoModificationsIgnored(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
-
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	result := updated.(*editorModel)
-
 	assert.Equal(t, stateBrowse, result.state)
 }
 
-func TestEditorModel_SingleLayerAutoSaves(t *testing.T) {
-	m := newEditorModel("Test", testFields(), []string{"clawker.yaml"})
+func TestEditorModel_SingleTargetAutoSaves(t *testing.T) {
+	targets := []SaveTarget{{Label: "Local", Filename: "clawker.yaml"}}
+	m := newEditorModel("Test", testFields(), targets)
 	m.modified["build.image"] = "alpine:latest"
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	result := updated.(*editorModel)
 
 	assert.True(t, result.saved)
-	assert.Equal(t, "clawker.yaml", result.selectedLayer())
+	assert.Equal(t, "clawker.yaml", result.selectedTarget().Filename)
 	assert.NotNil(t, cmd)
 }
 
-func TestEditorModel_MultipleLayersShowsSaveSelect(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
+func TestEditorModel_MultipleTargetsShowsSaveSelect(t *testing.T) {
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 	m.modified["build.image"] = "alpine:latest"
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	result := updated.(*editorModel)
-
 	assert.Equal(t, stateSave, result.state)
 }
 
-func TestEditorModel_ZeroLayersSaveIgnored(t *testing.T) {
+func TestEditorModel_ZeroTargetsSaveIgnored(t *testing.T) {
 	m := newEditorModel("Test", testFields(), nil)
 	m.modified["build.image"] = "alpine:latest"
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	result := updated.(*editorModel)
-
 	assert.Equal(t, stateBrowse, result.state)
 	assert.False(t, result.saved)
 }
 
 func TestEditorModel_ViewRendersTabBar(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 	m.width = 80
 	m.height = 30
 	view := m.View()
-
 	assert.Contains(t, view, "Build")
 	assert.Contains(t, view, "Security")
 }
 
 func TestEditorModel_ViewShowsSectionHeadings(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 	m.width = 80
 	m.height = 30
-
-	// Switch to security tab
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	view := m.View()
-
 	assert.Contains(t, view, "Git Credentials")
 }
 
 func TestEditorModel_ModifiedFieldShowsAsterisk(t *testing.T) {
-	m := newEditorModel("Test", testFields(), testLayers())
+	m := newEditorModel("Test", testFields(), testSaveTargets())
 	m.modified["build.image"] = "alpine:latest"
 	m.width = 80
 	m.height = 30
-
 	view := m.View()
 	assert.Contains(t, view, "* image")
 }

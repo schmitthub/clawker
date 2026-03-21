@@ -58,11 +58,38 @@ func Overrides() []storeui.Override {
 	}
 }
 
+// SaveTargets builds the save target options from store layers.
+// Settings only have a user-scope layer (config dir).
+func SaveTargets(store *storage.Store[config.Settings]) []storeui.SaveTarget {
+	layers := store.Layers()
+	targets := make([]storeui.SaveTarget, 0, len(layers)+1)
+
+	// Add each discovered layer as a target.
+	for _, l := range layers {
+		targets = append(targets, storeui.SaveTarget{
+			Label:       l.Filename,
+			Description: l.Path,
+			Filename:    l.Filename,
+		})
+	}
+
+	// If no layers discovered, add provenance-based write as fallback.
+	if len(targets) == 0 {
+		targets = append(targets, storeui.SaveTarget{
+			Label:       "Default",
+			Description: "Auto-route to original locations",
+		})
+	}
+
+	return targets
+}
+
 // Edit runs an interactive settings editor.
 func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Settings]) (storeui.Result, error) {
 	return storeui.Edit(ios, store,
 		storeui.WithTitle("Settings Editor"),
 		storeui.WithOverrides(Overrides()),
+		storeui.WithSaveTargets(SaveTargets(store)),
 	)
 }
 

@@ -20,6 +20,13 @@ const (
 	stateSave
 )
 
+// SaveTarget represents a location where changes can be persisted.
+type SaveTarget struct {
+	Label       string // Display label (e.g. "User settings", "Project local")
+	Description string // Path or explanation
+	Filename    string // Filename to pass to store.Write(filename), or "" for provenance routing
+}
+
 // tabRow is either a section heading or an editable field within a tab.
 type tabRow struct {
 	isHeading bool
@@ -38,11 +45,11 @@ type tabPage struct {
 var _ tea.Model = (*editorModel)(nil)
 
 type editorModel struct {
-	title    string
-	fields   []Field
-	layers   []string
-	modified map[string]string
-	state    editorState
+	title       string
+	fields      []Field
+	saveTargets []SaveTarget
+	modified    map[string]string
+	state       editorState
 
 	// Tab navigation
 	tabs      []tabPage
@@ -65,13 +72,13 @@ type editorModel struct {
 	height    int
 }
 
-func newEditorModel(title string, fields []Field, layers []string) *editorModel {
+func newEditorModel(title string, fields []Field, saveTargets []SaveTarget) *editorModel {
 	m := &editorModel{
-		title:    title,
-		fields:   fields,
-		layers:   layers,
-		modified: make(map[string]string),
-		state:    stateBrowse,
+		title:       title,
+		fields:      fields,
+		saveTargets: saveTargets,
+		modified:    make(map[string]string),
+		state:       stateBrowse,
 	}
 	m.tabs = m.buildTabs()
 	if len(m.tabs) > 0 {
@@ -379,20 +386,20 @@ func (m *editorModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *editorModel) enterSaveState() tea.Cmd {
-	if len(m.layers) == 0 {
+	if len(m.saveTargets) == 0 {
 		return nil
 	}
-	if len(m.layers) == 1 {
+	if len(m.saveTargets) == 1 {
 		m.saved = true
 		return tea.Quit
 	}
 
 	m.state = stateSave
-	options := make([]tui.FieldOption, len(m.layers))
-	for i, l := range m.layers {
-		options[i] = tui.FieldOption{Label: l}
+	options := make([]tui.FieldOption, len(m.saveTargets))
+	for i, t := range m.saveTargets {
+		options[i] = tui.FieldOption{Label: t.Label, Description: t.Description}
 	}
-	m.saveField = tui.NewSelectField("save", "Save to which config file?", options, 0)
+	m.saveField = tui.NewSelectField("save", "Save changes to:", options, 0)
 	return nil
 }
 
@@ -586,12 +593,16 @@ func (m *editorModel) viewEdit(b *strings.Builder) {
 	}
 }
 
-// selectedLayer returns the filename of the layer the user selected to save to.
-func (m *editorModel) selectedLayer() string {
-	if len(m.layers) == 1 {
-		return m.layers[0]
+// selectedTarget returns the SaveTarget the user chose to save to.
+func (m *editorModel) selectedTarget() SaveTarget {
+	if len(m.saveTargets) == 1 {
+		return m.saveTargets[0]
 	}
-	return m.saveField.Value()
+	idx := m.saveField.SelectedIndex()
+	if idx >= 0 && idx < len(m.saveTargets) {
+		return m.saveTargets[idx]
+	}
+	return SaveTarget{}
 }
 
 // formatTabName capitalizes a yaml key for tab display.

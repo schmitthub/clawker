@@ -17,9 +17,10 @@ type Result struct {
 type Option func(*editOptions)
 
 type editOptions struct {
-	title     string
-	overrides []Override
-	skipPaths map[string]bool
+	title       string
+	overrides   []Override
+	skipPaths   map[string]bool
+	saveTargets []SaveTarget
 }
 
 // WithTitle sets the editor title displayed at the top.
@@ -45,6 +46,14 @@ func WithSkipPaths(paths ...string) Option {
 	}
 }
 
+// WithSaveTargets provides the list of locations the user can save to.
+// Domain adapters build these using config path accessors.
+func WithSaveTargets(targets []SaveTarget) Option {
+	return func(o *editOptions) {
+		o.saveTargets = targets
+	}
+}
+
 // Edit runs an interactive field editor for a storage.Store[T].
 //
 // Flow:
@@ -52,7 +61,7 @@ func WithSkipPaths(paths ...string) Option {
 //  2. WalkFields(snapshot) → fields
 //  3. Filter skip paths, ApplyOverrides
 //  4. tui.RunProgram with editorModel
-//  5. If saved: store.Set(func(t *T) { SetFieldValue(t, ...) }) then store.Write(layer)
+//  5. If saved: store.Set(func(t *T) { SetFieldValue(t, ...) }) then store.Write(target)
 //  6. Return Result
 func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error) {
 	cfg := editOptions{
@@ -81,15 +90,20 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 	}
 	fields = ApplyOverrides(fields, cfg.overrides)
 
-	// Build layer list from store.
-	storeLayerInfos := store.Layers()
-	layers := make([]string, len(storeLayerInfos))
-	for i, l := range storeLayerInfos {
-		layers[i] = l.Filename
+	// Build save targets. If caller didn't provide any, fall back to store layers.
+	saveTargets := cfg.saveTargets
+	if len(saveTargets) == 0 {
+		for _, l := range store.Layers() {
+			saveTargets = append(saveTargets, SaveTarget{
+				Label:       l.Filename,
+				Description: l.Path,
+				Filename:    l.Filename,
+			})
+		}
 	}
 
 	// 4. Run the interactive editor.
-	model := newEditorModel(cfg.title, fields, layers)
+	model := newEditorModel(cfg.title, fields, saveTargets)
 	finalModel, err := tui.RunProgram(ios, model, tui.WithAltScreen(true))
 	if err != nil {
 		return Result{}, err
@@ -109,8 +123,6 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 	// 5. Apply changes via store.Set and persist.
 	err = store.Set(func(t *T) {
 		for path, val := range editor.modified {
-			// SetFieldValue errors are not expected here since the editor only
-			// presents fields that WalkFields discovered. Log and skip on error.
 			_ = SetFieldValue(t, path, val)
 		}
 	})
@@ -118,10 +130,11 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 		return result, err
 	}
 
-	layer := editor.selectedLayer()
-	if layer != "" {
-		err = store.Write(layer)
+	target := editor.selectedTarget()
+	if target.Filename != "" {
+		err = store.Write(target.Filename)
 	} else {
+		// Empty filename = provenance-based routing.
 		err = store.Write()
 	}
 	if err != nil {

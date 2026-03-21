@@ -75,11 +75,40 @@ func Overrides() []storeui.Override {
 	}
 }
 
+// SaveTargets builds the save target options from store layers.
+// Project configs can have multiple layers (CWD, user-level, etc.).
+func SaveTargets(store *storage.Store[config.Project], cfg config.Config) []storeui.SaveTarget {
+	layers := store.Layers()
+	targets := make([]storeui.SaveTarget, 0, len(layers)+1)
+
+	// Always offer provenance-based routing as the first option.
+	if len(layers) > 1 {
+		targets = append(targets, storeui.SaveTarget{
+			Label:       "Original locations",
+			Description: "Save each value to the file it came from",
+		})
+	}
+
+	// Add each discovered layer as a named target.
+	for _, l := range layers {
+		label := l.Filename
+		desc := l.Path
+		targets = append(targets, storeui.SaveTarget{
+			Label:       label,
+			Description: desc,
+			Filename:    l.Filename,
+		})
+	}
+
+	return targets
+}
+
 // Edit runs an interactive project config editor.
-func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Project]) (storeui.Result, error) {
+func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Project], cfg config.Config) (storeui.Result, error) {
 	return storeui.Edit(ios, store,
 		storeui.WithTitle("Project Configuration Editor"),
 		storeui.WithOverrides(Overrides()),
+		storeui.WithSaveTargets(SaveTargets(store, cfg)),
 	)
 }
 
