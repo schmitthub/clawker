@@ -213,7 +213,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |
 | `update.CheckForUpdate` | Background GitHub release check — 24h cached, suppressed in CI/DEV; wired into `Main()` via goroutine + channel |
 | `update.CheckResult` | Returned when newer version available: `CurrentVersion`, `LatestVersion`, `ReleaseURL` |
-| `storeui.Edit[T]` | Generic TUI for browsing/editing `Store[T]` — bridges storage + tui. Domain adapters in `config/storeui/settings` and `config/storeui/project` provide overrides |
+| `storeui.Edit[T]` | Generic orchestrator for browsing/editing `Store[T]` — bridges storage + tui. Owns reflection, overrides, type mapping, read→edit→set→write lifecycle. Delegates presentation to `tui.FieldBrowserModel`. Domain adapters in `config/storeui/settings` and `config/storeui/project` provide overrides |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map (`cfg.ProjectRegistryFileName()`); CRUD/orchestration is owned by `internal/project` |
 | `project.ProjectManager` | Project-layer domain API: registration, resolution, worktree lifecycle. Constructor: `NewProjectManager(cfg, gitFactory)`. `ListWorktrees(ctx)` aggregates across all projects; `Project.ListWorktrees(ctx)` returns enriched state for one project |

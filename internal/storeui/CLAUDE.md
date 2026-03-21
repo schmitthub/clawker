@@ -1,18 +1,18 @@
 # Store UI Package
 
-Generic TUI for browsing and editing `storage.Store[T]` instances. Bridges typed stores (`internal/storage`) and terminal presentation (`internal/tui`).
+Generic orchestration layer for browsing and editing `storage.Store[T]` instances. Bridges typed stores (`internal/storage`) and terminal presentation (`internal/tui`).
 
 ## Architecture
 
 ```
 cmd/settings/edit, cmd/project/edit
   → config/storeui/settings, config/storeui/project  (domain adapters)
-    → internal/storeui                                (generic building blocks)
-      → internal/tui (widgets, RunProgram)
+    → internal/storeui                                (orchestration)
+      → internal/tui (FieldBrowserModel, widgets, RunProgram)
       → internal/storage (Store[T] API)
 ```
 
-**Import boundary**: Imports `bubbletea` for `tea.Model`/`tea.Cmd` (allowed per tui CLAUDE.md). Uses `tui.Is*` key matchers. Styles via `iostreams.*` qualified imports.
+**Import boundary**: storeui does NOT import `bubbletea` or `bubbles` directly. All presentation is delegated to `internal/tui` via generic widget types. storeui owns the reflection-based field discovery, override merging, type mapping, and the read→edit→set→write lifecycle.
 
 ## Files
 
@@ -21,8 +21,7 @@ cmd/settings/edit, cmd/project/edit
 | `field.go` | `FieldKind`, `Field`, `Override`, `ApplyOverrides` — core types |
 | `reflect.go` | `WalkFields(v)` — reflection-based struct walker |
 | `value.go` | `SetFieldValue(v, path, val)` — reverse reflection writer |
-| `editor.go` | `editorModel` — BubbleTea Browse→Edit→Save state machine |
-| `edit.go` | `Edit[T](ios, store, opts...)` — orchestration entry point |
+| `edit.go` | `Edit[T](ios, store, opts...)` — orchestration entry point, `SaveTarget`, `Result` |
 
 ## Public API
 
@@ -35,6 +34,7 @@ type Field struct {
     Path, Label, Description string
     Kind        FieldKind
     Value       string
+    Default     string
     Options     []string
     Validator   func(string) error
     Required, ReadOnly bool
@@ -43,7 +43,7 @@ type Field struct {
 
 type Override struct {
     Path        string
-    Label, Description *string
+    Label, Description, Default *string
     Kind        *FieldKind
     Options     []string
     Validator   func(string) error
@@ -52,6 +52,7 @@ type Override struct {
     Hidden      bool
 }
 
+type SaveTarget struct { Label, Description, Path string }
 type Result struct { Saved, Cancelled bool; Modified map[string]string }
 type Option func(*editOptions)
 ```
@@ -67,6 +68,7 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 func WithTitle(title string) Option
 func WithOverrides(overrides []Override) Option
 func WithSkipPaths(paths ...string) Option
+func WithSaveTargets(targets []SaveTarget) Option
 ```
 
 ## Domain Adapters
@@ -78,14 +80,27 @@ func WithSkipPaths(paths ...string) Option
 
 Each adapter exports `Overrides() []storeui.Override` and `Edit(ios, store) (Result, error)`.
 
+## Data Flow
+
+```
+Edit[T](ios, store, opts...):
+  1. store.Read() → *T snapshot
+  2. WalkFields(snapshot) → []Field (reflection)
+  3. Filter skip paths, ApplyOverrides (domain overrides)
+  4. fieldsToBrowserFields() → []tui.BrowserField (type mapping)
+  5. tui.NewFieldBrowser(cfg) → tui.RunProgram (presentation)
+  6. tui.BrowserResult → store.Set(func(t *T) { SetFieldValue... }) (mutation)
+  7. store.WriteTo(path) or store.Write() (persistence)
+```
+
 ## Key Design Decisions
 
 1. `KindSelect` separated from `KindTriState` — distinct widget semantics
 2. `KindComplex` auto-enforces `ReadOnly` in `ApplyOverrides`
 3. Nil `*struct` recursion in `WalkFields` — produces zero-value fields (domain adapters hide via overrides)
 4. `yamlTagName` re-implemented locally (5-line helper, conscious trade-off vs. storage API change)
-5. `filterQuit` in editor prevents child widget `tea.Quit` from terminating parent
-6. `Edit[T]` calls `tui.RunProgram` directly (not a TUI method) — avoids import cycle
+5. `SaveTarget.Path` maps to `store.WriteTo()` for explicit path targeting; empty path falls back to provenance routing via `store.Write()`
+6. Type mapping between `storeui.FieldKind` and `tui.BrowserFieldKind` happens in `edit.go` — tui knows nothing about storeui types
 
 ## Gotchas
 

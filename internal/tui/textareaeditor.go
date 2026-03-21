@@ -1,4 +1,4 @@
-package storeui
+package tui
 
 import (
 	"strings"
@@ -9,15 +9,16 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
-// textareaEditorModel provides multiline text editing for fields like post_init.
-type textareaEditorModel struct {
+// TextareaEditorModel provides multiline text editing with ctrl+s save and esc cancel.
+type TextareaEditorModel struct {
 	label     string
 	ta        textarea.Model
 	confirmed bool
 	cancelled bool
 }
 
-func newTextareaEditor(label string, value string) textareaEditorModel {
+// NewTextareaEditor creates a multiline text editor with the given label and initial value.
+func NewTextareaEditor(label string, value string) TextareaEditorModel {
 	ta := textarea.New()
 	ta.SetValue(value)
 	ta.Focus()
@@ -37,17 +38,19 @@ func newTextareaEditor(label string, value string) textareaEditorModel {
 	}
 	ta.SetHeight(lines)
 
-	return textareaEditorModel{
+	return TextareaEditorModel{
 		label: label,
 		ta:    ta,
 	}
 }
 
-func (m textareaEditorModel) Init() tea.Cmd {
+// Init returns the textarea blink command.
+func (m TextareaEditorModel) Init() tea.Cmd {
 	return textarea.Blink
 }
 
-func (m textareaEditorModel) Update(msg tea.Msg) (textareaEditorModel, tea.Cmd) {
+// Update handles key messages: ctrl+s saves, esc cancels, everything else delegates.
+func (m TextareaEditorModel) Update(msg tea.Msg) (TextareaEditorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.ta.SetWidth(msg.Width - 4)
@@ -74,7 +77,8 @@ func (m textareaEditorModel) Update(msg tea.Msg) (textareaEditorModel, tea.Cmd) 
 	return m, cmd
 }
 
-func (m textareaEditorModel) View() string {
+// View renders the textarea editor with label, content area, and help bar.
+func (m TextareaEditorModel) View() string {
 	promptStyle := iostreams.PanelTitleStyle
 	mutedStyle := iostreams.MutedStyle
 	helpKeyStyle := iostreams.HelpKeyStyle
@@ -107,6 +111,11 @@ func (m textareaEditorModel) View() string {
 	return b.String()
 }
 
-func (m textareaEditorModel) Value() string     { return m.ta.Value() }
-func (m textareaEditorModel) IsConfirmed() bool { return m.confirmed }
-func (m textareaEditorModel) IsCancelled() bool { return m.cancelled }
+// Value returns the current textarea content.
+func (m TextareaEditorModel) Value() string { return m.ta.Value() }
+
+// IsConfirmed returns true if the user saved.
+func (m TextareaEditorModel) IsConfirmed() bool { return m.confirmed }
+
+// IsCancelled returns true if the user cancelled.
+func (m TextareaEditorModel) IsCancelled() bool { return m.cancelled }

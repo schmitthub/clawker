@@ -1,4 +1,4 @@
-package storeui
+package tui
 
 import (
 	"testing"
@@ -9,17 +9,17 @@ import (
 )
 
 func TestListEditor_ParsesCommaSeparated(t *testing.T) {
-	m := newListEditor("packages", "git, curl, ripgrep")
+	m := NewListEditor("packages", "git, curl, ripgrep")
 	assert.Equal(t, []string{"git", "curl", "ripgrep"}, m.items)
 }
 
 func TestListEditor_EmptyValue(t *testing.T) {
-	m := newListEditor("packages", "")
+	m := NewListEditor("packages", "")
 	assert.Empty(t, m.items)
 }
 
 func TestListEditor_AddItem(t *testing.T) {
-	m := newListEditor("packages", "git")
+	m := NewListEditor("packages", "git")
 
 	// Press 'a' to start adding.
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
@@ -37,7 +37,7 @@ func TestListEditor_AddItem(t *testing.T) {
 }
 
 func TestListEditor_EditItem(t *testing.T) {
-	m := newListEditor("packages", "git, curl")
+	m := NewListEditor("packages", "git, curl")
 
 	// Press 'e' to edit first item.
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
@@ -52,7 +52,7 @@ func TestListEditor_EditItem(t *testing.T) {
 }
 
 func TestListEditor_DeleteItem(t *testing.T) {
-	m := newListEditor("packages", "git, curl, ripgrep")
+	m := NewListEditor("packages", "git, curl, ripgrep")
 
 	// Delete first item.
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
@@ -60,7 +60,7 @@ func TestListEditor_DeleteItem(t *testing.T) {
 }
 
 func TestListEditor_NavigateUpDown(t *testing.T) {
-	m := newListEditor("packages", "a, b, c")
+	m := NewListEditor("packages", "a, b, c")
 	assert.Equal(t, 0, m.cursor)
 
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -75,21 +75,21 @@ func TestListEditor_NavigateUpDown(t *testing.T) {
 }
 
 func TestListEditor_EnterConfirms(t *testing.T) {
-	m := newListEditor("packages", "git")
+	m := NewListEditor("packages", "git")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.True(t, m.IsConfirmed())
 	assert.Equal(t, "git", m.Value())
 }
 
 func TestListEditor_EscConfirms(t *testing.T) {
-	m := newListEditor("packages", "git")
+	m := NewListEditor("packages", "git")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	assert.True(t, m.IsConfirmed())
 	assert.Equal(t, "git", m.Value())
 }
 
 func TestListEditor_EscFromEditReturnsToBrowse(t *testing.T) {
-	m := newListEditor("packages", "git")
+	m := NewListEditor("packages", "git")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
 	require.Equal(t, listEditing, m.state)
 
@@ -99,7 +99,7 @@ func TestListEditor_EscFromEditReturnsToBrowse(t *testing.T) {
 }
 
 func TestListEditor_DeleteLastItemClampsCursor(t *testing.T) {
-	m := newListEditor("packages", "a, b")
+	m := NewListEditor("packages", "a, b")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown}) // cursor = 1
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	assert.Equal(t, 0, m.cursor) // clamped to 0
@@ -107,7 +107,7 @@ func TestListEditor_DeleteLastItemClampsCursor(t *testing.T) {
 }
 
 func TestListEditor_ViewShowsItems(t *testing.T) {
-	m := newListEditor("packages", "git, curl")
+	m := NewListEditor("packages", "git, curl")
 	view := m.View()
 	assert.Contains(t, view, "git")
 	assert.Contains(t, view, "curl")

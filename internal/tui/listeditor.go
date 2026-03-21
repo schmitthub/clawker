@@ -1,4 +1,4 @@
-package storeui
+package tui
 
 import (
 	"strings"
@@ -8,7 +8,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/text"
-	"github.com/schmitthub/clawker/internal/tui"
 )
 
 // listEditorState tracks what the user is doing in the list editor.
@@ -20,9 +19,12 @@ const (
 	listAdding                   // adding a new item at the bottom
 )
 
-// listEditorModel lets the user manage a []string field by navigating,
+// ListEditorModel lets the user manage a string list by navigating,
 // editing, deleting, and adding individual items.
-type listEditorModel struct {
+//
+// Input: a label and a comma-separated string value.
+// Output: Value() returns the edited comma-separated string.
+type ListEditorModel struct {
 	label     string
 	items     []string
 	cursor    int
@@ -34,7 +36,8 @@ type listEditorModel struct {
 	height    int
 }
 
-func newListEditor(label string, value string) listEditorModel {
+// NewListEditor creates a list editor from a label and comma-separated value.
+func NewListEditor(label string, value string) ListEditorModel {
 	var items []string
 	if value != "" {
 		for _, s := range strings.Split(value, ",") {
@@ -49,7 +52,7 @@ func newListEditor(label string, value string) listEditorModel {
 	ti.Focus()
 	ti.Width = 60
 
-	return listEditorModel{
+	return ListEditorModel{
 		label: label,
 		items: items,
 		state: listBrowsing,
@@ -58,11 +61,13 @@ func newListEditor(label string, value string) listEditorModel {
 	}
 }
 
-func (m listEditorModel) Init() tea.Cmd {
+// Init returns nil — no initial command is needed.
+func (m ListEditorModel) Init() tea.Cmd {
 	return nil
 }
 
-func (m listEditorModel) Update(msg tea.Msg) (listEditorModel, tea.Cmd) {
+// Update handles key messages for list browsing and inline editing.
+func (m ListEditorModel) Update(msg tea.Msg) (ListEditorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -80,12 +85,12 @@ func (m listEditorModel) Update(msg tea.Msg) (listEditorModel, tea.Cmd) {
 	return m, nil
 }
 
-func (m listEditorModel) updateBrowsing(msg tea.Msg) (listEditorModel, tea.Cmd) {
+func (m ListEditorModel) updateBrowsing(msg tea.Msg) (ListEditorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
-		case tui.IsEnter(msg), tui.IsEscape(msg):
-			// Both Enter and Esc save changes and return to browse.
+		case IsEnter(msg), IsEscape(msg):
+			// Both Enter and Esc save changes and return to caller.
 			m.confirmed = true
 			return m, nil
 
@@ -93,12 +98,12 @@ func (m listEditorModel) updateBrowsing(msg tea.Msg) (listEditorModel, tea.Cmd) 
 			m.cancelled = true
 			return m, nil
 
-		case tui.IsUp(msg):
+		case IsUp(msg):
 			if m.cursor > 0 {
 				m.cursor--
 			}
 
-		case tui.IsDown(msg):
+		case IsDown(msg):
 			if m.cursor < len(m.items)-1 {
 				m.cursor++
 			}
@@ -128,11 +133,11 @@ func (m listEditorModel) updateBrowsing(msg tea.Msg) (listEditorModel, tea.Cmd) 
 	return m, nil
 }
 
-func (m listEditorModel) updateEditing(msg tea.Msg) (listEditorModel, tea.Cmd) {
+func (m ListEditorModel) updateEditing(msg tea.Msg) (ListEditorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
-		case tui.IsEnter(msg):
+		case IsEnter(msg):
 			val := strings.TrimSpace(m.input.Value())
 			if val != "" {
 				if m.state == listAdding {
@@ -145,7 +150,7 @@ func (m listEditorModel) updateEditing(msg tea.Msg) (listEditorModel, tea.Cmd) {
 			m.state = listBrowsing
 			return m, nil
 
-		case tui.IsEscape(msg):
+		case IsEscape(msg):
 			m.state = listBrowsing
 			return m, nil
 		}
@@ -156,7 +161,8 @@ func (m listEditorModel) updateEditing(msg tea.Msg) (listEditorModel, tea.Cmd) {
 	return m, cmd
 }
 
-func (m listEditorModel) View() string {
+// View renders the list editor with items, inline input, and help bar.
+func (m ListEditorModel) View() string {
 	promptStyle := iostreams.PanelTitleStyle
 	selectedStyle := iostreams.ListItemSelectedStyle
 	mutedStyle := iostreams.MutedStyle
@@ -235,9 +241,12 @@ func (m listEditorModel) View() string {
 }
 
 // Value returns the current items as a comma-separated string.
-func (m listEditorModel) Value() string {
+func (m ListEditorModel) Value() string {
 	return strings.Join(m.items, ", ")
 }
 
-func (m listEditorModel) IsConfirmed() bool { return m.confirmed }
-func (m listEditorModel) IsCancelled() bool { return m.cancelled }
+// IsConfirmed returns true if the user accepted the list.
+func (m ListEditorModel) IsConfirmed() bool { return m.confirmed }
+
+// IsCancelled returns true if the user cancelled editing.
+func (m ListEditorModel) IsCancelled() bool { return m.cancelled }
