@@ -433,10 +433,10 @@ func TestPerformProjectSetup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config file not created: %v", err)
 	}
-	if !strings.Contains(string(content), `image: "debian:latest"`) {
+	if !strings.Contains(string(content), "image: debian:latest") {
 		t.Error("config file missing build image")
 	}
-	if !strings.Contains(string(content), `default_mode: "snapshot"`) {
+	if !strings.Contains(string(content), "default_mode: snapshot") {
 		t.Error("config file missing workspace mode")
 	}
 
@@ -480,12 +480,12 @@ func TestScaffoldProjectConfig(t *testing.T) {
 			buildImage:    "buildpack-deps:bookworm-scm",
 			workspaceMode: "bind",
 			wantContains: []string{
-				`image: "buildpack-deps:bookworm-scm"`,
-				`default_mode: "bind"`,
+				"image: buildpack-deps:bookworm-scm",
+				"default_mode: bind",
 				"docker_socket: false",
 			},
 			wantNotContain: []string{
-				"enable_firewall:", // old flat form should NOT appear
+				"enable_firewall:",
 				"default_image:",
 				"version:",
 				"project:",
@@ -496,8 +496,8 @@ func TestScaffoldProjectConfig(t *testing.T) {
 			buildImage:    "alpine:latest",
 			workspaceMode: "snapshot",
 			wantContains: []string{
-				`image: "alpine:latest"`,
-				`default_mode: "snapshot"`,
+				"image: alpine:latest",
+				"default_mode: snapshot",
 			},
 			wantNotContain: []string{
 				"default_image:",
@@ -550,16 +550,16 @@ func TestScaffoldProjectConfig(t *testing.T) {
 func TestScaffoldProjectConfig_ValidStructure(t *testing.T) {
 	result := scaffoldProjectConfig("debian:latest", "bind")
 
-	// Check it starts with the comment header from DefaultConfigYAML
-	if !strings.HasPrefix(result, "# Clawker") {
-		t.Errorf("scaffoldProjectConfig() should start with '# Clawker', got:\n%s", result[:50])
-	}
-
-	// Check it has proper sections
+	// Check it has proper sections (generated YAML from struct)
 	sections := []string{"build:", "agent:", "workspace:", "security:"}
 	for _, section := range sections {
 		if !strings.Contains(result, section) {
 			t.Errorf("scaffoldProjectConfig() missing section %q", section)
 		}
+	}
+
+	// Includes firewall rules for new projects
+	if !strings.Contains(result, "github.com") {
+		t.Error("scaffoldProjectConfig() should include github.com in firewall rules")
 	}
 }

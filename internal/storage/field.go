@@ -51,6 +51,7 @@ type Field interface {
 	Label() string       // Short human-readable name (from `label` tag or derived from YAML key).
 	Description() string // Help text (from `desc` tag).
 	Default() string     // Default value hint (from `default` tag), may be empty.
+	Required() bool      // Whether this field must have a value (from `required:"true"` tag).
 }
 
 // FieldSet is an ordered, indexed collection of [Field] values.
@@ -72,11 +73,12 @@ type Schema interface {
 
 // field is the unexported concrete implementation of [Field].
 type field struct {
-	path  string
-	kind  FieldKind
-	label string
-	desc  string
-	def   string
+	path     string
+	kind     FieldKind
+	label    string
+	desc     string
+	def      string
+	required bool
 }
 
 func (f *field) Path() string        { return f.path }
@@ -84,6 +86,7 @@ func (f *field) Kind() FieldKind     { return f.kind }
 func (f *field) Label() string       { return f.label }
 func (f *field) Description() string { return f.desc }
 func (f *field) Default() string     { return f.def }
+func (f *field) Required() bool      { return f.required }
 
 // fieldSet is the unexported concrete implementation of [FieldSet].
 type fieldSet struct {
@@ -118,11 +121,11 @@ func (fs *fieldSet) Len() int { return len(fs.fields) }
 
 // NewField creates a [Field] with explicit values. Use this when struct tags
 // are not available (e.g. manually-assembled schemas).
-func NewField(path string, kind FieldKind, label, desc, def string) Field {
+func NewField(path string, kind FieldKind, label, desc, def string, required bool) Field {
 	if path == "" {
 		panic("storage.NewField: path must not be empty")
 	}
-	return &field{path: path, kind: kind, label: label, desc: desc, def: def}
+	return &field{path: path, kind: kind, label: label, desc: desc, def: def, required: required}
 }
 
 // NewFieldSet creates a [FieldSet] from a slice of [Field] values.
@@ -147,6 +150,7 @@ func NewFieldSet(fields []Field) FieldSet {
 //   - `label:"Display Name"` — human-readable label (falls back to YAML key)
 //   - `desc:"Help text"` — field description
 //   - `default:"value"` — default value hint
+//   - `required:"true"` — marks load-bearing fields that must have a value
 //
 // Go type → [FieldKind] mapping:
 //
@@ -209,6 +213,7 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field) {
 		}
 		desc := sf.Tag.Get("desc")
 		def := sf.Tag.Get("default")
+		req := sf.Tag.Get("required") == "true"
 
 		ft := sf.Type
 
@@ -216,7 +221,7 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field) {
 		if ft.Kind() == reflect.Ptr {
 			elem := ft.Elem()
 			if elem.Kind() == reflect.Bool {
-				*fields = append(*fields, &field{path: path, kind: KindBool, label: label, desc: desc, def: def})
+				*fields = append(*fields, &field{path: path, kind: KindBool, label: label, desc: desc, def: def, required: req})
 				continue
 			}
 			if elem.Kind() == reflect.Struct {
@@ -224,26 +229,26 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field) {
 				continue
 			}
 			// Other pointer types → Complex.
-			*fields = append(*fields, &field{path: path, kind: KindComplex, label: label, desc: desc, def: def})
+			*fields = append(*fields, &field{path: path, kind: KindComplex, label: label, desc: desc, def: def, required: req})
 			continue
 		}
 
 		// Non-pointer types.
 		switch {
 		case ft == reflect.TypeFor[time.Duration]():
-			*fields = append(*fields, &field{path: path, kind: KindDuration, label: label, desc: desc, def: def})
+			*fields = append(*fields, &field{path: path, kind: KindDuration, label: label, desc: desc, def: def, required: req})
 
 		case ft.Kind() == reflect.String:
-			*fields = append(*fields, &field{path: path, kind: KindText, label: label, desc: desc, def: def})
+			*fields = append(*fields, &field{path: path, kind: KindText, label: label, desc: desc, def: def, required: req})
 
 		case ft.Kind() == reflect.Bool:
-			*fields = append(*fields, &field{path: path, kind: KindBool, label: label, desc: desc, def: def})
+			*fields = append(*fields, &field{path: path, kind: KindBool, label: label, desc: desc, def: def, required: req})
 
 		case ft.Kind() == reflect.Int, ft.Kind() == reflect.Int64:
-			*fields = append(*fields, &field{path: path, kind: KindInt, label: label, desc: desc, def: def})
+			*fields = append(*fields, &field{path: path, kind: KindInt, label: label, desc: desc, def: def, required: req})
 
 		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String:
-			*fields = append(*fields, &field{path: path, kind: KindStringSlice, label: label, desc: desc, def: def})
+			*fields = append(*fields, &field{path: path, kind: KindStringSlice, label: label, desc: desc, def: def, required: req})
 
 		case ft.Kind() == reflect.Struct:
 			normalizeStruct(ft, path, fields)
@@ -251,7 +256,7 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field) {
 
 		default:
 			// Maps, non-string slices, interfaces, etc. → Complex.
-			*fields = append(*fields, &field{path: path, kind: KindComplex, label: label, desc: desc, def: def})
+			*fields = append(*fields, &field{path: path, kind: KindComplex, label: label, desc: desc, def: def, required: req})
 		}
 	}
 }

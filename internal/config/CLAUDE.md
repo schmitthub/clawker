@@ -13,7 +13,7 @@ Two `storage.Store[T]` instances wrapped by a thin `configImpl`. Replaces Viper.
 - `Store[Project]` — project config (`clawker.yaml`, `clawker.local.yaml`), walk-up + config dir discovery.
 - `Store[Settings]` — user settings (`settings.yaml`), config dir only.
 
-Both stores use `storage.WithDefaults()` to guarantee critical values (firewall, logging, monitoring) are always present, even with no files on disk.
+Both stores use `storage.WithDefaultsFromStruct[T]()` to generate defaults from `default` struct tags on schema types, guaranteeing critical values (firewall, logging, monitoring) are always present, even with no files on disk.
 
 **Precedence** (highest to lowest): project `clawker.yaml` (walk-up: closest to CWD wins) > user `clawker.yaml` in config dir > defaults YAML string.
 
@@ -33,7 +33,7 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 | `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors |
 | `consts.go` | Private constants exposed via `Config` methods. Only export: `Mode` type (`ModeBind`/`ModeSnapshot`) |
 | `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods |
-| `defaults.go` | `defaultProjectYAML`, `defaultSettingsYAML` constants, `requiredFirewallDomains`, scaffold templates |
+| `defaults.go` | Firewall rules (`requiredFirewallDomains`, `requiredFirewallRules`), `NewProjectWithDefaults()`, `NewSettingsWithDefaults()`, `DefaultIgnoreFile` |
 | `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()`, `GetProjectRoot`/`GetProjectIgnoreFile`, path helpers |
 | `config_test.go` | Tests: constructors, defaults, validation, typed mutation, persistence, constants, env var overrides |
 | `mocks/config_mock.go` | moq-generated `ConfigMock` (do not edit) |
@@ -47,6 +47,8 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 func NewConfig() (Config, error)                                // Full production loading (defaults + discovery + merge)
 func NewBlankConfig() (Config, error)                           // Defaults only, no file discovery (test double base)
 func NewFromString(projectYAML, settingsYAML string) (Config, error) // Raw YAML, NO defaults (precise test control)
+func NewProjectWithDefaults() Project                           // Returns Project populated from `default` struct tags
+func NewSettingsWithDefaults() Settings                         // Returns Settings populated from `default` struct tags
 func ConfigDir() string                                         // Config directory path
 func DataDir() string                                           // XDG data dir (~/.local/share/clawker)
 func StateDir() string                                          // XDG state dir (~/.local/state/clawker)
@@ -97,7 +99,7 @@ const ModeSnapshot Mode = "snapshot"
 
 ### Schema Types (schema.go)
 
-`Project` and `Settings` implement `storage.Schema` via `Fields() FieldSet`. All exported leaf fields carry `desc` and `label` struct tags — the single source of truth for field descriptions. CI enforces non-empty descriptions via `TestProjectFields_AllFieldsHaveDescriptions` and `TestSettingsFields_AllFieldsHaveDescriptions`. When adding a new field, always include `desc` and `label` tags.
+`Project` and `Settings` implement `storage.Schema` via `Fields() FieldSet`. All exported leaf fields carry `desc`, `label`, and `default` struct tags — the single source of truth for field metadata. Critical fields also carry `required:"true"`. CI enforces non-empty descriptions via `TestProjectFields_AllFieldsHaveDescriptions` and `TestSettingsFields_AllFieldsHaveDescriptions`. When adding a new field, always include `desc`, `label`, and `default` tags (and `required:"true"` if the field must always have a value).
 
 **Top-level**: `Project`, `Settings`, `LoggingConfig`, `OtelConfig`, `MonitoringConfig`, `TelemetryConfig`, `HostProxyConfig`, `HostProxyManagerConfig`, `HostProxyDaemonConfig`
 

@@ -36,6 +36,7 @@ Write:  node tree → route by provenance → per-file atomic write
 | `write.go` | `structToMap`, `encodeValue`, provenance-based routing, atomic I/O, flock |
 | `resolver.go` | XDG directory resolution: `configDir`, `dataDir`, `stateDir`, `cacheDir` |
 | `field.go` | `Field`, `FieldSet`, `Schema` interfaces, `FieldKind` constants, `NormalizeFields[T]` normalizer, `NewField`, `NewFieldSet` constructors |
+| `defaults.go` | `GenerateDefaultsYAML[T]`, default-tag YAML generation, `parseDefaultValue` |
 | `field_test.go` | Tests for normalizer type mapping, struct tag reading, FieldSet operations, constructors |
 | `storage_test.go` | Comprehensive tests: load, merge, write, provenance, discovery, migrations |
 
@@ -54,6 +55,7 @@ type Field interface {
     Label() string       // Human-readable name (from `label` tag or YAML key)
     Description() string // Help text (from `desc` tag)
     Default() string     // Default value hint (from `default` tag)
+    Required() bool      // Whether the field is required (from `required:"true"` tag)
 }
 
 type FieldSet interface {
@@ -76,6 +78,7 @@ type Schema interface {
 | `label:"Display Name"` | Human-readable label | YAML key |
 | `desc:"Help text"` | Field description | Empty |
 | `default:"value"` | Default value hint | Empty |
+| `required:"true"` | Marks field as required | `false` |
 
 **Constructors:**
 
@@ -85,13 +88,14 @@ func NewFieldSet(fields []Field) FieldSet                                   // B
 func NormalizeFields[T any](v T) FieldSet                                     // Reflect struct tags → FieldSet
 ```
 
-`NormalizeFields` reads struct tags and maps Go types to `FieldKind`. It does NOT extract runtime values. Panics on non-struct input. Handles: nested structs, `*struct`, `*bool`, `time.Duration`, `[]string`, maps (→ KindComplex).
+`NormalizeFields` reads struct tags (including `required:"true"`) and maps Go types to `FieldKind`. It does NOT extract runtime values. Panics on non-struct input. Handles: nested structs, `*struct`, `*bool`, `time.Duration`, `[]string`, maps (→ KindComplex).
 
 ### Constructors
 
 ```go
 func NewStore[T Schema](opts ...Option) (*Store[T], error)   // Full pipeline: discover → load → migrate → merge → deserialize
 func NewFromString[T Schema](raw string) (*Store[T], error)  // Read-only: parse YAML, no discovery/write paths
+func GenerateDefaultsYAML[T Schema]() string                 // Generate YAML from `default` struct tags (replaces hand-written template constants)
 ```
 
 ### Store[T] Methods
@@ -122,7 +126,7 @@ type LayerInfo struct { Filename, Path string }
 
 ### Options (Construction)
 
-`WithFilenames(names...)`, `WithDefaults(yaml)`, `WithWalkUp()`, `WithDirs(dirs...)`, `WithConfigDir()`, `WithDataDir()`, `WithStateDir()`, `WithCacheDir()`, `WithPaths(dirs...)`, `WithMigrations(fns...)`, `WithLock()`
+`WithFilenames(names...)`, `WithDefaults(yaml)`, `WithDefaultsFromStruct[T Schema]()`, `WithWalkUp()`, `WithDirs(dirs...)`, `WithConfigDir()`, `WithDataDir()`, `WithStateDir()`, `WithCacheDir()`, `WithPaths(dirs...)`, `WithMigrations(fns...)`, `WithLock()`
 
 ### Sentinel Errors
 
@@ -160,9 +164,9 @@ Reflection-based serializer ignoring `omitempty`. Every non-nil field is include
 
 ```go
 // internal/config
-projectStore, _ := storage.NewStore[ConfigFile](
+projectStore, _ := storage.NewStore[Project](
     storage.WithFilenames("clawker.yaml", "clawker.local.yaml"),
-    storage.WithDefaults(DefaultConfigYAML),
+    storage.WithDefaultsFromStruct[Project](),
     storage.WithWalkUp(),
     storage.WithConfigDir(),
     storage.WithMigrations(configMigrations...),

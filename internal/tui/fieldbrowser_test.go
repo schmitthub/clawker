@@ -342,8 +342,9 @@ func TestVisibleRows_AccountsForDescriptionHeight(t *testing.T) {
 	// 13 / 2 = 6, but only 5 rows exist, so visible = 5.
 	assert.Equal(t, 5, visible, "should fit all 5 rows in 13 available lines")
 
-	// Shrink terminal: only room for 2 rows (4 lines for 2-line rows).
-	m.height = 11 // 11-7 = 4 lines available
+	// Shrink terminal: visibleLines = max(11-7, 5) = 5 (min-clamped).
+	// Only 2 two-line rows fit in 5 lines, so visibleRows clamps to minimum of 3.
+	m.height = 11
 	visible = m.visibleRows()
 	assert.Equal(t, 3, visible, "should clamp to minimum of 3")
 }

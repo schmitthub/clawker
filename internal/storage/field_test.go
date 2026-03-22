@@ -32,6 +32,11 @@ type fieldTestNested struct {
 	Port int `yaml:"port" label:"Port" desc:"Listening port"`
 }
 
+type fieldTestRequired struct {
+	Host string `yaml:"host" required:"true" default:"localhost" desc:"Hostname"`
+	Port int    `yaml:"port" desc:"Port number"`
+}
+
 type fieldTestTagless struct {
 	NoTag     string `yaml:""`
 	SkipField string `yaml:"-"`
@@ -156,6 +161,27 @@ func TestNormalizeFields_PanicOnNonStruct(t *testing.T) {
 	})
 }
 
+func TestNormalizeFields_RequiredTag(t *testing.T) {
+	fs := NormalizeFields(fieldTestRequired{})
+
+	host := fs.Get("host")
+	require.NotNil(t, host)
+	assert.True(t, host.Required(), "host should be required")
+	assert.Equal(t, "localhost", host.Default())
+
+	port := fs.Get("port")
+	require.NotNil(t, port)
+	assert.False(t, port.Required(), "port should not be required")
+}
+
+func TestNewField_Required(t *testing.T) {
+	f := NewField("a.b", KindText, "A", "desc", "val", true)
+	assert.True(t, f.Required())
+
+	f2 := NewField("c.d", KindText, "C", "desc", "", false)
+	assert.False(t, f2.Required())
+}
+
 func TestNormalizeFields_Int64(t *testing.T) {
 	type withInt64 struct {
 		Count int64 `yaml:"count" desc:"A 64-bit counter"`
@@ -204,7 +230,7 @@ func TestFieldSet_All_PreservesOrder(t *testing.T) {
 
 func TestNewField_PanicOnEmptyPath(t *testing.T) {
 	assert.PanicsWithValue(t, "storage.NewField: path must not be empty", func() {
-		NewField("", KindText, "Label", "desc", "")
+		NewField("", KindText, "Label", "desc", "", false)
 	})
 }
 
@@ -219,8 +245,8 @@ func TestNewFieldSet_Empty(t *testing.T) {
 
 func TestNewFieldSet_PanicOnDuplicatePaths(t *testing.T) {
 	fields := []Field{
-		NewField("a.b", KindText, "A", "", ""),
-		NewField("a.b", KindInt, "B", "", ""),
+		NewField("a.b", KindText, "A", "", "", false),
+		NewField("a.b", KindInt, "B", "", "", false),
 	}
 	assert.PanicsWithValue(t, "storage.NewFieldSet: duplicate field path a.b", func() {
 		NewFieldSet(fields)

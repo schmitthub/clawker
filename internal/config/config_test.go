@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -477,4 +478,64 @@ func TestRequiredFirewallRules(t *testing.T) {
 	// Returned slice is a copy
 	rules[0].Dst = "mutated.com"
 	assert.Equal(t, "api.anthropic.com", cfg.RequiredFirewallRules()[0].Dst)
+}
+
+// --- Generated defaults validation ---
+
+func TestGeneratedDefaults_ProjectValues(t *testing.T) {
+	generated := storage.GenerateDefaultsYAML[Project]()
+	store, err := storage.NewFromString[Project](generated)
+	require.NoError(t, err)
+	p := store.Read()
+
+	assert.Equal(t, []string{"git", "curl", "ripgrep"}, p.Build.Packages)
+	assert.Equal(t, "bind", p.Workspace.DefaultMode)
+	assert.False(t, p.Security.DockerSocket)
+	assert.Equal(t, []string{"NET_ADMIN", "NET_RAW"}, p.Security.CapAdd)
+	assert.True(t, p.Security.HostProxyEnabled())
+
+	require.NotNil(t, p.Agent.ClaudeCode)
+	assert.Equal(t, "copy", p.Agent.ClaudeCode.ConfigStrategy())
+	assert.True(t, p.Agent.ClaudeCode.UseHostAuthEnabled())
+	assert.False(t, p.Agent.SharedDirEnabled())
+
+	require.NotNil(t, p.Security.GitCredentials)
+	assert.True(t, p.Security.GitCredentials.GitHTTPSEnabled(true))
+	assert.True(t, p.Security.GitCredentials.GitSSHEnabled())
+	assert.True(t, p.Security.GitCredentials.GPGEnabled())
+	assert.True(t, p.Security.GitCredentials.CopyGitConfigEnabled())
+}
+
+func TestGeneratedDefaults_SettingsValues(t *testing.T) {
+	generated := storage.GenerateDefaultsYAML[Settings]()
+	store, err := storage.NewFromString[Settings](generated)
+	require.NoError(t, err)
+	s := store.Read()
+
+	// Logging
+	require.NotNil(t, s.Logging.FileEnabled)
+	assert.True(t, *s.Logging.FileEnabled)
+	assert.Equal(t, 50, s.Logging.MaxSizeMB)
+	assert.Equal(t, 7, s.Logging.MaxAgeDays)
+	assert.Equal(t, 3, s.Logging.MaxBackups)
+
+	// OTEL
+	require.NotNil(t, s.Logging.Otel.Enabled)
+	assert.True(t, *s.Logging.Otel.Enabled)
+	assert.Equal(t, 5, s.Logging.Otel.TimeoutSeconds)
+	assert.Equal(t, 2048, s.Logging.Otel.MaxQueueSize)
+
+	// Host Proxy
+	assert.Equal(t, 18374, s.HostProxy.Manager.Port)
+	assert.Equal(t, 18374, s.HostProxy.Daemon.Port)
+
+	// Firewall
+	assert.True(t, s.Firewall.FirewallEnabled())
+
+	// Monitoring
+	assert.Equal(t, 4318, s.Monitoring.OtelCollectorPort)
+	assert.Equal(t, "localhost", s.Monitoring.OtelCollectorHost)
+	assert.Equal(t, "otel-collector", s.Monitoring.OtelCollectorInternal)
+	assert.Equal(t, "/v1/metrics", s.Monitoring.Telemetry.MetricsPath)
+	assert.Equal(t, "/v1/logs", s.Monitoring.Telemetry.LogsPath)
 }

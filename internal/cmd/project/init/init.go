@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
@@ -18,6 +17,7 @@ import (
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // ProjectInitOptions contains the options for the project init command.
@@ -454,18 +454,26 @@ func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, 
 	fmt.Fprintf(ios.Out, "%s Default: %s\n", cs.SuccessIcon(), userConfigPath)
 }
 
-// scaffoldProjectConfig creates the .clawker.yaml content from the canonical template.
-// It inserts the build image and substitutes the workspace mode into DefaultConfigYAML.
+// scaffoldProjectConfig generates a .clawker.yaml from the Project struct
+// populated with default values and the user's wizard selections.
 func scaffoldProjectConfig(buildImage, workspaceMode string) string {
-	s := config.DefaultConfigYAML
-	// Uncomment and set the image line (with fallback if template anchor changes)
-	const imageAnchor = `  #image: "buildpack-deps:bookworm-scm"`
-	if replaced := strings.Replace(s, imageAnchor, `  image: "`+buildImage+`"`, 1); replaced != s {
-		s = replaced
-	} else {
-		s = strings.Replace(s, "build:\n", "build:\n  image: \""+buildImage+"\"\n", 1)
+	p := config.NewProjectWithDefaults()
+	p.Build.Image = buildImage
+	p.Workspace.DefaultMode = workspaceMode
+
+	// Add common firewall domains for new projects.
+	if p.Security.Firewall == nil {
+		p.Security.Firewall = &config.FirewallConfig{}
 	}
-	// Substitute workspace mode
-	s = strings.Replace(s, `  default_mode: "bind"`, `  default_mode: "`+workspaceMode+`"`, 1)
-	return s
+	p.Security.Firewall.AddDomains = []string{"github.com", "api.github.com"}
+	p.Security.Firewall.Rules = []config.EgressRule{
+		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
+	}
+
+	out, err := yaml.Marshal(p)
+	if err != nil {
+		// Programming error — Project is always marshalable.
+		panic("scaffoldProjectConfig: " + err.Error())
+	}
+	return string(out)
 }

@@ -19,7 +19,7 @@ Project commands are the primary user interface for working with the `ProjectMan
 
 ## Subcommands
 
-- `project init` — initialize new project in current directory (creates `.clawker.yaml` dotfile and `cfg.ClawkerIgnoreName()`). Uses TUI wizard for interactive prompts, `scaffoldProjectConfig()` based on `config.DefaultConfigYAML`. Optionally prompts to save as user-level default in configDir.
+- `project init` — initialize new project in current directory (creates `.clawker.yaml` dotfile and `cfg.ClawkerIgnoreName()`). Uses TUI wizard for interactive prompts, `scaffoldProjectConfig()` marshals a struct populated with defaults from `config.NewProjectWithDefaults()`. Optionally prompts to save as user-level default in configDir.
 - `project register` — register existing project in user's registry (`cfg.ProjectRegistryFileName()`)
 - `project list` (alias `ls`) — list all registered projects via `ProjectManager.ListProjects()`. Table output with NAME, ROOT, WORKTREES, STATUS columns. Supports `--format`/`--json`/`-q` flags via `FormatFlags`. Status reflects `ProjectState.Status` (ok, missing, inaccessible).
 - `project info NAME` — show detailed info for a single project via `ProjectManager.ListProjects()`: name, root, directory status, worktrees with health status. Supports `--json` output (no `--format`/`--quiet`).
@@ -95,7 +95,7 @@ Filenames are derived from `cfg.ProjectConfigFileName()` (main + `.local` varian
 
 ## Config Access Pattern
 
-All subcommands use the `config.Config` interface. `project init` uses `config.DefaultConfigYAML` as scaffold template, `config.UserProjectConfigFilePath()` for user-level default, and `project.ProjectManager` for registry.
+All subcommands use the `config.Config` interface. `project init` uses `config.NewProjectWithDefaults()` to populate a struct and marshals it to YAML for scaffolding, `config.UserProjectConfigFilePath()` for user-level default, and `project.ProjectManager` for registry.
 
 ## Testing
 

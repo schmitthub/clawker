@@ -28,7 +28,7 @@ func (p Project) Fields() storage.FieldSet {
 type BuildConfig struct {
 	Image        string              `yaml:"image" label:"Base Image" desc:"Docker base image for the container"`
 	Dockerfile   string              `yaml:"dockerfile,omitempty" label:"Dockerfile" desc:"Custom Dockerfile path (overrides image)"`
-	Packages     []string            `yaml:"packages,omitempty" label:"Packages" desc:"System packages to install"`
+	Packages     []string            `yaml:"packages,omitempty" label:"Packages" desc:"System packages to install" default:"git,curl,ripgrep"`
 	Context      string              `yaml:"context,omitempty" label:"Build Context" desc:"Docker build context directory"`
 	BuildArgs    map[string]string   `yaml:"build_args,omitempty" label:"Build Args" desc:"Docker build arguments"`
 	Instructions *DockerInstructions `yaml:"instructions,omitempty"`
@@ -98,13 +98,13 @@ type InjectConfig struct {
 
 // ClaudeCodeConfigOptions controls how Claude Code config is initialized in containers.
 type ClaudeCodeConfigOptions struct {
-	Strategy string `yaml:"strategy" label:"Strategy" desc:"Config initialization strategy (copy or fresh)"`
+	Strategy string `yaml:"strategy" label:"Strategy" desc:"Config initialization strategy (copy or fresh)" default:"copy"`
 }
 
 // ClaudeCodeConfig controls Claude Code settings and authentication in containers.
 type ClaudeCodeConfig struct {
 	Config      ClaudeCodeConfigOptions `yaml:"config"`
-	UseHostAuth *bool                   `yaml:"use_host_auth,omitempty" label:"Use Host Auth" desc:"Use host authentication credentials"`
+	UseHostAuth *bool                   `yaml:"use_host_auth,omitempty" label:"Use Host Auth" desc:"Use host authentication credentials" default:"true"`
 }
 
 // AgentConfig defines Claude agent-specific settings.
@@ -120,7 +120,7 @@ type AgentConfig struct {
 	Visual          string            `yaml:"visual,omitempty" label:"Visual Editor" desc:"Default visual editor"`
 	Shell           string            `yaml:"shell,omitempty" label:"Shell" desc:"Default shell inside the container"`
 	ClaudeCode      *ClaudeCodeConfig `yaml:"claude_code,omitempty"`
-	EnableSharedDir *bool             `yaml:"enable_shared_dir,omitempty" label:"Enable Shared Dir" desc:"Mount ~/.clawker-share into the container"`
+	EnableSharedDir *bool             `yaml:"enable_shared_dir,omitempty" label:"Enable Shared Dir" desc:"Mount ~/.clawker-share into the container" default:"false"`
 	PostInit        string            `yaml:"post_init,omitempty" label:"Post-Init Script" desc:"Script to run after container initialization"`
 }
 
@@ -150,7 +150,7 @@ func (a *AgentConfig) SharedDirEnabled() bool {
 
 // WorkspaceConfig defines workspace mounting behavior
 type WorkspaceConfig struct {
-	DefaultMode string `yaml:"default_mode" label:"Default Mode" desc:"Workspace mounting mode (bind or snapshot)"`
+	DefaultMode string `yaml:"default_mode" label:"Default Mode" desc:"Workspace mounting mode (bind or snapshot)" default:"bind" required:"true"`
 }
 
 // PathRule defines an HTTP path-level filtering rule for MITM inspection.
@@ -224,9 +224,9 @@ func (f *FirewallConfig) GetFirewallDomains(requiredDomains []string) []string {
 
 type SecurityConfig struct {
 	Firewall        *FirewallConfig       `yaml:"firewall,omitempty"`
-	DockerSocket    bool                  `yaml:"docker_socket" label:"Docker Socket" desc:"Mount Docker socket inside the container"`
-	CapAdd          []string              `yaml:"cap_add,omitempty" label:"Cap Add" desc:"Linux capabilities to add to the container"`
-	EnableHostProxy *bool                 `yaml:"enable_host_proxy,omitempty" label:"Host Proxy" desc:"Enable host proxy for browser auth and credential forwarding"`
+	DockerSocket    bool                  `yaml:"docker_socket" label:"Docker Socket" desc:"Mount Docker socket inside the container" default:"false" required:"true"`
+	CapAdd          []string              `yaml:"cap_add,omitempty" label:"Cap Add" desc:"Linux capabilities to add to the container" default:"NET_ADMIN,NET_RAW"`
+	EnableHostProxy *bool                 `yaml:"enable_host_proxy,omitempty" label:"Host Proxy" desc:"Enable host proxy for browser auth and credential forwarding" default:"true"`
 	GitCredentials  *GitCredentialsConfig `yaml:"git_credentials,omitempty"`
 }
 
@@ -241,10 +241,10 @@ func (s *SecurityConfig) HostProxyEnabled() bool {
 
 // GitCredentialsConfig defines git credential forwarding settings
 type GitCredentialsConfig struct {
-	ForwardHTTPS  *bool `yaml:"forward_https,omitempty" label:"Forward HTTPS" desc:"Enable HTTPS credential forwarding"`
-	ForwardSSH    *bool `yaml:"forward_ssh,omitempty" label:"Forward SSH" desc:"Enable SSH agent forwarding"`
-	ForwardGPG    *bool `yaml:"forward_gpg,omitempty" label:"Forward GPG" desc:"Enable GPG agent forwarding"`
-	CopyGitConfig *bool `yaml:"copy_git_config,omitempty" label:"Copy Git Config" desc:"Copy host .gitconfig into the container"`
+	ForwardHTTPS  *bool `yaml:"forward_https,omitempty" label:"Forward HTTPS" desc:"Enable HTTPS credential forwarding" default:"true"`
+	ForwardSSH    *bool `yaml:"forward_ssh,omitempty" label:"Forward SSH" desc:"Enable SSH agent forwarding" default:"true"`
+	ForwardGPG    *bool `yaml:"forward_gpg,omitempty" label:"Forward GPG" desc:"Enable GPG agent forwarding" default:"true"`
+	CopyGitConfig *bool `yaml:"copy_git_config,omitempty" label:"Copy Git Config" desc:"Copy host .gitconfig into the container" default:"true"`
 }
 
 // GitHTTPSEnabled returns whether HTTPS credential forwarding should be enabled.
@@ -376,7 +376,7 @@ func (s Settings) Fields() storage.FieldSet {
 // FirewallSettings controls global firewall lifecycle in settings.yaml.
 // Per-project rules live in FirewallConfig (clawker.yaml).
 type FirewallSettings struct {
-	Enable *bool `yaml:"enable,omitempty" label:"Enable Firewall" desc:"Global firewall on/off"`
+	Enable *bool `yaml:"enable,omitempty" label:"Enable Firewall" desc:"Global firewall on/off" default:"true" required:"true"`
 }
 
 // FirewallEnabled returns whether the global firewall is enabled.
@@ -396,60 +396,60 @@ type HostProxyConfig struct {
 
 // HostProxyManagerConfig configures the host proxy manager.
 type HostProxyManagerConfig struct {
-	Port int `yaml:"port" label:"Manager Port" desc:"Host proxy manager port"`
+	Port int `yaml:"port" label:"Manager Port" desc:"Host proxy manager port" default:"18374"`
 }
 
 // HostProxyDaemonConfig defines configuration for the host proxy daemon.
 type HostProxyDaemonConfig struct {
-	Port               int           `yaml:"port" label:"Daemon Port" desc:"Host proxy daemon port"`
-	PollInterval       time.Duration `yaml:"poll_interval,omitempty" label:"Poll Interval" desc:"Container health poll interval"`
-	GracePeriod        time.Duration `yaml:"grace_period,omitempty" label:"Grace Period" desc:"Grace period before shutting down idle daemon"`
-	MaxConsecutiveErrs int           `yaml:"max_consecutive_errs,omitempty" label:"Max Consecutive Errors" desc:"Errors before daemon restart"`
+	Port               int           `yaml:"port" label:"Daemon Port" desc:"Host proxy daemon port" default:"18374"`
+	PollInterval       time.Duration `yaml:"poll_interval,omitempty" label:"Poll Interval" desc:"Container health poll interval" default:"30s"`
+	GracePeriod        time.Duration `yaml:"grace_period,omitempty" label:"Grace Period" desc:"Grace period before shutting down idle daemon" default:"60s"`
+	MaxConsecutiveErrs int           `yaml:"max_consecutive_errs,omitempty" label:"Max Consecutive Errors" desc:"Errors before daemon restart" default:"10"`
 }
 
 // LoggingConfig configures file-based logging.
 type LoggingConfig struct {
-	FileEnabled *bool      `yaml:"file_enabled,omitempty" label:"Enable File Logging" desc:"Write log output to a file"`
-	MaxSizeMB   int        `yaml:"max_size_mb,omitempty" label:"Max Log Size (MB)" desc:"Maximum log file size before rotation"`
-	MaxAgeDays  int        `yaml:"max_age_days,omitempty" label:"Max Log Age (days)" desc:"Days to retain old log files"`
-	MaxBackups  int        `yaml:"max_backups,omitempty" label:"Max Backups" desc:"Maximum number of old log files to retain"`
-	Compress    *bool      `yaml:"compress,omitempty" label:"Compress Logs" desc:"Compress rotated log files"`
+	FileEnabled *bool      `yaml:"file_enabled,omitempty" label:"Enable File Logging" desc:"Write log output to a file" default:"true"`
+	MaxSizeMB   int        `yaml:"max_size_mb,omitempty" label:"Max Log Size (MB)" desc:"Maximum log file size before rotation" default:"50"`
+	MaxAgeDays  int        `yaml:"max_age_days,omitempty" label:"Max Log Age (days)" desc:"Days to retain old log files" default:"7"`
+	MaxBackups  int        `yaml:"max_backups,omitempty" label:"Max Backups" desc:"Maximum number of old log files to retain" default:"3"`
+	Compress    *bool      `yaml:"compress,omitempty" label:"Compress Logs" desc:"Compress rotated log files" default:"true"`
 	Otel        OtelConfig `yaml:"otel,omitempty"`
 }
 
 // OtelConfig configures the OTEL zerolog bridge.
 type OtelConfig struct {
-	Enabled               *bool `yaml:"enabled,omitempty" label:"OTEL Logging" desc:"Enable OpenTelemetry log bridge"`
-	TimeoutSeconds        int   `yaml:"timeout_seconds,omitempty" label:"OTEL Timeout (sec)" desc:"OTEL exporter timeout"`
-	MaxQueueSize          int   `yaml:"max_queue_size,omitempty" label:"OTEL Queue Size" desc:"Maximum queued log records"`
-	ExportIntervalSeconds int   `yaml:"export_interval_seconds,omitempty" label:"OTEL Export Interval (sec)" desc:"Seconds between OTEL exports"`
+	Enabled               *bool `yaml:"enabled,omitempty" label:"OTEL Logging" desc:"Enable OpenTelemetry log bridge" default:"true"`
+	TimeoutSeconds        int   `yaml:"timeout_seconds,omitempty" label:"OTEL Timeout (sec)" desc:"OTEL exporter timeout" default:"5"`
+	MaxQueueSize          int   `yaml:"max_queue_size,omitempty" label:"OTEL Queue Size" desc:"Maximum queued log records" default:"2048"`
+	ExportIntervalSeconds int   `yaml:"export_interval_seconds,omitempty" label:"OTEL Export Interval (sec)" desc:"Seconds between OTEL exports" default:"5"`
 }
 
 // MonitoringConfig configures monitoring stack ports and OTEL endpoints.
 type MonitoringConfig struct {
 	OtelCollectorEndpoint string          `yaml:"otel_collector_endpoint,omitempty" label:"OTEL Collector Endpoint" desc:"OTEL collector endpoint URL"`
-	OtelCollectorPort     int             `yaml:"otel_collector_port,omitempty" label:"OTEL Collector Port" desc:"OTEL collector HTTP port"`
-	OtelCollectorHost     string          `yaml:"otel_collector_host,omitempty" label:"OTEL Collector Host" desc:"OTEL collector hostname"`
-	OtelCollectorInternal string          `yaml:"otel_collector_internal,omitempty" label:"OTEL Collector Internal" desc:"Internal OTEL collector address"`
-	OtelGRPCPort          int             `yaml:"otel_grpc_port,omitempty" label:"OTEL gRPC Port" desc:"OTEL collector gRPC port"`
-	LokiPort              int             `yaml:"loki_port,omitempty" label:"Loki Port" desc:"Loki log aggregation port"`
-	PrometheusPort        int             `yaml:"prometheus_port,omitempty" label:"Prometheus Port" desc:"Prometheus metrics port"`
-	JaegerPort            int             `yaml:"jaeger_port,omitempty" label:"Jaeger Port" desc:"Jaeger tracing UI port"`
-	GrafanaPort           int             `yaml:"grafana_port,omitempty" label:"Grafana Port" desc:"Grafana dashboard port"`
-	PrometheusMetricsPort int             `yaml:"prometheus_metrics_port,omitempty" label:"Prometheus Metrics Port" desc:"Prometheus self-metrics port"`
+	OtelCollectorPort     int             `yaml:"otel_collector_port,omitempty" label:"OTEL Collector Port" desc:"OTEL collector HTTP port" default:"4318"`
+	OtelCollectorHost     string          `yaml:"otel_collector_host,omitempty" label:"OTEL Collector Host" desc:"OTEL collector hostname" default:"localhost"`
+	OtelCollectorInternal string          `yaml:"otel_collector_internal,omitempty" label:"OTEL Collector Internal" desc:"Internal OTEL collector address" default:"otel-collector"`
+	OtelGRPCPort          int             `yaml:"otel_grpc_port,omitempty" label:"OTEL gRPC Port" desc:"OTEL collector gRPC port" default:"4317"`
+	LokiPort              int             `yaml:"loki_port,omitempty" label:"Loki Port" desc:"Loki log aggregation port" default:"3100"`
+	PrometheusPort        int             `yaml:"prometheus_port,omitempty" label:"Prometheus Port" desc:"Prometheus metrics port" default:"9090"`
+	JaegerPort            int             `yaml:"jaeger_port,omitempty" label:"Jaeger Port" desc:"Jaeger tracing UI port" default:"16686"`
+	GrafanaPort           int             `yaml:"grafana_port,omitempty" label:"Grafana Port" desc:"Grafana dashboard port" default:"3000"`
+	PrometheusMetricsPort int             `yaml:"prometheus_metrics_port,omitempty" label:"Prometheus Metrics Port" desc:"Prometheus self-metrics port" default:"8889"`
 	Telemetry             TelemetryConfig `yaml:"telemetry,omitempty"`
 }
 
 // TelemetryConfig configures telemetry export paths and intervals.
 type TelemetryConfig struct {
-	MetricsPath            string `yaml:"metrics_path,omitempty" label:"Metrics Path" desc:"Path for metrics export"`
-	LogsPath               string `yaml:"logs_path,omitempty" label:"Logs Path" desc:"Path for logs export"`
-	MetricExportIntervalMs int    `yaml:"metric_export_interval_ms,omitempty" label:"Metric Export Interval (ms)" desc:"Milliseconds between metric exports"`
-	LogsExportIntervalMs   int    `yaml:"logs_export_interval_ms,omitempty" label:"Logs Export Interval (ms)" desc:"Milliseconds between log exports"`
-	LogToolDetails         *bool  `yaml:"log_tool_details,omitempty" label:"Log Tool Details" desc:"Include tool call details in logs"`
-	LogUserPrompts         *bool  `yaml:"log_user_prompts,omitempty" label:"Log User Prompts" desc:"Include user prompts in logs"`
-	IncludeAccountUUID     *bool  `yaml:"include_account_uuid,omitempty" label:"Include Account UUID" desc:"Include account UUID in telemetry"`
-	IncludeSessionID       *bool  `yaml:"include_session_id,omitempty" label:"Include Session ID" desc:"Include session ID in telemetry"`
+	MetricsPath            string `yaml:"metrics_path,omitempty" label:"Metrics Path" desc:"Path for metrics export" default:"/v1/metrics"`
+	LogsPath               string `yaml:"logs_path,omitempty" label:"Logs Path" desc:"Path for logs export" default:"/v1/logs"`
+	MetricExportIntervalMs int    `yaml:"metric_export_interval_ms,omitempty" label:"Metric Export Interval (ms)" desc:"Milliseconds between metric exports" default:"10000"`
+	LogsExportIntervalMs   int    `yaml:"logs_export_interval_ms,omitempty" label:"Logs Export Interval (ms)" desc:"Milliseconds between log exports" default:"5000"`
+	LogToolDetails         *bool  `yaml:"log_tool_details,omitempty" label:"Log Tool Details" desc:"Include tool call details in logs" default:"true"`
+	LogUserPrompts         *bool  `yaml:"log_user_prompts,omitempty" label:"Log User Prompts" desc:"Include user prompts in logs" default:"true"`
+	IncludeAccountUUID     *bool  `yaml:"include_account_uuid,omitempty" label:"Include Account UUID" desc:"Include account UUID in telemetry" default:"true"`
+	IncludeSessionID       *bool  `yaml:"include_session_id,omitempty" label:"Include Session ID" desc:"Include session ID in telemetry" default:"true"`
 }
 
 // ProjectEntry represents a project in the registry.

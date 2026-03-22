@@ -19,7 +19,6 @@ type projectRegistry struct {
 func newRegistryStore() (*storage.Store[config.ProjectRegistry], error) {
 	return storage.NewStore[config.ProjectRegistry](
 		storage.WithFilenames("registry.yaml"),
-		storage.WithDefaults(config.DefaultRegistryYAML),
 		storage.WithDataDir(),
 		storage.WithLock(),
 	)
