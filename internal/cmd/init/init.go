@@ -9,14 +9,15 @@ import (
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	settingsui "github.com/schmitthub/clawker/internal/config/storeui/settings"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 // InitOptions contains the options for the init command.
@@ -194,6 +195,19 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintf(ios.ErrOut, "%s Settings: %s\n", cs.SuccessIcon(), settingsPath)
 
+	// Offer interactive customization via the settings editor.
+	if !opts.Yes && ios.IsInteractive() {
+		prompter := opts.Prompter()
+		customize, promptErr := prompter.Confirm("Customize settings?", false)
+		if promptErr == nil && customize {
+			result, editErr := settingsui.Edit(ios, cfg.SettingsStore(), cfg)
+			if editErr == nil && result.Saved {
+				fmt.Fprintf(ios.ErrOut, "%s Settings updated (%d fields modified)\n",
+					cs.SuccessIcon(), result.SavedCount)
+			}
+		}
+	}
+
 	// Ensure shared directory exists on host for bind-mounting into containers
 	shareDir, err := cfg.ShareSubdir()
 	if err != nil {
@@ -307,27 +321,25 @@ func saveUserProjectConfig(imageTag string) error {
 		return fmt.Errorf("resolving user project config path: %w", err)
 	}
 
-	existing := make(map[string]any)
-	if data, readErr := os.ReadFile(cfgPath); readErr == nil && len(data) > 0 {
-		if err := yaml.Unmarshal(data, &existing); err != nil {
-			return fmt.Errorf("parsing existing %s: %w", cfgPath, err)
-		}
-	}
-
-	build, ok := existing["build"].(map[string]any)
-	if !ok {
-		build = make(map[string]any)
-	}
-	build["image"] = imageTag
-	existing["build"] = build
-
-	encoded, err := yaml.Marshal(existing)
-	if err != nil {
-		return fmt.Errorf("encoding user project config: %w", err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+	dir := filepath.Dir(cfgPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
-	return os.WriteFile(cfgPath, encoded, 0o644)
+
+	store, err := storage.NewStore[config.Project](
+		storage.WithFilenames(filepath.Base(cfgPath)),
+		storage.WithDefaultsFromStruct[config.Project](),
+		storage.WithPaths(dir),
+	)
+	if err != nil {
+		return fmt.Errorf("creating user project config store: %w", err)
+	}
+
+	if err := store.Set(func(p *config.Project) {
+		p.Build.Image = imageTag
+	}); err != nil {
+		return fmt.Errorf("setting build image: %w", err)
+	}
+
+	return store.WriteTo(cfgPath)
 }
