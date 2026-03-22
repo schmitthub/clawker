@@ -7,7 +7,6 @@ import (
 	"io"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
-	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -16,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/signals"
-	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -28,7 +26,6 @@ type ExecOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
-	SocketBridge   func() socketbridge.SocketBridgeManager
 	Logger         func() (*logger.Logger, error)
 
 	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
@@ -52,7 +49,6 @@ func NewCmdExec(f *cmdutil.Factory, runF func(context.Context, *ExecOptions) err
 		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
 		HostProxy:      f.HostProxy,
-		SocketBridge:   f.SocketBridge,
 		Logger:         f.Logger,
 	}
 
@@ -188,15 +184,6 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	if p != nil {
 		gitSetup := workspace.SetupGitCredentials(p.Security.GitCredentials, hostProxyRunning, log)
 		opts.Env = append(opts.Env, gitSetup.Env...)
-	}
-
-	// Ensure socket bridge is running for GPG/SSH forwarding
-	// The bridge may already be running from a prior run/start command
-	if shared.NeedsSocketBridge(p) && opts.SocketBridge != nil {
-		gpgEnabled := p.Security.GitCredentials.GPGEnabled()
-		if err := opts.SocketBridge().EnsureBridge(c.ID, gpgEnabled); err != nil {
-			log.Warn().Err(err).Msg("failed to ensure socket bridge for exec")
-		}
 	}
 
 	// Create exec configuration
