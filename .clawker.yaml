@@ -131,6 +131,7 @@ security:
       - registry.npmjs.org
       - github.com
       - api.github.com
+      - release-assets.githubusercontent.com
     rules:
       - action: allow
         dst: github.com
