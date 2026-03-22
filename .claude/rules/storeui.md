@@ -77,10 +77,11 @@ Add `edit.NewCmdEdit(f, nil)` to the parent command's `AddCommand` list.
 ### Data Flow
 
 ```
-Edit[T](ios, store, opts...):
+Edit[T storage.Schema](ios, store, opts...):
   1. store.Read() → *T snapshot
-  2. WalkFields(snapshot) → []Field via reflection
-  3. ApplyOverrides(fields, overrides) → filtered + customized fields
+  2. WalkFields(snapshot) → []Field via reflection (runtime values)
+  2b. enrichWithSchema(fields, snapshot.Fields()) → replace labels/descriptions/kinds with Schema struct tag metadata
+  3. ApplyOverrides(fields, overrides) → filtered + customized fields (TUI-specific only: Hidden, ReadOnly, Kind, Options)
   4. Map to tui types: fieldsToBrowserFields(), layersToBrowserLayers()
   5. Wire OnFieldSaved callback
   6. tui.NewFieldBrowser(cfg) → tui.RunProgram()

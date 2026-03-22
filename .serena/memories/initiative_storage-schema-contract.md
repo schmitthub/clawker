@@ -13,8 +13,8 @@
 | Task 1: Storage contract foundation — interfaces, types, normalizer | `complete` | opus-4.6 |
 | Task 2: Config schema annotations — struct tags + Schema impl on Project and Settings | `complete` | opus-4.6 |
 | Task 3: Remaining types — Schema impl on EgressRulesFile and ProjectRegistry | `complete` | opus-4.6 |
-| Task 4: Store constraint + storeui refactor — `Store[T Schema]`, consume `Fields()`, slim adapters | `pending` | — |
-| Task 5: Enforcement, documentation, brainstorm wrap-up | `pending` | — |
+| Task 4: Store constraint + storeui refactor — `Store[T Schema]`, consume `Fields()`, slim adapters | `complete` | opus-4.6 |
+| Task 5: Enforcement, documentation, brainstorm wrap-up | `complete` | opus-4.6 |
 
 ## Key Learnings
 

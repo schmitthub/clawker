@@ -97,6 +97,8 @@ const ModeSnapshot Mode = "snapshot"
 
 ### Schema Types (schema.go)
 
+`Project` and `Settings` implement `storage.Schema` via `Fields() FieldSet`. All exported leaf fields carry `desc` and `label` struct tags — the single source of truth for field descriptions. CI enforces non-empty descriptions via `TestProjectFields_AllFieldsHaveDescriptions` and `TestSettingsFields_AllFieldsHaveDescriptions`. When adding a new field, always include `desc` and `label` tags.
+
 **Top-level**: `Project`, `Settings`, `LoggingConfig`, `OtelConfig`, `MonitoringConfig`, `TelemetryConfig`, `HostProxyConfig`, `HostProxyManagerConfig`, `HostProxyDaemonConfig`
 
 **Build**: `BuildConfig`, `DockerInstructions`, `CopyInstruction`, `ExposePort`, `ArgDefinition`, `HealthcheckConfig`, `RunInstruction`, `InjectConfig`
