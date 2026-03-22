@@ -15,14 +15,8 @@ import (
 // Overrides returns field overrides for config.Project.
 // Labels and descriptions come from schema struct tags (desc/label).
 // Overrides here are limited to TUI-specific concerns: Hidden, Kind, Options, ReadOnly.
-// Description overrides are only set when the TUI context adds information
-// beyond the schema (e.g., "(comma-separated)" input hints).
 func Overrides() []storeui.Override {
 	return []storeui.Override{
-		// TUI input hints for comma-separated list fields.
-		{Path: "build.packages", Description: storeui.Ptr("System packages to install (comma-separated)")},
-		{Path: "security.firewall.add_domains", Description: storeui.Ptr("Additional domains to allow through the firewall (comma-separated)")},
-
 		// Build — complex types hidden (prefix-based: hides all children)
 		{Path: "build.build_args", Hidden: true},
 		{Path: "build.instructions", Hidden: true},

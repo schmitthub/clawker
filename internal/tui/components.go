@@ -167,6 +167,23 @@ func RenderLabeledDivider(label string, width int) string {
 	return iostreams.DividerStyle.Render(left) + " " + iostreams.MutedStyle.Render(label) + " " + iostreams.DividerStyle.Render(right)
 }
 
+// RenderLeftLabeledDivider renders a divider with a left-aligned label followed by a trailing rule.
+func RenderLeftLabeledDivider(label string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	labelLen := cltext.CountVisibleWidth(label)
+	if labelLen+2 >= width {
+		return RenderDivider(width)
+	}
+
+	trailWidth := width - labelLen - 1
+	trail := strings.Repeat("\u2500", trailWidth) // ─
+
+	return iostreams.MutedStyle.Render(label) + " " + iostreams.DividerStyle.Render(trail)
+}
+
 // RenderEmptyState renders a centered empty state message.
 func RenderEmptyState(message string, width, height int) string {
 	return iostreams.CenterInRect(iostreams.EmptyStateStyle.Render(message), width, height)

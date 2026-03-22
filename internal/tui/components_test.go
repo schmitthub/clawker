@@ -2,11 +2,13 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
+	cltext "github.com/schmitthub/clawker/internal/text"
 )
 
 func TestRenderHeader(t *testing.T) {
@@ -171,6 +173,24 @@ func TestRenderDivider(t *testing.T) {
 func TestRenderLabeledDivider(t *testing.T) {
 	result := RenderLabeledDivider("Section", 40)
 	assert.Contains(t, result, "Section")
+}
+
+func TestRenderLeftLabeledDivider(t *testing.T) {
+	result := RenderLeftLabeledDivider("Section", 40)
+	stripped := cltext.StripANSI(result)
+	assert.True(t, strings.HasPrefix(stripped, "Section"), "label should be left-aligned, got: %q", stripped)
+	assert.Equal(t, 40, cltext.CountVisibleWidth(stripped), "should fill full width")
+}
+
+func TestRenderLeftLabeledDivider_ZeroWidth(t *testing.T) {
+	assert.Equal(t, "", RenderLeftLabeledDivider("Section", 0))
+}
+
+func TestRenderLeftLabeledDivider_LabelTooWide(t *testing.T) {
+	result := RenderLeftLabeledDivider("Very Long Label", 10)
+	// Falls back to plain divider when label won't fit.
+	stripped := cltext.StripANSI(result)
+	assert.Equal(t, 10, cltext.CountVisibleWidth(stripped))
 }
 
 func TestRenderEmptyState(t *testing.T) {

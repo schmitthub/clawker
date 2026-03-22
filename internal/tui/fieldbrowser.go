@@ -564,13 +564,48 @@ func (m *FieldBrowserModel) ensureVisible() {
 	}
 }
 
-func (m *FieldBrowserModel) visibleRows() int {
+// visibleLines returns the number of terminal lines available for the field list.
+func (m *FieldBrowserModel) visibleLines() int {
 	// Chrome: title(2) + tabbar(2) + status/help(3: newline + optional error + help bar).
 	chrome := 7
 	if len(m.layers) > 0 {
 		chrome += len(m.layers) + 2 // divider + entries
 	}
-	return max(m.height-chrome, 3)
+	return max(m.height-chrome, 5)
+}
+
+// rowLines returns the number of terminal lines a row consumes.
+func rowLines(row browserRow) int {
+	if row.isHeading {
+		return 1
+	}
+	if row.field != nil && row.field.Description != "" {
+		return 2 // label+value line + description line
+	}
+	return 1
+}
+
+// visibleRows returns how many rows fit from scrollOff within the available lines.
+func (m *FieldBrowserModel) visibleRows() int {
+	lines := m.visibleLines()
+	if m.activeTab >= len(m.tabs) {
+		return max(lines, 3)
+	}
+	rows := m.tabs[m.activeTab].rows
+	count := 0
+	used := 0
+	for i := m.scrollOff; i < len(rows); i++ {
+		rl := rowLines(rows[i])
+		if used+rl > lines {
+			break
+		}
+		used += rl
+		count++
+	}
+	if count < 3 {
+		return 3
+	}
+	return count
 }
 
 // ---------------------------------------------------------------------------
@@ -616,7 +651,7 @@ func (m *FieldBrowserModel) viewBrowse(b *strings.Builder) {
 				if w < 10 {
 					w = 40
 				}
-				b.WriteString(RenderLabeledDivider(row.heading, w))
+				b.WriteString(RenderLeftLabeledDivider(row.heading, w))
 				b.WriteString("\n")
 				continue
 			}
@@ -739,6 +774,18 @@ func (m *FieldBrowserModel) renderFieldRow(b *strings.Builder, row browserRow, s
 	if selected && f.Source != "" {
 		b.WriteString("  ")
 		b.WriteString(iostreams.MutedStyle.Render("← " + f.Source))
+	}
+
+	// Show description below the field.
+	if f.Description != "" {
+		b.WriteString("\n")
+		b.WriteString("    ")
+		desc := f.Description
+		maxDesc := m.width - 8
+		if maxDesc > 10 {
+			desc = text.Truncate(desc, maxDesc)
+		}
+		b.WriteString(iostreams.MutedStyle.Render(desc))
 	}
 }
 

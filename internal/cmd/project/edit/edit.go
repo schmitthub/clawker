@@ -55,12 +55,10 @@ func editRun(_ context.Context, opts *EditOptions) error {
 		return err
 	}
 
-	cs := opts.IOStreams.ColorScheme()
 	if result.Saved {
+		cs := opts.IOStreams.ColorScheme()
 		fmt.Fprintf(opts.IOStreams.Out, "%s Project configuration saved (%d fields modified)\n",
 			cs.SuccessIcon(), result.SavedCount)
-	} else if result.Cancelled {
-		fmt.Fprintf(opts.IOStreams.Out, "%s Edit cancelled\n", cs.InfoIcon())
 	}
 
 	return nil
