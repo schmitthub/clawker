@@ -341,9 +341,15 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 		if promptErr == nil && customize {
 			// Reload config to discover the just-written file.
 			freshCfg, cfgErr := config.NewConfig()
-			if cfgErr == nil {
+			if cfgErr != nil {
+				fmt.Fprintf(ios.ErrOut, "%s Could not reload configuration for editing: %s\n",
+					cs.WarningIcon(), cfgErr)
+			} else {
 				result, editErr := projectui.Edit(ios, freshCfg.ProjectStore(), freshCfg)
-				if editErr == nil && result.Saved {
+				if editErr != nil {
+					fmt.Fprintf(ios.ErrOut, "%s Configuration editor failed: %s\n",
+						cs.WarningIcon(), editErr)
+				} else if result.Saved {
 					fmt.Fprintf(ios.Out, "%s Configuration updated (%d fields modified)\n",
 						cs.SuccessIcon(), result.SavedCount)
 				}

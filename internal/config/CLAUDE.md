@@ -47,8 +47,8 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 func NewConfig() (Config, error)                                // Full production loading (defaults + discovery + merge)
 func NewBlankConfig() (Config, error)                           // Defaults only, no file discovery (test double base)
 func NewFromString(projectYAML, settingsYAML string) (Config, error) // Raw YAML, NO defaults (precise test control)
-func NewProjectWithDefaults() Project                           // Returns Project populated from `default` struct tags
-func NewSettingsWithDefaults() Settings                         // Returns Settings populated from `default` struct tags
+func NewProjectWithDefaults() *Project                          // Returns *Project populated from `default` struct tags
+func NewSettingsWithDefaults() *Settings                        // Returns *Settings populated from `default` struct tags
 func ConfigDir() string                                         // Config directory path
 func DataDir() string                                           // XDG data dir (~/.local/share/clawker)
 func StateDir() string                                          // XDG state dir (~/.local/state/clawker)

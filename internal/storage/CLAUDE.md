@@ -83,7 +83,7 @@ type Schema interface {
 **Constructors:**
 
 ```go
-func NewField(path string, kind FieldKind, label, desc, def string) Field  // Manual field creation
+func NewField(path string, kind FieldKind, label, desc, def string, required bool) Field  // Manual field creation
 func NewFieldSet(fields []Field) FieldSet                                   // Build from slice
 func NormalizeFields[T any](v T) FieldSet                                     // Reflect struct tags → FieldSet
 ```

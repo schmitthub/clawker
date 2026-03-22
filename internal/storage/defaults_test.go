@@ -146,26 +146,24 @@ func TestGenerateDefaultsYAML_NestedRoundTrip(t *testing.T) {
 	assert.Equal(t, "auto", snap.Agent.Mode)
 }
 
-func TestWithDefaultsFromStruct_Equivalent(t *testing.T) {
-	// WithDefaultsFromStruct should produce the same YAML as GenerateDefaultsYAML
-	generated := GenerateDefaultsYAML[defaultsTestSimple]()
+func TestWithDefaultsFromStruct_ViaRealStore(t *testing.T) {
+	dir := t.TempDir()
 
-	// Can't directly compare options, but we can verify that both produce
-	// the same store state by constructing stores both ways.
-	store1, err := NewFromString[defaultsTestSimple](generated)
+	// Build a real filesystem-backed store using WithDefaultsFromStruct.
+	store, err := NewStore[defaultsTestSimple](
+		WithFilenames("test.yaml"),
+		WithDefaultsFromStruct[defaultsTestSimple](),
+		WithPaths(dir),
+	)
 	require.NoError(t, err)
 
-	// WithDefaultsFromStruct is used via NewStore which needs filesystem.
-	// Instead, verify the generated string is identical.
-	store2, err := NewFromString[defaultsTestSimple](GenerateDefaultsYAML[defaultsTestSimple]())
-	require.NoError(t, err)
-
-	snap1 := store1.Read()
-	snap2 := store2.Read()
-	assert.Equal(t, snap1.Name, snap2.Name)
-	assert.Equal(t, snap1.Port, snap2.Port)
-	assert.Equal(t, snap1.Verbose, snap2.Verbose)
-	assert.Equal(t, snap1.Tags, snap2.Tags)
+	snap := store.Read()
+	assert.Equal(t, "myapp", snap.Name)
+	assert.Equal(t, 8080, snap.Port)
+	assert.True(t, snap.Verbose)
+	assert.Equal(t, []string{"web", "api"}, snap.Tags)
+	assert.Equal(t, 30*time.Second, snap.Timeout)
+	assert.Empty(t, snap.NoDefault)
 }
 
 func TestParseDefaultValue_EdgeCases(t *testing.T) {
