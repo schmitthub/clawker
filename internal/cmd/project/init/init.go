@@ -11,13 +11,14 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	projectui "github.com/schmitthub/clawker/internal/config/storeui/project"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 // ProjectInitOptions contains the options for the project init command.
@@ -134,8 +135,6 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	}
 
 	configFileName := "." + cfgGateway.ProjectConfigFileName()
-	configPath := filepath.Join(wd, configFileName)
-	plainConfigPath := filepath.Join(wd, cfgGateway.ProjectConfigFileName())
 
 	// Check if configuration already exists via storage layer discovery.
 	configExists := shared.HasLocalProjectConfig(cfgGateway, wd)
@@ -182,18 +181,9 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 			fmt.Fprintf(ios.Out, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
 		}
 
-		// Still offer user-level default from existing config
-		existingContent, readErr := os.ReadFile(configPath)
-		if readErr != nil {
-			existingContent, readErr = os.ReadFile(plainConfigPath)
-			if readErr != nil {
-				log.Debug().Err(readErr).Msg("failed to read existing config for user default offer")
-			}
-		}
-		if readErr == nil {
-			prompter := opts.Prompter()
-			maybeOfferUserDefault(ios, cs, log, prompter, existingContent)
-		}
+		// Still offer user-level default from struct defaults
+		prompter := opts.Prompter()
+		maybeOfferUserDefault(ios, cs, log, prompter)
 		return nil
 	}
 
@@ -293,12 +283,34 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 		Bool("force", opts.Force).
 		Msg("initializing project")
 
-	// Generate config content with collected options
-	configContent := scaffoldProjectConfig(buildImage, workspaceMode)
+	// Create a project store with defaults from struct tags, pointed at CWD.
+	store, err := storage.NewStore[config.Project](
+		storage.WithFilenames(cfgGateway.ProjectConfigFileName()),
+		storage.WithDefaultsFromStruct[config.Project](),
+		storage.WithDirs(wd),
+	)
+	if err != nil {
+		return fmt.Errorf("creating project config store: %w", err)
+	}
 
-	// Create .clawker.yaml (dotfile form)
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", configFileName, err)
+	// Apply wizard selections on top of defaults.
+	if err := store.Set(func(p *config.Project) {
+		p.Build.Image = buildImage
+		p.Workspace.DefaultMode = workspaceMode
+		if p.Security.Firewall == nil {
+			p.Security.Firewall = &config.FirewallConfig{}
+		}
+		p.Security.Firewall.AddDomains = []string{"github.com", "api.github.com"}
+		p.Security.Firewall.Rules = []config.EgressRule{
+			{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
+		}
+	}); err != nil {
+		return fmt.Errorf("setting project config: %w", err)
+	}
+
+	// Persist to dotfile via the store.
+	if err := store.WriteTo(configPath); err != nil {
+		return fmt.Errorf("writing %s: %w", configFileName, err)
 	}
 	log.Debug().Str("file", configPath).Msg("created configuration file")
 
@@ -321,17 +333,30 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 		return fmt.Errorf("could not register project: %w", err)
 	}
 
-	// Offer to save as user-level default if not already present
+	// Offer interactive customization via the project config editor.
 	if !opts.Yes && ios.IsInteractive() {
 		prompter := opts.Prompter()
-		maybeOfferUserDefault(ios, cs, log, prompter, []byte(configContent))
+
+		customize, promptErr := prompter.Confirm("Customize configuration?", false)
+		if promptErr == nil && customize {
+			// Reload config to discover the just-written file.
+			freshCfg, cfgErr := config.NewConfig()
+			if cfgErr == nil {
+				result, editErr := projectui.Edit(ios, freshCfg.ProjectStore(), freshCfg)
+				if editErr == nil && result.Saved {
+					fmt.Fprintf(ios.Out, "%s Configuration updated (%d fields modified)\n",
+						cs.SuccessIcon(), result.SavedCount)
+				}
+			}
+		}
+
+		maybeOfferUserDefault(ios, cs, log, prompter)
 	}
 
 	fmt.Fprintln(ios.Out)
 	fmt.Fprintln(ios.Out, "Next Steps:")
-	fmt.Fprintf(ios.Out, "  1. Review and customize %s\n", configFileName)
-	fmt.Fprintf(ios.Out, "  2. Run 'clawker build' to build your project's container image\n")
-	fmt.Fprintf(ios.Out, "  3. Run 'clawker run -it --agent <agent-name> @' to start an interactive shell in the container\n")
+	fmt.Fprintf(ios.Out, "  1. Run 'clawker build' to build your project's container image\n")
+	fmt.Fprintf(ios.Out, "  2. Run 'clawker run -it --agent <agent-name> @' to start an interactive shell in the container\n")
 	return nil
 }
 
@@ -426,8 +451,8 @@ func resolveImageFromWizard(values tui.WizardValues) string {
 }
 
 // maybeOfferUserDefault checks if a user-level clawker.yaml exists in configDir.
-// If it doesn't, prompts the user to save the given content as their default.
-func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, log *logger.Logger, prompter *prompterpkg.Prompter, content []byte) {
+// If it doesn't, prompts the user to save defaults as their user-level config.
+func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, log *logger.Logger, prompter *prompterpkg.Prompter) {
 	userConfigPath, pathErr := config.UserProjectConfigFilePath()
 	if pathErr != nil {
 		return
@@ -442,38 +467,30 @@ func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, 
 	if promptErr != nil || !saveDefault {
 		return
 	}
+
+	// Write defaults via a store — same struct-tag-driven defaults used everywhere.
 	dir := filepath.Dir(userConfigPath)
 	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
 		log.Debug().Err(mkErr).Msg("failed to create config dir for user defaults")
 		return
 	}
-	if writeErr := os.WriteFile(userConfigPath, content, 0644); writeErr != nil {
-		log.Debug().Err(writeErr).Msg("failed to write user-level default config")
+	store, err := storage.NewStore[config.Project](
+		storage.WithFilenames(filepath.Base(userConfigPath)),
+		storage.WithDefaultsFromStruct[config.Project](),
+		storage.WithPaths(dir),
+	)
+	if err != nil {
+		log.Debug().Err(err).Msg("failed to create default config store")
+		return
+	}
+	// Mark dirty so Write persists the defaults.
+	if err := store.Set(func(_ *config.Project) {}); err != nil {
+		log.Debug().Err(err).Msg("failed to prepare default config")
+		return
+	}
+	if err := store.WriteTo(userConfigPath); err != nil {
+		log.Debug().Err(err).Msg("failed to write user-level default config")
 		return
 	}
 	fmt.Fprintf(ios.Out, "%s Default: %s\n", cs.SuccessIcon(), userConfigPath)
-}
-
-// scaffoldProjectConfig generates a .clawker.yaml from the Project struct
-// populated with default values and the user's wizard selections.
-func scaffoldProjectConfig(buildImage, workspaceMode string) string {
-	p := config.NewProjectWithDefaults()
-	p.Build.Image = buildImage
-	p.Workspace.DefaultMode = workspaceMode
-
-	// Add common firewall domains for new projects.
-	if p.Security.Firewall == nil {
-		p.Security.Firewall = &config.FirewallConfig{}
-	}
-	p.Security.Firewall.AddDomains = []string{"github.com", "api.github.com"}
-	p.Security.Firewall.Rules = []config.EgressRule{
-		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
-	}
-
-	out, err := yaml.Marshal(p)
-	if err != nil {
-		// Programming error — Project is always marshalable.
-		panic("scaffoldProjectConfig: " + err.Error())
-	}
-	return string(out)
 }

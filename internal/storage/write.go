@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
@@ -191,6 +192,17 @@ func encodeValue(v reflect.Value) any {
 	}
 }
 
+// marshalYAML encodes a value as YAML with 2-space indentation.
+func marshalYAML(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // atomicWrite writes data to path using a temp-file + fsync + rename
 // strategy. The temp file is created in the target's parent directory
 // to guarantee same-filesystem rename semantics.
@@ -269,7 +281,7 @@ func writeToPath(path string, fields map[string]any, lock bool) error {
 		// Merge fields into existing content.
 		maps.Copy(existing, fields)
 
-		encoded, err := yaml.Marshal(existing)
+		encoded, err := marshalYAML(existing)
 		if err != nil {
 			return fmt.Errorf("storage: encoding %s: %w", path, err)
 		}
