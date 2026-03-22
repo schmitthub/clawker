@@ -9,8 +9,6 @@ import (
 
 // FieldKind classifies a configuration field's data type for schema consumers
 // (TUI editors, doc generators, CLI help).
-//
-// storeui.FieldKind is a type alias for this type.
 type FieldKind int
 
 const (
@@ -157,7 +155,6 @@ func NewFieldSet(fields []Field) FieldSet {
 //   - int, int64 → KindInt
 //   - []string → KindStringSlice
 //   - time.Duration → KindDuration
-//   - *bool → KindBool
 //   - struct, *struct → recursed (not a leaf field)
 //   - *T (all other pointers), map, non-string slice → KindComplex
 //

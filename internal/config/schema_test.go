@@ -23,6 +23,13 @@ func TestSettingsFields_AllFieldsHaveDescriptions(t *testing.T) {
 	}
 }
 
+func TestProjectRegistryFields_AllFieldsHaveDescriptions(t *testing.T) {
+	fs := ProjectRegistry{}.Fields()
+	for _, f := range fs.All() {
+		assert.NotEmptyf(t, f.Description(), "field %q has no desc tag", f.Path())
+	}
+}
+
 // --- Parity with storeui.WalkFields ---
 // TODO: Remove when storeui.WalkFields is deprecated (Task 4 of storage-schema-contract initiative).
 

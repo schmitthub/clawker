@@ -552,15 +552,21 @@ func (m *FieldBrowserModel) updatePickLayer(msg tea.Msg) (tea.Model, tea.Cmd) {
 // ---------------------------------------------------------------------------
 
 func (m *FieldBrowserModel) ensureVisible() {
-	visible := m.visibleRows()
-	if visible <= 0 {
-		return
-	}
-	if m.activeRow < m.scrollOff {
-		m.scrollOff = m.activeRow
-	}
-	if m.activeRow >= m.scrollOff+visible {
-		m.scrollOff = m.activeRow - visible + 1
+	// Iterate to convergence: visibleRows() depends on scrollOff (variable-height
+	// rows mean the count changes with the starting position). Three iterations
+	// is sufficient — each adjustment moves scrollOff closer to activeRow.
+	for range 3 {
+		visible := m.visibleRows()
+		if visible <= 0 {
+			return
+		}
+		if m.activeRow < m.scrollOff {
+			m.scrollOff = m.activeRow
+		} else if m.activeRow >= m.scrollOff+visible {
+			m.scrollOff = max(m.activeRow-visible+1, 0)
+		} else {
+			return // active row is visible
+		}
 	}
 }
 
@@ -782,9 +788,10 @@ func (m *FieldBrowserModel) renderFieldRow(b *strings.Builder, row browserRow, s
 		b.WriteString("    ")
 		desc := f.Description
 		maxDesc := m.width - 8
-		if maxDesc > 10 {
-			desc = text.Truncate(desc, maxDesc)
+		if maxDesc < 10 {
+			maxDesc = 10
 		}
+		desc = text.Truncate(desc, maxDesc)
 		b.WriteString(iostreams.MutedStyle.Render(desc))
 	}
 }

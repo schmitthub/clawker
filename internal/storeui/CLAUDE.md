@@ -81,8 +81,8 @@ func Ptr[T any](v T) *T                                 // Pointer helper for Ov
 
 | Package | Schema | Purpose |
 |---------|--------|---------|
-| `config/storeui/settings` | `config.Settings` | Labels, host_proxy read-only |
-| `config/storeui/project` | `config.Project` | Labels, complex types hidden, workspace mode as Select |
+| `config/storeui/settings` | `config.Settings` | host_proxy read-only |
+| `config/storeui/project` | `config.Project` | complex types hidden, workspace mode as Select |
 
 Each adapter exports `Overrides() []storeui.Override`, `LayerTargets(store, cfg) []storeui.LayerTarget`, and `Edit(ios, store, cfg) (storeui.Result, error)`.
 

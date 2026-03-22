@@ -29,7 +29,7 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 | `RenderBadge(text, ...func(string) string)` | Inline badge |
 | `RenderCountBadge(count, label)` | Count with label |
 | `RenderProgress(ProgressConfig)` | Text "3/10" or visual bar |
-| `RenderDivider(width)`, `RenderLabeledDivider(label, width)` | Horizontal rules |
+| `RenderDivider(width)`, `RenderLabeledDivider(label, width)`, `RenderLeftLabeledDivider(label, width)` | Horizontal rules |
 | `RenderEmptyState(message, w, h)`, `RenderError(err, width)` | State displays |
 | `RenderLabelValue`, `RenderKeyValueTable`, `RenderTable` | Key-value and tabular |
 | `RenderPercentage(float64)`, `RenderBytes(int64)` | Color-coded percentage, human bytes |

@@ -85,7 +85,7 @@ Edit[T storage.Schema](ios, store, opts...):
   4. Map to tui types: fieldsToBrowserFields(), layersToBrowserLayers()
   5. Wire OnFieldSaved callback
   6. tui.NewFieldBrowser(cfg) → tui.RunProgram()
-  7. Return Result{Saved, Cancelled, Modified}
+  7. Return Result{Saved, Cancelled, SavedCount}
 ```
 
 ### Per-Field Save Flow
@@ -93,9 +93,9 @@ Edit[T storage.Schema](ios, store, opts...):
 When a user edits a field and picks a save target:
 
 1. `store.Set(func(t *T) { SetFieldValue(t, fieldPath, value) })` — update in-memory
-2. `writeFieldToFile(targetPath, fieldPath, value)` — persist single field to the chosen file
+2. `writeFieldToFile(targetPath, fieldPath, value, kind)` — persist single field to the chosen file
 
-`writeFieldToFile` reads existing YAML (or starts empty), builds a nested map from the dotted path, merges it into the existing map, and writes atomically (temp + rename). Values are coerced to appropriate YAML types (bool, int, `[]string`) via `coerceYAMLValue`.
+`writeFieldToFile` reads existing YAML (or starts empty), builds a nested map from the dotted path, merges it into the existing map, and writes atomically (temp + rename). Values are coerced to appropriate YAML types (bool, int, `[]string`) via `typedYAMLValue`.
 
 ### Field Discovery (WalkFields)
 
