@@ -190,7 +190,7 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		if storeErr != nil {
 			log.Debug().Err(storeErr).Msg("failed to load existing config for user default offer")
 		} else {
-			maybeOfferUserDefault(ios, cs, log, prompter, existingStore)
+			offerUserDefault(ios, cs, log, prompter, existingStore)
 		}
 		return nil
 	}
@@ -373,7 +373,7 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 		if storeErr != nil {
 			log.Debug().Err(storeErr).Msg("failed to reload project config for user default offer")
 		} else {
-			maybeOfferUserDefault(ios, cs, log, prompter, projectStore)
+			offerUserDefault(ios, cs, log, prompter, projectStore)
 		}
 	}
 
@@ -474,10 +474,10 @@ func resolveImageFromWizard(values tui.WizardValues) string {
 	return intbuild.FlavorToImage(values["flavor"])
 }
 
-// maybeOfferUserDefault checks if a user-level clawker.yaml exists in configDir.
+// offerUserDefault checks if a user-level clawker.yaml exists in configDir.
 // If it doesn't, prompts the user to save the project config as their user-level default.
 // The sourceStore should contain the user's wizard selections and any storeui edits.
-func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, log *logger.Logger, prompter *prompterpkg.Prompter, sourceStore *storage.Store[config.Project]) {
+func offerUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, log *logger.Logger, prompter *prompterpkg.Prompter, sourceStore *storage.Store[config.Project]) {
 	userConfigPath, pathErr := config.UserProjectConfigFilePath()
 	if pathErr != nil {
 		return
