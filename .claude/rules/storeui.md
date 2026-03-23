@@ -166,6 +166,7 @@ Multiline text editor wrapping `bubbles/textarea`.
 |--------|---------|
 | `store.Read()` | Get immutable `*T` snapshot |
 | `store.Set(func(*T))` | Mutate in-memory via closure |
+| `store.DeleteKey(path)` | Remove a dotted path from tree + re-publish snapshot |
 | `store.Layers()` | All discovered layers (for layer breakdown display) |
 | `store.Provenance(path)` | Which layer won a specific field |
 | `store.ProvenanceMap()` | All fields → source file paths |

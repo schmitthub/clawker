@@ -187,12 +187,33 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		return nil
 	}
 
+	// Wire per-field delete callback.
+	onFieldDeleted := func(fieldPath string, targetIdx int) error {
+		if targetIdx < 0 || targetIdx >= len(cfg.layerTargets) {
+			return fmt.Errorf("invalid layer target index: %d", targetIdx)
+		}
+		target := cfg.layerTargets[targetIdx]
+
+		// Remove from the in-memory store tree.
+		if _, err := store.DeleteKey(fieldPath); err != nil {
+			return fmt.Errorf("deleting from store: %w", err)
+		}
+
+		// Remove from the target file.
+		if err := deleteFieldFromFile(target.Path, fieldPath); err != nil {
+			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
+		}
+
+		return nil
+	}
+
 	model := tui.NewFieldBrowser(tui.BrowserConfig{
-		Title:        cfg.title,
-		Fields:       browserFields,
-		LayerTargets: browserTargets,
-		Layers:       browserLayers,
-		OnFieldSaved: onFieldSaved,
+		Title:          cfg.title,
+		Fields:         browserFields,
+		LayerTargets:   browserTargets,
+		Layers:         browserLayers,
+		OnFieldSaved:   onFieldSaved,
+		OnFieldDeleted: onFieldDeleted,
 	})
 	finalModel, err := tui.RunProgram(ios, model, tui.WithAltScreen(true))
 	if err != nil {
@@ -299,6 +320,102 @@ func writeFieldToFile(filePath, fieldPath, value string, kind FieldKind) error {
 	}
 
 	return nil
+}
+
+// deleteFieldFromFile removes a single field from a YAML file by dotted path.
+// If the parent map becomes empty after deletion, it is also removed (recursively).
+// If the file becomes empty after deletion, it is left as an empty file.
+func deleteFieldFromFile(filePath, fieldPath string) error {
+	// Read existing file.
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // Nothing to delete from a non-existent file.
+		}
+		return fmt.Errorf("reading %s: %w", filePath, err)
+	}
+
+	existing := make(map[string]any)
+	if len(data) > 0 {
+		if err := yaml.Unmarshal(data, &existing); err != nil {
+			return fmt.Errorf("parsing %s: %w", filePath, err)
+		}
+	}
+	if len(existing) == 0 {
+		return nil // Nothing to delete.
+	}
+
+	// Walk the dotted path and delete the leaf key.
+	if !deleteMapPath(existing, strings.Split(fieldPath, ".")) {
+		return nil // Key not found — nothing to do.
+	}
+
+	// Preserve existing file permissions.
+	perm := os.FileMode(0o644)
+	if info, err := os.Stat(filePath); err == nil {
+		perm = info.Mode().Perm()
+	}
+
+	// Atomic write: temp + rename.
+	dir := filepath.Dir(filePath)
+	tmp, err := os.CreateTemp(dir, ".clawker-*.yaml")
+	if err != nil {
+		return fmt.Errorf("creating temp file in %s: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+
+	enc := yaml.NewEncoder(tmp)
+	enc.SetIndent(2)
+	if err := enc.Encode(existing); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("marshaling YAML: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("flushing YAML encoder: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("syncing %s: %w", tmpName, err)
+	}
+	tmp.Close()
+
+	if err := os.Chmod(tmpName, perm); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("setting permissions on %s: %w", tmpName, err)
+	}
+	return os.Rename(tmpName, filePath)
+}
+
+// deleteMapPath walks segments through a nested map and deletes the leaf key.
+// Empty parent maps are pruned recursively. Returns true if a key was deleted.
+func deleteMapPath(m map[string]any, segments []string) bool {
+	if len(segments) == 0 {
+		return false
+	}
+	key := segments[0]
+	if len(segments) == 1 {
+		if _, exists := m[key]; !exists {
+			return false
+		}
+		delete(m, key)
+		return true
+	}
+	sub, ok := m[key].(map[string]any)
+	if !ok {
+		return false
+	}
+	if !deleteMapPath(sub, segments[1:]) {
+		return false
+	}
+	// Prune empty parent maps.
+	if len(sub) == 0 {
+		delete(m, key)
+	}
+	return true
 }
 
 // buildNestedMap converts "build.image" + value into {"build": {"image": value}}.

@@ -71,6 +71,12 @@ type BrowserConfig struct {
 	// fieldPath is the dotted path, value is the new string value,
 	// targetIdx is the index into LayerTargets. Return error to show to user.
 	OnFieldSaved func(fieldPath, value string, targetIdx int) error
+
+	// OnFieldDeleted is called when the user deletes a field from a layer.
+	// fieldPath is the dotted path, targetIdx is the index into LayerTargets.
+	// Deletion removes the key from the target YAML file entirely, letting
+	// lower-priority layers show through. Return error to show to user.
+	OnFieldDeleted func(fieldPath string, targetIdx int) error
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +88,8 @@ type browserState int
 const (
 	bsStateBrowse browserState = iota
 	bsStateEdit
-	bsStatePickLayer // layer picker after field edit confirmation
+	bsStatePickLayer       // layer picker after field edit confirmation
+	bsStatePickLayerDelete // layer picker for field deletion
 )
 
 // editKind identifies which sub-editor is active during bsStateEdit.
@@ -120,13 +127,14 @@ var _ tea.Model = (*FieldBrowserModel)(nil)
 // FieldBrowserModel is a generic tabbed field browser/editor.
 // It knows nothing about stores, reflection, or config schemas.
 type FieldBrowserModel struct {
-	title        string
-	fields       []BrowserField
-	layerTargets []BrowserLayerTarget
-	layers       []BrowserLayer
-	onFieldSaved func(fieldPath, value string, targetIdx int) error
-	savedCount   int
-	state        browserState
+	title          string
+	fields         []BrowserField
+	layerTargets   []BrowserLayerTarget
+	layers         []BrowserLayer
+	onFieldSaved   func(fieldPath, value string, targetIdx int) error
+	onFieldDeleted func(fieldPath string, targetIdx int) error
+	savedCount     int
+	state          browserState
 
 	// Tab navigation
 	tabs      []browserTab
@@ -158,14 +166,15 @@ type FieldBrowserModel struct {
 // NewFieldBrowser creates a field browser from the given config.
 func NewFieldBrowser(cfg BrowserConfig) *FieldBrowserModel {
 	m := &FieldBrowserModel{
-		title:        cfg.Title,
-		fields:       cfg.Fields,
-		layerTargets: cfg.LayerTargets,
-		layers:       cfg.Layers,
-		onFieldSaved: cfg.OnFieldSaved,
-		state:        bsStateBrowse,
-		width:        80,
-		height:       24,
+		title:          cfg.Title,
+		fields:         cfg.Fields,
+		layerTargets:   cfg.LayerTargets,
+		layers:         cfg.Layers,
+		onFieldSaved:   cfg.OnFieldSaved,
+		onFieldDeleted: cfg.OnFieldDeleted,
+		state:          bsStateBrowse,
+		width:          80,
+		height:         24,
 	}
 	m.tabs = m.buildTabs()
 	if len(m.tabs) > 0 {
@@ -303,6 +312,8 @@ func (m *FieldBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateEdit(msg)
 	case bsStatePickLayer:
 		return m.updatePickLayer(msg)
+	case bsStatePickLayerDelete:
+		return m.updatePickLayerDelete(msg)
 	}
 	return m, nil
 }
@@ -328,6 +339,23 @@ func (m *FieldBrowserModel) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.enterEditState(rows[m.activeRow].fieldIdx)
+
+		case msg.Type == tea.KeyRunes && string(msg.Runes) == "d":
+			if m.onFieldDeleted == nil {
+				return m, nil
+			}
+			if m.activeTab >= len(m.tabs) {
+				return m, nil
+			}
+			rows := m.tabs[m.activeTab].rows
+			if m.activeRow >= len(rows) || rows[m.activeRow].isHeading {
+				return m, nil
+			}
+			f := rows[m.activeRow].field
+			if f.ReadOnly {
+				return m, nil
+			}
+			return m, m.enterDeletePickLayer(f.Path)
 
 		case IsLeft(msg):
 			if len(m.tabs) > 1 {
@@ -548,6 +576,66 @@ func (m *FieldBrowserModel) updatePickLayer(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, fbFilterQuit(cmd)
 }
 
+// enterDeletePickLayer transitions to the layer picker for deleting a field.
+func (m *FieldBrowserModel) enterDeletePickLayer(fieldPath string) tea.Cmd {
+	if len(m.layerTargets) == 0 {
+		m.lastSaveError = "no save destinations available"
+		m.state = bsStateBrowse
+		return nil
+	}
+
+	m.pendingPath = fieldPath
+	m.pendingValue = ""
+	m.state = bsStatePickLayerDelete
+
+	options := make([]FieldOption, len(m.layerTargets))
+	for i, t := range m.layerTargets {
+		options[i] = FieldOption{Label: t.Label, Description: t.Description}
+	}
+	m.layerField = NewSelectField("layer", "Delete from:", options, 0)
+	return nil
+}
+
+func (m *FieldBrowserModel) updatePickLayerDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if msg, ok := msg.(tea.KeyMsg); ok && IsEscape(msg) {
+		m.pendingPath = ""
+		m.state = bsStateBrowse
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.layerField, cmd = m.layerField.Update(msg)
+	if m.layerField.IsConfirmed() {
+		idx := m.layerField.SelectedIndex()
+		if m.onFieldDeleted == nil {
+			m.lastSaveError = "delete not available (no delete handler configured)"
+			m.state = bsStateBrowse
+			return m, nil
+		}
+		if idx >= 0 && idx < len(m.layerTargets) {
+			if err := m.onFieldDeleted(m.pendingPath, idx); err != nil {
+				m.lastSaveError = err.Error()
+				m.state = bsStateBrowse
+				return m, nil
+			}
+		}
+		// Clear the field's displayed value to show inheritance.
+		for i := range m.fields {
+			if m.fields[i].Path == m.pendingPath {
+				m.fields[i].Value = ""
+				break
+			}
+		}
+		m.lastSaveError = ""
+		m.saved = true
+		m.savedCount++
+		m.pendingPath = ""
+		m.state = bsStateBrowse
+		return m, nil
+	}
+	return m, fbFilterQuit(cmd)
+}
+
 // ---------------------------------------------------------------------------
 // Scroll
 // ---------------------------------------------------------------------------
@@ -632,7 +720,7 @@ func (m *FieldBrowserModel) View() string {
 		m.viewBrowse(&b)
 	case bsStateEdit:
 		m.viewEdit(&b)
-	case bsStatePickLayer:
+	case bsStatePickLayer, bsStatePickLayerDelete:
 		b.WriteString(m.layerField.View())
 	}
 
@@ -712,6 +800,11 @@ func (m *FieldBrowserModel) viewBrowse(b *strings.Builder) {
 	b.WriteString("  ")
 	b.WriteString(iostreams.HelpKeyStyle.Render("enter"))
 	b.WriteString(iostreams.HelpDescStyle.Render(" edit"))
+	if m.onFieldDeleted != nil {
+		b.WriteString("  ")
+		b.WriteString(iostreams.HelpKeyStyle.Render("d"))
+		b.WriteString(iostreams.HelpDescStyle.Render(" delete"))
+	}
 	b.WriteString("  ")
 	b.WriteString(iostreams.HelpKeyStyle.Render("esc"))
 	b.WriteString(iostreams.HelpDescStyle.Render(" quit"))

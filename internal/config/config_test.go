@@ -8,6 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestNewBlankConfig(t *testing.T) {
@@ -504,6 +505,89 @@ func TestGeneratedDefaults_ProjectValues(t *testing.T) {
 	assert.True(t, p.Security.GitCredentials.GitSSHEnabled())
 	assert.True(t, p.Security.GitCredentials.GPGEnabled())
 	assert.True(t, p.Security.GitCredentials.CopyGitConfigEnabled())
+}
+
+// TestSetProject_EmptyStringsDontOverrideUserConfig reproduces the bug where
+// project init writes empty string fields (agent.editor: "", agent.shell: "")
+// to the project config file, overriding values set in the user-level config
+// (e.g. agent.editor: vim, agent.shell: zsh).
+//
+// The fix: structToMap treats empty strings as "not set" (same as nil pointers),
+// so they are not written to disk and higher-priority layer values merge through.
+func TestSetProject_EmptyStringsDontOverrideUserConfig(t *testing.T) {
+	base := t.TempDir()
+	configDir := filepath.Join(base, "config")
+	projectDir := filepath.Join(base, "project")
+	t.Setenv("CLAWKER_CONFIG_DIR", configDir)
+	t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
+	t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
+	for _, dir := range []string{
+		configDir,
+		projectDir,
+		filepath.Join(base, "data"),
+		filepath.Join(base, "state"),
+	} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+
+	// User-level config: sets agent.editor and agent.shell.
+	userConfigFile := filepath.Join(configDir, "clawker.yaml")
+	require.NoError(t, os.WriteFile(userConfigFile, []byte(`
+agent:
+  editor: vim
+  shell: zsh
+  visual: vim
+`), 0o644))
+
+	// Simulate project init: create a store with defaults, set a few fields, write.
+	projectStore, err := storage.NewStore[Project](
+		storage.WithFilenames("clawker.yaml"),
+		storage.WithDefaultsFromStruct[Project](),
+		storage.WithDirs(projectDir),
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, projectStore.Set(func(p *Project) {
+		p.Build.Image = "bookworm:latest"
+		p.Workspace.DefaultMode = "bind"
+	}))
+	projectConfigFile := filepath.Join(projectDir, ".clawker.yaml")
+	require.NoError(t, projectStore.WriteTo(projectConfigFile))
+
+	// Verify the project file does NOT contain empty agent strings.
+	raw, err := os.ReadFile(projectConfigFile)
+	require.NoError(t, err)
+	var projectMap map[string]any
+	require.NoError(t, yaml.Unmarshal(raw, &projectMap))
+
+	if agentMap, ok := projectMap["agent"].(map[string]any); ok {
+		assert.NotContains(t, agentMap, "editor",
+			"project file should not write empty agent.editor")
+		assert.NotContains(t, agentMap, "shell",
+			"project file should not write empty agent.shell")
+		assert.NotContains(t, agentMap, "visual",
+			"project file should not write empty agent.visual")
+	}
+
+	// Now simulate production loading: project file (walk-up) + user config.
+	// Use explicit paths since we can't walk-up in a temp dir.
+	mergedStore, err := storage.NewStore[Project](
+		storage.WithFilenames("clawker.yaml"),
+		storage.WithDefaultsFromStruct[Project](),
+		storage.WithDirs(projectDir),
+		storage.WithPaths(configDir),
+	)
+	require.NoError(t, err)
+
+	snap := mergedStore.Read()
+	assert.Equal(t, "bookworm:latest", snap.Build.Image,
+		"project-level build.image should win")
+	assert.Equal(t, "vim", snap.Agent.Editor,
+		"user-level agent.editor should survive — not overridden by empty string")
+	assert.Equal(t, "zsh", snap.Agent.Shell,
+		"user-level agent.shell should survive — not overridden by empty string")
+	assert.Equal(t, "vim", snap.Agent.Visual,
+		"user-level agent.visual should survive — not overridden by empty string")
 }
 
 func TestGeneratedDefaults_SettingsValues(t *testing.T) {

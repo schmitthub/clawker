@@ -2126,6 +2126,214 @@ func TestStore_Set_ClearMapPersistsEmpty(t *testing.T) {
 	assert.Empty(t, onDisk.Env, "clearing map via Set should persist an empty map")
 }
 
+// TestStore_Set_EmptyStringsNotWritten verifies that Set+Write does not
+// pollute the written file with zero-value empty strings. This is the
+// root cause of the config layer override bug: when init creates a project
+// file, zero-value string fields like agent.editor="" were written to disk,
+// overriding values from higher-priority user-config layers during merge.
+func TestStore_Set_EmptyStringsNotWritten(t *testing.T) {
+	dir := t.TempDir()
+
+	// Start with a store seeded from defaults (only name has a value).
+	store, err := NewStore[testConfig](
+		WithFilenames("config.yaml"),
+		WithDefaults(`name: default-app`),
+		WithPaths(dir),
+	)
+	require.NoError(t, err)
+
+	// Set only the name field — build.image and build.target remain "".
+	require.NoError(t, store.Set(func(c *testConfig) {
+		c.Name = "my-project"
+	}))
+	require.NoError(t, store.Write())
+
+	// Read raw YAML from disk — empty string fields must be absent.
+	raw, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	require.NoError(t, err)
+
+	var onDiskMap map[string]any
+	require.NoError(t, yaml.Unmarshal(raw, &onDiskMap))
+
+	// The written file should have name but NOT build.image or build.target.
+	assert.Equal(t, "my-project", onDiskMap["name"])
+
+	// build section should either be absent or contain no empty string fields.
+	if buildMap, ok := onDiskMap["build"].(map[string]any); ok {
+		assert.NotContains(t, buildMap, "image",
+			"empty string field build.image should not be written to disk")
+		assert.NotContains(t, buildMap, "target",
+			"empty string field build.target should not be written to disk")
+	}
+}
+
+// TestStore_Set_EmptyStringsDontOverrideLowerLayers verifies the multi-layer
+// merge scenario: a user-level config sets agent values, a project-level file
+// is created via Set+WriteTo with only a few fields, and the user values
+// are preserved through the merge (not overridden by empty strings).
+func TestStore_Set_EmptyStringsDontOverrideLowerLayers(t *testing.T) {
+	projectDir := t.TempDir()
+	userDir := t.TempDir()
+
+	// User-level config: provides build.image and build.target.
+	userFile := filepath.Join(userDir, "config.yaml")
+	require.NoError(t, os.WriteFile(userFile, []byte(`
+name: user-app
+build:
+  image: node:20
+  target: production
+`), 0o644))
+
+	// Create a project-level store that writes to projectDir.
+	// This simulates init: defaults + Set for a few fields + WriteTo.
+	projectStore, err := NewStore[testConfig](
+		WithFilenames("config.yaml"),
+		WithDefaults(`name: default-name`),
+		WithPaths(projectDir),
+	)
+	require.NoError(t, err)
+
+	// Set only name — build.image and build.target are untouched (empty).
+	require.NoError(t, projectStore.Set(func(c *testConfig) {
+		c.Name = "project-override"
+	}))
+	require.NoError(t, projectStore.WriteTo(filepath.Join(projectDir, "config.yaml")))
+
+	// Now load a layered store: projectDir (high priority) + userDir (low priority).
+	mergedStore, err := NewStore[testConfig](
+		WithFilenames("config.yaml"),
+		WithDefaults(`name: default-name`),
+		WithPaths(projectDir, userDir),
+	)
+	require.NoError(t, err)
+
+	snap := mergedStore.Read()
+	assert.Equal(t, "project-override", snap.Name,
+		"project layer should win for explicitly set fields")
+	assert.Equal(t, "node:20", snap.Build.Image,
+		"user layer value should survive — not overridden by empty string from project layer")
+	assert.Equal(t, "production", snap.Build.Target,
+		"user layer value should survive — not overridden by empty string from project layer")
+}
+
+// TestStore_Set_EmptyStringsPreservedInSlicesAndMaps verifies that the
+// empty-string filter only applies to struct fields, not to values inside
+// slices or maps where "" is valid data (e.g. env vars, list entries).
+func TestStore_Set_EmptyStringsPreservedInSlicesAndMaps(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore[testConfig](
+		WithFilenames("config.yaml"),
+		WithDefaults(`name: test`),
+		WithPaths(dir),
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, store.Set(func(c *testConfig) {
+		c.Name = "test"
+		c.Tags = []string{"a", "", "b"} // empty string in slice
+		c.Env = map[string]string{      // empty string in map value
+			"SET_VAR":   "value",
+			"EMPTY_VAR": "",
+		}
+	}))
+	require.NoError(t, store.Write())
+
+	raw, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	require.NoError(t, err)
+
+	var onDiskMap map[string]any
+	require.NoError(t, yaml.Unmarshal(raw, &onDiskMap))
+
+	// Slice: empty string must be preserved, not converted to null.
+	tags, ok := onDiskMap["tags"].([]any)
+	require.True(t, ok, "tags should be a list")
+	assert.Equal(t, []any{"a", "", "b"}, tags,
+		"empty strings inside slices must be preserved")
+
+	// Map: empty string value must be preserved, not converted to null.
+	env, ok := onDiskMap["env"].(map[string]any)
+	require.True(t, ok, "env should be a map")
+	assert.Equal(t, "", env["EMPTY_VAR"],
+		"empty string values inside maps must be preserved")
+	assert.Equal(t, "value", env["SET_VAR"])
+}
+
+func TestStore_DeleteKey(t *testing.T) {
+	t.Run("deletes leaf key and updates snapshot", func(t *testing.T) {
+		store, err := NewFromString[testConfig](testFullData())
+		require.NoError(t, err)
+
+		assert.Equal(t, "myproject", store.Read().Name)
+
+		deleted, err := store.DeleteKey("name")
+		require.NoError(t, err)
+		assert.True(t, deleted)
+		assert.Empty(t, store.Read().Name, "snapshot should reflect deletion")
+	})
+
+	t.Run("deletes nested key", func(t *testing.T) {
+		store, err := NewFromString[testConfig](testFullData())
+		require.NoError(t, err)
+
+		assert.Equal(t, "node:20", store.Read().Build.Image)
+
+		deleted, err := store.DeleteKey("build.image")
+		require.NoError(t, err)
+		assert.True(t, deleted)
+		assert.Empty(t, store.Read().Build.Image)
+		// Sibling key should survive.
+		assert.Equal(t, "production", store.Read().Build.Target)
+	})
+
+	t.Run("returns false for missing key", func(t *testing.T) {
+		store, err := NewFromString[testConfig](testFullData())
+		require.NoError(t, err)
+
+		deleted, err := store.DeleteKey("nonexistent.path")
+		require.NoError(t, err)
+		assert.False(t, deleted)
+	})
+
+	t.Run("delete + write + reload shows lower layer", func(t *testing.T) {
+		projectDir := t.TempDir()
+		userDir := t.TempDir()
+
+		// User-level config provides build.image.
+		require.NoError(t, os.WriteFile(
+			filepath.Join(userDir, "config.yaml"),
+			[]byte("build:\n  image: user-image\n"), 0o644))
+
+		// Project-level config overrides build.image.
+		require.NoError(t, os.WriteFile(
+			filepath.Join(projectDir, "config.yaml"),
+			[]byte("name: my-project\nbuild:\n  image: project-image\n"), 0o644))
+
+		store, err := NewStore[testConfig](
+			WithFilenames("config.yaml"),
+			WithPaths(projectDir, userDir),
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "project-image", store.Read().Build.Image)
+
+		// Delete build.image from the project file via the tree.
+		deleted, err := store.DeleteKey("build.image")
+		require.NoError(t, err)
+		assert.True(t, deleted)
+
+		// Write only the project layer.
+		require.NoError(t, store.Write())
+
+		// Reload — user layer's value should now win.
+		fresh, err := NewStore[testConfig](
+			WithFilenames("config.yaml"),
+			WithPaths(projectDir, userDir),
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "user-image", fresh.Read().Build.Image,
+			"after deleting from project layer, user layer value should show through")
+	})
+}
+
 func TestStore_Merge_UnionHandlesNonComparableValues(t *testing.T) {
 	tags := buildTagRegistry[testUnionMapCfg]()
 

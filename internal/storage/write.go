@@ -103,12 +103,23 @@ func (s *Store[T]) defaultWritePath() (string, error) {
 }
 
 // structToMap converts a struct to map[string]any using reflection.
-// Unlike yaml.Marshal, this ignores omitempty tags — all non-nil fields
-// are included regardless of whether their values are zero. This ensures
-// explicit clears (e.g. setting a bool to false) are captured in the tree.
+// Unlike yaml.Marshal, this ignores omitempty tags — all non-nil, non-empty
+// fields are included regardless of whether their values are zero. This
+// ensures explicit clears (e.g. setting a bool to false) are captured in
+// the tree.
 //
-// Nil pointers and nil slices are excluded (they mean "not set").
-// Non-nil pointers to zero values are included (they mean "explicitly set").
+// Excluded (meaning "not set") at the struct-field level only:
+//   - Nil pointers and nil slices (via encodeValue)
+//   - Empty strings on direct struct fields (config schemas use bare string,
+//     not *string, for optional fields — "" means "not set")
+//
+// The empty-string filter applies only to direct struct fields, NOT to
+// string values inside slices or maps. A []string{"a", "", "b"} or
+// map[string]string{"VAR": ""} preserves empty strings as valid data.
+//
+// Included (meaning "explicitly set"):
+//   - Non-nil pointers to zero values (e.g. *bool pointing to false)
+//   - Zero-value ints and bools (distinguishable via schema defaults)
 func structToMap(v any) map[string]any {
 	val := reflect.ValueOf(v)
 	if val.Kind() == reflect.Ptr {
@@ -139,7 +150,17 @@ func structToMap(v any) map[string]any {
 			name = strings.ToLower(field.Name)
 		}
 
-		encoded := encodeValue(val.Field(i))
+		// Skip empty struct-level strings — they are Go zero values meaning
+		// "not set", not intentional data. This prevents Set() from polluting
+		// the node tree with "" entries that override higher-priority layers.
+		// Only applied here (struct fields), not in encodeValue (which handles
+		// slices/maps where "" is valid data).
+		fv := val.Field(i)
+		if fv.Kind() == reflect.String && fv.Len() == 0 {
+			continue
+		}
+
+		encoded := encodeValue(fv)
 		if encoded != nil {
 			result[name] = encoded
 		}
@@ -150,6 +171,10 @@ func structToMap(v any) map[string]any {
 
 // encodeValue converts a reflect.Value to its map-compatible representation.
 // Returns nil for nil pointers and nil slices (meaning "not set").
+//
+// Note: empty-string filtering for struct fields is handled in structToMap,
+// not here. encodeValue is called recursively for slice elements and map
+// values where "" is valid data (e.g. env vars, list entries).
 func encodeValue(v reflect.Value) any {
 	switch v.Kind() {
 	case reflect.Ptr:

@@ -181,7 +181,7 @@ Generic tabbed field browser/editor. Domain-agnostic — knows nothing about sto
 
 **Features**: Tabbed navigation (fields grouped by top-level path key), sub-section headings (3+ segment paths), inline editing via SelectField/TextField/ListEditorModel/TextareaEditorModel, scroll, per-field save with layer picker.
 
-**Key bindings**: `←/→` tab switch, `↑/↓` navigate, `enter` edit, `esc/q/ctrl+c` quit.
+**Key bindings**: `←/→` tab switch, `↑/↓` navigate, `enter` edit, `d` delete (when `OnFieldDeleted` is wired), `esc/q/ctrl+c` quit.
 
 ## ListEditorModel (`listeditor.go`)
 

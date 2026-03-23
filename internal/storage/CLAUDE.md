@@ -101,11 +101,12 @@ func GenerateDefaultsYAML[T Schema]() string                 // Generate YAML fr
 ### Store[T] Methods
 
 ```go
-func (s *Store[T]) Read() *T                   // Lock-free atomic load — returns current immutable snapshot
-func (s *Store[T]) Get() *T                    // Deprecated: identical to Read, exists for migration only
-func (s *Store[T]) Set(fn func(*T)) error      // COW: deep copy → mutate → sync tree → atomic swap
-func (s *Store[T]) Write(filename ...string) error  // Persist: no args = provenance routing, with arg = all to that file
-func (s *Store[T]) Layers() []LayerInfo        // Discovered layers, highest→lowest priority
+func (s *Store[T]) Read() *T                          // Lock-free atomic load — returns current immutable snapshot
+func (s *Store[T]) Get() *T                           // Deprecated: identical to Read, exists for migration only
+func (s *Store[T]) Set(fn func(*T)) error             // COW: deep copy → mutate → sync tree → atomic swap
+func (s *Store[T]) DeleteKey(path string) (bool, error) // Remove dotted path from tree; re-publishes snapshot
+func (s *Store[T]) Write(filename ...string) error     // Persist: no args = provenance routing, with arg = all to that file
+func (s *Store[T]) Layers() []LayerInfo               // Discovered layers, highest→lowest priority
 ```
 
 ### Utility Functions
@@ -154,7 +155,9 @@ Two modes: auto-route (each field → its provenance layer) or explicit (all fie
 
 ### `structToMap` — omitempty-Safe Serializer
 
-Reflection-based serializer ignoring `omitempty`. Every non-nil field is included regardless of zero value. Nil pointers/slices excluded (meaning "not set").
+Reflection-based serializer ignoring `omitempty`. Non-nil, non-empty fields are included regardless of zero value. Excluded (meaning "not set") at the **struct-field level only**: nil pointers, nil slices, and empty strings. Included: non-nil pointers to zero values (e.g. `*bool` pointing to `false`), zero-value ints and bools.
+
+Empty strings are excluded at the struct-field level because config schemas use bare `string` (not `*string`) for optional fields. Without this, `Set()` round-trips every zero-value string through the Go struct back into the node tree, polluting it with `""` entries that override values from higher-priority layers during merge. The filter is applied in `structToMap` (not `encodeValue`) so that empty strings inside slices and maps are preserved as valid data (e.g. env vars `{"VAR": ""}`, list entries `["a", "", "b"]`).
 
 ### XDG Resolution (`resolver.go`)
 
@@ -196,10 +199,14 @@ The following regressions were reproduced with tests and fixed in package logic:
 - **Union panic on non-comparable elements**: `merge:"union"` no longer panics when slices contain unhashable values (e.g. maps inside `[]any`); dedupe is deep-equality based.
 - **Implicit YAML field-name tag mapping**: merge-tag lookup now correctly handles tags like `yaml:",omitempty"` by using YAML default field naming (`strings.ToLower(field.Name)`), so `merge:"union"` still applies.
 - **`walkType` pointer-dereference order**: `walkType` must dereference `reflect.Ptr` before the `reflect.Struct` guard. Flipped order silently returns an empty tag registry for pointer schema types (`*T`), causing union slices to fall back to overwrite. Not caught by oracle/golden tests because all callers pre-dereference before calling `walkType`.
+- **Empty string layer override**: `structToMap`/`encodeValue` now treats empty strings as "not set" (returns nil). Previously, `Set()` round-tripped zero-value string fields through the Go struct back into the node tree, writing `""` entries to config files that overrode values from higher-priority layers during merge. Root cause: project init wrote `agent.editor: ""` to the project file, overriding `agent.editor: vim` from the user-level config.
 
 Regression tests added:
 
 - `TestStore_Set_ClearMapPersistsEmpty`
+- `TestStore_Set_EmptyStringsNotWritten`
+- `TestStore_Set_EmptyStringsDontOverrideLowerLayers`
+- `TestStore_Set_EmptyStringsPreservedInSlicesAndMaps`
 - `TestStore_Merge_UnionHandlesNonComparableValues`
 - `TestStore_Merge_UnionWithImplicitYAMLFieldName`
 - `TestWalkType_PointerToStruct`
@@ -230,7 +237,7 @@ Defense in depth — two independent guards for merge correctness:
 - **`omitempty` is irrelevant** — node tree is the persistence layer; `structToMap` ignores it.
 - **Unknown keys survive** — `mergeIntoTree` preserves tree keys not in the struct schema.
 - **Walk-up is bounded** — never reaches `~/.config/clawker/`. Home-level configs added via `WithConfigDir()`.
-- **Nil vs zero** — Nil pointers/slices = "not set". Non-nil zero values = "explicitly set".
+- **Nil vs zero** — Nil pointers/slices/empty strings = "not set" (excluded from `structToMap`). Non-nil zero values (e.g. `*bool` → `false`, `int` → 0) = "explicitly set".
 - **Dirty is store-wide** — `Set` marks entire store dirty, not individual fields.
 - **`NewFromString` stores have no write paths** — `Set()` + `Write()` will error by design.
 - **File locking is advisory** — `flock` is cooperative. Lock files (`.lock` suffix) left on disk intentionally.

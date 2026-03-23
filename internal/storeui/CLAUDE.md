@@ -98,6 +98,7 @@ Edit[T](ios, store, opts...):
   5. fieldsToBrowserFields() → []tui.BrowserField (type mapping)
   6. tui.NewFieldBrowser(cfg) → tui.RunProgram (presentation)
   7. OnFieldSaved callback per field: store.Set(SetFieldValue...) + writeFieldToFile(target)
+  7b. OnFieldDeleted callback per field: store.DeleteKey(path) + deleteFieldFromFile(target, path)
   8. Return Result (Saved, SavedCount)
 ```
 
@@ -110,6 +111,7 @@ Edit[T](ios, store, opts...):
 5. `LayerTarget.Path` used by `writeFieldToFile()` for direct per-field YAML writes to the chosen target file
 6. Type mapping between `storeui.FieldKind` and `tui.BrowserFieldKind` happens in `edit.go` — tui knows nothing about storeui types
 7. Per-field save model: each edit is persisted immediately via layer picker → `onFieldSaved` callback. No batch save.
+8. Per-field delete: `d` key in browse state → layer picker → `onFieldDeleted` callback. Removes key from YAML file and in-memory tree via `store.DeleteKey`. Lets lower-priority layer values show through.
 
 ## Gotchas
 

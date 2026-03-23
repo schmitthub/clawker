@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -235,6 +236,52 @@ func (s *Store[T]) Set(fn func(*T)) error {
 	s.value.Store(fresh)
 	s.dirty = true
 	return nil
+}
+
+// DeleteKey removes a dotted field path from the node tree (e.g. "agent.editor")
+// and republishes the snapshot. This allows a field to be "unset" so that
+// lower-priority layers can show through on next load.
+//
+// Empty parent maps are NOT pruned — the tree retains the structure.
+// Returns true if the key was found and deleted, false if it wasn't in the tree.
+func (s *Store[T]) DeleteKey(path string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	segments := strings.Split(path, ".")
+	if !deleteTreePath(s.tree, segments) {
+		return false, nil
+	}
+
+	// Re-deserialize the tree to update the snapshot.
+	value, err := unmarshal[T](s.tree)
+	if err != nil {
+		return true, fmt.Errorf("storage: DeleteKey: deserializing after delete: %w", err)
+	}
+	s.value.Store(value)
+	s.dirty = true
+	return true, nil
+}
+
+// deleteTreePath walks segments through a nested map and deletes the leaf key.
+// Returns true if a key was deleted.
+func deleteTreePath(m map[string]any, segments []string) bool {
+	if len(segments) == 0 {
+		return false
+	}
+	key := segments[0]
+	if len(segments) == 1 {
+		if _, exists := m[key]; !exists {
+			return false
+		}
+		delete(m, key)
+		return true
+	}
+	sub, ok := m[key].(map[string]any)
+	if !ok {
+		return false
+	}
+	return deleteTreePath(sub, segments[1:])
 }
 
 // mergeIntoTree updates tree entries with values from fresh.

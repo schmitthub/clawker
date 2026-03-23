@@ -192,3 +192,59 @@ func TestWriteTo_WritesExplicitPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "from-dir1", store1.Read().Name)
 }
+
+// TestDeleteFieldFromFile verifies field deletion from a YAML file.
+func TestDeleteFieldFromFile(t *testing.T) {
+	t.Run("deletes leaf key", func(t *testing.T) {
+		dir := t.TempDir()
+		file := filepath.Join(dir, "test.yaml")
+		require.NoError(t, os.WriteFile(file, []byte("name: myapp\ncount: 42\n"), 0o644))
+
+		require.NoError(t, deleteFieldFromFile(file, "name"))
+
+		raw, err := os.ReadFile(file)
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), "name")
+		assert.Contains(t, string(raw), "count")
+	})
+
+	t.Run("deletes nested key and prunes empty parent", func(t *testing.T) {
+		dir := t.TempDir()
+		file := filepath.Join(dir, "test.yaml")
+		require.NoError(t, os.WriteFile(file, []byte("build:\n  image: node:20\n"), 0o644))
+
+		require.NoError(t, deleteFieldFromFile(file, "build.image"))
+
+		raw, err := os.ReadFile(file)
+		require.NoError(t, err)
+		// Parent map "build" should also be pruned since it's now empty.
+		assert.NotContains(t, string(raw), "build")
+		assert.NotContains(t, string(raw), "image")
+	})
+
+	t.Run("preserves sibling keys", func(t *testing.T) {
+		dir := t.TempDir()
+		file := filepath.Join(dir, "test.yaml")
+		require.NoError(t, os.WriteFile(file, []byte("build:\n  image: node:20\n  target: prod\n"), 0o644))
+
+		require.NoError(t, deleteFieldFromFile(file, "build.image"))
+
+		raw, err := os.ReadFile(file)
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), "image")
+		assert.Contains(t, string(raw), "target")
+		assert.Contains(t, string(raw), "build") // parent survives — has sibling
+	})
+
+	t.Run("noop for missing key", func(t *testing.T) {
+		dir := t.TempDir()
+		file := filepath.Join(dir, "test.yaml")
+		require.NoError(t, os.WriteFile(file, []byte("name: myapp\n"), 0o644))
+
+		require.NoError(t, deleteFieldFromFile(file, "nonexistent"))
+	})
+
+	t.Run("noop for missing file", func(t *testing.T) {
+		require.NoError(t, deleteFieldFromFile("/tmp/does-not-exist-"+t.Name()+".yaml", "name"))
+	})
+}

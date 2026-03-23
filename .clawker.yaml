@@ -1,0 +1,35 @@
+agent:
+  claude_code:
+    config:
+      strategy: copy
+    use_host_auth: true
+  enable_shared_dir: false
+build:
+  image: buildpack-deps:bookworm-scm
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - less
+    - procps
+    - sudo
+security:
+  docker_socket: true
+  enable_host_proxy: true
+  firewall:
+    add_domains:
+      - github.com
+      - api.github.com
+    rules:
+      - action: allow
+        dst: github.com
+        path_default: ""
+        port: 22
+        proto: ssh
+  git_credentials:
+    copy_git_config: true
+    forward_gpg: true
+    forward_https: true
+    forward_ssh: true
+workspace:
+  default_mode: bind
