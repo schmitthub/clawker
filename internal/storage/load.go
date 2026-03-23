@@ -27,7 +27,7 @@ func loadFile(path string, migrations []Migration) (map[string]any, error) {
 		return nil, err
 	}
 	if migrated {
-		encoded, mErr := yaml.Marshal(raw)
+		encoded, mErr := marshalYAML(raw)
 		if mErr != nil {
 			return nil, fmt.Errorf("storage: encoding migrated %s: %w", path, mErr)
 		}

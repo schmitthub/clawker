@@ -181,9 +181,17 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 			fmt.Fprintf(ios.Out, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
 		}
 
-		// Still offer user-level default from struct defaults
+		// Offer to save existing project config as user-level default.
 		prompter := opts.Prompter()
-		maybeOfferUserDefault(ios, cs, log, prompter)
+		existingStore, storeErr := storage.NewStore[config.Project](
+			storage.WithFilenames(cfgGateway.ProjectConfigFileName()),
+			storage.WithDirs(wd),
+		)
+		if storeErr != nil {
+			log.Debug().Err(storeErr).Msg("failed to load existing config for user default offer")
+		} else {
+			maybeOfferUserDefault(ios, cs, log, prompter, existingStore)
+		}
 		return nil
 	}
 
@@ -356,7 +364,17 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 			}
 		}
 
-		maybeOfferUserDefault(ios, cs, log, prompter)
+		// Offer to save the project config (with wizard + editor changes) as user-level default.
+		// Reload from disk to capture any storeui edits.
+		projectStore, storeErr := storage.NewStore[config.Project](
+			storage.WithFilenames(cfgGateway.ProjectConfigFileName()),
+			storage.WithDirs(wd),
+		)
+		if storeErr != nil {
+			log.Debug().Err(storeErr).Msg("failed to reload project config for user default offer")
+		} else {
+			maybeOfferUserDefault(ios, cs, log, prompter, projectStore)
+		}
 	}
 
 	fmt.Fprintln(ios.Out)
@@ -457,8 +475,9 @@ func resolveImageFromWizard(values tui.WizardValues) string {
 }
 
 // maybeOfferUserDefault checks if a user-level clawker.yaml exists in configDir.
-// If it doesn't, prompts the user to save defaults as their user-level config.
-func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, log *logger.Logger, prompter *prompterpkg.Prompter) {
+// If it doesn't, prompts the user to save the project config as their user-level default.
+// The sourceStore should contain the user's wizard selections and any storeui edits.
+func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, log *logger.Logger, prompter *prompterpkg.Prompter, sourceStore *storage.Store[config.Project]) {
 	userConfigPath, pathErr := config.UserProjectConfigFilePath()
 	if pathErr != nil {
 		return
@@ -474,27 +493,18 @@ func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, 
 		return
 	}
 
-	// Write defaults via a store — same struct-tag-driven defaults used everywhere.
 	dir := filepath.Dir(userConfigPath)
 	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
 		log.Debug().Err(mkErr).Msg("failed to create config dir for user defaults")
 		return
 	}
-	store, err := storage.NewStore[config.Project](
-		storage.WithFilenames(filepath.Base(userConfigPath)),
-		storage.WithDefaultsFromStruct[config.Project](),
-		storage.WithPaths(dir),
-	)
-	if err != nil {
-		log.Debug().Err(err).Msg("failed to create default config store")
+
+	// Mark dirty so WriteTo persists even though the store was already written.
+	if err := sourceStore.Set(func(_ *config.Project) {}); err != nil {
+		log.Debug().Err(err).Msg("failed to prepare config for user default")
 		return
 	}
-	// Mark dirty so Write persists the defaults.
-	if err := store.Set(func(_ *config.Project) {}); err != nil {
-		log.Debug().Err(err).Msg("failed to prepare default config")
-		return
-	}
-	if err := store.WriteTo(userConfigPath); err != nil {
+	if err := sourceStore.WriteTo(userConfigPath); err != nil {
 		log.Debug().Err(err).Msg("failed to write user-level default config")
 		return
 	}
