@@ -292,6 +292,8 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 	fmt.Fprintln(ios.ErrOut, "Next Steps:")
 	fmt.Fprintf(ios.ErrOut, "  1. %s\n", "Navigate to a project directory")
 	fmt.Fprintf(ios.ErrOut, "  2. %s\n", "Run 'clawker project init' to set up the project")
+	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintf(ios.ErrOut, "To edit your settings later, run 'clawker settings edit'\n")
 
 	return nil
 }

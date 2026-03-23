@@ -381,6 +381,8 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 	fmt.Fprintln(ios.Out, "Next Steps:")
 	fmt.Fprintf(ios.Out, "  1. Run 'clawker build' to build your project's container image\n")
 	fmt.Fprintf(ios.Out, "  2. Run 'clawker run -it --agent <agent-name> @' to start an interactive shell in the container\n")
+	fmt.Fprintln(ios.Out)
+	fmt.Fprintf(ios.Out, "To edit your project configuration later, run 'clawker project edit'\n")
 	return nil
 }
 
