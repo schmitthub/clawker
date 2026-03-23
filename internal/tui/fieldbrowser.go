@@ -403,11 +403,12 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 		return m.listEditor.Init()
 
 	default:
-		// Text, Int, Duration — check if multiline.
-		if strings.Contains(currentVal, "\n") {
+		// Text fields always use the multiline textarea editor —
+		// YAML strings are inherently multiline-capable.
+		// Int and Duration fields use single-line text input.
+		if f.Kind == BrowserText {
 			m.editKind = ekTextarea
 			m.taEditor = NewTextareaEditor(f.Label, currentVal)
-			// Size to the browser's known dimensions so wrapping works immediately.
 			if m.width > 0 && m.height > 0 {
 				m.taEditor, _ = m.taEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 			}

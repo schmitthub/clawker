@@ -147,12 +147,12 @@ func TestFieldBrowser_EditConfirmShowsLayerPicker(t *testing.T) {
 	}
 	m := NewFieldBrowser(cfg)
 
-	// Enter edit on build.image (text field).
+	// Enter edit on build.image (text field → textarea editor).
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.Equal(t, bsStateEdit, m.state)
 
-	// Type a new value and confirm — should show layer picker.
-	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// Save the textarea value with Ctrl+S — should show layer picker.
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	require.Equal(t, bsStatePickLayer, m.state)
 
 	// Confirm the default layer (index 0 = Local).
@@ -167,9 +167,9 @@ func TestFieldBrowser_EditConfirmShowsLayerPicker(t *testing.T) {
 func TestFieldBrowser_EscFromLayerPickerDiscardsEdit(t *testing.T) {
 	m := NewFieldBrowser(testBrowserConfig())
 
-	// Enter edit → confirm value → layer picker.
+	// Enter edit → save textarea with Ctrl+S → layer picker.
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	require.Equal(t, bsStatePickLayer, m.state)
 
 	// Esc from layer picker → discard, back to browse.
