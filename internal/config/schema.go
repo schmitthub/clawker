@@ -39,7 +39,7 @@ type BuildConfig struct {
 type DockerInstructions struct {
 	Copy        []CopyInstruction  `yaml:"copy,omitempty" label:"Copy" desc:"Files to copy into the image"`
 	Env         map[string]string  `yaml:"env,omitempty" label:"Env" desc:"Static environment variables injected at container runtime"`
-	Labels      map[string]string  `yaml:"labels,omitempty" label:"Labels" desc:"Image labels"`
+	Labels      map[string]string  `yaml:"labels,omitempty" label:"Labels" desc:"Image labels" merge:"union"`
 	Expose      []ExposePort       `yaml:"expose,omitempty" label:"Expose" desc:"Ports to expose"`
 	Args        []ArgDefinition    `yaml:"args,omitempty" label:"Args" desc:"Build arguments"`
 	Volumes     []string           `yaml:"volumes,omitempty" label:"Volumes" desc:"Volume mount points"`

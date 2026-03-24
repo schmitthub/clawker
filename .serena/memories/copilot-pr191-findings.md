@@ -10,10 +10,7 @@ Validated by multi-agent consensus (2 agents per finding). Branch: `feat/field-d
 
 - [x] **#4 Write() doesn't rebuild tree/provenance after refreshLayers** — RESOLVED: Write() now calls remerge() after refreshLayers(), plus injectNewLayers() for newly created files. Removed redundant Refresh() calls from storeui.
 
-- [ ] **#5 Write() routes new map entry dirty paths to wrong layer** — `internal/storage/store.go:542`
-  - `layerPathForKey("env.FOO")` only checks exact match and descendant prefix, not ancestor paths. New map entries (not in original YAML) have no provenance, fall through to `defaultWritePath()`, which may be the wrong layer.
-  - Fix: `layerPathForKey` should walk up parent paths (e.g. `"env.FOO"` → check `"env"`).
-  - Note: Agent 2 said false positive (claiming provenance exists at leaf level for existing entries). Agent 1's concern is specifically about NEW entries added via `Set()`. Agent 1's analysis is more thorough on this specific scenario.
+- [x] **#5 Write() routes new map entry dirty paths to wrong layer** — RESOLVED: Root cause was deeper than routing — the tree engine couldn't distinguish `map[string]string` fields from struct nesting. Fix: (1) evolved `tagRegistry` to carry `FieldKind` as schema boundary, (2) `mergeTrees` now checks registry — opaque maps get tag-driven merge (union or last-wins) instead of implicit key-by-key, (3) `diffTreePaths` treats opaque maps as leaves (emits `"env"` not `"env.FOO"`), (4) `Write()` uses delete-then-set for opaque maps to get replace semantics. Also added `merge:"union"` to `labels` field; env maps default to overwrite.
 
 - [ ] **#10 Silent fallback in FieldBrowser when Editor returns non-FieldEditor** — `internal/tui/fieldbrowser.go:425`
   - `Editor` factory returns `any` (import boundary design). Type assertion failure silently drops to browse mode. Comment says "programming error" but suppresses it.

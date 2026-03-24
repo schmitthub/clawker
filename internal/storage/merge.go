@@ -3,19 +3,29 @@ package storage
 import (
 	"reflect"
 	"strings"
+	"time"
 )
 
 // provenance maps field paths to the index of the layer that provided the
 // winning value. E.g. "build.image" → 2 means layer[2] won that field.
 type provenance map[string]int
 
-// tagRegistry maps dotted field paths to their merge tag values.
+// fieldMeta holds per-field schema metadata used by tree operations.
+// Merge strategy and field kind are recorded together so that
+// mergeTrees, diffTreePaths, and Write can make schema-aware decisions
+// from a single registry.
+type fieldMeta struct {
+	mergeTag string    // "union", "overwrite", or "" (empty = last-wins)
+	kind     FieldKind // Go type classification (KindMap, KindStringSlice, etc.)
+}
+
+// tagRegistry maps dotted field paths to their schema metadata.
 // Built once from the struct type T during construction.
-type tagRegistry map[string]string
+type tagRegistry map[string]fieldMeta
 
 // buildTagRegistry walks the struct type T and extracts merge tags
-// for slice fields. Used during map-based merge to determine whether
-// a slice should be unioned or overwritten.
+// and field kinds for all leaf fields. Used by mergeTrees (merge strategy)
+// and diffTreePaths (opaque-value detection).
 func buildTagRegistry[T Schema]() tagRegistry {
 	reg := make(tagRegistry)
 	var zero T
@@ -23,7 +33,9 @@ func buildTagRegistry[T Schema]() tagRegistry {
 	return reg
 }
 
-// walkType recursively walks a struct type, recording merge tags.
+// walkType recursively walks a struct type, recording merge tags and
+// field kinds for every leaf (non-struct) field. Struct fields are
+// recursed into and do not get their own registry entry.
 func walkType(t reflect.Type, prefix string, reg tagRegistry) {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
@@ -40,18 +52,51 @@ func walkType(t reflect.Type, prefix string, reg tagRegistry) {
 
 		path := fieldPathKey(prefix, field)
 
-		if tag := field.Tag.Get("merge"); tag != "" {
-			reg[path] = tag
-		}
-
-		// Recurse into struct fields.
+		// Recurse into struct fields (they are not leaf fields).
 		ft := field.Type
 		if ft.Kind() == reflect.Ptr {
 			ft = ft.Elem()
 		}
 		if ft.Kind() == reflect.Struct {
 			walkType(ft, path, reg)
+			continue
 		}
+
+		// Leaf field — record merge tag and kind.
+		meta := fieldMeta{
+			mergeTag: field.Tag.Get("merge"),
+			kind:     classifyFieldKind(ft),
+		}
+		reg[path] = meta
+	}
+}
+
+// classifyFieldKind maps a reflect.Type to its FieldKind for the
+// tag registry. Uses the same classification logic as NormalizeFields.
+func classifyFieldKind(ft reflect.Type) FieldKind {
+	// Dereference pointer.
+	if ft.Kind() == reflect.Ptr {
+		ft = ft.Elem()
+	}
+	switch {
+	case ft == reflect.TypeFor[time.Duration]():
+		return KindDuration
+	case ft.Kind() == reflect.Map:
+		return KindMap
+	case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
+		return KindStructSlice
+	case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String:
+		return KindStringSlice
+	case ft.Kind() == reflect.Slice:
+		return KindStringSlice // conservative: treat unknown slices as string slices
+	case ft.Kind() == reflect.String:
+		return KindText
+	case ft.Kind() == reflect.Bool:
+		return KindBool
+	case ft.Kind() == reflect.Int, ft.Kind() == reflect.Int64:
+		return KindInt
+	default:
+		return KindText // fallback for unrecognized types
 	}
 }
 
@@ -88,19 +133,39 @@ func mergeTrees(dst, src map[string]any, prov provenance, layerIdx int, prefix s
 
 		switch sv := srcVal.(type) {
 		case map[string]any:
-			// Nested map: recursive merge.
-			if dm, ok := dstVal.(map[string]any); ok && exists {
-				mergeTrees(dm, sv, prov, layerIdx, path, tags)
+			meta, ok := tags[path]
+			if ok && meta.kind == KindMap {
+				// Opaque map field (e.g. map[string]string).
+				if meta.mergeTag == "union" && exists {
+					// Key-by-key merge: recurse into entries.
+					if dm, ok := dstVal.(map[string]any); ok {
+						mergeTrees(dm, sv, prov, layerIdx, path, tags)
+					} else {
+						cp := make(map[string]any)
+						deepCopyMap(cp, sv)
+						dst[key] = cp
+					}
+				} else {
+					// Untagged or "overwrite": last wins — replace entire map.
+					cp := make(map[string]any)
+					deepCopyMap(cp, sv)
+					dst[key] = cp
+				}
 			} else {
-				cp := make(map[string]any)
-				deepCopyMap(cp, sv)
-				dst[key] = cp
+				// Struct nesting: always recursive merge.
+				if dm, ok := dstVal.(map[string]any); ok && exists {
+					mergeTrees(dm, sv, prov, layerIdx, path, tags)
+				} else {
+					cp := make(map[string]any)
+					deepCopyMap(cp, sv)
+					dst[key] = cp
+				}
 			}
 			prov[path] = layerIdx
 
 		case []any:
 			// Slice: check tag registry for merge strategy.
-			if tags[path] == "union" && exists {
+			if meta, ok := tags[path]; ok && meta.mergeTag == "union" && exists {
 				if dstSlice, ok := dstVal.([]any); ok {
 					dst[key] = unionAny(dstSlice, sv)
 				} else {

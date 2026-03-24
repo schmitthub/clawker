@@ -320,8 +320,8 @@ func TestStore_Merge(t *testing.T) {
 			wantPlugins: []string{"semgrep"},
 			// untagged: override wins
 			wantTags: []string{"dev"},
-			// map merge: all keys, override wins conflicts
-			wantEnv: map[string]string{"APP_ENV": "development", "LOG_LEVEL": "info", "DEBUG": "true"},
+			// map overwrite: highest-priority layer replaces entire map
+			wantEnv: map[string]string{"APP_ENV": "development", "DEBUG": "true"},
 			wantProv: map[string]int{
 				"name":         0, // from override (highest priority)
 				"version":      0,
@@ -557,6 +557,72 @@ version: 2
 
 	assert.Equal(t, "global", globalResult.Name, "name should not be routed to global layer")
 	assert.Equal(t, []string{"global-updated"}, globalResult.Tags)
+}
+
+// TestStore_WriteProvenance_NewMapEntryRoutesToParentLayer verifies that
+// adding a new entry to a map[string]string field routes the write to the
+// layer that owns the parent map, not to defaultWritePath. This is a
+// regression test for new map entries falling through layerPathForKey
+// because they have no individual provenance — the ancestor walk-up in
+// layerPathForKey resolves them to the parent field's layer.
+func TestStore_WriteProvenance_NewMapEntryRoutesToParentLayer(t *testing.T) {
+	dir := t.TempDir()
+	localPath := filepath.Join(dir, "local.yaml")
+	globalPath := filepath.Join(dir, "global.yaml")
+
+	// Local layer owns the env map with one existing entry.
+	localYAML := `
+name: local-project
+env:
+  BAR: "1"
+`
+	// Global layer has other fields but no env.
+	globalYAML := `
+version: 2
+build:
+  image: ubuntu
+`
+	require.NoError(t, os.WriteFile(localPath, []byte(localYAML), 0o644))
+	require.NoError(t, os.WriteFile(globalPath, []byte(globalYAML), 0o644))
+
+	localData, err := loadFile(localPath, nil)
+	require.NoError(t, err)
+	globalData, err := loadFile(globalPath, nil)
+	require.NoError(t, err)
+
+	layers := []layer{
+		{path: localPath, filename: "local.yaml", data: localData},
+		{path: globalPath, filename: "global.yaml", data: globalData},
+	}
+
+	tags := buildTagRegistry[testConfig]()
+	tree, prov := merge(layers, tags)
+
+	value, err := unmarshal[testConfig](tree)
+	require.NoError(t, err)
+
+	store := &Store[testConfig]{
+		tree:   tree,
+		layers: layers,
+		prov:   prov,
+		tags:   tags,
+		opts:   options{filenames: []string{"local.yaml", "global.yaml"}},
+	}
+	store.value.Store(value)
+
+	// Add a NEW map entry — FOO has no provenance because it's not in any layer file.
+	require.NoError(t, store.Set(func(c *testConfig) {
+		c.Env["FOO"] = "2"
+	}))
+	require.NoError(t, store.Write())
+
+	// FOO should be written to the local layer (which owns env), not the global layer.
+	localResult := mustReadConfig(t, localPath)
+	globalResult := mustReadConfig(t, globalPath)
+
+	assert.Equal(t, "2", localResult.Env["FOO"], "new map entry should be written to the layer that owns the parent map")
+	assert.Equal(t, "1", localResult.Env["BAR"], "existing map entry should be preserved")
+	assert.Empty(t, globalResult.Env, "new map entry should NOT be written to the global layer")
 }
 
 func TestStore_WriteFilename(t *testing.T) {
@@ -1028,6 +1094,39 @@ func TestStore_Dirs(t *testing.T) {
 	}
 }
 
+// TestWalkType_RecordsFieldKinds verifies that walkType populates FieldKind
+// for all leaf fields in the registry, not just merge-tagged ones.
+func TestWalkType_RecordsFieldKinds(t *testing.T) {
+	reg := buildTagRegistry[testConfig]()
+
+	tests := []struct {
+		path string
+		kind FieldKind
+	}{
+		{"name", KindText},
+		{"version", KindInt},
+		{"build.image", KindText},
+		{"build.target", KindText},
+		{"packages", KindStringSlice},
+		{"plugins", KindStringSlice},
+		{"tags", KindStringSlice},
+		{"env", KindMap},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			meta, ok := reg[tt.path]
+			require.True(t, ok, "path %q should be in registry", tt.path)
+			assert.Equal(t, tt.kind, meta.kind, "path %q kind mismatch", tt.path)
+		})
+	}
+
+	// Verify merge tags are still recorded alongside kinds.
+	assert.Equal(t, "union", reg["packages"].mergeTag)
+	assert.Equal(t, "overwrite", reg["plugins"].mergeTag)
+	assert.Empty(t, reg["name"].mergeTag, "untagged field should have empty merge tag")
+}
+
 func TestStore_Dirs_MergePrecedence(t *testing.T) {
 	// Two directories: high-priority overrides low-priority via merge order.
 	highDir := t.TempDir()
@@ -1080,13 +1179,15 @@ func TestWalkType_PointerToStruct(t *testing.T) {
 	valReg := make(tagRegistry)
 	walkType(reflect.TypeOf(outer{}), "", valReg)
 	require.Contains(t, valReg, "inner.items", "value type: merge tag must be registered")
-	assert.Equal(t, "union", valReg["inner.items"])
+	assert.Equal(t, "union", valReg["inner.items"].mergeTag)
+	assert.Equal(t, KindStringSlice, valReg["inner.items"].kind)
 
 	// Pointer type — must produce identical registry.
 	ptrReg := make(tagRegistry)
 	walkType(reflect.TypeOf(&outer{}), "", ptrReg)
 	require.Contains(t, ptrReg, "inner.items", "pointer type: merge tag must be registered")
-	assert.Equal(t, "union", ptrReg["inner.items"])
+	assert.Equal(t, "union", ptrReg["inner.items"].mergeTag)
+	assert.Equal(t, KindStringSlice, ptrReg["inner.items"].kind)
 
 	// Both registries must be identical.
 	assert.Equal(t, valReg, ptrReg, "value and pointer registries must match")
@@ -1634,7 +1735,7 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	//               → local wins over main at same depth)
 	//   - Scalars:  last writer wins (iterate low→high, overwrite)
 	//   - Union:    accumulate unique, preserving insertion order
-	//   - Map:      accumulate keys, conflicts won by higher priority
+	//   - Map:      overwrite — highest-priority layer replaces entire map
 	type oracleResult struct {
 		name     string
 		version  int
@@ -1656,7 +1757,10 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 				o.packages = append(o.packages, pkg)
 			}
 		}
-		maps.Copy(o.env, gen.env)
+		if gen.env != nil {
+			o.env = make(map[string]string, len(gen.env))
+			maps.Copy(o.env, gen.env)
+		}
 	}
 
 	// Start with user config (lowest priority — explicit path layer).
@@ -1922,12 +2026,12 @@ func TestStore_WalkUpGolden(t *testing.T) {
 	goldenVersion := 710
 	goldenImage := "go:1.22"
 	goldenPackages := []string{"pkg-user", "pkg-project", "git", "vim", "pkg-level1", "pkg-level2", "jq", "pkg-level3"}
+	// Map overwrite: highest-priority layer with env wins entirely.
+	// With seed 42, level1 main is the highest-priority layer that has
+	// an env section (deeper walk-up = higher priority).
 	goldenEnv := map[string]string{
-		"B":       "project",
-		"EDITOR":  "vim",
-		"F":       "level1",
-		"LEVEL1":  "yes",
-		"PROJECT": "yes",
+		"F":      "level1",
+		"LEVEL1": "yes",
 	}
 
 	assert.Equal(t, goldenName, cfg.Name, "golden: name")

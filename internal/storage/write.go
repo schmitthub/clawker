@@ -14,19 +14,44 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// layerPathForKey finds the layer path that owns a top-level key via
-// provenance. Checks for exact key match and dotted sub-field matches
-// (e.g. "build" matches provenance entry "build.image"). When multiple
-// sub-fields map to different layers, the highest-priority (lowest index)
-// layer wins.
+// layerPathForKey finds the layer path that owns a field via provenance.
+//
+// Resolution:
+//  1. Scan provenance for exact or descendant matches in a single pass
+//     (e.g. key="build" matches "build" or "build.image"). When multiple
+//     entries match, the highest-priority (lowest index) layer wins.
+//  2. If no match, walk up ancestor paths stopping only at opaque value
+//     fields (e.g. key="env.FOO" walks up to "env" if it's a KindMap).
+//     This handles new entries in map[string]string fields whose parent
+//     has provenance but the entry itself does not.
 func (s *Store[T]) layerPathForKey(key string) string {
 	bestIdx := -1
 	prefix := key + "."
 
+	// Check exact match and descendant matches.
 	for provKey, idx := range s.prov {
 		if provKey == key || strings.HasPrefix(provKey, prefix) {
 			if bestIdx == -1 || idx < bestIdx {
 				bestIdx = idx
+			}
+		}
+	}
+
+	// If no match, walk up ancestor paths. Only stop at ancestors that
+	// are opaque value fields (maps, struct slices) — a new entry in an
+	// opaque field should route to the layer that owns that field.
+	// Struct nesting ancestors are skipped since they don't represent
+	// a meaningful write target for leaf entries.
+	if bestIdx == -1 {
+		for parent := key; ; {
+			dot := strings.LastIndex(parent, ".")
+			if dot < 0 {
+				break
+			}
+			parent = parent[:dot]
+			if idx, ok := s.prov[parent]; ok && isOpaqueField(s.tags, parent) {
+				bestIdx = idx
+				break // closest opaque ancestor is the most specific match
 			}
 		}
 	}
@@ -296,15 +321,17 @@ func writeFieldsToPath(path string, sets map[string]any, deletes []string, lock 
 			}
 		}
 
-		// Deep merge set fields into existing content.
-		if len(sets) > 0 {
-			deepMergeMap(existing, sets)
-		}
-
-		// Remove deleted field paths.
+		// Remove deleted field paths first. This ensures opaque value fields
+		// (e.g. non-union maps) are fully cleared before their new value is
+		// merged in — giving replace semantics instead of deep merge.
 		for _, dottedPath := range deletes {
 			segments := strings.Split(dottedPath, ".")
 			deleteTreePath(existing, segments)
+		}
+
+		// Deep merge set fields into existing content.
+		if len(sets) > 0 {
+			deepMergeMap(existing, sets)
 		}
 
 		encoded, err := marshalYAML(existing)

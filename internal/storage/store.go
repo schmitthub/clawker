@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -265,7 +266,7 @@ func (s *Store[T]) Set(fn func(*T)) error {
 	if s.dirtyPaths == nil {
 		s.dirtyPaths = make(map[string]dirtyOp)
 	}
-	diffTreePaths(oldTree, s.tree, "",
+	diffTreePaths(oldTree, s.tree, "", s.tags,
 		func(path string) { s.dirtyPaths[path] = dirtySet },
 		func(path string) { s.dirtyPaths[path] = dirtyDeleted },
 	)
@@ -308,7 +309,12 @@ func (s *Store[T]) Delete(path string) (bool, error) {
 // diffTreePaths walks two trees and calls onSet for each leaf path where
 // the value was added or changed, and onDelete for each leaf path that
 // was removed. Used by Set to discover which field paths were mutated.
-func diffTreePaths(oldTree, newTree map[string]any, prefix string, onSet, onDelete func(path string)) {
+//
+// The tags registry provides schema boundaries: opaque value fields
+// (non-union KindMap, KindStructSlice) are compared as wholes rather than
+// recursed into. Union maps are recursed per-entry (matching mergeTrees).
+// Struct nesting (no registry entry) is always recursed.
+func diffTreePaths(oldTree, newTree map[string]any, prefix string, tags tagRegistry, onSet, onDelete func(path string)) {
 	// Check keys in newTree (added or changed).
 	for k, newVal := range newTree {
 		path := k
@@ -317,13 +323,27 @@ func diffTreePaths(oldTree, newTree map[string]any, prefix string, onSet, onDele
 		}
 		oldVal, exists := oldTree[k]
 		if !exists {
-			emitLeafPaths(newVal, path, onSet)
+			if isOpaqueField(tags, path) {
+				onSet(path)
+			} else {
+				emitLeafPaths(newVal, path, onSet)
+			}
 			continue
 		}
 		newSub, newIsMap := newVal.(map[string]any)
 		oldSub, oldIsMap := oldVal.(map[string]any)
 		if newIsMap && oldIsMap {
-			diffTreePaths(oldSub, newSub, path, onSet, onDelete)
+			if isOpaqueField(tags, path) {
+				// Opaque value field — compare as whole.
+				// reflect.DeepEqual is required here because map iteration
+				// order is non-deterministic, making fmt.Sprintf unreliable.
+				if !reflect.DeepEqual(oldSub, newSub) {
+					onSet(path)
+				}
+			} else {
+				// Struct nesting or union map — recurse.
+				diffTreePaths(oldSub, newSub, path, tags, onSet, onDelete)
+			}
 			continue
 		}
 		if fmt.Sprintf("%v", oldVal) != fmt.Sprintf("%v", newVal) {
@@ -339,8 +359,29 @@ func diffTreePaths(oldTree, newTree map[string]any, prefix string, onSet, onDele
 		if prefix != "" {
 			path = prefix + "." + k
 		}
-		emitLeafPaths(oldVal, path, onDelete)
+		if isOpaqueField(tags, path) {
+			onDelete(path)
+		} else {
+			emitLeafPaths(oldVal, path, onDelete)
+		}
 	}
+}
+
+// isOpaqueField returns true if the path is a schema-level value field that
+// should not be recursed into by tree operations. Non-union KindMap and
+// KindStructSlice are opaque. Union maps are NOT opaque — their entries
+// are individually merged and tracked. KindStructSlice is always opaque
+// regardless of merge tag — its merge semantics are handled in the []any
+// branch of mergeTrees, not the map branch.
+func isOpaqueField(tags tagRegistry, path string) bool {
+	meta, ok := tags[path]
+	if !ok {
+		return false
+	}
+	if meta.kind == KindMap && meta.mergeTag == "union" {
+		return false // union maps recurse per-entry
+	}
+	return meta.kind == KindMap || meta.kind == KindStructSlice
 }
 
 // emitLeafPaths walks a value and emits dotted paths for every leaf.
@@ -549,6 +590,11 @@ func (s *Store[T]) Write(opts ...WriteOption) error {
 			val := lookupTreeValue(s.tree, strings.Split(path, "."))
 			nested := buildNestedMap(strings.Split(path, "."), val)
 			deepMergeMap(ops.sets, nested)
+			// Opaque value fields (non-union maps) must delete-then-set
+			// so the old map content is fully replaced, not deep-merged.
+			if isOpaqueField(s.tags, path) {
+				ops.deletes = append(ops.deletes, path)
+			}
 		case dirtyDeleted:
 			ops.deletes = append(ops.deletes, path)
 		}

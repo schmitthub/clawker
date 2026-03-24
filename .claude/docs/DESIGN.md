@@ -242,13 +242,15 @@ At each walk-up level, dir form (`.clawker/`) wins over flat form (`.clawker.yam
 
 Higher precedence wins silently (no warnings on override).
 
-**Per-field merge for arrays** via struct tags:
+**Per-field merge via struct tags:**
 
-| Tag | Behavior | Used By |
-|-----|----------|---------|
-| `merge:"union"` | Additive, deduped | `from_env`, `packages`, `includes`, `firewall.sources` |
-| `merge:"overwrite"` | Project wins entirely | `copy`, `root_run`, `user_run`, `inject.*` |
-| (none / scalar) | Last-wins | All scalar fields |
+| Tag | Behavior | Applies To | Used By |
+|-----|----------|------------|---------|
+| `merge:"union"` | Additive, deduped | Slices, maps | `security.firewall.add_domains`, `security.firewall.rules`, `build.instructions.labels` |
+| `merge:"overwrite"` | Last-wins (explicit) | Slices, maps | (none currently — all overwrite fields use implicit default) |
+| (none) | Last-wins | Scalars, slices, maps | All scalar fields, all untagged slices, `env`, `build_args` |
+
+**Maps** are schema-aware: `tagRegistry` carries `FieldKind` so `mergeTrees` distinguishes `map[string]string` fields (opaque values) from struct nesting. Untagged maps default to last-wins (highest-priority layer's map replaces entirely). Tagged `merge:"union"` maps do key-by-key merge across layers.
 
 Untagged slices default to overwrite at runtime (safe fallback). A reflection test in CI asserts every `[]T` field has an explicit `merge` tag — missing tag = test failure. Go can't enforce struct tags at compile time; test + CI gate is the standard approach.
 

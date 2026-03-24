@@ -32,8 +32,8 @@ Write:  node tree → route by provenance → per-file atomic write
 | `options.go` | `Option` type, `Migration` type, all `With*` constructors |
 | `discover.go` | Walk-up + explicit path discovery, `ResolveProjectRoot`, dual placement logic |
 | `load.go` | Per-file YAML load, migration runner, `unmarshal[T]` |
-| `merge.go` | N-way map fold, `tagRegistry`, `mergeTrees`, `provenance` |
-| `write.go` | `structToMap`, `encodeValue`, provenance-based routing, atomic I/O, flock |
+| `merge.go` | N-way map fold, `tagRegistry` (field kinds + merge tags), `fieldMeta`, `mergeTrees`, `provenance` |
+| `write.go` | `structToMap`, `encodeValue`, provenance-based routing (with ancestor walk-up), atomic I/O, flock |
 | `resolver.go` | XDG directory resolution: `configDir`, `dataDir`, `stateDir`, `cacheDir` |
 | `field.go` | `Field`, `FieldSet`, `Schema` interfaces, `FieldKind` constants, `NormalizeFields[T]` normalizer, `NewField`, `NewFieldSet` constructors |
 | `defaults.go` | `GenerateDefaultsYAML[T]`, default-tag YAML generation, `parseDefaultValue` |
@@ -149,11 +149,15 @@ Priority: walk-up > dirs > explicit paths. Overlapping discovery deduplicated by
 
 ### Merge (`merge.go`)
 
-`mergeTrees()` recursively merges `map[string]any` trees. Nested maps: recursive. Slices with `merge:"union"` tag: additive, deduplicated. All others: last wins. Provenance tracks which layer won each field.
+`tagRegistry` maps dotted field paths to `fieldMeta` structs carrying both the merge tag and `FieldKind`. Built once from `T`'s struct type via `walkType` during store construction. `walkType` records every leaf (non-struct) field; struct fields are recursed into without registry entries. The registry is the **schema boundary** — it tells all tree operations (`mergeTrees`, `diffTreePaths`, `Write`) which `map[string]any` nodes are struct nesting (recurse) vs. opaque value fields like `map[string]string` (treat as leaf).
+
+`mergeTrees()` recursively merges `map[string]any` trees. **Struct nesting**: always recursive. **Opaque maps** (`KindMap`): check merge tag — `merge:"union"` does key-by-key merge (recurse), untagged/overwrite does last-wins (replace entire map). **Slices**: `merge:"union"` is additive/deduplicated, otherwise last-wins. **Scalars**: last wins. Provenance tracks which layer won each field.
 
 ### Write (`write.go`)
 
 Two modes: auto-route (each field → its provenance layer) or explicit (all fields → named file). Atomic write via temp+fsync+rename. Advisory flock with 10s timeout for cross-process safety.
+
+`layerPathForKey` resolves write targets via three-tier lookup: (1) exact provenance match, (2) descendant prefix match (e.g., `"build"` matches `"build.image"`), (3) ancestor walk-up for new entries without provenance (e.g., `"env.FOO"` walks up to `"env"`). This ensures new map entries route to the layer that owns the parent `map[string]string` field.
 
 ### `structToMap` — omitempty-Safe Serializer
 
