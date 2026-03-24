@@ -563,7 +563,19 @@ func (s *Store[T]) Write(opts ...WriteOption) error {
 
 	s.dirtyPaths = nil
 	s.refreshLayers()
-	return nil
+
+	// Inject layers for any newly created files that weren't in the
+	// layer stack at construction time (e.g. first Write(ToPath(...))
+	// to a local override file).
+	writtenPaths := make([]string, 0, len(grouped))
+	for p := range grouped {
+		writtenPaths = append(writtenPaths, p)
+	}
+	s.injectNewLayers(writtenPaths)
+
+	// Rebuild the merged tree, provenance, and snapshot so that
+	// Read(), ProvenanceMap(), and future Write() calls see fresh state.
+	return s.remerge()
 }
 
 // MarkForWrite adds a dotted field path to the write set so the next
@@ -583,14 +595,13 @@ func (s *Store[T]) MarkForWrite(path string) {
 }
 
 // Refresh re-discovers layer files, re-reads them from disk, and
-// re-merges into a fresh snapshot. This picks up newly created files
-// (e.g. a first save to a "Local" target that didn't exist at
-// construction time) as well as external modifications to existing
-// files.
+// re-merges into a fresh snapshot. This picks up external modifications
+// to existing files and newly created files found via discovery that
+// weren't written by this store.
 //
-// Call after Write(ToPath(...)) when the written layer may not be the
-// highest-priority one — ensures Read() returns the true merged state,
-// not the value last passed to Set.
+// Note: Write() already remerges and injects new layers for files it
+// writes, so Refresh is only needed for external changes (e.g. another
+// process modified a config file).
 func (s *Store[T]) Refresh() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -625,18 +636,9 @@ func (s *Store[T]) Refresh() error {
 		}
 	}
 
-	tree, prov := merge(allLayers, s.tags)
-	value, err := unmarshal[T](tree)
-	if err != nil {
-		return fmt.Errorf("storage: Refresh: %w", err)
-	}
-
 	s.layers = allLayers
-	s.tree = tree
-	s.prov = prov
 	s.dirtyPaths = nil
-	s.value.Store(value)
-	return nil
+	return s.remerge()
 }
 
 // refreshLayers re-reads each discovered layer's data from disk.
@@ -652,4 +654,59 @@ func (s *Store[T]) refreshLayers() {
 		}
 		s.layers[i].data = data
 	}
+}
+
+// injectNewLayers adds layers for files that were written but weren't in
+// the layer stack at construction time. New layers are appended just before
+// the virtual layer (lowest file priority) so they participate in the
+// next remerge. Caller must hold s.mu.
+func (s *Store[T]) injectNewLayers(writtenPaths []string) {
+	known := make(map[string]bool, len(s.layers))
+	for _, l := range s.layers {
+		if l.path != "" {
+			known[l.path] = true
+		}
+	}
+
+	for _, filePath := range writtenPaths {
+		if known[filePath] {
+			continue
+		}
+		data, err := loadRaw(filePath)
+		if err != nil {
+			continue
+		}
+		// Derive filename from the path for layer metadata.
+		fname := filepath.Base(filePath)
+
+		// Insert before the virtual layer (last element with path=="").
+		// If no virtual layer exists, append at the end.
+		inserted := false
+		for i, l := range s.layers {
+			if l.path == "" {
+				// Splice in before virtual layer.
+				s.layers = append(s.layers[:i+1], s.layers[i:]...)
+				s.layers[i] = layer{path: filePath, filename: fname, data: data}
+				inserted = true
+				break
+			}
+		}
+		if !inserted {
+			s.layers = append(s.layers, layer{path: filePath, filename: fname, data: data})
+		}
+	}
+}
+
+// remerge rebuilds the merged tree, provenance map, and typed snapshot
+// from the current layer stack. Caller must hold s.mu.
+func (s *Store[T]) remerge() error {
+	tree, prov := merge(s.layers, s.tags)
+	value, err := unmarshal[T](tree)
+	if err != nil {
+		return fmt.Errorf("storage: remerge: %w", err)
+	}
+	s.tree = tree
+	s.prov = prov
+	s.value.Store(value)
+	return nil
 }

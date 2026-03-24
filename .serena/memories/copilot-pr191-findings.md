@@ -8,10 +8,7 @@ Validated by multi-agent consensus (2 agents per finding). Branch: `feat/field-d
 
 - [x] **#2 offerUserDefault no-op Set → Write silently fails** — RESOLVED: deleted `offerUserDefault` entirely. Feature will return properly in init overhaul PR.
 
-- [ ] **#4 Write() doesn't rebuild tree/provenance after refreshLayers** — `internal/storage/store.go:566`
-  - After `Write()`, `s.tree` and `s.prov` are stale because `refreshLayers()` only re-reads per-layer `.data`. `ProvenanceMap()` returns stale data. Future untargeted writes can route to wrong file in multi-layer configs.
-  - Mitigated by documented `Refresh()` API, but `Write()` itself should be self-consistent.
-  - Severity: MEDIUM (single-layer configs unaffected).
+- [x] **#4 Write() doesn't rebuild tree/provenance after refreshLayers** — RESOLVED: Write() now calls remerge() after refreshLayers(), plus injectNewLayers() for newly created files. Removed redundant Refresh() calls from storeui.
 
 - [ ] **#5 Write() routes new map entry dirty paths to wrong layer** — `internal/storage/store.go:542`
   - `layerPathForKey("env.FOO")` only checks exact match and descendant prefix, not ancestor paths. New map entries (not in original YAML) have no provenance, fall through to `defaultWritePath()`, which may be the wrong layer.

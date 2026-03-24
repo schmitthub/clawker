@@ -2337,17 +2337,18 @@ func TestStore_Refresh_RemergesLayers(t *testing.T) {
 		}))
 		require.NoError(t, store.Write(ToPath(filepath.Join(lowDir, "config.yaml"))))
 
-		// Before Refresh: snapshot has the raw Set value.
-		assert.Equal(t, "user-wrote-this", store.Read().Build.Image,
-			"before Refresh, snapshot reflects Set() not merged state")
-
-		// After Refresh: snapshot reflects the true merge — high-priority wins.
-		require.NoError(t, store.Refresh())
+		// Write remerges: snapshot immediately reflects the true merge —
+		// high-priority layer wins even though we wrote to the low layer.
 		assert.Equal(t, "high-image", store.Read().Build.Image,
-			"after Refresh, high-priority layer wins")
+			"after Write, high-priority layer wins (remerge)")
 
 		// Fields only in the low layer survive.
 		assert.Equal(t, "from-low", store.Read().Name)
+
+		// Refresh is idempotent — no change from the already-correct state.
+		require.NoError(t, store.Refresh())
+		assert.Equal(t, "high-image", store.Read().Build.Image,
+			"Refresh is idempotent after remerge")
 	})
 
 	t.Run("provenance updated after Refresh", func(t *testing.T) {
@@ -2405,15 +2406,23 @@ func TestStore_Refresh_RemergesLayers(t *testing.T) {
 		newFile := filepath.Join(newDir, "config.yaml")
 		require.NoError(t, store.Write(ToPath(newFile)))
 
-		// Before Refresh: Layers still has only the original file.
-		require.Len(t, store.Layers(), 1)
-
-		// After Refresh: the new file is discovered as a layer.
-		require.NoError(t, store.Refresh())
+		// Write injects the new file into the layer stack immediately.
 		layers := store.Layers()
-		require.Len(t, layers, 2, "new file should be discovered")
-		assert.Equal(t, newFile, layers[0].Path,
-			"new file is higher priority (newDir listed first in WithPaths)")
+		require.Len(t, layers, 2, "new file should be injected by Write")
+
+		// Find the new file in layers (position depends on injection point).
+		var found bool
+		for _, l := range layers {
+			if l.Path == newFile {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "new file should be in Layers()")
+
+		// Refresh is idempotent — re-discovery finds the same file.
+		require.NoError(t, store.Refresh())
+		assert.Len(t, store.Layers(), 2, "Refresh is idempotent")
 	})
 }
 
@@ -2542,6 +2551,87 @@ func TestStore_Write_RefreshesLayers(t *testing.T) {
 		require.Len(t, layers, 1)
 		assert.Equal(t, "updated-via-topath", layers[0].Data["name"],
 			"layer data should be refreshed after Write(ToPath)")
+	})
+
+	t.Run("provenance is fresh after Write", func(t *testing.T) {
+		dir := t.TempDir()
+		// First filename = highest priority (like clawker.local.yaml > clawker.yaml).
+		localPath := filepath.Join(dir, "local.yaml")
+		mainPath := filepath.Join(dir, "main.yaml")
+
+		// local owns "name", main owns "build.image" — split across layers.
+		require.NoError(t, os.WriteFile(localPath, []byte("name: from-local\n"), 0o644))
+		require.NoError(t, os.WriteFile(mainPath, []byte("build:\n  image: alpine\n"), 0o644))
+
+		store, err := NewStore[testConfig](
+			WithFilenames("local.yaml", "main.yaml"),
+			WithPaths(dir),
+		)
+		require.NoError(t, err)
+
+		// Initial provenance: "name" → local (idx 0), "build" → main (idx 1).
+		// Provenance tracks at the subtree level, not leaf level.
+		pm := store.ProvenanceMap()
+		require.Equal(t, localPath, pm["name"], "name should come from local initially")
+		require.Equal(t, mainPath, pm["build"], "build should come from main initially")
+
+		// Write build.image to the local layer (promoting it to highest priority).
+		require.NoError(t, store.Set(func(c *testConfig) {
+			c.Build.Image = "ubuntu"
+		}))
+		require.NoError(t, store.Write(ToPath(localPath)))
+
+		// After Write, provenance should reflect the new state:
+		// "build" now exists in both layers; local (idx 0) wins.
+		freshPM := store.ProvenanceMap()
+		assert.Equal(t, localPath, freshPM["build"],
+			"provenance for 'build' should update to local after Write")
+
+		// The snapshot value should also be consistent.
+		assert.Equal(t, "ubuntu", store.Read().Build.Image,
+			"Read() snapshot should reflect post-Write state")
+	})
+
+	t.Run("new file injected into layers after Write", func(t *testing.T) {
+		dir := t.TempDir()
+		existingPath := filepath.Join(dir, "main.yaml")
+
+		require.NoError(t, os.WriteFile(existingPath, []byte("name: original\n"), 0o644))
+
+		// local.yaml listed first (highest priority) but doesn't exist on disk yet.
+		store, err := NewStore[testConfig](
+			WithFilenames("local.yaml", "main.yaml"),
+			WithPaths(dir),
+		)
+		require.NoError(t, err)
+
+		// Only main.yaml discovered (local.yaml doesn't exist yet).
+		require.Len(t, store.Layers(), 1)
+
+		// Write to a new file that wasn't in the layer stack.
+		newPath := filepath.Join(dir, "local.yaml")
+		require.NoError(t, store.Set(func(c *testConfig) {
+			c.Build.Image = "ubuntu"
+		}))
+		require.NoError(t, store.Write(ToPath(newPath)))
+
+		// The new file should now appear in Layers().
+		layers := store.Layers()
+		require.Len(t, layers, 2, "new file should be injected into layer stack")
+
+		var found bool
+		for _, l := range layers {
+			if l.Path == newPath {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "new file %s should be in Layers()", newPath)
+
+		// Provenance should route build to the new file (highest priority).
+		pm := store.ProvenanceMap()
+		assert.Equal(t, newPath, pm["build"],
+			"provenance should route build to newly written file")
 	})
 }
 

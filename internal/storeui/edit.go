@@ -222,15 +222,10 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 			}
 		}
 
-		// Persist dirty fields to the target file.
+		// Persist dirty fields to the target file. Write() remerges
+		// internally, so the snapshot reflects the true merged state.
 		if err := store.Write(storage.ToPath(target.Path)); err != nil {
 			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
-		}
-
-		// Re-merge from all layers so the snapshot reflects the true
-		// merged state, not just the value written to one layer.
-		if err := store.Refresh(); err != nil {
-			return fmt.Errorf("refreshing store: %w", err)
 		}
 		return nil
 	}
@@ -247,14 +242,10 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 
-		// Persist the deletion to the target file.
+		// Persist the deletion to the target file. Write() remerges
+		// internally, so the snapshot reflects the true merged state.
 		if err := store.Write(storage.ToPath(target.Path)); err != nil {
 			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
-		}
-
-		// Re-merge so the snapshot reflects the true merged state.
-		if err := store.Refresh(); err != nil {
-			return fmt.Errorf("refreshing store: %w", err)
 		}
 		return nil
 	}
