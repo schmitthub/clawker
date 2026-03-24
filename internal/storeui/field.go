@@ -25,7 +25,8 @@ const (
 	KindInt         = storage.KindInt
 	KindStringSlice = storage.KindStringSlice
 	KindDuration    = storage.KindDuration
-	KindComplex     = storage.KindComplex
+	KindMap         = storage.KindMap
+	KindStructSlice = storage.KindStructSlice
 )
 
 // KindTriState is deprecated. Use KindBool instead. Retained for backward
@@ -38,13 +39,20 @@ type Field struct {
 	Label       string             // Human-readable label
 	Description string             // Help text
 	Kind        FieldKind          // Widget type
-	Value       string             // Formatted current value
+	Value       string             // Formatted current value (compact summary for browse display)
+	EditValue   string             // Full value for editor pre-population (YAML for Map/StructSlice kinds)
 	Default     string             // Effective default shown when Value is "<unset>" or empty
 	Options     []string           // For Select fields
 	Validator   func(string) error // Optional input validation
 	Required    bool               // Whether the field must have a value
 	ReadOnly    bool               // Whether the field is not editable
 	Order       int                // Sort order (lower = first)
+
+	// Editor is a custom editor factory provided by domain adapters.
+	// When non-nil, the field browser uses it instead of the default kind-based
+	// editor dispatch. The returned value must satisfy [tui.FieldEditor].
+	// Using any preserves the storeui → tui import boundary.
+	Editor func(label, value string) any
 }
 
 // Override allows domain adapters to customize reflected fields by path.
@@ -61,6 +69,11 @@ type Override struct {
 	ReadOnly    *bool
 	Order       *int
 	Hidden      bool // When true, removes the field from the list entirely
+
+	// Editor is a custom editor factory for this field.
+	// When non-nil, the field browser uses it instead of the default kind-based
+	// editor dispatch. The returned value must satisfy [tui.FieldEditor].
+	Editor func(label, value string) any
 }
 
 // ApplyOverrides merges overrides into a copy of fields, returning the result sorted by Order.
@@ -141,11 +154,9 @@ func ApplyOverrides(fields []Field, overrides []Override) []Field {
 			if ov.Order != nil {
 				out.Order = *ov.Order
 			}
-		}
-
-		// KindComplex fields are always read-only — enforce the invariant.
-		if out.Kind == KindComplex {
-			out.ReadOnly = true
+			if ov.Editor != nil {
+				out.Editor = ov.Editor
+			}
 		}
 
 		result = append(result, out)

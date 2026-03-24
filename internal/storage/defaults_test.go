@@ -179,7 +179,7 @@ func TestParseDefaultValue_EdgeCases(t *testing.T) {
 	v = parseDefaultValue("false", KindBool)
 	assert.Equal(t, false, v)
 
-	// Complex kind passes through as string
-	v = parseDefaultValue("whatever", KindComplex)
+	// Map kind passes through as string (maps don't have defaults)
+	v = parseDefaultValue("whatever", KindMap)
 	assert.Equal(t, "whatever", v)
 }

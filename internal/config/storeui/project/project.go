@@ -14,26 +14,20 @@ import (
 
 // Overrides returns field overrides for config.Project.
 // Labels and descriptions come from schema struct tags (desc/label).
-// Overrides here are limited to TUI-specific concerns: Hidden, Kind, Options, ReadOnly.
+// Overrides here are limited to TUI-specific concerns: Kind and Options for constrained fields.
+//
+// Every field in the schema is editable — no fields are hidden.
+// Maps and struct slices use the default YAML textarea editor.
+// Domain adapters can wire custom Editor factories for polished UX in the future.
 func Overrides() []storeui.Override {
 	return []storeui.Override{
-		// Build — complex types hidden (prefix-based: hides all children)
-		{Path: "build.build_args", Hidden: true},
-		{Path: "build.instructions", Hidden: true},
-		{Path: "build.inject", Hidden: true},
-
-		// Agent — complex types hidden
-		{Path: "agent.env", Hidden: true},
-		{Path: "agent.claude_code", Hidden: true},
-
 		// Workspace — select widget
 		{Path: "workspace.default_mode",
 			Kind: storeui.Ptr(storeui.KindSelect), Options: []string{"bind", "snapshot"}},
 
-		// Security — complex types hidden
-		{Path: "security.firewall.rules", Hidden: true},
-		{Path: "security.firewall.ip_range_sources", Hidden: true},
-		{Path: "security.cap_add", Hidden: true},
+		// Agent — Claude Code config strategy select
+		{Path: "agent.claude_code.config.strategy",
+			Kind: storeui.Ptr(storeui.KindSelect), Options: []string{"copy", "fresh"}},
 	}
 }
 

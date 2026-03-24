@@ -3,8 +3,11 @@ package storeui
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // WalkFields uses reflection to discover editable fields from a struct value.
@@ -89,18 +92,16 @@ func walkStruct(val reflect.Value, typ reflect.Type, prefix string, fields *[]Fi
 				continue
 			}
 
-			// Other pointer types → Complex
-			f := Field{
-				Path:     path,
-				Label:    name,
-				Kind:     KindComplex,
-				ReadOnly: true,
-				Order:    *order,
-			}
-			if !fv.IsNil() {
-				f.Value = fmt.Sprintf("%v", fv.Elem().Interface())
-			}
-			*fields = append(*fields, f)
+			// Other pointer types — classify as map or struct slice.
+			kind, val, editVal := classifyAndFormat(ft, fv)
+			*fields = append(*fields, Field{
+				Path:      path,
+				Label:     name,
+				Kind:      kind,
+				Value:     val,
+				EditValue: editVal,
+				Order:     *order,
+			})
 			*order++
 			continue
 		}
@@ -162,14 +163,15 @@ func walkStruct(val reflect.Value, typ reflect.Type, prefix string, fields *[]Fi
 			continue // Don't increment order — the struct itself is not a field.
 
 		default:
-			// Maps, non-string slices, interfaces, etc. → Complex (read-only).
+			// Maps, struct slices, and other types — classify and format.
+			kind, val, editVal := classifyAndFormat(ft, fv)
 			*fields = append(*fields, Field{
-				Path:     path,
-				Label:    name,
-				Kind:     KindComplex,
-				ReadOnly: true,
-				Value:    fmt.Sprintf("%v", fv.Interface()),
-				Order:    *order,
+				Path:      path,
+				Label:     name,
+				Kind:      kind,
+				Value:     val,
+				EditValue: editVal,
+				Order:     *order,
 			})
 		}
 		*order++
@@ -184,4 +186,94 @@ func yamlTagName(tag string) string {
 	}
 	name, _, _ := strings.Cut(tag, ",")
 	return name
+}
+
+// classifyAndFormat determines the FieldKind and formats browse/edit values
+// for map and struct-slice types. Panics on truly unsupported types.
+func classifyAndFormat(ft reflect.Type, fv reflect.Value) (kind FieldKind, browseVal, editVal string) {
+	// Dereference pointer for classification.
+	elem := ft
+	if ft.Kind() == reflect.Ptr {
+		elem = ft.Elem()
+		if fv.IsNil() {
+			fv = reflect.New(elem).Elem()
+		} else {
+			fv = fv.Elem()
+		}
+	}
+
+	switch {
+	case elem.Kind() == reflect.Map:
+		kind = KindMap
+		browseVal = formatMapSummary(fv)
+		editVal = marshalYAMLValue(fv)
+
+	case elem.Kind() == reflect.Slice && elem.Elem().Kind() == reflect.Struct:
+		kind = KindStructSlice
+		n := fv.Len()
+		if n == 0 {
+			browseVal = ""
+		} else if n == 1 {
+			browseVal = "1 item"
+		} else {
+			browseVal = fmt.Sprintf("%d items", n)
+		}
+		editVal = marshalYAMLValue(fv)
+
+	default:
+		// Unrecognized type — return KindMap as a safe fallback with YAML editing.
+		kind = KindMap
+		editVal = marshalYAMLValue(fv)
+	}
+	return
+}
+
+// formatMapSummary produces a compact "key1=val1, key2=val2" browse summary.
+func formatMapSummary(fv reflect.Value) string {
+	if fv.IsNil() || fv.Len() == 0 {
+		return ""
+	}
+	n := fv.Len()
+	if n == 1 {
+		return "1 entry"
+	}
+	return fmt.Sprintf("%d entries", n)
+}
+
+// marshalYAMLValue marshals a reflect.Value to a YAML string for editor pre-population.
+// Returns empty string for nil/empty values.
+func marshalYAMLValue(fv reflect.Value) string {
+	if !fv.IsValid() {
+		return ""
+	}
+	iface := fv.Interface()
+	// Check for nil/empty.
+	switch fv.Kind() {
+	case reflect.Map:
+		if fv.IsNil() || fv.Len() == 0 {
+			return ""
+		}
+		// Sort map keys for stable output.
+		if fv.Type().Key().Kind() == reflect.String {
+			keys := make([]string, 0, fv.Len())
+			for _, k := range fv.MapKeys() {
+				keys = append(keys, k.String())
+			}
+			sort.Strings(keys)
+			ordered := make(map[string]any, len(keys))
+			for _, k := range keys {
+				ordered[k] = fv.MapIndex(reflect.ValueOf(k)).Interface()
+			}
+			iface = ordered
+		}
+	case reflect.Slice:
+		if fv.IsNil() || fv.Len() == 0 {
+			return ""
+		}
+	}
+	data, err := yaml.Marshal(iface)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }

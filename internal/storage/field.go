@@ -18,7 +18,8 @@ const (
 	KindInt                          // int, int64
 	KindStringSlice                  // []string
 	KindDuration                     // time.Duration
-	KindComplex                      // map, non-string slice, non-bool/struct pointer, or other non-editable type
+	KindMap                          // map[string]string
+	KindStructSlice                  // []struct (non-string slice of structs)
 )
 
 // String returns the human-readable name of the field kind.
@@ -36,8 +37,10 @@ func (k FieldKind) String() string {
 		return "StringSlice"
 	case KindDuration:
 		return "Duration"
-	case KindComplex:
-		return "Complex"
+	case KindMap:
+		return "Map"
+	case KindStructSlice:
+		return "StructSlice"
 	default:
 		return fmt.Sprintf("FieldKind(%d)", int(k))
 	}
@@ -160,7 +163,9 @@ func NewFieldSet(fields []Field) FieldSet {
 //   - []string → KindStringSlice
 //   - time.Duration → KindDuration
 //   - struct, *struct → recursed (not a leaf field)
-//   - *T (all other pointers), map, non-string slice → KindComplex
+//   - map[K]V → KindMap
+//   - []struct → KindStructSlice
+//   - unsupported types → panic
 //
 // NormalizeFields does NOT extract runtime values — only schema metadata.
 // Panics if v is not a struct or pointer-to-struct.
@@ -228,8 +233,12 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field) {
 				normalizeStruct(elem, path, fields)
 				continue
 			}
-			// Other pointer types → Complex.
-			*fields = append(*fields, &field{path: path, kind: KindComplex, label: label, desc: desc, def: def, required: req})
+			// Other pointer types — classify if recognized, skip otherwise.
+			kind, ok := classifyType(ft)
+			if !ok {
+				continue
+			}
+			*fields = append(*fields, &field{path: path, kind: kind, label: label, desc: desc, def: def, required: req})
 			continue
 		}
 
@@ -254,9 +263,32 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field) {
 			normalizeStruct(ft, path, fields)
 			continue // Struct itself is not a leaf field.
 
+		case ft.Kind() == reflect.Map:
+			*fields = append(*fields, &field{path: path, kind: KindMap, label: label, desc: desc, def: def, required: req})
+
+		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
+			*fields = append(*fields, &field{path: path, kind: KindStructSlice, label: label, desc: desc, def: def, required: req})
+
 		default:
-			// Maps, non-string slices, interfaces, etc. → Complex.
-			*fields = append(*fields, &field{path: path, kind: KindComplex, label: label, desc: desc, def: def, required: req})
+			// Silently skip types we don't know how to describe (channels, interfaces, etc.).
+			continue
 		}
+	}
+}
+
+// classifyType maps a non-primitive reflect.Type to a FieldKind.
+// Returns false if the type is not recognized (caller should skip the field).
+func classifyType(ft reflect.Type) (FieldKind, bool) {
+	elem := ft
+	if ft.Kind() == reflect.Ptr {
+		elem = ft.Elem()
+	}
+	switch {
+	case elem.Kind() == reflect.Map:
+		return KindMap, true
+	case elem.Kind() == reflect.Slice && elem.Elem().Kind() == reflect.Struct:
+		return KindStructSlice, true
+	default:
+		return 0, false
 	}
 }

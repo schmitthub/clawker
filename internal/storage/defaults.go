@@ -129,7 +129,11 @@ func fieldKindFor(ft reflect.Type) FieldKind {
 		if elem.Kind() == reflect.Bool {
 			return KindBool
 		}
-		return KindComplex
+		kind, ok := classifyType(ft)
+		if !ok {
+			return KindText // fallback for default coercion
+		}
+		return kind
 	}
 	switch {
 	case ft == reflect.TypeFor[time.Duration]():
@@ -142,7 +146,11 @@ func fieldKindFor(ft reflect.Type) FieldKind {
 		return KindInt
 	case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String:
 		return KindStringSlice
+	case ft.Kind() == reflect.Map:
+		return KindMap
+	case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
+		return KindStructSlice
 	default:
-		return KindComplex
+		return KindText // default coercion fallback for unknown types
 	}
 }

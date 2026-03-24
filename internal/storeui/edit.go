@@ -251,6 +251,7 @@ func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.Brow
 			Description: f.Description,
 			Kind:        fieldKindToBrowserKind(f.Kind),
 			Value:       f.Value,
+			EditValue:   f.EditValue,
 			Default:     f.Default,
 			Source:      source,
 			Options:     f.Options,
@@ -258,6 +259,7 @@ func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.Brow
 			Required:    f.Required,
 			ReadOnly:    f.ReadOnly,
 			Order:       f.Order,
+			Editor:      f.Editor,
 		}
 	}
 	return out
@@ -329,9 +331,11 @@ func fieldKindToBrowserKind(k FieldKind) tui.BrowserFieldKind {
 		return tui.BrowserStringSlice
 	case KindDuration:
 		return tui.BrowserDuration
-	case KindComplex:
-		return tui.BrowserComplex
+	case KindMap:
+		return tui.BrowserMap
+	case KindStructSlice:
+		return tui.BrowserStructSlice
 	default:
-		return tui.BrowserComplex
+		return tui.BrowserMap // fallback; should not happen with well-typed schemas
 	}
 }

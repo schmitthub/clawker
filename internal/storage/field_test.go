@@ -62,7 +62,7 @@ func TestNormalizeFields_AllTypeMappings(t *testing.T) {
 		{"build.target", KindText},
 		{"optional.port", KindInt},
 		{"debug", KindBool},
-		{"env", KindComplex},
+		{"env", KindMap},
 	}
 
 	for _, tt := range tests {

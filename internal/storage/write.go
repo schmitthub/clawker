@@ -183,17 +183,41 @@ func encodeValue(v reflect.Value) any {
 }
 
 // marshalYAML encodes a value as YAML with 2-space indentation.
+// Multiline strings automatically use literal block style (|) instead of
+// escaped newlines in quoted scalars.
 func marshalYAML(v any) ([]byte, error) {
+	// First marshal to a yaml.Node tree so we can adjust scalar styles.
+	var node yaml.Node
+	if err := node.Encode(v); err != nil {
+		return nil, err
+	}
+	setLiteralStyle(&node)
+
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
-	if err := enc.Encode(v); err != nil {
+	if err := enc.Encode(&node); err != nil {
 		return nil, err
 	}
 	if err := enc.Close(); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// setLiteralStyle walks a yaml.Node tree and sets LiteralStyle on string
+// scalar nodes that contain newlines. This produces "cmd: |" block scalars
+// instead of "cmd: \"line1\\nline2\"" escaped quotes.
+func setLiteralStyle(node *yaml.Node) {
+	if node == nil {
+		return
+	}
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" && strings.Contains(node.Value, "\n") {
+		node.Style = yaml.LiteralStyle
+	}
+	for _, child := range node.Content {
+		setLiteralStyle(child)
+	}
 }
 
 // atomicWrite writes data to path using a temp-file + fsync + rename

@@ -106,8 +106,10 @@ func TestWalkFields_ComplexTypes(t *testing.T) {
 	assert.Equal(t, KindText, fields[0].Kind)
 
 	assert.Equal(t, "env", fields[1].Path)
-	assert.Equal(t, KindComplex, fields[1].Kind)
-	assert.True(t, fields[1].ReadOnly)
+	assert.Equal(t, KindMap, fields[1].Kind)
+	assert.False(t, fields[1].ReadOnly)
+	assert.Equal(t, "1 entry", fields[1].Value)
+	assert.NotEmpty(t, fields[1].EditValue, "map fields should have YAML EditValue")
 }
 
 func TestWalkFields_YAMLTags(t *testing.T) {

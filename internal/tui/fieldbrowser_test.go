@@ -15,7 +15,7 @@ func testBrowserFields() []BrowserField {
 		{Path: "build.packages", Label: "packages", Kind: BrowserStringSlice, Value: "git, curl", Order: 1},
 		{Path: "security.docker_socket", Label: "docker_socket", Kind: BrowserBool, Value: "false", Order: 2},
 		{Path: "security.git_credentials.forward_ssh", Label: "forward_ssh", Kind: BrowserBool, Value: "false", Order: 3},
-		{Path: "build.instructions", Label: "instructions", Kind: BrowserComplex, Value: "{}", ReadOnly: true, Order: 4},
+		{Path: "build.instructions.env", Label: "env", Kind: BrowserMap, Value: "2 entries", ReadOnly: true, Order: 4},
 	}
 }
 

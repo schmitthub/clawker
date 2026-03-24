@@ -21,7 +21,8 @@ const (
 	BrowserInt                                 // Integer text input
 	BrowserStringSlice                         // List editor (comma-separated)
 	BrowserDuration                            // Duration text input
-	BrowserComplex                             // Unsupported — always read-only
+	BrowserMap                                 // Key-value map editor (default: YAML textarea)
+	BrowserStructSlice                         // Struct slice editor (default: YAML textarea)
 )
 
 // BrowserField represents a single field in the field browser.
@@ -30,7 +31,8 @@ type BrowserField struct {
 	Label       string             // Human-readable label
 	Description string             // Help text
 	Kind        BrowserFieldKind   // Widget type for editing
-	Value       string             // Formatted current value
+	Value       string             // Formatted current value (compact summary for browse display)
+	EditValue   string             // Full value for editor pre-population (YAML for Map/StructSlice)
 	Default     string             // Shown when Value is empty or "<unset>"
 	Source      string             // Where this value came from (e.g. "~/.config/clawker/clawker.yaml")
 	Options     []string           // For Select fields
@@ -38,6 +40,11 @@ type BrowserField struct {
 	Required    bool               // Whether the field must have a value
 	ReadOnly    bool               // Whether the field is not editable
 	Order       int                // Sort order (lower = first)
+
+	// Editor is a custom editor factory. When non-nil, the field browser uses
+	// it instead of the default kind-based dispatch. The returned value must
+	// satisfy [FieldEditor]. Domain adapters provide this via overrides.
+	Editor func(label, value string) any
 }
 
 // BrowserLayerTarget represents a save destination for a single field.
@@ -107,6 +114,7 @@ const (
 	ekText                     // TextField (simple string, int, duration)
 	ekList                     // ListEditorModel ([]string)
 	ekTextarea                 // TextareaEditorModel (multiline string)
+	ekCustom                   // Custom FieldEditor from BrowserField.Editor factory
 )
 
 // ---------------------------------------------------------------------------
@@ -151,12 +159,13 @@ type FieldBrowserModel struct {
 	scrollOff int // scroll offset for visible area
 
 	// Edit state
-	editIdx    int
-	editKind   editKind
-	textField  TextField
-	selField   SelectField
-	listEditor ListEditorModel
-	taEditor   TextareaEditorModel
+	editIdx      int
+	editKind     editKind
+	textField    TextField
+	selField     SelectField
+	listEditor   ListEditorModel
+	taEditor     TextareaEditorModel
+	customEditor FieldEditor // custom editor from BrowserField.Editor factory
 
 	// Layer picker state (after edit confirmation)
 	layerField    SelectField
@@ -401,6 +410,29 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 	m.editIdx = idx
 	f := m.fields[idx]
 
+	// Custom editor takes priority over kind-based dispatch.
+	if f.Editor != nil {
+		editVal := f.EditValue
+		if editVal == "" {
+			editVal = f.Value
+		}
+		editor, ok := f.Editor(f.Label, editVal).(FieldEditor)
+		if !ok {
+			// Programming error: Editor factory must return a FieldEditor.
+			m.state = bsStateBrowse
+			return nil
+		}
+		m.editKind = ekCustom
+		m.customEditor = editor
+		if m.width > 0 && m.height > 0 {
+			updated, _ := m.customEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+			if fe, ok := updated.(FieldEditor); ok {
+				m.customEditor = fe
+			}
+		}
+		return m.customEditor.Init()
+	}
+
 	currentVal := f.Value
 
 	switch f.Kind {
@@ -438,6 +470,20 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 			m.listEditor, _ = m.listEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		}
 		return m.listEditor.Init()
+
+	case BrowserMap, BrowserStructSlice:
+		// Default fallback: YAML textarea for maps and struct slices
+		// when no custom Editor factory is provided via override.
+		editVal := f.EditValue
+		if editVal == "" {
+			editVal = currentVal
+		}
+		m.editKind = ekTextarea
+		m.taEditor = NewTextareaEditor(f.Label, editVal)
+		if m.width > 0 && m.height > 0 {
+			m.taEditor, _ = m.taEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		}
+		return m.taEditor.Init()
 
 	default:
 		// Text fields always use the multiline textarea editor —
@@ -512,6 +558,20 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.enterPickLayer(f.Path, m.taEditor.Value())
 		}
 		if m.taEditor.IsCancelled() {
+			m.state = bsStateBrowse
+			return m, nil
+		}
+		return m, cmd
+
+	case ekCustom:
+		updated, cmd := m.customEditor.Update(msg)
+		if fe, ok := updated.(FieldEditor); ok {
+			m.customEditor = fe
+		}
+		if m.customEditor.IsConfirmed() {
+			return m, m.enterPickLayer(f.Path, m.customEditor.Value())
+		}
+		if m.customEditor.IsCancelled() {
 			m.state = bsStateBrowse
 			return m, nil
 		}
@@ -1034,6 +1094,10 @@ func (m *FieldBrowserModel) viewEdit(b *strings.Builder) {
 		b.WriteString(m.listEditor.View())
 	case ekTextarea:
 		b.WriteString(m.taEditor.View())
+	case ekCustom:
+		if m.customEditor != nil {
+			b.WriteString(m.customEditor.View())
+		}
 	}
 }
 
