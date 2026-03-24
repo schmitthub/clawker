@@ -2309,6 +2309,182 @@ func TestStore_Delete(t *testing.T) {
 	})
 }
 
+func TestStore_Refresh_RemergesLayers(t *testing.T) {
+	t.Run("snapshot reflects true merged state after per-layer write", func(t *testing.T) {
+		highDir := t.TempDir() // highest priority
+		lowDir := t.TempDir()  // lowest priority
+
+		// High-priority layer: agent.editor = nano
+		require.NoError(t, os.WriteFile(
+			filepath.Join(highDir, "config.yaml"),
+			[]byte("build:\n  image: high-image\n"), 0o644))
+
+		// Low-priority layer: agent.editor = vim
+		require.NoError(t, os.WriteFile(
+			filepath.Join(lowDir, "config.yaml"),
+			[]byte("build:\n  image: low-image\nname: from-low\n"), 0o644))
+
+		store, err := NewStore[testConfig](
+			WithFilenames("config.yaml"),
+			WithPaths(highDir, lowDir),
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "high-image", store.Read().Build.Image)
+
+		// Set + Write to the LOW-priority layer — simulates storeui per-layer save.
+		require.NoError(t, store.Set(func(c *testConfig) {
+			c.Build.Image = "user-wrote-this"
+		}))
+		require.NoError(t, store.Write(ToPath(filepath.Join(lowDir, "config.yaml"))))
+
+		// Before Refresh: snapshot has the raw Set value.
+		assert.Equal(t, "user-wrote-this", store.Read().Build.Image,
+			"before Refresh, snapshot reflects Set() not merged state")
+
+		// After Refresh: snapshot reflects the true merge — high-priority wins.
+		require.NoError(t, store.Refresh())
+		assert.Equal(t, "high-image", store.Read().Build.Image,
+			"after Refresh, high-priority layer wins")
+
+		// Fields only in the low layer survive.
+		assert.Equal(t, "from-low", store.Read().Name)
+	})
+
+	t.Run("provenance updated after Refresh", func(t *testing.T) {
+		highDir := t.TempDir()
+		lowDir := t.TempDir()
+
+		require.NoError(t, os.WriteFile(
+			filepath.Join(highDir, "config.yaml"),
+			[]byte("name: high\n"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(lowDir, "config.yaml"),
+			[]byte("name: low\n"), 0o644))
+
+		store, err := NewStore[testConfig](
+			WithFilenames("config.yaml"),
+			WithPaths(highDir, lowDir),
+		)
+		require.NoError(t, err)
+
+		prov, ok := store.Provenance("name")
+		require.True(t, ok)
+		assert.Equal(t, filepath.Join(highDir, "config.yaml"), prov.Path)
+
+		// Mutate and write to low layer, then refresh.
+		require.NoError(t, store.Set(func(c *testConfig) { c.Name = "changed" }))
+		require.NoError(t, store.Write(ToPath(filepath.Join(lowDir, "config.yaml"))))
+		require.NoError(t, store.Refresh())
+
+		// Provenance should point back to high layer (it still wins).
+		prov, ok = store.Provenance("name")
+		require.True(t, ok)
+		assert.Equal(t, filepath.Join(highDir, "config.yaml"), prov.Path)
+	})
+
+	t.Run("discovers newly created layer file", func(t *testing.T) {
+		existingDir := t.TempDir()
+		newDir := t.TempDir()
+
+		require.NoError(t, os.WriteFile(
+			filepath.Join(existingDir, "config.yaml"),
+			[]byte("name: existing\n"), 0o644))
+
+		// newDir has no config.yaml yet — store starts with one layer.
+		store, err := NewStore[testConfig](
+			WithFilenames("config.yaml"),
+			WithPaths(newDir, existingDir),
+		)
+		require.NoError(t, err)
+		require.Len(t, store.Layers(), 1, "only the existing file is discovered")
+
+		// Write to the new path (simulates first "Local" save in storeui).
+		require.NoError(t, store.Set(func(c *testConfig) {
+			c.Build.Image = "new-local"
+		}))
+		newFile := filepath.Join(newDir, "config.yaml")
+		require.NoError(t, store.Write(ToPath(newFile)))
+
+		// Before Refresh: Layers still has only the original file.
+		require.Len(t, store.Layers(), 1)
+
+		// After Refresh: the new file is discovered as a layer.
+		require.NoError(t, store.Refresh())
+		layers := store.Layers()
+		require.Len(t, layers, 2, "new file should be discovered")
+		assert.Equal(t, newFile, layers[0].Path,
+			"new file is higher priority (newDir listed first in WithPaths)")
+	})
+}
+
+func TestStore_MarkForWrite(t *testing.T) {
+	t.Run("unchanged value written to lower layer", func(t *testing.T) {
+		highDir := t.TempDir()
+		lowDir := t.TempDir()
+
+		require.NoError(t, os.WriteFile(
+			filepath.Join(highDir, "config.yaml"),
+			[]byte("build:\n  image: alpine\n"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(lowDir, "config.yaml"),
+			[]byte("name: low-only\n"), 0o644))
+
+		store, err := NewStore[testConfig](
+			WithFilenames("config.yaml"),
+			WithPaths(highDir, lowDir),
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "alpine", store.Read().Build.Image)
+
+		// Set the same value — merged tree unchanged, path NOT dirtied.
+		require.NoError(t, store.Set(func(c *testConfig) {
+			c.Build.Image = "alpine"
+		}))
+
+		// Without MarkForWrite, Write is a no-op (nothing dirty).
+		lowFile := filepath.Join(lowDir, "config.yaml")
+		require.NoError(t, store.Write(ToPath(lowFile)))
+
+		raw, _ := os.ReadFile(lowFile)
+		assert.NotContains(t, string(raw), "alpine",
+			"Write without MarkForWrite should not write unchanged value")
+
+		// MarkForWrite forces the path into the write set.
+		store.MarkForWrite("build.image")
+		require.NoError(t, store.Write(ToPath(lowFile)))
+
+		raw, _ = os.ReadFile(lowFile)
+		assert.Contains(t, string(raw), "alpine",
+			"Write after MarkForWrite should persist the value")
+	})
+
+	t.Run("no-op when path already dirty from Set", func(t *testing.T) {
+		dir := t.TempDir()
+
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dir, "config.yaml"),
+			[]byte("name: original\n"), 0o644))
+
+		store, err := NewStore[testConfig](
+			WithFilenames("config.yaml"),
+			WithPaths(dir),
+		)
+		require.NoError(t, err)
+
+		// Set with a different value — path is already dirty.
+		require.NoError(t, store.Set(func(c *testConfig) {
+			c.Name = "changed"
+		}))
+
+		// MarkForWrite is idempotent — doesn't break anything.
+		store.MarkForWrite("name")
+		require.NoError(t, store.Write(ToPath(filepath.Join(dir, "config.yaml"))))
+
+		raw, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+		assert.Contains(t, string(raw), "changed")
+	})
+}
+
 func TestStore_Write_RefreshesLayers(t *testing.T) {
 	t.Run("layers reflect written values", func(t *testing.T) {
 		dir := t.TempDir()

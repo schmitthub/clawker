@@ -566,6 +566,79 @@ func (s *Store[T]) Write(opts ...WriteOption) error {
 	return nil
 }
 
+// MarkForWrite adds a dotted field path to the write set so the next
+// Write includes it regardless of whether Set detected a change.
+//
+// Use this when persisting a value to a specific layer file where
+// the merged result is already identical (e.g. writing the current
+// winning value to a lower-priority layer). Normal Set-based dirty
+// tracking won't catch this because the merged tree didn't change.
+func (s *Store[T]) MarkForWrite(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dirtyPaths == nil {
+		s.dirtyPaths = make(map[string]dirtyOp)
+	}
+	s.dirtyPaths[path] = dirtySet
+}
+
+// Refresh re-discovers layer files, re-reads them from disk, and
+// re-merges into a fresh snapshot. This picks up newly created files
+// (e.g. a first save to a "Local" target that didn't exist at
+// construction time) as well as external modifications to existing
+// files.
+//
+// Call after Write(ToPath(...)) when the written layer may not be the
+// highest-priority one — ensures Read() returns the true merged state,
+// not the value last passed to Set.
+func (s *Store[T]) Refresh() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-run discovery to pick up newly created files.
+	discovered, err := discover(&s.opts)
+	if err != nil {
+		return fmt.Errorf("storage: Refresh: discovery: %w", err)
+	}
+
+	// Load each discovered file (loadRaw — migrations ran at construction).
+	var fileLayers []layer
+	for _, df := range discovered {
+		data, lErr := loadRaw(df.path)
+		if lErr != nil {
+			continue // skip unreadable files
+		}
+		fileLayers = append(fileLayers, layer{
+			path:     df.path,
+			filename: df.filename,
+			data:     data,
+		})
+	}
+
+	// Preserve the virtual layer (defaults + raw string).
+	allLayers := make([]layer, 0, len(fileLayers)+1)
+	allLayers = append(allLayers, fileLayers...)
+	for _, l := range s.layers {
+		if l.path == "" {
+			allLayers = append(allLayers, l)
+			break
+		}
+	}
+
+	tree, prov := merge(allLayers, s.tags)
+	value, err := unmarshal[T](tree)
+	if err != nil {
+		return fmt.Errorf("storage: Refresh: %w", err)
+	}
+
+	s.layers = allLayers
+	s.tree = tree
+	s.prov = prov
+	s.dirtyPaths = nil
+	s.value.Store(value)
+	return nil
+}
+
 // refreshLayers re-reads each discovered layer's data from disk.
 // Caller must hold s.mu.
 func (s *Store[T]) refreshLayers() {

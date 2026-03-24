@@ -36,6 +36,45 @@ func ResolveLocalPath(cwd, filename string) string {
 	return filepath.Join(cwd, "."+filename)
 }
 
+// BuildLayerTargets builds save destinations from the canonical locations
+// (Local, User) plus every discovered file layer. All targets are always
+// shown so the user can save to any layer — even ones that don't currently
+// define the field being edited.
+//
+// Virtual layers (empty path = defaults) are always excluded.
+// Duplicate paths are deduped (first occurrence wins).
+func BuildLayerTargets(filename, configDir string, layers []storage.LayerInfo) []LayerTarget {
+	var targets []LayerTarget
+	seen := make(map[string]bool)
+
+	add := func(label, path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		targets = append(targets, LayerTarget{
+			Label:       label,
+			Description: ShortenHome(path),
+			Path:        path,
+		})
+		seen[path] = true
+	}
+
+	// Local: CWD dot-file (skipped if CWD is unavailable).
+	if cwd, err := os.Getwd(); err == nil {
+		add("Local", ResolveLocalPath(cwd, filename))
+	}
+
+	// User: config dir file.
+	add("User", filepath.Join(configDir, filename))
+
+	// All discovered file layers (deduped against Local/User).
+	for _, l := range layers {
+		add(ShortenHome(l.Path), l.Path)
+	}
+
+	return targets
+}
+
 // Ptr returns a pointer to a copy of the given value.
 // Useful for constructing Override fields.
 func Ptr[T any](v T) *T {
@@ -171,9 +210,27 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 			return fmt.Errorf("setting field %s: %w", fieldPath, setFieldErr)
 		}
 
-		// Persist the dirty field to the target file.
+		// When saving to a layer that isn't the provenance winner,
+		// Set() may not have dirtied the path (merged value unchanged).
+		// Compare against the target layer's raw data — only force a
+		// write when the layer file actually needs updating.
+		prov, hasProv := store.Provenance(fieldPath)
+		if hasProv && prov.Path != target.Path {
+			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
+			if fmt.Sprintf("%v", layerVal) != value {
+				store.MarkForWrite(fieldPath)
+			}
+		}
+
+		// Persist dirty fields to the target file.
 		if err := store.Write(storage.ToPath(target.Path)); err != nil {
 			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
+		}
+
+		// Re-merge from all layers so the snapshot reflects the true
+		// merged state, not just the value written to one layer.
+		if err := store.Refresh(); err != nil {
+			return fmt.Errorf("refreshing store: %w", err)
 		}
 		return nil
 	}
@@ -193,6 +250,11 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		// Persist the deletion to the target file.
 		if err := store.Write(storage.ToPath(target.Path)); err != nil {
 			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
+		}
+
+		// Re-merge so the snapshot reflects the true merged state.
+		if err := store.Refresh(); err != nil {
+			return fmt.Errorf("refreshing store: %w", err)
 		}
 		return nil
 	}
@@ -263,6 +325,31 @@ func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.Brow
 		}
 	}
 	return out
+}
+
+// lookupLayerFieldValue finds the raw value for a dotted field path in a
+// specific layer identified by its file path. Returns nil if the layer is
+// not found or the field is absent from that layer's data.
+func lookupLayerFieldValue(layers []storage.LayerInfo, layerPath, fieldPath string) any {
+	for _, l := range layers {
+		if l.Path != layerPath {
+			continue
+		}
+		segments := strings.Split(fieldPath, ".")
+		var cur any = l.Data
+		for _, seg := range segments {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				return nil
+			}
+			cur, ok = m[seg]
+			if !ok {
+				return nil
+			}
+		}
+		return cur
+	}
+	return nil
 }
 
 // resolveFieldSource finds the source file for a field path by checking
