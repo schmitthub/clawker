@@ -108,6 +108,15 @@ if [ "${CLAWKER_FIREWALL_ENABLED:-}" = "true" ]; then
 fi
 
 # =============================================================================
+# Docker socket permissions (must run as root before privilege drop)
+# =============================================================================
+# Host-mounted socket arrives as root:root — fix group so the container user
+# (member of the "docker" group created in the Dockerfile) can access it.
+if [ -S /var/run/docker.sock ]; then
+    chgrp docker /var/run/docker.sock
+fi
+
+# =============================================================================
 # User-level init (config, git, ssh, post-init) — all via gosu
 # =============================================================================
 
