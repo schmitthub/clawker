@@ -420,7 +420,7 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 		}
 		editor, ok := f.Editor(f.Label, editVal).(FieldEditor)
 		if !ok {
-			// Programming error: Editor factory must return a FieldEditor.
+			// Editor factory returned a non-FieldEditor type; fall back to browse-only.
 			m.state = bsStateBrowse
 			return nil
 		}

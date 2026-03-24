@@ -12,9 +12,7 @@ Validated by multi-agent consensus (2 agents per finding). Branch: `feat/field-d
 
 - [x] **#5 Write() routes new map entry dirty paths to wrong layer** — RESOLVED: Root cause was deeper than routing — the tree engine couldn't distinguish `map[string]string` fields from struct nesting. Fix: (1) evolved `tagRegistry` to carry `FieldKind` as schema boundary, (2) `mergeTrees` now checks registry — opaque maps get tag-driven merge (union or last-wins) instead of implicit key-by-key, (3) `diffTreePaths` treats opaque maps as leaves (emits `"env"` not `"env.FOO"`), (4) `Write()` uses delete-then-set for opaque maps to get replace semantics. Also added `merge:"union"` to `labels` field; env maps default to overwrite.
 
-- [ ] **#10 Silent fallback in FieldBrowser when Editor returns non-FieldEditor** — `internal/tui/fieldbrowser.go:425`
-  - `Editor` factory returns `any` (import boundary design). Type assertion failure silently drops to browse mode. Comment says "programming error" but suppresses it.
-  - Fix: panic (consistent with other programming-error paths in codebase) or surface via error display.
+- [x] **#10 Silent fallback in FieldBrowser when Editor returns non-FieldEditor** — RESOLVED: Silent fallback is intentional design (unresolvable fields degrade to browse-only). Fixed misleading "Programming error" comment to describe the intended behavior.
 
 - [ ] **#12 E2E migration tests don't assert command success** — `test/e2e/migration_test.go:49,88`
   - `h.Run("project", "info", ...)` return value discarded on both lines. If command errors, file content assertions could pass for wrong reasons.
