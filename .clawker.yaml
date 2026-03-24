@@ -3,9 +3,36 @@ agent:
     config:
       strategy: copy
     use_host_auth: true
-  enable_shared_dir: false
+  editor: nano
+  enable_shared_dir: true
+  from_env:
+    - GH_TOKEN
+    - CONTEXT7_API_KEY
+  post_init: |
+    claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+    claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
+    claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
 build:
   image: buildpack-deps:bookworm-scm
+  inject:
+    after_user_switch:
+      - ENV PATH="$PATH:/usr/local/go/bin:/home/${USERNAME}/go/bin"
+  instructions:
+    root_run:
+      - |
+        ARCH=$(dpkg --print-architecture) && \
+          curl -fsSL "https://golang.org/dl/go1.26.1.linux-${ARCH}.tar.gz" | tar -C /usr/local -xzf - \
+          && echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile.d/go.sh
+    user_run:
+      - curl -LsSf https://astral.sh/uv/install.sh | sh
+      - uv tool install pre-commit --with pre-commit-uv
+      - /usr/local/go/bin/go install golang.org/x/tools/gopls@latest
+      - /usr/local/go/bin/go install gotest.tools/gotestsum@latest
+      - /usr/local/go/bin/go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+      - /usr/local/go/bin/go install golang.org/x/vuln/cmd/govulncheck@latest
+      - /usr/local/go/bin/go install golang.org/x/tools/cmd/goimports@latest
+      - /usr/local/go/bin/go install honnef.co/go/tools/cmd/staticcheck@latest
+      - uv tool install semgrep
   packages:
     - git
     - curl
@@ -13,17 +40,80 @@ build:
     - less
     - procps
     - sudo
+    - fzf
+    - zsh
+    - man-db
+    - unzip
+    - gnupg2
+    - iptables
+    - ipset
+    - iproute2
+    - dnsutils
+    - aggregate
+    - jq
+    - nano
+    - vim
+    - wget
+    - curl
+    - gh
+    - locales
+    - locales-all
+    - iputils-ping
+    - shellcheck
+    - nodejs
+    - npm
+loop:
+  calls_per_hour: 100
+  completion_threshold: 2
+  loop_delay_seconds: 3
+  max_consecutive_test_loops: 3
+  max_loops: 50
+  output_decline_threshold: 70
+  safety_completion_threshold: 5
+  same_error_threshold: 5
+  session_expiration_hours: 24
+  skip_permissions: true
+  stagnation_threshold: 3
+  timeout_minutes: 15
 security:
   docker_socket: true
-  enable_host_proxy: true
   firewall:
     add_domains:
+      - charm.land
+      - code.gitea.io
+      - golang.org
+      - proxy.golang.org
+      - sum.golang.org
+      - gocloud.dev
+      - gopkg.in
+      - software.sslmate.com
+      - cloud.google.com
+      - sigs.k8s.io
+      - google.golang.org
+      - storage.googleapis.com
+      - go.opentelemetry.io
+      - go.uber.org
+      - lukechampine.com
+      - go.yaml.in
+      - cel.dev
+      - files.pythonhosted.org
+      - code.claude.com
+      - mcp.deepwiki.com
+      - mcp.context7.com
+      - pypi.org
+      - semgrep.dev
+      - registry.npmjs.org
       - github.com
       - api.github.com
+      - release-assets.githubusercontent.com
+    enable: true
     rules:
       - action: allow
         dst: github.com
-        path_default: ""
+        port: 22
+        proto: ssh
+      - action: allow
+        dst: github.com
         port: 22
         proto: ssh
   git_credentials:

@@ -79,13 +79,6 @@ type HealthcheckConfig struct {
 	Retries     int      `yaml:"retries,omitempty" label:"Retries" desc:"Consecutive failures before unhealthy"`
 }
 
-// RunInstruction represents a RUN command with OS-awareness
-type RunInstruction struct {
-	Cmd    string `yaml:"cmd,omitempty" label:"Command" desc:"OS-agnostic command (used when alpine/debian variants are not set)"`
-	Alpine string `yaml:"alpine,omitempty" label:"Alpine" desc:"Alpine-specific command"`
-	Debian string `yaml:"debian,omitempty" label:"Debian" desc:"Debian-specific command"`
-}
-
 // InjectConfig defines injection points for arbitrary Dockerfile instructions
 type InjectConfig struct {
 	AfterFrom          []string `yaml:"after_from,omitempty" label:"After FROM" desc:"Instructions after FROM stage"`

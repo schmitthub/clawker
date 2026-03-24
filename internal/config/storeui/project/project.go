@@ -2,10 +2,6 @@
 package project
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
-
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -32,67 +28,8 @@ func Overrides() []storeui.Override {
 }
 
 // LayerTargets builds the per-field save destinations for project config.
-// Targets: Local (CWD dot-file), User (config dir), plus Original if provenance exists.
-// Paths and filenames come from config accessors, never hardcoded.
 func LayerTargets(store *storage.Store[config.Project], cfg config.Config) []storeui.LayerTarget {
-	filename := cfg.ProjectConfigFileName()
-
-	var targets []storeui.LayerTarget
-	seen := make(map[string]bool)
-
-	// Local: CWD dot-file (skipped if CWD is unavailable).
-	cwd, cwdErr := os.Getwd()
-	if cwdErr == nil {
-		localPath := storeui.ResolveLocalPath(cwd, filename)
-		targets = append(targets, storeui.LayerTarget{
-			Label:       "Local",
-			Description: storeui.ShortenHome(localPath),
-			Path:        localPath,
-		})
-		seen[localPath] = true
-	}
-
-	// User: config dir file.
-	userPath := filepath.Join(config.ConfigDir(), filename)
-	if !seen[userPath] {
-		targets = append(targets, storeui.LayerTarget{
-			Label:       "User",
-			Description: storeui.ShortenHome(userPath),
-			Path:        userPath,
-		})
-		seen[userPath] = true
-	}
-
-	// Original: add any discovered layers not already in the list.
-	for _, l := range store.Layers() {
-		if !seen[l.Path] {
-			targets = append(targets, storeui.LayerTarget{
-				Label:       layerLabel(l, config.ConfigDir(), cwd),
-				Description: storeui.ShortenHome(l.Path),
-				Path:        l.Path,
-			})
-			seen[l.Path] = true
-		}
-	}
-
-	return targets
-}
-
-// layerLabel produces a human-readable label for a layer based on its path.
-func layerLabel(l storage.LayerInfo, configDir, cwd string) string {
-	dir := filepath.Dir(l.Path)
-
-	switch {
-	case dir == configDir || strings.HasPrefix(dir, configDir+string(os.PathSeparator)):
-		return "User"
-	case cwd != "" && dir == cwd:
-		return "Local"
-	case cwd != "" && strings.HasPrefix(dir, cwd+string(os.PathSeparator)):
-		rel, _ := filepath.Rel(cwd, l.Path)
-		return "Local (" + rel + ")"
-	default:
-		return "Project"
-	}
+	return storeui.BuildLayerTargets(cfg.ProjectConfigFileName(), config.ConfigDir(), store.Layers())
 }
 
 // Edit runs an interactive project config editor.
