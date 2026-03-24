@@ -77,6 +77,13 @@ type BrowserConfig struct {
 	// Deletion removes the key from the target YAML file entirely, letting
 	// lower-priority layers show through. Return error to show to user.
 	OnFieldDeleted func(fieldPath string, targetIdx int) error
+
+	// OnRefresh is called after a successful save or delete to get fresh
+	// field values and layer data from the store. The TUI replaces its
+	// displayed state with the returned data, ensuring the winning values
+	// and layer breakdowns are always accurate. If nil, the field and
+	// layer displays are not refreshed.
+	OnRefresh func() (fields []BrowserField, layers []BrowserLayer)
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +140,7 @@ type FieldBrowserModel struct {
 	layers         []BrowserLayer
 	onFieldSaved   func(fieldPath, value string, targetIdx int) error
 	onFieldDeleted func(fieldPath string, targetIdx int) error
+	onRefresh      func() ([]BrowserField, []BrowserLayer)
 	savedCount     int
 	state          browserState
 
@@ -172,6 +180,7 @@ func NewFieldBrowser(cfg BrowserConfig) *FieldBrowserModel {
 		layers:         cfg.Layers,
 		onFieldSaved:   cfg.OnFieldSaved,
 		onFieldDeleted: cfg.OnFieldDeleted,
+		onRefresh:      cfg.OnRefresh,
 		state:          bsStateBrowse,
 		width:          80,
 		height:         24,
@@ -558,11 +567,13 @@ func (m *FieldBrowserModel) updatePickLayer(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// Update the field's displayed value.
-		for i := range m.fields {
-			if m.fields[i].Path == m.pendingPath {
-				m.fields[i].Value = m.pendingValue
-				break
+		if !m.refresh() {
+			// No refresh callback — update field value directly.
+			for i := range m.fields {
+				if m.fields[i].Path == m.pendingPath {
+					m.fields[i].Value = m.pendingValue
+					break
+				}
 			}
 		}
 		m.lastSaveError = "" // Clear any previous error on success.
@@ -619,11 +630,13 @@ func (m *FieldBrowserModel) updatePickLayerDelete(msg tea.Msg) (tea.Model, tea.C
 				return m, nil
 			}
 		}
-		// Clear the field's displayed value to show inheritance.
-		for i := range m.fields {
-			if m.fields[i].Path == m.pendingPath {
-				m.fields[i].Value = ""
-				break
+		if !m.refresh() {
+			// No refresh callback — clear field value directly.
+			for i := range m.fields {
+				if m.fields[i].Path == m.pendingPath {
+					m.fields[i].Value = ""
+					break
+				}
 			}
 		}
 		m.lastSaveError = ""
@@ -634,6 +647,42 @@ func (m *FieldBrowserModel) updatePickLayerDelete(msg tea.Msg) (tea.Model, tea.C
 		return m, nil
 	}
 	return m, fbFilterQuit(cmd)
+}
+
+// ---------------------------------------------------------------------------
+// State refresh
+// ---------------------------------------------------------------------------
+
+// refresh replaces fields and layers with fresh data from the OnRefresh
+// callback, then rebuilds tabs while preserving the cursor position.
+// Called after every successful save or delete so that winning values
+// and layer breakdowns reflect the current store state.
+// Returns true if the refresh was performed, false if no callback is set.
+func (m *FieldBrowserModel) refresh() bool {
+	if m.onRefresh == nil {
+		return false
+	}
+	fields, layers := m.onRefresh()
+	m.fields = fields
+	m.layers = layers
+
+	// Rebuild tabs from fresh fields, preserving cursor position.
+	prevTab := m.activeTab
+	prevRow := m.activeRow
+	m.tabs = m.buildTabs()
+	if prevTab < len(m.tabs) {
+		m.activeTab = prevTab
+		// Clamp row to tab bounds.
+		if prevRow < len(m.tabs[prevTab].rows) {
+			m.activeRow = prevRow
+		} else {
+			m.activeRow = m.firstFieldRow(prevTab)
+		}
+	} else if len(m.tabs) > 0 {
+		m.activeTab = 0
+		m.activeRow = m.firstFieldRow(0)
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------

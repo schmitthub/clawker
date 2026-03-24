@@ -60,15 +60,11 @@ func walkType(t reflect.Type, prefix string, reg tagRegistry) {
 // to lowest priority (last index, home-level).
 // The base map is treated as the lowest-priority starting point.
 // Returns the merged tree and a provenance map.
-func merge(base map[string]any, layers []layer, tags tagRegistry) (map[string]any, provenance) {
+func merge(layers []layer, tags tagRegistry) (map[string]any, provenance) {
 	prov := make(provenance)
-
 	result := make(map[string]any)
-	if base != nil {
-		deepCopyMap(result, base)
-	}
 
-	// Layers are in discovery order: index 0 = highest priority.
+	// Layers are in priority order: index 0 = highest priority.
 	// Process from lowest to highest so last write wins.
 	for i := len(layers) - 1; i >= 0; i-- {
 		if layers[i].data == nil {

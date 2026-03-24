@@ -343,5 +343,5 @@ func saveUserProjectConfig(imageTag string) error {
 		return fmt.Errorf("setting build image: %w", err)
 	}
 
-	return store.WriteTo(cfgPath)
+	return store.Write(storage.ToPath(cfgPath))
 }

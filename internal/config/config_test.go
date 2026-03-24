@@ -552,7 +552,7 @@ agent:
 		p.Workspace.DefaultMode = "bind"
 	}))
 	projectConfigFile := filepath.Join(projectDir, ".clawker.yaml")
-	require.NoError(t, projectStore.WriteTo(projectConfigFile))
+	require.NoError(t, projectStore.Write(storage.ToPath(projectConfigFile)))
 
 	// Verify the project file does NOT contain empty agent strings.
 	raw, err := os.ReadFile(projectConfigFile)

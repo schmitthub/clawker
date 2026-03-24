@@ -4,10 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -127,36 +124,32 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		}
 	}
 
-	// 1. Read current snapshot.
-	snapshot := store.Read()
+	// buildBrowserState reads the current store snapshot and produces
+	// the TUI field and layer representations. Called at init and after
+	// every save/delete to refresh the display with winning values.
+	buildBrowserState := func() ([]tui.BrowserField, []tui.BrowserLayer) {
+		snapshot := store.Read()
+		fields := WalkFields(snapshot)
+		enrichWithSchema(fields, (*snapshot).Fields())
 
-	// 2. Discover fields via reflection, enriched with schema metadata.
-	fields := WalkFields(snapshot)
-	enrichWithSchema(fields, (*snapshot).Fields())
-
-	// 3. Filter and apply overrides.
-	if len(cfg.skipPaths) > 0 {
-		filtered := make([]Field, 0, len(fields))
-		for _, f := range fields {
-			if !cfg.skipPaths[f.Path] {
-				filtered = append(filtered, f)
+		if len(cfg.skipPaths) > 0 {
+			filtered := make([]Field, 0, len(fields))
+			for _, f := range fields {
+				if !cfg.skipPaths[f.Path] {
+					filtered = append(filtered, f)
+				}
 			}
+			fields = filtered
 		}
-		fields = filtered
-	}
-	fields = ApplyOverrides(fields, cfg.overrides)
+		fields = ApplyOverrides(fields, cfg.overrides)
 
-	// 4. Map to tui types and run the interactive browser.
-	provMap := store.ProvenanceMap()
-	browserFields := fieldsToBrowserFields(fields, provMap)
-	browserLayers := layersToBrowserLayers(store.Layers())
+		provMap := store.ProvenanceMap()
+		return fieldsToBrowserFields(fields, provMap), layersToBrowserLayers(store.Layers())
+	}
+
+	// Initial state.
+	browserFields, browserLayers := buildBrowserState()
 	browserTargets := layerTargetsToBrowserTargets(cfg.layerTargets)
-
-	// Build field kind lookup for type-aware YAML writes.
-	fieldKinds := make(map[string]FieldKind, len(fields))
-	for _, f := range fields {
-		fieldKinds[f.Path] = f.Kind
-	}
 
 	// Wire per-field save callback.
 	onFieldSaved := func(fieldPath, value string, targetIdx int) error {
@@ -178,12 +171,10 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 			return fmt.Errorf("setting field %s: %w", fieldPath, setFieldErr)
 		}
 
-		// Persist single field to the target file.
-		kind := fieldKinds[fieldPath]
-		if err := writeFieldToFile(target.Path, fieldPath, value, kind); err != nil {
+		// Persist the dirty field to the target file.
+		if err := store.Write(storage.ToPath(target.Path)); err != nil {
 			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
 		}
-
 		return nil
 	}
 
@@ -195,15 +186,14 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		target := cfg.layerTargets[targetIdx]
 
 		// Remove from the in-memory store tree.
-		if _, err := store.DeleteKey(fieldPath); err != nil {
+		if _, err := store.Delete(fieldPath); err != nil {
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 
-		// Remove from the target file.
-		if err := deleteFieldFromFile(target.Path, fieldPath); err != nil {
+		// Persist the deletion to the target file.
+		if err := store.Write(storage.ToPath(target.Path)); err != nil {
 			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
 		}
-
 		return nil
 	}
 
@@ -214,6 +204,7 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		Layers:         browserLayers,
 		OnFieldSaved:   onFieldSaved,
 		OnFieldDeleted: onFieldDeleted,
+		OnRefresh:      buildBrowserState,
 	})
 	finalModel, err := tui.RunProgram(ios, model, tui.WithAltScreen(true))
 	if err != nil {
@@ -246,237 +237,6 @@ func enrichWithSchema(fields []Field, schema storage.FieldSet) {
 		fields[i].Default = sf.Default()
 		fields[i].Kind = sf.Kind()
 	}
-}
-
-// writeFieldToFile persists a single field value to a YAML file.
-// If the file doesn't exist, it is created with just that field.
-// If it exists, the field is merged into the existing content.
-func writeFieldToFile(filePath, fieldPath, value string, kind FieldKind) error {
-	// Ensure parent directory exists.
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("creating directory %s: %w", dir, err)
-	}
-
-	// Read existing file (or start with empty map).
-	existing := make(map[string]any)
-	data, err := os.ReadFile(filePath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("reading existing %s: %w", filePath, err)
-	}
-	if err == nil && len(data) > 0 {
-		if err := yaml.Unmarshal(data, &existing); err != nil {
-			return fmt.Errorf("parsing existing %s: %w", filePath, err)
-		}
-	}
-	if existing == nil {
-		existing = make(map[string]any)
-	}
-
-	// Build nested map from dotted path and merge.
-	nested := buildNestedMap(fieldPath, typedYAMLValue(value, kind))
-	mergeMap(existing, nested)
-
-	// Preserve existing file permissions, default to 0644 for new files.
-	perm := os.FileMode(0o644)
-	if info, err := os.Stat(filePath); err == nil {
-		perm = info.Mode().Perm()
-	}
-
-	// Atomic write: temp + rename.
-	tmp, err := os.CreateTemp(dir, ".clawker-*.yaml")
-	if err != nil {
-		return fmt.Errorf("creating temp file in %s: %w", dir, err)
-	}
-	tmpName := tmp.Name()
-
-	enc := yaml.NewEncoder(tmp)
-	enc.SetIndent(2)
-	if err := enc.Encode(existing); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("marshaling YAML: %w", err)
-	}
-	if err := enc.Close(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("flushing YAML encoder: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("syncing %s: %w", tmpName, err)
-	}
-	tmp.Close()
-
-	if err := os.Chmod(tmpName, perm); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("setting permissions on %s: %w", tmpName, err)
-	}
-
-	if err := os.Rename(tmpName, filePath); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("renaming %s to %s: %w", tmpName, filePath, err)
-	}
-
-	return nil
-}
-
-// deleteFieldFromFile removes a single field from a YAML file by dotted path.
-// If the parent map becomes empty after deletion, it is also removed (recursively).
-// If the file becomes empty after deletion, it is left as an empty file.
-func deleteFieldFromFile(filePath, fieldPath string) error {
-	// Read existing file.
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // Nothing to delete from a non-existent file.
-		}
-		return fmt.Errorf("reading %s: %w", filePath, err)
-	}
-
-	existing := make(map[string]any)
-	if len(data) > 0 {
-		if err := yaml.Unmarshal(data, &existing); err != nil {
-			return fmt.Errorf("parsing %s: %w", filePath, err)
-		}
-	}
-	if len(existing) == 0 {
-		return nil // Nothing to delete.
-	}
-
-	// Walk the dotted path and delete the leaf key.
-	if !deleteMapPath(existing, strings.Split(fieldPath, ".")) {
-		return nil // Key not found — nothing to do.
-	}
-
-	// Preserve existing file permissions.
-	perm := os.FileMode(0o644)
-	if info, err := os.Stat(filePath); err == nil {
-		perm = info.Mode().Perm()
-	}
-
-	// Atomic write: temp + rename.
-	dir := filepath.Dir(filePath)
-	tmp, err := os.CreateTemp(dir, ".clawker-*.yaml")
-	if err != nil {
-		return fmt.Errorf("creating temp file in %s: %w", dir, err)
-	}
-	tmpName := tmp.Name()
-
-	enc := yaml.NewEncoder(tmp)
-	enc.SetIndent(2)
-	if err := enc.Encode(existing); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("marshaling YAML: %w", err)
-	}
-	if err := enc.Close(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("flushing YAML encoder: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("syncing %s: %w", tmpName, err)
-	}
-	tmp.Close()
-
-	if err := os.Chmod(tmpName, perm); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("setting permissions on %s: %w", tmpName, err)
-	}
-	return os.Rename(tmpName, filePath)
-}
-
-// deleteMapPath walks segments through a nested map and deletes the leaf key.
-// Empty parent maps are pruned recursively. Returns true if a key was deleted.
-func deleteMapPath(m map[string]any, segments []string) bool {
-	if len(segments) == 0 {
-		return false
-	}
-	key := segments[0]
-	if len(segments) == 1 {
-		if _, exists := m[key]; !exists {
-			return false
-		}
-		delete(m, key)
-		return true
-	}
-	sub, ok := m[key].(map[string]any)
-	if !ok {
-		return false
-	}
-	if !deleteMapPath(sub, segments[1:]) {
-		return false
-	}
-	// Prune empty parent maps.
-	if len(sub) == 0 {
-		delete(m, key)
-	}
-	return true
-}
-
-// buildNestedMap converts "build.image" + value into {"build": {"image": value}}.
-func buildNestedMap(dottedPath string, value any) map[string]any {
-	segments := strings.Split(dottedPath, ".")
-	result := make(map[string]any)
-	current := result
-	for i, seg := range segments {
-		if i == len(segments)-1 {
-			current[seg] = value
-		} else {
-			next := make(map[string]any)
-			current[seg] = next
-			current = next
-		}
-	}
-	return result
-}
-
-// mergeMap recursively merges src into dst. Nested maps are merged;
-// all other values are overwritten.
-func mergeMap(dst, src map[string]any) {
-	for k, sv := range src {
-		if sm, ok := sv.(map[string]any); ok {
-			if dm, ok := dst[k].(map[string]any); ok {
-				mergeMap(dm, sm)
-				continue
-			}
-		}
-		dst[k] = sv
-	}
-}
-
-// typedYAMLValue converts a string value to the appropriate Go type based on
-// the field's known kind, so YAML output uses native types (bool, int, []string).
-//
-// SetFieldValue validates the value before this function is called, so the
-// parse-failure fallthrough (returning the raw string) should be unreachable.
-// If it is reached, the raw string is still valid YAML — just not the expected type.
-func typedYAMLValue(s string, kind FieldKind) any {
-	switch kind {
-	case KindBool:
-		if b, err := strconv.ParseBool(s); err == nil {
-			return b
-		}
-	case KindInt:
-		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return n
-		}
-	case KindStringSlice:
-		parts := strings.Split(s, ",")
-		result := make([]string, 0, len(parts))
-		for _, p := range parts {
-			if t := strings.TrimSpace(p); t != "" {
-				result = append(result, t)
-			}
-		}
-		return result
-	}
-	// KindText, KindSelect, KindDuration, KindComplex — all stored as strings.
-	return s
 }
 
 // fieldsToBrowserFields maps storeui fields to tui browser fields.
@@ -530,8 +290,12 @@ func resolveFieldSource(fieldPath string, provMap map[string]string) string {
 func layersToBrowserLayers(layers []storage.LayerInfo) []tui.BrowserLayer {
 	out := make([]tui.BrowserLayer, len(layers))
 	for i, l := range layers {
+		label := ShortenHome(l.Path)
+		if l.Path == "" {
+			label = "(defaults)"
+		}
 		out[i] = tui.BrowserLayer{
-			Label: ShortenHome(l.Path),
+			Label: label,
 			Data:  l.Data,
 		}
 	}

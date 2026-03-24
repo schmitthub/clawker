@@ -317,7 +317,7 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 	}
 
 	// Persist to dotfile via the store.
-	if err := store.WriteTo(configPath); err != nil {
+	if err := store.Write(storage.ToPath(configPath)); err != nil {
 		return fmt.Errorf("writing %s: %w", configFileName, err)
 	}
 	log.Debug().Str("file", configPath).Msg("created configuration file")
@@ -506,7 +506,7 @@ func offerUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, log *
 		log.Debug().Err(err).Msg("failed to prepare config for user default")
 		return
 	}
-	if err := sourceStore.WriteTo(userConfigPath); err != nil {
+	if err := sourceStore.Write(storage.ToPath(userConfigPath)); err != nil {
 		log.Debug().Err(err).Msg("failed to write user-level default config")
 		return
 	}

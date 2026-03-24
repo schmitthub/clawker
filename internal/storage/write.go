@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,31 +13,6 @@ import (
 	"github.com/gofrs/flock"
 	"gopkg.in/yaml.v3"
 )
-
-// routeByProvenance groups the full value map by target layer path.
-// Each top-level key is routed to the layer it originated from.
-// Keys without provenance route to the fallback (highest-priority
-// layer or first explicit path).
-func (s *Store[T]) routeByProvenance(full map[string]any) (map[string]map[string]any, error) {
-	fallback, err := s.defaultWritePath()
-	if err != nil {
-		return nil, err
-	}
-
-	writes := make(map[string]map[string]any)
-	for key, val := range full {
-		target := s.layerPathForKey(key)
-		if target == "" {
-			target = fallback
-		}
-		if writes[target] == nil {
-			writes[target] = make(map[string]any)
-		}
-		writes[target][key] = val
-	}
-
-	return writes, nil
-}
 
 // layerPathForKey finds the layer path that owns a top-level key via
 // provenance. Checks for exact key match and dotted sub-field matches
@@ -63,43 +37,34 @@ func (s *Store[T]) layerPathForKey(key string) string {
 	return ""
 }
 
-// resolveLayerPath finds the path for a layer by filename.
-// Returns the first (highest-priority) match. If no discovered layer
-// matches, falls back to creating at the first explicit path.
-func (s *Store[T]) resolveLayerPath(filename string) (string, error) {
-	for _, l := range s.layers {
-		if l.filename == filename {
-			return l.path, nil
-		}
-	}
-
-	// No existing layer — create at first explicit path.
-	if len(s.opts.paths) > 0 {
-		dir := s.opts.paths[0]
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return "", fmt.Errorf("storage: creating directory %s: %w", dir, err)
-		}
-		return filepath.Join(dir, filename), nil
-	}
-
-	return "", fmt.Errorf("storage: no layer found for filename %q", filename)
-}
-
 // defaultWritePath returns the fallback write target for fields without
 // provenance. Prefers the highest-priority discovered layer, then the
 // first explicit path + first filename.
 func (s *Store[T]) defaultWritePath() (string, error) {
-	if len(s.layers) > 0 {
-		return s.layers[0].path, nil
+	// Prefer the highest-priority file-backed layer.
+	for _, l := range s.layers {
+		if l.path != "" {
+			return l.path, nil
+		}
 	}
-	if len(s.opts.paths) > 0 && len(s.opts.filenames) > 0 {
-		dir := s.opts.paths[0]
+	// No file layers — use explicit paths if configured, otherwise CWD.
+	if len(s.opts.filenames) > 0 {
+		dir := ""
+		if len(s.opts.paths) > 0 {
+			dir = s.opts.paths[0]
+		} else {
+			var err error
+			dir, err = os.Getwd()
+			if err != nil {
+				return "", fmt.Errorf("storage: resolving CWD for default write path: %w", err)
+			}
+		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("storage: creating directory %s: %w", dir, err)
 		}
 		return filepath.Join(dir, s.opts.filenames[0]), nil
 	}
-	return "", fmt.Errorf("storage: no write path available (no layers or explicit paths)")
+	return "", fmt.Errorf("storage: no write path available (no layers or filenames)")
 }
 
 // structToMap converts a struct to map[string]any using reflection.
@@ -294,9 +259,10 @@ func withLock(path string, fn func() error) error {
 	return fn()
 }
 
-// writeToPath performs the full write sequence: read existing → merge fields → atomic write.
-// If lock is true, wraps the operation in a file lock.
-func writeToPath(path string, fields map[string]any, lock bool) error {
+// writeFieldsToPath reads an existing YAML file, deeply merges the set fields,
+// removes the deleted field paths, and atomically writes the result.
+// If lock is true, the entire operation is wrapped in a cross-process flock.
+func writeFieldsToPath(path string, sets map[string]any, deletes []string, lock bool) error {
 	writeFn := func() error {
 		// Read existing file content if it exists.
 		existing := make(map[string]any)
@@ -306,8 +272,16 @@ func writeToPath(path string, fields map[string]any, lock bool) error {
 			}
 		}
 
-		// Merge fields into existing content.
-		maps.Copy(existing, fields)
+		// Deep merge set fields into existing content.
+		if len(sets) > 0 {
+			deepMergeMap(existing, sets)
+		}
+
+		// Remove deleted field paths.
+		for _, dottedPath := range deletes {
+			segments := strings.Split(dottedPath, ".")
+			deleteTreePath(existing, segments)
+		}
 
 		encoded, err := marshalYAML(existing)
 		if err != nil {
