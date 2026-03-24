@@ -165,9 +165,7 @@ RUN locale-gen en_US.UTF-8
 {{/* Root-mode RUN commands (before user setup) */}}
 {{- if .Instructions}}
 {{- range .Instructions.RootRun}}
-{{- if .Cmd}}
-RUN {{.Cmd}}
-{{- end}}
+RUN {{.}}
 {{- end}}
 {{- end}}
 
@@ -334,9 +332,7 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
 {{/* User-mode RUN commands (as claude user) */}}
 {{- if .Instructions}}
 {{- range .Instructions.UserRun}}
-{{- if .Cmd}}
-RUN {{.Cmd}}
-{{- end}}
+RUN {{.}}
 {{- end}}
 {{- end}}
 

@@ -46,8 +46,8 @@ type DockerInstructions struct {
 	Workdir     string             `yaml:"workdir,omitempty" label:"Workdir" desc:"Working directory in the image"`
 	Healthcheck *HealthcheckConfig `yaml:"healthcheck,omitempty"`
 	Shell       []string           `yaml:"shell,omitempty" label:"Shell" desc:"Default shell for RUN instructions"`
-	UserRun     []RunInstruction   `yaml:"user_run,omitempty" label:"User Run" desc:"Commands to run as container user"`
-	RootRun     []RunInstruction   `yaml:"root_run,omitempty" label:"Root Run" desc:"Commands to run as root"`
+	UserRun     []string           `yaml:"user_run,omitempty" label:"User Run" desc:"Commands to run as container user"`
+	RootRun     []string           `yaml:"root_run,omitempty" label:"Root Run" desc:"Commands to run as root"`
 }
 
 // CopyInstruction represents a COPY instruction with optional chown/chmod
