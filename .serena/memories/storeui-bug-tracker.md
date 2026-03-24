@@ -9,3 +9,6 @@
 - [ ] Descriptions seem off like for command. says its for "healchecks"... is it really just the container command lol. SHELL is an env var for the default shell for terminal sessions... not specifically "Default shell for RUN instructions"
 - [x] i'm leaning towards removing "alpine" vs "debian" variants for commands it kind of doesn't make any sense to me 
 - [x] instructions.root_run|user_run need to be multiline. all text fields need to be multiline as per yaml spec 
+- [ ] firewall rules editor is just multiline text instead of enterning rules one by one in a form. 
+- [ ] firewall rules preview shows the literal type "[map[action:allow dst:github.com port:22 proto:ssh] map[action:allow dst:github.com port:22 proto:ssh]]"
+- [ ] Noticing a bug where firewalls rules are duplicated (github ssh is duplicated)

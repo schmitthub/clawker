@@ -181,17 +181,6 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 			fmt.Fprintf(ios.Out, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
 		}
 
-		// Offer to save existing project config as user-level default.
-		prompter := opts.Prompter()
-		existingStore, storeErr := storage.NewStore[config.Project](
-			storage.WithFilenames(cfgGateway.ProjectConfigFileName()),
-			storage.WithDirs(wd),
-		)
-		if storeErr != nil {
-			log.Debug().Err(storeErr).Msg("failed to load existing config for user default offer")
-		} else {
-			offerUserDefault(ios, cs, log, prompter, existingStore)
-		}
 		return nil
 	}
 
@@ -364,17 +353,6 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 			}
 		}
 
-		// Offer to save the project config (with wizard + editor changes) as user-level default.
-		// Reload from disk to capture any storeui edits.
-		projectStore, storeErr := storage.NewStore[config.Project](
-			storage.WithFilenames(cfgGateway.ProjectConfigFileName()),
-			storage.WithDirs(wd),
-		)
-		if storeErr != nil {
-			log.Debug().Err(storeErr).Msg("failed to reload project config for user default offer")
-		} else {
-			offerUserDefault(ios, cs, log, prompter, projectStore)
-		}
 	}
 
 	fmt.Fprintln(ios.Out)
@@ -474,41 +452,4 @@ func resolveImageFromWizard(values tui.WizardValues) string {
 		return values["custom_image"]
 	}
 	return intbuild.FlavorToImage(values["flavor"])
-}
-
-// offerUserDefault checks if a user-level clawker.yaml exists in configDir.
-// If it doesn't, prompts the user to save the project config as their user-level default.
-// The sourceStore should contain the user's wizard selections and any storeui edits.
-func offerUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, log *logger.Logger, prompter *prompterpkg.Prompter, sourceStore *storage.Store[config.Project]) {
-	userConfigPath, pathErr := config.UserProjectConfigFilePath()
-	if pathErr != nil {
-		return
-	}
-	if _, statErr := os.Stat(userConfigPath); !os.IsNotExist(statErr) {
-		return // already exists or stat error
-	}
-	saveDefault, promptErr := prompter.Confirm(
-		"Save as default project settings?",
-		false,
-	)
-	if promptErr != nil || !saveDefault {
-		return
-	}
-
-	dir := filepath.Dir(userConfigPath)
-	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
-		log.Debug().Err(mkErr).Msg("failed to create config dir for user defaults")
-		return
-	}
-
-	// Mark dirty so WriteTo persists even though the store was already written.
-	if err := sourceStore.Set(func(_ *config.Project) {}); err != nil {
-		log.Debug().Err(err).Msg("failed to prepare config for user default")
-		return
-	}
-	if err := sourceStore.Write(storage.ToPath(userConfigPath)); err != nil {
-		log.Debug().Err(err).Msg("failed to write user-level default config")
-		return
-	}
-	fmt.Fprintf(ios.Out, "%s Default: %s\n", cs.SuccessIcon(), userConfigPath)
 }
