@@ -55,6 +55,7 @@ type Field interface {
 	Description() string // Help text (from `desc` tag).
 	Default() string     // Default value hint (from `default` tag), may be empty.
 	Required() bool      // Whether this field must have a value (from `required:"true"` tag).
+	MergeTag() string    // Merge strategy hint (from `merge` tag): "union", "overwrite", or "".
 }
 
 // FieldSet is an ordered, indexed collection of [Field] values.
@@ -82,6 +83,7 @@ type field struct {
 	desc     string
 	def      string
 	required bool
+	mergeTag string
 }
 
 func (f *field) Path() string        { return f.path }
@@ -90,6 +92,7 @@ func (f *field) Label() string       { return f.label }
 func (f *field) Description() string { return f.desc }
 func (f *field) Default() string     { return f.def }
 func (f *field) Required() bool      { return f.required }
+func (f *field) MergeTag() string    { return f.mergeTag }
 
 // fieldSet is the unexported concrete implementation of [FieldSet].
 type fieldSet struct {
@@ -128,7 +131,7 @@ func NewField(path string, kind FieldKind, label, desc, def string, required boo
 	if path == "" {
 		panic("storage.NewField: path must not be empty")
 	}
-	return &field{path: path, kind: kind, label: label, desc: desc, def: def, required: required}
+	return &field{path: path, kind: kind, label: label, desc: desc, def: def, required: required, mergeTag: ""}
 }
 
 // NewFieldSet creates a [FieldSet] from a slice of [Field] values.
@@ -165,10 +168,11 @@ func NewFieldSet(fields []Field) FieldSet {
 //   - struct, *struct → recursed (not a leaf field)
 //   - map[K]V → KindMap
 //   - []struct → KindStructSlice
-//   - unsupported types → panic
+//   - unsupported types → panic (schema must be exhaustive)
 //
 // NormalizeFields does NOT extract runtime values — only schema metadata.
-// Panics if v is not a struct or pointer-to-struct.
+// Panics if v is not a struct or pointer-to-struct, or if any exported field
+// has an unsupported type.
 func NormalizeFields[T any](v T) FieldSet {
 	rt := reflect.TypeOf(v)
 	if rt == nil {
@@ -219,6 +223,7 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field) {
 		desc := sf.Tag.Get("desc")
 		def := sf.Tag.Get("default")
 		req := sf.Tag.Get("required") == "true"
+		merge := sf.Tag.Get("merge")
 
 		ft := sf.Type
 
@@ -226,69 +231,45 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field) {
 		if ft.Kind() == reflect.Ptr {
 			elem := ft.Elem()
 			if elem.Kind() == reflect.Bool {
-				*fields = append(*fields, &field{path: path, kind: KindBool, label: label, desc: desc, def: def, required: req})
+				*fields = append(*fields, &field{path: path, kind: KindBool, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 				continue
 			}
 			if elem.Kind() == reflect.Struct {
 				normalizeStruct(elem, path, fields)
 				continue
 			}
-			// Other pointer types — classify if recognized, skip otherwise.
-			kind, ok := classifyType(ft)
-			if !ok {
-				continue
-			}
-			*fields = append(*fields, &field{path: path, kind: kind, label: label, desc: desc, def: def, required: req})
-			continue
+			panic(fmt.Sprintf("storage.NormalizeFields: unsupported field type %s at path %q", ft, path))
 		}
 
 		// Non-pointer types.
 		switch {
 		case ft == reflect.TypeFor[time.Duration]():
-			*fields = append(*fields, &field{path: path, kind: KindDuration, label: label, desc: desc, def: def, required: req})
+			*fields = append(*fields, &field{path: path, kind: KindDuration, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		case ft.Kind() == reflect.String:
-			*fields = append(*fields, &field{path: path, kind: KindText, label: label, desc: desc, def: def, required: req})
+			*fields = append(*fields, &field{path: path, kind: KindText, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		case ft.Kind() == reflect.Bool:
-			*fields = append(*fields, &field{path: path, kind: KindBool, label: label, desc: desc, def: def, required: req})
+			*fields = append(*fields, &field{path: path, kind: KindBool, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		case ft.Kind() == reflect.Int, ft.Kind() == reflect.Int64:
-			*fields = append(*fields, &field{path: path, kind: KindInt, label: label, desc: desc, def: def, required: req})
+			*fields = append(*fields, &field{path: path, kind: KindInt, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String:
-			*fields = append(*fields, &field{path: path, kind: KindStringSlice, label: label, desc: desc, def: def, required: req})
+			*fields = append(*fields, &field{path: path, kind: KindStringSlice, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		case ft.Kind() == reflect.Struct:
 			normalizeStruct(ft, path, fields)
 			continue // Struct itself is not a leaf field.
 
 		case ft.Kind() == reflect.Map:
-			*fields = append(*fields, &field{path: path, kind: KindMap, label: label, desc: desc, def: def, required: req})
+			*fields = append(*fields, &field{path: path, kind: KindMap, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
-			*fields = append(*fields, &field{path: path, kind: KindStructSlice, label: label, desc: desc, def: def, required: req})
+			*fields = append(*fields, &field{path: path, kind: KindStructSlice, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		default:
-			// Silently skip types we don't know how to describe (channels, interfaces, etc.).
-			continue
+			panic(fmt.Sprintf("storage.NormalizeFields: unsupported field type %s at path %q", ft, path))
 		}
-	}
-}
-
-// classifyType maps a non-primitive reflect.Type to a FieldKind.
-// Returns false if the type is not recognized (caller should skip the field).
-func classifyType(ft reflect.Type) (FieldKind, bool) {
-	elem := ft
-	if ft.Kind() == reflect.Ptr {
-		elem = ft.Elem()
-	}
-	switch {
-	case elem.Kind() == reflect.Map:
-		return KindMap, true
-	case elem.Kind() == reflect.Slice && elem.Elem().Kind() == reflect.Struct:
-		return KindStructSlice, true
-	default:
-		return 0, false
 	}
 }

@@ -1,10 +1,9 @@
 package storage
 
 import (
-	"reflect"
+	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -23,13 +22,16 @@ import (
 //   - KindText → YAML string
 func GenerateDefaultsYAML[T Schema]() string {
 	var zero T
-	rt := reflect.TypeOf(zero)
-	if rt.Kind() == reflect.Ptr {
-		rt = rt.Elem()
-	}
+	fields := NormalizeFields(zero)
 
 	tree := make(map[string]any)
-	collectDefaults(rt, tree)
+	for _, f := range fields.All() {
+		def := f.Default()
+		if def == "" {
+			continue
+		}
+		setNestedValue(tree, f.Path(), parseDefaultValue(def, f.Kind()))
+	}
 
 	if len(tree) == 0 {
 		return ""
@@ -43,54 +45,23 @@ func GenerateDefaultsYAML[T Schema]() string {
 	return string(out)
 }
 
-// collectDefaults walks a struct type's fields and populates tree with typed
-// values from `default` tags. Nested structs produce nested maps.
-func collectDefaults(rt reflect.Type, tree map[string]any) {
-	for i := 0; i < rt.NumField(); i++ {
-		sf := rt.Field(i)
-		if !sf.IsExported() {
-			continue
-		}
-
-		tag := sf.Tag.Get("yaml")
-		if tag == "-" {
-			continue
-		}
-		name := yamlTagName(tag)
-		if name == "" {
-			name = strings.ToLower(sf.Name)
-		}
-
-		ft := sf.Type
-		def := sf.Tag.Get("default")
-
-		// Recurse into struct and *struct fields.
-		if ft.Kind() == reflect.Struct && ft != reflect.TypeFor[time.Duration]() {
-			sub := make(map[string]any)
-			collectDefaults(ft, sub)
-			if len(sub) > 0 {
-				tree[name] = sub
-			}
-			continue
-		}
-		if ft.Kind() == reflect.Ptr && ft.Elem().Kind() == reflect.Struct {
-			sub := make(map[string]any)
-			collectDefaults(ft.Elem(), sub)
-			if len(sub) > 0 {
-				tree[name] = sub
-			}
-			continue
-		}
-
-		if def == "" {
-			continue
-		}
-
-		// Coerce the default string to the appropriate Go type so
-		// yaml.Marshal produces the correct YAML type (bool, int, etc.).
-		kind := fieldKindFor(ft)
-		tree[name] = parseDefaultValue(def, kind)
+// setNestedValue inserts a value into a nested map tree using a dotted path.
+// Intermediate maps are created as needed. Panics on empty path.
+func setNestedValue(tree map[string]any, path string, value any) {
+	if path == "" {
+		panic("storage.setNestedValue: path must not be empty")
 	}
+	parts := strings.Split(path, ".")
+	m := tree
+	for _, key := range parts[:len(parts)-1] {
+		sub, ok := m[key].(map[string]any)
+		if !ok {
+			sub = make(map[string]any)
+			m[key] = sub
+		}
+		m = sub
+	}
+	m[parts[len(parts)-1]] = value
 }
 
 // parseDefaultValue converts a default tag string to a typed Go value
@@ -102,7 +73,7 @@ func parseDefaultValue(raw string, kind FieldKind) any {
 	case KindInt:
 		v, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
-			return raw // fall back to string
+			panic(fmt.Sprintf("storage.parseDefaultValue: invalid int default %q: %v", raw, err))
 		}
 		return v
 	case KindStringSlice:
@@ -118,39 +89,5 @@ func parseDefaultValue(raw string, kind FieldKind) any {
 		return raw // duration stored as string in YAML
 	default:
 		return raw
-	}
-}
-
-// fieldKindFor maps a reflect.Type to the FieldKind used for default value
-// coercion. This mirrors the type mapping in normalizeStruct.
-func fieldKindFor(ft reflect.Type) FieldKind {
-	if ft.Kind() == reflect.Ptr {
-		elem := ft.Elem()
-		if elem.Kind() == reflect.Bool {
-			return KindBool
-		}
-		kind, ok := classifyType(ft)
-		if !ok {
-			return KindText // fallback for default coercion
-		}
-		return kind
-	}
-	switch {
-	case ft == reflect.TypeFor[time.Duration]():
-		return KindDuration
-	case ft.Kind() == reflect.String:
-		return KindText
-	case ft.Kind() == reflect.Bool:
-		return KindBool
-	case ft.Kind() == reflect.Int, ft.Kind() == reflect.Int64:
-		return KindInt
-	case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String:
-		return KindStringSlice
-	case ft.Kind() == reflect.Map:
-		return KindMap
-	case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
-		return KindStructSlice
-	default:
-		return KindText // default coercion fallback for unknown types
 	}
 }

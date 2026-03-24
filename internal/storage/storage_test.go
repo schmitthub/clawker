@@ -42,8 +42,12 @@ type testBuild struct {
 }
 
 // Test types for merge union edge cases (promoted from local types to support Schema constraint).
+type testUnionMapItem struct {
+	Name string `yaml:"name"`
+}
+
 type testUnionMapCfg struct {
-	Items []map[string]string `yaml:"items" merge:"union"`
+	Items []testUnionMapItem `yaml:"items" merge:"union"`
 }
 
 func (t testUnionMapCfg) Fields() FieldSet { return NormalizeFields(t) }
@@ -1162,35 +1166,35 @@ func TestStore_Dirs_MergePrecedence(t *testing.T) {
 	assert.Equal(t, "node:20", store.Get().Build.Image)
 }
 
-func TestWalkType_PointerToStruct(t *testing.T) {
-	// walkType must dereference pointer types before the struct check.
+func TestBuildTagRegistry_PointerToStruct(t *testing.T) {
+	// NormalizeFields must dereference pointer types before the struct check.
 	// Without this, passing *T (instead of T) silently returns an empty
-	// registry — merge tags are lost and union slices fall back to overwrite.
+	// field set — merge tags are lost and union slices fall back to overwrite.
 
 	type inner struct {
-		Items []string `yaml:"items" merge:"union"`
+		Items []string `yaml:"items" merge:"union" desc:"items"`
 	}
 	type outer struct {
-		Name  string `yaml:"name"`
+		Name  string `yaml:"name" desc:"name"`
 		Inner inner  `yaml:"inner"`
 	}
 
 	// Value type — baseline.
-	valReg := make(tagRegistry)
-	walkType(reflect.TypeOf(outer{}), "", valReg)
-	require.Contains(t, valReg, "inner.items", "value type: merge tag must be registered")
-	assert.Equal(t, "union", valReg["inner.items"].mergeTag)
-	assert.Equal(t, KindStringSlice, valReg["inner.items"].kind)
+	valFields := NormalizeFields(outer{})
+	items := valFields.Get("inner.items")
+	require.NotNil(t, items, "value type: inner.items must be in field set")
+	assert.Equal(t, "union", items.MergeTag())
+	assert.Equal(t, KindStringSlice, items.Kind())
 
-	// Pointer type — must produce identical registry.
-	ptrReg := make(tagRegistry)
-	walkType(reflect.TypeOf(&outer{}), "", ptrReg)
-	require.Contains(t, ptrReg, "inner.items", "pointer type: merge tag must be registered")
-	assert.Equal(t, "union", ptrReg["inner.items"].mergeTag)
-	assert.Equal(t, KindStringSlice, ptrReg["inner.items"].kind)
+	// Pointer type — must produce identical field set.
+	ptrFields := NormalizeFields(&outer{})
+	ptrItems := ptrFields.Get("inner.items")
+	require.NotNil(t, ptrItems, "pointer type: inner.items must be in field set")
+	assert.Equal(t, "union", ptrItems.MergeTag())
+	assert.Equal(t, KindStringSlice, ptrItems.Kind())
 
-	// Both registries must be identical.
-	assert.Equal(t, valReg, ptrReg, "value and pointer registries must match")
+	// Both field sets must have the same length.
+	assert.Equal(t, valFields.Len(), ptrFields.Len(), "value and pointer field sets must match")
 }
 
 func TestStore_WalkUpLayerMerge(t *testing.T) {

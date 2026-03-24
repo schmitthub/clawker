@@ -2,8 +2,6 @@ package storage
 
 import (
 	"reflect"
-	"strings"
-	"time"
 )
 
 // provenance maps field paths to the index of the layer that provided the
@@ -23,81 +21,19 @@ type fieldMeta struct {
 // Built once from the struct type T during construction.
 type tagRegistry map[string]fieldMeta
 
-// buildTagRegistry walks the struct type T and extracts merge tags
-// and field kinds for all leaf fields. Used by mergeTrees (merge strategy)
-// and diffTreePaths (opaque-value detection).
+// buildTagRegistry builds the tag registry from NormalizeFields output.
+// Used by mergeTrees (merge strategy) and diffTreePaths (opaque-value detection).
 func buildTagRegistry[T Schema]() tagRegistry {
-	reg := make(tagRegistry)
 	var zero T
-	walkType(reflect.TypeOf(zero), "", reg)
+	fields := NormalizeFields(zero)
+	reg := make(tagRegistry, fields.Len())
+	for _, f := range fields.All() {
+		reg[f.Path()] = fieldMeta{
+			mergeTag: f.MergeTag(),
+			kind:     f.Kind(),
+		}
+	}
 	return reg
-}
-
-// walkType recursively walks a struct type, recording merge tags and
-// field kinds for every leaf (non-struct) field. Struct fields are
-// recursed into and do not get their own registry entry.
-func walkType(t reflect.Type, prefix string, reg tagRegistry) {
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-	if t.Kind() != reflect.Struct {
-		return
-	}
-
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		if !field.IsExported() {
-			continue
-		}
-
-		path := fieldPathKey(prefix, field)
-
-		// Recurse into struct fields (they are not leaf fields).
-		ft := field.Type
-		if ft.Kind() == reflect.Ptr {
-			ft = ft.Elem()
-		}
-		if ft.Kind() == reflect.Struct {
-			walkType(ft, path, reg)
-			continue
-		}
-
-		// Leaf field — record merge tag and kind.
-		meta := fieldMeta{
-			mergeTag: field.Tag.Get("merge"),
-			kind:     classifyFieldKind(ft),
-		}
-		reg[path] = meta
-	}
-}
-
-// classifyFieldKind maps a reflect.Type to its FieldKind for the
-// tag registry. Uses the same classification logic as NormalizeFields.
-func classifyFieldKind(ft reflect.Type) FieldKind {
-	// Dereference pointer.
-	if ft.Kind() == reflect.Ptr {
-		ft = ft.Elem()
-	}
-	switch {
-	case ft == reflect.TypeFor[time.Duration]():
-		return KindDuration
-	case ft.Kind() == reflect.Map:
-		return KindMap
-	case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
-		return KindStructSlice
-	case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String:
-		return KindStringSlice
-	case ft.Kind() == reflect.Slice:
-		return KindStringSlice // conservative: treat unknown slices as string slices
-	case ft.Kind() == reflect.String:
-		return KindText
-	case ft.Kind() == reflect.Bool:
-		return KindBool
-	case ft.Kind() == reflect.Int, ft.Kind() == reflect.Int64:
-		return KindInt
-	default:
-		return KindText // fallback for unrecognized types
-	}
 }
 
 // merge folds a base map with N layer maps in priority order.
@@ -245,19 +181,6 @@ func deepCopyMap(dst, src map[string]any) {
 			dst[k] = v
 		}
 	}
-}
-
-// fieldPathKey builds the dotted field path for provenance tracking.
-func fieldPathKey(prefix string, field reflect.StructField) string {
-	tag := field.Tag.Get("yaml")
-	name := yamlTagName(tag)
-	if name == "" {
-		name = strings.ToLower(field.Name)
-	}
-	if prefix == "" {
-		return name
-	}
-	return prefix + "." + name
 }
 
 // yamlTagName extracts the field name from a yaml struct tag.

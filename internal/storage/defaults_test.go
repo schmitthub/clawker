@@ -167,12 +167,11 @@ func TestWithDefaultsFromStruct_ViaRealStore(t *testing.T) {
 }
 
 func TestParseDefaultValue_EdgeCases(t *testing.T) {
-	// Invalid int falls back to string
-	v := parseDefaultValue("not_a_number", KindInt)
-	assert.Equal(t, "not_a_number", v)
+	// Invalid int panics
+	assert.Panics(t, func() { parseDefaultValue("not_a_number", KindInt) })
 
 	// Empty string slice
-	v = parseDefaultValue("", KindStringSlice)
+	v := parseDefaultValue("", KindStringSlice)
 	assert.Equal(t, []string{}, v)
 
 	// Bool false

@@ -161,6 +161,24 @@ func TestNormalizeFields_PanicOnNonStruct(t *testing.T) {
 	})
 }
 
+func TestNormalizeFields_PanicOnUnsupportedFieldType(t *testing.T) {
+	type withChan struct {
+		Ch chan int `yaml:"ch" desc:"unsupported"`
+	}
+	assert.PanicsWithValue(t,
+		`storage.NormalizeFields: unsupported field type chan int at path "ch"`,
+		func() { NormalizeFields(withChan{}) },
+	)
+
+	type withPtrSlice struct {
+		Items *[]string `yaml:"items" desc:"unsupported pointer to slice"`
+	}
+	assert.PanicsWithValue(t,
+		`storage.NormalizeFields: unsupported field type *[]string at path "items"`,
+		func() { NormalizeFields(withPtrSlice{}) },
+	)
+}
+
 func TestNormalizeFields_RequiredTag(t *testing.T) {
 	fs := NormalizeFields(fieldTestRequired{})
 
