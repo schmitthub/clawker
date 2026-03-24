@@ -13,8 +13,7 @@ import (
 // Overrides here are limited to TUI-specific concerns: Kind and Options for constrained fields.
 //
 // Every field in the schema is editable — no fields are hidden.
-// Maps and struct slices use the default YAML textarea editor.
-// Domain adapters can wire custom Editor factories for polished UX in the future.
+// Maps (map[string]string) use the built-in KV editor; struct slices use the YAML textarea editor.
 func Overrides() []storeui.Override {
 	return []storeui.Override{
 		// Workspace — select widget

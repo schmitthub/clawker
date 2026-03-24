@@ -21,7 +21,7 @@ const (
 	BrowserInt                                 // Integer text input
 	BrowserStringSlice                         // List editor (comma-separated)
 	BrowserDuration                            // Duration text input
-	BrowserMap                                 // Key-value map editor (default: YAML textarea)
+	BrowserMap                                 // Key-value map editor (default: KVEditorModel)
 	BrowserStructSlice                         // Struct slice editor (default: YAML textarea)
 )
 
@@ -114,6 +114,7 @@ const (
 	ekText                     // TextField (simple string, int, duration)
 	ekList                     // ListEditorModel ([]string)
 	ekTextarea                 // TextareaEditorModel (multiline string)
+	ekKV                       // KVEditorModel (map[string]string)
 	ekCustom                   // Custom FieldEditor from BrowserField.Editor factory
 )
 
@@ -165,6 +166,7 @@ type FieldBrowserModel struct {
 	selField     SelectField
 	listEditor   ListEditorModel
 	taEditor     TextareaEditorModel
+	kvEditor     KVEditorModel
 	customEditor FieldEditor // custom editor from BrowserField.Editor factory
 
 	// Layer picker state (after edit confirmation)
@@ -471,9 +473,21 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 		}
 		return m.listEditor.Init()
 
-	case BrowserMap, BrowserStructSlice:
-		// Default fallback: YAML textarea for maps and struct slices
-		// when no custom Editor factory is provided via override.
+	case BrowserMap:
+		editVal := f.EditValue
+		if editVal == "" {
+			editVal = currentVal
+		}
+		m.editKind = ekKV
+		m.kvEditor = NewKVEditor(f.Label, editVal)
+		if m.width > 0 && m.height > 0 {
+			if updated, _ := m.kvEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height}); updated != nil {
+				m.kvEditor = updated.(KVEditorModel)
+			}
+		}
+		return m.kvEditor.Init()
+
+	case BrowserStructSlice:
 		editVal := f.EditValue
 		if editVal == "" {
 			editVal = currentVal
@@ -558,6 +572,20 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.enterPickLayer(f.Path, m.taEditor.Value())
 		}
 		if m.taEditor.IsCancelled() {
+			m.state = bsStateBrowse
+			return m, nil
+		}
+		return m, cmd
+
+	case ekKV:
+		updated, cmd := m.kvEditor.Update(msg)
+		if kv, ok := updated.(KVEditorModel); ok {
+			m.kvEditor = kv
+		}
+		if m.kvEditor.IsConfirmed() {
+			return m, m.enterPickLayer(f.Path, m.kvEditor.Value())
+		}
+		if m.kvEditor.IsCancelled() {
 			m.state = bsStateBrowse
 			return m, nil
 		}
@@ -1094,6 +1122,8 @@ func (m *FieldBrowserModel) viewEdit(b *strings.Builder) {
 		b.WriteString(m.listEditor.View())
 	case ekTextarea:
 		b.WriteString(m.taEditor.View())
+	case ekKV:
+		b.WriteString(m.kvEditor.View())
 	case ekCustom:
 		if m.customEditor != nil {
 			b.WriteString(m.customEditor.View())

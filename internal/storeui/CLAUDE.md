@@ -28,7 +28,7 @@ cmd/settings/edit, cmd/project/edit
 ### Types
 
 ```go
-type FieldKind = storage.FieldKind  // Alias; constants: KindText, KindBool, KindSelect, KindInt, KindStringSlice, KindDuration, KindComplex
+type FieldKind = storage.FieldKind  // Alias; constants: KindText, KindBool, KindSelect, KindInt, KindStringSlice, KindDuration, KindMap, KindComplex
 // KindTriState is deprecated — maps to KindBool, retained for backward compatibility
 
 type Field struct {
@@ -82,7 +82,7 @@ func Ptr[T any](v T) *T                                 // Pointer helper for Ov
 | Package | Schema | Purpose |
 |---------|--------|---------|
 | `config/storeui/settings` | `config.Settings` | host_proxy read-only |
-| `config/storeui/project` | `config.Project` | complex types hidden, workspace mode as Select |
+| `config/storeui/project` | `config.Project` | workspace mode as Select; maps use KV editor |
 
 Each adapter exports `Overrides() []storeui.Override`, `LayerTargets(store, cfg) []storeui.LayerTarget`, and `Edit(ios, store, cfg) (storeui.Result, error)`.
 
@@ -110,8 +110,9 @@ Edit[T](ios, store, opts...):
 4. `yamlTagName` re-implemented locally (5-line helper, conscious trade-off vs. storage API change)
 5. `LayerTarget.Path` used by `writeFieldToFile()` for direct per-field YAML writes to the chosen target file
 6. Type mapping between `storeui.FieldKind` and `tui.BrowserFieldKind` happens in `edit.go` — tui knows nothing about storeui types
-7. Per-field save model: each edit is persisted immediately via layer picker → `onFieldSaved` callback. No batch save.
-8. Per-field delete: `d` key in browse state → layer picker → `onFieldDeleted` callback. Removes key from YAML file and in-memory tree via `store.DeleteKey`. Lets lower-priority layer values show through.
+7. `KindMap` → `BrowserMap` → `KVEditorModel` (interactive key-value pair editor); `KindStructSlice` → `BrowserStructSlice` → `TextareaEditorModel` (raw YAML)
+8. Per-field save model: each edit is persisted immediately via layer picker → `onFieldSaved` callback. No batch save.
+9. Per-field delete: `d` key in browse state → layer picker → `onFieldDeleted` callback. Removes key from YAML file and in-memory tree via `store.DeleteKey`. Lets lower-priority layer values show through.
 
 ## Gotchas
 

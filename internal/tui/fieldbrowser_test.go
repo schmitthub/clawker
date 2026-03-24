@@ -16,6 +16,7 @@ func testBrowserFields() []BrowserField {
 		{Path: "security.docker_socket", Label: "docker_socket", Kind: BrowserBool, Value: "false", Order: 2},
 		{Path: "security.git_credentials.forward_ssh", Label: "forward_ssh", Kind: BrowserBool, Value: "false", Order: 3},
 		{Path: "build.instructions.env", Label: "env", Kind: BrowserMap, Value: "2 entries", ReadOnly: true, Order: 4},
+		{Path: "agent.env", Label: "env", Kind: BrowserMap, Value: "1 entry", EditValue: "FOO: bar", Order: 5},
 	}
 }
 
@@ -37,9 +38,10 @@ func testBrowserConfig() BrowserConfig {
 func TestFieldBrowser_BuildsTabs(t *testing.T) {
 	m := NewFieldBrowser(testBrowserConfig())
 
-	require.Len(t, m.tabs, 2, "should have 2 tabs: build, security")
+	require.Len(t, m.tabs, 3, "should have 3 tabs: build, security, agent")
 	assert.Equal(t, "Build", m.tabs[0].name)
 	assert.Equal(t, "Security", m.tabs[1].name)
+	assert.Equal(t, "Agent", m.tabs[2].name)
 }
 
 func TestFieldBrowser_TabRowStructure(t *testing.T) {
@@ -73,9 +75,11 @@ func TestFieldBrowser_TabSwitching(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	assert.Equal(t, 1, m.activeTab)
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	assert.Equal(t, 0, m.activeTab)
+	assert.Equal(t, 2, m.activeTab)
+	m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	assert.Equal(t, 0, m.activeTab, "should wrap around to first tab")
 	m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	assert.Equal(t, 1, m.activeTab)
+	assert.Equal(t, 2, m.activeTab, "should wrap around to last tab")
 }
 
 func TestFieldBrowser_UpDownSkipsHeadings(t *testing.T) {
@@ -430,4 +434,74 @@ func TestFieldBrowser_Result(t *testing.T) {
 	assert.Equal(t, 1, r.SavedCount)
 	// The field's base value should reflect the saved value.
 	assert.Equal(t, "true", m.fields[2].Value) // security.docker_socket
+}
+
+func TestFieldBrowser_MapFieldUsesKVEditor(t *testing.T) {
+	cfg := testBrowserConfig()
+	m := NewFieldBrowser(cfg)
+
+	// Navigate to Agent tab (3rd tab) where agent.env lives.
+	m.Update(tea.KeyMsg{Type: tea.KeyRight}) // Security
+	m.Update(tea.KeyMsg{Type: tea.KeyRight}) // Agent
+
+	// Enter edit on agent.env (the only field in Agent tab).
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, bsStateEdit, m.state)
+	assert.Equal(t, ekKV, m.editKind, "map field should dispatch to KV editor")
+}
+
+func TestFieldBrowser_MapFieldConfirmFlowsToLayerPicker(t *testing.T) {
+	var savedPath string
+	cfg := testBrowserConfig()
+	cfg.OnFieldSaved = func(fieldPath, value string, targetIdx int) error {
+		savedPath = fieldPath
+		return nil
+	}
+	m := NewFieldBrowser(cfg)
+
+	// Navigate to Agent tab → agent.env.
+	m.Update(tea.KeyMsg{Type: tea.KeyRight}) // Security
+	m.Update(tea.KeyMsg{Type: tea.KeyRight}) // Agent
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // edit
+	require.Equal(t, ekKV, m.editKind)
+
+	// Confirm the KV editor (Enter = done).
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, bsStatePickLayer, m.state)
+
+	// Confirm layer.
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.Equal(t, bsStateBrowse, m.state)
+	assert.Equal(t, "agent.env", savedPath)
+}
+
+func TestFieldBrowser_MapFieldCancelReturnsToBrowse(t *testing.T) {
+	cfg := testBrowserConfig()
+	m := NewFieldBrowser(cfg)
+
+	// Navigate to Agent tab → agent.env → edit.
+	m.Update(tea.KeyMsg{Type: tea.KeyRight}) // Security
+	m.Update(tea.KeyMsg{Type: tea.KeyRight}) // Agent
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, bsStateEdit, m.state)
+
+	// Cancel from KV editor.
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	assert.Equal(t, bsStateBrowse, m.state)
+}
+
+func TestFieldBrowser_StructSliceStillUsesTextarea(t *testing.T) {
+	fields := []BrowserField{
+		{Path: "build.items", Label: "items", Kind: BrowserStructSlice, Value: "3 items", EditValue: "- cmd: echo\n"},
+	}
+	cfg := BrowserConfig{
+		Title:        "Test",
+		Fields:       fields,
+		LayerTargets: testLayerTargets(),
+	}
+	m := NewFieldBrowser(cfg)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, bsStateEdit, m.state)
+	assert.Equal(t, ekTextarea, m.editKind, "struct slice should still use textarea editor")
 }

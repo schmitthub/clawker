@@ -103,12 +103,13 @@ Reflection-based struct walker. Type mapping:
 
 | Go Type | FieldKind | Editor |
 |---------|-----------|--------|
-| `string` | `KindText` | TextField |
+| `string` | `KindText` | TextareaEditorModel |
 | `bool` | `KindBool` | SelectField (true/false) |
 | `*bool` | `KindBool` | SelectField (nil → false display) |
 | `int`, `int64` | `KindInt` | TextField |
 | `[]string` | `KindStringSlice` | ListEditorModel |
 | `time.Duration` | `KindDuration` | TextField |
+| `map[string]string` | `KindMap` | KVEditorModel |
 | `struct` | (recursed) | — |
 | `*struct` | (recursed, nil → zero value) | — |
 | everything else | `KindComplex` | Read-only display |

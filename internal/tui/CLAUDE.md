@@ -179,7 +179,7 @@ Generic tabbed field browser/editor. Domain-agnostic — knows nothing about sto
 
 **Result**: `(*FieldBrowserModel).Result() BrowserResult` — `{Saved, Cancelled bool; SavedCount int}`
 
-**Features**: Tabbed navigation (fields grouped by top-level path key), sub-section headings (3+ segment paths), inline editing via SelectField/TextField/ListEditorModel/TextareaEditorModel, scroll, per-field save with layer picker.
+**Features**: Tabbed navigation (fields grouped by top-level path key), sub-section headings (3+ segment paths), inline editing via SelectField/TextField/ListEditorModel/TextareaEditorModel/KVEditorModel, scroll, per-field save with layer picker.
 
 **Key bindings**: `←/→` tab switch, `↑/↓` navigate, `enter` edit, `d` delete (when `OnFieldDeleted` is wired), `esc/q/ctrl+c` quit.
 
@@ -202,6 +202,16 @@ Generic multiline text editor wrapping `bubbles/textarea`.
 **Methods**: `Value() string`, `IsConfirmed() bool`, `IsCancelled() bool`
 
 **Key bindings**: `ctrl+s` save, `esc` cancel.
+
+## KVEditorModel (`kveditor.go`)
+
+Interactive key-value pair editor for `map[string]string` fields. Parses and outputs YAML-formatted map strings. Default editor for `BrowserMap` fields in FieldBrowserModel.
+
+**Constructor**: `NewKVEditor(label, value string) KVEditorModel`
+
+**Methods**: `Value() string` (YAML), `IsConfirmed() bool`, `IsCancelled() bool`
+
+**Key bindings (browsing)**: `a` add pair, `e` edit value, `E` edit key, `d/backspace` delete, `↑/↓` navigate, `enter` done, `esc` cancel. **Editing**: `enter` confirm, `esc` cancel.
 
 ## Golden Tests
 
