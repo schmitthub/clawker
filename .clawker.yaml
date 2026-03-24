@@ -6,7 +6,7 @@ agent:
   editor: nano
   enable_shared_dir: true
   env:
-    FOO: BAR
+    FOO: RAB
   from_env:
     - GH_TOKEN
     - CONTEXT7_API_KEY
@@ -110,10 +110,6 @@ security:
       - release-assets.githubusercontent.com
     enable: true
     rules:
-      - action: allow
-        dst: github.com
-        port: 22
-        proto: ssh
       - action: allow
         dst: github.com
         port: 22

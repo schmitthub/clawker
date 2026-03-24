@@ -15,10 +15,24 @@ type TextareaEditorModel struct {
 	ta        textarea.Model
 	confirmed bool
 	cancelled bool
+	validator func(string) error // optional external validator run on save
+	errMsg    string             // validation error shown inline
+}
+
+// TextareaEditorOption is a functional option for configuring a TextareaEditorModel.
+type TextareaEditorOption func(*TextareaEditorModel)
+
+// WithTextareaValidator sets a validation function called when the user saves
+// (Ctrl+S). If the function returns an error, the editor displays it
+// and does not confirm.
+func WithTextareaValidator(fn func(string) error) TextareaEditorOption {
+	return func(m *TextareaEditorModel) {
+		m.validator = fn
+	}
 }
 
 // NewTextareaEditor creates a multiline text editor with the given label and initial value.
-func NewTextareaEditor(label string, value string) TextareaEditorModel {
+func NewTextareaEditor(label string, value string, opts ...TextareaEditorOption) TextareaEditorModel {
 	ta := textarea.New()
 	ta.SetValue(value)
 	ta.Focus()
@@ -38,10 +52,14 @@ func NewTextareaEditor(label string, value string) TextareaEditorModel {
 	}
 	ta.SetHeight(lines)
 
-	return TextareaEditorModel{
+	te := TextareaEditorModel{
 		label: label,
 		ta:    ta,
 	}
+	for _, opt := range opts {
+		opt(&te)
+	}
+	return te
 }
 
 // Init returns the textarea blink command.
@@ -69,8 +87,18 @@ func (m TextareaEditorModel) Update(msg tea.Msg) (TextareaEditorModel, tea.Cmd) 
 		return m, nil
 
 	case tea.KeyMsg:
+		// Any key clears the previous error so it doesn't linger.
+		m.errMsg = ""
+
 		switch {
 		case msg.String() == "ctrl+s":
+			// Run external validator before confirming.
+			if m.validator != nil {
+				if err := m.validator(m.ta.Value()); err != nil {
+					m.errMsg = err.Error()
+					return m, nil
+				}
+			}
 			m.confirmed = true
 			return m, nil
 		case msg.String() == "esc":
@@ -106,9 +134,15 @@ func (m TextareaEditorModel) View() string {
 		b.WriteString("  ")
 		b.WriteString(line)
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
-	b.WriteString("  ")
+	// Validation error
+	if m.errMsg != "" {
+		b.WriteString("\n  ")
+		b.WriteString(renderValidationError(m.errMsg))
+	}
+
+	b.WriteString("\n  ")
 	b.WriteString(helpKeyStyle.Render("ctrl+s"))
 	b.WriteString(helpDescStyle.Render(" save"))
 	b.WriteString("  ")
@@ -126,3 +160,6 @@ func (m TextareaEditorModel) IsConfirmed() bool { return m.confirmed }
 
 // IsCancelled returns true if the user cancelled.
 func (m TextareaEditorModel) IsCancelled() bool { return m.cancelled }
+
+// Err returns the current validation error message, or empty string if none.
+func (m TextareaEditorModel) Err() string { return m.errMsg }

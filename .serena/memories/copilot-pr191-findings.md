@@ -18,9 +18,7 @@ Validated by multi-agent consensus (2 agents per finding). Branch: `feat/field-d
   - `h.Run("project", "info", ...)` return value discarded on both lines. If command errors, file content assertions could pass for wrong reasons.
   - Fix: capture result, `require.NoError(t, res.Err)` like the register step on line 42.
 
-- [ ] **#14 KVEditor allows duplicate keys → silent data loss** — `internal/tui/kveditor.go:195-199`
-  - Two paths create duplicates: add (line 196) and edit-key (line 179). `Value()` converts to `map[string]string` → last-one-wins, earlier values silently lost.
-  - **Requires**: building a validation/error callback system in storeui first. Not a one-off hack in KVEditor. The real architectural gap is that storeui has no way for editors to report validation errors to users.
+- [x] **#14 KVEditor allows duplicate keys → silent data loss** — RESOLVED (partial): Built generic editor validation system. (1) `renderValidationError()` shared helper for consistent error display across all editors, (2) added `Validator func(string) error` + `errMsg` + `Err()` to KVEditor/ListEditor/TextareaEditor via functional options (`WithKVValidator`, `WithListValidator`, `WithTextareaValidator`), (3) FieldBrowserModel now wires `BrowserField.Validator` to ALL editor types (was TextField-only), (4) `Err()` added to `FieldEditor` interface, (5) KV editor no longer blocks duplicate keys — editor shows merged state, duplicate key validation belongs at the write boundary (per-layer). **TODO**: Write-time overwrite confirmation UX: `Write()` sentinel errors → FieldBrowser "FOO exists, overwrite? y/n" → yes: edit existing entry, no: cancel save.
 
 - [ ] **#16 NormalizeFields doc says "panic" but impl silently skips** — `internal/storage/field.go:168`
   - Doc comment: `unsupported types → panic`. Actual behavior: `default: continue` (silent skip).

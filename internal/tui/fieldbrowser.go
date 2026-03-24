@@ -27,19 +27,22 @@ const (
 
 // BrowserField represents a single field in the field browser.
 type BrowserField struct {
-	Path        string             // Dotted path used as key (e.g. "build.image")
-	Label       string             // Human-readable label
-	Description string             // Help text
-	Kind        BrowserFieldKind   // Widget type for editing
-	Value       string             // Formatted current value (compact summary for browse display)
-	EditValue   string             // Full value for editor pre-population (YAML for Map/StructSlice)
-	Default     string             // Shown when Value is empty or "<unset>"
-	Source      string             // Where this value came from (e.g. "~/.config/clawker/clawker.yaml")
-	Options     []string           // For Select fields
-	Validator   func(string) error // Optional input validation
-	Required    bool               // Whether the field must have a value
-	ReadOnly    bool               // Whether the field is not editable
-	Order       int                // Sort order (lower = first)
+	Path        string           // Dotted path used as key (e.g. "build.image")
+	Label       string           // Human-readable label
+	Description string           // Help text
+	Kind        BrowserFieldKind // Widget type for editing
+	Value       string           // Formatted current value (compact summary for browse display)
+	EditValue   string           // Full value for editor pre-population (YAML for Map/StructSlice)
+	Default     string           // Shown when Value is empty or "<unset>"
+	Source      string           // Where this value came from (e.g. "~/.config/clawker/clawker.yaml")
+	Options     []string         // For Select fields
+	// Validator is called with the editor's Value() before confirming.
+	// The string format depends on Kind: comma-separated for StringSlice,
+	// YAML for Map/StructSlice, raw text for Text, Go literal for Int/Duration.
+	Validator func(string) error
+	Required  bool // Whether the field must have a value
+	ReadOnly  bool // Whether the field is not editable
+	Order     int  // Sort order (lower = first)
 
 	// Editor is a custom editor factory. When non-nil, the field browser uses
 	// it instead of the default kind-based dispatch. The returned value must
@@ -420,7 +423,7 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 		}
 		editor, ok := f.Editor(f.Label, editVal).(FieldEditor)
 		if !ok {
-			// Editor factory returned a non-FieldEditor type; fall back to browse-only.
+			m.lastSaveError = fmt.Sprintf("field %q: editor factory did not return a FieldEditor", f.Path)
 			m.state = bsStateBrowse
 			return nil
 		}
@@ -467,7 +470,11 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 
 	case BrowserStringSlice:
 		m.editKind = ekList
-		m.listEditor = NewListEditor(f.Label, currentVal)
+		var listOpts []ListEditorOption
+		if f.Validator != nil {
+			listOpts = append(listOpts, WithListValidator(f.Validator))
+		}
+		m.listEditor = NewListEditor(f.Label, currentVal, listOpts...)
 		if m.width > 0 && m.height > 0 {
 			m.listEditor, _ = m.listEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		}
@@ -479,7 +486,11 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 			editVal = currentVal
 		}
 		m.editKind = ekKV
-		m.kvEditor = NewKVEditor(f.Label, editVal)
+		var kvOpts []KVEditorOption
+		if f.Validator != nil {
+			kvOpts = append(kvOpts, WithKVValidator(f.Validator))
+		}
+		m.kvEditor = NewKVEditor(f.Label, editVal, kvOpts...)
 		if m.width > 0 && m.height > 0 {
 			if updated, _ := m.kvEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height}); updated != nil {
 				m.kvEditor = updated.(KVEditorModel)
@@ -487,30 +498,26 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 		}
 		return m.kvEditor.Init()
 
-	case BrowserStructSlice:
-		editVal := f.EditValue
-		if editVal == "" {
-			editVal = currentVal
+	case BrowserText, BrowserStructSlice:
+		// Text and StructSlice both use the multiline textarea editor.
+		// StructSlice prefers EditValue (full YAML); Text uses the display value.
+		editVal := currentVal
+		if f.Kind == BrowserStructSlice && f.EditValue != "" {
+			editVal = f.EditValue
 		}
 		m.editKind = ekTextarea
-		m.taEditor = NewTextareaEditor(f.Label, editVal)
+		var taOpts []TextareaEditorOption
+		if f.Validator != nil {
+			taOpts = append(taOpts, WithTextareaValidator(f.Validator))
+		}
+		m.taEditor = NewTextareaEditor(f.Label, editVal, taOpts...)
 		if m.width > 0 && m.height > 0 {
 			m.taEditor, _ = m.taEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		}
 		return m.taEditor.Init()
 
 	default:
-		// Text fields always use the multiline textarea editor —
-		// YAML strings are inherently multiline-capable.
 		// Int and Duration fields use single-line text input.
-		if f.Kind == BrowserText {
-			m.editKind = ekTextarea
-			m.taEditor = NewTextareaEditor(f.Label, currentVal)
-			if m.width > 0 && m.height > 0 {
-				m.taEditor, _ = m.taEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-			}
-			return m.taEditor.Init()
-		}
 		m.editKind = ekText
 		opts := []TextFieldOption{WithDefault(currentVal)}
 		if f.Validator != nil {
@@ -537,6 +544,9 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.selField, cmd = m.selField.Update(msg)
 		if m.selField.IsConfirmed() {
+			if err := m.validateBeforeSave(f, m.selField.Value()); err != nil {
+				return m, nil
+			}
 			return m, m.enterPickLayer(f.Path, m.selField.Value())
 		}
 		return m, fbFilterQuit(cmd)
@@ -597,6 +607,9 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.customEditor = fe
 		}
 		if m.customEditor.IsConfirmed() {
+			if err := m.validateBeforeSave(f, m.customEditor.Value()); err != nil {
+				return m, nil
+			}
 			return m, m.enterPickLayer(f.Path, m.customEditor.Value())
 		}
 		if m.customEditor.IsCancelled() {
@@ -607,6 +620,21 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// validateBeforeSave runs the field's Validator (if any) and stores the error
+// on lastSaveError, returning to browse state. Used for editor types that
+// don't have built-in validator support (ekSelect, ekCustom).
+func (m *FieldBrowserModel) validateBeforeSave(f BrowserField, value string) error {
+	if f.Validator == nil {
+		return nil
+	}
+	if err := f.Validator(value); err != nil {
+		m.lastSaveError = err.Error()
+		m.state = bsStateBrowse
+		return err
+	}
+	return nil
 }
 
 // enterPickLayer transitions to the layer picker after a field edit is confirmed.

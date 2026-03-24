@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -51,13 +52,34 @@ type KVEditorModel struct {
 	cancelled  bool
 	width      int
 	height     int
+	validator  func(string) error // optional external validator run on confirm
+	errMsg     string             // validation error shown inline
+}
+
+// KVEditorOption is a functional option for configuring a KVEditorModel.
+type KVEditorOption func(*KVEditorModel)
+
+// WithKVValidator sets a validation function called when the user confirms
+// the entire map. If the function returns an error, the editor displays it
+// and does not confirm.
+func WithKVValidator(fn func(string) error) KVEditorOption {
+	return func(m *KVEditorModel) {
+		m.validator = fn
+	}
 }
 
 // NewKVEditor creates a KV editor from a label and YAML-formatted map string.
-func NewKVEditor(label string, value string) KVEditorModel {
+func NewKVEditor(label string, value string, opts ...KVEditorOption) KVEditorModel {
+	ti := textinput.New()
+	ti.Focus()
+	ti.Width = 60
+
+	var parseErr string
 	var m map[string]string
 	if value != "" {
-		_ = yaml.Unmarshal([]byte(value), &m)
+		if err := yaml.Unmarshal([]byte(value), &m); err != nil {
+			parseErr = fmt.Sprintf("could not parse value: %s", err)
+		}
 	}
 
 	// Sort keys for stable display order.
@@ -72,17 +94,18 @@ func NewKVEditor(label string, value string) KVEditorModel {
 		pairs[i] = kvPair{Key: k, Value: m[k]}
 	}
 
-	ti := textinput.New()
-	ti.Focus()
-	ti.Width = 60
-
-	return KVEditorModel{
-		label: label,
-		pairs: pairs,
-		state: kvBrowsing,
-		input: ti,
-		width: 80,
+	kv := KVEditorModel{
+		label:  label,
+		pairs:  pairs,
+		state:  kvBrowsing,
+		input:  ti,
+		width:  80,
+		errMsg: parseErr,
 	}
+	for _, opt := range opts {
+		opt(&kv)
+	}
+	return kv
 }
 
 func (m KVEditorModel) Init() tea.Cmd { return nil }
@@ -111,8 +134,18 @@ func (m KVEditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m KVEditorModel) updateBrowsing(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Any key clears the previous error so it doesn't linger.
+		m.errMsg = ""
+
 		switch {
 		case IsEnter(msg):
+			// Run external validator before confirming.
+			if m.validator != nil {
+				if err := m.validator(m.Value()); err != nil {
+					m.errMsg = err.Error()
+					return m, nil
+				}
+			}
 			m.confirmed = true
 			return m, nil
 
@@ -170,6 +203,9 @@ func (m KVEditorModel) updateBrowsing(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m KVEditorModel) updateEditing(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Any key clears the previous error so it doesn't linger.
+		m.errMsg = ""
+
 		switch {
 		case IsEnter(msg):
 			val := strings.TrimSpace(m.input.Value())
@@ -291,6 +327,12 @@ func (m KVEditorModel) View() string {
 		b.WriteString("\n")
 	}
 
+	// Validation error
+	if m.errMsg != "" {
+		b.WriteString("\n  ")
+		b.WriteString(renderValidationError(m.errMsg))
+	}
+
 	// Help bar
 	b.WriteString("\n  ")
 	switch m.state {
@@ -326,6 +368,8 @@ func (m KVEditorModel) View() string {
 }
 
 // Value returns the current pairs as a YAML-formatted string.
+// When duplicate keys exist (valid in the editor — the user may save different
+// keys to different layers), the last occurrence wins in the output map.
 func (m KVEditorModel) Value() string {
 	if len(m.pairs) == 0 {
 		return ""
@@ -334,7 +378,12 @@ func (m KVEditorModel) Value() string {
 	for _, p := range m.pairs {
 		out[p.Key] = p.Value
 	}
-	data, _ := yaml.Marshal(out)
+	data, err := yaml.Marshal(out)
+	if err != nil {
+		// map[string]string should always marshal; surface the error visibly
+		// rather than returning empty string and silently losing data.
+		return fmt.Sprintf("# marshal error: %s", err)
+	}
 	return strings.TrimSpace(string(data))
 }
 
@@ -343,3 +392,6 @@ func (m KVEditorModel) IsConfirmed() bool { return m.confirmed }
 
 // IsCancelled returns true if the user cancelled editing.
 func (m KVEditorModel) IsCancelled() bool { return m.cancelled }
+
+// Err returns the current validation error message, or empty string if none.
+func (m KVEditorModel) Err() string { return m.errMsg }

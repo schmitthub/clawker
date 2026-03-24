@@ -306,3 +306,7 @@ func (m ItemListEditorModel) IsConfirmed() bool { return m.confirmed }
 
 // IsCancelled returns true if the user cancelled editing.
 func (m ItemListEditorModel) IsCancelled() bool { return m.cancelled }
+
+// Err returns the current validation error message, or empty string if none.
+// ItemListEditorModel does not support validation yet — this always returns "".
+func (m ItemListEditorModel) Err() string { return "" }

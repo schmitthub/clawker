@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -285,7 +284,6 @@ func (f TextField) Update(msg tea.Msg) (TextField, tea.Cmd) {
 // View renders the text field with prompt, input, and optional error message.
 func (f TextField) View() string {
 	promptStyle := iostreams.PanelTitleStyle
-	errStyle := iostreams.ErrorStyle
 
 	var b strings.Builder
 
@@ -301,7 +299,7 @@ func (f TextField) View() string {
 	// Error message
 	if f.errMsg != "" {
 		b.WriteString("\n  ")
-		b.WriteString(errStyle.Render(fmt.Sprintf("! %s", f.errMsg)))
+		b.WriteString(renderValidationError(f.errMsg))
 	}
 
 	return b.String()

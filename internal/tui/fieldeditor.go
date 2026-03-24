@@ -13,6 +13,7 @@ type FieldEditor interface {
 	Value() string     // Edited value as a string (YAML for complex types).
 	IsConfirmed() bool // True when the user accepted the edit.
 	IsCancelled() bool // True when the user cancelled the edit.
+	Err() string       // Current validation error message, or "" if none.
 }
 
 // StructFieldDef describes a single field within a struct, used by

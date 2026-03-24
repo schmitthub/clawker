@@ -149,16 +149,18 @@ Domain-agnostic tabbed field browser. States: Browse → Edit → PickLayer.
 
 Manages `[]string` fields. Parses comma-separated input into items.
 
-**Constructor:** `NewListEditor(label, value string)`
-**Result:** `Value() string` (comma-separated), `IsConfirmed()`, `IsCancelled()`
+**Constructor:** `NewListEditor(label, value string, opts ...ListEditorOption)`
+**Options:** `WithListValidator(fn func(string) error)` — external validator run on confirm
+**Result:** `Value() string` (comma-separated), `IsConfirmed()`, `IsCancelled()`, `Err() string`
 **Key bindings:** `a` add, `e` edit, `d/backspace` delete, `Enter` confirm list, `Esc` cancel
 
 ### TextareaEditorModel (`tui/textareaeditor.go`)
 
 Multiline text editor wrapping `bubbles/textarea`.
 
-**Constructor:** `NewTextareaEditor(label, value string)` — auto-sizes height from content
-**Result:** `Value() string`, `IsConfirmed()`, `IsCancelled()`
+**Constructor:** `NewTextareaEditor(label, value string, opts ...TextareaEditorOption)` — auto-sizes height from content
+**Options:** `WithTextareaValidator(fn func(string) error)` — external validator run on save (Ctrl+S)
+**Result:** `Value() string`, `IsConfirmed()`, `IsCancelled()`, `Err() string`
 **Key bindings:** `Ctrl+S` save, `Esc` cancel
 
 ## Storage API Used by Store UI

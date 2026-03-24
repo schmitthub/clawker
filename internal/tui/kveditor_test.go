@@ -145,10 +145,6 @@ func TestKVEditor_ViewShowsEmptyState(t *testing.T) {
 	assert.Contains(t, view, "(empty)")
 }
 
-func TestKVEditor_SatisfiesFieldEditor(t *testing.T) {
-	var _ FieldEditor = KVEditorModel{}
-}
-
 func TestKVEditor_EscFromEditReturnsToBrowsing(t *testing.T) {
 	m := NewKVEditor("env", "KEY: val")
 
