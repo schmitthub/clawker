@@ -298,6 +298,12 @@ func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.Brow
 	out := make([]tui.BrowserField, len(fields))
 	for i, f := range fields {
 		source := resolveFieldSource(f.Path, provMap)
+		readOnly := f.ReadOnly
+		// Consumer-defined kinds (> KindLast) have no specialized editor.
+		// Force read-only to prevent data corruption via the raw textarea fallback.
+		if f.Kind > storage.KindLast {
+			readOnly = true
+		}
 		out[i] = tui.BrowserField{
 			Path:        f.Path,
 			Label:       f.Label,
@@ -310,7 +316,7 @@ func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.Brow
 			Options:     f.Options,
 			Validator:   f.Validator,
 			Required:    f.Required,
-			ReadOnly:    f.ReadOnly,
+			ReadOnly:    readOnly,
 			Order:       f.Order,
 			Editor:      f.Editor,
 		}
@@ -414,6 +420,8 @@ func fieldKindToBrowserKind(k FieldKind) tui.BrowserFieldKind {
 	case KindStructSlice:
 		return tui.BrowserStructSlice
 	default:
-		return tui.BrowserMap // fallback; should not happen with well-typed schemas
+		// Consumer-defined kinds (>= KindLast) degrade to read-only display.
+		// No panic — the kind is known to storage, we just don't have an editor.
+		return tui.BrowserStructSlice
 	}
 }

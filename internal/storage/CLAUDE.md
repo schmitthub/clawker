@@ -47,7 +47,7 @@ Write:  node tree → route by provenance → per-file atomic write
 Interfaces for describing configuration field metadata. Types that implement `Schema` expose their field structure for consumption by TUI editors, doc generators, and CLI help.
 
 ```go
-type FieldKind int  // KindText, KindBool, KindSelect, KindInt, KindStringSlice, KindDuration, KindComplex
+type FieldKind int  // KindText, KindBool, KindSelect, KindInt, KindStringSlice, KindDuration, KindMap, KindStructSlice, KindLast (extension boundary)
 
 type Field interface {
     Path() string        // Dotted YAML path (e.g. "build.image")
@@ -85,10 +85,10 @@ type Schema interface {
 ```go
 func NewField(path string, kind FieldKind, label, desc, def string, required bool) Field  // Manual field creation
 func NewFieldSet(fields []Field) FieldSet                                   // Build from slice
-func NormalizeFields[T any](v T) FieldSet                                     // Reflect struct tags → FieldSet
+func NormalizeFields[T any](v T, opts ...NormalizeOption) FieldSet             // Reflect struct tags → FieldSet; opts: WithKindFunc
 ```
 
-`NormalizeFields` reads struct tags (including `required:"true"`) and maps Go types to `FieldKind`. It does NOT extract runtime values. Panics on non-struct input. Handles: nested structs, `*struct`, `*bool`, `time.Duration`, `[]string`, maps (→ KindComplex).
+`NormalizeFields` reads struct tags (including `required:"true"`) and maps Go types to `FieldKind`. It does NOT extract runtime values. Panics on non-struct input. Handles: nested structs, `*struct`, `*bool`, `time.Duration`, `[]string`, `map[string]string` (→ KindMap), `[]struct` (→ KindStructSlice). Unrecognized types try `KindFunc` (if registered via `WithKindFunc`), then panic.
 
 ### Constructors
 
@@ -241,6 +241,47 @@ Defense in depth — two independent guards for merge correctness:
 The store is a **layered inheritance system**, not a flat config. Walk-up file discovery + merge strategies produce a cascading config where closer files win. The same key in different layer files is **inheritance**, not duplication — merge strategies (`union`, `override`) resolve how values combine.
 
 Consumers (like storeui) show the **merged state** as a read-only view. Writes target specific layer files. Validation belongs at the write boundary (per-layer), not in consumers — only the write path knows the target layer's contents and can enforce per-file integrity.
+
+## Important: Strict Type Mapping — No Silent Fallbacks
+
+### Storage layer: panic on unrecognized types
+
+`NormalizeFields` and `normalizeStruct` **must panic on unrecognized Go types**. There are no lenient fallbacks, no "safe defaults", no silent degradation. If a Go type reaches the classification switch and doesn't match an explicit case, that is a programming error — the schema author must account for it.
+
+Storage owns classification for primitive/common types: `string`, `bool`, `*bool`, `int`, `int64`, `time.Duration`, `[]string`, `map[string]string` (→ `KindMap`), `[]struct` (→ `KindStructSlice`), nested structs (recursed). Everything else panics by default.
+
+### Extensible kind system (`KindFunc`)
+
+Domain-specific types (e.g., `map[string]WorktreeEntry`) do NOT belong in the storage package. Instead, consumers register custom kinds via `WithKindFunc` on `NormalizeFields`:
+
+```go
+// Consumer defines their kind constant:
+const KindWorktreeMap storage.FieldKind = storage.KindLast + 1
+
+// Consumer registers it in their Schema.Fields() implementation:
+func (r ProjectRegistry) Fields() storage.FieldSet {
+    return storage.NormalizeFields(r, storage.WithKindFunc(func(ft reflect.Type) (storage.FieldKind, bool) {
+        if ft == reflect.TypeOf(map[string]WorktreeEntry{}) {
+            return KindWorktreeMap, true
+        }
+        return 0, false // fall through → panic
+    }))
+}
+```
+
+`KindLast` is the boundary constant. Consumer kinds start at `KindLast + 1`. When `normalizeStruct` hits an unknown type, it tries the `KindFunc` before panicking. No `KindFunc` registered, or `KindFunc` returns `false` → panic.
+
+### StoreUI layer: unknown kinds enforced read-only
+
+StoreUI has a **different contract** than storage. Storage is the schema authority — it must classify every type (panic if it can't). StoreUI is the presentation layer — if it doesn't have a specialized editor for a `FieldKind`, it enforces read-only. No panic, no data loss.
+
+- `classifyAndFormat` in `storeui/reflect.go` — **lenient fallback** to `KindStructSlice` for unrecognized `reflect.Type` (expected when `KindFunc` is in use; `enrichWithSchema` overwrites the kind from schema metadata afterward)
+- `fieldKindToBrowserKind` in `storeui/edit.go` — maps unrecognized `FieldKind` to `BrowserStructSlice`
+- `fieldsToBrowserFields` in `storeui/edit.go` — forces `ReadOnly = true` for consumer-defined kinds (`> KindLast`), preventing data corruption via the raw textarea fallback
+
+### Rationale
+
+Silent fallbacks (e.g., returning `KindMap` for unknown types) create latent data-loss bugs. A `map[string]WorktreeEntry` routed to a KV editor would silently destroy structured data. Panicking forces the issue to be resolved at schema-definition time, not discovered in production. The `KindFunc` escape hatch lets consumers resolve it without bloating storage with domain-specific types.
 
 ## Gotchas
 

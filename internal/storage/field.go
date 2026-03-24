@@ -18,8 +18,14 @@ const (
 	KindInt                          // int, int64
 	KindStringSlice                  // []string
 	KindDuration                     // time.Duration
-	KindMap                          // map[string]string
+	KindMap                          // map[string]string (only — other map types must register via KindFunc)
 	KindStructSlice                  // []struct (non-string slice of structs)
+
+	// KindLast is the boundary for storage-defined kinds. Consumer packages
+	// define domain-specific kinds starting here:
+	//
+	//   const KindMyType storage.FieldKind = storage.KindLast + 1
+	KindLast
 )
 
 // String returns the human-readable name of the field kind.
@@ -41,6 +47,8 @@ func (k FieldKind) String() string {
 		return "Map"
 	case KindStructSlice:
 		return "StructSlice"
+	case KindLast:
+		return "Last (extension boundary)"
 	default:
 		return fmt.Sprintf("FieldKind(%d)", int(k))
 	}
@@ -149,6 +157,26 @@ func NewFieldSet(fields []Field) FieldSet {
 
 // ---------- normalizer ----------
 
+// KindFunc classifies a [reflect.Type] that the normalizer does not recognize.
+// Return (kind, true) to claim the type. Return (0, false) to fall through to
+// the default panic.
+type KindFunc func(reflect.Type) (FieldKind, bool)
+
+// NormalizeOption configures [NormalizeFields] behavior.
+type NormalizeOption func(*normalizeOpts)
+
+type normalizeOpts struct {
+	kindFunc KindFunc
+}
+
+// WithKindFunc registers a classifier for domain-specific types.
+// When [NormalizeFields] encounters a Go type it does not recognize, it calls fn
+// before panicking. This lets consumer packages define custom [FieldKind] values
+// (starting at [KindLast]) without modifying the storage package.
+func WithKindFunc(fn KindFunc) NormalizeOption {
+	return func(o *normalizeOpts) { o.kindFunc = fn }
+}
+
 // NormalizeFields reflects over v's exported struct fields and produces a
 // [FieldSet] containing schema metadata derived from struct tags:
 //
@@ -166,14 +194,19 @@ func NewFieldSet(fields []Field) FieldSet {
 //   - []string → KindStringSlice
 //   - time.Duration → KindDuration
 //   - struct, *struct → recursed (not a leaf field)
-//   - map[K]V → KindMap
+//   - map[string]string → KindMap
 //   - []struct → KindStructSlice
-//   - unsupported types → panic (schema must be exhaustive)
+//   - unrecognized types → KindFunc (if registered) → panic
 //
 // NormalizeFields does NOT extract runtime values — only schema metadata.
 // Panics if v is not a struct or pointer-to-struct, or if any exported field
-// has an unsupported type.
-func NormalizeFields[T any](v T) FieldSet {
+// has an unsupported type and no [KindFunc] claims it.
+func NormalizeFields[T any](v T, opts ...NormalizeOption) FieldSet {
+	var o normalizeOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	rt := reflect.TypeOf(v)
 	if rt == nil {
 		panic("storage.NormalizeFields: expected struct or *struct, got nil")
@@ -189,13 +222,17 @@ func NormalizeFields[T any](v T) FieldSet {
 	}
 
 	var fields []Field
-	normalizeStruct(rt, "", &fields)
+	normalizeStruct(rt, "", &fields, o.kindFunc)
 	return NewFieldSet(fields)
 }
 
 // normalizeStruct walks a struct type's exported fields and appends schema
 // metadata to fields. It recurses into nested structs and *structs.
-func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field) {
+// kindFunc is an optional classifier for domain-specific types (may be nil).
+//
+// SYNC: storeui.classifyAndFormat has a parallel type-classification switch.
+// When adding a new type case here, update classifyAndFormat to match.
+func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field, kindFunc KindFunc) {
 	for i := 0; i < rt.NumField(); i++ {
 		sf := rt.Field(i)
 		if !sf.IsExported() {
@@ -235,7 +272,7 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field) {
 				continue
 			}
 			if elem.Kind() == reflect.Struct {
-				normalizeStruct(elem, path, fields)
+				normalizeStruct(elem, path, fields, kindFunc)
 				continue
 			}
 			panic(fmt.Sprintf("storage.NormalizeFields: unsupported field type %s at path %q", ft, path))
@@ -259,16 +296,26 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field) {
 			*fields = append(*fields, &field{path: path, kind: KindStringSlice, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		case ft.Kind() == reflect.Struct:
-			normalizeStruct(ft, path, fields)
+			normalizeStruct(ft, path, fields, kindFunc)
 			continue // Struct itself is not a leaf field.
 
-		case ft.Kind() == reflect.Map:
+		case ft.Kind() == reflect.Map && ft.Key().Kind() == reflect.String && ft.Elem().Kind() == reflect.String:
 			*fields = append(*fields, &field{path: path, kind: KindMap, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
 			*fields = append(*fields, &field{path: path, kind: KindStructSlice, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		default:
+			// Try consumer-registered classifier before panicking.
+			if kindFunc != nil {
+				if kind, ok := kindFunc(ft); ok {
+					if kind <= KindLast {
+						panic(fmt.Sprintf("storage.NormalizeFields: KindFunc returned storage-defined kind %s for type %s at path %q; consumer kinds must be > KindLast", kind, ft, path))
+					}
+					*fields = append(*fields, &field{path: path, kind: kind, label: label, desc: desc, def: def, required: req, mergeTag: merge})
+					break
+				}
+			}
 			panic(fmt.Sprintf("storage.NormalizeFields: unsupported field type %s at path %q", ft, path))
 		}
 	}

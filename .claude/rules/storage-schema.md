@@ -27,8 +27,8 @@ Schema types use these struct tags as the single source of truth for field metad
 
 ## Key Functions
 
-### `storage.NormalizeFields[T](v T) FieldSet`
-Reflects over struct tags, maps Go types to `FieldKind`, returns `FieldSet`. Does NOT extract runtime values.
+### `storage.NormalizeFields[T](v T, opts ...NormalizeOption) FieldSet`
+Reflects over struct tags, maps Go types to `FieldKind`, returns `FieldSet`. Does NOT extract runtime values. Panics on unrecognized types unless a `KindFunc` claims them (see below).
 
 ### `storage.GenerateDefaultsYAML[T Schema]() string`
 Walks struct tags (type-level, not value-level), collects fields with non-empty `default` tag, builds nested `map[string]any` with typed coercion (bools → Go bool, ints → Go int64, etc.), marshals to YAML. Output feeds `WithDefaults()`.
@@ -43,12 +43,34 @@ Returns a `Project` populated with all default-tagged values. Used by `clawker p
 
 `Store[T Schema]` is compile-time enforced. All types stored in a `Store` must implement `Schema` (i.e., have `Fields() FieldSet`). This ensures every stored config type exposes field metadata.
 
+## Extensible Kind System (`KindFunc`)
+
+Storage owns `FieldKind` classification for primitive/common Go types. Domain-specific types (e.g., `map[string]WorktreeEntry`) must NOT be added to storage. Instead, consumers register custom kinds via `WithKindFunc`:
+
+```go
+// Consumer package defines its kind constant:
+const KindWorktreeMap storage.FieldKind = storage.KindLast + 1
+
+// Consumer's Schema.Fields() implementation registers it:
+func (r ProjectRegistry) Fields() storage.FieldSet {
+    return storage.NormalizeFields(r, storage.WithKindFunc(func(ft reflect.Type) (storage.FieldKind, bool) {
+        if ft == reflect.TypeOf(map[string]WorktreeEntry{}) {
+            return KindWorktreeMap, true
+        }
+        return 0, false // fall through → panic (forces explicit handling)
+    }))
+}
+```
+
+`KindLast` is the extension boundary. Consumer kinds use `storage.KindLast + 1`, `+ 2`, etc. When `normalizeStruct` encounters an unknown type, it tries the `KindFunc` before panicking. A `KindFunc` that returns a kind `<= KindLast` panics — consumer kinds must be strictly greater. StoreUI enforces read-only on consumer-defined kinds (`> KindLast`) in `fieldsToBrowserFields`.
+
 ## When Adding a New Config Field
 
 1. Add the field to the struct in `schema.go` with `yaml`, `label`, and `desc` tags
 2. If it needs a default, add `default:"value"` tag
 3. If it's load-bearing, add `required:"true"` tag
-4. CI enforces non-empty `desc` via `TestProjectFields_AllFieldsHaveDescriptions` and `TestSettingsFields_AllFieldsHaveDescriptions`
+4. If it's a domain-specific type (not a primitive), register a custom `FieldKind` via `KindFunc` in the schema's `Fields()` method — do not add domain types to storage
+5. CI enforces non-empty `desc` via `TestProjectFields_AllFieldsHaveDescriptions` and `TestSettingsFields_AllFieldsHaveDescriptions`
 
 ## No Hardcoded YAML Templates
 

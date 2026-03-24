@@ -22,7 +22,7 @@ import (
 //   - KindText → YAML string
 func GenerateDefaultsYAML[T Schema]() string {
 	var zero T
-	fields := NormalizeFields(zero)
+	fields := zero.Fields()
 
 	tree := make(map[string]any)
 	for _, f := range fields.All() {

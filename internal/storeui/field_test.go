@@ -229,6 +229,6 @@ func TestFieldKindToBrowserKind_CoverAllKinds(t *testing.T) {
 		assert.Equal(t, tc.expected, got, "FieldKind %d should map correctly", tc.kind)
 	}
 
-	// Verify unknown kinds fall back to BrowserMap (generic fallback).
-	assert.Equal(t, tui.BrowserMap, fieldKindToBrowserKind(FieldKind(99)))
+	// Verify unknown kinds (consumer-defined) fall back to BrowserStructSlice (read-only).
+	assert.Equal(t, tui.BrowserStructSlice, fieldKindToBrowserKind(FieldKind(99)))
 }

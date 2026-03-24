@@ -22,23 +22,20 @@ Validated by multi-agent consensus (2 agents per finding). Branch: `feat/field-d
 
 - [x] **#16 NormalizeFields doc says "panic" but impl silently skips** — RESOLVED: Made impl match doc — `normalizeStruct` now panics on unsupported field types (schema must be exhaustive). Also consolidated three duplicate type→kind mappings (`normalizeStruct`, `collectDefaults`/`fieldKindFor`, `walkType`/`classifyFieldKind`) into single canonical `NormalizeFields` path. `GenerateDefaultsYAML` and `buildTagRegistry` now consume `NormalizeFields` output instead of walking structs independently. Added `MergeTag()` to `Field` interface. `parseDefaultValue` panics on invalid int defaults. Net -135 lines.
 
-- [ ] **#17 KindMap classifies ALL reflect.Map, not just map[string]string** — `internal/storage/field.go:268`, `internal/storeui/reflect.go:227`, `internal/storeui/edit.go:427`
-  - `NormalizeFields`, `classifyAndFormat`, and `fieldKindToBrowserKind` all treat any `reflect.Map` as `KindMap`. Non-`map[string]string` maps (e.g. `map[string]WorktreeEntry`) route to KV editor → data loss.
-  - Currently dormant (only `map[string]string` fields exist in edited schemas), but latent bug.
-  - Fix: check `ft.Key().Kind() == reflect.String && ft.Elem().Kind() == reflect.String` for KindMap. Other maps → KindStructSlice. Also fix `classifyAndFormat` default fallback (currently returns KindMap for unknown types → should be KindStructSlice). Also fix `fieldKindToBrowserKind` default fallback.
+- [x] **#17 KindMap classifies ALL reflect.Map, not just map[string]string** — RESOLVED: (1) `normalizeStruct` now checks `map[string]string` specifically for `KindMap`; all other map types try consumer-registered `KindFunc` before panicking. (2) Added extensible kind system: `KindLast` boundary constant, `KindFunc` type, `WithKindFunc` option on `NormalizeFields`. Consumers define domain kinds as `storage.KindLast + 1` and register via `KindFunc` — storage stays free of domain types. `KindFunc` returning storage-defined kinds (`<= KindLast`) panics. (3) `classifyAndFormat` falls back to `KindStructSlice` for unrecognized types (expected with `KindFunc`; `enrichWithSchema` overwrites kind from schema). (4) `fieldKindToBrowserKind` default → `BrowserStructSlice`; `fieldsToBrowserFields` forces `ReadOnly=true` for consumer-defined kinds (`> KindLast`). (5) `buildTagRegistry` and `GenerateDefaultsYAML` route through `Fields()` so consumer `KindFunc` classifiers are applied.
 
 ### Documentation Drift
 
 - [ ] **#7 storage/CLAUDE.md out of date** — `internal/storage/CLAUDE.md:50,91,107-108,111-112`
-  - Line 50: lists `KindComplex` (doesn't exist), missing `KindMap` and `KindStructSlice`
-  - Line 91: says "maps (→ KindComplex)" — should be KindMap
+  - ~~Line 50: lists `KindComplex` (doesn't exist), missing `KindMap` and `KindStructSlice`~~ FIXED in #17
+  - ~~Line 91: says "maps (→ KindComplex)" — should be KindMap~~ FIXED in #17
   - Line 107: `DeleteKey` → actual method is `Delete`
   - Line 108: `Write(filename ...string)` → actual is `Write(opts ...WriteOption)` with `ToPath`/`ToLayer`
   - `WriteTo` method referenced but doesn't exist
 
 - [ ] **#8 .claude/rules/storeui.md out of date** — `.claude/rules/storeui.md:96-98,115,127,170,174`
   - References `writeFieldToFile`/`typedYAMLValue` (deleted functions)
-  - References `KindComplex` (deleted constant)
+  - ~~References `KindComplex` (deleted constant)~~ FIXED in #17
   - References `store.DeleteKey` → actual is `store.Delete`
   - References `store.WriteTo` → actual is `store.Write(storage.ToPath(...))`
 

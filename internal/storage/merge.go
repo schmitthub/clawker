@@ -21,11 +21,13 @@ type fieldMeta struct {
 // Built once from the struct type T during construction.
 type tagRegistry map[string]fieldMeta
 
-// buildTagRegistry builds the tag registry from NormalizeFields output.
+// buildTagRegistry builds the tag registry from the schema's Fields() output.
 // Used by mergeTrees (merge strategy) and diffTreePaths (opaque-value detection).
+// Routes through Fields() (not NormalizeFields directly) so consumer-registered
+// KindFunc classifiers are applied.
 func buildTagRegistry[T Schema]() tagRegistry {
 	var zero T
-	fields := NormalizeFields(zero)
+	fields := zero.Fields()
 	reg := make(tagRegistry, fields.Len())
 	for _, f := range fields.All() {
 		reg[f.Path()] = fieldMeta{

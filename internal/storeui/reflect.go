@@ -12,8 +12,10 @@ import (
 
 // WalkFields uses reflection to discover editable fields from a struct value.
 // It maps Go types to FieldKind: string→Text, bool→Bool, *bool→Bool, int→Int,
-// []string→StringSlice, time.Duration→Duration, nested struct→recurse,
-// nil *struct→recurse zero value, everything else→Complex (read-only).
+// []string→StringSlice, time.Duration→Duration, map[string]string→Map,
+// []struct→StructSlice, nested struct→recurse, nil *struct→recurse zero value.
+// Unrecognized types fall back to KindStructSlice (enrichWithSchema overwrites
+// the kind from schema metadata afterward).
 //
 // Accepts both value and pointer types. Uses yaml struct tags for path building.
 func WalkFields(v any) []Field {
@@ -189,7 +191,12 @@ func yamlTagName(tag string) string {
 }
 
 // classifyAndFormat determines the FieldKind and formats browse/edit values
-// for map and struct-slice types. Panics on truly unsupported types.
+// for map[string]string and []struct types. Unrecognized types fall back to
+// KindStructSlice with YAML-marshaled values — enrichWithSchema overwrites
+// the kind from the authoritative schema metadata afterward.
+//
+// SYNC: storage.normalizeStruct has a parallel type-classification switch.
+// When adding a new type case here, update normalizeStruct to match.
 func classifyAndFormat(ft reflect.Type, fv reflect.Value) (kind FieldKind, browseVal, editVal string) {
 	// Dereference pointer for classification.
 	elem := ft
@@ -203,7 +210,7 @@ func classifyAndFormat(ft reflect.Type, fv reflect.Value) (kind FieldKind, brows
 	}
 
 	switch {
-	case elem.Kind() == reflect.Map:
+	case elem.Kind() == reflect.Map && elem.Key().Kind() == reflect.String && elem.Elem().Kind() == reflect.String:
 		kind = KindMap
 		browseVal = formatMapSummary(fv)
 		editVal = marshalYAMLValue(fv)
@@ -221,8 +228,11 @@ func classifyAndFormat(ft reflect.Type, fv reflect.Value) (kind FieldKind, brows
 		editVal = marshalYAMLValue(fv)
 
 	default:
-		// Unrecognized type — return KindMap as a safe fallback with YAML editing.
-		kind = KindMap
+		// Unrecognized type — return KindStructSlice as a safe fallback.
+		// This is expected when consumers register custom kinds via KindFunc:
+		// WalkFields runs before enrichWithSchema, which overwrites the kind
+		// from the authoritative schema metadata. The fallback here is temporary.
+		kind = KindStructSlice
 		editVal = marshalYAMLValue(fv)
 	}
 	return
@@ -242,6 +252,8 @@ func formatMapSummary(fv reflect.Value) string {
 
 // marshalYAMLValue marshals a reflect.Value to a YAML string for editor pre-population.
 // Returns empty string for nil/empty values.
+// TODO: silently returns "" on yaml.Marshal errors — should propagate or log so
+// the user doesn't see an empty editor and unknowingly overwrite existing data.
 func marshalYAMLValue(fv reflect.Value) string {
 	if !fv.IsValid() {
 		return ""

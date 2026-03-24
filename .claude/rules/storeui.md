@@ -125,11 +125,15 @@ Reflection-based struct walker. Type mapping:
 | `[]string` | `KindStringSlice` | ListEditorModel |
 | `time.Duration` | `KindDuration` | TextField |
 | `map[string]string` | `KindMap` | KVEditorModel |
+| `[]struct` | `KindStructSlice` | TextareaEditorModel (raw YAML) |
 | `struct` | (recursed) | — |
 | `*struct` | (recursed, nil → zero value) | — |
-| everything else | `KindComplex` | Read-only display |
+| consumer-defined kind | (via `KindFunc`) | Read-only (enforced by `fieldsToBrowserFields`) |
+| unrecognized type | — | Falls back to `KindStructSlice` (`enrichWithSchema` overwrites kind from schema) |
 
 Uses `yaml` struct tags for field naming. Falls back to lowercase field name.
+
+**Extension model**: `classifyAndFormat` falls back to `KindStructSlice` for unrecognized types — this is expected when consumers register custom kinds via `KindFunc`. `enrichWithSchema` overwrites the kind from the authoritative schema metadata afterward. `fieldKindToBrowserKind` maps unrecognized `FieldKind` values to `BrowserStructSlice`, and `fieldsToBrowserFields` forces `ReadOnly = true` for consumer-defined kinds (`> KindLast`) to prevent data corruption via the raw textarea editor.
 
 ### Reverse Reflection (SetFieldValue)
 
@@ -139,7 +143,7 @@ Sets a field on a struct pointer by dotted YAML path (`"build.image"` → `Build
 
 - Non-nil override pointer fields replace original values
 - `Hidden: true` removes the field (exact match + prefix-based for hiding entire subtrees)
-- `KindComplex` fields are auto-enforced as `ReadOnly`
+- Unrecognized `FieldKind` values map to `BrowserStructSlice` (read-only) in `fieldKindToBrowserKind`
 - Result sorted by `Order` (stable sort)
 - Panics on duplicate override paths
 
@@ -285,6 +289,6 @@ func TestListEditor_AddItem(t *testing.T) {
 - `[]string` fields use comma-separated format — entries containing commas will break the parser
 - `time.Duration` uses `time.ParseDuration` — accepts `5m30s`, `1h`, `300ms` (standard Go duration)
 - `*bool` fields: nil is treated as `false` for display; `SetFieldValue` allocates a non-nil pointer
-- `KindComplex` is always enforced as read-only — even if an override sets `ReadOnly: false`
+- Unrecognized `FieldKind` values (consumer-defined kinds) are enforced as read-only in the browser — no editor exists for them
 - `writeFieldToFile` coerces string values to YAML types (bool, int, list) before writing
 - Provenance display uses exact field match + parent path walk-up for nested fields

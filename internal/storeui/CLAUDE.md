@@ -28,7 +28,7 @@ cmd/settings/edit, cmd/project/edit
 ### Types
 
 ```go
-type FieldKind = storage.FieldKind  // Alias; constants: KindText, KindBool, KindSelect, KindInt, KindStringSlice, KindDuration, KindMap, KindComplex
+type FieldKind = storage.FieldKind  // Alias; constants: KindText, KindBool, KindSelect, KindInt, KindStringSlice, KindDuration, KindMap, KindStructSlice, KindLast
 // KindTriState is deprecated — maps to KindBool, retained for backward compatibility
 
 type Field struct {
@@ -105,7 +105,7 @@ Edit[T](ios, store, opts...):
 ## Key Design Decisions
 
 1. `KindTriState` deprecated and mapped to `KindBool` — retained for backward compatibility
-2. `KindComplex` auto-enforces `ReadOnly` in `ApplyOverrides`
+2. Consumer-defined `FieldKind` values (`> KindLast`) map to `BrowserStructSlice` and are forced `ReadOnly = true` by `fieldsToBrowserFields`
 3. Nil `*struct` recursion in `WalkFields` — produces zero-value fields (domain adapters hide via overrides)
 4. `yamlTagName` re-implemented locally (5-line helper, conscious trade-off vs. storage API change)
 5. `LayerTarget.Path` used by `writeFieldToFile()` for direct per-field YAML writes to the chosen target file
