@@ -236,6 +236,12 @@ Defense in depth — two independent guards for merge correctness:
 | `make storage-golden` prints new values with interactive confirmation | Blocks CI — human must review and approve |
 | `STORAGE_GOLDEN_BLESS` env var is specific to this one test | No global sweep risk |
 
+## Layered Inheritance Model
+
+The store is a **layered inheritance system**, not a flat config. Walk-up file discovery + merge strategies produce a cascading config where closer files win. The same key in different layer files is **inheritance**, not duplication — merge strategies (`union`, `override`) resolve how values combine.
+
+Consumers (like storeui) show the **merged state** as a read-only view. Writes target specific layer files. Validation belongs at the write boundary (per-layer), not in consumers — only the write path knows the target layer's contents and can enforce per-file integrity.
+
 ## Gotchas
 
 - **Use `Read()`, not `Get()`** — Both are now identical (lock-free atomic load of immutable snapshot), but `Get` is deprecated. Migrate call sites to `Read`. Snapshots are immutable by convention — the store never mutates a published `*T`; `Set` creates and swaps a new one.

@@ -2,6 +2,21 @@
 
 **Applies to**: `internal/storeui/**`, `internal/config/storeui/**`, `internal/tui/fieldbrowser*`, `internal/tui/listeditor*`, `internal/tui/textareaeditor*`
 
+## Mental Model: Multi-Layer Config Editor
+
+Store UI is a **config placement tool**, not an override editor. It gives users a unified view across all layer files so they can make informed decisions about where to place config values based on their project's directory structure.
+
+**Layered inheritance**: Clawker configs use walk-up file discovery. A monorepo might have:
+- `./clawker.yaml` — repo root config (cascades to all subdirs)
+- `./frontend/.clawker.yaml` — frontend-specific overrides
+- `~/.config/clawker/clawker.yaml` — user-level defaults
+
+The same key in different layer files is **inheritance**, not duplication. Merge strategies (`union`, `override`) resolve how values combine across layers.
+
+**The browser shows the merged state** — the effective config for the current working directory, with per-layer breakdown showing which file each value comes from. This is read-only context. When the user edits a field and picks a save target, they're writing to a specific layer file. The user might save a value to the repo root file knowing it won't affect their CWD (a closer layer wins) but will cascade to sibling directories.
+
+**Validation guards writes, not editors.** Editors collect input freely. The write boundary (per-layer) is where validation happens, because that's where layer context is available. Don't put domain validation in TUI editors — they show merged state and can't know the user's intent until a layer is chosen.
+
 ## Architecture Overview
 
 Store UI is the system for building interactive TUI editors for any `storage.Store[T]` instance. It has four layers:
