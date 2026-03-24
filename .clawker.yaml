@@ -5,6 +5,8 @@ agent:
     use_host_auth: true
   editor: nano
   enable_shared_dir: true
+  env:
+    FOO: BAR
   from_env:
     - GH_TOKEN
     - CONTEXT7_API_KEY
