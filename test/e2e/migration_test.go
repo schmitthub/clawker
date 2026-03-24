@@ -45,7 +45,8 @@ build:
 	// "project info" triggers a fresh NewConfig with walk-up → discovers
 	// the registered project config → migration fires → file rewritten.
 	// No Docker needed — just reads config and project registry.
-	h.Run("project", "info", "migration-test")
+	infoRes := h.Run("project", "info", "migration-test")
+	require.NoError(t, infoRes.Err, "project info failed: stdout=%s stderr=%s", infoRes.Stdout, infoRes.Stderr)
 
 	// Verify the file on disk was rewritten without legacy cmd: keys.
 	configPath := filepath.Join(setup.ProjectDir, ".clawker.yaml")
@@ -85,7 +86,8 @@ build:
 	beforeStat, err := os.Stat(configPath)
 	require.NoError(t, err)
 
-	h.Run("project", "info", "no-migrate-test")
+	infoRes := h.Run("project", "info", "no-migrate-test")
+	require.NoError(t, infoRes.Err, "project info failed: stdout=%s stderr=%s", infoRes.Stdout, infoRes.Stderr)
 
 	afterStat, err := os.Stat(configPath)
 	require.NoError(t, err)

@@ -14,7 +14,7 @@ Validated by multi-agent consensus (2 agents per finding). Branch: `feat/field-d
 
 - [x] **#10 Silent fallback in FieldBrowser when Editor returns non-FieldEditor** — RESOLVED: Silent fallback is intentional design (unresolvable fields degrade to browse-only). Fixed misleading "Programming error" comment to describe the intended behavior.
 
-- [ ] **#12 E2E migration tests don't assert command success** — `test/e2e/migration_test.go:49,88`
+- [x] **#12 E2E migration tests don't assert command success** — `test/e2e/migration_test.go:49,88`
   - `h.Run("project", "info", ...)` return value discarded on both lines. If command errors, file content assertions could pass for wrong reasons.
   - Fix: capture result, `require.NoError(t, res.Err)` like the register step on line 42.
 
