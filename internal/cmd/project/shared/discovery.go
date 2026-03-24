@@ -36,6 +36,7 @@ func HasLocalProjectConfig(cfg config.Config, dir string) bool {
 	probe, err := storage.NewStore[config.Project](
 		storage.WithFilenames(mainFile, localFile),
 		storage.WithDirs(dir),
+		storage.WithMigrations(config.ProjectMigrations()...),
 	)
 	if err != nil {
 		return false

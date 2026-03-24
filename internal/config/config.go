@@ -118,7 +118,7 @@ func NewConfig() (Config, error) {
 		storage.WithDefaultsFromStruct[Project](),
 		storage.WithWalkUp(),
 		storage.WithConfigDir(),
-		storage.WithMigrations(projectMigrations()...),
+		storage.WithMigrations(ProjectMigrations()...),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("config: loading project config: %w", err)

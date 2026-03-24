@@ -2,9 +2,11 @@ package config
 
 import "github.com/schmitthub/clawker/internal/storage"
 
-// projectMigrations returns migrations for the project config store.
+// ProjectMigrations returns migrations for the project config store.
 // Migrations run on each file during load and auto-save if they return true.
-func projectMigrations() []storage.Migration {
+// Exported so that callers creating temporary probe stores (e.g. HasLocalProjectConfig)
+// can apply the same migrations as the production config loader.
+func ProjectMigrations() []storage.Migration {
 	return []storage.Migration{
 		migrateRunInstructionsToStrings,
 	}
