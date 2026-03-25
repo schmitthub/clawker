@@ -104,8 +104,8 @@ func GenerateDefaultsYAML[T Schema]() string                 // Generate YAML fr
 func (s *Store[T]) Read() *T                          // Lock-free atomic load — returns current immutable snapshot
 func (s *Store[T]) Get() *T                           // Deprecated: identical to Read, exists for migration only
 func (s *Store[T]) Set(fn func(*T)) error             // COW: deep copy → mutate → sync tree → atomic swap
-func (s *Store[T]) DeleteKey(path string) (bool, error) // Remove dotted path from tree; re-publishes snapshot
-func (s *Store[T]) Write(filename ...string) error     // Persist: no args = provenance routing, with arg = all to that file
+func (s *Store[T]) Delete(path string) (bool, error)   // Remove dotted path from tree; re-publishes snapshot
+func (s *Store[T]) Write(opts ...WriteOption) error    // Persist: no opts = provenance routing, ToPath(p) = all to that file, ToLayer(i) = target layer index
 func (s *Store[T]) MarkForWrite(path string)           // Force a path into the write set (for per-layer saves where merged value is unchanged)
 func (s *Store[T]) Refresh() error                     // Re-read layers from disk, re-merge, publish fresh snapshot
 func (s *Store[T]) Layers() []LayerInfo               // Discovered layers, highest→lowest priority

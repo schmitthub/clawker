@@ -193,6 +193,14 @@ func TestRenderLeftLabeledDivider_LabelTooWide(t *testing.T) {
 	assert.Equal(t, 10, cltext.CountVisibleWidth(stripped))
 }
 
+func TestRenderLeftLabeledDivider_ExactFit(t *testing.T) {
+	// Label of width-2 should still render with label + space + 1-char trail.
+	result := RenderLeftLabeledDivider("12345678", 10)
+	stripped := cltext.StripANSI(result)
+	assert.True(t, strings.HasPrefix(stripped, "12345678"), "label should appear, got: %q", stripped)
+	assert.Equal(t, 10, cltext.CountVisibleWidth(stripped), "should fill full width")
+}
+
 func TestRenderEmptyState(t *testing.T) {
 	result := RenderEmptyState("No items", 40, 10)
 	assert.Contains(t, result, "No items")

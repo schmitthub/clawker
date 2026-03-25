@@ -26,36 +26,18 @@ Validated by multi-agent consensus (2 agents per finding). Branch: `feat/field-d
 
 ### Documentation Drift
 
-- [ ] **#7 storage/CLAUDE.md out of date** — `internal/storage/CLAUDE.md:50,91,107-108,111-112`
-  - ~~Line 50: lists `KindComplex` (doesn't exist), missing `KindMap` and `KindStructSlice`~~ FIXED in #17
-  - ~~Line 91: says "maps (→ KindComplex)" — should be KindMap~~ FIXED in #17
-  - Line 107: `DeleteKey` → actual method is `Delete`
-  - Line 108: `Write(filename ...string)` → actual is `Write(opts ...WriteOption)` with `ToPath`/`ToLayer`
-  - `WriteTo` method referenced but doesn't exist
+- [x] **#7 storage/CLAUDE.md out of date** — RESOLVED: Fixed `DeleteKey` → `Delete`, `Write(filename ...string)` → `Write(opts ...WriteOption)` with `ToPath`/`ToLayer`. Earlier KindComplex fixes landed in #17.
 
-- [ ] **#8 .claude/rules/storeui.md out of date** — `.claude/rules/storeui.md:96-98,115,127,170,174`
-  - References `writeFieldToFile`/`typedYAMLValue` (deleted functions)
-  - ~~References `KindComplex` (deleted constant)~~ FIXED in #17
-  - References `store.DeleteKey` → actual is `store.Delete`
-  - References `store.WriteTo` → actual is `store.Write(storage.ToPath(...))`
+- [x] **#8 .claude/rules/storeui.md out of date** — RESOLVED: Replaced `writeFieldToFile`/`typedYAMLValue` refs with current `store.Write(storage.ToPath(...))` flow. Fixed `store.DeleteKey` → `store.Delete`, `store.WriteTo` → `store.Write(storage.ToPath(...))`. Also updated `internal/storeui/CLAUDE.md` with same fixes. Earlier KindComplex fix landed in #17.
 
 
 ## Disagreements (user decides)
 
-- [ ] **#3 RenderLeftLabeledDivider off-by-one** — `internal/tui/components.go:179`
-  - Agent 1: Valid — guard `labelLen+2 >= width` should be `labelLen+1 >= width` (label of width-2 could fit with 1-char trail).
-  - Agent 2: False positive — `+2` ensures minimum 2-char trail, which is an intentional aesthetic choice.
-  - Your call: is a 1-char trailing rule acceptable visually?
+- [x] **#3 RenderLeftLabeledDivider off-by-one** — RESOLVED: Changed guard from `labelLen+2` to `labelLen+1`. A 1-char trailing rule is fine; dropping the label entirely was worse. Added `TestRenderLeftLabeledDivider_ExactFit` boundary test.
 
-- [ ] **#6 diffTreePaths uses fmt.Sprintf("%v") for comparison** — `internal/storage/store.go:331`
-  - Agent 1: False positive — Go 1.12+ prints map keys in sorted order, so `fmt.Sprintf` IS deterministic.
-  - Agent 2: Partially valid — fragile for slices containing maps, `reflect.DeepEqual` would be more correct.
-  - Note: Agent 1's point about Go 1.12+ sorted map printing is factually correct.
+- [x] **#6 diffTreePaths uses fmt.Sprintf("%v") for comparison** — RESOLVED: Replaced `fmt.Sprintf("%v")` leaf comparison with `reflect.DeepEqual`. Map-vs-map case was already fixed in #5; this hardens the scalar/slice leaf path against future regressions (e.g., `[]any` containing maps).
 
-- [ ] **#15 parseDefaultValue treats bool typos as false** — `internal/storage/defaults.go:107`
-  - Agent 1: Partially valid (LOW) — typo like `default:"ture"` silently becomes false.
-  - Agent 2: False positive — struct tags are compile-time constants, strict equality is fine.
-  - Low risk either way; all current tags are correct.
+- [x] **#15 parseDefaultValue treats bool typos as false** — RESOLVED: Added panic on invalid bool defaults (must be exactly `"true"` or `"false"`). Consistent with KindInt which already panics. Added panic test case.
 
 ## False Positives (no action needed)
 

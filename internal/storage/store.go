@@ -335,8 +335,6 @@ func diffTreePaths(oldTree, newTree map[string]any, prefix string, tags tagRegis
 		if newIsMap && oldIsMap {
 			if isOpaqueField(tags, path) {
 				// Opaque value field — compare as whole.
-				// reflect.DeepEqual is required here because map iteration
-				// order is non-deterministic, making fmt.Sprintf unreliable.
 				if !reflect.DeepEqual(oldSub, newSub) {
 					onSet(path)
 				}
@@ -346,7 +344,7 @@ func diffTreePaths(oldTree, newTree map[string]any, prefix string, tags tagRegis
 			}
 			continue
 		}
-		if fmt.Sprintf("%v", oldVal) != fmt.Sprintf("%v", newVal) {
+		if !reflect.DeepEqual(oldVal, newVal) {
 			onSet(path)
 		}
 	}

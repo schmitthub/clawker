@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -68,7 +69,12 @@ func setNestedValue(tree map[string]any, path string, value any) {
 // appropriate for YAML marshaling.
 func parseDefaultValue(raw string, kind FieldKind) any {
 	switch kind {
+	case KindText, KindSelect:
+		return raw
 	case KindBool:
+		if raw != "true" && raw != "false" {
+			panic(fmt.Sprintf("storage.parseDefaultValue: invalid bool default %q (must be \"true\" or \"false\")", raw))
+		}
 		return raw == "true"
 	case KindInt:
 		v, err := strconv.ParseInt(raw, 10, 64)
@@ -80,14 +86,19 @@ func parseDefaultValue(raw string, kind FieldKind) any {
 		parts := strings.Split(raw, ",")
 		out := make([]string, 0, len(parts))
 		for _, p := range parts {
-			if s := strings.TrimSpace(p); s != "" {
-				out = append(out, s)
+			s := strings.TrimSpace(p)
+			if s == "" {
+				panic(fmt.Sprintf("storage.parseDefaultValue: empty entry in string slice default %q", raw))
 			}
+			out = append(out, s)
 		}
 		return out
 	case KindDuration:
+		if _, err := time.ParseDuration(raw); err != nil {
+			panic(fmt.Sprintf("storage.parseDefaultValue: invalid duration default %q: %v", raw, err))
+		}
 		return raw // duration stored as string in YAML
 	default:
-		return raw
+		panic(fmt.Sprintf("storage.parseDefaultValue: kind %v does not support defaults", kind))
 	}
 }

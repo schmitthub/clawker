@@ -174,7 +174,7 @@ func RenderLeftLabeledDivider(label string, width int) string {
 	}
 
 	labelLen := cltext.CountVisibleWidth(label)
-	if labelLen+2 >= width {
+	if labelLen+1 >= width {
 		return RenderDivider(width)
 	}
 

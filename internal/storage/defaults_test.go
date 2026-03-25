@@ -167,18 +167,26 @@ func TestWithDefaultsFromStruct_ViaRealStore(t *testing.T) {
 }
 
 func TestParseDefaultValue_EdgeCases(t *testing.T) {
+	// Valid cases
+	assert.Equal(t, false, parseDefaultValue("false", KindBool))
+	assert.Equal(t, "bind", parseDefaultValue("bind", KindText))
+	assert.Equal(t, "bind", parseDefaultValue("bind", KindSelect))
+	assert.Equal(t, "30s", parseDefaultValue("30s", KindDuration))
+
+	// Invalid bool panics
+	assert.Panics(t, func() { parseDefaultValue("ture", KindBool) })
+
 	// Invalid int panics
 	assert.Panics(t, func() { parseDefaultValue("not_a_number", KindInt) })
 
-	// Empty string slice
-	v := parseDefaultValue("", KindStringSlice)
-	assert.Equal(t, []string{}, v)
+	// Invalid duration panics
+	assert.Panics(t, func() { parseDefaultValue("not_a_duration", KindDuration) })
 
-	// Bool false
-	v = parseDefaultValue("false", KindBool)
-	assert.Equal(t, false, v)
+	// Empty entry in string slice panics
+	assert.Panics(t, func() { parseDefaultValue("a,,b", KindStringSlice) })
 
-	// Map kind passes through as string (maps don't have defaults)
-	v = parseDefaultValue("whatever", KindMap)
-	assert.Equal(t, "whatever", v)
+	// Kinds that don't support defaults panic
+	assert.Panics(t, func() { parseDefaultValue("whatever", KindMap) })
+	assert.Panics(t, func() { parseDefaultValue("whatever", KindStructSlice) })
+	assert.Panics(t, func() { parseDefaultValue("whatever", KindLast+1) })
 }

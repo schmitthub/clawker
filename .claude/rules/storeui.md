@@ -108,9 +108,9 @@ Edit[T storage.Schema](ios, store, opts...):
 When a user edits a field and picks a save target:
 
 1. `store.Set(func(t *T) { SetFieldValue(t, fieldPath, value) })` — update in-memory
-2. `writeFieldToFile(targetPath, fieldPath, value, kind)` — persist single field to the chosen file
+2. `store.Write(storage.ToPath(target.Path))` — persist dirty fields to the chosen layer file
 
-`writeFieldToFile` reads existing YAML (or starts empty), builds a nested map from the dotted path, merges it into the existing map, and writes atomically (temp + rename). Values are coerced to appropriate YAML types (bool, int, `[]string`) via `typedYAMLValue`.
+`Write()` internally remerges layers, so the snapshot reflects the true merged state after each save. Values are type-coerced during `Set` via `SetFieldValue`.
 
 ### Field Discovery (WalkFields)
 
@@ -188,11 +188,11 @@ Multiline text editor wrapping `bubbles/textarea`.
 |--------|---------|
 | `store.Read()` | Get immutable `*T` snapshot |
 | `store.Set(func(*T))` | Mutate in-memory via closure |
-| `store.DeleteKey(path)` | Remove a dotted path from tree + re-publish snapshot |
+| `store.Delete(path)` | Remove a dotted path from tree + re-publish snapshot |
 | `store.Layers()` | All discovered layers (for layer breakdown display) |
 | `store.Provenance(path)` | Which layer won a specific field |
 | `store.ProvenanceMap()` | All fields → source file paths |
-| `store.WriteTo(path)` | Write to explicit absolute path |
+| `store.Write(storage.ToPath(path))` | Write to explicit absolute path |
 
 ## Testing Patterns
 
@@ -290,5 +290,5 @@ func TestListEditor_AddItem(t *testing.T) {
 - `time.Duration` uses `time.ParseDuration` — accepts `5m30s`, `1h`, `300ms` (standard Go duration)
 - `*bool` fields: nil is treated as `false` for display; `SetFieldValue` allocates a non-nil pointer
 - Unrecognized `FieldKind` values (consumer-defined kinds) are enforced as read-only in the browser — no editor exists for them
-- `writeFieldToFile` coerces string values to YAML types (bool, int, list) before writing
+- `store.Write(storage.ToPath(...))` persists dirty fields to the target layer file; type coercion happens during `SetFieldValue`
 - Provenance display uses exact field match + parent path walk-up for nested fields
