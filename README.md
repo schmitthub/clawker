@@ -11,11 +11,7 @@
 </p>
 
 <p align="center">
-The rise of Agentic AI has been meteoric, but in the rush to ship model harnesses, the industry is skipping the risks and responsibilities that come with them. They’re avoiding dependency pain by shipping bare-metal software, when the harness itself needs a harness. LLMs are powerful, but they’re also unpredictable, naive, and easy to coerce—and handing one unrestricted code execution, network access, software install rights, internet reach, and full filesystem access to unsuspecting users is reckless. As a security engineer, my first instinct was to protect my own machine by building the harness for the harness: an "agent-in-container" solution. Clawker started as my way to learn Claude Code, then proved useful enough to open source as a practical example of secure-by-default guardrails for agentic software. I hope this project inspires the industry to prioritize containerization natively in their agentic software offerings, and to build more tools that make it easy and seamless for users to run agents in containers with strong security defaults.
-</p>
-
-<p align="center">
-<code>clawker</code> is basically what would happen if <code>devcontainers</code> and <code>k8s</code> had a <code>Claude Code</code> baby. It's a container orchestration and automation tool for running Claude Code agents in isolated containers on any host with docker installed. I wrote this because I didn't want to have to pay someone to run claude code agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and claude code's sandbox mode is the temu version of a container. <code>clawker</code> offers convenience features beyond just building and running claude code in a container using a Dockerfile (you don't even have to write a Dockerfile it's got you covered).
+<code>clawker</code> is a cli for orchestrating, monitoring, and automating portable <code>devcontainers</code> for <code>Claude Code</code> agents. It works on any MacOS/Linux host with docker installed. I wrote this because I didn't want to have to pay someone to run claude code agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and claude code's sandbox mode is the temu version of a container. <code>clawker</code> offers many convenience features beyond just building and running claude code in a container using a Dockerfile (you don't even have to write a Dockerfile it's got you covered).
 </p>
 
 <div align="center">
@@ -34,8 +30,7 @@ The rise of Agentic AI has been meteoric, but in the rush to ship model harnesse
   - [Installation](#installation)
   - [Quick Start](#quick-start)
   - [Walkthrough](#walkthrough)
-    - [Initialize](#initialize)
-      - [Start a project](#start-a-project)
+    - [Initialize a project](#initialize-a-project)
       - [Run a container](#run-a-container)
   - [Creating and Using Containers](#creating-and-using-containers)
   - [The `@` Image Shortcut](#the--image-shortcut)
@@ -51,7 +46,8 @@ The rise of Agentic AI has been meteoric, but in the rush to ship model harnesse
 ---
 
 <details>
-<summary>Boring TLDR backstory/diary entry, skip this if you value your time</summary>
+<summary>Boring TLDR backstory</summary>
+The rise of Agentic AI has been meteoric, but in the rush to ship model harnesses, the industry is skipping the risks and responsibilities that come with them. They’re avoiding dependency pain by shipping bare-metal software, when the harness itself needs a harness. LLMs are powerful, but they’re also unpredictable, naive, and easy to coerce—and handing one unrestricted code execution, network access, software install rights, internet reach, and full filesystem access to unsuspecting users is reckless. As a security engineer, my first instinct was to protect my own machine by building the harness for the harness: an "agent-in-container" solution. Clawker started as my way to learn Claude Code, then proved useful enough to open source as a practical example of secure-by-default guardrails for agentic software. I hope this project inspires the industry to prioritize containerization natively in their agentic software offerings, and to build more tools that make it easy and seamless for users to run agents in containers with strong security defaults.
 
 When I began experimenting with Claude Code to keep up with the Agentic AI trend, I was surprised by the total absence of local development container offerings for using it. Claude Code's sandbox mode is lackluster; the only other options for isolation and orchestration involve paid remote services, which seems silly to me—we've had containers for over a decade now. The Claude Code docs recommend using containers, but they only offer a devcontainer example, which is a step in the right direction but leaves you coupled to the IDE. The DIY approach results in managing multiple Claude Code Dockerfiles, maybe a container registry, per language stack/project, which also sucks, and there are a lot of internals that devcontainers offer that vanilla containers don't have. So I decided to build something that abstracts away all the complexity of creating, managing, automating, and running Claude Code in containers with Docker. It served as a good project to learn the ways of "Agentic Engineering" and "vibing" (exhausting btw, beware of some hilarious slop I've been cleaning up in this code base), but Clawker has become very useful for me, so I've decided to open source it for anyone yearning for a better local development container experience.
 </details>
@@ -119,9 +115,9 @@ The fastest path to a seamless containerized Claude Code instance, with all your
 
 ```bash
 cd your-project
-clawker project init 
+clawker init 
 clawker build
-clawker run -it --rm --agent example @ --dangerously-skip-permissions
+clawker run -it --rm --agent dev @ --dangerously-skip-permissions
 ```
 
 You can ask claude code to assist you in writing a more appropriate config file for the project using this prompt: 
@@ -132,7 +128,7 @@ create a @.clawker.yaml file appropriate for this repos stack. Clawker configura
 
 This:
 - Builds a project-scoped container image (`clawker-<project>:latest`, with `@` as a shortcut when you are in the project directory), using the default Dockerfile template
-- Starts and attaches your terminal to the container (`clawker.<project>.example`) using that image (via the `@` identifier), with your current working directory bind-mounted (i.e., live share)
+- Starts and attaches your terminal to the container (`clawker.<project>.dev`) using that image (via the `@` identifier), with your current working directory bind-mounted (i.e., live share)
 - Copies your host Claude Code settings, plugins, authentication, skills, etc. for a seamless transition from host to container development.
  
 The `--rm` flag removes the container when you exit, so it's perfect for quick tasks or experimentation.
@@ -154,7 +150,7 @@ clawker init            # Guided setup: pick a language preset → creates .claw
 
 `clawker init` walks you through a guided setup with language-based presets (Python, Go, Rust, TypeScript, Java, Ruby, C/C++, C#/.NET, Bare). Choose a preset or "Build from scratch" to customize every field. User settings (`~/.config/clawker/settings.yaml`) and XDG directories are bootstrapped automatically on first run.
 
-> **Tip:** Customize your `.clawker.yaml` (see `examples/` for language-specific templates but be warned they were generated by claude code I have not manually tested them all personally, consider them inspiration. Future updates will have baked in reliable default project configs of common dev stacks.). If you use Claude Code or another LLM to help author your config, paste [`examples/llm.md`](examples/llm.md) ([raw](https://raw.githubusercontent.com/schmitthub/clawker/main/examples/llm.md)) into context, or have it read the LLM friendly [Mintlify](https://www.mintlify.com/) docs site (ex: `create a @.clawker.yaml file appropriate for this repos stack. Clawker configuration can be understood here: https://docs.clawker.dev/configuration.md`) — it covers the schema, build-time inject points, and common pitfalls. I dogfood clawker to build clawker, so also check out my `clawker.yaml` to see how I customized the build config for golang development.
+> **Tip:** Customize your image using `clawker project edit`. Clawker works on a layered, heirarchal config storage system. Configuration can be a bit confusing up front, if you are stuck ask Claude Code to read the LLM friendly [Mintlify](https://www.mintlify.com/) docs site (ex: `create a @.clawker.yaml file appropriate for this repos stack. Clawker configuration can be understood here: https://docs.clawker.dev/configuration.md`) — it covers the schema, build-time inject points, and common pitfalls. I dogfood clawker to build clawker, so also check out my `clawker.yaml` to see how I customized the build config for golang development.
 
 > **Tip** You can alternatively use `.clawker/clawker.yaml` (which takes precendence). You can also split the configs up into multiple files through your repository for merging, good for monorepos. A global clawker.yaml can also be created in `$CLAWKER_CONFIG_DIR` for system wide defaults. You can also create an uncomitted `.clawker.local.yaml|.clawker/clawker.local.yaml` for local-only overrides.
 
@@ -169,10 +165,10 @@ My workflow is a hybrid approach. I like having a claude code instance running o
 So to do that let's say you're working on a feature branch with host claude code and inspiration strikes or you notice an issue / bug and say "shit i should address this". Or you've finished up a few PRDs and want to bang them out in parallel. I just quickly open a tab and have another claude agent via clawker get after it on the side without me having to approve anything over and over again so...
 
 ```bash
-clawker run -it --agent example --worktree hotfix/example:main @ --dangerously-skip-permissions
+clawker run -it --rm --agent dev --worktree hotfix/example:main @ --dangerously-skip-permissions
 ```
 
-This creates and attaches my terminal to a new claude instance isolated in a container environment with a git worktree dir created under `~/.local/share/clawker/worktrees/` (or honors the override `$CLAWKER_DATA_DIR`) off of my main branch. Since it has all my plugins, skills, auth tokens, git creds, mcps installed, build deps instantly, it's just a matter of telling the little rascal what to do and letting it go bananas and create a pr about it. I'll periodically check in on it to see how it's doing in another tab. Or you can detach `ctrl p+q` and return to your terminal; to reattach to the same session use `clawker attach --agent example`. Ez pz no ssh/tmux bullshit, no vscode devcontainer window, no VPS with heavy IO latency, or setting up dedicated servers, or having to pay someone to do it for you.  
+This creates and attaches my terminal to a new claude instance isolated in a container environment with a git worktree dir created under `~/.local/share/clawker/worktrees/` (or honors the override `$CLAWKER_DATA_DIR`) off of my main branch. Since it has all my plugins, skills, auth tokens, git creds, mcps installed, build deps instantly, it's just a matter of telling the little rascal what to do and letting it go bananas and create a pr about it. I'll periodically check in on it to see how it's doing in another tab. Or you can detach `ctrl p+q` and return to your terminal; to reattach to the same session use `clawker attach --agent dev`. Ez pz no ssh/tmux bullshit, no vscode devcontainer window, no VPS with heavy IO latency, or setting up dedicated servers, or having to pay someone to do it for you.  
 
 I can see my worktree paths and open them in an IDE if I want to do some manual work or review the code... or never care about where they are, `clawker` remembers and auto mounts them using branches as an identifier. You can use `clawker worktree` commands to manage them, or `git worktree`. 
 
@@ -380,8 +376,6 @@ See `clawker loop --help` for all options and configuration.
 - Currently, clawker containers use stdout/stderr as a poor man's event transport for monitoring and looping mode. A proper control plane with container agent daemon for managing container lifecycles, configs, and events via gRPC is on the roadmap. This will keep container stdout/err sacred and allow for more robust features, better monitoring, better loop control, peering communications, and a more seamless experience overall
 - Linux might have a bug involving accessing the keychain for creds, I haven't focused on linux extensively yet
 - The TUI/UI formatting is mainly a polished turd currently, I'm aware of this. It's functional, but it'll be the last thing I really care about 
-- Being my first vibe coding experience, I come across some utterly insane, often painful, sometimes funny quality issues from good ole claude boy.  
-- I'm realizing it's probably trivial (just jinxed myself) to swap out different AI agents as the container entrypoint beyond claude code. So I am considering adding options for what AI agent you want. Making clawker essentially a general "harness for the harness" / agent-in-container solution  
 
 See [GitHub Issues](https://github.com/schmitthub/clawker/issues?q=is%3Aissue+is%3Aopen+label%3Aknown-issue) for current known issues and limitations.
 
@@ -395,4 +389,4 @@ Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 
 MIT — see [LICENSE](LICENSE)
 
-> I feel obligated to state this... **Clawker** is a portmanteau of Claude + Docker. The project was at first named `claucker`, but reading it, saying it, and especially typing it always felt awkward to my brain because it violates the phonetic rules of English. Before I was aware of the whole `clawdbot` `openclaw` `clawthis` `clawthat` naming craze, I changed it to be the "correct" phonetic spelling, `clawker`, purely because it just rolls off the fingers when typing it. For those reasons I'm not going to change the name, but I want to make it clear the decision wasn't to chase a trend  
+> I feel obligated to state this... **Clawker** is a portmanteau of Claude + Docker. The project was at first named `claucker`, but reading it, saying it, and especially typing it always felt awkward to my brain because it violates the phonetic rules of English. Before I was aware of the whole `clawdbot` `openclaw` `clawthis` `clawthat` naming craze, I changed it to be the "correct" phonetic spelling, `clawker`, purely because it just rolls off the fingers when typing it. For those reasons I'm not going to change the name, but I want to make it clear the decision wasn't to chase a trend and this has no relation to openclaw.  
