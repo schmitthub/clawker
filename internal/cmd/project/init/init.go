@@ -6,26 +6,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
-	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	projectui "github.com/schmitthub/clawker/internal/config/storeui/project"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
-	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/storage"
+	"github.com/schmitthub/clawker/internal/storeui"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
+)
+
+var projectNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+
+const (
+	actionSave      = "Save and get started"
+	actionCustomize = "Customize this preset"
 )
 
 // ProjectInitOptions contains the options for the project init command.
 type ProjectInitOptions struct {
 	IOStreams      *iostreams.IOStreams
 	TUI            *tui.TUI
-	Prompter       func() *prompterpkg.Prompter
 	Config         func() (config.Config, error)
 	Logger         func() (*logger.Logger, error)
 	ProjectManager func() (project.ProjectManager, error)
@@ -40,7 +46,6 @@ func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectIn
 	opts := &ProjectInitOptions{
 		IOStreams:      f.IOStreams,
 		TUI:            f.TUI,
-		Prompter:       f.Prompter,
 		Config:         f.Config,
 		Logger:         f.Logger,
 		ProjectManager: f.ProjectManager,
@@ -49,24 +54,22 @@ func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectIn
 	cmd := &cobra.Command{
 		Use:   "init [project-name]",
 		Short: "Initialize a new clawker project in the current directory",
-		Long: `Creates a .clawker.yaml configuration file and .clawkerignore in the current directory if they don't exist'.
+		Long: `Creates a .clawker.yaml configuration file and .clawkerignore in the current directory.
+
+Provides language-based presets for quick setup, plus a "Build from scratch" path
+that walks through each config field step by step.
 
 If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default).
 
-In interactive mode (default), you will be prompted to configure:
-  - Project Name
-  - Base container image
-  - Default workspace mode (bind or snapshot)
-
-Use --yes/-y to skip prompts and accept all defaults.`,
-		Example: `  # Interactive setup (prompts for options)
+Use --yes/-y to skip prompts and use the Bare preset with all defaults.`,
+		Example: `  # Interactive setup with preset picker
   clawker project init
 
-  # Use "my-project" as project name (still prompts for other options)
+  # Specify project name (still prompts for preset)
   clawker project init my-project
 
-  # Non-interactive with all defaults
+  # Non-interactive with Bare preset defaults
   clawker project init --yes
 
   # Overwrite existing configuration
@@ -103,6 +106,7 @@ type wizardContext struct {
 	force          bool
 	nameDefault    string
 	configFileName string
+	presets        []config.Preset
 }
 
 // overwriteDeclined returns true when the overwrite field was answered "no".
@@ -110,58 +114,95 @@ func overwriteDeclined(vals tui.WizardValues) bool {
 	return vals["overwrite"] == "no"
 }
 
-// runInteractive runs the wizard-based interactive flow.
-func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
-	ios := opts.IOStreams
-	cs := ios.ColorScheme()
+// initEnv holds the resolved dependencies and derived state shared by both
+// the interactive and non-interactive init paths.
+type initEnv struct {
+	log            *logger.Logger
+	cfg            config.Config
+	pm             project.ProjectManager
+	wd             string
+	dirName        string
+	configFileName string
+	configExists   bool
+	projectName    string // default name (may be overridden by wizard)
+}
 
+// resolveInitEnv resolves factory lazy closures, bootstraps settings, and
+// computes derived state that both runInteractive and runNonInteractive need.
+func resolveInitEnv(opts *ProjectInitOptions) (*initEnv, error) {
 	log, err := opts.Logger()
 	if err != nil {
-		return fmt.Errorf("initializing logger: %w", err)
+		return nil, fmt.Errorf("initializing logger: %w", err)
 	}
 
 	wd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	cfgGateway, err := opts.Config()
+	cfg, err := opts.Config()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return nil, fmt.Errorf("loading config: %w", err)
 	}
-	projectManager, err := opts.ProjectManager()
+
+	pm, err := opts.ProjectManager()
 	if err != nil {
-		return fmt.Errorf("initializing project manager: %w", err)
+		return nil, fmt.Errorf("initializing project manager: %w", err)
 	}
 
-	configFileName := "." + cfgGateway.ProjectConfigFileName()
+	if bsErr := bootstrapSettings(); bsErr != nil {
+		log.Warn().Err(bsErr).Msg("settings bootstrap failed")
+		fmt.Fprintf(opts.IOStreams.ErrOut, "Warning: could not create settings file: %s\n", bsErr)
+	}
 
-	// Check if configuration already exists via storage layer discovery.
-	configExists := shared.HasLocalProjectConfig(cfgGateway, wd)
+	configFileName := "." + cfg.ProjectConfigFileName()
+	configExists := shared.HasLocalProjectConfig(cfg, wd)
 
 	absPath, err := filepath.Abs(wd)
 	if err != nil {
-		return fmt.Errorf("failed to get absolute path: %w", err)
+		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 	dirName := filepath.Base(absPath)
 
-	nameDefault := dirName
+	projectName := strings.ToLower(dirName)
 	if opts.Name != "" {
-		nameDefault = opts.Name
+		projectName = strings.ToLower(opts.Name)
 	}
 
-	// Print header
+	return &initEnv{
+		log:            log,
+		cfg:            cfg,
+		pm:             pm,
+		wd:             wd,
+		dirName:        dirName,
+		configFileName: configFileName,
+		configExists:   configExists,
+		projectName:    projectName,
+	}, nil
+}
+
+// runInteractive runs the preset-based interactive flow.
+func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
+	ios := opts.IOStreams
+	cs := ios.ColorScheme()
+
+	env, err := resolveInitEnv(opts)
+	if err != nil {
+		return err
+	}
+
 	fmt.Fprintln(ios.Out, "Setting up clawker project...")
 	fmt.Fprintln(ios.Out)
 
-	// Run wizard
+	presets := config.Presets()
 	wctx := wizardContext{
-		configExists:   configExists,
+		configExists:   env.configExists,
 		force:          opts.Force,
-		nameDefault:    nameDefault,
-		configFileName: configFileName,
+		nameDefault:    env.projectName,
+		configFileName: env.configFileName,
+		presets:        presets,
 	}
-	result, err := opts.TUI.RunWizard(buildProjectWizardFields(wctx))
+	result, err := opts.TUI.RunWizard(buildInitWizardFields(wctx))
 	if err != nil {
 		return fmt.Errorf("wizard failed: %w", err)
 	}
@@ -170,26 +211,42 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		return nil
 	}
 
-	// Handle overwrite-declined: register only
+	// Handle overwrite-declined: register only.
 	if overwriteDeclined(result.Values) {
-		registeredProject, regErr := projectManager.Register(ctx, dirName, wd)
-		if regErr != nil {
-			log.Debug().Err(regErr).Msg("failed to register project during init (non-overwrite path)")
+		if _, regErr := env.pm.Register(ctx, strings.ToLower(env.dirName), env.wd); regErr != nil {
+			env.log.Debug().Err(regErr).Msg("failed to register project during init (non-overwrite path)")
 			return fmt.Errorf("could not register project: %w", regErr)
 		}
-		if registeredProject != nil {
-			fmt.Fprintf(ios.Out, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
-		}
-
+		fmt.Fprintf(ios.Out, "%s Registered project '%s'\n", cs.SuccessIcon(), strings.ToLower(env.dirName))
 		return nil
 	}
 
-	// Extract wizard values
+	// Resolve preset and branching.
 	projectName := result.Values["project_name"]
-	buildImage := resolveImageFromWizard(result.Values)
-	workspaceMode := result.Values["workspace_mode"]
+	presetName := result.Values["preset"]
+	action := result.Values["action"]
 
-	return performProjectSetup(ctx, opts, projectName, buildImage, workspaceMode)
+	preset, ok := presetByName(presets, presetName)
+	if !ok {
+		return fmt.Errorf("unknown preset: %s", presetName)
+	}
+
+	configPath := filepath.Join(env.wd, env.configFileName)
+	customize := preset.AutoCustomize || action == actionCustomize
+
+	return performProjectSetup(ctx, performSetupInput{
+		ios:         ios,
+		tui:         opts.TUI,
+		log:         env.log,
+		cfg:         env.cfg,
+		pm:          env.pm,
+		projectName: projectName,
+		preset:      preset,
+		configPath:  configPath,
+		wd:          env.wd,
+		force:       opts.Force,
+		customize:   customize,
+	})
 }
 
 // runNonInteractive runs the non-interactive (--yes) path with no prompts.
@@ -197,23 +254,13 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	wd, err := os.Getwd()
+	env, err := resolveInitEnv(opts)
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
+		return err
 	}
 
-	cfgGateway, err := opts.Config()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	configFileName := "." + cfgGateway.ProjectConfigFileName()
-
-	// Check if configuration already exists via storage layer discovery.
-	configExists := shared.HasLocalProjectConfig(cfgGateway, wd)
-
-	if configExists && !opts.Force {
-		fmt.Fprintf(ios.ErrOut, "%s %s already exists\n", cs.FailureIcon(), configFileName)
+	if env.configExists && !opts.Force {
+		fmt.Fprintf(ios.ErrOut, "%s %s already exists\n", cs.FailureIcon(), env.configFileName)
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "Next Steps:")
 		fmt.Fprintln(ios.ErrOut, "  - Use --force to overwrite the existing configuration")
@@ -222,150 +269,181 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		return fmt.Errorf("configuration already exists")
 	}
 
-	// Print header
 	fmt.Fprintln(ios.ErrOut, "Setting up clawker project...")
 	fmt.Fprintln(ios.ErrOut)
 
-	absPath, err := filepath.Abs(wd)
-	if err != nil {
-		return fmt.Errorf("failed to get absolute path: %w", err)
+	preset, ok := presetByName(config.Presets(), "Bare")
+	if !ok {
+		return fmt.Errorf("internal error: Bare preset not found")
 	}
-	dirName := filepath.Base(absPath)
 
-	projectName := dirName
-	if opts.Name != "" {
-		projectName = opts.Name
-	}
-	buildImage := intbuild.FlavorToImage("bookworm")
-	workspaceMode := "bind"
+	configPath := filepath.Join(env.wd, env.configFileName)
 
-	return performProjectSetup(ctx, opts, projectName, buildImage, workspaceMode)
+	return performProjectSetup(ctx, performSetupInput{
+		ios:         ios,
+		log:         env.log,
+		cfg:         env.cfg,
+		pm:          env.pm,
+		projectName: env.projectName,
+		preset:      preset,
+		configPath:  configPath,
+		wd:          env.wd,
+		force:       opts.Force,
+	})
 }
 
-// performProjectSetup handles file creation, registration, and success output.
-// Both runInteractive and runNonInteractive delegate to this function.
-func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectName, buildImage, workspaceMode string) error {
-	ios := opts.IOStreams
-	cs := ios.ColorScheme()
+// performSetupInput groups pre-resolved dependencies for performProjectSetup,
+// avoiding repeated calls to factory lazy closures.
+type performSetupInput struct {
+	ios         *iostreams.IOStreams
+	tui         *tui.TUI
+	log         *logger.Logger
+	cfg         config.Config
+	pm          project.ProjectManager
+	projectName string
+	preset      config.Preset
+	configPath  string
+	wd          string
+	force       bool
+	customize   bool
+}
 
-	log, err := opts.Logger()
-	if err != nil {
-		return fmt.Errorf("initializing logger: %w", err)
+// performProjectSetup creates the project config from a preset, optionally runs
+// the customize wizard, writes files, and registers the project.
+func performProjectSetup(ctx context.Context, in performSetupInput) error {
+	cs := in.ios.ColorScheme()
+
+	if err := validateProjectName(in.projectName); err != nil {
+		return fmt.Errorf("invalid project name %q: %w", in.projectName, err)
 	}
 
-	wd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
-	}
+	configFileName := filepath.Base(in.configPath)
+	ignoreFileName := in.cfg.ClawkerIgnoreName()
+	ignorePath := filepath.Join(in.wd, ignoreFileName)
 
-	cfgGateway, err := opts.Config()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	projectManager, err := opts.ProjectManager()
-	if err != nil {
-		return fmt.Errorf("initializing project manager: %w", err)
-	}
-
-	configFileName := "." + cfgGateway.ProjectConfigFileName()
-	configPath := filepath.Join(wd, configFileName)
-	ignoreFileName := cfgGateway.ClawkerIgnoreName()
-	ignorePath := filepath.Join(wd, ignoreFileName)
-
-	log.Debug().
-		Str("project", projectName).
-		Str("build_image", buildImage).
-		Str("mode", workspaceMode).
-		Str("workdir", wd).
-		Bool("force", opts.Force).
+	in.log.Debug().
+		Str("project", in.projectName).
+		Str("preset", in.preset.Name).
+		Str("workdir", in.wd).
+		Bool("customize", in.customize).
+		Bool("force", in.force).
 		Msg("initializing project")
 
-	// Create a project store with defaults from struct tags, pointed at CWD.
-	store, err := storage.NewStore[config.Project](
-		storage.WithFilenames(cfgGateway.ProjectConfigFileName()),
+	// Create a store from the preset YAML with schema defaults filling gaps.
+	store, err := storage.NewFromString[config.Project](
+		in.preset.YAML,
 		storage.WithDefaultsFromStruct[config.Project](),
-		storage.WithDirs(wd),
 	)
 	if err != nil {
-		return fmt.Errorf("creating project config store: %w", err)
+		return fmt.Errorf("loading preset %q: %w", in.preset.Name, err)
 	}
 
-	// Apply wizard selections on top of defaults.
-	if err := store.Set(func(p *config.Project) {
-		p.Build.Image = buildImage
-		p.Workspace.DefaultMode = workspaceMode
-		if p.Security.Firewall == nil {
-			p.Security.Firewall = &config.FirewallConfig{}
+	// If customizing, run the store-backed wizard before writing.
+	alreadySaved := false
+	if in.customize {
+		wizResult, wizErr := storeui.Wizard(
+			in.tui,
+			store,
+			storeui.WithWizardTitle("Customize "+in.preset.Name+" preset"),
+			storeui.WithWizardFields(customizeWizardFields()...),
+			storeui.WithWizardOverrides(customizeWizardOverrides()...),
+			storeui.WithWizardWritePath(in.configPath),
+		)
+		if wizErr != nil {
+			return fmt.Errorf("customize wizard: %w", wizErr)
 		}
-		p.Security.Firewall.AddDomains = []string{"github.com", "api.github.com"}
-		p.Security.Firewall.Rules = []config.EgressRule{
-			{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
+		if wizResult.Cancelled {
+			fmt.Fprintln(in.ios.Out, "Setup cancelled.")
+			return nil
 		}
-	}); err != nil {
-		return fmt.Errorf("setting project config: %w", err)
+		alreadySaved = wizResult.Saved
 	}
 
-	// Persist to dotfile via the store.
-	if err := store.Write(storage.ToPath(configPath)); err != nil {
-		return fmt.Errorf("writing %s: %w", configFileName, err)
+	// Persist the store if the wizard did not already write it (Saved=true
+	// means fields were modified and the wizard auto-wrote; if unchanged the
+	// caller must still persist the preset).
+	if !alreadySaved {
+		if err := store.Write(storage.ToPath(in.configPath)); err != nil {
+			return fmt.Errorf("writing %s: %w", configFileName, err)
+		}
 	}
-	log.Debug().Str("file", configPath).Msg("created configuration file")
+	in.log.Debug().Str("file", in.configPath).Msg("created configuration file")
 
-	// Create .clawkerignore
-	if _, err := os.Stat(ignorePath); os.IsNotExist(err) || opts.Force {
+	// Create .clawkerignore if it doesn't exist (or --force).
+	ignoreCreated := false
+	_, statErr := os.Stat(ignorePath)
+	switch {
+	case statErr != nil && !os.IsNotExist(statErr):
+		return fmt.Errorf("checking %s: %w", ignoreFileName, statErr)
+	case os.IsNotExist(statErr) || in.force:
 		if err := os.WriteFile(ignorePath, []byte(config.DefaultIgnoreFile), 0644); err != nil {
 			return fmt.Errorf("failed to write %s: %w", ignoreFileName, err)
 		}
-		log.Debug().Str("file", ignorePath).Msg("created ignore file")
+		in.log.Debug().Str("file", ignorePath).Msg("created ignore file")
+		ignoreCreated = true
 	}
 
-	// Success output — always report files created before registration attempt
-	fmt.Fprintln(ios.Out)
-	fmt.Fprintf(ios.Out, "%s Created: %s\n", cs.SuccessIcon(), configFileName)
-	fmt.Fprintf(ios.Out, "%s Created: %s\n", cs.SuccessIcon(), ignoreFileName)
-	fmt.Fprintf(ios.Out, "%s Project: %s\n", cs.InfoIcon(), projectName)
+	fmt.Fprintln(in.ios.Out)
+	fmt.Fprintf(in.ios.Out, "%s Created: %s\n", cs.SuccessIcon(), configFileName)
+	if ignoreCreated {
+		fmt.Fprintf(in.ios.Out, "%s Created: %s\n", cs.SuccessIcon(), ignoreFileName)
+	} else {
+		fmt.Fprintf(in.ios.Out, "%s Exists:  %s\n", cs.InfoIcon(), ignoreFileName)
+	}
+	fmt.Fprintf(in.ios.Out, "%s Project: %s (preset: %s)\n", cs.InfoIcon(), in.projectName, in.preset.Name)
 
-	// Register project in user settings
-	if _, err := projectManager.Register(ctx, projectName, wd); err != nil {
+	if _, err := in.pm.Register(ctx, in.projectName, in.wd); err != nil {
 		return fmt.Errorf("could not register project: %w", err)
 	}
 
-	// Offer interactive customization via the project config editor.
-	if !opts.Yes && ios.IsInteractive() {
-		prompter := opts.Prompter()
-
-		customize, promptErr := prompter.Confirm("Customize configuration?", false)
-		if promptErr == nil && customize {
-			// Reload config to discover the just-written file.
-			freshCfg, cfgErr := config.NewConfig()
-			if cfgErr != nil {
-				fmt.Fprintf(ios.ErrOut, "%s Could not reload configuration for editing: %s\n",
-					cs.WarningIcon(), cfgErr)
-			} else {
-				result, editErr := projectui.Edit(ios, freshCfg.ProjectStore(), freshCfg)
-				if editErr != nil {
-					fmt.Fprintf(ios.ErrOut, "%s Configuration editor failed: %s\n",
-						cs.WarningIcon(), editErr)
-				} else if result.Saved {
-					fmt.Fprintf(ios.Out, "%s Configuration updated (%d fields modified)\n",
-						cs.SuccessIcon(), result.SavedCount)
-				}
-			}
-		}
-
-	}
-
-	fmt.Fprintln(ios.Out)
-	fmt.Fprintln(ios.Out, "Next Steps:")
-	fmt.Fprintf(ios.Out, "  1. Run 'clawker build' to build your project's container image\n")
-	fmt.Fprintf(ios.Out, "  2. Run 'clawker run -it --agent <agent-name> @' to start an interactive shell in the container\n")
-	fmt.Fprintln(ios.Out)
-	fmt.Fprintf(ios.Out, "To edit your project configuration later, run 'clawker project edit'\n")
+	fmt.Fprintln(in.ios.Out)
+	fmt.Fprintln(in.ios.Out, "Next Steps:")
+	fmt.Fprintf(in.ios.Out, "  1. Run 'clawker build' to build your project's container image\n")
+	fmt.Fprintf(in.ios.Out, "  2. Run 'clawker run -it --agent <agent-name> @' to start a container\n")
+	fmt.Fprintln(in.ios.Out)
+	fmt.Fprintf(in.ios.Out, "To customize further, run 'clawker project edit'\n")
 	return nil
 }
 
-// buildProjectWizardFields returns the wizard field definitions for interactive project init.
-func buildProjectWizardFields(wctx wizardContext) []tui.WizardField {
+// bootstrapSettings ensures a settings.yaml exists with schema defaults.
+// Creates the file if missing; no-op otherwise.
+func bootstrapSettings() error {
+	settingsPath, err := config.SettingsFilePath()
+	if err != nil {
+		return fmt.Errorf("resolving settings path: %w", err)
+	}
+
+	_, statErr := os.Stat(settingsPath)
+	if statErr == nil {
+		return nil // file exists
+	}
+	if !os.IsNotExist(statErr) {
+		return fmt.Errorf("checking settings file: %w", statErr)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
+	}
+
+	defaultsYAML := storage.GenerateDefaultsYAML[config.Settings]()
+	if defaultsYAML == "" {
+		defaultsYAML = "{}\n"
+	}
+
+	return os.WriteFile(settingsPath, []byte(defaultsYAML), 0644)
+}
+
+// buildInitWizardFields returns wizard fields for the setup flow:
+// overwrite confirmation, project name, preset picker, and save-or-customize action.
+func buildInitWizardFields(wctx wizardContext) []tui.WizardField {
+	presetOptions := make([]tui.FieldOption, len(wctx.presets))
+	for i, p := range wctx.presets {
+		presetOptions[i] = tui.FieldOption{
+			Label:       p.Name,
+			Description: p.Description,
+		}
+	}
+
 	return []tui.WizardField{
 		{
 			ID:         "overwrite",
@@ -385,71 +463,96 @@ func buildProjectWizardFields(wctx wizardContext) []tui.WizardField {
 			Default:     wctx.nameDefault,
 			Placeholder: "my-project",
 			Required:    true,
+			Validator:   validateProjectName,
 			SkipIf: func(vals tui.WizardValues) bool {
 				return overwriteDeclined(vals)
 			},
 		},
 		{
-			ID:         "flavor",
-			Title:      "Image",
-			Prompt:     "Base Linux flavor for build",
+			ID:         "preset",
+			Title:      "Template",
+			Prompt:     "Choose a starting template",
 			Kind:       tui.FieldSelect,
-			Options:    flavorFieldOptionsWithCustom(),
+			Options:    presetOptions,
 			DefaultIdx: 0,
 			SkipIf: func(vals tui.WizardValues) bool {
 				return overwriteDeclined(vals)
 			},
 		},
 		{
-			ID:          "custom_image",
-			Title:       "Custom Image",
-			Prompt:      "Custom base image",
-			Kind:        tui.FieldText,
-			Placeholder: "e.g., node:20, python:3.12",
-			Required:    true,
-			SkipIf: func(vals tui.WizardValues) bool {
-				return overwriteDeclined(vals) || vals["flavor"] != "Custom"
-			},
-		},
-		{
-			ID:     "workspace_mode",
-			Title:  "Workspace",
-			Prompt: "Default workspace mode",
+			ID:     "action",
+			Title:  "Action",
+			Prompt: "What would you like to do?",
 			Kind:   tui.FieldSelect,
 			Options: []tui.FieldOption{
-				{Label: "bind", Description: "live sync - changes immediately affect host filesystem"},
-				{Label: "snapshot", Description: "isolated copy - use git to sync changes"},
+				{Label: actionSave, Description: "Write config and start building"},
+				{Label: actionCustomize, Description: "Walk through key config fields before saving"},
 			},
 			DefaultIdx: 0,
 			SkipIf: func(vals tui.WizardValues) bool {
-				return overwriteDeclined(vals)
+				if overwriteDeclined(vals) {
+					return true
+				}
+				// AutoCustomize presets skip this — they always customize.
+				preset, ok := presetByName(wctx.presets, vals["preset"])
+				return ok && preset.AutoCustomize
 			},
 		},
 	}
 }
 
-// flavorFieldOptionsWithCustom converts bundler flavor options to TUI wizard field options
-// and appends a "Custom" option for entering a custom base image.
-func flavorFieldOptionsWithCustom() []tui.FieldOption {
-	flavors := intbuild.DefaultFlavorOptions()
-	options := make([]tui.FieldOption, len(flavors)+1)
-	for i, f := range flavors {
-		options[i] = tui.FieldOption{
-			Label:       f.Name,
-			Description: f.Description,
-		}
+// customizeWizardFields returns the ordered list of store field paths shown
+// in the customize wizard.
+func customizeWizardFields() []string {
+	return []string{
+		"build.image",
+		"build.packages",
+		"build.instructions.root_run",
+		"build.instructions.user_run",
+		"build.inject.after_from",
+		"build.inject.after_packages",
+		"security.firewall.add_domains",
+		"workspace.default_mode",
 	}
-	options[len(flavors)] = tui.FieldOption{
-		Label:       "Custom",
-		Description: "Enter a custom base image (e.g., node:20, python:3.12)",
-	}
-	return options
 }
 
-// resolveImageFromWizard converts wizard values to a Docker image reference.
-func resolveImageFromWizard(values tui.WizardValues) string {
-	if values["flavor"] == "Custom" {
-		return values["custom_image"]
+// customizeWizardOverrides returns overrides that customize field presentation
+// in the store-backed wizard.
+func customizeWizardOverrides() []storeui.Override {
+	return []storeui.Override{
+		{
+			Path:    "workspace.default_mode",
+			Kind:    storeui.Ptr(storeui.KindSelect),
+			Options: []string{"bind", "snapshot"},
+		},
 	}
-	return intbuild.FlavorToImage(values["flavor"])
+}
+
+// presetByName finds a preset by its display name.
+func presetByName(presets []config.Preset, name string) (config.Preset, bool) {
+	for _, p := range presets {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return config.Preset{}, false
+}
+
+// validateProjectName checks that a project name is valid for clawker resource
+// naming. Stricter than Docker's container name rules: lowercase-only, must
+// start with a letter or digit.
+func validateProjectName(s string) error {
+	if s == "" {
+		return fmt.Errorf("project name is required")
+	}
+	if s != strings.ToLower(s) {
+		return fmt.Errorf("must be lowercase (try %q)", strings.ToLower(s))
+	}
+	if strings.Contains(s, " ") {
+		return fmt.Errorf("must not contain spaces")
+	}
+	if !projectNameRe.MatchString(s) {
+		return fmt.Errorf("must start with a letter or digit, and contain only lowercase letters, digits, dots, underscores, or hyphens")
+	}
+	return nil
 }

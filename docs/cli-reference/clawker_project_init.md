@@ -8,17 +8,15 @@ Initialize a new clawker project in the current directory
 
 ### Synopsis
 
-Creates a .clawker.yaml configuration file and .clawkerignore in the current directory if they don't exist'.
+Creates a .clawker.yaml configuration file and .clawkerignore in the current directory.
+
+Provides language-based presets for quick setup, plus a "Build from scratch" path
+that walks through each config field step by step.
 
 If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default).
 
-In interactive mode (default), you will be prompted to configure:
-  - Project Name
-  - Base container image
-  - Default workspace mode (bind or snapshot)
-
-Use --yes/-y to skip prompts and accept all defaults.
+Use --yes/-y to skip prompts and use the Bare preset with all defaults.
 
 ```
 clawker project init [project-name] [flags]
@@ -27,13 +25,13 @@ clawker project init [project-name] [flags]
 ### Examples
 
 ```
-  # Interactive setup (prompts for options)
+  # Interactive setup with preset picker
   clawker project init
 
-  # Use "my-project" as project name (still prompts for other options)
+  # Specify project name (still prompts for preset)
   clawker project init my-project
 
-  # Non-interactive with all defaults
+  # Non-interactive with Bare preset defaults
   clawker project init --yes
 
   # Overwrite existing configuration
