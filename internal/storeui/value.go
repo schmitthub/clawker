@@ -169,12 +169,8 @@ func setLeaf(f reflect.Value, val string, path string) error {
 }
 
 // setLeafYAML sets a field from a YAML string using reflection-based unmarshal.
-// Handles map and struct-slice types.
-//
-// For struct slices: if the input isn't valid YAML for the target type, it falls
-// back to wrapping a plain string as a single-element list using the first exported
-// string field of the struct. This lets users type a raw command string instead of
-// full YAML structure (e.g. typing "npm ci" instead of "- cmd: npm ci").
+// Handles map and struct-slice types. Invalid YAML returns an error so the
+// editor can display it to the user — no silent fallbacks.
 func setLeafYAML(f reflect.Value, ft reflect.Type, val string, path string) error {
 	if val == "" {
 		f.Set(reflect.Zero(ft))
@@ -182,42 +178,8 @@ func setLeafYAML(f reflect.Value, ft reflect.Type, val string, path string) erro
 	}
 	ptr := reflect.New(ft)
 	if err := yaml.Unmarshal([]byte(val), ptr.Interface()); err != nil {
-		// For struct slices, try wrapping a plain string as a single item.
-		if ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct {
-			if wrapped, ok := wrapStringAsStructSlice(ft, val); ok {
-				f.Set(wrapped)
-				return nil
-			}
-		}
 		return fmt.Errorf("storeui.SetFieldValue: invalid YAML for %q: %w", path, err)
 	}
 	f.Set(ptr.Elem())
 	return nil
-}
-
-// wrapStringAsStructSlice creates a single-element slice of structs from a plain
-// string by setting the first exported string field of the struct element type.
-// Returns (value, false) if the struct has no string fields.
-func wrapStringAsStructSlice(sliceType reflect.Type, val string) (reflect.Value, bool) {
-	elemType := sliceType.Elem()
-
-	// Find the first exported string field.
-	fieldIdx := -1
-	for i := 0; i < elemType.NumField(); i++ {
-		sf := elemType.Field(i)
-		if sf.IsExported() && sf.Type.Kind() == reflect.String {
-			fieldIdx = i
-			break
-		}
-	}
-	if fieldIdx < 0 {
-		return reflect.Value{}, false
-	}
-
-	// Create a single-element slice with the string in the first field.
-	elem := reflect.New(elemType).Elem()
-	elem.Field(fieldIdx).SetString(val)
-	slice := reflect.MakeSlice(sliceType, 1, 1)
-	slice.Index(0).Set(elem)
-	return slice, true
 }

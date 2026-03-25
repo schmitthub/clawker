@@ -60,6 +60,15 @@ func NewItemListEditor(label string, value string, fields []StructFieldDef) Item
 
 // parseYAMLItems parses a YAML list-of-maps into []map[string]string.
 // Handles both typed YAML and plain map representations.
+//
+// TODO: This silently returns nil on YAML unmarshal errors, which would make the
+// editor display an empty list. If a user confirms (Enter), the empty value would
+// overwrite existing data with no feedback. When wiring this editor into a domain
+// adapter, this MUST be fixed: capture the parse error into an errMsg field (like
+// KVEditorModel does at kveditor.go:77-83), surface it via Err(), and render it
+// inline via renderValidationError(). The current Err() at line 312 is hardcoded
+// to "" — it needs to return the captured parse error. See KVEditorModel for the
+// correct pattern. Do NOT wire this editor without fixing this first.
 func parseYAMLItems(value string, fields []StructFieldDef) []map[string]string {
 	if value == "" {
 		return nil
