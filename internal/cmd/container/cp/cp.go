@@ -312,16 +312,21 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 			}
 			f.Close()
 		case tar.TypeSymlink:
-			// Security: clean and validate symlink target stays within destination.
-			cleanLink := filepath.Clean(header.Linkname)
-			resolvedLink := cleanLink
+			// Security: resolve and validate symlink target stays within destination.
+			resolvedLink := filepath.Clean(header.Linkname)
 			if !filepath.IsAbs(resolvedLink) {
 				resolvedLink = filepath.Join(filepath.Dir(target), resolvedLink)
 			}
 			if !isWithinDir(resolvedLink, absDst) {
 				return fmt.Errorf("illegal symlink %q -> %q: target outside destination", header.Name, header.Linkname)
 			}
-			if err := os.Symlink(cleanLink, target); err != nil {
+			// Create symlink using a relative path from the link location to the
+			// validated target, preserving portability while ensuring safety.
+			relLink, err := filepath.Rel(filepath.Dir(target), resolvedLink)
+			if err != nil {
+				return fmt.Errorf("failed to compute relative symlink for %s: %w", header.Name, err)
+			}
+			if err := os.Symlink(relLink, target); err != nil {
 				return fmt.Errorf("failed to create symlink %s: %w", target, err)
 			}
 		case tar.TypeLink:
