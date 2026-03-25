@@ -258,23 +258,29 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 			return fmt.Errorf("error reading tar: %w", err)
 		}
 
-		// Determine target path
+		// Security: sanitize entry name before any filesystem use (Zip Slip).
+		cleanName := filepath.Clean(header.Name)
+		if filepath.IsAbs(cleanName) || cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("illegal tar entry %q: path traversal outside destination", header.Name)
+		}
+
+		// Determine target path using the sanitized name.
 		var target string
 		if dstIsDir {
-			target = filepath.Join(absDst, header.Name)
+			target = filepath.Join(absDst, cleanName)
 		} else if dstExists {
 			target = absDst
 		} else {
 			// Destination doesn't exist - create it as file or directory
 			// based on what we're extracting
 			if header.Typeflag == tar.TypeDir {
-				target = filepath.Join(absDst, header.Name)
+				target = filepath.Join(absDst, cleanName)
 			} else {
 				target = absDst
 			}
 		}
 
-		// Security: prevent path traversal (Zip Slip).
+		// Belt-and-suspenders: verify joined path is still within destination.
 		if !isWithinDir(target, absDst) {
 			return fmt.Errorf("illegal tar entry %q: path traversal outside destination", header.Name)
 		}
