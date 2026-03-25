@@ -312,27 +312,29 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 			}
 			f.Close()
 		case tar.TypeSymlink:
-			// Security: validate symlink target stays within destination.
-			linkTarget := header.Linkname
-			if !filepath.IsAbs(linkTarget) {
-				linkTarget = filepath.Join(filepath.Dir(target), linkTarget)
+			// Security: clean and validate symlink target stays within destination.
+			cleanLink := filepath.Clean(header.Linkname)
+			resolvedLink := cleanLink
+			if !filepath.IsAbs(resolvedLink) {
+				resolvedLink = filepath.Join(filepath.Dir(target), resolvedLink)
 			}
-			if !isWithinDir(linkTarget, absDst) {
+			if !isWithinDir(resolvedLink, absDst) {
 				return fmt.Errorf("illegal symlink %q -> %q: target outside destination", header.Name, header.Linkname)
 			}
-			if err := os.Symlink(header.Linkname, target); err != nil {
+			if err := os.Symlink(cleanLink, target); err != nil {
 				return fmt.Errorf("failed to create symlink %s: %w", target, err)
 			}
 		case tar.TypeLink:
-			// Security: validate hard link target stays within destination.
-			linkTarget := header.Linkname
-			if !filepath.IsAbs(linkTarget) {
-				linkTarget = filepath.Join(absDst, linkTarget)
+			// Security: clean and validate hard link target stays within destination.
+			cleanLink := filepath.Clean(header.Linkname)
+			resolvedLink := cleanLink
+			if !filepath.IsAbs(resolvedLink) {
+				resolvedLink = filepath.Join(absDst, resolvedLink)
 			}
-			if !isWithinDir(linkTarget, absDst) {
+			if !isWithinDir(resolvedLink, absDst) {
 				return fmt.Errorf("illegal hard link %q -> %q: target outside destination", header.Name, header.Linkname)
 			}
-			if err := os.Link(linkTarget, target); err != nil {
+			if err := os.Link(resolvedLink, target); err != nil {
 				return fmt.Errorf("failed to create hard link %s: %w", target, err)
 			}
 		}
