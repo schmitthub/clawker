@@ -30,31 +30,34 @@ Verify it's installed:
 clawker version
 ```
 
-## 2. Initialize Clawker
-
-```bash
-clawker init
-```
-
-This creates the Clawker directory structure following the XDG spec (`~/.config/clawker/` for settings, `~/.local/share/clawker/` for data, `~/.local/state/clawker/` for logs). It also asks if you want to build a default fallback image — this is optional but useful as a sandbox for quick experiments outside of a project.
-
-## 3. Set Up Your Project
+## 2. Initialize Your Project
 
 ```bash
 cd your-project
-clawker project init
+clawker init
 ```
 
-This does three things:
-- Creates a `.clawker.yaml` config file with sensible defaults
-- Creates a `.clawkerignore` file (like `.dockerignore` for snapshot mode)
-- Registers your project in Clawker's registry so it always knows the project root
+A guided setup walks you through:
+1. **Project name** — defaults to the current directory name (must be lowercase)
+2. **Language preset** — Python, Go, Rust, TypeScript, Java, Ruby, C/C++, C#/.NET, Bare, or "Build from scratch"
+3. **Save or customize** — accept the preset as-is, or step through each field to tailor it
+
+This creates:
+- A `.clawker.yaml` config file pre-filled with the right base image, packages, and firewall domains for your language
+- A `.clawkerignore` file (like `.dockerignore` for snapshot mode)
+- A project entry in Clawker's registry so it always knows the project root
+
+User settings (`~/.config/clawker/settings.yaml`) and XDG directories are bootstrapped automatically on first run.
 
 <Tip>
-The generated `.clawker.yaml` template includes GitHub domains and an SSH rule as a starting point. If your project needs npm, PyPI, or other services, add their domains to `security.firewall.add_domains`. See the [Firewall guide](/firewall#common-setups) for examples.
+To skip prompts and use the Bare preset with defaults, run `clawker init --yes`. You can always customize later with `clawker project edit`.
 </Tip>
 
-## 4. Build the Image
+<Tip>
+Language presets include ecosystem-specific firewall rules (e.g., `pypi.org` for Python, `registry.npmjs.org` for TypeScript). If you need additional domains, add them to `security.firewall.add_domains` or use `clawker firewall add` at runtime. See the [Firewall guide](/firewall#common-setups) for examples.
+</Tip>
+
+## 3. Build the Image
 
 ```bash
 clawker build
@@ -62,7 +65,7 @@ clawker build
 
 This builds a Docker image tagged `clawker-<project>:latest` using the settings in your `.clawker.yaml` — base image, system packages, Claude Code, and any custom instructions. The image is content-addressed, so rebuilds only happen when the config changes.
 
-## 5. Run Your First Agent
+## 4. Run Your First Agent
 
 An **agent** is a named container instance running Claude Code. The `--agent` flag gives it a name for management.
 
@@ -91,7 +94,7 @@ When you run this command, Clawker:
 
 The agent prompt at `/etc/claude-code/CLAUDE.md` is automatically loaded, so the agent knows it's in a container and can help troubleshoot firewall blocks.
 
-## 6. Working With Your Agent
+## 5. Working With Your Agent
 
 ### Detach Without Stopping
 
@@ -129,9 +132,15 @@ clawker run -it --rm --agent scratch @ --dangerously-skip-permissions
 
 Arguments after the image (`@`) are passed directly to Claude Code inside the container.
 
-## 7. Customize Your Config
+## 6. Customize Your Config
 
-Edit `.clawker.yaml` to tailor the environment. Here's a typical setup for a Node.js project:
+You can edit `.clawker.yaml` directly, or use the interactive TUI editor:
+
+```bash
+clawker project edit
+```
+
+Here's a typical setup for a Node.js project:
 
 ```yaml
 build:
@@ -168,7 +177,7 @@ clawker build
 
 See the [Configuration](/configuration) guide for the full reference.
 
-## 8. Parallel Agents with Worktrees
+## 7. Parallel Agents with Worktrees
 
 Run multiple agents on separate branches using Git worktrees:
 
@@ -192,7 +201,7 @@ clawker worktree remove --delete-branch feature/auth
 
 See the [Worktrees](/worktrees) guide for more.
 
-## 9. Monitoring (Optional)
+## 8. Monitoring (Optional)
 
 Start the monitoring stack before your agents to get real-time dashboards:
 
@@ -209,7 +218,7 @@ clawker monitor down    # Stop when done
 
 See the [Monitoring](/monitoring) guide for details.
 
-## 10. Autonomous Loops (Experimental)
+## 9. Autonomous Loops (Experimental)
 
 Run Claude Code in iterative loops with a fresh container per iteration:
 

@@ -56,13 +56,16 @@ clawker version
 
 ## First-Time Setup
 
-After installing, initialize Clawker:
+Navigate to a project directory and initialize:
 
 ```bash
+cd your-project
 clawker init
 ```
 
-This creates the Clawker directory structure following the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
+This walks you through a guided setup — pick a language preset (Python, Go, Rust, TypeScript, Java, Ruby, C/C++, C#/.NET, Bare) and Clawker creates a `.clawker.yaml` config tailored for your stack. User settings and XDG directories are bootstrapped automatically on first run.
+
+Clawker stores data following the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
 
 | Directory | Default Path | Contents |
 |-----------|-------------|----------|
@@ -70,4 +73,4 @@ This creates the Clawker directory structure following the [XDG Base Directory S
 | Data | `~/.local/share/clawker/` | `registry.yaml`, build cache, worktree directories |
 | State | `~/.local/state/clawker/` | Log files, PID files, loop sessions |
 
-It also prompts you to build a default fallback image.
+See the [Getting Started](/quickstart) guide for the full walkthrough.
