@@ -125,7 +125,7 @@ func mergeTrees(dst, src map[string]any, prov provenance, layerIdx int, prefix s
 
 // unionAny merges two []any slices, deduplicating by value.
 func unionAny(dst, src []any) []any {
-	result := make([]any, 0, len(dst)+len(src))
+	var result []any
 
 	appendUnique := func(value any) {
 		for _, existing := range result {
