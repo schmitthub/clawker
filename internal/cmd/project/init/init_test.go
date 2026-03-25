@@ -433,10 +433,10 @@ func TestPerformProjectSetup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config file not created: %v", err)
 	}
-	if !strings.Contains(string(content), `image: "debian:latest"`) {
+	if !strings.Contains(string(content), "image: debian:latest") {
 		t.Error("config file missing build image")
 	}
-	if !strings.Contains(string(content), `default_mode: "snapshot"`) {
+	if !strings.Contains(string(content), "default_mode: snapshot") {
 		t.Error("config file missing workspace mode")
 	}
 
@@ -464,102 +464,5 @@ func TestPerformProjectSetup(t *testing.T) {
 	}
 	if !strings.Contains(outStr, "Next Steps:") {
 		t.Error("expected next steps in output")
-	}
-}
-
-func TestScaffoldProjectConfig(t *testing.T) {
-	tests := []struct {
-		name           string
-		buildImage     string
-		workspaceMode  string
-		wantContains   []string
-		wantNotContain []string
-	}{
-		{
-			name:          "basic config",
-			buildImage:    "buildpack-deps:bookworm-scm",
-			workspaceMode: "bind",
-			wantContains: []string{
-				`image: "buildpack-deps:bookworm-scm"`,
-				`default_mode: "bind"`,
-				"docker_socket: false",
-			},
-			wantNotContain: []string{
-				"enable_firewall:", // old flat form should NOT appear
-				"default_image:",
-				"version:",
-				"project:",
-			},
-		},
-		{
-			name:          "snapshot mode",
-			buildImage:    "alpine:latest",
-			workspaceMode: "snapshot",
-			wantContains: []string{
-				`image: "alpine:latest"`,
-				`default_mode: "snapshot"`,
-			},
-			wantNotContain: []string{
-				"default_image:",
-				"version:",
-			},
-		},
-		{
-			name:          "includes standard packages",
-			buildImage:    "debian:latest",
-			workspaceMode: "bind",
-			wantContains: []string{
-				"- git",
-				"- curl",
-				"- ripgrep",
-			},
-		},
-		{
-			name:          "firewall section has rules not enablement",
-			buildImage:    "debian:latest",
-			workspaceMode: "bind",
-			wantContains: []string{
-				"firewall:",
-			},
-			wantNotContain: []string{
-				"enable_firewall:",
-				"enable: true", // enablement is in settings.yaml, not project config
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := scaffoldProjectConfig(tt.buildImage, tt.workspaceMode)
-
-			for _, want := range tt.wantContains {
-				if !strings.Contains(result, want) {
-					t.Errorf("scaffoldProjectConfig() missing expected content %q\nGot:\n%s", want, result)
-				}
-			}
-
-			for _, notWant := range tt.wantNotContain {
-				if strings.Contains(result, notWant) {
-					t.Errorf("scaffoldProjectConfig() contains unexpected content %q\nGot:\n%s", notWant, result)
-				}
-			}
-		})
-	}
-}
-
-func TestScaffoldProjectConfig_ValidStructure(t *testing.T) {
-	result := scaffoldProjectConfig("debian:latest", "bind")
-
-	// Check it starts with the comment header from DefaultConfigYAML
-	if !strings.HasPrefix(result, "# Clawker") {
-		t.Errorf("scaffoldProjectConfig() should start with '# Clawker', got:\n%s", result[:50])
-	}
-
-	// Check it has proper sections
-	sections := []string{"build:", "agent:", "workspace:", "security:"}
-	for _, section := range sections {
-		if !strings.Contains(result, section) {
-			t.Errorf("scaffoldProjectConfig() missing section %q", section)
-		}
 	}
 }

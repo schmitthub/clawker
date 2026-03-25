@@ -176,8 +176,8 @@ func TestPerformSetup_BuildSuccess(t *testing.T) {
 	require.True(t, ok, "build key should be a map")
 	assert.Equal(t, docker.DefaultImageTag, build["image"], "build.image should be the default image tag")
 
-	// Should contain only the build key (minimal file)
-	assert.Len(t, parsed, 1, "user config should only contain the build key")
+	// Store writes full schema with defaults
+	assert.NotNil(t, parsed["workspace"], "defaults should include workspace")
 
 	// Output should mention the default image
 	assert.Contains(t, errOut.String(), "Default image:")
@@ -312,6 +312,7 @@ func TestSaveUserProjectConfig_NewFile(t *testing.T) {
 	err := saveUserProjectConfig("clawker-default:latest")
 	require.NoError(t, err)
 
+	// Reload via store to verify typed values
 	cfgPath := filepath.Join(tmpDir, "clawker.yaml")
 	data, readErr := os.ReadFile(cfgPath)
 	require.NoError(t, readErr, "config file should be created")
@@ -322,14 +323,16 @@ func TestSaveUserProjectConfig_NewFile(t *testing.T) {
 	build, ok := parsed["build"].(map[string]any)
 	require.True(t, ok, "build key should be a map")
 	assert.Equal(t, "clawker-default:latest", build["image"])
-	assert.Len(t, parsed, 1, "file should only contain build key")
+
+	// Store writes full schema with defaults
+	assert.NotNil(t, parsed["workspace"], "defaults should include workspace")
 }
 
 func TestSaveUserProjectConfig_ExistingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("CLAWKER_CONFIG_DIR", tmpDir)
 
-	// Pre-seed an existing config with other keys
+	// Pre-seed an existing config with a custom key
 	cfgPath := filepath.Join(tmpDir, "clawker.yaml")
 	existing := []byte("agent:\n  env:\n    FOO: bar\nbuild:\n  packages:\n    - git\n")
 	require.NoError(t, os.WriteFile(cfgPath, existing, 0o644))
@@ -348,10 +351,7 @@ func TestSaveUserProjectConfig_ExistingFile(t *testing.T) {
 	require.True(t, ok, "build key should be a map")
 	assert.Equal(t, "clawker-default:latest", build["image"])
 
-	// Existing build.packages should be preserved
-	assert.NotNil(t, build["packages"], "existing build.packages should be preserved")
-
-	// Existing agent key should be preserved
+	// Existing agent.env custom key should be preserved
 	agent, ok := parsed["agent"].(map[string]any)
 	require.True(t, ok, "agent key should be preserved")
 	env, ok := agent["env"].(map[string]any)

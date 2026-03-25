@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // durationKind is the reflected type of time.Duration, stored for comparison convenience.
@@ -109,8 +111,8 @@ func setLeaf(f reflect.Value, val string, path string) error {
 			return nil
 		}
 
-		// Other pointer types are read-only/complex — shouldn't be set.
-		return fmt.Errorf("storeui.SetFieldValue: unsupported pointer type for %q", path)
+		// Other pointer types — try YAML unmarshal for maps, struct slices, etc.
+		return setLeafYAML(f, ft, val, path)
 	}
 
 	// Non-pointer types.
@@ -153,9 +155,31 @@ func setLeaf(f reflect.Value, val string, path string) error {
 		}
 		f.Set(reflect.ValueOf(result))
 
+	case ft.Kind() == reflect.Map:
+		return setLeafYAML(f, ft, val, path)
+
+	case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
+		return setLeafYAML(f, ft, val, path)
+
 	default:
 		return fmt.Errorf("storeui.SetFieldValue: unsupported type %s for %q", ft, path)
 	}
 
+	return nil
+}
+
+// setLeafYAML sets a field from a YAML string using reflection-based unmarshal.
+// Handles map and struct-slice types. Invalid YAML returns an error so the
+// editor can display it to the user — no silent fallbacks.
+func setLeafYAML(f reflect.Value, ft reflect.Type, val string, path string) error {
+	if val == "" {
+		f.Set(reflect.Zero(ft))
+		return nil
+	}
+	ptr := reflect.New(ft)
+	if err := yaml.Unmarshal([]byte(val), ptr.Interface()); err != nil {
+		return fmt.Errorf("storeui.SetFieldValue: invalid YAML for %q: %w", path, err)
+	}
+	f.Set(ptr.Elem())
 	return nil
 }

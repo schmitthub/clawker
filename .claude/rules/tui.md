@@ -31,6 +31,7 @@ Stateless rendering helpers that compose `iostreams` styles into reusable visual
 | `RenderProgress(ProgressConfig)` | Progress bar or fraction (supports bar mode and text mode) |
 | `RenderDivider(width)` | Horizontal rule |
 | `RenderLabeledDivider(label, width)` | Horizontal rule with centered label |
+| `RenderLeftLabeledDivider(label, width)` | Horizontal rule with left-aligned label |
 | `RenderEmptyState(message, width, height)` | Centered empty-state message |
 | `RenderError(err, width)` | Error message with word wrapping |
 | `RenderLabelValue(label, value)` | Single label: value pair |

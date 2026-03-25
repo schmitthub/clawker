@@ -115,9 +115,10 @@ type configImpl struct {
 func NewConfig() (Config, error) {
 	projectStore, err := storage.NewStore[Project](
 		storage.WithFilenames("clawker.local.yaml", "clawker.yaml"),
-		storage.WithDefaults(defaultProjectYAML),
+		storage.WithDefaultsFromStruct[Project](),
 		storage.WithWalkUp(),
 		storage.WithConfigDir(),
+		storage.WithMigrations(ProjectMigrations()...),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("config: loading project config: %w", err)
@@ -125,7 +126,7 @@ func NewConfig() (Config, error) {
 
 	settingsStore, err := storage.NewStore[Settings](
 		storage.WithFilenames("settings.yaml"),
-		storage.WithDefaults(defaultSettingsYAML),
+		storage.WithDefaultsFromStruct[Settings](),
 		storage.WithConfigDir(),
 	)
 	if err != nil {
@@ -142,11 +143,11 @@ func NewConfig() (Config, error) {
 // Useful as the default test double for consumers that don't care about
 // specific config values.
 func NewBlankConfig() (Config, error) {
-	projectStore, err := storage.NewFromString[Project](defaultProjectYAML)
+	projectStore, err := storage.NewFromString[Project](storage.GenerateDefaultsYAML[Project]())
 	if err != nil {
 		return nil, fmt.Errorf("config: blank project: %w", err)
 	}
-	settingsStore, err := storage.NewFromString[Settings](defaultSettingsYAML)
+	settingsStore, err := storage.NewFromString[Settings](storage.GenerateDefaultsYAML[Settings]())
 	if err != nil {
 		return nil, fmt.Errorf("config: blank settings: %w", err)
 	}

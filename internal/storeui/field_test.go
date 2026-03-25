@@ -13,11 +13,11 @@ import (
 func TestApplyOverrides_HiddenRemoval(t *testing.T) {
 	fields := []Field{
 		{Path: "build.image", Label: "image", Kind: KindText},
-		{Path: "build.instructions", Label: "instructions", Kind: KindComplex},
+		{Path: "build.instructions.env", Label: "env", Kind: KindMap},
 		{Path: "build.packages", Label: "packages", Kind: KindStringSlice},
 	}
 	overrides := []Override{
-		{Path: "build.instructions", Hidden: true},
+		{Path: "build.instructions.env", Hidden: true},
 	}
 
 	result := ApplyOverrides(fields, overrides)
@@ -141,23 +141,45 @@ func TestApplyOverrides_PreservesOriginal(t *testing.T) {
 	assert.Equal(t, "Modified", result[0].Label)
 }
 
-func TestApplyOverrides_ComplexKindForcesReadOnly(t *testing.T) {
+func TestApplyOverrides_EditorCopied(t *testing.T) {
+	called := false
+	factory := func(label, value string) any {
+		called = true
+		return nil
+	}
 	fields := []Field{
-		{Path: "build.instructions", Label: "instructions", Kind: KindComplex, ReadOnly: false},
+		{Path: "build.env", Label: "env", Kind: KindMap},
+	}
+	overrides := []Override{
+		{Path: "build.env", Editor: factory},
+	}
+
+	result := ApplyOverrides(fields, overrides)
+
+	require.Len(t, result, 1)
+	require.NotNil(t, result[0].Editor)
+	result[0].Editor("test", "value")
+	assert.True(t, called, "Editor factory should be copied from override to field")
+}
+
+func TestApplyOverrides_MapAndStructSliceNotForcedReadOnly(t *testing.T) {
+	fields := []Field{
+		{Path: "build.env", Label: "env", Kind: KindMap, ReadOnly: false},
+		{Path: "build.rules", Label: "rules", Kind: KindStructSlice, ReadOnly: false},
 	}
 
 	result := ApplyOverrides(fields, nil)
 
-	require.Len(t, result, 1)
-	assert.True(t, result[0].ReadOnly, "KindComplex fields must always be read-only")
+	require.Len(t, result, 2)
+	assert.False(t, result[0].ReadOnly, "KindMap fields should not be forced read-only")
+	assert.False(t, result[1].ReadOnly, "KindStructSlice fields should not be forced read-only")
 }
 
 func TestApplyOverrides_PrefixHidingHidesChildren(t *testing.T) {
 	fields := []Field{
 		{Path: "build.image", Label: "image", Kind: KindText},
-		{Path: "build.instructions", Label: "instructions", Kind: KindComplex},
-		{Path: "build.instructions.env", Label: "env", Kind: KindComplex},
-		{Path: "build.instructions.copy", Label: "copy", Kind: KindComplex},
+		{Path: "build.instructions.env", Label: "env", Kind: KindMap},
+		{Path: "build.instructions.copy", Label: "copy", Kind: KindStructSlice},
 		{Path: "build.inject.after_from", Label: "after_from", Kind: KindStringSlice},
 	}
 	overrides := []Override{
@@ -166,7 +188,7 @@ func TestApplyOverrides_PrefixHidingHidesChildren(t *testing.T) {
 
 	result := ApplyOverrides(fields, overrides)
 
-	// "build.instructions" exact match + "build.instructions.*" prefix = all hidden.
+	// "build.instructions.*" prefix = all hidden.
 	// Only "build.image" and "build.inject.after_from" remain.
 	require.Len(t, result, 2)
 	assert.Equal(t, "build.image", result[0].Path)
@@ -188,8 +210,6 @@ func TestApplyOverrides_DuplicatePathsPanics(t *testing.T) {
 }
 
 func TestFieldKindToBrowserKind_CoverAllKinds(t *testing.T) {
-	// Ensure every FieldKind maps to a non-default BrowserFieldKind
-	// (except KindTriState which maps to BrowserBool, and KindComplex which is the default).
 	kinds := []struct {
 		kind     FieldKind
 		expected tui.BrowserFieldKind
@@ -200,7 +220,8 @@ func TestFieldKindToBrowserKind_CoverAllKinds(t *testing.T) {
 		{KindInt, tui.BrowserInt},
 		{KindStringSlice, tui.BrowserStringSlice},
 		{KindDuration, tui.BrowserDuration},
-		{KindComplex, tui.BrowserComplex},
+		{KindMap, tui.BrowserMap},
+		{KindStructSlice, tui.BrowserStructSlice},
 	}
 
 	for _, tc := range kinds {
@@ -208,6 +229,6 @@ func TestFieldKindToBrowserKind_CoverAllKinds(t *testing.T) {
 		assert.Equal(t, tc.expected, got, "FieldKind %d should map correctly", tc.kind)
 	}
 
-	// Verify unknown kinds fall back to BrowserComplex.
-	assert.Equal(t, tui.BrowserComplex, fieldKindToBrowserKind(FieldKind(99)))
+	// Verify unknown kinds (consumer-defined) fall back to BrowserStructSlice (read-only).
+	assert.Equal(t, tui.BrowserStructSlice, fieldKindToBrowserKind(FieldKind(99)))
 }

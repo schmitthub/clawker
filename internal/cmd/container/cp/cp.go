@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -238,9 +239,15 @@ func copyToContainer(ctx context.Context, client *docker.Client, containerName, 
 func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 	tr := tar.NewReader(reader)
 
+	// Resolve destination to an absolute path for containment checks.
+	absDst, err := filepath.Abs(dstPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve destination path: %w", err)
+	}
+
 	// Get info about destination
-	dstInfo, err := os.Stat(dstPath)
-	dstExists := err == nil
+	dstInfo, statErr := os.Stat(absDst)
+	dstExists := statErr == nil
 	dstIsDir := dstExists && dstInfo.IsDir()
 
 	for {
@@ -252,20 +259,19 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 			return fmt.Errorf("error reading tar: %w", err)
 		}
 
-		// Determine target path
+		// Security: use SecureJoin to resolve the entry name within the
+		// destination, preventing path traversal (Zip Slip) and symlink attacks.
+		// SecureJoin resolves symlinks, cleans ".." components, and guarantees
+		// the result is lexically within absDst.
 		var target string
-		if dstIsDir {
-			target = filepath.Join(dstPath, header.Name)
-		} else if dstExists {
-			target = dstPath
-		} else {
-			// Destination doesn't exist - create it as file or directory
-			// based on what we're extracting
-			if header.Typeflag == tar.TypeDir {
-				target = filepath.Join(dstPath, header.Name)
-			} else {
-				target = dstPath
+		if dstIsDir || (!dstExists && header.Typeflag == tar.TypeDir) {
+			safeTarget, err := securejoin.SecureJoin(absDst, header.Name)
+			if err != nil {
+				return fmt.Errorf("illegal tar entry %q: %w", header.Name, err)
 			}
+			target = safeTarget
+		} else {
+			target = absDst
 		}
 
 		// Ensure parent directory exists
@@ -283,17 +289,39 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 			if err != nil {
 				return fmt.Errorf("failed to create file %s: %w", target, err)
 			}
-			if _, err := io.Copy(f, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb -- extracting user-requested container files, not untrusted input
+			if _, err := io.Copy(f, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb -- user-requested container file copy, size bounded by container storage
 				f.Close()
 				return fmt.Errorf("failed to write file %s: %w", target, err)
 			}
 			f.Close()
 		case tar.TypeSymlink:
-			if err := os.Symlink(header.Linkname, target); err != nil {
+			// Security: resolve symlink linkname relative to the link's parent dir,
+			// then verify containment via SecureJoin from destination root.
+			// SecureJoin resolves symlinks and prevents traversal.
+			linkBase := header.Linkname
+			if filepath.IsAbs(linkBase) {
+				// Absolute linknames are relative to the archive root.
+				linkBase = filepath.Clean(linkBase)
+			}
+			safeLink, err := securejoin.SecureJoin(absDst, linkBase)
+			if err != nil {
+				return fmt.Errorf("illegal symlink %q -> %q: %w", header.Name, header.Linkname, err)
+			}
+			// Compute relative path from the symlink location to the safe target.
+			relLink, err := filepath.Rel(filepath.Dir(target), safeLink)
+			if err != nil {
+				return fmt.Errorf("failed to compute relative symlink for %s: %w", header.Name, err)
+			}
+			if err := os.Symlink(relLink, target); err != nil {
 				return fmt.Errorf("failed to create symlink %s: %w", target, err)
 			}
 		case tar.TypeLink:
-			if err := os.Link(header.Linkname, target); err != nil {
+			// Security: resolve hard link target within destination using SecureJoin.
+			safeLink, err := securejoin.SecureJoin(absDst, header.Linkname)
+			if err != nil {
+				return fmt.Errorf("illegal hard link %q -> %q: %w", header.Name, header.Linkname, err)
+			}
+			if err := os.Link(safeLink, target); err != nil {
 				return fmt.Errorf("failed to create hard link %s: %w", target, err)
 			}
 		}

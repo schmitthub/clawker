@@ -224,7 +224,7 @@ Unknown fields silently ignored — matches Claude Code and Serena. No `KnownFie
 **Walk-up merge order for ConfigFile:**
 
 ```
-WithDefaults(yaml) → ~/.config/clawker/clawker.yaml → walk-up configs → env vars → CLI flags
+WithDefaultsFromStruct[T]() → ~/.config/clawker/clawker.yaml → walk-up configs → env vars → CLI flags
 ```
 
 **Configuration precedence** (highest to lowest):
@@ -234,21 +234,23 @@ WithDefaults(yaml) → ~/.config/clawker/clawker.yaml → walk-up configs → en
 3. `.clawker.local.yaml` or `.clawker/clawker.local.yaml` (personal overrides)
 4. `.clawker.yaml` or `.clawker/clawker.yaml` (project config, committed)
 5. `~/.config/clawker/clawker.yaml` (global defaults)
-6. `WithDefaults(DefaultConfigYAML)` — YAML string template, base layer
+6. `WithDefaultsFromStruct[T]()` — struct-tag-driven defaults, base layer
 
-**Defaults as YAML templates:** The same `DefaultConfigYAML` constant serves as both the base merge layer (parsed, comments ignored) and the scaffolding template written by `clawker init` (comments preserved). One source of truth — no imperative `SetDefaults()`, no struct tag defaults.
+**Defaults from struct tags:** Default values are declared via `default:"value"` struct tags on schema types (`Project`, `Settings`). `storage.GenerateDefaultsYAML[T]()` reads these tags and produces a YAML string used as the base merge layer. `clawker init` scaffolds config by marshaling a struct populated via `config.NewProjectWithDefaults()`. One source of truth — no hand-written YAML template constants, no imperative `SetDefaults()`.
 
 At each walk-up level, dir form (`.clawker/`) wins over flat form (`.clawker.yaml`) — they are mutually exclusive per directory.
 
 Higher precedence wins silently (no warnings on override).
 
-**Per-field merge for arrays** via struct tags:
+**Per-field merge via struct tags:**
 
-| Tag | Behavior | Used By |
-|-----|----------|---------|
-| `merge:"union"` | Additive, deduped | `from_env`, `packages`, `includes`, `firewall.sources` |
-| `merge:"overwrite"` | Project wins entirely | `copy`, `root_run`, `user_run`, `inject.*` |
-| (none / scalar) | Last-wins | All scalar fields |
+| Tag | Behavior | Applies To | Used By |
+|-----|----------|------------|---------|
+| `merge:"union"` | Additive, deduped | Slices, maps | `security.firewall.add_domains`, `security.firewall.rules`, `build.instructions.labels` |
+| `merge:"overwrite"` | Last-wins (explicit) | Slices, maps | (none currently — all overwrite fields use implicit default) |
+| (none) | Last-wins | Scalars, slices, maps | All scalar fields, all untagged slices, `env`, `build_args` |
+
+**Maps** are schema-aware: `tagRegistry` carries `FieldKind` so `mergeTrees` distinguishes `map[string]string` fields (opaque values) from struct nesting. Untagged maps default to last-wins (highest-priority layer's map replaces entirely). Tagged `merge:"union"` maps do key-by-key merge across layers.
 
 Untagged slices default to overwrite at runtime (safe fallback). A reflection test in CI asserts every `[]T` field has an explicit `merge` tag — missing tag = test failure. Go can't enforce struct tags at compile time; test + CI gate is the standard approach.
 

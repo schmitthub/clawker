@@ -34,10 +34,24 @@ type ListEditorModel struct {
 	cancelled bool // user pressed Esc or Ctrl+C to discard
 	width     int
 	height    int
+	validator func(string) error // optional external validator run on confirm
+	errMsg    string             // validation error shown inline
+}
+
+// ListEditorOption is a functional option for configuring a ListEditorModel.
+type ListEditorOption func(*ListEditorModel)
+
+// WithListValidator sets a validation function called when the user confirms
+// the list. If the function returns an error, the editor displays it
+// and does not confirm.
+func WithListValidator(fn func(string) error) ListEditorOption {
+	return func(m *ListEditorModel) {
+		m.validator = fn
+	}
 }
 
 // NewListEditor creates a list editor from a label and comma-separated value.
-func NewListEditor(label string, value string) ListEditorModel {
+func NewListEditor(label string, value string, opts ...ListEditorOption) ListEditorModel {
 	var items []string
 	if value != "" {
 		for _, s := range strings.Split(value, ",") {
@@ -52,13 +66,17 @@ func NewListEditor(label string, value string) ListEditorModel {
 	ti.Focus()
 	ti.Width = 60
 
-	return ListEditorModel{
+	le := ListEditorModel{
 		label: label,
 		items: items,
 		state: listBrowsing,
 		input: ti,
 		width: 80,
 	}
+	for _, opt := range opts {
+		opt(&le)
+	}
+	return le
 }
 
 // Init returns nil — no initial command is needed.
@@ -92,8 +110,18 @@ func (m ListEditorModel) Update(msg tea.Msg) (ListEditorModel, tea.Cmd) {
 func (m ListEditorModel) updateBrowsing(msg tea.Msg) (ListEditorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Any key clears the previous error so it doesn't linger.
+		m.errMsg = ""
+
 		switch {
 		case IsEnter(msg):
+			// Run external validator before confirming.
+			if m.validator != nil {
+				if err := m.validator(m.Value()); err != nil {
+					m.errMsg = err.Error()
+					return m, nil
+				}
+			}
 			m.confirmed = true
 			return m, nil
 
@@ -215,6 +243,12 @@ func (m ListEditorModel) View() string {
 		b.WriteString("\n")
 	}
 
+	// Validation error
+	if m.errMsg != "" {
+		b.WriteString("\n  ")
+		b.WriteString(renderValidationError(m.errMsg))
+	}
+
 	// Help bar
 	b.WriteString("\n  ")
 	switch m.state {
@@ -256,3 +290,6 @@ func (m ListEditorModel) IsConfirmed() bool { return m.confirmed }
 
 // IsCancelled returns true if the user cancelled editing.
 func (m ListEditorModel) IsCancelled() bool { return m.cancelled }
+
+// Err returns the current validation error message, or empty string if none.
+func (m ListEditorModel) Err() string { return m.errMsg }

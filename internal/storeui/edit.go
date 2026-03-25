@@ -4,10 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -37,6 +34,45 @@ func ResolveLocalPath(cwd, filename string) string {
 		return filepath.Join(clawkerDir, filename)
 	}
 	return filepath.Join(cwd, "."+filename)
+}
+
+// BuildLayerTargets builds save destinations from the canonical locations
+// (Local, User) plus every discovered file layer. All targets are always
+// shown so the user can save to any layer — even ones that don't currently
+// define the field being edited.
+//
+// Virtual layers (empty path = defaults) are always excluded.
+// Duplicate paths are deduped (first occurrence wins).
+func BuildLayerTargets(filename, configDir string, layers []storage.LayerInfo) []LayerTarget {
+	var targets []LayerTarget
+	seen := make(map[string]bool)
+
+	add := func(label, path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		targets = append(targets, LayerTarget{
+			Label:       label,
+			Description: ShortenHome(path),
+			Path:        path,
+		})
+		seen[path] = true
+	}
+
+	// Local: CWD dot-file (skipped if CWD is unavailable).
+	if cwd, err := os.Getwd(); err == nil {
+		add("Local", ResolveLocalPath(cwd, filename))
+	}
+
+	// User: config dir file.
+	add("User", filepath.Join(configDir, filename))
+
+	// All discovered file layers (deduped against Local/User).
+	for _, l := range layers {
+		add(ShortenHome(l.Path), l.Path)
+	}
+
+	return targets
 }
 
 // Ptr returns a pointer to a copy of the given value.
@@ -111,7 +147,7 @@ func WithLayerTargets(targets []LayerTarget) Option {
 //  4. Map storeui.Field → tui.BrowserField, run tui.FieldBrowserModel
 //  5. OnFieldSaved callback: store.Set + writeFieldToFile per field
 //  6. Return Result
-func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error) {
+func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error) {
 	cfg := editOptions{
 		title:     "Configuration Editor",
 		skipPaths: make(map[string]bool),
@@ -127,35 +163,32 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 		}
 	}
 
-	// 1. Read current snapshot.
-	snapshot := store.Read()
+	// buildBrowserState reads the current store snapshot and produces
+	// the TUI field and layer representations. Called at init and after
+	// every save/delete to refresh the display with winning values.
+	buildBrowserState := func() ([]tui.BrowserField, []tui.BrowserLayer) {
+		snapshot := store.Read()
+		fields := WalkFields(snapshot)
+		enrichWithSchema(fields, (*snapshot).Fields())
 
-	// 2. Discover fields via reflection.
-	fields := WalkFields(snapshot)
-
-	// 3. Filter and apply overrides.
-	if len(cfg.skipPaths) > 0 {
-		filtered := make([]Field, 0, len(fields))
-		for _, f := range fields {
-			if !cfg.skipPaths[f.Path] {
-				filtered = append(filtered, f)
+		if len(cfg.skipPaths) > 0 {
+			filtered := make([]Field, 0, len(fields))
+			for _, f := range fields {
+				if !cfg.skipPaths[f.Path] {
+					filtered = append(filtered, f)
+				}
 			}
+			fields = filtered
 		}
-		fields = filtered
-	}
-	fields = ApplyOverrides(fields, cfg.overrides)
+		fields = ApplyOverrides(fields, cfg.overrides)
 
-	// 4. Map to tui types and run the interactive browser.
-	provMap := store.ProvenanceMap()
-	browserFields := fieldsToBrowserFields(fields, provMap)
-	browserLayers := layersToBrowserLayers(store.Layers())
+		provMap := store.ProvenanceMap()
+		return fieldsToBrowserFields(fields, provMap), layersToBrowserLayers(store.Layers())
+	}
+
+	// Initial state.
+	browserFields, browserLayers := buildBrowserState()
 	browserTargets := layerTargetsToBrowserTargets(cfg.layerTargets)
-
-	// Build field kind lookup for type-aware YAML writes.
-	fieldKinds := make(map[string]FieldKind, len(fields))
-	for _, f := range fields {
-		fieldKinds[f.Path] = f.Kind
-	}
 
 	// Wire per-field save callback.
 	onFieldSaved := func(fieldPath, value string, targetIdx int) error {
@@ -177,21 +210,54 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 			return fmt.Errorf("setting field %s: %w", fieldPath, setFieldErr)
 		}
 
-		// Persist single field to the target file.
-		kind := fieldKinds[fieldPath]
-		if err := writeFieldToFile(target.Path, fieldPath, value, kind); err != nil {
-			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
+		// When saving to a layer that isn't the provenance winner,
+		// Set() may not have dirtied the path (merged value unchanged).
+		// Compare against the target layer's raw data — only force a
+		// write when the layer file actually needs updating.
+		prov, hasProv := store.Provenance(fieldPath)
+		if hasProv && prov.Path != target.Path {
+			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
+			if fmt.Sprintf("%v", layerVal) != value {
+				store.MarkForWrite(fieldPath)
+			}
 		}
 
+		// Persist dirty fields to the target file. Write() remerges
+		// internally, so the snapshot reflects the true merged state.
+		if err := store.Write(storage.ToPath(target.Path)); err != nil {
+			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
+		}
+		return nil
+	}
+
+	// Wire per-field delete callback.
+	onFieldDeleted := func(fieldPath string, targetIdx int) error {
+		if targetIdx < 0 || targetIdx >= len(cfg.layerTargets) {
+			return fmt.Errorf("invalid layer target index: %d", targetIdx)
+		}
+		target := cfg.layerTargets[targetIdx]
+
+		// Remove from the in-memory store tree.
+		if _, err := store.Delete(fieldPath); err != nil {
+			return fmt.Errorf("deleting from store: %w", err)
+		}
+
+		// Persist the deletion to the target file. Write() remerges
+		// internally, so the snapshot reflects the true merged state.
+		if err := store.Write(storage.ToPath(target.Path)); err != nil {
+			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
+		}
 		return nil
 	}
 
 	model := tui.NewFieldBrowser(tui.BrowserConfig{
-		Title:        cfg.title,
-		Fields:       browserFields,
-		LayerTargets: browserTargets,
-		Layers:       browserLayers,
-		OnFieldSaved: onFieldSaved,
+		Title:          cfg.title,
+		Fields:         browserFields,
+		LayerTargets:   browserTargets,
+		Layers:         browserLayers,
+		OnFieldSaved:   onFieldSaved,
+		OnFieldDeleted: onFieldDeleted,
+		OnRefresh:      buildBrowserState,
 	})
 	finalModel, err := tui.RunProgram(ios, model, tui.WithAltScreen(true))
 	if err != nil {
@@ -210,139 +276,20 @@ func Edit[T any](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Opti
 	}, nil
 }
 
-// writeFieldToFile persists a single field value to a YAML file.
-// If the file doesn't exist, it is created with just that field.
-// If it exists, the field is merged into the existing content.
-func writeFieldToFile(filePath, fieldPath, value string, kind FieldKind) error {
-	// Ensure parent directory exists.
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("creating directory %s: %w", dir, err)
-	}
-
-	// Read existing file (or start with empty map).
-	existing := make(map[string]any)
-	data, err := os.ReadFile(filePath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("reading existing %s: %w", filePath, err)
-	}
-	if err == nil && len(data) > 0 {
-		if err := yaml.Unmarshal(data, &existing); err != nil {
-			return fmt.Errorf("parsing existing %s: %w", filePath, err)
+// enrichWithSchema replaces the schema metadata (Label, Description, Default, Kind)
+// on walked fields with authoritative values from the storage.Schema.
+// Runtime values (Value, Order) are preserved from the walked fields.
+func enrichWithSchema(fields []Field, schema storage.FieldSet) {
+	for i := range fields {
+		sf := schema.Get(fields[i].Path)
+		if sf == nil {
+			continue
 		}
+		fields[i].Label = sf.Label()
+		fields[i].Description = sf.Description()
+		fields[i].Default = sf.Default()
+		fields[i].Kind = sf.Kind()
 	}
-	if existing == nil {
-		existing = make(map[string]any)
-	}
-
-	// Build nested map from dotted path and merge.
-	nested := buildNestedMap(fieldPath, typedYAMLValue(value, kind))
-	mergeMap(existing, nested)
-
-	// Preserve existing file permissions, default to 0644 for new files.
-	perm := os.FileMode(0o644)
-	if info, err := os.Stat(filePath); err == nil {
-		perm = info.Mode().Perm()
-	}
-
-	// Atomic write: temp + rename.
-	tmp, err := os.CreateTemp(dir, ".clawker-*.yaml")
-	if err != nil {
-		return fmt.Errorf("creating temp file in %s: %w", dir, err)
-	}
-	tmpName := tmp.Name()
-
-	enc := yaml.NewEncoder(tmp)
-	enc.SetIndent(2)
-	if err := enc.Encode(existing); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("marshaling YAML: %w", err)
-	}
-	if err := enc.Close(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("flushing YAML encoder: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("syncing %s: %w", tmpName, err)
-	}
-	tmp.Close()
-
-	if err := os.Chmod(tmpName, perm); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("setting permissions on %s: %w", tmpName, err)
-	}
-
-	if err := os.Rename(tmpName, filePath); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("renaming %s to %s: %w", tmpName, filePath, err)
-	}
-
-	return nil
-}
-
-// buildNestedMap converts "build.image" + value into {"build": {"image": value}}.
-func buildNestedMap(dottedPath string, value any) map[string]any {
-	segments := strings.Split(dottedPath, ".")
-	result := make(map[string]any)
-	current := result
-	for i, seg := range segments {
-		if i == len(segments)-1 {
-			current[seg] = value
-		} else {
-			next := make(map[string]any)
-			current[seg] = next
-			current = next
-		}
-	}
-	return result
-}
-
-// mergeMap recursively merges src into dst. Nested maps are merged;
-// all other values are overwritten.
-func mergeMap(dst, src map[string]any) {
-	for k, sv := range src {
-		if sm, ok := sv.(map[string]any); ok {
-			if dm, ok := dst[k].(map[string]any); ok {
-				mergeMap(dm, sm)
-				continue
-			}
-		}
-		dst[k] = sv
-	}
-}
-
-// typedYAMLValue converts a string value to the appropriate Go type based on
-// the field's known kind, so YAML output uses native types (bool, int, []string).
-//
-// SetFieldValue validates the value before this function is called, so the
-// parse-failure fallthrough (returning the raw string) should be unreachable.
-// If it is reached, the raw string is still valid YAML — just not the expected type.
-func typedYAMLValue(s string, kind FieldKind) any {
-	switch kind {
-	case KindBool:
-		if b, err := strconv.ParseBool(s); err == nil {
-			return b
-		}
-	case KindInt:
-		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return n
-		}
-	case KindStringSlice:
-		parts := strings.Split(s, ",")
-		result := make([]string, 0, len(parts))
-		for _, p := range parts {
-			if t := strings.TrimSpace(p); t != "" {
-				result = append(result, t)
-			}
-		}
-		return result
-	}
-	// KindText, KindSelect, KindDuration, KindComplex — all stored as strings.
-	return s
 }
 
 // fieldsToBrowserFields maps storeui fields to tui browser fields.
@@ -351,22 +298,55 @@ func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.Brow
 	out := make([]tui.BrowserField, len(fields))
 	for i, f := range fields {
 		source := resolveFieldSource(f.Path, provMap)
+		readOnly := f.ReadOnly
+		// Consumer-defined kinds (> KindLast) have no specialized editor.
+		// Force read-only to prevent data corruption via the raw textarea fallback.
+		if f.Kind > storage.KindLast {
+			readOnly = true
+		}
 		out[i] = tui.BrowserField{
 			Path:        f.Path,
 			Label:       f.Label,
 			Description: f.Description,
 			Kind:        fieldKindToBrowserKind(f.Kind),
 			Value:       f.Value,
+			EditValue:   f.EditValue,
 			Default:     f.Default,
 			Source:      source,
 			Options:     f.Options,
 			Validator:   f.Validator,
 			Required:    f.Required,
-			ReadOnly:    f.ReadOnly,
+			ReadOnly:    readOnly,
 			Order:       f.Order,
+			Editor:      f.Editor,
 		}
 	}
 	return out
+}
+
+// lookupLayerFieldValue finds the raw value for a dotted field path in a
+// specific layer identified by its file path. Returns nil if the layer is
+// not found or the field is absent from that layer's data.
+func lookupLayerFieldValue(layers []storage.LayerInfo, layerPath, fieldPath string) any {
+	for _, l := range layers {
+		if l.Path != layerPath {
+			continue
+		}
+		segments := strings.Split(fieldPath, ".")
+		var cur any = l.Data
+		for _, seg := range segments {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				return nil
+			}
+			cur, ok = m[seg]
+			if !ok {
+				return nil
+			}
+		}
+		return cur
+	}
+	return nil
 }
 
 // resolveFieldSource finds the source file for a field path by checking
@@ -396,8 +376,12 @@ func resolveFieldSource(fieldPath string, provMap map[string]string) string {
 func layersToBrowserLayers(layers []storage.LayerInfo) []tui.BrowserLayer {
 	out := make([]tui.BrowserLayer, len(layers))
 	for i, l := range layers {
+		label := ShortenHome(l.Path)
+		if l.Path == "" {
+			label = "(defaults)"
+		}
 		out[i] = tui.BrowserLayer{
-			Label: ShortenHome(l.Path),
+			Label: label,
 			Data:  l.Data,
 		}
 	}
@@ -431,9 +415,13 @@ func fieldKindToBrowserKind(k FieldKind) tui.BrowserFieldKind {
 		return tui.BrowserStringSlice
 	case KindDuration:
 		return tui.BrowserDuration
-	case KindComplex:
-		return tui.BrowserComplex
+	case KindMap:
+		return tui.BrowserMap
+	case KindStructSlice:
+		return tui.BrowserStructSlice
 	default:
-		return tui.BrowserComplex
+		// Consumer-defined kinds (>= KindLast) degrade to read-only display.
+		// No panic — the kind is known to storage, we just don't have an editor.
+		return tui.BrowserStructSlice
 	}
 }

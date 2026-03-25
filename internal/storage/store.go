@@ -3,6 +3,8 @@ package storage
 import (
 	"fmt"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -23,16 +25,24 @@ import (
 //	Load:  file → node tree → merge → deserialize → immutable snapshot
 //	Set:   deep copy → mutate copy → serialize into tree → atomic swap
 //	Write: node tree → file
-type Store[T any] struct {
-	value    atomic.Pointer[T] // immutable snapshot — lock-free reads
-	tree     map[string]any    // merged node tree (persistence layer)
-	dirty    bool              // true if Set has been called since last Write
-	layers   []layer           // discovered layers (internal)
-	prov     provenance        // field→layer mapping (internal)
-	defaults map[string]any    // parsed defaults as map (internal)
-	opts     options           // construction options (internal)
-	tags     tagRegistry       // merge tags from T's struct type (internal)
-	mu       sync.Mutex        // guards tree + dirty + layers (Set/Write)
+//
+// dirtyOp records the kind of mutation for a tracked field path.
+type dirtyOp int
+
+const (
+	dirtySet     dirtyOp = iota // field was set or updated
+	dirtyDeleted                // field was removed
+)
+
+type Store[T Schema] struct {
+	value      atomic.Pointer[T]  // immutable snapshot — lock-free reads
+	tree       map[string]any     // merged node tree (persistence layer)
+	dirtyPaths map[string]dirtyOp // field paths mutated since last Write (nil = clean)
+	layers     []layer            // discovered layers (internal)
+	prov       provenance         // field→layer mapping (internal)
+	opts       options            // construction options (internal)
+	tags       tagRegistry        // merge tags from T's struct type (internal)
+	mu         sync.Mutex         // guards tree + dirtyPaths + layers (Set/Write)
 }
 
 // LayerInfo describes a discovered configuration layer.
@@ -42,17 +52,31 @@ type LayerInfo struct {
 	Data     map[string]any // raw YAML data from this file only (read-only copy)
 }
 
-// NewStore constructs a store by discovering files, loading each as a
-// raw map, merging all maps into a single tree, and deserializing the
-// merged tree into a typed value.
+// New constructs a store with file discovery and defaults as the virtual
+// base layer. Equivalent to NewFromString("", opts...).
+func New[T Schema](opts ...Option) (*Store[T], error) {
+	return NewFromString[T]("", opts...)
+}
+
+// NewStore is an alias for New.
 //
-// Discovery modes are additive: walk-up files (if enabled) come first
-// (highest priority), followed by explicit path files (lowest priority).
-// If walk-up fails (not in a project, registry missing), discovery falls
-// back to explicit paths only — this is not an error.
+// Deprecated: use New.
+func NewStore[T Schema](opts ...Option) (*Store[T], error) {
+	return New[T](opts...)
+}
+
+// NewFromString constructs a store with an explicit YAML string as the
+// virtual layer, merged on top of defaults. File discovery, migrations,
+// and all other options work normally.
 //
-// The resulting store is immediately usable via Read/Set/Write.
-func NewStore[T any](opts ...Option) (*Store[T], error) {
+// The virtual layer (defaults + raw string) is the lowest-priority data
+// source. Discovered file layers override it. Fields that remain from
+// the virtual layer (not overridden by files) are marked dirty since
+// they have never been persisted.
+//
+// With no options, the store has no file discovery — useful for seeding
+// a new config that will be written via Write(ToPath(...)).
+func NewFromString[T Schema](raw string, opts ...Option) (*Store[T], error) {
 	o := options{}
 	for _, opt := range opts {
 		opt(&o)
@@ -65,32 +89,51 @@ func NewStore[T any](opts ...Option) (*Store[T], error) {
 	}
 
 	// Load each discovered file as a raw map.
-	var layers []layer
+	var fileLayers []layer
 	for _, df := range discovered {
 		data, lErr := loadFile(df.path, o.migrations)
 		if lErr != nil {
 			return nil, fmt.Errorf("storage: loading %s: %w", df.path, lErr)
 		}
-		layers = append(layers, layer{
+		fileLayers = append(fileLayers, layer{
 			path:     df.path,
 			filename: df.filename,
 			data:     data,
 		})
 	}
 
-	// Parse defaults to map.
-	var defaults map[string]any
+	// Build the virtual layer: defaults (safety net) + raw string on top.
+	var virtual map[string]any
 	if o.defaults != "" {
-		if err := yaml.Unmarshal([]byte(o.defaults), &defaults); err != nil {
+		if err := yaml.Unmarshal([]byte(o.defaults), &virtual); err != nil {
 			return nil, fmt.Errorf("storage: parsing defaults YAML: %w", err)
+		}
+	}
+	if raw != "" {
+		var rawMap map[string]any
+		if err := yaml.Unmarshal([]byte(raw), &rawMap); err != nil {
+			return nil, fmt.Errorf("storage: parsing YAML string: %w", err)
+		}
+		if virtual == nil {
+			virtual = rawMap
+		} else {
+			deepMergeMap(virtual, rawMap)
 		}
 	}
 
 	// Build tag registry from T's struct type.
 	tags := buildTagRegistry[T]()
 
-	// Merge: defaults (base) + layers (in priority order) → tree.
-	tree, prov := merge(defaults, layers, tags)
+	// Build layer stack: file layers in discovery order (index 0 = highest
+	// priority), virtual layer appended last (lowest priority).
+	// The virtual layer has no file path — it's the defaults + raw string.
+	allLayers := make([]layer, 0, len(fileLayers)+1)
+	allLayers = append(allLayers, fileLayers...)
+	if virtual != nil {
+		allLayers = append(allLayers, layer{data: virtual})
+	}
+
+	tree, prov := merge(allLayers, tags)
 
 	// Deserialize merged tree to typed struct.
 	value, err := unmarshal[T](tree)
@@ -98,41 +141,25 @@ func NewStore[T any](opts ...Option) (*Store[T], error) {
 		return nil, fmt.Errorf("storage: deserializing merged tree: %w", err)
 	}
 
-	s := &Store[T]{
-		tree:     tree,
-		layers:   layers,
-		prov:     prov,
-		defaults: defaults,
-		opts:     o,
-		tags:     tags,
-	}
-	s.value.Store(value)
-	return s, nil
-}
-
-// NewFromString creates a store from a YAML string without any filesystem
-// discovery, migration, or layering. The parsed string becomes the sole
-// node tree, deserialized into a typed value.
-// Useful for building test doubles. Write is a no-op (no paths configured).
-func NewFromString[T any](raw string) (*Store[T], error) {
-	var tree map[string]any
-	if raw != "" {
-		if err := yaml.Unmarshal([]byte(raw), &tree); err != nil {
-			return nil, fmt.Errorf("storage: parsing YAML string: %w", err)
+	// Fields whose provenance points to a layer with no file path are
+	// dirty — they exist in-memory but have never been persisted.
+	var dirtyPaths map[string]dirtyOp
+	for path, idx := range prov {
+		if idx >= 0 && idx < len(allLayers) && allLayers[idx].path == "" {
+			if dirtyPaths == nil {
+				dirtyPaths = make(map[string]dirtyOp)
+			}
+			dirtyPaths[path] = dirtySet
 		}
 	}
-	if tree == nil {
-		tree = make(map[string]any)
-	}
-
-	value, err := unmarshal[T](tree)
-	if err != nil {
-		return nil, fmt.Errorf("storage: deserializing: %w", err)
-	}
 
 	s := &Store[T]{
-		tree: tree,
-		tags: buildTagRegistry[T](),
+		tree:       tree,
+		layers:     allLayers,
+		prov:       prov,
+		dirtyPaths: dirtyPaths,
+		opts:       o,
+		tags:       tags,
 	}
 	s.value.Store(value)
 	return s, nil
@@ -185,7 +212,7 @@ func (s *Store[T]) Provenance(path string) (LayerInfo, bool) {
 }
 
 // ProvenanceMap returns a mapping of dotted field paths to their source layer
-// paths. Fields that came from defaults are not included.
+// paths. Virtual layer fields (defaults) have an empty path.
 //
 // No lock needed — provenance is immutable after construction.
 func (s *Store[T]) ProvenanceMap() map[string]string {
@@ -213,6 +240,10 @@ func (s *Store[T]) Set(fn func(*T)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Snapshot the tree before mutation for diffing.
+	oldTree := make(map[string]any)
+	deepCopyMap(oldTree, s.tree)
+
 	// Deep copy current tree and deserialize a fresh *T.
 	cp := make(map[string]any)
 	deepCopyMap(cp, s.tree)
@@ -231,10 +262,205 @@ func (s *Store[T]) Set(fn func(*T)) error {
 		mergeIntoTree(s.tree, serialized)
 	}
 
+	// Record which leaf paths changed.
+	if s.dirtyPaths == nil {
+		s.dirtyPaths = make(map[string]dirtyOp)
+	}
+	diffTreePaths(oldTree, s.tree, "", s.tags,
+		func(path string) { s.dirtyPaths[path] = dirtySet },
+		func(path string) { s.dirtyPaths[path] = dirtyDeleted },
+	)
+
 	// Atomically publish the new snapshot.
 	s.value.Store(fresh)
-	s.dirty = true
 	return nil
+}
+
+// Delete removes a dotted field path from the node tree (e.g. "agent.editor")
+// and republishes the snapshot. This allows a field to be "unset" so that
+// lower-priority layers can show through on next load.
+//
+// Empty parent maps are NOT pruned — the tree retains the structure.
+// Returns true if the key was found and deleted, false if it wasn't in the tree.
+func (s *Store[T]) Delete(path string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	segments := strings.Split(path, ".")
+	if !deleteTreePath(s.tree, segments) {
+		return false, nil
+	}
+
+	// Record the deletion for Write.
+	if s.dirtyPaths == nil {
+		s.dirtyPaths = make(map[string]dirtyOp)
+	}
+	s.dirtyPaths[path] = dirtyDeleted
+
+	// Re-deserialize the tree to update the snapshot.
+	value, err := unmarshal[T](s.tree)
+	if err != nil {
+		return true, fmt.Errorf("storage: Delete: deserializing after delete: %w", err)
+	}
+	s.value.Store(value)
+	return true, nil
+}
+
+// diffTreePaths walks two trees and calls onSet for each leaf path where
+// the value was added or changed, and onDelete for each leaf path that
+// was removed. Used by Set to discover which field paths were mutated.
+//
+// The tags registry provides schema boundaries: opaque value fields
+// (non-union KindMap, KindStructSlice) are compared as wholes rather than
+// recursed into. Union maps are recursed per-entry (matching mergeTrees).
+// Struct nesting (no registry entry) is always recursed.
+func diffTreePaths(oldTree, newTree map[string]any, prefix string, tags tagRegistry, onSet, onDelete func(path string)) {
+	// Check keys in newTree (added or changed).
+	for k, newVal := range newTree {
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		oldVal, exists := oldTree[k]
+		if !exists {
+			if isOpaqueField(tags, path) {
+				onSet(path)
+			} else {
+				emitLeafPaths(newVal, path, onSet)
+			}
+			continue
+		}
+		newSub, newIsMap := newVal.(map[string]any)
+		oldSub, oldIsMap := oldVal.(map[string]any)
+		if newIsMap && oldIsMap {
+			if isOpaqueField(tags, path) {
+				// Opaque value field — compare as whole.
+				if !reflect.DeepEqual(oldSub, newSub) {
+					onSet(path)
+				}
+			} else {
+				// Struct nesting or union map — recurse.
+				diffTreePaths(oldSub, newSub, path, tags, onSet, onDelete)
+			}
+			continue
+		}
+		if !reflect.DeepEqual(oldVal, newVal) {
+			onSet(path)
+		}
+	}
+	// Check keys removed from oldTree (present in old, absent in new).
+	for k, oldVal := range oldTree {
+		if _, exists := newTree[k]; exists {
+			continue
+		}
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		if isOpaqueField(tags, path) {
+			onDelete(path)
+		} else {
+			emitLeafPaths(oldVal, path, onDelete)
+		}
+	}
+}
+
+// isOpaqueField returns true if the path is a schema-level value field that
+// should not be recursed into by tree operations. Non-union KindMap and
+// KindStructSlice are opaque. Union maps are NOT opaque — their entries
+// are individually merged and tracked. KindStructSlice is always opaque
+// regardless of merge tag — its merge semantics are handled in the []any
+// branch of mergeTrees, not the map branch.
+func isOpaqueField(tags tagRegistry, path string) bool {
+	meta, ok := tags[path]
+	if !ok {
+		return false
+	}
+	if meta.kind == KindMap && meta.mergeTag == "union" {
+		return false // union maps recurse per-entry
+	}
+	return meta.kind == KindMap || meta.kind == KindStructSlice
+}
+
+// emitLeafPaths walks a value and emits dotted paths for every leaf.
+func emitLeafPaths(val any, prefix string, emit func(string)) {
+	if sub, ok := val.(map[string]any); ok {
+		for k, v := range sub {
+			emitLeafPaths(v, prefix+"."+k, emit)
+		}
+		return
+	}
+	emit(prefix)
+}
+
+// lookupTreeValue retrieves the value at a dotted path in the tree.
+// Returns nil if the path is not found.
+func lookupTreeValue(tree map[string]any, segments []string) any {
+	if len(segments) == 0 {
+		return nil
+	}
+	val, ok := tree[segments[0]]
+	if !ok {
+		return nil
+	}
+	if len(segments) == 1 {
+		return val
+	}
+	sub, ok := val.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return lookupTreeValue(sub, segments[1:])
+}
+
+// buildNestedMap converts ["security", "docker_socket"] + value into
+// {"security": {"docker_socket": value}}.
+func buildNestedMap(segments []string, value any) map[string]any {
+	if len(segments) == 0 {
+		return nil
+	}
+	result := make(map[string]any)
+	if len(segments) == 1 {
+		result[segments[0]] = value
+		return result
+	}
+	result[segments[0]] = buildNestedMap(segments[1:], value)
+	return result
+}
+
+// deepMergeMap recursively merges src into dst. Nested maps are merged;
+// all other values are overwritten.
+func deepMergeMap(dst, src map[string]any) {
+	for k, sv := range src {
+		if sm, ok := sv.(map[string]any); ok {
+			if dm, ok := dst[k].(map[string]any); ok {
+				deepMergeMap(dm, sm)
+				continue
+			}
+		}
+		dst[k] = sv
+	}
+}
+
+// deleteTreePath walks segments through a nested map and deletes the leaf key.
+// Returns true if a key was deleted.
+func deleteTreePath(m map[string]any, segments []string) bool {
+	if len(segments) == 0 {
+		return false
+	}
+	key := segments[0]
+	if len(segments) == 1 {
+		if _, exists := m[key]; !exists {
+			return false
+		}
+		delete(m, key)
+		return true
+	}
+	sub, ok := m[key].(map[string]any)
+	if !ok {
+		return false
+	}
+	return deleteTreePath(sub, segments[1:])
 }
 
 // mergeIntoTree updates tree entries with values from fresh.
@@ -257,78 +483,274 @@ func mergeIntoTree(tree, fresh map[string]any) {
 	}
 }
 
-// Write persists the current tree to disk.
-//
-// Without arguments, each top-level field is routed to the layer it
-// originated from (via provenance). Fields without provenance (e.g. from
-// defaults or newly added by Set) route to the highest-priority layer.
-//
-// With a filename argument, all fields are written to the first layer
-// matching that filename. This supports explicit layer targeting for
-// scenarios like a settings TUI where the user picks the save destination.
-//
-// Write sequence per target: read existing file → merge fields →
-// atomic write (temp+rename). If locking is enabled (WithLock),
-// each file write is wrapped in a cross-process flock.
-//
-// After a successful write, dirty tracking is cleared.
-func (s *Store[T]) Write(filename ...string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.dirty {
-		return nil
-	}
-
-	var writes map[string]map[string]any
-	if len(filename) > 0 && filename[0] != "" {
-		path, err := s.resolveLayerPath(filename[0])
-		if err != nil {
-			return err
-		}
-		writes = map[string]map[string]any{path: s.tree}
-	} else {
-		var err error
-		writes, err = s.routeByProvenance(s.tree)
-		if err != nil {
-			return err
-		}
-	}
-
-	for path, fields := range writes {
-		if err := writeToPath(path, fields, s.opts.lock); err != nil {
-			return err
-		}
-	}
-
-	s.dirty = false
-	return nil
+// WriteOption configures how Write persists data.
+type WriteOption struct {
+	path  string // absolute filesystem path
+	layer int    // layer index (-1 = unused)
 }
 
-// WriteTo persists the entire node tree to an explicit filesystem path.
-// Unlike Write (which resolves by filename against discovered layers),
-// WriteTo takes a full absolute path — useful when the caller knows
-// the exact target file, especially when multiple layers share the same
-// filename (e.g. clawker.yaml at project root vs config dir).
-//
-// The target directory is created if it does not exist.
-// After a successful write, dirty tracking is cleared.
-func (s *Store[T]) WriteTo(path string) error {
-	if path == "" || !filepath.IsAbs(path) {
-		return fmt.Errorf("storage: WriteTo requires an absolute path, got %q", path)
-	}
+// ToPath targets Write to an explicit absolute filesystem path.
+// Use this when writing to a new file or a known path outside the
+// discovered layer set.
+func ToPath(path string) WriteOption {
+	return WriteOption{path: path, layer: -1}
+}
 
+// ToLayer targets Write to a specific discovered layer by index.
+// Layer indices correspond to Layers() ordering (0 = highest priority).
+func ToLayer(idx int) WriteOption {
+	return WriteOption{layer: idx}
+}
+
+// Write persists dirty fields to disk, then refreshes layer data
+// from the written files so that subsequent Layers() calls return
+// current values.
+//
+// Only fields mutated since the last Write (via Set or Delete) are
+// written. Set fields are merged into the target file; deleted fields
+// are removed from it. This ensures per-field precision in multi-layer
+// configurations.
+//
+// Without options, each dirty field is routed to the layer it
+// originated from (via provenance). Fields without provenance route
+// to the highest-priority layer.
+//
+// With ToPath, all dirty fields are written to the given absolute path.
+// With ToLayer, all dirty fields are written to the specified layer.
+//
+// Write sequence per target: read existing file → merge set fields →
+// remove deleted fields → atomic write (temp+rename). If locking is
+// enabled (WithLock), each file write is wrapped in a cross-process flock.
+//
+// After a successful write, dirty tracking is cleared and layer data
+// is refreshed from disk.
+func (s *Store[T]) Write(opts ...WriteOption) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if !s.dirty {
+	if len(s.dirtyPaths) == 0 {
 		return nil
 	}
 
-	if err := writeToPath(path, s.tree, s.opts.lock); err != nil {
-		return err
+	// Resolve the target path for targeted writes.
+	var target string
+	if len(opts) > 0 {
+		opt := opts[0]
+		switch {
+		case opt.path != "":
+			if !filepath.IsAbs(opt.path) {
+				return fmt.Errorf("storage: Write(ToPath) requires an absolute path, got %q", opt.path)
+			}
+			target = opt.path
+		case opt.layer >= 0:
+			if opt.layer >= len(s.layers) {
+				return fmt.Errorf("storage: Write(ToLayer) index %d out of range (have %d layers)", opt.layer, len(s.layers))
+			}
+			target = s.layers[opt.layer].path
+		default:
+			return fmt.Errorf("storage: invalid WriteOption (no path or layer)")
+		}
 	}
 
-	s.dirty = false
+	// Group dirty fields by target file.
+	type fileOps struct {
+		sets    map[string]any // nested map of fields to merge
+		deletes []string       // dotted paths to remove
+	}
+	grouped := make(map[string]*fileOps)
+
+	ensureOps := func(path string) *fileOps {
+		if grouped[path] == nil {
+			grouped[path] = &fileOps{sets: make(map[string]any)}
+		}
+		return grouped[path]
+	}
+
+	for path, op := range s.dirtyPaths {
+		var dest string
+		if target != "" {
+			dest = target
+		} else {
+			dest = s.layerPathForKey(path)
+			if dest == "" {
+				fallback, err := s.defaultWritePath()
+				if err != nil {
+					return err
+				}
+				dest = fallback
+			}
+		}
+
+		ops := ensureOps(dest)
+		switch op {
+		case dirtySet:
+			// Extract this field's value from the tree and build a nested map.
+			val := lookupTreeValue(s.tree, strings.Split(path, "."))
+			nested := buildNestedMap(strings.Split(path, "."), val)
+			deepMergeMap(ops.sets, nested)
+			// Opaque value fields (non-union maps) must delete-then-set
+			// so the old map content is fully replaced, not deep-merged.
+			if isOpaqueField(s.tags, path) {
+				ops.deletes = append(ops.deletes, path)
+			}
+		case dirtyDeleted:
+			ops.deletes = append(ops.deletes, path)
+		}
+	}
+
+	// Write each target file atomically.
+	for filePath, ops := range grouped {
+		if err := writeFieldsToPath(filePath, ops.sets, ops.deletes, s.opts.lock); err != nil {
+			return err
+		}
+	}
+
+	s.dirtyPaths = nil
+	s.refreshLayers()
+
+	// Inject layers for any newly created files that weren't in the
+	// layer stack at construction time (e.g. first Write(ToPath(...))
+	// to a local override file).
+	writtenPaths := make([]string, 0, len(grouped))
+	for p := range grouped {
+		writtenPaths = append(writtenPaths, p)
+	}
+	s.injectNewLayers(writtenPaths)
+
+	// Rebuild the merged tree, provenance, and snapshot so that
+	// Read(), ProvenanceMap(), and future Write() calls see fresh state.
+	return s.remerge()
+}
+
+// MarkForWrite adds a dotted field path to the write set so the next
+// Write includes it regardless of whether Set detected a change.
+//
+// Use this when persisting a value to a specific layer file where
+// the merged result is already identical (e.g. writing the current
+// winning value to a lower-priority layer). Normal Set-based dirty
+// tracking won't catch this because the merged tree didn't change.
+func (s *Store[T]) MarkForWrite(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dirtyPaths == nil {
+		s.dirtyPaths = make(map[string]dirtyOp)
+	}
+	s.dirtyPaths[path] = dirtySet
+}
+
+// Refresh re-discovers layer files, re-reads them from disk, and
+// re-merges into a fresh snapshot. This picks up external modifications
+// to existing files and newly created files found via discovery that
+// weren't written by this store.
+//
+// Note: Write() already remerges and injects new layers for files it
+// writes, so Refresh is only needed for external changes (e.g. another
+// process modified a config file).
+func (s *Store[T]) Refresh() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-run discovery to pick up newly created files.
+	discovered, err := discover(&s.opts)
+	if err != nil {
+		return fmt.Errorf("storage: Refresh: discovery: %w", err)
+	}
+
+	// Load each discovered file (loadRaw — migrations ran at construction).
+	var fileLayers []layer
+	for _, df := range discovered {
+		data, lErr := loadRaw(df.path)
+		if lErr != nil {
+			continue // skip unreadable files
+		}
+		fileLayers = append(fileLayers, layer{
+			path:     df.path,
+			filename: df.filename,
+			data:     data,
+		})
+	}
+
+	// Preserve the virtual layer (defaults + raw string).
+	allLayers := make([]layer, 0, len(fileLayers)+1)
+	allLayers = append(allLayers, fileLayers...)
+	for _, l := range s.layers {
+		if l.path == "" {
+			allLayers = append(allLayers, l)
+			break
+		}
+	}
+
+	s.layers = allLayers
+	s.dirtyPaths = nil
+	return s.remerge()
+}
+
+// refreshLayers re-reads each discovered layer's data from disk.
+// Caller must hold s.mu.
+func (s *Store[T]) refreshLayers() {
+	for i := range s.layers {
+		if s.layers[i].path == "" {
+			continue // virtual layer — no file to read
+		}
+		data, err := loadRaw(s.layers[i].path)
+		if err != nil {
+			continue
+		}
+		s.layers[i].data = data
+	}
+}
+
+// injectNewLayers adds layers for files that were written but weren't in
+// the layer stack at construction time. New layers are appended just before
+// the virtual layer (lowest file priority) so they participate in the
+// next remerge. Caller must hold s.mu.
+func (s *Store[T]) injectNewLayers(writtenPaths []string) {
+	known := make(map[string]bool, len(s.layers))
+	for _, l := range s.layers {
+		if l.path != "" {
+			known[l.path] = true
+		}
+	}
+
+	for _, filePath := range writtenPaths {
+		if known[filePath] {
+			continue
+		}
+		data, err := loadRaw(filePath)
+		if err != nil {
+			continue
+		}
+		// Derive filename from the path for layer metadata.
+		fname := filepath.Base(filePath)
+
+		// Insert before the virtual layer (last element with path=="").
+		// If no virtual layer exists, append at the end.
+		inserted := false
+		for i, l := range s.layers {
+			if l.path == "" {
+				// Splice in before virtual layer.
+				s.layers = append(s.layers[:i+1], s.layers[i:]...)
+				s.layers[i] = layer{path: filePath, filename: fname, data: data}
+				inserted = true
+				break
+			}
+		}
+		if !inserted {
+			s.layers = append(s.layers, layer{path: filePath, filename: fname, data: data})
+		}
+	}
+}
+
+// remerge rebuilds the merged tree, provenance map, and typed snapshot
+// from the current layer stack. Caller must hold s.mu.
+func (s *Store[T]) remerge() error {
+	tree, prov := merge(s.layers, s.tags)
+	value, err := unmarshal[T](tree)
+	if err != nil {
+		return fmt.Errorf("storage: remerge: %w", err)
+	}
+	s.tree = tree
+	s.prov = prov
+	s.value.Store(value)
 	return nil
 }

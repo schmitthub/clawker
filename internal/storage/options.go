@@ -38,6 +38,13 @@ func WithDefaults(yaml string) Option {
 	}
 }
 
+// WithDefaultsFromStruct generates a defaults YAML string from the `default`
+// struct tags of T and registers it as the lowest-priority base layer.
+// This is equivalent to WithDefaults(GenerateDefaultsYAML[T]()).
+func WithDefaultsFromStruct[T Schema]() Option {
+	return WithDefaults(GenerateDefaultsYAML[T]())
+}
+
 // WithWalkUp enables bounded walk-up discovery from CWD to the registered
 // project root. The store resolves both CWD and project root internally:
 // CWD via os.Getwd(), project root by reading the registry at dataDir().

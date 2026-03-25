@@ -29,7 +29,7 @@
 1. Run acceptance criteria for the completed task
 2. Update the Progress Tracker in this memory
 3. Append any key learnings to the Key Learnings section
-4. Run a single `code-reviewer` subagent to review this task's changes, then fix any findings
+4. Run `code-reviewer`, `silent-failure-hunter`, `test-hunter`, `code-simplifier`, `comment-analyzer`,`type-design-analyzer` subagents to review this task's changes, then fix any and all findings
 5. Commit all changes from this task with a descriptive commit message
 6. Present the handoff prompt from the task's Wrap Up section to the user
 7. Wait for the user to start a new conversation with the handoff prompt
@@ -80,7 +80,7 @@ This ensures each task gets a fresh context window. Each task is designed to be 
 
 1. Update Progress Tracker: Task 1 -> `complete`
 2. Append key learnings
-3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+3. Run `code-reviewer`, `silent-failure-hunter`, `test-hunter`, `code-simplifier`, `comment-analyzer`,`type-design-analyzer` subagents to review this task's changes, then fix any and all findings.
 4. Commit all changes from this task with a descriptive commit message.
 5. **STOP.** Do not proceed to Task 2. Inform the user you are done and present this handoff prompt:
 

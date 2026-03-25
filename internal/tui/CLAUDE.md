@@ -29,7 +29,7 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 | `RenderBadge(text, ...func(string) string)` | Inline badge |
 | `RenderCountBadge(count, label)` | Count with label |
 | `RenderProgress(ProgressConfig)` | Text "3/10" or visual bar |
-| `RenderDivider(width)`, `RenderLabeledDivider(label, width)` | Horizontal rules |
+| `RenderDivider(width)`, `RenderLabeledDivider(label, width)`, `RenderLeftLabeledDivider(label, width)` | Horizontal rules |
 | `RenderEmptyState(message, w, h)`, `RenderError(err, width)` | State displays |
 | `RenderLabelValue`, `RenderKeyValueTable`, `RenderTable` | Key-value and tabular |
 | `RenderPercentage(float64)`, `RenderBytes(int64)` | Color-coded percentage, human bytes |
@@ -179,17 +179,19 @@ Generic tabbed field browser/editor. Domain-agnostic — knows nothing about sto
 
 **Result**: `(*FieldBrowserModel).Result() BrowserResult` — `{Saved, Cancelled bool; SavedCount int}`
 
-**Features**: Tabbed navigation (fields grouped by top-level path key), sub-section headings (3+ segment paths), inline editing via SelectField/TextField/ListEditorModel/TextareaEditorModel, scroll, per-field save with layer picker.
+**Features**: Tabbed navigation (fields grouped by top-level path key), sub-section headings (3+ segment paths), inline editing via SelectField/TextField/ListEditorModel/TextareaEditorModel/KVEditorModel, scroll, per-field save with layer picker.
 
-**Key bindings**: `←/→` tab switch, `↑/↓` navigate, `enter` edit, `esc/q/ctrl+c` quit.
+**Key bindings**: `←/→` tab switch, `↑/↓` navigate, `enter` edit, `d` delete (when `OnFieldDeleted` is wired), `esc/q/ctrl+c` quit.
 
 ## ListEditorModel (`listeditor.go`)
 
 Generic list editor for managing string lists. Parses comma-separated input, provides add/edit/delete with inline `textinput`.
 
-**Constructor**: `NewListEditor(label, value string) ListEditorModel`
+**Constructor**: `NewListEditor(label, value string, opts ...ListEditorOption) ListEditorModel`
 
-**Methods**: `Value() string` (comma-separated), `IsConfirmed() bool`, `IsCancelled() bool`
+**Options**: `WithListValidator(fn func(string) error)` — external validator run on confirm
+
+**Methods**: `Value() string` (comma-separated), `IsConfirmed() bool`, `IsCancelled() bool`, `Err() string`
 
 **Key bindings (browsing)**: `a` add, `e` edit, `d/backspace` delete, `↑/↓` navigate, `enter/esc` done. **Editing**: `enter` confirm, `esc` cancel.
 
@@ -197,11 +199,25 @@ Generic list editor for managing string lists. Parses comma-separated input, pro
 
 Generic multiline text editor wrapping `bubbles/textarea`.
 
-**Constructor**: `NewTextareaEditor(label, value string) TextareaEditorModel`
+**Constructor**: `NewTextareaEditor(label, value string, opts ...TextareaEditorOption) TextareaEditorModel`
 
-**Methods**: `Value() string`, `IsConfirmed() bool`, `IsCancelled() bool`
+**Options**: `WithTextareaValidator(fn func(string) error)` — external validator run on save (Ctrl+S)
+
+**Methods**: `Value() string`, `IsConfirmed() bool`, `IsCancelled() bool`, `Err() string`
 
 **Key bindings**: `ctrl+s` save, `esc` cancel.
+
+## KVEditorModel (`kveditor.go`)
+
+Interactive key-value pair editor for `map[string]string` fields. Parses and outputs YAML-formatted map strings. Default editor for `BrowserMap` fields in FieldBrowserModel. The editor shows the merged store state — duplicate key validation belongs at the write boundary (per-layer), not in the editor.
+
+**Constructor**: `NewKVEditor(label, value string, opts ...KVEditorOption) KVEditorModel`
+
+**Options**: `WithKVValidator(fn func(string) error)` — external validator run on confirm
+
+**Methods**: `Value() string` (YAML), `IsConfirmed() bool`, `IsCancelled() bool`, `Err() string`
+
+**Key bindings (browsing)**: `a` add pair, `e` edit value, `E` edit key, `d/backspace` delete, `↑/↓` navigate, `enter` done, `esc` cancel. **Editing**: `enter` confirm, `esc` cancel.
 
 ## Golden Tests
 

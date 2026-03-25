@@ -1,9 +1,13 @@
 package cp
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/shlex"
@@ -407,4 +411,121 @@ func TestCpRun_BothPathsHost(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "one of source or destination must be a container path")
+}
+
+func TestExtractTar_PathTraversal(t *testing.T) {
+	dst := t.TempDir()
+
+	// Build a tar with a ../escape path — SecureJoin clamps it inside dst.
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	content := []byte("pwnd")
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "../../../etc/evil",
+		Typeflag: tar.TypeReg,
+		Size:     int64(len(content)),
+		Mode:     0644,
+	}))
+	_, err := tw.Write(content)
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+
+	err = extractTar(&buf, dst, "", nil)
+	require.NoError(t, err)
+
+	// File must land inside dst, not at /etc/evil.
+	_, err = os.Stat(filepath.Join(dst, "etc", "evil"))
+	assert.NoError(t, err, "traversal path should be clamped inside destination")
+	_, err = os.Stat("/etc/evil")
+	assert.True(t, os.IsNotExist(err) || err != nil, "file must not exist outside destination")
+}
+
+func TestExtractTar_SymlinkEscape(t *testing.T) {
+	dst := t.TempDir()
+
+	// Symlink with absolute linkname — SecureJoin clamps it inside dst.
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "escape",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "/etc",
+	}))
+	require.NoError(t, tw.Close())
+
+	err := extractTar(&buf, dst, "", nil)
+	require.NoError(t, err)
+
+	// Symlink must point within dst, not to /etc.
+	linkTarget, err := os.Readlink(filepath.Join(dst, "escape"))
+	require.NoError(t, err)
+	resolved := linkTarget
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(dst, resolved)
+	}
+	resolved = filepath.Clean(resolved)
+	assert.True(t, strings.HasPrefix(resolved, dst), "symlink must resolve within destination, got: %s", resolved)
+}
+
+func TestExtractTar_HardLinkEscape(t *testing.T) {
+	dst := t.TempDir()
+
+	// Hard link to absolute path — SecureJoin clamps it inside dst,
+	// but the target file doesn't exist so os.Link fails.
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "link",
+		Typeflag: tar.TypeLink,
+		Linkname: "/etc/passwd",
+	}))
+	require.NoError(t, tw.Close())
+
+	err := extractTar(&buf, dst, "", nil)
+	// Hard link target (clamped to dst/etc/passwd) doesn't exist → error.
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no such file")
+}
+
+func TestExtractTar_SafeEntries(t *testing.T) {
+	dst := t.TempDir()
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+
+	// Safe directory
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "subdir/",
+		Typeflag: tar.TypeDir,
+		Mode:     0755,
+	}))
+
+	// Safe file
+	content := []byte("hello")
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "subdir/file.txt",
+		Typeflag: tar.TypeReg,
+		Size:     int64(len(content)),
+		Mode:     0644,
+	}))
+	_, err := tw.Write(content)
+	require.NoError(t, err)
+
+	// Safe relative symlink (stays within dest)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "subdir/link",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "subdir/file.txt",
+	}))
+
+	require.NoError(t, tw.Close())
+
+	err = extractTar(&buf, dst, "", nil)
+	require.NoError(t, err)
+
+	// Verify files were created
+	_, err = os.Stat(filepath.Join(dst, "subdir", "file.txt"))
+	assert.NoError(t, err)
+	_, err = os.Lstat(filepath.Join(dst, "subdir", "link"))
+	assert.NoError(t, err)
 }

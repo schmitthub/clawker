@@ -213,17 +213,19 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |
 | `update.CheckForUpdate` | Background GitHub release check — 24h cached, suppressed in CI/DEV; wired into `Main()` via goroutine + channel |
 | `update.CheckResult` | Returned when newer version available: `CurrentVersion`, `LatestVersion`, `ReleaseURL` |
-| `storeui.Edit[T]` | Generic orchestrator for browsing/editing `Store[T]` — bridges storage + tui. Owns reflection, overrides, type mapping, read→edit→set→write lifecycle. Delegates presentation to `tui.FieldBrowserModel`. Domain adapters in `config/storeui/settings` and `config/storeui/project` provide overrides |
-| `storeui.WalkFields` | Reflection-based struct walker: discovers all exported fields → `[]Field` with dotted YAML paths, type-mapped `FieldKind`, current values |
+| `storage.Schema` | Interface: `Fields() FieldSet`. Implemented by all `Store[T]` types (`Project`, `Settings`, `EgressRulesFile`, `ProjectRegistry`). Compile-time enforced via `Store[T Schema]` constraint. Default values come from `default` struct tags; `GenerateDefaultsYAML[T]()` produces YAML from them |
+| `storage.Field` / `storage.FieldSet` | Interfaces describing configuration field metadata (Path, Kind, Label, Description, Default, Required). `NormalizeFields[T]()` reads struct tags (`yaml`, `label`, `desc`, `default`, `required`) and produces a `FieldSet` |
+| `storeui.Edit[T]` | Generic orchestrator for browsing/editing `Store[T Schema]` — a **config placement tool** (not an override editor). Browser shows merged state across all layers; edits target specific layer files. Same key across layers is inheritance, not duplication. Validation guards writes (per-layer), not editors. Schema metadata from struct tags via `enrichWithSchema`; domain adapters provide TUI-specific overrides only (Hidden, ReadOnly, Kind, Options) |
+| `storeui.WalkFields` | Reflection-based struct walker: discovers all exported fields → `[]Field` with dotted YAML paths, type-mapped `FieldKind`, current values. Schema metadata enriched by `enrichWithSchema` |
 | `storeui.SetFieldValue` | Reverse reflection writer: sets struct field by dotted YAML path with type-aware parsing (bool, int, duration, `[]string`, `*bool`) |
-| `storeui.ApplyOverrides` | Merges domain `[]Override` onto reflected fields: labels, descriptions, hidden, read-only, select options, sort order |
+| `storeui.ApplyOverrides` | Merges domain `[]Override` onto schema-enriched fields: hidden, read-only, select options, sort order. Labels/descriptions now come from struct tags, not overrides |
 | `storeui.LayerTarget` | Save destination for per-field writes: Label, Description (shortened path), Path (absolute). Domain adapters build these from `store.Layers()` |
 | `tui.FieldBrowserModel` | Generic tabbed field browser/editor. Domain-agnostic — knows nothing about stores, reflection, or config schemas. Used by `storeui` to provide interactive editing for any `Store[T]`. States: Browse → Edit → PickLayer |
 | `tui.ListEditorModel` | Generic string list editor with add/edit/delete: parses comma-separated input into items, returns comma-separated output |
 | `tui.TextareaEditorModel` | Multiline text editor wrapping `bubbles/textarea`: Ctrl+S to save, Esc to cancel |
 | `storage.Provenance` | `Store[T].Provenance(path) (LayerInfo, bool)` — returns which layer won a specific dotted field path |
 | `storage.ProvenanceMap` | `Store[T].ProvenanceMap() map[string]string` — all dotted paths → source file paths |
-| `storage.WriteTo` | `Store[T].WriteTo(path) error` — persist to explicit absolute path, bypassing provenance routing |
+| `storage.Write(ToPath)` | `Store[T].Write(ToPath(path)) error` — persist to explicit absolute path, bypassing provenance routing |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map (`cfg.ProjectRegistryFileName()`); CRUD/orchestration is owned by `internal/project` |
 | `project.ProjectManager` | Project-layer domain API: registration, resolution, worktree lifecycle. Constructor: `NewProjectManager(cfg, gitFactory)`. `ListWorktrees(ctx)` aggregates across all projects; `Project.ListWorktrees(ctx)` returns enriched state for one project |

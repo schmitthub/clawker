@@ -1,9 +1,9 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,44 +14,44 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// routeByProvenance groups the full value map by target layer path.
-// Each top-level key is routed to the layer it originated from.
-// Keys without provenance route to the fallback (highest-priority
-// layer or first explicit path).
-func (s *Store[T]) routeByProvenance(full map[string]any) (map[string]map[string]any, error) {
-	fallback, err := s.defaultWritePath()
-	if err != nil {
-		return nil, err
-	}
-
-	writes := make(map[string]map[string]any)
-	for key, val := range full {
-		target := s.layerPathForKey(key)
-		if target == "" {
-			target = fallback
-		}
-		if writes[target] == nil {
-			writes[target] = make(map[string]any)
-		}
-		writes[target][key] = val
-	}
-
-	return writes, nil
-}
-
-// layerPathForKey finds the layer path that owns a top-level key via
-// provenance. Checks for exact key match and dotted sub-field matches
-// (e.g. "build" matches provenance entry "build.image"). When multiple
-// sub-fields map to different layers, the highest-priority (lowest index)
-// layer wins.
+// layerPathForKey finds the layer path that owns a field via provenance.
+//
+// Resolution:
+//  1. Scan provenance for exact or descendant matches in a single pass
+//     (e.g. key="build" matches "build" or "build.image"). When multiple
+//     entries match, the highest-priority (lowest index) layer wins.
+//  2. If no match, walk up ancestor paths stopping only at opaque value
+//     fields (e.g. key="env.FOO" walks up to "env" if it's a KindMap).
+//     This handles new entries in map[string]string fields whose parent
+//     has provenance but the entry itself does not.
 func (s *Store[T]) layerPathForKey(key string) string {
 	bestIdx := -1
 	prefix := key + "."
 
+	// Check exact match and descendant matches.
 	for provKey, idx := range s.prov {
 		if provKey == key || strings.HasPrefix(provKey, prefix) {
 			if bestIdx == -1 || idx < bestIdx {
 				bestIdx = idx
+			}
+		}
+	}
+
+	// If no match, walk up ancestor paths. Only stop at ancestors that
+	// are opaque value fields (maps, struct slices) — a new entry in an
+	// opaque field should route to the layer that owns that field.
+	// Struct nesting ancestors are skipped since they don't represent
+	// a meaningful write target for leaf entries.
+	if bestIdx == -1 {
+		for parent := key; ; {
+			dot := strings.LastIndex(parent, ".")
+			if dot < 0 {
+				break
+			}
+			parent = parent[:dot]
+			if idx, ok := s.prov[parent]; ok && isOpaqueField(s.tags, parent) {
+				bestIdx = idx
+				break // closest opaque ancestor is the most specific match
 			}
 		}
 	}
@@ -62,52 +62,54 @@ func (s *Store[T]) layerPathForKey(key string) string {
 	return ""
 }
 
-// resolveLayerPath finds the path for a layer by filename.
-// Returns the first (highest-priority) match. If no discovered layer
-// matches, falls back to creating at the first explicit path.
-func (s *Store[T]) resolveLayerPath(filename string) (string, error) {
-	for _, l := range s.layers {
-		if l.filename == filename {
-			return l.path, nil
-		}
-	}
-
-	// No existing layer — create at first explicit path.
-	if len(s.opts.paths) > 0 {
-		dir := s.opts.paths[0]
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return "", fmt.Errorf("storage: creating directory %s: %w", dir, err)
-		}
-		return filepath.Join(dir, filename), nil
-	}
-
-	return "", fmt.Errorf("storage: no layer found for filename %q", filename)
-}
-
 // defaultWritePath returns the fallback write target for fields without
 // provenance. Prefers the highest-priority discovered layer, then the
 // first explicit path + first filename.
 func (s *Store[T]) defaultWritePath() (string, error) {
-	if len(s.layers) > 0 {
-		return s.layers[0].path, nil
+	// Prefer the highest-priority file-backed layer.
+	for _, l := range s.layers {
+		if l.path != "" {
+			return l.path, nil
+		}
 	}
-	if len(s.opts.paths) > 0 && len(s.opts.filenames) > 0 {
-		dir := s.opts.paths[0]
+	// No file layers — use explicit paths if configured, otherwise CWD.
+	if len(s.opts.filenames) > 0 {
+		dir := ""
+		if len(s.opts.paths) > 0 {
+			dir = s.opts.paths[0]
+		} else {
+			var err error
+			dir, err = os.Getwd()
+			if err != nil {
+				return "", fmt.Errorf("storage: resolving CWD for default write path: %w", err)
+			}
+		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("storage: creating directory %s: %w", dir, err)
 		}
 		return filepath.Join(dir, s.opts.filenames[0]), nil
 	}
-	return "", fmt.Errorf("storage: no write path available (no layers or explicit paths)")
+	return "", fmt.Errorf("storage: no write path available (no layers or filenames)")
 }
 
 // structToMap converts a struct to map[string]any using reflection.
-// Unlike yaml.Marshal, this ignores omitempty tags — all non-nil fields
-// are included regardless of whether their values are zero. This ensures
-// explicit clears (e.g. setting a bool to false) are captured in the tree.
+// Unlike yaml.Marshal, this ignores omitempty tags — all non-nil, non-empty
+// fields are included regardless of whether their values are zero. This
+// ensures explicit clears (e.g. setting a bool to false) are captured in
+// the tree.
 //
-// Nil pointers and nil slices are excluded (they mean "not set").
-// Non-nil pointers to zero values are included (they mean "explicitly set").
+// Excluded (meaning "not set") at the struct-field level only:
+//   - Nil pointers and nil slices (via encodeValue)
+//   - Empty strings on direct struct fields (config schemas use bare string,
+//     not *string, for optional fields — "" means "not set")
+//
+// The empty-string filter applies only to direct struct fields, NOT to
+// string values inside slices or maps. A []string{"a", "", "b"} or
+// map[string]string{"VAR": ""} preserves empty strings as valid data.
+//
+// Included (meaning "explicitly set"):
+//   - Non-nil pointers to zero values (e.g. *bool pointing to false)
+//   - Zero-value ints and bools (distinguishable via schema defaults)
 func structToMap(v any) map[string]any {
 	val := reflect.ValueOf(v)
 	if val.Kind() == reflect.Ptr {
@@ -138,7 +140,17 @@ func structToMap(v any) map[string]any {
 			name = strings.ToLower(field.Name)
 		}
 
-		encoded := encodeValue(val.Field(i))
+		// Skip empty struct-level strings — they are Go zero values meaning
+		// "not set", not intentional data. This prevents Set() from polluting
+		// the node tree with "" entries that override higher-priority layers.
+		// Only applied here (struct fields), not in encodeValue (which handles
+		// slices/maps where "" is valid data).
+		fv := val.Field(i)
+		if fv.Kind() == reflect.String && fv.Len() == 0 {
+			continue
+		}
+
+		encoded := encodeValue(fv)
 		if encoded != nil {
 			result[name] = encoded
 		}
@@ -149,6 +161,10 @@ func structToMap(v any) map[string]any {
 
 // encodeValue converts a reflect.Value to its map-compatible representation.
 // Returns nil for nil pointers and nil slices (meaning "not set").
+//
+// Note: empty-string filtering for struct fields is handled in structToMap,
+// not here. encodeValue is called recursively for slice elements and map
+// values where "" is valid data (e.g. env vars, list entries).
 func encodeValue(v reflect.Value) any {
 	switch v.Kind() {
 	case reflect.Ptr:
@@ -188,6 +204,44 @@ func encodeValue(v reflect.Value) any {
 
 	default:
 		return v.Interface()
+	}
+}
+
+// marshalYAML encodes a value as YAML with 2-space indentation.
+// Multiline strings automatically use literal block style (|) instead of
+// escaped newlines in quoted scalars.
+func marshalYAML(v any) ([]byte, error) {
+	// First marshal to a yaml.Node tree so we can adjust scalar styles.
+	var node yaml.Node
+	if err := node.Encode(v); err != nil {
+		return nil, err
+	}
+	setLiteralStyle(&node)
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&node); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// setLiteralStyle walks a yaml.Node tree and sets LiteralStyle on string
+// scalar nodes that contain newlines. This produces "cmd: |" block scalars
+// instead of "cmd: \"line1\\nline2\"" escaped quotes.
+func setLiteralStyle(node *yaml.Node) {
+	if node == nil {
+		return
+	}
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" && strings.Contains(node.Value, "\n") {
+		node.Style = yaml.LiteralStyle
+	}
+	for _, child := range node.Content {
+		setLiteralStyle(child)
 	}
 }
 
@@ -254,9 +308,10 @@ func withLock(path string, fn func() error) error {
 	return fn()
 }
 
-// writeToPath performs the full write sequence: read existing → merge fields → atomic write.
-// If lock is true, wraps the operation in a file lock.
-func writeToPath(path string, fields map[string]any, lock bool) error {
+// writeFieldsToPath reads an existing YAML file, deeply merges the set fields,
+// removes the deleted field paths, and atomically writes the result.
+// If lock is true, the entire operation is wrapped in a cross-process flock.
+func writeFieldsToPath(path string, sets map[string]any, deletes []string, lock bool) error {
 	writeFn := func() error {
 		// Read existing file content if it exists.
 		existing := make(map[string]any)
@@ -266,10 +321,20 @@ func writeToPath(path string, fields map[string]any, lock bool) error {
 			}
 		}
 
-		// Merge fields into existing content.
-		maps.Copy(existing, fields)
+		// Remove deleted field paths first. This ensures opaque value fields
+		// (e.g. non-union maps) are fully cleared before their new value is
+		// merged in — giving replace semantics instead of deep merge.
+		for _, dottedPath := range deletes {
+			segments := strings.Split(dottedPath, ".")
+			deleteTreePath(existing, segments)
+		}
 
-		encoded, err := yaml.Marshal(existing)
+		// Deep merge set fields into existing content.
+		if len(sets) > 0 {
+			deepMergeMap(existing, sets)
+		}
+
+		encoded, err := marshalYAML(existing)
 		if err != nil {
 			return fmt.Errorf("storage: encoding %s: %w", path, err)
 		}

@@ -9,21 +9,29 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/storage"
 )
 
-// FieldKind identifies the type of a configuration field for widget selection.
-type FieldKind int
+// FieldKind is an alias for [storage.FieldKind]. Consumers should use the
+// storage constants (KindText, KindBool, etc.) directly.
+type FieldKind = storage.FieldKind
 
+// Re-export storage.FieldKind constants for backward compatibility.
 const (
-	KindText        FieldKind = iota // Single-line string
-	KindBool                         // true/false
-	KindTriState                     // Deprecated: mapped to KindBool. Retained for iota stability.
-	KindSelect                       // Bounded enum with Options
-	KindInt                          // Integer
-	KindStringSlice                  // Comma-separated string list
-	KindDuration                     // time.Duration
-	KindComplex                      // Unsupported type — always read-only
+	KindText        = storage.KindText
+	KindBool        = storage.KindBool
+	KindSelect      = storage.KindSelect
+	KindInt         = storage.KindInt
+	KindStringSlice = storage.KindStringSlice
+	KindDuration    = storage.KindDuration
+	KindMap         = storage.KindMap
+	KindStructSlice = storage.KindStructSlice
 )
+
+// KindTriState is deprecated. Use KindBool instead. Retained for backward
+// compatibility — maps to the same underlying type as KindBool.
+const KindTriState FieldKind = KindBool
 
 // Field represents a single editable configuration field discovered via reflection.
 type Field struct {
@@ -31,13 +39,20 @@ type Field struct {
 	Label       string             // Human-readable label
 	Description string             // Help text
 	Kind        FieldKind          // Widget type
-	Value       string             // Formatted current value
+	Value       string             // Formatted current value (compact summary for browse display)
+	EditValue   string             // Full value for editor pre-population (YAML for Map/StructSlice kinds)
 	Default     string             // Effective default shown when Value is "<unset>" or empty
 	Options     []string           // For Select fields
 	Validator   func(string) error // Optional input validation
 	Required    bool               // Whether the field must have a value
 	ReadOnly    bool               // Whether the field is not editable
 	Order       int                // Sort order (lower = first)
+
+	// Editor is a custom editor factory provided by domain adapters.
+	// When non-nil, the field browser uses it instead of the default kind-based
+	// editor dispatch. The returned value must satisfy [tui.FieldEditor].
+	// Using any preserves the storeui → tui import boundary.
+	Editor func(label, value string) any
 }
 
 // Override allows domain adapters to customize reflected fields by path.
@@ -54,6 +69,11 @@ type Override struct {
 	ReadOnly    *bool
 	Order       *int
 	Hidden      bool // When true, removes the field from the list entirely
+
+	// Editor is a custom editor factory for this field.
+	// When non-nil, the field browser uses it instead of the default kind-based
+	// editor dispatch. The returned value must satisfy [tui.FieldEditor].
+	Editor func(label, value string) any
 }
 
 // ApplyOverrides merges overrides into a copy of fields, returning the result sorted by Order.
@@ -134,11 +154,9 @@ func ApplyOverrides(fields []Field, overrides []Override) []Field {
 			if ov.Order != nil {
 				out.Order = *ov.Order
 			}
-		}
-
-		// KindComplex fields are always read-only — enforce the invariant.
-		if out.Kind == KindComplex {
-			out.ReadOnly = true
+			if ov.Editor != nil {
+				out.Editor = ov.Editor
+			}
 		}
 
 		result = append(result, out)

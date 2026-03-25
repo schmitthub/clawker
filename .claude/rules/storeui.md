@@ -2,6 +2,21 @@
 
 **Applies to**: `internal/storeui/**`, `internal/config/storeui/**`, `internal/tui/fieldbrowser*`, `internal/tui/listeditor*`, `internal/tui/textareaeditor*`
 
+## Mental Model: Multi-Layer Config Editor
+
+Store UI is a **config placement tool**, not an override editor. It gives users a unified view across all layer files so they can make informed decisions about where to place config values based on their project's directory structure.
+
+**Layered inheritance**: Clawker configs use walk-up file discovery. A monorepo might have:
+- `./clawker.yaml` — repo root config (cascades to all subdirs)
+- `./frontend/.clawker.yaml` — frontend-specific overrides
+- `~/.config/clawker/clawker.yaml` — user-level defaults
+
+The same key in different layer files is **inheritance**, not duplication. Merge strategies (`union`, `override`) resolve how values combine across layers.
+
+**The browser shows the merged state** — the effective config for the current working directory, with per-layer breakdown showing which file each value comes from. This is read-only context. When the user edits a field and picks a save target, they're writing to a specific layer file. The user might save a value to the repo root file knowing it won't affect their CWD (a closer layer wins) but will cascade to sibling directories.
+
+**Validation guards writes, not editors.** Editors collect input freely. The write boundary (per-layer) is where validation happens, because that's where layer context is available. Don't put domain validation in TUI editors — they show merged state and can't know the user's intent until a layer is chosen.
+
 ## Architecture Overview
 
 Store UI is the system for building interactive TUI editors for any `storage.Store[T]` instance. It has four layers:
@@ -77,14 +92,15 @@ Add `edit.NewCmdEdit(f, nil)` to the parent command's `AddCommand` list.
 ### Data Flow
 
 ```
-Edit[T](ios, store, opts...):
+Edit[T storage.Schema](ios, store, opts...):
   1. store.Read() → *T snapshot
-  2. WalkFields(snapshot) → []Field via reflection
-  3. ApplyOverrides(fields, overrides) → filtered + customized fields
+  2. WalkFields(snapshot) → []Field via reflection (runtime values)
+  2b. enrichWithSchema(fields, snapshot.Fields()) → replace labels/descriptions/kinds with Schema struct tag metadata
+  3. ApplyOverrides(fields, overrides) → filtered + customized fields (TUI-specific only: Hidden, ReadOnly, Kind, Options)
   4. Map to tui types: fieldsToBrowserFields(), layersToBrowserLayers()
   5. Wire OnFieldSaved callback
   6. tui.NewFieldBrowser(cfg) → tui.RunProgram()
-  7. Return Result{Saved, Cancelled, Modified}
+  7. Return Result{Saved, Cancelled, SavedCount}
 ```
 
 ### Per-Field Save Flow
@@ -92,9 +108,9 @@ Edit[T](ios, store, opts...):
 When a user edits a field and picks a save target:
 
 1. `store.Set(func(t *T) { SetFieldValue(t, fieldPath, value) })` — update in-memory
-2. `writeFieldToFile(targetPath, fieldPath, value)` — persist single field to the chosen file
+2. `store.Write(storage.ToPath(target.Path))` — persist dirty fields to the chosen layer file
 
-`writeFieldToFile` reads existing YAML (or starts empty), builds a nested map from the dotted path, merges it into the existing map, and writes atomically (temp + rename). Values are coerced to appropriate YAML types (bool, int, `[]string`) via `coerceYAMLValue`.
+`Write()` internally remerges layers, so the snapshot reflects the true merged state after each save. Values are type-coerced during `Set` via `SetFieldValue`.
 
 ### Field Discovery (WalkFields)
 
@@ -102,17 +118,22 @@ Reflection-based struct walker. Type mapping:
 
 | Go Type | FieldKind | Editor |
 |---------|-----------|--------|
-| `string` | `KindText` | TextField |
+| `string` | `KindText` | TextareaEditorModel |
 | `bool` | `KindBool` | SelectField (true/false) |
 | `*bool` | `KindBool` | SelectField (nil → false display) |
 | `int`, `int64` | `KindInt` | TextField |
 | `[]string` | `KindStringSlice` | ListEditorModel |
 | `time.Duration` | `KindDuration` | TextField |
+| `map[string]string` | `KindMap` | KVEditorModel |
+| `[]struct` | `KindStructSlice` | TextareaEditorModel (raw YAML) |
 | `struct` | (recursed) | — |
 | `*struct` | (recursed, nil → zero value) | — |
-| everything else | `KindComplex` | Read-only display |
+| consumer-defined kind | (via `KindFunc`) | Read-only (enforced by `fieldsToBrowserFields`) |
+| unrecognized type | — | Falls back to `KindStructSlice` (`enrichWithSchema` overwrites kind from schema) |
 
 Uses `yaml` struct tags for field naming. Falls back to lowercase field name.
+
+**Extension model**: `classifyAndFormat` falls back to `KindStructSlice` for unrecognized types — this is expected when consumers register custom kinds via `KindFunc`. `enrichWithSchema` overwrites the kind from the authoritative schema metadata afterward. `fieldKindToBrowserKind` maps unrecognized `FieldKind` values to `BrowserStructSlice`, and `fieldsToBrowserFields` forces `ReadOnly = true` for consumer-defined kinds (`> KindLast`) to prevent data corruption via the raw textarea editor.
 
 ### Reverse Reflection (SetFieldValue)
 
@@ -122,7 +143,7 @@ Sets a field on a struct pointer by dotted YAML path (`"build.image"` → `Build
 
 - Non-nil override pointer fields replace original values
 - `Hidden: true` removes the field (exact match + prefix-based for hiding entire subtrees)
-- `KindComplex` fields are auto-enforced as `ReadOnly`
+- Unrecognized `FieldKind` values map to `BrowserStructSlice` (read-only) in `fieldKindToBrowserKind`
 - Result sorted by `Order` (stable sort)
 - Panics on duplicate override paths
 
@@ -147,16 +168,18 @@ Domain-agnostic tabbed field browser. States: Browse → Edit → PickLayer.
 
 Manages `[]string` fields. Parses comma-separated input into items.
 
-**Constructor:** `NewListEditor(label, value string)`
-**Result:** `Value() string` (comma-separated), `IsConfirmed()`, `IsCancelled()`
+**Constructor:** `NewListEditor(label, value string, opts ...ListEditorOption)`
+**Options:** `WithListValidator(fn func(string) error)` — external validator run on confirm
+**Result:** `Value() string` (comma-separated), `IsConfirmed()`, `IsCancelled()`, `Err() string`
 **Key bindings:** `a` add, `e` edit, `d/backspace` delete, `Enter` confirm list, `Esc` cancel
 
 ### TextareaEditorModel (`tui/textareaeditor.go`)
 
 Multiline text editor wrapping `bubbles/textarea`.
 
-**Constructor:** `NewTextareaEditor(label, value string)` — auto-sizes height from content
-**Result:** `Value() string`, `IsConfirmed()`, `IsCancelled()`
+**Constructor:** `NewTextareaEditor(label, value string, opts ...TextareaEditorOption)` — auto-sizes height from content
+**Options:** `WithTextareaValidator(fn func(string) error)` — external validator run on save (Ctrl+S)
+**Result:** `Value() string`, `IsConfirmed()`, `IsCancelled()`, `Err() string`
 **Key bindings:** `Ctrl+S` save, `Esc` cancel
 
 ## Storage API Used by Store UI
@@ -165,10 +188,11 @@ Multiline text editor wrapping `bubbles/textarea`.
 |--------|---------|
 | `store.Read()` | Get immutable `*T` snapshot |
 | `store.Set(func(*T))` | Mutate in-memory via closure |
+| `store.Delete(path)` | Remove a dotted path from tree + re-publish snapshot |
 | `store.Layers()` | All discovered layers (for layer breakdown display) |
 | `store.Provenance(path)` | Which layer won a specific field |
 | `store.ProvenanceMap()` | All fields → source file paths |
-| `store.WriteTo(path)` | Write to explicit absolute path |
+| `store.Write(storage.ToPath(path))` | Write to explicit absolute path |
 
 ## Testing Patterns
 
@@ -265,6 +289,6 @@ func TestListEditor_AddItem(t *testing.T) {
 - `[]string` fields use comma-separated format — entries containing commas will break the parser
 - `time.Duration` uses `time.ParseDuration` — accepts `5m30s`, `1h`, `300ms` (standard Go duration)
 - `*bool` fields: nil is treated as `false` for display; `SetFieldValue` allocates a non-nil pointer
-- `KindComplex` is always enforced as read-only — even if an override sets `ReadOnly: false`
-- `writeFieldToFile` coerces string values to YAML types (bool, int, list) before writing
+- Unrecognized `FieldKind` values (consumer-defined kinds) are enforced as read-only in the browser — no editor exists for them
+- `store.Write(storage.ToPath(...))` persists dirty fields to the target layer file; type coercion happens during `SetFieldValue`
 - Provenance display uses exact field match + parent path walk-up for nested fields

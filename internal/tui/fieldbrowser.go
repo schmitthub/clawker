@@ -21,23 +21,33 @@ const (
 	BrowserInt                                 // Integer text input
 	BrowserStringSlice                         // List editor (comma-separated)
 	BrowserDuration                            // Duration text input
-	BrowserComplex                             // Unsupported — always read-only
+	BrowserMap                                 // Key-value map editor (default: KVEditorModel)
+	BrowserStructSlice                         // Struct slice editor (default: YAML textarea)
 )
 
 // BrowserField represents a single field in the field browser.
 type BrowserField struct {
-	Path        string             // Dotted path used as key (e.g. "build.image")
-	Label       string             // Human-readable label
-	Description string             // Help text
-	Kind        BrowserFieldKind   // Widget type for editing
-	Value       string             // Formatted current value
-	Default     string             // Shown when Value is empty or "<unset>"
-	Source      string             // Where this value came from (e.g. "~/.config/clawker/clawker.yaml")
-	Options     []string           // For Select fields
-	Validator   func(string) error // Optional input validation
-	Required    bool               // Whether the field must have a value
-	ReadOnly    bool               // Whether the field is not editable
-	Order       int                // Sort order (lower = first)
+	Path        string           // Dotted path used as key (e.g. "build.image")
+	Label       string           // Human-readable label
+	Description string           // Help text
+	Kind        BrowserFieldKind // Widget type for editing
+	Value       string           // Formatted current value (compact summary for browse display)
+	EditValue   string           // Full value for editor pre-population (YAML for Map/StructSlice)
+	Default     string           // Shown when Value is empty or "<unset>"
+	Source      string           // Where this value came from (e.g. "~/.config/clawker/clawker.yaml")
+	Options     []string         // For Select fields
+	// Validator is called with the editor's Value() before confirming.
+	// The string format depends on Kind: comma-separated for StringSlice,
+	// YAML for Map/StructSlice, raw text for Text, Go literal for Int/Duration.
+	Validator func(string) error
+	Required  bool // Whether the field must have a value
+	ReadOnly  bool // Whether the field is not editable
+	Order     int  // Sort order (lower = first)
+
+	// Editor is a custom editor factory. When non-nil, the field browser uses
+	// it instead of the default kind-based dispatch. The returned value must
+	// satisfy [FieldEditor]. Domain adapters provide this via overrides.
+	Editor func(label, value string) any
 }
 
 // BrowserLayerTarget represents a save destination for a single field.
@@ -71,6 +81,19 @@ type BrowserConfig struct {
 	// fieldPath is the dotted path, value is the new string value,
 	// targetIdx is the index into LayerTargets. Return error to show to user.
 	OnFieldSaved func(fieldPath, value string, targetIdx int) error
+
+	// OnFieldDeleted is called when the user deletes a field from a layer.
+	// fieldPath is the dotted path, targetIdx is the index into LayerTargets.
+	// Deletion removes the key from the target YAML file entirely, letting
+	// lower-priority layers show through. Return error to show to user.
+	OnFieldDeleted func(fieldPath string, targetIdx int) error
+
+	// OnRefresh is called after a successful save or delete to get fresh
+	// field values and layer data from the store. The TUI replaces its
+	// displayed state with the returned data, ensuring the winning values
+	// and layer breakdowns are always accurate. If nil, the field and
+	// layer displays are not refreshed.
+	OnRefresh func() (fields []BrowserField, layers []BrowserLayer)
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +105,8 @@ type browserState int
 const (
 	bsStateBrowse browserState = iota
 	bsStateEdit
-	bsStatePickLayer // layer picker after field edit confirmation
+	bsStatePickLayer       // layer picker after field edit confirmation
+	bsStatePickLayerDelete // layer picker for field deletion
 )
 
 // editKind identifies which sub-editor is active during bsStateEdit.
@@ -93,6 +117,8 @@ const (
 	ekText                     // TextField (simple string, int, duration)
 	ekList                     // ListEditorModel ([]string)
 	ekTextarea                 // TextareaEditorModel (multiline string)
+	ekKV                       // KVEditorModel (map[string]string)
+	ekCustom                   // Custom FieldEditor from BrowserField.Editor factory
 )
 
 // ---------------------------------------------------------------------------
@@ -120,13 +146,15 @@ var _ tea.Model = (*FieldBrowserModel)(nil)
 // FieldBrowserModel is a generic tabbed field browser/editor.
 // It knows nothing about stores, reflection, or config schemas.
 type FieldBrowserModel struct {
-	title        string
-	fields       []BrowserField
-	layerTargets []BrowserLayerTarget
-	layers       []BrowserLayer
-	onFieldSaved func(fieldPath, value string, targetIdx int) error
-	savedCount   int
-	state        browserState
+	title          string
+	fields         []BrowserField
+	layerTargets   []BrowserLayerTarget
+	layers         []BrowserLayer
+	onFieldSaved   func(fieldPath, value string, targetIdx int) error
+	onFieldDeleted func(fieldPath string, targetIdx int) error
+	onRefresh      func() ([]BrowserField, []BrowserLayer)
+	savedCount     int
+	state          browserState
 
 	// Tab navigation
 	tabs      []browserTab
@@ -135,12 +163,14 @@ type FieldBrowserModel struct {
 	scrollOff int // scroll offset for visible area
 
 	// Edit state
-	editIdx    int
-	editKind   editKind
-	textField  TextField
-	selField   SelectField
-	listEditor ListEditorModel
-	taEditor   TextareaEditorModel
+	editIdx      int
+	editKind     editKind
+	textField    TextField
+	selField     SelectField
+	listEditor   ListEditorModel
+	taEditor     TextareaEditorModel
+	kvEditor     KVEditorModel
+	customEditor FieldEditor // custom editor from BrowserField.Editor factory
 
 	// Layer picker state (after edit confirmation)
 	layerField    SelectField
@@ -158,14 +188,16 @@ type FieldBrowserModel struct {
 // NewFieldBrowser creates a field browser from the given config.
 func NewFieldBrowser(cfg BrowserConfig) *FieldBrowserModel {
 	m := &FieldBrowserModel{
-		title:        cfg.Title,
-		fields:       cfg.Fields,
-		layerTargets: cfg.LayerTargets,
-		layers:       cfg.Layers,
-		onFieldSaved: cfg.OnFieldSaved,
-		state:        bsStateBrowse,
-		width:        80,
-		height:       24,
+		title:          cfg.Title,
+		fields:         cfg.Fields,
+		layerTargets:   cfg.LayerTargets,
+		layers:         cfg.Layers,
+		onFieldSaved:   cfg.OnFieldSaved,
+		onFieldDeleted: cfg.OnFieldDeleted,
+		onRefresh:      cfg.OnRefresh,
+		state:          bsStateBrowse,
+		width:          80,
+		height:         24,
 	}
 	m.tabs = m.buildTabs()
 	if len(m.tabs) > 0 {
@@ -303,6 +335,8 @@ func (m *FieldBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateEdit(msg)
 	case bsStatePickLayer:
 		return m.updatePickLayer(msg)
+	case bsStatePickLayerDelete:
+		return m.updatePickLayerDelete(msg)
 	}
 	return m, nil
 }
@@ -328,6 +362,23 @@ func (m *FieldBrowserModel) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.enterEditState(rows[m.activeRow].fieldIdx)
+
+		case msg.Type == tea.KeyRunes && string(msg.Runes) == "d":
+			if m.onFieldDeleted == nil {
+				return m, nil
+			}
+			if m.activeTab >= len(m.tabs) {
+				return m, nil
+			}
+			rows := m.tabs[m.activeTab].rows
+			if m.activeRow >= len(rows) || rows[m.activeRow].isHeading {
+				return m, nil
+			}
+			f := rows[m.activeRow].field
+			if f.ReadOnly {
+				return m, nil
+			}
+			return m, m.enterDeletePickLayer(f.Path)
 
 		case IsLeft(msg):
 			if len(m.tabs) > 1 {
@@ -364,6 +415,29 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 	m.editIdx = idx
 	f := m.fields[idx]
 
+	// Custom editor takes priority over kind-based dispatch.
+	if f.Editor != nil {
+		editVal := f.EditValue
+		if editVal == "" {
+			editVal = f.Value
+		}
+		editor, ok := f.Editor(f.Label, editVal).(FieldEditor)
+		if !ok {
+			m.lastSaveError = fmt.Sprintf("field %q: editor factory did not return a FieldEditor", f.Path)
+			m.state = bsStateBrowse
+			return nil
+		}
+		m.editKind = ekCustom
+		m.customEditor = editor
+		if m.width > 0 && m.height > 0 {
+			updated, _ := m.customEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+			if fe, ok := updated.(FieldEditor); ok {
+				m.customEditor = fe
+			}
+		}
+		return m.customEditor.Init()
+	}
+
 	currentVal := f.Value
 
 	switch f.Kind {
@@ -396,23 +470,54 @@ func (m *FieldBrowserModel) enterEditState(idx int) tea.Cmd {
 
 	case BrowserStringSlice:
 		m.editKind = ekList
-		m.listEditor = NewListEditor(f.Label, currentVal)
+		var listOpts []ListEditorOption
+		if f.Validator != nil {
+			listOpts = append(listOpts, WithListValidator(f.Validator))
+		}
+		m.listEditor = NewListEditor(f.Label, currentVal, listOpts...)
 		if m.width > 0 && m.height > 0 {
 			m.listEditor, _ = m.listEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		}
 		return m.listEditor.Init()
 
-	default:
-		// Text, Int, Duration — check if multiline.
-		if strings.Contains(currentVal, "\n") {
-			m.editKind = ekTextarea
-			m.taEditor = NewTextareaEditor(f.Label, currentVal)
-			// Size to the browser's known dimensions so wrapping works immediately.
-			if m.width > 0 && m.height > 0 {
-				m.taEditor, _ = m.taEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-			}
-			return m.taEditor.Init()
+	case BrowserMap:
+		editVal := f.EditValue
+		if editVal == "" {
+			editVal = currentVal
 		}
+		m.editKind = ekKV
+		var kvOpts []KVEditorOption
+		if f.Validator != nil {
+			kvOpts = append(kvOpts, WithKVValidator(f.Validator))
+		}
+		m.kvEditor = NewKVEditor(f.Label, editVal, kvOpts...)
+		if m.width > 0 && m.height > 0 {
+			if updated, _ := m.kvEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height}); updated != nil {
+				m.kvEditor = updated.(KVEditorModel)
+			}
+		}
+		return m.kvEditor.Init()
+
+	case BrowserText, BrowserStructSlice:
+		// Text and StructSlice both use the multiline textarea editor.
+		// StructSlice prefers EditValue (full YAML); Text uses the display value.
+		editVal := currentVal
+		if f.Kind == BrowserStructSlice && f.EditValue != "" {
+			editVal = f.EditValue
+		}
+		m.editKind = ekTextarea
+		var taOpts []TextareaEditorOption
+		if f.Validator != nil {
+			taOpts = append(taOpts, WithTextareaValidator(f.Validator))
+		}
+		m.taEditor = NewTextareaEditor(f.Label, editVal, taOpts...)
+		if m.width > 0 && m.height > 0 {
+			m.taEditor, _ = m.taEditor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		}
+		return m.taEditor.Init()
+
+	default:
+		// Int and Duration fields use single-line text input.
 		m.editKind = ekText
 		opts := []TextFieldOption{WithDefault(currentVal)}
 		if f.Validator != nil {
@@ -439,6 +544,9 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.selField, cmd = m.selField.Update(msg)
 		if m.selField.IsConfirmed() {
+			if err := m.validateBeforeSave(f, m.selField.Value()); err != nil {
+				return m, nil
+			}
 			return m, m.enterPickLayer(f.Path, m.selField.Value())
 		}
 		return m, fbFilterQuit(cmd)
@@ -478,9 +586,55 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, cmd
+
+	case ekKV:
+		updated, cmd := m.kvEditor.Update(msg)
+		if kv, ok := updated.(KVEditorModel); ok {
+			m.kvEditor = kv
+		}
+		if m.kvEditor.IsConfirmed() {
+			return m, m.enterPickLayer(f.Path, m.kvEditor.Value())
+		}
+		if m.kvEditor.IsCancelled() {
+			m.state = bsStateBrowse
+			return m, nil
+		}
+		return m, cmd
+
+	case ekCustom:
+		updated, cmd := m.customEditor.Update(msg)
+		if fe, ok := updated.(FieldEditor); ok {
+			m.customEditor = fe
+		}
+		if m.customEditor.IsConfirmed() {
+			if err := m.validateBeforeSave(f, m.customEditor.Value()); err != nil {
+				return m, nil
+			}
+			return m, m.enterPickLayer(f.Path, m.customEditor.Value())
+		}
+		if m.customEditor.IsCancelled() {
+			m.state = bsStateBrowse
+			return m, nil
+		}
+		return m, cmd
 	}
 
 	return m, nil
+}
+
+// validateBeforeSave runs the field's Validator (if any) and stores the error
+// on lastSaveError, returning to browse state. Used for editor types that
+// don't have built-in validator support (ekSelect, ekCustom).
+func (m *FieldBrowserModel) validateBeforeSave(f BrowserField, value string) error {
+	if f.Validator == nil {
+		return nil
+	}
+	if err := f.Validator(value); err != nil {
+		m.lastSaveError = err.Error()
+		m.state = bsStateBrowse
+		return err
+	}
+	return nil
 }
 
 // enterPickLayer transitions to the layer picker after a field edit is confirmed.
@@ -529,11 +683,13 @@ func (m *FieldBrowserModel) updatePickLayer(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// Update the field's displayed value.
-		for i := range m.fields {
-			if m.fields[i].Path == m.pendingPath {
-				m.fields[i].Value = m.pendingValue
-				break
+		if !m.refresh() {
+			// No refresh callback — update field value directly.
+			for i := range m.fields {
+				if m.fields[i].Path == m.pendingPath {
+					m.fields[i].Value = m.pendingValue
+					break
+				}
 			}
 		}
 		m.lastSaveError = "" // Clear any previous error on success.
@@ -547,30 +703,169 @@ func (m *FieldBrowserModel) updatePickLayer(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, fbFilterQuit(cmd)
 }
 
+// enterDeletePickLayer transitions to the layer picker for deleting a field.
+func (m *FieldBrowserModel) enterDeletePickLayer(fieldPath string) tea.Cmd {
+	if len(m.layerTargets) == 0 {
+		m.lastSaveError = "no save destinations available"
+		m.state = bsStateBrowse
+		return nil
+	}
+
+	m.pendingPath = fieldPath
+	m.pendingValue = ""
+	m.state = bsStatePickLayerDelete
+
+	options := make([]FieldOption, len(m.layerTargets))
+	for i, t := range m.layerTargets {
+		options[i] = FieldOption{Label: t.Label, Description: t.Description}
+	}
+	m.layerField = NewSelectField("layer", "Delete from:", options, 0)
+	return nil
+}
+
+func (m *FieldBrowserModel) updatePickLayerDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if msg, ok := msg.(tea.KeyMsg); ok && IsEscape(msg) {
+		m.pendingPath = ""
+		m.state = bsStateBrowse
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.layerField, cmd = m.layerField.Update(msg)
+	if m.layerField.IsConfirmed() {
+		idx := m.layerField.SelectedIndex()
+		if m.onFieldDeleted == nil {
+			m.lastSaveError = "delete not available (no delete handler configured)"
+			m.state = bsStateBrowse
+			return m, nil
+		}
+		if idx >= 0 && idx < len(m.layerTargets) {
+			if err := m.onFieldDeleted(m.pendingPath, idx); err != nil {
+				m.lastSaveError = err.Error()
+				m.state = bsStateBrowse
+				return m, nil
+			}
+		}
+		if !m.refresh() {
+			// No refresh callback — clear field value directly.
+			for i := range m.fields {
+				if m.fields[i].Path == m.pendingPath {
+					m.fields[i].Value = ""
+					break
+				}
+			}
+		}
+		m.lastSaveError = ""
+		m.saved = true
+		m.savedCount++
+		m.pendingPath = ""
+		m.state = bsStateBrowse
+		return m, nil
+	}
+	return m, fbFilterQuit(cmd)
+}
+
+// ---------------------------------------------------------------------------
+// State refresh
+// ---------------------------------------------------------------------------
+
+// refresh replaces fields and layers with fresh data from the OnRefresh
+// callback, then rebuilds tabs while preserving the cursor position.
+// Called after every successful save or delete so that winning values
+// and layer breakdowns reflect the current store state.
+// Returns true if the refresh was performed, false if no callback is set.
+func (m *FieldBrowserModel) refresh() bool {
+	if m.onRefresh == nil {
+		return false
+	}
+	fields, layers := m.onRefresh()
+	m.fields = fields
+	m.layers = layers
+
+	// Rebuild tabs from fresh fields, preserving cursor position.
+	prevTab := m.activeTab
+	prevRow := m.activeRow
+	m.tabs = m.buildTabs()
+	if prevTab < len(m.tabs) {
+		m.activeTab = prevTab
+		// Clamp row to tab bounds.
+		if prevRow < len(m.tabs[prevTab].rows) {
+			m.activeRow = prevRow
+		} else {
+			m.activeRow = m.firstFieldRow(prevTab)
+		}
+	} else if len(m.tabs) > 0 {
+		m.activeTab = 0
+		m.activeRow = m.firstFieldRow(0)
+	}
+	return true
+}
+
 // ---------------------------------------------------------------------------
 // Scroll
 // ---------------------------------------------------------------------------
 
 func (m *FieldBrowserModel) ensureVisible() {
-	visible := m.visibleRows()
-	if visible <= 0 {
-		return
-	}
-	if m.activeRow < m.scrollOff {
-		m.scrollOff = m.activeRow
-	}
-	if m.activeRow >= m.scrollOff+visible {
-		m.scrollOff = m.activeRow - visible + 1
+	// Iterate to convergence: visibleRows() depends on scrollOff (variable-height
+	// rows mean the count changes with the starting position). Three iterations
+	// is sufficient — each adjustment moves scrollOff closer to activeRow.
+	for range 3 {
+		visible := m.visibleRows()
+		if visible <= 0 {
+			return
+		}
+		if m.activeRow < m.scrollOff {
+			m.scrollOff = m.activeRow
+		} else if m.activeRow >= m.scrollOff+visible {
+			m.scrollOff = max(m.activeRow-visible+1, 0)
+		} else {
+			return // active row is visible
+		}
 	}
 }
 
-func (m *FieldBrowserModel) visibleRows() int {
+// visibleLines returns the number of terminal lines available for the field list.
+func (m *FieldBrowserModel) visibleLines() int {
 	// Chrome: title(2) + tabbar(2) + status/help(3: newline + optional error + help bar).
 	chrome := 7
 	if len(m.layers) > 0 {
 		chrome += len(m.layers) + 2 // divider + entries
 	}
-	return max(m.height-chrome, 3)
+	return max(m.height-chrome, 5)
+}
+
+// rowLines returns the number of terminal lines a row consumes.
+func rowLines(row browserRow) int {
+	if row.isHeading {
+		return 1
+	}
+	if row.field != nil && row.field.Description != "" {
+		return 2 // label+value line + description line
+	}
+	return 1
+}
+
+// visibleRows returns how many rows fit from scrollOff within the available lines.
+func (m *FieldBrowserModel) visibleRows() int {
+	lines := m.visibleLines()
+	if m.activeTab >= len(m.tabs) {
+		return max(lines, 3)
+	}
+	rows := m.tabs[m.activeTab].rows
+	count := 0
+	used := 0
+	for i := m.scrollOff; i < len(rows); i++ {
+		rl := rowLines(rows[i])
+		if used+rl > lines {
+			break
+		}
+		used += rl
+		count++
+	}
+	if count < 3 {
+		return 3
+	}
+	return count
 }
 
 // ---------------------------------------------------------------------------
@@ -590,7 +885,7 @@ func (m *FieldBrowserModel) View() string {
 		m.viewBrowse(&b)
 	case bsStateEdit:
 		m.viewEdit(&b)
-	case bsStatePickLayer:
+	case bsStatePickLayer, bsStatePickLayerDelete:
 		b.WriteString(m.layerField.View())
 	}
 
@@ -616,7 +911,7 @@ func (m *FieldBrowserModel) viewBrowse(b *strings.Builder) {
 				if w < 10 {
 					w = 40
 				}
-				b.WriteString(RenderLabeledDivider(row.heading, w))
+				b.WriteString(RenderLeftLabeledDivider(row.heading, w))
 				b.WriteString("\n")
 				continue
 			}
@@ -670,6 +965,11 @@ func (m *FieldBrowserModel) viewBrowse(b *strings.Builder) {
 	b.WriteString("  ")
 	b.WriteString(iostreams.HelpKeyStyle.Render("enter"))
 	b.WriteString(iostreams.HelpDescStyle.Render(" edit"))
+	if m.onFieldDeleted != nil {
+		b.WriteString("  ")
+		b.WriteString(iostreams.HelpKeyStyle.Render("d"))
+		b.WriteString(iostreams.HelpDescStyle.Render(" delete"))
+	}
 	b.WriteString("  ")
 	b.WriteString(iostreams.HelpKeyStyle.Render("esc"))
 	b.WriteString(iostreams.HelpDescStyle.Render(" quit"))
@@ -739,6 +1039,19 @@ func (m *FieldBrowserModel) renderFieldRow(b *strings.Builder, row browserRow, s
 	if selected && f.Source != "" {
 		b.WriteString("  ")
 		b.WriteString(iostreams.MutedStyle.Render("← " + f.Source))
+	}
+
+	// Show description below the field.
+	if f.Description != "" {
+		b.WriteString("\n")
+		b.WriteString("    ")
+		desc := f.Description
+		maxDesc := m.width - 8
+		if maxDesc < 10 {
+			maxDesc = 10
+		}
+		desc = text.Truncate(desc, maxDesc)
+		b.WriteString(iostreams.MutedStyle.Render(desc))
 	}
 }
 
@@ -837,6 +1150,12 @@ func (m *FieldBrowserModel) viewEdit(b *strings.Builder) {
 		b.WriteString(m.listEditor.View())
 	case ekTextarea:
 		b.WriteString(m.taEditor.View())
+	case ekKV:
+		b.WriteString(m.kvEditor.View())
+	case ekCustom:
+		if m.customEditor != nil {
+			b.WriteString(m.customEditor.View())
+		}
 	}
 }
 

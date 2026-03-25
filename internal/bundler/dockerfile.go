@@ -156,8 +156,8 @@ type DockerfileContext struct {
 type DockerfileInstructions struct {
 	Copy    []CopyInstruction
 	Args    []ArgInstruction
-	UserRun []RunInstruction
-	RootRun []RunInstruction
+	UserRun []string
+	RootRun []string
 }
 
 // DockerfileInject contains raw instruction injection points.
@@ -182,13 +182,6 @@ type CopyInstruction struct {
 type ArgInstruction struct {
 	Name    string
 	Default string
-}
-
-// RunInstruction represents a RUN instruction with OS variants.
-type RunInstruction struct {
-	Cmd    string
-	Alpine string
-	Debian string
 }
 
 type DockerFileManagerOptions struct {
@@ -655,8 +648,8 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		ctx.Instructions = &DockerfileInstructions{
 			Copy:    convertCopyInstructions(inst.Copy),
 			Args:    convertArgInstructions(inst.Args),
-			UserRun: convertRunInstructions(inst.UserRun),
-			RootRun: convertRunInstructions(inst.RootRun),
+			UserRun: inst.UserRun,
+			RootRun: inst.RootRun,
 		}
 	}
 
@@ -703,21 +696,6 @@ func convertArgInstructions(src []config.ArgDefinition) []ArgInstruction {
 		result[i] = ArgInstruction{
 			Name:    a.Name,
 			Default: a.Default,
-		}
-	}
-	return result
-}
-
-func convertRunInstructions(src []config.RunInstruction) []RunInstruction {
-	if src == nil {
-		return nil
-	}
-	result := make([]RunInstruction, len(src))
-	for i, r := range src {
-		result[i] = RunInstruction{
-			Cmd:    r.Cmd,
-			Alpine: r.Alpine,
-			Debian: r.Debian,
 		}
 	}
 	return result

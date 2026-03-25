@@ -6,16 +6,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	projectui "github.com/schmitthub/clawker/internal/config/storeui/project"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -134,8 +135,6 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	}
 
 	configFileName := "." + cfgGateway.ProjectConfigFileName()
-	configPath := filepath.Join(wd, configFileName)
-	plainConfigPath := filepath.Join(wd, cfgGateway.ProjectConfigFileName())
 
 	// Check if configuration already exists via storage layer discovery.
 	configExists := shared.HasLocalProjectConfig(cfgGateway, wd)
@@ -182,18 +181,6 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 			fmt.Fprintf(ios.Out, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
 		}
 
-		// Still offer user-level default from existing config
-		existingContent, readErr := os.ReadFile(configPath)
-		if readErr != nil {
-			existingContent, readErr = os.ReadFile(plainConfigPath)
-			if readErr != nil {
-				log.Debug().Err(readErr).Msg("failed to read existing config for user default offer")
-			}
-		}
-		if readErr == nil {
-			prompter := opts.Prompter()
-			maybeOfferUserDefault(ios, cs, log, prompter, existingContent)
-		}
 		return nil
 	}
 
@@ -293,12 +280,34 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 		Bool("force", opts.Force).
 		Msg("initializing project")
 
-	// Generate config content with collected options
-	configContent := scaffoldProjectConfig(buildImage, workspaceMode)
+	// Create a project store with defaults from struct tags, pointed at CWD.
+	store, err := storage.NewStore[config.Project](
+		storage.WithFilenames(cfgGateway.ProjectConfigFileName()),
+		storage.WithDefaultsFromStruct[config.Project](),
+		storage.WithDirs(wd),
+	)
+	if err != nil {
+		return fmt.Errorf("creating project config store: %w", err)
+	}
 
-	// Create .clawker.yaml (dotfile form)
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", configFileName, err)
+	// Apply wizard selections on top of defaults.
+	if err := store.Set(func(p *config.Project) {
+		p.Build.Image = buildImage
+		p.Workspace.DefaultMode = workspaceMode
+		if p.Security.Firewall == nil {
+			p.Security.Firewall = &config.FirewallConfig{}
+		}
+		p.Security.Firewall.AddDomains = []string{"github.com", "api.github.com"}
+		p.Security.Firewall.Rules = []config.EgressRule{
+			{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
+		}
+	}); err != nil {
+		return fmt.Errorf("setting project config: %w", err)
+	}
+
+	// Persist to dotfile via the store.
+	if err := store.Write(storage.ToPath(configPath)); err != nil {
+		return fmt.Errorf("writing %s: %w", configFileName, err)
 	}
 	log.Debug().Str("file", configPath).Msg("created configuration file")
 
@@ -321,17 +330,37 @@ func performProjectSetup(ctx context.Context, opts *ProjectInitOptions, projectN
 		return fmt.Errorf("could not register project: %w", err)
 	}
 
-	// Offer to save as user-level default if not already present
+	// Offer interactive customization via the project config editor.
 	if !opts.Yes && ios.IsInteractive() {
 		prompter := opts.Prompter()
-		maybeOfferUserDefault(ios, cs, log, prompter, []byte(configContent))
+
+		customize, promptErr := prompter.Confirm("Customize configuration?", false)
+		if promptErr == nil && customize {
+			// Reload config to discover the just-written file.
+			freshCfg, cfgErr := config.NewConfig()
+			if cfgErr != nil {
+				fmt.Fprintf(ios.ErrOut, "%s Could not reload configuration for editing: %s\n",
+					cs.WarningIcon(), cfgErr)
+			} else {
+				result, editErr := projectui.Edit(ios, freshCfg.ProjectStore(), freshCfg)
+				if editErr != nil {
+					fmt.Fprintf(ios.ErrOut, "%s Configuration editor failed: %s\n",
+						cs.WarningIcon(), editErr)
+				} else if result.Saved {
+					fmt.Fprintf(ios.Out, "%s Configuration updated (%d fields modified)\n",
+						cs.SuccessIcon(), result.SavedCount)
+				}
+			}
+		}
+
 	}
 
 	fmt.Fprintln(ios.Out)
 	fmt.Fprintln(ios.Out, "Next Steps:")
-	fmt.Fprintf(ios.Out, "  1. Review and customize %s\n", configFileName)
-	fmt.Fprintf(ios.Out, "  2. Run 'clawker build' to build your project's container image\n")
-	fmt.Fprintf(ios.Out, "  3. Run 'clawker run -it --agent <agent-name> @' to start an interactive shell in the container\n")
+	fmt.Fprintf(ios.Out, "  1. Run 'clawker build' to build your project's container image\n")
+	fmt.Fprintf(ios.Out, "  2. Run 'clawker run -it --agent <agent-name> @' to start an interactive shell in the container\n")
+	fmt.Fprintln(ios.Out)
+	fmt.Fprintf(ios.Out, "To edit your project configuration later, run 'clawker project edit'\n")
 	return nil
 }
 
@@ -423,49 +452,4 @@ func resolveImageFromWizard(values tui.WizardValues) string {
 		return values["custom_image"]
 	}
 	return intbuild.FlavorToImage(values["flavor"])
-}
-
-// maybeOfferUserDefault checks if a user-level clawker.yaml exists in configDir.
-// If it doesn't, prompts the user to save the given content as their default.
-func maybeOfferUserDefault(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, log *logger.Logger, prompter *prompterpkg.Prompter, content []byte) {
-	userConfigPath, pathErr := config.UserProjectConfigFilePath()
-	if pathErr != nil {
-		return
-	}
-	if _, statErr := os.Stat(userConfigPath); !os.IsNotExist(statErr) {
-		return // already exists or stat error
-	}
-	saveDefault, promptErr := prompter.Confirm(
-		"Save as default project settings?",
-		false,
-	)
-	if promptErr != nil || !saveDefault {
-		return
-	}
-	dir := filepath.Dir(userConfigPath)
-	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
-		log.Debug().Err(mkErr).Msg("failed to create config dir for user defaults")
-		return
-	}
-	if writeErr := os.WriteFile(userConfigPath, content, 0644); writeErr != nil {
-		log.Debug().Err(writeErr).Msg("failed to write user-level default config")
-		return
-	}
-	fmt.Fprintf(ios.Out, "%s Default: %s\n", cs.SuccessIcon(), userConfigPath)
-}
-
-// scaffoldProjectConfig creates the .clawker.yaml content from the canonical template.
-// It inserts the build image and substitutes the workspace mode into DefaultConfigYAML.
-func scaffoldProjectConfig(buildImage, workspaceMode string) string {
-	s := config.DefaultConfigYAML
-	// Uncomment and set the image line (with fallback if template anchor changes)
-	const imageAnchor = `  #image: "buildpack-deps:bookworm-scm"`
-	if replaced := strings.Replace(s, imageAnchor, `  image: "`+buildImage+`"`, 1); replaced != s {
-		s = replaced
-	} else {
-		s = strings.Replace(s, "build:\n", "build:\n  image: \""+buildImage+"\"\n", 1)
-	}
-	// Substitute workspace mode
-	s = strings.Replace(s, `  default_mode: "bind"`, `  default_mode: "`+workspaceMode+`"`, 1)
-	return s
 }
