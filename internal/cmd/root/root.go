@@ -30,9 +30,9 @@ func NewCmdRoot(f *cmdutil.Factory, version, buildDate string) (*cobra.Command, 
 		Long: `Clawker (claude + docker) wraps Claude Code in safe, reproducible, monitored, isolated Docker containers.
 
 Quick start:
-  clawker init           # Set up user settings (~/.config/clawker/settings.yaml)
-  clawker project init   # Initialize project in current directory (.clawker.yaml)
-  clawker start          # Build and start Claude Code in a container
+  clawker init           # Initialize project in current directory (.clawker.yaml)
+  clawker build          # Build the container image
+  clawker run            # Start Claude Code in a container
   clawker stop           # Stop the container
 
 Workspace modes:

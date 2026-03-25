@@ -1,360 +1,107 @@
 package init
 
 import (
+	"bytes"
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 
-	intbuild "github.com/schmitthub/clawker/internal/bundler"
+	projectinit "github.com/schmitthub/clawker/internal/cmd/project/init"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
-	"github.com/schmitthub/clawker/pkg/whail"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
-// testInitOpts builds a default InitOptions for testing with an isolated config.
-func testInitOpts(t *testing.T, tio *iostreams.IOStreams) *InitOptions {
+// testFactory builds a minimal Factory for init alias tests.
+// Returns the factory and the stderr buffer for output assertions.
+// Config, Logger, and ProjectManager are nil — tests must inject runF to avoid nil panics.
+func testFactory(t *testing.T) (*cmdutil.Factory, *bytes.Buffer) {
 	t.Helper()
-
-	cfg := configmocks.NewIsolatedTestConfig(t)
-
-	fake := dockertest.NewFakeClient(cfg)
-	fake.Client.BuildDefaultImageFunc = func(_ context.Context, _ string, _ whail.BuildProgressFunc) error {
-		return nil
-	}
-
-	return &InitOptions{
+	tio, _, _, errOut := iostreams.Test()
+	return &cmdutil.Factory{
 		IOStreams: tio,
 		TUI:       tui.NewTUI(tio),
-		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio) },
-		Config:    func() (config.Config, error) { return cfg, nil },
-		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
-		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
+	}, errOut
+}
+
+func TestNewCmdInit_FlagForwarding(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantName  string
+		wantForce bool
+		wantYes   bool
+		wantErr   bool
+	}{
+		{name: "defaults", args: []string{}},
+		{name: "yes flag", args: []string{"--yes"}, wantYes: true},
+		{name: "force flag", args: []string{"--force"}, wantForce: true},
+		{name: "positional arg", args: []string{"my-project"}, wantName: "my-project"},
+		{name: "all flags and arg", args: []string{"--yes", "--force", "my-project"}, wantYes: true, wantForce: true, wantName: "my-project"},
+		{name: "too many args", args: []string{"one", "two"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, _ := testFactory(t)
+
+			var gotOpts *projectinit.ProjectInitOptions
+			cmd := NewCmdInit(f, func(_ context.Context, opts *projectinit.ProjectInitOptions) error {
+				gotOpts = opts
+				return nil
+			})
+
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, gotOpts)
+
+			assert.Equal(t, f.IOStreams, gotOpts.IOStreams, "IOStreams should be wired from factory")
+			assert.NotNil(t, gotOpts.TUI, "TUI should be wired from factory")
+			assert.Equal(t, tt.wantYes, gotOpts.Yes)
+			assert.Equal(t, tt.wantForce, gotOpts.Force)
+			assert.Equal(t, tt.wantName, gotOpts.Name)
+		})
 	}
 }
 
-// --- NewCmdInit tests ---
+func TestNewCmdInit_PrintsAliasTip(t *testing.T) {
+	f, errOut := testFactory(t)
 
-func TestNewCmdInit(t *testing.T) {
-	tio, _, _, _ := iostreams.Test()
-	cfg := configmocks.NewBlankConfig()
-	fake := dockertest.NewFakeClient(cfg)
-	f := &cmdutil.Factory{
-		IOStreams: tio,
-		TUI:       tui.NewTUI(tio),
-		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio) },
-		Config:    func() (config.Config, error) { return cfg, nil },
-		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
-	}
-
-	var gotOpts *InitOptions
-	cmd := NewCmdInit(f, func(_ context.Context, opts *InitOptions) error {
-		gotOpts = opts
+	cmd := NewCmdInit(f, func(_ context.Context, _ *projectinit.ProjectInitOptions) error {
 		return nil
 	})
 
 	cmd.SetArgs([]string{})
-	err := cmd.Execute()
-	require.NoError(t, err)
-	require.NotNil(t, gotOpts, "expected runF to be called")
+	require.NoError(t, cmd.Execute())
 
-	assert.Equal(t, tio, gotOpts.IOStreams, "IOStreams should be wired from factory")
-	assert.NotNil(t, gotOpts.TUI, "TUI should be wired from factory")
-	assert.NotNil(t, gotOpts.Prompter, "Prompter func should be wired from factory")
-	assert.NotNil(t, gotOpts.Config, "Config func should be wired from factory")
-	assert.NotNil(t, gotOpts.Client, "Client func should be wired from factory")
-	assert.False(t, gotOpts.Yes, "Yes should be false by default")
+	assert.NotEmpty(t, errOut.String(), "should print alias tip to stderr")
 }
 
-func TestNewCmdInit_YesFlag(t *testing.T) {
-	tio, _, _, _ := iostreams.Test()
-	f := &cmdutil.Factory{IOStreams: tio}
+// TestNewCmdInit_FlagParityWithProjectInit catches drift between the alias and
+// the delegate command's flag definitions. If project init adds a new flag,
+// this test will fail — reminding you to add it to the alias too.
+func TestNewCmdInit_FlagParityWithProjectInit(t *testing.T) {
+	f, _ := testFactory(t)
 
-	var gotOpts *InitOptions
-	cmd := NewCmdInit(f, func(_ context.Context, opts *InitOptions) error {
-		gotOpts = opts
-		return nil
+	aliasCmd := NewCmdInit(f, nil)
+	delegateCmd := projectinit.NewCmdProjectInit(f, nil)
+
+	aliasFlags := make(map[string]bool)
+	aliasCmd.Flags().VisitAll(func(f *pflag.Flag) {
+		aliasFlags[f.Name] = true
 	})
 
-	cmd.SetArgs([]string{"--yes"})
-	err := cmd.Execute()
-	require.NoError(t, err)
-	require.NotNil(t, gotOpts, "expected runF to be called")
-	assert.True(t, gotOpts.Yes, "Yes should be true when --yes flag is set")
-}
-
-// --- Run dispatch tests ---
-
-func TestRun_NonInteractive(t *testing.T) {
-	tio, _, _, errOut := iostreams.Test()
-
-	opts := testInitOpts(t, tio)
-	opts.Yes = true
-
-	err := Run(context.Background(), opts)
-	require.NoError(t, err)
-
-	output := errOut.String()
-	assert.Contains(t, output, "Setting up clawker user settings...")
-	assert.Contains(t, output, "Settings:")
-	assert.Contains(t, output, "Next Steps:")
-}
-
-func TestRun_NonInteractive_SettingsUnchanged(t *testing.T) {
-	tio, _, _, _ := iostreams.Test()
-
-	opts := testInitOpts(t, tio)
-	opts.Yes = true
-
-	err := Run(context.Background(), opts)
-	require.NoError(t, err)
-
-	// In non-interactive mode, build should be skipped (no error)
-	_, cfgErr := opts.Config()
-	require.NoError(t, cfgErr)
-}
-
-// --- performSetup tests ---
-
-func TestPerformSetup_NoBuild(t *testing.T) {
-	tio, _, _, errOut := iostreams.Test()
-	opts := testInitOpts(t, tio)
-
-	err := performSetup(context.Background(), opts, false, "")
-	require.NoError(t, err)
-
-	output := errOut.String()
-	assert.Contains(t, output, "Setting up clawker user settings...")
-	assert.Contains(t, output, "Settings:")
-	assert.Contains(t, output, "Next Steps:")
-	assert.NotContains(t, output, "Building base image")
-
-	// Config should load without error (build was skipped)
-	_, cfgErr := opts.Config()
-	require.NoError(t, cfgErr)
-
-	// No build → no user-level clawker.yaml should be created
-	cfgPath, pathErr := config.UserProjectConfigFilePath()
-	require.NoError(t, pathErr)
-	_, statErr := os.Stat(cfgPath)
-	assert.True(t, os.IsNotExist(statErr), "user project config should not exist when build is skipped")
-}
-
-func TestPerformSetup_BuildSuccess(t *testing.T) {
-	tio, _, _, errOut := iostreams.Test()
-	opts := testInitOpts(t, tio)
-
-	err := performSetup(context.Background(), opts, true, "bookworm")
-	require.NoError(t, err)
-
-	// Verify config loads without error after successful build
-	_, cfgErr := opts.Config()
-	require.NoError(t, cfgErr)
-
-	// User-level clawker.yaml should be created with build.image
-	cfgPath, pathErr := config.UserProjectConfigFilePath()
-	require.NoError(t, pathErr)
-
-	data, readErr := os.ReadFile(cfgPath)
-	require.NoError(t, readErr, "user project config should exist after successful build")
-
-	var parsed map[string]any
-	require.NoError(t, yaml.Unmarshal(data, &parsed))
-
-	build, ok := parsed["build"].(map[string]any)
-	require.True(t, ok, "build key should be a map")
-	assert.Equal(t, docker.DefaultImageTag, build["image"], "build.image should be the default image tag")
-
-	// Store writes full schema with defaults
-	assert.NotNil(t, parsed["workspace"], "defaults should include workspace")
-
-	// Output should mention the default image
-	assert.Contains(t, errOut.String(), "Default image:")
-}
-
-func TestPerformSetup_BuildFailure(t *testing.T) {
-	tio, _, _, errOut := iostreams.Test()
-	cfg := configmocks.NewIsolatedTestConfig(t)
-
-	fake := dockertest.NewFakeClient(cfg)
-	fake.Client.BuildDefaultImageFunc = func(_ context.Context, _ string, _ whail.BuildProgressFunc) error {
-		return fmt.Errorf("insufficient disk space")
-	}
-
-	opts := &InitOptions{
-		IOStreams: tio,
-		TUI:       tui.NewTUI(tio),
-		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio) },
-		Config:    func() (config.Config, error) { return cfg, nil },
-		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
-		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
-	}
-
-	err := performSetup(context.Background(), opts, true, "bookworm")
-	// performSetup does not return an error on build failure — it prints a message and continues
-	require.NoError(t, err)
-
-	output := errOut.String()
-	assert.Contains(t, output, "Base image build failed")
-	assert.Contains(t, output, "You can manually build later")
-
-	// Build failure should not cause a crash — settings are still valid
-	assert.Equal(t, cfg.Settings().Logging.MaxSizeMB, cfg.Settings().Logging.MaxSizeMB)
-
-	// Build failure → no user-level clawker.yaml should be created
-	cfgPath, pathErr := config.UserProjectConfigFilePath()
-	require.NoError(t, pathErr)
-	_, statErr := os.Stat(cfgPath)
-	assert.True(t, os.IsNotExist(statErr), "user project config should not exist after build failure")
-}
-
-// --- Wizard field definition tests ---
-
-func TestBuildWizardFields(t *testing.T) {
-	fields := buildWizardFields()
-	require.Len(t, fields, 3, "wizard should have 3 fields")
-
-	// Field 0: build
-	assert.Equal(t, "build", fields[0].ID)
-	assert.Equal(t, "Build Image", fields[0].Title)
-	assert.Equal(t, "Build an initial base image?", fields[0].Prompt)
-	assert.Equal(t, tui.FieldSelect, fields[0].Kind)
-	require.Len(t, fields[0].Options, 2)
-	assert.Equal(t, "Yes", fields[0].Options[0].Label)
-	assert.Equal(t, "No", fields[0].Options[1].Label)
-	assert.Equal(t, 0, fields[0].DefaultIdx)
-	assert.Nil(t, fields[0].SkipIf, "build field should not have SkipIf")
-
-	// Field 1: flavor
-	assert.Equal(t, "flavor", fields[1].ID)
-	assert.Equal(t, "Flavor", fields[1].Title)
-	assert.Equal(t, "Select Linux flavor", fields[1].Prompt)
-	assert.Equal(t, tui.FieldSelect, fields[1].Kind)
-	assert.NotEmpty(t, fields[1].Options, "flavor should have options")
-	assert.Equal(t, 0, fields[1].DefaultIdx)
-	require.NotNil(t, fields[1].SkipIf, "flavor field should have SkipIf")
-
-	// SkipIf should skip when build != "Yes"
-	assert.True(t, fields[1].SkipIf(tui.WizardValues{"build": "No"}), "flavor should be skipped when build=No")
-	assert.False(t, fields[1].SkipIf(tui.WizardValues{"build": "Yes"}), "flavor should not be skipped when build=Yes")
-
-	// Field 2: confirm
-	assert.Equal(t, "confirm", fields[2].ID)
-	assert.Equal(t, "Submit", fields[2].Title)
-	assert.Equal(t, "Proceed with setup?", fields[2].Prompt)
-	assert.Equal(t, tui.FieldConfirm, fields[2].Kind)
-	assert.True(t, fields[2].DefaultYes)
-}
-
-func TestFlavorFieldOptions(t *testing.T) {
-	options := flavorFieldOptions()
-	flavors := intbuild.DefaultFlavorOptions()
-
-	require.Len(t, options, len(flavors), "should have same count as bundler flavors")
-
-	for i, opt := range options {
-		assert.Equal(t, flavors[i].Name, opt.Label, "option %d label should match flavor name", i)
-		assert.Equal(t, flavors[i].Description, opt.Description, "option %d description should match", i)
-	}
-
-	// Verify bookworm is first (recommended)
-	assert.Equal(t, "bookworm", options[0].Label, "first option should be bookworm")
-}
-
-// --- Constant/option tests ---
-
-func TestDefaultImageTag(t *testing.T) {
-	expected := "clawker-default:latest"
-	assert.Equal(t, expected, docker.DefaultImageTag, "DefaultImageTag constant")
-}
-
-func TestFlavorOptions(t *testing.T) {
-	flavorOptions := intbuild.DefaultFlavorOptions()
-	require.NotEmpty(t, flavorOptions, "flavor options should be defined")
-
-	// Check that bookworm (recommended) is first
-	assert.Equal(t, "bookworm", flavorOptions[0].Name, "first flavor option should be bookworm")
-
-	// Check all options have name and description
-	for i, opt := range flavorOptions {
-		assert.NotEmpty(t, opt.Name, "flavor option %d has empty name", i)
-		assert.NotEmpty(t, opt.Description, "flavor option %d has empty description", i)
-	}
-
-	// Verify expected flavors exist
-	expectedFlavors := []string{"bookworm", "trixie", "alpine3.22", "alpine3.23"}
-	names := make([]string, len(flavorOptions))
-	for i, opt := range flavorOptions {
-		names[i] = opt.Name
-	}
-	for _, expected := range expectedFlavors {
-		assert.Contains(t, names, expected, "expected flavor %q to exist", expected)
-	}
-}
-
-// --- saveUserProjectConfig tests ---
-
-func TestSaveUserProjectConfig_NewFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("CLAWKER_CONFIG_DIR", tmpDir)
-
-	err := saveUserProjectConfig("clawker-default:latest")
-	require.NoError(t, err)
-
-	// Reload via store to verify typed values
-	cfgPath := filepath.Join(tmpDir, "clawker.yaml")
-	data, readErr := os.ReadFile(cfgPath)
-	require.NoError(t, readErr, "config file should be created")
-
-	var parsed map[string]any
-	require.NoError(t, yaml.Unmarshal(data, &parsed))
-
-	build, ok := parsed["build"].(map[string]any)
-	require.True(t, ok, "build key should be a map")
-	assert.Equal(t, "clawker-default:latest", build["image"])
-
-	// Store writes full schema with defaults
-	assert.NotNil(t, parsed["workspace"], "defaults should include workspace")
-}
-
-func TestSaveUserProjectConfig_ExistingFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("CLAWKER_CONFIG_DIR", tmpDir)
-
-	// Pre-seed an existing config with a custom key
-	cfgPath := filepath.Join(tmpDir, "clawker.yaml")
-	existing := []byte("agent:\n  env:\n    FOO: bar\nbuild:\n  packages:\n    - git\n")
-	require.NoError(t, os.WriteFile(cfgPath, existing, 0o644))
-
-	err := saveUserProjectConfig("clawker-default:latest")
-	require.NoError(t, err)
-
-	data, readErr := os.ReadFile(cfgPath)
-	require.NoError(t, readErr)
-
-	var parsed map[string]any
-	require.NoError(t, yaml.Unmarshal(data, &parsed))
-
-	// build.image should be set
-	build, ok := parsed["build"].(map[string]any)
-	require.True(t, ok, "build key should be a map")
-	assert.Equal(t, "clawker-default:latest", build["image"])
-
-	// Existing agent.env custom key should be preserved
-	agent, ok := parsed["agent"].(map[string]any)
-	require.True(t, ok, "agent key should be preserved")
-	env, ok := agent["env"].(map[string]any)
-	require.True(t, ok, "agent.env should be preserved")
-	assert.Equal(t, "bar", env["FOO"])
+	delegateCmd.Flags().VisitAll(func(f *pflag.Flag) {
+		assert.True(t, aliasFlags[f.Name],
+			"project init has flag --%s that init alias is missing", f.Name)
+	})
 }

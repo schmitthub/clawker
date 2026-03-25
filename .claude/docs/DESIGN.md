@@ -296,7 +296,7 @@ cfg.WriteSettings()
 
 | Call | Target File | Writer | When |
 |------|-------------|--------|------|
-| `cfg.WriteSettings()` | `~/.config/clawker/settings.yaml` | `clawker init`, image commands | Settings mutation |
+| `cfg.WriteSettings()` | `~/.config/clawker/settings.yaml` | `clawker project init` (bootstrap), image commands | Settings mutation |
 | `cfg.WriteProject()` | Auto-routed by provenance | Programmatic | Project config updates |
 | `cfg.WriteProject("clawker.local.yaml")` | First layer matching filename | User/programmatic | Personal overrides |
 | `pm.Write()` | `~/.local/share/clawker/registry.yaml` | `internal/project` | Runtime CRUD |

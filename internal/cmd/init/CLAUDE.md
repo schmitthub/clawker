@@ -1,105 +1,47 @@
 # Init Command Package
 
-Initialize user-level clawker settings (`cfg.SettingsFileName()` in `config.ConfigDir()`).
+Alias for `clawker project init`. Delegates all functionality to `internal/cmd/project/init`.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `init.go` | `NewCmdInit(f, runF)` — user initialization command with wizard-based interactive flow |
-| `init_test.go` | Unit tests with dockertest fakes, wizard field assertions, and `performSetup` tests |
+| `init.go` | `NewCmdInit(f, runF)` — thin alias command that forwards flags and delegates to `projectinit.Run()` |
+| `init_test.go` | Flag forwarding tests, positional arg forwarding, alias tip output assertion |
 
 ## Key Symbols
 
 ```go
-type InitOptions struct {
-    IOStreams *iostreams.IOStreams
-    TUI      *tui.TUI
-    Prompter func() *prompter.Prompter  // retained for backward compat; unused by wizard path
-    Config   func() config.Provider
-    Client   func(context.Context) (*docker.Client, error)
-    Yes      bool
-}
-
-func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command
-func Run(ctx context.Context, opts *InitOptions) error
-
-// Internal functions (unexported)
-func runInteractive(ctx, opts)    // wizard-based flow via TUI.RunWizard
-func runNonInteractive(ctx, opts) // --yes / non-TTY path (no prompts, no build)
-func performSetup(ctx, opts, buildBaseImage, selectedFlavor) // shared setup logic
-func buildWizardFields() []tui.WizardField    // wizard field definitions
-func flavorFieldOptions() []tui.FieldOption   // converts bundler flavors to TUI field options
-func saveUserProjectConfig(imageTag) error    // writes/updates user-level clawker.yaml with build.image
+func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *projectinit.ProjectInitOptions) error) *cobra.Command
 ```
 
 ## Flags
 
-- `--yes` / `-y` — skip interactive prompts (non-interactive mode)
-
-## Output Scenario
-
-**Hybrid Scenario 3+4** — TUI wizard for interactive prompts followed by live-display progress:
-1. Interactive wizard via `TUI.RunWizard` (build image?, select flavor, confirm)
-2. TUI progress display via `TUI.RunProgress` for image build
-3. Static output for status messages and next steps
-
-## Architecture
-
-`Run` dispatches to `runInteractive` (wizard) or `runNonInteractive` based on `--yes` flag and TTY detection. Both delegate to `performSetup` for the actual settings save and optional image build, making the core logic easily testable without driving BubbleTea.
-
-```
-Run()
-  ├── runInteractive()     → TUI.RunWizard(fields) → performSetup(build, flavor)
-  └── runNonInteractive()  → performSetup(false, "")
-```
-
-### Wizard Fields
-
-| ID | Kind | Purpose |
-|----|------|---------|
-| `build` | Select | "Build an initial base image?" — Yes/No |
-| `flavor` | Select | "Select Linux flavor" — from `bundler.DefaultFlavorOptions()`; skipped if build=No |
-| `confirm` | Confirm | "Proceed with setup?" — DefaultYes=true |
+- `--yes` / `-y` — Non-interactive mode, accept all defaults (forwarded to project init)
+- `--force` / `-f` — Overwrite existing configuration files (forwarded to project init)
 
 ## Behavior
 
-1. Creates/updates user settings file via `cfg.SettingsStore().Set()` + `.Write()`:
-   - The no-op `Set` flips the store's dirty flag, then `Write()` creates `configDir/settings.yaml` via `defaultWritePath()` (handles missing dir + atomic write).
-2. Interactive wizard (unless `--yes` or non-TTY):
-   - Build initial base image? (Select: Yes/No)
-   - Select Linux flavor (Debian/Alpine) via `bundler.DefaultFlavorOptions()`
-   - Confirm setup
-3. Saves settings, then builds base image if requested:
-   - Builds with `client.BuildDefaultImage(ctx, flavor, progressFunc)`
-   - Progress displayed via `TUI.RunProgress("auto", ...)` with single "build" step; result checked for errors
-4. On progress display error (e.g., Ctrl+C): returns error immediately
-5. On build failure: prints error + manual recovery steps (does not return error)
-6. On build success: persists the built image tag to user-level `clawker.yaml` via `saveUserProjectConfig()`:
-   - Writes to `config.UserProjectConfigFilePath()` (`~/.config/clawker/clawker.yaml`)
-   - Only sets `build.image` — preserves existing keys on reruns
-   - Discovered by project store via `WithConfigDir()` as lowest-priority layer
-7. Ensures shared directory at `cfg.ShareSubdir()` exists
-8. Prints next steps guidance to stderr
+1. Accepts optional positional arg `[project-name]` (forwarded to project init)
+2. Prints alias tip to stderr: "Tip: 'clawker init' is an alias for 'clawker project init'"
+3. Delegates to `projectinit.Run(ctx, opts)` with all flags forwarded via `ProjectInitOptions`
 
 ## Factory Wiring
 
-All five Factory fields are captured eagerly in `NewCmdInit`:
+Five Factory fields captured in `NewCmdInit`:
 - `f.IOStreams` — I/O streams
 - `f.TUI` — TUI wizard + progress display
-- `f.Prompter` — lazy prompter accessor (retained for backward compat, unused by wizard)
 - `f.Config` — lazy config gateway accessor
-- `f.Client` — lazy Docker client constructor
+- `f.Logger` — lazy logger accessor
+- `f.ProjectManager` — lazy project manager accessor
 
 ## Testing
 
-Tests use `runF` injection and dockertest fakes. Key patterns:
-- `NewCmdInit(f, captureFunc)` for flag/option capture tests
-- `performSetup()` tested directly for build/no-build/failure scenarios (avoids BubbleTea)
-- `buildWizardFields()` tested for field definitions, SkipIf logic
-- `flavorFieldOptions()` tested for correct conversion from bundler types
-- `saveUserProjectConfig()` tested for new file creation and existing file update (preserves keys)
-- `configmocks.NewIsolatedTestConfig(t)` for isolated config dir (no temp dir leaks)
+Tests use `runF` injection to capture `ProjectInitOptions` without executing the real project init flow:
+
+- `TestNewCmdInit_FlagForwarding` — table-driven: defaults, `--yes`, `--force`, positional arg, combined flags+arg, too many args rejection
+- `TestNewCmdInit_PrintsAliasTip` — alias tip printed to stderr
+- `TestNewCmdInit_FlagParityWithProjectInit` — drift detection: verifies alias has all flags that project init has
 
 ```bash
 go test ./internal/cmd/init/... -v
