@@ -1,0 +1,210 @@
+package config
+
+// Preset defines a language-specific project configuration template.
+// Each preset provides a partial YAML overlay — fields not specified
+// are filled from schema defaults via WithDefaultsFromStruct[Project]().
+type Preset struct {
+	Name          string // Display name (used as select option label)
+	Description   string // Short description (used as select option secondary text)
+	YAML          string // Partial clawker.yaml content
+	AutoCustomize bool   // If true, skip "save and get started" and go straight to wizard
+}
+
+// Presets returns the ordered list of language presets for the init wizard.
+// The last entry ("Build from scratch") is Bare with AutoCustomize=true.
+func Presets() []Preset {
+	return []Preset{
+		{
+			Name:        "Python",
+			Description: "Python development with pip and venv",
+			YAML:        pythonPreset,
+		},
+		{
+			Name:        "Go",
+			Description: "Go development with module support",
+			YAML:        goPreset,
+		},
+		{
+			Name:        "Rust",
+			Description: "Rust development with Cargo",
+			YAML:        rustPreset,
+		},
+		{
+			Name:        "TypeScript",
+			Description: "Node.js and TypeScript development",
+			YAML:        typescriptPreset,
+		},
+		{
+			Name:        "Java",
+			Description: "Java development with Maven",
+			YAML:        javaPreset,
+		},
+		{
+			Name:        "Ruby",
+			Description: "Ruby development with Bundler",
+			YAML:        rubyPreset,
+		},
+		{
+			Name:        "C/C++",
+			Description: "C/C++ development with GCC and CMake",
+			YAML:        cppPreset,
+		},
+		{
+			Name:        "C#/.NET",
+			Description: ".NET SDK development",
+			YAML:        dotnetPreset,
+		},
+		{
+			Name:        "Bare",
+			Description: "Minimal base with common tools, no language runtime",
+			YAML:        barePreset,
+		},
+		{
+			Name:          "Build from scratch",
+			Description:   "Start with a minimal base and customize everything",
+			YAML:          barePreset,
+			AutoCustomize: true,
+		},
+	}
+}
+
+const pythonPreset = `build:
+  image: "python:3.12-bookworm"
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - build-essential
+security:
+  firewall:
+    add_domains:
+      - pypi.org
+      - files.pythonhosted.org
+      - github.com
+      - api.github.com
+`
+
+const goPreset = `build:
+  image: "golang:1.23-bookworm"
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - make
+security:
+  firewall:
+    add_domains:
+      - proxy.golang.org
+      - sum.golang.org
+      - storage.googleapis.com
+      - github.com
+      - api.github.com
+`
+
+const rustPreset = `build:
+  image: "rust:1-bookworm"
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - build-essential
+    - pkg-config
+security:
+  firewall:
+    add_domains:
+      - crates.io
+      - static.crates.io
+      - index.crates.io
+      - github.com
+      - api.github.com
+`
+
+const typescriptPreset = `build:
+  image: "node:22-bookworm"
+  packages:
+    - git
+    - curl
+    - ripgrep
+security:
+  firewall:
+    add_domains:
+      - registry.npmjs.org
+      - github.com
+      - api.github.com
+`
+
+const javaPreset = `build:
+  image: "eclipse-temurin:21-bookworm"
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - maven
+security:
+  firewall:
+    add_domains:
+      - repo1.maven.org
+      - central.sonatype.com
+      - github.com
+      - api.github.com
+`
+
+const rubyPreset = `build:
+  image: "ruby:3.3-bookworm"
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - build-essential
+security:
+  firewall:
+    add_domains:
+      - rubygems.org
+      - index.rubygems.org
+      - github.com
+      - api.github.com
+`
+
+const cppPreset = `build:
+  image: "buildpack-deps:bookworm"
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - cmake
+    - make
+    - gcc
+    - g++
+security:
+  firewall:
+    add_domains:
+      - github.com
+      - api.github.com
+`
+
+const dotnetPreset = `build:
+  image: "mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim"
+  packages:
+    - git
+    - curl
+    - ripgrep
+security:
+  firewall:
+    add_domains:
+      - api.nuget.org
+      - github.com
+      - api.github.com
+`
+
+const barePreset = `build:
+  image: "buildpack-deps:bookworm-scm"
+  packages:
+    - git
+    - curl
+    - ripgrep
+security:
+  firewall:
+    add_domains:
+      - github.com
+      - api.github.com
+`

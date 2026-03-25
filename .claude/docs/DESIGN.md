@@ -236,7 +236,7 @@ WithDefaultsFromStruct[T]() → ~/.config/clawker/clawker.yaml → walk-up confi
 5. `~/.config/clawker/clawker.yaml` (global defaults)
 6. `WithDefaultsFromStruct[T]()` — struct-tag-driven defaults, base layer
 
-**Defaults from struct tags:** Default values are declared via `default:"value"` struct tags on schema types (`Project`, `Settings`). `storage.GenerateDefaultsYAML[T]()` reads these tags and produces a YAML string used as the base merge layer. `clawker init` scaffolds config by marshaling a struct populated via `config.NewProjectWithDefaults()`. One source of truth — no hand-written YAML template constants, no imperative `SetDefaults()`.
+**Defaults from struct tags:** Default values are declared via `default:"value"` struct tags on schema types (`Project`, `Settings`). `storage.GenerateDefaultsYAML[T]()` reads these tags and produces a YAML string used as the base merge layer. `clawker project init` scaffolds config via language presets (`config.Presets()`) combined with `storage.WithDefaultsFromStruct[Project]()` — preset YAML provides language-specific fields, schema defaults fill the rest. One source of truth — no hand-written YAML template constants, no imperative `SetDefaults()`.
 
 At each walk-up level, dir form (`.clawker/`) wins over flat form (`.clawker.yaml`) — they are mutually exclusive per directory.
 

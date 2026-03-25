@@ -36,9 +36,6 @@ Walks struct tags (type-level, not value-level), collects fields with non-empty 
 ### `storage.WithDefaultsFromStruct[T Schema]() Option`
 Convenience wrapper: `WithDefaults(GenerateDefaultsYAML[T]())`.
 
-### `config.NewProjectWithDefaults() *Project`
-Returns a `Project` populated with all default-tagged values. Used by `clawker project init` scaffolding.
-
 ## Schema → Store Constraint
 
 `Store[T Schema]` is compile-time enforced. All types stored in a `Store` must implement `Schema` (i.e., have `Fields() FieldSet`). This ensures every stored config type exposes field metadata.
