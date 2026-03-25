@@ -6,7 +6,7 @@ agent:
   editor: nano
   enable_shared_dir: true
   env:
-    FOO: RAB
+    CLAWKER_TEST_DIR: .clawkerlocal/.test-tmp
   from_env:
     - GH_TOKEN
     - CONTEXT7_API_KEY
