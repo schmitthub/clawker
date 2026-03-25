@@ -447,7 +447,7 @@ func TestExtractTar_SymlinkEscape(t *testing.T) {
 
 	err := extractTar(&buf, dst, "", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "target outside destination")
+	assert.Contains(t, err.Error(), "escapes destination")
 }
 
 func TestExtractTar_HardLinkEscape(t *testing.T) {
@@ -464,7 +464,7 @@ func TestExtractTar_HardLinkEscape(t *testing.T) {
 
 	err := extractTar(&buf, dst, "", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "target outside destination")
+	assert.Contains(t, err.Error(), "escapes destination")
 }
 
 func TestExtractTar_SafeEntries(t *testing.T) {

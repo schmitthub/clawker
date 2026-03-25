@@ -312,19 +312,18 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 			}
 			f.Close()
 		case tar.TypeSymlink:
-			// Security: resolve symlink target to absolute path and verify containment.
-			resolvedLink := filepath.Clean(header.Linkname)
-			if !filepath.IsAbs(resolvedLink) {
-				resolvedLink = filepath.Join(filepath.Dir(target), resolvedLink)
+			// Security: resolve symlink target using EvalSymlinks on ancestors
+			// to catch previously-extracted symlinks that redirect outside dest.
+			symlinkTarget := filepath.Clean(header.Linkname)
+			if !filepath.IsAbs(symlinkTarget) {
+				symlinkTarget = filepath.Join(filepath.Dir(target), symlinkTarget)
 			}
-			resolvedLink = filepath.Clean(resolvedLink)
-			// Inline containment check — CodeQL requires strings.HasPrefix to
-			// recognize the sanitization (custom helper functions are not tracked).
-			if resolvedLink != absDst && !strings.HasPrefix(resolvedLink, absDst+string(filepath.Separator)) {
-				return fmt.Errorf("illegal symlink %q -> %q: target outside destination", header.Name, header.Linkname)
+			realTarget, err := realPathWithinDir(symlinkTarget, absDst)
+			if err != nil {
+				return fmt.Errorf("illegal symlink %q -> %q: %w", header.Name, header.Linkname, err)
 			}
-			// Compute safe relative path from the validated absolute target.
-			relLink, err := filepath.Rel(filepath.Dir(target), resolvedLink)
+			// Compute safe relative path from the validated resolved target.
+			relLink, err := filepath.Rel(filepath.Dir(target), realTarget)
 			if err != nil {
 				return fmt.Errorf("failed to compute relative symlink for %s: %w", header.Name, err)
 			}
@@ -332,16 +331,17 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 				return fmt.Errorf("failed to create symlink %s: %w", target, err)
 			}
 		case tar.TypeLink:
-			// Security: resolve hard link target and verify containment.
-			resolvedLink := filepath.Clean(header.Linkname)
-			if !filepath.IsAbs(resolvedLink) {
-				resolvedLink = filepath.Join(absDst, resolvedLink)
+			// Security: resolve hard link target using EvalSymlinks on ancestors
+			// to catch previously-extracted symlinks that redirect outside dest.
+			hardlinkTarget := filepath.Clean(header.Linkname)
+			if !filepath.IsAbs(hardlinkTarget) {
+				hardlinkTarget = filepath.Join(absDst, hardlinkTarget)
 			}
-			resolvedLink = filepath.Clean(resolvedLink)
-			if resolvedLink != absDst && !strings.HasPrefix(resolvedLink, absDst+string(filepath.Separator)) {
-				return fmt.Errorf("illegal hard link %q -> %q: target outside destination", header.Name, header.Linkname)
+			realTarget, err := realPathWithinDir(hardlinkTarget, absDst)
+			if err != nil {
+				return fmt.Errorf("illegal hard link %q -> %q: %w", header.Name, header.Linkname, err)
 			}
-			if err := os.Link(resolvedLink, target); err != nil {
+			if err := os.Link(realTarget, target); err != nil {
 				return fmt.Errorf("failed to create hard link %s: %w", target, err)
 			}
 		}
