@@ -19,7 +19,7 @@ Project commands are the primary user interface for working with the `ProjectMan
 
 ## Subcommands
 
-- `project init` — initialize new project in current directory (creates `.clawker.yaml` dotfile and `cfg.ClawkerIgnoreName()`). Uses TUI wizard for interactive prompts. Creates a `storage.Store[config.Project]` with `WithDefaultsFromStruct`, applies wizard selections via `store.Set`, and persists via `store.WriteTo`. Optionally offers storeui editor for further customization and user-level default save.
+- `project init` — initialize new project in current directory (creates `.clawker.yaml` dotfile and `cfg.ClawkerIgnoreName()`). Uses TUI wizard for interactive prompts. Creates a `storage.Store[config.Project]` with `WithDefaultsFromStruct`, applies wizard selections via `store.Set`, and persists via `store.Write(storage.ToPath(...))`. Optionally offers `projectui.Edit` for further configuration customization.
 - `project register` — register existing project in user's registry (`cfg.ProjectRegistryFileName()`)
 - `project list` (alias `ls`) — list all registered projects via `ProjectManager.ListProjects()`. Table output with NAME, ROOT, WORKTREES, STATUS columns. Supports `--format`/`--json`/`-q` flags via `FormatFlags`. Status reflects `ProjectState.Status` (ok, missing, inaccessible).
 - `project info NAME` — show detailed info for a single project via `ProjectManager.ListProjects()`: name, root, directory status, worktrees with health status. Supports `--json` output (no `--format`/`--quiet`).
@@ -80,7 +80,7 @@ Run()
 
 ### Post-wizard Prompter
 
-`maybeOfferUserDefault` uses `prompter.Confirm` (not wizard) to offer saving config as user-level default. This is a one-off post-action offer, separate from the setup wizard.
+After setup, `performProjectSetup` uses `prompter.Confirm` to offer "Customize configuration?" which launches `projectui.Edit` (the storeui-based project config editor). This is a one-off post-action offer, separate from the setup wizard.
 
 ## Shared Utilities (`shared/`)
 
@@ -95,7 +95,7 @@ Filenames are derived from `cfg.ProjectConfigFileName()` (main + `.local` varian
 
 ## Config Access Pattern
 
-All subcommands use the `config.Config` interface. `project init` creates a `storage.Store[config.Project]` with `WithDefaultsFromStruct` and applies wizard values via `store.Set`, then persists with `store.WriteTo`. It uses `config.UserProjectConfigFilePath()` for the user-level default and `project.ProjectManager` for registry.
+All subcommands use the `config.Config` interface. `project init` creates a `storage.Store[config.Project]` with `WithDefaultsFromStruct` and applies wizard values via `store.Set`, then persists with `store.Write(storage.ToPath(configPath))`. Uses `project.ProjectManager` for registry registration.
 
 ## Testing
 

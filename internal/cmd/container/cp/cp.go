@@ -238,9 +238,15 @@ func copyToContainer(ctx context.Context, client *docker.Client, containerName, 
 func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 	tr := tar.NewReader(reader)
 
+	// Resolve destination to an absolute path for containment checks.
+	absDst, err := filepath.Abs(dstPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve destination path: %w", err)
+	}
+
 	// Get info about destination
-	dstInfo, err := os.Stat(dstPath)
-	dstExists := err == nil
+	dstInfo, statErr := os.Stat(absDst)
+	dstExists := statErr == nil
 	dstIsDir := dstExists && dstInfo.IsDir()
 
 	for {
@@ -255,17 +261,22 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 		// Determine target path
 		var target string
 		if dstIsDir {
-			target = filepath.Join(dstPath, header.Name)
+			target = filepath.Join(absDst, header.Name)
 		} else if dstExists {
-			target = dstPath
+			target = absDst
 		} else {
 			// Destination doesn't exist - create it as file or directory
 			// based on what we're extracting
 			if header.Typeflag == tar.TypeDir {
-				target = filepath.Join(dstPath, header.Name)
+				target = filepath.Join(absDst, header.Name)
 			} else {
-				target = dstPath
+				target = absDst
 			}
+		}
+
+		// Security: prevent path traversal (Zip Slip).
+		if !isWithinDir(target, absDst) {
+			return fmt.Errorf("illegal tar entry %q: path traversal outside destination", header.Name)
 		}
 
 		// Ensure parent directory exists
@@ -279,26 +290,78 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 				return fmt.Errorf("failed to create directory %s: %w", target, err)
 			}
 		case tar.TypeReg:
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode))
+			// Resolve symlinks in parent path to prevent symlink-following attacks
+			// where a previously extracted symlink redirects writes outside dest.
+			realTarget, err := realPathWithinDir(target, absDst)
+			if err != nil {
+				return fmt.Errorf("refusing to write %s: %w", header.Name, err)
+			}
+			f, err := os.OpenFile(realTarget, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode))
 			if err != nil {
 				return fmt.Errorf("failed to create file %s: %w", target, err)
 			}
-			if _, err := io.Copy(f, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb -- extracting user-requested container files, not untrusted input
+			if _, err := io.Copy(f, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb -- user-requested container file copy, size bounded by container storage
 				f.Close()
 				return fmt.Errorf("failed to write file %s: %w", target, err)
 			}
 			f.Close()
 		case tar.TypeSymlink:
+			// Security: validate symlink target stays within destination.
+			linkTarget := header.Linkname
+			if !filepath.IsAbs(linkTarget) {
+				linkTarget = filepath.Join(filepath.Dir(target), linkTarget)
+			}
+			if !isWithinDir(linkTarget, absDst) {
+				return fmt.Errorf("illegal symlink %q -> %q: target outside destination", header.Name, header.Linkname)
+			}
 			if err := os.Symlink(header.Linkname, target); err != nil {
 				return fmt.Errorf("failed to create symlink %s: %w", target, err)
 			}
 		case tar.TypeLink:
-			if err := os.Link(header.Linkname, target); err != nil {
+			// Security: validate hard link target stays within destination.
+			linkTarget := header.Linkname
+			if !filepath.IsAbs(linkTarget) {
+				linkTarget = filepath.Join(absDst, linkTarget)
+			}
+			if !isWithinDir(linkTarget, absDst) {
+				return fmt.Errorf("illegal hard link %q -> %q: target outside destination", header.Name, header.Linkname)
+			}
+			if err := os.Link(linkTarget, target); err != nil {
 				return fmt.Errorf("failed to create hard link %s: %w", target, err)
 			}
 		}
 	}
 	return nil
+}
+
+// isWithinDir checks if path is within (or equal to) dir.
+// Both paths should be absolute and clean.
+func isWithinDir(path, dir string) bool {
+	p := filepath.Clean(path)
+	d := filepath.Clean(dir)
+	if p == d {
+		return true
+	}
+	return strings.HasPrefix(p, d+string(filepath.Separator))
+}
+
+// realPathWithinDir resolves symlinks in the parent components of target
+// and verifies the real path stays within dir. This prevents symlink-following
+// attacks where a previously extracted symlink redirects writes outside dest.
+func realPathWithinDir(target, dir string) (string, error) {
+	parent := filepath.Dir(target)
+	realParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return target, nil
+		}
+		return "", err
+	}
+	realTarget := filepath.Join(realParent, filepath.Base(target))
+	if !isWithinDir(realTarget, dir) {
+		return "", fmt.Errorf("resolved path escapes destination %s", dir)
+	}
+	return realTarget, nil
 }
 
 // createTar creates a tar archive from a local path.
