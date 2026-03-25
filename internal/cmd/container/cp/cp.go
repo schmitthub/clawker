@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -258,31 +259,19 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 			return fmt.Errorf("error reading tar: %w", err)
 		}
 
-		// Security: sanitize entry name before any filesystem use (Zip Slip).
-		cleanName := filepath.Clean(header.Name)
-		if filepath.IsAbs(cleanName) || cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("illegal tar entry %q: path traversal outside destination", header.Name)
-		}
-
-		// Determine target path using the sanitized name.
+		// Security: use SecureJoin to resolve the entry name within the
+		// destination, preventing path traversal (Zip Slip) and symlink attacks.
+		// SecureJoin resolves symlinks, cleans ".." components, and guarantees
+		// the result is lexically within absDst.
 		var target string
-		if dstIsDir {
-			target = filepath.Join(absDst, cleanName)
-		} else if dstExists {
-			target = absDst
-		} else {
-			// Destination doesn't exist - create it as file or directory
-			// based on what we're extracting
-			if header.Typeflag == tar.TypeDir {
-				target = filepath.Join(absDst, cleanName)
-			} else {
-				target = absDst
+		if dstIsDir || (!dstExists && header.Typeflag == tar.TypeDir) {
+			safeTarget, err := securejoin.SecureJoin(absDst, header.Name)
+			if err != nil {
+				return fmt.Errorf("illegal tar entry %q: %w", header.Name, err)
 			}
-		}
-
-		// Belt-and-suspenders: verify joined path is still within destination.
-		if !isWithinDir(target, absDst) {
-			return fmt.Errorf("illegal tar entry %q: path traversal outside destination", header.Name)
+			target = safeTarget
+		} else {
+			target = absDst
 		}
 
 		// Ensure parent directory exists
@@ -296,13 +285,7 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 				return fmt.Errorf("failed to create directory %s: %w", target, err)
 			}
 		case tar.TypeReg:
-			// Resolve symlinks in parent path to prevent symlink-following attacks
-			// where a previously extracted symlink redirects writes outside dest.
-			realTarget, err := realPathWithinDir(target, absDst)
-			if err != nil {
-				return fmt.Errorf("refusing to write %s: %w", header.Name, err)
-			}
-			f, err := os.OpenFile(realTarget, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode))
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode))
 			if err != nil {
 				return fmt.Errorf("failed to create file %s: %w", target, err)
 			}
@@ -312,18 +295,20 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 			}
 			f.Close()
 		case tar.TypeSymlink:
-			// Security: resolve symlink target using EvalSymlinks on ancestors
-			// to catch previously-extracted symlinks that redirect outside dest.
-			symlinkTarget := filepath.Clean(header.Linkname)
-			if !filepath.IsAbs(symlinkTarget) {
-				symlinkTarget = filepath.Join(filepath.Dir(target), symlinkTarget)
+			// Security: resolve symlink linkname relative to the link's parent dir,
+			// then verify containment via SecureJoin from destination root.
+			// SecureJoin resolves symlinks and prevents traversal.
+			linkBase := header.Linkname
+			if filepath.IsAbs(linkBase) {
+				// Absolute linknames are relative to the archive root.
+				linkBase = filepath.Clean(linkBase)
 			}
-			realTarget, err := realPathWithinDir(symlinkTarget, absDst)
+			safeLink, err := securejoin.SecureJoin(absDst, linkBase)
 			if err != nil {
 				return fmt.Errorf("illegal symlink %q -> %q: %w", header.Name, header.Linkname, err)
 			}
-			// Compute safe relative path from the validated resolved target.
-			relLink, err := filepath.Rel(filepath.Dir(target), realTarget)
+			// Compute relative path from the symlink location to the safe target.
+			relLink, err := filepath.Rel(filepath.Dir(target), safeLink)
 			if err != nil {
 				return fmt.Errorf("failed to compute relative symlink for %s: %w", header.Name, err)
 			}
@@ -331,52 +316,17 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 				return fmt.Errorf("failed to create symlink %s: %w", target, err)
 			}
 		case tar.TypeLink:
-			// Security: resolve hard link target using EvalSymlinks on ancestors
-			// to catch previously-extracted symlinks that redirect outside dest.
-			hardlinkTarget := filepath.Clean(header.Linkname)
-			if !filepath.IsAbs(hardlinkTarget) {
-				hardlinkTarget = filepath.Join(absDst, hardlinkTarget)
-			}
-			realTarget, err := realPathWithinDir(hardlinkTarget, absDst)
+			// Security: resolve hard link target within destination using SecureJoin.
+			safeLink, err := securejoin.SecureJoin(absDst, header.Linkname)
 			if err != nil {
 				return fmt.Errorf("illegal hard link %q -> %q: %w", header.Name, header.Linkname, err)
 			}
-			if err := os.Link(realTarget, target); err != nil {
+			if err := os.Link(safeLink, target); err != nil {
 				return fmt.Errorf("failed to create hard link %s: %w", target, err)
 			}
 		}
 	}
 	return nil
-}
-
-// isWithinDir checks if path is within (or equal to) dir.
-// Both paths should be absolute and clean.
-func isWithinDir(path, dir string) bool {
-	p := filepath.Clean(path)
-	d := filepath.Clean(dir)
-	if p == d {
-		return true
-	}
-	return strings.HasPrefix(p, d+string(filepath.Separator))
-}
-
-// realPathWithinDir resolves symlinks in the parent components of target
-// and verifies the real path stays within dir. This prevents symlink-following
-// attacks where a previously extracted symlink redirects writes outside dest.
-func realPathWithinDir(target, dir string) (string, error) {
-	parent := filepath.Dir(target)
-	realParent, err := filepath.EvalSymlinks(parent)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return target, nil
-		}
-		return "", err
-	}
-	realTarget := filepath.Join(realParent, filepath.Base(target))
-	if !isWithinDir(realTarget, dir) {
-		return "", fmt.Errorf("resolved path escapes destination %s", dir)
-	}
-	return realTarget, nil
 }
 
 // createTar creates a tar archive from a local path.
