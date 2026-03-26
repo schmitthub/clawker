@@ -5,9 +5,9 @@ description: "Secure, isolated Docker environments for Claude Code agents"
 
 # Clawker
 
-The rise of Agentic AI has been meteoric, but in the rush to ship model harnesses, the industry is skipping the risks and responsibilities that come with them. They’re avoiding dependency pain by shipping bare-metal software, when the harness itself needs a harness. LLMs are powerful, but they’re also unpredictable, naive, and easy to coerce—and handing one unrestricted code execution, network access, software install rights, internet reach, and full filesystem access to unsuspecting users is reckless. As a security engineer, my first instinct was to protect my own machine by building the harness for the harness: an "agent-in-container" solution. Clawker started as my way to learn Claude Code, then proved useful enough to open source as a practical example of secure-by-default guardrails for agentic software. I hope this project inspires the industry to prioritize containerization natively in their agentic software offerings, and to build more tools that make it easy and seamless for users to run agents in containers with strong security defaults.
+The rise of Agentic AI has been meteoric, but in the rush to ship model harnesses, the industry is skipping the risks and responsibilities that come with them. They’re avoiding dependency pain by shipping bare-metal software, when the harness itself needs a harness. 
 
-Clawker solves this by running [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents in isolated Docker containers with security controls, credential forwarding, and multi-agent orchestration built in.
+Clawker solves this by running [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents in isolated devcontainers with security controls, credential forwarding, and multi-agent orchestration built in.
 
 <CardGroup cols={2}>
   <Card title="Quick Start" icon="terminal" href="/quickstart">

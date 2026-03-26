@@ -169,7 +169,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `IsOutsideHome(dir)` | Pure bool function in `container/shared/safety.go` — returns true when dir is `$HOME` or not within `$HOME`. Used by `run`/`create` (prompt) and `loop` (hard error) |
 | `CreateContainerConfig` / `CreateContainerResult` | Input/output types for `CreateContainer()` — all deps and runtime values |
 | `CreateContainerEvent` | Channel event: Step, Status (`StepRunning`/`StepComplete`/`StepCached`), Type (`MessageInfo`/`MessageWarning`), Message |
-| `clawker-share` | Optional read-only bind mount from `cfg.ShareSubdir()` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker init`, re-created if missing during mount setup |
+| `clawker-share` | Optional read-only bind mount from `cfg.ShareSubdir()` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker project init`, re-created if missing during mount setup |
 | `containerfs` | Host Claude config preparation for container init: copies settings, plugins (incl. cache), credentials to config volume; rewrites host paths in plugin JSON files; prepares post-init script tar |
 | `ConfigVolumeResult` | Bool flags tracking which config volumes were freshly created (`ConfigCreated`, `HistoryCreated`) — returned by `workspace.EnsureConfigVolumes` |
 | `InitConfigOpts` | Options for `shared.InitContainerConfig` — project/agent names, container work dir, ClaudeCodeConfig, CopyToVolumeFn (DI) |

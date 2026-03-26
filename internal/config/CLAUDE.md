@@ -33,7 +33,8 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 | `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors |
 | `consts.go` | Private constants exposed via `Config` methods. Only export: `Mode` type (`ModeBind`/`ModeSnapshot`) |
 | `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods |
-| `defaults.go` | Firewall rules (`requiredFirewallDomains`, `requiredFirewallRules`), `NewProjectWithDefaults()`, `NewSettingsWithDefaults()`, `DefaultIgnoreFile` |
+| `defaults.go` | Firewall rules (`requiredFirewallDomains`, `requiredFirewallRules`), `DefaultIgnoreFile` |
+| `presets.go` | Language preset definitions (`Preset` type, `Presets()` function) for project init |
 | `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()`, `GetProjectRoot`/`GetProjectIgnoreFile`, path helpers |
 | `config_test.go` | Tests: constructors, defaults, validation, typed mutation, persistence, constants, env var overrides |
 | `mocks/config_mock.go` | moq-generated `ConfigMock` (do not edit) |
@@ -44,11 +45,10 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 ### Constructors & Package Functions
 
 ```go
-func NewConfig() (Config, error)                                // Full production loading (defaults + discovery + merge)
+func NewConfig(opts ...NewConfigOption) (Config, error)          // Full production loading (defaults + discovery + merge)
 func NewBlankConfig() (Config, error)                           // Defaults only, no file discovery (test double base)
 func NewFromString(projectYAML, settingsYAML string) (Config, error) // Raw YAML, NO defaults (precise test control)
-func NewProjectWithDefaults() *Project                          // Returns *Project populated from `default` struct tags
-func NewSettingsWithDefaults() *Settings                        // Returns *Settings populated from `default` struct tags
+func Presets() []Preset                                         // Language preset definitions for project init
 func ConfigDir() string                                         // Config directory path
 func DataDir() string                                           // XDG data dir (~/.local/share/clawker)
 func StateDir() string                                          // XDG state dir (~/.local/state/clawker)

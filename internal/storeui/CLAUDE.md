@@ -23,6 +23,7 @@ cmd/settings/edit, cmd/project/edit
 | `value.go` | `SetFieldValue(v, path, val)` — reverse reflection writer |
 | `edit.go` | `Edit[T](ios, store, opts...)` — orchestration entry point, `LayerTarget`, `Result`, shared helpers |
 
+
 ## Public API
 
 ### Types

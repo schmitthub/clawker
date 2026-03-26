@@ -10,13 +10,15 @@ type Migration func(raw map[string]any) bool
 
 // options holds the accumulated construction configuration.
 type options struct {
-	filenames  []string
-	defaults   string // raw YAML string for the base layer
-	walkUp     bool
-	dirs       []string // directories probed with dual placement (highest priority first)
-	paths      []string // explicit directories to probe (no dual placement)
-	migrations []Migration
-	lock       bool
+	filenames       []string
+	defaults        string // raw YAML string for the base layer
+	walkUp          bool
+	dirs            []string // directories probed with dual placement (highest priority first)
+	paths           []string // explicit directories to probe (no dual placement)
+	migrations      []Migration
+	lock            bool
+	dotDefault      bool   // apply dual-placement dot prefix in defaultWritePath CWD fallback
+	defaultFilename string // filename for new writes when no file layers exist; defaults to filenames[0]
 }
 
 // WithFilenames sets the ordered list of filenames to discover.
@@ -43,6 +45,26 @@ func WithDefaults(yaml string) Option {
 // This is equivalent to WithDefaults(GenerateDefaultsYAML[T]()).
 func WithDefaultsFromStruct[T Schema]() Option {
 	return WithDefaults(GenerateDefaultsYAML[T]())
+}
+
+// WithDefaultFilename sets the filename used when writing to a directory with
+// no existing file layers. Without this, filenames[0] is used, which may be
+// a local override variant rather than the main config file.
+func WithDefaultFilename(name string) Option {
+	return func(o *options) {
+		o.defaultFilename = name
+	}
+}
+
+// WithDotDefault enables dual-placement dot-prefix logic in defaultWritePath.
+// When the store has no file layers and falls back to CWD, the filename is
+// written as .{filename} (or .clawker/{filename} if .clawker/ exists) instead
+// of the raw filename. Use this for stores discovered via walk-up where files
+// are dot-prefixed by convention.
+func WithDotDefault() Option {
+	return func(o *options) {
+		o.dotDefault = true
+	}
 }
 
 // WithWalkUp enables bounded walk-up discovery from CWD to the registered

@@ -74,20 +74,34 @@ func (s *Store[T]) defaultWritePath() (string, error) {
 	}
 	// No file layers — use explicit paths if configured, otherwise CWD.
 	if len(s.opts.filenames) > 0 {
-		dir := ""
+		fname := s.opts.defaultFilename
+		if fname == "" {
+			fname = s.opts.filenames[0]
+		}
 		if len(s.opts.paths) > 0 {
-			dir = s.opts.paths[0]
-		} else {
-			var err error
-			dir, err = os.Getwd()
-			if err != nil {
-				return "", fmt.Errorf("storage: resolving CWD for default write path: %w", err)
+			// Explicit dir (e.g. config dir) — no dot prefix.
+			dir := s.opts.paths[0]
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return "", fmt.Errorf("storage: creating directory %s: %w", dir, err)
 			}
+			return filepath.Join(dir, fname), nil
+		}
+		// CWD fallback — apply dual-placement dot prefix if configured.
+		dir, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("storage: resolving CWD for default write path: %w", err)
 		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("storage: creating directory %s: %w", dir, err)
 		}
-		return filepath.Join(dir, s.opts.filenames[0]), nil
+		if s.opts.dotDefault {
+			clawkerDir := filepath.Join(dir, ".clawker")
+			if info, statErr := os.Stat(clawkerDir); statErr == nil && info.IsDir() {
+				return filepath.Join(clawkerDir, fname), nil
+			}
+			fname = "." + fname
+		}
+		return filepath.Join(dir, fname), nil
 	}
 	return "", fmt.Errorf("storage: no write path available (no layers or filenames)")
 }

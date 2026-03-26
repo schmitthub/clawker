@@ -1,7 +1,5 @@
 package config
 
-import "github.com/schmitthub/clawker/internal/storage"
-
 // requiredFirewallRules is the canonical list of required egress rules.
 // These are essential for Claude Code and container image pulls.
 //
@@ -37,31 +35,10 @@ func init() {
 }
 
 // Programmatic base-layer defaults for project and settings configuration are
-// now generated from `default` struct tags on schema types via
+// generated from `default` struct tags on schema types via
 // storage.GenerateDefaultsYAML[T](). See schema.go for the tag definitions.
-// The legacy YAML constants (defaultProjectYAML, defaultSettingsYAML) have
-// been removed — struct tags are the single source of truth.
-
-// NewProjectWithDefaults returns a Project populated with all default-tagged
-// values from struct tags. Used by init scaffolding — callers can override
-// fields before marshaling to YAML.
-func NewProjectWithDefaults() *Project {
-	store, err := storage.NewFromString[Project](storage.GenerateDefaultsYAML[Project]())
-	if err != nil {
-		panic("config.NewProjectWithDefaults: " + err.Error())
-	}
-	return store.Read()
-}
-
-// NewSettingsWithDefaults returns a Settings populated with all default-tagged
-// values from struct tags.
-func NewSettingsWithDefaults() *Settings {
-	store, err := storage.NewFromString[Settings](storage.GenerateDefaultsYAML[Settings]())
-	if err != nil {
-		panic("config.NewSettingsWithDefaults: " + err.Error())
-	}
-	return store.Read()
-}
+// Consumers use storage.WithDefaultsFromStruct[T]() to inject defaults into
+// a Store[T] as a merge layer.
 
 // DefaultIgnoreFile returns the default .clawkerignore content
 const DefaultIgnoreFile = `# Clawker Ignore File

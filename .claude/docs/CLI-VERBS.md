@@ -69,51 +69,38 @@ clawker build --label version=1.0 --label team=backend
 
 ### `clawker init`
 
-Initialize clawker user settings.
+Alias for `clawker project init`. Initializes a new clawker project in the current directory.
 
 **Usage:**
 ```bash
-clawker init [flags]
+clawker init [project-name] [flags]
 ```
 
-Creates or updates the user settings file (`cfg.SettingsFileName()` in `config.ConfigDir()`).
-This sets up user-level defaults that apply across all clawker projects.
-
-In interactive mode (default), you will be prompted to:
-- Build an initial base image (recommended)
-- Select a Linux flavor (Debian or Alpine)
-
-If you choose to build a base image, clawker will:
-1. Fetch the latest Claude Code version from npm
-2. Generate a Dockerfile for your selected flavor
-3. Build the image as `clawker-default:latest`
-4. Set this as your default image in settings
+Prints a tip noting the alias, then delegates entirely to `clawker project init`. All flags and the optional positional argument are forwarded.
 
 **Flags:**
 
 | Flag | Shorthand | Type | Default | Description |
 |------|-----------|------|---------|-------------|
-| `--yes` | `-y` | bool | false | Non-interactive mode, accept all defaults (skips base image build) |
+| `--force` | `-f` | bool | false | Overwrite existing configuration files |
+| `--yes` | `-y` | bool | false | Non-interactive mode, accept all defaults |
 
 **Examples:**
 ```bash
-# Interactive setup (prompts for options)
+# Interactive setup with preset picker
 clawker init
 
-# Non-interactive with all defaults (skips base image build)
+# Specify project name
+clawker init my-project
+
+# Non-interactive with Bare preset defaults
 clawker init --yes
+
+# Overwrite existing configuration
+clawker init --force
 ```
 
-**Linux Flavors:**
-
-| Flavor | Description |
-|--------|-------------|
-| `bookworm` | Debian stable (Recommended) |
-| `trixie` | Debian testing |
-| `alpine3.22` | Alpine Linux 3.22 |
-| `alpine3.23` | Alpine Linux 3.23 |
-
-**Note:** To initialize a project, use `clawker project init` instead. `clawker init` sets up user-level settings only; it does not register projects.
+**Note:** This is a convenience alias. See `clawker project init --help` for full documentation including language presets and the customization wizard.
 
 ---
 
@@ -127,12 +114,13 @@ clawker project init [project-name] [flags]
 ```
 
 Creates `cfg.ProjectConfigFileName()` and `cfg.ClawkerIgnoreName()` in the current directory.
-If no project name is provided, you will be prompted to enter one.
+Provides language-based presets for quick setup, plus a "Build from scratch" path
+that walks through each config field step by step.
 
-In interactive mode (default), you will be prompted to configure:
-- Project name
-- Base container image (uses default from `clawker init` if available)
-- Default workspace mode (bind or snapshot)
+If no project name is provided, you will be prompted to enter one (or accept the
+current directory name as the default).
+
+Also available as `clawker init` (top-level alias).
 
 **Flags:**
 
@@ -143,21 +131,20 @@ In interactive mode (default), you will be prompted to configure:
 
 **Examples:**
 ```bash
-# Interactive setup (prompts for options)
+# Interactive setup with preset picker
 clawker project init
 
-# Use "my-project" as project name (still prompts for other options)
+# Specify project name (still prompts for preset)
 clawker project init my-project
 
-# Non-interactive with all defaults (requires default image from 'clawker init')
+# Non-interactive with Bare preset defaults
 clawker project init --yes
 
 # Overwrite existing configuration
 clawker project init --force
 ```
 
-**Note:** When using `--yes`, a default image must be configured via `clawker init`.
-If no default image exists, the command will fail with a helpful error message.
+**Language Presets:** Python, Go, Rust, TypeScript, Java, Ruby, C/C++, C#/.NET, Bare, Build from scratch. Each preset configures `build.image`, `build.packages`, and `security.firewall.add_domains` for that ecosystem.
 
 **Registry:** `project init` also registers the project in `cfg.ProjectRegistryFileName()`.
 

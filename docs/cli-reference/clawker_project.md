@@ -39,7 +39,7 @@ Use 'clawker project init' to set up a new project in the current directory.
 
 * [clawker project edit](clawker_project_edit) - Interactively edit project configuration
 * [clawker project info](clawker_project_info) - Show details of a registered project
-* [clawker project init](clawker_project_init) - Initialize a new clawker project in the current directory
+* [clawker project init](clawker_project_init) - Initialize a new project or configuration file
 * [clawker project list](clawker_project_list) - List registered projects
 * [clawker project register](clawker_project_register) - Register an existing clawker project in the local registry
 * [clawker project remove](clawker_project_remove) - Remove projects from the registry

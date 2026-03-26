@@ -25,7 +25,7 @@ Logger is initialized by `factory.ioStreams()` during Factory construction. Pers
 
 ## Registered Commands
 
-- **Top-level:** `init`, `project`, `settings`, `monitor`, `generate`, `loop`, `version`
+- **Top-level:** `init` (alias for `project init`), `project`, `settings`, `monitor`, `generate`, `loop`, `version`
 - **Management:** `container`, `firewall`, `image`, `volume`, `network`, `worktree`
 
 ## Testing

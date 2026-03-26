@@ -1,347 +1,92 @@
+// Package init provides the top-level init command, which delegates to project init.
 package init
 
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
+	"strings"
 
-	intbuild "github.com/schmitthub/clawker/internal/bundler"
+	projectinit "github.com/schmitthub/clawker/internal/cmd/project/init"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
-	settingsui "github.com/schmitthub/clawker/internal/config/storeui/settings"
-	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
-	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
-	"github.com/schmitthub/clawker/internal/storage"
-	"github.com/schmitthub/clawker/internal/tui"
-	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
 )
 
-// InitOptions contains the options for the init command.
-type InitOptions struct {
-	IOStreams *iostreams.IOStreams
-	TUI       *tui.TUI
-	Prompter  func() *prompterpkg.Prompter
-	Config    func() (config.Config, error)
-	Logger    func() (*logger.Logger, error)
-	Client    func(context.Context) (*docker.Client, error)
-
-	Yes bool // Non-interactive mode
-}
-
-// NewCmdInit creates the init command for user-level setup.
-func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command {
-	opts := &InitOptions{
-		IOStreams: f.IOStreams,
-		TUI:       f.TUI,
-		Prompter:  f.Prompter,
-		Config:    f.Config,
-		Logger:    f.Logger,
-		Client:    f.Client,
+// NewCmdInit creates the init command, which is an alias for 'clawker project init'.
+// All project initialization functionality lives in the project init command;
+// this command prints an alias tip to stderr, then forwards flags and delegates.
+func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *projectinit.ProjectInitOptions) error) *cobra.Command {
+	opts := &projectinit.ProjectInitOptions{
+		IOStreams:      f.IOStreams,
+		TUI:            f.TUI,
+		Config:         f.Config,
+		Logger:         f.Logger,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Initialize clawker user settings",
-		Long: `Creates or updates the user settings file at ~/.config/clawker/settings.yaml.
+		Use:   "init [project-name]",
+		Short: "Initialize a new clawker project (alias for 'project init')",
+		Long: `Alias for 'clawker project init'. Initializes a new clawker project in the current
+directory with language-based presets for quick setup.
 
-This command sets up user-level defaults that apply across all clawker projects.
-In interactive mode (default), you will be prompted to:
-  - Build an initial base image (recommended)
-  - Select a Linux flavor (Debian or Alpine)
-
-Use --yes/-y to skip prompts and accept all defaults (skips base image build).
-
-To initialize a project in the current directory, use 'clawker project init' instead.`,
-		Example: `  # Interactive setup (prompts for options)
+See 'clawker project init --help' for full documentation.`,
+		Example: `  # Interactive setup with preset picker and VCS config
   clawker init
 
-  # Non-interactive with all defaults
-  clawker init --yes`,
-		Args: cobra.NoArgs,
+  # Non-interactive with Bare preset defaults
+  clawker init --yes
+
+  # Non-interactive with a specific preset and VCS
+  clawker init --yes --preset Go --vcs github
+  clawker init --yes --preset Python --vcs gitlab --git-protocol ssh
+
+  # Overwrite existing configuration
+  clawker init --force`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				opts.Name = args[0]
+			}
+			if opts.Preset != "" && !opts.Yes {
+				return cmdutil.FlagErrorf("--preset requires --yes")
+			}
+			if (opts.VCS != "" || opts.GitProtocol != "" || opts.NoGPG) && !opts.Yes {
+				return cmdutil.FlagErrorf("--vcs, --git-protocol, and --no-gpg require --yes")
+			}
+			if opts.VCS != "" && !projectinit.IsValidVCSProvider(opts.VCS) {
+				return cmdutil.FlagErrorf("invalid --vcs value %q; valid: %s", opts.VCS, strings.Join(projectinit.VCSProviderNames(), ", "))
+			}
+			if opts.GitProtocol != "" && !projectinit.IsValidGitProtocol(opts.GitProtocol) {
+				return cmdutil.FlagErrorf("invalid --git-protocol value %q; valid: %s", opts.GitProtocol, strings.Join(projectinit.GitProtocolNames(), ", "))
+			}
+
+			cs := f.IOStreams.ColorScheme()
+			fmt.Fprintf(f.IOStreams.ErrOut, "%s Tip: 'clawker init' is an alias for 'clawker project init'\n\n",
+				cs.InfoIcon())
+
 			if runF != nil {
 				return runF(cmd.Context(), opts)
 			}
-			return Run(cmd.Context(), opts)
+			return projectinit.Run(cmd.Context(), opts)
 		},
 	}
 
+	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Overwrite existing configuration files")
 	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Non-interactive mode, accept all defaults")
+	cmd.Flags().StringVar(&opts.Preset, "preset", "", "Select a language preset (requires --yes)")
+	cmd.Flags().StringVar(&opts.VCS, "vcs", "", "VCS provider: github, gitlab, bitbucket (requires --yes)")
+	cmd.Flags().StringVar(&opts.GitProtocol, "git-protocol", "", "Git protocol: https, ssh (requires --yes)")
+	cmd.Flags().BoolVar(&opts.NoGPG, "no-gpg", false, "Disable GPG agent forwarding (requires --yes)")
+
+	cmd.RegisterFlagCompletionFunc("preset", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck // cobra registers completion internally
+		return projectinit.PresetCompletions(), cobra.ShellCompDirectiveNoFileComp
+	})
+	cmd.RegisterFlagCompletionFunc("vcs", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck
+		return projectinit.VCSCompletions(), cobra.ShellCompDirectiveNoFileComp
+	})
+	cmd.RegisterFlagCompletionFunc("git-protocol", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck
+		return projectinit.GitProtocolCompletions(), cobra.ShellCompDirectiveNoFileComp
+	})
 
 	return cmd
-}
-
-// Run executes the init command logic.
-func Run(ctx context.Context, opts *InitOptions) error {
-	if opts.Yes || !opts.IOStreams.IsInteractive() {
-		return runNonInteractive(ctx, opts)
-	}
-	return runInteractive(ctx, opts)
-}
-
-// runInteractive runs the wizard-based interactive flow.
-func runInteractive(ctx context.Context, opts *InitOptions) error {
-	fields := buildWizardFields()
-	result, err := opts.TUI.RunWizard(fields)
-	if err != nil {
-		return fmt.Errorf("wizard failed: %w", err)
-	}
-	if !result.Submitted {
-		fmt.Fprintln(opts.IOStreams.ErrOut, "Setup cancelled.")
-		return nil
-	}
-
-	buildImage := result.Values["build"] == "Yes"
-	flavor := result.Values["flavor"]
-	if result.Values["confirm"] != "yes" {
-		return nil // user declined at submit step
-	}
-
-	return performSetup(ctx, opts, buildImage, flavor)
-}
-
-// runNonInteractive runs the non-interactive (--yes) path with no prompts.
-func runNonInteractive(ctx context.Context, opts *InitOptions) error {
-	return performSetup(ctx, opts, false, "")
-}
-
-// buildWizardFields returns the wizard field definitions for interactive init.
-func buildWizardFields() []tui.WizardField {
-	return []tui.WizardField{
-		{
-			ID:     "build",
-			Title:  "Build Image",
-			Prompt: "Build an initial base image?",
-			Kind:   tui.FieldSelect,
-			Options: []tui.FieldOption{
-				{Label: "Yes", Description: "Build a clawker-optimized base image (Recommended)"},
-				{Label: "No", Description: "Skip - specify images per-project later"},
-			},
-			DefaultIdx: 0,
-		},
-		{
-			ID:         "flavor",
-			Title:      "Flavor",
-			Prompt:     "Select Linux flavor",
-			Kind:       tui.FieldSelect,
-			Options:    flavorFieldOptions(),
-			DefaultIdx: 0,
-			SkipIf: func(vals tui.WizardValues) bool {
-				return vals["build"] != "Yes"
-			},
-		},
-		{
-			ID:         "confirm",
-			Title:      "Submit",
-			Prompt:     "Proceed with setup?",
-			Kind:       tui.FieldConfirm,
-			DefaultYes: true,
-		},
-	}
-}
-
-// flavorFieldOptions converts bundler flavor options to TUI wizard field options.
-func flavorFieldOptions() []tui.FieldOption {
-	flavors := intbuild.DefaultFlavorOptions()
-	options := make([]tui.FieldOption, len(flavors))
-	for i, f := range flavors {
-		options[i] = tui.FieldOption{
-			Label:       f.Name,
-			Description: f.Description,
-		}
-	}
-	return options
-}
-
-// performSetup handles the actual settings save and optional base image build.
-// Both runInteractive and runNonInteractive delegate to this function.
-func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, selectedFlavor string) error {
-	ios := opts.IOStreams
-	cs := ios.ColorScheme()
-
-	log, err := opts.Logger()
-	if err != nil {
-		return fmt.Errorf("initializing logger: %w", err)
-	}
-
-	// Print header
-	fmt.Fprintln(ios.ErrOut, "Setting up clawker user settings...")
-	fmt.Fprintln(ios.ErrOut)
-
-	cfg, err := opts.Config()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	log.Debug().
-		Bool("build_base_image", buildBaseImage).
-		Str("flavor", selectedFlavor).
-		Msg("initializing user settings")
-
-	// Save initial settings — mark dirty so the store creates the file
-	if err := cfg.SettingsStore().Set(func(s *config.Settings) {}); err != nil {
-		return fmt.Errorf("failed to initialize settings: %w", err)
-	}
-	if err := cfg.SettingsStore().Write(); err != nil {
-		return fmt.Errorf("failed to save settings: %w", err)
-	}
-
-	// Success output
-	settingsPath, _ := config.SettingsFilePath()
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintf(ios.ErrOut, "%s Settings: %s\n", cs.SuccessIcon(), settingsPath)
-
-	// Offer interactive customization via the settings editor.
-	if !opts.Yes && ios.IsInteractive() {
-		prompter := opts.Prompter()
-		customize, promptErr := prompter.Confirm("Customize settings?", false)
-		if promptErr == nil && customize {
-			result, editErr := settingsui.Edit(ios, cfg.SettingsStore(), cfg)
-			if editErr == nil && result.Saved {
-				fmt.Fprintf(ios.ErrOut, "%s Settings updated (%d fields modified)\n",
-					cs.SuccessIcon(), result.SavedCount)
-			}
-		}
-	}
-
-	// Ensure shared directory exists on host for bind-mounting into containers
-	shareDir, err := cfg.ShareSubdir()
-	if err != nil {
-		return fmt.Errorf("failed to create share directory: %w", err)
-	}
-	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), shareDir)
-
-	// Build base image with TUI progress display
-	if buildBaseImage {
-		fmt.Fprintln(ios.ErrOut)
-
-		client, err := opts.Client(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to create docker client: %w", err)
-		}
-		defer client.Close()
-
-		// Use TUI RunProgress for the build
-		ch := make(chan tui.ProgressStep, 4)
-		buildErrCh := make(chan error, 1)
-
-		go func() {
-			defer close(ch)
-			ch <- tui.ProgressStep{
-				ID:     "build",
-				Name:   "Building base image (" + selectedFlavor + ")",
-				Status: tui.StepRunning,
-			}
-			buildErr := client.BuildDefaultImage(ctx, selectedFlavor, func(event whail.BuildProgressEvent) {
-				ch <- tui.ProgressStep{
-					ID:     event.StepID,
-					Name:   event.StepName,
-					Status: progressStatus(event.Status),
-					Cached: event.Cached,
-				}
-			})
-			if buildErr != nil {
-				ch <- tui.ProgressStep{
-					ID:     "build",
-					Status: tui.StepError,
-					Error:  buildErr.Error(),
-				}
-				buildErrCh <- buildErr
-				return
-			}
-			ch <- tui.ProgressStep{
-				ID:     "build",
-				Status: tui.StepComplete,
-			}
-			buildErrCh <- nil
-		}()
-
-		result := opts.TUI.RunProgress("auto", tui.ProgressDisplayConfig{
-			Title:          "Building",
-			Subtitle:       docker.DefaultImageTag,
-			CompletionVerb: "Built",
-		}, ch)
-
-		if result.Err != nil {
-			return result.Err
-		}
-
-		if buildErr := <-buildErrCh; buildErr != nil {
-			fmt.Fprintln(ios.ErrOut)
-			fmt.Fprintf(ios.ErrOut, "%s Base image build failed: %v\n", cs.FailureIcon(), buildErr)
-			fmt.Fprintln(ios.ErrOut)
-			fmt.Fprintln(ios.ErrOut, "Next Steps:")
-			fmt.Fprintf(ios.ErrOut, "  1. %s\n", "You can manually build later with 'clawker generate latest && docker build ...'")
-			fmt.Fprintf(ios.ErrOut, "  2. %s\n", "Or specify images per-project in .clawker.yaml")
-			return nil // early return to avoid duplicate next steps
-		}
-
-		// Persist the built image as the user-level default so that
-		// "clawker run" finds it even without a per-project clawker.yaml.
-		if err := saveUserProjectConfig(docker.DefaultImageTag); err != nil {
-			return fmt.Errorf("saving user project config: %w", err)
-		}
-		fmt.Fprintf(ios.ErrOut, "%s Default image: %s\n", cs.SuccessIcon(), docker.DefaultImageTag)
-	}
-
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintln(ios.ErrOut, "Next Steps:")
-	fmt.Fprintf(ios.ErrOut, "  1. %s\n", "Navigate to a project directory")
-	fmt.Fprintf(ios.ErrOut, "  2. %s\n", "Run 'clawker project init' to set up the project")
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintf(ios.ErrOut, "To edit your settings later, run 'clawker settings edit'\n")
-
-	return nil
-}
-
-// progressStatus converts a whail build step status to a TUI progress step status.
-func progressStatus(s whail.BuildStepStatus) tui.ProgressStepStatus {
-	switch s {
-	case whail.BuildStepRunning:
-		return tui.StepRunning
-	case whail.BuildStepComplete:
-		return tui.StepComplete
-	case whail.BuildStepCached:
-		return tui.StepCached
-	case whail.BuildStepError:
-		return tui.StepError
-	default:
-		return tui.StepPending
-	}
-}
-
-// saveUserProjectConfig writes or updates the user-level clawker.yaml in the
-// config directory with the given image tag. Only the build.image field is set;
-// existing keys in the file are preserved on reruns.
-func saveUserProjectConfig(imageTag string) error {
-	cfgPath, err := config.UserProjectConfigFilePath()
-	if err != nil {
-		return fmt.Errorf("resolving user project config path: %w", err)
-	}
-
-	dir := filepath.Dir(cfgPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("creating config directory: %w", err)
-	}
-
-	store, err := storage.NewStore[config.Project](
-		storage.WithFilenames(filepath.Base(cfgPath)),
-		storage.WithDefaultsFromStruct[config.Project](),
-		storage.WithPaths(dir),
-	)
-	if err != nil {
-		return fmt.Errorf("creating user project config store: %w", err)
-	}
-
-	if err := store.Set(func(p *config.Project) {
-		p.Build.Image = imageTag
-	}); err != nil {
-		return fmt.Errorf("setting build image: %w", err)
-	}
-
-	return store.Write(storage.ToPath(cfgPath))
 }

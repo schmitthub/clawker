@@ -52,17 +52,16 @@ type LayerInfo struct {
 	Data     map[string]any // raw YAML data from this file only (read-only copy)
 }
 
-// New constructs a store with file discovery and defaults as the virtual
-// base layer. Equivalent to NewFromString("", opts...).
-func New[T Schema](opts ...Option) (*Store[T], error) {
-	return NewFromString[T]("", opts...)
+// New constructs a store. It delegates directly to NewFromString.
+func New[T Schema](yaml string, opts ...Option) (*Store[T], error) {
+	return NewFromString[T](yaml, opts...)
 }
 
 // NewStore is an alias for New.
 //
 // Deprecated: use New.
 func NewStore[T Schema](opts ...Option) (*Store[T], error) {
-	return New[T](opts...)
+	return New[T]("", opts...)
 }
 
 // NewFromString constructs a store with an explicit YAML string as the
@@ -620,6 +619,13 @@ func (s *Store[T]) Write(opts ...WriteOption) error {
 	// Rebuild the merged tree, provenance, and snapshot so that
 	// Read(), ProvenanceMap(), and future Write() calls see fresh state.
 	return s.remerge()
+}
+
+// WriteTo persists dirty fields to the given absolute path.
+// Convenience wrapper for Write(ToPath(path)) so callers don't need
+// to import the storage package for the WriteOption constructor.
+func (s *Store[T]) WriteTo(path string) error {
+	return s.Write(ToPath(path))
 }
 
 // MarkForWrite adds a dotted field path to the write set so the next

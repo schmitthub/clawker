@@ -103,6 +103,7 @@ type editOptions struct {
 	title        string
 	overrides    []Override
 	skipPaths    map[string]bool
+	onlyPaths    map[string]bool
 	layerTargets []LayerTarget
 }
 
@@ -129,12 +130,133 @@ func WithSkipPaths(paths ...string) Option {
 	}
 }
 
+// WithOnlyPaths restricts the editor to show only the given dotted paths.
+// All other fields are excluded. When set, WithSkipPaths is ignored.
+func WithOnlyPaths(paths ...string) Option {
+	return func(o *editOptions) {
+		if o.onlyPaths == nil {
+			o.onlyPaths = make(map[string]bool, len(paths))
+		}
+		for _, p := range paths {
+			o.onlyPaths[p] = true
+		}
+	}
+}
+
 // WithLayerTargets provides the per-field save destinations.
 // Domain adapters build these using config path accessors.
 func WithLayerTargets(targets []LayerTarget) Option {
 	return func(o *editOptions) {
 		o.layerTargets = targets
 	}
+}
+
+// BuildBrowser creates a FieldBrowserModel for a storage.Store[T] without
+// running it. The returned model can be embedded as a WizardPage or run
+// standalone via tui.RunProgram. All save/delete callbacks are wired.
+func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*tui.FieldBrowserModel, error) {
+	cfg := editOptions{
+		title:     "Configuration Editor",
+		skipPaths: make(map[string]bool),
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	for _, t := range cfg.layerTargets {
+		if t.Path != "" && !filepath.IsAbs(t.Path) {
+			return nil, fmt.Errorf("layer target %q has non-absolute path: %s", t.Label, t.Path)
+		}
+	}
+
+	buildBrowserState := func() ([]tui.BrowserField, []tui.BrowserLayer) {
+		snapshot := store.Read()
+		fields := WalkFields(snapshot)
+		enrichWithSchema(fields, (*snapshot).Fields())
+
+		if len(cfg.onlyPaths) > 0 {
+			filtered := make([]Field, 0, len(cfg.onlyPaths))
+			for _, f := range fields {
+				if cfg.onlyPaths[f.Path] {
+					filtered = append(filtered, f)
+				}
+			}
+			fields = filtered
+		} else if len(cfg.skipPaths) > 0 {
+			filtered := make([]Field, 0, len(fields))
+			for _, f := range fields {
+				if !cfg.skipPaths[f.Path] {
+					filtered = append(filtered, f)
+				}
+			}
+			fields = filtered
+		}
+		fields = ApplyOverrides(fields, cfg.overrides)
+
+		provMap := store.ProvenanceMap()
+		return fieldsToBrowserFields(fields, provMap), layersToBrowserLayers(store.Layers())
+	}
+
+	browserFields, browserLayers := buildBrowserState()
+	browserTargets := layerTargetsToBrowserTargets(cfg.layerTargets)
+
+	onFieldSaved := func(fieldPath, value string, targetIdx int) error {
+		if targetIdx < 0 || targetIdx >= len(cfg.layerTargets) {
+			return fmt.Errorf("invalid layer target index: %d", targetIdx)
+		}
+		target := cfg.layerTargets[targetIdx]
+
+		var setFieldErr error
+		if err := store.Set(func(t *T) {
+			if err := SetFieldValue(t, fieldPath, value); err != nil {
+				setFieldErr = err
+			}
+		}); err != nil {
+			return fmt.Errorf("updating store: %w", err)
+		}
+		if setFieldErr != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, setFieldErr)
+		}
+
+		prov, hasProv := store.Provenance(fieldPath)
+		if hasProv && prov.Path != target.Path {
+			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
+			if normalizeLayerValue(layerVal) != value {
+				store.MarkForWrite(fieldPath)
+			}
+		}
+
+		if err := store.Write(storage.ToPath(target.Path)); err != nil {
+			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
+		}
+		return nil
+	}
+
+	onFieldDeleted := func(fieldPath string, targetIdx int) error {
+		if targetIdx < 0 || targetIdx >= len(cfg.layerTargets) {
+			return fmt.Errorf("invalid layer target index: %d", targetIdx)
+		}
+		target := cfg.layerTargets[targetIdx]
+
+		if _, err := store.Delete(fieldPath); err != nil {
+			return fmt.Errorf("deleting from store: %w", err)
+		}
+
+		if err := store.Write(storage.ToPath(target.Path)); err != nil {
+			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
+		}
+		return nil
+	}
+
+	return tui.NewFieldBrowser(tui.BrowserConfig{
+		Title:          cfg.title,
+		Fields:         browserFields,
+		LayerTargets:   browserTargets,
+		Layers:         browserLayers,
+		OnFieldSaved:   onFieldSaved,
+		OnFieldDeleted: onFieldDeleted,
+		OnRefresh:      buildBrowserState,
+	}), nil
 }
 
 // Edit runs an interactive field editor for a storage.Store[T].
@@ -171,7 +293,15 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		fields := WalkFields(snapshot)
 		enrichWithSchema(fields, (*snapshot).Fields())
 
-		if len(cfg.skipPaths) > 0 {
+		if len(cfg.onlyPaths) > 0 {
+			filtered := make([]Field, 0, len(cfg.onlyPaths))
+			for _, f := range fields {
+				if cfg.onlyPaths[f.Path] {
+					filtered = append(filtered, f)
+				}
+			}
+			fields = filtered
+		} else if len(cfg.skipPaths) > 0 {
 			filtered := make([]Field, 0, len(fields))
 			for _, f := range fields {
 				if !cfg.skipPaths[f.Path] {
@@ -217,7 +347,7 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		prov, hasProv := store.Provenance(fieldPath)
 		if hasProv && prov.Path != target.Path {
 			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
-			if fmt.Sprintf("%v", layerVal) != value {
+			if normalizeLayerValue(layerVal) != value {
 				store.MarkForWrite(fieldPath)
 			}
 		}
@@ -327,6 +457,25 @@ func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.Brow
 // lookupLayerFieldValue finds the raw value for a dotted field path in a
 // specific layer identified by its file path. Returns nil if the layer is
 // not found or the field is absent from that layer's data.
+// normalizeLayerValue formats a raw YAML-decoded value into the same string
+// representation that the TUI editor produces, enabling accurate comparison
+// to avoid spurious MarkForWrite calls.
+func normalizeLayerValue(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case []any:
+		parts := make([]string, 0, len(val))
+		for _, item := range val {
+			parts = append(parts, fmt.Sprintf("%v", item))
+		}
+		return strings.Join(parts, ", ")
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 func lookupLayerFieldValue(layers []storage.LayerInfo, layerPath, fieldPath string) any {
 	for _, l := range layers {
 		if l.Path != layerPath {
