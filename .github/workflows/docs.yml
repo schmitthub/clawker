@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   docs:
-    name: CLI Docs Check
+    name: Generated Docs Check
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -18,5 +18,5 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Check CLI docs freshness
+      - name: Check generated docs freshness
         run: make docs-check

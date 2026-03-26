@@ -88,21 +88,6 @@ build:
       version: "1.0"
 ```
 
-### expose
-
-Document ports the container listens on:
-
-```yaml
-build:
-  instructions:
-    expose:
-      - port: 3000
-      - port: 8080
-        protocol: "tcp"
-      - port: 9090
-        protocol: "udp"
-```
-
 ### args
 
 Define build-time arguments:
@@ -114,53 +99,6 @@ build:
       - name: "NODE_VERSION"
         default: "20"
       - name: "CUSTOM_FLAG"
-```
-
-### volumes
-
-Declare volume mount points:
-
-```yaml
-build:
-  instructions:
-    volumes:
-      - "/data"
-      - "/var/cache"
-```
-
-### workdir
-
-Override the working directory:
-
-```yaml
-build:
-  instructions:
-    workdir: "/app"
-```
-
-### healthcheck
-
-Configure a container health check:
-
-```yaml
-build:
-  instructions:
-    healthcheck:
-      cmd: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: "30s"
-      timeout: "10s"
-      start_period: "5s"
-      retries: 3
-```
-
-### shell
-
-Override the default shell:
-
-```yaml
-build:
-  instructions:
-    shell: ["/bin/bash", "-c"]
 ```
 
 ### root_run and user_run
@@ -232,19 +170,18 @@ build:
 
 When using a custom Dockerfile, the `image`, `packages`, `instructions`, and `inject` fields are ignored. The Dockerfile is built as-is.
 
-## Build Context and Build Args
+## Build Context
 
-Set a custom build context directory and pass build-time arguments:
+Set a custom build context directory:
 
 ```yaml
 build:
   context: "./docker"
-  build_args:
-    NODE_VERSION: "20"
-    REGISTRY: "ghcr.io"
 ```
 
-The `context` path is relative to the project root. Build args are passed as `--build-arg` to Docker.
+The `context` path is relative to the project root.
+
+Build-time arguments can be passed via the `--build-arg` flag on `clawker image build`.
 
 ## Complete Example
 
@@ -256,8 +193,6 @@ build:
     - curl
     - ripgrep
     - python3
-  build_args:
-    NPM_TOKEN: ""
   instructions:
     env:
       NODE_ENV: "development"
@@ -270,8 +205,6 @@ build:
         debian: "apt-get install -y libsqlite3-dev"
     user_run:
       - cmd: "npm install -g typescript ts-node"
-    expose:
-      - port: 3000
   inject:
     after_claude_install:
       - "RUN claude mcp add context7 -- npx -y @anthropic-ai/claude-code-mcp"

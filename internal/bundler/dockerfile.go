@@ -452,24 +452,6 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
-	// Add any include files from agent config
-	for _, include := range g.cfg.Project().Agent.Includes {
-		includePath := include
-		if !filepath.IsAbs(includePath) {
-			includePath = filepath.Join(g.workDir, includePath)
-		}
-
-		content, err := os.ReadFile(includePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read include file %q: %w", include, err)
-		}
-
-		// Add to archive with relative path
-		if err := addFileToTar(tw, filepath.Base(include), content); err != nil {
-			return nil, err
-		}
-	}
-
 	if err := tw.Close(); err != nil {
 		return nil, err
 	}
@@ -518,23 +500,6 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "clawker-ca.crt"), content, 0644); err != nil {
 			return fmt.Errorf("failed to write clawker-ca.crt: %w", err)
-		}
-	}
-
-	// Write include files from agent config
-	for _, include := range g.cfg.Project().Agent.Includes {
-		includePath := include
-		if !filepath.IsAbs(includePath) {
-			includePath = filepath.Join(g.workDir, includePath)
-		}
-
-		content, err := os.ReadFile(includePath)
-		if err != nil {
-			return fmt.Errorf("failed to read include file %q: %w", include, err)
-		}
-
-		if err := os.WriteFile(filepath.Join(dir, filepath.Base(include)), content, 0644); err != nil {
-			return fmt.Errorf("failed to write include %s: %w", include, err)
 		}
 	}
 

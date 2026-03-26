@@ -107,7 +107,7 @@ const ModeSnapshot Mode = "snapshot"
 
 **Agent**: `AgentConfig`, `ClaudeCodeConfig`, `ClaudeCodeConfigOptions`
 
-**Workspace/Security**: `WorkspaceConfig` (`DefaultMode`), `SecurityConfig`, `FirewallConfig`, `IPRangeSource`, `GitCredentialsConfig`
+**Workspace/Security**: `WorkspaceConfig` (`DefaultMode`), `SecurityConfig`, `FirewallConfig`, `GitCredentialsConfig`
 
 **Loop**: `LoopConfig` (max_loops, stagnation_threshold, timeout_minutes, circuit breaker params)
 

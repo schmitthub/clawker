@@ -45,10 +45,10 @@ repos:
         pass_filenames: false
 
       - id: docs-check
-        name: CLI docs freshness
+        name: Generated docs freshness
         entry: make docs-check
         language: system
-        files: ^(cmd/|internal/cmd/|internal/docs/)
+        files: ^(cmd/|internal/cmd/|internal/docs/|internal/config/schema\.go)
         pass_filenames: false
 
       - id: licenses-check

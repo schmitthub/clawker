@@ -1,0 +1,194 @@
+---
+title: "Configuration"
+description: "Reference for .clawker.yaml project configuration"
+icon: "gear"
+---
+
+{/* AUTO-GENERATED from cmd/gen-docs/configuration.mdx.tmpl + schema struct tags. Do not edit directly. Run: make docs */}
+
+Every Clawker project has a `.clawker.yaml` file in the project root. Create one with:
+
+```bash
+clawker project init
+```
+
+## How Configuration Works
+
+Clawker uses a layered configuration system that discovers, loads, and merges YAML files from multiple locations. Understanding this system is key to using Clawker effectively -- especially in monorepos, shared environments, or when you want per-directory overrides.
+
+### Discovery and Merge
+
+When you run any Clawker command, the configuration engine:
+
+1. **Walk-up discovery** -- Starting from your current working directory, walks up the directory tree to the registered project root, probing for config files at each level.
+2. **Explicit paths** -- Checks the user config directory (`~/.config/clawker/`) for additional config files.
+3. **Defaults** -- Applies built-in defaults as the lowest-priority base layer.
+
+Files found closer to CWD have **higher priority** than files found further up the tree. This means a `.clawker.yaml` in a subdirectory overrides values from the one at the project root.
+
+**Merge rules:**
+- **Scalars** (strings, numbers, booleans): closest-to-CWD wins.
+- **Maps** (objects): recursively merged -- keys from higher-priority files override, but unmentioned keys from lower-priority files are preserved.
+- **Slices** (arrays): replaced entirely by higher-priority files, unless the field is tagged for union merge (e.g., firewall `add_domains`).
+
+### File Placement
+
+At each directory level during walk-up, the engine checks two placement styles:
+
+| Style | Path | When |
+|-------|------|------|
+| **Directory form** | `.clawker/clawker.yaml` | When a `.clawker/` directory exists |
+| **Flat dotfile form** | `.clawker.yaml` | When no `.clawker/` directory exists |
+
+The directory form takes precedence. Both `.yaml` and `.yml` extensions are accepted.
+
+<Note>
+Walk-up discovery is **bounded** -- it never walks past the registered project root and never reaches `~/.config/clawker/`. Home-level configs are loaded separately via the explicit path mechanism.
+</Note>
+
+### Local Overrides
+
+Clawker also discovers `clawker.local.yaml` (or `.clawker.local.yaml` / `.clawker/clawker.local.yaml`) files alongside the main config. These are intended for machine-specific or developer-specific settings that shouldn't be committed to version control.
+
+At each directory level, both `clawker.yaml` and `clawker.local.yaml` are discovered. The local file merges at the same priority level but is loaded after the main file, so its values win.
+
+```
+.clawker.yaml              # Committed to git
+.clawker.local.yaml        # In .gitignore -- personal overrides
+```
+
+### Precedence (Highest to Lowest)
+
+```
+1. .clawker.yaml in CWD (or .clawker/clawker.yaml)
+2. .clawker.local.yaml in CWD
+3. .clawker.yaml in parent directory
+4. .clawker.local.yaml in parent directory
+5. ... (continues up to project root)
+6. .clawker.yaml at project root
+7. .clawker.local.yaml at project root
+8. ~/.config/clawker/clawker.yaml (user-level overrides)
+9. Built-in defaults
+```
+
+### Project Registration
+
+Walk-up discovery requires your project to be **registered** in the project registry. This is how Clawker knows where to stop walking up:
+
+```bash
+# Register during project init
+clawker project init
+
+# Or register an existing project
+clawker project register
+```
+
+If CWD is not within a registered project, walk-up is skipped entirely and only the user config directory and defaults are used.
+
+The registry lives at `~/.local/share/clawker/registry.yaml` and maps project names to filesystem paths (managed via `clawker project` commands):
+
+```yaml
+projects:
+  - name: "my-app"
+    root: "/Users/dev/my-app"
+    worktrees:
+      feature-auth:
+        path: "/Users/dev/.local/share/clawker/worktrees/my-app-auth-a1b2c3d4e5f6"
+        branch: "feature/auth"
+```
+
+### Monorepo Support
+
+The layered merge system enables monorepo workflows. Place a shared `.clawker.yaml` at the repo root with common settings, then add per-service overrides in subdirectories:
+
+```
+monorepo/
+├── .clawker.yaml           # Shared: base image, firewall rules, common packages
+├── services/
+│   ├── api/
+│   │   └── .clawker.yaml   # Override: add Python packages, different image
+│   └── web/
+│       └── .clawker.yaml   # Override: add Node packages, different env vars
+```
+
+To create a subdir config, run `clawker init` from inside the subdirectory. It detects that you're inside an existing project and skips project registration — going straight to preset selection and config file creation. The resulting file layers on top of the root config.
+
+```bash
+cd services/api
+clawker init          # Interactive: pick a preset, customize
+clawker init --yes    # Non-interactive: Bare preset defaults
+```
+
+When you run `clawker run` from `services/api/`, the engine merges:
+1. `services/api/.clawker.yaml` (highest priority)
+2. `.clawker.yaml` at repo root
+3. `~/.config/clawker/clawker.yaml` (if exists)
+4. Built-in defaults
+
+Only the fields you specify in the subdirectory config are overridden. Everything else inherits from the parent.
+
+### Writes
+
+When Clawker writes configuration changes (e.g., via `clawker project init`), each field is routed back to the file it originally came from (provenance tracking). New fields that didn't come from any file are written to the highest-priority discovered file. All writes are atomic (temp file + fsync + rename) with advisory file locking for cross-process safety.
+
+## Project Configuration Reference
+
+The following tables are auto-generated from the schema struct tags in `internal/config/schema.go`. Each section corresponds to a top-level key in `.clawker.yaml`.
+
+{{- range .ProjectSections }}
+
+### {{ .Key }}
+
+{{ fieldTable .Fields }}
+{{- range .Groups }}
+
+#### {{ .Key }}
+
+{{ fieldTable .Fields }}
+{{- end }}
+{{- end }}
+
+## Interactive Editing
+
+Instead of editing YAML by hand, you can use Clawker's built-in interactive editor:
+
+```bash
+# Edit project configuration (.clawker.yaml)
+clawker project edit
+
+# Edit user settings (settings.yaml)
+clawker settings edit
+```
+
+The editor opens a TUI with your configuration fields grouped into tabs. You can browse fields, see their current values and defaults, edit them inline, and save. When you save a field, you choose which config layer to write it to — for example, saving to a local override file instead of the committed project config. The editor also shows which file each value comes from, so you can see exactly how the layered merge is working.
+
+## User Settings Reference
+
+Global settings live at `~/.config/clawker/settings.yaml`. The following tables are auto-generated from the schema struct tags.
+
+{{- range .SettingsSections }}
+
+### {{ .Key }}
+
+{{ fieldTable .Fields }}
+{{- range .Groups }}
+
+#### {{ .Key }}
+
+{{ fieldTable .Fields }}
+{{- end }}
+{{- end }}
+
+You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level project config defaults. This file is merged as the lowest-priority project config layer (just above built-in defaults), so any project-level `.clawker.yaml` overrides it.
+
+## Directory Structure
+
+Clawker follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/). Files are organized across three directories:
+
+| Directory | Default Path | Contents |
+|-----------|-------------|----------|
+| Config | `~/.config/clawker/` | `settings.yaml`, `clawker.yaml` (user-level project overrides) |
+| Data | `~/.local/share/clawker/` | `registry.yaml`, worktree directories, `.clawker-share` |
+| State | `~/.local/state/clawker/` | Log files, PID files, loop sessions, update cache |
+
+Override with environment variables: `CLAWKER_CONFIG_DIR`, `CLAWKER_DATA_DIR`, `CLAWKER_STATE_DIR`.

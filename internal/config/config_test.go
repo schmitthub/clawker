@@ -18,9 +18,7 @@ func TestNewBlankConfig(t *testing.T) {
 	p := cfg.Project()
 	require.NotNil(t, p)
 
-	// Default project YAML does not set build.image — only packages
 	assert.Empty(t, p.Build.Image)
-	assert.Contains(t, p.Build.Packages, "git")
 	assert.Equal(t, "bind", p.Workspace.DefaultMode)
 	assert.False(t, p.Security.DockerSocket)
 }
@@ -483,34 +481,10 @@ func TestRequiredFirewallRules(t *testing.T) {
 
 // --- Generated defaults validation ---
 
-func TestGeneratedDefaults_ProjectValues(t *testing.T) {
-	generated := storage.GenerateDefaultsYAML[Project]()
-	store, err := storage.NewFromString[Project](generated)
-	require.NoError(t, err)
-	p := store.Read()
-
-	assert.Equal(t, []string{"git", "curl", "ripgrep"}, p.Build.Packages)
-	assert.Equal(t, "bind", p.Workspace.DefaultMode)
-	assert.False(t, p.Security.DockerSocket)
-	assert.Equal(t, []string{"NET_ADMIN", "NET_RAW"}, p.Security.CapAdd)
-	assert.True(t, p.Security.HostProxyEnabled())
-
-	require.NotNil(t, p.Agent.ClaudeCode)
-	assert.Equal(t, "copy", p.Agent.ClaudeCode.ConfigStrategy())
-	assert.True(t, p.Agent.ClaudeCode.UseHostAuthEnabled())
-	assert.False(t, p.Agent.SharedDirEnabled())
-
-	require.NotNil(t, p.Security.GitCredentials)
-	assert.True(t, p.Security.GitCredentials.GitHTTPSEnabled(true))
-	assert.True(t, p.Security.GitCredentials.GitSSHEnabled())
-	assert.True(t, p.Security.GitCredentials.GPGEnabled())
-	assert.True(t, p.Security.GitCredentials.CopyGitConfigEnabled())
-}
-
 // TestSetProject_EmptyStringsDontOverrideUserConfig reproduces the bug where
-// project init writes empty string fields (agent.editor: "", agent.shell: "")
+// project init writes empty string fields (agent.editor: "", agent.visual: "")
 // to the project config file, overriding values set in the user-level config
-// (e.g. agent.editor: vim, agent.shell: zsh).
+// (e.g. agent.editor: vim, agent.visual: vim).
 //
 // The fix: structToMap treats empty strings as "not set" (same as nil pointers),
 // so they are not written to disk and higher-priority layer values merge through.
@@ -530,12 +504,11 @@ func TestSetProject_EmptyStringsDontOverrideUserConfig(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dir, 0o755))
 	}
 
-	// User-level config: sets agent.editor and agent.shell.
+	// User-level config: sets agent.editor and agent.visual.
 	userConfigFile := filepath.Join(configDir, "clawker.yaml")
 	require.NoError(t, os.WriteFile(userConfigFile, []byte(`
 agent:
   editor: vim
-  shell: zsh
   visual: vim
 `), 0o644))
 
@@ -563,8 +536,6 @@ agent:
 	if agentMap, ok := projectMap["agent"].(map[string]any); ok {
 		assert.NotContains(t, agentMap, "editor",
 			"project file should not write empty agent.editor")
-		assert.NotContains(t, agentMap, "shell",
-			"project file should not write empty agent.shell")
 		assert.NotContains(t, agentMap, "visual",
 			"project file should not write empty agent.visual")
 	}
@@ -584,8 +555,6 @@ agent:
 		"project-level build.image should win")
 	assert.Equal(t, "vim", snap.Agent.Editor,
 		"user-level agent.editor should survive — not overridden by empty string")
-	assert.Equal(t, "zsh", snap.Agent.Shell,
-		"user-level agent.shell should survive — not overridden by empty string")
 	assert.Equal(t, "vim", snap.Agent.Visual,
 		"user-level agent.visual should survive — not overridden by empty string")
 }

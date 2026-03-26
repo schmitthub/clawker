@@ -432,21 +432,3 @@ build:
 	assert.Equal(t, "testproj", buildLabels[cfg.LabelProject()],
 		"project label should be applied via mergeImageLabels")
 }
-
-func TestEnsureImage_ContentHashError(t *testing.T) {
-	cfg := testConfig(t, `
-build:
-  image: "buildpack-deps:bookworm-scm"
-agent:
-  includes:
-    - "nonexistent-file.txt"
-`)
-	projectCfg := cfg.Project()
-	client, _ := newTestClientWithConfig(cfg)
-	builder := NewBuilder(client, projectCfg, t.TempDir(), "testproj")
-	imageTag := ImageTag("testproj")
-
-	err := builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to compute content hash")
-}
