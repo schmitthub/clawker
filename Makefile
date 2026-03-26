@@ -303,23 +303,23 @@ licenses-check:
 # Docs Targets
 # ============================================================================
 
-# Generate CLI reference docs
+# Generate CLI reference + config reference docs
 docs:
-	@echo "Generating CLI reference docs..."
+	@echo "Generating CLI reference + config reference docs..."
 	$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
 
-# Check CLI docs are up to date (used by CI)
+# Check all generated docs are up to date (used by CI)
 docs-check:
-	@echo "Checking CLI docs freshness..."
+	@echo "Checking generated docs freshness..."
 	@$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
-	@if ! git diff --quiet docs/cli-reference/; then \
+	@if ! git diff --quiet docs/cli-reference/ docs/configuration.mdx; then \
 		echo "" >&2; \
-		echo "ERROR: CLI docs are out of date. Run 'make docs' and commit." >&2; \
+		echo "ERROR: Generated docs are out of date. Run 'make docs' and commit." >&2; \
 		echo "" >&2; \
-		git diff --stat docs/cli-reference/; \
+		git diff --stat docs/cli-reference/ docs/configuration.mdx; \
 		exit 1; \
 	fi
-	@echo "CLI docs are up to date."
+	@echo "Generated docs are up to date."
 
 # ============================================================================
 # Pre-commit Targets

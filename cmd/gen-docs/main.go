@@ -1,9 +1,12 @@
-// gen-docs is a standalone binary for generating CLI documentation.
+// gen-docs is a standalone binary for generating CLI and configuration documentation.
 // It provides documentation generation for clawker CLI in multiple formats
-// (Markdown, man pages, YAML, reStructuredText) without the full clawker CLI.
+// (Markdown, man pages, YAML, reStructuredText) and auto-generates configuration
+// reference docs from schema struct tags.
 package main
 
 import (
+	"bytes"
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +17,9 @@ import (
 	"github.com/schmitthub/clawker/internal/docs"
 	"github.com/spf13/pflag"
 )
+
+//go:embed configuration.mdx.tmpl
+var configDocTemplate string
 
 func main() {
 	if err := run(os.Args); err != nil {
@@ -94,6 +100,14 @@ func run(args []string) error {
 			return fmt.Errorf("failed to generate Markdown documentation: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "Generated CLI reference documentation in %s\n", dir)
+
+		// Generate configuration reference from schema struct tags.
+		if flagWebsite {
+			if err := genConfigDoc(flagDocPath); err != nil {
+				return fmt.Errorf("failed to generate config documentation: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Generated configuration reference in %s\n", filepath.Join(flagDocPath, "configuration.mdx"))
+		}
 	}
 
 	if flagManPage {
@@ -133,6 +147,18 @@ func run(args []string) error {
 	}
 
 	return nil
+}
+
+// genConfigDoc renders the embedded configuration.mdx.tmpl template with
+// schema metadata to produce the final configuration.mdx.
+func genConfigDoc(docPath string) error {
+	var buf bytes.Buffer
+	if err := docs.GenConfigDoc(&buf, configDocTemplate); err != nil {
+		return err
+	}
+
+	outPath := filepath.Join(docPath, "configuration.mdx")
+	return os.WriteFile(outPath, buf.Bytes(), 0644)
 }
 
 // mintlifyFilePrepender returns Mintlify-compatible front matter for a given filename.

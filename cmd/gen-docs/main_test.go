@@ -225,4 +225,10 @@ func TestRunWebsite(t *testing.T) {
 	contentStr := string(content)
 	require.True(t, strings.HasPrefix(contentStr, "---"), "should start with Mintlify front matter")
 	require.Contains(t, contentStr, `title: "clawker"`)
+
+	// Verify config doc was generated
+	configDoc, err := os.ReadFile(filepath.Join(dir, "configuration.mdx"))
+	require.NoError(t, err)
+	require.Contains(t, string(configDoc), "### build")
+	require.Contains(t, string(configDoc), "### security")
 }
