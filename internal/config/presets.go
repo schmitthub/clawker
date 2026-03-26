@@ -134,7 +134,7 @@ security:
 `
 
 const javaPreset = `build:
-  image: "eclipse-temurin:21-bookworm"
+  image: "eclipse-temurin:21-jdk-alpine"
   packages:
     - git
     - curl

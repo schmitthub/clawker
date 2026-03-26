@@ -66,12 +66,13 @@ func TestNewCmdProjectInit(t *testing.T) {
 
 func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 	tests := []struct {
-		name      string
-		args      []string
-		wantName  string
-		wantForce bool
-		wantYes   bool
-		wantErr   bool
+		name       string
+		args       []string
+		wantName   string
+		wantPreset string
+		wantForce  bool
+		wantYes    bool
+		wantErr    bool
 	}{
 		{name: "no flags", args: []string{}},
 		{name: "force flag", args: []string{"--force"}, wantForce: true},
@@ -82,6 +83,9 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 		{name: "with project name", args: []string{"my-project"}, wantName: "my-project"},
 		{name: "name and flags", args: []string{"my-project", "-f", "-y"}, wantName: "my-project", wantForce: true, wantYes: true},
 		{name: "too many args", args: []string{"project1", "project2"}, wantErr: true},
+		{name: "preset with yes", args: []string{"--yes", "--preset", "Go"}, wantYes: true, wantPreset: "Go"},
+		{name: "preset name and yes", args: []string{"my-project", "--yes", "--preset", "Python"}, wantName: "my-project", wantYes: true, wantPreset: "Python"},
+		{name: "preset without yes", args: []string{"--preset", "Go"}, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -108,10 +112,52 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
 			assert.Equal(t, tt.wantName, gotOpts.Name)
+			assert.Equal(t, tt.wantPreset, gotOpts.Preset)
 			assert.Equal(t, tt.wantForce, gotOpts.Force)
 			assert.Equal(t, tt.wantYes, gotOpts.Yes)
 		})
 	}
+}
+
+func TestPresetCompletions(t *testing.T) {
+	completions := PresetCompletions()
+
+	// Should have one entry per non-AutoCustomize preset.
+	var presetCount int
+	for _, p := range config.Presets() {
+		if !p.AutoCustomize {
+			presetCount++
+		}
+	}
+	assert.Len(t, completions, presetCount)
+
+	// Each completion should be a non-empty string (cobra.Completion is a string type).
+	for _, c := range completions {
+		assert.NotEmpty(t, string(c))
+	}
+
+	// "Build from scratch" (AutoCustomize) should not appear.
+	for _, c := range completions {
+		assert.NotContains(t, string(c), "Build from scratch")
+	}
+}
+
+func TestPresetWithoutYes_ReturnsError(t *testing.T) {
+	tio, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{
+		IOStreams: tio,
+		TUI:       tui.NewTUI(tio),
+	}
+
+	cmd := NewCmdProjectInit(f, func(_ context.Context, _ *ProjectInitOptions) error {
+		t.Fatal("runF should not be called when --preset is used without --yes")
+		return nil
+	})
+
+	cmd.SetArgs([]string{"--preset", "Go"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--preset requires --yes")
 }
 
 // --- Wizard step definition tests ---
@@ -383,6 +429,64 @@ func TestPerformProjectSetup_OverwriteCreatesIgnore(t *testing.T) {
 	content, err = os.ReadFile(ignorePath)
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "Clawker Ignore File")
+}
+
+func TestRunNonInteractive_PresetFlag(t *testing.T) {
+	wd := chdirTemp(t)
+
+	tio, _, out, _ := iostreams.Test()
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	mockPM := projectmocks.NewMockProjectManager()
+	mockPM.RegisterFunc = func(_ context.Context, name string, repoPath string) (project.Project, error) {
+		return projectmocks.NewMockProject(name, repoPath), nil
+	}
+
+	opts := &ProjectInitOptions{
+		IOStreams:      tio,
+		Config:         func() (config.Config, error) { return cfg, nil },
+		Logger:         func() (*logger.Logger, error) { return logger.Nop(), nil },
+		ProjectManager: func() (project.ProjectManager, error) { return mockPM, nil },
+		Yes:            true,
+		Preset:         "Go",
+	}
+
+	err := Run(context.Background(), opts)
+	require.NoError(t, err)
+
+	// Verify config file was created with Go preset values.
+	configPath := filepath.Join(wd, "."+cfg.ProjectConfigFileName())
+	content, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+
+	reloaded, err := storage.NewFromString[config.Project](
+		string(content),
+		storage.WithDefaultsFromStruct[config.Project](),
+	)
+	require.NoError(t, err)
+
+	snap := reloaded.Read()
+	assert.Equal(t, "golang:1.23-bookworm", snap.Build.Image)
+	assert.Contains(t, out.String(), "Go")
+}
+
+func TestRunNonInteractive_UnknownPreset(t *testing.T) {
+	chdirTemp(t)
+
+	tio, _, _, _ := iostreams.Test()
+	cfg := configmocks.NewIsolatedTestConfig(t)
+
+	opts := &ProjectInitOptions{
+		IOStreams:      tio,
+		Config:         func() (config.Config, error) { return cfg, nil },
+		Logger:         func() (*logger.Logger, error) { return logger.Nop(), nil },
+		ProjectManager: func() (project.ProjectManager, error) { return projectmocks.NewMockProjectManager(), nil },
+		Yes:            true,
+		Preset:         "NonExistent",
+	}
+
+	err := Run(context.Background(), opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown preset")
 }
 
 func TestRunNonInteractive_ExistingConfigNoForce(t *testing.T) {

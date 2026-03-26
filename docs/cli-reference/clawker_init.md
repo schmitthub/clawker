@@ -29,6 +29,9 @@ clawker init [project-name] [flags]
   # Non-interactive with Bare preset defaults
   clawker init --yes
 
+  # Non-interactive with a specific preset
+  clawker init --yes --preset Go
+
   # Overwrite existing configuration
   clawker init --force
 ```
@@ -36,9 +39,10 @@ clawker init [project-name] [flags]
 ### Options
 
 ```
-  -f, --force   Overwrite existing configuration files
-  -h, --help    help for init
-  -y, --yes     Non-interactive mode, accept all defaults
+  -f, --force           Overwrite existing configuration files
+  -h, --help            help for init
+      --preset string   Select a language preset (requires --yes)
+  -y, --yes             Non-interactive mode, accept all defaults
 ```
 
 ### Options inherited from parent commands

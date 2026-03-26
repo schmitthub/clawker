@@ -19,6 +19,7 @@ func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *projectinit.Proj
 
 - `--yes` / `-y` — Non-interactive mode, accept all defaults (forwarded to project init)
 - `--force` / `-f` — Overwrite existing configuration files (forwarded to project init)
+- `--preset` — Select a language preset (requires `--yes`); shell completions via `projectinit.PresetCompletions()`
 
 ## Behavior
 

@@ -35,9 +35,10 @@ type ProjectInitOptions struct {
 	Logger         func() (*logger.Logger, error)
 	ProjectManager func() (project.ProjectManager, error)
 
-	Name  string // Positional arg: project name
-	Force bool
-	Yes   bool // Non-interactive mode
+	Name   string // Positional arg: project name
+	Preset string // --preset flag: select a preset by name
+	Force  bool
+	Yes    bool // Non-interactive mode
 }
 
 // NewCmdProjectInit creates the project init command.
@@ -61,7 +62,8 @@ that walks through each config field step by step.
 If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default).
 
-Use --yes/-y to skip prompts and use the Bare preset with all defaults.`,
+Use --yes/-y to skip all prompts (defaults to Bare preset).
+Combine --yes --preset to select a specific language preset non-interactively.`,
 		Example: `  # Interactive setup with preset picker
   clawker project init
 
@@ -71,12 +73,19 @@ Use --yes/-y to skip prompts and use the Bare preset with all defaults.`,
   # Non-interactive with Bare preset defaults
   clawker project init --yes
 
+  # Non-interactive with a specific preset
+  clawker project init --yes --preset Go
+  clawker project init my-project --yes --preset Python
+
   # Overwrite existing configuration
   clawker project init --force`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				opts.Name = args[0]
+			}
+			if opts.Preset != "" && !opts.Yes {
+				return cmdutil.FlagErrorf("--preset requires --yes")
 			}
 			if runF != nil {
 				return runF(cmd.Context(), opts)
@@ -87,6 +96,11 @@ Use --yes/-y to skip prompts and use the Bare preset with all defaults.`,
 
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Overwrite existing configuration files")
 	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Non-interactive mode, accept all defaults")
+	cmd.Flags().StringVar(&opts.Preset, "preset", "", "Select a language preset (requires --yes)")
+
+	cmd.RegisterFlagCompletionFunc("preset", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck // cobra registers completion internally
+		return PresetCompletions(), cobra.ShellCompDirectiveNoFileComp
+	})
 
 	return cmd
 }
@@ -97,6 +111,20 @@ func Run(ctx context.Context, opts *ProjectInitOptions) error {
 		return runNonInteractive(ctx, opts)
 	}
 	return runInteractive(ctx, opts)
+}
+
+// PresetCompletions builds cobra.Completion values from config.Presets()
+// for shell completion of the --preset flag.
+func PresetCompletions() []cobra.Completion {
+	presets := config.Presets()
+	completions := make([]cobra.Completion, 0, len(presets))
+	for _, p := range presets {
+		if p.AutoCustomize {
+			continue // "Build from scratch" is interactive-only
+		}
+		completions = append(completions, cobra.CompletionWithDesc(p.Name, p.Description))
+	}
+	return completions
 }
 
 // wizardContext captures external state needed by wizard field definitions.
@@ -274,9 +302,14 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	fmt.Fprintln(ios.ErrOut, "Setting up clawker project...")
 	fmt.Fprintln(ios.ErrOut)
 
-	preset, ok := presetByName(config.Presets(), "Bare")
+	presetName := "Bare"
+	if opts.Preset != "" {
+		presetName = opts.Preset
+	}
+
+	preset, ok := presetByName(config.Presets(), presetName)
 	if !ok {
-		return fmt.Errorf("internal error: Bare preset not found")
+		return fmt.Errorf("unknown preset %q (see --help for available presets)", presetName)
 	}
 
 	configPath := filepath.Join(env.wd, env.configFileName)

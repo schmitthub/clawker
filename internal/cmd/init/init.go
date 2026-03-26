@@ -38,12 +38,18 @@ See 'clawker project init --help' for full documentation.`,
   # Non-interactive with Bare preset defaults
   clawker init --yes
 
+  # Non-interactive with a specific preset
+  clawker init --yes --preset Go
+
   # Overwrite existing configuration
   clawker init --force`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				opts.Name = args[0]
+			}
+			if opts.Preset != "" && !opts.Yes {
+				return cmdutil.FlagErrorf("--preset requires --yes")
 			}
 
 			cs := f.IOStreams.ColorScheme()
@@ -59,6 +65,11 @@ See 'clawker project init --help' for full documentation.`,
 
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Overwrite existing configuration files")
 	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Non-interactive mode, accept all defaults")
+	cmd.Flags().StringVar(&opts.Preset, "preset", "", "Select a language preset (requires --yes)")
+
+	cmd.RegisterFlagCompletionFunc("preset", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck // cobra registers completion internally
+		return projectinit.PresetCompletions(), cobra.ShellCompDirectiveNoFileComp
+	})
 
 	return cmd
 }

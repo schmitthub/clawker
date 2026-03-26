@@ -19,7 +19,7 @@ Project commands are the primary user interface for working with the `ProjectMan
 
 ## Subcommands
 
-- `project init` — initialize new project in current directory. Guided setup with language presets (Python, Go, Rust, TypeScript, Java, Ruby, C/C++, C#/.NET, Bare) and optional "Build from scratch" customization. Creates `.clawker.yaml` from preset YAML via `storage.NewFromString[Project]` + `WithDefaultsFromStruct`, optionally runs `storeui.Wizard[T]` for field customization, then writes via `store.Write(storage.ToPath(...))` and registers project. Non-interactive mode uses Bare preset with defaults.
+- `project init` — initialize new project in current directory. Guided setup with language presets (Python, Go, Rust, TypeScript, Java, Ruby, C/C++, C#/.NET, Bare) and optional "Build from scratch" customization. Creates `.clawker.yaml` from preset YAML via `storage.NewFromString[Project]` + `WithDefaultsFromStruct`, optionally runs `storeui.Wizard[T]` for field customization, then writes via `store.Write(storage.ToPath(...))` and registers project. Non-interactive mode (`--yes`) defaults to Bare preset; `--yes --preset <name>` selects a specific preset. Shell completions for `--preset` are dynamically generated from `config.Presets()` via `RegisterFlagCompletionFunc`.
 - `project register` — register existing project in user's registry (`cfg.ProjectRegistryFileName()`)
 - `project list` (alias `ls`) — list all registered projects via `ProjectManager.ListProjects()`. Table output with NAME, ROOT, WORKTREES, STATUS columns. Supports `--format`/`--json`/`-q` flags via `FormatFlags`. Status reflects `ProjectState.Status` (ok, missing, inaccessible).
 - `project info NAME` — show detailed info for a single project via `ProjectManager.ListProjects()`: name, root, directory status, worktrees with health status. Supports `--json` output (no `--format`/`--quiet`).
@@ -37,6 +37,7 @@ type ProjectInitOptions struct {
     Logger          func() (*logger.Logger, error)
     ProjectManager  func() (project.ProjectManager, error)
     Name            string // positional arg
+    Preset          string // --preset flag
     Force           bool
     Yes             bool
 }
@@ -52,6 +53,7 @@ func bootstrapSettings() error
 func buildInitWizardFields(wctx wizardContext) []tui.WizardField
 func customizeWizardFields() []string
 func customizeWizardOverrides() []storeui.Override
+func PresetCompletions() []cobra.Completion  // Dynamic completions from config.Presets()
 func presetByName(presets []config.Preset, name string) (config.Preset, bool)
 func validateProjectName(s string) error
 ```
@@ -77,9 +79,10 @@ Run()
   │       ├── store.Write(ToPath(configPath))
   │       ├── create .clawkerignore
   │       └── pm.Register(name, wd)
-  └── runNonInteractive()
+  └── runNonInteractive()                 (--yes or non-TTY)
       ├── resolveInitEnv()
-      └── performProjectSetup(Bare preset, customize=false)
+      ├── resolve preset (--preset <name> or default "Bare")
+      └── performProjectSetup(preset, customize=false)
 ```
 
 ### Setup Wizard Fields

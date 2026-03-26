@@ -16,7 +16,8 @@ that walks through each config field step by step.
 If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default).
 
-Use --yes/-y to skip prompts and use the Bare preset with all defaults.
+Use --yes/-y to skip all prompts (defaults to Bare preset).
+Combine --yes --preset to select a specific language preset non-interactively.
 
 ```
 clawker project init [project-name] [flags]
@@ -34,6 +35,10 @@ clawker project init [project-name] [flags]
   # Non-interactive with Bare preset defaults
   clawker project init --yes
 
+  # Non-interactive with a specific preset
+  clawker project init --yes --preset Go
+  clawker project init my-project --yes --preset Python
+
   # Overwrite existing configuration
   clawker project init --force
 ```
@@ -41,9 +46,10 @@ clawker project init [project-name] [flags]
 ### Options
 
 ```
-  -f, --force   Overwrite existing configuration files
-  -h, --help    help for init
-  -y, --yes     Non-interactive mode, accept all defaults
+  -f, --force           Overwrite existing configuration files
+  -h, --help            help for init
+      --preset string   Select a language preset (requires --yes)
+  -y, --yes             Non-interactive mode, accept all defaults
 ```
 
 ### Options inherited from parent commands

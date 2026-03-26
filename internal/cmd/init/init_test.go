@@ -28,12 +28,13 @@ func testFactory(t *testing.T) (*cmdutil.Factory, *bytes.Buffer) {
 
 func TestNewCmdInit_FlagForwarding(t *testing.T) {
 	tests := []struct {
-		name      string
-		args      []string
-		wantName  string
-		wantForce bool
-		wantYes   bool
-		wantErr   bool
+		name       string
+		args       []string
+		wantName   string
+		wantPreset string
+		wantForce  bool
+		wantYes    bool
+		wantErr    bool
 	}{
 		{name: "defaults", args: []string{}},
 		{name: "yes flag", args: []string{"--yes"}, wantYes: true},
@@ -41,6 +42,8 @@ func TestNewCmdInit_FlagForwarding(t *testing.T) {
 		{name: "positional arg", args: []string{"my-project"}, wantName: "my-project"},
 		{name: "all flags and arg", args: []string{"--yes", "--force", "my-project"}, wantYes: true, wantForce: true, wantName: "my-project"},
 		{name: "too many args", args: []string{"one", "two"}, wantErr: true},
+		{name: "preset with yes", args: []string{"--yes", "--preset", "Go"}, wantYes: true, wantPreset: "Go"},
+		{name: "preset without yes", args: []string{"--preset", "Go"}, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -69,6 +72,7 @@ func TestNewCmdInit_FlagForwarding(t *testing.T) {
 			assert.Equal(t, tt.wantYes, gotOpts.Yes)
 			assert.Equal(t, tt.wantForce, gotOpts.Force)
 			assert.Equal(t, tt.wantName, gotOpts.Name)
+			assert.Equal(t, tt.wantPreset, gotOpts.Preset)
 		})
 	}
 }
