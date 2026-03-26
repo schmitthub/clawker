@@ -265,6 +265,11 @@ agent:
 		"SSH should not time out — firewall rule should allow port 22")
 	assert.NotContains(t, combinedOutput, "Connection refused",
 		"SSH should not be refused — firewall rule should allow port 22")
+	assert.True(t,
+		strings.Contains(combinedOutput, "Permission denied") ||
+			strings.Contains(combinedOutput, "publickey") ||
+			strings.Contains(combinedOutput, "Host key verification failed"),
+		"SSH should connect and fail auth (proving TCP connectivity through firewall) — got: %s", combinedOutput)
 
 	// Verify HTTPS git also works through the firewall.
 	httpsRes := h.ExecInContainer("ssh-test",

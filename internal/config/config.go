@@ -111,9 +111,8 @@ type configImpl struct {
 type NewConfigOption func(*newConfigOptions)
 
 type newConfigOptions struct {
-	projectYAML      string
-	projectWritePath string
-	settingsYAML     string
+	projectYAML  string
+	settingsYAML string
 }
 
 // NewConfig loads all clawker configuration files into a Config.
@@ -174,12 +173,6 @@ func WithDefaultProjectYAML(yaml string) NewConfigOption {
 func WithDefaultSettingsYAML(yaml string) NewConfigOption {
 	return func(o *newConfigOptions) {
 		o.settingsYAML = yaml
-	}
-}
-
-func WithProjectWritePath(path string) NewConfigOption {
-	return func(o *newConfigOptions) {
-		o.projectWritePath = path
 	}
 }
 

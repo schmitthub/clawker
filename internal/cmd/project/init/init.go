@@ -409,11 +409,11 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 
 	// Handle overwrite-declined: register only.
 	if overwriteDeclined(result.Values) {
-		if _, regErr := env.pm.Register(ctx, strings.ToLower(env.dirName), env.wd); regErr != nil {
+		if _, regErr := env.pm.Register(ctx, env.projectName, env.wd); regErr != nil {
 			env.log.Debug().Err(regErr).Msg("failed to register project during init (non-overwrite path)")
 			return fmt.Errorf("could not register project: %w", regErr)
 		}
-		fmt.Fprintf(ios.Out, "%s Registered project '%s'\n", cs.SuccessIcon(), strings.ToLower(env.dirName))
+		fmt.Fprintf(ios.Out, "%s Registered project '%s'\n", cs.SuccessIcon(), env.projectName)
 		return nil
 	}
 

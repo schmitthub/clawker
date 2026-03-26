@@ -22,7 +22,7 @@ cmd/settings/edit, cmd/project/edit
 | `reflect.go` | `WalkFields(v)` — reflection-based struct walker |
 | `value.go` | `SetFieldValue(v, path, val)` — reverse reflection writer |
 | `edit.go` | `Edit[T](ios, store, opts...)` — orchestration entry point, `LayerTarget`, `Result`, shared helpers |
-| `wizard.go` | `Wizard[T](tui, store, opts...)` — step-by-step guided editor, field-to-wizard mapping |
+
 
 ## Public API
 
@@ -72,12 +72,6 @@ func WithOverrides(overrides []Override) Option
 func WithSkipPaths(paths ...string) Option
 func WithLayerTargets(targets []LayerTarget) Option
 
-func Wizard[T storage.Schema](t *tui.TUI, store *storage.Store[T], opts ...WizardOption) (Result, error)
-func WithWizardFields(paths ...string) WizardOption    // Filter + order wizard steps by dotted path
-func WithWizardOverrides(overrides ...Override) WizardOption  // Domain-specific field overrides
-func WithWizardTitle(title string) WizardOption        // Stepper bar title
-func WithWizardWritePath(path string) WizardOption     // Target file for store.Write after wizard
-
 // Shared helpers (used by domain adapters)
 func ShortenHome(path string) string                     // Replace $HOME with ~
 func ResolveLocalPath(cwd, filename string) string       // Dual-placement CWD dot-file
@@ -108,24 +102,6 @@ Edit[T](ios, store, opts...):
   7b. OnFieldDeleted callback per field: store.Delete(path) + store.Write(storage.ToPath(target.Path))
   8. Return Result (Saved, SavedCount)
 ```
-
-## Wizard Data Flow
-
-```
-Wizard[T](tui, store, opts...):
-  1. store.Read() → *T snapshot
-  2. WalkFields(snapshot) → []Field (reflection + runtime values)
-  2b. enrichWithSchema(fields, snapshot.Fields()) — schema metadata
-  3. ApplyOverrides (domain overrides)
-  4. filterAndOrder(fields, paths) — select + reorder to wizard step sequence
-  5. fieldToWizardField() — map FieldKind → WizardFieldKind, pre-populate defaults
-  6. tui.RunWizard(wizardFields) — present step-by-step wizard
-  7. Compare wizard values vs originals → store.Set(SetFieldValue...) for changed fields only
-  8. Optional store.Write(ToPath(writePath)) — persist to target file
-  9. Return Result (Saved, SavedCount)
-```
-
-**Kind mapping**: KindText→FieldText, KindBool→FieldConfirm, KindInt/KindDuration→FieldText (with validators), KindSelect→FieldSelect, KindStringSlice→FieldText (comma-separated). KindMap, KindStructSlice, and consumer kinds are skipped (too complex for wizard UX).
 
 ## Key Design Decisions
 

@@ -25,7 +25,7 @@ type WizardStep struct {
 	Page   WizardPage
 	SkipIf func(WizardValues) bool
 	// HelpKeys provides custom help bar entries for this step.
-	// If nil, no help bar is shown for this step.
+	// If nil, a default help bar (esc/back, ctrl+c/quit) is shown.
 	HelpKeys []string // alternating key, description pairs for QuickHelp
 }
 

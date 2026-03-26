@@ -52,8 +52,7 @@ type LayerInfo struct {
 	Data     map[string]any // raw YAML data from this file only (read-only copy)
 }
 
-// New constructs a store with file discovery and defaults as the virtual
-// base layer. Equivalent to NewFromString("", opts...).
+// New constructs a store. It delegates directly to NewFromString.
 func New[T Schema](yaml string, opts ...Option) (*Store[T], error) {
 	return NewFromString[T](yaml, opts...)
 }
@@ -274,20 +273,6 @@ func (s *Store[T]) Set(fn func(*T)) error {
 	// Atomically publish the new snapshot.
 	s.value.Store(fresh)
 	return nil
-}
-
-// SetFromYAML parses a YAML string and merges the result into the store
-// using the same semantics as Set. Fields present in the YAML dirty the tree;
-// fields absent from the YAML (zero/nil/empty in the deserialized struct)
-// are ignored by structToMap and do not clobber existing values.
-func (s *Store[T]) SetFromYAML(raw string) error {
-	var overlay T
-	if err := yaml.Unmarshal([]byte(raw), &overlay); err != nil {
-		return fmt.Errorf("storage: SetFromYAML: parsing YAML: %w", err)
-	}
-	return s.Set(func(t *T) {
-		*t = overlay
-	})
 }
 
 // Delete removes a dotted field path from the node tree (e.g. "agent.editor")

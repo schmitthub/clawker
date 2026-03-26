@@ -221,7 +221,7 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 		prov, hasProv := store.Provenance(fieldPath)
 		if hasProv && prov.Path != target.Path {
 			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
-			if fmt.Sprintf("%v", layerVal) != value {
+			if normalizeLayerValue(layerVal) != value {
 				store.MarkForWrite(fieldPath)
 			}
 		}
@@ -232,13 +232,30 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 		return nil
 	}
 
+	onFieldDeleted := func(fieldPath string, targetIdx int) error {
+		if targetIdx < 0 || targetIdx >= len(cfg.layerTargets) {
+			return fmt.Errorf("invalid layer target index: %d", targetIdx)
+		}
+		target := cfg.layerTargets[targetIdx]
+
+		if _, err := store.Delete(fieldPath); err != nil {
+			return fmt.Errorf("deleting from store: %w", err)
+		}
+
+		if err := store.Write(storage.ToPath(target.Path)); err != nil {
+			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
+		}
+		return nil
+	}
+
 	return tui.NewFieldBrowser(tui.BrowserConfig{
-		Title:        cfg.title,
-		Fields:       browserFields,
-		LayerTargets: browserTargets,
-		Layers:       browserLayers,
-		OnFieldSaved: onFieldSaved,
-		OnRefresh:    buildBrowserState,
+		Title:          cfg.title,
+		Fields:         browserFields,
+		LayerTargets:   browserTargets,
+		Layers:         browserLayers,
+		OnFieldSaved:   onFieldSaved,
+		OnFieldDeleted: onFieldDeleted,
+		OnRefresh:      buildBrowserState,
 	}), nil
 }
 
@@ -330,7 +347,7 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		prov, hasProv := store.Provenance(fieldPath)
 		if hasProv && prov.Path != target.Path {
 			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
-			if fmt.Sprintf("%v", layerVal) != value {
+			if normalizeLayerValue(layerVal) != value {
 				store.MarkForWrite(fieldPath)
 			}
 		}
@@ -440,6 +457,25 @@ func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.Brow
 // lookupLayerFieldValue finds the raw value for a dotted field path in a
 // specific layer identified by its file path. Returns nil if the layer is
 // not found or the field is absent from that layer's data.
+// normalizeLayerValue formats a raw YAML-decoded value into the same string
+// representation that the TUI editor produces, enabling accurate comparison
+// to avoid spurious MarkForWrite calls.
+func normalizeLayerValue(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case []any:
+		parts := make([]string, 0, len(val))
+		for _, item := range val {
+			parts = append(parts, fmt.Sprintf("%v", item))
+		}
+		return strings.Join(parts, ", ")
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 func lookupLayerFieldValue(layers []storage.LayerInfo, layerPath, fieldPath string) any {
 	for _, l := range layers {
 		if l.Path != layerPath {
