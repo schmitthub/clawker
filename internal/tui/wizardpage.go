@@ -135,29 +135,59 @@ func (p *confirmPage) Reset() {
 // ---------------------------------------------------------------------------
 
 type browserPage struct {
-	browser *FieldBrowserModel
-	done    bool
+	browser   *FieldBrowserModel
+	done      bool
+	cancelled bool
+	doneKey   string // key that marks the page as complete (empty = no done key)
+	cancelKey string // key that cancels the wizard (empty = no cancel key)
+}
+
+// BrowserPageOption configures a browserPage.
+type BrowserPageOption func(*browserPage)
+
+// WithDoneKey sets the key that completes the browser page and advances
+// the wizard. Only checked when the browser is in its base (browse) state.
+func WithDoneKey(key string) BrowserPageOption {
+	return func(p *browserPage) { p.doneKey = key }
+}
+
+// WithCancelKey sets the key that cancels out of the browser page.
+// The wizard will treat this as a full cancellation. Only checked when
+// the browser is in its base (browse) state.
+func WithCancelKey(key string) BrowserPageOption {
+	return func(p *browserPage) { p.cancelKey = key }
 }
 
 // NewBrowserPage wraps a FieldBrowserModel as a WizardPage.
 // The browser handles per-field saves via its OnFieldSaved callback.
-// The page is "complete" when the user quits the browser (q in browse mode).
-// Esc in browse mode triggers wizard back-navigation; Esc in edit/picker mode
-// is delegated to the browser via the EscapeHandler interface.
-func NewBrowserPage(browser *FieldBrowserModel) WizardPage {
-	return &browserPage{browser: browser}
+// Use WithDoneKey to set which key completes the page, and WithCancelKey
+// to set which key cancels the wizard. Esc in browse mode triggers wizard
+// back-navigation; Esc in edit/picker mode is delegated to the browser
+// via the EscapeHandler interface.
+func NewBrowserPage(browser *FieldBrowserModel, opts ...BrowserPageOption) WizardPage {
+	p := &browserPage{browser: browser}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
-func (p *browserPage) Init() tea.Cmd    { return p.browser.Init() }
-func (p *browserPage) View() string     { return p.browser.View() }
-func (p *browserPage) IsComplete() bool { return p.done }
-func (p *browserPage) Value() string    { return "" }
+func (p *browserPage) Init() tea.Cmd     { return p.browser.Init() }
+func (p *browserPage) View() string      { return p.browser.View() }
+func (p *browserPage) IsComplete() bool  { return p.done }
+func (p *browserPage) IsCancelled() bool { return p.cancelled }
+func (p *browserPage) Value() string     { return "" }
 
 func (p *browserPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Intercept q in browse mode as "done, advance."
+	// Intercept configured keys in browse mode before they reach the browser.
 	if km, ok := msg.(tea.KeyMsg); ok && p.browser.InBaseState() {
-		if km.String() == "q" {
+		k := km.String()
+		if p.doneKey != "" && k == p.doneKey {
 			p.done = true
+			return p, nil
+		}
+		if p.cancelKey != "" && k == p.cancelKey {
+			p.cancelled = true
 			return p, nil
 		}
 	}
@@ -184,4 +214,5 @@ func (p *browserPage) HandlesEscape() bool {
 
 func (p *browserPage) Reset() {
 	p.done = false
+	p.cancelled = false
 }

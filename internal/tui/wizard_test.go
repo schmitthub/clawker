@@ -386,6 +386,125 @@ func TestFilterQuit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// BrowserPage key configuration tests
+// ---------------------------------------------------------------------------
+
+func TestBrowserPage_DoneKey(t *testing.T) {
+	browser := NewFieldBrowser(testBrowserConfig())
+	page := NewBrowserPage(browser, WithDoneKey("s"))
+
+	page.Init()
+	bp := page.(*browserPage)
+
+	// "s" should complete the page.
+	page.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	assert.True(t, bp.done, "done key 's' should mark the page as complete")
+	assert.True(t, page.IsComplete(), "IsComplete should return true after done key")
+}
+
+func TestBrowserPage_CancelKey(t *testing.T) {
+	browser := NewFieldBrowser(testBrowserConfig())
+	page := NewBrowserPage(browser, WithCancelKey("q"))
+
+	page.Init()
+	bp := page.(*browserPage)
+
+	// "q" should cancel the page.
+	page.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	assert.True(t, bp.cancelled, "cancel key 'q' should mark the page as cancelled")
+	assert.False(t, page.IsComplete(), "cancelled page should not be complete")
+
+	// Should satisfy CancelledPage interface.
+	cp, ok := page.(CancelledPage)
+	require.True(t, ok, "browserPage should implement CancelledPage")
+	assert.True(t, cp.IsCancelled(), "IsCancelled should return true after cancel key")
+}
+
+func TestBrowserPage_NoKeysConfigured(t *testing.T) {
+	browser := NewFieldBrowser(testBrowserConfig())
+	page := NewBrowserPage(browser)
+
+	page.Init()
+	bp := page.(*browserPage)
+
+	// Neither "s" nor "q" should trigger done/cancel when no keys configured.
+	page.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	assert.False(t, bp.done, "'s' should not complete page when no done key configured")
+
+	page.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	assert.False(t, bp.cancelled, "'q' should not cancel page when no cancel key configured")
+}
+
+func TestBrowserPage_Reset(t *testing.T) {
+	browser := NewFieldBrowser(testBrowserConfig())
+	page := NewBrowserPage(browser, WithDoneKey("s"), WithCancelKey("q"))
+
+	page.Init()
+	bp := page.(*browserPage)
+
+	page.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	assert.True(t, bp.done)
+
+	// Reset should clear both done and cancelled.
+	page.(Resetter).Reset()
+	assert.False(t, bp.done, "done should be cleared after reset")
+	assert.False(t, bp.cancelled, "cancelled should be cleared after reset")
+}
+
+func TestWizard_BrowserPageCancelKey(t *testing.T) {
+	browser := NewFieldBrowser(testBrowserConfig())
+	steps := []WizardStep{
+		{ID: "confirm", Title: "Confirm", Page: NewConfirmPage("confirm", "Ready?", true)},
+		{
+			ID:    "browse",
+			Title: "Browse",
+			Page:  NewBrowserPage(browser, WithDoneKey("s"), WithCancelKey("q")),
+		},
+	}
+
+	m := newWizardModel(steps)
+	model := &m
+	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Advance past confirm step.
+	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.Equal(t, 1, model.currentStep)
+
+	// Press "q" — should cancel the wizard.
+	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	assert.True(t, model.cancelled, "cancel key on browser page should cancel wizard")
+	assert.False(t, model.submitted, "cancelled wizard should not be submitted")
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, isQuit := msg.(tea.QuitMsg)
+	assert.True(t, isQuit, "cancel should produce tea.QuitMsg")
+}
+
+func TestWizard_BrowserPageDoneKey(t *testing.T) {
+	browser := NewFieldBrowser(testBrowserConfig())
+	steps := []WizardStep{
+		{
+			ID:    "browse",
+			Title: "Browse",
+			Page:  NewBrowserPage(browser, WithDoneKey("s"), WithCancelKey("q")),
+		},
+	}
+
+	m := newWizardModel(steps)
+	model := &m
+	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Press "s" — should complete the page and submit (last step).
+	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	assert.True(t, model.submitted, "done key should submit wizard when on last step")
+	assert.False(t, model.cancelled, "done key should not cancel wizard")
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, isQuit := msg.(tea.QuitMsg)
+	assert.True(t, isQuit, "submit should produce tea.QuitMsg")
+}
+
+// ---------------------------------------------------------------------------
 // Wizard validation panic tests
 // ---------------------------------------------------------------------------
 

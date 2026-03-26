@@ -582,10 +582,13 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 
 		customizeResult, wizErr := in.tui.RunWizard([]tui.WizardStep{
 			{
-				ID:       "customize",
-				Title:    "Customize",
-				Page:     tui.NewBrowserPage(browser),
-				HelpKeys: []string{"↑↓", "navigate", "enter", "edit", "q", "done", "esc", "back", "ctrl+c", "quit"},
+				ID:    "customize",
+				Title: "Customize",
+				Page: tui.NewBrowserPage(browser,
+					tui.WithDoneKey("s"),
+					tui.WithCancelKey("q"),
+				),
+				HelpKeys: []string{"↑↓", "navigate", "enter", "edit", "s", "save", "q", "quit", "esc", "back"},
 			},
 		})
 		if wizErr != nil {
@@ -752,6 +755,7 @@ func customizeFields() []string {
 		"build.instructions.user_run",
 		"build.inject.after_from",
 		"build.inject.after_packages",
+		"agent.post_init",
 		"security.firewall.add_domains",
 		"workspace.default_mode",
 	}

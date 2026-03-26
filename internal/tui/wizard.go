@@ -217,6 +217,12 @@ func (m *wizardModel) delegateToPage(msg tea.Msg) tea.Cmd {
 		m.steps[idx].Page = p
 	}
 
+	// Check if the page signalled cancellation.
+	if cp, ok := m.steps[idx].Page.(CancelledPage); ok && cp.IsCancelled() {
+		m.cancelled = true
+		return tea.Quit
+	}
+
 	// Check if the page completed after this update.
 	if m.steps[idx].Page.IsComplete() {
 		return m.completeAndAdvance(idx)
@@ -301,6 +307,13 @@ func (m *wizardModel) helpBar() string {
 // when the user navigates backward in the wizard.
 type Resetter interface {
 	Reset()
+}
+
+// CancelledPage is an optional interface for pages that can signal
+// cancellation (e.g. a browser page with a configured cancel key).
+// When IsCancelled returns true, the wizard treats it as a full cancel.
+type CancelledPage interface {
+	IsCancelled() bool
 }
 
 // filterQuit intercepts tea.Quit from pages to prevent them from
