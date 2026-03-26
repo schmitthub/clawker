@@ -184,9 +184,8 @@ func renderFieldTable(fields []ConfigField) string {
 	return buf.String()
 }
 
-// escapeMDX wraps bare <word> angle brackets in backticks for MDX safety.
+// escapeMDX wraps bare <word> angle brackets in backticks for MDX safety,
+// reusing the same regex-based logic as EscapeMDXProse.
 func escapeMDX(s string) string {
-	// Reuse the same logic as EscapeMDXProse but for inline strings.
-	// Simple approach: escape < that look like JSX tags.
-	return strings.ReplaceAll(s, "<", "&lt;")
+	return EscapeMDXProse(s)
 }

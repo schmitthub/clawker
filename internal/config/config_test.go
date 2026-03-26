@@ -482,9 +482,9 @@ func TestRequiredFirewallRules(t *testing.T) {
 // --- Generated defaults validation ---
 
 // TestSetProject_EmptyStringsDontOverrideUserConfig reproduces the bug where
-// project init writes empty string fields (agent.editor: "", agent.shell: "")
+// project init writes empty string fields (agent.editor: "", agent.visual: "")
 // to the project config file, overriding values set in the user-level config
-// (e.g. agent.editor: vim, agent.shell: zsh).
+// (e.g. agent.editor: vim, agent.visual: vim).
 //
 // The fix: structToMap treats empty strings as "not set" (same as nil pointers),
 // so they are not written to disk and higher-priority layer values merge through.
@@ -504,12 +504,11 @@ func TestSetProject_EmptyStringsDontOverrideUserConfig(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dir, 0o755))
 	}
 
-	// User-level config: sets agent.editor and agent.shell.
+	// User-level config: sets agent.editor and agent.visual.
 	userConfigFile := filepath.Join(configDir, "clawker.yaml")
 	require.NoError(t, os.WriteFile(userConfigFile, []byte(`
 agent:
   editor: vim
-  shell: zsh
   visual: vim
 `), 0o644))
 
@@ -537,8 +536,6 @@ agent:
 	if agentMap, ok := projectMap["agent"].(map[string]any); ok {
 		assert.NotContains(t, agentMap, "editor",
 			"project file should not write empty agent.editor")
-		assert.NotContains(t, agentMap, "shell",
-			"project file should not write empty agent.shell")
 		assert.NotContains(t, agentMap, "visual",
 			"project file should not write empty agent.visual")
 	}

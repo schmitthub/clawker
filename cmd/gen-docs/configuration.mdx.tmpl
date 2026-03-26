@@ -4,7 +4,7 @@ description: "Reference for .clawker.yaml project configuration"
 icon: "gear"
 ---
 
-{/* AUTO-GENERATED from docs/configuration.mdx.tmpl + schema struct tags. Do not edit directly. Run: make docs */}
+{/* AUTO-GENERATED from cmd/gen-docs/configuration.mdx.tmpl + schema struct tags. Do not edit directly. Run: make docs */}
 
 Every Clawker project has a `.clawker.yaml` file in the project root. Create one with:
 
@@ -108,7 +108,7 @@ monorepo/
 │   ├── api/
 │   │   └── .clawker.yaml   # Override: add Python packages, different image
 │   └── web/
-│       └── .clawker.yaml   # Override: add Node packages, expose port 3000
+│       └── .clawker.yaml   # Override: add Node packages, different env vars
 ```
 
 To create a subdir config, run `clawker init` from inside the subdirectory. It detects that you're inside an existing project and skips project registration — going straight to preset selection and config file creation. The resulting file layers on top of the root config.
