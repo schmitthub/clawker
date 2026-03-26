@@ -109,6 +109,14 @@ monorepo/
 │       └── .clawker.yaml   # Override: add Node packages, expose port 3000
 ```
 
+To create a subdir config, run `clawker init` from inside the subdirectory. It detects that you're inside an existing project and skips project registration — going straight to preset selection and config file creation. The resulting file layers on top of the root config.
+
+```bash
+cd services/api
+clawker init          # Interactive: pick a preset, customize
+clawker init --yes    # Non-interactive: Bare preset defaults
+```
+
 When you run `clawker run` from `services/api/`, the engine merges:
 1. `services/api/.clawker.yaml` (highest priority)
 2. `.clawker.yaml` at repo root

@@ -54,6 +54,10 @@ To skip prompts and use the Bare preset with defaults, run `clawker init --yes`.
 </Tip>
 
 <Tip>
+If you run `clawker init` inside a subdirectory of an existing project, it creates a layer config file that overrides the root config for that directory — useful for monorepos with per-service settings. See [Monorepo Support](/configuration#monorepo-support).
+</Tip>
+
+<Tip>
 Language presets include ecosystem-specific firewall rules (e.g., `pypi.org` for Python, `registry.npmjs.org` for TypeScript). If you need additional domains, add them to `security.firewall.add_domains` or use `clawker firewall add` at runtime. See the [Firewall guide](/firewall#common-setups) for examples.
 </Tip>
 
