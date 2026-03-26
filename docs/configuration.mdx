@@ -139,9 +139,6 @@ build:
   # dockerfile: "./.devcontainer/Dockerfile"
   # Optional: custom build context directory (relative to project root)
   # context: "./docker"
-  # Build-time arguments (passed as --build-arg)
-  # build_args:
-  #   NODE_VERSION: "20"
   # System packages to install (apt-get on Debian, apk on Alpine)
   packages:
     - git
@@ -155,23 +152,8 @@ build:
     labels: {}
     # COPY instructions with optional chown/chmod
     copy: []
-    # Ports to expose (protocol defaults to tcp)
-    expose: []
     # Build arguments (ARG instruction)
     args: []
-    # Additional volume mount points
-    volumes: []
-    # Override the working directory
-    # workdir: "/app"
-    # Healthcheck configuration
-    # healthcheck:
-    #   cmd: ["CMD", "curl", "-f", "http://localhost/health"]
-    #   interval: "30s"
-    #   timeout: "10s"
-    #   start_period: "5s"
-    #   retries: 3
-    # Override the default shell
-    # shell: ["/bin/bash", "-c"]
     # Commands to run as root (OS-aware: cmd, alpine, debian)
     root_run: []
     # Commands to run as the container user (OS-aware: cmd, alpine, debian)
@@ -194,14 +176,10 @@ agent:
   from_env: []
   # Environment variables to set
   env: {}
-  # Container memory limit (e.g., "4g", "2048m")
-  # memory: "4g"
   # Override the default editor
   # editor: "vim"
   # Override the visual editor
   # visual: "code"
-  # Override the default shell
-  # shell: "/bin/zsh"
   # Claude Code configuration
   # claude_code:
   #   config:
@@ -293,7 +271,7 @@ The editor opens a TUI with your configuration fields grouped into tabs. You can
 
 Controls how the Docker image is built. The `image` field sets the base image. Use `packages` for system-level dependencies, and `instructions` for more complex customization.
 
-The `context` field sets a custom build context directory, and `build_args` passes build-time arguments.
+The `context` field sets a custom build context directory. Build-time arguments can be passed via the `--build-arg` flag on `clawker image build`.
 
 #### instructions
 
@@ -304,12 +282,7 @@ The `instructions` block maps to Dockerfile directives:
 | `copy` | `COPY` | Copy files with optional `chown`/`chmod` |
 | `env` | `ENV` | Environment variables baked into the image |
 | `labels` | `LABEL` | Image metadata labels |
-| `expose` | `EXPOSE` | Ports to document (with protocol) |
 | `args` | `ARG` | Build-time arguments with optional defaults |
-| `volumes` | `VOLUME` | Mount point declarations |
-| `workdir` | `WORKDIR` | Override working directory |
-| `healthcheck` | `HEALTHCHECK` | Container health check configuration |
-| `shell` | `SHELL` | Override the default shell |
 | `root_run` | `RUN` (as root) | Commands run as root before user switch |
 | `user_run` | `RUN` (as user) | Commands run as the container user |
 
@@ -345,7 +318,7 @@ The `claude_code` block controls how Claude Code is configured inside the contai
 - `config.strategy` -- `"copy"` (default) copies your host `~/.claude/` settings into the container; `"fresh"` starts with a clean configuration
 - `use_host_auth` -- when `true` (default), your host authentication tokens are forwarded so Claude Code inside the container is pre-authenticated
 
-Additional container environment settings: `memory` sets a container memory limit, `editor`/`visual` override the editor, and `shell` overrides the default shell.
+`editor`/`visual` override the default editor inside the container. Use `--memory` on `clawker run` to set a container memory limit.
 
 ### workspace
 

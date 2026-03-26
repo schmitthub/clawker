@@ -89,30 +89,3 @@ security:
 	require.NoError(t, err, "firewall.sh should always exist in build context")
 	assert.NotZero(t, info.Mode()&0111, "firewall.sh should be executable")
 }
-
-func TestWriteBuildContextToDir_WithIncludes(t *testing.T) {
-	workDir := t.TempDir()
-
-	// Create an include file in workDir
-	includeContent := []byte("# my include file\n")
-	require.NoError(t, os.WriteFile(filepath.Join(workDir, "CLAUDE.md"), includeContent, 0644))
-
-	cfg := testConfig(t, `
-version: "1"
-build:
-  image: "buildpack-deps:bookworm-scm"
-agent:
-  includes:
-    - "CLAUDE.md"
-`)
-	gen := NewProjectGenerator(cfg, workDir)
-	dir := t.TempDir()
-
-	err := gen.WriteBuildContextToDir(dir, []byte("FROM alpine\n"))
-	require.NoError(t, err)
-
-	// Verify include file was copied
-	content, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
-	require.NoError(t, err)
-	assert.Equal(t, includeContent, content)
-}

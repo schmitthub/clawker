@@ -26,95 +26,69 @@ func (p Project) Fields() storage.FieldSet {
 
 // BuildConfig defines the container build configuration
 type BuildConfig struct {
-	Image        string              `yaml:"image" label:"Base Image" desc:"Docker base image for the container"`
-	Dockerfile   string              `yaml:"dockerfile,omitempty" label:"Dockerfile" desc:"Custom Dockerfile path (overrides image)"`
-	Packages     []string            `yaml:"packages,omitempty" label:"Packages" desc:"System packages to install" default:"git,curl,ripgrep"`
-	Context      string              `yaml:"context,omitempty" label:"Build Context" desc:"Docker build context directory"`
-	BuildArgs    map[string]string   `yaml:"build_args,omitempty" label:"Build Args" desc:"Docker build arguments"`
+	Image        string              `yaml:"image" label:"Base Image" desc:"Starting Docker image (e.g. node:20-slim, python:3.12); clawker layers tools on top"`
+	Dockerfile   string              `yaml:"dockerfile,omitempty" label:"Dockerfile" desc:"Use your own Dockerfile instead of clawker's generated one; ignores image, packages, and instructions"`
+	Packages     []string            `yaml:"packages,omitempty" label:"Packages" desc:"System packages (apt/apk) needed by your project that aren't in the base image" default:"ripgrep"`
+	Context      string              `yaml:"context,omitempty" label:"Build Context" desc:"Directory to use as Docker build context when using a custom Dockerfile (relative to project root)"`
 	Instructions *DockerInstructions `yaml:"instructions,omitempty"`
 	Inject       *InjectConfig       `yaml:"inject,omitempty"`
 }
 
 // DockerInstructions represents type-safe Dockerfile instructions
 type DockerInstructions struct {
-	Copy        []CopyInstruction  `yaml:"copy,omitempty" label:"Copy" desc:"Files to copy into the image"`
-	Env         map[string]string  `yaml:"env,omitempty" label:"Env" desc:"Static environment variables injected at container runtime"`
-	Labels      map[string]string  `yaml:"labels,omitempty" label:"Labels" desc:"Image labels" merge:"union"`
-	Expose      []ExposePort       `yaml:"expose,omitempty" label:"Expose" desc:"Ports to expose"`
-	Args        []ArgDefinition    `yaml:"args,omitempty" label:"Args" desc:"Build arguments"`
-	Volumes     []string           `yaml:"volumes,omitempty" label:"Volumes" desc:"Volume mount points"`
-	Workdir     string             `yaml:"workdir,omitempty" label:"Workdir" desc:"Working directory in the image"`
-	Healthcheck *HealthcheckConfig `yaml:"healthcheck,omitempty"`
-	Shell       []string           `yaml:"shell,omitempty" label:"Shell" desc:"Default shell for RUN instructions"`
-	UserRun     []string           `yaml:"user_run,omitempty" label:"User Run" desc:"Commands to run as container user"`
-	RootRun     []string           `yaml:"root_run,omitempty" label:"Root Run" desc:"Commands to run as root"`
+	Copy    []CopyInstruction `yaml:"copy,omitempty" label:"Copy" desc:"Bake config files or credentials into the image (e.g. .npmrc, SSH config)"`
+	Env     map[string]string `yaml:"env,omitempty" label:"Env" desc:"Environment variables baked into the image; use agent.env for runtime-only vars"`
+	Labels  map[string]string `yaml:"labels,omitempty" label:"Labels" desc:"Custom Docker labels for image metadata or tooling integration" merge:"union"`
+	Args    []ArgDefinition   `yaml:"args,omitempty" label:"Args" desc:"Build-time variables resolved during docker build (ARG); not available at runtime"`
+	UserRun []string          `yaml:"user_run,omitempty" label:"User Run" desc:"Setup commands that run as the container user (e.g. npm install -g, pip install)"`
+	RootRun []string          `yaml:"root_run,omitempty" label:"Root Run" desc:"Setup commands that need root privileges (e.g. system config, additional repos)"`
 }
 
 // CopyInstruction represents a COPY instruction with optional chown/chmod
 type CopyInstruction struct {
-	Src   string `yaml:"src" label:"Source" desc:"Source path to copy"`
-	Dest  string `yaml:"dest" label:"Destination" desc:"Destination path in the image"`
-	Chown string `yaml:"chown,omitempty" label:"Chown" desc:"File ownership (user:group)"`
-	Chmod string `yaml:"chmod,omitempty" label:"Chmod" desc:"File permissions"`
-}
-
-// ExposePort represents an EXPOSE instruction
-type ExposePort struct {
-	Port     int    `yaml:"port" label:"Port" desc:"Port number to expose"`
-	Protocol string `yaml:"protocol,omitempty" label:"Protocol" desc:"Protocol (tcp or udp, defaults to tcp)"`
+	Src   string `yaml:"src" label:"Source" desc:"File or directory to copy from your project"`
+	Dest  string `yaml:"dest" label:"Destination" desc:"Where to place it inside the container"`
+	Chown string `yaml:"chown,omitempty" label:"Chown" desc:"Set file ownership (e.g. claude:claude)"`
+	Chmod string `yaml:"chmod,omitempty" label:"Chmod" desc:"Set file permissions (e.g. 0644)"`
 }
 
 // ArgDefinition represents an ARG instruction
 type ArgDefinition struct {
-	Name    string `yaml:"name" label:"Name" desc:"Argument name"`
-	Default string `yaml:"default,omitempty" label:"Default" desc:"Default argument value"`
-}
-
-// HealthcheckConfig represents HEALTHCHECK instruction
-type HealthcheckConfig struct {
-	Cmd         []string `yaml:"cmd" label:"Command" desc:"Healthcheck command"`
-	Interval    string   `yaml:"interval,omitempty" label:"Interval" desc:"Time between healthchecks"`
-	Timeout     string   `yaml:"timeout,omitempty" label:"Timeout" desc:"Healthcheck timeout"`
-	StartPeriod string   `yaml:"start_period,omitempty" label:"Start Period" desc:"Initial grace period"`
-	Retries     int      `yaml:"retries,omitempty" label:"Retries" desc:"Consecutive failures before unhealthy"`
+	Name    string `yaml:"name" label:"Name" desc:"Build argument name (referenced as $NAME in Dockerfile instructions)"`
+	Default string `yaml:"default,omitempty" label:"Default" desc:"Value used when not overridden by --build-arg at build time"`
 }
 
 // InjectConfig defines injection points for arbitrary Dockerfile instructions
 type InjectConfig struct {
-	AfterFrom          []string `yaml:"after_from,omitempty" label:"After FROM" desc:"Instructions after FROM stage"`
-	AfterPackages      []string `yaml:"after_packages,omitempty" label:"After Packages" desc:"Instructions after package install"`
-	AfterUserSetup     []string `yaml:"after_user_setup,omitempty" label:"After User Setup" desc:"Instructions after user creation"`
-	AfterUserSwitch    []string `yaml:"after_user_switch,omitempty" label:"After User Switch" desc:"Instructions after USER switch"`
-	AfterClaudeInstall []string `yaml:"after_claude_install,omitempty" label:"After Claude Install" desc:"Instructions after Claude Code install"`
-	BeforeEntrypoint   []string `yaml:"before_entrypoint,omitempty" label:"Before Entrypoint" desc:"Instructions before ENTRYPOINT"`
+	AfterFrom          []string `yaml:"after_from,omitempty" label:"After FROM" desc:"Add Dockerfile instructions while root with only the base image — e.g. apt sources, proxy config, or CA certs that package installation depends on"`
+	AfterPackages      []string `yaml:"after_packages,omitempty" label:"After Packages" desc:"Add Dockerfile instructions while root with system packages available — e.g. compile native libraries or install tools that need those packages"`
+	AfterUserSetup     []string `yaml:"after_user_setup,omitempty" label:"After User Setup" desc:"Add Dockerfile instructions while root with the claude user created — e.g. set up directories, fix permissions, or configure services"`
+	AfterUserSwitch    []string `yaml:"after_user_switch,omitempty" label:"After User Switch" desc:"Add Dockerfile instructions as the claude user — e.g. install dotfiles, configure your shell, or set up user-level tools"`
+	AfterClaudeInstall []string `yaml:"after_claude_install,omitempty" label:"After Claude Install" desc:"Add Dockerfile instructions as the claude user with Claude Code available — e.g. add MCP servers, install plugins, or extensions"`
+	BeforeEntrypoint   []string `yaml:"before_entrypoint,omitempty" label:"Before Entrypoint" desc:"Add Dockerfile instructions at the very end — e.g. final environment tweaks or cleanup that must happen after everything else"`
 }
 
 // ClaudeCodeConfigOptions controls how Claude Code config is initialized in containers.
 type ClaudeCodeConfigOptions struct {
-	Strategy string `yaml:"strategy" label:"Strategy" desc:"Config initialization strategy (copy or fresh)" default:"copy"`
+	Strategy string `yaml:"strategy" label:"Strategy" desc:"How to initialize Claude Code config: copy syncs host settings/plugins, fresh starts clean" default:"copy"`
 }
 
 // ClaudeCodeConfig controls Claude Code settings and authentication in containers.
 type ClaudeCodeConfig struct {
 	Config      ClaudeCodeConfigOptions `yaml:"config"`
-	UseHostAuth *bool                   `yaml:"use_host_auth,omitempty" label:"Use Host Auth" desc:"Use host authentication credentials" default:"true"`
+	UseHostAuth *bool                   `yaml:"use_host_auth,omitempty" label:"Use Host Auth" desc:"Let the container use your host API keys so you don't have to re-authenticate" default:"true"`
 }
 
 // AgentConfig defines Claude agent-specific settings.
 type AgentConfig struct {
-	// TODO: these are added to the build context and image hash but never COPY'd into the image.
-	// Project root is already mounted at runtime. Do we still need this?
-	Includes        []string          `yaml:"includes,omitempty" label:"Includes" desc:"Files to include in the build context"`
-	EnvFile         []string          `yaml:"env_file,omitempty" label:"Env Files" desc:"Environment files to load"`
-	FromEnv         []string          `yaml:"from_env,omitempty" label:"Forward Env Vars" desc:"Host env vars to forward to the container"`
-	Env             map[string]string `yaml:"env,omitempty" label:"Env" desc:"Environment variables for the container"`
-	Memory          string            `yaml:"memory,omitempty" label:"Memory" desc:"Container memory limit"`
-	Editor          string            `yaml:"editor,omitempty" label:"Editor" desc:"Default editor inside the container"`
-	Visual          string            `yaml:"visual,omitempty" label:"Visual Editor" desc:"Default visual editor"`
-	Shell           string            `yaml:"shell,omitempty" label:"Shell" desc:"Default shell inside the container"`
+	EnvFile         []string          `yaml:"env_file,omitempty" label:"Env Files" desc:"Load environment variables from .env-style files (e.g. .env.local)"`
+	FromEnv         []string          `yaml:"from_env,omitempty" label:"Forward Env Vars" desc:"Pass specific host env vars into the container (e.g. AWS_PROFILE, GITHUB_TOKEN)"`
+	Env             map[string]string `yaml:"env,omitempty" label:"Env" desc:"Set container env vars directly; use from_env to forward host values instead"`
+	Editor          string            `yaml:"editor,omitempty" label:"Editor" desc:"Editor for git commits and interactive editing inside the container"`
+	Visual          string            `yaml:"visual,omitempty" label:"Visual Editor" desc:"Visual editor ($VISUAL) for the container"`
 	ClaudeCode      *ClaudeCodeConfig `yaml:"claude_code,omitempty"`
-	EnableSharedDir *bool             `yaml:"enable_shared_dir,omitempty" label:"Enable Shared Dir" desc:"Mount ~/.clawker-share into the container" default:"false"`
-	PostInit        string            `yaml:"post_init,omitempty" label:"Post-Init Script" desc:"Script to run after container initialization"`
+	EnableSharedDir *bool             `yaml:"enable_shared_dir,omitempty" label:"Enable Shared Dir" desc:"Share files between host and container via ~/.clawker-share (read-only in container)" default:"false"`
+	PostInit        string            `yaml:"post_init,omitempty" label:"Post-Init Script" desc:"Shell commands run after container starts but before Claude Code launches (e.g. install MCP servers)"`
 }
 
 // UseHostAuthEnabled returns whether host auth should be used (default: true).
@@ -143,49 +117,31 @@ func (a *AgentConfig) SharedDirEnabled() bool {
 
 // WorkspaceConfig defines workspace mounting behavior
 type WorkspaceConfig struct {
-	DefaultMode string `yaml:"default_mode" label:"Default Mode" desc:"Workspace mounting mode (bind or snapshot)" default:"bind" required:"true"`
+	DefaultMode string `yaml:"default_mode" label:"Default Mode" desc:"bind mounts your project live (edits sync); snapshot copies it (isolated, disposable)" default:"bind" required:"true"`
 }
 
 // PathRule defines an HTTP path-level filtering rule for MITM inspection.
 type PathRule struct {
-	Path   string `yaml:"path" label:"Path" desc:"HTTP path pattern to match"`
-	Action string `yaml:"action" label:"Action" desc:"Rule action (allow or deny)"`
+	Path   string `yaml:"path" label:"Path" desc:"URL path prefix to match (e.g. /v1/api, /repos/myorg)"`
+	Action string `yaml:"action" label:"Action" desc:"Whether to allow or deny requests matching this path"`
 }
 
 // EgressRule defines a single egress firewall rule.
 // Dst is the domain or IP, Proto defaults to "tls", Action defaults to "allow".
 type EgressRule struct {
-	Dst         string     `yaml:"dst" label:"Destination" desc:"Domain or IP address"`
-	Proto       string     `yaml:"proto,omitempty" label:"Protocol" desc:"Network protocol (defaults to tls)"`
-	Port        int        `yaml:"port,omitempty" label:"Port" desc:"Destination port (defaults to 443 for TLS)"`
-	Action      string     `yaml:"action,omitempty" label:"Action" desc:"Rule action (defaults to allow)"`
-	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"HTTP path-level filtering rules"`
-	PathDefault string     `yaml:"path_default,omitempty" label:"Path Default" desc:"Default action for unmatched paths"`
-}
-
-type IPRangeSource struct {
-	Name     string `yaml:"name" json:"name" label:"Name" desc:"Source identifier (e.g. github, google-cloud, cloudflare)"`
-	URL      string `yaml:"url,omitempty" json:"url,omitempty" label:"URL" desc:"Custom URL (uses built-in URL if empty for known sources)"`
-	JQFilter string `yaml:"jq_filter,omitempty" json:"jq_filter,omitempty" label:"JQ Filter" desc:"JQ expression to extract CIDR arrays from JSON response"`
-	Required *bool  `yaml:"required,omitempty" json:"required,omitempty" label:"Required" desc:"Whether failure to fetch is fatal"`
-}
-
-// IsRequired returns whether this source is required (failure to fetch is fatal).
-// For "github" source, defaults to true if not explicitly set.
-func (s *IPRangeSource) IsRequired() bool {
-	if s.Required != nil {
-		return *s.Required
-	}
-	// GitHub is required by default; other sources are optional
-	return s.Name == "github"
+	Dst         string     `yaml:"dst" label:"Destination" desc:"Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)"`
+	Proto       string     `yaml:"proto,omitempty" label:"Protocol" desc:"Connection protocol: tls (HTTPS, default), tcp (plain), or http (MITM-inspected)"`
+	Port        int        `yaml:"port,omitempty" label:"Port" desc:"Override the default port (443 for TLS, 80 for HTTP)"`
+	Action      string     `yaml:"action,omitempty" label:"Action" desc:"Allow or deny traffic to this destination (default: allow)"`
+	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained HTTP path filtering when proto is http (requires MITM inspection)"`
+	PathDefault string     `yaml:"path_default,omitempty" label:"Path Default" desc:"What to do with HTTP paths that don't match any path rule (allow or deny)"`
 }
 
 // FirewallConfig defines per-project firewall rules in clawker.yaml.
 // Global lifecycle control (enable/disable) lives in settings.yaml via FirewallSettings.
 type FirewallConfig struct {
-	AddDomains     []string        `yaml:"add_domains,omitempty" merge:"union" label:"Firewall Domains" desc:"Additional domains to allow through the firewall"`
-	Rules          []EgressRule    `yaml:"rules,omitempty" merge:"union" label:"Rules" desc:"Egress firewall rules"`
-	IPRangeSources []IPRangeSource `yaml:"ip_range_sources,omitempty" label:"IP Range Sources" desc:"IP range sources (deprecated)"` // DEPRECATED: ignored at runtime
+	AddDomains []string     `yaml:"add_domains,omitempty" merge:"union" label:"Firewall Domains" desc:"Shorthand: domains the container can reach over HTTPS (converted to TLS rules)"`
+	Rules      []EgressRule `yaml:"rules,omitempty" merge:"union" label:"Rules" desc:"Full egress rules with protocol, port, and path control"`
 }
 
 // GetFirewallDomains returns required domains merged with user's add_domains.
@@ -217,9 +173,9 @@ func (f *FirewallConfig) GetFirewallDomains(requiredDomains []string) []string {
 
 type SecurityConfig struct {
 	Firewall        *FirewallConfig       `yaml:"firewall,omitempty"`
-	DockerSocket    bool                  `yaml:"docker_socket" label:"Docker Socket" desc:"Mount Docker socket inside the container" default:"false" required:"true"`
-	CapAdd          []string              `yaml:"cap_add,omitempty" label:"Cap Add" desc:"Linux capabilities to add to the container" default:"NET_ADMIN,NET_RAW"`
-	EnableHostProxy *bool                 `yaml:"enable_host_proxy,omitempty" label:"Host Proxy" desc:"Enable host proxy for browser auth and credential forwarding" default:"true"`
+	DockerSocket    bool                  `yaml:"docker_socket" label:"Docker Socket" desc:"Mount the host Docker socket (DooD, not DinD) — lets the container manage sibling containers but is a security risk" default:"false" required:"true"`
+	CapAdd          []string              `yaml:"cap_add,omitempty" label:"Cap Add" desc:"Linux capabilities granted to the container; NET_ADMIN and NET_RAW are required — removing them will break the firewall" default:"NET_ADMIN,NET_RAW"`
+	EnableHostProxy *bool                 `yaml:"enable_host_proxy,omitempty" label:"Host Proxy" desc:"Run a proxy for browser-based auth flows and credential forwarding from the host" default:"true"`
 	GitCredentials  *GitCredentialsConfig `yaml:"git_credentials,omitempty"`
 }
 
@@ -234,10 +190,10 @@ func (s *SecurityConfig) HostProxyEnabled() bool {
 
 // GitCredentialsConfig defines git credential forwarding settings
 type GitCredentialsConfig struct {
-	ForwardHTTPS  *bool `yaml:"forward_https,omitempty" label:"Forward HTTPS" desc:"Enable HTTPS credential forwarding" default:"true"`
-	ForwardSSH    *bool `yaml:"forward_ssh,omitempty" label:"Forward SSH" desc:"Enable SSH agent forwarding" default:"true"`
-	ForwardGPG    *bool `yaml:"forward_gpg,omitempty" label:"Forward GPG" desc:"Enable GPG agent forwarding" default:"true"`
-	CopyGitConfig *bool `yaml:"copy_git_config,omitempty" label:"Copy Git Config" desc:"Copy host .gitconfig into the container" default:"true"`
+	ForwardHTTPS  *bool `yaml:"forward_https,omitempty" label:"Forward HTTPS" desc:"Let git clone/push use your host HTTPS credentials (via host proxy)" default:"true"`
+	ForwardSSH    *bool `yaml:"forward_ssh,omitempty" label:"Forward SSH" desc:"Let git use your host SSH keys for cloning and pushing" default:"true"`
+	ForwardGPG    *bool `yaml:"forward_gpg,omitempty" label:"Forward GPG" desc:"Let git sign commits using your host GPG keys" default:"true"`
+	CopyGitConfig *bool `yaml:"copy_git_config,omitempty" label:"Copy Git Config" desc:"Sync your host .gitconfig (aliases, user.name, user.email) into the container" default:"true"`
 }
 
 // GitHTTPSEnabled returns whether HTTPS credential forwarding should be enabled.
@@ -278,20 +234,20 @@ func (g *GitCredentialsConfig) GPGEnabled() bool {
 
 // LoopConfig defines configuration for autonomous agent loops.
 type LoopConfig struct {
-	MaxLoops                  int    `yaml:"max_loops,omitempty" label:"Max Loops" desc:"Maximum number of autonomous loops"`
-	StagnationThreshold       int    `yaml:"stagnation_threshold,omitempty" label:"Stagnation Threshold" desc:"Loops without progress before stopping"`
-	TimeoutMinutes            int    `yaml:"timeout_minutes,omitempty" label:"Timeout (min)" desc:"Maximum runtime in minutes"`
-	CallsPerHour              int    `yaml:"calls_per_hour,omitempty" label:"Calls per Hour" desc:"Rate limit for API calls"`
-	CompletionThreshold       int    `yaml:"completion_threshold,omitempty" label:"Completion Threshold" desc:"Score threshold to consider task complete"`
-	SessionExpirationHours    int    `yaml:"session_expiration_hours,omitempty" label:"Session Expiration (hrs)" desc:"Hours before session expires"`
-	SameErrorThreshold        int    `yaml:"same_error_threshold,omitempty" label:"Same Error Threshold" desc:"Consecutive identical errors before stopping"`
-	OutputDeclineThreshold    int    `yaml:"output_decline_threshold,omitempty" label:"Output Decline Threshold" desc:"Output quality decline threshold"`
-	MaxConsecutiveTestLoops   int    `yaml:"max_consecutive_test_loops,omitempty" label:"Max Consecutive Test Loops" desc:"Maximum consecutive test-only loops"`
-	LoopDelaySeconds          int    `yaml:"loop_delay_seconds,omitempty" label:"Loop Delay (sec)" desc:"Delay between loops in seconds"`
-	SafetyCompletionThreshold int    `yaml:"safety_completion_threshold,omitempty" label:"Safety Completion Threshold" desc:"Safety score threshold for completion"`
-	SkipPermissions           bool   `yaml:"skip_permissions,omitempty" label:"Skip Permissions" desc:"Skip permission prompts in loops"`
-	HooksFile                 string `yaml:"hooks_file,omitempty" label:"Hooks File" desc:"Path to hooks file for loop events"`
-	AppendSystemPrompt        string `yaml:"append_system_prompt,omitempty" label:"Append System Prompt" desc:"Additional system prompt for loops"`
+	MaxLoops                  int    `yaml:"max_loops,omitempty" label:"Max Loops" desc:"Hard cap on iterations to prevent runaway loops"`
+	StagnationThreshold       int    `yaml:"stagnation_threshold,omitempty" label:"Stagnation Threshold" desc:"Stop early if this many consecutive loops make no progress"`
+	TimeoutMinutes            int    `yaml:"timeout_minutes,omitempty" label:"Timeout (min)" desc:"Kill the loop after this long regardless of progress"`
+	CallsPerHour              int    `yaml:"calls_per_hour,omitempty" label:"Calls per Hour" desc:"Throttle API calls to control cost"`
+	CompletionThreshold       int    `yaml:"completion_threshold,omitempty" label:"Completion Threshold" desc:"Quality score at which the task is considered done"`
+	SessionExpirationHours    int    `yaml:"session_expiration_hours,omitempty" label:"Session Expiration (hrs)" desc:"Discard loop state after this many hours of inactivity"`
+	SameErrorThreshold        int    `yaml:"same_error_threshold,omitempty" label:"Same Error Threshold" desc:"Stop if the same error repeats this many times (stuck in a loop)"`
+	OutputDeclineThreshold    int    `yaml:"output_decline_threshold,omitempty" label:"Output Decline Threshold" desc:"Stop if output quality drops by this amount between iterations"`
+	MaxConsecutiveTestLoops   int    `yaml:"max_consecutive_test_loops,omitempty" label:"Max Consecutive Test Loops" desc:"Stop if the agent only runs tests for this many loops without code changes"`
+	LoopDelaySeconds          int    `yaml:"loop_delay_seconds,omitempty" label:"Loop Delay (sec)" desc:"Pause between iterations (e.g. to avoid rate limits)"`
+	SafetyCompletionThreshold int    `yaml:"safety_completion_threshold,omitempty" label:"Safety Completion Threshold" desc:"Minimum safety score required before marking a task complete"`
+	SkipPermissions           bool   `yaml:"skip_permissions,omitempty" label:"Skip Permissions" desc:"Run Claude Code with --dangerously-skip-permissions for fully autonomous loops"`
+	HooksFile                 string `yaml:"hooks_file,omitempty" label:"Hooks File" desc:"Script called on loop events (start, complete, error) for custom integrations"`
+	AppendSystemPrompt        string `yaml:"append_system_prompt,omitempty" label:"Append System Prompt" desc:"Extra instructions appended to Claude's system prompt in each loop iteration"`
 }
 
 // GetHooksFile returns the hooks file path (empty string if not configured).
@@ -369,7 +325,7 @@ func (s Settings) Fields() storage.FieldSet {
 // FirewallSettings controls global firewall lifecycle in settings.yaml.
 // Per-project rules live in FirewallConfig (clawker.yaml).
 type FirewallSettings struct {
-	Enable *bool `yaml:"enable,omitempty" label:"Enable Firewall" desc:"Global firewall on/off" default:"true" required:"true"`
+	Enable *bool `yaml:"enable,omitempty" label:"Enable Firewall" desc:"Master switch for the Envoy firewall; when off, containers have unrestricted network access" default:"true" required:"true"`
 }
 
 // FirewallEnabled returns whether the global firewall is enabled.
@@ -389,60 +345,60 @@ type HostProxyConfig struct {
 
 // HostProxyManagerConfig configures the host proxy manager.
 type HostProxyManagerConfig struct {
-	Port int `yaml:"port" label:"Manager Port" desc:"Host proxy manager port" default:"18374"`
+	Port int `yaml:"port" label:"Manager Port" desc:"Local port the host proxy listens on (change if 18374 conflicts)" default:"18374"`
 }
 
 // HostProxyDaemonConfig defines configuration for the host proxy daemon.
 type HostProxyDaemonConfig struct {
-	Port               int           `yaml:"port" label:"Daemon Port" desc:"Host proxy daemon port" default:"18374"`
-	PollInterval       time.Duration `yaml:"poll_interval,omitempty" label:"Poll Interval" desc:"Container health poll interval" default:"30s"`
-	GracePeriod        time.Duration `yaml:"grace_period,omitempty" label:"Grace Period" desc:"Grace period before shutting down idle daemon" default:"60s"`
-	MaxConsecutiveErrs int           `yaml:"max_consecutive_errs,omitempty" label:"Max Consecutive Errors" desc:"Errors before daemon restart" default:"10"`
+	Port               int           `yaml:"port" label:"Daemon Port" desc:"Local port the proxy daemon binds to" default:"18374"`
+	PollInterval       time.Duration `yaml:"poll_interval,omitempty" label:"Poll Interval" desc:"How often to check if containers still need the proxy" default:"30s"`
+	GracePeriod        time.Duration `yaml:"grace_period,omitempty" label:"Grace Period" desc:"How long to keep the proxy alive after the last container stops" default:"60s"`
+	MaxConsecutiveErrs int           `yaml:"max_consecutive_errs,omitempty" label:"Max Consecutive Errors" desc:"Restart the proxy daemon after this many consecutive failures" default:"10"`
 }
 
 // LoggingConfig configures file-based logging.
 type LoggingConfig struct {
-	FileEnabled *bool      `yaml:"file_enabled,omitempty" label:"Enable File Logging" desc:"Write log output to a file" default:"true"`
-	MaxSizeMB   int        `yaml:"max_size_mb,omitempty" label:"Max Log Size (MB)" desc:"Maximum log file size before rotation" default:"50"`
-	MaxAgeDays  int        `yaml:"max_age_days,omitempty" label:"Max Log Age (days)" desc:"Days to retain old log files" default:"7"`
-	MaxBackups  int        `yaml:"max_backups,omitempty" label:"Max Backups" desc:"Maximum number of old log files to retain" default:"3"`
-	Compress    *bool      `yaml:"compress,omitempty" label:"Compress Logs" desc:"Compress rotated log files" default:"true"`
+	FileEnabled *bool      `yaml:"file_enabled,omitempty" label:"Enable File Logging" desc:"Write structured logs to disk for debugging and diagnostics" default:"true"`
+	MaxSizeMB   int        `yaml:"max_size_mb,omitempty" label:"Max Log Size (MB)" desc:"Rotate the log file when it exceeds this size" default:"50"`
+	MaxAgeDays  int        `yaml:"max_age_days,omitempty" label:"Max Log Age (days)" desc:"Delete rotated logs older than this" default:"7"`
+	MaxBackups  int        `yaml:"max_backups,omitempty" label:"Max Backups" desc:"Number of rotated log files to keep" default:"3"`
+	Compress    *bool      `yaml:"compress,omitempty" label:"Compress Logs" desc:"Gzip rotated logs to save disk space" default:"true"`
 	Otel        OtelConfig `yaml:"otel,omitempty"`
 }
 
 // OtelConfig configures the OTEL zerolog bridge.
 type OtelConfig struct {
-	Enabled               *bool `yaml:"enabled,omitempty" label:"OTEL Logging" desc:"Enable OpenTelemetry log bridge" default:"true"`
-	TimeoutSeconds        int   `yaml:"timeout_seconds,omitempty" label:"OTEL Timeout (sec)" desc:"OTEL exporter timeout" default:"5"`
-	MaxQueueSize          int   `yaml:"max_queue_size,omitempty" label:"OTEL Queue Size" desc:"Maximum queued log records" default:"2048"`
-	ExportIntervalSeconds int   `yaml:"export_interval_seconds,omitempty" label:"OTEL Export Interval (sec)" desc:"Seconds between OTEL exports" default:"5"`
+	Enabled               *bool `yaml:"enabled,omitempty" label:"OTEL Logging" desc:"Send logs to the OTEL collector for Grafana/Loki visibility" default:"true"`
+	TimeoutSeconds        int   `yaml:"timeout_seconds,omitempty" label:"OTEL Timeout (sec)" desc:"Give up on an export batch after this long" default:"5"`
+	MaxQueueSize          int   `yaml:"max_queue_size,omitempty" label:"OTEL Queue Size" desc:"Buffer this many log records before dropping (increase if you see gaps)" default:"2048"`
+	ExportIntervalSeconds int   `yaml:"export_interval_seconds,omitempty" label:"OTEL Export Interval (sec)" desc:"How often to flush buffered logs to the collector" default:"5"`
 }
 
 // MonitoringConfig configures monitoring stack ports and OTEL endpoints.
 type MonitoringConfig struct {
-	OtelCollectorEndpoint string          `yaml:"otel_collector_endpoint,omitempty" label:"OTEL Collector Endpoint" desc:"OTEL collector endpoint URL"`
-	OtelCollectorPort     int             `yaml:"otel_collector_port,omitempty" label:"OTEL Collector Port" desc:"OTEL collector HTTP port" default:"4318"`
-	OtelCollectorHost     string          `yaml:"otel_collector_host,omitempty" label:"OTEL Collector Host" desc:"OTEL collector hostname" default:"localhost"`
-	OtelCollectorInternal string          `yaml:"otel_collector_internal,omitempty" label:"OTEL Collector Internal" desc:"Internal OTEL collector address" default:"otel-collector"`
-	OtelGRPCPort          int             `yaml:"otel_grpc_port,omitempty" label:"OTEL gRPC Port" desc:"OTEL collector gRPC port" default:"4317"`
-	LokiPort              int             `yaml:"loki_port,omitempty" label:"Loki Port" desc:"Loki log aggregation port" default:"3100"`
-	PrometheusPort        int             `yaml:"prometheus_port,omitempty" label:"Prometheus Port" desc:"Prometheus metrics port" default:"9090"`
-	JaegerPort            int             `yaml:"jaeger_port,omitempty" label:"Jaeger Port" desc:"Jaeger tracing UI port" default:"16686"`
-	GrafanaPort           int             `yaml:"grafana_port,omitempty" label:"Grafana Port" desc:"Grafana dashboard port" default:"3000"`
-	PrometheusMetricsPort int             `yaml:"prometheus_metrics_port,omitempty" label:"Prometheus Metrics Port" desc:"Prometheus self-metrics port" default:"8889"`
+	OtelCollectorEndpoint string          `yaml:"otel_collector_endpoint,omitempty" label:"OTEL Collector Endpoint" desc:"Override the auto-detected OTEL collector URL (e.g. for a remote collector)"`
+	OtelCollectorPort     int             `yaml:"otel_collector_port,omitempty" label:"OTEL Collector Port" desc:"Host port for the OTEL HTTP receiver" default:"4318"`
+	OtelCollectorHost     string          `yaml:"otel_collector_host,omitempty" label:"OTEL Collector Host" desc:"Hostname for reaching the collector from the host" default:"localhost"`
+	OtelCollectorInternal string          `yaml:"otel_collector_internal,omitempty" label:"OTEL Collector Internal" desc:"Docker network hostname containers use to reach the collector" default:"otel-collector"`
+	OtelGRPCPort          int             `yaml:"otel_grpc_port,omitempty" label:"OTEL gRPC Port" desc:"Host port for the OTEL gRPC receiver" default:"4317"`
+	LokiPort              int             `yaml:"loki_port,omitempty" label:"Loki Port" desc:"Host port for Loki log ingestion" default:"3100"`
+	PrometheusPort        int             `yaml:"prometheus_port,omitempty" label:"Prometheus Port" desc:"Host port for Prometheus metrics UI" default:"9090"`
+	JaegerPort            int             `yaml:"jaeger_port,omitempty" label:"Jaeger Port" desc:"Host port for Jaeger tracing UI" default:"16686"`
+	GrafanaPort           int             `yaml:"grafana_port,omitempty" label:"Grafana Port" desc:"Host port for Grafana dashboards" default:"3000"`
+	PrometheusMetricsPort int             `yaml:"prometheus_metrics_port,omitempty" label:"Prometheus Metrics Port" desc:"Host port for Prometheus internal metrics" default:"8889"`
 	Telemetry             TelemetryConfig `yaml:"telemetry,omitempty"`
 }
 
 // TelemetryConfig configures telemetry export paths and intervals.
 type TelemetryConfig struct {
-	MetricsPath            string `yaml:"metrics_path,omitempty" label:"Metrics Path" desc:"Path for metrics export" default:"/v1/metrics"`
-	LogsPath               string `yaml:"logs_path,omitempty" label:"Logs Path" desc:"Path for logs export" default:"/v1/logs"`
-	MetricExportIntervalMs int    `yaml:"metric_export_interval_ms,omitempty" label:"Metric Export Interval (ms)" desc:"Milliseconds between metric exports" default:"10000"`
-	LogsExportIntervalMs   int    `yaml:"logs_export_interval_ms,omitempty" label:"Logs Export Interval (ms)" desc:"Milliseconds between log exports" default:"5000"`
-	LogToolDetails         *bool  `yaml:"log_tool_details,omitempty" label:"Log Tool Details" desc:"Include tool call details in logs" default:"true"`
-	LogUserPrompts         *bool  `yaml:"log_user_prompts,omitempty" label:"Log User Prompts" desc:"Include user prompts in logs" default:"true"`
-	IncludeAccountUUID     *bool  `yaml:"include_account_uuid,omitempty" label:"Include Account UUID" desc:"Include account UUID in telemetry" default:"true"`
-	IncludeSessionID       *bool  `yaml:"include_session_id,omitempty" label:"Include Session ID" desc:"Include session ID in telemetry" default:"true"`
+	MetricsPath            string `yaml:"metrics_path,omitempty" label:"Metrics Path" desc:"OTEL collector HTTP path for metrics" default:"/v1/metrics"`
+	LogsPath               string `yaml:"logs_path,omitempty" label:"Logs Path" desc:"OTEL collector HTTP path for logs" default:"/v1/logs"`
+	MetricExportIntervalMs int    `yaml:"metric_export_interval_ms,omitempty" label:"Metric Export Interval (ms)" desc:"How often Claude exports metrics (lower = more granular, higher = less overhead)" default:"10000"`
+	LogsExportIntervalMs   int    `yaml:"logs_export_interval_ms,omitempty" label:"Logs Export Interval (ms)" desc:"How often Claude exports logs (lower = more real-time, higher = less overhead)" default:"5000"`
+	LogToolDetails         *bool  `yaml:"log_tool_details,omitempty" label:"Log Tool Details" desc:"Capture full tool call inputs/outputs in telemetry (verbose but useful for debugging)" default:"true"`
+	LogUserPrompts         *bool  `yaml:"log_user_prompts,omitempty" label:"Log User Prompts" desc:"Capture user prompts in telemetry (disable for privacy)" default:"true"`
+	IncludeAccountUUID     *bool  `yaml:"include_account_uuid,omitempty" label:"Include Account UUID" desc:"Tag telemetry with your Anthropic account ID (useful for multi-user setups)" default:"true"`
+	IncludeSessionID       *bool  `yaml:"include_session_id,omitempty" label:"Include Session ID" desc:"Tag telemetry with session ID to correlate events across a single run" default:"true"`
 }
 
 // ProjectEntry represents a project in the registry.

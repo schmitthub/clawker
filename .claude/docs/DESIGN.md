@@ -248,7 +248,7 @@ Higher precedence wins silently (no warnings on override).
 |-----|----------|------------|---------|
 | `merge:"union"` | Additive, deduped | Slices, maps | `security.firewall.add_domains`, `security.firewall.rules`, `build.instructions.labels` |
 | `merge:"overwrite"` | Last-wins (explicit) | Slices, maps | (none currently — all overwrite fields use implicit default) |
-| (none) | Last-wins | Scalars, slices, maps | All scalar fields, all untagged slices, `env`, `build_args` |
+| (none) | Last-wins | Scalars, slices, maps | All scalar fields, all untagged slices, `env` |
 
 **Maps** are schema-aware: `tagRegistry` carries `FieldKind` so `mergeTrees` distinguishes `map[string]string` fields (opaque values) from struct nesting. Untagged maps default to last-wins (highest-priority layer's map replaces entirely). Tagged `merge:"union"` maps do key-by-key merge across layers.
 

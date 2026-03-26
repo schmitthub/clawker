@@ -1839,12 +1839,6 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		envOpts.FirewallEnabled = true
 	}
 
-	// Deprecation warning for ip_range_sources
-	if projectCfg.Security.Firewall != nil && len(projectCfg.Security.Firewall.IPRangeSources) > 0 {
-		log.Warn().Msg("ip_range_sources in firewall config is deprecated and ignored")
-		warnings = append(warnings, "ip_range_sources is deprecated and ignored — use add_domains or rules instead")
-	}
-
 	if projectCfg.Security.GitCredentials != nil {
 		envOpts.GPGForwardingEnabled = projectCfg.Security.GitCredentials.GPGEnabled()
 		envOpts.SSHForwardingEnabled = projectCfg.Security.GitCredentials.GitSSHEnabled()
