@@ -80,6 +80,7 @@
         "group": "Guides",
         "pages": [
           "configuration",
+          "threat-model",
           "security",
           "firewall",
           "credentials",
