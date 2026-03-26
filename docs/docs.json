@@ -77,10 +77,15 @@
         ]
       },
       {
+        "group": "Security",
+        "pages": [
+          "threat-model"
+        ]
+      },
+      {
         "group": "Guides",
         "pages": [
           "configuration",
-          "threat-model",
           "security",
           "firewall",
           "credentials",

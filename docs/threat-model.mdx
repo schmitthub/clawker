@@ -6,7 +6,7 @@ icon: "crosshairs"
 
 AI coding agents are not traditional CLI tools. They make autonomous decisions about what files to read and write, what commands to run, what network requests to make, and what credentials to use. They do this with full conviction — even when they're wrong. They hallucinate file paths, lose context mid-task, get tunnel vision on a broken approach, and can be coerced by adversarial content embedded in the data they fetch. Handing one of these agents unrestricted code execution, full filesystem access, and open network on your bare-metal host is reckless.
 
-Clawker exists because containers have been solving this problem for over a decade. The agent runs inside a Docker container where it can thrash, experiment, and make mistakes freely — that's the whole point of a devcontainer. What matters is that the blast radius stops at the container boundary. The host filesystem, credentials, network, and Docker daemon are protected by default, and every capability is restricted until you explicitly open it.
+Clawker exists because containers have been solving this problem for over a decade. The agent runs inside a Docker container where it can thrash, experiment, and make mistakes freely — that's the whole point of a devcontainer. What matters is that the blast radius stops at the container boundary. The host filesystem, credentials, and network are protected by default, and every capability is restricted until you explicitly open it.
 
 This page maps the attack surfaces to clawker's security controls. For configuration details and CLI commands, follow the cross-references to the dedicated guides.
 
