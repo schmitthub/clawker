@@ -86,6 +86,16 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 		{name: "preset with yes", args: []string{"--yes", "--preset", "Go"}, wantYes: true, wantPreset: "Go"},
 		{name: "preset name and yes", args: []string{"my-project", "--yes", "--preset", "Python"}, wantName: "my-project", wantYes: true, wantPreset: "Python"},
 		{name: "preset without yes", args: []string{"--preset", "Go"}, wantErr: true},
+		{name: "vcs with yes", args: []string{"--yes", "--vcs", "github"}, wantYes: true},
+		{name: "vcs gitlab with yes", args: []string{"--yes", "--vcs", "gitlab"}, wantYes: true},
+		{name: "git-protocol with yes", args: []string{"--yes", "--git-protocol", "ssh"}, wantYes: true},
+		{name: "no-gpg with yes", args: []string{"--yes", "--no-gpg"}, wantYes: true},
+		{name: "vcs without yes", args: []string{"--vcs", "github"}, wantErr: true},
+		{name: "git-protocol without yes", args: []string{"--git-protocol", "ssh"}, wantErr: true},
+		{name: "no-gpg without yes", args: []string{"--no-gpg"}, wantErr: true},
+		{name: "invalid vcs", args: []string{"--yes", "--vcs", "svn"}, wantErr: true},
+		{name: "invalid git-protocol", args: []string{"--yes", "--git-protocol", "ftp"}, wantErr: true},
+		{name: "all vcs flags", args: []string{"--yes", "--preset", "Go", "--vcs", "gitlab", "--git-protocol", "ssh", "--no-gpg"}, wantYes: true, wantPreset: "Go"},
 	}
 
 	for _, tt := range tests {
@@ -173,12 +183,15 @@ func TestBuildInitWizardSteps(t *testing.T) {
 	}
 	steps := buildInitWizardSteps(wctx)
 
-	require.Len(t, steps, 4, "expected 4 wizard steps: overwrite, project_name, preset, action")
+	require.Len(t, steps, 7, "expected 7 wizard steps")
 
 	assert.Equal(t, "overwrite", steps[0].ID)
 	assert.Equal(t, "project_name", steps[1].ID)
 	assert.Equal(t, "preset", steps[2].ID)
-	assert.Equal(t, "action", steps[3].ID)
+	assert.Equal(t, "vcs_provider", steps[3].ID)
+	assert.Equal(t, "git_protocol", steps[4].ID)
+	assert.Equal(t, "gpg_forward", steps[5].ID)
+	assert.Equal(t, "action", steps[6].ID)
 
 	// All pages should be non-nil.
 	for _, s := range steps {
@@ -217,7 +230,10 @@ func TestBuildInitWizardSteps_OverwriteDeclined(t *testing.T) {
 	vals := tui.WizardValues{"overwrite": "no"}
 	assert.True(t, steps[1].SkipIf(vals), "project_name skipped on overwrite=no")
 	assert.True(t, steps[2].SkipIf(vals), "preset skipped on overwrite=no")
-	assert.True(t, steps[3].SkipIf(vals), "action skipped on overwrite=no")
+	assert.True(t, steps[3].SkipIf(vals), "vcs_provider skipped on overwrite=no")
+	assert.True(t, steps[4].SkipIf(vals), "git_protocol skipped on overwrite=no")
+	assert.True(t, steps[5].SkipIf(vals), "gpg_forward skipped on overwrite=no")
+	assert.True(t, steps[6].SkipIf(vals), "action skipped on overwrite=no")
 }
 
 func TestBuildInitWizardSteps_ForceSkipsOverwrite(t *testing.T) {
@@ -244,11 +260,11 @@ func TestBuildInitWizardSteps_ActionSkipForAutoCustomize(t *testing.T) {
 
 	// Action should be skipped for "Build from scratch" (AutoCustomize preset).
 	vals := tui.WizardValues{"preset": "Build from scratch"}
-	assert.True(t, steps[3].SkipIf(vals), "action skipped for AutoCustomize preset")
+	assert.True(t, steps[6].SkipIf(vals), "action skipped for AutoCustomize preset")
 
 	// Action should NOT be skipped for normal presets.
 	vals = tui.WizardValues{"preset": "Go"}
-	assert.False(t, steps[3].SkipIf(vals), "action shown for normal presets")
+	assert.False(t, steps[6].SkipIf(vals), "action shown for normal presets")
 }
 
 // --- Validation tests ---
@@ -487,6 +503,166 @@ func TestRunNonInteractive_UnknownPreset(t *testing.T) {
 	err := Run(context.Background(), opts)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown preset")
+}
+
+// --- VCS configuration tests ---
+
+func TestApplyVCSToProject(t *testing.T) {
+	tests := []struct {
+		name         string
+		vcs          vcsSettings
+		wantDomains  []string
+		wantSSHRule  bool
+		wantSSHHost  string
+		wantGPGFalse bool
+	}{
+		{
+			name:        "github https with gpg",
+			vcs:         vcsSettings{Provider: vcsGitHub, Protocol: protoHTTPS, ForwardGPG: true},
+			wantDomains: []string{"github.com", "api.github.com"},
+		},
+		{
+			name:        "gitlab https",
+			vcs:         vcsSettings{Provider: vcsGitLab, Protocol: protoHTTPS, ForwardGPG: true},
+			wantDomains: []string{"gitlab.com", "registry.gitlab.com"},
+		},
+		{
+			name:        "bitbucket https",
+			vcs:         vcsSettings{Provider: vcsBitbucket, Protocol: protoHTTPS, ForwardGPG: true},
+			wantDomains: []string{"bitbucket.org", "api.bitbucket.org"},
+		},
+		{
+			name:        "github ssh",
+			vcs:         vcsSettings{Provider: vcsGitHub, Protocol: protoSSH, ForwardGPG: true},
+			wantDomains: []string{"github.com", "api.github.com"},
+			wantSSHRule: true,
+			wantSSHHost: "github.com",
+		},
+		{
+			name:         "gitlab ssh no gpg",
+			vcs:          vcsSettings{Provider: vcsGitLab, Protocol: protoSSH, ForwardGPG: false},
+			wantDomains:  []string{"gitlab.com", "registry.gitlab.com"},
+			wantSSHRule:  true,
+			wantSSHHost:  "gitlab.com",
+			wantGPGFalse: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &config.Project{}
+			applyVCSToProject(p, tt.vcs)
+
+			for _, d := range tt.wantDomains {
+				assert.Contains(t, p.Security.Firewall.AddDomains, d)
+			}
+
+			if tt.wantSSHRule {
+				require.NotEmpty(t, p.Security.Firewall.Rules)
+				rule := p.Security.Firewall.Rules[0]
+				assert.Equal(t, tt.wantSSHHost, rule.Dst)
+				assert.Equal(t, 22, rule.Port)
+				assert.Equal(t, "ssh", rule.Proto)
+				assert.Equal(t, "allow", rule.Action)
+			} else {
+				assert.Empty(t, p.Security.Firewall.Rules)
+			}
+
+			if tt.wantGPGFalse {
+				require.NotNil(t, p.Security.GitCredentials)
+				require.NotNil(t, p.Security.GitCredentials.ForwardGPG)
+				assert.False(t, *p.Security.GitCredentials.ForwardGPG)
+			}
+		})
+	}
+}
+
+func TestVCSSettingsFromWizard(t *testing.T) {
+	tests := []struct {
+		name string
+		vals tui.WizardValues
+		want vcsSettings
+	}{
+		{
+			name: "defaults when empty",
+			vals: tui.WizardValues{},
+			want: defaultVCSSettings(),
+		},
+		{
+			name: "github https gpg",
+			vals: tui.WizardValues{"vcs_provider": "GitHub", "git_protocol": "HTTPS", "gpg_forward": "yes"},
+			want: vcsSettings{Provider: vcsGitHub, Protocol: protoHTTPS, ForwardGPG: true},
+		},
+		{
+			name: "gitlab ssh no gpg",
+			vals: tui.WizardValues{"vcs_provider": "GitLab", "git_protocol": "SSH", "gpg_forward": "no"},
+			want: vcsSettings{Provider: vcsGitLab, Protocol: protoSSH, ForwardGPG: false},
+		},
+		{
+			name: "bitbucket ssh gpg",
+			vals: tui.WizardValues{"vcs_provider": "Bitbucket", "git_protocol": "SSH", "gpg_forward": "yes"},
+			want: vcsSettings{Provider: vcsBitbucket, Protocol: protoSSH, ForwardGPG: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := vcsSettingsFromWizard(tt.vals)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestRunNonInteractive_VCSFlags(t *testing.T) {
+	wd := chdirTemp(t)
+
+	tio, _, _, _ := iostreams.Test()
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	mockPM := projectmocks.NewMockProjectManager()
+	mockPM.RegisterFunc = func(_ context.Context, name string, repoPath string) (project.Project, error) {
+		return projectmocks.NewMockProject(name, repoPath), nil
+	}
+
+	opts := &ProjectInitOptions{
+		IOStreams:      tio,
+		Config:         func() (config.Config, error) { return cfg, nil },
+		Logger:         func() (*logger.Logger, error) { return logger.Nop(), nil },
+		ProjectManager: func() (project.ProjectManager, error) { return mockPM, nil },
+		Yes:            true,
+		VCS:            "gitlab",
+		GitProtocol:    "ssh",
+		NoGPG:          true,
+	}
+
+	err := Run(context.Background(), opts)
+	require.NoError(t, err)
+
+	configPath := filepath.Join(wd, "."+cfg.ProjectConfigFileName())
+	content, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+
+	reloaded, err := storage.NewFromString[config.Project](
+		string(content),
+		storage.WithDefaultsFromStruct[config.Project](),
+	)
+	require.NoError(t, err)
+
+	snap := reloaded.Read()
+
+	// Verify GitLab domains present, GitHub absent.
+	assert.Contains(t, snap.Security.Firewall.AddDomains, "gitlab.com")
+	assert.Contains(t, snap.Security.Firewall.AddDomains, "registry.gitlab.com")
+	assert.NotContains(t, snap.Security.Firewall.AddDomains, "github.com")
+
+	// Verify SSH rule.
+	require.NotEmpty(t, snap.Security.Firewall.Rules)
+	assert.Equal(t, "gitlab.com", snap.Security.Firewall.Rules[0].Dst)
+	assert.Equal(t, 22, snap.Security.Firewall.Rules[0].Port)
+
+	// Verify GPG disabled.
+	require.NotNil(t, snap.Security.GitCredentials)
+	require.NotNil(t, snap.Security.GitCredentials.ForwardGPG)
+	assert.False(t, *snap.Security.GitCredentials.ForwardGPG)
 }
 
 func TestRunNonInteractive_ExistingConfigNoForce(t *testing.T) {

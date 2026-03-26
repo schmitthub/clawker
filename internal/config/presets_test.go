@@ -23,6 +23,12 @@ func TestPresets_AllParseSuccessfully(t *testing.T) {
 }
 
 func TestPresets_FieldAssertions(t *testing.T) {
+	// Presets that have language-specific firewall domains (not Bare/C++).
+	presetsWithDomains := map[string]bool{
+		"Python": true, "Go": true, "Rust": true, "TypeScript": true,
+		"Java": true, "Ruby": true, "C#/.NET": true,
+	}
+
 	for _, p := range Presets() {
 		t.Run(p.Name, func(t *testing.T) {
 			store, err := storage.NewFromString[Project](p.YAML,
@@ -36,21 +42,23 @@ func TestPresets_FieldAssertions(t *testing.T) {
 				"preset %q: build.image must not be empty", p.Name)
 			assert.NotEmpty(t, snap.Build.Packages,
 				"preset %q: build.packages must not be empty", p.Name)
-			assert.Contains(t, snap.Build.Packages, "git",
-				"preset %q: build.packages must include git", p.Name)
-			assert.Contains(t, snap.Build.Packages, "curl",
-				"preset %q: build.packages must include curl", p.Name)
+
+			// ripgrep is the only package all presets add (git/curl are in
+			// the Dockerfile template base and no longer listed in presets).
 			assert.Contains(t, snap.Build.Packages, "ripgrep",
 				"preset %q: build.packages must include ripgrep", p.Name)
 
-			require.NotNil(t, snap.Security.Firewall,
-				"preset %q: security.firewall must not be nil", p.Name)
-			assert.NotEmpty(t, snap.Security.Firewall.AddDomains,
-				"preset %q: security.firewall.add_domains must not be empty", p.Name)
-			assert.Contains(t, snap.Security.Firewall.AddDomains, "github.com",
-				"preset %q: firewall domains must include github.com", p.Name)
-			assert.Contains(t, snap.Security.Firewall.AddDomains, "api.github.com",
-				"preset %q: firewall domains must include api.github.com", p.Name)
+			// VCS domains (github.com, etc.) are no longer in presets — they
+			// come from the VCS wizard/flags. Only language-specific domains
+			// remain (e.g., pypi.org, proxy.golang.org).
+			if presetsWithDomains[p.Name] {
+				require.NotNil(t, snap.Security.Firewall,
+					"preset %q: security.firewall must not be nil", p.Name)
+				assert.NotEmpty(t, snap.Security.Firewall.AddDomains,
+					"preset %q: should have language-specific domains", p.Name)
+				assert.NotContains(t, snap.Security.Firewall.AddDomains, "github.com",
+					"preset %q: VCS domains should not be in presets", p.Name)
+			}
 		})
 	}
 }

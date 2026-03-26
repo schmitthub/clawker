@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
@@ -27,6 +28,109 @@ const (
 	actionCustomize = "Customize this preset"
 )
 
+// VCS provider constants.
+const (
+	vcsGitHub    = "github"
+	vcsGitLab    = "gitlab"
+	vcsBitbucket = "bitbucket"
+)
+
+// VCS protocol constants.
+const (
+	protoHTTPS = "https"
+	protoSSH   = "ssh"
+)
+
+// vcsProviderDomains maps VCS provider keys to the HTTPS domains they require.
+var vcsProviderDomains = map[string][]string{
+	vcsGitHub:    {"github.com", "api.github.com"},
+	vcsGitLab:    {"gitlab.com", "registry.gitlab.com"},
+	vcsBitbucket: {"bitbucket.org", "api.bitbucket.org"},
+}
+
+// vcsSSHHosts maps VCS provider keys to the host that needs a port 22 rule.
+var vcsSSHHosts = map[string]string{
+	vcsGitHub:    "github.com",
+	vcsGitLab:    "gitlab.com",
+	vcsBitbucket: "bitbucket.org",
+}
+
+// vcsProviders returns the valid --vcs flag values.
+func vcsProviders() []string { return []string{vcsGitHub, vcsGitLab, vcsBitbucket} }
+
+// vcsProtocols returns the valid --git-protocol flag values.
+func vcsProtocols() []string { return []string{protoHTTPS, protoSSH} }
+
+// vcsSettings holds resolved VCS configuration from wizard or flags.
+type vcsSettings struct {
+	Provider   string // github, gitlab, bitbucket
+	Protocol   string // https, ssh
+	ForwardGPG bool
+}
+
+// defaultVCSSettings returns the defaults for non-interactive mode.
+func defaultVCSSettings() vcsSettings {
+	return vcsSettings{Provider: vcsGitHub, Protocol: protoHTTPS, ForwardGPG: true}
+}
+
+// applyVCSToProject mutates a *config.Project with VCS-derived config:
+//   - Appends provider domains to security.firewall.add_domains
+//   - If SSH: appends an EgressRule for port 22
+//   - If GPG disabled: sets security.git_credentials.forward_gpg = false
+func applyVCSToProject(p *config.Project, s vcsSettings) {
+	domains := vcsProviderDomains[s.Provider]
+	if p.Security.Firewall == nil {
+		p.Security.Firewall = &config.FirewallConfig{}
+	}
+
+	// Append provider domains (dedup).
+	existing := make(map[string]bool, len(p.Security.Firewall.AddDomains))
+	for _, d := range p.Security.Firewall.AddDomains {
+		existing[d] = true
+	}
+	for _, d := range domains {
+		if !existing[d] {
+			p.Security.Firewall.AddDomains = append(p.Security.Firewall.AddDomains, d)
+		}
+	}
+
+	// SSH: add port 22 egress rule for the provider host.
+	if s.Protocol == protoSSH {
+		host := vcsSSHHosts[s.Provider]
+		p.Security.Firewall.Rules = append(p.Security.Firewall.Rules, config.EgressRule{
+			Dst:    host,
+			Port:   22,
+			Proto:  "ssh",
+			Action: "allow",
+		})
+	}
+
+	// GPG: set forward_gpg to false if disabled (defaults are all true).
+	if !s.ForwardGPG {
+		if p.Security.GitCredentials == nil {
+			p.Security.GitCredentials = &config.GitCredentialsConfig{}
+		}
+		f := false
+		p.Security.GitCredentials.ForwardGPG = &f
+	}
+}
+
+// IsValidVCSProvider checks if a string is a valid --vcs value.
+func IsValidVCSProvider(s string) bool {
+	return slices.Contains(vcsProviders(), s)
+}
+
+// IsValidGitProtocol checks if a string is a valid --git-protocol value.
+func IsValidGitProtocol(s string) bool {
+	return slices.Contains(vcsProtocols(), s)
+}
+
+// VCSProviderNames returns valid provider names for error messages.
+func VCSProviderNames() []string { return vcsProviders() }
+
+// GitProtocolNames returns valid protocol names for error messages.
+func GitProtocolNames() []string { return vcsProtocols() }
+
 // ProjectInitOptions contains the options for the project init command.
 type ProjectInitOptions struct {
 	IOStreams      *iostreams.IOStreams
@@ -35,10 +139,13 @@ type ProjectInitOptions struct {
 	Logger         func() (*logger.Logger, error)
 	ProjectManager func() (project.ProjectManager, error)
 
-	Name   string // Positional arg: project name
-	Preset string // --preset flag: select a preset by name
-	Force  bool
-	Yes    bool // Non-interactive mode
+	Name        string // Positional arg: project name
+	Preset      string // --preset flag: select a preset by name
+	VCS         string // --vcs flag: github|gitlab|bitbucket
+	GitProtocol string // --git-protocol flag: https|ssh
+	NoGPG       bool   // --no-gpg flag: disable GPG forwarding
+	Force       bool
+	Yes         bool // Non-interactive mode
 }
 
 // NewCmdProjectInit creates the project init command.
@@ -62,20 +169,20 @@ that walks through each config field step by step.
 If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default).
 
-Use --yes/-y to skip all prompts (defaults to Bare preset).
-Combine --yes --preset to select a specific language preset non-interactively.`,
-		Example: `  # Interactive setup with preset picker
+Use --yes/-y to skip all prompts (defaults to Bare preset with GitHub HTTPS).
+Combine --yes with --preset, --vcs, --git-protocol, and --no-gpg for full control.`,
+		Example: `  # Interactive setup with preset picker and VCS config
   clawker project init
-
-  # Specify project name (still prompts for preset)
-  clawker project init my-project
 
   # Non-interactive with Bare preset defaults
   clawker project init --yes
 
-  # Non-interactive with a specific preset
-  clawker project init --yes --preset Go
-  clawker project init my-project --yes --preset Python
+  # Non-interactive with a specific preset and VCS
+  clawker project init --yes --preset Go --vcs github
+  clawker project init --yes --preset Python --vcs gitlab --git-protocol ssh
+
+  # Non-interactive with SSH and GPG disabled
+  clawker project init --yes --preset Rust --vcs github --git-protocol ssh --no-gpg
 
   # Overwrite existing configuration
   clawker project init --force`,
@@ -87,6 +194,15 @@ Combine --yes --preset to select a specific language preset non-interactively.`,
 			if opts.Preset != "" && !opts.Yes {
 				return cmdutil.FlagErrorf("--preset requires --yes")
 			}
+			if (opts.VCS != "" || opts.GitProtocol != "" || opts.NoGPG) && !opts.Yes {
+				return cmdutil.FlagErrorf("--vcs, --git-protocol, and --no-gpg require --yes")
+			}
+			if opts.VCS != "" && !IsValidVCSProvider(opts.VCS) {
+				return cmdutil.FlagErrorf("invalid --vcs value %q; valid: %s", opts.VCS, strings.Join(vcsProviders(), ", "))
+			}
+			if opts.GitProtocol != "" && !IsValidGitProtocol(opts.GitProtocol) {
+				return cmdutil.FlagErrorf("invalid --git-protocol value %q; valid: %s", opts.GitProtocol, strings.Join(vcsProtocols(), ", "))
+			}
 			if runF != nil {
 				return runF(cmd.Context(), opts)
 			}
@@ -97,9 +213,18 @@ Combine --yes --preset to select a specific language preset non-interactively.`,
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Overwrite existing configuration files")
 	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Non-interactive mode, accept all defaults")
 	cmd.Flags().StringVar(&opts.Preset, "preset", "", "Select a language preset (requires --yes)")
+	cmd.Flags().StringVar(&opts.VCS, "vcs", "", "VCS provider: github, gitlab, bitbucket (requires --yes)")
+	cmd.Flags().StringVar(&opts.GitProtocol, "git-protocol", "", "Git protocol: https, ssh (requires --yes)")
+	cmd.Flags().BoolVar(&opts.NoGPG, "no-gpg", false, "Disable GPG agent forwarding (requires --yes)")
 
 	cmd.RegisterFlagCompletionFunc("preset", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck // cobra registers completion internally
 		return PresetCompletions(), cobra.ShellCompDirectiveNoFileComp
+	})
+	cmd.RegisterFlagCompletionFunc("vcs", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck
+		return VCSCompletions(), cobra.ShellCompDirectiveNoFileComp
+	})
+	cmd.RegisterFlagCompletionFunc("git-protocol", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck
+		return GitProtocolCompletions(), cobra.ShellCompDirectiveNoFileComp
 	})
 
 	return cmd
@@ -125,6 +250,23 @@ func PresetCompletions() []cobra.Completion {
 		completions = append(completions, cobra.CompletionWithDesc(p.Name, p.Description))
 	}
 	return completions
+}
+
+// VCSCompletions returns cobra completions for the --vcs flag.
+func VCSCompletions() []cobra.Completion {
+	return []cobra.Completion{
+		cobra.CompletionWithDesc(vcsGitHub, "GitHub (github.com)"),
+		cobra.CompletionWithDesc(vcsGitLab, "GitLab (gitlab.com)"),
+		cobra.CompletionWithDesc(vcsBitbucket, "Bitbucket (bitbucket.org)"),
+	}
+}
+
+// GitProtocolCompletions returns cobra completions for the --git-protocol flag.
+func GitProtocolCompletions() []cobra.Completion {
+	return []cobra.Completion{
+		cobra.CompletionWithDesc(protoHTTPS, "HTTPS credential forwarding"),
+		cobra.CompletionWithDesc(protoSSH, "SSH key authentication"),
+	}
 }
 
 // wizardContext captures external state needed by wizard field definitions.
@@ -251,10 +393,11 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		return nil
 	}
 
-	// Resolve preset and branching.
+	// Resolve preset, VCS, and branching.
 	projectName := result.Values["project_name"]
 	presetName := result.Values["preset"]
 	action := result.Values["action"]
+	vcs := vcsSettingsFromWizard(result.Values)
 
 	preset, ok := presetByName(presets, presetName)
 	if !ok {
@@ -272,11 +415,40 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		pm:          env.pm,
 		projectName: projectName,
 		preset:      preset,
+		vcs:         vcs,
 		configPath:  configPath,
 		wd:          env.wd,
 		force:       opts.Force,
 		customize:   customize,
 	})
+}
+
+// vcsSettingsFromWizard extracts VCS settings from wizard values,
+// mapping display labels to internal keys.
+func vcsSettingsFromWizard(vals tui.WizardValues) vcsSettings {
+	s := defaultVCSSettings()
+
+	switch vals["vcs_provider"] {
+	case "GitHub":
+		s.Provider = vcsGitHub
+	case "GitLab":
+		s.Provider = vcsGitLab
+	case "Bitbucket":
+		s.Provider = vcsBitbucket
+	}
+
+	switch vals["git_protocol"] {
+	case "HTTPS":
+		s.Protocol = protoHTTPS
+	case "SSH":
+		s.Protocol = protoSSH
+	}
+
+	if vals["gpg_forward"] == "no" {
+		s.ForwardGPG = false
+	}
+
+	return s
 }
 
 // runNonInteractive runs the non-interactive (--yes) path with no prompts.
@@ -312,6 +484,17 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		return fmt.Errorf("unknown preset %q (see --help for available presets)", presetName)
 	}
 
+	vcs := defaultVCSSettings()
+	if opts.VCS != "" {
+		vcs.Provider = opts.VCS
+	}
+	if opts.GitProtocol != "" {
+		vcs.Protocol = opts.GitProtocol
+	}
+	if opts.NoGPG {
+		vcs.ForwardGPG = false
+	}
+
 	configPath := filepath.Join(env.wd, env.configFileName)
 
 	return performProjectSetup(ctx, performSetupInput{
@@ -321,6 +504,7 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		pm:          env.pm,
 		projectName: env.projectName,
 		preset:      preset,
+		vcs:         vcs,
 		configPath:  configPath,
 		wd:          env.wd,
 		force:       opts.Force,
@@ -337,6 +521,7 @@ type performSetupInput struct {
 	pm          project.ProjectManager
 	projectName string
 	preset      config.Preset
+	vcs         vcsSettings
 	configPath  string
 	wd          string
 	force       bool
@@ -373,6 +558,13 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 		return fmt.Errorf("loading config with preset %q: %w", in.preset.Name, err)
 	}
 	store := presetCfg.ProjectStore()
+
+	// Apply VCS configuration (provider domains, SSH rules, GPG settings).
+	if err := store.Set(func(p *config.Project) {
+		applyVCSToProject(p, in.vcs)
+	}); err != nil {
+		return fmt.Errorf("applying VCS config: %w", err)
+	}
 
 	if in.customize {
 		browser, buildErr := storeui.BuildBrowser(
@@ -494,6 +686,40 @@ func buildInitWizardSteps(wctx wizardContext) []tui.WizardStep {
 			Title:    "Template",
 			Page:     tui.NewSelectPage("preset", "Choose a starting template", presetOptions, 0),
 			HelpKeys: []string{"↑↓", "select", "enter", "confirm", "esc", "back", "ctrl+c", "quit"},
+			SkipIf: func(vals tui.WizardValues) bool {
+				return overwriteDeclined(vals)
+			},
+		},
+		{
+			ID:    "vcs_provider",
+			Title: "VCS",
+			Page: tui.NewSelectPage("vcs_provider", "Which VCS provider do you use?", []tui.FieldOption{
+				{Label: "GitHub", Description: "github.com"},
+				{Label: "GitLab", Description: "gitlab.com"},
+				{Label: "Bitbucket", Description: "bitbucket.org"},
+			}, 0),
+			HelpKeys: []string{"↑↓", "select", "enter", "confirm", "esc", "back", "ctrl+c", "quit"},
+			SkipIf: func(vals tui.WizardValues) bool {
+				return overwriteDeclined(vals)
+			},
+		},
+		{
+			ID:    "git_protocol",
+			Title: "Protocol",
+			Page: tui.NewSelectPage("git_protocol", "Which git protocol do you use?", []tui.FieldOption{
+				{Label: "HTTPS", Description: "Credential-based authentication"},
+				{Label: "SSH", Description: "SSH key authentication"},
+			}, 0),
+			HelpKeys: []string{"↑↓", "select", "enter", "confirm", "esc", "back", "ctrl+c", "quit"},
+			SkipIf: func(vals tui.WizardValues) bool {
+				return overwriteDeclined(vals)
+			},
+		},
+		{
+			ID:       "gpg_forward",
+			Title:    "GPG",
+			Page:     tui.NewConfirmPage("gpg_forward", "Forward GPG agent for commit signing?", true),
+			HelpKeys: []string{"←→", "toggle", "y/n", "set", "enter", "confirm", "esc", "back", "ctrl+c", "quit"},
 			SkipIf: func(vals tui.WizardValues) bool {
 				return overwriteDeclined(vals)
 			},

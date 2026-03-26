@@ -71,8 +71,6 @@ func Presets() []Preset {
 const pythonPreset = `build:
   image: "python:3.12-bookworm"
   packages:
-    - git
-    - curl
     - ripgrep
     - build-essential
 security:
@@ -80,32 +78,23 @@ security:
     add_domains:
       - pypi.org
       - files.pythonhosted.org
-      - github.com
-      - api.github.com
 `
 
 const goPreset = `build:
   image: "golang:1.23-bookworm"
   packages:
-    - git
-    - curl
     - ripgrep
-    - make
 security:
   firewall:
     add_domains:
       - proxy.golang.org
       - sum.golang.org
       - storage.googleapis.com
-      - github.com
-      - api.github.com
 `
 
 const rustPreset = `build:
   image: "rust:1-bookworm"
   packages:
-    - git
-    - curl
     - ripgrep
     - build-essential
     - pkg-config
@@ -115,29 +104,21 @@ security:
       - crates.io
       - static.crates.io
       - index.crates.io
-      - github.com
-      - api.github.com
 `
 
 const typescriptPreset = `build:
   image: "node:22-bookworm"
   packages:
-    - git
-    - curl
     - ripgrep
 security:
   firewall:
     add_domains:
       - registry.npmjs.org
-      - github.com
-      - api.github.com
 `
 
 const javaPreset = `build:
   image: "eclipse-temurin:21-jdk-alpine"
   packages:
-    - git
-    - curl
     - ripgrep
     - maven
 security:
@@ -145,15 +126,11 @@ security:
     add_domains:
       - repo1.maven.org
       - central.sonatype.com
-      - github.com
-      - api.github.com
 `
 
 const rubyPreset = `build:
   image: "ruby:3.3-bookworm"
   packages:
-    - git
-    - curl
     - ripgrep
     - build-essential
 security:
@@ -161,50 +138,28 @@ security:
     add_domains:
       - rubygems.org
       - index.rubygems.org
-      - github.com
-      - api.github.com
 `
 
 const cppPreset = `build:
   image: "buildpack-deps:bookworm"
   packages:
-    - git
-    - curl
     - ripgrep
     - cmake
-    - make
-    - gcc
     - g++
-security:
-  firewall:
-    add_domains:
-      - github.com
-      - api.github.com
 `
 
 const dotnetPreset = `build:
   image: "mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim"
   packages:
-    - git
-    - curl
     - ripgrep
 security:
   firewall:
     add_domains:
       - api.nuget.org
-      - github.com
-      - api.github.com
 `
 
 const barePreset = `build:
   image: "buildpack-deps:bookworm-scm"
   packages:
-    - git
-    - curl
     - ripgrep
-security:
-  firewall:
-    add_domains:
-      - github.com
-      - api.github.com
 `

@@ -20,17 +20,15 @@ clawker init [project-name] [flags]
 ### Examples
 
 ```
-  # Interactive setup with preset picker
+  # Interactive setup with preset picker and VCS config
   clawker init
-
-  # Specify project name
-  clawker init my-project
 
   # Non-interactive with Bare preset defaults
   clawker init --yes
 
-  # Non-interactive with a specific preset
-  clawker init --yes --preset Go
+  # Non-interactive with a specific preset and VCS
+  clawker init --yes --preset Go --vcs github
+  clawker init --yes --preset Python --vcs gitlab --git-protocol ssh
 
   # Overwrite existing configuration
   clawker init --force
@@ -39,10 +37,13 @@ clawker init [project-name] [flags]
 ### Options
 
 ```
-  -f, --force           Overwrite existing configuration files
-  -h, --help            help for init
-      --preset string   Select a language preset (requires --yes)
-  -y, --yes             Non-interactive mode, accept all defaults
+  -f, --force                 Overwrite existing configuration files
+      --git-protocol string   Git protocol: https, ssh (requires --yes)
+  -h, --help                  help for init
+      --no-gpg                Disable GPG agent forwarding (requires --yes)
+      --preset string         Select a language preset (requires --yes)
+      --vcs string            VCS provider: github, gitlab, bitbucket (requires --yes)
+  -y, --yes                   Non-interactive mode, accept all defaults
 ```
 
 ### Options inherited from parent commands

@@ -4,6 +4,7 @@ package init
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	projectinit "github.com/schmitthub/clawker/internal/cmd/project/init"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -29,17 +30,15 @@ func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *projectinit.Proj
 directory with language-based presets for quick setup.
 
 See 'clawker project init --help' for full documentation.`,
-		Example: `  # Interactive setup with preset picker
+		Example: `  # Interactive setup with preset picker and VCS config
   clawker init
-
-  # Specify project name
-  clawker init my-project
 
   # Non-interactive with Bare preset defaults
   clawker init --yes
 
-  # Non-interactive with a specific preset
-  clawker init --yes --preset Go
+  # Non-interactive with a specific preset and VCS
+  clawker init --yes --preset Go --vcs github
+  clawker init --yes --preset Python --vcs gitlab --git-protocol ssh
 
   # Overwrite existing configuration
   clawker init --force`,
@@ -50,6 +49,15 @@ See 'clawker project init --help' for full documentation.`,
 			}
 			if opts.Preset != "" && !opts.Yes {
 				return cmdutil.FlagErrorf("--preset requires --yes")
+			}
+			if (opts.VCS != "" || opts.GitProtocol != "" || opts.NoGPG) && !opts.Yes {
+				return cmdutil.FlagErrorf("--vcs, --git-protocol, and --no-gpg require --yes")
+			}
+			if opts.VCS != "" && !projectinit.IsValidVCSProvider(opts.VCS) {
+				return cmdutil.FlagErrorf("invalid --vcs value %q; valid: %s", opts.VCS, strings.Join(projectinit.VCSProviderNames(), ", "))
+			}
+			if opts.GitProtocol != "" && !projectinit.IsValidGitProtocol(opts.GitProtocol) {
+				return cmdutil.FlagErrorf("invalid --git-protocol value %q; valid: %s", opts.GitProtocol, strings.Join(projectinit.GitProtocolNames(), ", "))
 			}
 
 			cs := f.IOStreams.ColorScheme()
@@ -66,9 +74,18 @@ See 'clawker project init --help' for full documentation.`,
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Overwrite existing configuration files")
 	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Non-interactive mode, accept all defaults")
 	cmd.Flags().StringVar(&opts.Preset, "preset", "", "Select a language preset (requires --yes)")
+	cmd.Flags().StringVar(&opts.VCS, "vcs", "", "VCS provider: github, gitlab, bitbucket (requires --yes)")
+	cmd.Flags().StringVar(&opts.GitProtocol, "git-protocol", "", "Git protocol: https, ssh (requires --yes)")
+	cmd.Flags().BoolVar(&opts.NoGPG, "no-gpg", false, "Disable GPG agent forwarding (requires --yes)")
 
 	cmd.RegisterFlagCompletionFunc("preset", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck // cobra registers completion internally
 		return projectinit.PresetCompletions(), cobra.ShellCompDirectiveNoFileComp
+	})
+	cmd.RegisterFlagCompletionFunc("vcs", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck
+		return projectinit.VCSCompletions(), cobra.ShellCompDirectiveNoFileComp
+	})
+	cmd.RegisterFlagCompletionFunc("git-protocol", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck
+		return projectinit.GitProtocolCompletions(), cobra.ShellCompDirectiveNoFileComp
 	})
 
 	return cmd

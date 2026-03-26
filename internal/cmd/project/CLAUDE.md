@@ -38,6 +38,9 @@ type ProjectInitOptions struct {
     ProjectManager  func() (project.ProjectManager, error)
     Name            string // positional arg
     Preset          string // --preset flag
+    VCS             string // --vcs flag
+    GitProtocol     string // --git-protocol flag
+    NoGPG           bool   // --no-gpg flag
     Force           bool
     Yes             bool
 }

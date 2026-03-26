@@ -20,6 +20,9 @@ func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *projectinit.Proj
 - `--yes` / `-y` — Non-interactive mode, accept all defaults (forwarded to project init)
 - `--force` / `-f` — Overwrite existing configuration files (forwarded to project init)
 - `--preset` — Select a language preset (requires `--yes`); shell completions via `projectinit.PresetCompletions()`
+- `--vcs` — VCS provider: github, gitlab, bitbucket (requires `--yes`); completions via `projectinit.VCSCompletions()`
+- `--git-protocol` — Git protocol: https, ssh (requires `--yes`); completions via `projectinit.GitProtocolCompletions()`
+- `--no-gpg` — Disable GPG agent forwarding (requires `--yes`)
 
 ## Behavior
 
