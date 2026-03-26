@@ -160,8 +160,13 @@ func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectIn
 
 	cmd := &cobra.Command{
 		Use:   "init [project-name]",
-		Short: "Initialize a new clawker project in the current directory",
-		Long: `Creates a .clawker.yaml configuration file and .clawkerignore in the current directory.
+		Short: "Initialize a new project or configuration file",
+		Long: `Creates a .clawker.yaml configuration file in the current directory.
+
+When run at a project root, performs full project setup: creates config and
+.clawkerignore files, and registers the project. When run inside an existing
+project subdirectory, creates a layer config file that overrides the root config
+for that subdirectory — skipping registration and ignore file creation.
 
 Provides language-based presets for quick setup, plus a "Build from scratch" path
 that walks through each config field step by step.
@@ -273,6 +278,7 @@ func GitProtocolCompletions() []cobra.Completion {
 type wizardContext struct {
 	configExists   bool
 	force          bool
+	inSubdir       bool
 	nameDefault    string
 	configFileName string
 	presets        []config.Preset
@@ -286,19 +292,21 @@ func overwriteDeclined(vals tui.WizardValues) bool {
 // initEnv holds the resolved dependencies and derived state shared by both
 // the interactive and non-interactive init paths.
 type initEnv struct {
-	log            *logger.Logger
-	cfg            config.Config
-	pm             project.ProjectManager
-	wd             string
-	dirName        string
-	configFileName string
-	configExists   bool
-	projectName    string // default name (may be overridden by wizard)
+	log               *logger.Logger
+	cfg               config.Config
+	pm                project.ProjectManager
+	wd                string
+	dirName           string
+	configFileName    string
+	configExists      bool
+	projectName       string // default name (may be overridden by wizard)
+	inSubdir          bool   // CWD is inside an existing registered project
+	parentProjectName string // name of the parent project (when inSubdir)
 }
 
 // resolveInitEnv resolves factory lazy closures, bootstraps settings, and
 // computes derived state that both runInteractive and runNonInteractive need.
-func resolveInitEnv(opts *ProjectInitOptions) (*initEnv, error) {
+func resolveInitEnv(ctx context.Context, opts *ProjectInitOptions) (*initEnv, error) {
 	log, err := opts.Logger()
 	if err != nil {
 		return nil, fmt.Errorf("initializing logger: %w", err)
@@ -341,7 +349,7 @@ func resolveInitEnv(opts *ProjectInitOptions) (*initEnv, error) {
 		projectName = strings.ToLower(opts.Name)
 	}
 
-	return &initEnv{
+	env := &initEnv{
 		log:            log,
 		cfg:            cfg,
 		pm:             pm,
@@ -350,7 +358,18 @@ func resolveInitEnv(opts *ProjectInitOptions) (*initEnv, error) {
 		configFileName: configFileName,
 		configExists:   configExists,
 		projectName:    projectName,
-	}, nil
+	}
+
+	// Ask the ProjectManager — the one true oracle of projects — if CWD
+	// is inside a registered project. If yes and we're not at the root,
+	// this is a subdir init. We do not question its wisdom with path tricks.
+	if proj, projErr := pm.CurrentProject(ctx); projErr == nil && proj.RepoPath() != wd {
+		env.inSubdir = true
+		env.parentProjectName = proj.Name()
+		log.Debug().Str("parent", proj.Name()).Msg("detected project subdirectory")
+	}
+
+	return env, nil
 }
 
 // runInteractive runs the preset-based interactive flow.
@@ -358,18 +377,23 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	env, err := resolveInitEnv(opts)
+	env, err := resolveInitEnv(ctx, opts)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintln(ios.Out, "Setting up clawker project...")
+	if env.inSubdir {
+		fmt.Fprintf(ios.Out, "Adding config layer in %s (project: %s)...\n", env.dirName, env.parentProjectName)
+	} else {
+		fmt.Fprintln(ios.Out, "Setting up clawker project...")
+	}
 	fmt.Fprintln(ios.Out)
 
 	presets := config.Presets()
 	wctx := wizardContext{
 		configExists:   env.configExists,
 		force:          opts.Force,
+		inSubdir:       env.inSubdir,
 		nameDefault:    env.projectName,
 		configFileName: env.configFileName,
 		presets:        presets,
@@ -395,6 +419,9 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 
 	// Resolve preset, VCS, and branching.
 	projectName := result.Values["project_name"]
+	if env.inSubdir {
+		projectName = env.parentProjectName
+	}
 	presetName := result.Values["preset"]
 	action := result.Values["action"]
 	vcs := vcsSettingsFromWizard(result.Values)
@@ -420,6 +447,7 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		wd:          env.wd,
 		force:       opts.Force,
 		customize:   customize,
+		subdir:      env.inSubdir,
 	})
 }
 
@@ -456,12 +484,12 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	env, err := resolveInitEnv(opts)
+	env, err := resolveInitEnv(ctx, opts)
 	if err != nil {
 		return err
 	}
 
-	if env.configExists && !opts.Force {
+	if env.configExists && !opts.Force && !env.inSubdir {
 		fmt.Fprintf(ios.ErrOut, "%s %s already exists\n", cs.FailureIcon(), env.configFileName)
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "Next Steps:")
@@ -471,7 +499,11 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		return fmt.Errorf("configuration already exists")
 	}
 
-	fmt.Fprintln(ios.ErrOut, "Setting up clawker project...")
+	if env.inSubdir {
+		fmt.Fprintf(ios.ErrOut, "Adding config layer in %s (project: %s)...\n", env.dirName, env.parentProjectName)
+	} else {
+		fmt.Fprintln(ios.ErrOut, "Setting up clawker project...")
+	}
 	fmt.Fprintln(ios.ErrOut)
 
 	presetName := "Bare"
@@ -508,6 +540,7 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		configPath:  configPath,
 		wd:          env.wd,
 		force:       opts.Force,
+		subdir:      env.inSubdir,
 	})
 }
 
@@ -526,6 +559,7 @@ type performSetupInput struct {
 	wd          string
 	force       bool
 	customize   bool
+	subdir      bool // CWD is a project subdir — skip registration + ignore file
 }
 
 // performProjectSetup creates the project config from a preset, optionally runs
@@ -533,13 +567,13 @@ type performSetupInput struct {
 func performProjectSetup(ctx context.Context, in performSetupInput) error {
 	cs := in.ios.ColorScheme()
 
-	if err := validateProjectName(in.projectName); err != nil {
-		return fmt.Errorf("invalid project name %q: %w", in.projectName, err)
+	if !in.subdir {
+		if err := validateProjectName(in.projectName); err != nil {
+			return fmt.Errorf("invalid project name %q: %w", in.projectName, err)
+		}
 	}
 
 	configFileName := filepath.Base(in.configPath)
-	ignoreFileName := in.cfg.ClawkerIgnoreName()
-	ignorePath := filepath.Join(in.wd, ignoreFileName)
 
 	in.log.Debug().
 		Str("project", in.projectName).
@@ -547,6 +581,7 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 		Str("workdir", in.wd).
 		Bool("customize", in.customize).
 		Bool("force", in.force).
+		Bool("subdir", in.subdir).
 		Msg("initializing project")
 
 	// Construct a config with the preset YAML as the project store's virtual
@@ -607,7 +642,21 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 	}
 	in.log.Debug().Str("file", in.configPath).Msg("created configuration file")
 
+	fmt.Fprintln(in.ios.Out)
+	fmt.Fprintf(in.ios.Out, "%s Created: %s\n", cs.SuccessIcon(), configFileName)
+
+	if in.subdir {
+		// Subdir init: no ignore file, no registration — parent project owns those.
+		fmt.Fprintf(in.ios.Out, "%s Preset:  %s\n", cs.InfoIcon(), in.preset.Name)
+		fmt.Fprintln(in.ios.Out)
+		fmt.Fprintln(in.ios.Out, "This config will layer on top of the project root config.")
+		fmt.Fprintf(in.ios.Out, "To customize further, run 'clawker project edit'\n")
+		return nil
+	}
+
 	// Create .clawkerignore if it doesn't exist (or --force).
+	ignoreFileName := in.cfg.ClawkerIgnoreName()
+	ignorePath := filepath.Join(in.wd, ignoreFileName)
 	ignoreCreated := false
 	_, statErr := os.Stat(ignorePath)
 	switch {
@@ -621,8 +670,6 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 		ignoreCreated = true
 	}
 
-	fmt.Fprintln(in.ios.Out)
-	fmt.Fprintf(in.ios.Out, "%s Created: %s\n", cs.SuccessIcon(), configFileName)
 	if ignoreCreated {
 		fmt.Fprintf(in.ios.Out, "%s Created: %s\n", cs.SuccessIcon(), ignoreFileName)
 	} else {
@@ -665,7 +712,7 @@ func buildInitWizardSteps(wctx wizardContext) []tui.WizardStep {
 			),
 			HelpKeys: []string{"←→", "toggle", "y/n", "set", "enter", "confirm", "esc", "back", "ctrl+c", "quit"},
 			SkipIf: func(_ tui.WizardValues) bool {
-				return !wctx.configExists || wctx.force
+				return wctx.inSubdir || !wctx.configExists || wctx.force
 			},
 		},
 		{
@@ -681,7 +728,7 @@ func buildInitWizardSteps(wctx wizardContext) []tui.WizardStep {
 			),
 			HelpKeys: []string{"enter", "confirm", "esc", "back", "ctrl+c", "quit"},
 			SkipIf: func(vals tui.WizardValues) bool {
-				return overwriteDeclined(vals)
+				return wctx.inSubdir || overwriteDeclined(vals)
 			},
 		},
 		{

@@ -665,6 +665,68 @@ func TestRunNonInteractive_VCSFlags(t *testing.T) {
 	assert.False(t, *snap.Security.GitCredentials.ForwardGPG)
 }
 
+func TestPerformProjectSetup_SubdirSkipsRegistrationAndIgnore(t *testing.T) {
+	wd := chdirTemp(t)
+
+	tio, _, out, _ := iostreams.Test()
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	mockPM := projectmocks.NewMockProjectManager()
+
+	// Register should NOT be called for subdir init.
+	mockPM.RegisterFunc = func(_ context.Context, _ string, _ string) (project.Project, error) {
+		t.Fatal("Register should not be called for subdir init")
+		return nil, nil
+	}
+
+	preset, _ := presetByName(config.Presets(), "Go")
+	configPath := filepath.Join(wd, "."+cfg.ProjectConfigFileName())
+
+	err := performProjectSetup(context.Background(), performSetupInput{
+		ios:         tio,
+		tui:         tui.NewTUI(tio),
+		log:         logger.Nop(),
+		cfg:         cfg,
+		pm:          mockPM,
+		projectName: "parent-project",
+		preset:      preset,
+		configPath:  configPath,
+		wd:          wd,
+		subdir:      true,
+	})
+	require.NoError(t, err)
+
+	// Config file should be created.
+	_, err = os.ReadFile(configPath)
+	require.NoError(t, err, "config file should be created")
+
+	// Ignore file should NOT be created.
+	ignorePath := filepath.Join(wd, cfg.ClawkerIgnoreName())
+	_, err = os.Stat(ignorePath)
+	assert.True(t, os.IsNotExist(err), "ignore file should not be created for subdir init")
+
+	// Output should mention layering.
+	assert.Contains(t, out.String(), "layer on top")
+	assert.Contains(t, out.String(), "Created:")
+}
+
+func TestBuildInitWizardSteps_SubdirSkipsOverwriteAndName(t *testing.T) {
+	wctx := wizardContext{
+		configExists:   false,
+		force:          false,
+		inSubdir:       true,
+		nameDefault:    "frontend",
+		configFileName: ".clawker.yaml",
+		presets:        config.Presets(),
+	}
+	steps := buildInitWizardSteps(wctx)
+
+	vals := tui.WizardValues{}
+	assert.True(t, steps[0].SkipIf(vals), "overwrite should be skipped for subdir")
+	assert.True(t, steps[1].SkipIf(vals), "project_name should be skipped for subdir")
+	assert.False(t, steps[2].SkipIf(vals), "preset should NOT be skipped for subdir")
+	assert.False(t, steps[3].SkipIf(vals), "vcs_provider should NOT be skipped for subdir")
+}
+
 func TestRunNonInteractive_ExistingConfigNoForce(t *testing.T) {
 	wd := chdirTemp(t)
 

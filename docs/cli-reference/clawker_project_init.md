@@ -4,11 +4,16 @@ title: "clawker project init"
 
 ## clawker project init
 
-Initialize a new clawker project in the current directory
+Initialize a new project or configuration file
 
 ### Synopsis
 
-Creates a .clawker.yaml configuration file and .clawkerignore in the current directory.
+Creates a .clawker.yaml configuration file in the current directory.
+
+When run at a project root, performs full project setup: creates config and
+.clawkerignore files, and registers the project. When run inside an existing
+project subdirectory, creates a layer config file that overrides the root config
+for that subdirectory — skipping registration and ignore file creation.
 
 Provides language-based presets for quick setup, plus a "Build from scratch" path
 that walks through each config field step by step.
