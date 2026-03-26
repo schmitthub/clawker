@@ -18,7 +18,6 @@ import (
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/schmitthub/clawker/internal/storage"
-	"github.com/schmitthub/clawker/internal/storeui"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
@@ -115,9 +114,9 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 	}
 }
 
-// --- Wizard field definition tests ---
+// --- Wizard step definition tests ---
 
-func TestBuildInitWizardFields(t *testing.T) {
+func TestBuildInitWizardSteps(t *testing.T) {
 	presets := config.Presets()
 	wctx := wizardContext{
 		configExists:   true,
@@ -126,40 +125,22 @@ func TestBuildInitWizardFields(t *testing.T) {
 		configFileName: ".clawker.yaml",
 		presets:        presets,
 	}
-	fields := buildInitWizardFields(wctx)
+	steps := buildInitWizardSteps(wctx)
 
-	require.Len(t, fields, 4, "expected 4 wizard fields: overwrite, project_name, preset, action")
+	require.Len(t, steps, 4, "expected 4 wizard steps: overwrite, project_name, preset, action")
 
-	// Field 0: overwrite
-	assert.Equal(t, "overwrite", fields[0].ID)
-	assert.Equal(t, tui.FieldConfirm, fields[0].Kind)
-	assert.False(t, fields[0].DefaultYes)
+	assert.Equal(t, "overwrite", steps[0].ID)
+	assert.Equal(t, "project_name", steps[1].ID)
+	assert.Equal(t, "preset", steps[2].ID)
+	assert.Equal(t, "action", steps[3].ID)
 
-	// Field 1: project_name
-	assert.Equal(t, "project_name", fields[1].ID)
-	assert.Equal(t, tui.FieldText, fields[1].Kind)
-	assert.Equal(t, "my-dir", fields[1].Default)
-	assert.True(t, fields[1].Required)
-	assert.NotNil(t, fields[1].Validator, "project_name should have validator")
-
-	// Field 2: preset
-	assert.Equal(t, "preset", fields[2].ID)
-	assert.Equal(t, tui.FieldSelect, fields[2].Kind)
-	assert.Len(t, fields[2].Options, len(presets))
-	for i, p := range presets {
-		assert.Equal(t, p.Name, fields[2].Options[i].Label)
-		assert.Equal(t, p.Description, fields[2].Options[i].Description)
+	// All pages should be non-nil.
+	for _, s := range steps {
+		assert.NotNil(t, s.Page, "step %q should have a non-nil Page", s.ID)
 	}
-
-	// Field 3: action
-	assert.Equal(t, "action", fields[3].ID)
-	assert.Equal(t, tui.FieldSelect, fields[3].Kind)
-	assert.Len(t, fields[3].Options, 2)
-	assert.Equal(t, "Save and get started", fields[3].Options[0].Label)
-	assert.Equal(t, "Customize this preset", fields[3].Options[1].Label)
 }
 
-func TestBuildInitWizardFields_NoExistingConfig(t *testing.T) {
+func TestBuildInitWizardSteps_NoExistingConfig(t *testing.T) {
 	wctx := wizardContext{
 		configExists:   false,
 		force:          false,
@@ -167,17 +148,17 @@ func TestBuildInitWizardFields_NoExistingConfig(t *testing.T) {
 		configFileName: ".clawker.yaml",
 		presets:        config.Presets(),
 	}
-	fields := buildInitWizardFields(wctx)
+	steps := buildInitWizardSteps(wctx)
 
 	// Overwrite should be skipped.
-	assert.True(t, fields[0].SkipIf(tui.WizardValues{}))
+	assert.True(t, steps[0].SkipIf(tui.WizardValues{}))
 
-	// Other fields should not be skipped.
-	assert.False(t, fields[1].SkipIf(tui.WizardValues{}))
-	assert.False(t, fields[2].SkipIf(tui.WizardValues{}))
+	// Other steps should not be skipped.
+	assert.False(t, steps[1].SkipIf(tui.WizardValues{}))
+	assert.False(t, steps[2].SkipIf(tui.WizardValues{}))
 }
 
-func TestBuildInitWizardFields_OverwriteDeclined(t *testing.T) {
+func TestBuildInitWizardSteps_OverwriteDeclined(t *testing.T) {
 	wctx := wizardContext{
 		configExists:   true,
 		force:          false,
@@ -185,15 +166,15 @@ func TestBuildInitWizardFields_OverwriteDeclined(t *testing.T) {
 		configFileName: ".clawker.yaml",
 		presets:        config.Presets(),
 	}
-	fields := buildInitWizardFields(wctx)
+	steps := buildInitWizardSteps(wctx)
 
 	vals := tui.WizardValues{"overwrite": "no"}
-	assert.True(t, fields[1].SkipIf(vals), "project_name skipped on overwrite=no")
-	assert.True(t, fields[2].SkipIf(vals), "preset skipped on overwrite=no")
-	assert.True(t, fields[3].SkipIf(vals), "action skipped on overwrite=no")
+	assert.True(t, steps[1].SkipIf(vals), "project_name skipped on overwrite=no")
+	assert.True(t, steps[2].SkipIf(vals), "preset skipped on overwrite=no")
+	assert.True(t, steps[3].SkipIf(vals), "action skipped on overwrite=no")
 }
 
-func TestBuildInitWizardFields_ForceSkipsOverwrite(t *testing.T) {
+func TestBuildInitWizardSteps_ForceSkipsOverwrite(t *testing.T) {
 	wctx := wizardContext{
 		configExists:   true,
 		force:          true,
@@ -201,27 +182,27 @@ func TestBuildInitWizardFields_ForceSkipsOverwrite(t *testing.T) {
 		configFileName: ".clawker.yaml",
 		presets:        config.Presets(),
 	}
-	fields := buildInitWizardFields(wctx)
+	steps := buildInitWizardSteps(wctx)
 
-	assert.True(t, fields[0].SkipIf(tui.WizardValues{}), "overwrite skipped when force=true")
+	assert.True(t, steps[0].SkipIf(tui.WizardValues{}), "overwrite skipped when force=true")
 }
 
-func TestBuildInitWizardFields_ActionSkipForAutoCustomize(t *testing.T) {
+func TestBuildInitWizardSteps_ActionSkipForAutoCustomize(t *testing.T) {
 	wctx := wizardContext{
 		configExists:   false,
 		nameDefault:    "my-dir",
 		configFileName: ".clawker.yaml",
 		presets:        config.Presets(),
 	}
-	fields := buildInitWizardFields(wctx)
+	steps := buildInitWizardSteps(wctx)
 
 	// Action should be skipped for "Build from scratch" (AutoCustomize preset).
 	vals := tui.WizardValues{"preset": "Build from scratch"}
-	assert.True(t, fields[3].SkipIf(vals), "action skipped for AutoCustomize preset")
+	assert.True(t, steps[3].SkipIf(vals), "action skipped for AutoCustomize preset")
 
 	// Action should NOT be skipped for normal presets.
 	vals = tui.WizardValues{"preset": "Go"}
-	assert.False(t, fields[3].SkipIf(vals), "action shown for normal presets")
+	assert.False(t, steps[3].SkipIf(vals), "action shown for normal presets")
 }
 
 // --- Validation tests ---
@@ -282,70 +263,6 @@ func TestPresetByName(t *testing.T) {
 		assert.True(t, ok)
 		assert.True(t, p.AutoCustomize)
 	})
-}
-
-// --- Customize wizard field tests ---
-
-func TestCustomizeWizardFields_AllPathsMatchSchema(t *testing.T) {
-	// Verify all field paths in customizeWizardFields() map to real fields
-	// in the Project schema, so they won't be silently dropped by the wizard.
-	fields := storeui.WalkFields(&config.Project{})
-	fieldPaths := make(map[string]bool, len(fields))
-	for _, f := range fields {
-		fieldPaths[f.Path] = true
-	}
-
-	for _, path := range customizeWizardFields() {
-		assert.True(t, fieldPaths[path],
-			"customize wizard path %q does not match any field in config.Project schema", path)
-	}
-}
-
-func TestCustomizeWizardOverrides_AllPathsMatchSchema(t *testing.T) {
-	fields := storeui.WalkFields(&config.Project{})
-	fieldPaths := make(map[string]bool, len(fields))
-	for _, f := range fields {
-		fieldPaths[f.Path] = true
-	}
-
-	for _, ov := range customizeWizardOverrides() {
-		assert.True(t, fieldPaths[ov.Path],
-			"customize wizard override path %q does not match any field", ov.Path)
-	}
-}
-
-// --- Settings bootstrap tests ---
-
-func TestBootstrapSettings_CreatesFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("CLAWKER_CONFIG_DIR", tmpDir)
-
-	err := bootstrapSettings()
-	require.NoError(t, err)
-
-	settingsPath := filepath.Join(tmpDir, "settings.yaml")
-	assert.FileExists(t, settingsPath)
-
-	content, err := os.ReadFile(settingsPath)
-	require.NoError(t, err)
-	assert.NotEmpty(t, content)
-}
-
-func TestBootstrapSettings_SkipsWhenFileExists(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("CLAWKER_CONFIG_DIR", tmpDir)
-
-	// Pre-create settings file.
-	settingsPath := filepath.Join(tmpDir, "settings.yaml")
-	require.NoError(t, os.WriteFile(settingsPath, []byte("logging:\n  file_enabled: false\n"), 0644))
-
-	err := bootstrapSettings()
-	require.NoError(t, err)
-
-	// Verify file was not overwritten.
-	content, err := os.ReadFile(settingsPath)
-	require.NoError(t, err)
-	assert.Contains(t, string(content), "file_enabled: false")
 }
 
 // --- Preset→store→write round-trip test ---

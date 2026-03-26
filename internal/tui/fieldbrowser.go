@@ -215,6 +215,14 @@ func (m *FieldBrowserModel) Result() BrowserResult {
 	}
 }
 
+// InBaseState returns true when the browser is in its root browse state
+// (not editing, picking a layer, or confirming a delete). Callers embedding
+// the browser as a wizard page use this to decide whether navigation keys
+// (like Esc) should be handled by the parent or delegated to the browser.
+func (m *FieldBrowserModel) InBaseState() bool {
+	return m.state == bsStateBrowse
+}
+
 // ---------------------------------------------------------------------------
 // Tab building
 // ---------------------------------------------------------------------------

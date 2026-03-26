@@ -108,27 +108,53 @@ type configImpl struct {
 	settings *storage.Store[Settings]
 }
 
+type NewConfigOption func(*newConfigOptions)
+
+type newConfigOptions struct {
+	projectYAML      string
+	projectWritePath string
+	settingsYAML     string
+}
+
 // NewConfig loads all clawker configuration files into a Config.
 // The project store discovers clawker.yaml via walk-up (CWD → project root)
 // and config dir. The settings store loads settings.yaml from config dir.
 // Both stores use defaults as the lowest-priority base layer.
-func NewConfig() (Config, error) {
-	projectStore, err := storage.NewStore[Project](
+func NewConfig(opts ...NewConfigOption) (Config, error) {
+	options := &newConfigOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+	projectOpts := []storage.Option{
 		storage.WithFilenames("clawker.local.yaml", "clawker.yaml"),
-		storage.WithDefaultsFromStruct[Project](),
+		storage.WithDefaultFilename("clawker.yaml"),
+	}
+	if options.projectYAML != "" {
+		projectOpts = append(projectOpts, storage.WithDefaults(options.projectYAML))
+	} else {
+		projectOpts = append(projectOpts, storage.WithDefaultsFromStruct[Project]())
+	}
+	projectOpts = append(projectOpts,
 		storage.WithWalkUp(),
 		storage.WithConfigDir(),
+		storage.WithDotDefault(),
 		storage.WithMigrations(ProjectMigrations()...),
 	)
+	projectStore, err := storage.New[Project]("", projectOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("config: loading project config: %w", err)
 	}
 
-	settingsStore, err := storage.NewStore[Settings](
+	settingsOpts := []storage.Option{
 		storage.WithFilenames("settings.yaml"),
-		storage.WithDefaultsFromStruct[Settings](),
-		storage.WithConfigDir(),
-	)
+	}
+	if options.settingsYAML != "" {
+		settingsOpts = append(settingsOpts, storage.WithDefaults(options.settingsYAML))
+	} else {
+		settingsOpts = append(settingsOpts, storage.WithDefaultsFromStruct[Settings]())
+	}
+	settingsOpts = append(settingsOpts, storage.WithConfigDir())
+	settingsStore, err := storage.New[Settings]("", settingsOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("config: loading settings: %w", err)
 	}
@@ -137,6 +163,24 @@ func NewConfig() (Config, error) {
 		project:  projectStore,
 		settings: settingsStore,
 	}, nil
+}
+
+func WithDefaultProjectYAML(yaml string) NewConfigOption {
+	return func(o *newConfigOptions) {
+		o.projectYAML = yaml
+	}
+}
+
+func WithDefaultSettingsYAML(yaml string) NewConfigOption {
+	return func(o *newConfigOptions) {
+		o.settingsYAML = yaml
+	}
+}
+
+func WithProjectWritePath(path string) NewConfigOption {
+	return func(o *newConfigOptions) {
+		o.projectWritePath = path
+	}
 }
 
 // NewBlankConfig creates a Config with defaults but no file discovery.

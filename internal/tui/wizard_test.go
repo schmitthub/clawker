@@ -14,37 +14,31 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestWizard_StepNavigation(t *testing.T) {
-	fields := []WizardField{
-		{ID: "step1", Title: "Step 1", Prompt: "Confirm step 1?", Kind: FieldConfirm, DefaultYes: true},
-		{ID: "step2", Title: "Step 2", Prompt: "Pick one", Kind: FieldSelect, Options: []FieldOption{
+	steps := []WizardStep{
+		{ID: "step1", Title: "Step 1", Page: NewConfirmPage("step1", "Confirm step 1?", true)},
+		{ID: "step2", Title: "Step 2", Page: NewSelectPage("step2", "Pick one", []FieldOption{
 			{Label: "Alpha", Description: "First"},
 			{Label: "Beta", Description: "Second"},
-		}},
-		{ID: "step3", Title: "Step 3", Prompt: "Confirm step 3?", Kind: FieldConfirm, DefaultYes: false},
+		}, 0)},
+		{ID: "step3", Title: "Step 3", Page: NewConfirmPage("step3", "Confirm step 3?", false)},
 	}
 
-	m := newWizardModel(fields)
+	m := newWizardModel(steps)
 	model := &m
 
-	// Send initial window size for realistic sizing.
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Should start at step 0.
 	assert.Equal(t, 0, model.currentStep)
 
-	// Confirm step 0 (Enter on ConfirmField).
 	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, 1, model.currentStep, "should advance to step 1 after confirming step 0")
 
-	// Confirm step 1 (Enter on SelectField with default selection).
 	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, 2, model.currentStep, "should advance to step 2 after confirming step 1")
 
-	// Go back with Esc.
 	model.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	assert.Equal(t, 1, model.currentStep, "should go back to step 1 on Esc")
 
-	// Go back again.
 	model.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	assert.Equal(t, 0, model.currentStep, "should go back to step 0 on Esc")
 }
@@ -54,23 +48,22 @@ func TestWizard_StepNavigation(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWizard_ConditionalSkip(t *testing.T) {
-	fields := []WizardField{
-		{ID: "build", Title: "Build", Prompt: "Build image?", Kind: FieldConfirm, DefaultYes: false},
-		{ID: "flavor", Title: "Flavor", Prompt: "Pick flavor", Kind: FieldSelect, Options: []FieldOption{
+	steps := []WizardStep{
+		{ID: "build", Title: "Build", Page: NewConfirmPage("build", "Build image?", false)},
+		{ID: "flavor", Title: "Flavor", Page: NewSelectPage("flavor", "Pick flavor", []FieldOption{
 			{Label: "Vanilla", Description: "Plain"},
 			{Label: "Chocolate", Description: "Rich"},
-		}, SkipIf: func(vals WizardValues) bool {
+		}, 0), SkipIf: func(vals WizardValues) bool {
 			return vals["build"] == "no"
 		}},
-		{ID: "submit", Title: "Submit", Prompt: "Submit?", Kind: FieldConfirm, DefaultYes: true},
+		{ID: "submit", Title: "Submit", Page: NewConfirmPage("submit", "Submit?", true)},
 	}
 
-	m := newWizardModel(fields)
+	m := newWizardModel(steps)
 	model := &m
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Step 0: ConfirmField with DefaultYes=false, so default value is "no".
-	// Confirm it without toggling — value stays "no".
+	// Step 0: ConfirmField with defaultYes=false, so value is "no".
 	assert.Equal(t, 0, model.currentStep)
 	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -87,12 +80,12 @@ func TestWizard_ConditionalSkip(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWizard_Cancel(t *testing.T) {
-	fields := []WizardField{
-		{ID: "step1", Title: "Step 1", Prompt: "First?", Kind: FieldConfirm, DefaultYes: true},
-		{ID: "step2", Title: "Step 2", Prompt: "Second?", Kind: FieldConfirm, DefaultYes: true},
+	steps := []WizardStep{
+		{ID: "step1", Title: "Step 1", Page: NewConfirmPage("step1", "First?", true)},
+		{ID: "step2", Title: "Step 2", Page: NewConfirmPage("step2", "Second?", true)},
 	}
 
-	m := newWizardModel(fields)
+	m := newWizardModel(steps)
 	model := &m
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
@@ -101,7 +94,6 @@ func TestWizard_Cancel(t *testing.T) {
 	assert.True(t, model.cancelled, "Esc on first step should cancel")
 	assert.False(t, model.submitted, "cancelled wizard should not be submitted")
 
-	// Verify tea.Quit was returned.
 	require.NotNil(t, cmd, "Esc on first step should return tea.Quit cmd")
 	msg := cmd()
 	_, isQuit := msg.(tea.QuitMsg)
@@ -113,16 +105,16 @@ func TestWizard_Cancel(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWizard_CtrlC(t *testing.T) {
-	fields := []WizardField{
-		{ID: "step1", Title: "Step 1", Prompt: "First?", Kind: FieldConfirm, DefaultYes: true},
-		{ID: "step2", Title: "Step 2", Prompt: "Second?", Kind: FieldConfirm, DefaultYes: true},
+	steps := []WizardStep{
+		{ID: "step1", Title: "Step 1", Page: NewConfirmPage("step1", "First?", true)},
+		{ID: "step2", Title: "Step 2", Page: NewConfirmPage("step2", "Second?", true)},
 	}
 
-	m := newWizardModel(fields)
+	m := newWizardModel(steps)
 	model := &m
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Advance to step 1 first to test Ctrl+C at a non-first step.
+	// Advance to step 1 first.
 	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, 1, model.currentStep)
 
@@ -131,7 +123,6 @@ func TestWizard_CtrlC(t *testing.T) {
 	assert.True(t, model.cancelled, "Ctrl+C should cancel")
 	assert.False(t, model.submitted, "Ctrl+C should not submit")
 
-	// Verify tea.Quit was returned.
 	require.NotNil(t, cmd, "Ctrl+C should return tea.Quit cmd")
 	msg := cmd()
 	_, isQuit := msg.(tea.QuitMsg)
@@ -143,21 +134,21 @@ func TestWizard_CtrlC(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWizard_SubmitCollectsValues(t *testing.T) {
-	fields := []WizardField{
-		{ID: "build", Title: "Build", Prompt: "Build image?", Kind: FieldConfirm, DefaultYes: true},
-		{ID: "flavor", Title: "Flavor", Prompt: "Pick flavor", Kind: FieldSelect, Options: []FieldOption{
+	steps := []WizardStep{
+		{ID: "build", Title: "Build", Page: NewConfirmPage("build", "Build image?", true)},
+		{ID: "flavor", Title: "Flavor", Page: NewSelectPage("flavor", "Pick flavor", []FieldOption{
 			{Label: "Vanilla", Description: "Plain"},
 			{Label: "Chocolate", Description: "Rich"},
 			{Label: "Strawberry", Description: "Fruity"},
-		}, DefaultIdx: 0},
-		{ID: "submit", Title: "Submit", Prompt: "Submit?", Kind: FieldConfirm, DefaultYes: true},
+		}, 0)},
+		{ID: "submit", Title: "Submit", Page: NewConfirmPage("submit", "Submit?", true)},
 	}
 
-	m := newWizardModel(fields)
+	m := newWizardModel(steps)
 	model := &m
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Step 0: Confirm build (DefaultYes=true, so value is "yes").
+	// Step 0: Confirm build (defaultYes=true, so value is "yes").
 	assert.Equal(t, 0, model.currentStep)
 	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, 1, model.currentStep)
@@ -167,20 +158,17 @@ func TestWizard_SubmitCollectsValues(t *testing.T) {
 	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, 2, model.currentStep)
 
-	// Step 2: Confirm submit (DefaultYes=true, so value is "yes").
-	// This is the last step — submitting should complete the wizard.
+	// Step 2: Confirm submit — last step, submitting completes the wizard.
 	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	assert.True(t, model.submitted, "wizard should be submitted after confirming last step")
 	assert.False(t, model.cancelled, "submitted wizard should not be cancelled")
 
-	// Verify tea.Quit was returned.
 	require.NotNil(t, cmd, "final confirmation should return tea.Quit cmd")
 	msg := cmd()
 	_, isQuit := msg.(tea.QuitMsg)
 	assert.True(t, isQuit, "cmd should produce tea.QuitMsg")
 
-	// Verify collected values.
 	assert.Equal(t, "yes", model.values["build"], "build should be 'yes'")
 	assert.Equal(t, "Chocolate", model.values["flavor"], "flavor should be 'Chocolate'")
 	assert.Equal(t, "yes", model.values["submit"], "submit should be 'yes'")
@@ -191,28 +179,25 @@ func TestWizard_SubmitCollectsValues(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWizard_NavBarUpdates(t *testing.T) {
-	fields := []WizardField{
-		{ID: "step1", Title: "First Step", Prompt: "Do first?", Kind: FieldConfirm, DefaultYes: true},
-		{ID: "step2", Title: "Second Step", Prompt: "Do second?", Kind: FieldConfirm, DefaultYes: false},
+	steps := []WizardStep{
+		{ID: "step1", Title: "First Step", Page: NewConfirmPage("step1", "Do first?", true)},
+		{ID: "step2", Title: "Second Step", Page: NewConfirmPage("step2", "Do second?", false)},
 	}
 
-	m := newWizardModel(fields)
+	m := newWizardModel(steps)
 	model := &m
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Before confirming anything — step 0 active, step 1 pending.
-	steps := model.buildStepperSteps()
-	assert.Equal(t, StepActiveState, steps[0].State, "step 0 should be active initially")
-	assert.Equal(t, StepPendingState, steps[1].State, "step 1 should be pending initially")
+	steps2 := model.buildStepperSteps()
+	assert.Equal(t, StepActiveState, steps2[0].State, "step 0 should be active initially")
+	assert.Equal(t, StepPendingState, steps2[1].State, "step 1 should be pending initially")
 
-	// Confirm step 0.
 	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Now step 0 should be complete with value, step 1 active.
-	steps = model.buildStepperSteps()
-	assert.Equal(t, StepCompleteState, steps[0].State, "step 0 should be complete after confirming")
-	assert.Equal(t, "yes", steps[0].Value, "step 0 value should be 'yes'")
-	assert.Equal(t, StepActiveState, steps[1].State, "step 1 should be active")
+	steps2 = model.buildStepperSteps()
+	assert.Equal(t, StepCompleteState, steps2[0].State, "step 0 should be complete after confirming")
+	assert.Equal(t, "yes", steps2[0].Value, "step 0 value should be 'yes'")
+	assert.Equal(t, StepActiveState, steps2[1].State, "step 1 should be active")
 }
 
 // ---------------------------------------------------------------------------
@@ -220,27 +205,30 @@ func TestWizard_NavBarUpdates(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWizard_View(t *testing.T) {
-	fields := []WizardField{
-		{ID: "build", Title: "Build", Prompt: "Build image?", Kind: FieldConfirm, DefaultYes: true},
-		{ID: "flavor", Title: "Flavor", Prompt: "Pick flavor", Kind: FieldSelect, Options: []FieldOption{
-			{Label: "Vanilla", Description: "Plain"},
-		}},
+	steps := []WizardStep{
+		{
+			ID:       "build",
+			Title:    "Build",
+			Page:     NewConfirmPage("build", "Build image?", true),
+			HelpKeys: []string{"←→", "toggle", "enter", "confirm", "esc", "back"},
+		},
+		{
+			ID:       "flavor",
+			Title:    "Flavor",
+			Page:     NewSelectPage("flavor", "Pick flavor", []FieldOption{{Label: "Vanilla", Description: "Plain"}}, 0),
+			HelpKeys: []string{"↑↓", "select", "enter", "confirm", "esc", "back"},
+		},
 	}
 
-	m := newWizardModel(fields)
+	m := newWizardModel(steps)
 	model := &m
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	view := model.View()
 
-	// View should contain elements from the stepper bar (step titles).
 	assert.Contains(t, view, "Build", "view should contain stepper bar step title")
 	assert.Contains(t, view, "Flavor", "view should contain stepper bar step title")
-
-	// View should contain the current field's prompt.
 	assert.Contains(t, view, "Build image?", "view should contain the current field prompt")
-
-	// View should contain help bar elements.
 	assert.Contains(t, view, "enter", "view should contain help bar key bindings")
 	assert.Contains(t, view, "confirm", "view should contain help bar descriptions")
 	assert.Contains(t, view, "esc", "view should contain esc in help bar")
@@ -251,23 +239,20 @@ func TestWizard_View(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWizard_WindowSize(t *testing.T) {
-	fields := []WizardField{
-		{ID: "step1", Title: "Step 1", Prompt: "First?", Kind: FieldConfirm, DefaultYes: true},
+	steps := []WizardStep{
+		{ID: "step1", Title: "Step 1", Page: NewConfirmPage("step1", "First?", true)},
 	}
 
-	m := newWizardModel(fields)
+	m := newWizardModel(steps)
 	model := &m
 
-	// Initial dimensions should be zero.
 	assert.Equal(t, 0, model.width)
 	assert.Equal(t, 0, model.height)
 
-	// Send WindowSizeMsg.
 	model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	assert.Equal(t, 100, model.width, "width should be updated to 100")
 	assert.Equal(t, 30, model.height, "height should be updated to 30")
 
-	// Send another WindowSizeMsg to verify update.
 	model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	assert.Equal(t, 120, model.width, "width should be updated to 120")
 	assert.Equal(t, 40, model.height, "height should be updated to 40")
@@ -278,21 +263,21 @@ func TestWizard_WindowSize(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWizard_SkipIfReevaluation(t *testing.T) {
-	fields := []WizardField{
-		{ID: "build", Title: "Build", Prompt: "Build image?", Kind: FieldSelect, Options: []FieldOption{
+	steps := []WizardStep{
+		{ID: "build", Title: "Build", Page: NewSelectPage("build", "Build?", []FieldOption{
 			{Label: "Yes", Description: "Build it"},
 			{Label: "No", Description: "Skip it"},
-		}, DefaultIdx: 1}, // Default to "No"
-		{ID: "flavor", Title: "Flavor", Prompt: "Pick flavor", Kind: FieldSelect, Options: []FieldOption{
+		}, 1)}, // Default to "No"
+		{ID: "flavor", Title: "Flavor", Page: NewSelectPage("flavor", "Pick flavor", []FieldOption{
 			{Label: "Vanilla", Description: "Plain"},
 			{Label: "Chocolate", Description: "Rich"},
-		}, SkipIf: func(vals WizardValues) bool {
+		}, 0), SkipIf: func(vals WizardValues) bool {
 			return vals["build"] == "No"
 		}},
-		{ID: "submit", Title: "Submit", Prompt: "Submit?", Kind: FieldConfirm, DefaultYes: true},
+		{ID: "submit", Title: "Submit", Page: NewConfirmPage("submit", "Submit?", true)},
 	}
 
-	m := newWizardModel(fields)
+	m := newWizardModel(steps)
 	model := &m
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
@@ -320,32 +305,26 @@ func TestWizard_SkipIfReevaluation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Wizard with FieldText step
+// Wizard with text field step
 // ---------------------------------------------------------------------------
 
 func TestWizard_TextFieldInWizard(t *testing.T) {
-	fields := []WizardField{
-		{ID: "name", Title: "Name", Prompt: "Enter project name", Kind: FieldText, Default: "my-project"},
-		{ID: "submit", Title: "Submit", Prompt: "Submit?", Kind: FieldConfirm, DefaultYes: true},
+	steps := []WizardStep{
+		{ID: "name", Title: "Name", Page: NewTextPage("name", "Enter project name", WithDefault("my-project"))},
+		{ID: "submit", Title: "Submit", Page: NewConfirmPage("submit", "Submit?", true)},
 	}
 
-	m := newWizardModel(fields)
+	m := newWizardModel(steps)
 	model := &m
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-
-	// Initialize the text field (activates blink cursor).
 	model.Init()
 
-	// Step 0 should be a TextField. Type some characters to replace default.
 	assert.Equal(t, 0, model.currentStep)
 
-	// Clear the default value first: select all and delete (ctrl+a then delete won't work in test,
-	// but we can just verify the default gets passed through).
 	// Press Enter to confirm the text field with default value.
 	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, 1, model.currentStep, "should advance to step 1 after confirming text field")
 
-	// Verify the value was collected.
 	assert.Equal(t, "my-project", model.values["name"], "text field should have default value")
 
 	// Confirm submit.
@@ -355,21 +334,21 @@ func TestWizard_TextFieldInWizard(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Wizard with empty fields slice
+// Wizard with empty steps slice
 // ---------------------------------------------------------------------------
 
-func TestWizard_EmptyFields(t *testing.T) {
+func TestWizard_EmptySteps(t *testing.T) {
 	ios, _, _, _ := iostreams.Test()
 	tui := NewTUI(ios)
 
 	result, err := tui.RunWizard(nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "wizard requires at least one field")
+	assert.Contains(t, err.Error(), "wizard requires at least one step")
 	assert.False(t, result.Submitted)
 
-	result, err = tui.RunWizard([]WizardField{})
+	result, err = tui.RunWizard([]WizardStep{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "wizard requires at least one field")
+	assert.Contains(t, err.Error(), "wizard requires at least one step")
 	assert.False(t, result.Submitted)
 }
 
@@ -388,7 +367,6 @@ func TestFilterQuit(t *testing.T) {
 		result := filterQuit(quitCmd)
 		require.NotNil(t, result, "filterQuit should return a non-nil cmd for quit")
 
-		// The returned cmd should produce nil (quit suppressed).
 		msg := result()
 		assert.Nil(t, msg, "filtered quit cmd should produce nil msg")
 	})
@@ -412,28 +390,28 @@ func TestFilterQuit(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWizard_ValidationPanics(t *testing.T) {
-	t.Run("empty field ID", func(t *testing.T) {
+	t.Run("empty step ID", func(t *testing.T) {
 		assert.Panics(t, func() {
-			newWizardModel([]WizardField{
-				{ID: "", Title: "Bad", Prompt: "Bad?", Kind: FieldConfirm},
+			newWizardModel([]WizardStep{
+				{ID: "", Title: "Bad", Page: NewConfirmPage("bad", "Bad?", false)},
 			})
-		}, "empty field ID should panic")
+		}, "empty step ID should panic")
 	})
 
-	t.Run("duplicate field IDs", func(t *testing.T) {
+	t.Run("duplicate step IDs", func(t *testing.T) {
 		assert.Panics(t, func() {
-			newWizardModel([]WizardField{
-				{ID: "dup", Title: "First", Prompt: "First?", Kind: FieldConfirm},
-				{ID: "dup", Title: "Second", Prompt: "Second?", Kind: FieldConfirm},
+			newWizardModel([]WizardStep{
+				{ID: "dup", Title: "First", Page: NewConfirmPage("dup1", "First?", false)},
+				{ID: "dup", Title: "Second", Page: NewConfirmPage("dup2", "Second?", false)},
 			})
-		}, "duplicate field IDs should panic")
+		}, "duplicate step IDs should panic")
 	})
 
-	t.Run("select with empty options", func(t *testing.T) {
+	t.Run("nil page", func(t *testing.T) {
 		assert.Panics(t, func() {
-			newWizardModel([]WizardField{
-				{ID: "sel", Title: "Pick", Prompt: "Pick one", Kind: FieldSelect, Options: []FieldOption{}},
+			newWizardModel([]WizardStep{
+				{ID: "bad", Title: "Bad", Page: nil},
 			})
-		}, "FieldSelect with empty Options should panic")
+		}, "nil Page should panic")
 	})
 }

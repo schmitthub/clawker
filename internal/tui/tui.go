@@ -44,13 +44,15 @@ func (t *TUI) IOStreams() *iostreams.IOStreams {
 	return t.ios
 }
 
-// RunWizard runs a multi-step wizard using the given field definitions.
+// RunWizard runs a multi-step wizard using the given steps.
+// Each step wraps a pre-constructed WizardPage — the wizard is a generic
+// page sequencer that delegates rendering and input to each page model.
 // Returns the collected values and whether the wizard was submitted (vs cancelled).
-func (t *TUI) RunWizard(fields []WizardField) (WizardResult, error) {
-	if len(fields) == 0 {
-		return WizardResult{}, fmt.Errorf("wizard requires at least one field")
+func (t *TUI) RunWizard(steps []WizardStep) (WizardResult, error) {
+	if len(steps) == 0 {
+		return WizardResult{}, fmt.Errorf("wizard requires at least one step")
 	}
-	model := newWizardModel(fields)
+	model := newWizardModel(steps)
 	finalModel, err := RunProgram(t.ios, &model, WithAltScreen(true))
 	if err != nil {
 		return WizardResult{}, err

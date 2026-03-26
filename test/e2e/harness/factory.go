@@ -29,7 +29,7 @@ import (
 // Nil fields use test fakes (configmocks, logger.Nop, dockertest.FakeClient, etc.).
 // Set a field to the real constructor (e.g. config.NewConfig) for integration tests.
 type FactoryOptions struct {
-	Config         func() (config.Config, error)
+	Config         func(...config.NewConfigOption) (config.Config, error)
 	Client         func(context.Context, config.Config, *logger.Logger, ...docker.ClientOption) (*docker.Client, error)
 	ProjectManager func(config.Config, *logger.Logger, project.GitManagerFactory) (project.ProjectManager, error)
 	GitManager     func(string) (*git.GitManager, error)

@@ -54,15 +54,15 @@ type LayerInfo struct {
 
 // New constructs a store with file discovery and defaults as the virtual
 // base layer. Equivalent to NewFromString("", opts...).
-func New[T Schema](opts ...Option) (*Store[T], error) {
-	return NewFromString[T]("", opts...)
+func New[T Schema](yaml string, opts ...Option) (*Store[T], error) {
+	return NewFromString[T](yaml, opts...)
 }
 
 // NewStore is an alias for New.
 //
 // Deprecated: use New.
 func NewStore[T Schema](opts ...Option) (*Store[T], error) {
-	return New[T](opts...)
+	return New[T]("", opts...)
 }
 
 // NewFromString constructs a store with an explicit YAML string as the
@@ -274,6 +274,20 @@ func (s *Store[T]) Set(fn func(*T)) error {
 	// Atomically publish the new snapshot.
 	s.value.Store(fresh)
 	return nil
+}
+
+// SetFromYAML parses a YAML string and merges the result into the store
+// using the same semantics as Set. Fields present in the YAML dirty the tree;
+// fields absent from the YAML (zero/nil/empty in the deserialized struct)
+// are ignored by structToMap and do not clobber existing values.
+func (s *Store[T]) SetFromYAML(raw string) error {
+	var overlay T
+	if err := yaml.Unmarshal([]byte(raw), &overlay); err != nil {
+		return fmt.Errorf("storage: SetFromYAML: parsing YAML: %w", err)
+	}
+	return s.Set(func(t *T) {
+		*t = overlay
+	})
 }
 
 // Delete removes a dotted field path from the node tree (e.g. "agent.editor")
@@ -620,6 +634,13 @@ func (s *Store[T]) Write(opts ...WriteOption) error {
 	// Rebuild the merged tree, provenance, and snapshot so that
 	// Read(), ProvenanceMap(), and future Write() calls see fresh state.
 	return s.remerge()
+}
+
+// WriteTo persists dirty fields to the given absolute path.
+// Convenience wrapper for Write(ToPath(path)) so callers don't need
+// to import the storage package for the WriteOption constructor.
+func (s *Store[T]) WriteTo(path string) error {
+	return s.Write(ToPath(path))
 }
 
 // MarkForWrite adds a dotted field path to the write set so the next

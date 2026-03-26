@@ -15,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/storeui"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
@@ -150,7 +149,10 @@ func resolveInitEnv(opts *ProjectInitOptions) (*initEnv, error) {
 		return nil, fmt.Errorf("initializing project manager: %w", err)
 	}
 
-	if bsErr := bootstrapSettings(); bsErr != nil {
+	// Ensure settings.yaml exists with schema defaults. The store's virtual
+	// defaults layer makes the entire file dirty when no physical file exists,
+	// so Write() persists it. If the file already exists, Write() is a no-op.
+	if bsErr := cfg.SettingsStore().Write(); bsErr != nil {
 		log.Warn().Err(bsErr).Msg("settings bootstrap failed")
 		fmt.Fprintf(opts.IOStreams.ErrOut, "Warning: could not create settings file: %s\n", bsErr)
 	}
@@ -202,7 +204,7 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		configFileName: env.configFileName,
 		presets:        presets,
 	}
-	result, err := opts.TUI.RunWizard(buildInitWizardFields(wctx))
+	result, err := opts.TUI.RunWizard(buildInitWizardSteps(wctx))
 	if err != nil {
 		return fmt.Errorf("wizard failed: %w", err)
 	}
@@ -329,43 +331,51 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 		Bool("force", in.force).
 		Msg("initializing project")
 
-	// Create a store from the preset YAML with schema defaults filling gaps.
-	store, err := storage.NewFromString[config.Project](
-		in.preset.YAML,
-		storage.WithDefaultsFromStruct[config.Project](),
-	)
+	// Construct a config with the preset YAML as the project store's virtual
+	// defaults layer. Walk-up + config dir discovery layers existing files on
+	// top. The preset values are in the base layer — if no project file exists
+	// yet, Write() persists them to create one.
+	presetCfg, err := config.NewConfig(config.WithDefaultProjectYAML(in.preset.YAML))
 	if err != nil {
-		return fmt.Errorf("loading preset %q: %w", in.preset.Name, err)
+		return fmt.Errorf("loading config with preset %q: %w", in.preset.Name, err)
 	}
+	store := presetCfg.ProjectStore()
 
-	// If customizing, run the store-backed wizard before writing.
-	alreadySaved := false
 	if in.customize {
-		wizResult, wizErr := storeui.Wizard(
-			in.tui,
+		browser, buildErr := storeui.BuildBrowser(
 			store,
-			storeui.WithWizardTitle("Customize "+in.preset.Name+" preset"),
-			storeui.WithWizardFields(customizeWizardFields()...),
-			storeui.WithWizardOverrides(customizeWizardOverrides()...),
-			storeui.WithWizardWritePath(in.configPath),
+			storeui.WithTitle("Customize "+in.preset.Name),
+			storeui.WithOnlyPaths(customizeFields()...),
+			storeui.WithOverrides(customizeOverrides()),
+			storeui.WithLayerTargets([]storeui.LayerTarget{
+				{Label: "Project", Description: storeui.ShortenHome(in.configPath), Path: in.configPath},
+			}),
 		)
+		if buildErr != nil {
+			return fmt.Errorf("building customize browser: %w", buildErr)
+		}
+
+		customizeResult, wizErr := in.tui.RunWizard([]tui.WizardStep{
+			{
+				ID:       "customize",
+				Title:    "Customize",
+				Page:     tui.NewBrowserPage(browser),
+				HelpKeys: []string{"↑↓", "navigate", "enter", "edit", "q", "done", "esc", "back", "ctrl+c", "quit"},
+			},
+		})
 		if wizErr != nil {
 			return fmt.Errorf("customize wizard: %w", wizErr)
 		}
-		if wizResult.Cancelled {
+		if !customizeResult.Submitted {
 			fmt.Fprintln(in.ios.Out, "Setup cancelled.")
 			return nil
 		}
-		alreadySaved = wizResult.Saved
 	}
 
-	// Persist the store if the wizard did not already write it (Saved=true
-	// means fields were modified and the wizard auto-wrote; if unchanged the
-	// caller must still persist the preset).
-	if !alreadySaved {
-		if err := store.Write(storage.ToPath(in.configPath)); err != nil {
-			return fmt.Errorf("writing %s: %w", configFileName, err)
-		}
+	// Persist the store to the project config file. WriteTo routes all
+	// dirty paths (preset defaults + any customize edits) to this file.
+	if err := store.WriteTo(in.configPath); err != nil {
+		return fmt.Errorf("writing %s: %w", configFileName, err)
 	}
 	in.log.Debug().Str("file", in.configPath).Msg("created configuration file")
 
@@ -405,37 +415,9 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 	return nil
 }
 
-// bootstrapSettings ensures a settings.yaml exists with schema defaults.
-// Creates the file if missing; no-op otherwise.
-func bootstrapSettings() error {
-	settingsPath, err := config.SettingsFilePath()
-	if err != nil {
-		return fmt.Errorf("resolving settings path: %w", err)
-	}
-
-	_, statErr := os.Stat(settingsPath)
-	if statErr == nil {
-		return nil // file exists
-	}
-	if !os.IsNotExist(statErr) {
-		return fmt.Errorf("checking settings file: %w", statErr)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
-		return fmt.Errorf("creating config directory: %w", err)
-	}
-
-	defaultsYAML := storage.GenerateDefaultsYAML[config.Settings]()
-	if defaultsYAML == "" {
-		defaultsYAML = "{}\n"
-	}
-
-	return os.WriteFile(settingsPath, []byte(defaultsYAML), 0644)
-}
-
-// buildInitWizardFields returns wizard fields for the setup flow:
+// buildInitWizardSteps returns wizard steps for the setup flow:
 // overwrite confirmation, project name, preset picker, and save-or-customize action.
-func buildInitWizardFields(wctx wizardContext) []tui.WizardField {
+func buildInitWizardSteps(wctx wizardContext) []tui.WizardStep {
 	presetOptions := make([]tui.FieldOption, len(wctx.presets))
 	for i, p := range wctx.presets {
 		presetOptions[i] = tui.FieldOption{
@@ -444,56 +426,57 @@ func buildInitWizardFields(wctx wizardContext) []tui.WizardField {
 		}
 	}
 
-	return []tui.WizardField{
+	return []tui.WizardStep{
 		{
-			ID:         "overwrite",
-			Title:      "Overwrite",
-			Prompt:     fmt.Sprintf("%s already exists. Overwrite?", wctx.configFileName),
-			Kind:       tui.FieldConfirm,
-			DefaultYes: false,
+			ID:    "overwrite",
+			Title: "Overwrite",
+			Page: tui.NewConfirmPage(
+				"overwrite",
+				fmt.Sprintf("%s already exists. Overwrite?", wctx.configFileName),
+				false,
+			),
+			HelpKeys: []string{"←→", "toggle", "y/n", "set", "enter", "confirm", "esc", "back", "ctrl+c", "quit"},
 			SkipIf: func(_ tui.WizardValues) bool {
 				return !wctx.configExists || wctx.force
 			},
 		},
 		{
-			ID:          "project_name",
-			Title:       "Project",
-			Prompt:      "Project name",
-			Kind:        tui.FieldText,
-			Default:     wctx.nameDefault,
-			Placeholder: "my-project",
-			Required:    true,
-			Validator:   validateProjectName,
+			ID:    "project_name",
+			Title: "Project",
+			Page: tui.NewTextPage(
+				"project_name",
+				"Project name",
+				tui.WithDefault(wctx.nameDefault),
+				tui.WithPlaceholder("my-project"),
+				tui.WithRequired(),
+				tui.WithValidator(validateProjectName),
+			),
+			HelpKeys: []string{"enter", "confirm", "esc", "back", "ctrl+c", "quit"},
 			SkipIf: func(vals tui.WizardValues) bool {
 				return overwriteDeclined(vals)
 			},
 		},
 		{
-			ID:         "preset",
-			Title:      "Template",
-			Prompt:     "Choose a starting template",
-			Kind:       tui.FieldSelect,
-			Options:    presetOptions,
-			DefaultIdx: 0,
+			ID:       "preset",
+			Title:    "Template",
+			Page:     tui.NewSelectPage("preset", "Choose a starting template", presetOptions, 0),
+			HelpKeys: []string{"↑↓", "select", "enter", "confirm", "esc", "back", "ctrl+c", "quit"},
 			SkipIf: func(vals tui.WizardValues) bool {
 				return overwriteDeclined(vals)
 			},
 		},
 		{
-			ID:     "action",
-			Title:  "Action",
-			Prompt: "What would you like to do?",
-			Kind:   tui.FieldSelect,
-			Options: []tui.FieldOption{
+			ID:    "action",
+			Title: "Action",
+			Page: tui.NewSelectPage("action", "What would you like to do?", []tui.FieldOption{
 				{Label: actionSave, Description: "Write config and start building"},
 				{Label: actionCustomize, Description: "Walk through key config fields before saving"},
-			},
-			DefaultIdx: 0,
+			}, 0),
+			HelpKeys: []string{"↑↓", "select", "enter", "confirm", "esc", "back", "ctrl+c", "quit"},
 			SkipIf: func(vals tui.WizardValues) bool {
 				if overwriteDeclined(vals) {
 					return true
 				}
-				// AutoCustomize presets skip this — they always customize.
 				preset, ok := presetByName(wctx.presets, vals["preset"])
 				return ok && preset.AutoCustomize
 			},
@@ -501,9 +484,8 @@ func buildInitWizardFields(wctx wizardContext) []tui.WizardField {
 	}
 }
 
-// customizeWizardFields returns the ordered list of store field paths shown
-// in the customize wizard.
-func customizeWizardFields() []string {
+// customizeFields returns the dotted paths shown in the customize browser.
+func customizeFields() []string {
 	return []string{
 		"build.image",
 		"build.packages",
@@ -516,9 +498,8 @@ func customizeWizardFields() []string {
 	}
 }
 
-// customizeWizardOverrides returns overrides that customize field presentation
-// in the store-backed wizard.
-func customizeWizardOverrides() []storeui.Override {
+// customizeOverrides returns overrides for the customize browser.
+func customizeOverrides() []storeui.Override {
 	return []storeui.Override{
 		{
 			Path:    "workspace.default_mode",
