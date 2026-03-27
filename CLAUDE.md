@@ -334,6 +334,28 @@ Generated mocks live in `<package>/mocks/` and are prefixed with `// Code genera
 
 **NEVER** store `context.Context` in struct fields. Pass as first parameter to I/O methods. Use `context.Background()` for cleanup in deferred functions.
 
+## Security
+
+### Version Pinning
+
+All external dependencies must be pinned to exact versions with integrity verification where possible. Never use `@latest`, floating tags, or unpinned references.
+
+| Context | Pinning requirement | Example |
+|---------|-------------------|---------|
+| `go.mod` | Go manages this via `go.sum` checksums | Automatic |
+| Dockerfile base images | SHA256 digest | `FROM golang:1.24.1@sha256:abc123...` |
+| Dockerfile binary installs | Version + SHA256 checksum verification | `wget ... && echo "$SHA /tmp/file" \| sha256sum -c -` |
+| CI workflow actions | SHA commit hash, not version tag | `uses: actions/checkout@a1b2c3d...` |
+| CI tool installs | Pinned version + checksum where available | `GITLEAKS_VERSION=8.30.1` |
+| Pre-commit hooks | SHA commit hash with version comment | `rev: 83d9cd68...  # frozen: v8.30.1` |
+| Go tool installs (`go install`) | SHA commit hash or exact version | `go install tool@v2.0.1` or `tool@sha...` |
+| Container images in code | SHA256 digest in constants | `DefaultGoBuilderImage = "golang:1.24.1@sha256:..."` |
+| npm/pip installs in Dockerfiles | Exact version | `npm install -g @anthropic-ai/claude-code@${VERSION}` |
+
+**Why:** Version tags are mutable — a compromised upstream can re-tag a release. SHA pins are immutable and verifiable. This is defense-in-depth against supply chain attacks (see `docs/threat-model.mdx`).
+
+**When adding any new external dependency**, look up the actual release SHA/digest — do not rely on training data or cached knowledge for version hashes.
+
 ## Testing Requirements
 
 **All tests must pass before any change is complete.** Run `make test` (unit) or `make test-all` (all suites). See Build Commands above for individual test suites. See `.claude/rules/testing.md` for conventions.
