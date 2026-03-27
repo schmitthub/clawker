@@ -315,7 +315,7 @@ ARG ZSH_THEME=default
 {{if .IsAlpine -}}
 RUN wget -O /tmp/zsh-in-docker.sh "https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh" && \
     echo "${ZSH_IN_DOCKER_SHA256}  /tmp/zsh-in-docker.sh" | sha256sum -c - && \
-    sh /tmp/zsh-in-docker.sh -- \
+    sh /tmp/zsh-in-docker.sh \
     -t ${ZSH_THEME} \
     -p git \
     -p fzf \
@@ -328,7 +328,7 @@ RUN wget -O /tmp/zsh-in-docker.sh "https://github.com/deluan/zsh-in-docker/relea
 {{else -}}
 RUN wget -O /tmp/zsh-in-docker.sh "https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh" && \
     echo "${ZSH_IN_DOCKER_SHA256}  /tmp/zsh-in-docker.sh" | sha256sum -c - && \
-    sh /tmp/zsh-in-docker.sh -- \
+    sh /tmp/zsh-in-docker.sh \
     -t ${ZSH_THEME} \
     -p git \
     -p fzf \
