@@ -18,6 +18,18 @@ Clawker's security model is designed around two threat actors:
 
 **Prompt injection.** Adversarial content embedded in web pages, README files, package metadata, API responses, or files hosted on cloud storage can hijack the agent's intent. A malicious instruction hidden in a fetched document could direct the agent to exfiltrate source code, steal credentials, or modify files in ways that serve the attacker rather than the user. The agent cannot reliably distinguish legitimate instructions from injected ones.
 
+## How the Firewall Works
+
+The firewall is central to most of clawker's threat mitigations, so it's worth understanding the mechanism before diving into specific threats.
+
+Claude Code runs as an unprivileged `claude` user (UID 1001) inside the container. The firewall is managed by the container's root user, which sets iptables rules that intercept all outbound traffic from the `claude` user and redirect it to Envoy (the proxy) running on the `clawker-net` Docker network. DNS is handled separately — the container's `/etc/resolv.conf` is configured to point at the clawker-managed CoreDNS instance, which only resolves whitelisted domains and returns NXDOMAIN for everything else.
+
+This two-layer approach means traffic is controlled at both the DNS level (domains that aren't whitelisted never resolve) and the connection level (Envoy enforces SNI matching, protocol rules, and path-level restrictions on actual connections).
+
+**When the firewall is toggled off** for a container (via `clawker firewall disable`), clawker flushes the iptables rules and overwrites `/etc/resolv.conf` to point at Cloudflare's anti-malware DNS nameservers (`1.1.1.2`, `1.0.0.2`) instead of CoreDNS. This provides a safety net — the agent gets unrestricted network access, but DNS still filters known-malicious domains. Re-enabling the firewall restores the iptables rules and switches DNS back to CoreDNS.
+
+See the [Firewall](/firewall) guide for the full architecture, configuration, and CLI reference.
+
 ## Data Exfiltration via Network Egress
 
 **Threat:** A prompt-injected or hallucinating agent sends source code, secrets, environment variables, or credentials to an attacker-controlled endpoint — or leaks sensitive data to unintended services.
@@ -119,7 +131,7 @@ See [Firewall configuration](/firewall#configuration) for path rules and [Securi
 - **Deny-default firewall.** All outbound traffic is blocked, including to internal IPs and RFC 1918 ranges.
 - **DNS filtering.** Internal hostnames that are not in the allowlist do not resolve via CoreDNS.
 - **Traffic redirection.** iptables DNAT rules route all outbound traffic through Envoy across all supported protocols (TLS, TCP, UDP, HTTP), preventing direct connections to arbitrary hosts or ports.
-- **Isolated Docker network.** All clawker containers run on a dedicated `clawker-net` bridge network, separated from other Docker workloads. The subnet is determined at runtime, not hardcoded. Internal traffic between containers on the network is allowed, but Docker's built-in DNS service discovery only resolves clawker's own baked-in services (Envoy, CoreDNS, and the optional monitoring stack). An agent cannot discover or address other user containers by name — it would need to know the runtime IP, which changes on every network recreation.
+- **Isolated Docker network.** All clawker containers run on a dedicated `clawker-net` bridge network, separated from other Docker workloads. The subnet is assigned at runtime by Docker, not hardcoded. Internal traffic between containers on the network is allowed, but Docker's built-in DNS service discovery only resolves clawker's own baked-in services (Envoy, CoreDNS, and the optional monitoring stack). An agent cannot discover or address other user containers by name — it would need to know the runtime IP, which changes on every network recreation.
 
 See [Firewall architecture](/firewall#architecture) for the network flow details.
 
