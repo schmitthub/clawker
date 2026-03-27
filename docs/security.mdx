@@ -16,7 +16,7 @@ See the [Firewall](/firewall) guide for the full architecture, configuration, CL
 
 ### Hardcoded Allowed Domains
 
-These are the **only** domains allowed by default — they are required for Claude Code and container image pulls to function:
+These are the **only** domains allowed by default — they are required for Claude Code to function (API access, OAuth, telemetry):
 
 | Domain | Purpose |
 |--------|---------|
@@ -26,9 +26,6 @@ These are the **only** domains allowed by default — they are required for Clau
 | `sentry.io` | Error tracking |
 | `statsig.anthropic.com` | Feature flags |
 | `statsig.com` | Feature flags |
-| `registry-1.docker.io` | Docker image registry |
-| `production.cloudflare.docker.com` | Docker CDN |
-| `docker.io` | Docker image resolution |
 
 <Warning>
 **GitHub, npm, PyPI, and all other services are NOT hardcoded.** The generated `clawker.yaml` template includes `github.com` and `api.github.com` as a convenience starting point, but these are project-level config entries — not system defaults. If you remove them from your config or start from scratch, GitHub will be blocked.

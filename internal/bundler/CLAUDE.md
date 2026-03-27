@@ -86,8 +86,11 @@ type DockerfileContext struct {
     OtelMetricsEndpoint, OtelLogsEndpoint string
     OtelLogsExportInterval, OtelMetricExportInterval int
     OtelLogToolDetails, OtelLogUserPrompts, OtelIncludeAccountUUID, OtelIncludeSessionID bool
+    HasFirewallCA bool; GoBuilderImage string
 }
 ```
+
+`GoBuilderImage` is the Go toolchain image for builder stages, pinned to exact patch version + SHA digest (default: `DefaultGoBuilderImage`). Tracks `go.mod`.
 
 ### Dockerfile Instruction Types
 

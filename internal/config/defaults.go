@@ -1,7 +1,12 @@
 package config
 
 // requiredFirewallRules is the canonical list of required egress rules.
-// These are essential for Claude Code and container image pulls.
+// These are essential for Claude Code operation inside the container.
+//
+// Docker registry domains (docker.io, registry-1.docker.io, etc.) are NOT
+// included because image pulls are performed by the host-side Docker daemon,
+// outside the container's network namespace — container egress rules do not
+// apply to them.
 //
 // Claude Code OAuth requires platform.claude.com (token exchange) and
 // claude.ai (alternative authorize URL). These use SNI-based filtering,
@@ -16,10 +21,6 @@ var requiredFirewallRules = []EgressRule{
 	{Dst: "sentry.io", Proto: "tls", Port: 443, Action: "allow"},
 	{Dst: "statsig.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	{Dst: "statsig.com", Proto: "tls", Port: 443, Action: "allow"},
-	// Container image pulls
-	{Dst: "registry-1.docker.io", Proto: "tls", Port: 443, Action: "allow"},
-	{Dst: "production.cloudflare.docker.com", Proto: "tls", Port: 443, Action: "allow"},
-	{Dst: "docker.io", Proto: "tls", Port: 443, Action: "allow"},
 }
 
 // requiredFirewallDomains is derived from requiredFirewallRules for backwards compatibility.

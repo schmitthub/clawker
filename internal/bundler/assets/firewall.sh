@@ -29,7 +29,7 @@ fi
 # Resolve the container user's UID from CLAWKER_USER env var (set at create time).
 CONTAINER_UID=$(id -u "${CLAWKER_USER}")
 
-# flush_rules removes all clawker-managed iptables rules for the container user.
+# flush_rules removes all clawker-managed iptables and ip6tables rules for the container user.
 # Idempotent — safe to call when no rules exist.
 flush_rules() {
     # Flush nat OUTPUT rules for the container user UID.
@@ -60,6 +60,33 @@ flush_rules() {
     for idx in $indices; do
         iptables -t nat -D OUTPUT "$idx" 2>/dev/null || true
     done
+
+    # Flush ip6tables rules — mirrors the iptables sections above.
+    if command -v ip6tables >/dev/null 2>&1; then
+        indices=$(ip6tables -t nat -L OUTPUT --line-numbers -n 2>/dev/null \
+            | grep "owner UID match ${CONTAINER_UID}" \
+            | awk '{print $1}' \
+            | sort -rn) || true
+        for idx in $indices; do
+            ip6tables -t nat -D OUTPUT "$idx" 2>/dev/null || true
+        done
+
+        indices=$(ip6tables -L OUTPUT --line-numbers -n 2>/dev/null \
+            | grep "owner UID match ${CONTAINER_UID}" \
+            | awk '{print $1}' \
+            | sort -rn) || true
+        for idx in $indices; do
+            ip6tables -D OUTPUT "$idx" 2>/dev/null || true
+        done
+
+        indices=$(ip6tables -t nat -L OUTPUT --line-numbers -n 2>/dev/null \
+            | grep "owner UID match 0" \
+            | awk '{print $1}' \
+            | sort -rn) || true
+        for idx in $indices; do
+            ip6tables -t nat -D OUTPUT "$idx" 2>/dev/null || true
+        done
+    fi
 }
 
 enable_firewall() {
@@ -135,6 +162,23 @@ enable_firewall() {
     # UDP: allow intra-network, drop everything else (prevent exfiltration).
     iptables -A OUTPUT -p udp -m owner --uid-owner "${CONTAINER_UID}" -d "${net_cidr}" -j RETURN
     iptables -A OUTPUT -p udp -m owner --uid-owner "${CONTAINER_UID}" ! -d 127.0.0.0/8 -j DROP
+
+    # ICMP: drop all outbound ICMP from the container user.
+    # Prevents ICMP tunneling (ptunnel, icmpsh) which can exfiltrate data at ~50-100 KB/s.
+    # ICMP is neither TCP nor UDP, so it's not caught by the rules above.
+    iptables -A OUTPUT -p icmp -m owner --uid-owner "${CONTAINER_UID}" -j DROP
+
+    # IPv6 egress: deny-by-default for TCP, UDP, and ICMPv6.
+    # Envoy and CoreDNS bind to IPv4-only Docker bridge addresses, so IPv6 TCP cannot be
+    # DNAT-ed through the allowlist the way IPv4 is. An agent with IPv6 connectivity could
+    # otherwise bypass the Envoy SNI filter and CoreDNS domain gate entirely via IPv6 TCP.
+    # Dropping all non-loopback IPv6 egress closes that bypass.  Root (uid 0) is already
+    # exempted via the RETURN rules added above.
+    if command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -A OUTPUT -p tcp    -m owner --uid-owner "${CONTAINER_UID}" ! -d ::1/128 -j DROP 2>/dev/null || true
+        ip6tables -A OUTPUT -p udp    -m owner --uid-owner "${CONTAINER_UID}" ! -d ::1/128 -j DROP 2>/dev/null || true
+        ip6tables -A OUTPUT -p icmpv6 -m owner --uid-owner "${CONTAINER_UID}" ! -d ::1/128 -j DROP 2>/dev/null || true
+    fi
 }
 
 disable_firewall() {

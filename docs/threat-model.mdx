@@ -16,7 +16,13 @@ Clawker's security model is designed around two threat actors:
 
 **The agent itself.** An LLM-powered coding agent is autonomous software that can hallucinate file paths, run destructive commands, or pursue the wrong goal with absolute confidence. It doesn't need to be malicious to cause damage — context window amnesia, tunnel vision, and overconfident tool use are enough. The agent might `rm -rf` a directory it shouldn't touch, push code to the wrong branch, or install packages that compromise the environment, all while believing it's doing exactly what you asked.
 
-**Prompt injection.** Adversarial content embedded in web pages, README files, package metadata, API responses, or files hosted on cloud storage can hijack the agent's intent. A malicious instruction hidden in a fetched document could direct the agent to exfiltrate source code, steal credentials, or modify files in ways that serve the attacker rather than the user. The agent cannot reliably distinguish legitimate instructions from injected ones.
+**Cybercriminal Prompters.** This might seem facetious, or an oversimplification, but when you distill it down basically any external entity is trying to coerce your agent via prompt injection. There are a myriad of subcategories and motivations here but the same controls deal with all of them. 
+
+## Attack Vectors 
+
+### Prompt injection
+
+Adversarial content embedded in web pages, README files, package metadata, API responses, or files hosted on cloud storage can hijack the agent's intent. A malicious instruction hidden in a fetched document could direct the agent to exfiltrate source code, steal credentials, or modify files in ways that serve the attacker rather than the user. The agent cannot reliably distinguish legitimate instructions from injected ones.
 
 **Clawker does not attempt to prevent prompt injection** — and this is a deliberate design choice. LLMs can develop their own specialized internal languages — often referred to as "cryptoglyphs" or "internal representations" — which are highly efficient, non-human, mathematical, or symbolic languages. They can also interpret ancient Hebrew, binary, base64, steganographic patterns, and every other human or machine dialect in history. Trying to filter or detect injected instructions is boiling the ocean (actually, boiling the ocean might be easier).
 
@@ -24,15 +30,31 @@ Similarly, **clawker does not attempt to inspect egress traffic for sensitive co
 
 Instead, clawker takes the only approach that actually works: **deny the connection entirely.** If the agent gets coerced into exfiltrating data, the firewall blocks the egress — it doesn't matter what's in the payload because the payload never leaves. If it gets coerced into destructive file operations, container isolation limits the blast radius to the mounted workspace. The injection can change the agent's intent, but it can't change the container's constraints.
 
+### A note on supply chain attacks
+
+There is an inherent risk of using third party packages and libraries during software development, especially recently. Clawker itself, claude code, and anything you put in your container could become victim to complex supply chain attacks. Developing in containers does actually help keep your system safer, but it doesn't eliminate the risk. 
+
+For example had you been using trivy or litellm in a container with restricted egress... 
+
+**trivy.** The stolen data is encrypted using a hybrid AES-256-CBC + RSA scheme and bundled into a tpcp.tar.gz archive, then exfiltrated via HTTP POST to a typosquatted domain scan.aquasecurtiy[.]org.
+
+**litellm.** Stolen data is decoded then encrypted using AES-256-CBC with a randomly generated session key. That session key is subsequently encrypted using a hard-coded RSA public key embedded in the payload. The encrypted data and key are packaged into an archive (tpcp.tar.gz) and exfiltrated to a remote endpoint controlled by the attacker, including the domains models[.]litellm[.]cloud and checkmarx[.]zone. 
+
+Regardless of how or if your container became infected, or what obfuscation and packaging they used... the exfiltration would have failed and cleaning the infection would involve simply building a new image with patched packages, and creating a fresh container.  
+
+<Note>
+The clawker project leverages every version pinning and integrity check opportunity in CI, its infra containers, and embedded dockerfile template. SCA and SAST scanning checks are used in CI. 
+</Note>
+
 ## How the Firewall Works
 
 The firewall is central to most of clawker's threat mitigations, so it's worth understanding the mechanism before diving into specific threats.
 
-All clawker containers run on a dedicated `clawker-net` bridge network, isolated from other Docker workloads. The subnet is assigned at runtime by Docker, not hardcoded. Internal traffic between containers on the network is allowed, but Docker's built-in DNS service discovery only resolves clawker's own baked-in services (Envoy, CoreDNS, and the optional monitoring stack). An agent cannot discover or address other user containers by name — it would need to know the runtime IP, which changes on every network recreation.
+All clawker containers run on a dedicated `clawker-net` bridge network, isolated from other Docker workloads and the host's network. The subnet is assigned at runtime by Docker, not hardcoded, and access to any IP range is restricted by iptables at runtime by a firewall daemon manager. Only internal traffic on this subnet is freely allowed, but Docker's built-in DNS service discovery only resolves clawker's own baked-in services (Envoy, CoreDNS, and the optional monitoring stack).
 
 Claude Code runs as an unprivileged `claude` user (UID 1001) inside the container. The firewall is managed by the container's root user, which sets iptables rules per protocol: outbound TCP from the `claude` user is DNAT'd to Envoy (the proxy) on the `clawker-net` network, DNS (UDP port 53) is DNAT'd to CoreDNS, and all other non-DNS UDP is dropped (except intra-`clawker-net` traffic). DNS is also handled via `/etc/resolv.conf`, which points at the CoreDNS instance and returns NXDOMAIN for unlisted domains.
 
-This layered approach means traffic is controlled at the DNS level (unlisted domains never resolve), the TCP level (Envoy enforces SNI matching, protocol rules, and path-level restrictions), and the UDP level (non-DNS UDP is blocked entirely).
+This layered approach means traffic is controlled at the DNS level (unlisted domains never resolve), the TCP level (Envoy enforces SNI matching, protocol rules, and path-level restrictions), the UDP level (non-DNS UDP is blocked entirely), and the ICMP level (all outbound ICMP is dropped to prevent ICMP tunneling).
 
 **When the firewall is toggled off** for a container (via `clawker firewall disable`), clawker flushes the iptables rules and restores `/etc/resolv.conf` to point at Docker's embedded DNS (`127.0.0.11`), which forwards externally to Cloudflare's anti-malware DNS nameservers (`1.1.1.2`, `1.0.0.2`). This provides a safety net — the agent gets unrestricted network access, but DNS still filters known-malicious domains. Re-enabling the firewall restores the iptables rules and switches DNS back to CoreDNS.
 
@@ -53,14 +75,15 @@ Claude Code's `WebSearch` tool uses an Anthropic-managed proxy to perform search
 - **Deny-by-default firewall.** The Envoy+CoreDNS firewall blocks all outbound traffic. TCP is DNAT'd to Envoy for inspection, DNS is DNAT'd to CoreDNS, and non-DNS UDP is dropped entirely. Traffic to the `clawker-net` CIDR is allowed (for Envoy, CoreDNS, and the optional monitoring stack), but everything else is deny-by-default. Only explicitly whitelisted domains on specific protocols are reachable. DNS queries for unlisted domains return NXDOMAIN — the domain never even resolves.
 - **SNI-based domain enforcement.** Domains are whitelisted by name, not by IP address. This is critical — many domains sit behind shared edge proxies like Cloudflare, so IP-whitelisting one domain could accidentally open the entire internet. IPs also rotate frequently in load-balanced environments, making IP-based rules fragile. Envoy inspects the SNI (Server Name Indication) field in the TLS handshake to match traffic to allowed domains. Connections to unlisted domains are reset with no fallback or soft-fail.
 - **Path-level filtering.** For domains that need fine-grained control, Envoy can enforce path-level restrictions. For TLS rules with path filtering, Envoy performs MITM TLS inspection to decrypt and inspect the request path. For plain HTTP rules, Envoy inspects the request directly without MITM. Either way, you can whitelist a domain and specific paths, or whitelist a domain while blocking certain paths. Useful for user-generated content platforms and package repositories where you need to scope access down to specific endpoints (e.g., allow `api.github.com/repos/` but block `api.github.com/gists`).
-- **Minimal hardcoded allowlist.** Only the domains required for Claude Code itself to function (API, OAuth, telemetry) and Docker image pulls are allowed by default. See the [Security](/security#hardcoded-allowed-domains) page for the canonical list. GitHub, npm, PyPI, and every other service must be explicitly added.
+- **Minimal hardcoded allowlist.** Only the domains required for Claude Code itself to function (API, OAuth, telemetry) are allowed by default. Docker image pulls are handled by the host daemon, outside the container's network namespace, and are not subject to the container firewall. See the [Security](/security#hardcoded-allowed-domains) page for the canonical list. GitHub, npm, PyPI, and every other service must be explicitly added.
 - **DNS exfiltration prevention.** DNS-based exfiltration is a well-known technique where stolen data is encoded into DNS queries — for example, resolving `stolen-secret.attacker.com` or encoding data as subdomains (`dG9rZW4.exfil.attacker.com`). This is often effective because DNS traffic is overlooked by network controls and even a single query can leak data. Clawker blocks this because the container's `/etc/resolv.conf` routes all DNS through the managed CoreDNS instance, which only has forward zones for whitelisted domains. Every other query — including crafted exfiltration subdomains — returns NXDOMAIN. There is no upstream resolver fallback.
+- **ICMP blocked.** ICMP tunneling tools (e.g., `ptunnel`, `icmpsh`) can exfiltrate data by encoding it in ICMP echo request/reply payloads. While slow (~50-100 KB/s), this is effective because ICMP is neither TCP nor UDP and is often overlooked by network controls. Clawker drops all outbound ICMP from the container user via iptables, preventing this vector entirely.
 
 See the [Firewall](/firewall) guide for the full architecture, configuration, and CLI commands.
 
-## Host Filesystem Damage
+## Host Infection / Filesystem Damage 
 
-**Threat:** A hallucinating or coerced agent runs destructive commands (`rm -rf`, overwrites, corrupted writes) or accesses sensitive files on the host system — personal documents, SSH keys, system configuration, other projects.
+**Threat:** A hallucinating or coerced agent runs destructive commands (`rm -rf`, overwrites, corrupted writes), installs malicious or unapproved packages, accesses sensitive files on the host system — personal documents, SSH keys, system configuration, other projects. 
 
 **Attack surface:** The host filesystem.
 
@@ -80,6 +103,7 @@ See [Container Internals](/container-internals) for bind vs snapshot details and
 | Threat | Primary Control | Default | Guide |
 |--------|----------------|:---:|-------|
 | Data exfiltration (network + DNS) | Network firewall + CoreDNS NXDOMAIN | On | [Firewall](/firewall) |
+| Data exfiltration (ICMP tunneling) | iptables ICMP DROP for container user | On | [Firewall](/firewall) |
 | Host filesystem damage | Container isolation + workspace mount scoping | On | [Container Internals](/container-internals) |
 
 ## Shared Responsibility
@@ -105,7 +129,15 @@ The credentials you inject via environment variables or env files are available 
 
 Enabling `security.docker_socket: true` mounts the host Docker socket into the container. The Docker CLI inside the container is the real Docker CLI talking directly to your host Docker daemon — not Docker-in-Docker (which is resource-heavy and brittle). This means the agent has full, unfiltered control over your Docker daemon and can create, modify, and delete any container, image, or volume on your host.
 
-Note: clawker's own resource jailing (`pkg/whail`) is a UX feature for the *user*, not a security boundary for the agent. It prevents you from accidentally running `clawker volume prune` and deleting non-clawker volumes. But the agent inside the container uses the real Docker CLI, not clawker — so the jailing doesn't apply. Only enable the Docker socket if your workflow genuinely requires container-driven development (e.g., building and running containers as part of your CI or dev workflow). Otherwise, leave it off.
+<Danger>
+**Mounting the Docker socket is a major privilege escalation vector.** The agent gains root-equivalent access to the host — it can mount arbitrary host paths into new containers, read any file on the host filesystem, spawn privileged containers, and escape the isolation that clawker otherwise provides. This effectively negates container isolation as a security boundary.
+
+Docker-outside-of-Docker (DooD) was chosen over Docker-in-Docker (DinD) for performance and reliability — DinD requires a nested daemon, consumes significantly more resources, and introduces complex storage driver issues. However, alternative approaches that provide Docker capabilities without full socket access are being evaluated for future releases.
+
+**If you enable this setting, treat the session as supervised.** Do not leave an agent running unattended with socket access. Review what containers and volumes the agent creates. Disable `security.docker_socket` when Docker access is not actively needed.
+</Danger>
+
+<Warning>clawker's own resource jailing (`pkg/whail`) is a UX feature for the *user*, not a security boundary for the agent. It prevents you from accidentally running `clawker volume prune` and deleting non-clawker volumes. But the agent inside the container uses the real Docker CLI, not clawker — so the jailing doesn't apply. Only enable the Docker socket if your workflow genuinely requires container-driven development (e.g., building and running containers as part of your CI or dev workflow). Otherwise, leave it off.</Warning>
 
 ### Bypass Discipline
 

@@ -40,7 +40,7 @@ Agent Container        CoreDNS (.201)       Envoy (.200)         Internet
 
 ## Default Allowed Domains
 
-The hardcoded allowlist is deliberately **bare-bones** — only domains required for Claude Code itself and container image pulls are included:
+The hardcoded allowlist is deliberately **bare-bones** — only domains required for Claude Code itself are included (API access, OAuth, telemetry):
 
 | Domain | Purpose |
 |--------|---------|
@@ -50,9 +50,6 @@ The hardcoded allowlist is deliberately **bare-bones** — only domains required
 | `sentry.io` | Error tracking |
 | `statsig.anthropic.com` | Feature flags |
 | `statsig.com` | Feature flags |
-| `registry-1.docker.io` | Docker image registry |
-| `production.cloudflare.docker.com` | Docker CDN |
-| `docker.io` | Docker image resolution |
 
 <Warning>
 **GitHub, npm, PyPI, and all other services are NOT in this list.** When you run `clawker project init`, the generated `.clawker.yaml` template includes `github.com` and `api.github.com` as a convenience starting point — but these are project-level config entries, not system defaults. If you start from a blank config, GitHub SSH and HTTPS will be blocked.
@@ -284,7 +281,7 @@ The `ip_range_sources` field is recognized by the YAML parser but **ignored at r
 
 ## Global vs Project Rules
 
-- **System-required rules** (from `cfg.RequiredFirewallRules()`) are always present --- Claude API, Docker registry, error tracking, and feature flags
+- **System-required rules** (from `cfg.RequiredFirewallRules()`) are always present --- Claude API, OAuth, error tracking, and feature flags
 - **Project rules** come from `add_domains` and `rules` in your `.clawker.yaml`
 - Rules merge **additively** --- project rules add to (never replace) system rules
 - Dedup key: `destination:protocol:port` --- duplicate rules are silently ignored

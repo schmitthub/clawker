@@ -27,7 +27,7 @@ fi
 MISSING=()
 command -v gitleaks    >/dev/null 2>&1 || MISSING+=("gitleaks    — brew install gitleaks")
 command -v semgrep     >/dev/null 2>&1 || MISSING+=("semgrep     — pip install semgrep")
-command -v govulncheck >/dev/null 2>&1 || MISSING+=("govulncheck — go install golang.org/x/vuln/cmd/govulncheck@latest")
+command -v govulncheck >/dev/null 2>&1 || MISSING+=("govulncheck — go install golang.org/x/vuln/cmd/govulncheck@v1.1.4")
 command -v golangci-lint >/dev/null 2>&1 || MISSING+=("golangci-lint — brew install golangci-lint")
 
 if [[ ${#MISSING[@]} -gt 0 ]]; then

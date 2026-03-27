@@ -29,8 +29,6 @@ github.com/go-logr/logr                                                        A
 github.com/go-logr/stdr                                                        Apache-2.0
 github.com/golang/groupcache/lru                                               Apache-2.0
 github.com/google/shlex                                                        Apache-2.0
-github.com/in-toto/attestation/go/v1                                           Apache-2.0
-github.com/in-toto/in-toto-golang/in_toto                                      Apache-2.0
 github.com/klauspost/compress                                                  Apache-2.0
 github.com/moby/buildkit                                                       Apache-2.0
 github.com/moby/docker-image-spec/specs-go/v1                                  Apache-2.0
@@ -78,6 +76,7 @@ BSD-3-Clause
 github.com/ProtonMail/go-crypto                                                BSD-3-Clause
 github.com/atotto/clipboard                                                    BSD-3-Clause
 github.com/cloudflare/circl                                                    BSD-3-Clause
+github.com/cyphar/filepath-securejoin                                          BSD-3-Clause
 github.com/go-git/gcfg/v2                                                      BSD-3-Clause
 github.com/gofrs/flock                                                         BSD-3-Clause
 github.com/gogo/protobuf/proto                                                 BSD-3-Clause
@@ -85,10 +84,22 @@ github.com/golang/protobuf/ptypes                                              B
 github.com/google/go-cmp/cmp                                                   BSD-3-Clause
 github.com/google/uuid                                                         BSD-3-Clause
 github.com/grpc-ecosystem/grpc-gateway/v2                                      BSD-3-Clause
+github.com/klauspost/compress                                                  BSD-3-Clause
 github.com/klauspost/compress/internal/snapref                                 BSD-3-Clause
 github.com/planetscale/vtprotobuf                                              BSD-3-Clause
 github.com/pmezard/go-difflib/difflib                                          BSD-3-Clause
 github.com/spf13/pflag                                                         BSD-3-Clause
+go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc    BSD-3-Clause
+go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace   BSD-3-Clause
+go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp                  BSD-3-Clause
+go.opentelemetry.io/otel                                                       BSD-3-Clause
+go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp                    BSD-3-Clause
+go.opentelemetry.io/otel/exporters/otlp/otlptrace                              BSD-3-Clause
+go.opentelemetry.io/otel/log                                                   BSD-3-Clause
+go.opentelemetry.io/otel/metric                                                BSD-3-Clause
+go.opentelemetry.io/otel/sdk                                                   BSD-3-Clause
+go.opentelemetry.io/otel/sdk/log                                               BSD-3-Clause
+go.opentelemetry.io/otel/trace                                                 BSD-3-Clause
 golang.org/x/crypto                                                            BSD-3-Clause
 golang.org/x/net                                                               BSD-3-Clause
 golang.org/x/sync                                                              BSD-3-Clause
@@ -102,6 +113,7 @@ ISC
 ================================================================================
 
 github.com/davecgh/go-spew/spew                                                ISC
+github.com/emirpasic/gods                                                      ISC
 
 ================================================================================
 MIT
@@ -123,6 +135,7 @@ github.com/clipperhouse/uax29/v2/graphemes                                     M
 github.com/cpuguy83/go-md2man/v2/md2man                                        MIT
 github.com/felixge/httpsnoop                                                   MIT
 github.com/kevinburke/ssh_config                                               MIT
+github.com/klauspost/compress                                                  MIT
 github.com/klauspost/compress/zstd/internal/xxhash                             MIT
 github.com/klauspost/cpuid/v2                                                  MIT
 github.com/lucasb-eyer/go-colorful                                             MIT
@@ -149,3 +162,14 @@ MPL-2.0
 ================================================================================
 
 github.com/cyphar/filepath-securejoin                                          MPL-2.0
+
+================================================================================
+Unknown
+================================================================================
+
+github.com/in-toto/attestation/go/v1                                           Unknown
+github.com/in-toto/in-toto-golang/in_toto                                      Unknown
+github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/common               Unknown
+github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.1                 Unknown
+github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.2                 Unknown
+github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v1                   Unknown

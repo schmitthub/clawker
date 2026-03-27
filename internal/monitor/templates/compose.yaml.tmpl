@@ -1,7 +1,7 @@
 services:
   otel-collector:
     container_name: otel-collector
-    image: otel/opentelemetry-collector-contrib:latest
+    image: {{.OtelCollectorImage}}
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./otel-config.yaml:/etc/otel-collector-config.yaml
@@ -18,7 +18,7 @@ services:
 
   jaeger:
     container_name: jaeger
-    image: jaegertracing/all-in-one:latest
+    image: {{.JaegerImage}}
     ports:
       - "{{.JaegerPort}}:{{.JaegerPort}}" # UI
       - "{{.OtelGRPCPort}}"        # OTLP gRPC internal
@@ -32,7 +32,7 @@ services:
 
   prometheus:
     container_name: prometheus
-    image: prom/prometheus:latest
+    image: {{.PrometheusImage}}
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--web.enable-remote-write-receiver"
@@ -40,6 +40,7 @@ services:
       - "{{.PrometheusPort}}:{{.PrometheusPort}}"
     volumes:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml
+      - clawker-prometheus:/prometheus
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
@@ -48,10 +49,12 @@ services:
 
   loki:
     container_name: loki
-    image: grafana/loki:latest
+    image: {{.LokiImage}}
     ports:
       - "{{.LokiPort}}:{{.LokiPort}}"
     command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - clawker-loki:/loki
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
@@ -60,7 +63,7 @@ services:
 
   grafana:
     container_name: grafana
-    image: grafana/grafana:latest
+    image: {{.GrafanaImage}}
     ports:
       - "{{.GrafanaPort}}:{{.GrafanaPort}}"
     environment:
@@ -74,6 +77,7 @@ services:
       - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
       - ./grafana-dashboard.json:/etc/grafana/provisioning/dashboards/claude-code.json
+      - clawker-grafana:/var/lib/grafana
     extra_hosts:
       - "host.docker.internal:host-gateway"
     labels:
@@ -81,6 +85,20 @@ services:
       dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
+
+volumes:
+  clawker-prometheus:
+    labels:
+      dev.clawker.managed: "true"
+      dev.clawker.purpose: "monitoring"
+  clawker-loki:
+    labels:
+      dev.clawker.managed: "true"
+      dev.clawker.purpose: "monitoring"
+  clawker-grafana:
+    labels:
+      dev.clawker.managed: "true"
+      dev.clawker.purpose: "monitoring"
 
 networks:
   clawker-net:
