@@ -18,7 +18,11 @@ Clawker's security model is designed around two threat actors:
 
 **Prompt injection.** Adversarial content embedded in web pages, README files, package metadata, API responses, or files hosted on cloud storage can hijack the agent's intent. A malicious instruction hidden in a fetched document could direct the agent to exfiltrate source code, steal credentials, or modify files in ways that serve the attacker rather than the user. The agent cannot reliably distinguish legitimate instructions from injected ones.
 
-**Clawker does not attempt to prevent prompt injection** — and this is a deliberate design choice. LLMs can interpret ancient Hebrew, binary, base64, steganographic patterns, and every dialect in human history. Trying to filter or detect injected instructions is boiling the ocean. Instead, clawker assumes injection *will* succeed and focuses on making it useless. If the agent gets coerced into exfiltrating data, the firewall blocks the egress. If it gets coerced into destructive file operations, container isolation limits the blast radius to the mounted workspace. The injection can change the agent's intent, but it can't change the container's constraints.
+**Clawker does not attempt to prevent prompt injection** — and this is a deliberate design choice. LLMs can interpret ancient Hebrew, binary, base64, steganographic patterns, and every dialect in human history. Trying to filter or detect injected instructions is boiling the ocean.
+
+Similarly, **clawker does not attempt to inspect egress traffic for sensitive content.** Building what amounts to a reverse WAF that can detect whether an outgoing request — across all protocols, all ports, any size from 1MB to 4GB — contains something sensitive is equally fruitless. The payload could be a tar archive of base64-triple-encoded text containing secrets, double-encrypted, split across multiple requests, or disguised as legitimate API traffic. Content-based exfiltration detection is an arms race you cannot win.
+
+Instead, clawker takes the only approach that actually works: **deny the connection entirely.** If the agent gets coerced into exfiltrating data, the firewall blocks the egress — it doesn't matter what's in the payload because the payload never leaves. If it gets coerced into destructive file operations, container isolation limits the blast radius to the mounted workspace. The injection can change the agent's intent, but it can't change the container's constraints.
 
 ## How the Firewall Works
 
