@@ -81,7 +81,7 @@ security:
 `
 
 const goPreset = `build:
-  image: "golang:1.23-bookworm"
+  image: "golang:1.25-bookworm"
   packages:
     - ripgrep
 security:

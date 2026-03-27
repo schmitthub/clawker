@@ -107,6 +107,9 @@ const (
 	DefaultClaudeCodeVersion = "latest"
 	DefaultUsername          = "claude"
 	DefaultShell             = "/bin/zsh"
+	// DefaultGoBuilderImage is the Go toolchain image used for builder stages.
+	// Pinned to exact patch version + SHA digest matching go.mod (go 1.25.5).
+	DefaultGoBuilderImage = "golang:1.25.5-alpine@sha256:ac09a5f469f307e5da71e766b0bd59c9c49ea460a528cc3e6686513d64a6f1fb"
 )
 
 // DockerfileManager generates and persists Dockerfiles for each version/variant combination.
@@ -146,7 +149,8 @@ type DockerfileContext struct {
 	OtelIncludeAccountUUID bool // OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
 	OtelIncludeSessionID   bool // OTEL_METRICS_INCLUDE_SESSION_ID=true
 
-	HasFirewallCA bool // CA cert exists for MITM inspection
+	HasFirewallCA  bool   // CA cert exists for MITM inspection
+	GoBuilderImage string // Go toolchain image for builder stages (e.g. "golang:1.25.5-alpine@sha256:...")
 }
 
 // DockerfileInstructions contains type-safe Dockerfile instructions.
@@ -306,6 +310,7 @@ func (m *DockerfileManager) createContext(version, variant string) (*DockerfileC
 		OtelLogUserPrompts:       *mon.Telemetry.LogUserPrompts,
 		OtelIncludeAccountUUID:   *mon.Telemetry.IncludeAccountUUID,
 		OtelIncludeSessionID:     *mon.Telemetry.IncludeSessionID,
+		GoBuilderImage:           DefaultGoBuilderImage,
 	}, nil
 }
 
@@ -605,6 +610,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		OtelLogUserPrompts:       *mon.Telemetry.LogUserPrompts,
 		OtelIncludeAccountUUID:   *mon.Telemetry.IncludeAccountUUID,
 		OtelIncludeSessionID:     *mon.Telemetry.IncludeSessionID,
+		GoBuilderImage:           DefaultGoBuilderImage,
 	}
 
 	// Populate Instructions if present (structural only — Copy, Args, RUN)

@@ -481,7 +481,7 @@ func TestRunNonInteractive_PresetFlag(t *testing.T) {
 	require.NoError(t, err)
 
 	snap := reloaded.Read()
-	assert.Equal(t, "golang:1.23-bookworm", snap.Build.Image)
+	assert.Equal(t, "golang:1.25-bookworm", snap.Build.Image)
 	assert.Contains(t, out.String(), "Go")
 }
 

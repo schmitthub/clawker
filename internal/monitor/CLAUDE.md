@@ -44,6 +44,11 @@ Struct providing values for `{{.FieldName}}` placeholders in `.tmpl` files:
 | `GrafanaPort` | `int` | Grafana port |
 | `PrometheusMetricsPort` | `int` | Prometheus metrics scrape port |
 | `OtelCollectorInternal` | `string` | Internal OTEL collector address |
+| `OtelCollectorImage` | `string` | OTEL collector container image (version + SHA256 pinned) |
+| `JaegerImage` | `string` | Jaeger container image (version + SHA256 pinned) |
+| `PrometheusImage` | `string` | Prometheus container image (version + SHA256 pinned) |
+| `LokiImage` | `string` | Loki container image (version + SHA256 pinned) |
+| `GrafanaImage` | `string` | Grafana container image (version + SHA256 pinned) |
 
 ### NewMonitorTemplateData(cfg *config.MonitoringConfig) MonitorTemplateData
 

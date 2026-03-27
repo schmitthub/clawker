@@ -42,6 +42,10 @@ For example had you been using trivy or litellm in a container with restricted e
 
 Regardless of how or if your container became infected, or what obfusctation and packaging they used... the exfiltration would have failed and cleaning the infection would involve simply building a new image with patched packages, and creating a fresh container.  
 
+<Note>
+The clawker project leverages every version pinning and integrity check opportunity in CI, its infra containers, and embedded dockerfile template. SCA and SAST scanning checks are used in CI. 
+</Note>
+
 ## How the Firewall Works
 
 The firewall is central to most of clawker's threat mitigations, so it's worth understanding the mechanism before diving into specific threats.

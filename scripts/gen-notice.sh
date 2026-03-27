@@ -15,7 +15,7 @@ cd "$MODULE_ROOT"
 # ── Install go-licenses if needed ────────────────────────────────────────────
 if ! command -v go-licenses &>/dev/null; then
     echo "Installing go-licenses..." >&2
-    go install github.com/google/go-licenses@latest
+    go install github.com/google/go-licenses/v2@v2.0.1
 fi
 
 # ── Collect license data ─────────────────────────────────────────────────────

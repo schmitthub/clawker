@@ -41,6 +41,15 @@ const (
 	GrafanaDashboardFileName   = "grafana-dashboard.json"
 )
 
+// Monitoring stack container images — pinned to version + SHA256 digest.
+const (
+	OtelCollectorImage = "otel/opentelemetry-collector-contrib:0.148.0@sha256:8164eab2e6bca9c9b0837a8d2f118a6618489008a839db7f9d6510e66be3923c"
+	JaegerImage        = "jaegertracing/all-in-one:1.76.0@sha256:ab6f1a1f0fb49ea08bcd19f6b84f6081d0d44b364b6de148e1798eb5816bacac"
+	PrometheusImage    = "prom/prometheus:v3.10.0@sha256:4a61322ac1103a0e3aea2a61ef1718422a48fa046441f299d71e660a3bc71ae9"
+	LokiImage          = "grafana/loki:3.7.0@sha256:c316b7c7589a5eeca843b6926c7446149d18300b79ac8538dc4ae063bc478da2"
+	GrafanaImage       = "grafana/grafana:12.4.2@sha256:83749231c3835e390a3144e5e940203e42b9589761f20ef3169c716e734ad505"
+)
+
 // MonitorTemplateData provides values for rendering monitoring stack templates.
 type MonitorTemplateData struct {
 	OtelCollectorPort     int
@@ -51,6 +60,13 @@ type MonitorTemplateData struct {
 	GrafanaPort           int
 	PrometheusMetricsPort int
 	OtelCollectorInternal string
+
+	// Container images — version + SHA256 pinned.
+	OtelCollectorImage string
+	JaegerImage        string
+	PrometheusImage    string
+	LokiImage          string
+	GrafanaImage       string
 }
 
 // NewMonitorTemplateData constructs template data from MonitoringConfig.
@@ -64,6 +80,11 @@ func NewMonitorTemplateData(cfg *config.MonitoringConfig) MonitorTemplateData {
 		GrafanaPort:           cfg.GrafanaPort,
 		PrometheusMetricsPort: cfg.PrometheusMetricsPort,
 		OtelCollectorInternal: cfg.OtelCollectorInternal,
+		OtelCollectorImage:    OtelCollectorImage,
+		JaegerImage:           JaegerImage,
+		PrometheusImage:       PrometheusImage,
+		LokiImage:             LokiImage,
+		GrafanaImage:          GrafanaImage,
 	}
 }
 

@@ -41,7 +41,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Install moq
-        run: go install github.com/matryer/moq@latest
+        run: go install github.com/matryer/moq@v0.7.1
 
       - name: Verify build
         run: go build ./cmd/clawker
