@@ -38,6 +38,10 @@ This two-layer approach means traffic is controlled at both the DNS level (domai
 
 See the [Firewall](/firewall) guide for the full architecture, configuration, and CLI reference.
 
+<Note>
+Claude Code's `WebFetch` and `WebSearch` tools use an Anthropic-managed proxy to access the internet. These requests do not go through the clawker firewall — they are routed through Anthropic's infrastructure, which curates and controls the access. This means the agent may appear to reach domains that are not in your allowlist, but this is expected behavior, not a firewall bypass. The proxy is managed by Anthropic, not clawker.
+</Note>
+
 ## Data Exfiltration via Network Egress
 
 **Threat:** A prompt-injected or hallucinating agent sends source code, secrets, environment variables, or credentials to an attacker-controlled endpoint — or leaks sensitive data to unintended services.
@@ -105,7 +109,9 @@ Note: clawker's own resource jailing (`pkg/whail`) is a UX feature for the *user
 
 ### Bypass Discipline
 
-`clawker firewall bypass` is a temporary escape hatch, not a workflow. During a bypass, all outbound traffic goes directly to the network without filtering. Keep bypass durations short, use them only when needed, and let them auto-expire rather than running extended bypasses.
+The bypass exists to avoid firewall rule management fatigue. Sometimes the agent just needs to do some research or install a package and you don't want to add permanent rules for a one-off domain. That's what bypass is for — short, supervised windows of unrestricted access.
+
+Use small time windows (e.g., `clawker firewall bypass 30s --agent dev`). Pay attention while it's active. If you notice anything suspicious, immediately close the bypass with `clawker firewall bypass --stop --agent <agent-name>`. During a bypass, all outbound traffic goes directly to the network without filtering — the firewall is fully off for that container. Don't leave long bypasses running unattended.
 
 ### Workspace Scope
 
