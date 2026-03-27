@@ -40,6 +40,7 @@ services:
       - "{{.PrometheusPort}}:{{.PrometheusPort}}"
     volumes:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml
+      - clawker-prometheus:/prometheus
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
@@ -52,6 +53,8 @@ services:
     ports:
       - "{{.LokiPort}}:{{.LokiPort}}"
     command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - clawker-loki:/loki
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
@@ -74,6 +77,7 @@ services:
       - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
       - ./grafana-dashboard.json:/etc/grafana/provisioning/dashboards/claude-code.json
+      - clawker-grafana:/var/lib/grafana
     extra_hosts:
       - "host.docker.internal:host-gateway"
     labels:
@@ -81,6 +85,20 @@ services:
       dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
+
+volumes:
+  clawker-prometheus:
+    labels:
+      dev.clawker.managed: "true"
+      dev.clawker.purpose: "monitoring"
+  clawker-loki:
+    labels:
+      dev.clawker.managed: "true"
+      dev.clawker.purpose: "monitoring"
+  clawker-grafana:
+    labels:
+      dev.clawker.managed: "true"
+      dev.clawker.purpose: "monitoring"
 
 networks:
   clawker-net:
