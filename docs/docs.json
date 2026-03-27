@@ -77,6 +77,12 @@
         ]
       },
       {
+        "group": "Security",
+        "pages": [
+          "threat-model"
+        ]
+      },
+      {
         "group": "Guides",
         "pages": [
           "configuration",

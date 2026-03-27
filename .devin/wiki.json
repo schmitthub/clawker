@@ -1,0 +1,301 @@
+{
+  "repo_notes": [
+    {
+      "content": ""
+    }
+  ],
+  "pages": [
+    {
+      "title": "Clawker Overview",
+      "purpose": "High-level introduction to Clawker: what it is, why it exists, the 'padded cell' philosophy, key concepts, and a map to all child pages.",
+      "page_notes": [
+        {
+          "content": "Clawker is not a system to isolate docker from ai agents. It's a system to isolate AI agents from the host machine and mitigates destructive changes (ex: ai agent deleting sensitive/critical system files when unattended, installing binaries it shouldn't be), and data exfiltration from prompt injection via containerization and network isolation. Clawker cli also orchestrates security infrastructure: an isolated docker network `clawker-net`, daemonized services that manage infra via container lifecycle events, a socketbridge to forward credentials for development (ssh, gpg, git creds, git https creds), a hostproxy to facilitate http forwarding and callbacks (like browser open events for oauth), monitoring infrastructure, egress infrastructure, etc. (Important: Agents don't ever use clawker cli directly, only users. The whail engine is a UX/user error defensive guard by keeping clawker cli docker resource access relegated to specific resources. This way running destructive commands like `clawker volume prune` only removes volumes created by clawker, it doesn't remove all of the host's docker volumes. Docker itself when enabled inside the container is actually fully available to the agent (no whail) to do what it wants via the host docker socket, that is why enabling it is policy gated.)"
+        }
+      ]
+    },
+    {
+      "title": "Getting Started",
+      "purpose": "Installation, initial setup (clawker init, project init), quick-start workflow, and the clawker.yaml configuration file. Covers the install script, Homebrew cask, and first-run experience.",
+      "parent": "Clawker Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Core Concepts and Terminology",
+      "purpose": "Defines the key domain terms an onboarding engineer needs: Agent, Project, Whail, Workspace Modes, Managed Labels, Socket Bridge, Egress Firewall, etc. Acts as a conceptual glossary with code pointers.",
+      "parent": "Clawker Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Configuration Reference",
+      "purpose": "Complete reference for clawker.yaml (Project config) and settings.yaml (user Settings). Covers schema, precedence order, walk-up discovery, merge strategy, and all top-level keys with examples.",
+      "parent": "Clawker Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "purpose": "Overview of the layered architecture: CLI → Middleware → Whail → Docker SDK. Introduces the Factory DI pattern, package DAG, and links to child pages for each major subsystem.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "CLI Layer and Command Structure",
+      "purpose": "How the Cobra command tree is organized, the Factory dependency injection pattern, top-level aliases, error handling in Main(), and the update notification system.",
+      "parent": "Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Docker Middleware (internal/docker)",
+      "purpose": "The internal/docker.Client layer: resource naming conventions, label enforcement, volume lifecycle, PTY handling, image resolution, and how it wraps the Whail engine.",
+      "parent": "Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Whail: Docker Isolation Engine (pkg/whail)",
+      "purpose": "Deep dive into pkg/whail — the label-based Docker jail. Covers Engine construction, label injection, filtering semantics, all resource operation categories (container/volume/network/image), BuildKit integration, and the whailtest fake.",
+      "parent": "Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Configuration and Storage Engine",
+      "purpose": "The storage.Store[T] generic engine: node-tree merge architecture, copy-on-write semantics, walk-up discovery, provenance tracking, migrations, and how internal/config composes two stores.",
+      "parent": "Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Container Lifecycle",
+      "purpose": "Overview of how containers are created, started, and managed. Links to child pages covering the creation pipeline, workspace strategies, and the container command set.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Container Creation Pipeline (CreateContainer)",
+      "purpose": "Step-by-step walkthrough of CreateContainer: workspace setup, config volume initialization, environment resolution, Docker container creation, post-init injection, and the events channel progress model.",
+      "parent": "Container Lifecycle",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Workspace Strategies: Bind and Snapshot",
+      "purpose": "How the workspace is presented to the container. Covers BindStrategy (live mount with tmpfs overlays for ignored dirs), SnapshotStrategy (ephemeral volume copy), .clawkerignore pattern matching, and the SetupMounts pipeline.",
+      "parent": "Container Lifecycle",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Container Commands Reference",
+      "purpose": "Reference for all container subcommands: run, create, start, stop, remove, exec, attach, logs, list, inspect, cp, kill, pause, unpause, rename, restart, stats, top, update, wait. Covers the daemon bootstrap pattern and ContainerStart.",
+      "parent": "Container Lifecycle",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Agent Image Building",
+      "purpose": "Overview of how Docker images for Claude Code agents are built and managed. Links to child pages on Dockerfile generation and the build pipeline.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Dockerfile Generation and Bundler",
+      "purpose": "How the Dockerfile template is rendered: DockerfileManager for official multi-flavor images, ProjectGenerator for project-specific builds, DockerfileContext injection points, content hashing, embedded assets, and BuildKit cache mounts.",
+      "parent": "Agent Image Building",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Container Internals: Entrypoint and Runtime Scripts",
+      "purpose": "What runs inside the container: entrypoint.sh privilege drop, firewall.sh iptables setup, statusline.sh terminal UI, host-open browser forwarding, git-credential-clawker, and the clawker-socket-server binary.",
+      "parent": "Agent Image Building",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Image Management Commands",
+      "purpose": "CLI commands for managing agent images: image build, list, inspect, remove, prune, and the generate command for producing official Dockerfiles from npm version patterns.",
+      "parent": "Agent Image Building",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Egress Firewall",
+      "purpose": "Overview of the Envoy + CoreDNS egress firewall stack. Links to child pages on architecture, configuration, and the daemon.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Firewall Architecture: Envoy and CoreDNS",
+      "purpose": "How the firewall works: CoreDNS for DNS-level blocking (NXDOMAIN for unlisted domains), Envoy for TLS inspection and path-level filtering, MITM certificate management, static IP allocation on the clawker-net Docker network.",
+      "parent": "Egress Firewall",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Firewall Manager and Daemon",
+      "purpose": "The FirewallManager interface and its Docker implementation: EnsureRunning, AddRules, RemoveRules, Bypass, Disable/Enable, Status. The background daemon's dual-loop (health check + container watcher) and auto-stop behavior.",
+      "parent": "Egress Firewall",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Firewall CLI Commands",
+      "purpose": "Reference for all firewall subcommands: up, down, add, remove, list, reload, status, bypass, disable, enable, rotate-ca. Covers egress rule schema (domains, path_rules, IP ranges) and the requiredFirewallRules defaults.",
+      "parent": "Egress Firewall",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Host Integration Services",
+      "purpose": "Overview of the services that bridge the host and container: Host Proxy, Socket Bridge, and Git credential forwarding. Links to child pages for each.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Host Proxy",
+      "purpose": "The host proxy daemon: HTTP server for browser-open callbacks and OAuth forwarding, container watcher auto-exit logic, Manager/Daemon/Server architecture, SessionStore, CallbackChannel, and the hidden host-proxy CLI.",
+      "parent": "Host Integration Services",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Socket Bridge (SSH and GPG Forwarding)",
+      "purpose": "How SSH and GPG agent sockets are forwarded from host to container via muxrpc over docker exec. Covers the Manager/Bridge architecture, wire protocol, PID file lifecycle, Docker die-event subscription, and the clawker-socket-server binary.",
+      "parent": "Host Integration Services",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Git Credential Forwarding",
+      "purpose": "How HTTPS and SSH git credentials are forwarded into containers: git-credential-clawker helper, GIT_CONFIG_KEY_N environment variable injection, copy_git_config strategy, and GPG signing configuration.",
+      "parent": "Host Integration Services",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Autonomous Loop Mode",
+      "purpose": "Overview of the loop iterate and loop tasks commands for autonomous agent execution. Links to child pages on the runner engine and the TUI dashboard.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Loop Runner Engine",
+      "purpose": "The loop runner internals: circuit breaker (stagnation detection, output decline threshold, same-error threshold), session history, stream parsing, rate limiting, concurrency detection, hook injection, and the container lifecycle per iteration.",
+      "parent": "Autonomous Loop Mode",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Loop TUI Dashboard",
+      "purpose": "The real-time BubbleTea dashboard for loop mode: LoopDashEvent channel, activity log ring buffer, streaming output display, cost/token tracking, detach (q/Esc) vs interrupt (Ctrl+C) flows, and the DashboardRenderer interface.",
+      "parent": "Autonomous Loop Mode",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Project and Worktree Management",
+      "purpose": "Overview of project registration and Git worktree lifecycle management. Links to child pages on the project domain and worktree health model.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Project Registry and Manager",
+      "purpose": "How projects are registered, resolved, and listed. Covers ProjectManager interface, projects.yaml registry, ResolvePath symlink handling, CurrentProject detection, and the project init/register/list/info/remove CLI commands.",
+      "parent": "Project and Worktree Management",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    }
+  ]
+}
