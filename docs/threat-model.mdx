@@ -129,7 +129,15 @@ The credentials you inject via environment variables or env files are available 
 
 Enabling `security.docker_socket: true` mounts the host Docker socket into the container. The Docker CLI inside the container is the real Docker CLI talking directly to your host Docker daemon — not Docker-in-Docker (which is resource-heavy and brittle). This means the agent has full, unfiltered control over your Docker daemon and can create, modify, and delete any container, image, or volume on your host.
 
-Note: clawker's own resource jailing (`pkg/whail`) is a UX feature for the *user*, not a security boundary for the agent. It prevents you from accidentally running `clawker volume prune` and deleting non-clawker volumes. But the agent inside the container uses the real Docker CLI, not clawker — so the jailing doesn't apply. Only enable the Docker socket if your workflow genuinely requires container-driven development (e.g., building and running containers as part of your CI or dev workflow). Otherwise, leave it off.
+<Danger>
+**Mounting the Docker socket is a major privilege escalation vector.** The agent gains root-equivalent access to the host — it can mount arbitrary host paths into new containers, read any file on the host filesystem, spawn privileged containers, and escape the isolation that clawker otherwise provides. This effectively negates container isolation as a security boundary.
+
+Docker-outside-of-Docker (DooD) was chosen over Docker-in-Docker (DinD) for performance and reliability — DinD requires a nested daemon, consumes significantly more resources, and introduces complex storage driver issues. However, alternative approaches that provide Docker capabilities without full socket access are being evaluated for future releases.
+
+**If you enable this setting, treat the session as supervised.** Do not leave an agent running unattended with socket access. Review what containers and volumes the agent creates. Disable `security.docker_socket` when Docker access is not actively needed.
+</Danger>
+
+<Warning>clawker's own resource jailing (`pkg/whail`) is a UX feature for the *user*, not a security boundary for the agent. It prevents you from accidentally running `clawker volume prune` and deleting non-clawker volumes. But the agent inside the container uses the real Docker CLI, not clawker — so the jailing doesn't apply. Only enable the Docker socket if your workflow genuinely requires container-driven development (e.g., building and running containers as part of your CI or dev workflow). Otherwise, leave it off.</Warning>
 
 ### Bypass Discipline
 
