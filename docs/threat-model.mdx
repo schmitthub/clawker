@@ -40,7 +40,7 @@ For example had you been using trivy or litellm in a container with restricted e
 
 **litellm.** Stolen data is decoded then encrypted using AES-256-CBC with a randomly generated session key. That session key is subsequently encrypted using a hard-coded RSA public key embedded in the payload. The encrypted data and key are packaged into an archive (tpcp.tar.gz) and exfiltrated to a remote endpoint controlled by the attacker, including the domains models[.]litellm[.]cloud and checkmarx[.]zone. 
 
-Regardless of how or if your container became infected, or what obfusctation and packaging they used... the exfiltration would have failed and cleaning the infection would involve simply building a new image with patched packages, and creating a fresh container.  
+Regardless of how or if your container became infected, or what obfuscation and packaging they used... the exfiltration would have failed and cleaning the infection would involve simply building a new image with patched packages, and creating a fresh container.  
 
 <Note>
 The clawker project leverages every version pinning and integrity check opportunity in CI, its infra containers, and embedded dockerfile template. SCA and SAST scanning checks are used in CI. 
@@ -50,7 +50,7 @@ The clawker project leverages every version pinning and integrity check opportun
 
 The firewall is central to most of clawker's threat mitigations, so it's worth understanding the mechanism before diving into specific threats.
 
-All clawker containers run on a dedicated `clawker-net` bridge network, isolated from other Docker workloads and the host's network. The subnet is assigned at runtime by Docker, not hardcoded, and access to any IP range is restricted by IP tables at runtime by a firewall daemon manager. Only internal traffic on this subnet is freely allowed, but Docker's built-in DNS service discovery only resolves clawker's own baked-in services (Envoy, CoreDNS, and the optional monitoring stack).
+All clawker containers run on a dedicated `clawker-net` bridge network, isolated from other Docker workloads and the host's network. The subnet is assigned at runtime by Docker, not hardcoded, and access to any IP range is restricted by iptables at runtime by a firewall daemon manager. Only internal traffic on this subnet is freely allowed, but Docker's built-in DNS service discovery only resolves clawker's own baked-in services (Envoy, CoreDNS, and the optional monitoring stack).
 
 Claude Code runs as an unprivileged `claude` user (UID 1001) inside the container. The firewall is managed by the container's root user, which sets iptables rules per protocol: outbound TCP from the `claude` user is DNAT'd to Envoy (the proxy) on the `clawker-net` network, DNS (UDP port 53) is DNAT'd to CoreDNS, and all other non-DNS UDP is dropped (except intra-`clawker-net` traffic). DNS is also handled via `/etc/resolv.conf`, which points at the CoreDNS instance and returns NXDOMAIN for unlisted domains.
 

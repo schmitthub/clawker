@@ -4,8 +4,9 @@ package config
 // These are essential for Claude Code operation inside the container.
 //
 // Docker registry domains (docker.io, registry-1.docker.io, etc.) are NOT
-// included because image pulls flow through the host Docker daemon via the
-// mounted socket — they never traverse the container's network namespace.
+// included because image pulls are performed by the host-side Docker daemon,
+// outside the container's network namespace — container egress rules do not
+// apply to them.
 //
 // Claude Code OAuth requires platform.claude.com (token exchange) and
 // claude.ai (alternative authorize URL). These use SNI-based filtering,

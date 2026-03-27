@@ -281,7 +281,7 @@ The `ip_range_sources` field is recognized by the YAML parser but **ignored at r
 
 ## Global vs Project Rules
 
-- **System-required rules** (from `cfg.RequiredFirewallRules()`) are always present --- Claude API, Docker registry, error tracking, and feature flags
+- **System-required rules** (from `cfg.RequiredFirewallRules()`) are always present --- Claude API, OAuth, error tracking, and feature flags
 - **Project rules** come from `add_domains` and `rules` in your `.clawker.yaml`
 - Rules merge **additively** --- project rules add to (never replace) system rules
 - Dedup key: `destination:protocol:port` --- duplicate rules are silently ignored

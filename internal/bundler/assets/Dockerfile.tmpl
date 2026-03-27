@@ -225,11 +225,14 @@ ARG GIT_DELTA_SHA256_ARM64=1bd252110eafa1065c0798f9e68de0682127408e4b53db79733ef
 RUN --mount=type=cache,target=/tmp/downloads \
     ARCH=$(dpkg --print-architecture) && \
 {{- else}}
-RUN ARCH=$(dpkg --print-architecture) && \
+RUN mkdir -p /tmp/downloads && \
+    ARCH=$(dpkg --print-architecture) && \
 {{- end}}
     DEB="git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
     [ -f "/tmp/downloads/$DEB" ] || wget -O "/tmp/downloads/$DEB" "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/$DEB" && \
-    EXPECTED_SHA=$(if [ "$ARCH" = "amd64" ]; then echo "${GIT_DELTA_SHA256_AMD64}"; else echo "${GIT_DELTA_SHA256_ARM64}"; fi) && \
+    if [ "$ARCH" = "amd64" ]; then EXPECTED_SHA="${GIT_DELTA_SHA256_AMD64}"; \
+    elif [ "$ARCH" = "arm64" ]; then EXPECTED_SHA="${GIT_DELTA_SHA256_ARM64}"; \
+    else echo "ERROR: git-delta does not support architecture: $ARCH (only amd64 and arm64)" >&2; exit 1; fi && \
     echo "$EXPECTED_SHA  /tmp/downloads/$DEB" | sha256sum -c - && \
     dpkg -i "/tmp/downloads/$DEB"
 {{end}}
