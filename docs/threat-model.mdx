@@ -16,13 +16,29 @@ Clawker's security model is designed around two threat actors:
 
 **The agent itself.** An LLM-powered coding agent is autonomous software that can hallucinate file paths, run destructive commands, or pursue the wrong goal with absolute confidence. It doesn't need to be malicious to cause damage — context window amnesia, tunnel vision, and overconfident tool use are enough. The agent might `rm -rf` a directory it shouldn't touch, push code to the wrong branch, or install packages that compromise the environment, all while believing it's doing exactly what you asked.
 
-**Prompt injection.** Adversarial content embedded in web pages, README files, package metadata, API responses, or files hosted on cloud storage can hijack the agent's intent. A malicious instruction hidden in a fetched document could direct the agent to exfiltrate source code, steal credentials, or modify files in ways that serve the attacker rather than the user. The agent cannot reliably distinguish legitimate instructions from injected ones.
+**Cybercriminal Prompters.** This might seem facetious, or an oversimplification, but when you distill it down basically any external entity is trying to coerce your agent via prompt injection. There are a myriad of subcategories and motivations here but the same controls deal with all of them. 
+
+## Attack Vectors 
+
+### Prompt injection
+
+Adversarial content embedded in web pages, README files, package metadata, API responses, or files hosted on cloud storage can hijack the agent's intent. A malicious instruction hidden in a fetched document could direct the agent to exfiltrate source code, steal credentials, or modify files in ways that serve the attacker rather than the user. The agent cannot reliably distinguish legitimate instructions from injected ones.
 
 **Clawker does not attempt to prevent prompt injection** — and this is a deliberate design choice. LLMs can develop their own specialized internal languages — often referred to as "cryptoglyphs" or "internal representations" — which are highly efficient, non-human, mathematical, or symbolic languages. They can also interpret ancient Hebrew, binary, base64, steganographic patterns, and every other human or machine dialect in history. Trying to filter or detect injected instructions is boiling the ocean (actually, boiling the ocean might be easier).
 
 Similarly, **clawker does not attempt to inspect egress traffic for sensitive content.** Building what amounts to a reverse WAF that can detect whether an outgoing request — across all protocols, all ports, of any size — contains something sensitive is equally fruitless. HTTP has no technical size limit on request bodies, and other protocols vary or have none at all. Scanning every byte of outbound traffic hoping to detect a highly obfuscated and encrypted payload that *might* contain sensitive data would make the system unusable. Even large WAF vendors cap their request scanning buffers to small allocations (typically 128KB max) because full-payload inspection at scale is impractical. The payload could be a tar archive of base64-triple-encoded text containing secrets, double-encrypted, split across multiple requests, or disguised as legitimate API traffic. Content-based exfiltration detection is an arms race you cannot win. Enlisting another LLM to review outbound requests doesn't solve this either — it adds enormous latency to every network call and relies on a model that is vulnerable to the exact same coercion and precision problems as the agent it's supposed to be watching.
 
 Instead, clawker takes the only approach that actually works: **deny the connection entirely.** If the agent gets coerced into exfiltrating data, the firewall blocks the egress — it doesn't matter what's in the payload because the payload never leaves. If it gets coerced into destructive file operations, container isolation limits the blast radius to the mounted workspace. The injection can change the agent's intent, but it can't change the container's constraints.
+
+### Supply Chain Attacks
+
+There is an inherent risk of using third party packages and libraries during software development, especially recently. Clawker itself, claude code, and anything you put in your container could become victim to complex supply chain attacks. Developing in containers does actually help keep your system safer. For example had you been using trivy or litellm in a container with restricted egress... 
+
+**trivy.** The stolen data is encrypted using a hybrid AES-256-CBC + RSA scheme and bundled into a tpcp.tar.gz archive, then exfiltrated via HTTP POST to a typosquatted domain scan.aquasecurtiy[.]org.
+
+**litellm.** Stolen data is decoded then encrypted using AES-256-CBC with a randomly generated session key. That session key is subsequently encrypted using a hard-coded RSA public key embedded in the payload. The encrypted data and key are packaged into an archive (tpcp.tar.gz) and exfiltrated to a remote endpoint controlled by the attacker, including the domains models[.]litellm[.]cloud and checkmarx[.]zone. 
+
+Regardless of how or if your container became infected, the exfiltration would have failed and cleaning the infection would involve simply building a new image with updated packages, and creating a fresh container.  
 
 ## How the Firewall Works
 
@@ -58,9 +74,9 @@ Claude Code's `WebSearch` tool uses an Anthropic-managed proxy to perform search
 
 See the [Firewall](/firewall) guide for the full architecture, configuration, and CLI commands.
 
-## Host Filesystem Damage
+## Host Infection / Filesystem Damage 
 
-**Threat:** A hallucinating or coerced agent runs destructive commands (`rm -rf`, overwrites, corrupted writes) or accesses sensitive files on the host system — personal documents, SSH keys, system configuration, other projects.
+**Threat:** A hallucinating or coerced agent runs destructive commands (`rm -rf`, overwrites, corrupted writes), installs malicious or unapproved packages, accesses sensitive files on the host system — personal documents, SSH keys, system configuration, other projects. 
 
 **Attack surface:** The host filesystem.
 
