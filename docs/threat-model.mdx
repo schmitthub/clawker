@@ -54,7 +54,6 @@ See the [Firewall](/firewall) guide for the full architecture, configuration, an
 
 **How clawker mitigates it:**
 
-- **Home directory guard.** `IsOutsideHome()` prevents mounting `$HOME` itself or directories outside `$HOME` as the workspace. The `run` and `create` commands prompt for confirmation; `loop` commands hard-error.
 - **Directory-level ignore patterns.** `.clawkerignore` patterns trigger tmpfs overlays in bind mode, masking matched directories inside the container without modifying the host.
 - **Snapshot mode.** Creates an ephemeral copy of the workspace in a Docker volume. Changes inside the container never reach the host. Ideal for experimental or high-risk agent tasks.
 - **Unprivileged user.** Containers run as `claude:claude` (UID 1001, GID 1001), not root. The agent can only modify files the mount permissions allow.
