@@ -18,6 +18,8 @@ Clawker's security model is designed around two threat actors:
 
 **Prompt injection.** Adversarial content embedded in web pages, README files, package metadata, API responses, or files hosted on cloud storage can hijack the agent's intent. A malicious instruction hidden in a fetched document could direct the agent to exfiltrate source code, steal credentials, or modify files in ways that serve the attacker rather than the user. The agent cannot reliably distinguish legitimate instructions from injected ones.
 
+**Clawker does not attempt to prevent prompt injection** — and this is a deliberate design choice. LLMs can interpret ancient Hebrew, binary, base64, steganographic patterns, and every dialect in human history. Trying to filter or detect injected instructions is boiling the ocean. Instead, clawker assumes injection *will* succeed and focuses on making it useless. If the agent gets coerced into exfiltrating data, the firewall blocks the egress. If it gets coerced into destructive file operations, container isolation limits the blast radius to the mounted workspace. The injection can change the agent's intent, but it can't change the container's constraints.
+
 ## How the Firewall Works
 
 The firewall is central to most of clawker's threat mitigations, so it's worth understanding the mechanism before diving into specific threats.
@@ -63,21 +65,6 @@ See the [Firewall](/firewall) guide for the full architecture, configuration, an
 
 See [Container Internals](/container-internals) for bind vs snapshot details and workspace configuration.
 
-## Prompt Injection via Fetched Content
-
-**Threat:** An attacker places malicious instructions in content the agent fetches — a web page, a repository README, a package description, a file hosted on Google Cloud Storage or Firebase. The agent follows the injected instructions, potentially exfiltrating data, modifying code, or performing unauthorized operations.
-
-**Attack surface:** Any domain the agent is allowed to reach. Broader allowlists mean more exposure to adversarial content.
-
-**How clawker mitigates it:**
-
-- **Strict domain scoping.** Only allow the specific domains your project needs. Every additional domain is additional attack surface.
-- **Path-level rules.** Restrict allowed endpoints to specific API paths when possible, limiting what content the agent can fetch from allowed domains.
-- **Agent awareness prompt.** Every clawker container includes `/etc/claude-code/CLAUDE.md`, which gives the agent explicit context about its sandboxed environment. This reduces the likelihood the agent follows instructions that conflict with its known constraints.
-- **Network firewall limits blast radius.** Even if a prompt injection succeeds, the firewall constrains what the agent can do with it. Exfiltration attempts hit NXDOMAIN. Unauthorized API calls are blocked.
-
-See [Firewall configuration](/firewall#configuration) for path rules and [Security](/security#agent-awareness-prompt) for the agent awareness prompt.
-
 ## Internal Network Pivoting
 
 **Threat:** The agent uses the container as a pivot point to scan or attack internal network services — databases, APIs, admin panels, or other containers on the Docker bridge network.
@@ -113,7 +100,6 @@ See [Firewall certificate management](/firewall#certificate-management) for CA l
 |--------|----------------|:---:|-------|
 | Data exfiltration (network + DNS) | Network firewall + CoreDNS NXDOMAIN | On | [Firewall](/firewall) |
 | Host filesystem damage | Home guard + workspace isolation | On | [Container Internals](/container-internals) |
-| Prompt injection | Domain scoping + path rules | Configured per-project | [Firewall](/firewall#configuration) |
 | Network pivoting | Deny-default firewall + DNS filtering | On | [Firewall](/firewall#architecture) |
 | TLS interception | Per-project CA + rotation | Auto-generated | [Firewall](/firewall#certificate-management) |
 
