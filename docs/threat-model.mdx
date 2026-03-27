@@ -48,14 +48,17 @@ See the [Firewall](/firewall) guide for the full architecture, configuration, an
 
 ## Host Filesystem Damage
 
-**Threat:** The agent modifies or deletes files outside the intended project scope, accesses sensitive files (`.env`, private keys, credentials) within the workspace, or operates on a directory broader than intended.
+**Threat:** A hallucinating or coerced agent runs destructive commands (`rm -rf`, overwrites, corrupted writes) or accesses sensitive files on the host system — personal documents, SSH keys, system configuration, other projects.
 
-**Attack surface:** The bind-mounted workspace directory and any files accessible within it.
+**Attack surface:** The host filesystem.
 
 **How clawker mitigates it:**
 
-- **Snapshot mode.** Creates an ephemeral copy of the workspace in a Docker volume. Changes inside the container never reach the host. Ideal for experimental or high-risk agent tasks.
-- **Unprivileged user.** Containers run as `claude:claude` (UID 1001, GID 1001), not root. The agent can only modify files the mount permissions allow.
+- **Container isolation.** The agent runs inside a Docker container. The host filesystem is not mounted into the container by default — the agent has no awareness of or access to host system files, user files, tools, or other projects. They simply don't exist from the agent's perspective.
+- **Controlled workspace mounting.** The only host files the agent can touch are the ones the user explicitly mounts — either as a live bind mount or an ephemeral snapshot copy. Snapshot mode creates a disposable copy in a Docker volume, so changes never reach the host at all. In bind mode, the blast radius is limited to the mounted directory.
+- **Version-controlled repositories.** For git repositories, the damage from destructive file operations is largely mitigated by version control — the user can always reset, checkout, or recover from the git history.
+- **No host resource access.** System tools, package managers, shell configuration, browser profiles, credential stores, and everything else on the host are outside the container boundary. The agent cannot install system-level packages, modify host shell config, or access other applications.
+- **User-controlled secrets.** Any secrets the container has access to (environment variables, env files, forwarded credentials) are explicitly provided by the user — and their exfiltration is mitigated by the network firewall.
 
 See [Container Internals](/container-internals) for bind vs snapshot details and workspace configuration.
 
