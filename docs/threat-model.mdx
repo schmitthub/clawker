@@ -62,21 +62,6 @@ See the [Firewall](/firewall) guide for the full architecture, configuration, an
 
 See [Container Internals](/container-internals) for bind vs snapshot details and workspace configuration.
 
-## Credential Theft and Misuse
-
-**Threat:** The agent extracts SSH keys, GPG keys, API tokens, or git credentials from the container and exfiltrates them to an external endpoint. Or it uses forwarded credentials for unauthorized operations — pushing to the wrong repository, signing malicious commits, or authenticating to services it shouldn't access.
-
-**Attack surface:** Any credential material accessible inside the container.
-
-**How clawker mitigates it:**
-
-- **Credentials are never stored in the container.** SSH and GPG private keys are forwarded via a socket bridge (muxrpc over `docker exec`). The key material stays on the host — only signing and authentication operations are proxied.
-- **Git HTTPS credentials are transient.** The container's `git-credential-clawker` helper sends requests to the host proxy, which queries the OS keychain. Credentials pass through but are not persisted in the container.
-- **Settings filtering.** Only the `enabledPlugins` key is extracted from Claude Code's `settings.json` during config volume initialization. No other settings — which might contain sensitive paths or tokens — are copied.
-- **Network firewall limits exfiltration.** Even if credentials are accessed in memory, the deny-by-default firewall restricts where they can be sent.
-
-See the [Credential Forwarding](/credentials) guide for details on each forwarding mechanism.
-
 ## Container Escape and Docker Daemon Access
 
 **Threat:** The agent breaks out of the container to access the host filesystem, other containers, or the Docker daemon — gaining control beyond the intended sandbox.
@@ -143,7 +128,6 @@ See [Firewall certificate management](/firewall#certificate-management) for CA l
 |--------|----------------|:---:|-------|
 | Data exfiltration (network + DNS) | Network firewall + CoreDNS NXDOMAIN | On | [Firewall](/firewall) |
 | Host filesystem damage | Home guard + workspace isolation | On | [Container Internals](/container-internals) |
-| Credential theft | Socket bridge + host proxy (no storage) | On | [Credentials](/credentials) |
 | Container escape | Unprivileged user + no Docker socket | On | [Security](/security) |
 | Prompt injection | Domain scoping + path rules | Configured per-project | [Firewall](/firewall#configuration) |
 | Network pivoting | Deny-default firewall + DNS filtering | On | [Firewall](/firewall#architecture) |
