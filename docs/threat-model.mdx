@@ -80,7 +80,7 @@ See [Container Internals](/container-internals) for bind vs snapshot details and
 | Threat | Primary Control | Default | Guide |
 |--------|----------------|:---:|-------|
 | Data exfiltration (network + DNS) | Network firewall + CoreDNS NXDOMAIN | On | [Firewall](/firewall) |
-| Host filesystem damage | Home guard + workspace isolation | On | [Container Internals](/container-internals) |
+| Host filesystem damage | Container isolation + workspace mount scoping | On | [Container Internals](/container-internals) |
 
 ## Shared Responsibility
 
