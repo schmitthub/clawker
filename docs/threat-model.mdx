@@ -111,7 +111,7 @@ Note: clawker's own resource jailing (`pkg/whail`) is a UX feature for the *user
 
 The bypass exists to avoid firewall rule management fatigue. Sometimes the agent just needs to do some research or install a package and you don't want to add permanent rules for a one-off domain. That's what bypass is for — short, supervised windows of unrestricted access.
 
-Use small time windows (e.g., `clawker firewall bypass 30s --agent dev`). Pay attention while it's active. If you notice anything suspicious, immediately close the bypass with `clawker firewall bypass --stop --agent <agent-name>`. During a bypass, all outbound traffic goes directly to the network without filtering — the firewall is fully off for that container. Don't leave long bypasses running unattended.
+Use small time windows (e.g., `clawker firewall bypass 30s --agent dev`). Pay attention while it's active. If you notice anything suspicious, immediately close the bypass with `clawker firewall bypass --stop --agent <agent-name>`. Bypass is scoped to a specific agent — it only toggles the egress restrictions for that one container. The firewall stack itself is not turned off, and all other agents continue to have their traffic routed through it normally. This limits exposure to a single container rather than your entire fleet. That said, the bypassed container has fully unrestricted network access for the duration, so don't leave long bypasses running unattended.
 
 ### Workspace Scope
 
