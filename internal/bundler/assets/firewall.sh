@@ -135,6 +135,11 @@ enable_firewall() {
     # UDP: allow intra-network, drop everything else (prevent exfiltration).
     iptables -A OUTPUT -p udp -m owner --uid-owner "${CONTAINER_UID}" -d "${net_cidr}" -j RETURN
     iptables -A OUTPUT -p udp -m owner --uid-owner "${CONTAINER_UID}" ! -d 127.0.0.0/8 -j DROP
+
+    # ICMP: drop all outbound ICMP from the container user.
+    # Prevents ICMP tunneling (ptunnel, icmpsh) which can exfiltrate data at ~50-100 KB/s.
+    # ICMP is neither TCP nor UDP, so it's not caught by the rules above.
+    iptables -A OUTPUT -p icmp -m owner --uid-owner "${CONTAINER_UID}" -j DROP
 }
 
 disable_firewall() {

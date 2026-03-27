@@ -62,6 +62,15 @@ func TestFirewall_BlockedDomain(t *testing.T) {
 	assert.NotNil(t, res.Err, "curl to blocked domain should fail")
 }
 
+func TestFirewall_ICMPBlocked(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	// ICMP must be blocked to prevent ICMP tunneling (ptunnel, icmpsh).
+	// ping sends ICMP echo requests — should fail with the DROP rule in place.
+	res := h.RunInContainer("firewall-icmp", "ping", "-c", "1", "-W", "3", "8.8.8.8")
+	assert.NotNil(t, res.Err, "ping should fail — ICMP must be blocked to prevent tunneling")
+}
+
 func TestFirewall_Bypass(t *testing.T) {
 	h := newFirewallHarness(t)
 
