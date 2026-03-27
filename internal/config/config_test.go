@@ -163,7 +163,7 @@ func TestRequiredFirewallDomains(t *testing.T) {
 
 	domains := cfg.RequiredFirewallDomains()
 	assert.Contains(t, domains, "api.anthropic.com")
-	assert.Contains(t, domains, "registry-1.docker.io")
+	assert.NotContains(t, domains, "registry-1.docker.io", "Docker registry domains should not be required — image pulls go through host daemon")
 
 	// Returned slice is a copy — mutations don't affect the original.
 	domains[0] = "mutated.com"
@@ -459,7 +459,7 @@ func TestRequiredFirewallRules(t *testing.T) {
 	require.NoError(t, err)
 
 	rules := cfg.RequiredFirewallRules()
-	assert.GreaterOrEqual(t, len(rules), 9)
+	assert.GreaterOrEqual(t, len(rules), 6)
 
 	// Verify all required rules have proper proto and action
 	for _, r := range rules {
