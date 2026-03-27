@@ -18,6 +18,8 @@
   <img src="docs/assets/threat-model.png" alt="Threat Model: Bare Metal vs Sandbox vs Clawker Container" width="700">
 </div>
 
+> Read more about clawker's threat model and security philosophy at [docs.clawker.dev/threat-model](https://docs.clawker.dev/threat-model)
+
 > ! Clawker is in an early development stage, but it's usable and has a lot of features. Expect breaking changes and rough edges. I quickly patch regressions that were missed. If you want to contribute or have any feedback, please open an issue or a pull request! Give it a star if you find it useful so I can brag about them at parties
 
 ---
