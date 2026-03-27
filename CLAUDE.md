@@ -369,6 +369,12 @@ All external dependencies must be pinned to exact versions with integrity verifi
 
 **Critical**: After code changes, update README.md (user-facing), CLAUDE.md (developer-facing), and memories as appropriate.
 
+### Completion Gate: Plugin & Docs
+
+After completing any bug fix or feature change:
+- Check if the fix addresses an issue in `claude-plugin/clawker-support/skills/clawker-support/reference/known-issues.md`. If so, remove or update the entry so the support skill doesn't advise workarounds for fixed bugs.
+- If the change affects user-facing configuration, CLI commands, or behavior, update the relevant Mintlify docs in `docs/` (hand-authored `*.mdx` pages, not `cli-reference/` which is auto-generated).
+
 ### Mintlify Documentation Site (docs.clawker.dev)
 
 User-facing docs are powered by [Mintlify](https://mintlify.com/) and live in the `docs/` directory.

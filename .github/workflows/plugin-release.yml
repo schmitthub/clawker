@@ -1,0 +1,17 @@
+name: Plugin Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "claude-plugin/**"
+
+jobs:
+  update-marketplace:
+    name: Update marketplace
+    uses: schmitthub/claude-plugins/.github/workflows/update-plugin.yml@main
+    with:
+      plugin-name: clawker-support
+      sha: ${{ github.sha }}
+    secrets:
+      marketplace-token: ${{ secrets.MARKETPLACE_TOKEN }}

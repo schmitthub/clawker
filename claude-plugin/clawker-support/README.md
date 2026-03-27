@@ -15,11 +15,11 @@ It understands the full clawker system: Dockerfile generation, config layering, 
 ## Install
 
 ```bash
-# Add the clawker marketplace
-claude plugin marketplace add schmitthub/clawker-claude-plugin
+# Add the marketplace
+claude plugin marketplace add schmitthub/claude-plugins
 
 # Install the plugin
-claude plugin install clawker-support@clawker-marketplace
+claude plugin install clawker-support@claude-plugins
 ```
 
 ## Usage

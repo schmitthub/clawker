@@ -1,6 +1,6 @@
 {
   "name": "clawker-support",
-  "description": "Clawker internals expert for configuration, Dockerfile generation, MCP setup, and troubleshooting",
+  "description": "Clawker support expert for setup, configuration, and troubleshooting",
   "version": "0.1.0",
   "author": {
     "name": "schmitthub"

@@ -80,7 +80,10 @@ Do not guess at config syntax. Read the actual sources of truth:
 4. **Troubleshooting** — If diagnosing an error, read `reference/troubleshooting.md`
    for guided diagnostic flows.
 
-5. **Other topics** — For monitoring, worktrees, loop mode, or other features, fetch
+5. **Known issues** — Always check `reference/known-issues.md` when diagnosing
+   a problem. The user's issue may be a known bug with a documented workaround.
+
+6. **Other topics** — For monitoring, worktrees, loop mode, or other features, fetch
    `https://docs.clawker.dev/llms.txt` for the docs index, then fetch the relevant page.
 
 ### Step 4: Synthesize and respond
