@@ -86,9 +86,8 @@ Clawker provides the guardrails, but your configuration choices determine your a
 
 The firewall is your primary defense against data exfiltration. Every domain you add to the allowlist is attack surface you're accepting. Be deliberate:
 
-- **Avoid broad IP range sources.** Adding `google` IP ranges allows traffic to all Google IPs, including Google Cloud Storage and Firebase Hosting — which serve user-generated content. An attacker can host a prompt injection payload on a public GCS bucket that your agent fetches.
+- **Avoid untrusted domains or domains with untrusted content.** Storage buckets, UGC platforms, and gist-style services can host attacker-controlled content that your agent fetches — including prompt injection payloads. Use specific subdomains instead of top-level domains where possible, and leverage path rules to exclude endpoints that serve user-generated or untrusted content.
 - **Don't disable the firewall** unless you're in a trusted, isolated environment and accept fully unrestricted egress.
-- **Use path rules** when a domain serves both needed and unnecessary endpoints.
 
 ### Credential Scoping
 
