@@ -63,7 +63,34 @@ func TestFirewall_BlockedDomain(t *testing.T) {
 }
 
 func TestFirewall_ICMPBlocked(t *testing.T) {
-	h := newFirewallHarness(t)
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			Firewall:       firewall.NewManager,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+  packages:
+    - iputils-ping
+agent:
+  claude_code:
+    use_host_auth: false
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
 
 	// ICMP must be blocked to prevent ICMP tunneling (ptunnel, icmpsh).
 	// ping sends ICMP echo requests — should fail with the DROP rule in place.
