@@ -28,7 +28,9 @@ Instead, clawker takes the only approach that actually works: **deny the connect
 
 The firewall is central to most of clawker's threat mitigations, so it's worth understanding the mechanism before diving into specific threats.
 
-Claude Code runs as an unprivileged `claude` user (UID 1001) inside the container. The firewall is managed by the container's root user, which sets iptables rules that intercept all outbound traffic from the `claude` user and redirect it to Envoy (the proxy) running on the `clawker-net` Docker network. DNS is handled separately — the container's `/etc/resolv.conf` is configured to point at the clawker-managed CoreDNS instance, which only resolves whitelisted domains and returns NXDOMAIN for everything else.
+All clawker containers run on a dedicated `clawker-net` bridge network, isolated from other Docker workloads. The subnet is assigned at runtime by Docker, not hardcoded. Internal traffic between containers on the network is allowed, but Docker's built-in DNS service discovery only resolves clawker's own baked-in services (Envoy, CoreDNS, and the optional monitoring stack). An agent cannot discover or address other user containers by name — it would need to know the runtime IP, which changes on every network recreation.
+
+Claude Code runs as an unprivileged `claude` user (UID 1001) inside the container. The firewall is managed by the container's root user, which sets iptables rules that intercept all outbound traffic from the `claude` user and redirect it to Envoy (the proxy) running on the `clawker-net` network. DNS is handled separately — the container's `/etc/resolv.conf` is configured to point at the clawker-managed CoreDNS instance, which only resolves whitelisted domains and returns NXDOMAIN for everything else.
 
 This two-layer approach means traffic is controlled at both the DNS level (domains that aren't whitelisted never resolve) and the connection level (Envoy enforces SNI matching, protocol rules, and path-level restrictions on actual connections).
 
@@ -69,43 +71,12 @@ See the [Firewall](/firewall) guide for the full architecture, configuration, an
 
 See [Container Internals](/container-internals) for bind vs snapshot details and workspace configuration.
 
-## Internal Network Pivoting
-
-**Threat:** The agent uses the container as a pivot point to scan or attack internal network services — databases, APIs, admin panels, or other containers on the Docker bridge network.
-
-**Attack surface:** The container's network connectivity to internal hosts and Docker bridge networks.
-
-**How clawker mitigates it:**
-
-- **Deny-default firewall.** All outbound traffic is blocked, including to internal IPs and RFC 1918 ranges.
-- **DNS filtering.** Internal hostnames that are not in the allowlist do not resolve via CoreDNS.
-- **Traffic redirection.** iptables DNAT rules route all outbound traffic through Envoy across all supported protocols (TLS, TCP, UDP, HTTP), preventing direct connections to arbitrary hosts or ports.
-- **Isolated Docker network.** All clawker containers run on a dedicated `clawker-net` bridge network, separated from other Docker workloads. The subnet is assigned at runtime by Docker, not hardcoded. Internal traffic between containers on the network is allowed, but Docker's built-in DNS service discovery only resolves clawker's own baked-in services (Envoy, CoreDNS, and the optional monitoring stack). An agent cannot discover or address other user containers by name — it would need to know the runtime IP, which changes on every network recreation.
-
-See [Firewall architecture](/firewall#architecture) for the network flow details.
-
-## Certificate and TLS Interception
-
-**Threat:** An attacker compromises the firewall's MITM CA certificate, enabling decryption of all inspected TLS traffic or impersonation of allowed domains within the firewall stack.
-
-**Attack surface:** The self-signed CA keypair stored on the host filesystem.
-
-**How clawker mitigates it:**
-
-- **Per-project CA.** The CA is auto-generated per project and stored in the firewall data directory on the host — not inside agent containers.
-- **CA rotation.** `clawker firewall rotate-ca` regenerates the CA and all domain certificates in one command.
-- **SNI passthrough for most domains.** Domains without path rules use SNI passthrough — no MITM, no CA involvement. Only domains with path-level rules require TLS inspection.
-
-See [Firewall certificate management](/firewall#certificate-management) for CA lifecycle and rotation.
-
 ## Summary
 
 | Threat | Primary Control | Default | Guide |
 |--------|----------------|:---:|-------|
 | Data exfiltration (network + DNS) | Network firewall + CoreDNS NXDOMAIN | On | [Firewall](/firewall) |
 | Host filesystem damage | Home guard + workspace isolation | On | [Container Internals](/container-internals) |
-| Network pivoting | Deny-default firewall + DNS filtering | On | [Firewall](/firewall#architecture) |
-| TLS interception | Per-project CA + rotation | Auto-generated | [Firewall](/firewall#certificate-management) |
 
 ## Shared Responsibility
 
