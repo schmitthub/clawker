@@ -39,7 +39,7 @@ This two-layer approach means traffic is controlled at both the DNS level (domai
 See the [Firewall](/firewall) guide for the full architecture, configuration, and CLI reference.
 
 <Note>
-Claude Code's `WebSearch` tool uses an Anthropic-managed proxy to perform searches. These requests do not go through the clawker firewall — they are routed through Anthropic's infrastructure. This means the agent may appear to reach domains that are not in your allowlist via search results, but this is expected behavior, not a firewall bypass. The `WebFetch` tool, however, does go through the container's network and is subject to the firewall.
+Claude Code's `WebSearch` tool uses an Anthropic-managed proxy to perform searches. These requests do not go through the clawker firewall — they are routed through Anthropic's infrastructure, which is secured and curated by Anthropic. This means the agent may appear to reach domains that are not in your allowlist via search results, but this is expected behavior, not a firewall bypass. The `WebFetch` tool, however, does go through the container's network and is subject to the firewall.
 </Note>
 
 ## Data Exfiltration via Network Egress
