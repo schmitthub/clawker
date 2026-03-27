@@ -33,6 +33,20 @@ Clawker's security model is designed around two threat actors:
 
 See the [Firewall](/firewall) guide for the full architecture, configuration, and CLI commands.
 
+## DNS Exfiltration
+
+**Threat:** An attacker or coerced agent encodes stolen data (source code, secrets, tokens) into DNS queries — for example, by resolving `stolen-secret.attacker.com` or encoding data as subdomains (`dG9rZW4.exfil.attacker.com`). DNS exfiltration is a well-known technique because DNS traffic is often overlooked by network controls, and even a single query can leak data in the subdomain labels.
+
+**Attack surface:** Any DNS resolution from the container.
+
+**How clawker mitigates it:**
+
+- **CoreDNS catch-all NXDOMAIN.** All DNS queries are routed through the clawker-managed CoreDNS instance. Only domains with explicit forward zones (matching the allowlist) resolve successfully. Every other query — including crafted exfiltration subdomains — returns NXDOMAIN. There is no upstream resolver fallback.
+- **No direct DNS egress.** iptables rules inside the container redirect all DNS traffic to CoreDNS. The agent cannot bypass it by querying external resolvers (e.g., `8.8.8.8`) directly.
+- **Subdomain enforcement.** Forward zones are configured for exact domains and their subdomains as needed. A wildcard exfiltration domain like `anything.attacker.com` won't resolve unless `attacker.com` is explicitly in the allowlist.
+
+See the [Firewall](/firewall) guide for CoreDNS configuration details.
+
 ## Host Filesystem Damage
 
 **Threat:** The agent modifies or deletes files outside the intended project scope, accesses sensitive files (`.env`, private keys, credentials) within the workspace, or operates on a directory broader than intended.
@@ -105,7 +119,7 @@ See [Firewall configuration](/firewall#configuration) for path rules and [Securi
 - **Deny-default firewall.** All outbound traffic is blocked, including to internal IPs and RFC 1918 ranges.
 - **DNS filtering.** Internal hostnames that are not in the allowlist do not resolve via CoreDNS.
 - **Traffic redirection.** iptables DNAT rules route all outbound traffic through Envoy across all supported protocols (TLS, TCP, UDP, HTTP), preventing direct connections to arbitrary hosts or ports.
-- **Dedicated Docker network.** Clawker containers run on an isolated Docker network, separated from other Docker workloads.
+- **Isolated Docker network.** All clawker containers run on a dedicated `clawker-net` bridge network, separated from other Docker workloads. The subnet is determined at runtime, not hardcoded. Internal traffic between containers on the network is allowed, but Docker's built-in DNS service discovery only resolves clawker's own baked-in services (Envoy, CoreDNS, and the optional monitoring stack). An agent cannot discover or address other user containers by name — it would need to know the runtime IP, which changes on every network recreation.
 
 See [Firewall architecture](/firewall#architecture) for the network flow details.
 
@@ -128,6 +142,7 @@ See [Firewall certificate management](/firewall#certificate-management) for CA l
 | Threat | Primary Control | Default | Guide |
 |--------|----------------|:---:|-------|
 | Data exfiltration | Network firewall (deny-all egress) | On | [Firewall](/firewall) |
+| DNS exfiltration | CoreDNS catch-all NXDOMAIN | On | [Firewall](/firewall) |
 | Host filesystem damage | Home guard + workspace isolation | On | [Container Internals](/container-internals) |
 | Credential theft | Socket bridge + host proxy (no storage) | On | [Credentials](/credentials) |
 | Container escape | Unprivileged user + no Docker socket | On | [Security](/security) |
