@@ -27,8 +27,8 @@ Clawker's security model is designed around two threat actors:
 **How clawker mitigates it:**
 
 - **Deny-by-default firewall.** The Envoy+CoreDNS firewall blocks all outbound traffic unless a domain is explicitly whitelisted. DNS queries for unlisted domains return NXDOMAIN — the domain never even resolves.
-- **TLS-level enforcement.** Connections to unlisted destinations are reset by Envoy. There is no fallback or soft-fail.
-- **Path-level HTTP inspection.** For domains with path rules, Envoy performs MITM TLS inspection to enforce endpoint-level restrictions. The agent can reach `api.github.com/repos/` but not `api.github.com/gists` if configured that way.
+- **SNI-based domain enforcement.** Domains are whitelisted by name, not by IP address. This is critical — many domains sit behind shared edge proxies like Cloudflare, so IP-whitelisting one domain could accidentally open the entire internet. IPs also rotate frequently in load-balanced environments, making IP-based rules fragile. Envoy inspects the SNI (Server Name Indication) field in the TLS handshake to match traffic to allowed domains. Connections to unlisted domains are reset with no fallback or soft-fail.
+- **TLS inspection for path-level rules.** For domains that need fine-grained control, Envoy performs MITM TLS inspection to enforce path-level restrictions — regardless of whether the upstream is HTTP or HTTPS. This lets you whitelist a domain and specific paths, or whitelist a domain while blocking certain paths. Useful for user-generated content platforms and package repositories where you need to scope access down to specific endpoints (e.g., allow `api.github.com/repos/` but block `api.github.com/gists`).
 - **Minimal hardcoded allowlist.** Only the Claude API and Docker registry are allowed by default. GitHub, npm, PyPI, and every other service must be explicitly added.
 
 See the [Firewall](/firewall) guide for the full architecture, configuration, and CLI commands.
