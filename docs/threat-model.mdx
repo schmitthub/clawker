@@ -42,22 +42,9 @@ See the [Firewall](/firewall) guide for the full architecture, configuration, an
 - **SNI-based domain enforcement.** Domains are whitelisted by name, not by IP address. This is critical — many domains sit behind shared edge proxies like Cloudflare, so IP-whitelisting one domain could accidentally open the entire internet. IPs also rotate frequently in load-balanced environments, making IP-based rules fragile. Envoy inspects the SNI (Server Name Indication) field in the TLS handshake to match traffic to allowed domains. Connections to unlisted domains are reset with no fallback or soft-fail.
 - **TLS inspection for path-level rules.** For domains that need fine-grained control, Envoy performs MITM TLS inspection to enforce path-level restrictions — regardless of whether the upstream is HTTP or HTTPS. This lets you whitelist a domain and specific paths, or whitelist a domain while blocking certain paths. Useful for user-generated content platforms and package repositories where you need to scope access down to specific endpoints (e.g., allow `api.github.com/repos/` but block `api.github.com/gists`).
 - **Minimal hardcoded allowlist.** Only the Claude API and Docker registry are allowed by default. GitHub, npm, PyPI, and every other service must be explicitly added.
+- **DNS exfiltration prevention.** DNS-based exfiltration is a well-known technique where stolen data is encoded into DNS queries — for example, resolving `stolen-secret.attacker.com` or encoding data as subdomains (`dG9rZW4.exfil.attacker.com`). This is often effective because DNS traffic is overlooked by network controls and even a single query can leak data. Clawker blocks this because all DNS is routed through the managed CoreDNS instance, which only has forward zones for whitelisted domains. Every other query — including crafted exfiltration subdomains — returns NXDOMAIN. There is no upstream resolver fallback, and iptables rules prevent the agent from querying external resolvers directly.
 
 See the [Firewall](/firewall) guide for the full architecture, configuration, and CLI commands.
-
-## DNS Exfiltration
-
-**Threat:** An attacker or coerced agent encodes stolen data (source code, secrets, tokens) into DNS queries — for example, by resolving `stolen-secret.attacker.com` or encoding data as subdomains (`dG9rZW4.exfil.attacker.com`). DNS exfiltration is a well-known technique because DNS traffic is often overlooked by network controls, and even a single query can leak data in the subdomain labels.
-
-**Attack surface:** Any DNS resolution from the container.
-
-**How clawker mitigates it:**
-
-- **CoreDNS catch-all NXDOMAIN.** All DNS queries are routed through the clawker-managed CoreDNS instance. Only domains with explicit forward zones (matching the allowlist) resolve successfully. Every other query — including crafted exfiltration subdomains — returns NXDOMAIN. There is no upstream resolver fallback.
-- **No direct DNS egress.** iptables rules inside the container redirect all DNS traffic to CoreDNS. The agent cannot bypass it by querying external resolvers (e.g., `8.8.8.8`) directly.
-- **Subdomain enforcement.** Forward zones are configured for exact domains and their subdomains as needed. A wildcard exfiltration domain like `anything.attacker.com` won't resolve unless `attacker.com` is explicitly in the allowlist.
-
-See the [Firewall](/firewall) guide for CoreDNS configuration details.
 
 ## Host Filesystem Damage
 
@@ -153,8 +140,7 @@ See [Firewall certificate management](/firewall#certificate-management) for CA l
 
 | Threat | Primary Control | Default | Guide |
 |--------|----------------|:---:|-------|
-| Data exfiltration | Network firewall (deny-all egress) | On | [Firewall](/firewall) |
-| DNS exfiltration | CoreDNS catch-all NXDOMAIN | On | [Firewall](/firewall) |
+| Data exfiltration (network + DNS) | Network firewall + CoreDNS NXDOMAIN | On | [Firewall](/firewall) |
 | Host filesystem damage | Home guard + workspace isolation | On | [Container Internals](/container-internals) |
 | Credential theft | Socket bridge + host proxy (no storage) | On | [Credentials](/credentials) |
 | Container escape | Unprivileged user + no Docker socket | On | [Security](/security) |
