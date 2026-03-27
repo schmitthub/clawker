@@ -62,22 +62,6 @@ See the [Firewall](/firewall) guide for the full architecture, configuration, an
 
 See [Container Internals](/container-internals) for bind vs snapshot details and workspace configuration.
 
-## Container Escape and Docker Daemon Access
-
-**Threat:** The agent breaks out of the container to access the host filesystem, other containers, or the Docker daemon — gaining control beyond the intended sandbox.
-
-**Attack surface:** The Docker runtime, Linux kernel namespaces, and any sockets mounted into the container.
-
-**How clawker mitigates it:**
-
-- **Unprivileged user.** Containers run as a non-root user. The agent cannot escalate privileges within the container.
-- **Minimal capabilities.** Only `NET_ADMIN` and `NET_RAW` are added (required for firewall iptables rules). All other Linux capabilities are dropped by Docker's default seccomp profile.
-- **Docker socket disabled by default.** `security.docker_socket` is `false`. Mounting the Docker socket gives the agent full control over your Docker daemon — it can create, modify, and delete any container, image, or volume on your host. This is the most direct escape path, and it's off by default.
-- **Resource jailing.** `pkg/whail` decorates the Docker SDK with label-based filtering, preventing clawker from seeing or operating on non-clawker Docker resources. Even if the Docker socket were mounted, the clawker client only sees its own resources.
-- **Namespace isolation.** Standard Docker PID, network, mount, and user namespace separation.
-
-See [Security](/security#docker-socket) for Docker socket configuration and [Security](/security#linux-capabilities) for capability details.
-
 ## Prompt Injection via Fetched Content
 
 **Threat:** An attacker places malicious instructions in content the agent fetches — a web page, a repository README, a package description, a file hosted on Google Cloud Storage or Firebase. The agent follows the injected instructions, potentially exfiltrating data, modifying code, or performing unauthorized operations.
@@ -128,7 +112,6 @@ See [Firewall certificate management](/firewall#certificate-management) for CA l
 |--------|----------------|:---:|-------|
 | Data exfiltration (network + DNS) | Network firewall + CoreDNS NXDOMAIN | On | [Firewall](/firewall) |
 | Host filesystem damage | Home guard + workspace isolation | On | [Container Internals](/container-internals) |
-| Container escape | Unprivileged user + no Docker socket | On | [Security](/security) |
 | Prompt injection | Domain scoping + path rules | Configured per-project | [Firewall](/firewall#configuration) |
 | Network pivoting | Deny-default firewall + DNS filtering | On | [Firewall](/firewall#architecture) |
 | TLS interception | Per-project CA + rotation | Auto-generated | [Firewall](/firewall#certificate-management) |
