@@ -10,7 +10,6 @@ require (
 	github.com/containerd/errdefs v1.0.0
 	github.com/cpuguy83/go-md2man/v2 v2.0.7
 	github.com/cyphar/filepath-securejoin v0.6.1
-	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/docker/go-units v0.5.0
 	github.com/go-git/go-billy/v6 v6.0.0-20260226131633-45bd0956d66f
