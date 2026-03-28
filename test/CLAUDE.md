@@ -41,7 +41,7 @@ go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
 
 ### FactoryOptions (`factory.go`)
 
-Nil fields use test fakes (`configmocks`, `logger.Nop`, `dockertest.FakeClient`, etc.). Set a field to the real constructor for integration tests.
+Some nil fields use test fakes (`configmocks.NewBlankConfig`, `dockertest.FakeClient`, `hostproxytest.MockManager`, `firewallmocks.FirewallManagerMock`). `Logger` always creates a real file logger via `logger.New`. `ProjectManager`, `GitManager`, and `SocketBridge` default to nil. Set a field to the real constructor for integration tests.
 
 | Field | Signature | Default |
 |-------|-----------|---------|

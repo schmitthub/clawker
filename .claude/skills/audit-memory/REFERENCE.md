@@ -58,8 +58,8 @@ docs/
 ├── quickstart.mdx         # Hand-authored guide
 ├── installation.mdx       # Hand-authored guide
 ├── configuration.mdx      # Hand-authored guide
-├── architecture.md        # Developer docs (with Mintlify frontmatter)
-├── design.md              # Developer docs (with Mintlify frontmatter)
+├── architecture.mdx       # Developer docs (with Mintlify frontmatter)
+├── design.mdx             # Developer docs (with Mintlify frontmatter)
 ├── testing.md             # Developer docs (with Mintlify frontmatter)
 ├── assets/                # Image assets
 └── cli-reference/         # Auto-generated (82 files, NEVER edit directly)

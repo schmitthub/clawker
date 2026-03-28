@@ -65,7 +65,7 @@ Every CLI command follows the Factory/Options/runF pattern:
 2. Options struct declares only what the command needs
 3. Run function receives `*Options`, never `*Factory`
 
-See `docs/architecture.md` for the full pattern with examples.
+See `docs/architecture.mdx` for the full pattern with examples.
 
 ## Making Changes
 
@@ -99,8 +99,8 @@ PRs are reviewed by the maintainer. Expect feedback within a few days. For large
 
 Before making significant changes, familiarize yourself with the codebase:
 
-- **[docs/architecture.md](docs/architecture.md)** — System layers, package DAG, key abstractions
-- **[docs/design.md](docs/design.md)** — Design philosophy, security model, core concepts
+- **[docs/architecture.mdx](docs/architecture.mdx)** — System layers, package DAG, key abstractions
+- **[docs/design.mdx](docs/design.mdx)** — Design philosophy, security model, core concepts
 - **[docs/testing.md](docs/testing.md)** — Test strategy, patterns, and how to write tests
 - **[docs/cli-reference/](docs/cli-reference/)** — Auto-generated CLI command docs
 

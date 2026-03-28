@@ -178,7 +178,7 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 
 ### Command Test Pattern
 
-Commands are tested using the Cobra+Factory pattern with `dockertest.FakeClient`:
+Commands are tested using the Cobra+Factory pattern with `dockertest.FakeClient`. Each command's test file typically defines a `testFactory` helper that wires the minimum closures needed (Config, Logger, Client, etc.). The pattern looks like:
 
 ```go
 func TestMyCommand(t *testing.T) {
@@ -186,20 +186,14 @@ func TestMyCommand(t *testing.T) {
     fake.SetupContainerCreate()
     fake.SetupContainerStart()
 
-    tio, _, out, errOut := iostreams.Test()
-    f := &cmdutil.Factory{
-        IOStreams: tio,
-        TUI:      tui.NewTUI(tio),
-        Client: func(_ context.Context) (*docker.Client, error) {
-            return fake.Client, nil
-        },
-    }
+    // testFactory wires Config, Logger, Client, HostProxy, etc.
+    f, tio := testFactory(t, fake)
     cmd := NewCmdRun(f, nil)  // nil runF = real run function
 
     cmd.SetArgs([]string{"--detach", "alpine"})
     cmd.SetIn(&bytes.Buffer{})
-    cmd.SetOut(out)
-    cmd.SetErr(errOut)
+    cmd.SetOut(tio.Out)
+    cmd.SetErr(tio.ErrOut)
 
     err := cmd.Execute()
     require.NoError(t, err)
@@ -236,7 +230,7 @@ result := h.Run("firewall", "status", "--json")
 require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
 ```
 
-Pass real constructors for any dependency you want to exercise against Docker. Nil fields default to test fakes (`configmocks.NewBlankConfig`, `logger.Nop`, `dockertest.FakeClient`, `firewallmocks.FirewallManagerMock`, etc.).
+Pass real constructors for any dependency you want to exercise against Docker. Some nil fields use test fakes (`configmocks.NewBlankConfig`, `dockertest.FakeClient`, `hostproxytest.MockManager`, `firewallmocks.FirewallManagerMock`), while `Logger` always creates a real file logger via `logger.New`, and `ProjectManager`, `GitManager`, and `SocketBridge` default to nil.
 
 #### Harness Types
 

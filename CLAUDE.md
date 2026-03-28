@@ -377,7 +377,7 @@ User-facing docs are powered by [Mintlify](https://mintlify.com/) and live in th
 * `docs/index.mdx` — Homepage
 * `docs/*.mdx` — Hand-authored pages (quickstart, installation, configuration)
 * `docs/cli-reference/*.md` — Auto-generated via Makefile, checked in, freshness verified separately in CI (**never edit directly**)
-* `docs/architecture.md`, `docs/design.md`, `docs/testing.md` — Developer docs with Mintlify frontmatter
+* `docs/architecture.mdx`, `docs/design.mdx`, `docs/testing.md` — Developer docs with Mintlify frontmatter
 * See `.claude/rules/mintlify-docs.md` for full conventions (theming, MDX parsing, navigation)
 
 **Regenerating CLI reference**: `go run ./cmd/gen-docs --doc-path docs --markdown --website`
