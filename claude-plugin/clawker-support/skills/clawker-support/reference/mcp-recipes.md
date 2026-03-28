@@ -8,14 +8,15 @@ framework below.
 
 When investigating what MCP servers a project uses, **look at the clawker
 config**, not the host's Claude Code config files. Clawker manages its own
-MCP setup independently — the container's MCP servers are declared in the
-project's clawker config (via `agent.post_init` and potentially
-`agent.includes`), not in the host's Claude Code config directory.
+MCP setup independently — the container's MCP servers are registered via
+`agent.post_init` in the project's clawker config, not in the host's Claude
+Code config directory.
 
 **Where to look for existing MCP declarations:**
-1. Project-level `.clawker.yaml` → `agent.post_init` section and `agent.includes`
-2. `.clawker.local.yaml` → `agent.post_init` section (personal overrides)
-3. User-level `~/.config/clawker/clawker.yaml` → `agent.post_init` section
+Look for `claude mcp add` commands in `agent.post_init` across the project's
+clawker config layers (local overrides, project config, user-level defaults).
+Fetch `https://docs.clawker.dev/configuration` for the current schema to
+understand all available agent config fields.
 
 **Do NOT:**
 - Search the host's Claude Code config for MCP server lists

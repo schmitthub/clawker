@@ -200,9 +200,9 @@ Present the user with:
 - **What firewall rules** are needed — research the domains, don't guess.
 
 Always provide **specific YAML config** the user can paste. **Prefix every YAML
-block with a comment showing the target file path**, e.g.:
+block with a comment showing the target file path and config level:**
 ```yaml
-# In: .clawker.yaml (project-level)
+# In: <file path> (<config level>)
 ```
 
 If modifying existing config, show the change as a diff. Explain WHY a setting

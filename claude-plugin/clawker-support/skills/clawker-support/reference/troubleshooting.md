@@ -62,8 +62,8 @@ User reports network errors, timeouts, or "connection refused" from inside a con
    ```bash
    clawker firewall list
    ```
-   Check if the target domain appears. Only a small set of Anthropic domains
-   are hardcoded — everything else must be explicitly allowed.
+   Check if the target domain appears. Only a small subset of Claude Code
+   required domains are hardcoded — everything else must be explicitly allowed.
 
 3. **Is it the right protocol?** Fetch `https://docs.clawker.dev/configuration`
    for the current firewall config syntax. Different protocols and ports require
