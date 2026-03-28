@@ -28,11 +28,8 @@ Clawker has multiple test tiers. **All relevant tests must pass before submittin
 make test
 
 # Integration tests (Docker required)
+go test ./test/e2e/... -v -timeout 10m        # E2E integration
 go test ./test/whail/... -v -timeout 5m       # Whail BuildKit integration
-go test ./test/cli/... -v -timeout 15m        # CLI workflow tests
-go test ./test/commands/... -v -timeout 10m   # Command integration
-go test ./test/internals/... -v -timeout 10m  # Internal integration
-go test ./test/agents/... -v -timeout 15m     # Agent E2E
 
 # All test suites
 make test-all
@@ -68,7 +65,7 @@ Every CLI command follows the Factory/Options/runF pattern:
 2. Options struct declares only what the command needs
 3. Run function receives `*Options`, never `*Factory`
 
-See `docs/architecture.md` for the full pattern with examples.
+See `docs/architecture.mdx` for the full pattern with examples.
 
 ## Making Changes
 
@@ -102,8 +99,8 @@ PRs are reviewed by the maintainer. Expect feedback within a few days. For large
 
 Before making significant changes, familiarize yourself with the codebase:
 
-- **[docs/architecture.md](docs/architecture.md)** — System layers, package DAG, key abstractions
-- **[docs/design.md](docs/design.md)** — Design philosophy, security model, core concepts
+- **[docs/architecture.mdx](docs/architecture.mdx)** — System layers, package DAG, key abstractions
+- **[docs/design.mdx](docs/design.mdx)** — Design philosophy, security model, core concepts
 - **[docs/testing.md](docs/testing.md)** — Test strategy, patterns, and how to write tests
 - **[docs/cli-reference/](docs/cli-reference/)** — Auto-generated CLI command docs
 

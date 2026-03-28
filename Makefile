@@ -193,10 +193,10 @@ clawker-clean:
 # ============================================================================
 
 # Package list for unit tests (excludes integration test directories)
-UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/cli' | grep -v '/test/commands' | grep -v '/test/whail' | grep -v '/test/internals' | grep -v '/test/agents' | grep -v '/test/e2e')
+UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/whail' | grep -v '/test/e2e')
 
 # Unit tests only (fast, no Docker)
-# Excludes test/cli, test/internals, test/agents which require Docker
+# Excludes test/e2e, test/whail which require Docker
 test:
 	@echo "Running unit tests..."
 ifndef GOTESTSUM
@@ -215,29 +215,13 @@ test-ci:
 	@PKGS="$(UNIT_PKGS)"; if [ -z "$$PKGS" ]; then echo "ERROR: no packages found" >&2; exit 1; fi; \
 	$(GO) test -race -count=1 -coverprofile=coverage.out $$PKGS
 
-# Internal integration tests (requires Docker)
-test-internals:
-	@echo "Running internal integration tests (requires Docker)..."
+# E2E integration tests (requires Docker)
+test-e2e:
+	@echo "Running E2E integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
 endif
-	$(TEST_CMD_VERBOSE) -timeout 10m ./test/internals/...
-
-# Clawker workflow tests via testscript (requires Docker)
-test-acceptance:
-	@echo "Running Clawker acceptance tests (requires Docker)..."
-ifndef GOTESTSUM
-	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
-endif
-	$(TEST_CMD_VERBOSE) -timeout 15m ./test/cli/...
-
-# Command integration tests (requires Docker)
-test-commands:
-	@echo "Running command integration tests (requires Docker)..."
-ifndef GOTESTSUM
-	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
-endif
-	$(TEST_CMD_VERBOSE) -timeout 10m ./test/commands/...
+	$(TEST_CMD_VERBOSE) -timeout 10m ./test/e2e/...
 
 # Whail BuildKit integration tests (requires Docker + BuildKit)
 test-whail:
@@ -247,16 +231,8 @@ ifndef GOTESTSUM
 endif
 	$(TEST_CMD_VERBOSE) -timeout 5m ./test/whail/...
 
-# Agent E2E tests (requires Docker)
-test-agents:
-	@echo "Running agent E2E tests (requires Docker)..."
-ifndef GOTESTSUM
-	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
-endif
-	$(TEST_CMD_VERBOSE) -timeout 15m ./test/agents/...
-
 # All test suites
-test-all: test test-commands test-whail test-internals test-acceptance test-agents
+test-all: test test-e2e test-whail
 
 # Unit tests with coverage
 test-coverage:

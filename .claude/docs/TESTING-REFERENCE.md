@@ -74,8 +74,10 @@ Each package with complex dependencies provides test infrastructure:
 | `internal/docker` | `dockertest/` | `FakeClient`, `SetupContainerList`, fixtures |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
-| `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
-| `pkg/whail` | `whailtest/` | `FakeAPIClient`, function-field fake |
+| `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
+| `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
+| `internal/firewall` | `mocks/` | `FirewallManagerMock` (moq-generated) |
+| `internal/hostproxy` | `hostproxytest/` | `MockHostProxy` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
 
@@ -199,41 +201,32 @@ mgr.GetFunc = func(_ context.Context, root string) (project.Project, error) {
 }
 ```
 
-### 2) Read-only config + in-memory git
+### 2) Mock project with identity
 
-Use `projectmocks.NewReadOnlyTestManager(t, yaml)` when your test needs realistic project reads from YAML while preventing registry mutation.
-
-- Config double source: `configmocks.NewFromString(yaml, "")`
-- Git double source: `gittest.NewInMemoryGitManager(t, repoRoot)`
-- Mutation guard: `Register`, `Update`, and `Remove` return `project.ErrReadOnlyTestManager`
+Use `projectmocks.NewMockProject(name, repoPath)` when your test needs a project with read accessors populated. Mutation methods return zero values.
 
 ```go
-h := projectmocks.NewReadOnlyTestManager(t, `
-projects:
-  - name: Demo
-    root: /tmp/demo
-`)
-projects, err := h.Manager.List(context.Background())
-require.NoError(t, err)
-require.Len(t, projects, 1)
+proj := projectmocks.NewMockProject("demo", "/tmp/demo")
+require.Equal(t, "demo", proj.Name())
+require.Equal(t, "/tmp/demo", proj.RepoPath())
 ```
 
-### 3) Isolated writable config + in-memory git
+### 3) Isolated writable config + real PM
 
-Use `projectmocks.NewIsolatedTestManager(t)` when tests must exercise config `Set`/`Write` behavior and assert persisted files.
+Use `projectmocks.NewTestProjectManager(t, gitFactory)` when tests must exercise real Register/Remove/List round-trips with file-backed config.
 
-- Config double source: `configmocks.NewIsolatedTestConfig(t)`
-- Git double source: `gittest.NewInMemoryGitManager(t, repoRoot)`
-- Registry/settings assertions: `h.ReadConfigFiles(...)`
+- Backed by `testenv.New(t, testenv.WithProjectManager(gitFactory))`
+- Pass `nil` for gitFactory if worktree operations aren't needed
 
 ```go
-h := projectmocks.NewIsolatedTestManager(t)
-_, err := h.Manager.Register(context.Background(), "Demo", t.TempDir())
+pm := projectmocks.NewTestProjectManager(t, nil)
+_, err := pm.Register(context.Background(), "Demo", t.TempDir())
 require.NoError(t, err)
 
-var settingsBuf, projectBuf, registryBuf bytes.Buffer
-h.ReadConfigFiles(&settingsBuf, &projectBuf, &registryBuf)
-require.Contains(t, registryBuf.String(), "name: Demo")
+entries, err := pm.List(context.Background())
+require.NoError(t, err)
+require.Len(t, entries, 1)
+require.Equal(t, "Demo", entries[0].Name)
 ```
 
 ---
@@ -584,9 +577,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 Golden file tests use `GOLDEN_UPDATE=1` to regenerate expected outputs:
 
 ```bash
-GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeed -v          # JSON testdata
-GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v # TUI golden files
-GOLDEN_UPDATE=1 go test ./internal/cmd/image/build/... -run TestBuildProgress_Golden -v
+GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios -v  # JSON testdata
+make storage-golden                                                                  # Storage merge golden (interactive)
 ```
 
 ---

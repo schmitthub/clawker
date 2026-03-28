@@ -18,11 +18,8 @@ Docker is always available on this machine. It is a widely available free resour
 ```bash
 make test                                        # Unit tests (no Docker)
 make test-all                                    # All test suites
+go test ./test/e2e/... -v -timeout 10m           # E2E integration
 go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
-go test ./test/cli/... -v -timeout 15m           # CLI workflow tests
-go test ./test/commands/... -v -timeout 10m      # Command integration
-go test ./test/internals/... -v -timeout 10m     # Internal integration
-go test ./test/agents/... -v -timeout 15m        # Agent E2E
 ```
 
 ## DAG-Driven Test Infrastructure
@@ -34,9 +31,11 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | `internal/testenv` | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
-| `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
+| `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
-| `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
+| `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
+| `internal/firewall` | `mocks/` | `FirewallManagerMock` (moq-generated) |
+| `internal/hostproxy` | `hostproxytest/` | `MockHostProxy` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
 
@@ -82,12 +81,8 @@ For tests asserting defaults or file values, clear `CLAWKER_*` environment overr
 | Category | Directory | Docker | Purpose |
 |----------|-----------|:---:|---------|
 | Unit | `*_test.go` (co-located) | No | Pure logic, fakes, mocks |
-| CLI | `test/cli/` | Yes | Testscript-based CLI workflows |
-| Commands | `test/commands/` | Yes | Command integration |
-| Internals | `test/internals/` | Yes | Container scripts/services |
+| E2E | `test/e2e/` | Yes | Full-stack integration (firewall, mounts, migrations, presets) |
 | Whail | `test/whail/` | Yes+BuildKit | Engine-level image builds |
-| Agents | `test/agents/` | Yes | Full E2E lifecycle |
-| Harness | `test/harness/` | No | Builders, fixtures, golden files, helpers |
 
 No build tags — directory separation only.
 
@@ -101,18 +96,11 @@ func TestFeature_E2E(t *testing.T)            // E2E
 
 ## Golden File Tests
 
-Golden file utilities live in `test/harness/golden/` (leaf subpackage — stdlib + testify only).
+Golden files are managed per-package — there is no shared golden utility package. Each package handles its own approach:
 
-```go
-import "github.com/schmitthub/clawker/test/harness/golden"
-
-golden.CompareGoldenString(t, name, actual)  // Compare + auto-update
-golden.CompareGolden(t, name, actualBytes)   // Byte variant
-golden.GoldenAssert(t, name, actualBytes)    // Assert-style (no update mode)
-golden.GoldenPath(t, name)                   // Get path only
-```
-
-Update: `GOLDEN_UPDATE=1 go test ./... -run TestFoo`
+- **Whail build scenarios**: `GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios -v` (JSON testdata)
+- **Firewall corefile**: `internal/firewall/testdata/corefile_basic.golden` (hand-edit to update)
+- **Storage merge engine**: struct literals in test code, not files — use `make storage-golden` for interactive update
 
 ## Command Test Pattern (Cobra+Factory)
 
@@ -154,5 +142,5 @@ Golden values are code, not files — `STORAGE_GOLDEN_BLESS` env var + `make sto
 3. **Context cancellation**: Use `context.Background()` in cleanup functions
 4. **Docker availability**: Always check with `RequireDocker(t)` or `SkipIfNoDocker(t)`
 5. **Error handling**: NEVER silently discard errors — log cleanup failures with `t.Logf`
-6. **Unit test imports**: Co-located `*_test.go` should NOT import `test/harness` (pulls Docker SDK). Use `test/harness/golden/` for golden file utilities only.
+6. **Unit test imports**: Co-located `*_test.go` should NOT import `test/e2e/harness` (pulls Docker SDK).
 7. **Factory in tests**: Never call `factory.New()` outside `internal/clawker/cmd.go`. Use `&cmdutil.Factory{}` struct literals with test doubles.
