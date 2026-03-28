@@ -181,6 +181,15 @@ clawker build
 
 See the [Configuration](/configuration) guide for the full reference.
 
+<Tip>
+**Claude Code users:** Install the clawker-support plugin for hands-on help with setup, configuration, MCP wiring, firewall rules, and troubleshooting. It acts as a clawker internals expert — researches what you're trying to add, reads the real Dockerfile template and config schema, and gives you the exact YAML you need.
+
+```bash
+claude plugin marketplace add schmitthub/claude-plugins
+claude plugin install clawker-support@schmitthub-plugins
+```
+</Tip>
+
 ## 7. Parallel Agents with Worktrees
 
 Run multiple agents on separate branches using Git worktrees:
