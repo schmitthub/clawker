@@ -101,13 +101,9 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   └── whail/                 # Reusable Docker engine with label-based isolation
 │       └── buildkit/          # BuildKit client (moby/buildkit) — isolated heavy deps
 ├── test/
-│   ├── e2e/                   # E2E integration tests
+│   ├── e2e/                   # E2E integration tests (firewall, mounts, migrations, presets)
 │   │   └── harness/           # CLI test harness (delegates dirs to testenv, adds chdir + Factory + Run)
-│   ├── whail/                 # Whail BuildKit integration tests (Docker + BuildKit)
-│   ├── cli/                   # Testscript-based CLI workflow tests (Docker)
-│   ├── commands/              # Command integration tests (Docker)
-│   ├── internals/             # Container scripts/services tests (Docker)
-│   └── agents/                # Full agent E2E tests (Docker)
+│   └── whail/                 # Whail BuildKit integration tests (Docker + BuildKit)
 ├── scripts/
 │   ├── install.sh             # curl|bash installer (downloads pre-built binary from GitHub releases)
 │   └── check-claude-freshness.sh  # CLAUDE.md staleness checker
@@ -125,23 +121,18 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/ins
 bash scripts/install.sh --version v0.1.3 --dir $HOME/.local/bin  # Pin version + custom dir
 
 go build -o bin/clawker ./cmd/clawker  # Build CLI
-make test                                 # Unit tests (no Docker, excludes test/cli,internals,agents)
+make test                                 # Unit tests (no Docker, excludes test/e2e,whail)
 ./bin/clawker --debug run @              # Debug logging
 go run ./cmd/gen-docs --doc-path docs --markdown            # Regenerate CLI docs
 go run ./cmd/gen-docs --doc-path docs --markdown --website   # Regenerate CLI docs for Mintlify (MDX-safe + frontmatter)
 npx mintlify dev --docs-directory docs                       # Local Mintlify preview (http://localhost:3000)
 
 # Golden file tests
-GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeed -v          # Regenerate JSON testdata
-GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v # Regenerate TUI golden files
-GOLDEN_UPDATE=1 go test ./internal/cmd/image/build/... -run TestBuildProgress_Golden -v  # Regenerate command golden files
+GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios -v  # Regenerate JSON testdata
 
 # Docker-required tests (directory separation, no build tags)
+go test ./test/e2e/... -v -timeout 10m           # E2E integration tests
 go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration tests
-go test ./test/cli/... -v -timeout 15m           # CLI workflow tests
-go test ./test/commands/... -v -timeout 10m      # Command integration tests
-go test ./test/internals/... -v -timeout 10m     # Internal integration tests
-go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 
 # Pre-commit hooks (mirrors CI quality gates locally)
 bash scripts/install-hooks.sh          # Install pre-commit hooks (run once after clone)
@@ -323,7 +314,7 @@ Generated mocks live in `<package>/mocks/` and are prefixed with `// Code genera
 * Docker hijacked connections need cleanup of both read and write sides
 * Terminal visual state (alternate screen, cursor visibility, colors) must be reset separately from termios mode — `term.Restore()` sends escape sequences before restoring raw/cooked mode
 * Terminal resize +1/-1 trick: Resize to (height+1, width+1) then actual size to force SIGWINCH for TUI redraw
-* CLI test assertions (test/cli/) are case-sensitive; tests need `mkdir $HOME/.local/clawker` and `security.firewall.enable: false`
+* E2E tests use Docker resource labels (`dev.clawker.test=true`) for cleanup; `make test-clean` removes leaked resources
 * Container flag types and domain logic consolidated in `internal/cmd/container/shared/` — `CreateContainer()` is the single creation entry point
 * After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
 * Empty projects generate 2-segment names (`clawker.dev`), not 3 (`clawker..dev`)

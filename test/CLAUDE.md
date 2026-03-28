@@ -8,13 +8,7 @@ Test infrastructure for all non-unit tests. Uses directory separation instead of
 test/
 ├── e2e/            # End-to-end integration tests (Docker + real infra)
 │   └── harness/    # CLI test harness (harness.go, factory.go)
-├── whail/          # Whail BuildKit integration tests (Docker + BuildKit)
-├── cli/            # Testscript-based CLI workflow tests (Docker)
-├── commands/       # Command integration tests (Docker)
-├── internals/      # Container script/service tests (Docker)
-├── agents/         # Full agent E2E tests (Docker)
-└── harness/        # Shared non-Docker test utilities
-    └── golden/     # Golden file utilities (leaf — stdlib + testify only)
+└── whail/          # Whail BuildKit integration tests (Docker + BuildKit)
 ```
 
 ## Running Tests
@@ -23,10 +17,6 @@ test/
 make test                                        # Unit tests only (no Docker)
 go test ./test/e2e/... -v -timeout 10m           # E2E integration (firewall, mounts)
 go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
-go test ./test/cli/... -v -timeout 15m           # CLI workflows
-go test ./test/commands/... -v -timeout 10m      # Command integration
-go test ./test/internals/... -v -timeout 10m     # Internal integration
-go test ./test/agents/... -v -timeout 15m        # Agent E2E
 ```
 
 ## Conventions
@@ -105,21 +95,6 @@ On failure, dumps `clawker.log` and `firewall.log` from the test's state dir.
 - `ensureClawkerBinary(t)` — builds `bin/clawker` once per process, sets `CLAWKER_EXECUTABLE`
 - `cleanupTestEnvironment(t, h)` — orchestrates cleanup chain above
 - `dockerListByLabel(ctx, resourceType, label)` — lists Docker resource IDs by label
-
-## Golden Files (`test/harness/golden/`)
-
-Leaf subpackage — stdlib + testify only, no heavy transitive dependencies.
-
-```go
-import "github.com/schmitthub/clawker/test/harness/golden"
-
-golden.GoldenAssert(t, name, actual)
-golden.CompareGolden(t, name, actual)
-golden.CompareGoldenString(t, name, actual)
-golden.GoldenPath(t, name) string
-```
-
-Errors: `golden.ErrGoldenMismatch`, `golden.ErrGoldenMissing`. Update: `GOLDEN_UPDATE=1`.
 
 ## Firewall E2E Tests (`test/e2e/firewall_test.go`)
 

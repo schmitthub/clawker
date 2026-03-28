@@ -28,11 +28,8 @@ Clawker has multiple test tiers. **All relevant tests must pass before submittin
 make test
 
 # Integration tests (Docker required)
+go test ./test/e2e/... -v -timeout 10m        # E2E integration
 go test ./test/whail/... -v -timeout 5m       # Whail BuildKit integration
-go test ./test/cli/... -v -timeout 15m        # CLI workflow tests
-go test ./test/commands/... -v -timeout 10m   # Command integration
-go test ./test/internals/... -v -timeout 10m  # Internal integration
-go test ./test/agents/... -v -timeout 15m     # Agent E2E
 
 # All test suites
 make test-all
