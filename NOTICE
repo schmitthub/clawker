@@ -20,7 +20,6 @@ github.com/containerd/platforms                                                A
 github.com/containerd/ttrpc                                                    Apache-2.0
 github.com/containerd/typeurl/v2                                               Apache-2.0
 github.com/distribution/reference                                              Apache-2.0
-github.com/docker/docker/pkg/stdcopy                                           Apache-2.0
 github.com/docker/go-connections                                               Apache-2.0
 github.com/docker/go-units                                                     Apache-2.0
 github.com/go-git/go-billy/v6                                                  Apache-2.0

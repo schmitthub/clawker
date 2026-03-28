@@ -2,12 +2,12 @@ package dockertest
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"strings"
 
-	"github.com/docker/docker/pkg/stdcopy"
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/build"
 	"github.com/moby/moby/api/types/container"
@@ -258,8 +258,7 @@ func (f *FakeClient) SetupContainerAttachWithOutput(data string) {
 		clientConn, serverConn := net.Pipe()
 		go func() {
 			defer serverConn.Close()
-			w := stdcopy.NewStdWriter(serverConn, stdcopy.Stdout)
-			_, _ = w.Write([]byte(data))
+			_, _ = writeStdcopyFrame(serverConn, 1, []byte(data))
 		}()
 		return client.ContainerAttachResult{
 			HijackedResponse: client.NewHijackedResponse(clientConn, "application/vnd.docker.multiplexed-stream"),
@@ -452,8 +451,7 @@ func (f *FakeClient) SetupExecAttachWithOutput(data string) {
 		clientConn, serverConn := net.Pipe()
 		go func() {
 			defer serverConn.Close()
-			w := stdcopy.NewStdWriter(serverConn, stdcopy.Stdout)
-			_, _ = w.Write([]byte(data))
+			_, _ = writeStdcopyFrame(serverConn, 1, []byte(data))
 		}()
 		return client.ExecAttachResult{
 			HijackedResponse: client.NewHijackedResponse(clientConn, "application/vnd.docker.multiplexed-stream"),
@@ -618,4 +616,19 @@ func (e errNotFound) NotFound()     {}
 
 func notFoundError(ref string) error {
 	return errNotFound{msg: "No such image: " + ref}
+}
+
+// writeStdcopyFrame writes a single stdcopy-framed message. The Docker
+// multiplexed stream protocol uses an 8-byte header: stream type (1 byte),
+// 3 zero bytes, then payload size as big-endian uint32.
+// Stream types: 0=stdin, 1=stdout, 2=stderr.
+// See: https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container/operation/ContainerAttach
+func writeStdcopyFrame(w io.Writer, streamType byte, payload []byte) (int, error) {
+	header := [8]byte{}
+	header[0] = streamType
+	binary.BigEndian.PutUint32(header[4:], uint32(len(payload)))
+	if _, err := w.Write(header[:]); err != nil {
+		return 0, err
+	}
+	return w.Write(payload)
 }
