@@ -8,9 +8,15 @@ apply this pattern.
 
 Every MCP setup in clawker has three parts:
 
-1. **Install** — via `agent.post_init` (runs once per container)
-2. **Configure** — register the MCP with Claude Code via `claude mcp add` in post_init
+1. **Install the MCP package** — at build-time via `build.instructions.user_run`
+   (baked into the image, never re-downloaded)
+2. **Register with Claude Code** — via `claude mcp add` in `agent.post_init`
+   (must be runtime — needs the `claude` CLI and initialized config volume)
 3. **Network** — add firewall rules for any external endpoints the MCP calls
+
+**Important:** Only `claude mcp add` must be in `post_init`. Package
+installation (`npm install -g`, `pip install`, etc.) belongs at build-time.
+See "Common Mistake" section below.
 
 ## How to Research an MCP
 
@@ -34,35 +40,59 @@ When a user asks about an MCP server you don't know:
 
 ## Wiring It Into Clawker Config
 
-### Why post_init (not build-time)
+### Why registration must be in post_init (but installation should not)
 
-MCP registration uses `claude mcp add`, which requires:
+`claude mcp add` writes to Claude Code's config. It requires:
 
-1. **The `claude` CLI binary** — not available during early build steps
-   (`root_run`, `user_run` before Claude install)
-2. **Claude Code to be initialized** — the entrypoint script seeds config
-   from `~/.claude-init/` into the `~/.claude` config volume on first boot.
-   `claude mcp add` writes to this config, so it can only run after
-   initialization completes.
+1. **The `claude` CLI binary** — installed late in the Dockerfile (after `user_run`)
+2. **The initialized config volume** — the entrypoint seeds `~/.claude` from
+   `~/.claude-init/` on first boot. `claude mcp add` writes to this config, so
+   it can only run after initialization.
 
-`post_init` runs after the entrypoint init sequence — the binary is
-available, Claude is initialized, and the config volume is mounted and
-seeded. That's why all MCP setup goes here.
+That's why `claude mcp add` goes in `post_init`.
 
-### post_init: Install + Register
+But **installing the MCP package itself** (`npm install -g`, `pip install`, etc.)
+does NOT need the `claude` binary or the config volume. It should go in
+`build.instructions.user_run` so it's baked into the image layer and never
+re-downloaded when a new container starts.
 
-All MCP setup goes in `agent.post_init`. This runs once per container
+### Build-time: Install the MCP package
+
+Install the npm/pip package at build-time so it's baked into the image:
+
+**Node.js MCP server:**
+```yaml
+build:
+  instructions:
+    user_run:
+      - "npm install -g @some-org/mcp-server-foo"
+```
+
+**Python MCP server** (if pre-installing rather than relying on uvx):
+```yaml
+build:
+  instructions:
+    user_run:
+      - "pip install some-mcp-package"
+```
+
+Pre-installing at build-time avoids download delays at container startup and
+avoids needing npm/PyPI registry access at runtime (which would require
+additional firewall rules).
+
+### Runtime: Register with Claude Code
+
+Registration goes in `agent.post_init`. This runs once per container
 (marker file prevents re-runs).
 
-**stdio MCP example** (runs as a local subprocess):
+**stdio MCP** (runs as a local subprocess):
 ```yaml
 agent:
   post_init: |
-    npm install -g @some-org/mcp-server-foo
     claude mcp add -s local foo -- npx -y @some-org/mcp-server-foo
 ```
 
-**HTTP MCP example** (connects to a remote server):
+**HTTP MCP** (connects to a remote server):
 ```yaml
 agent:
   post_init: |
@@ -78,11 +108,31 @@ agent:
     claude mcp add -s user --header "Authorization: Bearer $FOO_API_KEY" -t http foo https://mcp.foo.com/mcp
 ```
 
-**Python-based MCP** (uses uvx instead of npx):
+**Python MCP via uvx** (uvx downloads on demand; pre-install via `user_run` for faster startup):
 ```yaml
 agent:
   post_init: |
     claude mcp add -s local foo -- uvx --from some-package foo-server start-mcp-server
+```
+
+### Complete example: stdio MCP with build-time install
+
+Combining both parts for a typical stdio MCP server:
+
+```yaml
+build:
+  instructions:
+    user_run:
+      - "npm install -g @some-org/mcp-server-foo"
+
+agent:
+  post_init: |
+    claude mcp add -s local foo -- npx -y @some-org/mcp-server-foo
+
+security:
+  firewall:
+    add_domains:
+      - api.foo.com
 ```
 
 ### Scope: `-s local` vs `-s user`
@@ -141,6 +191,21 @@ security:
 - Look at source code for HTTP client base URLs
 - If stuck: temporarily `clawker firewall bypass 5m` and watch for blocked
   connection errors, then add those domains
+
+## Common Mistake: Putting installations in post_init
+
+`post_init` runs once per container, NOT once per image. Every command in
+`post_init` re-executes when a new container is created from the same image.
+This wastes time and requires network access at startup.
+
+**Only `claude mcp add` belongs in post_init.** Package installations
+(`npm install -g`, `pip install`, `apt-get install`, etc.) belong at
+build-time. See SKILL.md Step 4 for the full decision framework, priority
+order, and anti-pattern table.
+
+If you see an existing config with `npm install -g` in `post_init`, recommend
+moving it to `build.instructions.user_run`. The `claude mcp add` line stays
+in `post_init`.
 
 ## Debugging MCP Issues
 
