@@ -224,18 +224,25 @@ User set up an MCP server but it's not working inside the container.
    # From inside the container:
    ls -la ~/.claude/post-initialized
    ```
-   If the marker exists, post_init already ran. If the MCP package wasn't
-   installed correctly, delete the marker and restart:
+   If the marker exists, post_init already ran. If `claude mcp add`
+   registration failed, delete the marker and restart:
    ```bash
    rm ~/.claude/post-initialized
    ```
-   Then restart the container.
+   Then restart the container. Note: this only re-runs `post_init`
+   (MCP registration). If the npm/pip package itself is missing, it
+   needs to be added to `build.instructions.user_run` and the image
+   rebuilt — see `mcp-recipes.md`.
 
-2. **Is the npm package installed?**
+2. **Are the MCP's dependencies installed?** Check using the MCP's own
+   documentation for how to verify its installation. For example, check
+   if the expected binary is on PATH:
    ```bash
    # Inside the container:
-   npx -y @modelcontextprotocol/server-<name> --help
+   which <expected-binary>
    ```
+   If the dependency is not found, it needs to be added at build-time
+   (see SKILL.md Step 4) and the image rebuilt.
 
 3. **Are firewall rules in place?** If the MCP calls external APIs, those
    domains must be in the firewall allowlist. See `mcp-recipes.md` for

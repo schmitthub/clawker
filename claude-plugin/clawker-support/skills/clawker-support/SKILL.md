@@ -6,8 +6,14 @@ description: >
   maps to generated Dockerfiles, where to add packages vs scripts vs injection
   points, firewall architecture, MCP setup, credential forwarding, and
   container lifecycle. Use when the user mentions clawker config, .clawker.yaml,
-  blocked domains, build errors, or container issues — even without saying
-  "clawker" explicitly.
+  blocked domains, build errors, Docker image build failures, post_init,
+  build.packages, container networking, or container issues — even without
+  saying "clawker" explicitly.
+license: MIT
+compatibility: >
+  Requires the clawker CLI installed on the host. Network access needed for
+  fetching docs.clawker.dev documentation pages. Works best inside a clawker
+  project directory with a .clawker.yaml config file present.
 allowed-tools: Bash(clawker *), Bash(which clawker), Bash(ls *), Bash(cat *), Read, Glob, Grep, WebFetch, WebSearch
 ---
 
@@ -70,8 +76,8 @@ Do not guess at config syntax. Read the actual sources of truth:
    - Where `{{.Packages}}` renders (the package install block)
    - Where `{{range .RootRunCmds}}` renders (root_run commands)
    - Where `{{range .UserRunCmds}}` renders (user_run commands)
-   - Where injection points render (`after_from`, `after_packages`, `after_user_setup`,
-     `after_user_switch`, `after_claude_install`, `before_entrypoint`)
+   - Where injection points render (in order: `after_from`, `after_packages`,
+     `after_user_setup`, `after_user_switch`, `after_claude_install`, `before_entrypoint`)
    - Where `{{range .CopyInstructions}}` renders (copy directives)
    - What runs as root vs as the `claude` user (look for `USER` directives)
 
@@ -87,17 +93,74 @@ Do not guess at config syntax. Read the actual sources of truth:
 6. **Other topics** — For monitoring, worktrees, loop mode, or other features, fetch
    `https://docs.clawker.dev/llms.txt` for the docs index, then fetch the relevant page.
 
-### Step 4: Synthesize and respond
+### Step 4: Decide where it goes — build-time vs runtime
+
+Before writing any YAML, classify every item the user needs installed. This is
+the most common source of bad advice — putting things in `post_init` that belong
+at build-time. Follow this priority order:
+
+**Priority 1 — Package managers (`build.packages`)**
+If the thing you need is available as an OS package via apt or apk, put it in
+`build.packages`. This is always the first choice. It runs as root during
+`docker build`, uses Docker layer caching, and is the fastest install method.
+
+**Priority 2 — Direct downloads and installers (`build.instructions.root_run` or `user_run`)**
+For tools not in the OS package manager — curl|bash installers, language runtimes
+(rustup, nvm, pyenv), compiled binaries from GitHub releases, npm/pip global
+installs — use build instructions. Use `root_run` when the installer needs root
+(system directories, adding repos, modifying `/etc`). Use `user_run` for
+user-level installs (npm, pip, cargo).
+
+**Priority 3 — Runtime ONLY (`agent.post_init`)**
+`post_init` is ONLY for commands that need the running container's runtime
+context. In practice, this means commands that need:
+- The `claude` CLI binary (installed late in the Dockerfile, after `user_run`)
+- The initialized `~/.claude` config volume (seeded by the entrypoint on first boot)
+- Mounted volumes or runtime environment variables not available at build time
+
+The canonical `post_init` command is `claude mcp add`. Almost nothing else
+belongs there.
+
+**Decision table:**
+
+| What you're installing | Config section | Why |
+|---|---|---|
+| OS packages (git, ripgrep, postgresql-client) | `build.packages` | apt/apk, root, cached in image layer |
+| System config, adding repos, modifying `/etc` | `build.instructions.root_run` | Needs root, baked into image |
+| npm/pip global installs, language runtimes, compiled tools | `build.instructions.user_run` | User-level, baked into image |
+| Registering an MCP server (`claude mcp add`) | `agent.post_init` | Needs `claude` CLI + initialized config volume |
+| Per-container env vars, API keys | `agent.env` / `agent.from_env` | Injected at container creation |
+
+**Decision flowchart:**
+
+Does this command require the `claude` CLI or initialized config volume?
+- YES -> `agent.post_init`
+- NO -> Does it need root privileges?
+  - YES -> Is it an OS package?
+    - YES -> `build.packages`
+    - NO -> `build.instructions.root_run`
+  - NO -> `build.instructions.user_run`
+
+**Anti-patterns — NEVER put these in post_init:**
+- `apt-get install` / `apk add` (needs root — use `build.packages`)
+- `npm install -g` / `pip install` / `cargo install` (use `build.instructions.user_run`)
+- `curl | bash` tool installers (use `build.instructions.root_run` or `user_run`)
+- `git clone` of tooling repos (use `build.instructions.user_run` or `build.instructions.copy`)
+- Language runtime installers like rustup, nvm, pyenv (use `build.instructions.root_run` or `user_run`)
+
+Putting installations in `post_init` technically works — the package installs each
+time a new container starts — but it wastes time re-downloading on every container
+creation and is never cached in the Docker image layer.
+
+### Step 5: Synthesize and respond
 
 Cross-reference your research against the template and schema to determine:
 
-- **Which config section** to use — the template shows the layer order and execution
-  context (root vs user, build-time vs runtime). Match the user's need to the right
-  injection point.
+- **Which config section** to use — use the decision framework in Step 4 to place
+  each item at the correct layer. Read the Dockerfile template to confirm execution
+  order and root vs user context.
 - **What firewall rules** are needed — `add_domains` for HTTPS endpoints, `rules`
   entries for SSH or other protocols.
-- **Build-time vs runtime** — Is this something baked into the image (`build.*`) or
-  something that runs per-container (`agent.post_init`, `agent.env`)?
 
 Always provide **specific YAML config** the user can paste. If modifying existing
 config, show the change as a diff. Explain WHY a setting goes where it does.
@@ -129,11 +192,14 @@ These are the things users consistently get wrong. Keep them in mind always:
   schema but is not used during image generation. For runtime environment variables,
   use `agent.env`. For build-time ARGs, use `build.instructions.args`.
 
-- **`root_run` vs `post_init` — build-time vs runtime.** `root_run` runs during
-  `docker build` as root and is baked into the image layer forever. `post_init` runs
-  once per container on first start (marker file at `~/.claude/post-initialized`
-  prevents re-runs). Use `root_run` for system config that affects all containers;
-  use `post_init` for per-container setup like MCP servers.
+- **`post_init` is ONLY for runtime dependencies.** `post_init` runs once per
+  container after the entrypoint seeds the config volume. Its only legitimate use
+  is commands that require the `claude` CLI or the initialized `~/.claude` config
+  — primarily `claude mcp add`. Everything else — package installs, tool
+  downloads, language runtimes, npm/pip installs — belongs at build-time via
+  `build.packages` (first choice), `root_run`, or `user_run`. Putting
+  installations in `post_init` is the #1 configuration mistake. See Step 4 for
+  the full decision framework and priority order.
 
 - **Config layering.** Clawker uses walk-up file discovery with this precedence
   (project config only — `settings.yaml` is a separate schema):
