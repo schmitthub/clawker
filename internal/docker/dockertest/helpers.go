@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/build"
 	"github.com/moby/moby/api/types/container"
 	dockerimage "github.com/moby/moby/api/types/image"
@@ -258,7 +259,7 @@ func (f *FakeClient) SetupContainerAttachWithOutput(data string) {
 		clientConn, serverConn := net.Pipe()
 		go func() {
 			defer serverConn.Close()
-			_, _ = writeStdcopyFrame(serverConn, 1, []byte(data))
+			_, _ = writeStdcopyFrame(serverConn, byte(stdcopy.Stdout), []byte(data))
 		}()
 		return client.ContainerAttachResult{
 			HijackedResponse: client.NewHijackedResponse(clientConn, "application/vnd.docker.multiplexed-stream"),
@@ -451,7 +452,7 @@ func (f *FakeClient) SetupExecAttachWithOutput(data string) {
 		clientConn, serverConn := net.Pipe()
 		go func() {
 			defer serverConn.Close()
-			_, _ = writeStdcopyFrame(serverConn, 1, []byte(data))
+			_, _ = writeStdcopyFrame(serverConn, byte(stdcopy.Stdout), []byte(data))
 		}()
 		return client.ExecAttachResult{
 			HijackedResponse: client.NewHijackedResponse(clientConn, "application/vnd.docker.multiplexed-stream"),
