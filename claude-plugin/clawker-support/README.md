@@ -19,7 +19,7 @@ It understands the full clawker system: Dockerfile generation, config layering, 
 claude plugin marketplace add schmitthub/claude-plugins
 
 # Install the plugin
-claude plugin install clawker-support@claude-plugins
+claude plugin install clawker-support@schmitthub-plugins
 ```
 
 ## Usage
