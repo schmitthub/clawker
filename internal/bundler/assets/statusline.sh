@@ -30,6 +30,7 @@ if [ "$COLOR_LEVEL" -ge 2 ]; then
     GREEN='\033[38;5;42m'
     YELLOW='\033[38;5;226m'
     MUTED_RED='\033[38;5;88m'
+    DEEP_SKY_BLUE='\033[38;5;39m'
     CYAN='\033[38;5;51m'
     NC='\033[0m'
 elif [ "$COLOR_LEVEL" -ge 1 ]; then
@@ -42,6 +43,7 @@ elif [ "$COLOR_LEVEL" -ge 1 ]; then
     GREEN='\033[32m'
     YELLOW='\033[33m'
     MUTED_RED='\033[2;31m'   # dim red
+    DEEP_SKY_BLUE='\033[36m' # cyan as DeepSkyBlue substitute
     CYAN='\033[36m'
     NC='\033[0m'
 else
@@ -54,6 +56,7 @@ else
     GREEN=''
     YELLOW=''
     MUTED_RED=''
+    DEEP_SKY_BLUE=''
     CYAN=''
     NC=''
 fi
@@ -109,13 +112,8 @@ format_remaining() {
     local resets_at="$1" fallback="$2"
     [ -z "$resets_at" ] && echo "$fallback" && return
 
-    local trimmed=$(echo "$resets_at" | sed 's/\.[0-9]*//; s/Z$//; s/[+-][0-9][0-9]:[0-9][0-9]$//')
     local reset_epoch
-    if [ "$(uname)" = "Darwin" ]; then
-        reset_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%S' "$trimmed" '+%s' 2>/dev/null)
-    else
-        reset_epoch=$(date -d "$resets_at" '+%s' 2>/dev/null)
-    fi
+    reset_epoch=$(date -d "$resets_at" '+%s' 2>/dev/null)
     [ -z "$reset_epoch" ] && echo "$fallback" && return
 
     local now=$(date '+%s')
@@ -127,6 +125,35 @@ format_remaining() {
     elif [ "$hours" -gt 0 ]; then echo "${hours}h${mins}m"
     elif [ "$mins" -gt 0 ]; then echo "${mins}m"
     else echo "<1m"; fi
+}
+
+# Refresh the subscription usage cache if stale or missing
+refresh_usage_cache() {
+    if [ -f "$USAGE_CACHE" ]; then
+        cache_age=$(( $(date +%s) - $(stat -c %Y "$USAGE_CACHE") ))
+        [ "$cache_age" -lt "$USAGE_CACHE_MAX_AGE" ] && return 0
+    fi
+
+    # Extract credential from Claude credential file
+    local cred_file="${HOME}/.claude/.credentials.json"
+    [ -f "$cred_file" ] || return 1
+    local raw_cred
+    raw_cred=$(cat "$cred_file" 2>/dev/null)
+    [ -z "$raw_cred" ] && return 1
+
+    # Credential may be JSON — try nested paths, then fall back to raw value
+    local token
+    token=$(echo "$raw_cred" | jq -r '.claudeAiOauth.accessToken // .accessToken // empty' 2>/dev/null)
+    [ -z "$token" ] && token="$raw_cred"
+
+    local response
+    response=$(curl -s --max-time 3 \
+        -H "Authorization: Bearer $token" \
+        -H "anthropic-beta: oauth-2025-04-20" \
+        https://api.anthropic.com/api/oauth/usage 2>/dev/null) || return 1
+
+    echo "$response" | jq -e '.five_hour.utilization' >/dev/null 2>&1 || return 1
+    echo "$response" > "$USAGE_CACHE"
 }
 
 # === Compute values ===
@@ -228,7 +255,7 @@ vim=$(echo "$input" | jq -r '.vim.mode // empty')
 line1=""
 
 # Clawker identity
-line1+=$(printf "${MUTED_RED}Clawker %s${NC} ${DARK_GRAY}|${NC}" "${CLAWKER_VERSION:-dev}")
+line1+=$(printf "${CYAN}Clawker %s${NC} ${DARK_GRAY}|${NC}" "${CLAWKER_VERSION:-dev}")
 
 # Output style (only if non-default)
 if [ "$STYLE" != "null" ] && [ "$STYLE" != "default" ]; then
@@ -249,7 +276,7 @@ fi
 # Git branch (+ cyan worktree indicator)
 if [ -n "$branch" ]; then
     if $is_worktree; then
-        line1+=$(printf " ${CYAN}%s+%s(wt)${NC}" "${GIT}" "$branch")
+        line1+=$(printf " ${DEEP_SKY_BLUE}%s+%s(wt)${NC}" "${GIT}" "$branch")
     else
         line1+=$(printf " ${GRAY}%s${NC}" "${GIT}$branch")
     fi
@@ -304,6 +331,22 @@ fi
 # Lines added/removed (end of line 2)
 if [ -n "$lines" ]; then
     line2+=$(printf "${SEP}${DARK_GRAY}loc:${NC} %s" "$lines")
+fi
+
+# Subscription usage bars (appended to line 2 when available)
+if refresh_usage_cache 2>/dev/null; then
+    five_hour=$(jq -r '.five_hour.utilization // empty' "$USAGE_CACHE" 2>/dev/null)
+    seven_day=$(jq -r '.seven_day.utilization // empty' "$USAGE_CACHE" 2>/dev/null)
+    five_hour_resets=$(jq -r '.five_hour.resets_at // empty' "$USAGE_CACHE" 2>/dev/null)
+    seven_day_resets=$(jq -r '.seven_day.resets_at // empty' "$USAGE_CACHE" 2>/dev/null)
+
+    if [ -n "$five_hour" ] && [ -n "$seven_day" ]; then
+        label_5h=$(format_remaining "$five_hour_resets" "5h")
+        label_7d=$(format_remaining "$seven_day_resets" "7d")
+        bar_5h=$(render_bar "$five_hour" "$label_5h")
+        bar_7d=$(render_bar "$seven_day" "$label_7d")
+        line2+=$(printf "${SEP}%s %s" "$bar_5h" "$bar_7d")
+    fi
 fi
 
 echo "$line1"
