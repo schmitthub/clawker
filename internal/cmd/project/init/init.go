@@ -620,10 +620,10 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 				ID:    "customize",
 				Title: "Customize",
 				Page: tui.NewBrowserPage(browser,
-					tui.WithDoneKey("s"),
+					tui.WithDoneKey("ctrl+s"),
 					tui.WithCancelKey("q"),
 				),
-				HelpKeys: []string{"↑↓", "navigate", "enter", "edit", "s", "save", "q", "quit", "esc", "back"},
+				HelpKeys: []string{"↑↓", "navigate", "enter", "edit", "ctrl+s", "save", "q", "quit", "esc", "back"},
 			},
 		})
 		if wizErr != nil {

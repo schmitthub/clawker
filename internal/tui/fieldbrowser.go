@@ -584,14 +584,18 @@ func (m *FieldBrowserModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case ekTextarea:
+		// Intercept Esc before delegating — matches ekSelect/ekText pattern.
+		// Prevents accidental cancellation from fragmented arrow-key escape
+		// sequences (e.g. holding left arrow generates rapid ESC [ D; read
+		// boundaries can split ESC from [D, delivering a standalone Esc).
+		if msg, ok := msg.(tea.KeyMsg); ok && IsEscape(msg) {
+			m.state = bsStateBrowse
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.taEditor, cmd = m.taEditor.Update(msg)
 		if m.taEditor.IsConfirmed() {
 			return m, m.enterPickLayer(f.Path, m.taEditor.Value())
-		}
-		if m.taEditor.IsCancelled() {
-			m.state = bsStateBrowse
-			return m, nil
 		}
 		return m, cmd
 
