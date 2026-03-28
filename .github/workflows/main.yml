@@ -10,6 +10,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
   security-events: write
   actions: read
 
@@ -19,6 +20,7 @@ jobs:
     uses: ./.github/workflows/security.yml
     permissions:
       contents: read
+      pull-requests: read
       security-events: write
       actions: read
     secrets: inherit
@@ -54,6 +56,17 @@ jobs:
     uses: ./.github/workflows/plugin.yml
     permissions:
       contents: read
+
+  plugin-release:
+    name: Plugin Release
+    needs: [plugin]
+    if: contains(join(github.event.commits.*.modified, ','), 'claude-plugin/') || contains(join(github.event.commits.*.added, ','), 'claude-plugin/')
+    uses: schmitthub/claude-plugins/.github/workflows/update-plugin.yml@9b42ee720580c360c0476213227c1a639b1f507a # main
+    with:
+      plugin-name: clawker-support
+      sha: ${{ github.sha }}
+    secrets:
+      marketplace-token: ${{ secrets.MARKETPLACE_TOKEN }}
 
   # Future: Integration test jobs will be added here.
   # Use `needs: [security, lint, test]` so integration tests only run
