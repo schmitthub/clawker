@@ -69,7 +69,7 @@
   "navigation": {
     "groups": [
       {
-        "group": "Getting Started",
+        "group": "Quickstart",
         "pages": [
           "index",
           "quickstart",

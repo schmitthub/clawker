@@ -108,6 +108,10 @@ security:
       - github.com
       - api.github.com
       - release-assets.githubusercontent.com
+      - docker.io
+      - registry-1.docker.io
+      - vuln.go.dev
+      - production.cloudflare.docker.com
     enable: true
     rules:
       - action: allow
