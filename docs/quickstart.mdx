@@ -44,21 +44,18 @@ A guided setup walks you through:
 
 This creates:
 - A `.clawker.yaml` config file pre-filled with the right base image, packages, and firewall domains for your language
-- A `.clawkerignore` file (like `.dockerignore` for snapshot mode)
+- A `.clawkerignore` file (not like `.dockerignore`, add directories or files that you don't want cross contaminated between operating systems, like dist dirs, build dirs, node_modules, etc. switching been macos and linux can cause issues)
 - A project entry in Clawker's registry so it always knows the project root
 
-User settings (`~/.config/clawker/settings.yaml`) and XDG directories are bootstrapped automatically on first run.
+User settings (`~/.config/clawker/settings.yaml`) and XDG directories are bootstrapped automatically on first run. (run `clawker settings edit` to update clawker cli settings, like disabling the global firewall, monitoring stack changes, etc)
 
 <Tip>
-To skip prompts and use the Bare preset with defaults, run `clawker init --yes`. You can always customize later with `clawker project edit`.
-</Tip>
+Install the **clawker-support** plugin to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, firewall rules, troubleshooting, and more — it reads the real Dockerfile template and config schema and gives you the exact YAML you need.
 
-<Tip>
-If you run `clawker init` inside a subdirectory of an existing project, it creates a layer config file that overrides the root config for that directory — useful for monorepos with per-service settings. See [Monorepo Support](/configuration#monorepo-support).
-</Tip>
-
-<Tip>
-Language presets include ecosystem-specific firewall rules (e.g., `pypi.org` for Python, `registry.npmjs.org` for TypeScript). If you need additional domains, add them to `security.firewall.add_domains` or use `clawker firewall add` at runtime. See the [Firewall guide](/firewall#common-setups) for examples.
+```bash
+claude plugin marketplace add schmitthub/claude-plugins
+claude plugin install clawker-support@schmitthub-plugins
+```
 </Tip>
 
 ## 3. Build the Image
@@ -74,10 +71,11 @@ This builds a Docker image tagged `clawker-<project>:latest` using the settings 
 An **agent** is a named container instance running Claude Code. The `--agent` flag gives it a name for management.
 
 ```bash
-clawker run -it --agent dev @
+clawker run -it --rm --agent dev @ --dangerously-skip-permissions
 ```
 
 - `-it` — interactive mode with a terminal attached
+- `--rm` — removes the container when it finishes (recommended, volumes are preserved)
 - `--agent dev` — names this container `clawker.<project>.dev`
 - `@` — shortcut that resolves to your project's built image
 
@@ -138,6 +136,15 @@ Arguments after the image (`@`) are passed directly to Claude Code inside the co
 
 ## 6. Customize Your Config
 
+<Tip>
+Install the **clawker-support** plugin to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, firewall rules, troubleshooting, and more — it reads the real Dockerfile template and config schema and gives you the exact YAML you need.
+
+```bash
+claude plugin marketplace add schmitthub/claude-plugins
+claude plugin install clawker-support@schmitthub-plugins
+```
+</Tip>
+
 You can edit `.clawker.yaml` directly, or use the interactive TUI editor:
 
 ```bash
@@ -180,15 +187,6 @@ clawker build
 ```
 
 See the [Configuration](/configuration) guide for the full reference.
-
-<Tip>
-**Claude Code users:** Install the clawker-support plugin for hands-on help with setup, configuration, MCP wiring, firewall rules, and troubleshooting. It acts as a clawker internals expert — researches what you're trying to add, reads the real Dockerfile template and config schema, and gives you the exact YAML you need.
-
-```bash
-claude plugin marketplace add schmitthub/claude-plugins
-claude plugin install clawker-support@schmitthub-plugins
-```
-</Tip>
 
 ## 7. Parallel Agents with Worktrees
 

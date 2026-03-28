@@ -152,12 +152,12 @@ clawker init            # Guided setup: pick a language preset → creates .claw
 
 `clawker init` walks you through a guided setup with language-based presets (Python, Go, Rust, TypeScript, Java, Ruby, C/C++, C#/.NET, Bare). Choose a preset or "Build from scratch" to customize every field. User settings (`~/.config/clawker/settings.yaml`) and XDG directories are bootstrapped automatically on first run.
 
-> **Tip:** Customize your image using `clawker project edit`. Clawker works on a layered, hierarchical config storage system. Configuration can be a bit confusing up front — if you use Claude Code, install the **clawker-support plugin** for hands-on help with setup, config, MCP wiring, firewall rules, and troubleshooting:
+> **Tip:** Install the **clawker-support plugin** to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, firewall rules, troubleshooting, and more — it reads the real Dockerfile template and config schema and gives you the exact YAML you need.
 > ```bash
 > claude plugin marketplace add schmitthub/claude-plugins
 > claude plugin install clawker-support@schmitthub-plugins
 > ```
-> The plugin acts as a clawker internals expert — it researches what you're trying to add, reads the actual Dockerfile template and config schema, and gives you the exact YAML you need. You can also point Claude Code at the LLM-friendly [docs site](https://docs.clawker.dev/configuration) for the full config reference. I dogfood clawker to build clawker, so also check out my `clawker.yaml` to see how I customized the build config for golang development.
+> You can also customize your image using `clawker project edit` or point Claude Code at the LLM-friendly [docs site](https://docs.clawker.dev/configuration) for the full config reference. I dogfood clawker to build clawker, so also check out my `clawker.yaml` to see how I customized the build config for golang development.
 
 > **Tip** You can alternatively use `.clawker/clawker.yaml` (which takes precedence). You can also split the configs up into multiple files through your repository for merging, good for monorepos. A global clawker.yaml can also be created in `$CLAWKER_CONFIG_DIR` for system wide defaults. You can also create an uncomitted `.clawker.local.yaml|.clawker/clawker.local.yaml` for local-only overrides.
 
