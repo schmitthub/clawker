@@ -73,7 +73,7 @@ jobs:
     name: Plugin Release
     needs: [plugin-check]
     if: needs.plugin-check.outputs.changed == 'true'
-    uses: schmitthub/claude-plugins/.github/workflows/update-plugin.yml@9b42ee720580c360c0476213227c1a639b1f507a # main
+    uses: schmitthub/claude-plugins/.github/workflows/update-plugin.yml@fdbd6ffdc036b82f60656e70e35ce80e40f8ab07 # main
     with:
       plugin-name: clawker-support
       sha: ${{ github.sha }}
