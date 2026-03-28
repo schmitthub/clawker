@@ -50,9 +50,22 @@ Parent dir config                 ← Parent config (monorepo subdirs, same file
 Built-in defaults                 ← Lowest priority
 ```
 
-Note: clawker discovers config in two forms per directory — `.clawker/` dir
-form first, then flat dotfile form. Both are valid; the dir form takes
-precedence if both exist.
+**File discovery rules:**
+
+- **Dot-prefix required in repos.** Walk-up discovery only finds files whose
+  relative path starts with a dot: `.clawker.yaml` (flat dotfile) or
+  `.clawker/clawker.yaml` (dir form). A bare `clawker.yaml` in a repo
+  directory will NOT be discovered — this follows standard repo config
+  conventions (like `.gitignore`, `.eslintrc`).
+- **Dir form wins.** If a `.clawker/` directory exists, only files inside it
+  are checked. The flat dotfile form is only probed when no `.clawker/` dir
+  exists in that directory.
+- **`.yml` accepted.** Both `.yaml` and `.yml` extensions are discovered
+  (`.yaml` is checked first). This applies at all levels.
+- **User-level config dir is different.** `~/.config/clawker/` uses direct
+  filename lookup (no dot prefix needed) — the directory itself is the
+  namespace. So it's `~/.config/clawker/clawker.yaml`, not
+  `~/.config/clawker/.clawker.yaml`.
 
 **When to use each level:**
 
