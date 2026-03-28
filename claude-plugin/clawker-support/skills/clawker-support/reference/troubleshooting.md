@@ -1,16 +1,23 @@
 # Clawker Troubleshooting
 
-Diagnostic decision trees for common failures. Follow each flow step by step.
+Entry point for diagnosing clawker issues. Start here, then follow the
+routing below to the appropriate domain reference if applicable.
 
-## Contents
+## Domain-specific troubleshooting
 
-- [clawker not found](#clawker-not-found)
-- [Container can't reach a domain](#container-cant-reach-a-domain)
-- [Build failed](#build-failed)
-- [Credentials not working](#credentials-not-working)
-- [MCP server won't start](#mcp-server-wont-start)
-- [Config not taking effect](#config-not-taking-effect)
-- [Container won't start](#container-wont-start)
+Some issue domains have their own troubleshooting sections in dedicated
+reference files. Check these first if the issue matches:
+
+| Issue domain | Reference | Section |
+| --- | --- | --- |
+| Build failures, config not taking effect | `reference/project-config.md` | Troubleshooting |
+| MCP server setup and debugging | `reference/mcp-recipes.md` | Troubleshooting |
+| Settings not taking effect | `reference/settings.md` | Troubleshooting |
+
+## Global issues
+
+The following diagnostics cover cross-cutting concerns that don't belong
+to a single domain.
 
 ---
 
@@ -30,16 +37,9 @@ User reports `clawker: command not found` or similar.
    ```bash
    echo $PATH | tr ':' '\n' | grep -E 'local|brew|go'
    ```
-   Common missing paths:
-   - Homebrew: `/opt/homebrew/bin` (Apple Silicon) or `/usr/local/bin` (Intel)
-   - Install script: `~/.local/bin`
-   - Go install: `~/go/bin`
 
-3. **Shell profile not sourced**: If installed just now, the user needs to:
-   ```bash
-   source ~/.zshrc  # or ~/.bashrc
-   ```
-   Or open a new terminal.
+3. **Shell profile not sourced**: If installed just now, the user needs to
+   open a new terminal or source their shell profile.
 
 4. **Wrong architecture**: On Apple Silicon, make sure the binary is arm64:
    ```bash
@@ -50,7 +50,8 @@ User reports `clawker: command not found` or similar.
 
 ## Container can't reach a domain
 
-User reports network errors, timeouts, or "connection refused" from inside a container.
+User reports network errors, timeouts, or "connection refused" from inside
+a container.
 
 1. **Is the firewall enabled?**
    ```bash
@@ -74,57 +75,12 @@ User reports network errors, timeouts, or "connection refused" from inside a con
 
 5. **Add the domain**: Either at runtime via `clawker firewall add` (immediate
    but doesn't persist to config file) or persistently by adding it to the
-   project's `.clawker.yaml`. Fetch the current config schema for the exact
+   project's clawker config. Fetch the current config schema for the exact
    syntax.
 
 6. **DNS resolution**: If the domain resolves to multiple IPs or uses CDN,
    clawker's CoreDNS handles this. Check `clawker firewall status` if DNS
    issues are suspected.
-
----
-
-## Build failed
-
-User reports errors during `clawker build` or first `clawker run` (which triggers a build).
-
-1. **Check for user-level config conflicts FIRST**: This is the #1 hidden cause
-   of build failures. User-level config (`~/.config/clawker/clawker.yaml`) is
-   merged into every project. If user-level config has build-related fields
-   written for a different distro than the project's base image, the build will
-   fail with confusing errors.
-   ```bash
-   cat ~/.config/clawker/clawker.yaml
-   ```
-   Look for:
-   - Distro-specific package names that don't match the project's base image
-   - Package manager commands targeting the wrong distro
-   - Shell commands assuming tools or behaviors not present on the base image
-   - Any build config at user level that isn't universally distro-agnostic
-
-   **If found**: Move the offending entries to the project-level `.clawker.yaml`
-   where they belong, or remove them from user-level config entirely.
-
-2. **Identify which layer failed**: The build output shows which Dockerfile
-   step failed. Read the Dockerfile template (`reference/Dockerfile.tmpl`) to
-   map the failing step to the config section that produced it. Look at
-   execution order and root vs user context.
-
-3. **Package not found**: Different base images use different package managers
-   with different package names. Check the project's base image, then research
-   the correct package name for that distro — do not guess.
-
-4. **Network error during build**: The build runs outside the firewall
-   (it needs to pull packages). But if using a custom registry or proxy,
-   ensure network access is available during build.
-
-5. **COPY file not found**: `build.instructions.copy` paths are relative to
-   the build context (project root). Verify the source file exists at the
-   specified path.
-
-6. **Rebuild from scratch**:
-   ```bash
-   clawker build --no-cache
-   ```
 
 ---
 
@@ -177,56 +133,6 @@ User reports SSH, GPG, or git HTTPS failures inside the container.
 
 ---
 
-## MCP server won't start
-
-User set up an MCP server but it's not working inside the container.
-
-1. **Did post_init run?** Check for the post-init marker file inside the
-   container. If the marker exists but the MCP wasn't registered, delete the
-   marker and restart the container to re-run post_init. If the MCP's
-   dependencies are missing, they need to be added at build-time and the
-   image rebuilt — see `mcp-recipes.md`.
-
-2. **Are the MCP's dependencies installed?** Check using the MCP provider's
-   own documentation for how to verify its installation. If missing, add
-   them at build-time (see SKILL.md Step 4) and rebuild.
-
-3. **Are firewall rules in place?** If the MCP calls external APIs, those
-   domains must be in the firewall allowlist. Research what domains the MCP
-   needs from its documentation.
-
-4. **Is the MCP registered in Claude Code?** Check the container's Claude
-   Code config to verify the MCP entry exists.
-
-5. **Are environment variables set?** Many MCPs need API keys. Check that
-   the required variables are set inside the container and not empty.
-
----
-
-## Config not taking effect
-
-User changed `.clawker.yaml` but the change doesn't seem to apply.
-
-1. **Config layering precedence**: Clawker uses walk-up file discovery —
-   closer files win over farther ones. Local overrides win over project
-   config, which wins over parent dirs, which win over user-level defaults.
-   Fetch `https://docs.clawker.dev/configuration` for the current merge
-   behavior and precedence details.
-
-2. **Check which file is active**: Use `clawker settings edit` or
-   `clawker project edit` to see the merged config with provenance
-   (which file each value comes from).
-
-3. **Build-time vs runtime**: Build-related config changes require a rebuild
-   (`clawker build --no-cache`). Agent and firewall config changes take
-   effect on next container creation. Fetch the current schema to check
-   which fields are build-time vs runtime.
-
-4. **Local override hiding changes**: Check if a local override file exists
-   and shadows the field you changed.
-
----
-
 ## Container won't start
 
 User reports the container fails to start or immediately exits.
@@ -242,10 +148,7 @@ User reports the container fails to start or immediately exits.
    ```
 
 3. **Port conflicts**: If the firewall or host proxy can't bind ports,
-   check for conflicts:
-   ```bash
-   lsof -i :18374  # host proxy port
-   ```
+   check for conflicts.
 
 4. **Docker Desktop running?**
    ```bash

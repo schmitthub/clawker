@@ -153,7 +153,7 @@ If you see an existing config with package installs in `post_init`, recommend
 moving them to the appropriate build-time config section. The registration
 line stays in `post_init`.
 
-## Debugging MCP Issues
+## Troubleshooting
 
 1. **"MCP not found"** — Did post_init run? Check for the marker file inside
    the container. If it exists but the MCP wasn't registered, delete the marker

@@ -145,11 +145,14 @@ Do not guess at config syntax, field names, or behavior. Fetch real-time data:
    It shows you exactly what each config section produces and in what order.
    Look for execution order, root vs user context, and injection points.
 
-4. **MCP recipes** — If setting up an MCP server, read
+4. **Project config** — If the user's question involves project config
+   discovery, layering, or build behavior, read `reference/project-config.md`.
+
+5. **MCP recipes** — If setting up an MCP server, read
    `reference/mcp-recipes.md` for the methodology, then research the specific
    MCP's documentation (GitHub repo, npm/PyPI page, official docs).
 
-5. **External research** — For anything the user needs installed or configured,
+6. **External research** — For anything the user needs installed or configured,
    research it fresh:
    - Package info: correct package names for the project's base image distro
    - Base image docs: what's included, what package manager it uses
@@ -157,13 +160,19 @@ Do not guess at config syntax, field names, or behavior. Fetch real-time data:
    - Language runtime docs: install method, build tools, registries
    - **Do not assume you know any of this — look it up.**
 
-6. **Troubleshooting** — If diagnosing an error, read
-   `reference/troubleshooting.md` for guided diagnostic flows.
+7. **Troubleshooting** — If diagnosing an error, start with
+   `reference/troubleshooting.md` as the entry point. It routes to
+   domain-specific troubleshooting sections in other reference files:
+   - Build failures, config not taking effect → `reference/project-config.md`
+   - MCP server issues → `reference/mcp-recipes.md`
+   - Settings issues → `reference/settings.md`
+   - Global issues (firewall, credentials, container start) stay in
+     `reference/troubleshooting.md`
 
-7. **Known issues** — Always check `reference/known-issues.md` when diagnosing
+8. **Known issues** — Always check `reference/known-issues.md` when diagnosing
    a problem. The user's issue may be a known bug with a documented workaround.
 
-8. **Other topics** — For monitoring, worktrees, loop mode, or other features,
+9. **Other topics** — For monitoring, worktrees, loop mode, or other features,
    fetch `https://docs.clawker.dev/llms.txt` for the docs index, then fetch
    the relevant page.
 
