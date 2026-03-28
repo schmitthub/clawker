@@ -11,7 +11,7 @@ permissions: {}
 jobs:
   update-marketplace:
     name: Update marketplace
-    uses: schmitthub/claude-plugins/.github/workflows/update-plugin.yml@main
+    uses: schmitthub/claude-plugins/.github/workflows/update-plugin.yml@9b42ee720580c360c0476213227c1a639b1f507a # main
     with:
       plugin-name: clawker-support
       sha: ${{ github.sha }}

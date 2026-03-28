@@ -258,8 +258,9 @@ User changed `.clawker.yaml` but the change doesn't seem to apply.
 
 1. **Config layering precedence**: A closer file wins over a farther one:
    ```
-   ./.clawker.yaml              (CWD — highest priority)
-   ./.clawker.local.yaml        (local override)
+   ./.clawker.local.yaml        (CWD local override — highest priority)
+   ./.clawker.yaml              (CWD project config)
+   ../.clawker.local.yaml       (parent directory local override)
    ../.clawker.yaml             (parent directory)
    ...                          (walk up to project root)
    ~/.config/clawker/settings.yaml  (user-level — lowest priority)

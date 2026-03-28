@@ -135,7 +135,7 @@ These are the things users consistently get wrong. Keep them in mind always:
   use `post_init` for per-container setup like MCP servers.
 
 - **Config layering.** Clawker uses walk-up file discovery with this precedence:
-  CWD `.clawker.yaml` > `.clawker.local.yaml` > parent dir > ... > project root >
+  CWD `.clawker.local.yaml` > `.clawker.yaml` > parent dir > ... > project root >
   `~/.config/clawker/settings.yaml` > built-in defaults.
 
 - **Container user.** The non-root user is `claude` (UID 1001, GID 1001), home
