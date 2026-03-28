@@ -11,33 +11,28 @@
 ## System Layers
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     cmd/clawker                              │
-│                   (Cobra commands)                           │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────┐
-│                  internal/cmd/*                              │
-│            (Command implementations)                         │
-└──────────┬──────────────────────────────────┬───────────────┘
-           │                                  │
-┌──────────▼──────────────────┐  ┌────────────▼──────────────┐
-│     internal/docker          │  │   internal/firewall        │
-│  (Clawker middleware)        │  │  (Envoy+CoreDNS stack)     │
-│  - Labels, naming            │  │  - Daemon lifecycle        │
-│  - Container orchestration   │  │  - Config generators       │
-└──────────┬──────────────────┘  │  - Certificate PKI         │
-           │                     │  - Rule management          │
-┌──────────▼──────────────────┐  └────────────┬──────────────┘
-│        pkg/whail             │               │
-│  (Docker engine library)     │               │
-│  - Label-based isolation     │               │
-└──────────┬──────────────────┘               │
-           │                                  │
-┌──────────▼──────────────────────────────────▼──────────────┐
-│                  github.com/moby/moby                       │
-│                     (Docker SDK)                            │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  CLI Layer                                                            │
+│  cmd/clawker → internal/clawker → internal/cmd/root                   │
+│  10 command groups, 50+ subcommands (Cobra + Factory DI)              │
+└──────┬────────────────────────┬────────────────────┬─────────────────┘
+       │                        │                    │
+       ▼                        ▼                    ▼
+┌──────────────┐  ┌─────────────────────┐  ┌───────────────────────┐
+│ Container    │  │ Configuration       │  │ Security              │
+│ Subsystem    │  │ Subsystem           │  │ Subsystem             │
+│              │  │                     │  │                       │
+│ docker/      │  │ storage/ (engine)   │  │ firewall/ (Envoy+DNS) │
+│ workspace/   │  │ config/ (project)   │  │ hostproxy/ (auth)     │
+│ containerfs/ │  │ config/ (settings)  │  │ socketbridge/ (SSH)   │
+│ bundler/     │  │ project/ (registry) │  │ keyring/ (creds)      │
+│              │  │ storeui/ (TUI edit) │  │                       │
+│ pkg/whail    │  │                     │  │                       │
+│ (engine lib) │  │                     │  │                       │
+└──────┬───────┘  └─────────────────────┘  └───────────────────────┘
+       │
+       ▼
+  moby/moby (Docker SDK)
 ```
 
 ## Factory Dependency Injection (gh CLI Pattern)
@@ -261,21 +256,24 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 
 ### internal/cmd/* - CLI Commands
 
-Two parallel command interfaces:
+10 command groups with 50+ subcommands, each in its own subpackage:
 
-1. **Project Commands** (`clawker run/stop/logs`) - Project-aware, uses `--agent` flag
-2. **Management Commands** (`clawker container/volume/network/image *`) - Docker CLI mimicry, positional args
+| Command Group | Subcommands |
+|---------------|-------------|
+| `container/` | list, run, start, stop, kill, exec, attach, logs, inspect, cp, pause, unpause, restart, rename, remove, stats, top, update, wait, create |
+| `image/` | list, build, inspect, remove, prune |
+| `volume/` | list, create, inspect, remove, prune |
+| `network/` | list, create, inspect, remove, prune |
+| `project/` | init, register, list, info, edit, remove |
+| `worktree/` | add, list, prune, remove |
+| `firewall/` | (single package — status, list, add, remove, reload, up, down, enable, disable, bypass, rotate-ca) |
+| `monitor/` | init, up, down, status |
+| `loop/` | iterate, status, tasks, reset |
+| `settings/` | edit |
 
-Management command structure:
+**Top-level shortcuts**: `init` → `project init`, `build` → `image build`, `run`/`start` → `container run`/`start`, `generate`, `version`
 
-```
-clawker container [list|inspect|logs|start|stop|kill|pause|unpause|restart|rename|wait|top|stats|update|exec|attach|cp|remove]
-clawker volume    [list|inspect|create|remove|prune]
-clawker network   [list|inspect|create|remove|prune]
-clawker image     [list|inspect|build|remove|prune]
-```
-
-**Note**: `internal/cmd/container/shared/` contains domain orchestration logic (container init, onboarding) shared between `run/` and `create/`.
+**Shared packages**: `container/shared/` and `loop/shared/` contain domain orchestration logic (container creation, loop engine) shared across subcommands within their group.
 
 ### internal/cmdutil - CLI Utilities
 
@@ -348,8 +346,8 @@ User interaction utilities with TTY and CI awareness.
 | `internal/containerfs` | Host Claude config preparation for container init: copies settings, plugins, credentials to config volume; prepares post-init script tar (leaf — keyring + logger only) |
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
-| `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. Leaf — zero internal imports |
-| `internal/config` | Thin wrapper composing `Store[Project]` + `Store[Settings]`. Exposes `Config` interface with namespaced accessors, path/constant helpers. See `internal/config/CLAUDE.md` |
+| `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. **Leaf** — zero internal imports. See `internal/storage/CLAUDE.md` |
+| `internal/config` | Thin wrapper composing `Store[Project]` + `Store[Settings]`. Exposes `Config` interface with namespaced accessors, path/constant helpers (~40 methods). **Foundation** — imports storage only. See `internal/config/CLAUDE.md` |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
 | `internal/cmdutil` | Factory struct (closure fields), error types, format/filter flags, arg validators |
@@ -578,108 +576,99 @@ cmd.AddCommand(stop.NewCmdStop(f, nil))
 
 ## Package Import DAG
 
-Domain packages in `internal/` form a directed acyclic graph with four tiers:
+Domain packages form a directed acyclic graph verified via `goda`. Tiers describe import constraints, not importance.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  LEAF PACKAGES — "Pure Utilities"                               │
+│  LEAF PACKAGES — zero internal imports                           │
 │                                                                 │
 │  Import: standard library only (or external-only like go-git)   │
 │  Imported by: anyone                                            │
 │                                                                 │
-│  Clawker examples: logger, term, text, signals, monitor, docs, git,│
-│                    storage                                         │
+│  storage, git, logger, text, term, signals, build, update,      │
+│  keyring, pkg/whail                                             │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  FOUNDATION PACKAGES — "Infrastructure"                         │
-│                                                                 │
-│  Import: leaves only (+ own sub-packages)                       │
-│  Imported by: middles, composites, commands                     │
+│  FOUNDATION PACKAGES — import leaves only                        │
 │                                                                 │
 │  Universally imported as infrastructure by most of the codebase.│
-│  Their imports are leaf-only or type-level declarations.        │
 │                                                                 │
-│  Clawker examples:                                              │
-│    config/ → logger, storage                                    │
-│    iostreams/ → logger, term, text                              │
-│    cmdutil/ → type-only imports for Factory struct fields +     │
-│              output helpers via iostreams                        │
+│  config → storage                                               │
+│  iostreams → term, text                                         │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  MIDDLE PACKAGES — "Core Domain Services"                       │
+│  DOMAIN PACKAGES — import leaves + foundation                    │
 │                                                                 │
-│  Import: leaves + foundation (+ own sub-packages)               │
-│  Imported by: composites, commands                              │
+│  Core business logic. Import leaves and foundation packages.     │
 │                                                                 │
-│  Clawker examples:                                              │
-│    bundler/ → config + own subpackages + hostproxy/internals (embed-only leaf) (no docker) │
-│    tui/ → iostreams, text (+ bubbletea, bubbles)                │
-│    containerfs/ → keyring, logger (leaf — no docker runtime)    │
-│    hostproxy/ → logger                                          │
-│    socketbridge/ → config, logger                               │
-│    prompter/ → iostreams                                        │
-│    project/ → config, storage, iostreams, logger                │
+│  project → config, git, logger, storage, text                   │
+│  bundler → config + own subpackages                             │
+│  tui → iostreams, text                                          │
+│  prompter → iostreams                                           │
+│  storeui → iostreams, storage, tui                              │
+│  firewall → config, logger, storage                             │
+│  hostproxy → config, logger                                     │
+│  socketbridge → config, logger                                  │
+│  containerfs → config, keyring, logger                          │
+│  monitor → config                                               │
+│  docs → config, storage                                         │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  COMPOSITE PACKAGES — "Subsystems"                              │
+│  COMPOSITE PACKAGES — import domain packages                     │
 │                                                                 │
-│  Import: leaves + foundation + middles + own sub-packages       │
-│  Imported by: commands only                                     │
-│                                                                 │
-│  Clawker examples:                                              │
-│    docker/ → bundler, config, logger, pkg/whail, pkg/whail/buildkit│
-│    firewall/ → config, logger, storage, moby/client (daemon exception)│
-│    workspace/ → config, docker, logger                          │
-│    cmd/loop/shared/ → docker, config, logger                    │
+│  docker → bundler, config, build, logger, signals, term,        │
+│           pkg/whail, pkg/whail/buildkit                         │
+│  workspace → config, docker, logger                             │
+│  cmdutil → config, docker, firewall, git, hostproxy, iostreams, │
+│            logger, project, prompter, socketbridge, tui         │
+│            (mostly type-level imports for Factory struct fields) │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Import Direction Rules
 
 ```
-  ✓  foundation → leaf             config imports logger
-  ✓  middle → leaf                 bundler imports logger
-  ✓  middle → foundation           bundler imports config
-  ✓  composite → middle            docker imports bundler
+  ✓  foundation → leaf             config imports storage
+  ✓  domain → leaf                 firewall imports storage
+  ✓  domain → foundation           project imports config
+  ✓  composite → domain            docker imports bundler
   ✓  composite → foundation        docker imports config
-  ✓  composite → leaf              loop/shared imports logger
 
-  ✗  leaf → foundation             logger must never import config
-  ✗  leaf → leaf (sibling)         leaves have zero internal imports
-  ✗  middle ↔ middle (unrelated)   bundler must never import prompter
+  ✗  leaf → anything internal      storage must never import config
   ✗  foundation ↔ foundation       config must never import iostreams
   ✗  Any cycle                     A → B → A is always wrong
 ```
 
-**Lateral imports** between unrelated middle packages are the most common violation. If two middle packages need shared behavior, extract the shared part into a leaf package.
+**Lateral imports** between unrelated domain packages are the most common violation. If two domain packages need shared behavior, extract the shared part into a leaf package.
 
 ### Test Subpackages
 
-Test doubles follow a `<package>/<package>test/` naming convention. Each provides fakes/mocks/builders for its parent package:
+Each package with complex dependencies provides test infrastructure:
 
 | Subpackage | Provides |
 |------------|----------|
-| `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
-| `config/` (stubs.go) | `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()` |
-| `docker/dockertest/` | `FakeClient`, test helpers |
-| `git/gittest/` | `InMemoryGitManager` |
-| `hostproxy/hostproxytest/` | `MockManager` (implements `HostProxyService`) |
+| `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager; `WriteYAML` |
+| `config/mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` (moq) |
+| `docker/dockertest/` | `FakeClient` (wraps `whailtest.FakeAPIClient`), `SetupXxx` helpers, fixtures, assertions |
+| `project/mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
+| `git/gittest/` | `InMemoryGitManager` (memfs-backed, seeded with initial commit) |
+| `whail/whailtest/` | `FakeAPIClient` (80+ Fn fields, call recording), build scenarios, `EventRecorder` |
+| `firewall/mocks/` | `FirewallManagerMock` (moq-generated) |
+| `hostproxy/hostproxytest/` | `MockHostProxy` |
+| `socketbridge/mocks/` | `MockManager` |
 | `iostreams` | `Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `term/mocks/` | `FakeTerm` — stub satisfying `iostreams.term` interface |
-| `logger/loggertest/` | `TestLogger` (captures output), `New()`, `NewNop()` |
-| `firewall/mocks/` | `FirewallManagerMock` (moq-generated) |
-| `socketbridge/socketbridgetest/` | `MockManager` |
 | `storage` | `ValidateDirectories()` — XDG directory collision detection |
 
 ### Where `cmdutil` Fits
 
-`cmdutil` is a **foundation package** — its high fan-out is structural (DI container type declarations for Factory struct fields), not behavioral. Commands and the entry point import it. It imports config, docker, hostproxy, iostreams, and prompter as type-level declarations for the Factory struct.
+`cmdutil` is a **composite package** by import count — it imports config, docker, firewall, git, hostproxy, iostreams, logger, project, prompter, socketbridge, and tui. However, its high fan-out is structural (type declarations for Factory struct fields), not behavioral. It contains no construction logic — that lives in `cmd/factory/`. Commands and the entry point import cmdutil for the Factory type and shared utilities.
 
 If a utility in `cmdutil` is also needed by domain packages outside commands, extract it into a leaf package:
 

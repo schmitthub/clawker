@@ -1,140 +1,162 @@
 ---
 title: "Architecture"
-description: "System layers, package DAG, and key abstractions"
+description: "System layers, package DAG, CLI commands, and key abstractions"
 ---
 
 # Architecture
 
-> For detailed method/type exploration, use Serena or your IDE's Go tooling. This document provides the high-level picture.
+## System Overview
 
-## System Layers
-
-Clawker is organized in four layers, from user-facing CLI down to the Docker SDK:
+Clawker is a CLI tool that manages isolated Docker containers for AI coding agents. It has three main subsystems that work together:
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                    cmd/clawker                            │
-│                  (Cobra commands)                         │
-└────────────────────┬─────────────────────────────────────┘
-                     │
-┌────────────────────▼─────────────────────────────────────┐
-│                 internal/cmd/*                            │
-│           (Command implementations)                       │
-└────────────────────┬─────────────────────────────────────┘
-                     │
-┌────────────────────▼─────────────────────────────────────┐
-│                 internal/docker                           │
-│           (Clawker-specific middleware)                    │
-│        - Label conventions (dev.clawker.*)                │
-│        - Naming schemes (clawker.project.agent)           │
-└────────────────────┬─────────────────────────────────────┘
-                     │
-┌────────────────────▼─────────────────────────────────────┐
-│                  pkg/whail                                │
-│             (Reusable Docker engine library)              │
-│        - Label-based selector injection                   │
-│        - Managed resource isolation                       │
-└────────────────────┬─────────────────────────────────────┘
-                     │
-┌────────────────────▼─────────────────────────────────────┐
-│             github.com/moby/moby                          │
-│                 (Docker SDK)                              │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  CLI Layer                                                            │
+│  cmd/clawker → internal/clawker → internal/cmd/root                   │
+│  10 command groups, 50+ subcommands (Cobra)                           │
+│  Factory DI pattern (gh CLI style)                                    │
+└──────┬────────────────────────┬────────────────────┬─────────────────┘
+       │                        │                    │
+       ▼                        ▼                    ▼
+┌──────────────┐  ┌─────────────────────┐  ┌───────────────────────┐
+│ Container    │  │ Configuration       │  │ Security              │
+│ Subsystem    │  │ Subsystem           │  │ Subsystem             │
+│              │  │                     │  │                       │
+│ docker/      │  │ storage/ (engine)   │  │ firewall/ (Envoy+DNS) │
+│ workspace/   │  │ config/ (project)   │  │ hostproxy/ (auth)     │
+│ containerfs/ │  │ config/ (settings)  │  │ socketbridge/ (SSH)   │
+│ bundler/     │  │ project/ (registry) │  │ keyring/ (creds)      │
+│              │  │ storeui/ (TUI edit) │  │                       │
+│ pkg/whail    │  │                     │  │                       │
+│ (engine lib) │  │                     │  │                       │
+└──────┬───────┘  └─────────────────────┘  └───────────────────────┘
+       │
+       ▼
+  moby/moby (Docker SDK)
 ```
+
+## CLI Command Structure
+
+Commands are organized under `internal/cmd/` with subpackages per subcommand:
+
+| Command Group | Subcommands | Purpose |
+|---------------|-------------|---------|
+| `container` | list, run, start, stop, kill, exec, attach, logs, inspect, cp, pause, unpause, restart, rename, remove, stats, top, update, wait, create | Docker container management |
+| `image` | list, build, inspect, remove, prune | Image lifecycle |
+| `volume` | list, create, inspect, remove, prune | Volume management |
+| `network` | list, create, inspect, remove, prune | Network management |
+| `project` | init, register, list, info, edit, remove | Project registration and config |
+| `worktree` | add, list, prune, remove | Git worktree management |
+| `firewall` | status, list, add, remove, reload, up, down, enable, disable, bypass, rotate-ca | Egress firewall control |
+| `monitor` | init, up, down, status | Observability stack (Grafana, Prometheus) |
+| `loop` | iterate, status, tasks, reset | Autonomous agent loops |
+| `settings` | edit | User settings TUI editor |
+
+**Top-level shortcuts**: `init` → `project init`, `build` → `image build`, `run`/`start` → `container run`/`start`, `generate`, `version`
+
+Shared domain logic (container creation, loop orchestration) lives in `shared/` subpackages within each command group — not in library packages.
 
 ## Package Dependency Graph
 
-Packages follow a strict DAG (Directed Acyclic Graph) organized in four tiers:
+Packages follow a strict DAG with no cycles. Verified via `goda`.
 
-### Tier 1: Leaf Packages (Pure Utilities)
+### Leaf Packages (zero internal imports)
 
-Import only the standard library or external-only dependencies. Importable by anyone.
+Importable by anyone. Depend only on stdlib or external libraries.
 
-- `build` — Build-time metadata (version, date)
-- `logger` — Zerolog setup
-- `term` — Terminal capabilities + raw mode (sole `x/term` gateway)
-- `text` — Pure ANSI-aware text utilities
-- `signals` — OS signal utilities
-- `git` — Git operations, worktree management (stdlib + go-git only)
-- `docs` — CLI documentation generation
+| Package | Purpose |
+|---------|---------|
+| `storage` | Generic layered YAML store engine (`Store[T]`): discovery, merge, provenance, atomic write |
+| `git` | Git operations, worktree management (go-git) |
+| `logger` | Struct-based zerolog (file rotation + optional OTEL bridge) |
+| `text` | Pure ANSI-aware text utilities (Truncate, PadRight, StripANSI) |
+| `term` | Terminal capabilities + raw mode (sole `x/term` gateway) |
+| `signals` | OS signal utilities (SetupSignalContext, ResizeHandler) |
+| `build` | Build-time metadata (version, date via ldflags) |
+| `update` | Background GitHub release checker (24h cached) |
+| `keyring` | Credential storage service |
+| `pkg/whail` | Reusable Docker engine library with label-based isolation |
 
-### Tier 2: Foundation Packages (Infrastructure)
+### Foundation Packages (import leaves only)
 
-Import leaves only. Universally imported as infrastructure.
+Universally imported infrastructure. Their imports are leaf-only.
 
-- `config` — Config loading, validation, path resolution (composes `storage.Store[Project]` + `storage.Store[Settings]`)
-- `iostreams` — I/O streams, TTY detection, colors, styles, spinners, progress
-- `cmdutil` — Factory struct (DI container), error types, arg validators
+| Package | Imports | Purpose |
+|---------|---------|---------|
+| `config` | storage | Config loading/validation, schema types, path resolution. Composes `Store[Project]` + `Store[Settings]` |
+| `iostreams` | term, text | I/O streams, TTY detection, colors, styles, spinners, progress |
 
-### Tier 3: Middle Packages (Core Domain Services)
+### Domain Packages (import leaves + foundation)
 
-Import leaves + foundation.
+Core business logic. Import leaves and foundation packages only.
 
-- `bundler` — Dockerfile generation, content hashing, semver, npm registry
-- `tui` — BubbleTea models, viewports, panels, progress display
-- `containerfs` — Host config preparation for container init
-- `hostproxy` — Host proxy for container-to-host communication
-- `socketbridge` — SSH/GPG agent forwarding via muxrpc
-- `prompter` — Interactive prompts with TTY/CI awareness
-- `project` — Project registration in user registry
+| Package | Imports | Purpose |
+|---------|---------|---------|
+| `project` | config, git, logger, storage, text | Project registration, worktree lifecycle, registry CRUD |
+| `bundler` | config + own subpkgs | Dockerfile generation, content hashing, semver, npm registry |
+| `tui` | iostreams, text | BubbleTea models, viewports, panels, progress display |
+| `prompter` | iostreams | Interactive prompts with TTY/CI awareness |
+| `storeui` | iostreams, storage, tui | Generic TUI editor for `Store[T]` instances |
+| `firewall` | config, logger, storage | Envoy+CoreDNS firewall: daemon, config gen, PKI, rules |
+| `hostproxy` | config, logger | Host proxy for container-to-host communication |
+| `socketbridge` | config, logger | SSH/GPG agent forwarding via muxrpc |
+| `containerfs` | config, keyring, logger | Host config preparation for container init |
+| `monitor` | config | Observability stack templates (Grafana, Prometheus) |
+| `docs` | config, storage | CLI documentation generation |
 
-### Tier 4: Composite Packages (Subsystems)
+### Composite Packages (import domain packages)
 
-Import all lower tiers. Imported by commands only.
+Higher-level subsystems that compose domain packages.
 
-- `docker` — Clawker middleware wrapping whail Engine with labels/naming
-- `workspace` — Bind vs Snapshot strategies
-- `loop` — Autonomous loop engine with circuit breaker
+| Package | Key Imports | Purpose |
+|---------|-------------|---------|
+| `docker` | bundler, config, pkg/whail, pkg/whail/buildkit | Clawker middleware wrapping whail with labels/naming |
+| `workspace` | config, docker, logger | Bind vs Snapshot strategies |
+| `cmdutil` | config, docker, iostreams, tui, + type imports for Factory | Factory struct (DI container), error types, arg validators |
 
 ### Import Rules
 
 ```
-  OK:  foundation → leaf           (config imports logger)
-  OK:  middle → leaf               (bundler imports logger)
-  OK:  middle → foundation         (bundler imports config)
-  OK:  composite → middle          (docker imports bundler)
-  OK:  composite → foundation      (docker imports config)
+  OK:  foundation → leaf           (config → storage)
+  OK:  domain → leaf               (firewall → storage)
+  OK:  domain → foundation         (project → config)
+  OK:  composite → domain          (docker → bundler)
 
-  BAD: leaf → foundation           (logger must never import config)
-  BAD: middle ↔ middle (sibling)   (bundler must never import prompter)
+  BAD: leaf → anything internal    (storage must never import config)
   BAD: foundation ↔ foundation     (config must never import iostreams)
   BAD: any cycle                   (A → B → A is always wrong)
 ```
 
+## Configuration and Storage
+
+Three packages form the configuration subsystem:
+
+- **`storage`** (leaf) — Generic `Store[T]` engine. Handles file discovery (static paths + walk-up), YAML loading with migrations, N-way merge with provenance tracking, and atomic writes. Zero domain knowledge.
+- **`config`** — Thin domain wrapper composing `Store[Project]` + `Store[Settings]`. Exposes the `Config` interface with schema types, path helpers, and ~40 accessor methods.
+- **`project`** — Project domain layer. Owns `projects.yaml` registry via its own `Store[ProjectRegistry]`. Handles registration CRUD, path resolution, worktree lifecycle.
+
+Commands access config through the `Config` interface and `ProjectManager` interface — never `storage` directly.
+
 ## Dependency Injection: The Factory Pattern
 
-Clawker follows the GitHub CLI's three-layer Factory pattern:
+Follows the GitHub CLI's three-layer pattern:
 
-### Layer 1: Wiring (`internal/cmd/factory/default.go`)
+1. **Wiring** (`internal/cmd/factory/`) — Creates `*cmdutil.Factory` with all deps as `sync.Once` closures. Called once at entry point. Tests never import this.
 
-Creates `*cmdutil.Factory` with all dependencies wired as closures. Called once at entry point. Tests never import this package.
+2. **Contract** (`internal/cmdutil/`) — `Factory` is a pure struct with closure fields. Eager: `Version`, `IOStreams`, `TUI`. Lazy: `Config`, `Client`, `ProjectManager`, `GitManager`, `HostProxy`, `SocketBridge`, `Firewall`, `Logger`, `Prompter`.
 
-### Layer 2: Contract (`internal/cmdutil/factory.go`)
-
-`Factory` is a pure struct with closure fields — no methods. Defines what dependencies exist. Importable by all command packages without cycles.
-
-**Eager fields** (set directly): `Version`, `IOStreams`, `TUI`
-
-**Lazy fields** (closures with `sync.Once`): `Config`, `Client`, `GitManager`, `HostProxy`, `SocketBridge`, `Prompter`
-
-### Layer 3: Consumers (`internal/cmd/*`)
-
-Commands cherry-pick Factory closures into per-command `Options` structs. Run functions accept `*Options` only — never see Factory.
+3. **Consumers** (`internal/cmd/*/`) — Cherry-pick Factory closures into per-command `Options` structs. Run functions accept `*Options` only.
 
 ```go
-// Constructor receives Factory, cherry-picks into Options
 func NewCmdStop(f *cmdutil.Factory, runF func(*StopOptions) error) *cobra.Command {
     opts := &StopOptions{
         IOStreams: f.IOStreams,
         Client:   f.Client,  // closure, not call
     }
-    // ...
 }
 
-// Run function only sees Options
 func stopRun(ctx context.Context, opts *StopOptions) error {
-    client, err := opts.Client(ctx)
-    // ...
+    client, err := opts.Client(ctx)  // resolved lazily here
 }
 ```
 
@@ -142,16 +164,15 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 
 | Abstraction | Package | Purpose |
 |-------------|---------|---------|
+| `storage.Store[T]` | `internal/storage` | Generic layered YAML store with merge, provenance, and atomic write |
+| `config.Config` | `internal/config` | Typed config interface composing `Store[Project]` + `Store[Settings]` |
+| `project.ProjectManager` | `internal/project` | Project identity, registration CRUD, worktree orchestration |
 | `whail.Engine` | `pkg/whail` | Reusable Docker engine with label-based resource isolation |
 | `docker.Client` | `internal/docker` | Clawker middleware (labels, naming) wrapping whail |
-| `config.Config` | `internal/config` | Typed config wrapper — composes `storage.Store[Project]` + `storage.Store[Settings]` with typed mutation (`SetProject`/`SetSettings`) |
-| `Factory` | `internal/cmdutil` | DI struct (closure fields); constructor in `cmd/factory` |
-| `WorkspaceStrategy` | `internal/workspace` | Bind (live mount) vs Snapshot (ephemeral copy) |
-| `CreateContainer()` | `internal/cmd/container/shared` | Single entry point for container creation — workspace, config, env, create, inject |
+| `cmdutil.Factory` | `internal/cmdutil` | DI struct (closure fields); constructor in `cmd/factory` |
+| `CreateContainer()` | `internal/cmd/container/shared` | Single entry point for container creation |
+| `firewall.FirewallManager` | `internal/firewall` | Envoy+CoreDNS firewall lifecycle, rules, bypass |
 | `tui.TUI` | `internal/tui` | Factory noun for presentation layer |
-| `tui.RunProgress` | `internal/tui` | Generic progress display (BubbleTea TTY + plain text) |
-| `hostproxy.HostProxyService` | `internal/hostproxy` | Interface for host proxy operations; `Manager` is concrete impl |
-| `shared.Runner` | `internal/cmd/loop/shared` | Autonomous loop orchestrator with per-iteration containers and circuit breaker |
 
 ## Container Naming and Labels
 
@@ -169,7 +190,7 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 | `version` | Clawker version |
 | `image` | Source image reference |
 
-Labels are the authoritative source of truth for resource ownership. Names are secondary, for human readability. Clawker refuses to operate on resources without `dev.clawker.managed=true`.
+Labels are authoritative for resource ownership. Names are for human readability. Clawker refuses to operate on resources without `dev.clawker.managed=true`.
 
 ## Presentation Layer
 
@@ -186,12 +207,3 @@ Commands follow a 4-scenario output model:
 - Only `iostreams` imports `lipgloss`
 - Only `tui` imports `bubbletea`/`bubbles`
 - Only `term` imports `golang.org/x/term`
-
-## Host Proxy Architecture
-
-The host proxy bridges container-to-host communication:
-
-- **URL opening**: Container script → POST to proxy → host browser
-- **OAuth**: Intercepts auth URL, rewrites callback, captures redirect
-- **Git HTTPS**: Container credential helper → proxy → host credential store
-- **SSH/GPG**: `socketbridge.Manager` → `docker exec` muxrpc → Unix sockets
