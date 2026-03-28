@@ -505,3 +505,63 @@ func TestFieldBrowser_StructSliceStillUsesTextarea(t *testing.T) {
 	require.Equal(t, bsStateEdit, m.state)
 	assert.Equal(t, ekTextarea, m.editKind, "struct slice should still use textarea editor")
 }
+
+func TestFieldBrowser_TextareaArrowKeysStayInEdit(t *testing.T) {
+	fields := []BrowserField{
+		{Path: "agent.post_init", Label: "post_init", Kind: BrowserStructSlice, Value: "echo hi", EditValue: "echo hi"},
+	}
+	cfg := BrowserConfig{
+		Title:        "Test",
+		Fields:       fields,
+		LayerTargets: testLayerTargets(),
+	}
+	m := NewFieldBrowser(cfg)
+
+	// Enter textarea edit mode.
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, bsStateEdit, m.state)
+	require.Equal(t, ekTextarea, m.editKind)
+
+	// Simulate rapid left arrow keys — must stay in edit mode.
+	for range 20 {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+		m = updated.(*FieldBrowserModel)
+	}
+	assert.Equal(t, bsStateEdit, m.state, "left arrow keys must not exit textarea edit mode")
+
+	// Right arrow also stays in edit.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(*FieldBrowserModel)
+	assert.Equal(t, bsStateEdit, m.state, "right arrow must not exit textarea edit mode")
+
+	// Up/down also stay in edit.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(*FieldBrowserModel)
+	assert.Equal(t, bsStateEdit, m.state, "up arrow must not exit textarea edit mode")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(*FieldBrowserModel)
+	assert.Equal(t, bsStateEdit, m.state, "down arrow must not exit textarea edit mode")
+}
+
+func TestFieldBrowser_TextareaEscExitsToBrowseNotQuit(t *testing.T) {
+	fields := []BrowserField{
+		{Path: "agent.post_init", Label: "post_init", Kind: BrowserStructSlice, Value: "echo hi", EditValue: "echo hi"},
+	}
+	cfg := BrowserConfig{
+		Title:        "Test",
+		Fields:       fields,
+		LayerTargets: testLayerTargets(),
+	}
+	m := NewFieldBrowser(cfg)
+
+	// Enter textarea edit mode.
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, bsStateEdit, m.state)
+
+	// Esc returns to browse (not quit).
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(*FieldBrowserModel)
+	assert.Equal(t, bsStateBrowse, m.state, "esc from textarea should return to browse")
+	assert.False(t, m.cancelled, "esc from textarea should not cancel the browser")
+}
