@@ -234,13 +234,15 @@ User set up an MCP server but it's not working inside the container.
    needs to be added to `build.instructions.user_run` and the image
    rebuilt — see `mcp-recipes.md`.
 
-2. **Is the MCP package installed?**
+2. **Are the MCP's dependencies installed?** Check using the MCP's own
+   documentation for how to verify its installation. For example, check
+   if the expected binary is on PATH:
    ```bash
    # Inside the container:
-   which mcp-server-<name> || npx -y @modelcontextprotocol/server-<name> --help
+   which <expected-binary>
    ```
-   If the package is not found, it was likely not installed at build-time.
-   Add it to `build.instructions.user_run` and rebuild the image.
+   If the dependency is not found, it needs to be added at build-time
+   (see SKILL.md Step 4) and the image rebuilt.
 
 3. **Are firewall rules in place?** If the MCP calls external APIs, those
    domains must be in the firewall allowlist. See `mcp-recipes.md` for
