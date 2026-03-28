@@ -21,7 +21,7 @@ go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
 
 ## Conventions
 
-- **Golden files**: In `testdata/` next to tests. `GoldenAssert(t, name, actual)`, `CompareGolden(t, name, actual) error`. Update: `GOLDEN_UPDATE=1`
+- **Golden files**: Per-package strategies — whail recorded scenarios (`GOLDEN_UPDATE=1`), firewall corefile golden (hand-edit), storage struct-literal golden (`make storage-golden`)
 - **Fakes**: `internal/docker/dockertest/`, `pkg/whail/whailtest/`
 - **Cleanup**: Always `t.Cleanup()` — never deferred functions
 - **Labels**: `dev.clawker.test=true` on all resources; `dev.clawker.test.name=TestName` per test
