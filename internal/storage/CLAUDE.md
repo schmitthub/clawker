@@ -173,7 +173,7 @@ Empty strings are excluded at the struct-field level because config schemas use 
 
 ```go
 // internal/config
-projectStore, _ := storage.NewStore[Project](
+projectStore, _ := storage.New[Project](
     storage.WithFilenames("clawker.local.yaml", "clawker.yaml"),
     storage.WithDefaultsFromStruct[Project](),
     storage.WithWalkUp(),

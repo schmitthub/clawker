@@ -263,7 +263,7 @@ User changed `.clawker.yaml` but the change doesn't seem to apply.
    ../.clawker.local.yaml       (parent directory local override)
    ../.clawker.yaml             (parent directory)
    ...                          (walk up to project root)
-   ~/.config/clawker/settings.yaml  (user-level — lowest priority)
+   ~/.config/clawker/clawker.yaml   (user-level project defaults — lowest priority)
    ```
 
 2. **Check which file is active**:

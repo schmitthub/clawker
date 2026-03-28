@@ -33,7 +33,8 @@ which clawker && clawker version
 Find and read their project config (clawker uses walk-up discovery):
 - Look for `.clawker.yaml` or `.clawker/clawker.yaml` starting from CWD up to project root
 - Check for `.clawker.local.yaml` overrides
-- Read `~/.config/clawker/settings.yaml` (user-level settings)
+- Read `~/.config/clawker/clawker.yaml` (user-level project defaults — lowest priority project layer)
+- Read `~/.config/clawker/settings.yaml` (user-level settings — separate schema from project config)
 - Read `~/.local/share/clawker/registry.yaml` (project registry)
 
 If firewall-related, also run:
@@ -134,9 +135,10 @@ These are the things users consistently get wrong. Keep them in mind always:
   prevents re-runs). Use `root_run` for system config that affects all containers;
   use `post_init` for per-container setup like MCP servers.
 
-- **Config layering.** Clawker uses walk-up file discovery with this precedence:
+- **Config layering.** Clawker uses walk-up file discovery with this precedence
+  (project config only — `settings.yaml` is a separate schema):
   CWD `.clawker.local.yaml` > `.clawker.yaml` > parent dir > ... > project root >
-  `~/.config/clawker/settings.yaml` > built-in defaults.
+  `~/.config/clawker/clawker.yaml` > built-in defaults.
 
 - **Container user.** The non-root user is `claude` (UID 1001, GID 1001), home
   `/home/claude`, workdir `/workspace`, shell `/bin/zsh`.
