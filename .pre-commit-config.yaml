@@ -34,7 +34,7 @@ repos:
         name: govulncheck SCA
         entry: govulncheck ./...
         language: system
-        types: [go]
+        always_run: true
         pass_filenames: false
 
       - id: go-test

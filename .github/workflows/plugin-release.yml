@@ -6,6 +6,8 @@ on:
     paths:
       - "claude-plugin/**"
 
+permissions: {}
+
 jobs:
   update-marketplace:
     name: Update marketplace
