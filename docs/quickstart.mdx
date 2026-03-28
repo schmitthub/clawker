@@ -1,10 +1,8 @@
 ---
-title: "Getting Started"
-description: "A complete walkthrough from installation to running your first containerized Claude Code agent"
+title: "Quickstart"
+description: "Install clawker, initialize a project, and run your first containerized Claude Code agent"
 icon: "rocket"
 ---
-
-This guide takes you from zero to a fully working containerized Claude Code setup. By the end you'll have an isolated agent running in a Docker container with your credentials forwarded, a network firewall active, and your project code mounted.
 
 ## Prerequisites
 
@@ -30,7 +28,7 @@ Verify it's installed:
 clawker version
 ```
 
-## 2. Initialize Your Project
+## 2. Initialize and Configure Your Project
 
 ```bash
 cd your-project
@@ -44,10 +42,10 @@ A guided setup walks you through:
 
 This creates:
 - A `.clawker.yaml` config file pre-filled with the right base image, packages, and firewall domains for your language
-- A `.clawkerignore` file (not like `.dockerignore`, add directories or files that you don't want cross contaminated between operating systems, like dist dirs, build dirs, node_modules, etc. switching been macos and linux can cause issues)
+- A `.clawkerignore` file (`.gitignore`-style syntax) that controls which files and directories are excluded from the container workspace — in snapshot mode, matching paths are excluded from the copy; in bind mode, matching directories are masked with empty tmpfs overlays. Useful for platform-specific build artifacts (e.g., `dist/`, `build/`, `node_modules/`) that can cause issues when switching between macOS and Linux
 - A project entry in Clawker's registry so it always knows the project root
 
-User settings (`~/.config/clawker/settings.yaml`) and XDG directories are bootstrapped automatically on first run. (run `clawker settings edit` to update clawker cli settings, like disabling the global firewall, monitoring stack changes, etc)
+User settings (`~/.config/clawker/settings.yaml`) and XDG directories are bootstrapped automatically on first run. (Run `clawker settings edit` to update Clawker CLI settings, like disabling the global firewall, monitoring stack changes, etc.)
 
 <Tip>
 Install the **clawker-support** plugin to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, firewall rules, troubleshooting, and more — it reads the real Dockerfile template and config schema and gives you the exact YAML you need.
@@ -58,92 +56,7 @@ claude plugin install clawker-support@schmitthub-plugins
 ```
 </Tip>
 
-## 3. Build the Image
-
-```bash
-clawker build
-```
-
-This builds a Docker image tagged `clawker-<project>:latest` using the settings in your `.clawker.yaml` — base image, system packages, Claude Code, and any custom instructions. The image is content-addressed, so rebuilds only happen when the config changes.
-
-## 4. Run Your First Agent
-
-An **agent** is a named container instance running Claude Code. The `--agent` flag gives it a name for management.
-
-```bash
-clawker run -it --rm --agent dev @ --dangerously-skip-permissions
-```
-
-- `-it` — interactive mode with a terminal attached
-- `--rm` — removes the container when it finishes (recommended, volumes are preserved)
-- `--agent dev` — names this container `clawker.<project>.dev`
-- `@` — shortcut that resolves to your project's built image
-
-You're now inside a containerized Claude Code session. Your project code is bind-mounted (live sync), your Git credentials are forwarded, and the network firewall is active.
-
-### What Happens Behind the Scenes
-
-When you run this command, Clawker:
-
-1. Creates the container with your project directory mounted at its real host path
-2. Creates persistent volumes for Claude Code config (`~/.claude`) and shell history
-3. Starts the firewall daemon (Envoy + CoreDNS) if it isn't already running
-4. Applies iptables rules inside the container to redirect traffic through the firewall
-5. Copies your host Claude Code settings, plugins, and authentication into the container
-6. Forwards SSH/GPG agent sockets and Git HTTPS credentials from your host
-7. Runs any `post_init` script you've configured
-8. Launches Claude Code
-
-The agent prompt at `/etc/claude-code/CLAUDE.md` is automatically loaded, so the agent knows it's in a container and can help troubleshoot firewall blocks.
-
-## 5. Working With Your Agent
-
-### Detach Without Stopping
-
-Press `Ctrl+P`, then `Ctrl+Q` to detach. The container keeps running in the background.
-
-### Re-attach
-
-```bash
-clawker attach --agent dev
-```
-
-### Stop the Agent
-
-Exit Claude Code with `/exit`, or from another terminal:
-
-```bash
-clawker stop --agent dev
-```
-
-### Restart a Stopped Agent
-
-```bash
-clawker start -a -i --agent dev
-```
-
-The `-a` (attach) and `-i` (interactive) flags reconnect your terminal. Your session data, config, and command history are preserved across restarts because they live in persistent volumes.
-
-### One-off Disposable Agent
-
-Use `--rm` to automatically remove the container when it stops — good for quick tasks:
-
-```bash
-clawker run -it --rm --agent scratch @ --dangerously-skip-permissions
-```
-
-Arguments after the image (`@`) are passed directly to Claude Code inside the container.
-
-## 6. Customize Your Config
-
-<Tip>
-Install the **clawker-support** plugin to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, firewall rules, troubleshooting, and more — it reads the real Dockerfile template and config schema and gives you the exact YAML you need.
-
-```bash
-claude plugin marketplace add schmitthub/claude-plugins
-claude plugin install clawker-support@schmitthub-plugins
-```
-</Tip>
+### Customizing Your Config
 
 You can edit `.clawker.yaml` directly, or use the interactive TUI editor:
 
@@ -180,15 +93,45 @@ security:
         action: allow
 ```
 
-After changing the config, rebuild:
+See the [Configuration](/configuration) guide for the full reference.
+
+## 3. Build the Image
 
 ```bash
 clawker build
 ```
 
-See the [Configuration](/configuration) guide for the full reference.
+This builds a Docker image tagged `clawker-<project>:latest` using the settings in your `.clawker.yaml` — base image, system packages, Claude Code, and any custom instructions. The image is content-addressed, so rebuilds only happen when the config changes.
 
-## 7. Parallel Agents with Worktrees
+## 4. Run Your First Agent
+
+```bash
+clawker run -it --rm --agent dev @ --dangerously-skip-permissions
+```
+
+- `-it` — interactive mode with a terminal attached
+- `--rm` — removes the container when it finishes (recommended, volumes are preserved)
+- `--agent dev` — names this container `clawker.<project>.dev`
+- `@` — shortcut that resolves to your project's built image
+
+You're now inside a containerized Claude Code session. Your project code is bind-mounted (live sync), your Git credentials are forwarded, and the network firewall is active. Arguments after the image (`@`) are passed directly to Claude Code inside the container.
+
+### What Happens Behind the Scenes
+
+When you run this command, Clawker:
+
+1. Creates the container with your project directory mounted at its real host path
+2. Creates persistent volumes for Claude Code config (`~/.claude`) and shell history
+3. Starts the firewall daemon (Envoy + CoreDNS) if it isn't already running
+4. Applies iptables rules inside the container to redirect traffic through the firewall
+5. Copies your host Claude Code settings, plugins, and authentication into the container
+6. Forwards SSH/GPG agent sockets and Git HTTPS credentials from your host
+7. Runs any `post_init` script you've configured
+8. Launches Claude Code
+
+The agent prompt at `/etc/claude-code/CLAUDE.md` is automatically loaded, so the agent knows it's in a container and can help troubleshoot firewall blocks.
+
+## 5. Parallel Agents with Worktrees
 
 Run multiple agents on separate branches using Git worktrees:
 
@@ -212,7 +155,7 @@ clawker worktree remove --delete-branch feature/auth
 
 See the [Worktrees](/worktrees) guide for more.
 
-## 8. Monitoring (Optional)
+## 6. Monitoring (Optional)
 
 Start the monitoring stack before your agents to get real-time dashboards:
 
@@ -229,7 +172,7 @@ clawker monitor down    # Stop when done
 
 See the [Monitoring](/monitoring) guide for details.
 
-## 9. Autonomous Loops (Experimental)
+## 7. Autonomous Loops (Experimental)
 
 Run Claude Code in iterative loops with a fresh container per iteration:
 
