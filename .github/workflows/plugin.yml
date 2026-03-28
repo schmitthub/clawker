@@ -1,0 +1,22 @@
+name: Plugin
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  dockerfile-drift:
+    name: Dockerfile template drift check
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Check Dockerfile.tmpl is in sync
+        run: |
+          diff \
+            internal/bundler/assets/Dockerfile.tmpl \
+            claude-plugin/clawker-support/skills/clawker-support/reference/Dockerfile.tmpl \
+          || (echo "::error::Dockerfile.tmpl drift detected. Copy internal/bundler/assets/Dockerfile.tmpl to claude-plugin/clawker-support/skills/clawker-support/reference/Dockerfile.tmpl" && exit 1)

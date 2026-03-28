@@ -1,0 +1,10 @@
+{
+  "name": "clawker-support",
+  "description": "Clawker support expert for setup, configuration, and troubleshooting",
+  "version": "0.1.0",
+  "author": {
+    "name": "schmitthub"
+  },
+  "repository": "https://github.com/schmitthub/clawker",
+  "homepage": "https://docs.clawker.dev"
+}

@@ -34,7 +34,7 @@ repos:
         name: govulncheck SCA
         entry: govulncheck ./...
         language: system
-        types: [go]
+        always_run: true
         pass_filenames: false
 
       - id: go-test
@@ -65,3 +65,10 @@ repos:
         files: \.go$
         pass_filenames: false
         verbose: true
+
+      - id: plugin-drift
+        name: Plugin Dockerfile.tmpl drift check
+        entry: diff internal/bundler/assets/Dockerfile.tmpl claude-plugin/clawker-support/skills/clawker-support/reference/Dockerfile.tmpl
+        language: system
+        files: (internal/bundler/assets/Dockerfile\.tmpl|claude-plugin/.*Dockerfile\.tmpl)
+        pass_filenames: false
