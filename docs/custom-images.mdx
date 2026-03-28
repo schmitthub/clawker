@@ -103,24 +103,18 @@ build:
 
 ### root_run and user_run
 
-Run commands during the build. `root_run` executes as root (before the `USER` switch), `user_run` executes as the container user (after the switch).
-
-Both support OS-aware variants:
+Run commands during the build. `root_run` executes as root (before the `USER` switch), `user_run` executes as the container user (after the switch):
 
 ```yaml
 build:
   instructions:
     root_run:
-      # Generic command (runs on both Alpine and Debian)
-      - cmd: "echo 'Setting up system'"
-      # OS-specific commands
-      - alpine: "apk add --no-cache sqlite-dev"
-        debian: "apt-get install -y libsqlite3-dev"
+      - "echo 'Setting up system'"
+      - "curl -fsSL https://example.com/setup.sh | bash"
     user_run:
-      - cmd: "pip install --user poetry"
+      - "pip install --user poetry"
+      - "npm install -g typescript"
 ```
-
-If only `alpine` or `debian` is specified, the command is skipped on the other OS.
 
 ## Injection Points
 
@@ -201,10 +195,9 @@ build:
         dest: "/home/claude/.npmrc"
         chown: "claude:claude"
     root_run:
-      - alpine: "apk add --no-cache sqlite-dev"
-        debian: "apt-get install -y libsqlite3-dev"
+      - "apt-get install -y libsqlite3-dev"
     user_run:
-      - cmd: "npm install -g typescript ts-node"
+      - "npm install -g typescript ts-node"
   inject:
     after_claude_install:
       - "RUN claude mcp add context7 -- npx -y @anthropic-ai/claude-code-mcp"
