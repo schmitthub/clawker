@@ -26,7 +26,9 @@ import (
 )
 
 // FactoryOptions holds dependency constructor overrides.
-// Nil fields use test fakes (configmocks, logger.Nop, dockertest.FakeClient, etc.).
+// Some nil fields use test fakes (configmocks, dockertest.FakeClient, hostproxytest.MockManager,
+// firewallmocks.FirewallManagerMock). Logger always uses logger.New (real file logger).
+// ProjectManager, GitManager, and SocketBridge default to nil.
 // Set a field to the real constructor (e.g. config.NewConfig) for integration tests.
 type FactoryOptions struct {
 	Config         func(...config.NewConfigOption) (config.Config, error)
