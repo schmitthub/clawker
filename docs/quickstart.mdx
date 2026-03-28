@@ -6,8 +6,8 @@ icon: "rocket"
 
 ## Prerequisites
 
-- **Docker** must be installed and running
-- An **Anthropic API key** or Claude Pro/Team subscription
+- [Docker](https://www.docker.com/get-started/) must be installed and running
+- An Anthropic API key or Claude Code subscription
 - macOS or Linux (Windows is not currently supported)
 
 ## 1. Install Clawker
@@ -47,15 +47,6 @@ This creates:
 
 User settings (`~/.config/clawker/settings.yaml`) and XDG directories are bootstrapped automatically on first run. (Run `clawker settings edit` to update Clawker CLI settings, like disabling the global firewall, monitoring stack changes, etc.)
 
-<Tip>
-Install the **clawker-support** plugin to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, firewall rules, troubleshooting, and more — it reads the real Dockerfile template and config schema and gives you the exact YAML you need.
-
-```bash
-claude plugin marketplace add schmitthub/claude-plugins
-claude plugin install clawker-support@schmitthub-plugins
-```
-</Tip>
-
 ### Customizing Your Config
 
 You can edit `.clawker.yaml` directly, or use the interactive TUI editor:
@@ -64,34 +55,14 @@ You can edit `.clawker.yaml` directly, or use the interactive TUI editor:
 clawker project edit
 ```
 
-Here's a typical setup for a Node.js project:
+<Tip>
+Install the **clawker-support** plugin to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, dependency installation, firewall rules, troubleshooting, and more
 
-```yaml
-build:
-  image: "node:20-slim"
-  packages:
-    - git
-    - curl
-    - ripgrep
-
-agent:
-  env:
-    NODE_ENV: "development"
-  post_init: |
-    npm install -g typescript
-
-security:
-  firewall:
-    add_domains:
-      - github.com
-      - api.github.com
-      - registry.npmjs.org
-    rules:
-      - dst: github.com
-        proto: ssh
-        port: 22
-        action: allow
+```bash
+claude plugin marketplace add schmitthub/claude-plugins
+claude plugin install clawker-support@schmitthub-plugins
 ```
+</Tip>
 
 See the [Configuration](/configuration) guide for the full reference.
 
@@ -129,7 +100,7 @@ When you run this command, Clawker:
 7. Runs any `post_init` script you've configured
 8. Launches Claude Code
 
-The agent prompt at `/etc/claude-code/CLAUDE.md` is automatically loaded, so the agent knows it's in a container and can help troubleshoot firewall blocks.
+An automatically loaded prompt exists at `/etc/claude-code/CLAUDE.md`, so the agent knows it's in a clawker container and can help troubleshoot issues and provide guidance when running into constraints.
 
 ## 5. Parallel Agents with Worktrees
 
@@ -137,10 +108,10 @@ Run multiple agents on separate branches using Git worktrees:
 
 ```bash
 # Agent on a feature branch (creates worktree automatically)
-clawker run -it --agent auth --worktree feature/auth:main @ --dangerously-skip-permissions
+clawker run -it --rm --agent auth --worktree feature/auth:main @ --dangerously-skip-permissions
 
 # Another agent on a different branch
-clawker run -it --agent cache --worktree feature/cache:main @ --dangerously-skip-permissions
+clawker run -it --rm --agent cache --worktree feature/cache:main @ --dangerously-skip-permissions
 ```
 
 The `--worktree branch:base` flag creates a Git worktree off the base branch and mounts it into the container. Each agent works on its own branch with no conflicts.
