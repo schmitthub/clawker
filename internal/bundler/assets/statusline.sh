@@ -130,7 +130,7 @@ format_remaining() {
 # Refresh the subscription usage cache if stale or missing
 refresh_usage_cache() {
     if [ -f "$USAGE_CACHE" ]; then
-        cache_age=$(( $(date +%s) - $(stat -c %Y "$USAGE_CACHE") ))
+        local cache_age=$(( $(date +%s) - $(stat -c %Y "$USAGE_CACHE") ))
         [ "$cache_age" -lt "$USAGE_CACHE_MAX_AGE" ] && return 0
     fi
 
