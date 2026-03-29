@@ -1,16 +1,23 @@
 # Clawker Troubleshooting
 
-Diagnostic decision trees for common failures. Follow each flow step by step.
+Entry point for diagnosing clawker issues. Start here, then follow the
+routing below to the appropriate domain reference if applicable.
 
-## Contents
+## Domain-specific troubleshooting
 
-- [clawker not found](#clawker-not-found)
-- [Container can't reach a domain](#container-cant-reach-a-domain)
-- [Build failed](#build-failed)
-- [Credentials not working](#credentials-not-working)
-- [MCP server won't start](#mcp-server-wont-start)
-- [Config not taking effect](#config-not-taking-effect)
-- [Container won't start](#container-wont-start)
+Some issue domains have their own troubleshooting sections in dedicated
+reference files. Check these first if the issue matches:
+
+| Issue domain | Reference | Section |
+| --- | --- | --- |
+| Build failures, config not taking effect | `reference/project-config.md` | Troubleshooting |
+| MCP server setup and debugging | `reference/mcp-recipes.md` | Troubleshooting |
+| Settings not taking effect | `reference/settings.md` | Troubleshooting |
+
+## Global issues
+
+The following diagnostics cover cross-cutting concerns that don't belong
+to a single domain.
 
 ---
 
@@ -30,16 +37,9 @@ User reports `clawker: command not found` or similar.
    ```bash
    echo $PATH | tr ':' '\n' | grep -E 'local|brew|go'
    ```
-   Common missing paths:
-   - Homebrew: `/opt/homebrew/bin` (Apple Silicon) or `/usr/local/bin` (Intel)
-   - Install script: `~/.local/bin`
-   - Go install: `~/go/bin`
 
-3. **Shell profile not sourced**: If installed just now, the user needs to:
-   ```bash
-   source ~/.zshrc  # or ~/.bashrc
-   ```
-   Or open a new terminal.
+3. **Shell profile not sourced**: If installed just now, the user needs to
+   open a new terminal or source their shell profile.
 
 4. **Wrong architecture**: On Apple Silicon, make sure the binary is arm64:
    ```bash
@@ -50,7 +50,8 @@ User reports `clawker: command not found` or similar.
 
 ## Container can't reach a domain
 
-User reports network errors, timeouts, or "connection refused" from inside a container.
+User reports network errors, timeouts, or "connection refused" from inside
+a container.
 
 1. **Is the firewall enabled?**
    ```bash
@@ -62,80 +63,36 @@ User reports network errors, timeouts, or "connection refused" from inside a con
    ```bash
    clawker firewall list
    ```
-   Check if the target domain appears. Remember:
-   - Only these are hardcoded: `api.anthropic.com`, `platform.claude.com`,
-     `claude.ai`, `sentry.io`, `statsig.anthropic.com`, `statsig.com`
-   - Everything else must be explicitly added
+   Check if the target domain appears. Only a small subset of Claude Code
+   required domains are hardcoded — everything else must be explicitly allowed.
 
-3. **Is it the right protocol?**
-   - `add_domains` creates TLS (port 443) rules only
-   - SSH (port 22) needs a `rules` entry with `proto: ssh`
-   - Custom ports need a `rules` entry with `proto: tcp`
+3. **Is it the right protocol?** Fetch `https://docs.clawker.dev/configuration`
+   for the current firewall config syntax. Different protocols and ports require
+   different config field types.
 
-4. **Quick test with bypass**:
+4. **Quick test with bypass**: Temporarily bypass the firewall for a specific
+   agent container:
    ```bash
-   clawker firewall bypass 5m --agent <agent-name>
+   clawker firewall bypass <duration> --agent <agent-name>
    ```
-   If it works with bypass, the issue is a missing firewall rule.
+   If the connection works during bypass, the issue is a missing firewall rule.
 
-5. **Add the domain**:
-   ```bash
-   # Runtime (immediate, doesn't persist to config):
-   clawker firewall add <domain>
-   # Persistent (add to .clawker.yaml):
-   ```
-   ```yaml
-   security:
-     firewall:
-       add_domains:
-         - <domain>
-   ```
+   **Important: firewall command scoping.** Some firewall commands are
+   per-container and require `--agent` (`bypass`, `enable`, `disable`).
+   Others are global infrastructure and do NOT accept `--agent` (`status`,
+   `list`, `add`, `remove`, `reload`, `up`, `down`, `rotate-ca`). Passing
+   `--agent` to a global command will error. When in doubt, fetch
+   `https://docs.clawker.dev/cli-reference/clawker_firewall` for current
+   command signatures.
+
+5. **Add the domain**: Either at runtime via `clawker firewall add` (immediate
+   but doesn't persist to config file) or persistently by adding it to the
+   project's clawker config. Fetch the current config schema for the exact
+   syntax.
 
 6. **DNS resolution**: If the domain resolves to multiple IPs or uses CDN,
-   clawker's CoreDNS handles this. But if the domain has non-standard DNS,
-   check that CoreDNS is running:
-   ```bash
-   clawker firewall status
-   ```
-
----
-
-## Build failed
-
-User reports errors during `clawker build` or first `clawker run` (which triggers a build).
-
-1. **Identify which layer failed**: The build output shows which Dockerfile
-   step failed. Map it to the config section:
-
-   | Error occurs during | Config section | Context |
-   |---|---|---|
-   | Package installation (apt-get/apk) | `build.packages` | Root |
-   | After FROM, before packages | `build.inject.after_from` | Root |
-   | After packages | `build.inject.after_packages` | Root |
-   | "Permission denied" as root | `build.instructions.root_run` | Root |
-   | "Permission denied" as user | `build.instructions.user_run` | User |
-   | npm/pip install | `build.instructions.user_run` | User |
-   | COPY failed | `build.instructions.copy` | User |
-   | Claude Code install | Internal (network issue?) | User |
-
-2. **Package not found**: The package name may differ between Alpine and Debian:
-   - Check which base image: `build.image` in `.clawker.yaml`
-   - Alpine uses `apk` — package names like `build-base` not `build-essential`
-   - Debian uses `apt-get` — package names like `build-essential` not `build-base`
-   - Research the correct package name for the base image's OS
-
-3. **Network error during build**: The build runs outside the firewall
-   (it needs to pull packages). But if using a custom registry or proxy,
-   ensure network access is available during build.
-
-4. **COPY file not found**: `build.instructions.copy` paths are relative to
-   the build context (project root). Verify the source file exists at the
-   specified path.
-
-5. **Rebuild from scratch**:
-   ```bash
-   clawker build --no-cache
-   ```
+   clawker's CoreDNS handles this. Check `clawker firewall status` if DNS
+   issues are suspected.
 
 ---
 
@@ -149,145 +106,42 @@ User reports SSH, GPG, or git HTTPS failures inside the container.
    ```bash
    ssh-add -l
    ```
-   If "Could not open a connection to your authentication agent", start it:
-   ```bash
-   eval "$(ssh-agent -s)" && ssh-add
-   ```
+   If the agent isn't running, the user needs to start it and add their keys.
 
-2. **Is SSH forwarding enabled?**
-   ```yaml
-   security:
-     git_credentials:
-       forward_ssh: true  # default
-   ```
+2. **Is SSH forwarding enabled in config?** Fetch `https://docs.clawker.dev/configuration`
+   and check the current credential forwarding fields. Verify the relevant
+   setting is enabled in the project's clawker config.
 
-3. **Is the SSH host in the firewall?**
-   ```yaml
-   security:
-     firewall:
-       rules:
-         - dst: github.com
-           proto: ssh
-           port: 22
-           action: allow
-   ```
+3. **Is the SSH host in the firewall?** SSH requires protocol-specific firewall
+   rules (not just domain allowlisting). Fetch the config schema for the
+   correct syntax.
 
 ### GPG not working
 
-1. **Is GPG forwarding enabled?**
-   ```yaml
-   security:
-     git_credentials:
-       forward_gpg: true  # default
-   ```
+1. **Is GPG forwarding enabled in config?** Fetch the current config schema and
+   check the credential forwarding fields.
 
 2. **Does the host have GPG keys?**
    ```bash
    gpg --list-keys
    ```
 
-3. **GPG needs the public key exported**: The container needs `pubring.kbx`
-   as a file (not directory). This is handled automatically by clawker's
-   socket bridge, but if it's not working, check the bridge status.
+3. **GPG key availability**: The container needs the public key available.
+   This is handled automatically by clawker's socket bridge, but if it's not
+   working, check the bridge status.
 
 ### Git HTTPS not working
 
-1. **Is HTTPS forwarding enabled?**
-   ```yaml
-   security:
-     git_credentials:
-       forward_https: true  # default
-   ```
+1. **Is HTTPS forwarding enabled in config?** Fetch the current config schema
+   and check the credential forwarding fields.
 
-2. **Is the host proxy running?** Git HTTPS goes through clawker's host
-   proxy daemon (port 18374).
+2. **Is the host proxy running?** Git HTTPS goes through clawker's host proxy.
    ```bash
-   clawker firewall status  # shows host proxy status too
+   clawker firewall status
    ```
 
-3. **Is the git host in the firewall?**
-   ```yaml
-   security:
-     firewall:
-       add_domains:
-         - github.com
-   ```
-
----
-
-## MCP server won't start
-
-User set up an MCP server but it's not working inside the container.
-
-1. **Did post_init run?** Check for the marker file inside the container:
-   ```bash
-   # From inside the container:
-   ls -la ~/.claude/post-initialized
-   ```
-   If the marker exists, post_init already ran. If `claude mcp add`
-   registration failed, delete the marker and restart:
-   ```bash
-   rm ~/.claude/post-initialized
-   ```
-   Then restart the container. Note: this only re-runs `post_init`
-   (MCP registration). If the npm/pip package itself is missing, it
-   needs to be added to `build.instructions.user_run` and the image
-   rebuilt — see `mcp-recipes.md`.
-
-2. **Are the MCP's dependencies installed?** Check using the MCP's own
-   documentation for how to verify its installation. For example, check
-   if the expected binary is on PATH:
-   ```bash
-   # Inside the container:
-   which <expected-binary>
-   ```
-   If the dependency is not found, it needs to be added at build-time
-   (see SKILL.md Step 4) and the image rebuilt.
-
-3. **Are firewall rules in place?** If the MCP calls external APIs, those
-   domains must be in the firewall allowlist. See `mcp-recipes.md` for
-   per-MCP requirements.
-
-4. **Is the MCP configured in Claude Code?** The MCP server entry needs to
-   be in the container's Claude Code settings. Check:
-   ```bash
-   cat ~/.claude/settings.json  # inside container
-   ```
-
-5. **Are environment variables set?** Many MCPs need API keys. Check that
-   `agent.env` has the required variables and they're not empty.
-
----
-
-## Config not taking effect
-
-User changed `.clawker.yaml` but the change doesn't seem to apply.
-
-1. **Config layering precedence**: A closer file wins over a farther one:
-   ```
-   ./.clawker.local.yaml        (CWD local override — highest priority)
-   ./.clawker.yaml              (CWD project config)
-   ../.clawker.local.yaml       (parent directory local override)
-   ../.clawker.yaml             (parent directory)
-   ...                          (walk up to project root)
-   ~/.config/clawker/clawker.yaml   (user-level project defaults — lowest priority)
-   ```
-
-2. **Check which file is active**:
-   ```bash
-   clawker settings edit  # shows merged config with provenance
-   ```
-
-3. **Build-time vs runtime**: Changes to `build.*` require a rebuild:
-   ```bash
-   clawker build --no-cache
-   ```
-   Changes to `agent.*` and `security.firewall.*` take effect on next
-   container creation (no rebuild needed for firewall rule changes if
-   using runtime `clawker firewall add`).
-
-4. **Local override hiding changes**: Check if `.clawker.local.yaml` exists
-   and overrides the field you changed.
+3. **Is the git host in the firewall?** The domain needs to be in the firewall
+   allowlist. Fetch the config schema for the correct syntax to add it.
 
 ---
 
@@ -306,10 +160,7 @@ User reports the container fails to start or immediately exits.
    ```
 
 3. **Port conflicts**: If the firewall or host proxy can't bind ports,
-   check for conflicts:
-   ```bash
-   lsof -i :18374  # host proxy port
-   ```
+   check for conflicts.
 
 4. **Docker Desktop running?**
    ```bash
