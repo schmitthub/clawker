@@ -369,9 +369,10 @@ func TestPresetInit_UserConfigIsolation(t *testing.T) {
 	assert.Equal(t, []string{"ripgrep"}, snap.Build.Packages,
 		"should have Go preset packages, not user-level nodejs/npm/gh")
 
-	// User-level build instructions should NOT appear.
-	assert.Empty(t, snap.Build.Instructions.UserRun,
-		"user-level user_run instructions should not bleed through")
+	// User-level build instructions should NOT appear — Go preset has none,
+	// so Instructions pointer should be nil (not populated from user config).
+	assert.Nil(t, snap.Build.Instructions,
+		"user-level build instructions should not bleed through")
 
 	// User-level agent config should NOT appear.
 	assert.Empty(t, snap.Agent.FromEnv,
