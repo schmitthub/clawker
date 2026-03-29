@@ -274,9 +274,10 @@ These are the things users consistently get wrong. Keep them in mind always:
   Claude Code config directory. The host and container are isolated environments
   with independent MCP configurations. See `reference/mcp-recipes.md`.
 
-- **Runtime config runs ONCE.** It writes a marker file. If the user changes it
-  and wants it to re-run, they need to delete the marker or recreate the config
-  volume.
+- **Runtime config runs once per config volume.** A marker file on the config
+  volume prevents re-execution. Changing `post_init` has no effect until the
+  marker is deleted or the config volume is removed and recreated. This is the
+  most common reason `post_init` changes don't take effect.
 
 - **Settings is a separate schema.** `settings.yaml` is NOT project config. It
   does not participate in walk-up discovery or project inheritance. See
