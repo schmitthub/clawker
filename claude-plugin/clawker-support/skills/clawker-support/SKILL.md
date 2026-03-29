@@ -251,8 +251,8 @@ These are the things users consistently get wrong. Keep them in mind always:
   in the firewall allowlist.
 
 - **Runtime config is ONLY for runtime dependencies.** It runs once per
-  container after the entrypoint seeds the config volume. Its only legitimate
-  use is commands that require the `claude` CLI or the initialized config.
+  config volume (guarded by a marker file). Its only legitimate use is
+  commands that require the `claude` CLI or the initialized config.
   Everything else belongs at build-time. This is the #1 configuration mistake.
 
 - **Config layering.** Clawker uses walk-up file discovery. Local overrides

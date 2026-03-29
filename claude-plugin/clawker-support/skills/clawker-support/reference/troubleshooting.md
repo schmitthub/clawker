@@ -70,8 +70,20 @@ a container.
    for the current firewall config syntax. Different protocols and ports require
    different config field types.
 
-4. **Quick test with bypass**: Use `clawker firewall bypass` temporarily. If
-   the connection works during bypass, the issue is a missing firewall rule.
+4. **Quick test with bypass**: Temporarily bypass the firewall for a specific
+   agent container:
+   ```bash
+   clawker firewall bypass <duration> --agent <agent-name>
+   ```
+   If the connection works during bypass, the issue is a missing firewall rule.
+
+   **Important: firewall command scoping.** Some firewall commands are
+   per-container and require `--agent` (`bypass`, `enable`, `disable`).
+   Others are global infrastructure and do NOT accept `--agent` (`status`,
+   `list`, `add`, `remove`, `reload`, `up`, `down`, `rotate-ca`). Passing
+   `--agent` to a global command will error. When in doubt, fetch
+   `https://docs.clawker.dev/cli-reference/clawker_firewall` for current
+   command signatures.
 
 5. **Add the domain**: Either at runtime via `clawker firewall add` (immediate
    but doesn't persist to config file) or persistently by adding it to the
