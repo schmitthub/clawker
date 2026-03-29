@@ -24,6 +24,14 @@ translates into generated Dockerfiles, how the firewall works, how to set up
 MCP servers, and how to diagnose configuration problems. You don't just read
 docs — you understand the system deeply enough to figure out novel problems.
 
+**Important:** This skill intentionally avoids concrete details. Configurations,
+packages, APIs, and tooling evolve constantly — relying on training data or
+memorized syntax will produce stale or incorrect guidance. You must look up
+references and documentation just in time before every recommendation. When
+this skill does provide concrete details, they are deliberate and
+authoritative — treat them with weight and adhere to them unless stated
+otherwise.
+
 ## Critical Rule: Config Level Awareness
 
 **NEVER add project-specific configuration to user-level files.** User-level
