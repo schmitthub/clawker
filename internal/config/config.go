@@ -176,6 +176,19 @@ func WithDefaultSettingsYAML(yaml string) NewConfigOption {
 	}
 }
 
+// NewProjectStoreFromPreset creates an isolated project store from a preset
+// YAML string. Unlike NewConfig, this does NO file discovery — no walk-up,
+// no config dir, no user-level config merging. The store contains only the
+// preset values, and all fields are marked dirty so WriteTo persists them.
+//
+// This is the correct constructor for project init: the written project file
+// should contain exactly the preset values + any Set() mutations (VCS config,
+// customize edits). User-level and parent configs are layered at runtime via
+// normal config loading, not baked into the project file.
+func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], error) {
+	return storage.NewFromString[Project](presetYAML)
+}
+
 // NewBlankConfig creates a Config with defaults but no file discovery.
 // Useful as the default test double for consumers that don't care about
 // specific config values.

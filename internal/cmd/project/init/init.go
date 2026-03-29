@@ -584,15 +584,19 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 		Bool("subdir", in.subdir).
 		Msg("initializing project")
 
-	// Construct a config with the preset YAML as the project store's virtual
-	// defaults layer. Walk-up + config dir discovery layers existing files on
-	// top. The preset values are in the base layer — if no project file exists
-	// yet, Write() persists them to create one.
-	presetCfg, err := config.NewConfig(config.WithDefaultProjectYAML(in.preset.YAML))
+	// Create an isolated store from the preset YAML only — no file discovery,
+	// no walk-up, no user-level config merging. The project file should contain
+	// exactly the preset values + VCS configuration. User-level and parent
+	// configs are layered at runtime via normal config loading, not baked into
+	// the project file. Using config.NewConfig here would discover the user's
+	// ~/.config/clawker/clawker.yaml and merge it into the store, causing:
+	//   - Preset build settings to be shadowed (not written)
+	//   - User-level firewall domains to bleed into the project file
+	//   - VCS rules from the user config to conflict with the selected VCS
+	store, err := config.NewProjectStoreFromPreset(in.preset.YAML)
 	if err != nil {
-		return fmt.Errorf("loading config with preset %q: %w", in.preset.Name, err)
+		return fmt.Errorf("loading preset %q: %w", in.preset.Name, err)
 	}
-	store := presetCfg.ProjectStore()
 
 	// Apply VCS configuration (provider domains, SSH rules, GPG settings).
 	if err := store.Set(func(p *config.Project) {
