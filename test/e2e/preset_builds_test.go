@@ -283,3 +283,136 @@ agent:
 	require.NoError(t, stopRes.Err,
 		"container stop failed\nstdout: %s\nstderr: %s", stopRes.Stdout, stopRes.Stderr)
 }
+
+// userLevelConfigForIsolationTest simulates a user-level ~/.config/clawker/clawker.yaml
+// with build, agent, and firewall settings that should NOT bleed into project init.
+const userLevelConfigForIsolationTest = `build:
+  image: "buildpack-deps:bookworm-scm"
+  instructions:
+    user_run:
+      - curl -LsSf https://astral.sh/uv/install.sh | sh
+  packages:
+    - ripgrep
+    - nodejs
+    - npm
+    - gh
+agent:
+  from_env:
+    - GH_TOKEN
+  post_init: |-
+    claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
+security:
+  firewall:
+    add_domains:
+      - registry-1.docker.io
+      - mcp.deepwiki.com
+      - pypi.org
+      - files.pythonhosted.org
+      - registry.npmjs.org
+      - astral.sh
+    rules:
+      - action: allow
+        dst: github.com
+        port: 22
+        proto: ssh
+  git_credentials:
+    forward_gpg: true
+    forward_ssh: true
+workspace:
+  default_mode: bind
+`
+
+// TestPresetInit_UserConfigIsolation is a regression test verifying that
+// project init writes ONLY preset + VCS config, not user-level config.
+//
+// Before the fix, performProjectSetup used config.NewConfig() internally which
+// discovered the user's ~/.config/clawker/clawker.yaml and merged it into the
+// preset store. This caused: preset build settings to be shadowed (not written),
+// user-level firewall domains to bleed into the project file, and VCS rules
+// from the user config to conflict with the selected VCS provider.
+//
+// This test exercises the full CLI pipeline: factory → root command → project
+// init, with a user-level config planted in the isolated config dir.
+func TestPresetInit_UserConfigIsolation(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			ProjectManager: project.NewProjectManager,
+		},
+	}
+	setup := h.NewIsolatedFS(&harness.FSOptions{
+		ProjectDir: "isolation-test",
+	})
+
+	// Plant a user-level config in the config dir BEFORE running init.
+	// In production, this is ~/.config/clawker/clawker.yaml.
+	userConfigPath := filepath.Join(setup.Dirs.Config, "clawker.yaml")
+	require.NoError(t, os.WriteFile(userConfigPath, []byte(userLevelConfigForIsolationTest), 0644))
+
+	// Run init with Go preset + GitLab SSH — exercises full Cobra pipeline.
+	initRes := h.Run("project", "init", "isolation-test", "--yes",
+		"--preset", "Go", "--vcs", "gitlab", "--git-protocol", "ssh", "--no-gpg")
+	require.NoError(t, initRes.Err,
+		"init failed\nstdout: %s\nstderr: %s", initRes.Stdout, initRes.Stderr)
+
+	// --- Verify settings.yaml was bootstrapped ---
+	settingsPath := filepath.Join(setup.Dirs.Config, "settings.yaml")
+	assert.FileExists(t, settingsPath, "init should bootstrap settings.yaml")
+
+	// --- Read and verify the written project config ---
+	snap := readProjectConfig(t, setup.ProjectDir)
+
+	// Preset build settings should be written, not user-level ones.
+	assert.Equal(t, "golang:1.25-bookworm", snap.Build.Image,
+		"should have Go preset image, not user-level buildpack-deps")
+	assert.Equal(t, []string{"ripgrep"}, snap.Build.Packages,
+		"should have Go preset packages, not user-level nodejs/npm/gh")
+
+	// User-level build instructions should NOT appear.
+	assert.Empty(t, snap.Build.Instructions.UserRun,
+		"user-level user_run instructions should not bleed through")
+
+	// User-level agent config should NOT appear.
+	assert.Empty(t, snap.Agent.FromEnv,
+		"user-level from_env should not bleed through")
+	assert.Empty(t, snap.Agent.PostInit,
+		"user-level post_init should not bleed through")
+
+	// Preset firewall domains should be present.
+	assert.Contains(t, snap.Security.Firewall.AddDomains, "proxy.golang.org")
+	assert.Contains(t, snap.Security.Firewall.AddDomains, "sum.golang.org")
+	assert.Contains(t, snap.Security.Firewall.AddDomains, "storage.googleapis.com")
+
+	// GitLab VCS domains should be present.
+	assert.Contains(t, snap.Security.Firewall.AddDomains, "gitlab.com")
+	assert.Contains(t, snap.Security.Firewall.AddDomains, "registry.gitlab.com")
+
+	// User-level domains should NOT appear.
+	assert.NotContains(t, snap.Security.Firewall.AddDomains, "pypi.org",
+		"user-level pypi.org should not bleed through")
+	assert.NotContains(t, snap.Security.Firewall.AddDomains, "registry.npmjs.org",
+		"user-level registry.npmjs.org should not bleed through")
+	assert.NotContains(t, snap.Security.Firewall.AddDomains, "registry-1.docker.io",
+		"user-level registry-1.docker.io should not bleed through")
+	assert.NotContains(t, snap.Security.Firewall.AddDomains, "mcp.deepwiki.com",
+		"user-level mcp.deepwiki.com should not bleed through")
+	assert.NotContains(t, snap.Security.Firewall.AddDomains, "astral.sh",
+		"user-level astral.sh should not bleed through")
+
+	// GitHub domains from user config should NOT appear (GitLab was selected).
+	assert.NotContains(t, snap.Security.Firewall.AddDomains, "github.com",
+		"github.com from user config should not appear when GitLab selected")
+
+	// Exactly one SSH rule: gitlab.com (from VCS selection), not github.com (from user config).
+	require.Len(t, snap.Security.Firewall.Rules, 1,
+		"should have exactly one SSH rule (gitlab), not two")
+	assert.Equal(t, "gitlab.com", snap.Security.Firewall.Rules[0].Dst)
+	assert.Equal(t, 22, snap.Security.Firewall.Rules[0].Port)
+	assert.Equal(t, "ssh", snap.Security.Firewall.Rules[0].Proto)
+
+	// GPG should be disabled (--no-gpg flag).
+	require.NotNil(t, snap.Security.GitCredentials)
+	require.NotNil(t, snap.Security.GitCredentials.ForwardGPG)
+	assert.False(t, *snap.Security.GitCredentials.ForwardGPG)
+}
