@@ -2156,6 +2156,198 @@
       ],
       "title": "Errors",
       "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 67
+      },
+      "id": 54,
+      "panels": [],
+      "title": "Egress Traffic",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 68
+      },
+      "id": 55,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokidatasource}"
+          },
+          "expr": "{service_name=\"envoy\"} | line_format `{{.proto}} {{.domain}}{{if ne .path \"-\"}} {{.method}} {{.path}}{{end}} code={{.response_code}} flags={{.response_flags}} sent={{.bytes_sent}} recv={{.bytes_received}} dur={{.duration_ms}}ms`",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Envoy Traffic",
+      "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 68
+      },
+      "id": 56,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokidatasource}"
+          },
+          "expr": "{service_name=\"coredns\"} | line_format `{{.domain}} {{.qtype}} rcode={{.rcode}} dur={{.duration}}`",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "DNS Lookups",
+      "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No blocked traffic"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 78
+      },
+      "id": 57,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Value"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokidatasource}"
+          },
+          "expr": "topk(20, sum by (domain) (count_over_time({service_name=~\"envoy|coredns\"} | response_flags=~`.*UF.*` or rcode=`NXDOMAIN` [$__range])))",
+          "legendFormat": "{{domain}}",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Blocked Domains",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "Count",
+              "domain": "Domain"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No egress traffic"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 78
+      },
+      "id": 58,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokidatasource}"
+          },
+          "expr": "sum by (proto) (count_over_time({service_name=\"envoy\"} [$__interval]))",
+          "legendFormat": "{{proto}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Egress Requests Over Time",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",

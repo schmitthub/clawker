@@ -1,0 +1,70 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:{{.LokiPort}}/loki/api/v1/push
+
+scrape_configs:
+  - job_name: firewall
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["dev.clawker.purpose=firewall"]
+    relabel_configs:
+      # Extract container name without leading slash.
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      # Derive service_name from container name: clawker-envoy → envoy, clawker-coredns → coredns.
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/clawker-(.*)'
+        target_label: 'service_name'
+    pipeline_stages:
+      - docker: {}
+
+      # Envoy emits JSON access logs — parse all fields.
+      - match:
+          selector: '{service_name="envoy"}'
+          stages:
+            - json:
+                expressions:
+                  source: source
+                  domain: domain
+                  upstream_host: upstream_host
+                  method: method
+                  path: path
+                  response_code: response_code
+                  response_flags: response_flags
+                  bytes_sent: bytes_sent
+                  bytes_received: bytes_received
+                  duration_ms: duration_ms
+                  proto: proto
+            - labels:
+                source:
+                domain:
+                proto:
+                response_code:
+                response_flags:
+
+      # CoreDNS emits logfmt access logs — parse key=value pairs.
+      - match:
+          selector: '{service_name="coredns"}'
+          stages:
+            - logfmt:
+                mapping:
+                  source: source
+                  domain: domain
+                  qtype: qtype
+                  rcode: rcode
+                  duration: duration
+            - labels:
+                source:
+                domain:
+                qtype:
+                rcode:

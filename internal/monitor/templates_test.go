@@ -193,6 +193,53 @@ monitoring:
 	}
 }
 
+func TestRenderTemplate_PromtailConfig(t *testing.T) {
+	mon := testMonitoringConfig(t, `
+monitoring:
+  loki_port: 4100
+`)
+
+	data := NewMonitorTemplateData(mon)
+	result, err := RenderTemplate("promtail-config.yaml", PromtailConfigTemplate, data)
+	if err != nil {
+		t.Fatalf("RenderTemplate failed: %v", err)
+	}
+
+	checks := []struct {
+		desc    string
+		contain string
+	}{
+		{"Loki push URL", "loki:4100/loki/api/v1/push"},
+		{"Docker socket", "/var/run/docker.sock"},
+		{"firewall label filter", "dev.clawker.purpose=firewall"},
+		{"service_name relabel", "service_name"},
+		{"envoy match selector", `service_name="envoy"`},
+		{"coredns match selector", `service_name="coredns"`},
+		{"json stage", "json:"},
+		{"logfmt stage", "logfmt:"},
+		{"domain label", "domain:"},
+		{"proto label", "proto:"},
+		{"rcode label", "rcode:"},
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(result, check.contain) {
+			t.Errorf("promtail-config.yaml should contain %q (%s)", check.contain, check.desc)
+		}
+	}
+}
+
+func TestNewMonitorTemplateData_PromtailImage(t *testing.T) {
+	mon := testMonitoringConfig(t, `
+monitoring:
+  otel_collector_port: 4318
+`)
+	data := NewMonitorTemplateData(mon)
+	if data.PromtailImage != PromtailImage {
+		t.Errorf("PromtailImage = %q, want %q", data.PromtailImage, PromtailImage)
+	}
+}
+
 func TestRenderTemplate_InvalidTemplate(t *testing.T) {
 	_, err := RenderTemplate("bad", "{{.Missing}", MonitorTemplateData{})
 	if err == nil {

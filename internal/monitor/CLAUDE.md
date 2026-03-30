@@ -14,6 +14,7 @@ Template source files live in `templates/`. Files with `.tmpl` extension are Go 
 | `PrometheusTemplate` | `templates/prometheus.yaml.tmpl` | Yes |
 | `GrafanaDashboardsTemplate` | `templates/grafana-dashboards.yaml` | No |
 | `GrafanaDashboardTemplate` | `templates/grafana-dashboard.json` | No |
+| `PromtailConfigTemplate` | `templates/promtail-config.yaml.tmpl` | Yes |
 
 ## Filename Constants
 
@@ -27,6 +28,7 @@ Output filenames for writing rendered content to disk:
 | `PrometheusFileName` | `prometheus.yaml` |
 | `GrafanaDashboardsFileName` | `grafana-dashboards.yaml` |
 | `GrafanaDashboardFileName` | `grafana-dashboard.json` |
+| `PromtailConfigFileName` | `promtail-config.yaml` |
 
 ## Template Rendering
 
@@ -49,6 +51,7 @@ Struct providing values for `{{.FieldName}}` placeholders in `.tmpl` files:
 | `PrometheusImage` | `string` | Prometheus container image (version + SHA256 pinned) |
 | `LokiImage` | `string` | Loki container image (version + SHA256 pinned) |
 | `GrafanaImage` | `string` | Grafana container image (version + SHA256 pinned) |
+| `PromtailImage` | `string` | Promtail container image (version + SHA256 pinned) |
 
 ### NewMonitorTemplateData(cfg *config.MonitoringConfig) MonitorTemplateData
 

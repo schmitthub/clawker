@@ -86,6 +86,19 @@ services:
     networks:
       - clawker-net
 
+  promtail:
+    container_name: promtail
+    image: {{.PromtailImage}}
+    command: -config.file=/etc/promtail/config.yaml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./promtail-config.yaml:/etc/promtail/config.yaml
+    labels:
+      dev.clawker.managed: "true"
+      dev.clawker.purpose: "monitoring"
+    networks:
+      - clawker-net
+
 volumes:
   clawker-prometheus:
     labels:

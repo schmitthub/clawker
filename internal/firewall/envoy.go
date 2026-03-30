@@ -92,6 +92,36 @@ const (
 	envoyKeyFileFmt  = "/etc/envoy/certs/%s-key.pem"
 )
 
+// buildAccessLog returns an Envoy stdout access log config that emits JSON.
+// The proto parameter is a static string identifying the listener type
+// (e.g. "tls", "tls_mitm", "http", "tcp", "deny").
+func buildAccessLog(proto string) []any {
+	return []any{
+		map[string]any{
+			"name": "envoy.access_loggers.stdout",
+			"typed_config": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog",
+				"log_format": map[string]any{
+					"json_format": map[string]any{
+						"timestamp":      "%START_TIME%",
+						"domain":         "%REQUESTED_SERVER_NAME%",
+						"upstream_host":  "%UPSTREAM_HOST%",
+						"method":         "%REQ(:METHOD)%",
+						"path":           "%REQ(:PATH)%",
+						"response_code":  "%RESPONSE_CODE%",
+						"response_flags": "%RESPONSE_FLAGS%",
+						"bytes_sent":     "%BYTES_SENT%",
+						"bytes_received": "%BYTES_RECEIVED%",
+						"duration_ms":    "%DURATION%",
+						"proto":          proto,
+						"source":         "envoy",
+					},
+				},
+			},
+		},
+	}
+}
+
 // dnsCacheName is the shared DNS cache name for dynamic forward proxy.
 const dnsCacheName = "dynamic_forward_proxy_cache_config"
 
@@ -285,6 +315,7 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int) map[string]any {
 							"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
 							"stat_prefix": "http_egress",
 							"codec_type":  "AUTO",
+							"access_log":  buildAccessLog("http"),
 							"route_config": map[string]any{
 								"name":          "http_egress_routes",
 								"virtual_hosts": virtualHosts,
@@ -350,6 +381,7 @@ func buildMITMFilterChain(r config.EgressRule) map[string]any {
 					"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
 					"stat_prefix": fmt.Sprintf("mitm_%s", sanitizeName(domain)),
 					"codec_type":  "AUTO",
+					"access_log":  buildAccessLog("tls_mitm"),
 					"route_config": map[string]any{
 						"name": fmt.Sprintf("mitm_route_%s", sanitizeName(domain)),
 						"virtual_hosts": []any{
@@ -458,6 +490,7 @@ func buildPassthroughFilterChain(r config.EgressRule) map[string]any {
 					"stat_prefix":  fmt.Sprintf("passthrough_%s", sanitizeName(domain)),
 					"cluster":      "dynamic_forward_proxy_cluster",
 					"idle_timeout": "0s",
+					"access_log":   buildAccessLog("tls"),
 				},
 			},
 		},
@@ -476,6 +509,7 @@ func buildDenyFilterChain() map[string]any {
 					"stat_prefix":  "deny_all",
 					"cluster":      "deny_cluster",
 					"idle_timeout": "0s",
+					"access_log":   buildAccessLog("deny"),
 				},
 			},
 		},
@@ -519,6 +553,7 @@ func buildTCPListener(r config.EgressRule, port int) map[string]any {
 							"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 							"stat_prefix": clusterName,
 							"cluster":     clusterName,
+							"access_log":  buildAccessLog("tcp"),
 						},
 					},
 				},

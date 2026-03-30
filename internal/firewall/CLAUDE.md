@@ -8,8 +8,8 @@ Domain contracts, Docker implementation, daemon, certificates, and network manag
 |------|---------|
 | `firewall.go` | `FirewallManager` interface, `FirewallStatus`, `HealthTimeoutError`, sentinel errors |
 | `types.go` | `EgressRulesFile` — top-level document for `storage.Store[T]` |
-| `coredns.go` | `GenerateCorefile(rules)` — CoreDNS Corefile from egress rules |
-| `envoy.go` | `GenerateEnvoyConfig(rules)` — Envoy bootstrap YAML from egress rules |
+| `coredns.go` | `GenerateCorefile(rules)` — CoreDNS Corefile from egress rules (with query logging) |
+| `envoy.go` | `GenerateEnvoyConfig(rules)` — Envoy bootstrap YAML from egress rules (with access logging) |
 | `certs.go` | CA and per-domain TLS certificate management for MITM inspection |
 | `daemon.go` | Background daemon process — health probes + container watcher |
 | `manager.go` | `Manager` — Docker implementation of `FirewallManager` |
@@ -150,6 +150,7 @@ func GenerateCorefile(rules []config.EgressRule) ([]byte, error)
 - Docker internal forward zones (`docker.internal`, `otel-collector`, `jaeger`, `prometheus`, `loki`, `grafana`) delegate to `127.0.0.11` (Docker's embedded DNS). CoreDNS is on `clawker-net` so its 127.0.0.11 resolves container names and `host.docker.internal`
 - Catch-all `.` zone: `template IN ANY . { rcode NXDOMAIN }` + `health :8080` + `reload`
 - IP/CIDR destinations and deny rules are excluded
+- **Query logging**: All zones include a `log` plugin with logfmt-compatible format (`source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}`). Promtail parses these via the `logfmt` pipeline stage and ships to Loki for the Grafana egress dashboard
 
 ### Envoy (`envoy.go`)
 
@@ -167,6 +168,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule) ([]byte, []string, error)
 - Passthrough chains: `sni_dynamic_forward_proxy` network filter
 - Default deny: `tcp_proxy` -> `deny_cluster` (static, no endpoints = connection reset)
 - TCP/SSH listeners on `:10001+` (sequential ports)
+- **Access logging**: All listeners include JSON access logs to stdout via `buildAccessLog(proto)`. Fields: `timestamp`, `domain` (SNI), `upstream_host`, `method`, `path`, `response_code`, `response_flags`, `bytes_sent`, `bytes_received`, `duration_ms`, `proto`, `source`. Promtail parses these via the `json` pipeline stage and ships to Loki for the Grafana egress dashboard
 
 ## Relationships
 

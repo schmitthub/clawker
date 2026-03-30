@@ -34,7 +34,7 @@ The pre-built Grafana dashboard gives you per-agent and per-project visibility i
 
 ## Architecture
 
-The monitoring stack runs as five Docker Compose services on the `clawker-net` network:
+The monitoring stack runs as six Docker Compose services on the `clawker-net` network:
 
 ```
 Claude Code (in container)
@@ -58,6 +58,7 @@ OTEL Collector ──┬──> Prometheus (metrics)
 | **Loki** | `grafana/loki` | 3100 | Log aggregation — structured events with tool details, prompts, decisions |
 | **Jaeger** | `jaegertracing/all-in-one` | 16686 | Distributed tracing — collector pipeline is configured but agents don't emit traces yet |
 | **Grafana** | `grafana/grafana` | 3000 | Unified dashboards — pre-configured with all data sources and a Claude Code dashboard |
+| **Promtail** | `grafana/promtail` | 9080 | Collects firewall container logs (Envoy + CoreDNS) via Docker socket and ships to Loki |
 
 All containers are pre-configured with labels and attached to the `clawker-net` network. Grafana starts with anonymous login enabled (no credentials required) and data sources pre-provisioned.
 
@@ -74,6 +75,17 @@ OTEL endpoints are baked into every Clawker image at build time. At container cr
 
 **Start the monitoring stack before starting your agents** to ensure telemetry is captured.
 
+## Egress Traffic Visibility
+
+When the firewall is enabled, the dashboard includes an **Egress Traffic** row at the bottom with real-time visibility into network activity:
+
+- **Envoy Traffic** — streaming log of all outbound connections through the proxy, showing domain, protocol, HTTP method/path (for inspected traffic), response codes, and response flags
+- **DNS Lookups** — streaming log of all DNS queries through CoreDNS, showing queried domain, query type, response code (NOERROR for allowed, NXDOMAIN for blocked), and resolution time
+- **Top Blocked Domains** — table of the most frequently blocked domains (denied by Envoy or NXDOMAIN from CoreDNS)
+- **Egress Over Time** — time series of outbound request volume by protocol type
+
+Egress logs are collected by **Promtail**, which auto-discovers the firewall containers by their Docker labels and ships structured logs to Loki. No additional configuration is needed — `clawker monitor init` generates the Promtail configuration automatically.
+
 ## Setup
 
 ### 1. Initialize Configuration
@@ -83,12 +95,13 @@ clawker monitor init
 ```
 
 This scaffolds configuration files in your data directory (`~/.local/share/clawker/monitor/`):
-- `compose.yaml` — Docker Compose definition for all five services
+- `compose.yaml` — Docker Compose definition for all six services
 - `otel-config.yaml` — OpenTelemetry Collector pipeline configuration
 - `prometheus.yaml` — Prometheus scrape targets
 - `grafana-datasources.yaml` — Auto-provisioned Grafana data sources
 - `grafana-dashboards.yaml` — Dashboard provisioning config
 - `grafana-dashboard.json` — Pre-built Claude Code dashboard
+- `promtail-config.yaml` — Promtail configuration for firewall log collection
 
 Use `--force` to regenerate files if they already exist.
 
