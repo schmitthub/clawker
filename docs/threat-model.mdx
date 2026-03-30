@@ -152,9 +152,9 @@ Docker-outside-of-Docker (DooD) was chosen over Docker-in-Docker (DinD) for perf
 Clawker does **not** run containers in privileged mode by default. The `--privileged` flag is available on `clawker container create` and `clawker container exec` for users who explicitly need it, but it is off unless you ask for it.
 
 <Danger>
-**Running containers with `--privileged` grants elevated permissions and can expose the host system to security risks.** Privileged mode disables all security boundaries — seccomp filtering, capability restrictions, device access controls, and mount namespace isolation are all removed. The container effectively has root-level access to the host kernel. Use this option only when absolutely necessary and in trusted environments.
+**Running containers with `--privileged` grants elevated permissions and can expose the host system to security risks.** Privileged mode broadly relaxes confinement — seccomp filtering and AppArmor profiles are typically disabled, capabilities like `CAP_SYS_ADMIN` are added, and device access controls are opened up. While the container still runs in its own namespaces, these permissions allow it to effectively bypass isolation (for example by mounting host filesystems) and interact with the host kernel much like a root process on the host. Use this option only when absolutely necessary and in trusted environments.
 
-Clawker's security controls (unprivileged user, nosuid mounts, seccomp, capability dropping) are meaningless in privileged mode. If you pass `--privileged`, you are accepting full responsibility for what the agent does.
+Clawker's security controls (unprivileged user, nosuid mounts, seccomp, capability dropping) are effectively neutralized in privileged mode. If you pass `--privileged`, you are accepting full responsibility for what the agent does.
 </Danger>
 
 ### Bypass Discipline
