@@ -275,10 +275,6 @@ security: { firewall: { enable: true }, docker_socket: false, git_credentials: {
 loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false, hooks_file: "", append_system_prompt: "" }
 ```
 
-### Firewall IP Range Sources
-
-**Security warning**: The `google` source allows traffic to all Google IPs, including Google Cloud Storage and Firebase Hosting which can serve user-generated content. This creates a prompt injection risk — an attacker could host malicious content on a public GCS bucket or Firebase site that the agent fetches. Only add `google` if your project requires it (e.g., Go modules via `proxy.golang.org`).
-
 ## Design Decisions
 
 1. Firewall enabled, Docker socket disabled by default
