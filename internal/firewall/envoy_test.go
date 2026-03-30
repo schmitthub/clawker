@@ -323,10 +323,10 @@ func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
 	assert.Contains(t, out, "port_value: 443")
 }
 
-func TestBuildAccessLog(t *testing.T) {
+func TestBuildHTTPAccessLog(t *testing.T) {
 	t.Parallel()
 
-	logs := buildAccessLog("tls")
+	logs := buildHTTPAccessLog("http")
 	require.Len(t, logs, 1)
 
 	entry, ok := logs[0].(map[string]any)
@@ -342,11 +342,65 @@ func TestBuildAccessLog(t *testing.T) {
 	jf, ok := lf["json_format"].(map[string]any)
 	require.True(t, ok)
 
-	assert.Equal(t, "tls", jf["proto"])
+	// Common fields.
+	assert.Equal(t, "http", jf["proto"])
 	assert.Equal(t, "envoy", jf["source"])
 	assert.Equal(t, "%REQUESTED_SERVER_NAME%", jf["domain"])
-	assert.Equal(t, "%RESPONSE_CODE%", jf["response_code"])
 	assert.Equal(t, "%DURATION%", jf["duration_ms"])
+	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["client_ip"])
+
+	// HTTP-specific fields present.
+	assert.Equal(t, "%RESPONSE_CODE%", jf["response_code"])
+	assert.Equal(t, "%REQ(:METHOD)%", jf["method"])
+	assert.Equal(t, "%REQ(:PATH)%", jf["path"])
+}
+
+func TestBuildTCPAccessLog(t *testing.T) {
+	t.Parallel()
+
+	logs := buildTCPAccessLog("tls")
+	require.Len(t, logs, 1)
+
+	entry, ok := logs[0].(map[string]any)
+	require.True(t, ok)
+
+	tc, ok := entry["typed_config"].(map[string]any)
+	require.True(t, ok)
+	lf, ok := tc["log_format"].(map[string]any)
+	require.True(t, ok)
+	jf, ok := lf["json_format"].(map[string]any)
+	require.True(t, ok)
+
+	// Common fields present.
+	assert.Equal(t, "tls", jf["proto"])
+	assert.Equal(t, "%REQUESTED_SERVER_NAME%", jf["domain"])
+	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["client_ip"])
+
+	// HTTP-specific fields absent.
+	assert.Nil(t, jf["response_code"])
+	assert.Nil(t, jf["method"])
+	assert.Nil(t, jf["path"])
+}
+
+func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
+	t.Parallel()
+
+	logs := buildTCPAccessLog("tcp", "github.com")
+	require.Len(t, logs, 1)
+
+	entry, ok := logs[0].(map[string]any)
+	require.True(t, ok)
+
+	tc, ok := entry["typed_config"].(map[string]any)
+	require.True(t, ok)
+	lf, ok := tc["log_format"].(map[string]any)
+	require.True(t, ok)
+	jf, ok := lf["json_format"].(map[string]any)
+	require.True(t, ok)
+
+	// Static domain overrides the SNI placeholder for raw TCP listeners.
+	assert.Equal(t, "github.com", jf["domain"])
+	assert.Equal(t, "tcp", jf["proto"])
 }
 
 func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {

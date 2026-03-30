@@ -52,7 +52,7 @@ const (
 	PrometheusImage    = "prom/prometheus:v3.10.0@sha256:4a61322ac1103a0e3aea2a61ef1718422a48fa046441f299d71e660a3bc71ae9"
 	LokiImage          = "grafana/loki:3.7.0@sha256:c316b7c7589a5eeca843b6926c7446149d18300b79ac8538dc4ae063bc478da2"
 	GrafanaImage       = "grafana/grafana:12.4.2@sha256:83749231c3835e390a3144e5e940203e42b9589761f20ef3169c716e734ad505"
-	PromtailImage      = "grafana/promtail:3.6.0@sha256:b35188494870141630bb6ab81d492236fbca5b0e78c91a9e4ddfc7bcd8fd5912"
+	PromtailImage      = "grafana/promtail:3.6.0@sha256:2aafa34b3d5fba888c51081d3a22c234906ffd3cafc5def11c581549b297d449"
 )
 
 // MonitorTemplateData provides values for rendering monitoring stack templates.

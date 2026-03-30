@@ -61,6 +61,15 @@ flush_rules() {
         iptables -t nat -D OUTPUT "$idx" 2>/dev/null || true
     done
 
+    # Flush nat POSTROUTING SNAT rules for the container user UID.
+    indices=$(iptables -t nat -L POSTROUTING --line-numbers -n 2>/dev/null \
+        | grep "owner UID match ${CONTAINER_UID}" \
+        | awk '{print $1}' \
+        | sort -rn) || true
+    for idx in $indices; do
+        iptables -t nat -D POSTROUTING "$idx" 2>/dev/null || true
+    done
+
     # Flush ip6tables rules — mirrors the iptables sections above.
     if command -v ip6tables >/dev/null 2>&1; then
         indices=$(ip6tables -t nat -L OUTPUT --line-numbers -n 2>/dev/null \
@@ -89,6 +98,34 @@ flush_rules() {
     fi
 }
 
+# emit_agent_identity pushes an agent→IP mapping to Loki so Grafana can
+# join Envoy access logs with agent names. Uses OTEL env vars as a signal
+# that monitoring is configured. Runs as root (bypasses firewall rules).
+# Best-effort — silently no-ops if monitoring isn't up or vars aren't set.
+emit_agent_identity() {
+    local client_ip="${1:-}"
+    [ -z "${client_ip}" ] && return
+    [ -z "${CLAWKER_AGENT:-}" ] && return
+    [ -z "${OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:-}" ] && return
+
+    local agent="${CLAWKER_AGENT}"
+    local project="${CLAWKER_PROJECT:-}"
+    local ts
+    ts=$(date +%s)000000000
+
+    local line
+    line=$(printf '{"source":"agent_map","agent":"%s","project":"%s","client_ip":"%s","action":"enable"}' \
+        "${agent}" "${project}" "${client_ip}")
+
+    local payload
+    payload=$(printf '{"streams":[{"stream":{"service_name":"envoy","source":"agent_map","agent":"%s","client_ip":"%s","project":"%s","action":"enable"},"values":[["%s",%s]]}]}' \
+        "${agent}" "${client_ip}" "${project}" "${ts}" "$(printf '%s' "${line}" | sed 's/"/\\"/g; s/^/"/; s/$/"/')")
+
+    curl -s -m 2 -X POST "http://loki:3100/loki/api/v1/push" \
+        -H "Content-Type: application/json" \
+        -d "${payload}" >/dev/null 2>&1 || true
+}
+
 enable_firewall() {
     local envoy_ip="$1"
     local coredns_ip="$2"
@@ -98,6 +135,32 @@ enable_firewall() {
 
     # Idempotent: flush existing rules before re-applying.
     flush_rules
+
+    # Source IP fix for per-agent attribution in Envoy/CoreDNS logs.
+    #
+    # Problem: containers are on two Docker networks (default bridge eth0 + clawker-net
+    # eth1). The default route goes through eth0. When iptables DNATs an outbound packet
+    # to the Envoy IP on clawker-net, the kernel re-routes from eth0 to eth1 — but the
+    # source address was already selected as the eth0 IP (172.17.0.x). The VM's host-level
+    # MASQUERADE catches this cross-bridge source mismatch and rewrites it to the gateway
+    # (172.18.0.1), hiding the real container identity.
+    #
+    # Fix: two parts.
+    # 1. /32 routes ensure DNAT'd packets use the clawker-net interface directly.
+    # 2. SNAT in POSTROUTING rewrites the source to the container's clawker-net IP for
+    #    packets going to firewall containers. This is done INSIDE the container namespace
+    #    before the packet hits the VM's iptables, so the VM never sees a cross-bridge source.
+    local clawker_dev clawker_src
+    clawker_dev=$(ip -4 route show "${net_cidr}" 2>/dev/null | awk '{print $3}') || true
+    clawker_src=$(ip -4 addr show dev "${clawker_dev}" 2>/dev/null | awk '/inet /{sub(/\/.*/, "", $2); print $2}') || true
+    if [ -n "${clawker_dev}" ]; then
+        ip route replace "${envoy_ip}/32" dev "${clawker_dev}" 2>/dev/null || true
+        ip route replace "${coredns_ip}/32" dev "${clawker_dev}" 2>/dev/null || true
+    fi
+    if [ -n "${clawker_src}" ]; then
+        iptables -t nat -A POSTROUTING -d "${envoy_ip}" -m owner --uid-owner "${CONTAINER_UID}" -j SNAT --to-source "${clawker_src}"
+        iptables -t nat -A POSTROUTING -d "${coredns_ip}" -m owner --uid-owner "${CONTAINER_UID}" -j SNAT --to-source "${clawker_src}"
+    fi
 
     # Root (uid 0) bypasses all rules — escape hatch.
     iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
@@ -179,6 +242,10 @@ enable_firewall() {
         ip6tables -A OUTPUT -p udp    -m owner --uid-owner "${CONTAINER_UID}" ! -d ::1/128 -j DROP 2>/dev/null || true
         ip6tables -A OUTPUT -p icmpv6 -m owner --uid-owner "${CONTAINER_UID}" ! -d ::1/128 -j DROP 2>/dev/null || true
     fi
+
+    # Emit agent identity to Loki so the dashboard can resolve client_ip → agent.
+    # Runs as root (bypasses firewall), best-effort (monitoring may not be up).
+    emit_agent_identity "${clawker_src:-}"
 }
 
 disable_firewall() {

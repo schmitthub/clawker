@@ -1,55 +1,55 @@
 github.com {
-    log . "source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}"
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     forward . 1.1.1.2 1.0.0.2
 }
 
 api.github.com {
-    log . "source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}"
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     forward . 1.1.1.2 1.0.0.2
 }
 
 registry.npmjs.org {
-    log . "source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}"
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     forward . 1.1.1.2 1.0.0.2
 }
 
 proxy.golang.org {
-    log . "source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}"
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     forward . 1.1.1.2 1.0.0.2
 }
 
 docker.internal {
-    log . "source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}"
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     forward . 127.0.0.11
 }
 
 otel-collector {
-    log . "source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}"
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     forward . 127.0.0.11
 }
 
 jaeger {
-    log . "source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}"
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     forward . 127.0.0.11
 }
 
 prometheus {
-    log . "source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}"
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     forward . 127.0.0.11
 }
 
 loki {
-    log . "source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}"
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     forward . 127.0.0.11
 }
 
 grafana {
-    log . "source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}"
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     forward . 127.0.0.11
 }
 
 . {
-    log . "source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}"
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN ANY . {
         rcode NXDOMAIN
     }

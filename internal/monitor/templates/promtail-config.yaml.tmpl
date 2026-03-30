@@ -28,7 +28,7 @@ scrape_configs:
     pipeline_stages:
       - docker: {}
 
-      # Envoy emits JSON access logs — parse all fields.
+      # Envoy emits JSON — access logs and agent_map entries.
       - match:
           selector: '{service_name="envoy"}'
           stages:
@@ -37,6 +37,8 @@ scrape_configs:
                   source: source
                   domain: domain
                   upstream_host: upstream_host
+                  listener_port: listener_port
+                  client_ip: client_ip
                   method: method
                   path: path
                   response_code: response_code
@@ -45,26 +47,43 @@ scrape_configs:
                   bytes_received: bytes_received
                   duration_ms: duration_ms
                   proto: proto
+                  agent: agent
+                  project: project
+                  action: action
+                  ts: timestamp
+            # Use Envoy's embedded timestamp instead of Docker log timestamp.
+            # Envoy logs on connection close — without this, a batch of connections
+            # closing together all get the same Docker stdout timestamp.
+            - timestamp:
+                source: ts
+                format: "2006-01-02T15:04:05.000Z"
             - labels:
                 source:
                 domain:
                 proto:
+                client_ip:
                 response_code:
                 response_flags:
+                agent:
+                project:
+                action:
 
-      # CoreDNS emits logfmt access logs — parse key=value pairs.
+      # CoreDNS log lines have an [INFO] prefix before the logfmt data:
+      #   [INFO] source=coredns client_ip=172.18.0.8:12345 domain=example.com. qtype=A rcode=NOERROR duration=0.001s
+      # CoreDNS {remote} outputs IP:port — capture IP-only (stop at colon).
+      # Domain names have a trailing dot from DNS — strip it in the dashboard query.
       - match:
           selector: '{service_name="coredns"}'
           stages:
-            - logfmt:
-                mapping:
-                  source: source
-                  domain: domain
-                  qtype: qtype
-                  rcode: rcode
-                  duration: duration
+            - regex:
+                expression: 'client_ip=(?P<client_ip>[^:\s]+)(?::\d+)?\s+domain=(?P<domain>\S+)\s+qtype=(?P<qtype>\S+)\s+rcode=(?P<rcode>\S+)\s+duration=(?P<duration>\S+)'
             - labels:
-                source:
+                client_ip:
                 domain:
                 qtype:
                 rcode:
+                duration:
+            # Drop detected_level so Grafana doesn't render an "info" badge on every line.
+            # CoreDNS prepends [INFO] to all log lines — the level is constant and useless.
+            - labeldrop:
+                - detected_level

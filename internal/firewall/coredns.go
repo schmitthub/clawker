@@ -15,7 +15,7 @@ var upstreamDNS = []string{"1.1.1.2", "1.0.0.2"}
 // Uses logfmt-compatible key=value pairs for easy parsing by Promtail.
 // CoreDNS placeholders: {name}=queried domain, {type}=query type (A/AAAA),
 // {rcode}=response code (NOERROR/NXDOMAIN), {duration}=resolution time.
-const corefileLogFormat = `source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}`
+const corefileLogFormat = `source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}`
 
 // GenerateCorefile produces a CoreDNS Corefile from the given egress rules.
 // healthPort is the port the CoreDNS health plugin listens on (inside the container).

@@ -2,7 +2,7 @@
 
 ## Branch: `feat/firewall-monitoring`
 
-## Status: Code complete, all tests passing (4146/4146), needs end-to-end verification
+## Status: Code complete, all tests passing (4147/4147), needs end-to-end verification after rebuild+redeploy
 
 ## What Was Done
 
@@ -18,7 +18,7 @@
 - Updated golden file: `internal/firewall/testdata/corefile_basic.golden`
 
 ### Phase 3: Promtail Log Collection (`internal/monitor/`)
-- Added `PromtailImage` constant: `grafana/promtail:3.6.0@sha256:b35188494870141630bb6ab81d492236fbca5b0e78c91a9e4ddfc7bcd8fd5912`
+- Added `PromtailImage` constant: `grafana/promtail:3.6.0@sha256:2aafa34b3d5fba888c51081d3a22c234906ffd3cafc5def11c581549b297d449`
 - Added `PromtailImage string` to `MonitorTemplateData` struct, wired in `NewMonitorTemplateData()`
 - Added `PromtailConfigTemplate` (embed) + `PromtailConfigFileName` constant
 - Created `internal/monitor/templates/promtail-config.yaml.tmpl`:

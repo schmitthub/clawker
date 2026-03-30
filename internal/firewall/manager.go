@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -141,13 +140,13 @@ func (m *Manager) IsRunning(ctx context.Context) bool {
 // or the context expires. Probes go through published localhost ports so they work
 // from the host (macOS Docker Desktop doesn't route to container IPs).
 //
-//   - Envoy: TCP connect to localhost:18901 (published TLS listener).
+//   - Envoy: HTTP GET to localhost:18901/ (published dedicated health listener).
 //   - CoreDNS: HTTP GET to localhost:18902/health (published health endpoint).
 func (m *Manager) WaitForHealthy(ctx context.Context) error {
 	deadline := time.Now().Add(healthCheckTimeout)
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
-	envoyAddr := fmt.Sprintf("localhost:%d", m.cfg.EnvoyHealthHostPort())
+	envoyURL := fmt.Sprintf("http://localhost:%d/", m.cfg.EnvoyHealthHostPort())
 	corednsURL := fmt.Sprintf("http://localhost:%d%s", m.cfg.CoreDNSHealthHostPort(), m.cfg.CoreDNSHealthPath())
 
 	var envoyReady, corednsReady bool
@@ -158,11 +157,12 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 		}
 
 		if !envoyReady {
-			conn, err := net.DialTimeout("tcp", envoyAddr, 2*time.Second)
-			if err == nil {
-				conn.Close()
-				envoyReady = true
-				m.log.Debug().Msg("envoy health check passed (TCP connect)")
+			if resp, err := httpClient.Get(envoyURL); err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					envoyReady = true
+					m.log.Debug().Msg("envoy health check passed (HTTP 200)")
+				}
 			}
 		}
 
@@ -356,6 +356,12 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 		Str("container", containerID).
 		Msg("firewall disabled")
 
+	// Emit disconnect mapping to Envoy's stdout.
+	inspect, inspectErr := m.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if inspectErr == nil {
+		m.emitAgentMapping(ctx, inspect, "disable")
+	}
+
 	return nil
 }
 
@@ -428,6 +434,13 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		Str("container", containerID).
 		Msg("firewall enabled")
 
+	// Emit agent IP mapping to Envoy's stdout for Promtail collection.
+	// Promtail scrapes clawker-envoy and sends to Loki, so this line becomes
+	// a queryable agent_map entry in the egress monitoring dashboard.
+	if inspectErr == nil {
+		m.emitAgentMapping(ctx, inspect, "enable")
+	}
+
 	return nil
 }
 
@@ -446,6 +459,74 @@ func (m *Manager) touchSignalFile(ctx context.Context, containerID string) error
 	}
 	_, err = m.client.ExecStart(ctx, execResp.ID, client.ExecStartOptions{})
 	return err
+}
+
+// emitAgentMapping pushes an agent→IP mapping log entry directly to Loki.
+// The egress monitoring dashboard uses these entries to resolve agent names
+// from container IPs via the hidden $agent_ips variable.
+//
+// We push directly to Loki's HTTP API rather than writing to a container's
+// stdout because the Envoy container is distroless (no shell/echo available).
+func (m *Manager) emitAgentMapping(ctx context.Context, inspect client.ContainerInspectResult, action string) {
+	agent := inspect.Container.Config.Labels[m.cfg.LabelAgent()]
+	if agent == "" {
+		return // not an agent container
+	}
+
+	// Get the container's IP on clawker-net.
+	var clientIP string
+	netName := m.cfg.ClawkerNetwork()
+	if inspect.Container.NetworkSettings != nil {
+		if ep, ok := inspect.Container.NetworkSettings.Networks[netName]; ok && ep != nil {
+			clientIP = ep.IPAddress.String()
+		}
+	}
+	if clientIP == "" {
+		m.log.Debug().Str("agent", agent).Msg("agent mapping: no IP on clawker-net, skipping")
+		return
+	}
+
+	project := inspect.Container.Config.Labels[m.cfg.LabelProject()]
+
+	lokiPort := m.cfg.SettingsStore().Read().Monitoring.LokiPort
+	if lokiPort == 0 {
+		lokiPort = 3100
+	}
+
+	ts := fmt.Sprintf("%d", time.Now().UnixNano())
+	line := fmt.Sprintf(
+		`{"source":"agent_map","agent":"%s","project":"%s","client_ip":"%s","action":"%s"}`,
+		agent, project, clientIP, action,
+	)
+
+	// Loki push API payload — labels must match what Promtail would produce
+	// so the dashboard's $agent_ips variable query finds these entries.
+	payload := fmt.Sprintf(
+		`{"streams":[{"stream":{"service_name":"envoy","source":"agent_map","agent":"%s","client_ip":"%s","project":"%s","action":"%s"},"values":[["%s",%q]]}]}`,
+		agent, clientIP, project, action, ts, line,
+	)
+
+	url := fmt.Sprintf("http://localhost:%d/loki/api/v1/push", lokiPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(payload))
+	if err != nil {
+		m.log.Debug().Err(err).Msg("agent mapping: failed to build request")
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		m.log.Debug().Err(err).Msg("agent mapping: loki push failed")
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		m.log.Debug().Int("status", resp.StatusCode).Str("body", string(body)).Msg("agent mapping: loki rejected push")
+	} else {
+		m.log.Debug().Str("agent", agent).Str("ip", clientIP).Str("action", action).Msg("agent mapping: pushed to loki")
+	}
 }
 
 // Bypass disables iptables rules and schedules re-enable after timeout.
@@ -595,6 +676,7 @@ func (m *Manager) envoyPorts() EnvoyPorts {
 		TLSPort:     m.cfg.EnvoyTLSPort(),
 		TCPPortBase: m.cfg.EnvoyTCPPortBase(),
 		HTTPPort:    m.cfg.EnvoyHTTPPort(),
+		HealthPort:  m.cfg.EnvoyHealthPort(),
 	}
 }
 
@@ -737,9 +819,11 @@ func (m *Manager) envoyContainerConfig(net *NetworkInfo, dataDir string) contain
 				ReadOnly: true,
 			},
 		},
-		// Publish TLS listener for host-side health probes (TCP connect).
+		// Publish the dedicated health listener — NOT the TLS port.
+		// Publishing the TLS port causes Docker to insert NAT rules for it,
+		// which masquerades the source IP of DNAT'd inter-container traffic.
 		portBindings: network.PortMap{
-			network.MustParsePort(fmt.Sprintf("%d/tcp", m.cfg.EnvoyTLSPort())): {
+			network.MustParsePort(fmt.Sprintf("%d/tcp", m.cfg.EnvoyHealthPort())): {
 				{HostPort: strconv.Itoa(m.cfg.EnvoyHealthHostPort())},
 			},
 		},

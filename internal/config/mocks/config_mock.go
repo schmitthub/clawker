@@ -76,6 +76,9 @@ var _ config.Config = &ConfigMock{}
 //			EnvoyHealthHostPortFunc: func() int {
 //				panic("mock out the EnvoyHealthHostPort method")
 //			},
+//			EnvoyHealthPortFunc: func() int {
+//				panic("mock out the EnvoyHealthPort method")
+//			},
 //			EnvoyIPLastOctetFunc: func() byte {
 //				panic("mock out the EnvoyIPLastOctet method")
 //			},
@@ -296,6 +299,9 @@ type ConfigMock struct {
 	// EnvoyHealthHostPortFunc mocks the EnvoyHealthHostPort method.
 	EnvoyHealthHostPortFunc func() int
 
+	// EnvoyHealthPortFunc mocks the EnvoyHealthPort method.
+	EnvoyHealthPortFunc func() int
+
 	// EnvoyIPLastOctetFunc mocks the EnvoyIPLastOctet method.
 	EnvoyIPLastOctetFunc func() byte
 
@@ -513,6 +519,9 @@ type ConfigMock struct {
 		// EnvoyHealthHostPort holds details about calls to the EnvoyHealthHostPort method.
 		EnvoyHealthHostPort []struct {
 		}
+		// EnvoyHealthPort holds details about calls to the EnvoyHealthPort method.
+		EnvoyHealthPort []struct {
+		}
 		// EnvoyIPLastOctet holds details about calls to the EnvoyIPLastOctet method.
 		EnvoyIPLastOctet []struct {
 		}
@@ -701,6 +710,7 @@ type ConfigMock struct {
 	lockEngineManagedLabel      sync.RWMutex
 	lockEnvoyHTTPPort           sync.RWMutex
 	lockEnvoyHealthHostPort     sync.RWMutex
+	lockEnvoyHealthPort         sync.RWMutex
 	lockEnvoyIPLastOctet        sync.RWMutex
 	lockEnvoyTCPPortBase        sync.RWMutex
 	lockEnvoyTLSPort            sync.RWMutex
@@ -1270,6 +1280,33 @@ func (mock *ConfigMock) EnvoyHealthHostPortCalls() []struct {
 	mock.lockEnvoyHealthHostPort.RLock()
 	calls = mock.calls.EnvoyHealthHostPort
 	mock.lockEnvoyHealthHostPort.RUnlock()
+	return calls
+}
+
+// EnvoyHealthPort calls EnvoyHealthPortFunc.
+func (mock *ConfigMock) EnvoyHealthPort() int {
+	if mock.EnvoyHealthPortFunc == nil {
+		panic("ConfigMock.EnvoyHealthPortFunc: method is nil but Config.EnvoyHealthPort was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEnvoyHealthPort.Lock()
+	mock.calls.EnvoyHealthPort = append(mock.calls.EnvoyHealthPort, callInfo)
+	mock.lockEnvoyHealthPort.Unlock()
+	return mock.EnvoyHealthPortFunc()
+}
+
+// EnvoyHealthPortCalls gets all the calls that were made to EnvoyHealthPort.
+// Check the length with:
+//
+//	len(mockedConfig.EnvoyHealthPortCalls())
+func (mock *ConfigMock) EnvoyHealthPortCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEnvoyHealthPort.RLock()
+	calls = mock.calls.EnvoyHealthPort
+	mock.lockEnvoyHealthPort.RUnlock()
 	return calls
 }
 

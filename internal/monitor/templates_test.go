@@ -216,10 +216,13 @@ monitoring:
 		{"envoy match selector", `service_name="envoy"`},
 		{"coredns match selector", `service_name="coredns"`},
 		{"json stage", "json:"},
-		{"logfmt stage", "logfmt:"},
+		{"regex stage for coredns", "regex:"},
 		{"domain label", "domain:"},
 		{"proto label", "proto:"},
 		{"rcode label", "rcode:"},
+		{"agent label", "agent:"},
+		{"client_ip label", "client_ip:"},
+		{"duration label for coredns", "duration:"},
 	}
 
 	for _, check := range checks {

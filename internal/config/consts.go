@@ -112,7 +112,9 @@ const (
 	envoyTCPPortBase = 10001
 	// envoyHTTPPort is the Envoy HTTP listener port for plain HTTP domain detection (inside container).
 	envoyHTTPPort = 10080
-	// envoyHealthHostPort is the host port published for Envoy health probes (TCP connect).
+	// envoyHealthPort is the Envoy dedicated health check listener port (inside container).
+	envoyHealthPort = 9902
+	// envoyHealthHostPort is the host port published for Envoy health probes (HTTP /healthz).
 	envoyHealthHostPort = 18901
 	// corednsHealthHostPort is the host port published for CoreDNS health probes (HTTP /health).
 	corednsHealthHostPort = 18902
@@ -296,6 +298,9 @@ func (c *configImpl) EnvoyTCPPortBase() int { return envoyTCPPortBase }
 
 // EnvoyHTTPPort returns the Envoy HTTP listener port for plain HTTP domain detection (inside container).
 func (c *configImpl) EnvoyHTTPPort() int { return envoyHTTPPort }
+
+// EnvoyHealthPort returns the Envoy dedicated health check listener port (inside container).
+func (c *configImpl) EnvoyHealthPort() int { return envoyHealthPort }
 
 // EnvoyHealthHostPort returns the host port published for Envoy health probes.
 func (c *configImpl) EnvoyHealthHostPort() int { return envoyHealthHostPort }
