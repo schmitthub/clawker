@@ -79,7 +79,7 @@ loop:
   stagnation_threshold: 3
   timeout_minutes: 15
 security:
-  docker_socket: false
+  docker_socket: true
   firewall:
     add_domains:
       - charm.land
