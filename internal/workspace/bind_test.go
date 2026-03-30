@@ -20,17 +20,17 @@ func assertTmpfsWritableForNonRoot(t *testing.T, m mount.Mount) {
 		t.Fatalf("tmpfs mode = %o, want %o", m.TmpfsOptions.Mode, 0o1777)
 	}
 
-	// Hardcoded security flags: exec (allow binary execution), nosuid
-	// (ignore suid bits), nodev (no device nodes). Don't rely on Docker
-	// daemon defaults — pin them explicitly.
-	wantOpts := [][]string{{"exec"}, {"nosuid"}, {"nodev"}}
+	// Only exec/noexec are valid in TmpfsOptions.Options — nosuid and
+	// nodev are applied automatically by the OCI runtime layer.
+	wantOpts := [][]string{{"exec"}}
 	if len(m.TmpfsOptions.Options) != len(wantOpts) {
 		t.Fatalf("tmpfs options = %v, want %v", m.TmpfsOptions.Options, wantOpts)
 	}
-	for i, opt := range wantOpts {
-		if len(m.TmpfsOptions.Options[i]) != len(opt) || m.TmpfsOptions.Options[i][0] != opt[0] {
-			t.Fatalf("tmpfs options[%d] = %v, want %v", i, m.TmpfsOptions.Options[i], opt)
-		}
+	if len(m.TmpfsOptions.Options[0]) != len(wantOpts[0]) {
+		t.Fatalf("tmpfs options[0] = %v, want %v", m.TmpfsOptions.Options[0], wantOpts[0])
+	}
+	if m.TmpfsOptions.Options[0][0] != "exec" {
+		t.Fatalf("tmpfs options[0] = %v, want %v", m.TmpfsOptions.Options[0], wantOpts[0])
 	}
 }
 
