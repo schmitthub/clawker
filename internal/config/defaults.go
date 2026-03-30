@@ -41,25 +41,56 @@ func init() {
 // Consumers use storage.WithDefaultsFromStruct[T]() to inject defaults into
 // a Store[T] as a merge layer.
 
-// DefaultIgnoreFile returns the default .clawkerignore content
+// DefaultIgnoreFile is the default .clawkerignore content.
+// All entries are commented out — users opt in to what they need.
 const DefaultIgnoreFile = `# Clawker Ignore File
-# Snapshot mode: matching files/directories are excluded from the copy
-# Bind mode: matching directories are masked with empty tmpfs overlays
-#            (file-level patterns like *.env cannot be enforced in bind mode)
-# Syntax is similar to .gitignore (negation patterns not yet supported)
+#
+# In bind mode, listed directories are masked with empty tmpfs overlays
+# so the host's platform-specific binaries (e.g. macOS Darwin node_modules/.bin)
+# don't bleed into the Linux container. The container installs its own
+# dependencies into the tmpfs, which is ephemeral.
+#
+# In snapshot mode, listed directories are simply excluded from the copy —
+# they don't exist in the container at all, allowing it to create its own.
+#
+# Syntax is similar to .gitignore. Negation patterns are not yet supported.
+# File-level patterns (*.env, *.pem) cannot be enforced in bind mode —
+# only directory-level masking works.
+#
+# Uncomment the lines relevant to your stack:
 
-# Dependencies
-node_modules/
-vendor/
-.venv/
-__pycache__/
+# ── JavaScript / TypeScript ──
+# node_modules/
+# .next/
+# .nuxt/
 
-# Build outputs
-dist/
-build/
-*.o
-*.a
-*.so
-*.dylib
+# ── Python ──
+# .venv/
+# __pycache__/
+# .mypy_cache/
 
+# ── Go ──
+# vendor/
+
+# ── Ruby ──
+# vendor/bundle/
+
+# ── Rust ──
+# target/
+
+# ── Java / Kotlin ──
+# .gradle/
+# build/
+
+# ── .NET ──
+# bin/
+# obj/
+
+# ── PHP ──
+# vendor/
+
+# ── Build outputs ──
+# dist/
+# build/
+# out/
 `

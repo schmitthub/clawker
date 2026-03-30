@@ -131,6 +131,14 @@ Only the fields you specify in the subdirectory config are overridden. Everythin
 
 When Clawker writes configuration changes (e.g., via `clawker project init`), each field is routed back to the file it originally came from (provenance tracking). New fields that didn't come from any file are written to the highest-priority discovered file. All writes are atomic (temp file + fsync + rename) with advisory file locking for cross-process safety.
 
+## Project Configuration Schema
+
+The complete `.clawker.yaml` schema with all fields and nested object structures. Descriptions are shown as comments.
+
+```yaml
+{{ .ProjectSchema }}
+```
+
 ## Project Configuration Reference
 
 The following tables are auto-generated from the schema struct tags in `internal/config/schema.go`. Each section corresponds to a top-level key in `.clawker.yaml`.
@@ -161,6 +169,14 @@ clawker settings edit
 ```
 
 The editor opens a TUI with your configuration fields grouped into tabs. You can browse fields, see their current values and defaults, edit them inline, and save. When you save a field, you choose which config layer to write it to — for example, saving to a local override file instead of the committed project config. The editor also shows which file each value comes from, so you can see exactly how the layered merge is working.
+
+## User Settings Schema
+
+The complete `settings.yaml` schema.
+
+```yaml
+{{ .SettingsSchema }}
+```
 
 ## User Settings Reference
 

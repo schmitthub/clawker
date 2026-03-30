@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -41,6 +43,8 @@ type ConfigField struct {
 type ConfigDocData struct {
 	ProjectSections  []ConfigSection
 	SettingsSections []ConfigSection
+	ProjectSchema    string // Full YAML schema with descriptions as comments
+	SettingsSchema   string // Full YAML schema with descriptions as comments
 }
 
 // GenConfigDoc renders the configuration documentation template to w using
@@ -49,6 +53,8 @@ func GenConfigDoc(w io.Writer, tmplContent string) error {
 	data := ConfigDocData{
 		ProjectSections:  buildSections(config.Project{}),
 		SettingsSections: buildSections(config.Settings{}),
+		ProjectSchema:    renderYAMLSchema(reflect.TypeOf(config.Project{}), 0),
+		SettingsSchema:   renderYAMLSchema(reflect.TypeOf(config.Settings{}), 0),
 	}
 
 	funcMap := template.FuncMap{
@@ -188,4 +194,207 @@ func renderFieldTable(fields []ConfigField) string {
 // reusing the same regex-based logic as EscapeMDXProse.
 func escapeMDX(s string) string {
 	return EscapeMDXProse(s)
+}
+
+// renderYAMLSchema generates a complete YAML schema from a struct type using
+// reflection. Unlike NormalizeFields (which treats []struct as an opaque leaf),
+// this recurses into struct slice element types to show their full field
+// structure. Descriptions from `desc` tags become inline YAML comments.
+func renderYAMLSchema(t reflect.Type, indent int) string {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return ""
+	}
+
+	var buf bytes.Buffer
+	prefix := strings.Repeat("  ", indent)
+
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+
+		yamlKey := yamlFieldKey(f)
+		if yamlKey == "-" {
+			continue
+		}
+
+		desc := f.Tag.Get("desc")
+		def := f.Tag.Get("default")
+		req := f.Tag.Get("required") == "true"
+
+		ft := f.Type
+		for ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+
+		switch {
+		case ft.Kind() == reflect.Struct:
+			// Nested struct — recurse.
+			if desc != "" {
+				buf.WriteString(fmt.Sprintf("%s# %s\n", prefix, desc))
+			}
+			buf.WriteString(fmt.Sprintf("%s%s:\n", prefix, yamlKey))
+			buf.WriteString(renderYAMLSchema(ft, indent+1))
+
+		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
+			// Struct slice — show element fields as list item.
+			if desc != "" {
+				buf.WriteString(fmt.Sprintf("%s# %s\n", prefix, desc))
+			}
+			buf.WriteString(fmt.Sprintf("%s%s:\n", prefix, yamlKey))
+			buf.WriteString(renderStructSliceElement(ft.Elem(), indent+1))
+
+		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String:
+			writeDescComment(&buf, prefix, desc)
+			buf.WriteString(fmt.Sprintf("%s%s:  %s\n%s  - <string>\n", prefix, yamlKey, fieldMeta(def, req), prefix))
+
+		case ft.Kind() == reflect.Map && ft.Key().Kind() == reflect.String && ft.Elem().Kind() == reflect.String:
+			writeDescComment(&buf, prefix, desc)
+			buf.WriteString(fmt.Sprintf("%s%s:  %s\n%s  <key>: <value>\n", prefix, yamlKey, fieldMeta(def, req), prefix))
+
+		case ft == reflect.TypeOf(time.Duration(0)):
+			writeDescComment(&buf, prefix, desc)
+			buf.WriteString(fmt.Sprintf("%s%s: <duration>  %s\n", prefix, yamlKey, fieldMeta(def, req)))
+
+		case ft.Kind() == reflect.Bool:
+			writeDescComment(&buf, prefix, desc)
+			buf.WriteString(fmt.Sprintf("%s%s: <boolean>  %s\n", prefix, yamlKey, fieldMeta(def, req)))
+
+		case ft.Kind() == reflect.Int, ft.Kind() == reflect.Int64:
+			writeDescComment(&buf, prefix, desc)
+			buf.WriteString(fmt.Sprintf("%s%s: <integer>  %s\n", prefix, yamlKey, fieldMeta(def, req)))
+
+		case ft.Kind() == reflect.String:
+			writeDescComment(&buf, prefix, desc)
+			buf.WriteString(fmt.Sprintf("%s%s: <string>  %s\n", prefix, yamlKey, fieldMeta(def, req)))
+
+		default:
+			writeDescComment(&buf, prefix, desc)
+			buf.WriteString(fmt.Sprintf("%s%s: <value>  %s\n", prefix, yamlKey, fieldMeta(def, req)))
+		}
+	}
+	return buf.String()
+}
+
+// renderStructSliceElement renders the fields of a struct as a YAML list item
+// (first field prefixed with "- ", subsequent fields indented to align).
+func renderStructSliceElement(t reflect.Type, indent int) string {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return ""
+	}
+
+	var buf bytes.Buffer
+	prefix := strings.Repeat("  ", indent)
+	first := true
+
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+
+		yamlKey := yamlFieldKey(f)
+		if yamlKey == "-" {
+			continue
+		}
+
+		desc := f.Tag.Get("desc")
+		def := f.Tag.Get("default")
+		req := f.Tag.Get("required") == "true"
+		ft := f.Type
+		for ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+
+		meta := fieldMeta(def, req)
+
+		// List items: "- key: val" for first field, "  key: val" for rest.
+		// Comments align with their key line.
+		itemPrefix := prefix + "  " // continuation indent for 2nd+ fields
+		if first {
+			first = false
+			// First field: comment + "- key: val" both at list indent.
+			writeDescComment(&buf, prefix, desc)
+			switch {
+			case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
+				buf.WriteString(fmt.Sprintf("%s- %s:  %s\n", prefix, yamlKey, meta))
+				buf.WriteString(renderStructSliceElement(ft.Elem(), indent+2))
+			case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String:
+				buf.WriteString(fmt.Sprintf("%s- %s:  %s\n%s  - <string>\n", prefix, yamlKey, meta, itemPrefix))
+			default:
+				buf.WriteString(fmt.Sprintf("%s- %s: <%s>  %s\n", prefix, yamlKey, yamlTypeName(ft), meta))
+			}
+			continue
+		}
+
+		writeDescComment(&buf, itemPrefix, desc)
+		switch {
+		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
+			buf.WriteString(fmt.Sprintf("%s%s:  %s\n", itemPrefix, yamlKey, meta))
+			buf.WriteString(renderStructSliceElement(ft.Elem(), indent+2))
+		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String:
+			buf.WriteString(fmt.Sprintf("%s%s:  %s\n%s  - <string>\n", itemPrefix, yamlKey, meta, itemPrefix))
+		default:
+			buf.WriteString(fmt.Sprintf("%s%s: <%s>  %s\n", itemPrefix, yamlKey, yamlTypeName(ft), meta))
+		}
+	}
+	return buf.String()
+}
+
+// writeDescComment writes the description as a YAML comment line.
+func writeDescComment(buf *bytes.Buffer, prefix, desc string) {
+	if desc != "" {
+		buf.WriteString(fmt.Sprintf("%s# %s\n", prefix, desc))
+	}
+}
+
+// fieldMeta returns an inline YAML comment with default and required metadata.
+// Every field gets both values so agents can parse the schema unambiguously.
+func fieldMeta(def string, required bool) string {
+	d := "n/a"
+	if def != "" {
+		d = def
+	}
+	r := "false"
+	if required {
+		r = "true"
+	}
+	return fmt.Sprintf("# default: %s | required: %s", d, r)
+}
+
+// yamlFieldKey extracts the YAML key from a struct field's yaml tag.
+func yamlFieldKey(f reflect.StructField) string {
+	tag := f.Tag.Get("yaml")
+	if tag == "" {
+		return strings.ToLower(f.Name)
+	}
+	key, _, _ := strings.Cut(tag, ",")
+	if key == "" {
+		return strings.ToLower(f.Name)
+	}
+	return key
+}
+
+// yamlTypeName returns a human-readable type placeholder for YAML schema output.
+func yamlTypeName(t reflect.Type) string {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.String:
+		return "string"
+	case reflect.Bool:
+		return "boolean"
+	case reflect.Int, reflect.Int64:
+		return "integer"
+	default:
+		return "value"
+	}
 }

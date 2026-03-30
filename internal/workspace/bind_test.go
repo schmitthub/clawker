@@ -19,8 +19,18 @@ func assertTmpfsWritableForNonRoot(t *testing.T, m mount.Mount) {
 	if m.TmpfsOptions.Mode != 0o1777 {
 		t.Fatalf("tmpfs mode = %o, want %o", m.TmpfsOptions.Mode, 0o1777)
 	}
-	if len(m.TmpfsOptions.Options) != 0 {
-		t.Fatalf("tmpfs options = %v, want empty for daemon compatibility", m.TmpfsOptions.Options)
+
+	// Hardcoded security flags: exec (allow binary execution), nosuid
+	// (ignore suid bits), nodev (no device nodes). Don't rely on Docker
+	// daemon defaults — pin them explicitly.
+	wantOpts := [][]string{{"exec"}, {"nosuid"}, {"nodev"}}
+	if len(m.TmpfsOptions.Options) != len(wantOpts) {
+		t.Fatalf("tmpfs options = %v, want %v", m.TmpfsOptions.Options, wantOpts)
+	}
+	for i, opt := range wantOpts {
+		if len(m.TmpfsOptions.Options[i]) != len(opt) || m.TmpfsOptions.Options[i][0] != opt[0] {
+			t.Fatalf("tmpfs options[%d] = %v, want %v", i, m.TmpfsOptions.Options[i], opt)
+		}
 	}
 }
 

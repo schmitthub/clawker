@@ -93,7 +93,21 @@ func (s *BindStrategy) GetMounts() ([]mount.Mount, error) {
 				Type:   mount.TypeTmpfs,
 				Target: path.Join(s.config.RemotePath, dir),
 				TmpfsOptions: &mount.TmpfsOptions{
+					// 1777 = rwxrwxrwt (world-writable with sticky bit).
+					// Tmpfs is root-owned; 1777 lets any user create/write
+					// files while the sticky bit prevents cross-user deletion.
 					Mode: 0o1777,
+					// Explicit security flags — don't rely on Docker daemon
+					// defaults which could change across versions.
+					// exec:   override default noexec so installed binaries
+					//         (e.g. node_modules/.bin/*) can execute
+					// nosuid: kernel ignores suid/sgid bits on this mount
+					// nodev:  prevent creation of device nodes
+					Options: [][]string{
+						{"exec"},
+						{"nosuid"},
+						{"nodev"},
+					},
 				},
 			})
 		}
