@@ -138,14 +138,14 @@ The complete `.clawker.yaml` schema with all fields and nested object structures
 ```yaml
 build:
   # Starting Docker image (e.g. node:20-slim, python:3.12); clawker layers tools on top
-  image: ""
+  image: <string>  # default: n/a | required: false
   # Use your own Dockerfile instead of clawker's generated one; ignores image, packages, and instructions
-  dockerfile: ""
-  # System packages (apt/apk) needed by your project that aren't in the base image (default: ripgrep)
-  packages:
+  dockerfile: <string>  # default: n/a | required: false
+  # System packages (apt/apk) needed by your project that aren't in the base image
+  packages:  # default: ripgrep | required: false
     - <string>
   # Directory to use as Docker build context when using a custom Dockerfile (relative to project root)
-  context: ""
+  context: <string>  # default: n/a | required: false
   instructions:
     # Bake config files or credentials into the image (e.g. .npmrc, SSH config)
     copy:
@@ -158,10 +158,10 @@ build:
         # Set file permissions (e.g. 0644)
         chmod: <string>
     # Environment variables baked into the image; use agent.env for runtime-only vars
-    env:
+    env:  # default: n/a | required: false
       <key>: <value>
     # Custom Docker labels for image metadata or tooling integration
-    labels:
+    labels:  # default: n/a | required: false
       <key>: <value>
     # Build-time variables resolved during docker build (ARG); not available at runtime
     args:
@@ -170,61 +170,61 @@ build:
         # Value used when not overridden by --build-arg at build time
         default: <string>
     # Setup commands that run as the container user (e.g. npm install -g, pip install)
-    user_run:
+    user_run:  # default: n/a | required: false
       - <string>
     # Setup commands that need root privileges (e.g. system config, additional repos)
-    root_run:
+    root_run:  # default: n/a | required: false
       - <string>
   inject:
     # Add Dockerfile instructions while root with only the base image — e.g. apt sources, proxy config, or CA certs that package installation depends on
-    after_from:
+    after_from:  # default: n/a | required: false
       - <string>
     # Add Dockerfile instructions while root with system packages available — e.g. compile native libraries or install tools that need those packages
-    after_packages:
+    after_packages:  # default: n/a | required: false
       - <string>
     # Add Dockerfile instructions while root with the claude user created — e.g. set up directories, fix permissions, or configure services
-    after_user_setup:
+    after_user_setup:  # default: n/a | required: false
       - <string>
     # Add Dockerfile instructions as the claude user — e.g. install dotfiles, configure your shell, or set up user-level tools
-    after_user_switch:
+    after_user_switch:  # default: n/a | required: false
       - <string>
     # Add Dockerfile instructions as the claude user with Claude Code available — e.g. add MCP servers, install plugins, or extensions
-    after_claude_install:
+    after_claude_install:  # default: n/a | required: false
       - <string>
     # Add Dockerfile instructions at the very end — e.g. final environment tweaks or cleanup that must happen after everything else
-    before_entrypoint:
+    before_entrypoint:  # default: n/a | required: false
       - <string>
 agent:
   # Load environment variables from .env-style files (e.g. .env.local)
-  env_file:
+  env_file:  # default: n/a | required: false
     - <string>
   # Pass specific host env vars into the container (e.g. AWS_PROFILE, GITHUB_TOKEN)
-  from_env:
+  from_env:  # default: n/a | required: false
     - <string>
   # Set container env vars directly; use from_env to forward host values instead
-  env:
+  env:  # default: n/a | required: false
     <key>: <value>
   # Editor for git commits and interactive editing inside the container
-  editor: ""
+  editor: <string>  # default: n/a | required: false
   # Visual editor ($VISUAL) for the container
-  visual: ""
+  visual: <string>  # default: n/a | required: false
   claude_code:
     config:
-      # How to initialize Claude Code config: copy syncs host settings/plugins, fresh starts clean (default: copy)
-      strategy: "copy"
-    # Let the container use your host API keys so you don't have to re-authenticate (default: true)
-    use_host_auth: true
-  # Share files between host and container via ~/.clawker-share (read-only in container) (default: false)
-  enable_shared_dir: false
+      # How to initialize Claude Code config: copy syncs host settings/plugins, fresh starts clean
+      strategy: <string>  # default: copy | required: false
+    # Let the container use your host API keys so you don't have to re-authenticate
+    use_host_auth: <boolean>  # default: true | required: false
+  # Share files between host and container via ~/.clawker-share (read-only in container)
+  enable_shared_dir: <boolean>  # default: false | required: false
   # Shell commands run after container starts but before Claude Code launches (e.g. install MCP servers)
-  post_init: ""
+  post_init: <string>  # default: n/a | required: false
 workspace:
-  # bind mounts your project live (edits sync); snapshot copies it (isolated, disposable) (default: bind)
-  default_mode: "bind"
+  # bind mounts your project live (edits sync); snapshot copies it (isolated, disposable)
+  default_mode: <string>  # default: bind | required: true
 security:
   firewall:
     # Shorthand: domains the container can reach over HTTPS (converted to TLS rules)
-    add_domains:
+    add_domains:  # default: n/a | required: false
       - <string>
     # Full egress rules with protocol, port, and path control
     rules:
@@ -244,51 +244,51 @@ security:
             action: <string>
         # What to do with HTTP paths that don't match any path rule (allow or deny)
         path_default: <string>
-  # Mount the host Docker socket (DooD, not DinD) — lets the container manage sibling containers but is a security risk (default: false)
-  docker_socket: false
-  # Linux capabilities granted to the container; NET_ADMIN and NET_RAW are required — removing them will break the firewall (default: NET_ADMIN,NET_RAW)
-  cap_add:
+  # Mount the host Docker socket (DooD, not DinD) — lets the container manage sibling containers but is a security risk
+  docker_socket: <boolean>  # default: false | required: true
+  # Linux capabilities granted to the container; NET_ADMIN and NET_RAW are required — removing them will break the firewall
+  cap_add:  # default: NET_ADMIN,NET_RAW | required: false
     - <string>
-  # Run a proxy for browser-based auth flows and credential forwarding from the host (default: true)
-  enable_host_proxy: true
+  # Run a proxy for browser-based auth flows and credential forwarding from the host
+  enable_host_proxy: <boolean>  # default: true | required: false
   git_credentials:
-    # Let git clone/push use your host HTTPS credentials (via host proxy) (default: true)
-    forward_https: true
-    # Let git use your host SSH keys for cloning and pushing (default: true)
-    forward_ssh: true
-    # Let git sign commits using your host GPG keys (default: true)
-    forward_gpg: true
-    # Sync your host .gitconfig (aliases, user.name, user.email) into the container (default: true)
-    copy_git_config: true
+    # Let git clone/push use your host HTTPS credentials (via host proxy)
+    forward_https: <boolean>  # default: true | required: false
+    # Let git use your host SSH keys for cloning and pushing
+    forward_ssh: <boolean>  # default: true | required: false
+    # Let git sign commits using your host GPG keys
+    forward_gpg: <boolean>  # default: true | required: false
+    # Sync your host .gitconfig (aliases, user.name, user.email) into the container
+    copy_git_config: <boolean>  # default: true | required: false
 loop:
   # Hard cap on iterations to prevent runaway loops
-  max_loops: 0
+  max_loops: <integer>  # default: n/a | required: false
   # Stop early if this many consecutive loops make no progress
-  stagnation_threshold: 0
+  stagnation_threshold: <integer>  # default: n/a | required: false
   # Kill the loop after this long regardless of progress
-  timeout_minutes: 0
+  timeout_minutes: <integer>  # default: n/a | required: false
   # Throttle API calls to control cost
-  calls_per_hour: 0
+  calls_per_hour: <integer>  # default: n/a | required: false
   # Quality score at which the task is considered done
-  completion_threshold: 0
+  completion_threshold: <integer>  # default: n/a | required: false
   # Discard loop state after this many hours of inactivity
-  session_expiration_hours: 0
+  session_expiration_hours: <integer>  # default: n/a | required: false
   # Stop if the same error repeats this many times (stuck in a loop)
-  same_error_threshold: 0
+  same_error_threshold: <integer>  # default: n/a | required: false
   # Stop if output quality drops by this amount between iterations
-  output_decline_threshold: 0
+  output_decline_threshold: <integer>  # default: n/a | required: false
   # Stop if the agent only runs tests for this many loops without code changes
-  max_consecutive_test_loops: 0
+  max_consecutive_test_loops: <integer>  # default: n/a | required: false
   # Pause between iterations (e.g. to avoid rate limits)
-  loop_delay_seconds: 0
+  loop_delay_seconds: <integer>  # default: n/a | required: false
   # Minimum safety score required before marking a task complete
-  safety_completion_threshold: 0
+  safety_completion_threshold: <integer>  # default: n/a | required: false
   # Run Claude Code with --dangerously-skip-permissions for fully autonomous loops
-  skip_permissions: false
+  skip_permissions: <boolean>  # default: n/a | required: false
   # Script called on loop events (start, complete, error) for custom integrations
-  hooks_file: ""
+  hooks_file: <string>  # default: n/a | required: false
   # Extra instructions appended to Claude's system prompt in each loop iteration
-  append_system_prompt: ""
+  append_system_prompt: <string>  # default: n/a | required: false
 
 ```
 
@@ -425,79 +425,79 @@ The complete `settings.yaml` schema.
 
 ```yaml
 logging:
-  # Write structured logs to disk for debugging and diagnostics (default: true)
-  file_enabled: true
-  # Rotate the log file when it exceeds this size (default: 50)
-  max_size_mb: 50
-  # Delete rotated logs older than this (default: 7)
-  max_age_days: 7
-  # Number of rotated log files to keep (default: 3)
-  max_backups: 3
-  # Gzip rotated logs to save disk space (default: true)
-  compress: true
+  # Write structured logs to disk for debugging and diagnostics
+  file_enabled: <boolean>  # default: true | required: false
+  # Rotate the log file when it exceeds this size
+  max_size_mb: <integer>  # default: 50 | required: false
+  # Delete rotated logs older than this
+  max_age_days: <integer>  # default: 7 | required: false
+  # Number of rotated log files to keep
+  max_backups: <integer>  # default: 3 | required: false
+  # Gzip rotated logs to save disk space
+  compress: <boolean>  # default: true | required: false
   otel:
-    # Send logs to the OTEL collector for Grafana/Loki visibility (default: true)
-    enabled: true
-    # Give up on an export batch after this long (default: 5)
-    timeout_seconds: 5
-    # Buffer this many log records before dropping (increase if you see gaps) (default: 2048)
-    max_queue_size: 2048
-    # How often to flush buffered logs to the collector (default: 5)
-    export_interval_seconds: 5
+    # Send logs to the OTEL collector for Grafana/Loki visibility
+    enabled: <boolean>  # default: true | required: false
+    # Give up on an export batch after this long
+    timeout_seconds: <integer>  # default: 5 | required: false
+    # Buffer this many log records before dropping (increase if you see gaps)
+    max_queue_size: <integer>  # default: 2048 | required: false
+    # How often to flush buffered logs to the collector
+    export_interval_seconds: <integer>  # default: 5 | required: false
 monitoring:
   # Override the auto-detected OTEL collector URL (e.g. for a remote collector)
-  otel_collector_endpoint: ""
-  # Host port for the OTEL HTTP receiver (default: 4318)
-  otel_collector_port: 4318
-  # Hostname for reaching the collector from the host (default: localhost)
-  otel_collector_host: "localhost"
-  # Docker network hostname containers use to reach the collector (default: otel-collector)
-  otel_collector_internal: "otel-collector"
-  # Host port for the OTEL gRPC receiver (default: 4317)
-  otel_grpc_port: 4317
-  # Host port for Loki log ingestion (default: 3100)
-  loki_port: 3100
-  # Host port for Prometheus metrics UI (default: 9090)
-  prometheus_port: 9090
-  # Host port for Jaeger tracing UI (default: 16686)
-  jaeger_port: 16686
-  # Host port for Grafana dashboards (default: 3000)
-  grafana_port: 3000
-  # Host port for Prometheus internal metrics (default: 8889)
-  prometheus_metrics_port: 8889
+  otel_collector_endpoint: <string>  # default: n/a | required: false
+  # Host port for the OTEL HTTP receiver
+  otel_collector_port: <integer>  # default: 4318 | required: false
+  # Hostname for reaching the collector from the host
+  otel_collector_host: <string>  # default: localhost | required: false
+  # Docker network hostname containers use to reach the collector
+  otel_collector_internal: <string>  # default: otel-collector | required: false
+  # Host port for the OTEL gRPC receiver
+  otel_grpc_port: <integer>  # default: 4317 | required: false
+  # Host port for Loki log ingestion
+  loki_port: <integer>  # default: 3100 | required: false
+  # Host port for Prometheus metrics UI
+  prometheus_port: <integer>  # default: 9090 | required: false
+  # Host port for Jaeger tracing UI
+  jaeger_port: <integer>  # default: 16686 | required: false
+  # Host port for Grafana dashboards
+  grafana_port: <integer>  # default: 3000 | required: false
+  # Host port for Prometheus internal metrics
+  prometheus_metrics_port: <integer>  # default: 8889 | required: false
   telemetry:
-    # OTEL collector HTTP path for metrics (default: /v1/metrics)
-    metrics_path: "/v1/metrics"
-    # OTEL collector HTTP path for logs (default: /v1/logs)
-    logs_path: "/v1/logs"
-    # How often Claude exports metrics (lower = more granular, higher = less overhead) (default: 10000)
-    metric_export_interval_ms: 10000
-    # How often Claude exports logs (lower = more real-time, higher = less overhead) (default: 5000)
-    logs_export_interval_ms: 5000
-    # Capture full tool call inputs/outputs in telemetry (verbose but useful for debugging) (default: true)
-    log_tool_details: true
-    # Capture user prompts in telemetry (disable for privacy) (default: true)
-    log_user_prompts: true
-    # Tag telemetry with your Anthropic account ID (useful for multi-user setups) (default: true)
-    include_account_uuid: true
-    # Tag telemetry with session ID to correlate events across a single run (default: true)
-    include_session_id: true
+    # OTEL collector HTTP path for metrics
+    metrics_path: <string>  # default: /v1/metrics | required: false
+    # OTEL collector HTTP path for logs
+    logs_path: <string>  # default: /v1/logs | required: false
+    # How often Claude exports metrics (lower = more granular, higher = less overhead)
+    metric_export_interval_ms: <integer>  # default: 10000 | required: false
+    # How often Claude exports logs (lower = more real-time, higher = less overhead)
+    logs_export_interval_ms: <integer>  # default: 5000 | required: false
+    # Capture full tool call inputs/outputs in telemetry (verbose but useful for debugging)
+    log_tool_details: <boolean>  # default: true | required: false
+    # Capture user prompts in telemetry (disable for privacy)
+    log_user_prompts: <boolean>  # default: true | required: false
+    # Tag telemetry with your Anthropic account ID (useful for multi-user setups)
+    include_account_uuid: <boolean>  # default: true | required: false
+    # Tag telemetry with session ID to correlate events across a single run
+    include_session_id: <boolean>  # default: true | required: false
 host_proxy:
   manager:
-    # Local port the host proxy listens on (change if 18374 conflicts) (default: 18374)
-    port: 18374
+    # Local port the host proxy listens on (change if 18374 conflicts)
+    port: <integer>  # default: 18374 | required: false
   daemon:
-    # Local port the proxy daemon binds to (default: 18374)
-    port: 18374
-    # How often to check if containers still need the proxy (default: 30s)
-    poll_interval: <duration>
-    # How long to keep the proxy alive after the last container stops (default: 60s)
-    grace_period: <duration>
-    # Restart the proxy daemon after this many consecutive failures (default: 10)
-    max_consecutive_errs: 10
+    # Local port the proxy daemon binds to
+    port: <integer>  # default: 18374 | required: false
+    # How often to check if containers still need the proxy
+    poll_interval: <duration>  # default: 30s | required: false
+    # How long to keep the proxy alive after the last container stops
+    grace_period: <duration>  # default: 60s | required: false
+    # Restart the proxy daemon after this many consecutive failures
+    max_consecutive_errs: <integer>  # default: 10 | required: false
 firewall:
-  # Master switch for the Envoy firewall; when off, containers have unrestricted network access (default: true)
-  enable: true
+  # Master switch for the Envoy firewall; when off, containers have unrestricted network access
+  enable: <boolean>  # default: true | required: true
 
 ```
 

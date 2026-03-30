@@ -56,15 +56,19 @@ func TestRenderYAMLSchema_DescriptionsAsComments(t *testing.T) {
 	}
 }
 
-func TestRenderYAMLSchema_DefaultsInComments(t *testing.T) {
+func TestRenderYAMLSchema_InlineMetadata(t *testing.T) {
 	schema := renderYAMLSchema(reflect.TypeOf(config.Project{}), 0)
 
-	// Fields with defaults should show them in comments.
-	if !strings.Contains(schema, "(default: ripgrep)") {
-		t.Error("schema should show default value for packages field")
+	// Every field gets inline metadata: # default: X | required: Y
+	if !strings.Contains(schema, "# default: ripgrep | required: false") {
+		t.Error("packages field should show default and required metadata")
 	}
-	if !strings.Contains(schema, "(default: bind)") {
-		t.Error("schema should show default value for default_mode field")
+	if !strings.Contains(schema, "# default: bind | required: true") {
+		t.Error("default_mode field should show default and required metadata")
+	}
+	// Fields without defaults show n/a.
+	if !strings.Contains(schema, "# default: n/a | required: false") {
+		t.Error("fields without defaults should show default: n/a")
 	}
 }
 

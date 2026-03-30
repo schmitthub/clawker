@@ -42,6 +42,27 @@ schema is deterministically documented at:
 
 **Always fetch this page** before recommending any project config changes.
 
+### Reading the YAML schema
+
+The configuration page includes a full YAML schema block for both project
+config and user settings. Every field uses a type placeholder as its value
+and an inline comment with metadata:
+
+```yaml
+# Description of the field
+some_field: <type>  # default: value | required: true
+```
+
+- **`<type>`** — The field's type: `<string>`, `<integer>`, `<boolean>`,
+  `<duration>`, or a nested structure.
+- **`default: value`** — The default applied when the field is omitted.
+  `default: n/a` means no default exists (the field is unset unless the
+  user provides a value, though getter methods may apply runtime fallbacks).
+- **`required: true|false`** — Whether the field must have a value.
+
+Do not treat type placeholders as literal values. Do not infer defaults
+from the placeholder — always read the inline `# default:` comment.
+
 ## Troubleshooting
 
 ### Build failed
