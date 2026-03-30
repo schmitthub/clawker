@@ -26,6 +26,9 @@ func assertTmpfsWritableForNonRoot(t *testing.T, m mount.Mount) {
 	if len(m.TmpfsOptions.Options) != len(wantOpts) {
 		t.Fatalf("tmpfs options = %v, want %v", m.TmpfsOptions.Options, wantOpts)
 	}
+	if len(m.TmpfsOptions.Options[0]) != len(wantOpts[0]) {
+		t.Fatalf("tmpfs options[0] = %v, want %v", m.TmpfsOptions.Options[0], wantOpts[0])
+	}
 	if m.TmpfsOptions.Options[0][0] != "exec" {
 		t.Fatalf("tmpfs options[0] = %v, want %v", m.TmpfsOptions.Options[0], wantOpts[0])
 	}
