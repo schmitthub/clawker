@@ -27,3 +27,20 @@ Claude Code → OTLP (http/protobuf) → otel-collector → Loki (logs/events) +
 ### Counter gotcha — absent values are NOT zero
 
 `count_over_time` returns **no result** when no matching events exist. Panels must handle gracefully — use `noValue` text on panel options, not `or vector(0)`.
+
+## Egress Traffic Logs
+
+Firewall containers (Envoy + CoreDNS) emit structured access logs to stdout. Promtail auto-discovers these by Docker label (`dev.clawker.purpose=firewall`) and ships to Loki.
+
+### Envoy (`service_name="envoy"`)
+- JSON access logs parsed by Promtail `json` stage
+- Key labels: `domain`, `proto` (tls/tls_mitm/http/tcp/deny), `response_code`, `response_flags`
+- `response_flags` containing `UF` (upstream failure) indicates blocked/denied traffic
+
+### CoreDNS (`service_name="coredns"`)
+- Key=value access logs parsed by Promtail `regex` stage
+- Key labels: `domain`, `qtype` (A/AAAA), `rcode` (NOERROR/NXDOMAIN)
+- `rcode=NXDOMAIN` indicates blocked domain lookups
+
+### Dashboard: "Egress Traffic" row (panel IDs 54–58)
+- Envoy Traffic (logs), DNS Lookups (logs), Top Blocked Domains (table), Egress Over Time (timeseries)

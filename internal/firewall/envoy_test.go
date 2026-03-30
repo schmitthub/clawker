@@ -323,6 +323,137 @@ func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
 	assert.Contains(t, out, "port_value: 443")
 }
 
+func TestBuildHTTPAccessLog(t *testing.T) {
+	t.Parallel()
+
+	logs := buildHTTPAccessLog("http")
+	require.Len(t, logs, 1)
+
+	entry, ok := logs[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "envoy.access_loggers.stdout", entry["name"])
+
+	tc, ok := entry["typed_config"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, tc["@type"], "StdoutAccessLog")
+
+	lf, ok := tc["log_format"].(map[string]any)
+	require.True(t, ok)
+	jf, ok := lf["json_format"].(map[string]any)
+	require.True(t, ok)
+
+	// Common fields.
+	assert.Equal(t, "http", jf["proto"])
+	assert.Equal(t, "envoy", jf["source"])
+	assert.Equal(t, "%REQUESTED_SERVER_NAME%", jf["domain"])
+	assert.Equal(t, "%DURATION%", jf["duration_ms"])
+	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["client_ip"])
+
+	// HTTP-specific fields present.
+	assert.Equal(t, "%RESPONSE_CODE%", jf["response_code"])
+	assert.Equal(t, "%REQ(:METHOD)%", jf["method"])
+	assert.Equal(t, "%REQ(:PATH)%", jf["path"])
+}
+
+func TestBuildTCPAccessLog(t *testing.T) {
+	t.Parallel()
+
+	logs := buildTCPAccessLog("tls")
+	require.Len(t, logs, 1)
+
+	entry, ok := logs[0].(map[string]any)
+	require.True(t, ok)
+
+	tc, ok := entry["typed_config"].(map[string]any)
+	require.True(t, ok)
+	lf, ok := tc["log_format"].(map[string]any)
+	require.True(t, ok)
+	jf, ok := lf["json_format"].(map[string]any)
+	require.True(t, ok)
+
+	// Common fields present.
+	assert.Equal(t, "tls", jf["proto"])
+	assert.Equal(t, "%REQUESTED_SERVER_NAME%", jf["domain"])
+	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["client_ip"])
+
+	// HTTP-specific fields absent.
+	assert.Nil(t, jf["response_code"])
+	assert.Nil(t, jf["method"])
+	assert.Nil(t, jf["path"])
+}
+
+func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
+	t.Parallel()
+
+	logs := buildTCPAccessLog("tcp", "github.com")
+	require.Len(t, logs, 1)
+
+	entry, ok := logs[0].(map[string]any)
+	require.True(t, ok)
+
+	tc, ok := entry["typed_config"].(map[string]any)
+	require.True(t, ok)
+	lf, ok := tc["log_format"].(map[string]any)
+	require.True(t, ok)
+	jf, ok := lf["json_format"].(map[string]any)
+	require.True(t, ok)
+
+	// Static domain overrides the SNI placeholder for raw TCP listeners.
+	assert.Equal(t, "github.com", jf["domain"])
+	assert.Equal(t, "tcp", jf["proto"])
+}
+
+func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		rules []config.EgressRule
+	}{
+		{
+			name: "TLS passthrough has access_log",
+			rules: []config.EgressRule{
+				{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+			},
+		},
+		{
+			name: "TLS MITM has access_log",
+			rules: []config.EgressRule{
+				{
+					Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+					PathRules:   []config.PathRule{{Path: "/v1", Action: "allow"}},
+					PathDefault: "deny",
+				},
+			},
+		},
+		{
+			name: "TCP/SSH has access_log",
+			rules: []config.EgressRule{
+				{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
+			},
+		},
+		{
+			name: "HTTP has access_log",
+			rules: []config.EgressRule{
+				{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+			},
+		},
+	}
+
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			yamlBytes, _, err := GenerateEnvoyConfig(tt.rules, ports)
+			require.NoError(t, err)
+			out := string(yamlBytes)
+			assert.Contains(t, out, "envoy.access_loggers.stdout")
+			assert.Contains(t, out, "StdoutAccessLog")
+			assert.Contains(t, out, "json_format")
+		})
+	}
+}
+
 func TestNormalizeAndDedup(t *testing.T) {
 	t.Parallel()
 

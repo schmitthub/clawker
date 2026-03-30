@@ -24,6 +24,7 @@ type RuntimeEnvOpts struct {
 
 	// Firewall
 	FirewallEnabled bool
+	LokiPort        int // Configured Loki port for container-side telemetry (0 = default 3100)
 
 	// Monitoring stack
 	MonitoringActive bool // Whether the monitoring stack (otel-collector) is running
@@ -87,6 +88,9 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	// Firewall (simple flag — iptables applied post-start via manager.Enable)
 	if opts.FirewallEnabled {
 		m["CLAWKER_FIREWALL_ENABLED"] = "true"
+	}
+	if opts.LokiPort != 0 && opts.LokiPort != 3100 {
+		m["CLAWKER_LOKI_PORT"] = fmt.Sprintf("%d", opts.LokiPort)
 	}
 
 	// Telemetry resource attributes for per-project/agent metric segmentation.

@@ -82,6 +82,7 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.EnvoyTLSPortFunc = cfg.EnvoyTLSPort
 	mock.EnvoyTCPPortBaseFunc = cfg.EnvoyTCPPortBase
 	mock.EnvoyHTTPPortFunc = cfg.EnvoyHTTPPort
+	mock.EnvoyHealthPortFunc = cfg.EnvoyHealthPort
 	mock.EnvoyHealthHostPortFunc = cfg.EnvoyHealthHostPort
 	mock.CoreDNSHealthHostPortFunc = cfg.CoreDNSHealthHostPort
 	mock.CoreDNSHealthPathFunc = cfg.CoreDNSHealthPath

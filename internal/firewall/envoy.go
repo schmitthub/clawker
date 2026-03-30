@@ -13,6 +13,7 @@ type EnvoyPorts struct {
 	TLSPort     int // Listener port for TLS egress (SNI passthrough + MITM).
 	TCPPortBase int // Starting port for TCP/SSH listeners.
 	HTTPPort    int // Listener port for plain HTTP egress (Host header domain detection).
+	HealthPort  int // Dedicated health check listener port for external probes.
 }
 
 // TCPMapping describes a per-destination iptables DNAT entry for non-TLS traffic.
@@ -91,6 +92,57 @@ const (
 	envoyCertFileFmt = "/etc/envoy/certs/%s-cert.pem"
 	envoyKeyFileFmt  = "/etc/envoy/certs/%s-key.pem"
 )
+
+// buildHTTPAccessLog returns an Envoy stdout access log for http_connection_manager contexts.
+// Includes HTTP-specific fields (method, path, response_code) that are only available
+// when Envoy terminates HTTP — used by MITM filter chains and the HTTP listener.
+func buildHTTPAccessLog(proto string) []any {
+	return []any{accessLogEntry(proto, map[string]any{
+		"method":        "%REQ(:METHOD)%",
+		"path":          "%REQ(:PATH)%",
+		"response_code": "%RESPONSE_CODE%",
+	})}
+}
+
+// buildTCPAccessLog returns an Envoy stdout access log for tcp_proxy contexts.
+// Omits HTTP fields (method, path, response_code) that are unavailable in TCP proxy —
+// used by passthrough TLS, deny, and TCP/SSH listeners.
+// Optional domain overrides %REQUESTED_SERVER_NAME% for raw TCP where SNI is unavailable.
+func buildTCPAccessLog(proto string, domain ...string) []any {
+	var extra map[string]any
+	if len(domain) > 0 && domain[0] != "" {
+		extra = map[string]any{"domain": domain[0]}
+	}
+	return []any{accessLogEntry(proto, extra)}
+}
+
+// accessLogEntry builds the common access log structure. Extra fields (if any)
+// are merged into the JSON format for HTTP-aware contexts.
+func accessLogEntry(proto string, extra map[string]any) map[string]any {
+	jf := map[string]any{
+		"timestamp":      "%START_TIME%",
+		"domain":         "%REQUESTED_SERVER_NAME%",
+		"upstream_host":  "%UPSTREAM_HOST%",
+		"listener_port":  "%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%",
+		"client_ip":      "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
+		"response_flags": "%RESPONSE_FLAGS%",
+		"bytes_sent":     "%BYTES_SENT%",
+		"bytes_received": "%BYTES_RECEIVED%",
+		"duration_ms":    "%DURATION%",
+		"proto":          proto,
+		"source":         "envoy",
+	}
+	for k, v := range extra {
+		jf[k] = v
+	}
+	return map[string]any{
+		"name": "envoy.access_loggers.stdout",
+		"typed_config": map[string]any{
+			"@type":      "type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog",
+			"log_format": map[string]any{"json_format": jf},
+		},
+	}
+}
 
 // dnsCacheName is the shared DNS cache name for dynamic forward proxy.
 const dnsCacheName = "dynamic_forward_proxy_cache_config"
@@ -182,7 +234,67 @@ func buildListeners(mitm, passthrough, tcp, http []config.EgressRule, tcpMapping
 		}
 	}
 
+	// Dedicated health check listener — published for host-side probes.
+	// Kept on a separate port so the TLS listener (10000) is never published,
+	// avoiding Docker's port-publish NAT rules that can masquerade source IPs.
+	if ports.HealthPort > 0 {
+		listeners = append(listeners, buildHealthListener(ports.HealthPort))
+	}
+
 	return listeners
+}
+
+// buildHealthListener creates a lightweight HTTP listener that returns 200 OK
+// for health probes. This is the only port published to the host — keeping
+// traffic ports unpublished preserves source IPs for per-agent attribution.
+func buildHealthListener(port int) map[string]any {
+	return map[string]any{
+		"name": "health_check",
+		"address": map[string]any{
+			"socket_address": map[string]any{
+				"address":    "0.0.0.0",
+				"port_value": port,
+			},
+		},
+		"filter_chains": []any{
+			map[string]any{
+				"filters": []any{
+					map[string]any{
+						"name": "envoy.filters.network.http_connection_manager",
+						"typed_config": map[string]any{
+							"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+							"stat_prefix": "health_check",
+							"route_config": map[string]any{
+								"virtual_hosts": []any{
+									map[string]any{
+										"name":    "health",
+										"domains": []any{"*"},
+										"routes": []any{
+											map[string]any{
+												"match": map[string]any{"prefix": "/"},
+												"direct_response": map[string]any{
+													"status": 200,
+													"body":   map[string]any{"inline_string": "ok"},
+												},
+											},
+										},
+									},
+								},
+							},
+							"http_filters": []any{
+								map[string]any{
+									"name": "envoy.filters.http.router",
+									"typed_config": map[string]any{
+										"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 // buildTLSListener creates the main TLS listener on the given port.
@@ -285,6 +397,7 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int) map[string]any {
 							"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
 							"stat_prefix": "http_egress",
 							"codec_type":  "AUTO",
+							"access_log":  buildHTTPAccessLog("http"),
 							"route_config": map[string]any{
 								"name":          "http_egress_routes",
 								"virtual_hosts": virtualHosts,
@@ -350,6 +463,7 @@ func buildMITMFilterChain(r config.EgressRule) map[string]any {
 					"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
 					"stat_prefix": fmt.Sprintf("mitm_%s", sanitizeName(domain)),
 					"codec_type":  "AUTO",
+					"access_log":  buildHTTPAccessLog("tls_mitm"),
 					"route_config": map[string]any{
 						"name": fmt.Sprintf("mitm_route_%s", sanitizeName(domain)),
 						"virtual_hosts": []any{
@@ -458,6 +572,7 @@ func buildPassthroughFilterChain(r config.EgressRule) map[string]any {
 					"stat_prefix":  fmt.Sprintf("passthrough_%s", sanitizeName(domain)),
 					"cluster":      "dynamic_forward_proxy_cluster",
 					"idle_timeout": "0s",
+					"access_log":   buildTCPAccessLog("tls"),
 				},
 			},
 		},
@@ -465,6 +580,8 @@ func buildPassthroughFilterChain(r config.EgressRule) map[string]any {
 }
 
 // buildDenyFilterChain creates the default deny filter chain that resets connections.
+// Access logging with proto="deny" so blocked connection attempts are visible in the
+// egress monitoring dashboard alongside allowed traffic.
 func buildDenyFilterChain() map[string]any {
 	return map[string]any{
 		"filter_chain_match": map[string]any{},
@@ -476,6 +593,7 @@ func buildDenyFilterChain() map[string]any {
 					"stat_prefix":  "deny_all",
 					"cluster":      "deny_cluster",
 					"idle_timeout": "0s",
+					"access_log":   buildTCPAccessLog("deny"),
 				},
 			},
 		},
@@ -519,6 +637,7 @@ func buildTCPListener(r config.EgressRule, port int) map[string]any {
 							"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 							"stat_prefix": clusterName,
 							"cluster":     clusterName,
+							"access_log":  buildTCPAccessLog(r.Proto, r.Dst),
 						},
 					},
 				},

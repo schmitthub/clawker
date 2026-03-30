@@ -2156,6 +2156,198 @@
       ],
       "title": "Errors",
       "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 67
+      },
+      "id": 54,
+      "panels": [],
+      "title": "Egress Traffic",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 68
+      },
+      "id": 55,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokidatasource}"
+          },
+          "expr": "{service_name=\"envoy\", source=\"envoy\", client_ip=~\"${agent_ips:regex}\"} | json | line_format `{{.proto}} → {{if .domain}}{{.domain}}{{else}}{{.upstream_host}}{{end}}{{if and .domain .upstream_host}} ({{.upstream_host}}){{end}}{{if .method}} {{.method}} {{.path}} {{.response_code}}{{end}}{{if and .response_flags (ne .response_flags \"-\")}} flags={{.response_flags}}{{end}} ↑{{.bytes_sent}} ↓{{.bytes_received}} {{.duration_ms}}ms`",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Envoy Traffic — ${agent}",
+      "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 68
+      },
+      "id": 56,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokidatasource}"
+          },
+          "expr": "{service_name=\"coredns\", client_ip=~\"${agent_ips:regex}\", rcode=~\".+\"} | regexp `duration=(?P<duration>\\S+)` | line_format `{{if eq .rcode \"NXDOMAIN\"}}🚫 BLOCKED{{else}}✓{{end}} {{.domain}} {{.qtype}} {{.duration}}`",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "DNS Lookups — ${agent}",
+      "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No blocked traffic"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 78
+      },
+      "id": 57,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Value"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokidatasource}"
+          },
+          "expr": "topk(20, sum by (domain) (count_over_time({service_name=\"coredns\", client_ip=~\"${agent_ips:regex}\"} | rcode=`NXDOMAIN` [$__range])))",
+          "legendFormat": "{{domain}}",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Blocked Domains — ${agent}",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "Count",
+              "domain": "Domain"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No egress traffic"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 78
+      },
+      "id": 58,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokidatasource}"
+          },
+          "expr": "sum by (proto) (count_over_time({service_name=\"envoy\", source=\"envoy\", client_ip=~\"${agent_ips:regex}\"} [$__interval]))",
+          "legendFormat": "{{proto}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Egress Over Time — ${agent}",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",
@@ -2286,6 +2478,34 @@
         "regex": "",
         "skipUrlSync": false,
         "sort": 2,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "${lokidatasource}"
+        },
+        "definition": "label_values({service_name=\"envoy\", source=\"agent_map\", project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\"}, client_ip)",
+        "hide": 2,
+        "includeAll": true,
+        "label": "Agent IPs",
+        "multi": true,
+        "name": "agent_ips",
+        "options": [],
+        "query": {
+          "query": "label_values({service_name=\"envoy\", source=\"agent_map\", project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\"}, client_ip)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": true,
+        "sort": 0,
         "type": "query"
       }
     ]

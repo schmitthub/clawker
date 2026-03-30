@@ -11,6 +11,12 @@ import (
 // Upstream DNS servers: Cloudflare malware-blocking resolvers.
 var upstreamDNS = []string{"1.1.1.2", "1.0.0.2"}
 
+// corefileLogFormat is the custom log format for DNS query logging.
+// Uses logfmt-compatible key=value pairs for easy parsing by Promtail.
+// CoreDNS placeholders: {name}=queried domain, {type}=query type (A/AAAA),
+// {rcode}=response code (NOERROR/NXDOMAIN), {duration}=resolution time.
+const corefileLogFormat = `source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}`
+
 // GenerateCorefile produces a CoreDNS Corefile from the given egress rules.
 // healthPort is the port the CoreDNS health plugin listens on (inside the container).
 //
@@ -60,6 +66,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	// Per-domain forward zones.
 	for _, domain := range domains {
 		fmt.Fprintf(&b, "%s {\n", domain)
+		fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
 		fmt.Fprintf(&b, "    forward . %s\n", strings.Join(upstreamDNS, " "))
 		fmt.Fprintf(&b, "}\n\n")
 	}
@@ -67,12 +74,14 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	// Internal host forward zones (Docker DNS).
 	for _, host := range internalHosts {
 		fmt.Fprintf(&b, "%s {\n", host)
+		fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
 		b.WriteString("    forward . 127.0.0.11\n")
 		b.WriteString("}\n\n")
 	}
 
 	// Catch-all zone: NXDOMAIN for everything not explicitly allowed.
 	b.WriteString(". {\n")
+	fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
 	b.WriteString("    template IN ANY . {\n")
 	b.WriteString("        rcode NXDOMAIN\n")
 	b.WriteString("    }\n")

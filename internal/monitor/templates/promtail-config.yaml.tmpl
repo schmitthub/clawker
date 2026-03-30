@@ -1,0 +1,88 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:{{.LokiPort}}/loki/api/v1/push
+
+scrape_configs:
+  - job_name: firewall
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["dev.clawker.purpose=firewall"]
+    relabel_configs:
+      # Extract container name without leading slash.
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      # Derive service_name from container name: clawker-envoy → envoy, clawker-coredns → coredns.
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/clawker-(.*)'
+        target_label: 'service_name'
+    pipeline_stages:
+      - docker: {}
+
+      # Envoy emits JSON — access logs and agent_map entries.
+      - match:
+          selector: '{service_name="envoy"}'
+          stages:
+            - json:
+                expressions:
+                  source: source
+                  domain: domain
+                  upstream_host: upstream_host
+                  listener_port: listener_port
+                  client_ip: client_ip
+                  method: method
+                  path: path
+                  response_code: response_code
+                  response_flags: response_flags
+                  bytes_sent: bytes_sent
+                  bytes_received: bytes_received
+                  duration_ms: duration_ms
+                  proto: proto
+                  agent: agent
+                  project: project
+                  action: action
+                  ts: timestamp
+            # Use Envoy's embedded timestamp instead of Docker log timestamp.
+            # Envoy logs on connection close — without this, a batch of connections
+            # closing together all get the same Docker stdout timestamp.
+            - timestamp:
+                source: ts
+                format: "2006-01-02T15:04:05.000Z"
+            - labels:
+                source:
+                domain:
+                proto:
+                client_ip:
+                response_code:
+                response_flags:
+                agent:
+                project:
+                action:
+
+      # CoreDNS log lines have an [INFO] prefix before the logfmt data:
+      #   [INFO] source=coredns client_ip=172.18.0.8:12345 domain=example.com. qtype=A rcode=NOERROR duration=0.001s
+      # CoreDNS {remote} outputs IP:port — capture IP-only (stop at colon).
+      # Domain names have a trailing dot from DNS — strip it in the dashboard query.
+      - match:
+          selector: '{service_name="coredns"}'
+          stages:
+            - regex:
+                expression: 'client_ip=(?P<client_ip>[^:\s]+)(?::\d+)?\s+domain=(?P<domain>\S+)\s+qtype=(?P<qtype>\S+)\s+rcode=(?P<rcode>\S+)\s+duration=(?P<duration>\S+)'
+            - labels:
+                client_ip:
+                domain:
+                qtype:
+                rcode:
+            # Drop detected_level so Grafana doesn't render an "info" badge on every line.
+            # CoreDNS prepends [INFO] to all log lines — the level is constant and useless.
+            - labeldrop:
+                - detected_level

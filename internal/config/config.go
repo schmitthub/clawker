@@ -91,6 +91,7 @@ type Config interface {
 	EnvoyTLSPort() int
 	EnvoyTCPPortBase() int
 	EnvoyHTTPPort() int
+	EnvoyHealthPort() int
 	EnvoyHealthHostPort() int
 	CoreDNSHealthHostPort() int
 	CoreDNSHealthPath() string
