@@ -98,11 +98,13 @@ See the [Firewall](/firewall) guide for the full architecture, configuration, an
 
 See [Container Internals](/container-internals) for bind vs snapshot details and workspace configuration.
 
-<Note>
-**`.clawkerignore` and tmpfs overlays.** Directories listed in `.clawkerignore` (e.g. `node_modules/`, `vendor/`, `.venv/`) are masked inside the container with empty tmpfs mounts. This prevents binary and dependency cross-contamination between host and container operating systems — a macOS host's `node_modules/.bin` contains Darwin binaries that won't run in the Linux container, and vice versa. The container installs its own dependencies into the tmpfs, which is ephemeral and destroyed when the container stops.
+<Info>
+**`.clawkerignore` and tmpfs overlays.** 
 
-These tmpfs mounts use the `exec` flag, overriding Docker's default `noexec`. This is intentional. The `noexec` hardening pattern targets unattended ephemeral production containers where the entire root filesystem is read-only and tmpfs is the attacker's only writable surface — restricting `exec` on `/tmp` and `/dev/shm` blocks the classic "download and execute" post-compromise chain. That threat model does not apply to a development container. In our case, the workspace bind mount already has `exec`. An attacker who can drop a binary to `node_modules/` can just as easily drop it to the project root or `src/`. So `noexec` on the tmpfs overlays is a speed bump, not a barrier. The real controls are the egress firewall (prevents downloading payloads), the unprivileged user (prevents privilege escalation), and seccomp filtering (restricts dangerous syscalls).
-</Note>
+Directories listed in `.clawkerignore` (e.g. `node_modules/`, `vendor/`, `.venv/`) are masked inside the container with empty tmpfs mounts mounted as `root` (macos doesn't support uid/gid settings) when in `workspace.bind` mode (`snapshot ignores copying them`). This prevents binary and dependency cross-contamination between host and container operating systems — a macOS host's `node_modules/.bin` contains Darwin binaries that won't run in the Linux container, and vice versa. The container installs its own dependencies into the tmpfs, which is ephemeral and destroyed when the container stops.
+
+These tmpfs mounts use `exec` setting, overriding Docker's default `noexec`. This is intentional. The `noexec` hardening pattern targets unattended ephemeral production containers where the entire root filesystem is read-only and tmpfs is the attacker's only writable surface — restricting `exec` on `/tmp` and `/dev/shm` blocks the classic "download and execute" post-compromise chain. That threat model does not apply to a development container. In our case, the workspace bind mount already has `exec`. An attacker who can drop a binary to `node_modules/` can just as easily drop it to the project root or `src/`. So `noexec` on the tmpfs overlays is a speed bump, not a barrier. The real controls are the egress firewall (prevents downloading payloads), the unprivileged user (prevents privilege escalation), and seccomp filtering (restricts dangerous syscalls).
+</Info>
 
 ## Summary
 
@@ -144,6 +146,16 @@ Docker-outside-of-Docker (DooD) was chosen over Docker-in-Docker (DinD) for perf
 </Danger>
 
 <Warning>clawker's own resource jailing (`pkg/whail`) is a UX feature for the *user*, not a security boundary for the agent. It prevents you from accidentally running `clawker volume prune` and deleting non-clawker volumes. But the agent inside the container uses the real Docker CLI, not clawker — so the jailing doesn't apply. Only enable the Docker socket if your workflow genuinely requires container-driven development (e.g., building and running containers as part of your CI or dev workflow). Otherwise, leave it off.</Warning>
+
+### Privileged Mode
+
+Clawker does **not** run containers in privileged mode by default. The `--privileged` flag is available on `clawker container create` and `clawker container exec` for users who explicitly need it, but it is off unless you ask for it.
+
+<Danger>
+**Running containers with `--privileged` grants elevated permissions and can expose the host system to security risks.** Privileged mode disables all security boundaries — seccomp filtering, capability restrictions, device access controls, and mount namespace isolation are all removed. The container effectively has root-level access to the host kernel. Use this option only when absolutely necessary and in trusted environments.
+
+Clawker's security controls (unprivileged user, nosuid mounts, seccomp, capability dropping) are meaningless in privileged mode. If you pass `--privileged`, you are accepting full responsibility for what the agent does.
+</Danger>
 
 ### Bypass Discipline
 
