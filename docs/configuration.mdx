@@ -131,6 +131,167 @@ Only the fields you specify in the subdirectory config are overridden. Everythin
 
 When Clawker writes configuration changes (e.g., via `clawker project init`), each field is routed back to the file it originally came from (provenance tracking). New fields that didn't come from any file are written to the highest-priority discovered file. All writes are atomic (temp file + fsync + rename) with advisory file locking for cross-process safety.
 
+## Project Configuration Schema
+
+The complete `.clawker.yaml` schema with all fields and nested object structures. Descriptions are shown as comments.
+
+```yaml
+build:
+  # Starting Docker image (e.g. node:20-slim, python:3.12); clawker layers tools on top
+  image: ""
+  # Use your own Dockerfile instead of clawker's generated one; ignores image, packages, and instructions
+  dockerfile: ""
+  # System packages (apt/apk) needed by your project that aren't in the base image (default: ripgrep)
+  packages:
+    - <string>
+  # Directory to use as Docker build context when using a custom Dockerfile (relative to project root)
+  context: ""
+  instructions:
+    # Bake config files or credentials into the image (e.g. .npmrc, SSH config)
+    copy:
+      # File or directory to copy from your project
+      - src: <string>
+        # Where to place it inside the container
+        dest: <string>
+        # Set file ownership (e.g. claude:claude)
+        chown: <string>
+        # Set file permissions (e.g. 0644)
+        chmod: <string>
+    # Environment variables baked into the image; use agent.env for runtime-only vars
+    env:
+      <key>: <value>
+    # Custom Docker labels for image metadata or tooling integration
+    labels:
+      <key>: <value>
+    # Build-time variables resolved during docker build (ARG); not available at runtime
+    args:
+      # Build argument name (referenced as $NAME in Dockerfile instructions)
+      - name: <string>
+        # Value used when not overridden by --build-arg at build time
+        default: <string>
+    # Setup commands that run as the container user (e.g. npm install -g, pip install)
+    user_run:
+      - <string>
+    # Setup commands that need root privileges (e.g. system config, additional repos)
+    root_run:
+      - <string>
+  inject:
+    # Add Dockerfile instructions while root with only the base image — e.g. apt sources, proxy config, or CA certs that package installation depends on
+    after_from:
+      - <string>
+    # Add Dockerfile instructions while root with system packages available — e.g. compile native libraries or install tools that need those packages
+    after_packages:
+      - <string>
+    # Add Dockerfile instructions while root with the claude user created — e.g. set up directories, fix permissions, or configure services
+    after_user_setup:
+      - <string>
+    # Add Dockerfile instructions as the claude user — e.g. install dotfiles, configure your shell, or set up user-level tools
+    after_user_switch:
+      - <string>
+    # Add Dockerfile instructions as the claude user with Claude Code available — e.g. add MCP servers, install plugins, or extensions
+    after_claude_install:
+      - <string>
+    # Add Dockerfile instructions at the very end — e.g. final environment tweaks or cleanup that must happen after everything else
+    before_entrypoint:
+      - <string>
+agent:
+  # Load environment variables from .env-style files (e.g. .env.local)
+  env_file:
+    - <string>
+  # Pass specific host env vars into the container (e.g. AWS_PROFILE, GITHUB_TOKEN)
+  from_env:
+    - <string>
+  # Set container env vars directly; use from_env to forward host values instead
+  env:
+    <key>: <value>
+  # Editor for git commits and interactive editing inside the container
+  editor: ""
+  # Visual editor ($VISUAL) for the container
+  visual: ""
+  claude_code:
+    config:
+      # How to initialize Claude Code config: copy syncs host settings/plugins, fresh starts clean (default: copy)
+      strategy: "copy"
+    # Let the container use your host API keys so you don't have to re-authenticate (default: true)
+    use_host_auth: true
+  # Share files between host and container via ~/.clawker-share (read-only in container) (default: false)
+  enable_shared_dir: false
+  # Shell commands run after container starts but before Claude Code launches (e.g. install MCP servers)
+  post_init: ""
+workspace:
+  # bind mounts your project live (edits sync); snapshot copies it (isolated, disposable) (default: bind)
+  default_mode: "bind"
+security:
+  firewall:
+    # Shorthand: domains the container can reach over HTTPS (converted to TLS rules)
+    add_domains:
+      - <string>
+    # Full egress rules with protocol, port, and path control
+    rules:
+      # Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)
+      - dst: <string>
+        # Connection protocol: tls (HTTPS, default), tcp (plain), or http (MITM-inspected)
+        proto: <string>
+        # Override the default port (443 for TLS, 80 for HTTP)
+        port: <integer>
+        # Allow or deny traffic to this destination (default: allow)
+        action: <string>
+        # Fine-grained HTTP path filtering when proto is http (requires MITM inspection)
+        path_rules:
+          # URL path prefix to match (e.g. /v1/api, /repos/myorg)
+          - path: <string>
+            # Whether to allow or deny requests matching this path
+            action: <string>
+        # What to do with HTTP paths that don't match any path rule (allow or deny)
+        path_default: <string>
+  # Mount the host Docker socket (DooD, not DinD) — lets the container manage sibling containers but is a security risk (default: false)
+  docker_socket: false
+  # Linux capabilities granted to the container; NET_ADMIN and NET_RAW are required — removing them will break the firewall (default: NET_ADMIN,NET_RAW)
+  cap_add:
+    - <string>
+  # Run a proxy for browser-based auth flows and credential forwarding from the host (default: true)
+  enable_host_proxy: true
+  git_credentials:
+    # Let git clone/push use your host HTTPS credentials (via host proxy) (default: true)
+    forward_https: true
+    # Let git use your host SSH keys for cloning and pushing (default: true)
+    forward_ssh: true
+    # Let git sign commits using your host GPG keys (default: true)
+    forward_gpg: true
+    # Sync your host .gitconfig (aliases, user.name, user.email) into the container (default: true)
+    copy_git_config: true
+loop:
+  # Hard cap on iterations to prevent runaway loops
+  max_loops: 0
+  # Stop early if this many consecutive loops make no progress
+  stagnation_threshold: 0
+  # Kill the loop after this long regardless of progress
+  timeout_minutes: 0
+  # Throttle API calls to control cost
+  calls_per_hour: 0
+  # Quality score at which the task is considered done
+  completion_threshold: 0
+  # Discard loop state after this many hours of inactivity
+  session_expiration_hours: 0
+  # Stop if the same error repeats this many times (stuck in a loop)
+  same_error_threshold: 0
+  # Stop if output quality drops by this amount between iterations
+  output_decline_threshold: 0
+  # Stop if the agent only runs tests for this many loops without code changes
+  max_consecutive_test_loops: 0
+  # Pause between iterations (e.g. to avoid rate limits)
+  loop_delay_seconds: 0
+  # Minimum safety score required before marking a task complete
+  safety_completion_threshold: 0
+  # Run Claude Code with --dangerously-skip-permissions for fully autonomous loops
+  skip_permissions: false
+  # Script called on loop events (start, complete, error) for custom integrations
+  hooks_file: ""
+  # Extra instructions appended to Claude's system prompt in each loop iteration
+  append_system_prompt: ""
+
+```
+
 ## Project Configuration Reference
 
 The following tables are auto-generated from the schema struct tags in `internal/config/schema.go`. Each section corresponds to a top-level key in `.clawker.yaml`.
@@ -257,6 +418,88 @@ clawker settings edit
 ```
 
 The editor opens a TUI with your configuration fields grouped into tabs. You can browse fields, see their current values and defaults, edit them inline, and save. When you save a field, you choose which config layer to write it to — for example, saving to a local override file instead of the committed project config. The editor also shows which file each value comes from, so you can see exactly how the layered merge is working.
+
+## User Settings Schema
+
+The complete `settings.yaml` schema.
+
+```yaml
+logging:
+  # Write structured logs to disk for debugging and diagnostics (default: true)
+  file_enabled: true
+  # Rotate the log file when it exceeds this size (default: 50)
+  max_size_mb: 50
+  # Delete rotated logs older than this (default: 7)
+  max_age_days: 7
+  # Number of rotated log files to keep (default: 3)
+  max_backups: 3
+  # Gzip rotated logs to save disk space (default: true)
+  compress: true
+  otel:
+    # Send logs to the OTEL collector for Grafana/Loki visibility (default: true)
+    enabled: true
+    # Give up on an export batch after this long (default: 5)
+    timeout_seconds: 5
+    # Buffer this many log records before dropping (increase if you see gaps) (default: 2048)
+    max_queue_size: 2048
+    # How often to flush buffered logs to the collector (default: 5)
+    export_interval_seconds: 5
+monitoring:
+  # Override the auto-detected OTEL collector URL (e.g. for a remote collector)
+  otel_collector_endpoint: ""
+  # Host port for the OTEL HTTP receiver (default: 4318)
+  otel_collector_port: 4318
+  # Hostname for reaching the collector from the host (default: localhost)
+  otel_collector_host: "localhost"
+  # Docker network hostname containers use to reach the collector (default: otel-collector)
+  otel_collector_internal: "otel-collector"
+  # Host port for the OTEL gRPC receiver (default: 4317)
+  otel_grpc_port: 4317
+  # Host port for Loki log ingestion (default: 3100)
+  loki_port: 3100
+  # Host port for Prometheus metrics UI (default: 9090)
+  prometheus_port: 9090
+  # Host port for Jaeger tracing UI (default: 16686)
+  jaeger_port: 16686
+  # Host port for Grafana dashboards (default: 3000)
+  grafana_port: 3000
+  # Host port for Prometheus internal metrics (default: 8889)
+  prometheus_metrics_port: 8889
+  telemetry:
+    # OTEL collector HTTP path for metrics (default: /v1/metrics)
+    metrics_path: "/v1/metrics"
+    # OTEL collector HTTP path for logs (default: /v1/logs)
+    logs_path: "/v1/logs"
+    # How often Claude exports metrics (lower = more granular, higher = less overhead) (default: 10000)
+    metric_export_interval_ms: 10000
+    # How often Claude exports logs (lower = more real-time, higher = less overhead) (default: 5000)
+    logs_export_interval_ms: 5000
+    # Capture full tool call inputs/outputs in telemetry (verbose but useful for debugging) (default: true)
+    log_tool_details: true
+    # Capture user prompts in telemetry (disable for privacy) (default: true)
+    log_user_prompts: true
+    # Tag telemetry with your Anthropic account ID (useful for multi-user setups) (default: true)
+    include_account_uuid: true
+    # Tag telemetry with session ID to correlate events across a single run (default: true)
+    include_session_id: true
+host_proxy:
+  manager:
+    # Local port the host proxy listens on (change if 18374 conflicts) (default: 18374)
+    port: 18374
+  daemon:
+    # Local port the proxy daemon binds to (default: 18374)
+    port: 18374
+    # How often to check if containers still need the proxy (default: 30s)
+    poll_interval: <duration>
+    # How long to keep the proxy alive after the last container stops (default: 60s)
+    grace_period: <duration>
+    # Restart the proxy daemon after this many consecutive failures (default: 10)
+    max_consecutive_errs: 10
+firewall:
+  # Master switch for the Envoy firewall; when off, containers have unrestricted network access (default: true)
+  enable: true
+
+```
 
 ## User Settings Reference
 

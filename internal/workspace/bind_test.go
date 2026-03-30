@@ -19,8 +19,26 @@ func assertTmpfsWritableForNonRoot(t *testing.T, m mount.Mount) {
 	if m.TmpfsOptions.Mode != 0o1777 {
 		t.Fatalf("tmpfs mode = %o, want %o", m.TmpfsOptions.Mode, 0o1777)
 	}
-	if len(m.TmpfsOptions.Options) != 0 {
-		t.Fatalf("tmpfs options = %v, want empty for daemon compatibility", m.TmpfsOptions.Options)
+
+	// Must include exec (override Docker's default noexec) and uid/gid
+	// matching the container user so installed binaries can execute.
+	// Options is [][]string: flag options are 1-length, key-value are 2-length.
+	wantOpts := map[string]bool{"exec": false, "uid=1001": false, "gid=1001": false}
+	for _, opt := range m.TmpfsOptions.Options {
+		var key string
+		if len(opt) == 1 {
+			key = opt[0]
+		} else if len(opt) == 2 {
+			key = opt[0] + "=" + opt[1]
+		}
+		if _, ok := wantOpts[key]; ok {
+			wantOpts[key] = true
+		}
+	}
+	for opt, found := range wantOpts {
+		if !found {
+			t.Fatalf("tmpfs options %v missing required option %q", m.TmpfsOptions.Options, opt)
+		}
 	}
 }
 
