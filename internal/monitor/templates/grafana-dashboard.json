@@ -2481,6 +2481,7 @@
         "type": "query"
       },
       {
+        "allValue": ".*",
         "current": {
           "selected": true,
           "text": "All",
@@ -2490,7 +2491,7 @@
           "type": "loki",
           "uid": "${lokidatasource}"
         },
-        "definition": "label_values({service_name=\"envoy\", source=\"agent_map\", agent=~\"^(${agent:regex})$\"}, client_ip)",
+        "definition": "label_values({service_name=\"envoy\", source=\"agent_map\", project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\"}, client_ip)",
         "hide": 2,
         "includeAll": true,
         "label": "Agent IPs",
@@ -2498,7 +2499,7 @@
         "name": "agent_ips",
         "options": [],
         "query": {
-          "query": "label_values({service_name=\"envoy\", source=\"agent_map\", agent=~\"^(${agent:regex})$\"}, client_ip)",
+          "query": "label_values({service_name=\"envoy\", source=\"agent_map\", project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\"}, client_ip)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
