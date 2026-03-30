@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
 	"reflect"
 	"strings"
 	"text/template"
@@ -233,7 +232,7 @@ func renderYAMLSchema(t reflect.Type, indent int) string {
 		}
 
 		switch {
-		case ft.Kind() == reflect.Struct && ft != reflect.TypeOf(time.Duration(0)) && ft != reflect.TypeOf(os.FileMode(0)):
+		case ft.Kind() == reflect.Struct:
 			// Nested struct — recurse.
 			if desc != "" {
 				buf.WriteString(fmt.Sprintf("%s# %s\n", prefix, desc))
