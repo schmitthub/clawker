@@ -97,10 +97,9 @@ if [ "${CLAWKER_FIREWALL_ENABLED:-}" = "true" ]; then
 
     FIREWALL_READY="/var/run/clawker/firewall-ready"
     FIREWALL_TIMEOUT=30
-    elapsed=0
-    while [ ! -f "${FIREWALL_READY}" ] && [ "${elapsed}" -lt "${FIREWALL_TIMEOUT}" ]; do
+    SECONDS=0
+    while [ ! -f "${FIREWALL_READY}" ] && [ "${SECONDS}" -lt "${FIREWALL_TIMEOUT}" ]; do
         sleep 0.2
-        elapsed=$((elapsed + 1))
     done
     if [ ! -f "${FIREWALL_READY}" ]; then
         emit_error "firewall" "timed out waiting for firewall enable (${FIREWALL_TIMEOUT}s)"
