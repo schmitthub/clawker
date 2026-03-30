@@ -580,9 +580,8 @@ func buildPassthroughFilterChain(r config.EgressRule) map[string]any {
 }
 
 // buildDenyFilterChain creates the default deny filter chain that resets connections.
-// No access logging — the deny chain catches all unrecognized SNI including health probes
-// and internal Docker traffic, which generates noise. Blocked domains are visible via
-// CoreDNS NXDOMAIN logs instead.
+// Access logging with proto="deny" so blocked connection attempts are visible in the
+// egress monitoring dashboard alongside allowed traffic.
 func buildDenyFilterChain() map[string]any {
 	return map[string]any{
 		"filter_chain_match": map[string]any{},
@@ -594,6 +593,7 @@ func buildDenyFilterChain() map[string]any {
 					"stat_prefix":  "deny_all",
 					"cluster":      "deny_cluster",
 					"idle_timeout": "0s",
+					"access_log":   buildTCPAccessLog("deny"),
 				},
 			},
 		},

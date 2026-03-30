@@ -121,7 +121,8 @@ emit_agent_identity() {
     payload=$(printf '{"streams":[{"stream":{"service_name":"envoy","source":"agent_map","agent":"%s","client_ip":"%s","project":"%s","action":"enable"},"values":[["%s",%s]]}]}' \
         "${agent}" "${client_ip}" "${project}" "${ts}" "$(printf '%s' "${line}" | sed 's/"/\\"/g; s/^/"/; s/$/"/')")
 
-    curl -s -m 2 -X POST "http://loki:3100/loki/api/v1/push" \
+    local loki_port="${CLAWKER_LOKI_PORT:-3100}"
+    curl -s -m 2 -X POST "http://loki:${loki_port}/loki/api/v1/push" \
         -H "Content-Type: application/json" \
         -d "${payload}" >/dev/null 2>&1 || true
 }

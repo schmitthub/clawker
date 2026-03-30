@@ -150,7 +150,7 @@ func GenerateCorefile(rules []config.EgressRule) ([]byte, error)
 - Docker internal forward zones (`docker.internal`, `otel-collector`, `jaeger`, `prometheus`, `loki`, `grafana`) delegate to `127.0.0.11` (Docker's embedded DNS). CoreDNS is on `clawker-net` so its 127.0.0.11 resolves container names and `host.docker.internal`
 - Catch-all `.` zone: `template IN ANY . { rcode NXDOMAIN }` + `health :8080` + `reload`
 - IP/CIDR destinations and deny rules are excluded
-- **Query logging**: All zones include a `log` plugin with logfmt-compatible format (`source=coredns domain={name} qtype={type} rcode={rcode} duration={duration}`). Promtail parses these via the `logfmt` pipeline stage and ships to Loki for the Grafana egress dashboard
+- **Query logging**: All zones include a `log` plugin with a format compatible with the Promtail regex pipeline (`source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}`). Promtail parses these via a `regex` pipeline stage (not `logfmt`, because CoreDNS `{remote}` emits `IP:port` and lines have an `[INFO]` prefix) and ships to Loki for the Grafana egress dashboard
 
 ### Envoy (`envoy.go`)
 
@@ -168,7 +168,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule) ([]byte, []string, error)
 - Passthrough chains: `sni_dynamic_forward_proxy` network filter
 - Default deny: `tcp_proxy` -> `deny_cluster` (static, no endpoints = connection reset)
 - TCP/SSH listeners on `:10001+` (sequential ports)
-- **Access logging**: All listeners include JSON access logs to stdout via `buildAccessLog(proto)`. Fields: `timestamp`, `domain` (SNI), `upstream_host`, `method`, `path`, `response_code`, `response_flags`, `bytes_sent`, `bytes_received`, `duration_ms`, `proto`, `source`. Promtail parses these via the `json` pipeline stage and ships to Loki for the Grafana egress dashboard
+- **Access logging**: All filter chains emit JSON access logs to stdout. HTTP MITM chains use `buildHTTPAccessLog(proto)` (includes `method`, `path`, `response_code`), TCP/SSH and deny chains use `buildTCPAccessLog(proto)`. The deny chain logs with `proto="deny"`. Common fields: `timestamp`, `domain` (SNI), `upstream_host`, `client_ip`, `response_flags`, `bytes_sent`, `bytes_received`, `duration_ms`, `proto`, `source`. Promtail parses these via the `json` pipeline stage and ships to Loki for the Grafana egress dashboard
 
 ## Relationships
 

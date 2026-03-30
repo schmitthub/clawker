@@ -2234,7 +2234,7 @@
             "type": "loki",
             "uid": "${lokidatasource}"
           },
-          "expr": "{service_name=\"coredns\", client_ip=~\"${agent_ips:regex}\", rcode=~\".+\"} | line_format `{{if eq .rcode \"NXDOMAIN\"}}🚫 BLOCKED{{else}}✓{{end}} {{.domain}} {{.qtype}} {{.duration}}`",
+          "expr": "{service_name=\"coredns\", client_ip=~\"${agent_ips:regex}\", rcode=~\".+\"} | regexp `duration=(?P<duration>\\S+)` | line_format `{{if eq .rcode \"NXDOMAIN\"}}🚫 BLOCKED{{else}}✓{{end}} {{.domain}} {{.qtype}} {{.duration}}`",
           "legendFormat": "",
           "refId": "A"
         }

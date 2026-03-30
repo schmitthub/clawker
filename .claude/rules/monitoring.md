@@ -38,7 +38,7 @@ Firewall containers (Envoy + CoreDNS) emit structured access logs to stdout. Pro
 - `response_flags` containing `UF` (upstream failure) indicates blocked/denied traffic
 
 ### CoreDNS (`service_name="coredns"`)
-- Logfmt access logs parsed by Promtail `logfmt` stage
+- Key=value access logs parsed by Promtail `regex` stage
 - Key labels: `domain`, `qtype` (A/AAAA), `rcode` (NOERROR/NXDOMAIN)
 - `rcode=NXDOMAIN` indicates blocked domain lookups
 

@@ -114,7 +114,7 @@ const (
 	envoyHTTPPort = 10080
 	// envoyHealthPort is the Envoy dedicated health check listener port (inside container).
 	envoyHealthPort = 9902
-	// envoyHealthHostPort is the host port published for Envoy health probes (HTTP /healthz).
+	// envoyHealthHostPort is the host port published for Envoy health probes (HTTP GET /).
 	envoyHealthHostPort = 18901
 	// corednsHealthHostPort is the host port published for CoreDNS health probes (HTTP /health).
 	corednsHealthHostPort = 18902

@@ -82,7 +82,6 @@ scrape_configs:
                 domain:
                 qtype:
                 rcode:
-                duration:
             # Drop detected_level so Grafana doesn't render an "info" badge on every line.
             # CoreDNS prepends [INFO] to all log lines — the level is constant and useless.
             - labeldrop:

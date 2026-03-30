@@ -222,7 +222,6 @@ monitoring:
 		{"rcode label", "rcode:"},
 		{"agent label", "agent:"},
 		{"client_ip label", "client_ip:"},
-		{"duration label for coredns", "duration:"},
 	}
 
 	for _, check := range checks {

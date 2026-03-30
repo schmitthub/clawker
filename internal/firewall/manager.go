@@ -356,7 +356,7 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 		Str("container", containerID).
 		Msg("firewall disabled")
 
-	// Emit disconnect mapping to Envoy's stdout.
+	// Emit disconnect mapping directly to Loki for the egress monitoring dashboard.
 	inspect, inspectErr := m.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if inspectErr == nil {
 		m.emitAgentMapping(ctx, inspect, "disable")
@@ -434,9 +434,8 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		Str("container", containerID).
 		Msg("firewall enabled")
 
-	// Emit agent IP mapping to Envoy's stdout for Promtail collection.
-	// Promtail scrapes clawker-envoy and sends to Loki, so this line becomes
-	// a queryable agent_map entry in the egress monitoring dashboard.
+	// Emit agent IP mapping directly to Loki so this becomes a queryable
+	// agent_map entry in the egress monitoring dashboard.
 	if inspectErr == nil {
 		m.emitAgentMapping(ctx, inspect, "enable")
 	}
@@ -467,7 +466,7 @@ func (m *Manager) touchSignalFile(ctx context.Context, containerID string) error
 //
 // We push directly to Loki's HTTP API rather than writing to a container's
 // stdout because the Envoy container is distroless (no shell/echo available).
-func (m *Manager) emitAgentMapping(ctx context.Context, inspect client.ContainerInspectResult, action string) {
+func (m *Manager) emitAgentMapping(_ context.Context, inspect client.ContainerInspectResult, action string) {
 	agent := inspect.Container.Config.Labels[m.cfg.LabelAgent()]
 	if agent == "" {
 		return // not an agent container
@@ -507,26 +506,34 @@ func (m *Manager) emitAgentMapping(ctx context.Context, inspect client.Container
 	)
 
 	url := fmt.Sprintf("http://localhost:%d/loki/api/v1/push", lokiPort)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(payload))
-	if err != nil {
-		m.log.Debug().Err(err).Msg("agent mapping: failed to build request")
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		m.log.Debug().Err(err).Msg("agent mapping: loki push failed")
-		return
-	}
-	defer resp.Body.Close()
+	// Fire-and-forget: best-effort telemetry must never block Enable/Disable.
+	log := m.log
+	go func() {
+		pushCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
 
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		m.log.Debug().Int("status", resp.StatusCode).Str("body", string(body)).Msg("agent mapping: loki rejected push")
-	} else {
-		m.log.Debug().Str("agent", agent).Str("ip", clientIP).Str("action", action).Msg("agent mapping: pushed to loki")
-	}
+		req, err := http.NewRequestWithContext(pushCtx, http.MethodPost, url, strings.NewReader(payload))
+		if err != nil {
+			log.Debug().Err(err).Msg("agent mapping: failed to build request")
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			log.Debug().Err(err).Msg("agent mapping: loki push failed")
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(resp.Body)
+			log.Debug().Int("status", resp.StatusCode).Str("body", string(body)).Msg("agent mapping: loki rejected push")
+		} else {
+			log.Debug().Str("agent", agent).Str("ip", clientIP).Str("action", action).Msg("agent mapping: pushed to loki")
+		}
+	}()
 }
 
 // Bypass disables iptables rules and schedules re-enable after timeout.
