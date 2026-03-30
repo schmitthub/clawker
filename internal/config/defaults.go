@@ -45,13 +45,13 @@ func init() {
 // All entries are commented out — users opt in to what they need.
 const DefaultIgnoreFile = `# Clawker Ignore File
 #
-# Directories listed here are masked inside the container:
-#   Bind mode:     empty tmpfs overlays hide the host directory
-#   Snapshot mode:  excluded from the copy entirely
+# In bind mode, listed directories are masked with empty tmpfs overlays
+# so the host's platform-specific binaries (e.g. macOS Darwin node_modules/.bin)
+# don't bleed into the Linux container. The container installs its own
+# dependencies into the tmpfs, which is ephemeral.
 #
-# This prevents cross-OS contamination — e.g. macOS Darwin binaries in
-# node_modules/.bin won't work in the Linux container. The container
-# installs its own dependencies into the tmpfs (bind) or volume (snapshot).
+# In snapshot mode, listed directories are simply excluded from the copy —
+# they don't exist in the container at all, allowing it to create its own.
 #
 # Syntax is similar to .gitignore. Negation patterns are not yet supported.
 # File-level patterns (*.env, *.pem) cannot be enforced in bind mode —
