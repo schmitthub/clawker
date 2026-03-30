@@ -139,13 +139,6 @@ const (
 	SharePurpose = "share"
 	// ShareStagingPath is the container mount point for the shared volume.
 	ShareStagingPath = "/home/claude/.clawker-share"
-
-	// containerUID is the UID of the non-root user inside clawker containers.
-	// Must match config.ContainerUID() (1001).
-	containerUID = 1001
-	// containerGID is the GID of the non-root user inside clawker containers.
-	// Must match config.ContainerGID() (1001).
-	containerGID = 1001
 )
 
 // GetShareVolumeMount returns the mount for the global shared volume (read-only).
