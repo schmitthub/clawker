@@ -150,13 +150,13 @@ build:
     # Bake config files or credentials into the image (e.g. .npmrc, SSH config)
     copy:
       # File or directory to copy from your project
-      - src: <string>
+      - src: <string>  # default: n/a | required: false
         # Where to place it inside the container
-        dest: <string>
+        dest: <string>  # default: n/a | required: false
         # Set file ownership (e.g. claude:claude)
-        chown: <string>
+        chown: <string>  # default: n/a | required: false
         # Set file permissions (e.g. 0644)
-        chmod: <string>
+        chmod: <string>  # default: n/a | required: false
     # Environment variables baked into the image; use agent.env for runtime-only vars
     env:  # default: n/a | required: false
       <key>: <value>
@@ -166,9 +166,9 @@ build:
     # Build-time variables resolved during docker build (ARG); not available at runtime
     args:
       # Build argument name (referenced as $NAME in Dockerfile instructions)
-      - name: <string>
+      - name: <string>  # default: n/a | required: false
         # Value used when not overridden by --build-arg at build time
-        default: <string>
+        default: <string>  # default: n/a | required: false
     # Setup commands that run as the container user (e.g. npm install -g, pip install)
     user_run:  # default: n/a | required: false
       - <string>
@@ -229,21 +229,21 @@ security:
     # Full egress rules with protocol, port, and path control
     rules:
       # Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)
-      - dst: <string>
+      - dst: <string>  # default: n/a | required: false
         # Connection protocol: tls (HTTPS, default), tcp (plain), or http (MITM-inspected)
-        proto: <string>
+        proto: <string>  # default: n/a | required: false
         # Override the default port (443 for TLS, 80 for HTTP)
-        port: <integer>
+        port: <integer>  # default: n/a | required: false
         # Allow or deny traffic to this destination (default: allow)
-        action: <string>
+        action: <string>  # default: n/a | required: false
         # Fine-grained HTTP path filtering when proto is http (requires MITM inspection)
-        path_rules:
+        path_rules:  # default: n/a | required: false
           # URL path prefix to match (e.g. /v1/api, /repos/myorg)
-          - path: <string>
+          - path: <string>  # default: n/a | required: false
             # Whether to allow or deny requests matching this path
-            action: <string>
+            action: <string>  # default: n/a | required: false
         # What to do with HTTP paths that don't match any path rule (allow or deny)
-        path_default: <string>
+        path_default: <string>  # default: n/a | required: false
   # Mount the host Docker socket (DooD, not DinD) — lets the container manage sibling containers but is a security risk
   docker_socket: <boolean>  # default: false | required: true
   # Linux capabilities granted to the container; NET_ADMIN and NET_RAW are required — removing them will break the firewall

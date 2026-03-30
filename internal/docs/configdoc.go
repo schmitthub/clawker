@@ -306,10 +306,14 @@ func renderStructSliceElement(t reflect.Type, indent int) string {
 		}
 
 		desc := f.Tag.Get("desc")
+		def := f.Tag.Get("default")
+		req := f.Tag.Get("required") == "true"
 		ft := f.Type
 		for ft.Kind() == reflect.Ptr {
 			ft = ft.Elem()
 		}
+
+		meta := fieldMeta(def, req)
 
 		// List items: "- key: val" for first field, "  key: val" for rest.
 		// Comments align with their key line.
@@ -317,32 +321,28 @@ func renderStructSliceElement(t reflect.Type, indent int) string {
 		if first {
 			first = false
 			// First field: comment + "- key: val" both at list indent.
-			if desc != "" {
-				buf.WriteString(fmt.Sprintf("%s# %s\n", prefix, desc))
-			}
+			writeDescComment(&buf, prefix, desc)
 			switch {
 			case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
-				buf.WriteString(fmt.Sprintf("%s- %s:\n", prefix, yamlKey))
+				buf.WriteString(fmt.Sprintf("%s- %s:  %s\n", prefix, yamlKey, meta))
 				buf.WriteString(renderStructSliceElement(ft.Elem(), indent+2))
 			case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String:
-				buf.WriteString(fmt.Sprintf("%s- %s:\n%s  - <string>\n", prefix, yamlKey, itemPrefix))
+				buf.WriteString(fmt.Sprintf("%s- %s:  %s\n%s  - <string>\n", prefix, yamlKey, meta, itemPrefix))
 			default:
-				buf.WriteString(fmt.Sprintf("%s- %s: <%s>\n", prefix, yamlKey, yamlTypeName(ft)))
+				buf.WriteString(fmt.Sprintf("%s- %s: <%s>  %s\n", prefix, yamlKey, yamlTypeName(ft), meta))
 			}
 			continue
 		}
 
-		if desc != "" {
-			buf.WriteString(fmt.Sprintf("%s# %s\n", itemPrefix, desc))
-		}
+		writeDescComment(&buf, itemPrefix, desc)
 		switch {
 		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
-			buf.WriteString(fmt.Sprintf("%s%s:\n", itemPrefix, yamlKey))
+			buf.WriteString(fmt.Sprintf("%s%s:  %s\n", itemPrefix, yamlKey, meta))
 			buf.WriteString(renderStructSliceElement(ft.Elem(), indent+2))
 		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String:
-			buf.WriteString(fmt.Sprintf("%s%s:\n%s  - <string>\n", itemPrefix, yamlKey, itemPrefix))
+			buf.WriteString(fmt.Sprintf("%s%s:  %s\n%s  - <string>\n", itemPrefix, yamlKey, meta, itemPrefix))
 		default:
-			buf.WriteString(fmt.Sprintf("%s%s: <%s>\n", itemPrefix, yamlKey, yamlTypeName(ft)))
+			buf.WriteString(fmt.Sprintf("%s%s: <%s>  %s\n", itemPrefix, yamlKey, yamlTypeName(ft), meta))
 		}
 	}
 	return buf.String()
