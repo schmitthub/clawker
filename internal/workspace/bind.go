@@ -97,16 +97,12 @@ func (s *BindStrategy) GetMounts() ([]mount.Mount, error) {
 					// Tmpfs is root-owned; 1777 lets any user create/write
 					// files while the sticky bit prevents cross-user deletion.
 					Mode: 0o1777,
-					// Explicit security flags — don't rely on Docker daemon
-					// defaults which could change across versions.
-					// exec:   override default noexec so installed binaries
-					//         (e.g. node_modules/.bin/*) can execute
-					// nosuid: kernel ignores suid/sgid bits on this mount
-					// nodev:  prevent creation of device nodes
+					// Override default noexec so installed binaries
+					// (e.g. node_modules/.bin/*) can execute.
+					// nosuid and nodev are applied automatically by the
+					// OCI runtime — only exec/noexec are valid in Options.
 					Options: [][]string{
 						{"exec"},
-						{"nosuid"},
-						{"nodev"},
 					},
 				},
 			})
