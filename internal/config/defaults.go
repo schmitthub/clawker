@@ -16,11 +16,15 @@ var requiredFirewallRules = []EgressRule{
 	// Claude Code — API and OAuth
 	{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	{Dst: "platform.claude.com", Proto: "tls", Port: 443, Action: "allow"},
-	{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: ".claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+	// Claude Code — MCP proxy
+	{Dst: "mcp-proxy.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	// Claude Code — telemetry
 	{Dst: "sentry.io", Proto: "tls", Port: 443, Action: "allow"},
 	{Dst: "statsig.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	{Dst: "statsig.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: ".datadoghq.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: ".datadoghq.eu", Proto: "tls", Port: 443, Action: "allow"},
 }
 
 // requiredFirewallDomains is derived from requiredFirewallRules for backwards compatibility.

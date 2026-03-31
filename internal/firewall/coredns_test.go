@@ -45,3 +45,19 @@ func TestGenerateCorefile(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateCorefile_WildcardDomain(t *testing.T) {
+	rules := []config.EgressRule{
+		{Dst: ".datadoghq.com", Action: "allow"},
+		{Dst: "api.anthropic.com", Action: "allow"},
+	}
+
+	got, err := firewall.GenerateCorefile(rules, 18902)
+	require.NoError(t, err)
+
+	out := string(got)
+	// Leading dot should be stripped — CoreDNS zone "datadoghq.com" matches all subdomains.
+	assert.Contains(t, out, "datadoghq.com {")
+	assert.NotContains(t, out, ".datadoghq.com {")
+	assert.Contains(t, out, "api.anthropic.com {")
+}

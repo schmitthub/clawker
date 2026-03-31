@@ -22,10 +22,13 @@ These are the **only** domains allowed by default — they are required for Clau
 |--------|---------|
 | `api.anthropic.com` | Claude API |
 | `platform.claude.com` | OAuth token exchange |
-| `claude.ai` | OAuth authorization |
+| `.claude.ai` | OAuth authorization, downloads |
+| `mcp-proxy.anthropic.com` | MCP tool server proxy |
 | `sentry.io` | Error tracking |
 | `statsig.anthropic.com` | Feature flags |
 | `statsig.com` | Feature flags |
+| `.datadoghq.com` | Telemetry (all Datadog subdomains/regions) |
+| `.datadoghq.eu` | Telemetry (Datadog EU regions) |
 
 <Warning>
 **GitHub, npm, PyPI, and all other services are NOT hardcoded.** The generated `clawker.yaml` template includes `github.com` and `api.github.com` as a convenience starting point, but these are project-level config entries — not system defaults. If you remove them from your config or start from scratch, GitHub will be blocked.

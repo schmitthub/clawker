@@ -46,10 +46,17 @@ The hardcoded allowlist is deliberately **bare-bones** — only domains required
 |--------|---------|
 | `api.anthropic.com` | Claude API |
 | `platform.claude.com` | OAuth token exchange |
-| `claude.ai` | OAuth authorization |
+| `.claude.ai` | OAuth authorization, downloads |
+| `mcp-proxy.anthropic.com` | MCP tool server proxy |
 | `sentry.io` | Error tracking |
 | `statsig.anthropic.com` | Feature flags |
 | `statsig.com` | Feature flags |
+| `.datadoghq.com` | Telemetry (all Datadog subdomains/regions) |
+| `.datadoghq.eu` | Telemetry (Datadog EU regions) |
+
+<Info>
+A leading dot (e.g., `.datadoghq.com`) is the **wildcard convention** — it matches the apex domain and all subdomains. Use this for services with region-specific subdomains. Without the leading dot, only the exact domain is allowed.
+</Info>
 
 <Warning>
 **GitHub, npm, PyPI, and all other services are NOT in this list.** When you run `clawker project init`, the generated `.clawker.yaml` template includes `github.com` and `api.github.com` as a convenience starting point — but these are project-level config entries, not system defaults. If you start from a blank config, GitHub SSH and HTTPS will be blocked.
@@ -179,7 +186,10 @@ security:
       - "api.openai.com"
       - "registry.npmjs.org"
       - "pypi.org"
+      - ".datadoghq.com"   # Leading dot = wildcard (all subdomains)
 ```
+
+A **leading dot** (e.g., `.datadoghq.com`) enables wildcard matching — the apex domain and all subdomains are allowed. Without the leading dot, only the exact domain is matched. Use wildcards for services with region-specific subdomains (e.g., Datadog's `us5.datadoghq.com`, `eu1.datadoghq.com`).
 
 ### `rules`
 
@@ -187,7 +197,7 @@ Full rule specification for fine-grained control:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `dst` | string | Domain name or IP address |
+| `dst` | string | Domain name or IP address. Prefix with `.` for wildcard (e.g., `.datadoghq.com` matches all subdomains) |
 | `proto` | string | `tls`, `http`, `tcp`, or `ssh` |
 | `port` | int | Destination port |
 | `action` | string | `allow` or `deny` (default: `allow`) |

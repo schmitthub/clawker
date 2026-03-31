@@ -111,7 +111,15 @@ func isIPOrCIDR(s string) bool {
 	return err == nil
 }
 
-// normalizeDomain strips any trailing dot from a domain name.
+// normalizeDomain strips any leading dot (wildcard indicator) and trailing dot
+// (FQDN indicator) from a domain name.
 func normalizeDomain(d string) string {
+	d = strings.TrimPrefix(d, ".")
 	return strings.TrimSuffix(d, ".")
+}
+
+// isWildcardDomain returns true if the domain uses the leading-dot convention
+// (e.g., ".datadoghq.com") to indicate that all subdomains should be matched.
+func isWildcardDomain(d string) bool {
+	return strings.HasPrefix(d, ".")
 }

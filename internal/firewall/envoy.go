@@ -360,7 +360,7 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int) map[string]any {
 
 		virtualHosts = append(virtualHosts, map[string]any{
 			"name":    domain,
-			"domains": []string{domain},
+			"domains": httpDomains(r.Dst),
 			"routes":  routes,
 		})
 	}
@@ -440,7 +440,7 @@ func buildMITMFilterChain(r config.EgressRule) map[string]any {
 
 	return map[string]any{
 		"filter_chain_match": map[string]any{
-			"server_names": []string{domain},
+			"server_names": serverNames(r.Dst),
 		},
 		"transport_socket": map[string]any{
 			"name": "envoy.transport_sockets.tls",
@@ -551,7 +551,7 @@ func buildPassthroughFilterChain(r config.EgressRule) map[string]any {
 
 	return map[string]any{
 		"filter_chain_match": map[string]any{
-			"server_names": []string{domain},
+			"server_names": serverNames(r.Dst),
 		},
 		"filters": []any{
 			map[string]any{
@@ -716,4 +716,27 @@ var statNameReplacer = strings.NewReplacer(".", "_", "-", "_", ":", "_")
 // sanitizeName replaces dots and other special characters with underscores for Envoy stat names.
 func sanitizeName(s string) string {
 	return statNameReplacer.Replace(s)
+}
+
+// serverNames returns the Envoy server_names list for SNI matching.
+// For wildcard domains (leading dot, e.g. ".datadoghq.com"), it returns both
+// the suffix match form (".datadoghq.com") and the apex ("datadoghq.com").
+// For exact domains, it returns a single-element list.
+func serverNames(dst string) []string {
+	domain := normalizeDomain(dst)
+	if isWildcardDomain(dst) {
+		return []string{"." + domain, domain}
+	}
+	return []string{domain}
+}
+
+// httpDomains returns the Envoy virtual host domains list for Host header matching.
+// For wildcard domains (leading dot), it returns both "*.domain" and "domain".
+// For exact domains, it returns a single-element list.
+func httpDomains(dst string) []string {
+	domain := normalizeDomain(dst)
+	if isWildcardDomain(dst) {
+		return []string{"*." + domain, domain}
+	}
+	return []string{domain}
 }

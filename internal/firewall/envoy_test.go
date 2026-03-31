@@ -471,3 +471,99 @@ func TestNormalizeAndDedup(t *testing.T) {
 		assert.Equal(t, 443, r.Port, "rule for %s should have port 443", r.Dst)
 	}
 }
+
+func TestNormalizeAndDedup_WildcardSubsumesExact(t *testing.T) {
+	t.Parallel()
+
+	// Wildcard and exact for the same domain — wildcard should win.
+	rules := []config.EgressRule{
+		{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: ".claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+	}
+
+	result := normalizeAndDedup(rules)
+	assert.Len(t, result, 1)
+	assert.Equal(t, ".claude.ai", result[0].Dst, "wildcard should supersede exact")
+}
+
+func TestNormalizeAndDedup_WildcardFirstKept(t *testing.T) {
+	t.Parallel()
+
+	// Wildcard comes first — exact duplicate should be dropped.
+	rules := []config.EgressRule{
+		{Dst: ".claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+	}
+
+	result := normalizeAndDedup(rules)
+	assert.Len(t, result, 1)
+	assert.Equal(t, ".claude.ai", result[0].Dst, "wildcard should be preserved")
+}
+
+func TestIsWildcardDomain(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, isWildcardDomain(".datadoghq.com"))
+	assert.True(t, isWildcardDomain(".example.com"))
+	assert.False(t, isWildcardDomain("api.anthropic.com"))
+	assert.False(t, isWildcardDomain("datadoghq.com"))
+	assert.False(t, isWildcardDomain(""))
+}
+
+func TestNormalizeDomain_LeadingDot(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "datadoghq.com", normalizeDomain(".datadoghq.com"))
+	assert.Equal(t, "example.com", normalizeDomain(".example.com."))
+	assert.Equal(t, "api.anthropic.com", normalizeDomain("api.anthropic.com"))
+	assert.Equal(t, "api.anthropic.com", normalizeDomain("api.anthropic.com."))
+}
+
+func TestServerNames_ExactDomain(t *testing.T) {
+	t.Parallel()
+
+	names := serverNames("api.anthropic.com")
+	assert.Equal(t, []string{"api.anthropic.com"}, names)
+}
+
+func TestServerNames_WildcardDomain(t *testing.T) {
+	t.Parallel()
+
+	names := serverNames(".datadoghq.com")
+	assert.Equal(t, []string{".datadoghq.com", "datadoghq.com"}, names)
+}
+
+func TestHTTPDomains_ExactDomain(t *testing.T) {
+	t.Parallel()
+
+	domains := httpDomains("api.anthropic.com")
+	assert.Equal(t, []string{"api.anthropic.com"}, domains)
+}
+
+func TestHTTPDomains_WildcardDomain(t *testing.T) {
+	t.Parallel()
+
+	domains := httpDomains(".datadoghq.com")
+	assert.Equal(t, []string{"*.datadoghq.com", "datadoghq.com"}, domains)
+}
+
+func TestGenerateEnvoyConfig_WildcardDomain(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: ".datadoghq.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+
+	out := string(yamlBytes)
+	// Wildcard domain should have suffix match form in SNI.
+	assert.Contains(t, out, ".datadoghq.com")
+	assert.Contains(t, out, "datadoghq.com")
+	// Exact domain should appear as-is.
+	assert.Contains(t, out, "api.anthropic.com")
+}
