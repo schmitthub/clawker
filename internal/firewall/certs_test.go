@@ -246,6 +246,71 @@ func TestGenerateDomainCert_ExactDomainNoWildcardSAN(t *testing.T) {
 	assert.Equal(t, []string{"api.openai.com"}, cert.DNSNames, "exact domain should not get wildcard SAN")
 }
 
+func TestRegenerateDomainCerts_WildcardAndExactDedup(t *testing.T) {
+	// Both ".example.com" (wildcard) and "example.com" (exact) should produce
+	// exactly one cert file with wildcard SANs, regardless of input order.
+	tests := []struct {
+		name  string
+		rules []config.EgressRule
+	}{
+		{
+			name: "wildcard first",
+			rules: []config.EgressRule{
+				{Dst: ".claude.ai", Proto: "tls"},
+				{Dst: "claude.ai", Proto: "tls"},
+			},
+		},
+		{
+			name: "exact first",
+			rules: []config.EgressRule{
+				{Dst: "claude.ai", Proto: "tls"},
+				{Dst: ".claude.ai", Proto: "tls"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			certDir := t.TempDir()
+			caCert, caKey, err := firewall.EnsureCA(certDir)
+			require.NoError(t, err)
+
+			err = firewall.RegenerateDomainCerts(tc.rules, certDir, caCert, caKey)
+			require.NoError(t, err)
+
+			// Only one cert file pair — normalized to "claude.ai".
+			certPath := filepath.Join(certDir, "claude.ai-cert.pem")
+			assert.FileExists(t, certPath)
+			assert.FileExists(t, filepath.Join(certDir, "claude.ai-key.pem"))
+			assert.NoFileExists(t, filepath.Join(certDir, ".claude.ai-cert.pem"))
+
+			// Cert must have both apex and wildcard SANs.
+			certPEM, err := os.ReadFile(certPath)
+			require.NoError(t, err)
+			block, _ := pem.Decode(certPEM)
+			require.NotNil(t, block)
+			cert, err := x509.ParseCertificate(block.Bytes)
+			require.NoError(t, err)
+
+			assert.Equal(t, "claude.ai", cert.Subject.CommonName)
+			assert.Contains(t, cert.DNSNames, "claude.ai", "apex SAN required")
+			assert.Contains(t, cert.DNSNames, "*.claude.ai", "wildcard SAN required")
+
+			// Count cert files — should be exactly 1 pair (+ CA pair).
+			entries, err := os.ReadDir(certDir)
+			require.NoError(t, err)
+			certFiles := 0
+			for _, e := range entries {
+				if !e.IsDir() && filepath.Ext(e.Name()) == ".pem" {
+					certFiles++
+				}
+			}
+			// 2 CA files + 2 domain files = 4.
+			assert.Equal(t, 4, certFiles, "should have exactly 1 domain cert pair + CA pair")
+		})
+	}
+}
+
 func TestRegenerateDomainCerts_WildcardFilenames(t *testing.T) {
 	certDir := t.TempDir()
 	caCert, caKey, err := firewall.EnsureCA(certDir)

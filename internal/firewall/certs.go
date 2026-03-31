@@ -139,10 +139,23 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 // storing them in certDir/<domain>-cert.pem and <domain>-key.pem.
 // Every TLS rule gets a certificate — Envoy terminates TLS for all domains
 // to enable HTTP-level inspection (paths, methods, response codes).
+//
+// Rules are deduplicated by normalized domain. If any rule for a domain uses
+// the wildcard convention (leading dot), the cert includes both apex and
+// wildcard SANs. This prevents a later exact-domain rule from overwriting
+// a cert that also needs wildcard SANs.
 func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error {
 	if err := os.MkdirAll(certDir, 0o700); err != nil {
 		return fmt.Errorf("creating certs directory: %w", err)
 	}
+
+	// Deduplicate by normalized domain, tracking whether any rule uses
+	// the wildcard convention so the cert includes wildcard SANs if needed.
+	type domainCertInfo struct {
+		needsWild bool
+	}
+	seen := make(map[string]*domainCertInfo)
+	var order []string // preserve deterministic iteration
 
 	for _, rule := range rules {
 		// Only TLS rules need certificates — skip TCP, SSH, HTTP.
@@ -154,21 +167,40 @@ func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x5
 			continue
 		}
 
-		domain := normalizeDomain(rule.Dst)
+		normalized := normalizeDomain(rule.Dst)
+		if info, exists := seen[normalized]; exists {
+			if isWildcardDomain(rule.Dst) {
+				info.needsWild = true
+			}
+			continue
+		}
+		seen[normalized] = &domainCertInfo{
+			needsWild: isWildcardDomain(rule.Dst),
+		}
+		order = append(order, normalized)
+	}
 
-		certPEM, keyPEM, err := GenerateDomainCert(caCert, caKey, rule.Dst)
-		if err != nil {
-			return fmt.Errorf("generating cert for %s: %w", domain, err)
+	for _, normalized := range order {
+		info := seen[normalized]
+		// Re-add leading dot so GenerateDomainCert produces wildcard SANs.
+		domain := normalized
+		if info.needsWild {
+			domain = "." + normalized
 		}
 
-		certPath := filepath.Join(certDir, domain+"-cert.pem")
-		keyPath := filepath.Join(certDir, domain+"-key.pem")
+		certPEM, keyPEM, err := GenerateDomainCert(caCert, caKey, domain)
+		if err != nil {
+			return fmt.Errorf("generating cert for %s: %w", normalized, err)
+		}
+
+		certPath := filepath.Join(certDir, normalized+"-cert.pem")
+		keyPath := filepath.Join(certDir, normalized+"-key.pem")
 
 		if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
-			return fmt.Errorf("writing cert for %s: %w", domain, err)
+			return fmt.Errorf("writing cert for %s: %w", normalized, err)
 		}
 		if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
-			return fmt.Errorf("writing key for %s: %w", domain, err)
+			return fmt.Errorf("writing key for %s: %w", normalized, err)
 		}
 	}
 

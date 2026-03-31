@@ -193,12 +193,20 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 		tlsRules = append(tlsRules, r)
 	}
 
-	// Build set of exact (non-wildcard) domains so wildcard filter chains can
-	// omit the apex from server_names when a separate exact rule handles it.
-	exactDomains := make(map[string]bool)
-	for _, r := range rules {
-		if !isWildcardDomain(r.Dst) && !isIPOrCIDR(r.Dst) {
-			exactDomains[normalizeDomain(r.Dst)] = true
+	// Build per-listener exact-domain sets so wildcard filter chains only
+	// omit the apex when a same-listener exact rule handles it. Without
+	// per-listener separation, an exact HTTP rule for "example.com" would
+	// wrongly suppress the apex from a TLS wildcard ".example.com".
+	tlsExactDomains := make(map[string]bool)
+	for _, r := range tlsRules {
+		if !isWildcardDomain(r.Dst) {
+			tlsExactDomains[normalizeDomain(r.Dst)] = true
+		}
+	}
+	httpExactDomains := make(map[string]bool)
+	for _, r := range httpRules {
+		if !isWildcardDomain(r.Dst) {
+			httpExactDomains[normalizeDomain(r.Dst)] = true
 		}
 	}
 
@@ -215,7 +223,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 			},
 		},
 		"static_resources": map[string]any{
-			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tcpMappings, ports, exactDomains),
+			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tcpMappings, ports, tlsExactDomains, httpExactDomains),
 			"clusters":  buildClusters(tcpRules),
 		},
 	}
@@ -228,17 +236,17 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 }
 
 // buildListeners constructs all Envoy listeners.
-func buildListeners(tls, tcp, http []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts, exactDomains map[string]bool) []any {
+func buildListeners(tls, tcp, http []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts, tlsExactDomains, httpExactDomains map[string]bool) []any {
 	var listeners []any
 
 	// Main TLS listener — terminates TLS, inspects HTTP, re-encrypts upstream.
 	if len(tls) > 0 {
-		listeners = append(listeners, buildTLSListener(tls, ports.TLSPort, exactDomains))
+		listeners = append(listeners, buildTLSListener(tls, ports.TLSPort, tlsExactDomains))
 	}
 
 	// HTTP listener — domain detection via Host header.
 	if len(http) > 0 {
-		listeners = append(listeners, buildHTTPListener(http, ports.HTTPPort, exactDomains))
+		listeners = append(listeners, buildHTTPListener(http, ports.HTTPPort, httpExactDomains))
 	}
 
 	// Per-rule TCP/SSH listeners from the port mappings.
