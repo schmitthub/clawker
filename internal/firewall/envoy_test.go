@@ -6,6 +6,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestTCPMappings(t *testing.T) {
@@ -320,7 +321,9 @@ func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
 	assert.Contains(t, out, "github.com")
 	// port_value:0 must never appear — Envoy requires (0, 65535].
 	assert.NotContains(t, out, "port_value: 0")
-	assert.Contains(t, out, "port_value: 443")
+	// Both rules get TLS filter chains with per-domain certs.
+	assert.Contains(t, out, "api.anthropic.com-cert.pem")
+	assert.Contains(t, out, "github.com-cert.pem")
 }
 
 func TestBuildHTTPAccessLog(t *testing.T) {
@@ -411,13 +414,13 @@ func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {
 		rules []config.EgressRule
 	}{
 		{
-			name: "TLS passthrough has access_log",
+			name: "TLS has access_log",
 			rules: []config.EgressRule{
 				{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 			},
 		},
 		{
-			name: "TLS MITM has access_log",
+			name: "TLS with path rules has access_log",
 			rules: []config.EgressRule{
 				{
 					Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
@@ -585,4 +588,150 @@ func TestGenerateEnvoyConfig_WildcardDomain(t *testing.T) {
 	assert.Contains(t, out, "datadoghq.com")
 	// Exact domain should appear as-is.
 	assert.Contains(t, out, "api.anthropic.com")
+}
+
+func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	out := string(yamlBytes)
+
+	// The TLS cluster must exist with upstream TLS context for re-encryption.
+	assert.Contains(t, out, "dynamic_forward_proxy_cluster_tls",
+		"TLS cluster must be present for upstream re-encryption after MITM termination")
+	assert.Contains(t, out, "UpstreamTlsContext",
+		"TLS cluster must have UpstreamTlsContext for upstream re-encryption")
+	assert.Contains(t, out, "ca-certificates.crt",
+		"TLS cluster must validate upstream certificates against system CA bundle")
+
+	// The plaintext cluster must also exist (for HTTP routes).
+	assert.Contains(t, out, "dynamic_forward_proxy_cluster")
+
+	// TLS filter chains must route to the TLS cluster, not the plaintext one.
+	// Parse YAML to verify the route target in the TLS filter chain.
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	clusters := sr["clusters"].([]any)
+
+	// Find the TLS cluster and verify its transport_socket.
+	var foundTLSCluster bool
+	for _, c := range clusters {
+		cl := c.(map[string]any)
+		if cl["name"] == "dynamic_forward_proxy_cluster_tls" {
+			foundTLSCluster = true
+			ts := cl["transport_socket"].(map[string]any)
+			assert.Equal(t, "envoy.transport_sockets.tls", ts["name"])
+			tc := ts["typed_config"].(map[string]any)
+			assert.Contains(t, tc["@type"], "UpstreamTlsContext")
+		}
+	}
+	assert.True(t, foundTLSCluster, "dynamic_forward_proxy_cluster_tls must be defined")
+}
+
+func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	listeners := sr["listeners"].([]any)
+
+	// Find the TLS listener.
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		if lis["name"] != "tls_egress" {
+			continue
+		}
+		chains := lis["filter_chains"].([]any)
+		for _, fc := range chains {
+			chain := fc.(map[string]any)
+			// Skip the deny chain (no transport_socket).
+			if chain["transport_socket"] == nil {
+				continue
+			}
+			filters := chain["filters"].([]any)
+			for _, f := range filters {
+				filter := f.(map[string]any)
+				tc := filter["typed_config"].(map[string]any)
+				rc := tc["route_config"].(map[string]any)
+				vhosts := rc["virtual_hosts"].([]any)
+				for _, vh := range vhosts {
+					vhost := vh.(map[string]any)
+					routes := vhost["routes"].([]any)
+					for _, r := range routes {
+						route := r.(map[string]any)
+						if routeTarget, ok := route["route"].(map[string]any); ok {
+							assert.Equal(t, "dynamic_forward_proxy_cluster_tls", routeTarget["cluster"],
+								"TLS filter chain routes must use the TLS cluster for upstream re-encryption")
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestGenerateEnvoyConfig_HTTPRoutesToPlaintextCluster(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+	}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	listeners := sr["listeners"].([]any)
+
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		if lis["name"] != "http_egress" {
+			continue
+		}
+		chains := lis["filter_chains"].([]any)
+		for _, fc := range chains {
+			chain := fc.(map[string]any)
+			filters := chain["filters"].([]any)
+			for _, f := range filters {
+				filter := f.(map[string]any)
+				tc := filter["typed_config"].(map[string]any)
+				rc := tc["route_config"].(map[string]any)
+				vhosts := rc["virtual_hosts"].([]any)
+				for _, vh := range vhosts {
+					vhost := vh.(map[string]any)
+					routes := vhost["routes"].([]any)
+					for _, r := range routes {
+						route := r.(map[string]any)
+						if routeTarget, ok := route["route"].(map[string]any); ok {
+							assert.Equal(t, "dynamic_forward_proxy_cluster", routeTarget["cluster"],
+								"HTTP listener routes must use the plaintext cluster (no upstream TLS)")
+						}
+					}
+				}
+			}
+		}
+	}
 }

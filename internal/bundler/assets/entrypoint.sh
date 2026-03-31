@@ -93,16 +93,16 @@ emit_error() {
 # then touches the signal file. We wait here so CMD doesn't run until the
 # firewall is applied. No network IPs baked into env vars.
 if [ "${CLAWKER_FIREWALL_ENABLED:-}" = "true" ]; then
-    emit_step "firewall"
+    emit_step "firewall (may be slow on first run)"
 
     FIREWALL_READY="/var/run/clawker/firewall-ready"
-    FIREWALL_TIMEOUT=30
+    FIREWALL_TIMEOUT=60
     SECONDS=0
     while [ ! -f "${FIREWALL_READY}" ] && [ "${SECONDS}" -lt "${FIREWALL_TIMEOUT}" ]; do
         sleep 0.2
     done
     if [ ! -f "${FIREWALL_READY}" ]; then
-        emit_error "firewall" "timed out waiting for firewall enable (${FIREWALL_TIMEOUT}s)"
+        emit_error "firewall" "timed out waiting for firewall enable (${FIREWALL_TIMEOUT}s) — on first run, firewall container images may still be pulling. Check 'docker ps -a --filter label=dev.clawker.purpose=firewall' or try starting again"
     fi
 fi
 

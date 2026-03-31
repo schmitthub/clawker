@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -134,16 +135,22 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 	return certPEM, keyPEM, nil
 }
 
-// RegenerateDomainCerts generates certificates for all rules that have PathRules,
+// RegenerateDomainCerts generates certificates for all TLS egress rules,
 // storing them in certDir/<domain>-cert.pem and <domain>-key.pem.
-// Rules without PathRules are skipped (SNI passthrough, no MITM needed).
+// Every TLS rule gets a certificate — Envoy terminates TLS for all domains
+// to enable HTTP-level inspection (paths, methods, response codes).
 func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error {
 	if err := os.MkdirAll(certDir, 0o700); err != nil {
 		return fmt.Errorf("creating certs directory: %w", err)
 	}
 
 	for _, rule := range rules {
-		if len(rule.PathRules) == 0 {
+		// Only TLS rules need certificates — skip TCP, SSH, HTTP.
+		proto := strings.ToLower(rule.Proto)
+		if proto == "tcp" || proto == "ssh" || proto == "http" {
+			continue
+		}
+		if isIPOrCIDR(rule.Dst) {
 			continue
 		}
 

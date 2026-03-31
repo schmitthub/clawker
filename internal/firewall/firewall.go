@@ -22,7 +22,7 @@ type HealthTimeoutError struct {
 }
 
 func (e *HealthTimeoutError) Error() string {
-	return fmt.Sprintf("%v after %s", e.Err, e.Timeout)
+	return fmt.Sprintf("%v after %s — this can happen during first run when firewall container images are being pulled, or may indicate a bug. Run 'docker ps -a --filter label=dev.clawker.purpose=firewall' to check container status, or try the command again", e.Err, e.Timeout)
 }
 
 func (e *HealthTimeoutError) Unwrap() error { return e.Err }

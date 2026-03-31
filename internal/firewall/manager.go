@@ -38,7 +38,7 @@ const (
 	corednsImage = "coredns/coredns:1.14.2@sha256:e7e6440cfd1e919280958f5b5a6ab2b184d385bba774c12ad2a9e1e4183f90d9"
 
 	// Health check timing.
-	healthCheckTimeout  = 30 * time.Second
+	healthCheckTimeout  = 60 * time.Second
 	healthCheckInterval = 500 * time.Millisecond
 )
 

@@ -79,7 +79,7 @@ func TestGenerateDomainCert_Valid(t *testing.T) {
 	require.NoError(t, err, "key PEM should be a valid EC private key")
 }
 
-func TestRegenerateDomainCerts_OnlyForPathRules(t *testing.T) {
+func TestRegenerateDomainCerts_AllTLSRules(t *testing.T) {
 	certDir := t.TempDir()
 	caCert, caKey, err := firewall.EnsureCA(certDir)
 	require.NoError(t, err)
@@ -88,7 +88,7 @@ func TestRegenerateDomainCerts_OnlyForPathRules(t *testing.T) {
 		{
 			Dst:   "github.com",
 			Proto: "tls",
-			// No PathRules — SNI passthrough, no cert needed.
+			// No PathRules — still gets a cert for TLS inspection.
 		},
 		{
 			Dst:   "api.openai.com",
@@ -106,22 +106,28 @@ func TestRegenerateDomainCerts_OnlyForPathRules(t *testing.T) {
 			},
 			PathDefault: "deny",
 		},
+		{
+			Dst:   "git.example.com",
+			Proto: "ssh",
+			Port:  22,
+			// SSH rules do NOT get certs.
+		},
 	}
 
 	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
 	require.NoError(t, err)
 
-	// github.com should NOT have certs (no PathRules).
-	assert.NoFileExists(t, filepath.Join(certDir, "github.com-cert.pem"))
-	assert.NoFileExists(t, filepath.Join(certDir, "github.com-key.pem"))
-
-	// api.openai.com SHOULD have certs (has PathRules).
+	// All TLS rules get certs — regardless of PathRules.
+	assert.FileExists(t, filepath.Join(certDir, "github.com-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "github.com-key.pem"))
 	assert.FileExists(t, filepath.Join(certDir, "api.openai.com-cert.pem"))
 	assert.FileExists(t, filepath.Join(certDir, "api.openai.com-key.pem"))
-
-	// storage.googleapis.com SHOULD have certs (has PathRules).
 	assert.FileExists(t, filepath.Join(certDir, "storage.googleapis.com-cert.pem"))
 	assert.FileExists(t, filepath.Join(certDir, "storage.googleapis.com-key.pem"))
+
+	// SSH rules do NOT get certs.
+	assert.NoFileExists(t, filepath.Join(certDir, "git.example.com-cert.pem"))
+	assert.NoFileExists(t, filepath.Join(certDir, "git.example.com-key.pem"))
 
 	// Verify one of the generated certs is valid and CA-signed.
 	certPEM, err := os.ReadFile(filepath.Join(certDir, "api.openai.com-cert.pem"))

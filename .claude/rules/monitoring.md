@@ -7,6 +7,9 @@ paths: ["internal/monitor/**"]
 
 > For event schemas, Grafana patterns, and MCP quirks, see `.claude/docs/MONITORING-REFERENCE.md`.
 
+## Purpose
+The monitoring stack provides critical security observability into Clawker's internal operations for end users. 
+
 ## Telemetry Pipeline
 
 ```

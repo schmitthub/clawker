@@ -137,7 +137,7 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 			return fmt.Errorf("bootstrapping services: ensuring firewall daemon: %w", err)
 		}
 
-		waitCtx, waitCancel := context.WithTimeout(ctx, 60*time.Second)
+		waitCtx, waitCancel := context.WithTimeout(ctx, 90*time.Second)
 		defer waitCancel()
 		if err := fwMgr.WaitForHealthy(waitCtx); err != nil {
 			return fmt.Errorf("bootstrapping services: waiting for firewall health: %w", err)

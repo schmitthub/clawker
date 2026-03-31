@@ -317,16 +317,33 @@ All firewall operations are available under `clawker firewall`:
 
 ## Certificate Management
 
-The firewall uses a self-signed certificate authority for TLS inspection:
+The firewall uses a self-signed certificate authority for TLS inspection. All HTTPS traffic is terminated at Envoy with per-domain certificates, inspected at the HTTP level (making request paths, methods, and response codes visible), then re-encrypted upstream.
 
 - An **ECDSA P256 CA** is auto-generated during `clawker build` and baked into agent container images via `update-ca-certificates`
-- Per-domain MITM certificates are generated on demand for domains with `path_rules` (TLS inspection)
-- Domains without `path_rules` use SNI passthrough --- no certificate needed
+- Per-domain certificates are generated for **every** TLS rule --- Envoy terminates TLS for all allowed domains
+- Domains with `path_rules` get per-path routing; domains without get allow-all routing --- both go through TLS inspection
 - The CA keypair is persisted in the firewall data directory and shared between the bundler and firewall manager
 - Use `clawker firewall rotate-ca` to regenerate the CA and all domain certs
 
 <Note>
 After rotating the CA, you must restart any running agent containers for them to pick up the new certificate.
+</Note>
+
+### Tools with custom CA bundles
+
+Some tools (notably Python packages installed via `uv`/`uvx`, like semgrep) ship their own CA certificate bundles and ignore the system trust store. Clawker sets `SSL_CERT_FILE` and `CURL_CA_BUNDLE` in the container environment to point these tools at the system store, which includes the firewall CA.
+
+If a tool still reports certificate errors, it may need its own environment variable. Add it to your project config:
+
+```yaml
+# clawker.yaml
+agent:
+  env:
+    REQUESTS_CA_BUNDLE: "${SSL_CERT_FILE}"
+```
+
+<Note>
+`SSL_CERT_FILE` and `CURL_CA_BUNDLE` are set automatically in the container. They point at the system CA bundle which includes the firewall CA. Use `${SSL_CERT_FILE}` when configuring additional tools rather than hardcoding paths.
 </Note>
 
 ## Bypass (Escape Hatch)
@@ -399,13 +416,17 @@ Docker internal names (`host.docker.internal`, monitoring stack containers like 
 
 ### Certificate trust errors
 
-If an agent reports TLS certificate errors for a domain with path rules (MITM inspection), the CA certificate may not have been injected properly. Try:
+If an agent reports TLS certificate errors (`CERTIFICATE_VERIFY_FAILED`, `unable to get local issuer certificate`):
+
+1. **Check if the tool uses the system trust store.** Most tools (Go, curl, wget) do. Python tools installed via `uv`/`uvx` may not --- see [Tools with custom CA bundles](#tools-with-custom-ca-bundles) above.
+
+2. **Rotate the CA** if the certificate is expired or corrupted:
 
 ```bash
 clawker firewall rotate-ca
 ```
 
-Then restart the affected containers.
+Then rebuild the image (`clawker build`) and restart containers.
 
 ### GitHub IP range fetch fails
 
