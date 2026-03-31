@@ -486,6 +486,49 @@ func TestNormalizeAndDedup_WildcardSubsumesExact(t *testing.T) {
 	assert.Equal(t, ".claude.ai", result[0].Dst, "wildcard should supersede exact")
 }
 
+func TestNormalizeAndDedup_WildcardInheritsPathRules(t *testing.T) {
+	t.Parallel()
+
+	// Exact rule has PathRules, wildcard does not — wildcard should inherit them.
+	rules := []config.EgressRule{
+		{
+			Dst: "example.com", Proto: "tls", Port: 443, Action: "allow",
+			PathRules:   []config.PathRule{{Path: "/api", Action: "allow"}},
+			PathDefault: "deny",
+		},
+		{Dst: ".example.com", Proto: "tls", Port: 443, Action: "allow"},
+	}
+
+	result := normalizeAndDedup(rules)
+	assert.Len(t, result, 1)
+	assert.Equal(t, ".example.com", result[0].Dst, "wildcard should supersede exact")
+	assert.Len(t, result[0].PathRules, 1, "wildcard should inherit PathRules from exact")
+	assert.Equal(t, "/api", result[0].PathRules[0].Path)
+	assert.Equal(t, "deny", result[0].PathDefault, "wildcard should inherit PathDefault from exact")
+}
+
+func TestNormalizeAndDedup_WildcardKeepsOwnPathRules(t *testing.T) {
+	t.Parallel()
+
+	// Both have PathRules — wildcard keeps its own.
+	rules := []config.EgressRule{
+		{
+			Dst: "example.com", Proto: "tls", Port: 443, Action: "allow",
+			PathRules: []config.PathRule{{Path: "/old", Action: "allow"}},
+		},
+		{
+			Dst: ".example.com", Proto: "tls", Port: 443, Action: "allow",
+			PathRules: []config.PathRule{{Path: "/new", Action: "allow"}},
+		},
+	}
+
+	result := normalizeAndDedup(rules)
+	assert.Len(t, result, 1)
+	assert.Equal(t, ".example.com", result[0].Dst)
+	assert.Len(t, result[0].PathRules, 1)
+	assert.Equal(t, "/new", result[0].PathRules[0].Path, "wildcard should keep its own PathRules")
+}
+
 func TestNormalizeAndDedup_WildcardFirstKept(t *testing.T) {
 	t.Parallel()
 

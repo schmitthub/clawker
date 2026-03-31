@@ -202,3 +202,77 @@ func TestRotateCA_RegeneratesAll(t *testing.T) {
 	})
 	assert.Error(t, err, "new domain cert should NOT verify against old CA")
 }
+
+func TestGenerateDomainCert_WildcardSANs(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	certPEM, _, err := firewall.GenerateDomainCert(caCert, caKey, ".datadoghq.com")
+	require.NoError(t, err)
+
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	// CN should be the normalized domain (no leading dot).
+	assert.Equal(t, "datadoghq.com", cert.Subject.CommonName)
+	// SANs should include both apex and wildcard.
+	assert.Contains(t, cert.DNSNames, "datadoghq.com")
+	assert.Contains(t, cert.DNSNames, "*.datadoghq.com")
+}
+
+func TestGenerateDomainCert_ExactDomainNoWildcardSAN(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	certPEM, _, err := firewall.GenerateDomainCert(caCert, caKey, "api.openai.com")
+	require.NoError(t, err)
+
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	assert.Equal(t, "api.openai.com", cert.Subject.CommonName)
+	assert.Equal(t, []string{"api.openai.com"}, cert.DNSNames, "exact domain should not get wildcard SAN")
+}
+
+func TestRegenerateDomainCerts_WildcardFilenames(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	rules := []config.EgressRule{
+		{
+			Dst:   ".datadoghq.com",
+			Proto: "tls",
+			PathRules: []config.PathRule{
+				{Path: "/api/v2/logs", Action: "allow"},
+			},
+			PathDefault: "deny",
+		},
+	}
+
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
+	require.NoError(t, err)
+
+	// Files should use the normalized domain (no leading dot).
+	assert.FileExists(t, filepath.Join(certDir, "datadoghq.com-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "datadoghq.com-key.pem"))
+	// No hidden files with leading dot.
+	assert.NoFileExists(t, filepath.Join(certDir, ".datadoghq.com-cert.pem"))
+	assert.NoFileExists(t, filepath.Join(certDir, ".datadoghq.com-key.pem"))
+
+	// Verify the cert has wildcard SANs.
+	certPEM, err := os.ReadFile(filepath.Join(certDir, "datadoghq.com-cert.pem"))
+	require.NoError(t, err)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	assert.Contains(t, cert.DNSNames, "datadoghq.com")
+	assert.Contains(t, cert.DNSNames, "*.datadoghq.com")
+}

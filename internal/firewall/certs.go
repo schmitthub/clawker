@@ -84,6 +84,9 @@ func EnsureCA(certDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 
 // GenerateDomainCert signs a per-domain certificate for MITM inspection.
 // The certificate is signed by the given CA and has the domain as a SAN.
+// For wildcard domains (leading-dot convention), the SAN includes both
+// the apex (e.g., "datadoghq.com") and the wildcard ("*.datadoghq.com")
+// so MITM inspection works for any subdomain.
 // Returns PEM-encoded cert and key bytes.
 func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domain string) (certPEM, keyPEM []byte, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -96,11 +99,19 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 		return nil, nil, fmt.Errorf("generating serial: %w", err)
 	}
 
+	wild := isWildcardDomain(domain)
+	normalized := normalizeDomain(domain)
+
+	dnsNames := []string{normalized}
+	if wild {
+		dnsNames = append(dnsNames, "*."+normalized)
+	}
+
 	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: domain},
-		DNSNames:     []string{domain},
+		Subject:      pkix.Name{CommonName: normalized},
+		DNSNames:     dnsNames,
 		NotBefore:    now,
 		NotAfter:     now.AddDate(domainCertValidYears, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
@@ -136,19 +147,21 @@ func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x5
 			continue
 		}
 
+		domain := normalizeDomain(rule.Dst)
+
 		certPEM, keyPEM, err := GenerateDomainCert(caCert, caKey, rule.Dst)
 		if err != nil {
-			return fmt.Errorf("generating cert for %s: %w", rule.Dst, err)
+			return fmt.Errorf("generating cert for %s: %w", domain, err)
 		}
 
-		certPath := filepath.Join(certDir, rule.Dst+"-cert.pem")
-		keyPath := filepath.Join(certDir, rule.Dst+"-key.pem")
+		certPath := filepath.Join(certDir, domain+"-cert.pem")
+		keyPath := filepath.Join(certDir, domain+"-key.pem")
 
 		if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
-			return fmt.Errorf("writing cert for %s: %w", rule.Dst, err)
+			return fmt.Errorf("writing cert for %s: %w", domain, err)
 		}
 		if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
-			return fmt.Errorf("writing key for %s: %w", rule.Dst, err)
+			return fmt.Errorf("writing key for %s: %w", domain, err)
 		}
 	}
 

@@ -53,7 +53,9 @@ func ruleKey(r config.EgressRule) string {
 //
 // When a wildcard rule (.claude.ai) and an exact rule (claude.ai) collide,
 // the wildcard wins — it's the broader allowance and both produce the same
-// Envoy/CoreDNS config entries.
+// Envoy/CoreDNS config entries. If the exact rule carried PathRules or a
+// PathDefault that the wildcard lacks, the wildcard inherits them so
+// path-level restrictions are not silently dropped.
 func normalizeAndDedup(rules []config.EgressRule) []config.EgressRule {
 	seen := make(map[string]int, len(rules)) // key → index in out
 	out := make([]config.EgressRule, 0, len(rules))
@@ -63,6 +65,14 @@ func normalizeAndDedup(rules []config.EgressRule) []config.EgressRule {
 		if idx, exists := seen[key]; exists {
 			// Wildcard supersedes exact — promote if the new entry is wildcard.
 			if isWildcardDomain(r.Dst) && !isWildcardDomain(out[idx].Dst) {
+				// Inherit PathRules/PathDefault from the exact rule if the
+				// wildcard doesn't have its own.
+				if len(r.PathRules) == 0 && len(out[idx].PathRules) > 0 {
+					r.PathRules = out[idx].PathRules
+					if r.PathDefault == "" {
+						r.PathDefault = out[idx].PathDefault
+					}
+				}
 				out[idx] = r
 			}
 			continue
