@@ -40,10 +40,11 @@ func normalizeRule(r config.EgressRule) config.EgressRule {
 }
 
 // ruleKey returns the dedup key for an egress rule: dst:proto:port.
-// Leading dots are stripped so that ".claude.ai" and "claude.ai" share the same key.
+// The Dst is used verbatim so that ".claude.ai" and "claude.ai" are distinct
+// rules — a wildcard and its apex carry independent semantics (e.g., different
+// PathRules) and must not be collapsed.
 func ruleKey(r config.EgressRule) string {
-	dst := normalizeDomain(r.Dst)
-	return fmt.Sprintf("%s:%s:%d", dst, r.Proto, r.Port)
+	return fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
 }
 
 // normalizeAndDedup normalizes all rules and removes duplicates.
@@ -51,33 +52,19 @@ func ruleKey(r config.EgressRule) string {
 // normalizeRule defaulted TLS to 443 — after normalization those become
 // duplicates of the correctly-ported entries.
 //
-// When a wildcard rule (.claude.ai) and an exact rule (claude.ai) collide,
-// the wildcard wins — it's the broader allowance and both produce the same
-// Envoy/CoreDNS config entries. If the exact rule carried PathRules or a
-// PathDefault that the wildcard lacks, the wildcard inherits them so
-// path-level restrictions are not silently dropped.
+// Wildcard (.claude.ai) and exact (claude.ai) rules are NOT deduped against
+// each other — they are semantically distinct. A user may want unrestricted
+// subdomain access while restricting paths on the apex, or vice versa.
 func normalizeAndDedup(rules []config.EgressRule) []config.EgressRule {
-	seen := make(map[string]int, len(rules)) // key → index in out
+	seen := make(map[string]struct{}, len(rules))
 	out := make([]config.EgressRule, 0, len(rules))
 	for _, r := range rules {
 		r = normalizeRule(r)
 		key := ruleKey(r)
-		if idx, exists := seen[key]; exists {
-			// Wildcard supersedes exact — promote if the new entry is wildcard.
-			if isWildcardDomain(r.Dst) && !isWildcardDomain(out[idx].Dst) {
-				// Inherit PathRules/PathDefault from the exact rule if the
-				// wildcard doesn't have its own.
-				if len(r.PathRules) == 0 && len(out[idx].PathRules) > 0 {
-					r.PathRules = out[idx].PathRules
-					if r.PathDefault == "" {
-						r.PathDefault = out[idx].PathDefault
-					}
-				}
-				out[idx] = r
-			}
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[key] = len(out)
+		seen[key] = struct{}{}
 		out = append(out, r)
 	}
 	return out

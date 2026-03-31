@@ -472,75 +472,34 @@ func TestNormalizeAndDedup(t *testing.T) {
 	}
 }
 
-func TestNormalizeAndDedup_WildcardSubsumesExact(t *testing.T) {
+func TestNormalizeAndDedup_WildcardAndExactCoexist(t *testing.T) {
 	t.Parallel()
 
-	// Wildcard and exact for the same domain — wildcard should win.
+	// Wildcard and exact for the same domain — both kept as separate rules.
 	rules := []config.EgressRule{
 		{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
 		{Dst: ".claude.ai", Proto: "tls", Port: 443, Action: "allow"},
 	}
 
 	result := normalizeAndDedup(rules)
-	assert.Len(t, result, 1)
-	assert.Equal(t, ".claude.ai", result[0].Dst, "wildcard should supersede exact")
+	assert.Len(t, result, 2, "wildcard and exact are distinct rules")
+
+	dsts := []string{result[0].Dst, result[1].Dst}
+	assert.Contains(t, dsts, "claude.ai")
+	assert.Contains(t, dsts, ".claude.ai")
 }
 
-func TestNormalizeAndDedup_WildcardInheritsPathRules(t *testing.T) {
+func TestNormalizeAndDedup_ExactDuplicatesStillDeduped(t *testing.T) {
 	t.Parallel()
 
-	// Exact rule has PathRules, wildcard does not — wildcard should inherit them.
 	rules := []config.EgressRule{
-		{
-			Dst: "example.com", Proto: "tls", Port: 443, Action: "allow",
-			PathRules:   []config.PathRule{{Path: "/api", Action: "allow"}},
-			PathDefault: "deny",
-		},
-		{Dst: ".example.com", Proto: "tls", Port: 443, Action: "allow"},
-	}
-
-	result := normalizeAndDedup(rules)
-	assert.Len(t, result, 1)
-	assert.Equal(t, ".example.com", result[0].Dst, "wildcard should supersede exact")
-	assert.Len(t, result[0].PathRules, 1, "wildcard should inherit PathRules from exact")
-	assert.Equal(t, "/api", result[0].PathRules[0].Path)
-	assert.Equal(t, "deny", result[0].PathDefault, "wildcard should inherit PathDefault from exact")
-}
-
-func TestNormalizeAndDedup_WildcardKeepsOwnPathRules(t *testing.T) {
-	t.Parallel()
-
-	// Both have PathRules — wildcard keeps its own.
-	rules := []config.EgressRule{
-		{
-			Dst: "example.com", Proto: "tls", Port: 443, Action: "allow",
-			PathRules: []config.PathRule{{Path: "/old", Action: "allow"}},
-		},
-		{
-			Dst: ".example.com", Proto: "tls", Port: 443, Action: "allow",
-			PathRules: []config.PathRule{{Path: "/new", Action: "allow"}},
-		},
-	}
-
-	result := normalizeAndDedup(rules)
-	assert.Len(t, result, 1)
-	assert.Equal(t, ".example.com", result[0].Dst)
-	assert.Len(t, result[0].PathRules, 1)
-	assert.Equal(t, "/new", result[0].PathRules[0].Path, "wildcard should keep its own PathRules")
-}
-
-func TestNormalizeAndDedup_WildcardFirstKept(t *testing.T) {
-	t.Parallel()
-
-	// Wildcard comes first — exact duplicate should be dropped.
-	rules := []config.EgressRule{
-		{Dst: ".claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
 		{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
 	}
 
 	result := normalizeAndDedup(rules)
 	assert.Len(t, result, 1)
-	assert.Equal(t, ".claude.ai", result[0].Dst, "wildcard should be preserved")
+	assert.Equal(t, "claude.ai", result[0].Dst)
 }
 
 func TestIsWildcardDomain(t *testing.T) {
@@ -565,29 +524,46 @@ func TestNormalizeDomain_LeadingDot(t *testing.T) {
 func TestServerNames_ExactDomain(t *testing.T) {
 	t.Parallel()
 
-	names := serverNames("api.anthropic.com")
+	names := serverNames("api.anthropic.com", nil)
 	assert.Equal(t, []string{"api.anthropic.com"}, names)
 }
 
 func TestServerNames_WildcardDomain(t *testing.T) {
 	t.Parallel()
 
-	names := serverNames(".datadoghq.com")
+	names := serverNames(".datadoghq.com", nil)
 	assert.Equal(t, []string{".datadoghq.com", "datadoghq.com"}, names)
+}
+
+func TestServerNames_WildcardWithExactSibling(t *testing.T) {
+	t.Parallel()
+
+	// When a separate exact rule exists, wildcard omits the apex.
+	exact := map[string]bool{"claude.ai": true}
+	names := serverNames(".claude.ai", exact)
+	assert.Equal(t, []string{".claude.ai"}, names, "apex should be omitted when exact rule handles it")
 }
 
 func TestHTTPDomains_ExactDomain(t *testing.T) {
 	t.Parallel()
 
-	domains := httpDomains("api.anthropic.com")
+	domains := httpDomains("api.anthropic.com", nil)
 	assert.Equal(t, []string{"api.anthropic.com"}, domains)
 }
 
 func TestHTTPDomains_WildcardDomain(t *testing.T) {
 	t.Parallel()
 
-	domains := httpDomains(".datadoghq.com")
+	domains := httpDomains(".datadoghq.com", nil)
 	assert.Equal(t, []string{"*.datadoghq.com", "datadoghq.com"}, domains)
+}
+
+func TestHTTPDomains_WildcardWithExactSibling(t *testing.T) {
+	t.Parallel()
+
+	exact := map[string]bool{"claude.ai": true}
+	domains := httpDomains(".claude.ai", exact)
+	assert.Equal(t, []string{"*.claude.ai"}, domains, "apex should be omitted when exact rule handles it")
 }
 
 func TestGenerateEnvoyConfig_WildcardDomain(t *testing.T) {

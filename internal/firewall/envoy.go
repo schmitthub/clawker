@@ -188,6 +188,15 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 		}
 	}
 
+	// Build set of exact (non-wildcard) domains so wildcard filter chains can
+	// omit the apex from server_names when a separate exact rule handles it.
+	exactDomains := make(map[string]bool)
+	for _, r := range rules {
+		if !isWildcardDomain(r.Dst) && !isIPOrCIDR(r.Dst) {
+			exactDomains[normalizeDomain(r.Dst)] = true
+		}
+	}
+
 	// Compute TCP port mappings (same function used by manager.Enable for iptables args).
 	tcpMappings := TCPMappings(rules, ports)
 
@@ -201,7 +210,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 			},
 		},
 		"static_resources": map[string]any{
-			"listeners": buildListeners(mitmRules, passthroughRules, tcpRules, httpRules, tcpMappings, ports),
+			"listeners": buildListeners(mitmRules, passthroughRules, tcpRules, httpRules, tcpMappings, ports, exactDomains),
 			"clusters":  buildClusters(tcpRules),
 		},
 	}
@@ -214,17 +223,17 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 }
 
 // buildListeners constructs all Envoy listeners.
-func buildListeners(mitm, passthrough, tcp, http []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts) []any {
+func buildListeners(mitm, passthrough, tcp, http []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts, exactDomains map[string]bool) []any {
 	var listeners []any
 
 	// Main TLS listener — handles both MITM and passthrough.
 	if len(mitm) > 0 || len(passthrough) > 0 {
-		listeners = append(listeners, buildTLSListener(mitm, passthrough, ports.TLSPort))
+		listeners = append(listeners, buildTLSListener(mitm, passthrough, ports.TLSPort, exactDomains))
 	}
 
 	// HTTP listener — domain detection via Host header.
 	if len(http) > 0 {
-		listeners = append(listeners, buildHTTPListener(http, ports.HTTPPort))
+		listeners = append(listeners, buildHTTPListener(http, ports.HTTPPort, exactDomains))
 	}
 
 	// Per-rule TCP/SSH listeners from the port mappings.
@@ -298,17 +307,17 @@ func buildHealthListener(port int) map[string]any {
 }
 
 // buildTLSListener creates the main TLS listener on the given port.
-func buildTLSListener(mitm, passthrough []config.EgressRule, tlsPort int) map[string]any {
+func buildTLSListener(mitm, passthrough []config.EgressRule, tlsPort int, exactDomains map[string]bool) map[string]any {
 	var filterChains []any
 
 	// 1. MITM filter chains (TLS termination + HTTP path matching).
 	for _, r := range mitm {
-		filterChains = append(filterChains, buildMITMFilterChain(r))
+		filterChains = append(filterChains, buildMITMFilterChain(r, exactDomains))
 	}
 
 	// 2. SNI passthrough filter chains.
 	for _, r := range passthrough {
-		filterChains = append(filterChains, buildPassthroughFilterChain(r))
+		filterChains = append(filterChains, buildPassthroughFilterChain(r, exactDomains))
 	}
 
 	// 3. Default deny chain (catch-all → connection reset).
@@ -338,7 +347,7 @@ func buildTLSListener(mitm, passthrough []config.EgressRule, tlsPort int) map[st
 // via the Host header — the HTTP equivalent of the TLS listener's SNI detection.
 // Each allowed domain gets a virtual host; unknown domains get a 403 deny response.
 // Rules with PathRules get per-path route matching; rules without get allow-all.
-func buildHTTPListener(rules []config.EgressRule, httpPort int) map[string]any {
+func buildHTTPListener(rules []config.EgressRule, httpPort int, exactDomains map[string]bool) map[string]any {
 	var virtualHosts []any
 
 	for _, r := range rules {
@@ -360,7 +369,7 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int) map[string]any {
 
 		virtualHosts = append(virtualHosts, map[string]any{
 			"name":    domain,
-			"domains": httpDomains(r.Dst),
+			"domains": httpDomains(r.Dst, exactDomains),
 			"routes":  routes,
 		})
 	}
@@ -430,7 +439,7 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int) map[string]any {
 
 // buildMITMFilterChain creates a filter chain that terminates TLS with a per-domain
 // certificate and inspects HTTP paths before forwarding upstream with re-encryption.
-func buildMITMFilterChain(r config.EgressRule) map[string]any {
+func buildMITMFilterChain(r config.EgressRule, exactDomains map[string]bool) map[string]any {
 	domain := normalizeDomain(r.Dst)
 	certFile := fmt.Sprintf(envoyCertFileFmt, domain)
 	keyFile := fmt.Sprintf(envoyKeyFileFmt, domain)
@@ -440,7 +449,7 @@ func buildMITMFilterChain(r config.EgressRule) map[string]any {
 
 	return map[string]any{
 		"filter_chain_match": map[string]any{
-			"server_names": serverNames(r.Dst),
+			"server_names": serverNames(r.Dst, exactDomains),
 		},
 		"transport_socket": map[string]any{
 			"name": "envoy.transport_sockets.tls",
@@ -542,7 +551,7 @@ func buildHTTPRoutes(r config.EgressRule) []any {
 
 // buildPassthroughFilterChain creates an SNI passthrough filter chain for an allowed domain.
 // sni_dynamic_forward_proxy is non-terminal — tcp_proxy must follow it.
-func buildPassthroughFilterChain(r config.EgressRule) map[string]any {
+func buildPassthroughFilterChain(r config.EgressRule, exactDomains map[string]bool) map[string]any {
 	domain := normalizeDomain(r.Dst)
 	port := r.Port
 	if port == 0 {
@@ -551,7 +560,7 @@ func buildPassthroughFilterChain(r config.EgressRule) map[string]any {
 
 	return map[string]any{
 		"filter_chain_match": map[string]any{
-			"server_names": serverNames(r.Dst),
+			"server_names": serverNames(r.Dst, exactDomains),
 		},
 		"filters": []any{
 			map[string]any{
@@ -721,10 +730,16 @@ func sanitizeName(s string) string {
 // serverNames returns the Envoy server_names list for SNI matching.
 // For wildcard domains (leading dot, e.g. ".datadoghq.com"), it returns both
 // the suffix match form (".datadoghq.com") and the apex ("datadoghq.com").
+// However, if a separate exact rule exists for the same apex (tracked in
+// exactDomains), the apex is omitted to avoid duplicate filter chain matches.
 // For exact domains, it returns a single-element list.
-func serverNames(dst string) []string {
+func serverNames(dst string, exactDomains map[string]bool) []string {
 	domain := normalizeDomain(dst)
 	if isWildcardDomain(dst) {
+		if exactDomains[domain] {
+			// Separate exact rule owns the apex — wildcard covers subdomains only.
+			return []string{"." + domain}
+		}
 		return []string{"." + domain, domain}
 	}
 	return []string{domain}
@@ -732,10 +747,14 @@ func serverNames(dst string) []string {
 
 // httpDomains returns the Envoy virtual host domains list for Host header matching.
 // For wildcard domains (leading dot), it returns both "*.domain" and "domain".
+// If a separate exact rule exists for the apex, the apex is omitted.
 // For exact domains, it returns a single-element list.
-func httpDomains(dst string) []string {
+func httpDomains(dst string, exactDomains map[string]bool) []string {
 	domain := normalizeDomain(dst)
 	if isWildcardDomain(dst) {
+		if exactDomains[domain] {
+			return []string{"*." + domain}
+		}
 		return []string{"*." + domain, domain}
 	}
 	return []string{domain}
