@@ -63,6 +63,11 @@ type ProgressDisplayConfig struct {
 	// When true, progress output is rendered in the alt screen and cleared
 	// when the display finishes — useful for clean handoff to a container TTY.
 	AltScreen bool
+
+	// blinkHide is internal render state set by the TTY model on each frame.
+	// When true, running-step icons are hidden (blink off-phase).
+	// Defaults to false so standalone render calls always show icons.
+	blinkHide bool
 }
 
 // ProgressResult contains the outcome of a progress display.
@@ -320,6 +325,18 @@ type progressStepMsg ProgressStep
 
 type progressChannelClosedMsg struct{}
 
+// blinkTickMsg triggers a blink-state toggle for running-step icons.
+type blinkTickMsg struct{}
+
+// blinkInterval controls the blink cycle.
+const blinkInterval = 700 * time.Millisecond
+
+func blinkTick() tea.Cmd {
+	return tea.Tick(blinkInterval, func(time.Time) tea.Msg {
+		return blinkTickMsg{}
+	})
+}
+
 func waitForProgressStep(ch <-chan ProgressStep) tea.Cmd {
 	return func() tea.Msg {
 		step, ok := <-ch
@@ -345,6 +362,7 @@ type progressModel struct {
 
 	finished    bool
 	interrupted bool // true if user pressed Ctrl+C
+	blinkHide   bool // toggled by blinkTickMsg for running-icon blink
 
 	width int
 
@@ -370,7 +388,7 @@ func newProgressModel(ios *iostreams.IOStreams, cfg ProgressDisplayConfig, event
 }
 
 func (m progressModel) Init() tea.Cmd {
-	return waitForProgressStep(m.eventCh)
+	return tea.Batch(waitForProgressStep(m.eventCh), blinkTick())
 }
 
 func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -386,6 +404,10 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		return m, nil
+
+	case blinkTickMsg:
+		m.blinkHide = !m.blinkHide
+		return m, blinkTick()
 
 	case progressStepMsg:
 		step := ProgressStep(msg)
@@ -453,6 +475,10 @@ func (m *progressModel) processEvent(step ProgressStep) {
 // View renders the progress display. Used for both live updates and the final
 // BubbleTea frame — the tree rendering shows status icons without animation.
 func (m progressModel) View() string {
+	// Copy blink state onto the config so render helpers can read it.
+	// Safe: value receiver means m.cfg is already a copy.
+	m.cfg.blinkHide = m.blinkHide
+
 	cs := m.cs
 	width := m.width
 	if width < 40 {
@@ -541,7 +567,11 @@ func stepLineParts(cs *iostreams.ColorScheme, cfg *ProgressDisplayConfig, step *
 		name = cfg.cleanName(step.name)
 		duration = cs.Muted("cached")
 	case StepRunning:
-		icon = cs.Muted("●")
+		if cfg.blinkHide {
+			icon = " "
+		} else {
+			icon = cs.Muted("●")
+		}
 		name = cfg.cleanName(step.name)
 		d := time.Since(step.startTime)
 		duration = cs.Muted(cfg.formatDuration(d))
@@ -738,7 +768,11 @@ func renderStageNode(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *Progr
 	switch state {
 	case StepRunning, StepError:
 		// Active or error stage: heading + expanded children.
+		// Inline blink logic: running stage icon blinks with step icons.
 		icon := stageIcon(cs, state)
+		if state == StepRunning && cfg.blinkHide {
+			icon = " "
+		}
 		buf.WriteString(fmt.Sprintf("  %s %s\n", icon, cs.Bold(stage.name)))
 		lines++
 		lines += renderStageChildren(buf, cs, cfg, stage, maxVisible, width)
