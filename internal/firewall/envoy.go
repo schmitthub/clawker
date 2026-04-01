@@ -417,8 +417,9 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int, exactDomains map
 							"codec_type":  "AUTO",
 							"access_log":  buildHTTPAccessLog("http"),
 							"route_config": map[string]any{
-								"name":          "http_egress_routes",
-								"virtual_hosts": virtualHosts,
+								"name":                "http_egress_routes",
+								"strip_any_host_port": true,
+								"virtual_hosts":       virtualHosts,
 							},
 							"http_filters": []any{
 								buildDFPHTTPFilter(false),
@@ -491,21 +492,8 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 						"virtual_hosts": []any{
 							map[string]any{
 								"name":    virtualHostName(r.Dst),
-								"domains": httpDomains(r.Dst, exactDomains),
-								"routes":  routes,
-							},
-							map[string]any{
-								"name":    "deny_" + sanitizeName(domain),
 								"domains": []string{"*"},
-								"routes": []any{
-									map[string]any{
-										"match": map[string]any{"prefix": "/"},
-										"direct_response": map[string]any{
-											"status": 403,
-											"body":   map[string]any{"inline_string": "Blocked by clawker firewall\n"},
-										},
-									},
-								},
+								"routes":  routes,
 							},
 						},
 					},

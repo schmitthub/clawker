@@ -143,6 +143,13 @@ func (m *Manager) IsRunning(ctx context.Context) bool {
 //   - Envoy: HTTP GET to localhost:18901/ (published dedicated health listener).
 //   - CoreDNS: HTTP GET to localhost:18902/health (published health endpoint).
 func (m *Manager) WaitForHealthy(ctx context.Context) error {
+	// Fast-path: if context is already done, return immediately
+	// rather than falling through to HealthTimeoutError with a
+	// misleading negative timeout duration.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	// Respect caller's context deadline; fall back to
 	// healthCheckTimeout when no deadline is set.
 	timeout := healthCheckTimeout
