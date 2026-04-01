@@ -250,6 +250,29 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 	// Compute TCP port mappings (same function used by manager.Enable for iptables args).
 	tcpMappings := TCPMappings(rules, ports)
 
+	// Validate derived TCP listener ports: range check + collision detection.
+	if len(tcpMappings) > 0 {
+		reservedPorts := map[int]string{
+			ports.TLSPort:    "TLSPort",
+			ports.HTTPPort:   "HTTPPort",
+			ports.HealthPort: "HealthPort",
+			9901:             "EnvoyAdmin",
+		}
+		for _, m := range tcpMappings {
+			if m.EnvoyPort > 65535 {
+				return nil, nil, fmt.Errorf(
+					"TCP rule %s:%d would use port %d which exceeds 65535 (TCPPortBase=%d, %d TCP rules)",
+					m.Dst, m.DstPort, m.EnvoyPort, ports.TCPPortBase, len(tcpMappings))
+			}
+			if conflict, ok := reservedPorts[m.EnvoyPort]; ok {
+				return nil, nil, fmt.Errorf(
+					"TCP rule %s:%d would use port %d which collides with %s (TCPPortBase=%d)",
+					m.Dst, m.DstPort, m.EnvoyPort, conflict, ports.TCPPortBase)
+			}
+			reservedPorts[m.EnvoyPort] = fmt.Sprintf("TCP:%s:%d", m.Dst, m.DstPort)
+		}
+	}
+
 	cfg := map[string]any{
 		"admin": map[string]any{
 			"address": map[string]any{

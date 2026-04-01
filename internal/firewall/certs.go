@@ -144,14 +144,12 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 // the wildcard convention (leading dot), the cert includes both apex and
 // wildcard SANs. This prevents a later exact-domain rule from overwriting
 // a cert that also needs wildcard SANs.
+//
+// Cert generation runs before stale cleanup so that a partial failure leaves
+// previously-working certs intact rather than an empty directory.
 func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error {
 	if err := os.MkdirAll(certDir, 0o700); err != nil {
 		return fmt.Errorf("creating certs directory: %w", err)
-	}
-
-	// Clean stale domain cert files from previous runs. CA files are preserved.
-	if err := cleanStaleDomainCerts(certDir); err != nil {
-		return fmt.Errorf("cleaning stale certs: %w", err)
 	}
 
 	// Deduplicate by normalized domain, tracking whether any rule uses
@@ -185,6 +183,9 @@ func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x5
 		order = append(order, normalized)
 	}
 
+	// Generate certs first — overwrites existing files in-place.
+	// If generation fails partway, domains before the failure have fresh certs
+	// and domains after still have their old (valid) certs.
 	for _, normalized := range order {
 		info := seen[normalized]
 		// Re-add leading dot so GenerateDomainCert produces wildcard SANs.
@@ -207,6 +208,12 @@ func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x5
 		if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
 			return fmt.Errorf("writing key for %s: %w", normalized, err)
 		}
+	}
+
+	// Clean stale domain cert files only after all new certs are written.
+	// Only removes certs for domains no longer in the rule set.
+	if err := cleanStaleDomainCerts(certDir, seen); err != nil {
+		return fmt.Errorf("cleaning stale certs: %w", err)
 	}
 
 	return nil
@@ -233,11 +240,11 @@ func RotateCA(certDir string, rules []config.EgressRule) error {
 	return nil
 }
 
-// cleanStaleDomainCerts removes all domain cert/key files from certDir,
-// preserving the CA files (ca-cert.pem, ca-key.pem). Domain certs are
-// fully regenerated on each call to RegenerateDomainCerts, so stale files
-// from removed rules are cleaned up.
-func cleanStaleDomainCerts(certDir string) error {
+// cleanStaleDomainCerts removes domain cert/key files from certDir that are
+// not in the target domain set, preserving the CA files (ca-cert.pem, ca-key.pem).
+// This is called after cert generation so that a partial generation failure
+// does not leave the directory empty — only truly stale files are removed.
+func cleanStaleDomainCerts[T any](certDir string, targetDomains map[string]T) error {
 	entries, err := os.ReadDir(certDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -250,10 +257,21 @@ func cleanStaleDomainCerts(certDir string) error {
 		if name == caCertFile || name == caKeyFile {
 			continue
 		}
-		if strings.HasSuffix(name, "-cert.pem") || strings.HasSuffix(name, "-key.pem") {
-			if err := os.Remove(filepath.Join(certDir, name)); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("removing stale cert %s: %w", name, err)
-			}
+		// Extract domain from filename: "<domain>-cert.pem" or "<domain>-key.pem".
+		var domain string
+		switch {
+		case strings.HasSuffix(name, "-cert.pem"):
+			domain = strings.TrimSuffix(name, "-cert.pem")
+		case strings.HasSuffix(name, "-key.pem"):
+			domain = strings.TrimSuffix(name, "-key.pem")
+		default:
+			continue
+		}
+		if _, inTarget := targetDomains[domain]; inTarget {
+			continue // current domain — keep
+		}
+		if err := os.Remove(filepath.Join(certDir, name)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing stale cert %s: %w", name, err)
 		}
 	}
 	return nil
