@@ -153,11 +153,14 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 	// Respect caller's context deadline; fall back to
 	// healthCheckTimeout when no deadline is set.
 	timeout := healthCheckTimeout
+	deadline := time.Now().Add(timeout)
 	if dl, ok := ctx.Deadline(); ok {
 		timeout = time.Until(dl)
+		if timeout <= 0 {
+			return ctx.Err()
+		}
+		deadline = dl
 	}
-
-	deadline := time.Now().Add(timeout)
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
 	envoyURL := fmt.Sprintf("http://localhost:%d/", m.cfg.EnvoyHealthHostPort())
@@ -171,21 +174,25 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 		}
 
 		if !envoyReady {
-			if resp, err := httpClient.Get(envoyURL); err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					envoyReady = true
-					m.log.Debug().Msg("envoy health check passed (HTTP 200)")
+			if req, err := http.NewRequestWithContext(ctx, http.MethodGet, envoyURL, nil); err == nil {
+				if resp, err := httpClient.Do(req); err == nil {
+					resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						envoyReady = true
+						m.log.Debug().Msg("envoy health check passed (HTTP 200)")
+					}
 				}
 			}
 		}
 
 		if !corednsReady {
-			if resp, err := httpClient.Get(corednsURL); err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					corednsReady = true
-					m.log.Debug().Msg("coredns health check passed (HTTP 200)")
+			if req, err := http.NewRequestWithContext(ctx, http.MethodGet, corednsURL, nil); err == nil {
+				if resp, err := httpClient.Do(req); err == nil {
+					resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						corednsReady = true
+						m.log.Debug().Msg("coredns health check passed (HTTP 200)")
+					}
 				}
 			}
 		}

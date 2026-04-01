@@ -492,7 +492,7 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 						"virtual_hosts": []any{
 							map[string]any{
 								"name":    virtualHostName(r.Dst),
-								"domains": []string{"*"},
+								"domains": httpDomains(r.Dst, exactDomains),
 								"routes":  routes,
 							},
 						},
