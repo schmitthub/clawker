@@ -631,6 +631,9 @@ func dfpClusterType() map[string]any {
 		"name": "envoy.clusters.dynamic_forward_proxy",
 		"typed_config": map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
+			// Disable h2 connection coalescing so domains sharing an IP get separate
+			// TLS connections with per-host SNI and SAN validation.
+			"allow_coalesced_connections": false,
 			"dns_cache_config": map[string]any{
 				"name":              dnsCacheName,
 				"dns_lookup_family": "V4_ONLY",
@@ -674,10 +677,8 @@ func buildClusters(tcp []config.EgressRule) []any {
 					},
 				},
 			},
-			// Mirror downstream protocol upstream — transparent forwarding.
-			// auto_config with h2 pools connections by IP:port, causing SAN failures
-			// when domains share an IP but have different certs. use_downstream avoids
-			// this by creating per-request connections matching the client's protocol.
+			// Negotiate upstream protocol with the origin while keeping per-host
+			// connection separation via allow_coalesced_connections: false.
 			"typed_extension_protocol_options": map[string]any{
 				"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
 					"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
@@ -685,7 +686,7 @@ func buildClusters(tcp []config.EgressRule) []any {
 						"auto_sni":            true,
 						"auto_san_validation": true,
 					},
-					"use_downstream_protocol_config": map[string]any{
+					"auto_config": map[string]any{
 						"http_protocol_options":  map[string]any{},
 						"http2_protocol_options": map[string]any{},
 					},
