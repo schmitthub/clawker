@@ -269,7 +269,7 @@ func TestGenerateEnvoyConfig_MixedHTTPAndTLS(t *testing.T) {
 	assert.Contains(t, out, "http_egress")
 }
 
-func TestGenerateEnvoyConfig_TLSOriginationEnablesAutoSNIAndSANValidation(t *testing.T) {
+func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
@@ -287,7 +287,7 @@ func TestGenerateEnvoyConfig_TLSOriginationEnablesAutoSNIAndSANValidation(t *tes
 	assert.Contains(t, out, "auto_sni: true")
 	assert.Contains(t, out, "auto_san_validation: true")
 	assert.Contains(t, out, "http2_protocol_options: {}")
-	assert.Contains(t, out, "cluster: dynamic_forward_proxy_cluster_tls")
+	assert.Contains(t, out, "allow_coalesced_connections: false")
 }
 
 func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {
@@ -752,6 +752,187 @@ func TestGenerateEnvoyConfig_HTTPRoutesToPlaintextCluster(t *testing.T) {
 						}
 					}
 				}
+			}
+		}
+	}
+}
+
+func TestVirtualHostName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		dst      string
+		expected string
+	}{
+		{"api.anthropic.com", "api.anthropic.com"},
+		{".datadoghq.com", "wildcard_datadoghq.com"},
+		{".example.com", "wildcard_example.com"},
+		{"example.com", "example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.dst, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, virtualHostName(tt.dst))
+		})
+	}
+}
+
+func TestGenerateEnvoyConfig_WildcardAndExactHTTPNoDuplicateVirtualHostNames(t *testing.T) {
+	t.Parallel()
+
+	// Both wildcard and exact rules for the same domain — virtual host names must be unique.
+	rules := []config.EgressRule{
+		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+		{Dst: ".example.com", Proto: "http", Port: 80, Action: "allow"},
+	}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	listeners := sr["listeners"].([]any)
+
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		if lis["name"] != "http_egress" {
+			continue
+		}
+		chains := lis["filter_chains"].([]any)
+		for _, fc := range chains {
+			chain := fc.(map[string]any)
+			filters := chain["filters"].([]any)
+			for _, f := range filters {
+				filter := f.(map[string]any)
+				tc := filter["typed_config"].(map[string]any)
+				rc := tc["route_config"].(map[string]any)
+				vhosts := rc["virtual_hosts"].([]any)
+
+				names := make(map[string]bool, len(vhosts))
+				for _, vh := range vhosts {
+					vhost := vh.(map[string]any)
+					name := vhost["name"].(string)
+					assert.False(t, names[name],
+						"duplicate virtual host name %q in HTTP route_config", name)
+					names[name] = true
+				}
+				assert.True(t, names["example.com"], "exact virtual host should be present")
+				assert.True(t, names["wildcard_example.com"], "wildcard virtual host should be present")
+			}
+		}
+	}
+}
+
+func TestGenerateEnvoyConfig_TLSPortEnforcement(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "custom.example.com", Proto: "tls", Port: 8443, Action: "allow"},
+	}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	listeners := sr["listeners"].([]any)
+
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		if lis["name"] != "tls_egress" {
+			continue
+		}
+		chains := lis["filter_chains"].([]any)
+		for _, fc := range chains {
+			chain := fc.(map[string]any)
+			if chain["transport_socket"] == nil {
+				continue
+			}
+			filters := chain["filters"].([]any)
+			for _, f := range filters {
+				filter := f.(map[string]any)
+				tc := filter["typed_config"].(map[string]any)
+
+				httpFilters := tc["http_filters"].([]any)
+				require.GreaterOrEqual(t, len(httpFilters), 3,
+					"TLS filter chain must have set_filter_state + DFP + router")
+
+				sfs := httpFilters[0].(map[string]any)
+				assert.Equal(t, "envoy.filters.http.set_filter_state", sfs["name"],
+					"first HTTP filter must be set_filter_state for port enforcement")
+
+				dfp := httpFilters[1].(map[string]any)
+				assert.Equal(t, "envoy.filters.http.dynamic_forward_proxy", dfp["name"])
+				dfpTC := dfp["typed_config"].(map[string]any)
+				assert.Equal(t, true, dfpTC["allow_dynamic_host_from_filter_state"],
+					"DFP must enable filter state so it reads the pinned port")
+			}
+		}
+	}
+}
+
+func TestGenerateEnvoyConfig_TLSPortEnforcementValues(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "custom.example.com", Proto: "tls", Port: 8443, Action: "allow"},
+	}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	out := string(yamlBytes)
+	assert.Contains(t, out, "inline_string: \"443\"")
+	assert.Contains(t, out, "inline_string: \"8443\"")
+	assert.Contains(t, out, "envoy.upstream.dynamic_port")
+	assert.Contains(t, out, "envoy.filters.http.set_filter_state")
+}
+
+func TestGenerateEnvoyConfig_HTTPListenerNoDFPFilterState(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+	}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	listeners := sr["listeners"].([]any)
+
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		if lis["name"] != "http_egress" {
+			continue
+		}
+		chains := lis["filter_chains"].([]any)
+		for _, fc := range chains {
+			chain := fc.(map[string]any)
+			filters := chain["filters"].([]any)
+			for _, f := range filters {
+				filter := f.(map[string]any)
+				tc := filter["typed_config"].(map[string]any)
+				httpFilters := tc["http_filters"].([]any)
+
+				assert.Len(t, httpFilters, 2, "HTTP listener should have DFP + router only")
+				dfp := httpFilters[0].(map[string]any)
+				dfpTC := dfp["typed_config"].(map[string]any)
+				assert.Nil(t, dfpTC["allow_dynamic_host_from_filter_state"],
+					"HTTP listener DFP should not enable filter state override")
 			}
 		}
 	}

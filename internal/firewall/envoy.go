@@ -361,7 +361,6 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int, exactDomains map
 	var virtualHosts []any
 
 	for _, r := range rules {
-		domain := normalizeDomain(r.Dst)
 		var routes []any
 
 		if len(r.PathRules) > 0 {
@@ -378,7 +377,7 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int, exactDomains map
 		}
 
 		virtualHosts = append(virtualHosts, map[string]any{
-			"name":    domain,
+			"name":    virtualHostName(r.Dst),
 			"domains": httpDomains(r.Dst, exactDomains),
 			"routes":  routes,
 		})
@@ -422,16 +421,7 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int, exactDomains map
 								"virtual_hosts": virtualHosts,
 							},
 							"http_filters": []any{
-								map[string]any{
-									"name": "envoy.filters.http.dynamic_forward_proxy",
-									"typed_config": map[string]any{
-										"@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
-										"dns_cache_config": map[string]any{
-											"name":              dnsCacheName,
-											"dns_lookup_family": "V4_ONLY",
-										},
-									},
-								},
+								buildDFPHTTPFilter(false),
 								map[string]any{
 									"name": "envoy.filters.http.router",
 									"typed_config": map[string]any{
@@ -500,7 +490,7 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 						"name": fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
 						"virtual_hosts": []any{
 							map[string]any{
-								"name":    domain,
+								"name":    virtualHostName(r.Dst),
 								"domains": httpDomains(r.Dst, exactDomains),
 								"routes":  routes,
 							},
@@ -520,16 +510,8 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 						},
 					},
 					"http_filters": []any{
-						map[string]any{
-							"name": "envoy.filters.http.dynamic_forward_proxy",
-							"typed_config": map[string]any{
-								"@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
-								"dns_cache_config": map[string]any{
-									"name":              dnsCacheName,
-									"dns_lookup_family": "V4_ONLY",
-								},
-							},
-						},
+						buildPortEnforcementFilter(r.Port),
+						buildDFPHTTPFilter(true),
 						map[string]any{
 							"name": "envoy.filters.http.router",
 							"typed_config": map[string]any{
@@ -661,6 +643,9 @@ func dfpClusterType() map[string]any {
 		"name": "envoy.clusters.dynamic_forward_proxy",
 		"typed_config": map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
+			// Disable h2 connection coalescing so domains sharing an IP get separate
+			// TLS connections with per-host SNI and SAN validation.
+			"allow_coalesced_connections": false,
 			"dns_cache_config": map[string]any{
 				"name":              dnsCacheName,
 				"dns_lookup_family": "V4_ONLY",
@@ -680,8 +665,8 @@ func buildClusters(tcp []config.EgressRule) []any {
 			"cluster_type":    dfpClusterType(),
 		},
 		// Dynamic forward proxy cluster — TLS upstream (re-encrypts after MITM termination).
-		// auto_sni and auto_san_validation bind upstream TLS validation to the
-		// dynamically resolved host instead of trusting any public-CA-signed endpoint.
+		// DFP clusters with UpstreamTlsContext + trusted_ca automatically perform
+		// SNI and SAN validation for the resolved hostname (per Envoy docs).
 		map[string]any{
 			"name":            clusterDFPTLS,
 			"connect_timeout": "10s",
@@ -787,6 +772,59 @@ func serverNames(dst string, exactDomains map[string]bool) []string {
 		return []string{"." + domain, domain}
 	}
 	return []string{domain}
+}
+
+// buildPortEnforcementFilter returns a set_filter_state HTTP filter that pins
+// envoy.upstream.dynamic_port to the given port. This prevents clients from
+// overriding the upstream port via the :authority header when using DFP.
+func buildPortEnforcementFilter(port int) map[string]any {
+	return map[string]any{
+		"name": "envoy.filters.http.set_filter_state",
+		"typed_config": map[string]any{
+			"@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+			"on_request_headers": []any{
+				map[string]any{
+					"object_key": "envoy.upstream.dynamic_port",
+					"format_string": map[string]any{
+						"text_format_source": map[string]any{
+							"inline_string": fmt.Sprintf("%d", port),
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// buildDFPHTTPFilter returns the dynamic forward proxy HTTP filter config.
+// When portEnforcement is true, allow_dynamic_host_from_filter_state is enabled
+// so the DFP reads the pinned port from filter state instead of :authority.
+func buildDFPHTTPFilter(portEnforcement bool) map[string]any {
+	tc := map[string]any{
+		"@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
+		"dns_cache_config": map[string]any{
+			"name":              dnsCacheName,
+			"dns_lookup_family": "V4_ONLY",
+		},
+	}
+	if portEnforcement {
+		tc["allow_dynamic_host_from_filter_state"] = true
+	}
+	return map[string]any{
+		"name":         "envoy.filters.http.dynamic_forward_proxy",
+		"typed_config": tc,
+	}
+}
+
+// virtualHostName returns a unique Envoy virtual host name for a rule's destination.
+// Wildcard domains get a "wildcard_" prefix so they don't collide with exact rules
+// for the same apex domain in the same route_config.
+func virtualHostName(dst string) string {
+	domain := normalizeDomain(dst)
+	if isWildcardDomain(dst) {
+		return "wildcard_" + domain
+	}
+	return domain
 }
 
 // httpDomains returns the Envoy virtual host domains list for Host header matching.
