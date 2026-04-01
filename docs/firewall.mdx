@@ -11,7 +11,7 @@ Clawker ships a **deny-by-default network firewall** that restricts all containe
 The firewall uses two infrastructure containers managed automatically by the Clawker daemon:
 
 - **CoreDNS** (port `53`) --- DNS-level deny-by-default. Only explicitly allowed domains resolve successfully. All other queries return NXDOMAIN. Uses Cloudflare malware-blocking upstream (`1.1.1.2`, `1.0.0.2`).
-- **Envoy** (port `10000` TLS, `10001+` TCP) --- TLS inspection with per-domain MITM certificates for path-level filtering. SNI passthrough for allowed domains without path rules. Default deny (connection reset) for unrecognized SNI.
+- **Envoy** (port `10000` TLS, `10001+` TCP) --- TLS termination with per-domain certificates for all allowed domains. Envoy terminates TLS, inspects HTTP traffic (paths, methods, response codes visible), then re-encrypts upstream. Default deny (connection reset) for unrecognized SNI.
 
 Both containers run on the `clawker-net` bridge network with static IPs: Envoy at `.200`, CoreDNS at `.201`. Agent containers join the same network with Cloudflare DNS (`1.1.1.2`, `1.0.0.2`) as Docker's default external forwarders. When the firewall is enabled, `resolv.conf` is flipped to point to CoreDNS for filtered resolution. CoreDNS forwards Docker internal names (`host.docker.internal`, monitoring stack containers) back to Docker's embedded DNS at `127.0.0.11`, preserving internal networking. HTTPS is routed through Envoy via iptables DNAT rules.
 
@@ -177,7 +177,7 @@ security:
 
 ### `add_domains`
 
-A convenience shorthand for allowlisting entire domains. Each entry is automatically converted to a TLS allow rule on port 443 with no path restrictions (SNI passthrough).
+A convenience shorthand for allowlisting entire domains. Each entry is automatically converted to a TLS allow rule on port 443 with no path restrictions (allow-all routing through TLS inspection).
 
 ```yaml
 security:
@@ -206,7 +206,7 @@ Full rule specification for fine-grained control:
 
 #### Protocol behavior
 
-- **`tls`** (default) --- HTTPS traffic. Without `path_rules`, uses SNI passthrough (no inspection). With `path_rules`, Envoy terminates TLS (MITM), inspects the HTTP path, and forwards or blocks based on path prefix matching.
+- **`tls`** (default) --- HTTPS traffic. Envoy terminates TLS with a per-domain certificate, inspects HTTP traffic (paths visible in access logs), then re-encrypts upstream. With `path_rules`, per-path routing is applied; without `path_rules`, all traffic to the domain is allowed.
 - **`http`** --- Plain HTTP traffic. Envoy inspects the Host header for domain matching and applies path rules directly. No TLS involved.
 - **`tcp`** --- Raw TCP forwarding to a specific port. No domain or path inspection.
 - **`ssh`** --- SSH traffic forwarding. Functionally identical to `tcp` but semantically distinct.
@@ -382,7 +382,7 @@ Disabling the firewall removes **all** outbound network restrictions. The agent 
 
 ### Health check failures
 
-Run `clawker firewall status` to see the health of Envoy and CoreDNS. The daemon checks Envoy on port `18901` (TCP) and CoreDNS on port `18902` (`/health` HTTP endpoint) every 5 seconds.
+Run `clawker firewall status` to see the health of Envoy and CoreDNS. The daemon checks Envoy on port `18901` (HTTP GET to `/`) and CoreDNS on port `18902` (HTTP GET to `/health`) every 5 seconds.
 
 If a container is unhealthy, try:
 

@@ -16,6 +16,32 @@ type EnvoyPorts struct {
 	HealthPort  int // Dedicated health check listener port for external probes.
 }
 
+// Validate checks that all ports are in valid range and no two ports collide.
+func (p EnvoyPorts) Validate() error {
+	named := []struct {
+		name string
+		port int
+	}{
+		{"TLSPort", p.TLSPort},
+		{"TCPPortBase", p.TCPPortBase},
+		{"HTTPPort", p.HTTPPort},
+		{"HealthPort", p.HealthPort},
+	}
+	for _, n := range named {
+		if n.port <= 0 || n.port > 65535 {
+			return fmt.Errorf("envoy ports: %s=%d is out of valid range (1-65535)", n.name, n.port)
+		}
+	}
+	seen := make(map[int]string, len(named))
+	for _, n := range named {
+		if prev, exists := seen[n.port]; exists {
+			return fmt.Errorf("envoy ports: %s and %s both use port %d", prev, n.name, n.port)
+		}
+		seen[n.port] = n.name
+	}
+	return nil
+}
+
 // TCPMapping describes a per-destination iptables DNAT entry for non-TLS traffic.
 // Each TCP/SSH rule gets a dedicated Envoy listener port.
 type TCPMapping struct {
@@ -165,6 +191,10 @@ func tlsDNSCacheName(domain string) string {
 // GenerateEnvoyConfig produces an Envoy static bootstrap YAML from egress rules.
 // Returns the YAML bytes and a list of warnings (non-fatal issues).
 func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, []string, error) {
+	if err := ports.Validate(); err != nil {
+		return nil, nil, err
+	}
+
 	var warnings []string
 
 	// Classify rules.
@@ -497,7 +527,8 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 					"codec_type":  "AUTO",
 					"access_log":  buildHTTPAccessLog("tls"),
 					"route_config": map[string]any{
-						"name": fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
+						"name":                fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
+						"strip_any_host_port": true,
 						"virtual_hosts": []any{
 							map[string]any{
 								"name":    virtualHostName(r.Dst),

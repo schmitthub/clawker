@@ -83,11 +83,11 @@ func EnsureCA(certDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	return cert, key, nil
 }
 
-// GenerateDomainCert signs a per-domain certificate for MITM inspection.
+// GenerateDomainCert signs a per-domain certificate for TLS inspection.
 // The certificate is signed by the given CA and has the domain as a SAN.
 // For wildcard domains (leading-dot convention), the SAN includes both
 // the apex (e.g., "datadoghq.com") and the wildcard ("*.datadoghq.com")
-// so MITM inspection works for any subdomain.
+// so TLS inspection works for any subdomain.
 // Returns PEM-encoded cert and key bytes.
 func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domain string) (certPEM, keyPEM []byte, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -147,6 +147,11 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error {
 	if err := os.MkdirAll(certDir, 0o700); err != nil {
 		return fmt.Errorf("creating certs directory: %w", err)
+	}
+
+	// Clean stale domain cert files from previous runs. CA files are preserved.
+	if err := cleanStaleDomainCerts(certDir); err != nil {
+		return fmt.Errorf("cleaning stale certs: %w", err)
 	}
 
 	// Deduplicate by normalized domain, tracking whether any rule uses
@@ -225,6 +230,32 @@ func RotateCA(certDir string, rules []config.EgressRule) error {
 		return fmt.Errorf("regenerating domain certs: %w", err)
 	}
 
+	return nil
+}
+
+// cleanStaleDomainCerts removes all domain cert/key files from certDir,
+// preserving the CA files (ca-cert.pem, ca-key.pem). Domain certs are
+// fully regenerated on each call to RegenerateDomainCerts, so stale files
+// from removed rules are cleaned up.
+func cleanStaleDomainCerts(certDir string) error {
+	entries, err := os.ReadDir(certDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if name == caCertFile || name == caKeyFile {
+			continue
+		}
+		if strings.HasSuffix(name, "-cert.pem") || strings.HasSuffix(name, "-key.pem") {
+			if err := os.Remove(filepath.Join(certDir, name)); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("removing stale cert %s: %w", name, err)
+			}
+		}
+	}
 	return nil
 }
 

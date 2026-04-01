@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
 # Entrypoint runs as root. Privileged init (iptables) runs directly.
@@ -96,7 +96,7 @@ if [ "${CLAWKER_FIREWALL_ENABLED:-}" = "true" ]; then
     emit_step "firewall (may be slow on first run)"
 
     FIREWALL_READY="/var/run/clawker/firewall-ready"
-    FIREWALL_TIMEOUT=60
+    FIREWALL_TIMEOUT="${CLAWKER_FIREWALL_TIMEOUT:-90}"
     SECONDS=0
     while [ ! -f "${FIREWALL_READY}" ] && [ "${SECONDS}" -lt "${FIREWALL_TIMEOUT}" ]; do
         sleep 0.2

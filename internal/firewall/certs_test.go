@@ -347,3 +347,32 @@ func TestRegenerateDomainCerts_WildcardFilenames(t *testing.T) {
 	assert.Contains(t, cert.DNSNames, "datadoghq.com")
 	assert.Contains(t, cert.DNSNames, "*.datadoghq.com")
 }
+
+func TestRegenerateDomainCerts_CleansStaleCerts(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	// Generate certs for two domains.
+	rules := []config.EgressRule{
+		{Dst: "old-domain.com", Proto: "tls"},
+		{Dst: "kept-domain.com", Proto: "tls"},
+	}
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(certDir, "old-domain.com-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "kept-domain.com-cert.pem"))
+
+	// Regenerate with only the kept domain — stale cert should be cleaned.
+	rules = []config.EgressRule{
+		{Dst: "kept-domain.com", Proto: "tls"},
+	}
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(certDir, "old-domain.com-cert.pem"))
+	assert.NoFileExists(t, filepath.Join(certDir, "old-domain.com-key.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "kept-domain.com-cert.pem"))
+	// CA files preserved.
+	assert.FileExists(t, filepath.Join(certDir, "ca-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "ca-key.pem"))
+}

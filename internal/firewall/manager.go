@@ -157,7 +157,7 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 	if dl, ok := ctx.Deadline(); ok {
 		timeout = time.Until(dl)
 		if timeout <= 0 {
-			return ctx.Err()
+			return context.DeadlineExceeded
 		}
 		deadline = dl
 	}
@@ -167,6 +167,7 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 	corednsURL := fmt.Sprintf("http://localhost:%d%s", m.cfg.CoreDNSHealthHostPort(), m.cfg.CoreDNSHealthPath())
 
 	var envoyReady, corednsReady bool
+	var lastEnvoyErr, lastCorednsErr error
 
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
@@ -174,25 +175,35 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 		}
 
 		if !envoyReady {
-			if req, err := http.NewRequestWithContext(ctx, http.MethodGet, envoyURL, nil); err == nil {
-				if resp, err := httpClient.Do(req); err == nil {
-					resp.Body.Close()
-					if resp.StatusCode == http.StatusOK {
-						envoyReady = true
-						m.log.Debug().Msg("envoy health check passed (HTTP 200)")
-					}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, envoyURL, nil)
+			if err != nil {
+				lastEnvoyErr = err
+			} else if resp, err := httpClient.Do(req); err != nil {
+				lastEnvoyErr = err
+			} else {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					envoyReady = true
+					m.log.Debug().Msg("envoy health check passed (HTTP 200)")
+				} else {
+					lastEnvoyErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 				}
 			}
 		}
 
 		if !corednsReady {
-			if req, err := http.NewRequestWithContext(ctx, http.MethodGet, corednsURL, nil); err == nil {
-				if resp, err := httpClient.Do(req); err == nil {
-					resp.Body.Close()
-					if resp.StatusCode == http.StatusOK {
-						corednsReady = true
-						m.log.Debug().Msg("coredns health check passed (HTTP 200)")
-					}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, corednsURL, nil)
+			if err != nil {
+				lastCorednsErr = err
+			} else if resp, err := httpClient.Do(req); err != nil {
+				lastCorednsErr = err
+			} else {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					corednsReady = true
+					m.log.Debug().Msg("coredns health check passed (HTTP 200)")
+				} else {
+					lastCorednsErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 				}
 			}
 		}
@@ -204,12 +215,25 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 		time.Sleep(healthCheckInterval)
 	}
 
+	// Prefer context error (e.g., user Ctrl+C) over timeout.
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	var unhealthy error
 	if !envoyReady {
-		unhealthy = errors.Join(unhealthy, ErrEnvoyUnhealthy)
+		envoyErr := ErrEnvoyUnhealthy
+		if lastEnvoyErr != nil {
+			envoyErr = fmt.Errorf("%w: last probe: %v", ErrEnvoyUnhealthy, lastEnvoyErr)
+		}
+		unhealthy = errors.Join(unhealthy, envoyErr)
 	}
 	if !corednsReady {
-		unhealthy = errors.Join(unhealthy, ErrCoreDNSUnhealthy)
+		corednsErr := ErrCoreDNSUnhealthy
+		if lastCorednsErr != nil {
+			corednsErr = fmt.Errorf("%w: last probe: %v", ErrCoreDNSUnhealthy, lastCorednsErr)
+		}
+		unhealthy = errors.Join(unhealthy, corednsErr)
 	}
 	return &HealthTimeoutError{Timeout: timeout, Err: unhealthy}
 }
@@ -725,7 +749,7 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 		return "", fmt.Errorf("resolving firewall cert dir: %w", err)
 	}
 
-	// Ensure certs exist (CA + domain certs for MITM rules).
+	// Ensure certs exist (CA + domain certs for TLS rules).
 	caCert, caKey, err := EnsureCA(certDir)
 	if err != nil {
 		return "", fmt.Errorf("ensuring CA: %w", err)
@@ -763,7 +787,7 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 		m.log.Info().Int("rules", len(allRules)).Msg("healed legacy rules in store")
 	}
 
-	// Regenerate domain certs for any MITM rules.
+	// Regenerate domain certs for TLS rules.
 	if err := RegenerateDomainCerts(allRules, certDir, caCert, caKey); err != nil {
 		return "", fmt.Errorf("regenerating domain certs: %w", err)
 	}

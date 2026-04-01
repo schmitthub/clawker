@@ -60,6 +60,10 @@ func normalizeAndDedup(rules []config.EgressRule) []config.EgressRule {
 	out := make([]config.EgressRule, 0, len(rules))
 	for _, r := range rules {
 		r = normalizeRule(r)
+		// Skip rules that normalize to an empty domain (e.g., "." or "..").
+		if normalizeDomain(r.Dst) == "" {
+			continue
+		}
 		key := ruleKey(r)
 		if _, exists := seen[key]; exists {
 			continue

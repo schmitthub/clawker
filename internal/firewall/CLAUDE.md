@@ -10,7 +10,7 @@ Domain contracts, Docker implementation, daemon, certificates, and network manag
 | `types.go` | `EgressRulesFile` — top-level document for `storage.Store[T]` |
 | `coredns.go` | `GenerateCorefile(rules)` — CoreDNS Corefile from egress rules (with query logging) |
 | `envoy.go` | `GenerateEnvoyConfig(rules)` — Envoy bootstrap YAML from egress rules (with access logging) |
-| `certs.go` | CA and per-domain TLS certificate management for MITM inspection |
+| `certs.go` | CA and per-domain TLS certificate management for TLS inspection/termination |
 | `daemon.go` | Background daemon process — health probes + container watcher |
 | `manager.go` | `Manager` — Docker implementation of `FirewallManager` |
 | `network.go` | `NetworkInfo`, Docker network creation, static IP computation |
@@ -78,7 +78,7 @@ Key internal methods: `ensureNetwork`, `ensureContainer`, `ensureConfigs`, `rege
 
 ## Certificate Management (`certs.go`)
 
-Self-signed CA and per-domain TLS certificates for Envoy MITM inspection of path-rule traffic.
+Self-signed CA and per-domain TLS certificates for Envoy TLS termination and inspection.
 
 ```go
 func EnsureCA(certDir string) (*x509.Certificate, *ecdsa.PrivateKey, error)
@@ -88,8 +88,8 @@ func RotateCA(certDir string, rules []config.EgressRule) error
 ```
 
 - `EnsureCA` — creates or loads CA keypair (`ca-cert.pem`, `ca-key.pem`) in `dataDir`
-- `GenerateDomainCert` — signs a per-domain certificate with the CA; returns PEM bytes
-- `RegenerateDomainCerts` — generates certs for all rules with `PathRules` (MITM); skips SNI-passthrough rules
+- `GenerateDomainCert` — signs a per-domain certificate with the CA; returns PEM bytes. Wildcard domains (leading-dot convention) get both apex and `*.domain` SANs
+- `RegenerateDomainCerts` — generates certs for all TLS egress rules; skips TCP/SSH/HTTP and IP/CIDR rules. Deduplicates by normalized domain, preserving wildcard SANs. Cleans stale cert files from previous runs
 - `RotateCA` — regenerates the CA keypair and all domain certificates
 
 ## Daemon (`daemon.go`)
@@ -142,7 +142,7 @@ type NetworkInfo struct {
 ### CoreDNS (`coredns.go`)
 
 ```go
-func GenerateCorefile(rules []config.EgressRule) ([]byte, error)
+func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 ```
 
 - Only "allow" rules with domain destinations produce forward zones
@@ -155,20 +155,24 @@ func GenerateCorefile(rules []config.EgressRule) ([]byte, error)
 ### Envoy (`envoy.go`)
 
 ```go
-const EnvoyTLSPort     = 10000
-const EnvoyTCPPortBase = 10001
+type EnvoyPorts struct {
+    TLSPort, TCPPortBase, HTTPPort, HealthPort int
+}
 
-func GenerateEnvoyConfig(rules []config.EgressRule) ([]byte, []string, error)
+func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, []string, error)
 ```
 
 - Returns YAML bytes + warnings (non-fatal issues like skipped IP/CIDR rules)
-- TLS listener on `:10000` with TLS Inspector
-- Filter chain ordering: MITM (path rules) -> SNI passthrough -> default deny
-- MITM chains: TLS termination with per-domain cert, HTTP route matching, dynamic forward proxy
-- Passthrough chains: `sni_dynamic_forward_proxy` network filter
-- Default deny: `tcp_proxy` -> `deny_cluster` (static, no endpoints = connection reset)
-- TCP/SSH listeners on `:10001+` (sequential ports)
-- **Access logging**: All filter chains emit JSON access logs to stdout. HTTP MITM chains use `buildHTTPAccessLog(proto)` (includes `method`, `path`, `response_code`), TCP/SSH and deny chains use `buildTCPAccessLog(proto)`. The deny chain logs with `proto="deny"`. Common fields: `timestamp`, `domain` (SNI), `upstream_host`, `client_ip`, `response_flags`, `bytes_sent`, `bytes_received`, `duration_ms`, `proto`, `source`. Promtail parses these via the `json` pipeline stage and ships to Loki for the Grafana egress dashboard
+- `EnvoyPorts.Validate()` checks port ranges and detects collisions at entry
+- TLS listener with TLS Inspector — per-domain filter chains for all TLS rules
+- Per-domain TLS filter chains: TLS termination with per-domain cert, HTTP inspection, per-domain DFP cluster with upstream re-encryption → default deny
+- Two DFP cluster types: `clusterDFPPlaintext` (HTTP listener) and per-domain `dfp_tls_<domain>` (TLS listener, upstream re-encryption with isolated connection pools)
+- Default deny: `tcp_proxy` → `deny_cluster` (static, no endpoints = connection reset)
+- TCP/SSH listeners on sequential ports from `TCPPortBase`
+- Wildcard domain support: `serverNames()` produces SNI suffix matches (`.domain`), `httpDomains()` produces Envoy Host wildcard patterns (`*.domain`). Per-listener `exactDomains` maps prevent cross-listener interference
+- `virtualHostName()` prefixes wildcard virtual hosts with `wildcard_` to avoid name collisions with exact rules
+- `buildPortEnforcementFilter()` pins `envoy.upstream.dynamic_port` via `set_filter_state` to prevent `:authority` header port overrides
+- **Access logging**: All filter chains emit JSON access logs to stdout. TLS filter chains use `buildHTTPAccessLog(proto)` (includes `method`, `path`, `response_code`), TCP/SSH and deny chains use `buildTCPAccessLog(proto)`. The deny chain logs with `proto="deny"`. Common fields: `timestamp`, `domain` (SNI), `upstream_host`, `client_ip`, `response_flags`, `bytes_sent`, `bytes_received`, `duration_ms`, `proto`, `source`. Promtail parses these via the `json` pipeline stage and ships to Loki for the Grafana egress dashboard
 
 ## Relationships
 

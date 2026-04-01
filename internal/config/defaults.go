@@ -9,9 +9,9 @@ package config
 // apply to them.
 //
 // Claude Code OAuth requires platform.claude.com (token exchange) and
-// claude.ai (alternative authorize URL). These use SNI-based filtering,
-// so each domain must be listed explicitly even if they share IPs with
-// api.anthropic.com.
+// claude.ai (authorization/downloads). SNI matching selects per-domain TLS
+// filter chains in Envoy, so each domain must be listed explicitly even if
+// they share IPs with api.anthropic.com.
 var requiredFirewallRules = []EgressRule{
 	// Claude Code — API and OAuth
 	{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},

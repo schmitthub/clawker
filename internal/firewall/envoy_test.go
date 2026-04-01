@@ -13,7 +13,7 @@ import (
 func TestTCPMappings(t *testing.T) {
 	t.Parallel()
 
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
 	tests := []struct {
 		name     string
@@ -123,7 +123,7 @@ func TestGenerateEnvoyConfig_TCPListeners(t *testing.T) {
 		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -235,7 +235,7 @@ func TestGenerateEnvoyConfig_HTTPListener(t *testing.T) {
 	rules := []config.EgressRule{
 		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -258,7 +258,7 @@ func TestGenerateEnvoyConfig_MixedHTTPAndTLS(t *testing.T) {
 		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -276,7 +276,7 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	rules := []config.EgressRule{
 		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -309,7 +309,7 @@ func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {
 			Action:      "allow",
 		},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -333,7 +333,7 @@ func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
 		{Dst: "api.anthropic.com", Proto: "tls", Port: 0, Action: "allow"},
 		{Dst: "github.com", Proto: "tls", Port: 0, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -467,7 +467,7 @@ func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {
 		},
 	}
 
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -600,7 +600,7 @@ func TestGenerateEnvoyConfig_WildcardDomain(t *testing.T) {
 		{Dst: ".datadoghq.com", Proto: "tls", Port: 443, Action: "allow"},
 		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -620,7 +620,7 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 	rules := []config.EgressRule{
 		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -665,7 +665,7 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 	rules := []config.EgressRule{
 		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -728,7 +728,7 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 		{Dst: "mcp-proxy.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -800,7 +800,7 @@ func TestGenerateEnvoyConfig_HTTPRoutesToPlaintextCluster(t *testing.T) {
 	rules := []config.EgressRule{
 		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -875,7 +875,7 @@ func TestGenerateEnvoyConfig_WildcardAndExactHTTPNoDuplicateVirtualHostNames(t *
 		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
 		{Dst: ".example.com", Proto: "http", Port: 80, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -923,7 +923,7 @@ func TestGenerateEnvoyConfig_TLSPortEnforcement(t *testing.T) {
 		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 		{Dst: "custom.example.com", Proto: "tls", Port: 8443, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -975,7 +975,7 @@ func TestGenerateEnvoyConfig_TLSPortEnforcementValues(t *testing.T) {
 		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 		{Dst: "custom.example.com", Proto: "tls", Port: 8443, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -993,7 +993,7 @@ func TestGenerateEnvoyConfig_HTTPListenerNoDFPFilterState(t *testing.T) {
 	rules := []config.EgressRule{
 		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
 	}
-	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901}
 
 	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
 	require.NoError(t, err)
@@ -1025,5 +1025,62 @@ func TestGenerateEnvoyConfig_HTTPListenerNoDFPFilterState(t *testing.T) {
 					"HTTP listener DFP should not enable filter state override")
 			}
 		}
+	}
+}
+
+func TestNormalizeAndDedup_MalformedDomains(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: ".", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "..", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "valid.com", Proto: "tls", Port: 443, Action: "allow"},
+	}
+
+	result := normalizeAndDedup(rules)
+	assert.Len(t, result, 1, "malformed domains should be filtered out")
+	assert.Equal(t, "valid.com", result[0].Dst)
+}
+
+func TestEnvoyPorts_Validate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		ports   EnvoyPorts
+		wantErr string
+	}{
+		{
+			name:  "valid ports",
+			ports: EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901},
+		},
+		{
+			name:    "zero TLSPort",
+			ports:   EnvoyPorts{TLSPort: 0, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 18901},
+			wantErr: "TLSPort=0 is out of valid range",
+		},
+		{
+			name:    "port too large",
+			ports:   EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 70000},
+			wantErr: "HealthPort=70000 is out of valid range",
+		},
+		{
+			name:    "collision TLS and Health",
+			ports:   EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080, HealthPort: 10000},
+			wantErr: "TLSPort and HealthPort both use port 10000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.ports.Validate()
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			}
+		})
 	}
 }
