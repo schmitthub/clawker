@@ -674,12 +674,15 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 	sr := cfg["static_resources"].(map[string]any)
 	listeners := sr["listeners"].([]any)
 
-	// Find the TLS listener.
+	// Find the TLS listener and verify routes use the TLS cluster.
+	foundListener := false
+	checkedRoutes := false
 	for _, l := range listeners {
 		lis := l.(map[string]any)
 		if lis["name"] != "tls_egress" {
 			continue
 		}
+		foundListener = true
 		chains := lis["filter_chains"].([]any)
 		for _, fc := range chains {
 			chain := fc.(map[string]any)
@@ -699,6 +702,7 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 					for _, r := range routes {
 						route := r.(map[string]any)
 						if routeTarget, ok := route["route"].(map[string]any); ok {
+							checkedRoutes = true
 							assert.Equal(t, "dynamic_forward_proxy_cluster_tls", routeTarget["cluster"],
 								"TLS filter chain routes must use the TLS cluster for upstream re-encryption")
 						}
@@ -707,6 +711,8 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 			}
 		}
 	}
+	require.True(t, foundListener, "tls_egress listener must be present in generated config")
+	require.True(t, checkedRoutes, "at least one TLS route must be inspected")
 }
 
 func TestGenerateEnvoyConfig_HTTPRoutesToPlaintextCluster(t *testing.T) {
@@ -726,11 +732,14 @@ func TestGenerateEnvoyConfig_HTTPRoutesToPlaintextCluster(t *testing.T) {
 	sr := cfg["static_resources"].(map[string]any)
 	listeners := sr["listeners"].([]any)
 
+	foundListener := false
+	checkedRoutes := false
 	for _, l := range listeners {
 		lis := l.(map[string]any)
 		if lis["name"] != "http_egress" {
 			continue
 		}
+		foundListener = true
 		chains := lis["filter_chains"].([]any)
 		for _, fc := range chains {
 			chain := fc.(map[string]any)
@@ -746,6 +755,7 @@ func TestGenerateEnvoyConfig_HTTPRoutesToPlaintextCluster(t *testing.T) {
 					for _, r := range routes {
 						route := r.(map[string]any)
 						if routeTarget, ok := route["route"].(map[string]any); ok {
+							checkedRoutes = true
 							assert.Equal(t, "dynamic_forward_proxy_cluster", routeTarget["cluster"],
 								"HTTP listener routes must use the plaintext cluster (no upstream TLS)")
 						}
@@ -754,6 +764,8 @@ func TestGenerateEnvoyConfig_HTTPRoutesToPlaintextCluster(t *testing.T) {
 			}
 		}
 	}
+	require.True(t, foundListener, "http_egress listener must be present in generated config")
+	require.True(t, checkedRoutes, "at least one HTTP route must be inspected")
 }
 
 func TestVirtualHostName(t *testing.T) {

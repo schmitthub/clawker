@@ -945,8 +945,8 @@ security:
 
 // TestFirewall_WildcardAndExactCoexist verifies that a wildcard rule (.example.com)
 // and an exact rule (example.com) produce independent Envoy filter chains with
-// separate PathRules. The apex gets path restrictions while subdomains pass through
-// unrestricted — ensuring both can coexist without Envoy config conflicts.
+// separate PathRules. Both the apex and subdomains get their own path restrictions,
+// ensuring they can coexist without Envoy SNI/filter chain collisions.
 func TestFirewall_WildcardAndExactCoexist(t *testing.T) {
 	h := &harness.Harness{
 		T: t,

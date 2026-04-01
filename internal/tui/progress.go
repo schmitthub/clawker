@@ -363,6 +363,7 @@ type progressModel struct {
 	finished    bool
 	interrupted bool // true if user pressed Ctrl+C
 	blinkHide   bool // toggled by blinkTickMsg for running-icon blink
+	hasRunning  bool // true when any step is StepRunning
 
 	width int
 
@@ -388,7 +389,7 @@ func newProgressModel(ios *iostreams.IOStreams, cfg ProgressDisplayConfig, event
 }
 
 func (m progressModel) Init() tea.Cmd {
-	return tea.Batch(waitForProgressStep(m.eventCh), blinkTick())
+	return waitForProgressStep(m.eventCh)
 }
 
 func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -407,12 +408,21 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case blinkTickMsg:
 		m.blinkHide = !m.blinkHide
-		return m, blinkTick()
+		if m.hasRunning && !m.finished {
+			return m, blinkTick()
+		}
+		return m, nil
 
 	case progressStepMsg:
 		step := ProgressStep(msg)
+		wasRunning := m.hasRunning
 		m.processEvent(step)
-		return m, waitForProgressStep(m.eventCh)
+		m.hasRunning = m.anyRunning()
+		cmds := []tea.Cmd{waitForProgressStep(m.eventCh)}
+		if m.hasRunning && !wasRunning {
+			cmds = append(cmds, blinkTick())
+		}
+		return m, tea.Batch(cmds...)
 
 	case progressChannelClosedMsg:
 		m.finished = true
@@ -420,6 +430,15 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *progressModel) anyRunning() bool {
+	for _, s := range m.steps {
+		if s.status == StepRunning {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *progressModel) processEvent(step ProgressStep) {

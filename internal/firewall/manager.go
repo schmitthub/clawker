@@ -143,7 +143,14 @@ func (m *Manager) IsRunning(ctx context.Context) bool {
 //   - Envoy: HTTP GET to localhost:18901/ (published dedicated health listener).
 //   - CoreDNS: HTTP GET to localhost:18902/health (published health endpoint).
 func (m *Manager) WaitForHealthy(ctx context.Context) error {
-	deadline := time.Now().Add(healthCheckTimeout)
+	// Respect caller's context deadline; fall back to
+	// healthCheckTimeout when no deadline is set.
+	timeout := healthCheckTimeout
+	if dl, ok := ctx.Deadline(); ok {
+		timeout = time.Until(dl)
+	}
+
+	deadline := time.Now().Add(timeout)
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
 	envoyURL := fmt.Sprintf("http://localhost:%d/", m.cfg.EnvoyHealthHostPort())
@@ -190,7 +197,7 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 	if !corednsReady {
 		unhealthy = errors.Join(unhealthy, ErrCoreDNSUnhealthy)
 	}
-	return &HealthTimeoutError{Timeout: healthCheckTimeout, Err: unhealthy}
+	return &HealthTimeoutError{Timeout: timeout, Err: unhealthy}
 }
 
 // AddRules adds individual egress rules to the running firewall (CLI "firewall add").
