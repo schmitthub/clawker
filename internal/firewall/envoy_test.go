@@ -286,8 +286,7 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	assert.Contains(t, out, "envoy.extensions.upstreams.http.v3.HttpProtocolOptions")
 	assert.Contains(t, out, "auto_sni: true")
 	assert.Contains(t, out, "auto_san_validation: true")
-	assert.Contains(t, out, "http2_protocol_options: {}")
-	assert.Contains(t, out, "allow_coalesced_connections: false")
+	assert.Contains(t, out, "use_downstream_protocol_config")
 }
 
 func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {
