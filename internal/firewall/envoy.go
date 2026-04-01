@@ -539,7 +539,7 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 					},
 					"http_filters": []any{
 						buildPortEnforcementFilter(r.Port),
-						buildDFPHTTPFilter(true, dnsCache),
+						buildDFPHTTPFilterWithCache(true, dnsCache),
 						map[string]any{
 							"name": "envoy.filters.http.router",
 							"typed_config": map[string]any{
@@ -554,8 +554,8 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 }
 
 // buildHTTPRoutes converts path rules into Envoy route entries.
-// clusterName determines the upstream cluster — clusterDFPTLS for TLS filter chains
-// (re-encrypts upstream), clusterDFPPlaintext for HTTP listener routes.
+// clusterName determines the upstream cluster — per-domain dfp_tls_<domain> for TLS
+// filter chains (re-encrypts upstream), clusterDFPPlaintext for HTTP listener routes.
 func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 	var routes []any
 
@@ -838,19 +838,20 @@ func buildPortEnforcementFilter(port int) map[string]any {
 	}
 }
 
-// buildDFPHTTPFilter returns the dynamic forward proxy HTTP filter config.
-// When portEnforcement is true, allow_dynamic_host_from_filter_state is enabled
-// so the DFP reads the pinned port from filter state instead of :authority.
-// cacheName overrides the DNS cache name (per-domain isolation for TLS clusters).
-func buildDFPHTTPFilter(portEnforcement bool, cacheName ...string) map[string]any {
-	cache := dnsCacheName
-	if len(cacheName) > 0 && cacheName[0] != "" {
-		cache = cacheName[0]
-	}
+// buildDFPHTTPFilter returns the dynamic forward proxy HTTP filter config
+// using the shared DNS cache. Used by HTTP listener routes (plaintext upstream).
+func buildDFPHTTPFilter(portEnforcement bool) map[string]any {
+	return buildDFPHTTPFilterWithCache(portEnforcement, dnsCacheName)
+}
+
+// buildDFPHTTPFilterWithCache returns the dynamic forward proxy HTTP filter config
+// with an explicit DNS cache name. Used by TLS filter chains where each domain
+// needs its own cache for connection pool isolation.
+func buildDFPHTTPFilterWithCache(portEnforcement bool, cacheName string) map[string]any {
 	tc := map[string]any{
 		"@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
 		"dns_cache_config": map[string]any{
-			"name":              cache,
+			"name":              cacheName,
 			"dns_lookup_family": "V4_ONLY",
 		},
 	}

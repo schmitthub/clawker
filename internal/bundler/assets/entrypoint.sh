@@ -97,6 +97,9 @@ if [ "${CLAWKER_FIREWALL_ENABLED:-}" = "true" ]; then
 
     FIREWALL_READY="/var/run/clawker/firewall-ready"
     FIREWALL_TIMEOUT="${CLAWKER_FIREWALL_TIMEOUT:-90}"
+    if ! [ "$FIREWALL_TIMEOUT" -eq "$FIREWALL_TIMEOUT" ] 2>/dev/null; then
+        emit_error "firewall" "CLAWKER_FIREWALL_TIMEOUT must be a number (got: ${CLAWKER_FIREWALL_TIMEOUT})"
+    fi
     SECONDS=0
     while [ ! -f "${FIREWALL_READY}" ] && [ "${SECONDS}" -lt "${FIREWALL_TIMEOUT}" ]; do
         sleep 0.2

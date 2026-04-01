@@ -55,13 +55,15 @@ func ruleKey(r config.EgressRule) string {
 // Wildcard (.claude.ai) and exact (claude.ai) rules are NOT deduped against
 // each other — they are semantically distinct. A user may want unrestricted
 // subdomain access while restricting paths on the apex, or vice versa.
-func normalizeAndDedup(rules []config.EgressRule) []config.EgressRule {
+func normalizeAndDedup(rules []config.EgressRule) ([]config.EgressRule, []string) {
+	var warnings []string
 	seen := make(map[string]struct{}, len(rules))
 	out := make([]config.EgressRule, 0, len(rules))
 	for _, r := range rules {
 		r = normalizeRule(r)
 		// Skip rules that normalize to an empty domain (e.g., "." or "..").
 		if normalizeDomain(r.Dst) == "" {
+			warnings = append(warnings, fmt.Sprintf("skipping rule with empty domain after normalization (dst=%q)", r.Dst))
 			continue
 		}
 		key := ruleKey(r)
@@ -71,5 +73,5 @@ func normalizeAndDedup(rules []config.EgressRule) []config.EgressRule {
 		seen[key] = struct{}{}
 		out = append(out, r)
 	}
-	return out
+	return out, warnings
 }

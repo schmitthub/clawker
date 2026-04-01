@@ -290,7 +290,7 @@ func (m *Manager) addRulesToStore(rules []config.EgressRule) (bool, error) {
 	if err := m.store.Set(func(f *EgressRulesFile) {
 		// Normalize and dedup existing rules inside the closure so we
 		// operate on the authoritative COW copy, not a stale snapshot.
-		existing := normalizeAndDedup(f.Rules)
+		existing, _ := normalizeAndDedup(f.Rules)
 
 		known := make(map[string]struct{}, len(existing))
 		for _, r := range existing {
@@ -337,7 +337,7 @@ func (m *Manager) removeRulesFromStore(toRemove []config.EgressRule) error {
 	if err := m.store.Set(func(f *EgressRulesFile) {
 		// Normalize and dedup inside the closure to operate on the
 		// authoritative COW copy, not a stale snapshot.
-		normalized := normalizeAndDedup(f.Rules)
+		normalized, _ := normalizeAndDedup(f.Rules)
 		filtered := make([]config.EgressRule, 0, len(normalized))
 		for _, r := range normalized {
 			if _, remove := removeSet[ruleKey(r)]; !remove {
@@ -365,7 +365,11 @@ func (m *Manager) Reload(ctx context.Context) error {
 
 // List returns all currently active egress rules.
 func (m *Manager) List(_ context.Context) ([]config.EgressRule, error) {
-	return normalizeAndDedup(m.store.Read().Rules), nil
+	rules, warnings := normalizeAndDedup(m.store.Read().Rules)
+	for _, w := range warnings {
+		m.log.Warn().Msg(w)
+	}
+	return rules, nil
 }
 
 // Disable disconnects a container from the firewall network, blocking all egress
@@ -653,7 +657,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 
 // Status returns a health snapshot of the firewall stack.
 func (m *Manager) Status(ctx context.Context) (*FirewallStatus, error) {
-	rules := normalizeAndDedup(m.store.Read().Rules)
+	rules, _ := normalizeAndDedup(m.store.Read().Rules)
 
 	// Discover network state from Docker (best-effort; fields stay empty if network doesn't exist).
 	netInfo, _ := m.discoverNetwork(ctx)
@@ -707,7 +711,7 @@ func (m *Manager) NetCIDR() string {
 // HTTP mappings are appended after TCP mappings — all HTTP ports redirect to the
 // single HTTP listener, while TCP ports get per-rule dedicated listeners.
 func (m *Manager) formatPortMappings() string {
-	rules := normalizeAndDedup(m.store.Read().Rules)
+	rules, _ := normalizeAndDedup(m.store.Read().Rules)
 	ports := m.envoyPorts()
 	tcpMappings := TCPMappings(rules, ports)
 	httpMappings := HTTPMappings(rules, ports.HTTPPort)
@@ -761,7 +765,11 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 	var allRules []config.EgressRule
 	var healed bool
 	if err := m.store.Set(func(f *EgressRulesFile) {
-		allRules = normalizeAndDedup(f.Rules)
+		var ruleWarnings []string
+		allRules, ruleWarnings = normalizeAndDedup(f.Rules)
+		for _, w := range ruleWarnings {
+			m.log.Warn().Msg(w)
+		}
 		// Dirty if count changed (dedup) or any normalizable field differs.
 		if len(allRules) != len(f.Rules) {
 			healed = true

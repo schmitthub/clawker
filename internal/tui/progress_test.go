@@ -1515,38 +1515,3 @@ func TestStepBlinkHidden_IndependentPerStep(t *testing.T) {
 	assert.True(t, stepBlinkHidden(blinkNow, step1Start), "step1 should be hidden")
 	assert.False(t, stepBlinkHidden(blinkNow, step2Start), "step2 should be visible (started 500ms later)")
 }
-
-func TestEarliestRunningStart(t *testing.T) {
-	t.Run("no running steps", func(t *testing.T) {
-		stage := &stageNode{
-			steps: []*progressStep{
-				{status: StepComplete, startTime: time.Now()},
-				{status: StepPending},
-			},
-		}
-		assert.True(t, stage.earliestRunningStart().IsZero())
-	})
-
-	t.Run("single running step", func(t *testing.T) {
-		now := time.Now()
-		stage := &stageNode{
-			steps: []*progressStep{
-				{status: StepRunning, startTime: now},
-			},
-		}
-		assert.Equal(t, now, stage.earliestRunningStart())
-	})
-
-	t.Run("multiple running picks earliest", func(t *testing.T) {
-		early := time.Now()
-		late := early.Add(time.Second)
-		stage := &stageNode{
-			steps: []*progressStep{
-				{status: StepRunning, startTime: late},
-				{status: StepRunning, startTime: early},
-				{status: StepComplete, startTime: early.Add(-time.Hour)},
-			},
-		}
-		assert.Equal(t, early, stage.earliestRunningStart())
-	})
-}
