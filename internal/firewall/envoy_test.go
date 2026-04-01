@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -282,13 +283,14 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	assert.Empty(t, warnings)
 
 	out := string(yamlBytes)
-	assert.Contains(t, out, "dynamic_forward_proxy_cluster_tls")
+	// Per-domain TLS cluster with isolated connection pool.
+	assert.Contains(t, out, "dfp_tls_api_anthropic_com")
+	assert.Contains(t, out, "dfp_dns_api_anthropic_com")
 	assert.Contains(t, out, "envoy.extensions.upstreams.http.v3.HttpProtocolOptions")
 	assert.Contains(t, out, "auto_sni: true")
 	assert.Contains(t, out, "auto_san_validation: true")
 	assert.Contains(t, out, "auto_config")
 	assert.Contains(t, out, "http2_protocol_options: {}")
-	assert.Contains(t, out, "allow_coalesced_connections: false")
 }
 
 func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {
@@ -625,9 +627,9 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 
 	out := string(yamlBytes)
 
-	// The TLS cluster must exist with upstream TLS context for re-encryption.
-	assert.Contains(t, out, "dynamic_forward_proxy_cluster_tls",
-		"TLS cluster must be present for upstream re-encryption after MITM termination")
+	// Per-domain TLS cluster must exist with upstream TLS context for re-encryption.
+	assert.Contains(t, out, "dfp_tls_api_anthropic_com",
+		"per-domain TLS cluster must be present for upstream re-encryption after MITM termination")
 	assert.Contains(t, out, "UpstreamTlsContext",
 		"TLS cluster must have UpstreamTlsContext for upstream re-encryption")
 	assert.Contains(t, out, "ca-certificates.crt",
@@ -636,19 +638,17 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 	// The plaintext cluster must also exist (for HTTP routes).
 	assert.Contains(t, out, "dynamic_forward_proxy_cluster")
 
-	// TLS filter chains must route to the TLS cluster, not the plaintext one.
-	// Parse YAML to verify the route target in the TLS filter chain.
+	// Per-domain TLS cluster must have its own DNS cache for connection isolation.
 	var cfg map[string]any
 	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
 
 	sr := cfg["static_resources"].(map[string]any)
 	clusters := sr["clusters"].([]any)
 
-	// Find the TLS cluster and verify its transport_socket.
 	var foundTLSCluster bool
 	for _, c := range clusters {
 		cl := c.(map[string]any)
-		if cl["name"] == "dynamic_forward_proxy_cluster_tls" {
+		if cl["name"] == "dfp_tls_api_anthropic_com" {
 			foundTLSCluster = true
 			ts := cl["transport_socket"].(map[string]any)
 			assert.Equal(t, "envoy.transport_sockets.tls", ts["name"])
@@ -656,7 +656,7 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 			assert.Contains(t, tc["@type"], "UpstreamTlsContext")
 		}
 	}
-	assert.True(t, foundTLSCluster, "dynamic_forward_proxy_cluster_tls must be defined")
+	assert.True(t, foundTLSCluster, "per-domain TLS cluster must be defined")
 }
 
 func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
@@ -705,8 +705,9 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 						route := r.(map[string]any)
 						if routeTarget, ok := route["route"].(map[string]any); ok {
 							checkedRoutes = true
-							assert.Equal(t, "dynamic_forward_proxy_cluster_tls", routeTarget["cluster"],
-								"TLS filter chain routes must use the TLS cluster for upstream re-encryption")
+							clusterName := routeTarget["cluster"].(string)
+							assert.Truef(t, strings.HasPrefix(clusterName, "dfp_tls_"),
+								"TLS filter chain routes must use a per-domain TLS cluster, got %q", clusterName)
 						}
 					}
 				}
@@ -715,6 +716,82 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 	}
 	require.True(t, foundListener, "tls_egress listener must be present in generated config")
 	require.True(t, checkedRoutes, "at least one TLS route must be inspected")
+}
+
+// TestGenerateEnvoyConfig_PerDomainClusterIsolation verifies that domains sharing
+// the same IP get separate DFP clusters with isolated DNS caches, preventing HTTP/2
+// connection pool reuse that causes SAN validation failures.
+func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "mcp-proxy.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	clusters := sr["clusters"].([]any)
+
+	// Each domain must have its own TLS cluster with its own DNS cache.
+	clusterNames := make(map[string]string) // cluster name → dns cache name
+	for _, c := range clusters {
+		cl := c.(map[string]any)
+		name := cl["name"].(string)
+		if !strings.HasPrefix(name, "dfp_tls_") {
+			continue
+		}
+		ct := cl["cluster_type"].(map[string]any)
+		tc := ct["typed_config"].(map[string]any)
+		dc := tc["dns_cache_config"].(map[string]any)
+		clusterNames[name] = dc["name"].(string)
+	}
+
+	assert.Contains(t, clusterNames, "dfp_tls_api_anthropic_com")
+	assert.Contains(t, clusterNames, "dfp_tls_mcp_proxy_anthropic_com")
+	assert.Equal(t, "dfp_dns_api_anthropic_com", clusterNames["dfp_tls_api_anthropic_com"])
+	assert.Equal(t, "dfp_dns_mcp_proxy_anthropic_com", clusterNames["dfp_tls_mcp_proxy_anthropic_com"])
+
+	// Each filter chain must route to its own domain-specific cluster.
+	listeners := sr["listeners"].([]any)
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		if lis["name"] != "tls_egress" {
+			continue
+		}
+		chains := lis["filter_chains"].([]any)
+		for _, fc := range chains {
+			chain := fc.(map[string]any)
+			fcm, ok := chain["filter_chain_match"].(map[string]any)
+			if !ok {
+				continue
+			}
+			sn, ok := fcm["server_names"].([]any)
+			if !ok || len(sn) == 0 {
+				continue
+			}
+			domain := sn[0].(string)
+			filters := chain["filters"].([]any)
+			hcm := filters[0].(map[string]any)
+			tc := hcm["typed_config"].(map[string]any)
+			rc := tc["route_config"].(map[string]any)
+			vhosts := rc["virtual_hosts"].([]any)
+			routes := vhosts[0].(map[string]any)["routes"].([]any)
+			route := routes[0].(map[string]any)
+			routeAction := route["route"].(map[string]any)
+			cluster := routeAction["cluster"].(string)
+
+			expectedCluster := "dfp_tls_" + sanitizeName(domain)
+			assert.Equalf(t, expectedCluster, cluster,
+				"filter chain for %s must route to its own per-domain cluster", domain)
+		}
+	}
 }
 
 func TestGenerateEnvoyConfig_HTTPRoutesToPlaintextCluster(t *testing.T) {

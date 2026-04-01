@@ -144,16 +144,23 @@ func accessLogEntry(proto string, extra map[string]any) map[string]any {
 	}
 }
 
-// dnsCacheName is the shared DNS cache name for dynamic forward proxy.
+// dnsCacheName is the shared DNS cache name for the plaintext DFP cluster.
 const dnsCacheName = "dynamic_forward_proxy_cache_config"
 
-// Cluster names for dynamic forward proxy routing.
-const (
-	// clusterDFPPlaintext is for HTTP listener routes — no upstream TLS.
-	clusterDFPPlaintext = "dynamic_forward_proxy_cluster"
-	// clusterDFPTLS is for TLS listener routes — re-encrypts upstream after MITM termination.
-	clusterDFPTLS = "dynamic_forward_proxy_cluster_tls"
-)
+// Cluster name for plaintext HTTP listener routes — no upstream TLS.
+const clusterDFPPlaintext = "dynamic_forward_proxy_cluster"
+
+// tlsClusterName returns the per-domain DFP cluster name for TLS upstream.
+// Each domain gets its own cluster so Envoy maintains separate connection pools,
+// preventing HTTP/2 connection reuse across domains that share an IP address.
+func tlsClusterName(domain string) string {
+	return "dfp_tls_" + sanitizeName(domain)
+}
+
+// tlsDNSCacheName returns the per-domain DNS cache name for TLS DFP clusters.
+func tlsDNSCacheName(domain string) string {
+	return "dfp_dns_" + sanitizeName(domain)
+}
 
 // GenerateEnvoyConfig produces an Envoy static bootstrap YAML from egress rules.
 // Returns the YAML bytes and a list of warnings (non-fatal issues).
@@ -224,7 +231,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 		},
 		"static_resources": map[string]any{
 			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tcpMappings, ports, tlsExactDomains, httpExactDomains),
-			"clusters":  buildClusters(tcpRules),
+			"clusters":  buildClusters(tlsRules, tcpRules),
 		},
 	}
 
@@ -445,17 +452,19 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 	domain := normalizeDomain(r.Dst)
 	certFile := fmt.Sprintf(envoyCertFileFmt, domain)
 	keyFile := fmt.Sprintf(envoyKeyFileFmt, domain)
+	cluster := tlsClusterName(domain)
+	dnsCache := tlsDNSCacheName(domain)
 
 	// Build routes: path rules when configured, otherwise allow-all.
-	// TLS filter chains use the TLS cluster to re-encrypt upstream after MITM termination.
+	// Each domain routes to its own per-domain TLS cluster for connection isolation.
 	var routes []any
 	if len(r.PathRules) > 0 {
-		routes = buildHTTPRoutes(r, clusterDFPTLS)
+		routes = buildHTTPRoutes(r, cluster)
 	} else {
 		routes = []any{
 			map[string]any{
 				"match": map[string]any{"prefix": "/"},
-				"route": map[string]any{"cluster": clusterDFPTLS, "timeout": "0s"},
+				"route": map[string]any{"cluster": cluster, "timeout": "0s"},
 			},
 		}
 	}
@@ -499,7 +508,7 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 					},
 					"http_filters": []any{
 						buildPortEnforcementFilter(r.Port),
-						buildDFPHTTPFilter(true),
+						buildDFPHTTPFilter(true, dnsCache),
 						map[string]any{
 							"name": "envoy.filters.http.router",
 							"typed_config": map[string]any{
@@ -624,74 +633,73 @@ func buildTCPListener(r config.EgressRule, port int) map[string]any {
 	}
 }
 
-// dfpClusterType returns the shared dynamic forward proxy cluster_type config.
-// Both plaintext and TLS clusters use the same DNS cache for resolution.
-func dfpClusterType() map[string]any {
+// dfpClusterType returns a dynamic forward proxy cluster_type config.
+// cacheName identifies the DNS cache — each per-domain TLS cluster gets its own
+// cache so Envoy maintains fully isolated connection pools per domain.
+func dfpClusterType(cacheName string) map[string]any {
 	return map[string]any{
 		"name": "envoy.clusters.dynamic_forward_proxy",
 		"typed_config": map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
-			// Disable h2 connection coalescing so domains sharing an IP get separate
-			// TLS connections with per-host SNI and SAN validation.
-			"allow_coalesced_connections": false,
 			"dns_cache_config": map[string]any{
-				"name":              dnsCacheName,
+				"name":              cacheName,
 				"dns_lookup_family": "V4_ONLY",
 			},
 		},
 	}
 }
 
+// buildTLSDFPCluster creates a per-domain DFP cluster with TLS upstream.
+// Separate clusters per domain prevent HTTP/2 connection pooling from reusing
+// a TLS session across domains that share an IP but have different certificates.
+func buildTLSDFPCluster(domain string) map[string]any {
+	return map[string]any{
+		"name":            tlsClusterName(domain),
+		"connect_timeout": "10s",
+		"lb_policy":       "CLUSTER_PROVIDED",
+		"cluster_type":    dfpClusterType(tlsDNSCacheName(domain)),
+		"transport_socket": map[string]any{
+			"name": "envoy.transport_sockets.tls",
+			"typed_config": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+				"common_tls_context": map[string]any{
+					"alpn_protocols": []string{"h2", "http/1.1"},
+					"tls_params": map[string]any{
+						"ecdh_curves": []string{"X25519", "P-256", "P-384"},
+					},
+					"validation_context": map[string]any{
+						"trusted_ca": map[string]any{
+							"filename": "/etc/ssl/certs/ca-certificates.crt",
+						},
+					},
+				},
+			},
+		},
+		"typed_extension_protocol_options": map[string]any{
+			"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+				"upstream_http_protocol_options": map[string]any{
+					"auto_sni":            true,
+					"auto_san_validation": true,
+				},
+				"auto_config": map[string]any{
+					"http_protocol_options":  map[string]any{},
+					"http2_protocol_options": map[string]any{},
+				},
+			},
+		},
+	}
+}
+
 // buildClusters constructs all Envoy clusters.
-func buildClusters(tcp []config.EgressRule) []any {
+func buildClusters(tls, tcp []config.EgressRule) []any {
 	clusters := []any{
 		// Dynamic forward proxy cluster — plaintext upstream (HTTP listener).
 		map[string]any{
 			"name":            clusterDFPPlaintext,
 			"connect_timeout": "10s",
 			"lb_policy":       "CLUSTER_PROVIDED",
-			"cluster_type":    dfpClusterType(),
-		},
-		// Dynamic forward proxy cluster — TLS upstream (re-encrypts after MITM termination).
-		// DFP clusters with UpstreamTlsContext + trusted_ca automatically perform
-		// SNI and SAN validation for the resolved hostname (per Envoy docs).
-		map[string]any{
-			"name":            clusterDFPTLS,
-			"connect_timeout": "10s",
-			"lb_policy":       "CLUSTER_PROVIDED",
-			"cluster_type":    dfpClusterType(),
-			"transport_socket": map[string]any{
-				"name": "envoy.transport_sockets.tls",
-				"typed_config": map[string]any{
-					"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
-					"common_tls_context": map[string]any{
-						"alpn_protocols": []string{"h2", "http/1.1"},
-						"tls_params": map[string]any{
-							"ecdh_curves": []string{"X25519", "P-256", "P-384"},
-						},
-						"validation_context": map[string]any{
-							"trusted_ca": map[string]any{
-								"filename": "/etc/ssl/certs/ca-certificates.crt",
-							},
-						},
-					},
-				},
-			},
-			// Negotiate upstream protocol with the origin while keeping per-host
-			// connection separation via allow_coalesced_connections: false.
-			"typed_extension_protocol_options": map[string]any{
-				"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
-					"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
-					"upstream_http_protocol_options": map[string]any{
-						"auto_sni":            true,
-						"auto_san_validation": true,
-					},
-					"auto_config": map[string]any{
-						"http_protocol_options":  map[string]any{},
-						"http2_protocol_options": map[string]any{},
-					},
-				},
-			},
+			"cluster_type":    dfpClusterType(dnsCacheName),
 		},
 		// Deny cluster (no endpoints — connection reset).
 		map[string]any{
@@ -703,6 +711,19 @@ func buildClusters(tcp []config.EgressRule) []any {
 				"endpoints":    []any{},
 			},
 		},
+	}
+
+	// Per-domain TLS clusters — each domain gets its own cluster with isolated
+	// connection pool, preventing HTTP/2 connection reuse across domains that
+	// share an IP but have different TLS certificates.
+	seen := make(map[string]bool)
+	for _, r := range tls {
+		domain := normalizeDomain(r.Dst)
+		if seen[domain] {
+			continue
+		}
+		seen[domain] = true
+		clusters = append(clusters, buildTLSDFPCluster(domain))
 	}
 
 	// Per-destination TCP clusters.
@@ -789,11 +810,16 @@ func buildPortEnforcementFilter(port int) map[string]any {
 // buildDFPHTTPFilter returns the dynamic forward proxy HTTP filter config.
 // When portEnforcement is true, allow_dynamic_host_from_filter_state is enabled
 // so the DFP reads the pinned port from filter state instead of :authority.
-func buildDFPHTTPFilter(portEnforcement bool) map[string]any {
+// cacheName overrides the DNS cache name (per-domain isolation for TLS clusters).
+func buildDFPHTTPFilter(portEnforcement bool, cacheName ...string) map[string]any {
+	cache := dnsCacheName
+	if len(cacheName) > 0 && cacheName[0] != "" {
+		cache = cacheName[0]
+	}
 	tc := map[string]any{
 		"@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
 		"dns_cache_config": map[string]any{
-			"name":              dnsCacheName,
+			"name":              cache,
 			"dns_lookup_family": "V4_ONLY",
 		},
 	}
