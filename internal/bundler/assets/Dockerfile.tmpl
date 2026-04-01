@@ -247,9 +247,11 @@ RUN mkdir -p /etc/claude-code
 COPY clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
 {{- if .HasFirewallCA}}
 
-# Firewall CA cert for MITM inspection
+# Firewall CA cert for TLS inspection
 COPY clawker-ca.crt /usr/local/share/ca-certificates/clawker-firewall-ca.crt
 RUN update-ca-certificates
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 {{- end}}
 
 # Host proxy client scripts for container-to-host communication

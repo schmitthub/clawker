@@ -9,18 +9,22 @@ package config
 // apply to them.
 //
 // Claude Code OAuth requires platform.claude.com (token exchange) and
-// claude.ai (alternative authorize URL). These use SNI-based filtering,
-// so each domain must be listed explicitly even if they share IPs with
-// api.anthropic.com.
+// claude.ai (authorization/downloads). SNI matching selects per-domain TLS
+// filter chains in Envoy, so each domain must be listed explicitly even if
+// they share IPs with api.anthropic.com.
 var requiredFirewallRules = []EgressRule{
 	// Claude Code — API and OAuth
 	{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	{Dst: "platform.claude.com", Proto: "tls", Port: 443, Action: "allow"},
-	{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: ".claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+	// Claude Code — MCP proxy
+	{Dst: "mcp-proxy.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	// Claude Code — telemetry
 	{Dst: "sentry.io", Proto: "tls", Port: 443, Action: "allow"},
 	{Dst: "statsig.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 	{Dst: "statsig.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: ".datadoghq.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: ".datadoghq.eu", Proto: "tls", Port: 443, Action: "allow"},
 }
 
 // requiredFirewallDomains is derived from requiredFirewallRules for backwards compatibility.

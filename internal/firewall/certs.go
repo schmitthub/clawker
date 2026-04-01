@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -82,8 +83,11 @@ func EnsureCA(certDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	return cert, key, nil
 }
 
-// GenerateDomainCert signs a per-domain certificate for MITM inspection.
+// GenerateDomainCert signs a per-domain certificate for TLS inspection.
 // The certificate is signed by the given CA and has the domain as a SAN.
+// For wildcard domains (leading-dot convention), the SAN includes both
+// the apex (e.g., "datadoghq.com") and the wildcard ("*.datadoghq.com")
+// so TLS inspection works for any subdomain.
 // Returns PEM-encoded cert and key bytes.
 func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domain string) (certPEM, keyPEM []byte, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -96,11 +100,19 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 		return nil, nil, fmt.Errorf("generating serial: %w", err)
 	}
 
+	wild := isWildcardDomain(domain)
+	normalized := normalizeDomain(domain)
+
+	dnsNames := []string{normalized}
+	if wild {
+		dnsNames = append(dnsNames, "*."+normalized)
+	}
+
 	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: domain},
-		DNSNames:     []string{domain},
+		Subject:      pkix.Name{CommonName: normalized},
+		DNSNames:     dnsNames,
 		NotBefore:    now,
 		NotAfter:     now.AddDate(domainCertValidYears, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
@@ -123,33 +135,85 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 	return certPEM, keyPEM, nil
 }
 
-// RegenerateDomainCerts generates certificates for all rules that have PathRules,
+// RegenerateDomainCerts generates certificates for all TLS egress rules,
 // storing them in certDir/<domain>-cert.pem and <domain>-key.pem.
-// Rules without PathRules are skipped (SNI passthrough, no MITM needed).
+// Every TLS rule gets a certificate — Envoy terminates TLS for all domains
+// to enable HTTP-level inspection (paths, methods, response codes).
+//
+// Rules are deduplicated by normalized domain. If any rule for a domain uses
+// the wildcard convention (leading dot), the cert includes both apex and
+// wildcard SANs. This prevents a later exact-domain rule from overwriting
+// a cert that also needs wildcard SANs.
+//
+// Cert generation runs before stale cleanup so that a partial failure leaves
+// previously-working certs intact rather than an empty directory.
 func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error {
 	if err := os.MkdirAll(certDir, 0o700); err != nil {
 		return fmt.Errorf("creating certs directory: %w", err)
 	}
 
+	// Deduplicate by normalized domain, tracking whether any rule uses
+	// the wildcard convention so the cert includes wildcard SANs if needed.
+	type domainCertInfo struct {
+		needsWild bool
+	}
+	seen := make(map[string]*domainCertInfo)
+	var order []string // preserve deterministic iteration
+
 	for _, rule := range rules {
-		if len(rule.PathRules) == 0 {
+		// Only TLS rules need certificates — skip TCP, SSH, HTTP.
+		proto := strings.ToLower(rule.Proto)
+		if proto == "tcp" || proto == "ssh" || proto == "http" {
+			continue
+		}
+		if isIPOrCIDR(rule.Dst) {
 			continue
 		}
 
-		certPEM, keyPEM, err := GenerateDomainCert(caCert, caKey, rule.Dst)
-		if err != nil {
-			return fmt.Errorf("generating cert for %s: %w", rule.Dst, err)
+		normalized := normalizeDomain(rule.Dst)
+		if info, exists := seen[normalized]; exists {
+			if isWildcardDomain(rule.Dst) {
+				info.needsWild = true
+			}
+			continue
+		}
+		seen[normalized] = &domainCertInfo{
+			needsWild: isWildcardDomain(rule.Dst),
+		}
+		order = append(order, normalized)
+	}
+
+	// Generate certs first — overwrites existing files in-place.
+	// If generation fails partway, domains before the failure have fresh certs
+	// and domains after still have their old (valid) certs.
+	for _, normalized := range order {
+		info := seen[normalized]
+		// Re-add leading dot so GenerateDomainCert produces wildcard SANs.
+		domain := normalized
+		if info.needsWild {
+			domain = "." + normalized
 		}
 
-		certPath := filepath.Join(certDir, rule.Dst+"-cert.pem")
-		keyPath := filepath.Join(certDir, rule.Dst+"-key.pem")
+		certPEM, keyPEM, err := GenerateDomainCert(caCert, caKey, domain)
+		if err != nil {
+			return fmt.Errorf("generating cert for %s: %w", normalized, err)
+		}
+
+		certPath := filepath.Join(certDir, normalized+"-cert.pem")
+		keyPath := filepath.Join(certDir, normalized+"-key.pem")
 
 		if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
-			return fmt.Errorf("writing cert for %s: %w", rule.Dst, err)
+			return fmt.Errorf("writing cert for %s: %w", normalized, err)
 		}
 		if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
-			return fmt.Errorf("writing key for %s: %w", rule.Dst, err)
+			return fmt.Errorf("writing key for %s: %w", normalized, err)
 		}
+	}
+
+	// Clean stale domain cert files only after all new certs are written.
+	// Only removes certs for domains no longer in the rule set.
+	if err := cleanStaleDomainCerts(certDir, seen); err != nil {
+		return fmt.Errorf("cleaning stale certs: %w", err)
 	}
 
 	return nil
@@ -173,6 +237,43 @@ func RotateCA(certDir string, rules []config.EgressRule) error {
 		return fmt.Errorf("regenerating domain certs: %w", err)
 	}
 
+	return nil
+}
+
+// cleanStaleDomainCerts removes domain cert/key files from certDir that are
+// not in the target domain set, preserving the CA files (ca-cert.pem, ca-key.pem).
+// This is called after cert generation so that a partial generation failure
+// does not leave the directory empty — only truly stale files are removed.
+func cleanStaleDomainCerts[T any](certDir string, targetDomains map[string]T) error {
+	entries, err := os.ReadDir(certDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if name == caCertFile || name == caKeyFile {
+			continue
+		}
+		// Extract domain from filename: "<domain>-cert.pem" or "<domain>-key.pem".
+		var domain string
+		switch {
+		case strings.HasSuffix(name, "-cert.pem"):
+			domain = strings.TrimSuffix(name, "-cert.pem")
+		case strings.HasSuffix(name, "-key.pem"):
+			domain = strings.TrimSuffix(name, "-key.pem")
+		default:
+			continue
+		}
+		if _, inTarget := targetDomains[domain]; inTarget {
+			continue // current domain — keep
+		}
+		if err := os.Remove(filepath.Join(certDir, name)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing stale cert %s: %w", name, err)
+		}
+	}
 	return nil
 }
 

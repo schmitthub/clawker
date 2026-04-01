@@ -79,7 +79,7 @@ func TestGenerateDomainCert_Valid(t *testing.T) {
 	require.NoError(t, err, "key PEM should be a valid EC private key")
 }
 
-func TestRegenerateDomainCerts_OnlyForPathRules(t *testing.T) {
+func TestRegenerateDomainCerts_AllTLSRules(t *testing.T) {
 	certDir := t.TempDir()
 	caCert, caKey, err := firewall.EnsureCA(certDir)
 	require.NoError(t, err)
@@ -88,7 +88,7 @@ func TestRegenerateDomainCerts_OnlyForPathRules(t *testing.T) {
 		{
 			Dst:   "github.com",
 			Proto: "tls",
-			// No PathRules — SNI passthrough, no cert needed.
+			// No PathRules — still gets a cert for TLS inspection.
 		},
 		{
 			Dst:   "api.openai.com",
@@ -106,22 +106,28 @@ func TestRegenerateDomainCerts_OnlyForPathRules(t *testing.T) {
 			},
 			PathDefault: "deny",
 		},
+		{
+			Dst:   "git.example.com",
+			Proto: "ssh",
+			Port:  22,
+			// SSH rules do NOT get certs.
+		},
 	}
 
 	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
 	require.NoError(t, err)
 
-	// github.com should NOT have certs (no PathRules).
-	assert.NoFileExists(t, filepath.Join(certDir, "github.com-cert.pem"))
-	assert.NoFileExists(t, filepath.Join(certDir, "github.com-key.pem"))
-
-	// api.openai.com SHOULD have certs (has PathRules).
+	// All TLS rules get certs — regardless of PathRules.
+	assert.FileExists(t, filepath.Join(certDir, "github.com-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "github.com-key.pem"))
 	assert.FileExists(t, filepath.Join(certDir, "api.openai.com-cert.pem"))
 	assert.FileExists(t, filepath.Join(certDir, "api.openai.com-key.pem"))
-
-	// storage.googleapis.com SHOULD have certs (has PathRules).
 	assert.FileExists(t, filepath.Join(certDir, "storage.googleapis.com-cert.pem"))
 	assert.FileExists(t, filepath.Join(certDir, "storage.googleapis.com-key.pem"))
+
+	// SSH rules do NOT get certs.
+	assert.NoFileExists(t, filepath.Join(certDir, "git.example.com-cert.pem"))
+	assert.NoFileExists(t, filepath.Join(certDir, "git.example.com-key.pem"))
 
 	// Verify one of the generated certs is valid and CA-signed.
 	certPEM, err := os.ReadFile(filepath.Join(certDir, "api.openai.com-cert.pem"))
@@ -201,4 +207,172 @@ func TestRotateCA_RegeneratesAll(t *testing.T) {
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
 	assert.Error(t, err, "new domain cert should NOT verify against old CA")
+}
+
+func TestGenerateDomainCert_WildcardSANs(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	certPEM, _, err := firewall.GenerateDomainCert(caCert, caKey, ".datadoghq.com")
+	require.NoError(t, err)
+
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	// CN should be the normalized domain (no leading dot).
+	assert.Equal(t, "datadoghq.com", cert.Subject.CommonName)
+	// SANs should include both apex and wildcard.
+	assert.Contains(t, cert.DNSNames, "datadoghq.com")
+	assert.Contains(t, cert.DNSNames, "*.datadoghq.com")
+}
+
+func TestGenerateDomainCert_ExactDomainNoWildcardSAN(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	certPEM, _, err := firewall.GenerateDomainCert(caCert, caKey, "api.openai.com")
+	require.NoError(t, err)
+
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	assert.Equal(t, "api.openai.com", cert.Subject.CommonName)
+	assert.Equal(t, []string{"api.openai.com"}, cert.DNSNames, "exact domain should not get wildcard SAN")
+}
+
+func TestRegenerateDomainCerts_WildcardAndExactDedup(t *testing.T) {
+	// Both ".example.com" (wildcard) and "example.com" (exact) should produce
+	// exactly one cert file with wildcard SANs, regardless of input order.
+	tests := []struct {
+		name  string
+		rules []config.EgressRule
+	}{
+		{
+			name: "wildcard first",
+			rules: []config.EgressRule{
+				{Dst: ".claude.ai", Proto: "tls"},
+				{Dst: "claude.ai", Proto: "tls"},
+			},
+		},
+		{
+			name: "exact first",
+			rules: []config.EgressRule{
+				{Dst: "claude.ai", Proto: "tls"},
+				{Dst: ".claude.ai", Proto: "tls"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			certDir := t.TempDir()
+			caCert, caKey, err := firewall.EnsureCA(certDir)
+			require.NoError(t, err)
+
+			err = firewall.RegenerateDomainCerts(tc.rules, certDir, caCert, caKey)
+			require.NoError(t, err)
+
+			// Only one cert file pair — normalized to "claude.ai".
+			certPath := filepath.Join(certDir, "claude.ai-cert.pem")
+			assert.FileExists(t, certPath)
+			assert.FileExists(t, filepath.Join(certDir, "claude.ai-key.pem"))
+			assert.NoFileExists(t, filepath.Join(certDir, ".claude.ai-cert.pem"))
+
+			// Cert must have both apex and wildcard SANs.
+			certPEM, err := os.ReadFile(certPath)
+			require.NoError(t, err)
+			block, _ := pem.Decode(certPEM)
+			require.NotNil(t, block)
+			cert, err := x509.ParseCertificate(block.Bytes)
+			require.NoError(t, err)
+
+			assert.Equal(t, "claude.ai", cert.Subject.CommonName)
+			assert.Contains(t, cert.DNSNames, "claude.ai", "apex SAN required")
+			assert.Contains(t, cert.DNSNames, "*.claude.ai", "wildcard SAN required")
+
+			// Count cert files — should be exactly 1 pair (+ CA pair).
+			entries, err := os.ReadDir(certDir)
+			require.NoError(t, err)
+			certFiles := 0
+			for _, e := range entries {
+				if !e.IsDir() && filepath.Ext(e.Name()) == ".pem" {
+					certFiles++
+				}
+			}
+			// 2 CA files + 2 domain files = 4.
+			assert.Equal(t, 4, certFiles, "should have exactly 1 domain cert pair + CA pair")
+		})
+	}
+}
+
+func TestRegenerateDomainCerts_WildcardFilenames(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	rules := []config.EgressRule{
+		{
+			Dst:   ".datadoghq.com",
+			Proto: "tls",
+			PathRules: []config.PathRule{
+				{Path: "/api/v2/logs", Action: "allow"},
+			},
+			PathDefault: "deny",
+		},
+	}
+
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
+	require.NoError(t, err)
+
+	// Files should use the normalized domain (no leading dot).
+	assert.FileExists(t, filepath.Join(certDir, "datadoghq.com-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "datadoghq.com-key.pem"))
+	// No hidden files with leading dot.
+	assert.NoFileExists(t, filepath.Join(certDir, ".datadoghq.com-cert.pem"))
+	assert.NoFileExists(t, filepath.Join(certDir, ".datadoghq.com-key.pem"))
+
+	// Verify the cert has wildcard SANs.
+	certPEM, err := os.ReadFile(filepath.Join(certDir, "datadoghq.com-cert.pem"))
+	require.NoError(t, err)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	assert.Contains(t, cert.DNSNames, "datadoghq.com")
+	assert.Contains(t, cert.DNSNames, "*.datadoghq.com")
+}
+
+func TestRegenerateDomainCerts_CleansStaleCerts(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	// Generate certs for two domains.
+	rules := []config.EgressRule{
+		{Dst: "old-domain.com", Proto: "tls"},
+		{Dst: "kept-domain.com", Proto: "tls"},
+	}
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(certDir, "old-domain.com-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "kept-domain.com-cert.pem"))
+
+	// Regenerate with only the kept domain — stale cert should be cleaned.
+	rules = []config.EgressRule{
+		{Dst: "kept-domain.com", Proto: "tls"},
+	}
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(certDir, "old-domain.com-cert.pem"))
+	assert.NoFileExists(t, filepath.Join(certDir, "old-domain.com-key.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "kept-domain.com-cert.pem"))
+	// CA files preserved.
+	assert.FileExists(t, filepath.Join(certDir, "ca-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "ca-key.pem"))
 }

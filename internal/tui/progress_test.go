@@ -1473,3 +1473,45 @@ func TestRenderProgressSummary_ErrorWithDetails(t *testing.T) {
 	// Summary should show overall failure.
 	assert.Contains(t, output, "failed")
 }
+
+// ---------------------------------------------------------------------------
+// Blink phase tests
+// ---------------------------------------------------------------------------
+
+func TestStepBlinkHidden(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name     string
+		blinkNow time.Time
+		want     bool
+	}{
+		{"zero blinkNow always visible", time.Time{}, false},
+		{"phase=0 (start of cycle) visible", start, false},
+		{"just before half-cycle visible", start.Add(blinkInterval - time.Millisecond), false},
+		{"exactly at half-cycle hidden", start.Add(blinkInterval), true},
+		{"middle of hidden phase", start.Add(blinkInterval + 200*time.Millisecond), true},
+		{"just before full cycle hidden", start.Add(2*blinkInterval - time.Millisecond), true},
+		{"exactly at full cycle visible again", start.Add(2 * blinkInterval), false},
+		{"second cycle visible phase", start.Add(2*blinkInterval + 100*time.Millisecond), false},
+		{"second cycle hidden phase", start.Add(3 * blinkInterval), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stepBlinkHidden(tt.blinkNow, start)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestStepBlinkHidden_IndependentPerStep(t *testing.T) {
+	// Two steps started 500ms apart should blink independently.
+	step1Start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	step2Start := step1Start.Add(500 * time.Millisecond)
+
+	// At step1Start + blinkInterval, step1 is hidden but step2 is still visible.
+	blinkNow := step1Start.Add(blinkInterval)
+	assert.True(t, stepBlinkHidden(blinkNow, step1Start), "step1 should be hidden")
+	assert.False(t, stepBlinkHidden(blinkNow, step2Start), "step2 should be visible (started 500ms later)")
+}

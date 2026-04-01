@@ -38,7 +38,7 @@ const (
 	corednsImage = "coredns/coredns:1.14.2@sha256:e7e6440cfd1e919280958f5b5a6ab2b184d385bba774c12ad2a9e1e4183f90d9"
 
 	// Health check timing.
-	healthCheckTimeout  = 30 * time.Second
+	healthCheckTimeout  = 60 * time.Second
 	healthCheckInterval = 500 * time.Millisecond
 )
 
@@ -143,13 +143,31 @@ func (m *Manager) IsRunning(ctx context.Context) bool {
 //   - Envoy: HTTP GET to localhost:18901/ (published dedicated health listener).
 //   - CoreDNS: HTTP GET to localhost:18902/health (published health endpoint).
 func (m *Manager) WaitForHealthy(ctx context.Context) error {
-	deadline := time.Now().Add(healthCheckTimeout)
+	// Fast-path: if context is already done, return immediately
+	// rather than falling through to HealthTimeoutError with a
+	// misleading negative timeout duration.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// Respect caller's context deadline; fall back to
+	// healthCheckTimeout when no deadline is set.
+	timeout := healthCheckTimeout
+	deadline := time.Now().Add(timeout)
+	if dl, ok := ctx.Deadline(); ok {
+		timeout = time.Until(dl)
+		if timeout <= 0 {
+			return context.DeadlineExceeded
+		}
+		deadline = dl
+	}
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
 	envoyURL := fmt.Sprintf("http://localhost:%d/", m.cfg.EnvoyHealthHostPort())
 	corednsURL := fmt.Sprintf("http://localhost:%d%s", m.cfg.CoreDNSHealthHostPort(), m.cfg.CoreDNSHealthPath())
 
 	var envoyReady, corednsReady bool
+	var lastEnvoyErr, lastCorednsErr error
 
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
@@ -157,21 +175,35 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 		}
 
 		if !envoyReady {
-			if resp, err := httpClient.Get(envoyURL); err == nil {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, envoyURL, nil)
+			if err != nil {
+				lastEnvoyErr = err
+			} else if resp, err := httpClient.Do(req); err != nil {
+				lastEnvoyErr = err
+			} else {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
 					envoyReady = true
 					m.log.Debug().Msg("envoy health check passed (HTTP 200)")
+				} else {
+					lastEnvoyErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 				}
 			}
 		}
 
 		if !corednsReady {
-			if resp, err := httpClient.Get(corednsURL); err == nil {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, corednsURL, nil)
+			if err != nil {
+				lastCorednsErr = err
+			} else if resp, err := httpClient.Do(req); err != nil {
+				lastCorednsErr = err
+			} else {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
 					corednsReady = true
 					m.log.Debug().Msg("coredns health check passed (HTTP 200)")
+				} else {
+					lastCorednsErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 				}
 			}
 		}
@@ -183,14 +215,27 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 		time.Sleep(healthCheckInterval)
 	}
 
+	// Prefer context error (e.g., user Ctrl+C) over timeout.
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	var unhealthy error
 	if !envoyReady {
-		unhealthy = errors.Join(unhealthy, ErrEnvoyUnhealthy)
+		envoyErr := ErrEnvoyUnhealthy
+		if lastEnvoyErr != nil {
+			envoyErr = fmt.Errorf("%w: last probe: %v", ErrEnvoyUnhealthy, lastEnvoyErr)
+		}
+		unhealthy = errors.Join(unhealthy, envoyErr)
 	}
 	if !corednsReady {
-		unhealthy = errors.Join(unhealthy, ErrCoreDNSUnhealthy)
+		corednsErr := ErrCoreDNSUnhealthy
+		if lastCorednsErr != nil {
+			corednsErr = fmt.Errorf("%w: last probe: %v", ErrCoreDNSUnhealthy, lastCorednsErr)
+		}
+		unhealthy = errors.Join(unhealthy, corednsErr)
 	}
-	return &HealthTimeoutError{Timeout: healthCheckTimeout, Err: unhealthy}
+	return &HealthTimeoutError{Timeout: timeout, Err: unhealthy}
 }
 
 // AddRules adds individual egress rules to the running firewall (CLI "firewall add").
@@ -245,7 +290,7 @@ func (m *Manager) addRulesToStore(rules []config.EgressRule) (bool, error) {
 	if err := m.store.Set(func(f *EgressRulesFile) {
 		// Normalize and dedup existing rules inside the closure so we
 		// operate on the authoritative COW copy, not a stale snapshot.
-		existing := normalizeAndDedup(f.Rules)
+		existing, _ := normalizeAndDedup(f.Rules)
 
 		known := make(map[string]struct{}, len(existing))
 		for _, r := range existing {
@@ -292,7 +337,7 @@ func (m *Manager) removeRulesFromStore(toRemove []config.EgressRule) error {
 	if err := m.store.Set(func(f *EgressRulesFile) {
 		// Normalize and dedup inside the closure to operate on the
 		// authoritative COW copy, not a stale snapshot.
-		normalized := normalizeAndDedup(f.Rules)
+		normalized, _ := normalizeAndDedup(f.Rules)
 		filtered := make([]config.EgressRule, 0, len(normalized))
 		for _, r := range normalized {
 			if _, remove := removeSet[ruleKey(r)]; !remove {
@@ -320,7 +365,11 @@ func (m *Manager) Reload(ctx context.Context) error {
 
 // List returns all currently active egress rules.
 func (m *Manager) List(_ context.Context) ([]config.EgressRule, error) {
-	return normalizeAndDedup(m.store.Read().Rules), nil
+	rules, warnings := normalizeAndDedup(m.store.Read().Rules)
+	for _, w := range warnings {
+		m.log.Warn().Msg(w)
+	}
+	return rules, nil
 }
 
 // Disable disconnects a container from the firewall network, blocking all egress
@@ -608,7 +657,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 
 // Status returns a health snapshot of the firewall stack.
 func (m *Manager) Status(ctx context.Context) (*FirewallStatus, error) {
-	rules := normalizeAndDedup(m.store.Read().Rules)
+	rules, _ := normalizeAndDedup(m.store.Read().Rules)
 
 	// Discover network state from Docker (best-effort; fields stay empty if network doesn't exist).
 	netInfo, _ := m.discoverNetwork(ctx)
@@ -662,7 +711,7 @@ func (m *Manager) NetCIDR() string {
 // HTTP mappings are appended after TCP mappings — all HTTP ports redirect to the
 // single HTTP listener, while TCP ports get per-rule dedicated listeners.
 func (m *Manager) formatPortMappings() string {
-	rules := normalizeAndDedup(m.store.Read().Rules)
+	rules, _ := normalizeAndDedup(m.store.Read().Rules)
 	ports := m.envoyPorts()
 	tcpMappings := TCPMappings(rules, ports)
 	httpMappings := HTTPMappings(rules, ports.HTTPPort)
@@ -704,7 +753,7 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 		return "", fmt.Errorf("resolving firewall cert dir: %w", err)
 	}
 
-	// Ensure certs exist (CA + domain certs for MITM rules).
+	// Ensure certs exist (CA + domain certs for TLS rules).
 	caCert, caKey, err := EnsureCA(certDir)
 	if err != nil {
 		return "", fmt.Errorf("ensuring CA: %w", err)
@@ -716,7 +765,11 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 	var allRules []config.EgressRule
 	var healed bool
 	if err := m.store.Set(func(f *EgressRulesFile) {
-		allRules = normalizeAndDedup(f.Rules)
+		var ruleWarnings []string
+		allRules, ruleWarnings = normalizeAndDedup(f.Rules)
+		for _, w := range ruleWarnings {
+			m.log.Warn().Msg(w)
+		}
 		// Dirty if count changed (dedup) or any normalizable field differs.
 		if len(allRules) != len(f.Rules) {
 			healed = true
@@ -742,7 +795,7 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 		m.log.Info().Int("rules", len(allRules)).Msg("healed legacy rules in store")
 	}
 
-	// Regenerate domain certs for any MITM rules.
+	// Regenerate domain certs for TLS rules.
 	if err := RegenerateDomainCerts(allRules, certDir, caCert, caKey); err != nil {
 		return "", fmt.Errorf("regenerating domain certs: %w", err)
 	}

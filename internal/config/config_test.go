@@ -459,7 +459,7 @@ func TestRequiredFirewallRules(t *testing.T) {
 	require.NoError(t, err)
 
 	rules := cfg.RequiredFirewallRules()
-	assert.GreaterOrEqual(t, len(rules), 6)
+	assert.GreaterOrEqual(t, len(rules), 9)
 
 	// Verify all required rules have proper proto and action
 	for _, r := range rules {
@@ -472,7 +472,10 @@ func TestRequiredFirewallRules(t *testing.T) {
 	domains := cfg.RequiredFirewallDomains()
 	assert.Contains(t, domains, "api.anthropic.com")
 	assert.Contains(t, domains, "platform.claude.com")
-	assert.Contains(t, domains, "claude.ai")
+	assert.Contains(t, domains, ".claude.ai")
+	assert.Contains(t, domains, "mcp-proxy.anthropic.com")
+	assert.Contains(t, domains, ".datadoghq.com", "Datadog wildcard should use leading-dot convention")
+	assert.Contains(t, domains, ".datadoghq.eu", "Datadog EU wildcard should use leading-dot convention")
 
 	// Returned slice is a copy
 	rules[0].Dst = "mutated.com"

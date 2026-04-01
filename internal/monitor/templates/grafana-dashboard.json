@@ -2177,7 +2177,7 @@
       },
       "gridPos": {
         "h": 10,
-        "w": 12,
+        "w": 24,
         "x": 0,
         "y": 68
       },
@@ -2198,7 +2198,7 @@
             "type": "loki",
             "uid": "${lokidatasource}"
           },
-          "expr": "{service_name=\"envoy\", source=\"envoy\", client_ip=~\"${agent_ips:regex}\"} | json | line_format `{{.proto}} → {{if .domain}}{{.domain}}{{else}}{{.upstream_host}}{{end}}{{if and .domain .upstream_host}} ({{.upstream_host}}){{end}}{{if .method}} {{.method}} {{.path}} {{.response_code}}{{end}}{{if and .response_flags (ne .response_flags \"-\")}} flags={{.response_flags}}{{end}} ↑{{.bytes_sent}} ↓{{.bytes_received}} {{.duration_ms}}ms`",
+          "expr": "{service_name=\"envoy\", source=\"envoy\", client_ip=~\"${agent_ips:regex}\"} | json | line_format `{{if eq .proto \"deny\"}}DENIED{{else if eq .proto \"tls\"}}https{{else}}{{.proto}}{{end}} → {{if .domain}}{{.domain}}{{if and .path (ne .path \"-\")}}{{.path}}{{end}}{{else}}{{.upstream_host}}{{end}}{{if .method}} {{.method}} {{.response_code}}{{end}}{{if and .domain .upstream_host (ne .upstream_host \"-\")}} [{{.upstream_host}}]{{end}}{{if and .response_flags (ne .response_flags \"-\")}} flags={{.response_flags}}{{end}} ↑{{.bytes_sent}} ↓{{.bytes_received}} {{.duration_ms}}ms`",
           "legendFormat": "",
           "refId": "A"
         }
@@ -2213,9 +2213,9 @@
       },
       "gridPos": {
         "h": 10,
-        "w": 12,
-        "x": 12,
-        "y": 68
+        "w": 24,
+        "x": 0,
+        "y": 78
       },
       "id": 56,
       "options": {
@@ -2257,7 +2257,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 78
+        "y": 88
       },
       "id": 57,
       "options": {
@@ -2323,7 +2323,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 78
+        "y": 88
       },
       "id": 58,
       "options": {

@@ -10,10 +10,36 @@ import (
 
 // EnvoyPorts holds the port configuration for the Envoy proxy, sourced from config.Config.
 type EnvoyPorts struct {
-	TLSPort     int // Listener port for TLS egress (SNI passthrough + MITM).
+	TLSPort     int // Listener port for TLS egress (terminates TLS, inspects HTTP, re-encrypts upstream).
 	TCPPortBase int // Starting port for TCP/SSH listeners.
 	HTTPPort    int // Listener port for plain HTTP egress (Host header domain detection).
 	HealthPort  int // Dedicated health check listener port for external probes.
+}
+
+// Validate checks that all ports are in valid range and no two ports collide.
+func (p EnvoyPorts) Validate() error {
+	named := []struct {
+		name string
+		port int
+	}{
+		{"TLSPort", p.TLSPort},
+		{"TCPPortBase", p.TCPPortBase},
+		{"HTTPPort", p.HTTPPort},
+		{"HealthPort", p.HealthPort},
+	}
+	for _, n := range named {
+		if n.port <= 0 || n.port > 65535 {
+			return fmt.Errorf("envoy ports: %s=%d is out of valid range (1-65535)", n.name, n.port)
+		}
+	}
+	seen := make(map[int]string, len(named))
+	for _, n := range named {
+		if prev, exists := seen[n.port]; exists {
+			return fmt.Errorf("envoy ports: %s and %s both use port %d", prev, n.name, n.port)
+		}
+		seen[n.port] = n.name
+	}
+	return nil
 }
 
 // TCPMapping describes a per-destination iptables DNAT entry for non-TLS traffic.
@@ -95,7 +121,7 @@ const (
 
 // buildHTTPAccessLog returns an Envoy stdout access log for http_connection_manager contexts.
 // Includes HTTP-specific fields (method, path, response_code) that are only available
-// when Envoy terminates HTTP — used by MITM filter chains and the HTTP listener.
+// when Envoy terminates HTTP — used by TLS filter chains and the HTTP listener.
 func buildHTTPAccessLog(proto string) []any {
 	return []any{accessLogEntry(proto, map[string]any{
 		"method":        "%REQ(:METHOD)%",
@@ -106,7 +132,7 @@ func buildHTTPAccessLog(proto string) []any {
 
 // buildTCPAccessLog returns an Envoy stdout access log for tcp_proxy contexts.
 // Omits HTTP fields (method, path, response_code) that are unavailable in TCP proxy —
-// used by passthrough TLS, deny, and TCP/SSH listeners.
+// used by deny and TCP/SSH listeners.
 // Optional domain overrides %REQUESTED_SERVER_NAME% for raw TCP where SNI is unavailable.
 func buildTCPAccessLog(proto string, domain ...string) []any {
 	var extra map[string]any
@@ -144,20 +170,38 @@ func accessLogEntry(proto string, extra map[string]any) map[string]any {
 	}
 }
 
-// dnsCacheName is the shared DNS cache name for dynamic forward proxy.
+// dnsCacheName is the shared DNS cache name for the plaintext DFP cluster.
 const dnsCacheName = "dynamic_forward_proxy_cache_config"
+
+// Cluster name for plaintext HTTP listener routes — no upstream TLS.
+const clusterDFPPlaintext = "dynamic_forward_proxy_cluster"
+
+// tlsClusterName returns the per-domain DFP cluster name for TLS upstream.
+// Each domain gets its own cluster so Envoy maintains separate connection pools,
+// preventing HTTP/2 connection reuse across domains that share an IP address.
+func tlsClusterName(domain string) string {
+	return "dfp_tls_" + sanitizeName(domain)
+}
+
+// tlsDNSCacheName returns the per-domain DNS cache name for TLS DFP clusters.
+func tlsDNSCacheName(domain string) string {
+	return "dfp_dns_" + sanitizeName(domain)
+}
 
 // GenerateEnvoyConfig produces an Envoy static bootstrap YAML from egress rules.
 // Returns the YAML bytes and a list of warnings (non-fatal issues).
 func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, []string, error) {
+	if err := ports.Validate(); err != nil {
+		return nil, nil, err
+	}
+
 	var warnings []string
 
 	// Classify rules.
 	var (
-		mitmRules        []config.EgressRule
-		passthroughRules []config.EgressRule
-		tcpRules         []config.EgressRule
-		httpRules        []config.EgressRule
+		tlsRules  []config.EgressRule
+		tcpRules  []config.EgressRule
+		httpRules []config.EgressRule
 	)
 	for _, r := range rules {
 		action := strings.ToLower(r.Action)
@@ -177,19 +221,57 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 			httpRules = append(httpRules, r)
 			continue
 		}
-		// Default: TLS — normalize port defensively (Envoy rejects port_value 0).
+		// Default: TLS — Envoy terminates TLS with a per-domain certificate,
+		// inspects HTTP (paths visible in access logs), then re-encrypts upstream.
+		// Rules with PathRules get per-path routing; rules without get allow-all.
 		if r.Port == 0 {
 			r.Port = 443
 		}
-		if len(r.PathRules) > 0 {
-			mitmRules = append(mitmRules, r)
-		} else {
-			passthroughRules = append(passthroughRules, r)
+		tlsRules = append(tlsRules, r)
+	}
+
+	// Build per-listener exact-domain sets so wildcard filter chains only
+	// omit the apex when a same-listener exact rule handles it. Without
+	// per-listener separation, an exact HTTP rule for "example.com" would
+	// wrongly suppress the apex from a TLS wildcard ".example.com".
+	tlsExactDomains := make(map[string]bool)
+	for _, r := range tlsRules {
+		if !isWildcardDomain(r.Dst) {
+			tlsExactDomains[normalizeDomain(r.Dst)] = true
+		}
+	}
+	httpExactDomains := make(map[string]bool)
+	for _, r := range httpRules {
+		if !isWildcardDomain(r.Dst) {
+			httpExactDomains[normalizeDomain(r.Dst)] = true
 		}
 	}
 
 	// Compute TCP port mappings (same function used by manager.Enable for iptables args).
 	tcpMappings := TCPMappings(rules, ports)
+
+	// Validate derived TCP listener ports: range check + collision detection.
+	if len(tcpMappings) > 0 {
+		reservedPorts := map[int]string{
+			ports.TLSPort:    "TLSPort",
+			ports.HTTPPort:   "HTTPPort",
+			ports.HealthPort: "HealthPort",
+			9901:             "EnvoyAdmin",
+		}
+		for _, m := range tcpMappings {
+			if m.EnvoyPort > 65535 {
+				return nil, nil, fmt.Errorf(
+					"TCP rule %s:%d would use port %d which exceeds 65535 (TCPPortBase=%d, %d TCP rules)",
+					m.Dst, m.DstPort, m.EnvoyPort, ports.TCPPortBase, len(tcpMappings))
+			}
+			if conflict, ok := reservedPorts[m.EnvoyPort]; ok {
+				return nil, nil, fmt.Errorf(
+					"TCP rule %s:%d would use port %d which collides with %s (TCPPortBase=%d)",
+					m.Dst, m.DstPort, m.EnvoyPort, conflict, ports.TCPPortBase)
+			}
+			reservedPorts[m.EnvoyPort] = fmt.Sprintf("TCP:%s:%d", m.Dst, m.DstPort)
+		}
+	}
 
 	cfg := map[string]any{
 		"admin": map[string]any{
@@ -201,8 +283,8 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 			},
 		},
 		"static_resources": map[string]any{
-			"listeners": buildListeners(mitmRules, passthroughRules, tcpRules, httpRules, tcpMappings, ports),
-			"clusters":  buildClusters(tcpRules),
+			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tcpMappings, ports, tlsExactDomains, httpExactDomains),
+			"clusters":  buildClusters(tlsRules, tcpRules),
 		},
 	}
 
@@ -214,17 +296,17 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 }
 
 // buildListeners constructs all Envoy listeners.
-func buildListeners(mitm, passthrough, tcp, http []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts) []any {
+func buildListeners(tls, tcp, http []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts, tlsExactDomains, httpExactDomains map[string]bool) []any {
 	var listeners []any
 
-	// Main TLS listener — handles both MITM and passthrough.
-	if len(mitm) > 0 || len(passthrough) > 0 {
-		listeners = append(listeners, buildTLSListener(mitm, passthrough, ports.TLSPort))
+	// Main TLS listener — terminates TLS, inspects HTTP, re-encrypts upstream.
+	if len(tls) > 0 {
+		listeners = append(listeners, buildTLSListener(tls, ports.TLSPort, tlsExactDomains))
 	}
 
 	// HTTP listener — domain detection via Host header.
 	if len(http) > 0 {
-		listeners = append(listeners, buildHTTPListener(http, ports.HTTPPort))
+		listeners = append(listeners, buildHTTPListener(http, ports.HTTPPort, httpExactDomains))
 	}
 
 	// Per-rule TCP/SSH listeners from the port mappings.
@@ -298,20 +380,17 @@ func buildHealthListener(port int) map[string]any {
 }
 
 // buildTLSListener creates the main TLS listener on the given port.
-func buildTLSListener(mitm, passthrough []config.EgressRule, tlsPort int) map[string]any {
+// All TLS rules terminate TLS with per-domain certificates, inspect HTTP
+// traffic (making paths visible in access logs), then re-encrypt upstream.
+func buildTLSListener(rules []config.EgressRule, tlsPort int, exactDomains map[string]bool) map[string]any {
 	var filterChains []any
 
-	// 1. MITM filter chains (TLS termination + HTTP path matching).
-	for _, r := range mitm {
-		filterChains = append(filterChains, buildMITMFilterChain(r))
+	// Per-domain TLS filter chains.
+	for _, r := range rules {
+		filterChains = append(filterChains, buildTLSFilterChain(r, exactDomains))
 	}
 
-	// 2. SNI passthrough filter chains.
-	for _, r := range passthrough {
-		filterChains = append(filterChains, buildPassthroughFilterChain(r))
-	}
-
-	// 3. Default deny chain (catch-all → connection reset).
+	// Default deny chain (catch-all → connection reset).
 	filterChains = append(filterChains, buildDenyFilterChain())
 
 	return map[string]any{
@@ -338,29 +417,28 @@ func buildTLSListener(mitm, passthrough []config.EgressRule, tlsPort int) map[st
 // via the Host header — the HTTP equivalent of the TLS listener's SNI detection.
 // Each allowed domain gets a virtual host; unknown domains get a 403 deny response.
 // Rules with PathRules get per-path route matching; rules without get allow-all.
-func buildHTTPListener(rules []config.EgressRule, httpPort int) map[string]any {
+func buildHTTPListener(rules []config.EgressRule, httpPort int, exactDomains map[string]bool) map[string]any {
 	var virtualHosts []any
 
 	for _, r := range rules {
-		domain := normalizeDomain(r.Dst)
 		var routes []any
 
 		if len(r.PathRules) > 0 {
-			// Path-level access control — same logic as MITM.
-			routes = buildHTTPRoutes(r)
+			// Path-level access control — same logic as TLS filter chains.
+			routes = buildHTTPRoutes(r, clusterDFPPlaintext)
 		} else {
 			// No path rules — allow all traffic to this domain.
 			routes = []any{
 				map[string]any{
 					"match": map[string]any{"prefix": "/"},
-					"route": map[string]any{"cluster": "dynamic_forward_proxy_cluster"},
+					"route": map[string]any{"cluster": clusterDFPPlaintext, "timeout": "0s"},
 				},
 			}
 		}
 
 		virtualHosts = append(virtualHosts, map[string]any{
-			"name":    domain,
-			"domains": []string{domain},
+			"name":    virtualHostName(r.Dst),
+			"domains": httpDomains(r.Dst, exactDomains),
 			"routes":  routes,
 		})
 	}
@@ -403,16 +481,7 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int) map[string]any {
 								"virtual_hosts": virtualHosts,
 							},
 							"http_filters": []any{
-								map[string]any{
-									"name": "envoy.filters.http.dynamic_forward_proxy",
-									"typed_config": map[string]any{
-										"@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
-										"dns_cache_config": map[string]any{
-											"name":              dnsCacheName,
-											"dns_lookup_family": "V4_ONLY",
-										},
-									},
-								},
+								buildDFPHTTPFilter(false),
 								map[string]any{
 									"name": "envoy.filters.http.router",
 									"typed_config": map[string]any{
@@ -428,25 +497,40 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int) map[string]any {
 	}
 }
 
-// buildMITMFilterChain creates a filter chain that terminates TLS with a per-domain
-// certificate and inspects HTTP paths before forwarding upstream with re-encryption.
-func buildMITMFilterChain(r config.EgressRule) map[string]any {
+// buildTLSFilterChain creates a filter chain that terminates TLS with a per-domain
+// certificate, inspects HTTP traffic, then forwards upstream with re-encryption.
+// Rules with PathRules get per-path routing; rules without get allow-all.
+func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[string]any {
 	domain := normalizeDomain(r.Dst)
 	certFile := fmt.Sprintf(envoyCertFileFmt, domain)
 	keyFile := fmt.Sprintf(envoyKeyFileFmt, domain)
+	cluster := tlsClusterName(domain)
+	dnsCache := tlsDNSCacheName(domain)
 
-	// Build routes from path rules.
-	routes := buildHTTPRoutes(r)
+	// Build routes: path rules when configured, otherwise allow-all.
+	// Each domain routes to its own per-domain TLS cluster for connection isolation.
+	var routes []any
+	if len(r.PathRules) > 0 {
+		routes = buildHTTPRoutes(r, cluster)
+	} else {
+		routes = []any{
+			map[string]any{
+				"match": map[string]any{"prefix": "/"},
+				"route": map[string]any{"cluster": cluster, "timeout": "0s"},
+			},
+		}
+	}
 
 	return map[string]any{
 		"filter_chain_match": map[string]any{
-			"server_names": []string{domain},
+			"server_names": serverNames(r.Dst, exactDomains),
 		},
 		"transport_socket": map[string]any{
 			"name": "envoy.transport_sockets.tls",
 			"typed_config": map[string]any{
 				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext",
 				"common_tls_context": map[string]any{
+					"alpn_protocols": []string{"h2", "http/1.1"},
 					"tls_certificates": []any{
 						map[string]any{
 							"certificate_chain": map[string]any{"filename": certFile},
@@ -461,30 +545,22 @@ func buildMITMFilterChain(r config.EgressRule) map[string]any {
 				"name": "envoy.filters.network.http_connection_manager",
 				"typed_config": map[string]any{
 					"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
-					"stat_prefix": fmt.Sprintf("mitm_%s", sanitizeName(domain)),
+					"stat_prefix": fmt.Sprintf("tls_%s", sanitizeName(domain)),
 					"codec_type":  "AUTO",
-					"access_log":  buildHTTPAccessLog("tls_mitm"),
+					"access_log":  buildHTTPAccessLog("tls"),
 					"route_config": map[string]any{
-						"name": fmt.Sprintf("mitm_route_%s", sanitizeName(domain)),
+						"name": fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
 						"virtual_hosts": []any{
 							map[string]any{
-								"name":    domain,
-								"domains": []string{"*"},
+								"name":    virtualHostName(r.Dst),
+								"domains": httpDomains(r.Dst, exactDomains),
 								"routes":  routes,
 							},
 						},
 					},
 					"http_filters": []any{
-						map[string]any{
-							"name": "envoy.filters.http.dynamic_forward_proxy",
-							"typed_config": map[string]any{
-								"@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
-								"dns_cache_config": map[string]any{
-									"name":              dnsCacheName,
-									"dns_lookup_family": "V4_ONLY",
-								},
-							},
-						},
+						buildPortEnforcementFilter(r.Port),
+						buildDFPHTTPFilterWithCache(true, dnsCache),
 						map[string]any{
 							"name": "envoy.filters.http.router",
 							"typed_config": map[string]any{
@@ -499,7 +575,9 @@ func buildMITMFilterChain(r config.EgressRule) map[string]any {
 }
 
 // buildHTTPRoutes converts path rules into Envoy route entries.
-func buildHTTPRoutes(r config.EgressRule) []any {
+// clusterName determines the upstream cluster — per-domain dfp_tls_<domain> for TLS
+// filter chains (re-encrypts upstream), clusterDFPPlaintext for HTTP listener routes.
+func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 	var routes []any
 
 	// Explicit path rules first.
@@ -507,7 +585,7 @@ func buildHTTPRoutes(r config.EgressRule) []any {
 		if strings.EqualFold(pr.Action, "allow") {
 			routes = append(routes, map[string]any{
 				"match": map[string]any{"prefix": pr.Path},
-				"route": map[string]any{"cluster": "dynamic_forward_proxy_cluster"},
+				"route": map[string]any{"cluster": clusterName, "timeout": "0s"},
 			})
 		} else {
 			routes = append(routes, map[string]any{
@@ -533,50 +611,11 @@ func buildHTTPRoutes(r config.EgressRule) []any {
 	} else {
 		routes = append(routes, map[string]any{
 			"match": map[string]any{"prefix": "/"},
-			"route": map[string]any{"cluster": "dynamic_forward_proxy_cluster"},
+			"route": map[string]any{"cluster": clusterName, "timeout": "0s"},
 		})
 	}
 
 	return routes
-}
-
-// buildPassthroughFilterChain creates an SNI passthrough filter chain for an allowed domain.
-// sni_dynamic_forward_proxy is non-terminal — tcp_proxy must follow it.
-func buildPassthroughFilterChain(r config.EgressRule) map[string]any {
-	domain := normalizeDomain(r.Dst)
-	port := r.Port
-	if port == 0 {
-		port = 443 // Defensive default — Envoy requires port_value in (0, 65535].
-	}
-
-	return map[string]any{
-		"filter_chain_match": map[string]any{
-			"server_names": []string{domain},
-		},
-		"filters": []any{
-			map[string]any{
-				"name": "envoy.filters.network.sni_dynamic_forward_proxy",
-				"typed_config": map[string]any{
-					"@type": "type.googleapis.com/envoy.extensions.filters.network.sni_dynamic_forward_proxy.v3.FilterConfig",
-					"dns_cache_config": map[string]any{
-						"name":              dnsCacheName,
-						"dns_lookup_family": "V4_ONLY",
-					},
-					"port_value": port,
-				},
-			},
-			map[string]any{
-				"name": "envoy.filters.network.tcp_proxy",
-				"typed_config": map[string]any{
-					"@type":        "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
-					"stat_prefix":  fmt.Sprintf("passthrough_%s", sanitizeName(domain)),
-					"cluster":      "dynamic_forward_proxy_cluster",
-					"idle_timeout": "0s",
-					"access_log":   buildTCPAccessLog("tls"),
-				},
-			},
-		},
-	}
 }
 
 // buildDenyFilterChain creates the default deny filter chain that resets connections.
@@ -646,24 +685,73 @@ func buildTCPListener(r config.EgressRule, port int) map[string]any {
 	}
 }
 
-// buildClusters constructs all Envoy clusters.
-func buildClusters(tcp []config.EgressRule) []any {
-	clusters := []any{
-		// Dynamic forward proxy cluster (used by both SNI passthrough and MITM).
-		map[string]any{
-			"name":            "dynamic_forward_proxy_cluster",
-			"connect_timeout": "10s",
-			"lb_policy":       "CLUSTER_PROVIDED",
-			"cluster_type": map[string]any{
-				"name": "envoy.clusters.dynamic_forward_proxy",
-				"typed_config": map[string]any{
-					"@type": "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
-					"dns_cache_config": map[string]any{
-						"name":              dnsCacheName,
-						"dns_lookup_family": "V4_ONLY",
+// dfpClusterType returns a dynamic forward proxy cluster_type config.
+// cacheName identifies the DNS cache — each per-domain TLS cluster gets its own
+// cache so Envoy maintains fully isolated connection pools per domain.
+func dfpClusterType(cacheName string) map[string]any {
+	return map[string]any{
+		"name": "envoy.clusters.dynamic_forward_proxy",
+		"typed_config": map[string]any{
+			"@type": "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
+			"dns_cache_config": map[string]any{
+				"name":              cacheName,
+				"dns_lookup_family": "V4_ONLY",
+			},
+		},
+	}
+}
+
+// buildTLSDFPCluster creates a per-domain DFP cluster with TLS upstream.
+// Separate clusters per domain prevent HTTP/2 connection pooling from reusing
+// a TLS session across domains that share an IP but have different certificates.
+func buildTLSDFPCluster(domain string) map[string]any {
+	return map[string]any{
+		"name":            tlsClusterName(domain),
+		"connect_timeout": "10s",
+		"lb_policy":       "CLUSTER_PROVIDED",
+		"cluster_type":    dfpClusterType(tlsDNSCacheName(domain)),
+		"transport_socket": map[string]any{
+			"name": "envoy.transport_sockets.tls",
+			"typed_config": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+				"common_tls_context": map[string]any{
+					"alpn_protocols": []string{"h2", "http/1.1"},
+					"tls_params": map[string]any{
+						"ecdh_curves": []string{"X25519", "P-256", "P-384"},
+					},
+					"validation_context": map[string]any{
+						"trusted_ca": map[string]any{
+							"filename": "/etc/ssl/certs/ca-certificates.crt",
+						},
 					},
 				},
 			},
+		},
+		"typed_extension_protocol_options": map[string]any{
+			"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+				"upstream_http_protocol_options": map[string]any{
+					"auto_sni":            true,
+					"auto_san_validation": true,
+				},
+				"auto_config": map[string]any{
+					"http_protocol_options":  map[string]any{},
+					"http2_protocol_options": map[string]any{},
+				},
+			},
+		},
+	}
+}
+
+// buildClusters constructs all Envoy clusters.
+func buildClusters(tls, tcp []config.EgressRule) []any {
+	clusters := []any{
+		// Dynamic forward proxy cluster — plaintext upstream (HTTP listener).
+		map[string]any{
+			"name":            clusterDFPPlaintext,
+			"connect_timeout": "10s",
+			"lb_policy":       "CLUSTER_PROVIDED",
+			"cluster_type":    dfpClusterType(dnsCacheName),
 		},
 		// Deny cluster (no endpoints — connection reset).
 		map[string]any{
@@ -675,6 +763,19 @@ func buildClusters(tcp []config.EgressRule) []any {
 				"endpoints":    []any{},
 			},
 		},
+	}
+
+	// Per-domain TLS clusters — each domain gets its own cluster with isolated
+	// connection pool, preventing HTTP/2 connection reuse across domains that
+	// share an IP but have different TLS certificates.
+	seen := make(map[string]bool)
+	for _, r := range tls {
+		domain := normalizeDomain(r.Dst)
+		if seen[domain] {
+			continue
+		}
+		seen[domain] = true
+		clusters = append(clusters, buildTLSDFPCluster(domain))
 	}
 
 	// Per-destination TCP clusters.
@@ -716,4 +817,99 @@ var statNameReplacer = strings.NewReplacer(".", "_", "-", "_", ":", "_")
 // sanitizeName replaces dots and other special characters with underscores for Envoy stat names.
 func sanitizeName(s string) string {
 	return statNameReplacer.Replace(s)
+}
+
+// serverNames returns the Envoy server_names list for SNI matching.
+// For wildcard domains (leading dot, e.g. ".datadoghq.com"), it returns both
+// the suffix match form (".datadoghq.com") and the apex ("datadoghq.com").
+// However, if a separate exact rule exists for the same apex (tracked in
+// exactDomains), the apex is omitted to avoid duplicate filter chain matches.
+// For exact domains, it returns a single-element list.
+func serverNames(dst string, exactDomains map[string]bool) []string {
+	domain := normalizeDomain(dst)
+	if isWildcardDomain(dst) {
+		if exactDomains[domain] {
+			// Separate exact rule owns the apex — wildcard covers subdomains only.
+			return []string{"." + domain}
+		}
+		return []string{"." + domain, domain}
+	}
+	return []string{domain}
+}
+
+// buildPortEnforcementFilter returns a set_filter_state HTTP filter that pins
+// envoy.upstream.dynamic_port to the given port. This prevents clients from
+// overriding the upstream port via the :authority header when using DFP.
+func buildPortEnforcementFilter(port int) map[string]any {
+	return map[string]any{
+		"name": "envoy.filters.http.set_filter_state",
+		"typed_config": map[string]any{
+			"@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+			"on_request_headers": []any{
+				map[string]any{
+					"object_key": "envoy.upstream.dynamic_port",
+					"format_string": map[string]any{
+						"text_format_source": map[string]any{
+							"inline_string": fmt.Sprintf("%d", port),
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// buildDFPHTTPFilter returns the dynamic forward proxy HTTP filter config
+// using the shared DNS cache. Used by HTTP listener routes (plaintext upstream).
+func buildDFPHTTPFilter(portEnforcement bool) map[string]any {
+	return buildDFPHTTPFilterWithCache(portEnforcement, dnsCacheName)
+}
+
+// buildDFPHTTPFilterWithCache returns the dynamic forward proxy HTTP filter config
+// with an explicit DNS cache name. Used by TLS filter chains where each domain
+// needs its own cache for connection pool isolation.
+func buildDFPHTTPFilterWithCache(portEnforcement bool, cacheName string) map[string]any {
+	tc := map[string]any{
+		"@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
+		"dns_cache_config": map[string]any{
+			"name":              cacheName,
+			"dns_lookup_family": "V4_ONLY",
+		},
+	}
+	if portEnforcement {
+		tc["allow_dynamic_host_from_filter_state"] = true
+	}
+	return map[string]any{
+		"name":         "envoy.filters.http.dynamic_forward_proxy",
+		"typed_config": tc,
+	}
+}
+
+// virtualHostName returns a unique Envoy virtual host name for a rule's destination.
+// Wildcard domains get a "wildcard_" prefix so they don't collide with exact rules
+// for the same apex domain in the same route_config.
+func virtualHostName(dst string) string {
+	domain := normalizeDomain(dst)
+	if isWildcardDomain(dst) {
+		return "wildcard_" + domain
+	}
+	return domain
+}
+
+// httpDomains returns the Envoy virtual host domains list for Host header matching.
+// For wildcard domains (leading dot), it returns both "*.domain" and "domain".
+// If a separate exact rule exists for the apex, the apex is omitted.
+// For exact domains, it returns a single-element list.
+func httpDomains(dst string, exactDomains map[string]bool) []string {
+	domain := normalizeDomain(dst)
+	if isWildcardDomain(dst) {
+		if exactDomains[domain] {
+			// Exact rule owns the apex — wildcard only, plus port variant.
+			return []string{"*." + domain, "*." + domain + ":*"}
+		}
+		// Wildcard covers both apex and subdomains, with port variants.
+		return []string{"*." + domain, "*." + domain + ":*", domain, domain + ":*"}
+	}
+	// Exact domain plus port variant so Host: domain:443 also matches.
+	return []string{domain, domain + ":*"}
 }

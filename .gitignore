@@ -94,3 +94,5 @@ RALPH-TEST.md
 # this directory if you want to isolate dev files 
 # from your system's installation of clawker.
 .clawkerlocal/
+
+.clawker.local.yaml

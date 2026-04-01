@@ -63,6 +63,12 @@ type ProgressDisplayConfig struct {
 	// When true, progress output is rendered in the alt screen and cleared
 	// when the display finishes — useful for clean handoff to a container TTY.
 	AltScreen bool
+
+	// blinkNow is set by the TTY model on each blink tick. Render helpers
+	// compute per-step blink phase from (blinkNow - step.startTime), so
+	// steps that started at different times blink independently.
+	// Zero value → icons always visible (standalone render, no tick yet).
+	blinkNow time.Time
 }
 
 // ProgressResult contains the outcome of a progress display.
@@ -232,6 +238,20 @@ func (s *stageNode) stageState() ProgressStepStatus {
 	return StepPending
 }
 
+// earliestRunningStart returns the start time of the first running step
+// in this stage. Returns zero time if no steps are running.
+func (s *stageNode) earliestRunningStart() time.Time {
+	var earliest time.Time
+	for _, step := range s.steps {
+		if step.status == StepRunning {
+			if earliest.IsZero() || step.startTime.Before(earliest) {
+				earliest = step.startTime
+			}
+		}
+	}
+	return earliest
+}
+
 // stageTree is the result of buildStageTree.
 type stageTree struct {
 	stages    []*stageNode    // ordered by first appearance
@@ -320,6 +340,30 @@ type progressStepMsg ProgressStep
 
 type progressChannelClosedMsg struct{}
 
+// blinkTickMsg carries the current time so View() can compute per-step phase.
+type blinkTickMsg time.Time
+
+// blinkInterval controls the blink cycle period (full cycle = 2× this value).
+const blinkInterval = 700 * time.Millisecond
+
+func blinkTick() tea.Cmd {
+	return tea.Tick(blinkInterval, func(t time.Time) tea.Msg {
+		return blinkTickMsg(t)
+	})
+}
+
+// stepBlinkHidden returns true when a running step's icon should be hidden,
+// based on its own start time relative to the current blink tick.
+func stepBlinkHidden(blinkNow, stepStart time.Time) bool {
+	if blinkNow.IsZero() {
+		return false
+	}
+	elapsed := blinkNow.Sub(stepStart)
+	// Each full blink cycle is 2× the interval (on + off).
+	phase := elapsed % (2 * blinkInterval)
+	return phase >= blinkInterval
+}
+
 func waitForProgressStep(ch <-chan ProgressStep) tea.Cmd {
 	return func() tea.Msg {
 		step, ok := <-ch
@@ -344,7 +388,10 @@ type progressModel struct {
 	startTime time.Time
 
 	finished    bool
-	interrupted bool // true if user pressed Ctrl+C
+	interrupted bool      // true if user pressed Ctrl+C
+	blinkNow    time.Time // latest blink tick — zero means icons always visible
+	hasRunning  bool      // true when any step is StepRunning
+	blinkActive bool      // true while a blink tick chain is scheduled
 
 	width int
 
@@ -387,10 +434,24 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		return m, nil
 
+	case blinkTickMsg:
+		m.blinkNow = time.Time(msg)
+		if m.hasRunning && !m.finished {
+			return m, blinkTick()
+		}
+		m.blinkActive = false
+		return m, nil
+
 	case progressStepMsg:
 		step := ProgressStep(msg)
 		m.processEvent(step)
-		return m, waitForProgressStep(m.eventCh)
+		m.hasRunning = m.anyRunning()
+		cmds := []tea.Cmd{waitForProgressStep(m.eventCh)}
+		if m.hasRunning && !m.blinkActive {
+			m.blinkActive = true
+			cmds = append(cmds, blinkTick())
+		}
+		return m, tea.Batch(cmds...)
 
 	case progressChannelClosedMsg:
 		m.finished = true
@@ -398,6 +459,15 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *progressModel) anyRunning() bool {
+	for _, s := range m.steps {
+		if s.status == StepRunning {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *progressModel) processEvent(step ProgressStep) {
@@ -453,6 +523,10 @@ func (m *progressModel) processEvent(step ProgressStep) {
 // View renders the progress display. Used for both live updates and the final
 // BubbleTea frame — the tree rendering shows status icons without animation.
 func (m progressModel) View() string {
+	// Copy blink timestamp onto the config so render helpers can compute
+	// per-step blink phase. Safe: value receiver means m.cfg is already a copy.
+	m.cfg.blinkNow = m.blinkNow
+
 	cs := m.cs
 	width := m.width
 	if width < 40 {
@@ -541,7 +615,11 @@ func stepLineParts(cs *iostreams.ColorScheme, cfg *ProgressDisplayConfig, step *
 		name = cfg.cleanName(step.name)
 		duration = cs.Muted("cached")
 	case StepRunning:
-		icon = cs.Muted("●")
+		if stepBlinkHidden(cfg.blinkNow, step.startTime) {
+			icon = " "
+		} else {
+			icon = cs.Muted("●")
+		}
 		name = cfg.cleanName(step.name)
 		d := time.Since(step.startTime)
 		duration = cs.Muted(cfg.formatDuration(d))
@@ -738,7 +816,13 @@ func renderStageNode(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *Progr
 	switch state {
 	case StepRunning, StepError:
 		// Active or error stage: heading + expanded children.
+		// Stage icon blinks based on its earliest running step's start time.
 		icon := stageIcon(cs, state)
+		if state == StepRunning {
+			if earliest := stage.earliestRunningStart(); !earliest.IsZero() && stepBlinkHidden(cfg.blinkNow, earliest) {
+				icon = " "
+			}
+		}
 		buf.WriteString(fmt.Sprintf("  %s %s\n", icon, cs.Bold(stage.name)))
 		lines++
 		lines += renderStageChildren(buf, cs, cfg, stage, maxVisible, width)

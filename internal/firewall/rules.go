@@ -40,6 +40,9 @@ func normalizeRule(r config.EgressRule) config.EgressRule {
 }
 
 // ruleKey returns the dedup key for an egress rule: dst:proto:port.
+// The Dst is used verbatim so that ".claude.ai" and "claude.ai" are distinct
+// rules — a wildcard and its apex carry independent semantics (e.g., different
+// PathRules) and must not be collapsed.
 func ruleKey(r config.EgressRule) string {
 	return fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
 }
@@ -48,11 +51,21 @@ func ruleKey(r config.EgressRule) string {
 // This handles legacy store files that contain port:0 rules written before
 // normalizeRule defaulted TLS to 443 — after normalization those become
 // duplicates of the correctly-ported entries.
-func normalizeAndDedup(rules []config.EgressRule) []config.EgressRule {
+//
+// Wildcard (.claude.ai) and exact (claude.ai) rules are NOT deduped against
+// each other — they are semantically distinct. A user may want unrestricted
+// subdomain access while restricting paths on the apex, or vice versa.
+func normalizeAndDedup(rules []config.EgressRule) ([]config.EgressRule, []string) {
+	var warnings []string
 	seen := make(map[string]struct{}, len(rules))
 	out := make([]config.EgressRule, 0, len(rules))
 	for _, r := range rules {
 		r = normalizeRule(r)
+		// Skip rules that normalize to an empty domain (e.g., "." or "..").
+		if normalizeDomain(r.Dst) == "" {
+			warnings = append(warnings, fmt.Sprintf("skipping rule with empty domain after normalization (dst=%q)", r.Dst))
+			continue
+		}
 		key := ruleKey(r)
 		if _, exists := seen[key]; exists {
 			continue
@@ -60,5 +73,5 @@ func normalizeAndDedup(rules []config.EgressRule) []config.EgressRule {
 		seen[key] = struct{}{}
 		out = append(out, r)
 	}
-	return out
+	return out, warnings
 }

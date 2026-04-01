@@ -11,7 +11,7 @@ Clawker ships a **deny-by-default network firewall** that restricts all containe
 The firewall uses two infrastructure containers managed automatically by the Clawker daemon:
 
 - **CoreDNS** (port `53`) --- DNS-level deny-by-default. Only explicitly allowed domains resolve successfully. All other queries return NXDOMAIN. Uses Cloudflare malware-blocking upstream (`1.1.1.2`, `1.0.0.2`).
-- **Envoy** (port `10000` TLS, `10001+` TCP) --- TLS inspection with per-domain MITM certificates for path-level filtering. SNI passthrough for allowed domains without path rules. Default deny (connection reset) for unrecognized SNI.
+- **Envoy** (port `10000` TLS, `10001+` TCP) --- TLS termination with per-domain certificates for all allowed domains. Envoy terminates TLS, inspects HTTP traffic (paths, methods, response codes visible), then re-encrypts upstream. Default deny (connection reset) for unrecognized SNI.
 
 Both containers run on the `clawker-net` bridge network with static IPs: Envoy at `.200`, CoreDNS at `.201`. Agent containers join the same network with Cloudflare DNS (`1.1.1.2`, `1.0.0.2`) as Docker's default external forwarders. When the firewall is enabled, `resolv.conf` is flipped to point to CoreDNS for filtered resolution. CoreDNS forwards Docker internal names (`host.docker.internal`, monitoring stack containers) back to Docker's embedded DNS at `127.0.0.11`, preserving internal networking. HTTPS is routed through Envoy via iptables DNAT rules.
 
@@ -46,10 +46,17 @@ The hardcoded allowlist is deliberately **bare-bones** — only domains required
 |--------|---------|
 | `api.anthropic.com` | Claude API |
 | `platform.claude.com` | OAuth token exchange |
-| `claude.ai` | OAuth authorization |
+| `.claude.ai` | OAuth authorization, downloads |
+| `mcp-proxy.anthropic.com` | MCP tool server proxy |
 | `sentry.io` | Error tracking |
 | `statsig.anthropic.com` | Feature flags |
 | `statsig.com` | Feature flags |
+| `.datadoghq.com` | Telemetry (all Datadog subdomains/regions) |
+| `.datadoghq.eu` | Telemetry (Datadog EU regions) |
+
+<Info>
+A leading dot (e.g., `.datadoghq.com`) is the **wildcard convention** — it matches the apex domain and all subdomains. Use this for services with region-specific subdomains. Without the leading dot, only the exact domain is allowed.
+</Info>
 
 <Warning>
 **GitHub, npm, PyPI, and all other services are NOT in this list.** When you run `clawker project init`, the generated `.clawker.yaml` template includes `github.com` and `api.github.com` as a convenience starting point — but these are project-level config entries, not system defaults. If you start from a blank config, GitHub SSH and HTTPS will be blocked.
@@ -170,7 +177,7 @@ security:
 
 ### `add_domains`
 
-A convenience shorthand for allowlisting entire domains. Each entry is automatically converted to a TLS allow rule on port 443 with no path restrictions (SNI passthrough).
+A convenience shorthand for allowlisting entire domains. Each entry is automatically converted to a TLS allow rule on port 443 with no path restrictions (allow-all routing through TLS inspection).
 
 ```yaml
 security:
@@ -179,7 +186,10 @@ security:
       - "api.openai.com"
       - "registry.npmjs.org"
       - "pypi.org"
+      - ".datadoghq.com"   # Leading dot = wildcard (all subdomains)
 ```
+
+A **leading dot** (e.g., `.datadoghq.com`) enables wildcard matching — the apex domain and all subdomains are allowed. Without the leading dot, only the exact domain is matched. Use wildcards for services with region-specific subdomains (e.g., Datadog's `us5.datadoghq.com`, `eu1.datadoghq.com`).
 
 ### `rules`
 
@@ -187,7 +197,7 @@ Full rule specification for fine-grained control:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `dst` | string | Domain name or IP address |
+| `dst` | string | Domain name or IP address. Prefix with `.` for wildcard (e.g., `.datadoghq.com` matches all subdomains) |
 | `proto` | string | `tls`, `http`, `tcp`, or `ssh` |
 | `port` | int | Destination port |
 | `action` | string | `allow` or `deny` (default: `allow`) |
@@ -196,7 +206,7 @@ Full rule specification for fine-grained control:
 
 #### Protocol behavior
 
-- **`tls`** (default) --- HTTPS traffic. Without `path_rules`, uses SNI passthrough (no inspection). With `path_rules`, Envoy terminates TLS (MITM), inspects the HTTP path, and forwards or blocks based on path prefix matching.
+- **`tls`** (default) --- HTTPS traffic. Envoy terminates TLS with a per-domain certificate, inspects HTTP traffic (paths visible in access logs), then re-encrypts upstream. With `path_rules`, per-path routing is applied; without `path_rules`, all traffic to the domain is allowed.
 - **`http`** --- Plain HTTP traffic. Envoy inspects the Host header for domain matching and applies path rules directly. No TLS involved.
 - **`tcp`** --- Raw TCP forwarding to a specific port. No domain or path inspection.
 - **`ssh`** --- SSH traffic forwarding. Functionally identical to `tcp` but semantically distinct.
@@ -307,16 +317,33 @@ All firewall operations are available under `clawker firewall`:
 
 ## Certificate Management
 
-The firewall uses a self-signed certificate authority for TLS inspection:
+The firewall uses a self-signed certificate authority for TLS inspection. All HTTPS traffic is terminated at Envoy with per-domain certificates, inspected at the HTTP level (making request paths, methods, and response codes visible), then re-encrypted upstream.
 
 - An **ECDSA P256 CA** is auto-generated during `clawker build` and baked into agent container images via `update-ca-certificates`
-- Per-domain MITM certificates are generated on demand for domains with `path_rules` (TLS inspection)
-- Domains without `path_rules` use SNI passthrough --- no certificate needed
+- Per-domain certificates are generated for **every** TLS rule --- Envoy terminates TLS for all allowed domains
+- Domains with `path_rules` get per-path routing; domains without get allow-all routing --- both go through TLS inspection
 - The CA keypair is persisted in the firewall data directory and shared between the bundler and firewall manager
 - Use `clawker firewall rotate-ca` to regenerate the CA and all domain certs
 
 <Note>
 After rotating the CA, you must restart any running agent containers for them to pick up the new certificate.
+</Note>
+
+### Tools with custom CA bundles
+
+Some tools (notably Python packages installed via `uv`/`uvx`, like semgrep) ship their own CA certificate bundles and ignore the system trust store. Clawker sets `SSL_CERT_FILE` and `CURL_CA_BUNDLE` in the container environment to point these tools at the system store, which includes the firewall CA.
+
+If a tool still reports certificate errors, it may need its own environment variable. Add it to your project config:
+
+```yaml
+# clawker.yaml
+agent:
+  env:
+    REQUESTS_CA_BUNDLE: "${SSL_CERT_FILE}"
+```
+
+<Note>
+`SSL_CERT_FILE` and `CURL_CA_BUNDLE` are set automatically in the container. They point at the system CA bundle which includes the firewall CA. Use `${SSL_CERT_FILE}` when configuring additional tools rather than hardcoding paths.
 </Note>
 
 ## Bypass (Escape Hatch)
@@ -355,7 +382,7 @@ Disabling the firewall removes **all** outbound network restrictions. The agent 
 
 ### Health check failures
 
-Run `clawker firewall status` to see the health of Envoy and CoreDNS. The daemon checks Envoy on port `18901` (TCP) and CoreDNS on port `18902` (`/health` HTTP endpoint) every 5 seconds.
+Run `clawker firewall status` to see the health of Envoy and CoreDNS. The daemon checks Envoy on port `18901` (HTTP GET to `/`) and CoreDNS on port `18902` (HTTP GET to `/health`) every 5 seconds.
 
 If a container is unhealthy, try:
 
@@ -389,13 +416,17 @@ Docker internal names (`host.docker.internal`, monitoring stack containers like 
 
 ### Certificate trust errors
 
-If an agent reports TLS certificate errors for a domain with path rules (MITM inspection), the CA certificate may not have been injected properly. Try:
+If an agent reports TLS certificate errors (`CERTIFICATE_VERIFY_FAILED`, `unable to get local issuer certificate`):
+
+1. **Check if the tool uses the system trust store.** Most tools (Go, curl, wget) do. Python tools installed via `uv`/`uvx` may not --- see [Tools with custom CA bundles](#tools-with-custom-ca-bundles) above.
+
+2. **Rotate the CA** if the certificate is expired or corrupted:
 
 ```bash
 clawker firewall rotate-ca
 ```
 
-Then restart the affected containers.
+Then rebuild the image (`clawker build`) and restart containers.
 
 ### GitHub IP range fetch fails
 

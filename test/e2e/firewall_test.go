@@ -942,3 +942,121 @@ security:
 	assert.Contains(t, bodyRes.Stdout, "Blocked by clawker firewall",
 		"denied path should return firewall block message in body")
 }
+
+// TestFirewall_WildcardAndExactCoexist verifies that a wildcard rule (.example.com)
+// and an exact rule (example.com) produce independent Envoy filter chains with
+// separate PathRules. Both the apex and subdomains get their own path restrictions,
+// ensuring they can coexist without Envoy SNI/filter chain collisions.
+func TestFirewall_WildcardAndExactCoexist(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			Firewall:       firewall.NewManager,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	// Exact rule: clawker.dev (apex) MITM — only /quickstart allowed.
+	// Wildcard rule: .clawker.dev (subdomains) MITM — only /introduction allowed.
+	// Both are real domains with valid TLS certs (docs.clawker.dev is a real subdomain).
+	// Each gets its own MITM filter chain with independent path restrictions,
+	// proving wildcard and exact rules coexist without Envoy SNI collisions.
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+workspace:
+  default_mode: "snapshot"
+security:
+  firewall:
+    rules:
+      - dst: "clawker.dev"
+        proto: "tls"
+        port: 443
+        action: "allow"
+        path_rules:
+          - path: "/quickstart"
+            action: "allow"
+        path_default: "deny"
+      - dst: ".clawker.dev"
+        proto: "tls"
+        port: 443
+        action: "allow"
+        path_rules:
+          - path: "/introduction"
+            action: "allow"
+        path_default: "deny"
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", "wildcard-coexist", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() {
+		h.Run("container", "stop", "--agent", "wildcard-coexist")
+	})
+
+	// --- Apex (exact rule): MITM, only /quickstart allowed ---
+
+	// Allowed: clawker.dev/quickstart should reach upstream through MITM.
+	apexAllowed := h.ExecInContainer("wildcard-coexist",
+		"curl", "-s", "--max-time", "15", "--connect-timeout", "10",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"https://clawker.dev/quickstart")
+	require.NoError(t, apexAllowed.Err,
+		"curl to apex allowed path should succeed\nstdout: %s\nstderr: %s",
+		apexAllowed.Stdout, apexAllowed.Stderr)
+	apexAllowedCode := strings.TrimSpace(apexAllowed.Stdout)
+	assert.NotEqual(t, "403", apexAllowedCode,
+		"apex allowed path /quickstart should not be blocked, got %q", apexAllowedCode)
+
+	// Denied: clawker.dev/introduction should be blocked (path_default: deny).
+	apexDenied := h.ExecInContainer("wildcard-coexist",
+		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"https://clawker.dev/introduction")
+	require.NoError(t, apexDenied.Err,
+		"curl to apex denied path should get 403\nstdout: %s\nstderr: %s",
+		apexDenied.Stdout, apexDenied.Stderr)
+	apexDeniedCode := strings.TrimSpace(apexDenied.Stdout)
+	assert.Equal(t, "403", apexDeniedCode,
+		"apex path /introduction should be blocked by path_default:deny, got %q", apexDeniedCode)
+
+	// --- Subdomain (wildcard rule): MITM, only /introduction allowed ---
+
+	// docs.clawker.dev/introduction should pass through MITM — wildcard allows /introduction.
+	subAllowed := h.ExecInContainer("wildcard-coexist",
+		"curl", "-s", "--max-time", "15", "--connect-timeout", "10",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"https://docs.clawker.dev/introduction")
+	require.NoError(t, subAllowed.Err,
+		"curl to subdomain allowed path should succeed\nstdout: %s\nstderr: %s",
+		subAllowed.Stdout, subAllowed.Stderr)
+	subCode := strings.TrimSpace(subAllowed.Stdout)
+	assert.NotEqual(t, "403", subCode,
+		"subdomain /introduction should be allowed by wildcard path rule, got %q", subCode)
+
+	// docs.clawker.dev/quickstart should be denied — wildcard only allows /introduction.
+	subDenied := h.ExecInContainer("wildcard-coexist",
+		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"https://docs.clawker.dev/quickstart")
+	require.NoError(t, subDenied.Err,
+		"curl to subdomain denied path should get 403\nstdout: %s\nstderr: %s",
+		subDenied.Stdout, subDenied.Stderr)
+	subDeniedCode := strings.TrimSpace(subDenied.Stdout)
+	assert.Equal(t, "403", subDeniedCode,
+		"subdomain path /quickstart should be blocked by wildcard path_default:deny, got %q", subDeniedCode)
+}
