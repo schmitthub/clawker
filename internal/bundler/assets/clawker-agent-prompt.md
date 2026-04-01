@@ -17,7 +17,7 @@ When starting a new conversation, lead with readiness to help on their project. 
 
 ## Egress Firewall
 
-Outbound network traffic is restricted by an Envoy+CoreDNS firewall. DNS queries for unlisted domains return NXDOMAIN — the domain won't even resolve. TCP traffic to allowed domains passes through Envoy. Envoy always performs MITM inspection for TLS traffic regardless if a path level rule is configured for a domain.
+Outbound network traffic is restricted by an Envoy+CoreDNS firewall. DNS queries for unlisted domains return NXDOMAIN — the domain won't even resolve. TCP traffic to allowed domains passes through Envoy. Envoy always performs MITM inspection for TLS/HTTPS traffic, regardless of whether a path-level rule is configured for a domain.
 
 ### Diagnosing blocked connections
 
@@ -30,8 +30,15 @@ Always attempt connections first — the domain may already be whitelisted. Only
 
 ### When a connection is blocked
 
-Before presenting options, look up your agent name by reading the `CLAWKER_AGENT` environment variable. Don't present the user with 
-$CLAWKER_AGENT" directly use the value of this environment variable in your example commands. Use this value in the `--agent` flag of all commands below.
+Before presenting options, look up your agent name by reading the `CLAWKER_AGENT` environment variable and use its value in the `--agent` flag of all commands that support it below.
+
+**Important: firewall command scoping.** Some firewall commands are
+per-container and require `--agent` (`bypass`, `enable`, `disable`).
+Others are global infrastructure and do NOT accept `--agent` (`status`,
+`list`, `add`, `remove`, `reload`, `up`, `down`, `rotate-ca`). Passing
+`--agent` to a global command will error. When in doubt, fetch
+`https://docs.clawker.dev/cli-reference/clawker_firewall` for current
+command signatures.
 
 Present **all** of the following options to the user so they can choose. These are `clawker firewall` commands the user runs on the **host** — you cannot modify the firewall from inside this container.
 
@@ -54,14 +61,6 @@ Present **all** of the following options to the user so they can choose. These a
    clawker firewall disable --agent $CLAWKER_AGENT
    ```
    Re-enable later with `clawker firewall enable --agent $CLAWKER_AGENT`
-
-**Important: firewall command scoping.** Some firewall commands are
-per-container and require `--agent` (`bypass`, `enable`, `disable`).
-Others are global infrastructure and do NOT accept `--agent` (`status`,
-`list`, `add`, `remove`, `reload`, `up`, `down`, `rotate-ca`). Passing
-`--agent` to a global command will error. When in doubt, fetch
-`https://docs.clawker.dev/cli-reference/clawker_firewall` for current
-command signatures.
 
 
 ### How the bypass works (agent reference)
