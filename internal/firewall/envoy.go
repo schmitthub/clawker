@@ -454,9 +454,8 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int, exactDomains map
 							"codec_type":  "AUTO",
 							"access_log":  buildHTTPAccessLog("http"),
 							"route_config": map[string]any{
-								"name":                "http_egress_routes",
-								"strip_any_host_port": true,
-								"virtual_hosts":       virtualHosts,
+								"name":          "http_egress_routes",
+								"virtual_hosts": virtualHosts,
 							},
 							"http_filters": []any{
 								buildDFPHTTPFilter(false),
@@ -527,8 +526,7 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 					"codec_type":  "AUTO",
 					"access_log":  buildHTTPAccessLog("tls"),
 					"route_config": map[string]any{
-						"name":                fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
-						"strip_any_host_port": true,
+						"name": fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
 						"virtual_hosts": []any{
 							map[string]any{
 								"name":    virtualHostName(r.Dst),
