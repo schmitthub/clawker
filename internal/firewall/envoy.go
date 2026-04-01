@@ -478,6 +478,7 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 			"typed_config": map[string]any{
 				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext",
 				"common_tls_context": map[string]any{
+					"alpn_protocols": []string{"h2", "http/1.1"},
 					"tls_certificates": []any{
 						map[string]any{
 							"certificate_chain": map[string]any{"filename": certFile},
@@ -500,8 +501,21 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 						"virtual_hosts": []any{
 							map[string]any{
 								"name":    domain,
-								"domains": []string{"*"},
+								"domains": httpDomains(r.Dst, exactDomains),
 								"routes":  routes,
+							},
+							map[string]any{
+								"name":    "deny_" + sanitizeName(domain),
+								"domains": []string{"*"},
+								"routes": []any{
+									map[string]any{
+										"match": map[string]any{"prefix": "/"},
+										"direct_response": map[string]any{
+											"status": 403,
+											"body":   map[string]any{"inline_string": "Blocked by clawker firewall\n"},
+										},
+									},
+								},
 							},
 						},
 					},
@@ -666,9 +680,8 @@ func buildClusters(tcp []config.EgressRule) []any {
 			"cluster_type":    dfpClusterType(),
 		},
 		// Dynamic forward proxy cluster — TLS upstream (re-encrypts after MITM termination).
-		// Per Envoy docs, configuring a transport_socket with UpstreamTlsContext and trusted_ca
-		// on a dynamic forward proxy cluster automatically performs SNI and SAN validation
-		// for the resolved host name.
+		// auto_sni and auto_san_validation bind upstream TLS validation to the
+		// dynamically resolved host instead of trusting any public-CA-signed endpoint.
 		map[string]any{
 			"name":            clusterDFPTLS,
 			"connect_timeout": "10s",
@@ -679,11 +692,25 @@ func buildClusters(tcp []config.EgressRule) []any {
 				"typed_config": map[string]any{
 					"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
 					"common_tls_context": map[string]any{
+						"alpn_protocols": []string{"h2", "http/1.1"},
 						"validation_context": map[string]any{
 							"trusted_ca": map[string]any{
 								"filename": "/etc/ssl/certs/ca-certificates.crt",
 							},
 						},
+					},
+				},
+			},
+			"typed_extension_protocol_options": map[string]any{
+				"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
+					"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+					"upstream_http_protocol_options": map[string]any{
+						"auto_sni":            true,
+						"auto_san_validation": true,
+					},
+					"auto_config": map[string]any{
+						"http_protocol_options":  map[string]any{},
+						"http2_protocol_options": map[string]any{},
 					},
 				},
 			},

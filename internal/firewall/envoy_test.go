@@ -269,6 +269,27 @@ func TestGenerateEnvoyConfig_MixedHTTPAndTLS(t *testing.T) {
 	assert.Contains(t, out, "http_egress")
 }
 
+func TestGenerateEnvoyConfig_TLSOriginationEnablesAutoSNIAndSANValidation(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{TLSPort: 10000, TCPPortBase: 10001, HTTPPort: 10080}
+
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+
+	out := string(yamlBytes)
+	assert.Contains(t, out, "dynamic_forward_proxy_cluster_tls")
+	assert.Contains(t, out, "envoy.extensions.upstreams.http.v3.HttpProtocolOptions")
+	assert.Contains(t, out, "auto_sni: true")
+	assert.Contains(t, out, "auto_san_validation: true")
+	assert.Contains(t, out, "http2_protocol_options: {}")
+	assert.Contains(t, out, "cluster: dynamic_forward_proxy_cluster_tls")
+}
+
 func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {
 	t.Parallel()
 
