@@ -364,6 +364,7 @@ type progressModel struct {
 	interrupted bool // true if user pressed Ctrl+C
 	blinkHide   bool // toggled by blinkTickMsg for running-icon blink
 	hasRunning  bool // true when any step is StepRunning
+	blinkActive bool // true while a blink tick chain is scheduled
 
 	width int
 
@@ -411,15 +412,16 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.hasRunning && !m.finished {
 			return m, blinkTick()
 		}
+		m.blinkActive = false
 		return m, nil
 
 	case progressStepMsg:
 		step := ProgressStep(msg)
-		wasRunning := m.hasRunning
 		m.processEvent(step)
 		m.hasRunning = m.anyRunning()
 		cmds := []tea.Cmd{waitForProgressStep(m.eventCh)}
-		if m.hasRunning && !wasRunning {
+		if m.hasRunning && !m.blinkActive {
+			m.blinkActive = true
 			cmds = append(cmds, blinkTick())
 		}
 		return m, tea.Batch(cmds...)
