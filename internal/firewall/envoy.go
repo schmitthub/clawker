@@ -693,6 +693,9 @@ func buildClusters(tcp []config.EgressRule) []any {
 					"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
 					"common_tls_context": map[string]any{
 						"alpn_protocols": []string{"h2", "http/1.1"},
+						"tls_params": map[string]any{
+							"ecdh_curves": []string{"X25519", "P-256", "P-384"},
+						},
 						"validation_context": map[string]any{
 							"trusted_ca": map[string]any{
 								"filename": "/etc/ssl/certs/ca-certificates.crt",
