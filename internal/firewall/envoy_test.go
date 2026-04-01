@@ -575,14 +575,14 @@ func TestHTTPDomains_ExactDomain(t *testing.T) {
 	t.Parallel()
 
 	domains := httpDomains("api.anthropic.com", nil)
-	assert.Equal(t, []string{"api.anthropic.com"}, domains)
+	assert.Equal(t, []string{"api.anthropic.com", "api.anthropic.com:*"}, domains)
 }
 
 func TestHTTPDomains_WildcardDomain(t *testing.T) {
 	t.Parallel()
 
 	domains := httpDomains(".datadoghq.com", nil)
-	assert.Equal(t, []string{"*.datadoghq.com", "datadoghq.com"}, domains)
+	assert.Equal(t, []string{"*.datadoghq.com", "*.datadoghq.com:*", "datadoghq.com", "datadoghq.com:*"}, domains)
 }
 
 func TestHTTPDomains_WildcardWithExactSibling(t *testing.T) {
@@ -590,7 +590,7 @@ func TestHTTPDomains_WildcardWithExactSibling(t *testing.T) {
 
 	exact := map[string]bool{"claude.ai": true}
 	domains := httpDomains(".claude.ai", exact)
-	assert.Equal(t, []string{"*.claude.ai"}, domains, "apex should be omitted when exact rule handles it")
+	assert.Equal(t, []string{"*.claude.ai", "*.claude.ai:*"}, domains, "apex should be omitted when exact rule handles it")
 }
 
 func TestGenerateEnvoyConfig_WildcardDomain(t *testing.T) {

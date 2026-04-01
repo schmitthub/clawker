@@ -881,9 +881,12 @@ func httpDomains(dst string, exactDomains map[string]bool) []string {
 	domain := normalizeDomain(dst)
 	if isWildcardDomain(dst) {
 		if exactDomains[domain] {
-			return []string{"*." + domain}
+			// Exact rule owns the apex — wildcard only, plus port variant.
+			return []string{"*." + domain, "*." + domain + ":*"}
 		}
-		return []string{"*." + domain, domain}
+		// Wildcard covers both apex and subdomains, with port variants.
+		return []string{"*." + domain, "*." + domain + ":*", domain, domain + ":*"}
 	}
-	return []string{domain}
+	// Exact domain plus port variant so Host: domain:443 also matches.
+	return []string{domain, domain + ":*"}
 }
