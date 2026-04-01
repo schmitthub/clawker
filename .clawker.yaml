@@ -11,7 +11,7 @@ agent:
     - GH_TOKEN
     - CONTEXT7_API_KEY
   post_init: |
-    claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+    claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@e9d21915660a66f8532260c527ab6afae94a6bd5 serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
     claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
     claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
     claude mcp add -s local grafana -e GRAFANA_URL=http://grafana:3000 -e GRAFANA_USERNAME=admin -e GRAFANA_PASSWORD=admin -- uvx mcp-grafana
