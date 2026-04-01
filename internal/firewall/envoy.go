@@ -372,7 +372,7 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int, exactDomains map
 			routes = []any{
 				map[string]any{
 					"match": map[string]any{"prefix": "/"},
-					"route": map[string]any{"cluster": clusterDFPPlaintext},
+					"route": map[string]any{"cluster": clusterDFPPlaintext, "timeout": "0s"},
 				},
 			}
 		}
@@ -464,7 +464,7 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 		routes = []any{
 			map[string]any{
 				"match": map[string]any{"prefix": "/"},
-				"route": map[string]any{"cluster": clusterDFPTLS},
+				"route": map[string]any{"cluster": clusterDFPTLS, "timeout": "0s"},
 			},
 		}
 	}
@@ -554,7 +554,7 @@ func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 		if strings.EqualFold(pr.Action, "allow") {
 			routes = append(routes, map[string]any{
 				"match": map[string]any{"prefix": pr.Path},
-				"route": map[string]any{"cluster": clusterName},
+				"route": map[string]any{"cluster": clusterName, "timeout": "0s"},
 			})
 		} else {
 			routes = append(routes, map[string]any{
@@ -580,7 +580,7 @@ func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 	} else {
 		routes = append(routes, map[string]any{
 			"match": map[string]any{"prefix": "/"},
-			"route": map[string]any{"cluster": clusterName},
+			"route": map[string]any{"cluster": clusterName, "timeout": "0s"},
 		})
 	}
 
