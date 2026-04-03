@@ -15,10 +15,10 @@ Manage the clawker-support Claude Code skill plugin. Wraps the `claude plugin` C
 ## Key Symbols
 
 ```go
-func NewCmdSkill(f *cmdutil.Factory) *cobra.Command        // parent (no RunE)
-func NewCmdInstall(f, runF) *cobra.Command                  // --scope flag
-func NewCmdShow(f, runF) *cobra.Command                     // pure output
-func NewCmdRemove(f, runF) *cobra.Command                   // --scope flag, aliases: uninstall, rm
+func NewCmdSkill(f *cmdutil.Factory) *cobra.Command
+func NewCmdInstall(f *cmdutil.Factory, runF func(context.Context, *InstallOptions) error) *cobra.Command
+func NewCmdShow(f *cmdutil.Factory, runF func(context.Context, *ShowOptions) error) *cobra.Command
+func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command
 ```
 
 ## Shared Package

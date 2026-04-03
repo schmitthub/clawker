@@ -50,7 +50,7 @@ func RunClaude(ctx context.Context, ios *iostreams.IOStreams, args ...string) er
 
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return fmt.Errorf("operation cancelled")
+			return fmt.Errorf("operation cancelled: %w", ctx.Err())
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
