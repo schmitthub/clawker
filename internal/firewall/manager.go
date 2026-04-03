@@ -277,8 +277,9 @@ func ProjectRules(cfg config.Config) []config.EgressRule {
 }
 
 // addRulesToStore validates, deduplicates, and writes rules to the store.
-// Returns true if any new rules were added. Validation runs before any
-// store mutation so invalid input never persists.
+// Returns true if any new rules were added. Validation is all-or-nothing:
+// a single invalid destination aborts the entire batch before any store
+// mutation, so invalid input never persists.
 func (m *Manager) addRulesToStore(rules []config.EgressRule) (bool, error) {
 	// Validate all destinations before touching the store.
 	for _, r := range rules {

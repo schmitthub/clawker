@@ -23,12 +23,13 @@ func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {
 }
 
 // ValidateDst checks that a destination is a valid lowercase domain name,
-// wildcard domain, IP address, or CIDR block. Called from addRulesToStore
-// so all rule sources (CLI add, config sync) are validated through a single path.
+// wildcard domain, IP address, or CIDR block. Exported so CLI commands can
+// pre-validate before attempting store mutations.
 //
-// Domain validation mirrors Go's net.isDomainName (unexported) which implements
-// RFC 1035 / RFC 3696. Underscores are allowed for SRV/DMARC compatibility.
-// Uppercase is rejected — domains must be lowercased before storage.
+// Domain validation is based on Go's net.isDomainName (RFC 1035 / RFC 1123
+// label constraints) with two deliberate deviations: uppercase is rejected to
+// enforce normalized storage, and the root domain "." is not accepted.
+// Underscores are allowed for SRV/DMARC compatibility.
 func ValidateDst(dst string) error {
 	if dst == "" {
 		return fmt.Errorf("empty destination")
@@ -45,7 +46,7 @@ func ValidateDst(dst string) error {
 		return nil
 	}
 
-	// Mirrors net.isDomainName: max 253 effective chars (254 if trailing dot).
+	// Max 253 chars after stripping wildcard/FQDN affixes.
 	if len(normalized) > 253 {
 		return fmt.Errorf("destination %q exceeds 253 characters", dst)
 	}
@@ -82,8 +83,11 @@ func ValidateDst(dst string) error {
 		}
 		last = c
 	}
-	if last == '-' || partlen > 63 {
-		return fmt.Errorf("invalid destination %q: label ends with hyphen or exceeds 63 characters", dst)
+	if last == '-' {
+		return fmt.Errorf("invalid destination %q: last label ends with hyphen", dst)
+	}
+	if partlen > 63 {
+		return fmt.Errorf("invalid destination %q: last label exceeds 63 characters", dst)
 	}
 	if !nonNumeric {
 		return fmt.Errorf("invalid destination %q: domain must contain at least one letter", dst)

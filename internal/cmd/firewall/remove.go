@@ -58,6 +58,8 @@ immediately via hot-reload — no container restart required.`,
 
 // domainCompletions returns a ValidArgsFunction that suggests existing firewall
 // domains for shell tab-completion. Reads current rules via the FirewallManager.
+// Domains are deduplicated (a domain with multiple proto/port rules appears once)
+// and sorted alphabetically. Silently returns empty on errors (Cobra convention).
 func domainCompletions(firewallFn func(context.Context) (firewall.FirewallManager, error)) func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
 	return func(cmd *cobra.Command, args []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
 		if len(args) > 0 {

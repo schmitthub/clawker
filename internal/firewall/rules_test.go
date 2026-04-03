@@ -158,17 +158,13 @@ func TestValidateDst(t *testing.T) {
 		{name: "mixed case", dst: "Api.GitHub.Com", wantErr: true},
 		{name: "wildcard uppercase", dst: ".EXAMPLE.COM", wantErr: true},
 
-		// TLD variants.
-		{name: "com", dst: "example.com"},
-		{name: "org", dst: "registry.npmjs.org"},
-		{name: "io", dst: "github.io"},
-		{name: "dev", dst: "docs.clawker.dev"},
-		{name: "ai", dst: "claude.ai"},
+		// Multi-dot TLD and new gTLD (other TLDs exercise identical code paths).
 		{name: "co.uk", dst: "api.example.co.uk"},
-		{name: "app", dst: "myservice.app"},
-		{name: "cloud", dst: "storage.googleapis.cloud"},
-		{name: "internal", dst: "docker.internal"},
 		{name: "new gTLD", dst: "my.example.technology"},
+
+		// Domain length boundaries (253 chars max after normalization).
+		{name: "total 253 chars valid", dst: strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61)},
+		{name: "total 254 chars invalid", dst: strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 62), wantErr: true},
 
 		// Valid IPs and CIDRs.
 		{name: "IPv4", dst: "192.168.1.1"},
