@@ -108,8 +108,8 @@ const (
 	DefaultUsername          = "claude"
 	DefaultShell             = "/bin/zsh"
 	// DefaultGoBuilderImage is the Go toolchain image used for builder stages.
-	// Pinned to exact patch version + SHA digest matching go.mod (go 1.25.5).
-	DefaultGoBuilderImage = "golang:1.25.5-alpine@sha256:ac09a5f469f307e5da71e766b0bd59c9c49ea460a528cc3e6686513d64a6f1fb"
+	// Pinned to exact patch version + SHA digest matching go.mod (go 1.25.8).
+	DefaultGoBuilderImage = "golang:1.25.8-alpine@sha256:8e02eb337d9e0ea459e041f1ee5eece41cbb61f1d83e7d883a3e2fb4862063fa"
 )
 
 // DockerfileManager generates and persists Dockerfiles for each version/variant combination.
@@ -150,7 +150,7 @@ type DockerfileContext struct {
 	OtelIncludeSessionID   bool // OTEL_METRICS_INCLUDE_SESSION_ID=true
 
 	HasFirewallCA  bool   // CA cert exists for MITM inspection
-	GoBuilderImage string // Go toolchain image for builder stages (e.g. "golang:1.25.5-alpine@sha256:...")
+	GoBuilderImage string // Go toolchain image for builder stages (e.g. "golang:1.25.8-alpine@sha256:...")
 }
 
 // DockerfileInstructions contains type-safe Dockerfile instructions.
