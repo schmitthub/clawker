@@ -256,7 +256,7 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 
 ### internal/cmd/* - CLI Commands
 
-10 command groups with 50+ subcommands, each in its own subpackage:
+11 command groups with 50+ subcommands, each in its own subpackage:
 
 | Command Group | Subcommands |
 |---------------|-------------|
@@ -270,10 +270,11 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 | `monitor/` | init, up, down, status |
 | `loop/` | iterate, status, tasks, reset |
 | `settings/` | edit |
+| `skill/` | install, show, remove |
 
 **Top-level shortcuts**: `init` → `project init`, `build` → `image build`, `run`/`start` → `container run`/`start`, `generate`, `version`
 
-**Shared packages**: `container/shared/` and `loop/shared/` contain domain orchestration logic (container creation, loop engine) shared across subcommands within their group.
+**Shared packages**: `container/shared/`, `loop/shared/`, and `skill/shared/` contain domain orchestration logic shared across subcommands within their group.
 
 ### internal/cmdutil - CLI Utilities
 

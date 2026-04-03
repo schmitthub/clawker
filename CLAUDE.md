@@ -64,6 +64,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, version/, loop/, worktree/, firewall/, root/)
 │   │   ├── factory/           # Factory constructor — wires real dependencies
 │   │   ├── settings/          # Settings parent command + edit subcommand
+│   │   ├── skill/             # Skill plugin management (install/show/remove) — wraps claude CLI
 │   │   └── project/edit/      # Project edit subcommand
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
 │   ├── config/                # Storage.Store[T] config engine: schema types, multi-file loading, constants (see internal/config/CLAUDE.md)
@@ -234,7 +235,7 @@ See `.claude/docs/CLI-VERBS.md` for complete command reference.
 
 **Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `generate`, `loop iterate/tasks/status/reset`, `version`
 
-**Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`, `project edit`), `worktree *`, `firewall *` (status/list/add/remove/reload/up/down/enable/disable/bypass/rotate-ca), `settings *` (`settings edit`)
+**Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`, `project edit`), `worktree *`, `firewall *` (status/list/add/remove/reload/up/down/enable/disable/bypass/rotate-ca), `settings *` (`settings edit`), `skill *` (install/show/remove)
 
 Commands use positional arguments for resource names (e.g., `clawker container stop clawker.myapp.dev`) matching Docker's interface.
 
