@@ -85,6 +85,20 @@ func PrepareClaudeConfig(log *logger.Logger, hostConfigDir, containerHomeDir, co
 		}
 	}
 
+	// CLAUDE.md — user-level instructions
+	claudeMDSrc := filepath.Join(hostConfigDir, "CLAUDE.md")
+	if _, statErr := os.Stat(claudeMDSrc); statErr == nil {
+		if err := copyFile(claudeMDSrc, filepath.Join(stagingClaudeDir, "CLAUDE.md")); err != nil {
+			cleanupFn()
+			return "", nil, fmt.Errorf("stage CLAUDE.md: %w", err)
+		}
+	} else if !os.IsNotExist(statErr) {
+		cleanupFn()
+		return "", nil, fmt.Errorf("stat CLAUDE.md: %w", statErr)
+	} else {
+		log.Debug().Msg("CLAUDE.md not found on host, skipping")
+	}
+
 	// plugins/ — copy with cache, rewrite JSON paths for container
 	if err := stagePlugins(log, hostConfigDir, stagingClaudeDir, containerHomeDir, containerWorkDir); err != nil {
 		cleanupFn()
