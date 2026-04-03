@@ -104,9 +104,15 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		})
 	}
 
-	// Sort rows alphabetically by domain for consistent, scannable output.
+	// Sort rows by domain, then proto, then port for fully deterministic output.
 	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].Domain < rows[j].Domain
+		if rows[i].Domain != rows[j].Domain {
+			return rows[i].Domain < rows[j].Domain
+		}
+		if rows[i].Proto != rows[j].Proto {
+			return rows[i].Proto < rows[j].Proto
+		}
+		return rows[i].Port < rows[j].Port
 	})
 
 	// Format dispatch.

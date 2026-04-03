@@ -43,6 +43,14 @@ func ValidateDst(dst string) error {
 
 	// IPs and CIDRs have their own format.
 	if isIPOrCIDR(normalized) {
+		// Wildcard prefix only makes sense for domains, not IPs/CIDRs.
+		// Without this check, ".192.168.1.1" passes validation but
+		// downstream generators (CoreDNS, Envoy, certs) see the raw Dst
+		// with the leading dot, which fails isIPOrCIDR and causes the IP
+		// to be misclassified as a domain.
+		if strings.HasPrefix(dst, ".") {
+			return fmt.Errorf("invalid destination %q: wildcard prefix not allowed on IP/CIDR", dst)
+		}
 		return nil
 	}
 
@@ -83,6 +91,9 @@ func ValidateDst(dst string) error {
 		}
 		last = c
 	}
+	if last == '.' {
+		return fmt.Errorf("invalid destination %q: trailing empty label", dst)
+	}
 	if last == '-' {
 		return fmt.Errorf("invalid destination %q: last label ends with hyphen", dst)
 	}
@@ -90,7 +101,7 @@ func ValidateDst(dst string) error {
 		return fmt.Errorf("invalid destination %q: last label exceeds 63 characters", dst)
 	}
 	if !nonNumeric {
-		return fmt.Errorf("invalid destination %q: domain must contain at least one letter", dst)
+		return fmt.Errorf("invalid destination %q: domain must not be purely numeric", dst)
 	}
 	return nil
 }

@@ -152,6 +152,7 @@ func TestValidateDst(t *testing.T) {
 		{name: "all digits label", dst: "123.example.com"},
 		{name: "single label", dst: "localhost"},
 		{name: "underscore", dst: "_dmarc.example.com"},
+		{name: "digits with hyphen", dst: "123-456"},
 
 		// Case — must be lowercase.
 		{name: "uppercase", dst: "EXAMPLE.COM", wantErr: true},
@@ -171,6 +172,11 @@ func TestValidateDst(t *testing.T) {
 		{name: "IPv6", dst: "::1"},
 		{name: "CIDR", dst: "10.0.0.0/8"},
 
+		// Wildcard-prefixed IPs/CIDRs — wildcards only make sense for domains.
+		{name: "wildcard IPv4", dst: ".192.168.1.1", wantErr: true},
+		{name: "wildcard CIDR", dst: ".10.0.0.0/8", wantErr: true},
+		{name: "wildcard IPv6", dst: ".::1", wantErr: true},
+
 		// Invalid.
 		{name: "empty", dst: "", wantErr: true},
 		{name: "just dot", dst: ".", wantErr: true},
@@ -184,6 +190,8 @@ func TestValidateDst(t *testing.T) {
 		{name: "port", dst: "example.com:443", wantErr: true},
 		{name: "scheme", dst: "https://example.com", wantErr: true},
 		{name: "empty label", dst: "example..com", wantErr: true},
+		{name: "double trailing dot", dst: "example.com..", wantErr: true},
+		{name: "wildcard double trailing dot", dst: ".example.com..", wantErr: true},
 		{name: "label too long", dst: strings.Repeat("a", 64) + ".com", wantErr: true},
 		{name: "all numeric", dst: "123.456", wantErr: true},
 	}

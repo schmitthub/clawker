@@ -121,6 +121,37 @@ func TestListRun_SortsByDomain(t *testing.T) {
 	}
 }
 
+func TestListRun_SortsByDomainProtoPort(t *testing.T) {
+	// Same domain with different proto/port must sort deterministically.
+	rules := []config.EgressRule{
+		{Dst: "api.github.com", Proto: "tcp", Port: 22},
+		{Dst: "api.github.com", Proto: "tls", Port: 443},
+		{Dst: "api.github.com", Proto: "http", Port: 80},
+		{Dst: "alpha.example.com", Proto: "tls", Port: 443},
+	}
+
+	f, stdout := newListCmd(t, rules, nil)
+	cmd := NewCmdList(f, nil)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"--json"})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	var rows []ruleRow
+	require.NoError(t, json.Unmarshal([]byte(stdout.String()), &rows))
+	require.Len(t, rows, 4)
+
+	// alpha.example.com first (domain sort), then api.github.com sorted by proto.
+	assert.Equal(t, "alpha.example.com", rows[0].Domain)
+	assert.Equal(t, "api.github.com", rows[1].Domain)
+	assert.Equal(t, "http", rows[1].Proto)
+	assert.Equal(t, "api.github.com", rows[2].Domain)
+	assert.Equal(t, "tcp", rows[2].Proto)
+	assert.Equal(t, "api.github.com", rows[3].Domain)
+	assert.Equal(t, "tls", rows[3].Proto)
+}
+
 func TestListRun_EmptyRules(t *testing.T) {
 	f, stdout := newListCmd(t, nil, nil)
 	cmd := NewCmdList(f, nil)
