@@ -22,6 +22,75 @@ func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {
 	)
 }
 
+// ValidateDst checks that a destination is a valid lowercase domain name,
+// wildcard domain, IP address, or CIDR block. Called from addRulesToStore
+// so all rule sources (CLI add, config sync) are validated through a single path.
+//
+// Domain validation mirrors Go's net.isDomainName (unexported) which implements
+// RFC 1035 / RFC 3696. Underscores are allowed for SRV/DMARC compatibility.
+// Uppercase is rejected — domains must be lowercased before storage.
+func ValidateDst(dst string) error {
+	if dst == "" {
+		return fmt.Errorf("empty destination")
+	}
+
+	// Strip wildcard prefix and FQDN trailing dot for validation.
+	normalized := normalizeDomain(dst)
+	if normalized == "" {
+		return fmt.Errorf("invalid destination %q", dst)
+	}
+
+	// IPs and CIDRs have their own format.
+	if isIPOrCIDR(normalized) {
+		return nil
+	}
+
+	// Mirrors net.isDomainName: max 253 effective chars (254 if trailing dot).
+	if len(normalized) > 253 {
+		return fmt.Errorf("destination %q exceeds 253 characters", dst)
+	}
+
+	last := byte('.')
+	nonNumeric := false
+	partlen := 0
+	for i := range len(normalized) {
+		c := normalized[i]
+		switch {
+		case c >= 'a' && c <= 'z' || c == '_':
+			nonNumeric = true
+			partlen++
+		case c >= '0' && c <= '9':
+			partlen++
+		case c == '-':
+			if last == '.' {
+				return fmt.Errorf("invalid destination %q: label starts with hyphen", dst)
+			}
+			nonNumeric = true
+			partlen++
+		case c == '.':
+			if last == '.' || last == '-' {
+				return fmt.Errorf("invalid destination %q: empty label or label ends with hyphen", dst)
+			}
+			if partlen > 63 {
+				return fmt.Errorf("invalid destination %q: label exceeds 63 characters", dst)
+			}
+			partlen = 0
+		case c >= 'A' && c <= 'Z':
+			return fmt.Errorf("invalid destination %q: uppercase letters not allowed (use lowercase)", dst)
+		default:
+			return fmt.Errorf("invalid destination %q: invalid character %q", dst, string(rune(c)))
+		}
+		last = c
+	}
+	if last == '-' || partlen > 63 {
+		return fmt.Errorf("invalid destination %q: label ends with hyphen or exceeds 63 characters", dst)
+	}
+	if !nonNumeric {
+		return fmt.Errorf("invalid destination %q: domain must contain at least one letter", dst)
+	}
+	return nil
+}
+
 // normalizeRule fills in missing fields before storage so rules are explicit and
 // unambiguous. Empty proto defaults to "tls", empty action to "allow", and TLS
 // rules with no port default to 443. Existing non-zero values are never overridden.

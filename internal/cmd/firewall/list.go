@@ -3,6 +3,7 @@ package firewall
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -102,6 +103,11 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 			Action: action,
 		})
 	}
+
+	// Sort rows alphabetically by domain for consistent, scannable output.
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].Domain < rows[j].Domain
+	})
 
 	// Format dispatch.
 	switch {

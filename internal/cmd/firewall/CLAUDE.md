@@ -10,7 +10,7 @@ Cobra commands for the `clawker firewall` command group. Manages the Envoy+CoreD
 | `up.go` | `firewall up` — start the firewall daemon (blocks) |
 | `down.go` | `firewall down` — stop the firewall daemon (SIGTERM) |
 | `status.go` | `firewall status` — show firewall health, container IPs, rule count |
-| `list.go` | `firewall list` (alias `ls`) — list active egress rules |
+| `list.go` | `firewall list` (alias `ls`) — list active egress rules (sorted alphabetically by domain) |
 | `add.go` | `firewall add <domain>` — add a domain to the allow list |
 | `remove.go` | `firewall remove <domain>` — remove a domain from the allow list |
 | `reload.go` | `firewall reload` — force-reload Envoy/CoreDNS config from rule state |
@@ -32,7 +32,7 @@ Cobra commands for the `clawker firewall` command group. Manages the Envoy+CoreD
 | `status` | `NewCmdStatus(f, runF)` | none | `--format`, `--json`, `--quiet` | `IOStreams`, `Firewall`, `Format` |
 | `list` / `ls` | `NewCmdList(f, runF)` | none | `--format`, `--json`, `--quiet` | `IOStreams`, `TUI`, `Firewall`, `Format` |
 | `add` | `NewCmdAdd(f, runF)` | `<domain>` (required) | `--proto` (default `tls`), `--port` | `IOStreams`, `Firewall`, `Domain`, `Proto`, `Port` |
-| `remove` | `NewCmdRemove(f, runF)` | `<domain>` (required) | `--proto` (default `tls`), `--port` | `IOStreams`, `Firewall`, `Domain`, `Proto`, `Port` |
+| `remove` | `NewCmdRemove(f, runF)` | `<domain>` (required, tab-completable) | `--proto` (default `tls`), `--port` | `IOStreams`, `Firewall`, `Domain`, `Proto`, `Port` |
 | `reload` | `NewCmdReload(f, runF)` | none | none | `IOStreams`, `Firewall` |
 | `enable` | `NewCmdEnable(f, runF)` | none | `--agent` (required) | `IOStreams`, `Firewall`, `Agent` |
 | `disable` | `NewCmdDisable(f, runF)` | none | `--agent` (required) | `IOStreams`, `Firewall`, `Agent` |
@@ -62,3 +62,7 @@ All other commands produce action output only (success/error messages via `fmt.F
 - **Infrastructure queries** (`status`, `list`, `reload`, `rotate-ca`): Use `Firewall` Factory noun for firewall manager access
 - **Per-container operations** (`enable`, `disable`, `bypass`): Use `Firewall` + `--agent` flag to target a specific container
 - **Rule mutations** (`add`, `remove`): Use `Firewall` + positional `<domain>` arg + `--proto`/`--port` flags
+
+## Shell Completion
+
+`remove` provides `ValidArgsFunction` for tab-completing existing firewall domains. The `domainCompletions` helper in `remove.go` calls `FirewallManager.List()` (reads from the rules store, not containers). Domains are deduplicated, sorted, and returned as `[]cobra.Completion` with `ShellCompDirectiveNoFileComp`. Silently returns empty on errors.

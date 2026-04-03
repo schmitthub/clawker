@@ -276,8 +276,17 @@ func ProjectRules(cfg config.Config) []config.EgressRule {
 	return rules
 }
 
-// addRulesToStore deduplicates and writes rules to the store. Returns true if any new rules were added.
+// addRulesToStore validates, deduplicates, and writes rules to the store.
+// Returns true if any new rules were added. Validation runs before any
+// store mutation so invalid input never persists.
 func (m *Manager) addRulesToStore(rules []config.EgressRule) (bool, error) {
+	// Validate all destinations before touching the store.
+	for _, r := range rules {
+		if err := ValidateDst(r.Dst); err != nil {
+			return false, err
+		}
+	}
+
 	// Normalize incoming rules before the Set closure so we can do an early
 	// return if nothing is new — but all store reads happen inside Set to
 	// avoid TOCTOU races with concurrent CLI/daemon processes.

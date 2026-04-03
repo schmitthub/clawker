@@ -3,6 +3,7 @@ package firewall_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -130,6 +131,94 @@ func TestAddRules_MultipleCallsAdditive(t *testing.T) {
 	}
 	assert.True(t, dsts["first.com"])
 	assert.True(t, dsts["second.com"])
+}
+
+func TestValidateDst(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		dst     string
+		wantErr bool
+	}{
+		// Valid domains.
+		{name: "simple domain", dst: "example.com"},
+		{name: "subdomain", dst: "api.github.com"},
+		{name: "deep subdomain", dst: "a.b.c.example.com"},
+		{name: "wildcard", dst: ".example.com"},
+		{name: "trailing dot", dst: "example.com."},
+		{name: "wildcard trailing dot", dst: ".example.com."},
+		{name: "with hyphen", dst: "my-api.example.com"},
+		{name: "with digits", dst: "api2.example.com"},
+		{name: "all digits label", dst: "123.example.com"},
+		{name: "single label", dst: "localhost"},
+		{name: "underscore", dst: "_dmarc.example.com"},
+
+		// Case — must be lowercase.
+		{name: "uppercase", dst: "EXAMPLE.COM", wantErr: true},
+		{name: "mixed case", dst: "Api.GitHub.Com", wantErr: true},
+		{name: "wildcard uppercase", dst: ".EXAMPLE.COM", wantErr: true},
+
+		// TLD variants.
+		{name: "com", dst: "example.com"},
+		{name: "org", dst: "registry.npmjs.org"},
+		{name: "io", dst: "github.io"},
+		{name: "dev", dst: "docs.clawker.dev"},
+		{name: "ai", dst: "claude.ai"},
+		{name: "co.uk", dst: "api.example.co.uk"},
+		{name: "app", dst: "myservice.app"},
+		{name: "cloud", dst: "storage.googleapis.cloud"},
+		{name: "internal", dst: "docker.internal"},
+		{name: "new gTLD", dst: "my.example.technology"},
+
+		// Valid IPs and CIDRs.
+		{name: "IPv4", dst: "192.168.1.1"},
+		{name: "IPv6", dst: "::1"},
+		{name: "CIDR", dst: "10.0.0.0/8"},
+
+		// Invalid.
+		{name: "empty", dst: "", wantErr: true},
+		{name: "just dot", dst: ".", wantErr: true},
+		{name: "just dots", dst: "..", wantErr: true},
+		{name: "spaces", dst: "example .com", wantErr: true},
+		{name: "leading hyphen", dst: "-example.com", wantErr: true},
+		{name: "trailing hyphen label", dst: "example-.com", wantErr: true},
+		{name: "special chars", dst: "example!.com", wantErr: true},
+		{name: "at sign", dst: "user@example.com", wantErr: true},
+		{name: "path", dst: "example.com/path", wantErr: true},
+		{name: "port", dst: "example.com:443", wantErr: true},
+		{name: "scheme", dst: "https://example.com", wantErr: true},
+		{name: "empty label", dst: "example..com", wantErr: true},
+		{name: "label too long", dst: strings.Repeat("a", 64) + ".com", wantErr: true},
+		{name: "all numeric", dst: "123.456", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := firewall.ValidateDst(tt.dst)
+			if tt.wantErr {
+				assert.Error(t, err, "ValidateDst(%q) should fail", tt.dst)
+			} else {
+				assert.NoError(t, err, "ValidateDst(%q) should succeed", tt.dst)
+			}
+		})
+	}
+}
+
+func TestAddRules_RejectsInvalidDomain(t *testing.T) {
+	mgr, _ := newTestManager(t)
+
+	err := mgr.AddRules(t.Context(), []config.EgressRule{
+		{Dst: "valid.com"},
+		{Dst: "has spaces.com"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has spaces.com")
+
+	// Valid rule should not have been stored either (atomic).
+	rules, listErr := mgr.List(t.Context())
+	require.NoError(t, listErr)
+	assert.Empty(t, rules)
 }
 
 func TestAddRules_NormalizesEmptyFields(t *testing.T) {

@@ -3,6 +3,7 @@ package firewall
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -47,10 +48,48 @@ immediately via hot-reload — no container restart required.`,
 		},
 	}
 
+	cmd.ValidArgsFunction = domainCompletions(opts.Firewall)
+
 	cmd.Flags().StringVar(&opts.Proto, "proto", "tls", "Protocol (tls, ssh, tcp)")
 	cmd.Flags().IntVar(&opts.Port, "port", 0, "Port number")
 
 	return cmd
+}
+
+// domainCompletions returns a ValidArgsFunction that suggests existing firewall
+// domains for shell tab-completion. Reads current rules via the FirewallManager.
+func domainCompletions(firewallFn func(context.Context) (firewall.FirewallManager, error)) func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	return func(cmd *cobra.Command, args []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+		if len(args) > 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+
+		fwMgr, err := firewallFn(cmd.Context())
+		if err != nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+
+		rules, err := fwMgr.List(cmd.Context())
+		if err != nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+
+		seen := make(map[string]bool, len(rules))
+		var domains []string
+		for _, r := range rules {
+			if !seen[r.Dst] {
+				seen[r.Dst] = true
+				domains = append(domains, r.Dst)
+			}
+		}
+		sort.Strings(domains)
+
+		completions := make([]cobra.Completion, len(domains))
+		for i, d := range domains {
+			completions[i] = cobra.Completion(d)
+		}
+		return completions, cobra.ShellCompDirectiveNoFileComp
+	}
 }
 
 func removeRun(ctx context.Context, opts *RemoveOptions) error {
