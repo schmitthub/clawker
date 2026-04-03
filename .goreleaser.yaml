@@ -19,10 +19,13 @@ builds:
     goarch:
       - amd64
       - arm64
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w
       - -X github.com/schmitthub/clawker/internal/build.Version={{.Version}}
-      - -X github.com/schmitthub/clawker/internal/build.Date={{.Date}}
+      - -X github.com/schmitthub/clawker/internal/build.Date={{.CommitDate}}
 
 archives:
   - id: default
