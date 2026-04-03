@@ -49,8 +49,7 @@ git push origin v1.0.0
 
 - `clawker_VERSION_OS_ARCH.tar.gz` — binary + LICENSE + README.md (4 archives)
 - `checksums.txt` — SHA256 checksums of all archives
-- `checksums.txt.sig` — cosign signature
-- `checksums.txt.pem` — cosign certificate
+- `checksums.txt.sigstore.json` — cosign bundle (signature + certificate in Sigstore bundle format)
 - `clawker_VERSION_OS_ARCH.tar.gz.sbom.json` — SBOM per archive (syft)
 - Auto-generated changelog (excludes docs/test/ci/chore commits and merge commits)
 
@@ -74,8 +73,7 @@ After a release, verify artifact signatures:
 
 ```bash
 cosign verify-blob \
-  --signature checksums.txt.sig \
-  --certificate checksums.txt.pem \
+  --bundle checksums.txt.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp 'github\.com/schmitthub/clawker' \
   checksums.txt
