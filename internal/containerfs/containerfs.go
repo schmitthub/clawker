@@ -8,6 +8,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -82,6 +83,17 @@ func PrepareClaudeConfig(log *logger.Logger, hostConfigDir, containerHomeDir, co
 		if err := stageDirectory(log, hostConfigDir, stagingClaudeDir, dir); err != nil {
 			cleanupFn()
 			return "", nil, fmt.Errorf("stage %s: %w", dir, err)
+		}
+	}
+
+	// CLAUDE.md — user-level instructions
+	claudeMDSrc := filepath.Join(hostConfigDir, "CLAUDE.md")
+	if err := copyFile(claudeMDSrc, filepath.Join(stagingClaudeDir, "CLAUDE.md")); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			log.Debug().Msg("CLAUDE.md not found on host, skipping")
+		} else {
+			cleanupFn()
+			return "", nil, fmt.Errorf("stage CLAUDE.md: %w", err)
 		}
 	}
 

@@ -158,6 +158,30 @@ func TestPrepareClaudeConfig_DirectoriesCopied(t *testing.T) {
 	}
 }
 
+func TestPrepareClaudeConfig_CLAUDEMDCopied(t *testing.T) {
+	hostDir := t.TempDir()
+
+	content := "# My Custom Instructions\nAlways use tabs.\n"
+	if err := os.WriteFile(filepath.Join(hostDir, "CLAUDE.md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	staged := filepath.Join(stagingDir, ".claude", "CLAUDE.md")
+	data, err := os.ReadFile(staged)
+	if err != nil {
+		t.Fatalf("read staged CLAUDE.md: %v", err)
+	}
+	if string(data) != content {
+		t.Errorf("CLAUDE.md: got %q, want %q", string(data), content)
+	}
+}
+
 func TestPrepareClaudeConfig_PluginsCacheCopied(t *testing.T) {
 	hostDir := t.TempDir()
 

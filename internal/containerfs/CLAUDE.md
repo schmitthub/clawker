@@ -18,6 +18,7 @@ Imports: `internal/config`, `internal/keyring`, `internal/logger`, stdlib only. 
 ## Copy Logic
 
 - settings.json: Only `enabledPlugins` key extracted
+- CLAUDE.md: Direct copy if present (user-level instructions)
 - agents/, skills/, commands/: Full recursive copy, symlinks resolved
 - plugins/: Full recursive copy including cache/, minus install-counts-cache.json
 - known_marketplaces.json: `installPath` and `installLocation` values rewritten for container paths
@@ -38,6 +39,7 @@ Each `Prepare*` function returns a temp directory with this layout:
 ```
 <tmpdir>/.claude/
   settings.json      (if existed on host)
+  CLAUDE.md          (if existed on host)
   agents/            (if existed on host)
   skills/            (if existed on host)
   commands/          (if existed on host)
