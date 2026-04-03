@@ -3,26 +3,25 @@ package install
 import (
 	"context"
 	"fmt"
-	"os/exec"
 
+	"github.com/schmitthub/clawker/internal/cmd/skill/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
-const (
-	marketplaceSource = "schmitthub/claude-plugins"
-	pluginName        = "clawker-support@schmitthub-plugins"
-)
-
 type InstallOptions struct {
 	IOStreams *iostreams.IOStreams
 	Scope     string
+	CheckCLI  func() error
+	RunClaude func(ctx context.Context, ios *iostreams.IOStreams, args ...string) error
 }
 
 func NewCmdInstall(f *cmdutil.Factory, runF func(context.Context, *InstallOptions) error) *cobra.Command {
 	opts := &InstallOptions{
 		IOStreams: f.IOStreams,
+		CheckCLI:  shared.CheckClaudeCLI,
+		RunClaude: shared.RunClaude,
 	}
 
 	cmd := &cobra.Command{
@@ -56,42 +55,27 @@ func installRun(ctx context.Context, opts *InstallOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	if err := validateScope(opts.Scope); err != nil {
+	if err := shared.ValidateScope(opts.Scope); err != nil {
 		return err
 	}
 
-	if _, err := exec.LookPath("claude"); err != nil {
-		return fmt.Errorf("claude CLI not found in PATH — install it from https://docs.anthropic.com/en/docs/claude-code")
+	if err := opts.CheckCLI(); err != nil {
+		return err
 	}
 
 	// Step 1: Add marketplace
-	fmt.Fprintf(ios.ErrOut, "%s Adding marketplace %s...\n", cs.InfoIcon(), marketplaceSource)
-	if err := runClaude(ctx, ios, "plugin", "marketplace", "add", marketplaceSource); err != nil {
+	fmt.Fprintf(ios.ErrOut, "%s Adding marketplace %s...\n", cs.InfoIcon(), shared.MarketplaceSource)
+	if err := opts.RunClaude(ctx, ios, "plugin", "marketplace", "add", shared.MarketplaceSource); err != nil {
 		return fmt.Errorf("adding marketplace: %w", err)
 	}
 
 	// Step 2: Install plugin
-	fmt.Fprintf(ios.ErrOut, "%s Installing %s (scope: %s)...\n", cs.InfoIcon(), pluginName, opts.Scope)
-	if err := runClaude(ctx, ios, "plugin", "install", "--scope", opts.Scope, pluginName); err != nil {
-		return fmt.Errorf("installing plugin: %w", err)
+	fmt.Fprintf(ios.ErrOut, "%s Installing %s (scope: %s)...\n", cs.InfoIcon(), shared.PluginName, opts.Scope)
+	if err := opts.RunClaude(ctx, ios, "plugin", "install", "--scope", opts.Scope, shared.PluginName); err != nil {
+		return fmt.Errorf("marketplace was added, but plugin install failed: %w\n\nRetry with: claude plugin install --scope %s %s",
+			err, opts.Scope, shared.PluginName)
 	}
 
 	fmt.Fprintf(ios.ErrOut, "%s Clawker skill plugin installed successfully\n", cs.SuccessIcon())
 	return nil
-}
-
-func runClaude(ctx context.Context, ios *iostreams.IOStreams, args ...string) error {
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Stdout = ios.Out
-	cmd.Stderr = ios.ErrOut
-	return cmd.Run()
-}
-
-func validateScope(scope string) error {
-	switch scope {
-	case "user", "project", "local":
-		return nil
-	default:
-		return cmdutil.FlagErrorf("--scope must be user, project, or local; got %q", scope)
-	}
 }

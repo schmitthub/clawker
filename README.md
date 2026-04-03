@@ -154,6 +154,10 @@ clawker init            # Guided setup: pick a language preset → creates .claw
 
 > **Tip:** Install the **clawker-support plugin** to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, firewall rules, troubleshooting, and more — it reads the real Dockerfile template and config schema and gives you the exact YAML you need.
 > ```bash
+> # Via clawker CLI (recommended)
+> clawker skill install
+>
+> # Or manually
 > claude plugin marketplace add schmitthub/claude-plugins
 > claude plugin install clawker-support@schmitthub-plugins
 > ```
@@ -341,6 +345,12 @@ clawker firewall bypass --stop --agent dev  # End bypass early, re-enable firewa
 # Configuration editing
 clawker project edit                    # Interactive TUI editor for .clawker.yaml
 clawker settings edit                   # Interactive TUI editor for settings.yaml
+
+# Skill plugin management
+clawker skill install                   # Install the clawker-support Claude Code plugin
+clawker skill install --scope project   # Install with project scope
+clawker skill show                      # Show manual install commands
+clawker skill remove                    # Remove the clawker-support plugin
 ```
 
 ## Monitoring 

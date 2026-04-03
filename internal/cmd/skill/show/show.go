@@ -4,14 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/schmitthub/clawker/internal/cmd/skill/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
-)
-
-const (
-	marketplaceSource = "schmitthub/claude-plugins"
-	pluginName        = "clawker-support@schmitthub-plugins"
 )
 
 type ShowOptions struct {
@@ -45,12 +41,12 @@ func showRun(_ context.Context, opts *ShowOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	fmt.Fprintf(ios.Out, "%s Manual install commands:\n\n", cs.InfoIcon())
-	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("claude plugin marketplace add "+marketplaceSource))
-	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("claude plugin install "+pluginName))
+	fmt.Fprintf(ios.ErrOut, "%s Manual install commands:\n\n", cs.InfoIcon())
+	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("claude plugin marketplace add "+shared.MarketplaceSource))
+	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("claude plugin install "+shared.PluginName))
 	fmt.Fprintln(ios.Out)
-	fmt.Fprintf(ios.Out, "%s To remove:\n\n", cs.InfoIcon())
-	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("claude plugin remove "+pluginName))
+	fmt.Fprintf(ios.ErrOut, "%s To remove:\n\n", cs.InfoIcon())
+	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("claude plugin remove "+shared.PluginName))
 
 	return nil
 }

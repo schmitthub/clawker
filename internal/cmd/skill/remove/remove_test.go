@@ -3,8 +3,10 @@ package remove
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/cmd/skill/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/assert"
@@ -28,6 +30,7 @@ func TestNewCmdRemove_DefaultScope(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 	assert.Equal(t, "user", captured.Scope)
+	assert.Equal(t, tio, captured.IOStreams)
 }
 
 func TestNewCmdRemove_CustomScope(t *testing.T) {
@@ -71,25 +74,57 @@ func TestNewCmdRemove_RejectsArgs(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestValidateScope(t *testing.T) {
-	tests := []struct {
-		scope   string
-		wantErr bool
-	}{
-		{"user", false},
-		{"project", false},
-		{"local", false},
-		{"global", true},
-		{"", true},
+func TestRemoveRun_CLINotFound(t *testing.T) {
+	tio, _, _, _ := iostreams.Test()
+	opts := &RemoveOptions{
+		IOStreams: tio,
+		Scope:     "user",
+		CheckCLI: func() error {
+			return fmt.Errorf("claude CLI not found in PATH")
+		},
+		RunClaude: func(_ context.Context, _ *iostreams.IOStreams, _ ...string) error {
+			t.Fatal("RunClaude should not be called when CLI check fails")
+			return nil
+		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.scope, func(t *testing.T) {
-			err := validateScope(tt.scope)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
+
+	err := removeRun(context.Background(), opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestRemoveRun_RemoveFails(t *testing.T) {
+	tio, _, _, _ := iostreams.Test()
+	opts := &RemoveOptions{
+		IOStreams: tio,
+		Scope:     "user",
+		CheckCLI:  func() error { return nil },
+		RunClaude: func(_ context.Context, _ *iostreams.IOStreams, _ ...string) error {
+			return fmt.Errorf("claude plugin remove exited with status 1")
+		},
 	}
+
+	err := removeRun(context.Background(), opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "removing plugin")
+}
+
+func TestRemoveRun_Success(t *testing.T) {
+	tio, _, _, stderr := iostreams.Test()
+	var calls [][]string
+	opts := &RemoveOptions{
+		IOStreams: tio,
+		Scope:     "project",
+		CheckCLI:  func() error { return nil },
+		RunClaude: func(_ context.Context, _ *iostreams.IOStreams, args ...string) error {
+			calls = append(calls, args)
+			return nil
+		},
+	}
+
+	err := removeRun(context.Background(), opts)
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+	assert.Equal(t, []string{"plugin", "remove", "--scope", "project", shared.PluginName}, calls[0])
+	assert.Contains(t, stderr.String(), "removed successfully")
 }
