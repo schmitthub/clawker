@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -134,15 +136,167 @@ func TestServerOpenURLEndpoint(t *testing.T) {
 	}
 }
 
+func TestServerOpenURL_EgressBlocking(t *testing.T) {
+	// Write a minimal rules file: github.test:443:tls and docs.example.test:80:http.
+	tmp := t.TempDir()
+	rulesFile := filepath.Join(tmp, "egress-rules.yaml")
+	rulesYAML := `rules:
+  - action: allow
+    dst: github.test
+    port: 443
+    proto: tls
+  - action: allow
+    dst: docs.example.test
+    port: 80
+    proto: http
+`
+	if err := os.WriteFile(rulesFile, []byte(rulesYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name         string
+		body         string
+		wantStatus   int
+		wantSuccess  bool
+		wantBrowser  bool
+		wantErrorMsg string
+	}{
+		{
+			name:        "allowed domain passes egress check",
+			body:        `{"url":"https://github.test/schmitthub/clawker"}`,
+			wantStatus:  http.StatusOK,
+			wantSuccess: true,
+			wantBrowser: true,
+		},
+		{
+			name:         "blocked domain returns 403",
+			body:         `{"url":"https://evil.test/exfil?data=stolen"}`,
+			wantStatus:   http.StatusForbidden,
+			wantSuccess:  false,
+			wantBrowser:  false,
+			wantErrorMsg: "blocked by egress policy",
+		},
+		{
+			name:         "wrong proto for domain blocked",
+			body:         `{"url":"http://github.test/foo"}`,
+			wantStatus:   http.StatusForbidden,
+			wantSuccess:  false,
+			wantBrowser:  false,
+			wantErrorMsg: "blocked by egress policy",
+		},
+		{
+			name:        "http allowed domain passes",
+			body:        `{"url":"http://docs.example.test/guide"}`,
+			wantStatus:  http.StatusOK,
+			wantSuccess: true,
+			wantBrowser: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			browserCalled := false
+			s := &Server{
+				log:           logger.Nop(),
+				rulesFilePath: rulesFile,
+				browserFunc:   func(_ string) error { browserCalled = true; return nil },
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/open/url", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			s.handleOpenURL(w, req)
+
+			resp := w.Result()
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+
+			var result openURLResponse
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+
+			if result.Success != tt.wantSuccess {
+				t.Errorf("success = %v, want %v", result.Success, tt.wantSuccess)
+			}
+
+			if browserCalled != tt.wantBrowser {
+				t.Errorf("browserCalled = %v, want %v", browserCalled, tt.wantBrowser)
+			}
+
+			if tt.wantErrorMsg != "" && result.Error != tt.wantErrorMsg {
+				t.Errorf("error = %q, want %q", result.Error, tt.wantErrorMsg)
+			}
+		})
+	}
+}
+
+func TestServerOpenURL_NoRulesFile_SkipsCheck(t *testing.T) {
+	browserCalled := false
+	s := &Server{
+		log:         logger.Nop(),
+		browserFunc: func(_ string) error { browserCalled = true; return nil },
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/open/url",
+		bytes.NewBufferString(`{"url":"https://any-domain.test/path"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.handleOpenURL(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 when no rules file, got %d", resp.StatusCode)
+	}
+	if !browserCalled {
+		t.Error("expected browser to be called when no rules file configured")
+	}
+}
+
+func TestServerOpenURL_MissingRulesFile_FailsClosed(t *testing.T) {
+	s := &Server{
+		log:           logger.Nop(),
+		rulesFilePath: "/nonexistent/egress-rules.yaml",
+		browserFunc:   func(_ string) error { t.Fatal("browser should not be called"); return nil },
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/open/url",
+		bytes.NewBufferString(`{"url":"https://github.test/foo"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.handleOpenURL(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 when rules file missing, got %d", resp.StatusCode)
+	}
+
+	var result openURLResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result.Success {
+		t.Error("expected success to be false")
+	}
+	if result.Error != "blocked by egress policy" {
+		t.Errorf("expected 'blocked by egress policy', got %q", result.Error)
+	}
+}
+
 func TestServerPort(t *testing.T) {
-	s := NewServer(12345, logger.Nop())
+	s := NewServer(12345, logger.Nop(), "")
 	if s.Port() != 12345 {
 		t.Errorf("expected port 12345, got %d", s.Port())
 	}
 }
 
 func TestServerIsRunning(t *testing.T) {
-	s := NewServer(0, logger.Nop())
+	s := NewServer(0, logger.Nop(), "")
 	if s.IsRunning() {
 		t.Error("expected server to not be running initially")
 	}
@@ -186,7 +340,7 @@ func TestServerOpenURLBodySizeLimit(t *testing.T) {
 // --- Callback endpoint tests ---
 
 func TestServerCallbackRegister(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -286,7 +440,7 @@ func TestServerCallbackRegister(t *testing.T) {
 }
 
 func TestServerCallbackGetData(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	defer s.Stop(context.Background())
 
 	// Register a session first
@@ -359,7 +513,7 @@ func TestServerCallbackGetData(t *testing.T) {
 }
 
 func TestServerCallbackDelete(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	defer s.Stop(context.Background())
 
 	session, _ := s.callbackChannel.Register(8080, "/callback", 5*time.Minute)
@@ -403,7 +557,7 @@ func TestServerCallbackDelete(t *testing.T) {
 }
 
 func TestServerCallbackCapture(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	defer s.Stop(context.Background())
 
 	t.Run("capture valid callback", func(t *testing.T) {
@@ -482,7 +636,7 @@ func TestServerCallbackCapture(t *testing.T) {
 }
 
 func TestServerStopCleansUpSessions(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 
 	// Create some sessions
 	s.callbackChannel.Register(8080, "/callback", 5*time.Minute)
@@ -501,7 +655,7 @@ func TestServerStopCleansUpSessions(t *testing.T) {
 }
 
 func TestServer_DynamicListenerStartStop(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -574,7 +728,7 @@ func TestServer_DynamicListenerStartStop(t *testing.T) {
 }
 
 func TestServer_DynamicListenerCapture(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -626,7 +780,7 @@ func TestServer_DynamicListenerCapture(t *testing.T) {
 }
 
 func TestServer_DynamicListenerCaptureIPv6(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

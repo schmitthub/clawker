@@ -1,0 +1,84 @@
+rules:
+  - action: allow
+    dst: api.anthropic.test
+    port: 443
+    proto: tls
+  - action: allow
+    dst: .claude.test
+    port: 443
+    proto: tls
+  - action: allow
+    dst: github.test
+    port: 22
+    proto: ssh
+  - action: allow
+    dst: github.test
+    port: 443
+    proto: tls
+  - action: allow
+    dst: api.github.test
+    port: 443
+    proto: tls
+  - action: allow
+    dst: registry-1.docker.test
+    port: 443
+    proto: tls
+  - action: allow
+    dst: proxy.golang.test
+    port: 443
+    proto: tls
+  - action: allow
+    dst: sum.golang.test
+    port: 443
+    proto: tls
+  - action: allow
+    dst: registry.npmjs.test
+    port: 443
+    proto: tls
+  - action: allow
+    dst: pypi.test
+    port: 443
+    proto: tls
+  - action: allow
+    dst: docs.clawker.test
+    port: 443
+    proto: tls
+  # IP address rule
+  - action: allow
+    dst: "93.184.216.34"
+    port: 443
+    proto: tls
+  # CIDR block rule
+  - action: allow
+    dst: "10.0.0.0/8"
+    port: 443
+    proto: tls
+  # --- Test-specific rules below (not typical in production) ---
+  # Explicit deny for testing deny logic
+  - action: deny
+    dst: evil.test
+    port: 443
+    proto: tls
+  # Non-standard port for testing port matching
+  - action: allow
+    dst: registry.internal
+    port: 8443
+    proto: tls
+  # HTTP with path rules for testing path matching
+  - action: allow
+    dst: api.example.test
+    port: 80
+    proto: http
+    path_default: deny
+    path_rules:
+      - path: "/v1/"
+        action: allow
+      - path: "/v1/admin/"
+        action: deny
+      - path: "/health"
+        action: allow
+  # HTTP without path rules
+  - action: allow
+    dst: cdn.example.test
+    port: 80
+    proto: http

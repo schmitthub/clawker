@@ -65,6 +65,42 @@ func TestHandleGitCredential(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 			wantError:  "host is required",
 		},
+		{
+			name:       "newline in host",
+			body:       `{"action":"get","protocol":"https","host":"evil.com\nusername=victim\npassword=stolen"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "credential fields must not contain newlines or null bytes",
+		},
+		{
+			name:       "carriage return in host",
+			body:       `{"action":"get","protocol":"https","host":"evil.com\r\ninjected=true"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "credential fields must not contain newlines or null bytes",
+		},
+		{
+			name:       "null byte in protocol",
+			body:       "{\"action\":\"get\",\"protocol\":\"https\\u0000injected\",\"host\":\"github.com\"}",
+			wantStatus: http.StatusBadRequest,
+			wantError:  "credential fields must not contain newlines or null bytes",
+		},
+		{
+			name:       "newline in username",
+			body:       `{"action":"store","protocol":"https","host":"github.com","username":"user\npassword=pwned"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "credential fields must not contain newlines or null bytes",
+		},
+		{
+			name:       "newline in password",
+			body:       `{"action":"store","protocol":"https","host":"github.com","username":"user","password":"pass\nhost=evil.com"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "credential fields must not contain newlines or null bytes",
+		},
+		{
+			name:       "newline in path",
+			body:       `{"action":"get","protocol":"https","host":"github.com","path":"repo\nusername=hacker"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "credential fields must not contain newlines or null bytes",
+		},
 	}
 
 	for _, tt := range tests {
@@ -184,6 +220,45 @@ func TestFormatGitCredentialInput(t *testing.T) {
 				Password: "secretpass",
 			},
 			expected: "protocol=https\nhost=github.com\npath=user/repo.git\nusername=testuser\npassword=secretpass\n\n",
+		},
+		{
+			name: "strips newlines from host",
+			req: gitCredentialRequest{
+				Action:   "get",
+				Protocol: "https",
+				Host:     "evil.com\nusername=victim\npassword=stolen",
+			},
+			expected: "protocol=https\nhost=evil.comusername=victimpassword=stolen\n\n",
+		},
+		{
+			name: "strips carriage returns",
+			req: gitCredentialRequest{
+				Action:   "get",
+				Protocol: "https",
+				Host:     "evil.com\r\nusername=victim",
+			},
+			expected: "protocol=https\nhost=evil.comusername=victim\n\n",
+		},
+		{
+			name: "strips null bytes",
+			req: gitCredentialRequest{
+				Action:   "get",
+				Protocol: "https\x00injected",
+				Host:     "github.com",
+			},
+			expected: "protocol=httpsinjected\nhost=github.com\n\n",
+		},
+		{
+			name: "strips newlines from all fields",
+			req: gitCredentialRequest{
+				Action:   "store",
+				Protocol: "https\nhost=evil.com",
+				Host:     "github.com\npassword=stolen",
+				Path:     "repo\nusername=hacker",
+				Username: "user\npassword=pwned",
+				Password: "pass\nhost=attacker.com",
+			},
+			expected: "protocol=httpshost=evil.com\nhost=github.compassword=stolen\npath=repousername=hacker\nusername=userpassword=pwned\npassword=passhost=attacker.com\n\n",
 		},
 	}
 

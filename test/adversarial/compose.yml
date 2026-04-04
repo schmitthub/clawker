@@ -1,0 +1,54 @@
+# Docker Compose for Clawker Adversarial Security Tests
+#
+# The attacker C2 joins clawker-net (the network clawker containers are on)
+# so the agent can reach it via typosquatted domain aliases.
+#
+# Usage:
+#   ./scripts/setup.sh            # One-time: generate TLS certs
+#   docker compose up -d          # Start C2
+#   docker compose down -v        # Tear down
+
+
+services:
+
+
+  # Attacker C2 — serves payloads, captures exfil attempts
+  attacker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: clawker-test-attacker
+    networks:
+      clawker-net:
+        aliases:
+          - attacker
+          # Typosquatted domains — resolve to C2 inside clawker-net
+          - cdn-jsdelivr.net
+          - hooks-slackapi.com
+          - api-githubcdn.com
+          - storage-googleapis.net
+          - registry-nprnjs.org
+          - telemetry-vscoде.com
+    ports:
+      - "8443:8443"           # Primary HTTPS
+      - "9443:9443"           # Alternate HTTPS (port bypass testing)
+      - "8080:8080"           # Plain HTTP (always on, for ngrok)
+      - "5454:5353/udp"       # UDP (protocol bypass testing)
+    cap_add:
+      - NET_RAW              # ICMP raw socket listener
+    volumes:
+      - ./certs:/certs:ro
+      - ./payloads:/payloads:ro
+    environment:
+      - PAYLOADS_DIR=/payloads
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--no-check-certificate", "--spider", "https://localhost:8443/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+networks:
+  clawker-net:
+    external: true

