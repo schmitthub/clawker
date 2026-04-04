@@ -11,7 +11,7 @@
 |------|--------|-------|
 | Task 1: Egress rule matching library | `complete` | — |
 | Task 2: Wire into `/open/url` handler | `complete` | — |
-| Task 3: Sanitize git credential newline injection | `pending` | — |
+| Task 3: Sanitize git credential newline injection | `complete` | — |
 | Task 4: Tests | `pending` | — |
 | Task 5: Adversarial validation | `pending` | — |
 
@@ -24,6 +24,13 @@
 - HTTP 403 response uses generic "blocked by egress policy" message — do NOT leak internal error details (file paths, rule structure) to the container-side caller.
 - `host-open.sh` uses `curl -sf` which suppresses HTTP error response bodies — a future task should update the script to handle 403 explicitly and show actionable guidance (`clawker firewall add <domain>`).
 - `FirewallDataSubdir()` error must be logged, not silently swallowed — egress enforcement silently disabled is a security degradation.
+
+### Task 3
+- Handler rejects requests with `\n`, `\r`, or `\x00` in any credential field (400 response) — checked before `formatGitCredentialInput` is called.
+- `formatGitCredentialInput` sanitizes as defense-in-depth — strips injection chars even though handler already rejected them.
+- Rejection logged at Warn level (security-relevant event) — not Debug, because injection attempts are anomalous.
+- `Action` field excluded from injection check — already validated by switch statement and never written to wire format.
+- Code-simplifier refactored the 5-field check into a loop (`for _, field := range []string{...}`).
 
 ### Task 1
 - `normalizeEgressRule` must match `firewall.normalizeRule` exactly — only TLS gets port defaulting (443). HTTP port 80 comes from `schemeToProto` on the URL side, not rule normalization.

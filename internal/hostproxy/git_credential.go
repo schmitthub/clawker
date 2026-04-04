@@ -75,6 +75,22 @@ func (s *Server) handleGitCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject fields containing newlines or null bytes — these allow injection
+	// of arbitrary key=value pairs into the git credential protocol format.
+	for _, field := range []string{req.Protocol, req.Host, req.Path, req.Username, req.Password} {
+		if containsCredentialInjectionChars(field) {
+			s.log.Warn().
+				Str("action", req.Action).
+				Str("host", req.Host).
+				Msg("rejected git credential request: fields contain injection characters")
+			s.writeJSON(w, http.StatusBadRequest, gitCredentialResponse{
+				Success: false,
+				Error:   "credential fields must not contain newlines or null bytes",
+			})
+			return
+		}
+	}
+
 	// Log request (without password)
 	s.log.Debug().
 		Str("action", req.Action).
@@ -149,34 +165,49 @@ func (s *Server) handleGitCredential(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// containsCredentialInjectionChars returns true if s contains characters that
+// could inject additional key=value pairs into the git credential protocol.
+func containsCredentialInjectionChars(s string) bool {
+	return strings.ContainsAny(s, "\n\r\x00")
+}
+
+// credentialFieldSanitizer strips newline and null bytes from git credential
+// field values. This is defense-in-depth — the handler rejects such requests
+// before reaching this point.
+var credentialFieldSanitizer = strings.NewReplacer("\n", "", "\r", "", "\x00", "")
+
 // formatGitCredentialInput formats a request as git credential protocol input.
 // Format is: key=value\n pairs ending with a blank line.
+// All field values are sanitized to prevent newline injection attacks.
 func formatGitCredentialInput(req gitCredentialRequest) string {
 	var sb strings.Builder
 
 	sb.WriteString("protocol=")
-	sb.WriteString(req.Protocol)
+	sb.WriteString(credentialFieldSanitizer.Replace(req.Protocol))
 	sb.WriteString("\n")
 
 	sb.WriteString("host=")
-	sb.WriteString(req.Host)
+	sb.WriteString(credentialFieldSanitizer.Replace(req.Host))
 	sb.WriteString("\n")
 
-	if req.Path != "" {
+	path := credentialFieldSanitizer.Replace(req.Path)
+	if path != "" {
 		sb.WriteString("path=")
-		sb.WriteString(req.Path)
+		sb.WriteString(path)
 		sb.WriteString("\n")
 	}
 
-	if req.Username != "" {
+	username := credentialFieldSanitizer.Replace(req.Username)
+	if username != "" {
 		sb.WriteString("username=")
-		sb.WriteString(req.Username)
+		sb.WriteString(username)
 		sb.WriteString("\n")
 	}
 
-	if req.Password != "" {
+	password := credentialFieldSanitizer.Replace(req.Password)
+	if password != "" {
 		sb.WriteString("password=")
-		sb.WriteString(req.Password)
+		sb.WriteString(password)
 		sb.WriteString("\n")
 	}
 
