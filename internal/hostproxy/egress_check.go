@@ -49,9 +49,12 @@ func CheckURLAgainstEgressRules(targetURL string, rulesFilePath string) error {
 		return err
 	}
 
-	// Reject URLs with userinfo — no legitimate browser URL includes credentials.
+	// Reject URLs with userinfo or opaque forms — no legitimate browser URL uses these.
 	if parsed.User != nil {
 		return fmt.Errorf("URL with userinfo is not allowed")
+	}
+	if parsed.Opaque != "" {
+		return fmt.Errorf("opaque URL is not allowed")
 	}
 
 	host := parsed.Hostname()
