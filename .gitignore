@@ -96,3 +96,7 @@ RALPH-TEST.md
 .clawkerlocal/
 
 .clawker.local.yaml
+
+# Adversarial test artifacts
+test/adversarial/report.html
+test/adversarial/certs/

