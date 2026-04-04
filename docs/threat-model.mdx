@@ -32,7 +32,7 @@ Instead, clawker takes the only approach that actually works: **deny the connect
 
 ## Supply Chain Security
 
-The clawker project leverages every version pinning and integrity check opportunity in CI, its infra containers, and embedded dockerfile template. SCA and SAST scanning checks are used in CI.
+The clawker project leverages every version pinning and integrity check opportunity in CI, its infra containers, and embedded Dockerfile template. SCA and SAST scanning checks are used in CI.
 
 The release pipeline specifically:
 
@@ -60,47 +60,73 @@ Regardless of how or if your container became infected, or what obfuscation and 
 
 ### Verifying a release
 
-Download a release artifact and verify its build provenance attestation:
+**1. Download and checksum.** Download a release archive and verify its SHA256 checksum against the published `checksums.txt`:
 
 ```bash
-gh release download v0.7.6 --repo schmitthub/clawker \
-  --pattern 'clawker_0.7.6_linux_arm64.tar.gz' --dir /tmp/verify
-tar -xzf /tmp/verify/clawker_0.7.6_linux_arm64.tar.gz -C /tmp/verify
-
-# Verify SLSA build provenance (requires gh >= 2.49)
-gh attestation verify /tmp/verify/clawker --repo schmitthub/clawker
-```
-
-This confirms the artifact was built by the `release.yml` workflow from the exact tagged commit on a GitHub-hosted runner. The attestation is signed via Sigstore (keyless OIDC tied to the GitHub Actions identity).
-
-You can also verify the cosign signature on the checksums file:
-
-```bash
-gh release download v0.7.6 --repo schmitthub/clawker \
+mkdir -p /tmp/verify && gh release download v0.7.6 --repo schmitthub/clawker \
+  --pattern 'clawker_0.7.6_linux_arm64.tar.gz' \
   --pattern 'checksums.txt*' --dir /tmp/verify
 
+cd /tmp/verify && sha256sum -c checksums.txt --ignore-missing
+# clawker_0.7.6_linux_arm64.tar.gz: OK
+```
+
+**2. Verify cosign signature on checksums.** This proves the checksums file was signed by the `release.yml` GitHub Actions workflow — not by a human or compromised process. Requires [cosign](https://docs.sigstore.dev/cosign/system_config/installation/).
+
+```bash
 cosign verify-blob \
   --bundle /tmp/verify/checksums.txt.sigstore.json \
   /tmp/verify/checksums.txt \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp 'github.com/schmitthub/clawker'
+  --certificate-identity-regexp '^https://github\.com/schmitthub/clawker/\.github/workflows/release\.yml@refs/tags/'
+# Verified OK
 ```
+
+**3. Verify SLSA build provenance.** This confirms the archive was built by GitHub Actions from the exact tagged commit. Requires `gh` >= 2.49.
+
+```bash
+gh attestation verify /tmp/verify/clawker_0.7.6_linux_arm64.tar.gz \
+  --repo schmitthub/clawker
+```
+
+The attestation is signed via Sigstore (keyless OIDC tied to the GitHub Actions identity) and verifies against the [SLSA provenance](https://slsa.dev/) attached to the release. You can browse all attestations at [github.com/schmitthub/clawker/attestations](https://github.com/schmitthub/clawker/attestations).
 
 ### Reproducing a build
 
-Given the same source commit, Go version, and [GoReleaser](https://goreleaser.com/) version (matching CI), you can produce a bit-for-bit identical binary. The required Go version is the `go` directive in `go.mod` at the tagged commit — this is what CI uses via `go-version-file: go.mod`. You can also check what Go version was used to compile an existing binary with `go version <binary>`.
+Given the same source commit, Go version, and [GoReleaser](https://goreleaser.com/) version (matching CI), you can produce bit-for-bit identical binaries. The required Go version is the `go` directive in `go.mod` at the tagged commit — this is what CI uses via `go-version-file: go.mod`. You can also check what Go version was used to compile an existing binary with `go version <binary>`.
 
 ```bash
-git clone https://github.com/schmitthub/clawker.git && cd clawker
-git checkout v0.7.6
-head -3 go.mod                              # check required Go version
-go install github.com/matryer/moq@v0.6.0   # required by go generate, check tagged commit's release.yml for version
-goreleaser build --single-target
-sha256sum dist/clawker_linux_*/clawker      # compare against checksums.txt
+# Clone at the tag
+git clone --branch v0.7.6 https://github.com/schmitthub/clawker.git /tmp/verify/src
+cd /tmp/verify/src
+
+head -3 go.mod   # check required Go version (e.g., go 1.25.8)
+
+# Install build dependencies (versions must match release.yml at the tagged commit)
+go install github.com/matryer/moq@66a933417c1a7ca1302529db332fecbf77e166d9  # v0.6.0
+
+# Build with goreleaser — must match CI's goreleaser version (check release.yml)
+# Use GOTOOLCHAIN to pin the Go compiler if your system Go differs from go.mod
+GOTOOLCHAIN=go1.25.8 goreleaser release --clean --skip=publish,sign
 ```
 
 <Tip>
-`go build` alone will not produce a matching binary. GoReleaser's `mod_timestamp` setting normalizes Go module file timestamps to the commit timestamp before compilation, which changes the build output. This is what makes CI builds deterministic across runs — but it means you need GoReleaser to reproduce them locally.
+The `--skip=sign` flag is necessary because cosign keyless signing requires a GitHub Actions OIDC token — it cannot run locally. This does not affect the binary output.
+</Tip>
+
+The archive checksums (`dist/checksums.txt`) will differ from the release `checksums.txt` because tar.gz archives embed timestamps and the SBOMs are regenerated. To verify reproducibility, compare the **extracted binaries**:
+
+```bash
+# Extract and compare the binary from each archive
+tar -xzf /tmp/verify/clawker_0.7.6_linux_arm64.tar.gz -C /tmp/verify clawker
+tar -xzf /tmp/verify/src/dist/clawker_0.7.6_linux_arm64.tar.gz -C /tmp/verify/src/dist clawker
+
+sha256sum /tmp/verify/clawker /tmp/verify/src/dist/clawker
+# Both hashes should match
+```
+
+<Tip>
+`go build` alone will not produce a matching binary — you must use GoReleaser at the correct version at build time.
 </Tip>
 
 ## How the Firewall Works
