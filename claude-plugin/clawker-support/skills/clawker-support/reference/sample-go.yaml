@@ -129,7 +129,6 @@ security:
       - production.cloudflare.docker.com
       - www.envoyproxy.io
       - goreleaser.com
-    enable: true
     rules:
       - action: allow
         dst: github.com
