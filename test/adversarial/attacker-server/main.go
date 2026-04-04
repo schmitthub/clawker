@@ -144,7 +144,7 @@ func main() {
 	mux.HandleFunc("/docs/guides/", injectionHandler)
 	mux.HandleFunc("/docs/getting-started", injectionHandler)
 
-	// Per-test capture endpoints: /c/01 through /c/22
+	// Per-test capture endpoints: /c/{id} — one per payloadSpec entry
 	mux.HandleFunc("/c/", captureRouter)
 
 	// Payload download endpoints — each spec gets its own benign path
