@@ -137,30 +137,45 @@ clawker firewall list
 ### Step 3: Research — mandatory, never skip
 
 **You MUST complete this research phase before recommending any config changes.**
-Do not guess at config syntax, field names, or behavior. Fetch real-time data:
+Do not guess at config syntax, field names, or behavior.
 
-1. **Config schema** — Fetch `https://docs.clawker.dev/configuration` for the
-   current config field names, types, defaults, and descriptions. This is
-   deterministically generated from the schema struct tags and is always up to
-   date. **Never rely on field names or types from memory — always fetch.**
+1. **Reference config samples (read first)** — Read both
+   `reference/sample-go.yaml` and `reference/sample-node.yaml`. These are
+   working configs that show real-world structure, section relationships,
+   injection patterns, and firewall rule styles. Read both even if the user's
+   stack doesn't match either — together they demonstrate the full range of
+   config patterns applicable to any base image. Use them to understand how
+   to structure config for the user's situation.
 
-2. **Settings schema** — If the user's question involves settings, also fetch
+2. **Live config reference** — If the bundled samples seem stale or you need
+   the latest working config, fetch
+   `https://raw.githubusercontent.com/schmitthub/clawker/refs/heads/main/.clawker.yaml`
+   for the current production config straight from the repo.
+
+3. **Config schema (authoritative fallback)** — Fetch
+   `https://docs.clawker.dev/configuration` for field-level details: exact
+   field names, types, defaults, and descriptions. This is deterministically
+   generated from schema struct tags and is always up to date. **Use this to
+   verify field names and types — the reference samples show structure, the
+   docs site is the authority on individual fields.**
+
+4. **Settings schema** — If the user's question involves settings, also fetch
    `https://docs.clawker.dev/configuration#user-settings-reference` for the
    current settings fields. See `reference/settings.md`.
 
-3. **Dockerfile template** — Read `reference/Dockerfile.tmpl` (bundled with
+5. **Dockerfile template** — Read `reference/Dockerfile.tmpl` (bundled with
    this skill). This is the actual Go template that generates the Dockerfile.
    It shows you exactly what each config section produces and in what order.
    Look for execution order, root vs user context, and injection points.
 
-4. **Project config** — If the user's question involves project config
+6. **Project config** — If the user's question involves project config
    discovery, layering, or build behavior, read `reference/project-config.md`.
 
-5. **MCP recipes** — If setting up an MCP server, read
+7. **MCP recipes** — If setting up an MCP server, read
    `reference/mcp-recipes.md` for the methodology, then research the specific
    MCP's documentation (GitHub repo, npm/PyPI page, official docs).
 
-6. **External research** — For anything the user needs installed or configured,
+8. **External research** — For anything the user needs installed or configured,
    research it fresh:
    - Package info: correct package names for the project's base image distro
    - Base image docs: what's included, what package manager it uses
@@ -168,7 +183,7 @@ Do not guess at config syntax, field names, or behavior. Fetch real-time data:
    - Language runtime docs: install method, build tools, registries
    - **Do not assume you know any of this — look it up.**
 
-7. **Troubleshooting** — If diagnosing an error, start with
+9. **Troubleshooting** — If diagnosing an error, start with
    `reference/troubleshooting.md` as the entry point. It routes to
    domain-specific troubleshooting sections in other reference files:
    - Build failures, config not taking effect → `reference/project-config.md`
@@ -177,12 +192,12 @@ Do not guess at config syntax, field names, or behavior. Fetch real-time data:
    - Global issues (firewall, credentials, container start) stay in
      `reference/troubleshooting.md`
 
-8. **Known issues** — Always check `reference/known-issues.md` when diagnosing
-   a problem. The user's issue may be a known bug with a documented workaround.
+10. **Known issues** — Always check `reference/known-issues.md` when diagnosing
+    a problem. The user's issue may be a known bug with a documented workaround.
 
-9. **Other topics** — For monitoring, worktrees, loop mode, or other features,
-   fetch `https://docs.clawker.dev/llms.txt` for the docs index, then fetch
-   the relevant page.
+11. **Other topics** — For monitoring, worktrees, loop mode, or other features,
+    fetch `https://docs.clawker.dev/llms.txt` for the docs index, then fetch
+    the relevant page.
 
 ### Step 4: Analyze — classify and decide placement
 
