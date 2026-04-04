@@ -30,19 +30,8 @@ Similarly, **clawker does not attempt to inspect egress traffic for sensitive co
 
 Instead, clawker takes the only approach that actually works: **deny the connection entirely.** If the agent gets coerced into exfiltrating data, the firewall blocks the egress — it doesn't matter what's in the payload because the payload never leaves. If it gets coerced into destructive file operations, container isolation limits the blast radius to the mounted workspace. The injection can change the agent's intent, but it can't change the container's constraints.
 
-### A note on supply chain attacks
+## Supply Chain Security
 
-There is an inherent risk of using third party packages and libraries during software development, especially recently. Clawker itself, claude code, and anything you put in your container could become victim to complex supply chain attacks. Developing in containers does actually help keep your system safer, but it doesn't eliminate the risk. 
-
-For example had you been using trivy or litellm in a container with restricted egress... 
-
-**trivy.** The stolen data is encrypted using a hybrid AES-256-CBC + RSA scheme and bundled into a tpcp.tar.gz archive, then exfiltrated via HTTP POST to a typosquatted domain scan.aquasecurtiy[.]org.
-
-**litellm.** Stolen data is decoded then encrypted using AES-256-CBC with a randomly generated session key. That session key is subsequently encrypted using a hard-coded RSA public key embedded in the payload. The encrypted data and key are packaged into an archive (tpcp.tar.gz) and exfiltrated to a remote endpoint controlled by the attacker, including the domains models[.]litellm[.]cloud and checkmarx[.]zone. 
-
-Regardless of how or if your container became infected, or what obfuscation and packaging they used... the exfiltration would have failed and cleaning the infection would involve simply building a new image with patched packages, and creating a fresh container.  
-
-<Note>
 The clawker project leverages every version pinning and integrity check opportunity in CI, its infra containers, and embedded dockerfile template. SCA and SAST scanning checks are used in CI.
 
 The release pipeline specifically:
@@ -52,9 +41,67 @@ The release pipeline specifically:
 - **SHA256 checksums.** GoReleaser generates a `checksums.txt` containing SHA256 hashes for every release artifact.
 - **Cosign keyless signing.** The checksums file is signed using [Sigstore Cosign](https://docs.sigstore.dev/) in keyless mode (OIDC identity from the GitHub Actions workflow). This produces a Sigstore bundle (`.sigstore.json`) published as a release asset — anyone can verify the signature ties the checksums to the repository, workflow, and git ref that produced them.
 - **SBOM generation.** A Software Bill of Materials is generated for every release archive using [Syft](https://github.com/anchore/syft), cataloging every dependency bundled into the binary.
-- **GitHub artifact attestation.** [SLSA build provenance](https://slsa.dev/) attestations are generated via GitHub's `attest-build-provenance` action, binding the checksums to the workflow run, runner environment, and source commit. These can be verified with `gh attestation verify`.
+- **GitHub artifact attestation.** [SLSA build provenance](https://slsa.dev/) attestations are generated via GitHub's `attest-build-provenance` action, binding each release artifact to the workflow run, runner environment, and source commit.
 - **Tag integrity.** Release tags must be valid semver and must point to a commit on the `main` branch — the workflow rejects tags on feature branches or arbitrary commits.
+- **Immutable releases.** GitHub tag protection rules prevent tags from being deleted or force-pushed. Once a release is published, its artifacts, checksums, and attestations are frozen — a compromised CI pipeline cannot silently replace a previously published binary.
+- **Signed commits.** All commits to the main branch must be GPG or SSH signed. Branch protection rules enforce signature verification — unsigned or unverified commits are rejected at push time.
+
+<Note>
+There is an inherent risk of using third party packages and libraries during software development, especially recently. Clawker itself, claude code, and anything you put in your container could become victim to complex supply chain attacks. Developing in containers does actually help keep your system safer, but it doesn't eliminate the risk. 
+
+For example had you been using trivy or litellm in a container with restricted egress... 
+
+**trivy.** The stolen data is encrypted using a hybrid AES-256-CBC + RSA scheme and bundled into a tpcp.tar.gz archive, then exfiltrated via HTTP POST to a typosquatted domain scan.aquasecurtiy[.]org.
+
+**litellm.** Stolen data is decoded then encrypted using AES-256-CBC with a randomly generated session key. That session key is subsequently encrypted using a hard-coded RSA public key embedded in the payload. The encrypted data and key are packaged into an archive (tpcp.tar.gz) and exfiltrated to a remote endpoint controlled by the attacker, including the domains models[.]litellm[.]cloud and checkmarx[.]zone. 
+
+Regardless of how or if your container became infected, or what obfuscation and packaging they used... the exfiltration would have failed and cleaning the infection would involve simply building a new image with patched packages, and creating a fresh container.  
 </Note>
+
+### Verifying a release
+
+Download a release artifact and verify its build provenance attestation:
+
+```bash
+gh release download v0.7.6 --repo schmitthub/clawker \
+  --pattern 'clawker_0.7.6_linux_arm64.tar.gz' --dir /tmp/verify
+tar -xzf /tmp/verify/clawker_0.7.6_linux_arm64.tar.gz -C /tmp/verify
+
+# Verify SLSA build provenance (requires gh >= 2.49)
+gh attestation verify /tmp/verify/clawker --repo schmitthub/clawker
+```
+
+This confirms the artifact was built by the `release.yml` workflow from the exact tagged commit on a GitHub-hosted runner. The attestation is signed via Sigstore (keyless OIDC tied to the GitHub Actions identity).
+
+You can also verify the cosign signature on the checksums file:
+
+```bash
+gh release download v0.7.6 --repo schmitthub/clawker \
+  --pattern 'checksums.txt*' --dir /tmp/verify
+
+cosign verify-blob \
+  --bundle /tmp/verify/checksums.txt.sigstore.json \
+  /tmp/verify/checksums.txt \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'github.com/schmitthub/clawker'
+```
+
+### Reproducing a build
+
+Given the same source commit, Go version, and [GoReleaser](https://goreleaser.com/) version (matching CI), you can produce a bit-for-bit identical binary. The required Go version is the `go` directive in `go.mod` at the tagged commit — this is what CI uses via `go-version-file: go.mod`. You can also check what Go version was used to compile an existing binary with `go version <binary>`.
+
+```bash
+git clone https://github.com/schmitthub/clawker.git && cd clawker
+git checkout v0.7.6
+head -3 go.mod                              # check required Go version
+go install github.com/matryer/moq@v0.6.0   # required by go generate, check tagged commit's release.yml for version
+goreleaser build --single-target
+sha256sum dist/clawker_linux_*/clawker      # compare against checksums.txt
+```
+
+<Tip>
+`go build` alone will not produce a matching binary. GoReleaser's `mod_timestamp` setting normalizes Go module file timestamps to the commit timestamp before compilation, which changes the build output. This is what makes CI builds deterministic across runs — but it means you need GoReleaser to reproduce them locally.
+</Tip>
 
 ## How the Firewall Works
 

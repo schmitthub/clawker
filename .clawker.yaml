@@ -127,6 +127,9 @@ security:
       - production.cloudflare.docker.com
       - www.envoyproxy.io
       - goreleaser.com
+      - tuf-repo.github.com
+      - tuf-repo-cdn.sigstore.dev
+      - tmaproduction.blob.core.windows.net
     rules:
       - action: allow
         dst: github.com
