@@ -15,6 +15,7 @@ package config
 var requiredFirewallRules = []EgressRule{
 	// Claude Code — API and OAuth
 	{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "claude.com", Proto: "tls", Port: 443, Action: "allow"},
 	{Dst: "platform.claude.com", Proto: "tls", Port: 443, Action: "allow"},
 	{Dst: ".claude.ai", Proto: "tls", Port: 443, Action: "allow"},
 	// Claude Code — MCP proxy
