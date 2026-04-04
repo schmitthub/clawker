@@ -149,6 +149,14 @@ security:
         path_rules:
           - path: /syft/releases/
             action: allow
+      - action: allow
+        dst: raw.githubusercontent.com
+        port: 443
+        proto: tls
+        path_default: deny
+        path_rules:
+          - path: /schmitthub/clawker/
+            action: allow
   git_credentials:
     copy_git_config: true
     forward_gpg: true

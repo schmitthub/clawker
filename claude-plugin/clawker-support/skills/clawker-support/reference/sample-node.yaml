@@ -69,15 +69,7 @@ security:
         proto: tls
         path_default: deny
         path_rules:
-          - path: /anchore/syft/main/
-            action: allow
-      - action: allow
-        dst: toolbox-data.anchore.io
-        port: 443
-        proto: tls
-        path_default: deny
-        path_rules:
-          - path: /syft/releases/
+          - path: /schmitthub/clawker/
             action: allow
     git_credentials:
       copy_git_config: true
