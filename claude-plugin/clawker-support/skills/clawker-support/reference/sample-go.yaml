@@ -1,3 +1,6 @@
+# Reference: Go project config (clawker's own .clawker.yaml)
+# Manually maintained — may lag behind schema. Fetch
+# https://docs.clawker.dev/configuration for field-level details.
 agent:
   claude_code:
     config:
