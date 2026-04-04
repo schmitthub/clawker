@@ -22,10 +22,11 @@ build:
       - ENV PATH="$PATH:/usr/local/go/bin:/home/${USERNAME}/go/bin"
   instructions:
     root_run:
-      - |
+      - |-
         ARCH=$(dpkg --print-architecture) && \
           curl -fsSL "https://golang.org/dl/go1.26.1.linux-${ARCH}.tar.gz" | tar -C /usr/local -xzf - \
           && echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile.d/go.sh
+      - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
       - uv tool install pre-commit --with pre-commit-uv
@@ -121,6 +122,22 @@ security:
         dst: github.com
         port: 22
         proto: ssh
+      - action: allow
+        dst: raw.githubusercontent.com
+        port: 443
+        proto: tls
+        path_default: deny
+        path_rules:
+          - path: /anchore/syft/main/
+            action: allow
+      - action: allow
+        dst: toolbox-data.anchore.io
+        port: 443
+        proto: tls
+        path_default: deny
+        path_rules:
+          - path: /syft/releases/
+            action: allow
   git_credentials:
     copy_git_config: true
     forward_gpg: true

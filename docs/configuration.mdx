@@ -236,7 +236,7 @@ security:
         port: <integer>  # default: n/a | required: false
         # Allow or deny traffic to this destination (default: allow)
         action: <string>  # default: n/a | required: false
-        # Fine-grained HTTP path filtering when proto is http (requires MITM inspection)
+        # Fine-grained path filtering (works with proto tls and http)
         path_rules:  # default: n/a | required: false
           # URL path prefix to match (e.g. /v1/api, /repos/myorg)
           - path: <string>  # default: n/a | required: false
