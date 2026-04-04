@@ -75,7 +75,7 @@ type HostProxyService interface {
 ```go
 func NewManager(cfg config.Config) (*Manager, error)       // validates port; returns error for invalid config
 func NewDaemon(cfg config.Config, opts ...DaemonOption) (*Daemon, error) // reads all settings from cfg.HostProxyConfig()
-func NewServer(port int) *Server
+func NewServer(port int, log *logger.Logger, rulesFilePath string) *Server // rulesFilePath empty = no egress enforcement
 func NewSessionStore() *SessionStore  // Starts cleanup goroutine; must call Stop()
 func NewCallbackChannel(store *SessionStore) *CallbackChannel
 ```

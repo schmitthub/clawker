@@ -269,7 +269,7 @@ func TestDaemon_ClosesDockerClient(t *testing.T) {
 	daemon := &Daemon{
 		cfg:                configmocks.NewBlankConfig(),
 		log:                logger.Nop(),
-		server:             NewServer(0, logger.Nop()), // Use port 0 to get random available port
+		server:             NewServer(0, logger.Nop(), ""), // Use port 0 to get random available port
 		docker:             mock,
 		pollInterval:       10 * time.Millisecond,
 		gracePeriod:        0, // No grace period for faster test

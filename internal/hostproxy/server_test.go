@@ -135,14 +135,14 @@ func TestServerOpenURLEndpoint(t *testing.T) {
 }
 
 func TestServerPort(t *testing.T) {
-	s := NewServer(12345, logger.Nop())
+	s := NewServer(12345, logger.Nop(), "")
 	if s.Port() != 12345 {
 		t.Errorf("expected port 12345, got %d", s.Port())
 	}
 }
 
 func TestServerIsRunning(t *testing.T) {
-	s := NewServer(0, logger.Nop())
+	s := NewServer(0, logger.Nop(), "")
 	if s.IsRunning() {
 		t.Error("expected server to not be running initially")
 	}
@@ -186,7 +186,7 @@ func TestServerOpenURLBodySizeLimit(t *testing.T) {
 // --- Callback endpoint tests ---
 
 func TestServerCallbackRegister(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -286,7 +286,7 @@ func TestServerCallbackRegister(t *testing.T) {
 }
 
 func TestServerCallbackGetData(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	defer s.Stop(context.Background())
 
 	// Register a session first
@@ -359,7 +359,7 @@ func TestServerCallbackGetData(t *testing.T) {
 }
 
 func TestServerCallbackDelete(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	defer s.Stop(context.Background())
 
 	session, _ := s.callbackChannel.Register(8080, "/callback", 5*time.Minute)
@@ -403,7 +403,7 @@ func TestServerCallbackDelete(t *testing.T) {
 }
 
 func TestServerCallbackCapture(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	defer s.Stop(context.Background())
 
 	t.Run("capture valid callback", func(t *testing.T) {
@@ -482,7 +482,7 @@ func TestServerCallbackCapture(t *testing.T) {
 }
 
 func TestServerStopCleansUpSessions(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 
 	// Create some sessions
 	s.callbackChannel.Register(8080, "/callback", 5*time.Minute)
@@ -501,7 +501,7 @@ func TestServerStopCleansUpSessions(t *testing.T) {
 }
 
 func TestServer_DynamicListenerStartStop(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -574,7 +574,7 @@ func TestServer_DynamicListenerStartStop(t *testing.T) {
 }
 
 func TestServer_DynamicListenerCapture(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -626,7 +626,7 @@ func TestServer_DynamicListenerCapture(t *testing.T) {
 }
 
 func TestServer_DynamicListenerCaptureIPv6(t *testing.T) {
-	s := NewServer(18374, logger.Nop())
+	s := NewServer(18374, logger.Nop(), "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

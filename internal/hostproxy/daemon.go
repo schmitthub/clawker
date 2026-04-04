@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -48,7 +49,7 @@ type DaemonOption func(*Daemon)
 // WithDaemonPort overrides the daemon listen port.
 func WithDaemonPort(port int) DaemonOption {
 	return func(d *Daemon) {
-		d.server = NewServer(port, d.log)
+		d.server = NewServer(port, d.log, d.server.rulesFilePath)
 	}
 }
 
@@ -91,6 +92,15 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 		return nil, fmt.Errorf("failed to resolve host proxy PID file path: %w", err)
 	}
 
+	// Resolve egress rules file path for URL egress enforcement.
+	// If the firewall data dir is unavailable, skip enforcement (rulesFilePath stays empty).
+	var rulesFilePath string
+	if dataDir, err := cfg.FirewallDataSubdir(); err != nil {
+		log.Warn().Err(err).Msg("failed to resolve firewall data dir; egress enforcement disabled for /open/url")
+	} else {
+		rulesFilePath = filepath.Join(dataDir, cfg.EgressRulesFileName())
+	}
+
 	dockerClient, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
@@ -99,7 +109,7 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 	d := &Daemon{
 		cfg:                cfg,
 		log:                log,
-		server:             NewServer(daemonCfg.Port, log),
+		server:             NewServer(daemonCfg.Port, log, rulesFilePath),
 		docker:             dockerClient,
 		pidFile:            pidFile,
 		pollInterval:       daemonCfg.PollInterval,

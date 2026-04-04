@@ -10,7 +10,7 @@
 | Task | Status | Agent |
 |------|--------|-------|
 | Task 1: Egress rule matching library | `complete` | — |
-| Task 2: Wire into `/open/url` handler | `pending` | — |
+| Task 2: Wire into `/open/url` handler | `complete` | — |
 | Task 3: Sanitize git credential newline injection | `pending` | — |
 | Task 4: Tests | `pending` | — |
 | Task 5: Adversarial validation | `pending` | — |
@@ -18,6 +18,12 @@
 ## Key Learnings
 
 (Agents append here as they complete tasks)
+
+### Task 2
+- `WithDaemonPort` reads `d.server.rulesFilePath` rather than storing a duplicate on `Daemon` — linter caught the duplication, type-design-analyzer confirmed it was the right fix.
+- HTTP 403 response uses generic "blocked by egress policy" message — do NOT leak internal error details (file paths, rule structure) to the container-side caller.
+- `host-open.sh` uses `curl -sf` which suppresses HTTP error response bodies — a future task should update the script to handle 403 explicitly and show actionable guidance (`clawker firewall add <domain>`).
+- `FirewallDataSubdir()` error must be logged, not silently swallowed — egress enforcement silently disabled is a security degradation.
 
 ### Task 1
 - `normalizeEgressRule` must match `firewall.normalizeRule` exactly — only TLS gets port defaulting (443). HTTP port 80 comes from `schemeToProto` on the URL side, not rule normalization.

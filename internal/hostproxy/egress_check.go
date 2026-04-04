@@ -39,7 +39,7 @@ type egressRulesFile struct {
 // rules in rulesFilePath. Returns nil if allowed, an error describing the block
 // reason otherwise. The rules file is read on every call (no caching) with a
 // read flock (shared lock) to coordinate with the firewall daemon's writes.
-func CheckURLAgainstEgressRules(targetURL string, rulesFilePath string) error {
+func CheckURLAgainstEgressRules(targetURL, rulesFilePath string) error {
 	parsed, err := url.Parse(targetURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
@@ -119,8 +119,8 @@ func readEgressRules(path string) ([]egressRule, error) {
 }
 
 // matchRules checks if the given host/proto/port/path combination is allowed by
-// any rule. First matching rule wins (consistent with Envoy filter chain
-// evaluation). Returns nil if allowed, an error if blocked or no matching rule.
+// any rule. Returns on the first dst+proto+port match (linear scan). Returns
+// nil if allowed, an error if blocked or no matching rule.
 func matchRules(rules []egressRule, host, proto string, port int, path string) error {
 	for _, r := range rules {
 		r = normalizeEgressRule(r)
@@ -166,7 +166,7 @@ func checkPathRules(rules []pathRule, pathDefault, host, urlPath string) error {
 		}
 	}
 
-	// No path rule matched; use path_default (conservative: deny if unset).
+	// No path rule matched; use path_default (fail-closed: deny if unset).
 	if action == "" {
 		action = pathDefault
 		if action == "" {

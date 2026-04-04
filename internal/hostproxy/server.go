@@ -32,6 +32,7 @@ type dynamicListener struct {
 type Server struct {
 	port             int
 	log              *logger.Logger
+	rulesFilePath    string         // egress rules file path; empty = skip check (firewall disabled)
 	listeners        []net.Listener // IPv4 and optionally IPv6 listeners
 	servers          []*http.Server // One server per listener
 	mu               sync.RWMutex
@@ -43,11 +44,12 @@ type Server struct {
 }
 
 // NewServer creates a new host proxy server on the specified port.
-func NewServer(port int, log *logger.Logger) *Server {
+func NewServer(port int, log *logger.Logger, rulesFilePath string) *Server {
 	sessionStore := NewSessionStore()
 	s := &Server{
 		port:             port,
 		log:              log,
+		rulesFilePath:    rulesFilePath,
 		sessionStore:     sessionStore,
 		callbackChannel:  NewCallbackChannel(sessionStore, log),
 		dynamicListeners: make(map[int]*dynamicListener),
@@ -400,6 +402,19 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 			Error:   "only http and https URLs are allowed",
 		})
 		return
+	}
+
+	// Enforce egress rules if configured (firewall enabled).
+	if s.rulesFilePath != "" {
+		if err := CheckURLAgainstEgressRules(req.URL, s.rulesFilePath); err != nil {
+			s.log.Warn().Err(err).Str("url", req.URL).Msg("blocked by egress rules")
+			s.writeJSON(w, http.StatusForbidden, openURLResponse{
+				Success: false,
+				URL:     req.URL,
+				Error:   "blocked by egress policy",
+			})
+			return
+		}
 	}
 
 	s.log.Debug().Str("url", req.URL).Msg("opening URL in browser")
