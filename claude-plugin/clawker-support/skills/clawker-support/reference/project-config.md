@@ -33,6 +33,25 @@ overrides win over project config.
 Fetch `https://docs.clawker.dev/configuration` for the current merge
 behavior, field-level precedence details, and available merge strategies.
 
+## Reference Config Samples
+
+Working config samples are in standalone files to avoid bloating this
+reference when loaded into context.
+
+| File | Stack | Notes |
+|------|-------|-------|
+| `reference/sample-go.yaml` | Go (clawker's own config) | root_run for syft install, `golang:*` base image, extensive firewall rules, path-level rules |
+| `reference/sample-node.yaml` | Node.js | NVM-based setup, pnpm/typescript, env_file usage, leaner firewall |
+
+**Read both samples** when helping a user — even if their stack doesn't match
+either one exactly. Together they demonstrate the full range of config
+patterns (root_run vs user_run, env_file vs from_env, inject points,
+firewall rule styles, path-level rules) that apply to any base image. Use
+both to deduce the right structure for the user's specific stack.
+
+**These samples are manually maintained** — they may lag behind the schema.
+For field-level details, defaults, and types, always fetch the docs site.
+
 ## How to get the current schema
 
 **Never guess at project config field names or types.** The project config
@@ -41,6 +60,8 @@ schema is deterministically documented at:
 `https://docs.clawker.dev/configuration`
 
 **Always fetch this page** before recommending any project config changes.
+The reference samples show real-world structure; the docs site is
+authoritative for field names, types, and defaults.
 
 ### Reading the YAML schema
 

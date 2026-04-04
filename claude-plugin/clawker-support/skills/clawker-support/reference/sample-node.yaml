@@ -1,0 +1,80 @@
+# Reference: Node.js project config
+# Manually maintained — may lag behind schema. Fetch
+# https://docs.clawker.dev/configuration for field-level details.
+agent:
+  claude_code:
+    config:
+      strategy: copy
+    use_host_auth: true
+  editor: vim
+  enable_shared_dir: true
+  env_file:
+    - .env
+  from_env:
+    - GH_TOKEN
+    - CONTEXT7_API_KEY
+  env:
+    NODE_USE_SYSTEM_CA: 1
+  post_init: |
+    claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@e9d21915660a66f8532260c527ab6afae94a6bd5 serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+    claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
+    claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
+build:
+  image: node:24-bookworm
+  packages:
+    - ripgrep
+    - ca-certificates
+    - openssh-client
+  inject:
+    after_user_switch:
+      - ENV NVM_DIR="/home/${USERNAME}/.nvm"
+      - ENV NODE_VERSION="24"
+  instructions:
+    user_run:
+      - curl -LsSf https://astral.sh/uv/install.sh | sh
+      - uv tool install pre-commit --with pre-commit-uv
+      - curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+      - |
+          . "$NVM_DIR/nvm.sh" && \
+          nvm install $NODE_VERSION && \
+          nvm use $NODE_VERSION && \
+          nvm alias default $NODE_VERSION
+      - |
+          . "$NVM_DIR/nvm.sh" && \
+          npm install -g pnpm typescript
+      - |
+          echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.zshrc && \
+          echo '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"' >> ~/.zshrc && \
+          echo '[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"' >> ~/.zshrc
+security:
+  docker_socket: false
+  firewall:
+    add_domains:
+      - registry.npmjs.org
+      - github.com
+      - api.github.com
+      - docs.astro.build
+      - mcp.deepwiki.com
+      - mcp.context7.com
+      - files.pythonhosted.org
+      - api.cloudflare.com
+    rules:
+      - action: allow
+        dst: github.com
+        port: 22
+        proto: ssh
+      - action: allow
+        dst: raw.githubusercontent.com
+        port: 443
+        proto: tls
+        path_default: deny
+        path_rules:
+          - path: /schmitthub/clawker/
+            action: allow
+    git_credentials:
+      copy_git_config: true
+      forward_gpg: true
+      forward_https: true
+      forward_ssh: true
+workspace:
+  default_mode: bind

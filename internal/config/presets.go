@@ -106,10 +106,34 @@ security:
       - index.crates.io
 `
 
-const typescriptPreset = `build:
-  image: "node:22-bookworm"
+const typescriptPreset = `agent:
+  env:
+    NODE_USE_SYSTEM_CA: 1
+build:
+  image: "node:24-bookworm"
   packages:
     - ripgrep
+    - ca-certificates
+    - openssh-client
+  inject:
+    after_user_switch:
+      - ENV NVM_DIR="/home/${USERNAME}/.nvm"
+      - ENV NODE_VERSION="24"
+  instructions:
+    user_run:
+      - curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+      - |
+          . "$NVM_DIR/nvm.sh" && \
+          nvm install $NODE_VERSION && \
+          nvm use $NODE_VERSION && \
+          nvm alias default $NODE_VERSION
+      - |
+          . "$NVM_DIR/nvm.sh" && \
+          npm install -g pnpm typescript
+      - |
+          echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.bashrc && \
+          echo '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"' >> ~/.bashrc && \
+          echo '[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"' >> ~/.bashrc
 security:
   firewall:
     add_domains:

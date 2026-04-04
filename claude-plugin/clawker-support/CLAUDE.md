@@ -2,18 +2,29 @@
 
 See `../CLAUDE.md` for general Claude Code skill plugin conventions.
 
-## Core Principle: No Concrete Details
+## Core Principle: Minimal Concrete Details
 
-This skill intentionally avoids concrete configuration details. Configs,
+This skill avoids concrete configuration details where possible. Configs,
 packages, APIs, CLI flags, and tooling evolve constantly. Baking field names,
-YAML examples, domain lists, or flag syntax into the skill produces stale
-guidance that agents treat as authoritative.
+domain lists, or flag syntax into the skill produces stale guidance that agents
+treat as authoritative.
 
 **When concrete details DO appear, they are deliberate and load-bearing.**
-They represent stable architectural concepts (e.g., `agent.post_init` as the
-build-time vs runtime boundary). Do not add new concrete details without
-considering whether they will go stale. If they will, point to a docs URL
-instead.
+They represent either stable architectural concepts (e.g., `agent.post_init`
+as the build-time vs runtime boundary) or curated reference samples that are
+manually kept current.
+
+### Reference config samples
+
+`reference/sample-*.yaml` files contain working `.clawker.yaml` configs for
+different stacks (Go, Node.js). These are standalone YAML files — not inlined
+in markdown — so they only consume context when the agent reads them for a
+relevant task. `project-config.md` has a table pointing to each sample.
+
+Samples are manually maintained and NOT drift-checked. When updating, copy
+from a known-working source. The docs site
+(`https://docs.clawker.dev/configuration`) remains the authoritative schema
+reference and should still be fetched for field-level details.
 
 ### What belongs in skill files
 
@@ -22,15 +33,14 @@ instead.
 - Pointers to live documentation URLs
 - Architectural concepts that are stable (discovery rules, layering model)
 - Gotchas about common mistakes
+- Curated reference config samples (manually maintained, not drift-checked)
 
 ### What does NOT belong in skill files
 
-- Config field names (unless architecturally load-bearing)
-- YAML syntax examples with real values
-- Package names, version numbers, base image names
+- Exhaustive field name lists (point to docs instead)
 - CLI flag syntax (point to docs instead)
 - Domain lists (hardcoded firewall domains, registry URLs)
-- Anything derivable from `https://docs.clawker.dev/configuration`
+- Version numbers or base image digests
 
 ## Plugin Structure
 
@@ -44,6 +54,8 @@ claude-plugin/clawker-support/
     └── reference/
         ├── Dockerfile.tmpl       # Actual Go template (source of truth)
         ├── project-config.md     # Project config discovery, layering, troubleshooting
+        ├── sample-go.yaml        # Reference config: Go project (clawker's own)
+        ├── sample-node.yaml      # Reference config: Node.js project
         ├── settings.md           # User settings schema, troubleshooting
         ├── mcp-recipes.md        # MCP setup methodology, troubleshooting
         ├── troubleshooting.md    # Entry point routing to domain-specific sections

@@ -15,8 +15,9 @@ Code config directory.
 **Where to look for existing MCP declarations:**
 Look for `claude mcp add` commands in `agent.post_init` across the project's
 clawker config layers (local overrides, project config, user-level defaults).
-Fetch `https://docs.clawker.dev/configuration` for the current schema to
-understand all available agent config fields.
+Read the reference config samples (`reference/sample-go.yaml` and
+`reference/sample-node.yaml`) for working examples of `post_init` and agent
+config. Fetch `https://raw.githubusercontent.com/schmitthub/clawker/refs/heads/main/.clawker.yaml` for a live reference, and `https://docs.clawker.dev/configuration` for field-level details.
 
 **Do NOT:**
 - Search the host's Claude Code config for MCP server lists
@@ -80,9 +81,9 @@ requirements, and these change over time.
 ### Classify each dependency
 
 After researching the MCP, you'll have a list of things to install. Classify
-each one using SKILL.md Step 4's decision framework. Fetch the current config
-schema from `https://docs.clawker.dev/configuration` to get the exact field
-names and types for each section.
+each one using SKILL.md Step 4's decision framework. Read the reference config
+samples for working examples of each section, then fetch
+`https://docs.clawker.dev/configuration` if you need field-level details.
 
 ### Why registration must be in post_init (but installation should not)
 
@@ -118,9 +119,9 @@ MCP declared at user level would be set up in every project's container.
 
 ### Environment Variables
 
-If the MCP needs API keys or other secrets, fetch the current config schema
-from `https://docs.clawker.dev/configuration` for the exact field names and
-patterns for passing environment variables to containers. Prefer mechanisms
+If the MCP needs API keys or other secrets, see the reference config samples
+for working examples of `from_env`, `env`, and `env_file` patterns. Fetch
+`https://docs.clawker.dev/configuration` for field-level details if needed. Prefer mechanisms
 that keep secrets out of the config file (forwarding from host env, dotenv
 files in `.gitignore`).
 
@@ -131,8 +132,10 @@ See `reference/known-issues.md` for current env-related caveats.
 **Every external endpoint the MCP calls must be in the firewall allowlist.**
 The firewall is deny-by-default.
 
-Fetch `https://docs.clawker.dev/configuration` for the current firewall config
-syntax. Research the specific domains the MCP needs from its documentation.
+See the reference config samples for working firewall rule examples (both
+`add_domains` and path-level `rules`). Fetch
+`https://docs.clawker.dev/configuration` for field-level details if needed.
+Research the specific domains the MCP needs from its documentation.
 
 **How to find what domains an MCP needs:**
 - Read its docs for API endpoint information
