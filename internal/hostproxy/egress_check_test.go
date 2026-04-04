@@ -3,6 +3,7 @@ package hostproxy
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -111,6 +112,50 @@ func TestCheckURLAgainstEgressRules_EmptyRulesFile(t *testing.T) {
 	}
 }
 
+func TestMatchRules_ExactDenyBeatsWildcardAllow(t *testing.T) {
+	// A wildcard allow for .example.test must NOT shadow an exact deny for example.test.
+	// This is the critical case: exact rules always take priority regardless of order.
+	rules := []egressRule{
+		{Dst: ".example.test", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "example.test", Proto: "tls", Port: 443, Action: "deny"},
+	}
+
+	// Apex must be denied (exact deny wins over wildcard allow).
+	err := matchRules(rules, "example.test", "tls", 443, "/")
+	if err == nil {
+		t.Fatal("expected apex example.test to be denied, got nil")
+	}
+	if !strings.Contains(err.Error(), "denied") {
+		t.Fatalf("expected deny error, got: %v", err)
+	}
+
+	// Subdomain must still be allowed (wildcard covers subdomains).
+	err = matchRules(rules, "sub.example.test", "tls", 443, "/")
+	if err != nil {
+		t.Fatalf("expected subdomain to be allowed, got: %v", err)
+	}
+}
+
+func TestMatchRules_ExactAllowBeatsWildcardDeny(t *testing.T) {
+	// Reverse case: wildcard deny + exact allow. Exact allow must win for apex.
+	rules := []egressRule{
+		{Dst: ".example.test", Proto: "tls", Port: 443, Action: "deny"},
+		{Dst: "example.test", Proto: "tls", Port: 443, Action: "allow"},
+	}
+
+	// Apex must be allowed (exact allow wins).
+	err := matchRules(rules, "example.test", "tls", 443, "/")
+	if err != nil {
+		t.Fatalf("expected apex to be allowed, got: %v", err)
+	}
+
+	// Subdomain must be denied (wildcard deny covers subdomains).
+	err = matchRules(rules, "sub.example.test", "tls", 443, "/")
+	if err == nil {
+		t.Fatal("expected subdomain to be denied, got nil")
+	}
+}
+
 func TestCheckURLAgainstEgressRules_MalformedYAML(t *testing.T) {
 	tmp := t.TempDir()
 	f := filepath.Join(tmp, "bad.yaml")
@@ -124,64 +169,64 @@ func TestCheckURLAgainstEgressRules_MalformedYAML(t *testing.T) {
 	}
 }
 
-func TestDstMatches(t *testing.T) {
+func TestDstMatchType(t *testing.T) {
 	tests := []struct {
 		dst, host string
-		want      bool
+		want      matchKind
 	}{
 		// Domain passthrough
-		{"github.test", "github.test", true},
-		{".claude.test", "api.claude.test", true},
+		{"github.test", "github.test", matchExact},
+		{".claude.test", "api.claude.test", matchWildcard},
 		// IP exact match
-		{"192.168.1.1", "192.168.1.1", true},
-		{"192.168.1.1", "192.168.1.2", false},
+		{"192.168.1.1", "192.168.1.1", matchExact},
+		{"192.168.1.1", "192.168.1.2", matchNone},
 		// IPv6
-		{"::1", "::1", true},
-		{"::1", "::2", false},
+		{"::1", "::1", matchExact},
+		{"::1", "::2", matchNone},
 		// CIDR containment
-		{"10.0.0.0/8", "10.1.2.3", true},
-		{"10.0.0.0/8", "11.0.0.1", false},
-		{"192.168.0.0/16", "192.168.1.1", true},
-		{"192.168.0.0/16", "192.169.0.1", false},
+		{"10.0.0.0/8", "10.1.2.3", matchExact},
+		{"10.0.0.0/8", "11.0.0.1", matchNone},
+		{"192.168.0.0/16", "192.168.1.1", matchExact},
+		{"192.168.0.0/16", "192.169.0.1", matchNone},
 		// IP dst vs domain host (no match)
-		{"192.168.1.1", "example.test", false},
+		{"192.168.1.1", "example.test", matchNone},
 		// Domain dst vs IP host (no match)
-		{"example.test", "192.168.1.1", false},
+		{"example.test", "192.168.1.1", matchNone},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.dst+"_vs_"+tt.host, func(t *testing.T) {
-			got := dstMatches(tt.dst, tt.host)
+			got := dstMatchType(tt.dst, tt.host)
 			if got != tt.want {
-				t.Errorf("dstMatches(%q, %q) = %v, want %v", tt.dst, tt.host, got, tt.want)
+				t.Errorf("dstMatchType(%q, %q) = %v, want %v", tt.dst, tt.host, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestDomainMatches(t *testing.T) {
+func TestDomainMatchType(t *testing.T) {
 	tests := []struct {
 		dst, host string
-		want      bool
+		want      matchKind
 	}{
-		{"github.test", "github.test", true},
-		{"github.test", "GitHub.TEST", true},
-		{"github.test", "api.github.test", false},
-		{".claude.test", "claude.test", true},
-		{".claude.test", "api.claude.test", true},
-		{".claude.test", "deep.sub.claude.test", true},
-		{".claude.test", "notclaude.test", false},
-		{".claude.test", "claude.test.evil.test", false},
-		{"example.test.", "example.test", true}, // trailing dot FQDN
-		{"example.test", "example.test.", true}, // trailing dot on host
-		{".example.test.", "sub.example.test", true},
+		{"github.test", "github.test", matchExact},
+		{"github.test", "GitHub.TEST", matchExact},
+		{"github.test", "api.github.test", matchNone},
+		{".claude.test", "claude.test", matchWildcard},
+		{".claude.test", "api.claude.test", matchWildcard},
+		{".claude.test", "deep.sub.claude.test", matchWildcard},
+		{".claude.test", "notclaude.test", matchNone},
+		{".claude.test", "claude.test.evil.test", matchNone},
+		{"example.test.", "example.test", matchExact}, // trailing dot FQDN
+		{"example.test", "example.test.", matchExact}, // trailing dot on host
+		{".example.test.", "sub.example.test", matchWildcard},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.dst+"_vs_"+tt.host, func(t *testing.T) {
-			got := domainMatches(tt.dst, tt.host)
+			got := domainMatchType(tt.dst, tt.host)
 			if got != tt.want {
-				t.Errorf("domainMatches(%q, %q) = %v, want %v", tt.dst, tt.host, got, tt.want)
+				t.Errorf("domainMatchType(%q, %q) = %v, want %v", tt.dst, tt.host, got, tt.want)
 			}
 		})
 	}

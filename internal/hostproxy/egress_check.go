@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gofrs/flock"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,7 +37,7 @@ type egressRulesFile struct {
 // CheckURLAgainstEgressRules checks whether targetURL is permitted by the egress
 // rules in rulesFilePath. Returns nil if allowed, an error describing the block
 // reason otherwise. The rules file is read on every call (no caching) with a
-// read flock (shared lock) to coordinate with the firewall daemon's writes.
+// The firewall daemon writes atomically (temp+fsync+rename), so no locking needed.
 func CheckURLAgainstEgressRules(targetURL, rulesFilePath string) error {
 	parsed, err := url.Parse(targetURL)
 	if err != nil {
@@ -97,14 +96,10 @@ func schemeToProto(scheme string) (proto string, defaultPort int, err error) {
 	}
 }
 
-// readEgressRules reads and parses the egress rules file under a shared flock.
+// readEgressRules reads and parses the egress rules file. The firewall daemon
+// writes this file atomically (temp+fsync+rename), so concurrent reads always
+// see a complete snapshot — no locking needed.
 func readEgressRules(path string) ([]egressRule, error) {
-	fl := flock.New(path)
-	if err := fl.RLock(); err != nil {
-		return nil, fmt.Errorf("acquiring read lock: %w", err)
-	}
-	defer fl.Unlock() //nolint:errcheck
-
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -119,36 +114,53 @@ func readEgressRules(path string) ([]egressRule, error) {
 }
 
 // matchRules checks if the given host/proto/port/path combination is allowed by
-// any rule. Returns on the first dst+proto+port match (linear scan). Returns
-// nil if allowed, an error if blocked or no matching rule.
+// the rule set. Exact domain matches always take priority over wildcard matches
+// regardless of rule ordering — this prevents a wildcard allow from shadowing
+// an exact deny (or vice versa). Returns nil if allowed, an error if blocked or
+// no matching rule.
 func matchRules(rules []egressRule, host, proto string, port int, path string) error {
-	for _, r := range rules {
-		r = normalizeEgressRule(r)
+	var wildcardMatch *egressRule
 
-		if !dstMatches(r.Dst, host) {
-			continue
-		}
-		if !strings.EqualFold(r.Proto, proto) {
-			continue
-		}
-		if r.Port != port {
+	// Pass 1: find the best match. Exact domain wins; wildcard is fallback.
+	for i := range rules {
+		r := normalizeEgressRule(rules[i])
+
+		if !strings.EqualFold(r.Proto, proto) || r.Port != port {
 			continue
 		}
 
-		// Domain+proto+port matched. Block unless explicitly allowed (fail closed).
-		if !strings.EqualFold(r.Action, "allow") {
-			return fmt.Errorf("domain %q is denied by egress rules", host)
+		matchType := dstMatchType(r.Dst, host)
+		if matchType == matchNone {
+			continue
 		}
 
-		// Rule allows this destination. Check path rules if present.
-		if len(r.PathRules) > 0 {
-			return checkPathRules(r.PathRules, r.PathDefault, host, path)
+		if matchType == matchExact {
+			return evaluateRule(r, host, path)
 		}
 
-		return nil
+		// Wildcard match — remember first one as fallback.
+		if wildcardMatch == nil {
+			normalized := r
+			wildcardMatch = &normalized
+		}
+	}
+
+	if wildcardMatch != nil {
+		return evaluateRule(*wildcardMatch, host, path)
 	}
 
 	return fmt.Errorf("domain %q is not in the egress allow list", host)
+}
+
+// evaluateRule checks a matched rule's action and path rules.
+func evaluateRule(r egressRule, host, path string) error {
+	if !strings.EqualFold(r.Action, "allow") {
+		return fmt.Errorf("domain %q is denied by egress rules", host)
+	}
+	if len(r.PathRules) > 0 {
+		return checkPathRules(r.PathRules, r.PathDefault, host, path)
+	}
+	return nil
 }
 
 // checkPathRules evaluates path-level rules using longest-prefix matching.
@@ -195,47 +207,64 @@ func normalizeEgressRule(r egressRule) egressRule {
 	return r
 }
 
-// dstMatches checks if host matches the rule destination. Handles three cases:
-//   - IP exact match: dst "192.168.1.1" matches host "192.168.1.1"
-//   - CIDR containment: dst "10.0.0.0/8" matches host "10.1.2.3"
-//   - Domain match: exact or wildcard (see domainMatches)
-func dstMatches(dst, host string) bool {
+// matchKind classifies how a rule destination matched a host.
+type matchKind int
+
+const (
+	matchNone     matchKind = iota // no match
+	matchWildcard                  // wildcard suffix match (.example.com → sub.example.com)
+	matchExact                     // exact domain, IP, or CIDR match
+)
+
+// dstMatchType returns how host matches the rule destination dst.
+func dstMatchType(dst, host string) matchKind {
 	// Try CIDR match first (dst contains "/").
 	if strings.Contains(dst, "/") {
 		prefix, err := netip.ParsePrefix(dst)
 		if err == nil {
 			hostIP, err := netip.ParseAddr(host)
-			if err == nil {
-				return prefix.Contains(hostIP)
+			if err == nil && prefix.Contains(hostIP) {
+				return matchExact
 			}
 		}
-		return false
+		return matchNone
 	}
 
 	// Try IP exact match (dst parses as an IP address).
 	if dstIP, err := netip.ParseAddr(dst); err == nil {
 		hostIP, err := netip.ParseAddr(host)
-		if err == nil {
-			return dstIP == hostIP
+		if err == nil && dstIP == hostIP {
+			return matchExact
 		}
-		return false
+		return matchNone
 	}
 
-	return domainMatches(dst, host)
+	return domainMatchType(dst, host)
 }
 
-// domainMatches checks if host matches a domain rule destination.
-// Wildcard rules start with "." (e.g., ".claude.ai") and match any subdomain
-// as well as the bare domain itself.
-func domainMatches(dst, host string) bool {
+// domainMatchType classifies how host matches a domain rule destination.
+// Wildcard rules start with "." (e.g., ".claude.ai") and match subdomains.
+// A wildcard also matches the bare apex ONLY as a fallback — exact rules
+// for the apex always take priority (enforced by matchRules' two-pass scan).
+func domainMatchType(dst, host string) matchKind {
 	dst = strings.ToLower(strings.TrimSuffix(dst, "."))
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 
 	if !strings.HasPrefix(dst, ".") {
-		return dst == host
+		if dst == host {
+			return matchExact
+		}
+		return matchNone
 	}
 
-	// Wildcard: ".claude.ai" matches "claude.ai" and "sub.claude.ai".
+	// Wildcard: ".claude.ai" matches "sub.claude.ai" (wildcard)
+	// and "claude.ai" itself (wildcard fallback — exact rules win if present).
 	bare := dst[1:] // strip leading dot
-	return host == bare || strings.HasSuffix(host, dst)
+	if strings.HasSuffix(host, dst) {
+		return matchWildcard
+	}
+	if host == bare {
+		return matchWildcard
+	}
+	return matchNone
 }

@@ -92,13 +92,16 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 		return nil, fmt.Errorf("failed to resolve host proxy PID file path: %w", err)
 	}
 
-	// Resolve egress rules file path for URL egress enforcement.
-	// If the firewall data dir is unavailable, skip enforcement (rulesFilePath stays empty).
+	// Resolve egress rules file path for URL egress enforcement only when the
+	// global firewall is enabled. When disabled, keep rulesFilePath empty so
+	// /open/url preserves its documented "skip check" behavior.
 	var rulesFilePath string
-	if dataDir, err := cfg.FirewallDataSubdir(); err != nil {
-		log.Warn().Err(err).Msg("failed to resolve firewall data dir; egress enforcement disabled for /open/url")
-	} else {
-		rulesFilePath = filepath.Join(dataDir, cfg.EgressRulesFileName())
+	if cfg.Settings().Firewall.FirewallEnabled() {
+		if dataDir, err := cfg.FirewallDataSubdir(); err != nil {
+			log.Warn().Err(err).Msg("failed to resolve firewall data dir; egress enforcement disabled for /open/url")
+		} else {
+			rulesFilePath = filepath.Join(dataDir, cfg.EgressRulesFileName())
+		}
 	}
 
 	dockerClient, err := client.New(client.FromEnv)

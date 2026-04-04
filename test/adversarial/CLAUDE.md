@@ -20,7 +20,7 @@ Red team infrastructure for testing clawker's security boundaries. The primary w
 │  │ SQLite capture DB │    │  attempts from chat   │  │
 │  └───────────────────┘    └──────────────────────┘  │
 │                                                     │
-│  clawker-adversarial-testnet (bridge network)       │
+│  clawker-net (external bridge network)              │
 │                                                     │
 │  Host Proxy (:18374) — also an attack surface       │
 └─────────────────────────────────────────────────────┘
@@ -96,7 +96,7 @@ cd test/adversarial
 docker compose up -d
 
 # Connect a running clawker container to the testnet
-docker network connect clawker-adversarial-testnet <clawker-container-name>
+docker network connect clawker-net <clawker-container-name>
 
 # Now in the clawker container session, try exfil...
 # The operator tells the agent what to attempt and where to send it
