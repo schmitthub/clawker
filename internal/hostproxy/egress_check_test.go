@@ -50,6 +50,13 @@ func TestCheckURLAgainstEgressRules(t *testing.T) {
 		// --- HTTP without path rules ---
 		{name: "http cdn any path", url: "http://cdn.example.com/assets/img.png", allowed: true},
 
+		// --- IP address rules ---
+		{name: "ip exact match", url: "https://93.184.216.34/resource", allowed: true},
+		{name: "ip wrong address", url: "https://93.184.216.35/resource", allowed: false},
+		{name: "cidr match", url: "https://10.1.2.3/internal", allowed: true},
+		{name: "cidr match edge", url: "https://10.255.255.255/internal", allowed: true},
+		{name: "cidr no match", url: "https://11.0.0.1/internal", allowed: false},
+
 		// --- Non-standard port ---
 		{name: "custom port allowed", url: "https://registry.internal:8443/v2/images", allowed: true},
 		{name: "custom port wrong port", url: "https://registry.internal:443/v2/images", allowed: false},
@@ -113,6 +120,41 @@ func TestCheckURLAgainstEgressRules_MalformedYAML(t *testing.T) {
 	err := CheckURLAgainstEgressRules("https://github.com/", f)
 	if err == nil {
 		t.Fatal("expected error for malformed YAML, got nil")
+	}
+}
+
+func TestDstMatches(t *testing.T) {
+	tests := []struct {
+		dst, host string
+		want      bool
+	}{
+		// Domain passthrough
+		{"github.com", "github.com", true},
+		{".claude.ai", "api.claude.ai", true},
+		// IP exact match
+		{"192.168.1.1", "192.168.1.1", true},
+		{"192.168.1.1", "192.168.1.2", false},
+		// IPv6
+		{"::1", "::1", true},
+		{"::1", "::2", false},
+		// CIDR containment
+		{"10.0.0.0/8", "10.1.2.3", true},
+		{"10.0.0.0/8", "11.0.0.1", false},
+		{"192.168.0.0/16", "192.168.1.1", true},
+		{"192.168.0.0/16", "192.169.0.1", false},
+		// IP dst vs domain host (no match)
+		{"192.168.1.1", "example.com", false},
+		// Domain dst vs IP host (no match)
+		{"example.com", "192.168.1.1", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.dst+"_vs_"+tt.host, func(t *testing.T) {
+			got := dstMatches(tt.dst, tt.host)
+			if got != tt.want {
+				t.Errorf("dstMatches(%q, %q) = %v, want %v", tt.dst, tt.host, got, tt.want)
+			}
+		})
 	}
 }
 

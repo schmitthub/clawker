@@ -2,6 +2,7 @@ package hostproxy
 
 import (
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -124,7 +125,7 @@ func matchRules(rules []egressRule, host, proto string, port int, path string) e
 	for _, r := range rules {
 		r = normalizeEgressRule(r)
 
-		if !domainMatches(r.Dst, host) {
+		if !dstMatches(r.Dst, host) {
 			continue
 		}
 		if !strings.EqualFold(r.Proto, proto) {
@@ -194,7 +195,36 @@ func normalizeEgressRule(r egressRule) egressRule {
 	return r
 }
 
-// domainMatches checks if host matches the rule destination.
+// dstMatches checks if host matches the rule destination. Handles three cases:
+//   - IP exact match: dst "192.168.1.1" matches host "192.168.1.1"
+//   - CIDR containment: dst "10.0.0.0/8" matches host "10.1.2.3"
+//   - Domain match: exact or wildcard (see domainMatches)
+func dstMatches(dst, host string) bool {
+	// Try CIDR match first (dst contains "/").
+	if strings.Contains(dst, "/") {
+		prefix, err := netip.ParsePrefix(dst)
+		if err == nil {
+			hostIP, err := netip.ParseAddr(host)
+			if err == nil {
+				return prefix.Contains(hostIP)
+			}
+		}
+		return false
+	}
+
+	// Try IP exact match (dst parses as an IP address).
+	if dstIP, err := netip.ParseAddr(dst); err == nil {
+		hostIP, err := netip.ParseAddr(host)
+		if err == nil {
+			return dstIP == hostIP
+		}
+		return false
+	}
+
+	return domainMatches(dst, host)
+}
+
+// domainMatches checks if host matches a domain rule destination.
 // Wildcard rules start with "." (e.g., ".claude.ai") and match any subdomain
 // as well as the bare domain itself.
 func domainMatches(dst, host string) bool {

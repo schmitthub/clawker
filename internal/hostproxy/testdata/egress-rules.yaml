@@ -43,6 +43,16 @@ rules:
     dst: docs.clawker.dev
     port: 443
     proto: tls
+  # IP address rule
+  - action: allow
+    dst: "93.184.216.34"
+    port: 443
+    proto: tls
+  # CIDR block rule
+  - action: allow
+    dst: "10.0.0.0/8"
+    port: 443
+    proto: tls
   # --- Test-specific rules below (not typical in production) ---
   # Explicit deny for testing deny logic
   - action: deny
