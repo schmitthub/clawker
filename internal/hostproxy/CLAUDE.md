@@ -141,12 +141,36 @@ func StopDaemon(pidFile) error
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/health` | GET | Health check |
-| `/open/url` | POST | Open URL in host browser |
-| `/git/credential` | POST | Git credential get/store/erase |
+| `/open/url` | POST | Open URL in host browser (egress-checked) |
+| `/git/credential` | POST | Git credential get/store/erase (injection-sanitized) |
 | `/callback/register` | POST | Register OAuth callback session |
 | `/callback/{session}/data` | GET | Poll for captured callback |
 | `/callback/{session}` | DELETE | Cleanup session |
 | `/cb/{session}/{path...}` | GET | Receive OAuth callbacks |
+
+## Egress Enforcement (`egress_check.go`)
+
+The `/open/url` endpoint enforces egress rules before opening URLs in the host browser. This closes a proven exfil vector where a container agent could encode stolen secrets in URL query params and use the host browser as an out-of-band channel (bypassing the Envoy+CoreDNS firewall entirely).
+
+### How it works
+
+1. `handleOpenURL` calls `CheckURLAgainstEgressRules(targetURL, rulesFilePath)` before `openBrowser()`
+2. The function reads `egress-rules.yaml` just-in-time on every request (no caching — rules change at runtime)
+3. File read is protected by shared flock (`gofrs/flock`) to avoid torn reads from concurrent writes
+4. URL is parsed and matched against rules: scheme→proto, host→dst (exact + wildcard), port, path (longest prefix)
+5. If no matching allow rule → 403 "blocked by egress policy"
+6. If `rulesFilePath` is empty (firewall not enabled) → skip check, allow all (backwards compatible)
+
+### Key design decisions
+
+- **Leaf package**: Does NOT import `internal/firewall` or `internal/storage`. Reads YAML directly with `os.ReadFile` + `yaml.Unmarshal`. Mirror types for `EgressRulesFile`/`EgressRule`/`PathRule` are intentional copies.
+- **Fail-closed**: Missing/unreadable rules file → block all URLs. Rule action validation uses `!strings.EqualFold(action, "allow")` to reject typos.
+- **No caching**: Rules are a moving target (CLI adds/removes, project configs merge during startup). Each request reads fresh.
+- **Userinfo rejection**: URLs with `user:pass@host` are rejected — no legitimate browser URL uses this and it enables smuggling.
+
+### Git Credential Injection Protection
+
+`handleGitCredential` rejects requests where any credential field (Protocol, Host, Path, Username, Password) contains `\n`, `\r`, or `\0` (400 response). `formatGitCredentialInput` also sanitizes as defense-in-depth.
 
 ## OAuth Callback Flow
 

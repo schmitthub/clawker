@@ -13,7 +13,7 @@
 | Task 2: Wire into `/open/url` handler | `complete` | — |
 | Task 3: Sanitize git credential newline injection | `complete` | — |
 | Task 4: Tests | `complete` | — |
-| Task 5: Adversarial validation | `pending` | — |
+| Task 5: Adversarial validation | `complete` | — |
 
 ## Key Learnings
 
@@ -44,6 +44,12 @@
 - Action validation should be fail-closed: `!strings.EqualFold(action, "allow")` rather than checking for "deny". Rejects typos like `action: "alow"`.
 - Reject URLs with userinfo (`user:pass@host`) — no legitimate browser URL uses it and it could be used for smuggling.
 - Mirror types are intentional copies, not a design flaw — hostproxy is a leaf package that can't import internal/config.
+
+### Task 5
+- Adversarial validation confirmed all 6 test vectors pass: ngrok exfil (env vars, GH_TOKEN), localhost HTTP/HTTPS exfil, legitimate URL passthrough, git credential newline injection rejection.
+- C2 dashboard confirmed 0 captures — no data reached the attacker server.
+- Cannot verify C2 dashboard from inside container (ngrok.app is blocked by firewall, which is correct behavior) — operator must verify from host.
+- The 403 response body includes the full URL (with encoded secrets) — not an exfil concern since the response goes back to the container that already has those secrets, but worth noting for log hygiene.
 
 ---
 

