@@ -26,7 +26,25 @@ build:
         ARCH=$(dpkg --print-architecture) && \
           curl -fsSL "https://golang.org/dl/go1.26.1.linux-${ARCH}.tar.gz" | tar -C /usr/local -xzf - \
           && echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile.d/go.sh
-      - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+      - |-
+        SYFT_VERSION=v1.42.3 && \
+          ARCH=$(dpkg --print-architecture) && \
+          case "$ARCH" in \
+            amd64) SYFT_ARCH=amd64 ;; \
+            arm64) SYFT_ARCH=arm64 ;; \
+            armhf) SYFT_ARCH=armv7 ;; \
+            *) \
+              echo "Unsupported architecture for Syft: $ARCH" >&2; \
+              exit 1; \
+              ;; \
+          esac && \
+          SYFT_FILE="syft_${SYFT_VERSION#v}_linux_${SYFT_ARCH}.tar.gz" && \
+          CHECKSUMS_FILE="syft_${SYFT_VERSION#v}_checksums.txt" && \
+          curl -fsSLO "https://github.com/anchore/syft/releases/download/${SYFT_VERSION}/${SYFT_FILE}" && \
+          curl -fsSLO "https://github.com/anchore/syft/releases/download/${SYFT_VERSION}/${CHECKSUMS_FILE}" && \
+          grep " ${SYFT_FILE}\$" "${CHECKSUMS_FILE}" | sha256sum -c - && \
+          tar -C /usr/local/bin -xzf "${SYFT_FILE}" syft && \
+          rm -f "${SYFT_FILE}" "${CHECKSUMS_FILE}"
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
       - uv tool install pre-commit --with pre-commit-uv
