@@ -40,7 +40,7 @@ reference when loaded into context.
 
 | File | Stack | Notes |
 |------|-------|-------|
-| `reference/sample-go.yaml` | Go (clawker's own config) | root_run for Go toolchain, syft, extensive firewall rules, path-level rules |
+| `reference/sample-go.yaml` | Go (clawker's own config) | root_run for syft install, `golang:*` base image, extensive firewall rules, path-level rules |
 | `reference/sample-node.yaml` | Node.js | NVM-based setup, pnpm/typescript, env_file usage, leaner firewall |
 
 **Read both samples** when helping a user — even if their stack doesn't match

@@ -117,7 +117,7 @@ build:
     - openssh-client
   inject:
     after_user_switch:
-      - ENV NVM_DIR="/home/claude/.nvm"
+      - ENV NVM_DIR="/home/${USERNAME}/.nvm"
       - ENV NODE_VERSION="24"
   instructions:
     user_run:

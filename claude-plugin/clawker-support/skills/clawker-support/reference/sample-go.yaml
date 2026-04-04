@@ -72,7 +72,6 @@ build:
     - nano
     - vim
     - wget
-    - curl
     - gh
     - locales
     - locales-all
