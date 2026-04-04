@@ -9,7 +9,7 @@
 
 | Task | Status | Agent |
 |------|--------|-------|
-| Task 1: Egress rule matching library | `pending` | — |
+| Task 1: Egress rule matching library | `complete` | — |
 | Task 2: Wire into `/open/url` handler | `pending` | — |
 | Task 3: Sanitize git credential newline injection | `pending` | — |
 | Task 4: Tests | `pending` | — |
@@ -18,6 +18,12 @@
 ## Key Learnings
 
 (Agents append here as they complete tasks)
+
+### Task 1
+- `normalizeEgressRule` must match `firewall.normalizeRule` exactly — only TLS gets port defaulting (443). HTTP port 80 comes from `schemeToProto` on the URL side, not rule normalization.
+- Action validation should be fail-closed: `!strings.EqualFold(action, "allow")` rather than checking for "deny". Rejects typos like `action: "alow"`.
+- Reject URLs with userinfo (`user:pass@host`) — no legitimate browser URL uses it and it could be used for smuggling.
+- Mirror types are intentional copies, not a design flaw — hostproxy is a leaf package that can't import internal/config.
 
 ---
 
