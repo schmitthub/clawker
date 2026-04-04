@@ -238,9 +238,7 @@ go test ./internal/hostproxy/... -v
 
 ### Implementation Phase
 
-1. **Egress check tests** (`egress_check_test.go`):
-   - Write a temp `egress-rules.yaml` with known rules, call `CheckURLAgainstEgressRules`
-   - Test cases: allowed domain, blocked domain, wildcard domain match, wildcard non-match, wrong port, wrong proto, http vs https, path rules (allow path, deny path, default deny, longest prefix), missing rules file (should block or allow? — decide: if firewall data dir missing, block), empty rules file
+1. **Egress check tests** — DONE (shipped with Task 1). 48 test cases in `egress_check_test.go` using `testdata/egress-rules.yaml`.
 2. **Newline injection tests** (`git_credential_test.go`):
    - Test `formatGitCredentialInput` with newlines in host, username, password fields
    - Verify output contains no injected key=value pairs
