@@ -133,7 +133,7 @@ type EgressRule struct {
 	Proto       string     `yaml:"proto,omitempty" label:"Protocol" desc:"Connection protocol: tls (HTTPS, default), tcp (plain), or http (MITM-inspected)"`
 	Port        int        `yaml:"port,omitempty" label:"Port" desc:"Override the default port (443 for TLS, 80 for HTTP)"`
 	Action      string     `yaml:"action,omitempty" label:"Action" desc:"Allow or deny traffic to this destination (default: allow)"`
-	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained HTTP path filtering when proto is http (requires MITM inspection)"`
+	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained path filtering (works with proto tls and http)"`
 	PathDefault string     `yaml:"path_default,omitempty" label:"Path Default" desc:"What to do with HTTP paths that don't match any path rule (allow or deny)"`
 }
 

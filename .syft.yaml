@@ -1,0 +1,17 @@
+exclude:
+  - "./test/adversarial/**"
+  - "./dist/**"
+  - "./bin/**"
+  - "./.clawkerlocal/**"
+
+default-catalogers:
+  - "go-module-file-cataloger"
+  - "file"
+
+file:
+  metadata:
+    selection: "owned-by-package"
+
+source:
+  name: "clawker"
+  version: ""
