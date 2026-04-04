@@ -1,46 +1,46 @@
 rules:
   - action: allow
-    dst: api.anthropic.com
+    dst: api.anthropic.test
     port: 443
     proto: tls
   - action: allow
-    dst: .claude.ai
+    dst: .claude.test
     port: 443
     proto: tls
   - action: allow
-    dst: github.com
+    dst: github.test
     port: 22
     proto: ssh
   - action: allow
-    dst: github.com
+    dst: github.test
     port: 443
     proto: tls
   - action: allow
-    dst: api.github.com
+    dst: api.github.test
     port: 443
     proto: tls
   - action: allow
-    dst: registry-1.docker.io
+    dst: registry-1.docker.test
     port: 443
     proto: tls
   - action: allow
-    dst: proxy.golang.org
+    dst: proxy.golang.test
     port: 443
     proto: tls
   - action: allow
-    dst: sum.golang.org
+    dst: sum.golang.test
     port: 443
     proto: tls
   - action: allow
-    dst: registry.npmjs.org
+    dst: registry.npmjs.test
     port: 443
     proto: tls
   - action: allow
-    dst: pypi.org
+    dst: pypi.test
     port: 443
     proto: tls
   - action: allow
-    dst: docs.clawker.dev
+    dst: docs.clawker.test
     port: 443
     proto: tls
   # IP address rule
@@ -56,7 +56,7 @@ rules:
   # --- Test-specific rules below (not typical in production) ---
   # Explicit deny for testing deny logic
   - action: deny
-    dst: evil.com
+    dst: evil.test
     port: 443
     proto: tls
   # Non-standard port for testing port matching
@@ -66,7 +66,7 @@ rules:
     proto: tls
   # HTTP with path rules for testing path matching
   - action: allow
-    dst: api.example.com
+    dst: api.example.test
     port: 80
     proto: http
     path_default: deny
@@ -79,6 +79,6 @@ rules:
         action: allow
   # HTTP without path rules
   - action: allow
-    dst: cdn.example.com
+    dst: cdn.example.test
     port: 80
     proto: http

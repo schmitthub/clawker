@@ -32,9 +32,10 @@ type dynamicListener struct {
 type Server struct {
 	port             int
 	log              *logger.Logger
-	rulesFilePath    string         // egress rules file path; empty = skip check (firewall disabled)
-	listeners        []net.Listener // IPv4 and optionally IPv6 listeners
-	servers          []*http.Server // One server per listener
+	rulesFilePath    string             // egress rules file path; empty = skip check (firewall disabled)
+	browserFunc      func(string) error // opens URL in host browser; defaults to openBrowser
+	listeners        []net.Listener     // IPv4 and optionally IPv6 listeners
+	servers          []*http.Server     // One server per listener
 	mu               sync.RWMutex
 	running          bool
 	sessionStore     *SessionStore
@@ -50,6 +51,7 @@ func NewServer(port int, log *logger.Logger, rulesFilePath string) *Server {
 		port:             port,
 		log:              log,
 		rulesFilePath:    rulesFilePath,
+		browserFunc:      openBrowser,
 		sessionStore:     sessionStore,
 		callbackChannel:  NewCallbackChannel(sessionStore, log),
 		dynamicListeners: make(map[int]*dynamicListener),
@@ -419,7 +421,11 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 
 	s.log.Debug().Str("url", req.URL).Msg("opening URL in browser")
 
-	if err := openBrowser(req.URL); err != nil {
+	browserFn := s.browserFunc
+	if browserFn == nil {
+		browserFn = openBrowser
+	}
+	if err := browserFn(req.URL); err != nil {
 		s.log.Error().Err(err).Str("url", req.URL).Msg("failed to open URL in browser")
 		s.writeJSON(w, http.StatusInternalServerError, openURLResponse{
 			Success: false,

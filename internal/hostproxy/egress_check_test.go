@@ -15,40 +15,39 @@ func TestCheckURLAgainstEgressRules(t *testing.T) {
 		allowed bool
 	}{
 		// --- Exact domain matches (TLS) ---
-		{name: "github https allowed", url: "https://github.com/schmitthub/clawker", allowed: true},
-		{name: "github https with path", url: "https://github.com/foo/bar/pulls", allowed: true},
-		{name: "api.github.com allowed", url: "https://api.github.com/repos/foo/bar", allowed: true},
-		{name: "anthropic api allowed", url: "https://api.anthropic.com/v1/messages", allowed: true},
-		{name: "proxy.golang.org allowed", url: "https://proxy.golang.org/github.com/foo/@v/list", allowed: true},
-		{name: "docs.clawker.dev allowed", url: "https://docs.clawker.dev/quickstart", allowed: true},
+		{name: "github https allowed", url: "https://github.test/schmitthub/clawker", allowed: true},
+		{name: "github https with path", url: "https://github.test/foo/bar/pulls", allowed: true},
+		{name: "api.github.test allowed", url: "https://api.github.test/repos/foo/bar", allowed: true},
+		{name: "anthropic api allowed", url: "https://api.anthropic.test/v1/messages", allowed: true},
+		{name: "proxy.golang.test allowed", url: "https://proxy.golang.test/github.test/foo/@v/list", allowed: true},
+		{name: "docs.clawker.test allowed", url: "https://docs.clawker.test/quickstart", allowed: true},
 
 		// --- Wildcard domain matches ---
-		{name: "wildcard subdomain", url: "https://api.claude.ai/v1/messages", allowed: true},
-		{name: "wildcard bare domain", url: "https://claude.ai/", allowed: true},
-		{name: "wildcard deep subdomain", url: "https://us-east.api.claude.ai/chat", allowed: true},
-		{name: "wildcard no match suffix", url: "https://notclaude.ai/", allowed: false},
-		{name: "wildcard no match embedded", url: "https://claude.ai.evil.com/", allowed: false},
+		{name: "wildcard subdomain", url: "https://api.claude.test/v1/messages", allowed: true},
+		{name: "wildcard bare domain", url: "https://claude.test/", allowed: true},
+		{name: "wildcard deep subdomain", url: "https://us-east.api.claude.test/chat", allowed: true},
+		{name: "wildcard no match suffix", url: "https://notclaude.test/", allowed: false},
+		{name: "wildcard no match embedded", url: "https://claude.test.evil.test/", allowed: false},
 
 		// --- Explicit deny ---
-		{name: "denied domain", url: "https://evil.com/exfil?data=stolen", allowed: false},
+		{name: "denied domain", url: "https://evil.test/exfil?data=stolen", allowed: false},
 
 		// --- Exfil scenarios (must be blocked) ---
-		{name: "ngrok exfil blocked", url: "https://abc123.ngrok.app/c/16?c=c2VjcmV0cw==", allowed: false},
-		{name: "attacker domain blocked", url: "https://attacker.com/c/16?c=secrets", allowed: false},
+		{name: "unknown domain blocked", url: "https://attacker.test/c/16?c=secrets", allowed: false},
 		{name: "localhost https blocked", url: "https://localhost:8443/c/01", allowed: false},
 		{name: "localhost http blocked", url: "http://localhost:8080/c/01", allowed: false},
-		{name: "random domain blocked", url: "https://random-exfil-server.com/", allowed: false},
+		{name: "random domain blocked", url: "https://random-exfil-server.test/", allowed: false},
 
 		// --- HTTP with path rules ---
-		{name: "http path allowed", url: "http://api.example.com/v1/messages", allowed: true},
-		{name: "http path denied admin", url: "http://api.example.com/v1/admin/users", allowed: false},
-		{name: "http path health", url: "http://api.example.com/health", allowed: true},
-		{name: "http path healthcheck subpath", url: "http://api.example.com/healthcheck", allowed: true},
-		{name: "http path default deny", url: "http://api.example.com/secret/data", allowed: false},
-		{name: "http path root denied", url: "http://api.example.com/", allowed: false},
+		{name: "http path allowed", url: "http://api.example.test/v1/messages", allowed: true},
+		{name: "http path denied admin", url: "http://api.example.test/v1/admin/users", allowed: false},
+		{name: "http path health", url: "http://api.example.test/health", allowed: true},
+		{name: "http path healthcheck subpath", url: "http://api.example.test/healthcheck", allowed: true},
+		{name: "http path default deny", url: "http://api.example.test/secret/data", allowed: false},
+		{name: "http path root denied", url: "http://api.example.test/", allowed: false},
 
 		// --- HTTP without path rules ---
-		{name: "http cdn any path", url: "http://cdn.example.com/assets/img.png", allowed: true},
+		{name: "http cdn any path", url: "http://cdn.example.test/assets/img.png", allowed: true},
 
 		// --- IP address rules ---
 		{name: "ip exact match", url: "https://93.184.216.34/resource", allowed: true},
@@ -62,18 +61,20 @@ func TestCheckURLAgainstEgressRules(t *testing.T) {
 		{name: "custom port wrong port", url: "https://registry.internal:443/v2/images", allowed: false},
 		{name: "custom port default 443", url: "https://registry.internal/v2/images", allowed: false},
 
-		// --- Proto mismatch ---
-		{name: "http to tls-only domain", url: "http://github.com/foo", allowed: false},
-		{name: "https to http-only domain", url: "https://api.example.com/v1/foo", allowed: false},
-		{name: "https to ssh-only entry", url: "https://github.com:22/foo", allowed: false},
+		// --- Same domain, different proto/port are separate rules ---
+		{name: "github tls 443 allowed", url: "https://github.test/repo", allowed: true},
+		{name: "github port 22 not matched by tls 443 rule", url: "https://github.test:22/repo", allowed: false},
+		{name: "github http 80 not allowed", url: "http://github.test/foo", allowed: false},
+		{name: "api.example.test http 80 allowed", url: "http://api.example.test/v1/ok", allowed: true},
+		{name: "api.example.test https 443 not allowed", url: "https://api.example.test/v1/ok", allowed: false},
 
 		// --- Unsupported schemes ---
-		{name: "ftp rejected", url: "ftp://github.com/file", allowed: false},
+		{name: "ftp rejected", url: "ftp://github.test/file", allowed: false},
 		{name: "javascript rejected", url: "javascript:alert(1)", allowed: false},
 
 		// --- Malformed URLs ---
-		{name: "userinfo rejected", url: "https://user:pass@github.com/", allowed: false},
-		{name: "opaque rejected", url: "mailto:user@example.com", allowed: false},
+		{name: "userinfo rejected", url: "https://user:pass@github.test/", allowed: false},
+		{name: "opaque rejected", url: "mailto:user@example.test", allowed: false},
 		{name: "no host rejected", url: "https:///path", allowed: false},
 	}
 
@@ -91,7 +92,7 @@ func TestCheckURLAgainstEgressRules(t *testing.T) {
 }
 
 func TestCheckURLAgainstEgressRules_MissingFile(t *testing.T) {
-	err := CheckURLAgainstEgressRules("https://github.com/", "/nonexistent/egress-rules.yaml")
+	err := CheckURLAgainstEgressRules("https://github.test/", "/nonexistent/egress-rules.yaml")
 	if err == nil {
 		t.Fatal("expected error for missing rules file, got nil")
 	}
@@ -104,7 +105,7 @@ func TestCheckURLAgainstEgressRules_EmptyRulesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := CheckURLAgainstEgressRules("https://github.com/", f)
+	err := CheckURLAgainstEgressRules("https://github.test/", f)
 	if err == nil {
 		t.Fatal("expected block with empty rules, got nil")
 	}
@@ -117,7 +118,7 @@ func TestCheckURLAgainstEgressRules_MalformedYAML(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := CheckURLAgainstEgressRules("https://github.com/", f)
+	err := CheckURLAgainstEgressRules("https://github.test/", f)
 	if err == nil {
 		t.Fatal("expected error for malformed YAML, got nil")
 	}
@@ -129,8 +130,8 @@ func TestDstMatches(t *testing.T) {
 		want      bool
 	}{
 		// Domain passthrough
-		{"github.com", "github.com", true},
-		{".claude.ai", "api.claude.ai", true},
+		{"github.test", "github.test", true},
+		{".claude.test", "api.claude.test", true},
 		// IP exact match
 		{"192.168.1.1", "192.168.1.1", true},
 		{"192.168.1.1", "192.168.1.2", false},
@@ -143,9 +144,9 @@ func TestDstMatches(t *testing.T) {
 		{"192.168.0.0/16", "192.168.1.1", true},
 		{"192.168.0.0/16", "192.169.0.1", false},
 		// IP dst vs domain host (no match)
-		{"192.168.1.1", "example.com", false},
+		{"192.168.1.1", "example.test", false},
 		// Domain dst vs IP host (no match)
-		{"example.com", "192.168.1.1", false},
+		{"example.test", "192.168.1.1", false},
 	}
 
 	for _, tt := range tests {
@@ -163,17 +164,17 @@ func TestDomainMatches(t *testing.T) {
 		dst, host string
 		want      bool
 	}{
-		{"github.com", "github.com", true},
-		{"github.com", "GitHub.COM", true},
-		{"github.com", "api.github.com", false},
-		{".claude.ai", "claude.ai", true},
-		{".claude.ai", "api.claude.ai", true},
-		{".claude.ai", "deep.sub.claude.ai", true},
-		{".claude.ai", "notclaude.ai", false},
-		{".claude.ai", "claude.ai.evil.com", false},
-		{"example.com.", "example.com", true}, // trailing dot FQDN
-		{"example.com", "example.com.", true}, // trailing dot on host
-		{".example.com.", "sub.example.com", true},
+		{"github.test", "github.test", true},
+		{"github.test", "GitHub.TEST", true},
+		{"github.test", "api.github.test", false},
+		{".claude.test", "claude.test", true},
+		{".claude.test", "api.claude.test", true},
+		{".claude.test", "deep.sub.claude.test", true},
+		{".claude.test", "notclaude.test", false},
+		{".claude.test", "claude.test.evil.test", false},
+		{"example.test.", "example.test", true}, // trailing dot FQDN
+		{"example.test", "example.test.", true}, // trailing dot on host
+		{".example.test.", "sub.example.test", true},
 	}
 
 	for _, tt := range tests {
@@ -193,9 +194,9 @@ func TestNormalizeEgressRule(t *testing.T) {
 		wantProto, wantAction string
 		wantPort              int
 	}{
-		{"empty defaults to tls/allow/443", egressRule{Dst: "example.com"}, "tls", "allow", 443},
-		{"http proto keeps port 0", egressRule{Dst: "example.com", Proto: "http"}, "http", "allow", 0},
-		{"explicit values preserved", egressRule{Dst: "x.com", Proto: "tls", Port: 8443, Action: "deny"}, "tls", "deny", 8443},
+		{"empty defaults to tls/allow/443", egressRule{Dst: "example.test"}, "tls", "allow", 443},
+		{"http proto keeps port 0", egressRule{Dst: "example.test", Proto: "http"}, "http", "allow", 0},
+		{"explicit values preserved", egressRule{Dst: "x.test", Proto: "tls", Port: 8443, Action: "deny"}, "tls", "deny", 8443},
 	}
 
 	for _, tt := range tests {

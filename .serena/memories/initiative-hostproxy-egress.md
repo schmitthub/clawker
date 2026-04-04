@@ -12,7 +12,7 @@
 | Task 1: Egress rule matching library | `complete` | — |
 | Task 2: Wire into `/open/url` handler | `complete` | — |
 | Task 3: Sanitize git credential newline injection | `complete` | — |
-| Task 4: Tests | `pending` | — |
+| Task 4: Tests | `complete` | — |
 | Task 5: Adversarial validation | `pending` | — |
 
 ## Key Learnings
@@ -31,6 +31,13 @@
 - Rejection logged at Warn level (security-relevant event) — not Debug, because injection attempts are anomalous.
 - `Action` field excluded from injection check — already validated by switch statement and never written to wire format.
 - Code-simplifier refactored the 5-field check into a loop (`for _, field := range []string{...}`).
+
+### Task 4
+- Added `browserFunc func(string) error` field to `Server` for DI testability — defaults to `openBrowser` in `NewServer`, nil-guarded at call site.
+- Integration tests for `/open/url` egress blocking: allowed domain → 200 + browser called, blocked domain → 403 + browser not called, no rules file → skip check, missing rules file → fail-closed 403.
+- Shared mutable test state (`browserCalled` outside subtest loop) is fragile — moved inside each subtest iteration to be parallel-safe.
+- Pre-existing issues noted for future work: `dstMatches` silently swallows malformed CIDR parse errors (security concern); `normalizeEgressRule` does not default HTTP port to 80 (asymmetry with TLS/443 defaulting — footgun for operators).
+- Test-hunter flagged `TestSchemeToProto` and `TestNormalizeEgressRule` as linter-replaceable/integration-obvious — pre-existing from Task 1, left in place but noted.
 
 ### Task 1
 - `normalizeEgressRule` must match `firewall.normalizeRule` exactly — only TLS gets port defaulting (443). HTTP port 80 comes from `schemeToProto` on the URL side, not rule normalization.
@@ -251,7 +258,7 @@ go test ./internal/hostproxy/... -v
 
 ### Implementation Phase
 
-1. **Egress check tests** — DONE (shipped with Task 1). 48 test cases in `egress_check_test.go` using `testdata/egress-rules.yaml`.
+1. **Egress check tests** — NEEDS REVIEW (shipped with Task 1). 48 test cases in `egress_check_test.go` using `testdata/egress-rules.yaml`. Ensure path length matching, wildcard vs exact domain matching, proto/port matching, Same domain different ports / proto are honored and separate, and default deny logic are all covered.
 2. **Newline injection tests** (`git_credential_test.go`):
    - Test `formatGitCredentialInput` with newlines in host, username, password fields
    - Verify output contains no injected key=value pairs
