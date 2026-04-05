@@ -720,7 +720,7 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 			}
 		}
 	}
-	require.True(t, foundListener, "tls_egress listener must be present in generated config")
+	require.True(t, foundListener, "egress listener must be present in generated config")
 	require.True(t, checkedRoutes, "at least one TLS route must be inspected")
 }
 
