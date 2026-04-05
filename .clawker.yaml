@@ -7,6 +7,7 @@ agent:
   enable_shared_dir: true
   env:
     CLAWKER_TEST_DIR: .clawkerlocal/.test-tmp
+    NODE_USE_SYSTEM_CA: 1
   from_env:
     - GH_TOKEN
     - CONTEXT7_API_KEY
@@ -19,6 +20,7 @@ build:
   image: golang:1.26-bookworm
   instructions:
     root_run:
+      - npm install -g wscat
       - |-
         GH_VERSION=2.89.0 && \
           ARCH=$(dpkg --print-architecture) && \
@@ -168,14 +170,6 @@ security:
         port: 22
         proto: ssh
       - action: allow
-        dst: raw.githubusercontent.com
-        port: 443
-        proto: tls
-        path_default: deny
-        path_rules:
-          - path: /anchore/syft/main/
-            action: allow
-      - action: allow
         dst: toolbox-data.anchore.io
         port: 443
         proto: tls
@@ -189,7 +183,11 @@ security:
         proto: tls
         path_default: deny
         path_rules:
+          - path: /anchore/syft/main/
+            action: allow
           - path: /schmitthub/clawker/
+            action: allow
+          - path: /envoyproxy/
             action: allow
   git_credentials:
     copy_git_config: true

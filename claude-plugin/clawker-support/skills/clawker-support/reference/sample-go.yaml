@@ -140,7 +140,11 @@ security:
         proto: tls
         path_default: deny
         path_rules:
+          - path: /anchore/syft/main/
+            action: allow
           - path: /schmitthub/clawker/
+            action: allow
+          - path: /envoyproxy/
             action: allow
   git_credentials:
     copy_git_config: true

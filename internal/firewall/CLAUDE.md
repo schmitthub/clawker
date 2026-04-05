@@ -2,6 +2,12 @@
 
 Domain contracts, Docker implementation, daemon, certificates, and network management for the Envoy+CoreDNS firewall stack.
 
+<critical>
+## Envoy References
+See `.claude/rules/envoy.md` for all Envoy references, documentation links, and configuration guidelines.
+That rule is auto-loaded when touching `envoy.go`, `envoy_test.go`, or `manager.go`.
+</critical>
+
 ## Contents
 
 | File | Purpose |
