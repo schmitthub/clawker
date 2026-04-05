@@ -152,7 +152,7 @@ func TestGenerateEnvoyConfig_HTTPListener(t *testing.T) {
 	assert.Contains(t, out, "http_egress_routes")
 	assert.Contains(t, out, "example.com")
 	assert.Contains(t, out, "deny_all")
-	assert.Contains(t, out, "dynamic_forward_proxy_cluster")
+	assert.Contains(t, out, "http_example_com")
 }
 
 func TestGenerateEnvoyConfig_MixedHTTPAndTLS(t *testing.T) {
@@ -189,19 +189,19 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	assert.Empty(t, warnings)
 
 	out := string(yamlBytes)
-	// Per-domain TLS cluster with isolated connection pool.
-	assert.Contains(t, out, "dfp_tls_api_anthropic_com")
-	assert.Contains(t, out, "dfp_dns_api_anthropic_com")
+	// Per-domain LOGICAL_DNS cluster with upstream TLS re-encryption.
+	assert.Contains(t, out, "tls_api_anthropic_com")
+	assert.Contains(t, out, "type: LOGICAL_DNS")
 	assert.Contains(t, out, "envoy.extensions.upstreams.http.v3.HttpProtocolOptions")
 	assert.Contains(t, out, "auto_sni: true")
 	assert.Contains(t, out, "auto_san_validation: true")
 	assert.Contains(t, out, "auto_config")
 	assert.Contains(t, out, "http2_protocol_options: {}")
-	// WebSocket upgrade uses custom filter chain to force HTTP/1.1 upstream ALPN
-	// while preserving DFP routing and port enforcement from parent filters.
+	// WebSocket upgrade uses custom filter chain to force HTTP/1.1 upstream ALPN.
 	assert.Contains(t, out, "upgrade_type: websocket")
 	assert.Contains(t, out, "envoy.network.application_protocols")
-	assert.Contains(t, out, "envoy.filters.http.dynamic_forward_proxy")
+	// No DFP filter — LOGICAL_DNS clusters don't need it.
+	assert.NotContains(t, out, "envoy.filters.http.dynamic_forward_proxy")
 }
 
 func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {
@@ -538,18 +538,16 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 
 	out := string(yamlBytes)
 
-	// Per-domain TLS cluster must exist with upstream TLS context for re-encryption.
-	assert.Contains(t, out, "dfp_tls_api_anthropic_com",
+	// Per-domain LOGICAL_DNS cluster must exist with upstream TLS context for re-encryption.
+	assert.Contains(t, out, "tls_api_anthropic_com",
 		"per-domain TLS cluster must be present for upstream re-encryption after MITM termination")
 	assert.Contains(t, out, "UpstreamTlsContext",
 		"TLS cluster must have UpstreamTlsContext for upstream re-encryption")
 	assert.Contains(t, out, "ca-certificates.crt",
 		"TLS cluster must validate upstream certificates against system CA bundle")
 
-	// The plaintext cluster must also exist (for HTTP routes).
-	assert.Contains(t, out, "dynamic_forward_proxy_cluster")
-
-	// Per-domain TLS cluster must have its own DNS cache for connection isolation.
+	// Per-domain TLS cluster uses LOGICAL_DNS — upstream host is the domain itself,
+	// not derived from the Host header (prevents confused deputy attacks).
 	var cfg map[string]any
 	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
 
@@ -559,8 +557,10 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 	var foundTLSCluster bool
 	for _, c := range clusters {
 		cl := c.(map[string]any)
-		if cl["name"] == "dfp_tls_api_anthropic_com" {
+		if cl["name"] == "tls_api_anthropic_com" {
 			foundTLSCluster = true
+			assert.Equal(t, "LOGICAL_DNS", cl["type"],
+				"TLS cluster must use LOGICAL_DNS for domain-pinned routing")
 			ts := cl["transport_socket"].(map[string]any)
 			assert.Equal(t, "envoy.transport_sockets.tls", ts["name"])
 			tc := ts["typed_config"].(map[string]any)
@@ -617,7 +617,7 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 						if routeTarget, ok := route["route"].(map[string]any); ok {
 							checkedRoutes = true
 							clusterName := routeTarget["cluster"].(string)
-							assert.Truef(t, strings.HasPrefix(clusterName, "dfp_tls_"),
+							assert.Truef(t, strings.HasPrefix(clusterName, "tls_"),
 								"TLS filter chain routes must use a per-domain TLS cluster, got %q", clusterName)
 						}
 					}
@@ -630,8 +630,8 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 }
 
 // TestGenerateEnvoyConfig_PerDomainClusterIsolation verifies that domains sharing
-// the same IP get separate DFP clusters with isolated DNS caches, preventing HTTP/2
-// connection pool reuse that causes SAN validation failures.
+// the same IP get separate LOGICAL_DNS clusters, preventing HTTP/2 connection pool
+// reuse that causes SAN validation failures.
 func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 	t.Parallel()
 
@@ -650,24 +650,21 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 	sr := cfg["static_resources"].(map[string]any)
 	clusters := sr["clusters"].([]any)
 
-	// Each domain must have its own TLS cluster with its own DNS cache.
-	clusterNames := make(map[string]string) // cluster name → dns cache name
+	// Each domain must have its own LOGICAL_DNS cluster.
+	clusterNames := make(map[string]bool)
 	for _, c := range clusters {
 		cl := c.(map[string]any)
 		name := cl["name"].(string)
-		if !strings.HasPrefix(name, "dfp_tls_") {
+		if !strings.HasPrefix(name, "tls_") {
 			continue
 		}
-		ct := cl["cluster_type"].(map[string]any)
-		tc := ct["typed_config"].(map[string]any)
-		dc := tc["dns_cache_config"].(map[string]any)
-		clusterNames[name] = dc["name"].(string)
+		assert.Equal(t, "LOGICAL_DNS", cl["type"],
+			"TLS cluster %s must be LOGICAL_DNS", name)
+		clusterNames[name] = true
 	}
 
-	assert.Contains(t, clusterNames, "dfp_tls_api_anthropic_com")
-	assert.Contains(t, clusterNames, "dfp_tls_mcp_proxy_anthropic_com")
-	assert.Equal(t, "dfp_dns_api_anthropic_com", clusterNames["dfp_tls_api_anthropic_com"])
-	assert.Equal(t, "dfp_dns_mcp_proxy_anthropic_com", clusterNames["dfp_tls_mcp_proxy_anthropic_com"])
+	assert.Contains(t, clusterNames, "tls_api_anthropic_com")
+	assert.Contains(t, clusterNames, "tls_mcp_proxy_anthropic_com")
 
 	// Each filter chain must route to its own domain-specific cluster.
 	listeners := sr["listeners"].([]any)
@@ -698,7 +695,7 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 			routeAction := route["route"].(map[string]any)
 			cluster := routeAction["cluster"].(string)
 
-			expectedCluster := "dfp_tls_" + sanitizeName(domain)
+			expectedCluster := "tls_" + sanitizeName(domain)
 			assert.Equalf(t, expectedCluster, cluster,
 				"filter chain for %s must route to its own per-domain cluster", domain)
 		}
@@ -753,8 +750,9 @@ func TestGenerateEnvoyConfig_HTTPRoutesToPlaintextCluster(t *testing.T) {
 						route := r.(map[string]any)
 						if routeTarget, ok := route["route"].(map[string]any); ok {
 							checkedRoutes = true
-							assert.Equal(t, "dynamic_forward_proxy_cluster", routeTarget["cluster"],
-								"HTTP filter chain routes must use the plaintext cluster (no upstream TLS)")
+							clusterName := routeTarget["cluster"].(string)
+							assert.Truef(t, strings.HasPrefix(clusterName, "http_"),
+								"HTTP filter chain routes must use a per-domain HTTP cluster, got %q", clusterName)
 						}
 					}
 				}
@@ -807,12 +805,17 @@ func TestGenerateEnvoyConfig_WildcardAndExactHTTPNoDuplicateVirtualHostNames(t *
 
 	for _, l := range listeners {
 		lis := l.(map[string]any)
-		if lis["name"] != "http_egress" {
+		if lis["name"] != "egress" {
 			continue
 		}
 		chains := lis["filter_chains"].([]any)
 		for _, fc := range chains {
 			chain := fc.(map[string]any)
+			// Find the raw_buffer (HTTP) filter chain.
+			fcm, _ := chain["filter_chain_match"].(map[string]any)
+			if fcm["transport_protocol"] != "raw_buffer" {
+				continue
+			}
 			filters := chain["filters"].([]any)
 			for _, f := range filters {
 				filter := f.(map[string]any)
@@ -835,12 +838,62 @@ func TestGenerateEnvoyConfig_WildcardAndExactHTTPNoDuplicateVirtualHostNames(t *
 	}
 }
 
-func TestGenerateEnvoyConfig_TLSPortEnforcement(t *testing.T) {
+// TestGenerateEnvoyConfig_TLSClusterPortPinning verifies that each per-domain TLS
+// cluster uses the port from the rule config as its endpoint port_value — not derived
+// from the Host header. This is the security fix: LOGICAL_DNS endpoints have fixed
+// ports, eliminating the confused deputy attack via Host header port manipulation.
+func TestGenerateEnvoyConfig_TLSClusterPortPinning(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
 		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
 		{Dst: "custom.example.com", Proto: "tls", Port: 8443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	clusters := sr["clusters"].([]any)
+
+	portByCluster := make(map[string]int)
+	for _, c := range clusters {
+		cl := c.(map[string]any)
+		name := cl["name"].(string)
+		if !strings.HasPrefix(name, "tls_") {
+			continue
+		}
+		la := cl["load_assignment"].(map[string]any)
+		eps := la["endpoints"].([]any)
+		lbEps := eps[0].(map[string]any)["lb_endpoints"].([]any)
+		ep := lbEps[0].(map[string]any)["endpoint"].(map[string]any)
+		addr := ep["address"].(map[string]any)["socket_address"].(map[string]any)
+		portByCluster[name] = addr["port_value"].(int)
+	}
+
+	assert.Equal(t, 443, portByCluster["tls_api_anthropic_com"],
+		"cluster for api.anthropic.com must use port 443")
+	assert.Equal(t, 8443, portByCluster["tls_custom_example_com"],
+		"cluster for custom.example.com must use port 8443")
+
+	// No DFP port enforcement filter needed — ports are hardcoded in cluster endpoints.
+	out := string(yamlBytes)
+	assert.NotContains(t, out, "envoy.upstream.dynamic_port",
+		"LOGICAL_DNS clusters don't need dynamic port filter state")
+}
+
+// TestGenerateEnvoyConfig_SimplifiedFilterChains verifies the new architecture
+// has minimal http_filters: just the router. No DFP filter, no port enforcement.
+func TestGenerateEnvoyConfig_SimplifiedFilterChains(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -861,88 +914,21 @@ func TestGenerateEnvoyConfig_TLSPortEnforcement(t *testing.T) {
 		chains := lis["filter_chains"].([]any)
 		for _, fc := range chains {
 			chain := fc.(map[string]any)
-			if chain["transport_socket"] == nil {
+			// Skip deny chain (uses tcp_proxy, no http_filters).
+			fcm, _ := chain["filter_chain_match"].(map[string]any)
+			if len(fcm) == 0 {
 				continue
 			}
 			filters := chain["filters"].([]any)
-			for _, f := range filters {
-				filter := f.(map[string]any)
-				tc := filter["typed_config"].(map[string]any)
+			hcm := filters[0].(map[string]any)
+			tc := hcm["typed_config"].(map[string]any)
+			httpFilters := tc["http_filters"].([]any)
 
-				httpFilters := tc["http_filters"].([]any)
-				require.GreaterOrEqual(t, len(httpFilters), 3,
-					"TLS filter chain must have set_filter_state + DFP + router")
-
-				sfs := httpFilters[0].(map[string]any)
-				assert.Equal(t, "envoy.filters.http.set_filter_state", sfs["name"],
-					"first HTTP filter must be set_filter_state for port enforcement")
-
-				dfp := httpFilters[1].(map[string]any)
-				assert.Equal(t, "envoy.filters.http.dynamic_forward_proxy", dfp["name"])
-				dfpTC := dfp["typed_config"].(map[string]any)
-				assert.Equal(t, true, dfpTC["allow_dynamic_host_from_filter_state"],
-					"DFP must enable filter state so it reads the pinned port")
-			}
-		}
-	}
-}
-
-func TestGenerateEnvoyConfig_TLSPortEnforcementValues(t *testing.T) {
-	t.Parallel()
-
-	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: "custom.example.com", Proto: "tls", Port: 8443, Action: "allow"},
-	}
-	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
-
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
-	require.NoError(t, err)
-
-	out := string(yamlBytes)
-	assert.Contains(t, out, "inline_string: \"443\"")
-	assert.Contains(t, out, "inline_string: \"8443\"")
-	assert.Contains(t, out, "envoy.upstream.dynamic_port")
-	assert.Contains(t, out, "envoy.filters.http.set_filter_state")
-}
-
-func TestGenerateEnvoyConfig_HTTPListenerNoDFPFilterState(t *testing.T) {
-	t.Parallel()
-
-	rules := []config.EgressRule{
-		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
-	}
-	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
-
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
-	require.NoError(t, err)
-
-	var cfg map[string]any
-	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
-
-	sr := cfg["static_resources"].(map[string]any)
-	listeners := sr["listeners"].([]any)
-
-	for _, l := range listeners {
-		lis := l.(map[string]any)
-		if lis["name"] != "http_egress" {
-			continue
-		}
-		chains := lis["filter_chains"].([]any)
-		for _, fc := range chains {
-			chain := fc.(map[string]any)
-			filters := chain["filters"].([]any)
-			for _, f := range filters {
-				filter := f.(map[string]any)
-				tc := filter["typed_config"].(map[string]any)
-				httpFilters := tc["http_filters"].([]any)
-
-				assert.Len(t, httpFilters, 2, "HTTP listener should have DFP + router only")
-				dfp := httpFilters[0].(map[string]any)
-				dfpTC := dfp["typed_config"].(map[string]any)
-				assert.Nil(t, dfpTC["allow_dynamic_host_from_filter_state"],
-					"HTTP listener DFP should not enable filter state override")
-			}
+			// Both TLS and HTTP filter chains should have router only.
+			assert.Len(t, httpFilters, 1,
+				"filter chain should have router only (no DFP, no port enforcement)")
+			router := httpFilters[0].(map[string]any)
+			assert.Equal(t, "envoy.filters.http.router", router["name"])
 		}
 	}
 }

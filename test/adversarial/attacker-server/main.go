@@ -4,14 +4,11 @@
 package main
 
 import (
-	"bufio"
 	"compress/gzip"
 	crand "crypto/rand"
-	"crypto/sha1" //nolint:gosec // required by RFC 6455 WebSocket handshake
 	"crypto/tls"
 	"database/sql"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -26,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	_ "modernc.org/sqlite"
 )
 
@@ -142,6 +140,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/echo", echoHandler)
+	mux.HandleFunc("/ws/echo", wsEchoHandler)
 
 	// Injection endpoints
 	mux.HandleFunc("/docs/guides", injectionListHandler)
@@ -299,7 +299,24 @@ func captureRouter(w http.ResponseWriter, r *http.Request) {
 	insertCapture(testID, "http", port, transport, decoded)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "test": testID, "bytes": len(decoded)})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":        "captured",
+		"test":          testID,
+		"decode_type":   spec.Decode,
+		"desc":          spec.Desc,
+		"bytes":         len(decoded),
+		"preview":       truncate(decoded, 200),
+		"method":        r.Method,
+		"path":          r.URL.Path,
+		"query":         r.URL.RawQuery,
+		"proto":         r.Proto,
+		"host":          r.Host,
+		"remote_addr":   r.RemoteAddr,
+		"tls":           r.TLS != nil,
+		"content_type":  r.Header.Get("Content-Type"),
+		"forwarded_port": port,
+		"ts":            time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 func decodeCapture(r *http.Request, decodeType string) string {
@@ -763,11 +780,17 @@ func startICMPListener() {
 }
 
 // ---------------------------------------------------------------
-// WebSocket listener — test 31
+// WebSocket (gorilla/websocket — supports H2 via RFC 8441)
 // ---------------------------------------------------------------
 
+// wsUpgrader is shared across all WebSocket endpoints.
+var wsUpgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+	CheckOrigin:     func(*http.Request) bool { return true }, // Accept all origins (test server).
+}
+
 // wsRouter handles WebSocket upgrade requests on /ws/{testID}.
-// Implements RFC 6455 handshake and frame reading with no external dependencies.
 func wsRouter(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/ws/")
 	testID, err := strconv.Atoi(idStr)
@@ -776,183 +799,62 @@ func wsRouter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify this is a WebSocket upgrade request.
-	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") ||
-		!headerContains(r.Header, "Connection", "upgrade") {
-		http.Error(w, "expected websocket upgrade", http.StatusBadRequest)
-		return
-	}
-
-	key := r.Header.Get("Sec-WebSocket-Key")
-	if key == "" {
-		http.Error(w, "missing Sec-WebSocket-Key", http.StatusBadRequest)
-		return
-	}
-
-	// Hijack the connection for raw TCP access.
-	hj, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "server does not support hijacking", http.StatusInternalServerError)
-		return
-	}
-	conn, bufrw, err := hj.Hijack()
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("WebSocket upgrade failed (test=%d): %v", testID, err)
 		return
 	}
 	defer conn.Close()
 
-	// Complete the WebSocket handshake (RFC 6455 §4.2.2).
-	accept := wsAcceptKey(key)
-	bufrw.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
-	bufrw.WriteString("Upgrade: websocket\r\n")
-	bufrw.WriteString("Connection: Upgrade\r\n")
-	bufrw.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n")
-	bufrw.WriteString("\r\n")
-	bufrw.Flush()
+	log.Printf(">>> WebSocket upgraded for test=%d from %s (proto=%s)", testID, r.RemoteAddr, r.Proto)
 
-	log.Printf(">>> WebSocket upgraded for test=%d from %s", testID, r.RemoteAddr)
+	// Send connected acknowledgment.
+	_ = conn.WriteJSON(map[string]any{
+		"event":       "connected",
+		"test":        testID,
+		"remote_addr": r.RemoteAddr,
+		"proto":       r.Proto,
+		"ts":          time.Now().UTC().Format(time.RFC3339),
+	})
 
 	// Read frames until close or error.
 	for {
 		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-		payload, opcode, err := wsReadFrame(bufrw.Reader)
+		msgType, payload, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("WebSocket read error (test=%d): %v", testID, err)
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				log.Printf("WebSocket read error (test=%d): %v", testID, err)
+			}
 			break
 		}
 
-		// Opcode 8 = close frame.
-		if opcode == 8 {
-			// Send close frame back.
-			wsWriteClose(conn)
-			break
+		data := string(payload)
+
+		// Try base64 decode for binary-wrapped exfil.
+		decoded := data
+		b64Decoded := false
+		if raw, err := base64.StdEncoding.DecodeString(data); err == nil && len(raw) > 0 {
+			decoded = string(raw)
+			b64Decoded = true
 		}
 
-		// Opcode 9 = ping — reply with pong.
-		if opcode == 9 {
-			wsWritePong(conn, payload)
-			continue
-		}
+		proto := "websocket"
+		transport := fmt.Sprintf("ws frame type=%d from %s", msgType, r.RemoteAddr)
+		insertCapture(testID, proto, 443, transport, decoded)
 
-		// Opcode 1 (text) or 2 (binary) — capture it.
-		if opcode == 1 || opcode == 2 {
-			data := string(payload)
-
-			// Try base64 decode for binary-wrapped exfil.
-			if decoded, err := base64.StdEncoding.DecodeString(data); err == nil && len(decoded) > 0 {
-				data = string(decoded)
-			}
-
-			proto := "websocket"
-			transport := fmt.Sprintf("ws frame opcode=%d from %s", opcode, r.RemoteAddr)
-			insertCapture(testID, proto, 443, transport, data)
-		}
+		// Echo back a JSON response frame.
+		_ = conn.WriteJSON(map[string]any{
+			"status":        "captured",
+			"test":          testID,
+			"msg_type":      msgType,
+			"raw_bytes":     len(payload),
+			"decoded_bytes": len(decoded),
+			"b64_decoded":   b64Decoded,
+			"preview":       truncate(decoded, 200),
+			"from":          r.RemoteAddr,
+			"ts":            time.Now().UTC().Format(time.RFC3339),
+		})
 	}
-}
-
-// wsAcceptKey computes the Sec-WebSocket-Accept value per RFC 6455 §4.2.2.
-func wsAcceptKey(key string) string {
-	const magic = "258EAFA5-E914-47DA-95CA-5AB5DC76B98B"
-	h := sha1.New() //nolint:gosec // nosemgrep: go.lang.security.audit.crypto.use_of_weak_crypto.use-of-sha1 -- required by RFC 6455 WebSocket handshake
-	h.Write([]byte(key + magic))
-	return base64.StdEncoding.EncodeToString(h.Sum(nil))
-}
-
-// wsReadFrame reads a single WebSocket frame (RFC 6455 §5.2).
-// Returns the unmasked payload, opcode, and any error.
-func wsReadFrame(r *bufio.Reader) ([]byte, byte, error) {
-	// First 2 bytes: FIN/opcode + mask/payload length.
-	header := make([]byte, 2)
-	if _, err := io.ReadFull(r, header); err != nil {
-		return nil, 0, fmt.Errorf("read header: %w", err)
-	}
-
-	opcode := header[0] & 0x0F
-	masked := header[1]&0x80 != 0
-	length := uint64(header[1] & 0x7F)
-
-	// Extended payload length.
-	switch length {
-	case 126:
-		ext := make([]byte, 2)
-		if _, err := io.ReadFull(r, ext); err != nil {
-			return nil, 0, fmt.Errorf("read ext16: %w", err)
-		}
-		length = uint64(binary.BigEndian.Uint16(ext))
-	case 127:
-		ext := make([]byte, 8)
-		if _, err := io.ReadFull(r, ext); err != nil {
-			return nil, 0, fmt.Errorf("read ext64: %w", err)
-		}
-		length = binary.BigEndian.Uint64(ext)
-	}
-
-	// Cap frame size to prevent memory exhaustion.
-	const maxFrameSize = 10 * 1024 * 1024 // 10 MB
-	if length > maxFrameSize {
-		return nil, 0, fmt.Errorf("frame too large: %d bytes", length)
-	}
-
-	// Masking key (4 bytes, present if masked).
-	var mask [4]byte
-	if masked {
-		if _, err := io.ReadFull(r, mask[:]); err != nil {
-			return nil, 0, fmt.Errorf("read mask: %w", err)
-		}
-	}
-
-	// Payload.
-	payload := make([]byte, length)
-	if _, err := io.ReadFull(r, payload); err != nil {
-		return nil, 0, fmt.Errorf("read payload: %w", err)
-	}
-
-	// Unmask.
-	if masked {
-		for i := range payload {
-			payload[i] ^= mask[i%4]
-		}
-	}
-
-	return payload, opcode, nil
-}
-
-// wsWriteClose sends a close frame (opcode 8) to the peer.
-func wsWriteClose(conn net.Conn) {
-	frame := []byte{0x88, 0x00} // FIN + close opcode, 0 length
-	conn.Write(frame)
-}
-
-// wsWritePong sends a pong frame (opcode 10) echoing the ping payload.
-func wsWritePong(conn net.Conn, payload []byte) {
-	n := len(payload)
-	var frame []byte
-	if n < 126 {
-		frame = make([]byte, 2+n)
-		frame[0] = 0x8A // FIN + pong opcode
-		frame[1] = byte(n)
-		copy(frame[2:], payload)
-	} else {
-		frame = make([]byte, 4+n)
-		frame[0] = 0x8A
-		frame[1] = 126
-		binary.BigEndian.PutUint16(frame[2:4], uint16(n))
-		copy(frame[4:], payload)
-	}
-	conn.Write(frame)
-}
-
-// headerContains checks if a comma-separated HTTP header contains a value (case-insensitive).
-func headerContains(h http.Header, key, value string) bool {
-	for _, v := range h[http.CanonicalHeaderKey(key)] {
-		for part := range strings.SplitSeq(v, ",") {
-			if strings.EqualFold(strings.TrimSpace(part), value) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // ---------------------------------------------------------------
@@ -972,7 +874,18 @@ func legacyCaptureHandler(w http.ResponseWriter, r *http.Request) {
 	insertCapture(0, "http", 443, fmt.Sprintf("%s %s", r.Method, r.URL.Path), content)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "size": len(content)})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  "captured",
+		"test":    0,
+		"bytes":   len(content),
+		"preview": truncate(content, 200),
+		"method":  r.Method,
+		"path":    r.URL.Path,
+		"proto":   r.Proto,
+		"host":    r.Host,
+		"tls":     r.TLS != nil,
+		"ts":      time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 // ---------------------------------------------------------------
@@ -1324,6 +1237,14 @@ func basicAuth(user, pass string) func(http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// truncate returns at most maxLen characters of s, appending "..." if truncated.
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -1349,4 +1270,84 @@ func loggingMiddleware(next http.Handler) http.Handler {
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+}
+
+// echoHandler reflects the full request back as JSON — protocol, headers, body.
+// Use to verify proxy transparency: what did the server actually receive?
+func echoHandler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1*1024*1024))
+
+	headers := make(map[string][]string, len(r.Header))
+	for k, v := range r.Header {
+		headers[k] = v
+	}
+
+	tlsInfo := map[string]any{"active": false}
+	if r.TLS != nil {
+		tlsInfo = map[string]any{
+			"active":          true,
+			"version":         r.TLS.Version,
+			"server_name":     r.TLS.ServerName,
+			"negotiated_proto": r.TLS.NegotiatedProtocol,
+			"cipher_suite":    r.TLS.CipherSuite,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"method":       r.Method,
+		"url":          r.URL.String(),
+		"path":         r.URL.Path,
+		"query":        r.URL.RawQuery,
+		"proto":        r.Proto,
+		"host":         r.Host,
+		"remote_addr":  r.RemoteAddr,
+		"headers":      headers,
+		"body":         string(body),
+		"body_bytes":   len(body),
+		"content_type": r.Header.Get("Content-Type"),
+		"tls":          tlsInfo,
+		"ts":           time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// wsEchoHandler is a diagnostic WebSocket endpoint that echoes every frame back
+// with metadata. Unlike /ws/{id}, it doesn't store captures — pure connectivity test.
+func wsEchoHandler(w http.ResponseWriter, r *http.Request) {
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket echo upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	// Send a welcome frame so tester knows connection is alive.
+	_ = conn.WriteJSON(map[string]any{
+		"event":       "connected",
+		"remote_addr": r.RemoteAddr,
+		"proto":       r.Proto,
+		"ts":          time.Now().UTC().Format(time.RFC3339),
+	})
+
+	log.Printf(">>> WebSocket echo connected from %s (proto=%s)", r.RemoteAddr, r.Proto)
+
+	for {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		msgType, payload, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				log.Printf("WebSocket echo read error: %v", err)
+			}
+			break
+		}
+
+		_ = conn.WriteJSON(map[string]any{
+			"event":    "echo",
+			"msg_type": msgType,
+			"bytes":    len(payload),
+			"payload":  string(payload),
+			"ts":       time.Now().UTC().Format(time.RFC3339),
+		})
+	}
 }

@@ -133,23 +133,24 @@ func accessLogEntry(proto string, extra map[string]any) map[string]any {
 	}
 }
 
-// dnsCacheName is the shared DNS cache name for the plaintext DFP cluster.
-const dnsCacheName = "dynamic_forward_proxy_cache_config"
+// ──────────────────────────────────────────────────────────────────────────────
+// Cluster naming
+// ──────────────────────────────────────────────────────────────────────────────
 
-// Cluster name for plaintext HTTP listener routes — no upstream TLS.
-const clusterDFPPlaintext = "dynamic_forward_proxy_cluster"
-
-// tlsClusterName returns the per-domain DFP cluster name for TLS upstream.
-// Each domain gets its own cluster so Envoy maintains separate connection pools,
-// preventing HTTP/2 connection reuse across domains that share an IP address.
+// tlsClusterName returns the per-domain cluster name for TLS upstream.
+// Each domain gets its own LOGICAL_DNS cluster with upstream TLS re-encryption.
 func tlsClusterName(domain string) string {
-	return "dfp_tls_" + sanitizeName(domain)
+	return "tls_" + sanitizeName(domain)
 }
 
-// tlsDNSCacheName returns the per-domain DNS cache name for TLS DFP clusters.
-func tlsDNSCacheName(domain string) string {
-	return "dfp_dns_" + sanitizeName(domain)
+// httpClusterName returns the per-domain cluster name for plaintext HTTP upstream.
+func httpClusterName(domain string) string {
+	return "http_" + sanitizeName(domain)
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Top-level config generator
+// ──────────────────────────────────────────────────────────────────────────────
 
 // GenerateEnvoyConfig produces an Envoy static bootstrap YAML from egress rules.
 // Returns the YAML bytes and a list of warnings (non-fatal issues).
@@ -181,6 +182,9 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 			continue
 		}
 		if proto == "http" {
+			if r.Port == 0 {
+				r.Port = 80
+			}
 			httpRules = append(httpRules, r)
 			continue
 		}
@@ -246,7 +250,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 		},
 		"static_resources": map[string]any{
 			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tcpMappings, ports, tlsExactDomains, httpExactDomains),
-			"clusters":  buildClusters(tlsRules, tcpRules),
+			"clusters":  buildClusters(tlsRules, tcpRules, httpRules),
 		},
 	}
 
@@ -256,6 +260,10 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 	}
 	return out, warnings, nil
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Listeners
+// ──────────────────────────────────────────────────────────────────────────────
 
 // buildListeners constructs all Envoy listeners.
 func buildListeners(tls, tcp, http []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts, tlsExactDomains, httpExactDomains map[string]bool) []any {
@@ -322,14 +330,7 @@ func buildHealthListener(port int) map[string]any {
 									},
 								},
 							},
-							"http_filters": []any{
-								map[string]any{
-									"name": "envoy.filters.http.router",
-									"typed_config": map[string]any{
-										"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
-									},
-								},
-							},
+							"http_filters": []any{routerFilter()},
 						},
 					},
 				},
@@ -380,22 +381,29 @@ func buildEgressListener(tlsRules, httpRules []config.EgressRule, port int, tlsE
 	}
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// HTTP filter chain (plaintext)
+// ──────────────────────────────────────────────────────────────────────────────
+
 // buildHTTPFilterChain creates a filter chain for plaintext HTTP traffic on the
 // egress listener. Matched by transport_protocol: "raw_buffer" (the tls_inspector
-// sets this for non-TLS connections). Uses Host header for domain routing.
+// sets this for non-TLS connections). Uses Host header for domain authorization
+// and routes to per-domain LOGICAL_DNS clusters.
 func buildHTTPFilterChain(rules []config.EgressRule, exactDomains map[string]bool) map[string]any {
 	var virtualHosts []any
 
 	for _, r := range rules {
-		var routes []any
+		domain := normalizeDomain(r.Dst)
+		cluster := httpClusterName(domain)
 
+		var routes []any
 		if len(r.PathRules) > 0 {
-			routes = buildHTTPRoutes(r, clusterDFPPlaintext)
+			routes = buildHTTPRoutes(r, cluster)
 		} else {
 			routes = []any{
 				map[string]any{
 					"match": map[string]any{"prefix": "/"},
-					"route": map[string]any{"cluster": clusterDFPPlaintext, "timeout": "0s"},
+					"route": map[string]any{"cluster": cluster, "timeout": "0s"},
 				},
 			}
 		}
@@ -422,16 +430,6 @@ func buildHTTPFilterChain(rules []config.EgressRule, exactDomains map[string]boo
 		},
 	})
 
-	httpFilters := []any{
-		buildDFPHTTPFilter(false),
-		map[string]any{
-			"name": "envoy.filters.http.router",
-			"typed_config": map[string]any{
-				"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
-			},
-		},
-	}
-
 	return map[string]any{
 		"filter_chain_match": map[string]any{
 			"transport_protocol": "raw_buffer",
@@ -440,34 +438,43 @@ func buildHTTPFilterChain(rules []config.EgressRule, exactDomains map[string]boo
 			map[string]any{
 				"name": "envoy.filters.network.http_connection_manager",
 				"typed_config": map[string]any{
-					"@type":           "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
-					"stat_prefix":     "http_egress",
-					"codec_type":      "AUTO",
-					"access_log":      buildHTTPAccessLog("http"),
-					"upgrade_configs": buildWebSocketUpgradeConfig(httpFilters),
+					"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+					"stat_prefix": "http_egress",
+					"codec_type":  "AUTO",
+					"access_log":  buildHTTPAccessLog("http"),
+					// Plaintext HTTP — no upstream TLS, no ALPN override needed.
+					// Standard HCM-level upgrade is sufficient per envoy-ws.yaml example.
+					"upgrade_configs": []any{
+						map[string]any{"upgrade_type": "websocket"},
+					},
 					"route_config": map[string]any{
 						"name":          "http_egress_routes",
 						"virtual_hosts": virtualHosts,
 					},
-					"http_filters": httpFilters,
+					"http_filters": []any{routerFilter()},
 				},
 			},
 		},
 	}
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// TLS filter chain (per-domain MITM)
+// ──────────────────────────────────────────────────────────────────────────────
+
 // buildTLSFilterChain creates a filter chain that terminates TLS with a per-domain
-// certificate, inspects HTTP traffic, then forwards upstream with re-encryption.
-// Rules with PathRules get per-path routing; rules without get allow-all.
+// certificate, inspects HTTP traffic, then forwards to a per-domain LOGICAL_DNS
+// cluster that re-encrypts upstream. The upstream destination is determined by the
+// cluster endpoint (domain:port), NOT by the HTTP Host header — this prevents
+// confused deputy attacks where a malicious client manipulates Host to redirect traffic.
 func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[string]any {
 	domain := normalizeDomain(r.Dst)
 	certFile := fmt.Sprintf(envoyCertFileFmt, domain)
 	keyFile := fmt.Sprintf(envoyKeyFileFmt, domain)
 	cluster := tlsClusterName(domain)
-	dnsCache := tlsDNSCacheName(domain)
 
 	// Build routes: path rules when configured, otherwise allow-all.
-	// Each domain routes to its own per-domain TLS cluster for connection isolation.
+	// Each domain routes to its own per-domain LOGICAL_DNS cluster.
 	var routes []any
 	if len(r.PathRules) > 0 {
 		routes = buildHTTPRoutes(r, cluster)
@@ -478,17 +485,6 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 				"route": map[string]any{"cluster": cluster, "timeout": "0s"},
 			},
 		}
-	}
-
-	tlsHTTPFilters := []any{
-		buildPortEnforcementFilter(r.Port),
-		buildDFPHTTPFilterWithCache(true, dnsCache),
-		map[string]any{
-			"name": "envoy.filters.http.router",
-			"typed_config": map[string]any{
-				"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
-			},
-		},
 	}
 
 	return map[string]any{
@@ -514,11 +510,14 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 			map[string]any{
 				"name": "envoy.filters.network.http_connection_manager",
 				"typed_config": map[string]any{
-					"@type":           "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
-					"stat_prefix":     fmt.Sprintf("tls_%s", sanitizeName(domain)),
-					"codec_type":      "AUTO",
-					"access_log":      buildHTTPAccessLog("tls"),
-					"upgrade_configs": buildWebSocketUpgradeConfig(tlsHTTPFilters),
+					"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+					"stat_prefix": fmt.Sprintf("tls_%s", sanitizeName(domain)),
+					"codec_type":  "AUTO",
+					"access_log":  buildHTTPAccessLog("tls"),
+					// TLS upstream uses auto_config (H2+H1.1 ALPN). WebSocket Upgrade
+					// doesn't exist in HTTP/2, so the upgrade filter chain overrides
+					// ALPN to force HTTP/1.1 on the upstream TLS handshake.
+					"upgrade_configs": buildTLSWebSocketUpgrade(),
 					"route_config": map[string]any{
 						"name": fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
 						"virtual_hosts": []any{
@@ -529,16 +528,30 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 							},
 						},
 					},
-					"http_filters": tlsHTTPFilters,
+					"http_filters": []any{routerFilter()},
 				},
 			},
 		},
 	}
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Shared route and filter builders
+// ──────────────────────────────────────────────────────────────────────────────
+
+// routerFilter returns the standard Envoy router HTTP filter.
+func routerFilter() map[string]any {
+	return map[string]any{
+		"name": "envoy.filters.http.router",
+		"typed_config": map[string]any{
+			"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+		},
+	}
+}
+
 // buildHTTPRoutes converts path rules into Envoy route entries.
-// clusterName determines the upstream cluster — per-domain dfp_tls_<domain> for TLS
-// filter chains (re-encrypts upstream), clusterDFPPlaintext for HTTP listener routes.
+// clusterName determines the upstream cluster — per-domain LOGICAL_DNS for both
+// TLS (re-encrypts upstream) and HTTP (plaintext upstream) filter chains.
 func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 	var routes []any
 
@@ -582,6 +595,42 @@ func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 	return routes
 }
 
+// buildTLSWebSocketUpgrade returns the HCM upgrade_configs entry for WebSocket
+// on TLS filter chains. The custom filter chain overrides ALPN to HTTP/1.1 for
+// the upstream TLS handshake — necessary because standard WebSocket upgrades use
+// the HTTP/1.1 Upgrade header mechanism which does not exist in HTTP/2.
+// Regular (non-upgrade) requests continue to use the cluster's auto_config
+// ALPN and get HTTP/2 when available.
+//
+// Ref: https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/http/upgrades
+func buildTLSWebSocketUpgrade() []any {
+	return []any{
+		map[string]any{
+			"upgrade_type": "websocket",
+			"filters": []any{
+				// Force HTTP/1.1 ALPN for upstream TLS connection.
+				map[string]any{
+					"name": "envoy.filters.http.set_filter_state",
+					"typed_config": map[string]any{
+						"@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+						"on_request_headers": []any{
+							map[string]any{
+								"object_key": "envoy.network.application_protocols",
+								"format_string": map[string]any{
+									"text_format_source": map[string]any{
+										"inline_string": "http/1.1",
+									},
+								},
+							},
+						},
+					},
+				},
+				routerFilter(),
+			},
+		},
+	}
+}
+
 // buildDenyFilterChain creates the default deny filter chain that resets connections.
 // Access logging with proto="deny" so blocked connection attempts are visible in the
 // egress monitoring dashboard alongside allowed traffic.
@@ -602,6 +651,10 @@ func buildDenyFilterChain() map[string]any {
 		},
 	}
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// TCP/SSH listeners
+// ──────────────────────────────────────────────────────────────────────────────
 
 // tcpDefaultPort returns the effective destination port for a TCP/SSH rule.
 func tcpDefaultPort(r config.EgressRule) int {
@@ -649,74 +702,13 @@ func buildTCPListener(r config.EgressRule, port int) map[string]any {
 	}
 }
 
-// dfpClusterType returns a dynamic forward proxy cluster_type config.
-// cacheName identifies the DNS cache — each per-domain TLS cluster gets its own
-// cache so Envoy maintains fully isolated connection pools per domain.
-func dfpClusterType(cacheName string) map[string]any {
-	return map[string]any{
-		"name": "envoy.clusters.dynamic_forward_proxy",
-		"typed_config": map[string]any{
-			"@type": "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
-			"dns_cache_config": map[string]any{
-				"name":              cacheName,
-				"dns_lookup_family": "V4_ONLY",
-			},
-		},
-	}
-}
-
-// buildTLSDFPCluster creates a per-domain DFP cluster with TLS upstream.
-// Separate clusters per domain prevent HTTP/2 connection pooling from reusing
-// a TLS session across domains that share an IP but have different certificates.
-func buildTLSDFPCluster(domain string) map[string]any {
-	return map[string]any{
-		"name":            tlsClusterName(domain),
-		"connect_timeout": "10s",
-		"lb_policy":       "CLUSTER_PROVIDED",
-		"cluster_type":    dfpClusterType(tlsDNSCacheName(domain)),
-		"transport_socket": map[string]any{
-			"name": "envoy.transport_sockets.tls",
-			"typed_config": map[string]any{
-				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
-				"common_tls_context": map[string]any{
-					"alpn_protocols": []string{"h2", "http/1.1"},
-					"tls_params": map[string]any{
-						"ecdh_curves": []string{"X25519", "P-256", "P-384"},
-					},
-					"validation_context": map[string]any{
-						"trusted_ca": map[string]any{
-							"filename": "/etc/ssl/certs/ca-certificates.crt",
-						},
-					},
-				},
-			},
-		},
-		"typed_extension_protocol_options": map[string]any{
-			"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
-				"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
-				"upstream_http_protocol_options": map[string]any{
-					"auto_sni":            true,
-					"auto_san_validation": true,
-				},
-				"auto_config": map[string]any{
-					"http_protocol_options":  map[string]any{},
-					"http2_protocol_options": map[string]any{},
-				},
-			},
-		},
-	}
-}
+// ──────────────────────────────────────────────────────────────────────────────
+// Clusters
+// ──────────────────────────────────────────────────────────────────────────────
 
 // buildClusters constructs all Envoy clusters.
-func buildClusters(tls, tcp []config.EgressRule) []any {
+func buildClusters(tls, tcp, http []config.EgressRule) []any {
 	clusters := []any{
-		// Dynamic forward proxy cluster — plaintext upstream (HTTP listener).
-		map[string]any{
-			"name":            clusterDFPPlaintext,
-			"connect_timeout": "10s",
-			"lb_policy":       "CLUSTER_PROVIDED",
-			"cluster_type":    dfpClusterType(dnsCacheName),
-		},
 		// Deny cluster (no endpoints — connection reset).
 		map[string]any{
 			"name":            "deny_cluster",
@@ -729,9 +721,9 @@ func buildClusters(tls, tcp []config.EgressRule) []any {
 		},
 	}
 
-	// Per-domain TLS clusters — each domain gets its own cluster with isolated
-	// connection pool, preventing HTTP/2 connection reuse across domains that
-	// share an IP but have different TLS certificates.
+	// Per-domain TLS clusters — LOGICAL_DNS with upstream re-encryption.
+	// Separate clusters per domain maintain isolated connection pools, preventing
+	// HTTP/2 connection reuse across domains that share an IP address.
 	seen := make(map[string]bool)
 	for _, r := range tls {
 		domain := normalizeDomain(r.Dst)
@@ -739,7 +731,18 @@ func buildClusters(tls, tcp []config.EgressRule) []any {
 			continue
 		}
 		seen[domain] = true
-		clusters = append(clusters, buildTLSDFPCluster(domain))
+		clusters = append(clusters, buildTLSDNSCluster(domain, r.Port))
+	}
+
+	// Per-domain HTTP clusters — LOGICAL_DNS without TLS.
+	httpSeen := make(map[string]bool)
+	for _, r := range http {
+		domain := normalizeDomain(r.Dst)
+		if httpSeen[domain] {
+			continue
+		}
+		httpSeen[domain] = true
+		clusters = append(clusters, buildHTTPDNSCluster(domain, r.Port))
 	}
 
 	// Per-destination TCP clusters.
@@ -775,6 +778,103 @@ func buildClusters(tls, tcp []config.EgressRule) []any {
 	return clusters
 }
 
+// buildTLSDNSCluster creates a per-domain LOGICAL_DNS cluster with upstream TLS.
+// The cluster endpoint is the domain name itself — Envoy resolves it via DNS and
+// connects to the result. auto_sni derives the TLS SNI from the endpoint hostname,
+// auto_san_validation validates the upstream certificate against it.
+// auto_config enables HTTP/2 when the upstream supports it via ALPN negotiation.
+func buildTLSDNSCluster(domain string, port int) map[string]any {
+	return map[string]any{
+		"name":              tlsClusterName(domain),
+		"connect_timeout":   "10s",
+		"type":              "LOGICAL_DNS",
+		"dns_lookup_family": "V4_ONLY",
+		"load_assignment": map[string]any{
+			"cluster_name": tlsClusterName(domain),
+			"endpoints": []any{
+				map[string]any{
+					"lb_endpoints": []any{
+						map[string]any{
+							"endpoint": map[string]any{
+								"address": map[string]any{
+									"socket_address": map[string]any{
+										"address":    domain,
+										"port_value": port,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		"transport_socket": map[string]any{
+			"name": "envoy.transport_sockets.tls",
+			"typed_config": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+				"common_tls_context": map[string]any{
+					"alpn_protocols": []string{"h2", "http/1.1"},
+					"tls_params": map[string]any{
+						"ecdh_curves": []string{"X25519", "P-256", "P-384"},
+					},
+					"validation_context": map[string]any{
+						"trusted_ca": map[string]any{
+							"filename": "/etc/ssl/certs/ca-certificates.crt",
+						},
+					},
+				},
+			},
+		},
+		"typed_extension_protocol_options": map[string]any{
+			"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+				"upstream_http_protocol_options": map[string]any{
+					"auto_sni":            true,
+					"auto_san_validation": true,
+				},
+				"auto_config": map[string]any{
+					"http_protocol_options":  map[string]any{},
+					"http2_protocol_options": map[string]any{},
+				},
+			},
+		},
+	}
+}
+
+// buildHTTPDNSCluster creates a per-domain LOGICAL_DNS cluster for plaintext HTTP.
+// No upstream TLS — used by the HTTP filter chain for proto: http rules.
+func buildHTTPDNSCluster(domain string, port int) map[string]any {
+	return map[string]any{
+		"name":              httpClusterName(domain),
+		"connect_timeout":   "10s",
+		"type":              "LOGICAL_DNS",
+		"dns_lookup_family": "V4_ONLY",
+		"load_assignment": map[string]any{
+			"cluster_name": httpClusterName(domain),
+			"endpoints": []any{
+				map[string]any{
+					"lb_endpoints": []any{
+						map[string]any{
+							"endpoint": map[string]any{
+								"address": map[string]any{
+									"socket_address": map[string]any{
+										"address":    domain,
+										"port_value": port,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────────
+
 // statNameReplacer replaces dots and other special characters with underscores for Envoy stat names.
 var statNameReplacer = strings.NewReplacer(".", "_", "-", "_", ":", "_")
 
@@ -799,91 +899,6 @@ func serverNames(dst string, exactDomains map[string]bool) []string {
 		return []string{"." + domain, domain}
 	}
 	return []string{domain}
-}
-
-// buildWebSocketUpgradeConfig returns the HCM upgrade_configs entry for WebSocket.
-// parentFilters is the normal http_filters list from the HCM — the upgrade chain
-// prepends an ALPN override (forcing HTTP/1.1 upstream) while preserving all other
-// filters (DFP routing, port enforcement, router). This is necessary because standard
-// WebSocket upgrades use the HTTP/1.1 Upgrade header mechanism which does not exist
-// in HTTP/2. Regular (non-upgrade) requests continue to use the cluster's auto_config
-// ALPN and get HTTP/2 when available.
-func buildWebSocketUpgradeConfig(parentFilters []any) []any {
-	alpnFilter := map[string]any{
-		"name": "envoy.filters.http.set_filter_state",
-		"typed_config": map[string]any{
-			"@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
-			"on_request_headers": []any{
-				map[string]any{
-					"object_key": "envoy.network.application_protocols",
-					"format_string": map[string]any{
-						"text_format_source": map[string]any{
-							"inline_string": "http/1.1",
-						},
-					},
-				},
-			},
-		},
-	}
-
-	upgradeFilters := make([]any, 0, 1+len(parentFilters))
-	upgradeFilters = append(upgradeFilters, alpnFilter)
-	upgradeFilters = append(upgradeFilters, parentFilters...)
-
-	return []any{
-		map[string]any{
-			"upgrade_type": "websocket",
-			"filters":      upgradeFilters,
-		},
-	}
-}
-
-// buildPortEnforcementFilter returns a set_filter_state HTTP filter that pins
-// envoy.upstream.dynamic_port to the given port. This prevents clients from
-// overriding the upstream port via the :authority header when using DFP.
-func buildPortEnforcementFilter(port int) map[string]any {
-	return map[string]any{
-		"name": "envoy.filters.http.set_filter_state",
-		"typed_config": map[string]any{
-			"@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
-			"on_request_headers": []any{
-				map[string]any{
-					"object_key": "envoy.upstream.dynamic_port",
-					"format_string": map[string]any{
-						"text_format_source": map[string]any{
-							"inline_string": fmt.Sprintf("%d", port),
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-// buildDFPHTTPFilter returns the dynamic forward proxy HTTP filter config
-// using the shared DNS cache. Used by HTTP listener routes (plaintext upstream).
-func buildDFPHTTPFilter(portEnforcement bool) map[string]any {
-	return buildDFPHTTPFilterWithCache(portEnforcement, dnsCacheName)
-}
-
-// buildDFPHTTPFilterWithCache returns the dynamic forward proxy HTTP filter config
-// with an explicit DNS cache name. Used by TLS filter chains where each domain
-// needs its own cache for connection pool isolation.
-func buildDFPHTTPFilterWithCache(portEnforcement bool, cacheName string) map[string]any {
-	tc := map[string]any{
-		"@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
-		"dns_cache_config": map[string]any{
-			"name":              cacheName,
-			"dns_lookup_family": "V4_ONLY",
-		},
-	}
-	if portEnforcement {
-		tc["allow_dynamic_host_from_filter_state"] = true
-	}
-	return map[string]any{
-		"name":         "envoy.filters.http.dynamic_forward_proxy",
-		"typed_config": tc,
-	}
 }
 
 // virtualHostName returns a unique Envoy virtual host name for a rule's destination.
