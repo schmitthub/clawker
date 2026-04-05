@@ -117,13 +117,17 @@ User reports SSH, GPG, or git HTTPS failures inside the container.
    correct syntax.
 
 4. **SSH connecting to the wrong host?** TCP/SSH rules capture **all** traffic
-   on the configured port and redirect it to the whitelisted domain. If the
-   user has a `proto: ssh` rule for `github.com` on port 22, every port 22
-   connection from the container goes to GitHub regardless of the destination
-   the user specified. This is by design — there is no SNI equivalent for raw
-   TCP, so iptables routes by port only. The user should verify the remote
-   banner (`ssh -T git@target`) to confirm which host they actually reached.
-   Two different SSH hosts cannot be whitelisted on the same port.
+   on the configured port and redirect it to the whitelisted domain. Unlike
+   TLS (which has SNI) and HTTP (which has the Host header), raw TCP and SSH
+   have no protocol-level domain metadata. Resolving domains to IPs for
+   per-IP iptables rules is not viable — IPs change frequently for large
+   services (CDN rotation, load balancer failover). Instead, iptables creates
+   one DNAT rule per port and Envoy resolves the domain at connection time.
+   If the user has a `proto: ssh` rule for `github.com` on port 22, every
+   port 22 connection goes to GitHub regardless of the intended destination.
+   If multiple SSH rules exist on the same port, the first rule in the config
+   wins (iptables first-match). The user should verify with `ssh -T git@target`
+   to confirm which host they reached. Only one domain per non-TLS port.
 
 ### GPG not working
 
