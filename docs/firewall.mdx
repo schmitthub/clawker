@@ -208,8 +208,18 @@ Full rule specification for fine-grained control:
 
 - **`tls`** (default) --- HTTPS traffic. Envoy terminates TLS with a per-domain certificate, inspects HTTP traffic (paths visible in access logs), then re-encrypts upstream. With `path_rules`, per-path routing is applied; without `path_rules`, all traffic to the domain is allowed.
 - **`http`** --- Plain HTTP traffic. Envoy inspects the Host header for domain matching and applies path rules directly. No TLS involved.
-- **`tcp`** --- Raw TCP forwarding to a specific port. No domain or path inspection.
-- **`ssh`** --- SSH traffic forwarding. Functionally identical to `tcp` but semantically distinct.
+- **`tcp`** --- Raw TCP forwarding to a specific port. No domain or path inspection. See the port-level routing note below.
+- **`ssh`** --- SSH traffic forwarding. Functionally identical to `tcp` but semantically distinct. See the port-level routing note below.
+
+<Warning>
+**TCP/SSH rules capture all traffic on the port, not just traffic to the whitelisted domain.** Unlike TLS rules where Envoy can inspect the SNI to determine the intended destination, raw TCP and SSH connections have no domain-level metadata. Clawker handles this by redirecting **all** outbound traffic on the configured port (via iptables DNAT) to Envoy, which forwards it to the whitelisted domain's resolved IP.
+
+For example, a `proto: ssh` rule for `github.com` on port 22 means every outbound port 22 connection from the container — regardless of what IP or hostname the agent specifies — ends up at GitHub's SSH endpoint. The agent cannot reach any other SSH server. This is more restrictive than it might appear: it's not that arbitrary port 22 traffic is allowed through, it's that all port 22 traffic is funneled to a single destination.
+
+This also means **two different domains cannot be whitelisted on the same non-TLS port**. If you need SSH access to both GitHub and GitLab, one of them would need to use a non-standard port, or you can configure one provider to use HTTPS git instead.
+
+**For security testers:** a successful `connect()` on a port with a whitelisted rule does not mean you have reached your intended target. The connection was silently redirected to the whitelisted service. Always verify the remote banner or certificate before concluding you have egress — otherwise you may be sending data to GitHub, GitLab, or another corporate service rather than your C2.
+</Warning>
 
 #### Path rules
 

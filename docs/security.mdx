@@ -85,6 +85,12 @@ security:
 
 If you disable the firewall, you can remove these capabilities for a more locked-down container. If you need additional capabilities for your workflow, add them here.
 
+### TCP/SSH Port-Level Routing
+
+Raw TCP and SSH protocols have no domain-level metadata (no SNI equivalent), so Clawker cannot inspect the intended destination. Instead, iptables redirects **all** outbound traffic on the configured port to Envoy, which forwards it to the whitelisted domain. For example, a `proto: ssh` rule for `github.com` on port 22 means every port 22 connection from the container goes to GitHub, regardless of the destination the agent specified. An attacker cannot reach arbitrary SSH servers — the traffic is locked to the whitelisted target.
+
+See the [Firewall guide](/firewall#protocol-behavior) for details and limitations.
+
 ## Host Proxy
 
 The host proxy is a lightweight daemon that runs on your host machine and forwards credentials into containers. It's enabled by default:
