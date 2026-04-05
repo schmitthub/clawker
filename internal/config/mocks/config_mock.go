@@ -73,9 +73,6 @@ var _ config.Config = &ConfigMock{}
 //			EnvoyEgressPortFunc: func() int {
 //				panic("mock out the EnvoyEgressPort method")
 //			},
-//			EnvoyHTTPPortFunc: func() int {
-//				panic("mock out the EnvoyHTTPPort method")
-//			},
 //			EnvoyHealthHostPortFunc: func() int {
 //				panic("mock out the EnvoyHealthHostPort method")
 //			},
@@ -296,9 +293,6 @@ type ConfigMock struct {
 	// EnvoyEgressPortFunc mocks the EnvoyEgressPort method.
 	EnvoyEgressPortFunc func() int
 
-	// EnvoyHTTPPortFunc mocks the EnvoyHTTPPort method.
-	EnvoyHTTPPortFunc func() int
-
 	// EnvoyHealthHostPortFunc mocks the EnvoyHealthHostPort method.
 	EnvoyHealthHostPortFunc func() int
 
@@ -516,9 +510,6 @@ type ConfigMock struct {
 		// EnvoyEgressPort holds details about calls to the EnvoyEgressPort method.
 		EnvoyEgressPort []struct {
 		}
-		// EnvoyHTTPPort holds details about calls to the EnvoyHTTPPort method.
-		EnvoyHTTPPort []struct {
-		}
 		// EnvoyHealthHostPort holds details about calls to the EnvoyHealthHostPort method.
 		EnvoyHealthHostPort []struct {
 		}
@@ -709,7 +700,6 @@ type ConfigMock struct {
 	lockEngineLabelPrefix       sync.RWMutex
 	lockEngineManagedLabel      sync.RWMutex
 	lockEnvoyEgressPort         sync.RWMutex
-	lockEnvoyHTTPPort           sync.RWMutex
 	lockEnvoyHealthHostPort     sync.RWMutex
 	lockEnvoyHealthPort         sync.RWMutex
 	lockEnvoyIPLastOctet        sync.RWMutex
@@ -1253,33 +1243,6 @@ func (mock *ConfigMock) EnvoyEgressPortCalls() []struct {
 	mock.lockEnvoyEgressPort.RLock()
 	calls = mock.calls.EnvoyEgressPort
 	mock.lockEnvoyEgressPort.RUnlock()
-	return calls
-}
-
-// EnvoyHTTPPort calls EnvoyHTTPPortFunc.
-func (mock *ConfigMock) EnvoyHTTPPort() int {
-	if mock.EnvoyHTTPPortFunc == nil {
-		panic("ConfigMock.EnvoyHTTPPortFunc: method is nil but Config.EnvoyHTTPPort was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockEnvoyHTTPPort.Lock()
-	mock.calls.EnvoyHTTPPort = append(mock.calls.EnvoyHTTPPort, callInfo)
-	mock.lockEnvoyHTTPPort.Unlock()
-	return mock.EnvoyHTTPPortFunc()
-}
-
-// EnvoyHTTPPortCalls gets all the calls that were made to EnvoyHTTPPort.
-// Check the length with:
-//
-//	len(mockedConfig.EnvoyHTTPPortCalls())
-func (mock *ConfigMock) EnvoyHTTPPortCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockEnvoyHTTPPort.RLock()
-	calls = mock.calls.EnvoyHTTPPort
-	mock.lockEnvoyHTTPPort.RUnlock()
 	return calls
 }
 

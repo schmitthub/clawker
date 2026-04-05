@@ -6,7 +6,7 @@ paths: ["internal/firewall/envoy.go", "internal/firewall/envoy_test.go", "intern
 # Envoy Configuration Rules
 
 <critical>
-The firewall is a security-critical system. LLM training data on Envoy proxy is extremely weak and unreliable. Regression are unacceptable. Sacrificing existing functionality for unverified assumptions is unacceptable. 
+The firewall is a security-critical system. LLM training data on Envoy proxy is extremely weak and unreliable. Regressions are unacceptable. Sacrificing existing functionality for unverified assumptions is unacceptable. 
 
 **Every assumption about Envoy behavior MUST be verified against official documentation and reference implementations before writing or modifying code.** Do not rely on training data. Do not guess. Do not claim behavior without citing a doc page or example config.
 

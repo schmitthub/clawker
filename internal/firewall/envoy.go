@@ -403,7 +403,7 @@ func buildHTTPFilterChain(rules []config.EgressRule, exactDomains map[string]boo
 			routes = []any{
 				map[string]any{
 					"match": map[string]any{"prefix": "/"},
-					"route": map[string]any{"cluster": cluster, "timeout": "0s"},
+					"route": map[string]any{"cluster": cluster, "timeout": "0s", "upgrade_configs": []any{map[string]any{"upgrade_type": "websocket"}}},
 				},
 			}
 		}
@@ -482,7 +482,7 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 		routes = []any{
 			map[string]any{
 				"match": map[string]any{"prefix": "/"},
-				"route": map[string]any{"cluster": cluster, "timeout": "0s"},
+				"route": map[string]any{"cluster": cluster, "timeout": "0s", "upgrade_configs": []any{map[string]any{"upgrade_type": "websocket"}}},
 			},
 		}
 	}
