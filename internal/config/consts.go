@@ -106,7 +106,7 @@ const (
 //
 // Firewall stack ports (fixed):
 const (
-	// envoyEgressPort is the Envoy TLS listener port (inside container).
+	// envoyEgressPort is the main Envoy egress listener port — handles TLS (SNI) and HTTP (raw_buffer) (inside container).
 	envoyEgressPort = 10000
 	// envoyTCPPortBase is the starting port for TCP/SSH listeners (inside container).
 	envoyTCPPortBase = 10001
@@ -288,7 +288,7 @@ func (c *configImpl) EnvoyIPLastOctet() byte { return envoyIPLastOctet }
 // CoreDNSIPLastOctet returns the last octet for CoreDNS's static IP on clawker-net.
 func (c *configImpl) CoreDNSIPLastOctet() byte { return corednsIPLastOctet }
 
-// EnvoyEgressPort returns the Envoy TLS listener port (inside container).
+// EnvoyEgressPort returns the main Envoy egress listener port — handles TLS (SNI) and HTTP (raw_buffer) (inside container).
 func (c *configImpl) EnvoyEgressPort() int { return envoyEgressPort }
 
 // EnvoyTCPPortBase returns the starting port for TCP/SSH listeners (inside container).

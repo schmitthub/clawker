@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -152,7 +153,7 @@ func TestGenerateEnvoyConfig_HTTPListener(t *testing.T) {
 	assert.Contains(t, out, "http_egress_routes")
 	assert.Contains(t, out, "example.com")
 	assert.Contains(t, out, "deny_all")
-	assert.Contains(t, out, "http_example_com")
+	assert.Contains(t, out, "http_example_com_80")
 }
 
 func TestGenerateEnvoyConfig_MixedHTTPAndTLS(t *testing.T) {
@@ -171,7 +172,7 @@ func TestGenerateEnvoyConfig_MixedHTTPAndTLS(t *testing.T) {
 	out := string(yamlBytes)
 	// Single egress listener with both TLS filter chains and raw_buffer HTTP filter chain.
 	assert.Contains(t, out, "name: egress")
-	assert.Contains(t, out, "tls_api_anthropic_com")
+	assert.Contains(t, out, "tls_api_anthropic_com_443")
 	assert.Contains(t, out, "raw_buffer")
 	assert.Contains(t, out, "http_egress")
 }
@@ -190,7 +191,7 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 
 	out := string(yamlBytes)
 	// Per-domain LOGICAL_DNS cluster with upstream TLS re-encryption.
-	assert.Contains(t, out, "tls_api_anthropic_com")
+	assert.Contains(t, out, "tls_api_anthropic_com_443")
 	assert.Contains(t, out, "type: LOGICAL_DNS")
 	assert.Contains(t, out, "envoy.extensions.upstreams.http.v3.HttpProtocolOptions")
 	assert.Contains(t, out, "auto_sni: true")
@@ -539,7 +540,7 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 	out := string(yamlBytes)
 
 	// Per-domain LOGICAL_DNS cluster must exist with upstream TLS context for re-encryption.
-	assert.Contains(t, out, "tls_api_anthropic_com",
+	assert.Contains(t, out, "tls_api_anthropic_com_443",
 		"per-domain TLS cluster must be present for upstream re-encryption after MITM termination")
 	assert.Contains(t, out, "UpstreamTlsContext",
 		"TLS cluster must have UpstreamTlsContext for upstream re-encryption")
@@ -557,7 +558,7 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 	var foundTLSCluster bool
 	for _, c := range clusters {
 		cl := c.(map[string]any)
-		if cl["name"] == "tls_api_anthropic_com" {
+		if cl["name"] == "tls_api_anthropic_com_443" {
 			foundTLSCluster = true
 			assert.Equal(t, "LOGICAL_DNS", cl["type"],
 				"TLS cluster must use LOGICAL_DNS for domain-pinned routing")
@@ -663,8 +664,8 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 		clusterNames[name] = true
 	}
 
-	assert.Contains(t, clusterNames, "tls_api_anthropic_com")
-	assert.Contains(t, clusterNames, "tls_mcp_proxy_anthropic_com")
+	assert.Contains(t, clusterNames, "tls_api_anthropic_com_443")
+	assert.Contains(t, clusterNames, "tls_mcp_proxy_anthropic_com_443")
 
 	// Each filter chain must route to its own domain-specific cluster.
 	listeners := sr["listeners"].([]any)
@@ -695,7 +696,7 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 			routeAction := route["route"].(map[string]any)
 			cluster := routeAction["cluster"].(string)
 
-			expectedCluster := "tls_" + sanitizeName(domain)
+			expectedCluster := fmt.Sprintf("tls_%s_443", sanitizeName(domain))
 			assert.Equalf(t, expectedCluster, cluster,
 				"filter chain for %s must route to its own per-domain cluster", domain)
 		}
@@ -875,9 +876,9 @@ func TestGenerateEnvoyConfig_TLSClusterPortPinning(t *testing.T) {
 		portByCluster[name] = addr["port_value"].(int)
 	}
 
-	assert.Equal(t, 443, portByCluster["tls_api_anthropic_com"],
+	assert.Equal(t, 443, portByCluster["tls_api_anthropic_com_443"],
 		"cluster for api.anthropic.com must use port 443")
-	assert.Equal(t, 8443, portByCluster["tls_custom_example_com"],
+	assert.Equal(t, 8443, portByCluster["tls_custom_example_com_8443"],
 		"cluster for custom.example.com must use port 8443")
 
 	// No DFP port enforcement filter needed — ports are hardcoded in cluster endpoints.
@@ -961,7 +962,7 @@ func TestEnvoyPorts_Validate(t *testing.T) {
 			ports: EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901},
 		},
 		{
-			name:    "zero TLSPort",
+			name:    "zero EgressPort",
 			ports:   EnvoyPorts{EgressPort: 0, TCPPortBase: 10001, HealthPort: 18901},
 			wantErr: true,
 		},
@@ -971,7 +972,7 @@ func TestEnvoyPorts_Validate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "collision TLS and Health",
+			name:    "collision Egress and Health",
 			ports:   EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 10000},
 			wantErr: true,
 		},
@@ -988,4 +989,311 @@ func TestEnvoyPorts_Validate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Gap coverage: HTTP cluster structure (#9)
+// ──────────────────────────────────────────────────────────────────────────────
+
+func TestGenerateEnvoyConfig_HTTPClusterStructure(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "example.com", Proto: "http", Port: 8080, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	clusters := sr["clusters"].([]any)
+
+	var found bool
+	for _, c := range clusters {
+		cl := c.(map[string]any)
+		if cl["name"] != "http_example_com_8080" {
+			continue
+		}
+		found = true
+		assert.Equal(t, "LOGICAL_DNS", cl["type"])
+		assert.Equal(t, "V4_ONLY", cl["dns_lookup_family"])
+		// No transport_socket — plaintext upstream.
+		assert.Nil(t, cl["transport_socket"],
+			"HTTP cluster must NOT have transport_socket (plaintext upstream)")
+
+		// Endpoint address and port.
+		la := cl["load_assignment"].(map[string]any)
+		eps := la["endpoints"].([]any)
+		lbEps := eps[0].(map[string]any)["lb_endpoints"].([]any)
+		ep := lbEps[0].(map[string]any)["endpoint"].(map[string]any)
+		addr := ep["address"].(map[string]any)["socket_address"].(map[string]any)
+		assert.Equal(t, "example.com", addr["address"])
+		assert.Equal(t, 8080, addr["port_value"])
+	}
+	assert.True(t, found, "http_example_com_8080 cluster must exist")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Gap coverage: HTTP port 0 defaults to 80 (#10)
+// ──────────────────────────────────────────────────────────────────────────────
+
+func TestGenerateEnvoyConfig_ZeroPortHTTPDefaults80(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "example.com", Proto: "http", Port: 0, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	out := string(yamlBytes)
+	// port_value:0 must never appear — Envoy requires (0, 65535].
+	assert.NotContains(t, out, "port_value: 0")
+	assert.Contains(t, out, "http_example_com_80")
+
+	// Verify cluster endpoint uses port 80.
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+	sr := cfg["static_resources"].(map[string]any)
+	clusters := sr["clusters"].([]any)
+
+	for _, c := range clusters {
+		cl := c.(map[string]any)
+		if cl["name"] != "http_example_com_80" {
+			continue
+		}
+		la := cl["load_assignment"].(map[string]any)
+		eps := la["endpoints"].([]any)
+		lbEps := eps[0].(map[string]any)["lb_endpoints"].([]any)
+		ep := lbEps[0].(map[string]any)["endpoint"].(map[string]any)
+		addr := ep["address"].(map[string]any)["socket_address"].(map[string]any)
+		assert.Equal(t, 80, addr["port_value"])
+		return
+	}
+	t.Fatal("http_example_com_80 cluster not found")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Gap coverage: WebSocket ALPN override structural test (#11)
+// ──────────────────────────────────────────────────────────────────────────────
+
+func TestGenerateEnvoyConfig_TLSWebSocketALPNOverride(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	listeners := sr["listeners"].([]any)
+
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		if lis["name"] != "egress" {
+			continue
+		}
+		chains := lis["filter_chains"].([]any)
+		for _, fc := range chains {
+			chain := fc.(map[string]any)
+			// Find TLS filter chains (have transport_socket).
+			if chain["transport_socket"] == nil {
+				continue
+			}
+			filters := chain["filters"].([]any)
+			hcm := filters[0].(map[string]any)
+			tc := hcm["typed_config"].(map[string]any)
+			upgrades := tc["upgrade_configs"].([]any)
+
+			require.Len(t, upgrades, 1, "TLS chain must have exactly one upgrade_configs entry")
+			uc := upgrades[0].(map[string]any)
+			assert.Equal(t, "websocket", uc["upgrade_type"])
+
+			// Custom filter chain with ALPN override.
+			ucFilters := uc["filters"].([]any)
+			require.Len(t, ucFilters, 2, "WebSocket upgrade must have set_filter_state + router")
+
+			// First filter: set_filter_state to override ALPN.
+			sf := ucFilters[0].(map[string]any)
+			assert.Equal(t, "envoy.filters.http.set_filter_state", sf["name"])
+			sfTC := sf["typed_config"].(map[string]any)
+			headers := sfTC["on_request_headers"].([]any)
+			header := headers[0].(map[string]any)
+			assert.Equal(t, "envoy.network.application_protocols", header["object_key"])
+			fs := header["format_string"].(map[string]any)
+			tfs := fs["text_format_source"].(map[string]any)
+			assert.Equal(t, "http/1.1", tfs["inline_string"])
+
+			// Second filter: router.
+			router := ucFilters[1].(map[string]any)
+			assert.Equal(t, "envoy.filters.http.router", router["name"])
+			return
+		}
+	}
+	t.Fatal("TLS filter chain with WebSocket upgrade not found")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Gap coverage: duplicate domain different ports (#12)
+// ──────────────────────────────────────────────────────────────────────────────
+
+func TestGenerateEnvoyConfig_SameDomainDifferentPorts(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "tls", Port: 8443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+	sr := cfg["static_resources"].(map[string]any)
+	clusters := sr["clusters"].([]any)
+
+	// Both port-specific clusters must exist.
+	clusterNames := make(map[string]bool)
+	portByCluster := make(map[string]int)
+	for _, c := range clusters {
+		cl := c.(map[string]any)
+		name := cl["name"].(string)
+		clusterNames[name] = true
+		if !strings.HasPrefix(name, "tls_") {
+			continue
+		}
+		la := cl["load_assignment"].(map[string]any)
+		eps := la["endpoints"].([]any)
+		lbEps := eps[0].(map[string]any)["lb_endpoints"].([]any)
+		ep := lbEps[0].(map[string]any)["endpoint"].(map[string]any)
+		addr := ep["address"].(map[string]any)["socket_address"].(map[string]any)
+		portByCluster[name] = addr["port_value"].(int)
+	}
+
+	assert.True(t, clusterNames["tls_example_com_443"], "cluster for port 443 must exist")
+	assert.True(t, clusterNames["tls_example_com_8443"], "cluster for port 8443 must exist")
+	assert.Equal(t, 443, portByCluster["tls_example_com_443"])
+	assert.Equal(t, 8443, portByCluster["tls_example_com_8443"])
+}
+
+func TestGenerateEnvoyConfig_SameDomainDifferentPortsHTTP(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+		{Dst: "example.com", Proto: "http", Port: 8080, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+	sr := cfg["static_resources"].(map[string]any)
+	clusters := sr["clusters"].([]any)
+
+	clusterNames := make(map[string]bool)
+	for _, c := range clusters {
+		cl := c.(map[string]any)
+		clusterNames[cl["name"].(string)] = true
+	}
+
+	assert.True(t, clusterNames["http_example_com_80"], "cluster for port 80 must exist")
+	assert.True(t, clusterNames["http_example_com_8080"], "cluster for port 8080 must exist")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Gap coverage: tls_inspector listener filter presence (#13)
+// ──────────────────────────────────────────────────────────────────────────────
+
+func TestGenerateEnvoyConfig_TLSInspectorPresent(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	listeners := sr["listeners"].([]any)
+
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		if lis["name"] != "egress" {
+			continue
+		}
+		lf := lis["listener_filters"].([]any)
+		require.Len(t, lf, 1)
+		filter := lf[0].(map[string]any)
+		assert.Equal(t, "envoy.filters.listener.tls_inspector", filter["name"])
+		return
+	}
+	t.Fatal("egress listener not found")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Gap coverage: deny chain must be last (#8)
+// ──────────────────────────────────────────────────────────────────────────────
+
+func TestGenerateEnvoyConfig_DenyChainIsLast(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	listeners := sr["listeners"].([]any)
+
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		if lis["name"] != "egress" {
+			continue
+		}
+		chains := lis["filter_chains"].([]any)
+		require.Greater(t, len(chains), 1, "egress listener must have multiple filter chains")
+
+		// Last chain must be the deny chain: empty filter_chain_match + tcp_proxy → deny_cluster.
+		last := chains[len(chains)-1].(map[string]any)
+		fcm, _ := last["filter_chain_match"].(map[string]any)
+		assert.Empty(t, fcm, "deny chain must have empty filter_chain_match (catch-all)")
+
+		filters := last["filters"].([]any)
+		tcpProxy := filters[0].(map[string]any)
+		assert.Equal(t, "envoy.filters.network.tcp_proxy", tcpProxy["name"])
+		tc := tcpProxy["typed_config"].(map[string]any)
+		assert.Equal(t, "deny_cluster", tc["cluster"])
+		return
+	}
+	t.Fatal("egress listener not found")
 }

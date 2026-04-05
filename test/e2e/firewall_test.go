@@ -493,8 +493,8 @@ func TestFirewall_HTTPDomainDetection(t *testing.T) {
 	}
 	setup := h.NewIsolatedFS(nil)
 
-	// Configure an HTTP rule for example.com — exercises the HTTP listener path:
-	// iptables --dport 80 → DNAT envoy:10080 → http_connection_manager → Host header → domain match
+	// Configure an HTTP rule for example.com — exercises the consolidated egress listener:
+	// iptables --dport 80 → DNAT envoy:10000 → tls_inspector → raw_buffer filter chain → Host header → domain match
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
@@ -533,9 +533,9 @@ security:
 	assert.Contains(t, listRes.Stdout, "example.com", "HTTP rule should be in firewall list")
 
 	// Plain HTTP request to example.com — full path:
-	// DNS → CoreDNS allows example.com → iptables --dport 80 → DNAT envoy:10080
-	// → http_connection_manager → Host header "example.com" → virtual host match → allow
-	// → dynamic_forward_proxy → upstream example.com:80
+	// DNS → CoreDNS allows example.com → iptables --dport 80 → DNAT envoy:10000
+	// → tls_inspector → raw_buffer filter chain → Host header "example.com" → virtual host match
+	// → per-domain LOGICAL_DNS cluster → upstream example.com:80
 	httpRes := h.ExecInContainer("http-test",
 		"curl", "-s", "--max-time", "15", "--connect-timeout", "10",
 		"-o", "/dev/null", "-w", "%{http_code}",
@@ -621,9 +621,9 @@ func TestFirewall_PathRulesDefaultDeny(t *testing.T) {
 	setup := h.NewIsolatedFS(nil)
 
 	// Allow example.com on HTTP with path rules: only /test is allowed, default deny.
-	// Path: DNS → CoreDNS → iptables --dport 80 → DNAT envoy:10080
-	// → http_connection_manager → Host header → virtual host → path prefix match
-	// /test → forward to upstream; anything else → 403 (path_default: deny)
+	// Path: DNS → CoreDNS → iptables --dport 80 → DNAT envoy:10000
+	// → tls_inspector → raw_buffer filter chain → Host header → virtual host → path prefix match
+	// /test → LOGICAL_DNS cluster → upstream; anything else → 403 (path_default: deny)
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
@@ -705,9 +705,9 @@ func TestFirewall_PathRulesExplicitDeny(t *testing.T) {
 	setup := h.NewIsolatedFS(nil)
 
 	// Allow example.com on HTTP with path rules: /evil is explicitly denied, default allow.
-	// Path: DNS → CoreDNS → iptables --dport 80 → DNAT envoy:10080
-	// → http_connection_manager → Host header → virtual host → path prefix match
-	// /evil → 403; anything else → forward to upstream (path_default: allow)
+	// Path: DNS → CoreDNS → iptables --dport 80 → DNAT envoy:10000
+	// → tls_inspector → raw_buffer filter chain → Host header → virtual host → path prefix match
+	// /evil → 403; anything else → LOGICAL_DNS cluster → upstream (path_default: allow)
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"

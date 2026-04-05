@@ -112,7 +112,7 @@ func accessLogEntry(proto string, extra map[string]any) map[string]any {
 		"timestamp":      "%START_TIME%",
 		"domain":         "%REQUESTED_SERVER_NAME%",
 		"upstream_host":  "%UPSTREAM_HOST%",
-		"listener_port":  "%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%",
+		"listener_ip":    "%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%",
 		"client_ip":      "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
 		"response_flags": "%RESPONSE_FLAGS%",
 		"bytes_sent":     "%BYTES_SENT%",
@@ -137,15 +137,17 @@ func accessLogEntry(proto string, extra map[string]any) map[string]any {
 // Cluster naming
 // ──────────────────────────────────────────────────────────────────────────────
 
-// tlsClusterName returns the per-domain cluster name for TLS upstream.
-// Each domain gets its own LOGICAL_DNS cluster with upstream TLS re-encryption.
-func tlsClusterName(domain string) string {
-	return "tls_" + sanitizeName(domain)
+// tlsClusterName returns the per-domain, per-port cluster name for TLS upstream.
+// Each (domain, port) pair gets its own LOGICAL_DNS cluster with upstream TLS re-encryption.
+// Port is included in the name so that rules for the same domain on different ports
+// (e.g., example.com:443 and example.com:8443) get separate clusters.
+func tlsClusterName(domain string, port int) string {
+	return fmt.Sprintf("tls_%s_%d", sanitizeName(domain), port)
 }
 
-// httpClusterName returns the per-domain cluster name for plaintext HTTP upstream.
-func httpClusterName(domain string) string {
-	return "http_" + sanitizeName(domain)
+// httpClusterName returns the per-domain, per-port cluster name for plaintext HTTP upstream.
+func httpClusterName(domain string, port int) string {
+	return fmt.Sprintf("http_%s_%d", sanitizeName(domain), port)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -394,7 +396,7 @@ func buildHTTPFilterChain(rules []config.EgressRule, exactDomains map[string]boo
 
 	for _, r := range rules {
 		domain := normalizeDomain(r.Dst)
-		cluster := httpClusterName(domain)
+		cluster := httpClusterName(domain, r.Port)
 
 		var routes []any
 		if len(r.PathRules) > 0 {
@@ -471,7 +473,7 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 	domain := normalizeDomain(r.Dst)
 	certFile := fmt.Sprintf(envoyCertFileFmt, domain)
 	keyFile := fmt.Sprintf(envoyKeyFileFmt, domain)
-	cluster := tlsClusterName(domain)
+	cluster := tlsClusterName(domain, r.Port)
 
 	// Build routes: path rules when configured, otherwise allow-all.
 	// Each domain routes to its own per-domain LOGICAL_DNS cluster.
@@ -721,27 +723,29 @@ func buildClusters(tls, tcp, http []config.EgressRule) []any {
 		},
 	}
 
-	// Per-domain TLS clusters — LOGICAL_DNS with upstream re-encryption.
-	// Separate clusters per domain maintain isolated connection pools, preventing
-	// HTTP/2 connection reuse across domains that share an IP address.
+	// Per-(domain, port) TLS clusters — LOGICAL_DNS with upstream re-encryption.
+	// Separate clusters per (domain, port) pair maintain isolated connection pools and
+	// allow the same domain on different ports (e.g., example.com:443 and example.com:8443).
 	seen := make(map[string]bool)
 	for _, r := range tls {
 		domain := normalizeDomain(r.Dst)
-		if seen[domain] {
+		key := fmt.Sprintf("%s:%d", domain, r.Port)
+		if seen[key] {
 			continue
 		}
-		seen[domain] = true
+		seen[key] = true
 		clusters = append(clusters, buildTLSDNSCluster(domain, r.Port))
 	}
 
-	// Per-domain HTTP clusters — LOGICAL_DNS without TLS.
+	// Per-(domain, port) HTTP clusters — LOGICAL_DNS without TLS.
 	httpSeen := make(map[string]bool)
 	for _, r := range http {
 		domain := normalizeDomain(r.Dst)
-		if httpSeen[domain] {
+		key := fmt.Sprintf("%s:%d", domain, r.Port)
+		if httpSeen[key] {
 			continue
 		}
-		httpSeen[domain] = true
+		httpSeen[key] = true
 		clusters = append(clusters, buildHTTPDNSCluster(domain, r.Port))
 	}
 
@@ -785,12 +789,12 @@ func buildClusters(tls, tcp, http []config.EgressRule) []any {
 // auto_config enables HTTP/2 when the upstream supports it via ALPN negotiation.
 func buildTLSDNSCluster(domain string, port int) map[string]any {
 	return map[string]any{
-		"name":              tlsClusterName(domain),
+		"name":              tlsClusterName(domain, port),
 		"connect_timeout":   "10s",
 		"type":              "LOGICAL_DNS",
 		"dns_lookup_family": "V4_ONLY",
 		"load_assignment": map[string]any{
-			"cluster_name": tlsClusterName(domain),
+			"cluster_name": tlsClusterName(domain, port),
 			"endpoints": []any{
 				map[string]any{
 					"lb_endpoints": []any{
@@ -845,12 +849,12 @@ func buildTLSDNSCluster(domain string, port int) map[string]any {
 // No upstream TLS — used by the HTTP filter chain for proto: http rules.
 func buildHTTPDNSCluster(domain string, port int) map[string]any {
 	return map[string]any{
-		"name":              httpClusterName(domain),
+		"name":              httpClusterName(domain, port),
 		"connect_timeout":   "10s",
 		"type":              "LOGICAL_DNS",
 		"dns_lookup_family": "V4_ONLY",
 		"load_assignment": map[string]any{
-			"cluster_name": httpClusterName(domain),
+			"cluster_name": httpClusterName(domain, port),
 			"endpoints": []any{
 				map[string]any{
 					"lb_endpoints": []any{

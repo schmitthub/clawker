@@ -721,7 +721,10 @@ func (m *Manager) NetCIDR() string {
 // Only TCP/SSH rules need per-port iptables DNAT entries — HTTP rules are handled
 // by the egress listener's raw_buffer filter chain (no separate iptables needed).
 func (m *Manager) formatPortMappings() string {
-	rules, _ := normalizeAndDedup(m.store.Read().Rules)
+	rules, warnings := normalizeAndDedup(m.store.Read().Rules)
+	for _, w := range warnings {
+		m.log.Warn().Msg(w)
+	}
 	ports := m.envoyPorts()
 	tcpMappings := TCPMappings(rules, ports)
 	if len(tcpMappings) == 0 {
