@@ -718,19 +718,17 @@ func (m *Manager) NetCIDR() string {
 
 // formatPortMappings reads rules from the store, computes TCP and HTTP port mappings,
 // and returns the firewall.sh argument string (format: "dst_port|envoy_port;...").
-// HTTP mappings are appended after TCP mappings — all HTTP ports redirect to the
-// single HTTP listener, while TCP ports get per-rule dedicated listeners.
+// Only TCP/SSH rules need per-port iptables DNAT entries — HTTP rules are handled
+// by the egress listener's raw_buffer filter chain (no separate iptables needed).
 func (m *Manager) formatPortMappings() string {
 	rules, _ := normalizeAndDedup(m.store.Read().Rules)
 	ports := m.envoyPorts()
 	tcpMappings := TCPMappings(rules, ports)
-	httpMappings := HTTPMappings(rules, ports.HTTPPort)
-	allMappings := append(tcpMappings, httpMappings...)
-	if len(allMappings) == 0 {
+	if len(tcpMappings) == 0 {
 		return ""
 	}
 	var parts []string
-	for _, mp := range allMappings {
+	for _, mp := range tcpMappings {
 		parts = append(parts, fmt.Sprintf("%d|%d", mp.DstPort, mp.EnvoyPort))
 	}
 	return strings.Join(parts, ";")
@@ -739,9 +737,8 @@ func (m *Manager) formatPortMappings() string {
 // envoyPorts returns the EnvoyPorts config from the manager's config.
 func (m *Manager) envoyPorts() EnvoyPorts {
 	return EnvoyPorts{
-		TLSPort:     m.cfg.EnvoyTLSPort(),
+		EgressPort:  m.cfg.EnvoyTLSPort(),
 		TCPPortBase: m.cfg.EnvoyTCPPortBase(),
-		HTTPPort:    m.cfg.EnvoyHTTPPort(),
 		HealthPort:  m.cfg.EnvoyHealthPort(),
 	}
 }

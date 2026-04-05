@@ -10,9 +10,8 @@ import (
 
 // EnvoyPorts holds the port configuration for the Envoy proxy, sourced from config.Config.
 type EnvoyPorts struct {
-	TLSPort     int // Listener port for TLS egress (terminates TLS, inspects HTTP, re-encrypts upstream).
+	EgressPort  int // Main egress listener — handles TLS (per-domain filter chains) and HTTP (raw_buffer filter chain).
 	TCPPortBase int // Starting port for TCP/SSH listeners.
-	HTTPPort    int // Listener port for plain HTTP egress (Host header domain detection).
 	HealthPort  int // Dedicated health check listener port for external probes.
 }
 
@@ -22,9 +21,8 @@ func (p EnvoyPorts) Validate() error {
 		name string
 		port int
 	}{
-		{"TLSPort", p.TLSPort},
+		{"EgressPort", p.EgressPort},
 		{"TCPPortBase", p.TCPPortBase},
-		{"HTTPPort", p.HTTPPort},
 		{"HealthPort", p.HealthPort},
 	}
 	for _, n := range named {
@@ -78,11 +76,14 @@ func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 	return mappings
 }
 
-// HTTPMappings computes HTTP port mappings from egress rules.
-// Unlike TCP mappings (one listener per rule), all HTTP rules share a single listener
-// because the Host header provides domain detection. Multiple rules on the same port
-// produce a single DNAT entry.
-func HTTPMappings(rules []config.EgressRule, httpPort int) []TCPMapping {
+// httpMappingsLegacy computes HTTP port mappings for iptables DNAT.
+//
+// Deprecated: HTTP filter chains now live on the egress listener (port 10000) using
+// transport_protocol: "raw_buffer" matching. This function is only used by
+// formatPortMappings to maintain backward compatibility with existing containers
+// that still have old iptables rules pointing HTTP ports to a separate listener.
+// TODO: Remove once all containers are recreated with the new firewall config.
+func httpMappingsLegacy(rules []config.EgressRule, httpPort int) []TCPMapping {
 	seen := make(map[int]bool)
 	var mappings []TCPMapping
 	for _, r := range rules {
@@ -253,8 +254,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 	// Validate derived TCP listener ports: range check + collision detection.
 	if len(tcpMappings) > 0 {
 		reservedPorts := map[int]string{
-			ports.TLSPort:    "TLSPort",
-			ports.HTTPPort:   "HTTPPort",
+			ports.EgressPort: "EgressPort",
 			ports.HealthPort: "HealthPort",
 			9901:             "EnvoyAdmin",
 		}
@@ -299,14 +299,11 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 func buildListeners(tls, tcp, http []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts, tlsExactDomains, httpExactDomains map[string]bool) []any {
 	var listeners []any
 
-	// Main TLS listener — terminates TLS, inspects HTTP, re-encrypts upstream.
-	if len(tls) > 0 {
-		listeners = append(listeners, buildTLSListener(tls, ports.TLSPort, tlsExactDomains))
-	}
-
-	// HTTP listener — domain detection via Host header.
-	if len(http) > 0 {
-		listeners = append(listeners, buildHTTPListener(http, ports.HTTPPort, httpExactDomains))
+	// Main egress listener — handles TLS (per-domain filter chains with SNI matching)
+	// and plaintext HTTP (raw_buffer filter chain with Host header routing).
+	// tls_inspector differentiates TLS from plaintext at the listener level.
+	if len(tls) > 0 || len(http) > 0 {
+		listeners = append(listeners, buildEgressListener(tls, http, ports.EgressPort, tlsExactDomains, httpExactDomains))
 	}
 
 	// Per-rule TCP/SSH listeners from the port mappings.
@@ -379,26 +376,34 @@ func buildHealthListener(port int) map[string]any {
 	}
 }
 
-// buildTLSListener creates the main TLS listener on the given port.
-// All TLS rules terminate TLS with per-domain certificates, inspect HTTP
-// traffic (making paths visible in access logs), then re-encrypt upstream.
-func buildTLSListener(rules []config.EgressRule, tlsPort int, exactDomains map[string]bool) map[string]any {
+// buildEgressListener creates the main egress listener that handles both TLS and
+// plaintext HTTP traffic on a single port. The tls_inspector listener filter
+// differentiates protocols: TLS connections match per-domain filter chains (SNI),
+// plaintext HTTP matches a raw_buffer filter chain (Host header routing).
+// Unmatched traffic hits the deny chain (connection reset).
+func buildEgressListener(tlsRules, httpRules []config.EgressRule, port int, tlsExactDomains, httpExactDomains map[string]bool) map[string]any {
 	var filterChains []any
 
-	// Per-domain TLS filter chains.
-	for _, r := range rules {
-		filterChains = append(filterChains, buildTLSFilterChain(r, exactDomains))
+	// Per-domain TLS filter chains (matched by SNI via tls_inspector).
+	for _, r := range tlsRules {
+		filterChains = append(filterChains, buildTLSFilterChain(r, tlsExactDomains))
+	}
+
+	// Plaintext HTTP filter chain (matched by transport_protocol: "raw_buffer").
+	// Handles all proto: http rules via Host header routing on this same port.
+	if len(httpRules) > 0 {
+		filterChains = append(filterChains, buildHTTPFilterChain(httpRules, httpExactDomains))
 	}
 
 	// Default deny chain (catch-all → connection reset).
 	filterChains = append(filterChains, buildDenyFilterChain())
 
 	return map[string]any{
-		"name": "tls_egress",
+		"name": "egress",
 		"address": map[string]any{
 			"socket_address": map[string]any{
 				"address":    "0.0.0.0",
-				"port_value": tlsPort,
+				"port_value": port,
 			},
 		},
 		"listener_filters": []any{
@@ -413,21 +418,18 @@ func buildTLSListener(rules []config.EgressRule, tlsPort int, exactDomains map[s
 	}
 }
 
-// buildHTTPListener creates a plain HTTP listener that detects destination domains
-// via the Host header — the HTTP equivalent of the TLS listener's SNI detection.
-// Each allowed domain gets a virtual host; unknown domains get a 403 deny response.
-// Rules with PathRules get per-path route matching; rules without get allow-all.
-func buildHTTPListener(rules []config.EgressRule, httpPort int, exactDomains map[string]bool) map[string]any {
+// buildHTTPFilterChain creates a filter chain for plaintext HTTP traffic on the
+// egress listener. Matched by transport_protocol: "raw_buffer" (the tls_inspector
+// sets this for non-TLS connections). Uses Host header for domain routing.
+func buildHTTPFilterChain(rules []config.EgressRule, exactDomains map[string]bool) map[string]any {
 	var virtualHosts []any
 
 	for _, r := range rules {
 		var routes []any
 
 		if len(r.PathRules) > 0 {
-			// Path-level access control — same logic as TLS filter chains.
 			routes = buildHTTPRoutes(r, clusterDFPPlaintext)
 		} else {
-			// No path rules — allow all traffic to this domain.
 			routes = []any{
 				map[string]any{
 					"match": map[string]any{"prefix": "/"},
@@ -459,36 +461,28 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int, exactDomains map
 	})
 
 	return map[string]any{
-		"name": "http_egress",
-		"address": map[string]any{
-			"socket_address": map[string]any{
-				"address":    "0.0.0.0",
-				"port_value": httpPort,
-			},
+		"filter_chain_match": map[string]any{
+			"transport_protocol": "raw_buffer",
 		},
-		"filter_chains": []any{
+		"filters": []any{
 			map[string]any{
-				"filters": []any{
-					map[string]any{
-						"name": "envoy.filters.network.http_connection_manager",
-						"typed_config": map[string]any{
-							"@type":           "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
-							"stat_prefix":     "http_egress",
-							"codec_type":      "AUTO",
-							"access_log":      buildHTTPAccessLog("http"),
-							"upgrade_configs": buildWebSocketUpgradeConfig(),
-							"route_config": map[string]any{
-								"name":          "http_egress_routes",
-								"virtual_hosts": virtualHosts,
-							},
-							"http_filters": []any{
-								buildDFPHTTPFilter(false),
-								map[string]any{
-									"name": "envoy.filters.http.router",
-									"typed_config": map[string]any{
-										"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
-									},
-								},
+				"name": "envoy.filters.network.http_connection_manager",
+				"typed_config": map[string]any{
+					"@type":           "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+					"stat_prefix":     "http_egress",
+					"codec_type":      "AUTO",
+					"access_log":      buildHTTPAccessLog("http"),
+					"upgrade_configs": buildWebSocketUpgradeConfig(),
+					"route_config": map[string]any{
+						"name":          "http_egress_routes",
+						"virtual_hosts": virtualHosts,
+					},
+					"http_filters": []any{
+						buildDFPHTTPFilter(false),
+						map[string]any{
+							"name": "envoy.filters.http.router",
+							"typed_config": map[string]any{
+								"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
 							},
 						},
 					},
