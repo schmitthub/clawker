@@ -216,10 +216,10 @@ Full rule specification for fine-grained control:
 
 For example, a `proto: ssh` rule for `github.com` on port 22 means every outbound port 22 connection from the container — regardless of what IP or hostname the agent specifies — ends up at GitHub's SSH endpoint. The agent cannot reach any other SSH server. This is more restrictive than it might appear: it's not that arbitrary port 22 traffic is allowed through, it's that all port 22 traffic is funneled to a single destination.
 
-If multiple rules target the same port (e.g., SSH rules for both `github.com` and `gitlab.com` on port 22), the **first rule in the egress rules list wins** — iptables evaluates DNAT rules in order and the first `--dport` match captures all traffic for that port. The second rule's Envoy listener would exist but never receive traffic. For this reason, **only one domain can effectively be whitelisted per non-TLS port**. If you need SSH access to both GitHub and GitLab, configure one provider to use HTTPS git instead, or use a non-standard SSH port if the provider supports it.
+If multiple rules target the same port (e.g., SSH rules for both `github.com` and `gitlab.com` on port 22), the **first rule in the egress rules list wins** — iptables evaluates DNAT rules in order and the first `--dport` match captures all traffic for that port. The second rule's Envoy listener would exist but never receive traffic. For this reason, **only one domain can effectively be whitelisted per TCP/SSH port**. If you need SSH access to both GitHub and GitLab, configure one provider to use HTTPS git instead, or use a non-standard SSH port if the provider supports it.
 
 <Info>
-Multi-domain support for non-TLS ports is a [tracked limitation](https://github.com/schmitthub/clawker/issues/235), deferred for after the control plane work. In the meantime, HTTPS git works for most multi-provider setups.
+Multi-domain support for TCP/SSH ports is a [tracked limitation](https://github.com/schmitthub/clawker/issues/235), deferred for after the control plane work. In the meantime, HTTPS git works for most multi-provider setups.
 </Info>
 
 **For security testers:** a successful `connect()` on a port with a whitelisted rule does not mean you have reached your intended target. The connection was silently redirected to the whitelisted service. Always verify the remote banner or certificate before concluding you have egress — otherwise you may be sending data to GitHub, GitLab, or another corporate service rather than your C2.

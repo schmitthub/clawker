@@ -127,7 +127,7 @@ User reports SSH, GPG, or git HTTPS failures inside the container.
    port 22 connection goes to GitHub regardless of the intended destination.
    If multiple SSH rules exist on the same port, the first rule in the config
    wins (iptables first-match). The user should verify with `ssh -T git@target`
-   to confirm which host they reached. Only one domain per non-TLS port
+   to confirm which host they reached. Only one domain per TCP/SSH port
    (tracked: github.com/schmitthub/clawker/issues/235, deferred to control plane).
 
 ### GPG not working
