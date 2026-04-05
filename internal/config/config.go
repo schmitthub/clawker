@@ -88,7 +88,7 @@ type Config interface {
 	RequiredFirewallRules() []EgressRule
 	EnvoyIPLastOctet() byte
 	CoreDNSIPLastOctet() byte
-	EnvoyTLSPort() int
+	EnvoyEgressPort() int
 	EnvoyTCPPortBase() int
 	EnvoyHTTPPort() int
 	EnvoyHealthPort() int

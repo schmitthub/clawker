@@ -737,7 +737,7 @@ func (m *Manager) formatPortMappings() string {
 // envoyPorts returns the EnvoyPorts config from the manager's config.
 func (m *Manager) envoyPorts() EnvoyPorts {
 	return EnvoyPorts{
-		EgressPort:  m.cfg.EnvoyTLSPort(),
+		EgressPort:  m.cfg.EnvoyEgressPort(),
 		TCPPortBase: m.cfg.EnvoyTCPPortBase(),
 		HealthPort:  m.cfg.EnvoyHealthPort(),
 	}
