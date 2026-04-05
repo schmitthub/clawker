@@ -716,7 +716,7 @@ func (m *Manager) NetCIDR() string {
 	return netInfo.CIDR
 }
 
-// formatPortMappings reads rules from the store, computes TCP and HTTP port mappings,
+// formatPortMappings reads rules from the store, computes TCP/SSH port mappings,
 // and returns the firewall.sh argument string (format: "dst_port|envoy_port;...").
 // Only TCP/SSH rules need per-port iptables DNAT entries — HTTP rules are handled
 // by the egress listener's raw_buffer filter chain (no separate iptables needed).

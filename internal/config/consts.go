@@ -110,8 +110,6 @@ const (
 	envoyEgressPort = 10000
 	// envoyTCPPortBase is the starting port for TCP/SSH listeners (inside container).
 	envoyTCPPortBase = 10001
-	// envoyHTTPPort is the Envoy HTTP listener port for plain HTTP domain detection (inside container).
-	envoyHTTPPort = 10080
 	// envoyHealthPort is the Envoy dedicated health check listener port (inside container).
 	envoyHealthPort = 9902
 	// envoyHealthHostPort is the host port published for Envoy health probes (HTTP GET /).
@@ -295,9 +293,6 @@ func (c *configImpl) EnvoyEgressPort() int { return envoyEgressPort }
 
 // EnvoyTCPPortBase returns the starting port for TCP/SSH listeners (inside container).
 func (c *configImpl) EnvoyTCPPortBase() int { return envoyTCPPortBase }
-
-// EnvoyHTTPPort returns the Envoy HTTP listener port for plain HTTP domain detection (inside container).
-func (c *configImpl) EnvoyHTTPPort() int { return envoyHTTPPort }
 
 // EnvoyHealthPort returns the Envoy dedicated health check listener port (inside container).
 func (c *configImpl) EnvoyHealthPort() int { return envoyHealthPort }

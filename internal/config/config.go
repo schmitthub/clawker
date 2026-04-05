@@ -90,7 +90,6 @@ type Config interface {
 	CoreDNSIPLastOctet() byte
 	EnvoyEgressPort() int
 	EnvoyTCPPortBase() int
-	EnvoyHTTPPort() int
 	EnvoyHealthPort() int
 	EnvoyHealthHostPort() int
 	CoreDNSHealthHostPort() int

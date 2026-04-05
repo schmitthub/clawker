@@ -17,7 +17,7 @@
 - [x] firewall disable doesn't do agent selection "clawker firewall disable --agent dev" fails
 - [x] **Path rules e2e tests**: Fixed (2026-03-20) — Four tests added: `TestFirewall_PathRulesDefaultDeny` and `TestFirewall_PathRulesExplicitDeny` (HTTP), `TestFirewall_TLSPathRulesDefaultDeny` and `TestFirewall_TLSPathRulesExplicitDeny` (TLS MITM). Also fixed: `FirewallCertSubdir` accessor wired everywhere (replaced hardcoded `"certs"` paths), CA cert auto-generated at image build time by bundler's `generateCA` (bundler stays leaf — no firewall import).
 - [ ] No TCP support. Transparent tcp for random ports (like tls to 4443, http to 8080) not working. need to update envoy config
-- [x] **HTTP domain detection via Envoy listener**: Fixed (2026-03-20) — new `http_egress` listener on port 10080 uses `http_connection_manager` with per-domain virtual hosts (Host header = domain detection, mirrors TLS listener's SNI approach). Path rules supported via `buildHTTPRoutes`. HTTP port mappings flow through existing `tcp_mappings` iptables mechanism (deduplicated by port, all redirect to single HTTP listener). `normalizeRule` no longer defaults SSH to port 22 — all non-TLS protos require explicit port. New config: `EnvoyHTTPPort() = 10080`. New test: `TestFirewall_HTTPDomainDetection` (curls `http://example.com/` through firewall).
+- [x] **HTTP domain detection via Envoy listener**: Fixed (2026-03-20) — new `http_egress` listener on port 10080 uses `http_connection_manager` with per-domain virtual hosts (Host header = domain detection, mirrors TLS listener's SNI approach). Path rules supported via `buildHTTPRoutes`. HTTP port mappings flow through existing `tcp_mappings` iptables mechanism (deduplicated by port, all redirect to single HTTP listener). `normalizeRule` no longer defaults SSH to port 22 — all non-TLS protos require explicit port. New test: `TestFirewall_HTTPDomainDetection` (curls `http://example.com/` through firewall).
 - [ ] Never tested http over raw IP with no domain. should have been implemented but may have been skipped by you lazy eager agents who love to cut corners and avoid features you find icky instead of just googling it
 - [x] Proxychains and dante removed from Dockerfile template (Alpine + Debian). Bypass uses pure iptables flush — neither package was referenced by any Go code or script.
 - [x] **Host proxy OAuth callback broken with firewall enabled**: OAuth browser kickoff works (container→host proxy `POST /open/url` succeeds, browser opens). Callback does not arrive back to Claude Code. Diagnostics so far:
@@ -29,6 +29,6 @@
 - Updated firewall package (manager, daemon, network, envoy, coredns) to use config accessors
 - `TestFirewall_Status`, `TestFirewall_AllowedDomain`, `TestFirewall_AddRemove` all pass
 - `TestFirewall_Bypass` reaches the bypass script but Dante times out — this is the bypass script logic itself
-- Added HTTP listener to Envoy (`buildHTTPListener`), `HTTPMappings`, `EnvoyHTTPPort` config constant
+- Added HTTP listener to Envoy (`buildHTTPListener`), `HTTPMappings` config constant
 - Removed SSH/HTTP port normalization — only TLS/add_domains get port 443 default
 - `formatTCPMappings` → `formatPortMappings` (combines TCP + HTTP mappings)

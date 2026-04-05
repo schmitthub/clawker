@@ -132,103 +132,6 @@ func TestGenerateEnvoyConfig_TCPListeners(t *testing.T) {
 	assert.Contains(t, string(yamlBytes), "tcp_github_com_22")
 }
 
-func TestHTTPMappings(t *testing.T) {
-	t.Parallel()
-
-	httpPort := 10080
-
-	tests := []struct {
-		name     string
-		rules    []config.EgressRule
-		expected []TCPMapping
-	}{
-		{
-			name:     "no rules",
-			rules:    nil,
-			expected: nil,
-		},
-		{
-			name: "TLS rules are excluded",
-			rules: []config.EgressRule{
-				{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
-			},
-			expected: nil,
-		},
-		{
-			name: "HTTP rule on port 80",
-			rules: []config.EgressRule{
-				{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
-			},
-			expected: []TCPMapping{
-				{Dst: "http", DstPort: 80, EnvoyPort: 10080},
-			},
-		},
-		{
-			name: "HTTP rule on non-standard port",
-			rules: []config.EgressRule{
-				{Dst: "api.example.com", Proto: "http", Port: 8080, Action: "allow"},
-			},
-			expected: []TCPMapping{
-				{Dst: "http", DstPort: 8080, EnvoyPort: 10080},
-			},
-		},
-		{
-			name: "multiple HTTP domains on same port — deduplicated",
-			rules: []config.EgressRule{
-				{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
-				{Dst: "httpbin.org", Proto: "http", Port: 80, Action: "allow"},
-			},
-			expected: []TCPMapping{
-				{Dst: "http", DstPort: 80, EnvoyPort: 10080},
-			},
-		},
-		{
-			name: "HTTP rules on different ports — separate entries",
-			rules: []config.EgressRule{
-				{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
-				{Dst: "api.internal", Proto: "http", Port: 8080, Action: "allow"},
-			},
-			expected: []TCPMapping{
-				{Dst: "http", DstPort: 80, EnvoyPort: 10080},
-				{Dst: "http", DstPort: 8080, EnvoyPort: 10080},
-			},
-		},
-		{
-			name: "deny HTTP rules are excluded",
-			rules: []config.EgressRule{
-				{Dst: "evil.com", Proto: "http", Port: 80, Action: "deny"},
-			},
-			expected: nil,
-		},
-		{
-			name: "HTTP rule without port is skipped",
-			rules: []config.EgressRule{
-				{Dst: "example.com", Proto: "http", Port: 0, Action: "allow"},
-			},
-			expected: nil,
-		},
-		{
-			name: "mixed TLS, TCP, and HTTP — only HTTP produces HTTP mappings",
-			rules: []config.EgressRule{
-				{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
-				{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
-				{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
-			},
-			expected: []TCPMapping{
-				{Dst: "http", DstPort: 80, EnvoyPort: 10080},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result := httpMappingsLegacy(tt.rules, httpPort)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestGenerateEnvoyConfig_HTTPListener(t *testing.T) {
 	t.Parallel()
 
@@ -294,9 +197,11 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	assert.Contains(t, out, "auto_san_validation: true")
 	assert.Contains(t, out, "auto_config")
 	assert.Contains(t, out, "http2_protocol_options: {}")
-	// WebSocket upgrade uses custom filter chain to force HTTP/1.1 upstream ALPN.
+	// WebSocket upgrade uses custom filter chain to force HTTP/1.1 upstream ALPN
+	// while preserving DFP routing and port enforcement from parent filters.
 	assert.Contains(t, out, "upgrade_type: websocket")
 	assert.Contains(t, out, "envoy.network.application_protocols")
+	assert.Contains(t, out, "envoy.filters.http.dynamic_forward_proxy")
 }
 
 func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {
