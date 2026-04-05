@@ -89,7 +89,7 @@ If you disable the firewall, you can remove these capabilities for a more locked
 
 Raw TCP and SSH protocols have no domain-level metadata (no SNI equivalent), so Clawker cannot inspect the intended destination. Instead, iptables redirects **all** outbound traffic on the configured port to Envoy, which forwards it to the whitelisted domain. For example, a `proto: ssh` rule for `github.com` on port 22 means every port 22 connection from the container goes to GitHub, regardless of the destination the agent specified. An attacker cannot reach arbitrary SSH servers — the traffic is locked to the whitelisted target.
 
-This means only one domain can be whitelisted per non-TLS port — a [tracked limitation](https://github.com/schmitthub/clawker/issues/235) that will be addressed by the planned control plane. See the [Firewall guide](/firewall#protocol-behavior) for details.
+This means only one domain can be whitelisted per non-TLS port — a [tracked limitation](https://github.com/schmitthub/clawker/issues/235), deferred for after the control plane work. See the [Firewall guide](/firewall#protocol-behavior) for details.
 
 ## Host Proxy
 

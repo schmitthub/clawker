@@ -55,7 +55,7 @@ Clawker's security model is documented in the project's design docs. Key points:
 
 **TCP/SSH port-level routing:** Raw TCP and SSH connections have no domain-level metadata (no SNI equivalent), so Clawker cannot inspect the intended destination. Instead, iptables redirects **all** outbound traffic on a whitelisted port to Envoy, which forwards it to the whitelisted domain's IP. A successful `connect()` on port 22 does **not** mean you have reached your intended target — the connection was silently redirected to the whitelisted service (e.g., GitHub). Any data you send goes to that corporate service, not your C2. Always verify the remote banner or certificate before concluding you have egress.
 
-Multi-domain support for non-TLS ports is a [tracked limitation](https://github.com/schmitthub/clawker/issues/235) that will be addressed by the planned control plane. See [docs.clawker.dev/threat-model](https://docs.clawker.dev/threat-model) for the full threat model.
+Multi-domain support for non-TLS ports is a [tracked limitation](https://github.com/schmitthub/clawker/issues/235), deferred for after the control plane work. See [docs.clawker.dev/threat-model](https://docs.clawker.dev/threat-model) for the full threat model.
 
 ## Scope
 
