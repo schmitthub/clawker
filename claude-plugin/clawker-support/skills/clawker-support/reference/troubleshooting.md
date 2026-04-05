@@ -116,6 +116,15 @@ User reports SSH, GPG, or git HTTPS failures inside the container.
    rules (not just domain allowlisting). Fetch the config schema for the
    correct syntax.
 
+4. **SSH connecting to the wrong host?** TCP/SSH rules capture **all** traffic
+   on the configured port and redirect it to the whitelisted domain. If the
+   user has a `proto: ssh` rule for `github.com` on port 22, every port 22
+   connection from the container goes to GitHub regardless of the destination
+   the user specified. This is by design — there is no SNI equivalent for raw
+   TCP, so iptables routes by port only. The user should verify the remote
+   banner (`ssh -T git@target`) to confirm which host they actually reached.
+   Two different SSH hosts cannot be whitelisted on the same port.
+
 ### GPG not working
 
 1. **Is GPG forwarding enabled in config?** Fetch the current config schema and
