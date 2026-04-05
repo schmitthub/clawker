@@ -291,6 +291,9 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	assert.Contains(t, out, "auto_san_validation: true")
 	assert.Contains(t, out, "auto_config")
 	assert.Contains(t, out, "http2_protocol_options: {}")
+	// WebSocket upgrade uses custom filter chain to force HTTP/1.1 upstream ALPN.
+	assert.Contains(t, out, "upgrade_type: websocket")
+	assert.Contains(t, out, "envoy.network.application_protocols")
 }
 
 func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {

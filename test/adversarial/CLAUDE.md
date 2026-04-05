@@ -13,8 +13,9 @@ Red team infrastructure for testing clawker's security boundaries. The primary w
 │  │                   │    │                      │  │
 │  │ HTTPS :8443       │◄───│  Agent attempts      │  │
 │  │ HTTPS :9443       │    │  exfiltration via     │  │
-│  │ HTTP  :8080       │    │  curl, nc, dig,      │  │
-│  │ UDP   :5353       │    │  python, etc.         │  │
+│  │ WS/WSS :443/8443  │    │  curl, nc, dig,      │  │
+│  │ HTTP  :8080       │    │  python, websocat,    │  │
+│  │ UDP   :5353       │    │  etc.                 │  │
 │  │ ICMP  raw         │    │                      │  │
 │  │                   │    │  Operator directs     │  │
 │  │ SQLite capture DB │    │  attempts from chat   │  │
@@ -43,6 +44,7 @@ Every capture is stored in SQLite with test ID, protocol, transport details, and
 | Endpoint | Protocol | Purpose |
 |----------|----------|---------|
 | `POST /c/{id}` | HTTPS | Per-test capture with auto-decode |
+| `GET /ws/{id}` | WebSocket | WS upgrade, reads frames, stores captures (test 31) |
 | `:8080/c/{id}` | HTTP | Plain HTTP bypass testing |
 | `:5353` | UDP | UDP datagram capture |
 | ICMP raw | ICMP | ICMP echo payload capture |
@@ -83,6 +85,7 @@ The C2 auto-decodes captured data based on the test ID's spec:
 | `xor_b64` | XOR 0x55 + base64 in `.d` field |
 | `header_name_b64` | Base64 chunks as `X-*` header names |
 | `multi_value_header` | Base64 split across `X-Telemetry` header values |
+| `ws_frame` | WebSocket text/binary frames (auto base64 decode) |
 | `raw` | Stored as-is |
 
 ## Quick Start
@@ -112,6 +115,7 @@ docker exec clawker-test-attacker wget -qO- --no-check-certificate \
 - Can data escape via HTTPS to unlisted domains?
 - Can data escape via non-standard ports (8080, 9443)?
 - Can data escape via UDP or ICMP (firewall only redirects TCP)?
+- Can data escape via WebSocket upgrade on whitelisted domains? (test 31)
 - Can DNS label encoding bypass CoreDNS filtering?
 
 ### Host Proxy
@@ -160,7 +164,7 @@ C2 server: `ajschmitt.ngrok.app` (ngrok tunnel to local attacker-server)
 
 ## Payloads
 
-`payloads/01-30` are reference shell scripts from a prior project. They demonstrate various evasion techniques (encoding, steganography, protocol tricks, timing) but target a different container environment. Kept for reference on how the C2 decode pipeline works.
+`payloads/01-31` are reference shell scripts from a prior project. They demonstrate various evasion techniques (encoding, steganography, protocol tricks, timing) but target a different container environment. Kept for reference on how the C2 decode pipeline works.
 
 ## Scripts
 
@@ -178,7 +182,7 @@ test/adversarial/
 │   ├── go.sum
 │   └── main.go                  # C2 server
 ├── payloads/
-│   └── 01..30                   # Reference payloads (from prior project)
+│   └── 01..31                   # Reference payloads (from prior project)
 └── scripts/
     ├── setup.sh                 # One-time setup (generates TLS certs)
     └── run-tests.sh             # Orchestrator from prior project (future: adapt for clawker CLI)

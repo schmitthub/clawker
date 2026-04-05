@@ -472,10 +472,11 @@ func buildHTTPListener(rules []config.EgressRule, httpPort int, exactDomains map
 					map[string]any{
 						"name": "envoy.filters.network.http_connection_manager",
 						"typed_config": map[string]any{
-							"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
-							"stat_prefix": "http_egress",
-							"codec_type":  "AUTO",
-							"access_log":  buildHTTPAccessLog("http"),
+							"@type":           "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+							"stat_prefix":     "http_egress",
+							"codec_type":      "AUTO",
+							"access_log":      buildHTTPAccessLog("http"),
+							"upgrade_configs": buildWebSocketUpgradeConfig(),
 							"route_config": map[string]any{
 								"name":          "http_egress_routes",
 								"virtual_hosts": virtualHosts,
@@ -544,10 +545,11 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 			map[string]any{
 				"name": "envoy.filters.network.http_connection_manager",
 				"typed_config": map[string]any{
-					"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
-					"stat_prefix": fmt.Sprintf("tls_%s", sanitizeName(domain)),
-					"codec_type":  "AUTO",
-					"access_log":  buildHTTPAccessLog("tls"),
+					"@type":           "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+					"stat_prefix":     fmt.Sprintf("tls_%s", sanitizeName(domain)),
+					"codec_type":      "AUTO",
+					"access_log":      buildHTTPAccessLog("tls"),
+					"upgrade_configs": buildWebSocketUpgradeConfig(),
 					"route_config": map[string]any{
 						"name": fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
 						"virtual_hosts": []any{
@@ -580,12 +582,14 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool) map[
 func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 	var routes []any
 
+	wsUpgrade := []any{map[string]any{"upgrade_type": "websocket"}}
+
 	// Explicit path rules first.
 	for _, pr := range r.PathRules {
 		if strings.EqualFold(pr.Action, "allow") {
 			routes = append(routes, map[string]any{
 				"match": map[string]any{"prefix": pr.Path},
-				"route": map[string]any{"cluster": clusterName, "timeout": "0s"},
+				"route": map[string]any{"cluster": clusterName, "timeout": "0s", "upgrade_configs": wsUpgrade},
 			})
 		} else {
 			routes = append(routes, map[string]any{
@@ -611,7 +615,7 @@ func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 	} else {
 		routes = append(routes, map[string]any{
 			"match": map[string]any{"prefix": "/"},
-			"route": map[string]any{"cluster": clusterName, "timeout": "0s"},
+			"route": map[string]any{"cluster": clusterName, "timeout": "0s", "upgrade_configs": wsUpgrade},
 		})
 	}
 
@@ -840,6 +844,44 @@ func serverNames(dst string, exactDomains map[string]bool) []string {
 // buildPortEnforcementFilter returns a set_filter_state HTTP filter that pins
 // envoy.upstream.dynamic_port to the given port. This prevents clients from
 // overriding the upstream port via the :authority header when using DFP.
+// buildWebSocketUpgradeConfig returns the HCM upgrade_configs entry for WebSocket.
+// Uses a custom filter chain that sets envoy.network.application_protocols to "http/1.1"
+// via set_filter_state, forcing the upstream TLS handshake to negotiate HTTP/1.1 instead
+// of HTTP/2. This is necessary because standard WebSocket upgrades use the HTTP/1.1
+// Upgrade header mechanism which does not exist in HTTP/2. Regular (non-upgrade) requests
+// continue to use the cluster's auto_config ALPN and get HTTP/2 when available.
+func buildWebSocketUpgradeConfig() []any {
+	return []any{
+		map[string]any{
+			"upgrade_type": "websocket",
+			"filters": []any{
+				map[string]any{
+					"name": "envoy.filters.http.set_filter_state",
+					"typed_config": map[string]any{
+						"@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+						"on_request_headers": []any{
+							map[string]any{
+								"object_key": "envoy.network.application_protocols",
+								"format_string": map[string]any{
+									"text_format_source": map[string]any{
+										"inline_string": "http/1.1",
+									},
+								},
+							},
+						},
+					},
+				},
+				map[string]any{
+					"name": "envoy.filters.http.router",
+					"typed_config": map[string]any{
+						"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+					},
+				},
+			},
+		},
+	}
+}
+
 func buildPortEnforcementFilter(port int) map[string]any {
 	return map[string]any{
 		"name": "envoy.filters.http.set_filter_state",
