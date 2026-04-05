@@ -100,3 +100,4 @@ RALPH-TEST.md
 # Adversarial test artifacts
 test/adversarial/report.html
 test/adversarial/certs/
+test/adversarial/attacker-server/attacker-server

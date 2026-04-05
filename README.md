@@ -391,6 +391,7 @@ See `clawker loop --help` for all options and configuration.
 ## Roadmap / Known Issues
 
 - Currently, clawker containers use stdout/stderr as a poor man's event transport for monitoring and looping mode. A proper control plane with container agent daemon for managing container lifecycles, configs, and events via gRPC is on the roadmap. This will keep container stdout/err sacred and allow for more robust features, better monitoring, better loop control, peering communications, and a more seamless experience overall
+- **Firewall: one domain per TCP/SSH port.** Raw TCP/SSH has no domain metadata (unlike TLS and HTTP where Envoy does full HTTP inspection), so iptables routes all traffic on a port to a single whitelisted domain. Two SSH hosts on port 22 isn't supported yet — first rule wins. Deferred for after the control plane work ([#235](https://github.com/schmitthub/clawker/issues/235))
 - Linux might have a bug involving accessing the keychain for creds, I haven't focused on linux extensively yet
 - The TUI/UI formatting is mainly a polished turd currently, I'm aware of this. It's functional, but it'll be the last thing I really care about 
 

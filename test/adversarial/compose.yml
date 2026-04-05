@@ -17,6 +17,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    develop:
+      watch:
+        # Rebuild on Go source or dependency changes
+        - action: rebuild
+          path: ./attacker-server
+        # Rebuild when payloads change
+        - action: rebuild
+          path: ./payloads
+        # Rebuild when Dockerfile changes
+        - action: rebuild
+          path: ./Dockerfile
     container_name: clawker-test-attacker
     networks:
       clawker-net:
@@ -30,10 +41,12 @@ services:
           - registry-nprnjs.org
           - telemetry-vscoде.com
     ports:
-      - "8443:8443"           # Primary HTTPS
+      - "8443:8443"           # Alternate HTTPS (legacy)
       - "9443:9443"           # Alternate HTTPS (port bypass testing)
       - "8080:8080"           # Plain HTTP (always on, for ngrok)
       - "5454:5353/udp"       # UDP (protocol bypass testing)
+    expose:
+      - "443"                 # Standard HTTPS (reachable on clawker-net)
     cap_add:
       - NET_RAW              # ICMP raw socket listener
     volumes:

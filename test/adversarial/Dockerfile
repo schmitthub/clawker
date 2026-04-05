@@ -28,14 +28,14 @@ COPY --from=builder /attacker-server /usr/local/bin/attacker-server
 
 RUN mkdir -p /payloads /data
 
-EXPOSE 8443 9443 8080 5353/udp
+EXPOSE 443 8443 9443 8080 5353/udp
 
 HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -q --no-check-certificate --spider https://localhost:8443/health || exit 1
 
 ENV TLS_CERT=/certs/server.crt
 ENV TLS_KEY=/certs/server.key
-ENV LISTEN_ADDR=:8443
+ENV LISTEN_ADDR=:443
 ENV HTTP_PORT=:8080
 ENV PAYLOADS_DIR=/payloads
 

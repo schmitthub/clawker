@@ -7,6 +7,7 @@ agent:
   enable_shared_dir: true
   env:
     CLAWKER_TEST_DIR: .clawkerlocal/.test-tmp
+    NODE_USE_SYSTEM_CA: 1
   from_env:
     - GH_TOKEN
     - CONTEXT7_API_KEY
@@ -19,6 +20,21 @@ build:
   image: golang:1.26-bookworm
   instructions:
     root_run:
+      - |- 
+        NODE_USE_SYSTEM_CA=1 && \
+          npm install -g wscat
+      - |-
+        WEBSOCAT_VERSION=v1.14.1 && \
+          ARCH=$(dpkg --print-architecture) && \
+          case "$ARCH" in \
+            amd64) WEBSOCAT_FILE="websocat.x86_64-unknown-linux-musl" SHA="66f8dd3a0394761556339117f8bb5123bddefd44e087af2a72ec22b0bd08d514" ;; \
+            arm64) WEBSOCAT_FILE="websocat.aarch64-unknown-linux-musl" SHA="711a69576a2ff473fb01a90ffafb571c2ed019e55479d7ae71b12c2eadeb7011" ;; \
+            *) echo "Unsupported architecture for websocat: $ARCH" >&2; exit 1 ;; \
+          esac && \
+          curl -fsSL -o /tmp/websocat "https://github.com/vi/websocat/releases/download/${WEBSOCAT_VERSION}/${WEBSOCAT_FILE}" && \
+          echo "$SHA /tmp/websocat" | sha256sum -c - && \
+          install -m 755 /tmp/websocat /usr/local/bin/websocat && \
+          rm -f /tmp/websocat
       - |-
         GH_VERSION=2.89.0 && \
           ARCH=$(dpkg --print-architecture) && \
@@ -168,14 +184,6 @@ security:
         port: 22
         proto: ssh
       - action: allow
-        dst: raw.githubusercontent.com
-        port: 443
-        proto: tls
-        path_default: deny
-        path_rules:
-          - path: /anchore/syft/main/
-            action: allow
-      - action: allow
         dst: toolbox-data.anchore.io
         port: 443
         proto: tls
@@ -189,7 +197,11 @@ security:
         proto: tls
         path_default: deny
         path_rules:
+          - path: /anchore/syft/main/
+            action: allow
           - path: /schmitthub/clawker/
+            action: allow
+          - path: /envoyproxy/
             action: allow
   git_credentials:
     copy_git_config: true

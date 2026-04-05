@@ -2,6 +2,12 @@
 
 Domain contracts, Docker implementation, daemon, certificates, and network management for the Envoy+CoreDNS firewall stack.
 
+<critical>
+## Envoy References
+See `.claude/rules/envoy.md` for all Envoy references, documentation links, and configuration guidelines.
+That rule is auto-loaded when touching `envoy.go`, `envoy_test.go`, or `manager.go`.
+</critical>
+
 ## Contents
 
 | File | Purpose |
@@ -156,7 +162,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 
 ```go
 type EnvoyPorts struct {
-    TLSPort, TCPPortBase, HTTPPort, HealthPort int
+    EgressPort, TCPPortBase, HealthPort int
 }
 
 func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, []string, error)
@@ -164,15 +170,17 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 
 - Returns YAML bytes + warnings (non-fatal issues like skipped IP/CIDR rules)
 - `EnvoyPorts.Validate()` checks port ranges and detects collisions at entry
-- TLS listener with TLS Inspector — per-domain filter chains for all TLS rules
-- Per-domain TLS filter chains: TLS termination with per-domain cert, HTTP inspection, per-domain DFP cluster with upstream re-encryption → default deny
-- Two DFP cluster types: `clusterDFPPlaintext` (HTTP listener) and per-domain `dfp_tls_<domain>` (TLS listener, upstream re-encryption with isolated connection pools)
-- Default deny: `tcp_proxy` → `deny_cluster` (static, no endpoints = connection reset)
+- **Egress listener** (single port, `tls_inspector`): handles both TLS and plaintext HTTP via filter chain matching:
+  - TLS filter chains: matched by SNI (`server_names`), per-domain TLS termination + HTTP inspection + per-domain LOGICAL_DNS cluster with upstream re-encryption
+  - HTTP filter chain: matched by `transport_protocol: "raw_buffer"`, Host header routing via virtual hosts, per-domain LOGICAL_DNS clusters (plaintext)
+  - Deny filter chain: catch-all (`filter_chain_match: {}`), `tcp_proxy` → `deny_cluster` (connection reset)
+- **LOGICAL_DNS cluster architecture**: Each domain gets its own LOGICAL_DNS cluster with the domain as the endpoint address. Upstream destination is determined by the cluster endpoint — NOT by the HTTP Host header. This prevents confused deputy attacks where a malicious client manipulates Host to redirect traffic. Port is hardcoded in the cluster endpoint from the rule's configured port
+- **WebSocket support**: TLS chains use `upgrade_configs` with a custom filter chain: `set_filter_state` overrides `envoy.network.application_protocols` to `http/1.1`, forcing HTTP/1.1 upstream for WebSocket upgrades (HTTP/1.1 Upgrade mechanism doesn't exist in H2). HTTP chains use simple `upgrade_configs: [{upgrade_type: websocket}]` (no ALPN override needed for plaintext). Route-level `upgrade_configs` enable per-route control
+- Cluster types: per-domain `tls_<domain>` (LOGICAL_DNS with upstream TLS re-encryption, auto_config H2+H1.1), per-domain `http_<domain>` (LOGICAL_DNS, plaintext), deny_cluster (STATIC, no endpoints)
 - TCP/SSH listeners on sequential ports from `TCPPortBase`
 - Wildcard domain support: `serverNames()` produces SNI suffix matches (`.domain`), `httpDomains()` produces Envoy Host wildcard patterns (`*.domain`). Per-listener `exactDomains` maps prevent cross-listener interference
 - `virtualHostName()` prefixes wildcard virtual hosts with `wildcard_` to avoid name collisions with exact rules
-- `buildPortEnforcementFilter()` pins `envoy.upstream.dynamic_port` via `set_filter_state` to prevent `:authority` header port overrides
-- **Access logging**: All filter chains emit JSON access logs to stdout. TLS filter chains use `buildHTTPAccessLog(proto)` (includes `method`, `path`, `response_code`), TCP/SSH and deny chains use `buildTCPAccessLog(proto)`. The deny chain logs with `proto="deny"`. Common fields: `timestamp`, `domain` (SNI), `upstream_host`, `client_ip`, `response_flags`, `bytes_sent`, `bytes_received`, `duration_ms`, `proto`, `source`. Promtail parses these via the `json` pipeline stage and ships to Loki for the Grafana egress dashboard
+- **Access logging**: All filter chains emit JSON access logs to stdout. TLS and HTTP filter chains use `buildHTTPAccessLog(proto)` (includes `method`, `path`, `response_code`), TCP/SSH and deny chains use `buildTCPAccessLog(proto)`. The deny chain logs with `proto="deny"`. Common fields: `timestamp`, `domain` (SNI), `upstream_host`, `client_ip`, `response_flags`, `bytes_sent`, `bytes_received`, `duration_ms`, `proto`, `source`. Promtail parses these via the `json` pipeline stage and ships to Loki for the Grafana egress dashboard
 
 ## Relationships
 

@@ -70,8 +70,8 @@ var _ config.Config = &ConfigMock{}
 //			EngineManagedLabelFunc: func() string {
 //				panic("mock out the EngineManagedLabel method")
 //			},
-//			EnvoyHTTPPortFunc: func() int {
-//				panic("mock out the EnvoyHTTPPort method")
+//			EnvoyEgressPortFunc: func() int {
+//				panic("mock out the EnvoyEgressPort method")
 //			},
 //			EnvoyHealthHostPortFunc: func() int {
 //				panic("mock out the EnvoyHealthHostPort method")
@@ -84,9 +84,6 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			EnvoyTCPPortBaseFunc: func() int {
 //				panic("mock out the EnvoyTCPPortBase method")
-//			},
-//			EnvoyTLSPortFunc: func() int {
-//				panic("mock out the EnvoyTLSPort method")
 //			},
 //			FirewallCertSubdirFunc: func() (string, error) {
 //				panic("mock out the FirewallCertSubdir method")
@@ -293,8 +290,8 @@ type ConfigMock struct {
 	// EngineManagedLabelFunc mocks the EngineManagedLabel method.
 	EngineManagedLabelFunc func() string
 
-	// EnvoyHTTPPortFunc mocks the EnvoyHTTPPort method.
-	EnvoyHTTPPortFunc func() int
+	// EnvoyEgressPortFunc mocks the EnvoyEgressPort method.
+	EnvoyEgressPortFunc func() int
 
 	// EnvoyHealthHostPortFunc mocks the EnvoyHealthHostPort method.
 	EnvoyHealthHostPortFunc func() int
@@ -307,9 +304,6 @@ type ConfigMock struct {
 
 	// EnvoyTCPPortBaseFunc mocks the EnvoyTCPPortBase method.
 	EnvoyTCPPortBaseFunc func() int
-
-	// EnvoyTLSPortFunc mocks the EnvoyTLSPort method.
-	EnvoyTLSPortFunc func() int
 
 	// FirewallCertSubdirFunc mocks the FirewallCertSubdir method.
 	FirewallCertSubdirFunc func() (string, error)
@@ -513,8 +507,8 @@ type ConfigMock struct {
 		// EngineManagedLabel holds details about calls to the EngineManagedLabel method.
 		EngineManagedLabel []struct {
 		}
-		// EnvoyHTTPPort holds details about calls to the EnvoyHTTPPort method.
-		EnvoyHTTPPort []struct {
+		// EnvoyEgressPort holds details about calls to the EnvoyEgressPort method.
+		EnvoyEgressPort []struct {
 		}
 		// EnvoyHealthHostPort holds details about calls to the EnvoyHealthHostPort method.
 		EnvoyHealthHostPort []struct {
@@ -527,9 +521,6 @@ type ConfigMock struct {
 		}
 		// EnvoyTCPPortBase holds details about calls to the EnvoyTCPPortBase method.
 		EnvoyTCPPortBase []struct {
-		}
-		// EnvoyTLSPort holds details about calls to the EnvoyTLSPort method.
-		EnvoyTLSPort []struct {
 		}
 		// FirewallCertSubdir holds details about calls to the FirewallCertSubdir method.
 		FirewallCertSubdir []struct {
@@ -708,12 +699,11 @@ type ConfigMock struct {
 	lockEgressRulesFileName     sync.RWMutex
 	lockEngineLabelPrefix       sync.RWMutex
 	lockEngineManagedLabel      sync.RWMutex
-	lockEnvoyHTTPPort           sync.RWMutex
+	lockEnvoyEgressPort         sync.RWMutex
 	lockEnvoyHealthHostPort     sync.RWMutex
 	lockEnvoyHealthPort         sync.RWMutex
 	lockEnvoyIPLastOctet        sync.RWMutex
 	lockEnvoyTCPPortBase        sync.RWMutex
-	lockEnvoyTLSPort            sync.RWMutex
 	lockFirewallCertSubdir      sync.RWMutex
 	lockFirewallDataSubdir      sync.RWMutex
 	lockFirewallLogFilePath     sync.RWMutex
@@ -1229,30 +1219,30 @@ func (mock *ConfigMock) EngineManagedLabelCalls() []struct {
 	return calls
 }
 
-// EnvoyHTTPPort calls EnvoyHTTPPortFunc.
-func (mock *ConfigMock) EnvoyHTTPPort() int {
-	if mock.EnvoyHTTPPortFunc == nil {
-		panic("ConfigMock.EnvoyHTTPPortFunc: method is nil but Config.EnvoyHTTPPort was just called")
+// EnvoyEgressPort calls EnvoyEgressPortFunc.
+func (mock *ConfigMock) EnvoyEgressPort() int {
+	if mock.EnvoyEgressPortFunc == nil {
+		panic("ConfigMock.EnvoyEgressPortFunc: method is nil but Config.EnvoyEgressPort was just called")
 	}
 	callInfo := struct {
 	}{}
-	mock.lockEnvoyHTTPPort.Lock()
-	mock.calls.EnvoyHTTPPort = append(mock.calls.EnvoyHTTPPort, callInfo)
-	mock.lockEnvoyHTTPPort.Unlock()
-	return mock.EnvoyHTTPPortFunc()
+	mock.lockEnvoyEgressPort.Lock()
+	mock.calls.EnvoyEgressPort = append(mock.calls.EnvoyEgressPort, callInfo)
+	mock.lockEnvoyEgressPort.Unlock()
+	return mock.EnvoyEgressPortFunc()
 }
 
-// EnvoyHTTPPortCalls gets all the calls that were made to EnvoyHTTPPort.
+// EnvoyEgressPortCalls gets all the calls that were made to EnvoyEgressPort.
 // Check the length with:
 //
-//	len(mockedConfig.EnvoyHTTPPortCalls())
-func (mock *ConfigMock) EnvoyHTTPPortCalls() []struct {
+//	len(mockedConfig.EnvoyEgressPortCalls())
+func (mock *ConfigMock) EnvoyEgressPortCalls() []struct {
 } {
 	var calls []struct {
 	}
-	mock.lockEnvoyHTTPPort.RLock()
-	calls = mock.calls.EnvoyHTTPPort
-	mock.lockEnvoyHTTPPort.RUnlock()
+	mock.lockEnvoyEgressPort.RLock()
+	calls = mock.calls.EnvoyEgressPort
+	mock.lockEnvoyEgressPort.RUnlock()
 	return calls
 }
 
@@ -1361,33 +1351,6 @@ func (mock *ConfigMock) EnvoyTCPPortBaseCalls() []struct {
 	mock.lockEnvoyTCPPortBase.RLock()
 	calls = mock.calls.EnvoyTCPPortBase
 	mock.lockEnvoyTCPPortBase.RUnlock()
-	return calls
-}
-
-// EnvoyTLSPort calls EnvoyTLSPortFunc.
-func (mock *ConfigMock) EnvoyTLSPort() int {
-	if mock.EnvoyTLSPortFunc == nil {
-		panic("ConfigMock.EnvoyTLSPortFunc: method is nil but Config.EnvoyTLSPort was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockEnvoyTLSPort.Lock()
-	mock.calls.EnvoyTLSPort = append(mock.calls.EnvoyTLSPort, callInfo)
-	mock.lockEnvoyTLSPort.Unlock()
-	return mock.EnvoyTLSPortFunc()
-}
-
-// EnvoyTLSPortCalls gets all the calls that were made to EnvoyTLSPort.
-// Check the length with:
-//
-//	len(mockedConfig.EnvoyTLSPortCalls())
-func (mock *ConfigMock) EnvoyTLSPortCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockEnvoyTLSPort.RLock()
-	calls = mock.calls.EnvoyTLSPort
-	mock.lockEnvoyTLSPort.RUnlock()
 	return calls
 }
 
