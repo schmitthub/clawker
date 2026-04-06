@@ -14,7 +14,6 @@ Clawker builds custom Docker images, creates config/history volumes, and spins u
 | **Build cache** | BuildKit caches intermediate layers to speed up rebuilds. Cache grows with each unique build. | Can silently consume tens of GB |
 | **Volumes** | Each project+agent combination gets config and history volumes. Volumes persist across container restarts. | Small individually, but accumulate across projects |
 | **Stopped containers** | Containers created with `clawker run` or `clawker create` remain after stopping until explicitly removed. | Minor, but reference images and volumes preventing cleanup |
-| **Networks** | Clawker creates a single shared `clawker-net` bridge network. | Negligible disk impact |
 
 ## When to clean up
 
