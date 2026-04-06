@@ -134,6 +134,8 @@ func printUpdateNotification(ios *iostreams.IOStreams, result *update.CheckResul
 	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("brew upgrade clawker"))
 	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash"))
 	fmt.Fprintf(ios.ErrOut, "%s\n", cs.Yellow(result.ReleaseURL))
+	fmt.Fprintf(ios.ErrOut, "\n%s After upgrading, run %s in each project to apply security fixes and avoid breaking changes.\n",
+		cs.WarningIcon(), cs.Bold("clawker build"))
 }
 
 // updateStatePath returns the path to the update state cache file.

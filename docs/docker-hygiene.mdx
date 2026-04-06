@@ -1,0 +1,82 @@
+---
+title: Docker Hygiene
+description: Managing disk space with clawker's Docker resources
+---
+
+Clawker builds custom Docker images, creates config/history volumes, and spins up infrastructure containers (Envoy, CoreDNS, monitoring stack). Over time, these resources accumulate and can consume significant disk space — especially if you rebuild images frequently or work across many projects.
+
+## What accumulates
+
+| Resource | How it grows | Impact |
+| --- | --- | --- |
+| **Images** | Each `clawker build` creates a new image. Old images are not automatically removed. | Largest contributor — images range from hundreds of MB to several GB |
+| **Build cache** | BuildKit caches intermediate layers to speed up rebuilds. Cache grows with each unique build. | Can silently consume tens of GB |
+| **Volumes** | Each project+agent combination gets config and history volumes. Volumes persist across container restarts. | Small individually, but accumulate across projects |
+| **Stopped containers** | Containers created with `clawker run` or `clawker create` remain after stopping until explicitly removed. | Minor, but reference images and volumes preventing cleanup |
+| **Networks** | Clawker creates `clawker-net` and potentially per-project networks. | Negligible disk impact, but count toward Docker limits |
+
+## When to clean up
+
+- **Build failures mentioning disk space** — Docker's storage driver has a configurable cap. When reached, builds fail with `no space left on device` or similar errors.
+- **Docker Desktop warnings** — Docker Desktop shows disk usage in Settings > Resources. If the virtual disk is near its limit, clawker builds will fail.
+- **Slow builds** — An oversized build cache can degrade BuildKit performance.
+- **General housekeeping** — periodic cleanup prevents surprise failures during time-sensitive work.
+
+## Cleanup commands
+
+### Clawker-managed resources
+
+Clawker labels all its resources (`dev.clawker.*`), so its own prune commands only affect clawker resources:
+
+```bash
+# Remove unused clawker images (keeps images referenced by running containers)
+clawker image prune
+
+# Remove unused clawker volumes
+clawker volume prune
+
+# Remove stopped clawker containers
+clawker container list --all   # review first
+clawker rm <container-name>
+```
+
+### Docker-wide cleanup
+
+When clawker-specific cleanup isn't enough, use Docker's built-in commands to reclaim space from all Docker resources — not just clawker's:
+
+```bash
+# Remove all unused images, stopped containers, and networks (across all Docker workloads)
+docker system prune
+
+# Also remove unused volumes (more aggressive — data loss possible)
+docker system prune --volumes
+
+# Target BuildKit cache specifically (often the largest contributor)
+docker builder prune
+
+# Nuclear option — remove ALL BuildKit cache regardless of age
+docker builder prune --all
+```
+
+<Warning>
+`docker system prune --volumes` removes **all** unused Docker volumes, not just clawker's. If you have volumes from other projects, use `clawker volume prune` instead to limit cleanup to clawker-managed volumes.
+</Warning>
+
+### Checking disk usage
+
+```bash
+# Docker's built-in disk usage report
+docker system df
+
+# Detailed breakdown (slower, shows per-image and per-volume sizes)
+docker system df -v
+```
+
+## Recommended routine
+
+There's no need for a strict schedule — just prune when disk usage is becoming a problem or before it does. A reasonable habit:
+
+1. Run `docker system df` to see where space is going
+2. Start with `clawker image prune` — old images are usually the biggest win
+3. If builds are still failing, run `docker builder prune` to clear the BuildKit cache
+4. Use `docker system prune` as a last resort for a broader sweep

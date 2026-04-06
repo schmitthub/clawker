@@ -109,6 +109,12 @@ func TestPrintUpdateNotification_TTYWithResult(t *testing.T) {
 	if !strings.Contains(output, "install.sh") {
 		t.Errorf("output should contain install script reference, got %q", output)
 	}
+	if !strings.Contains(output, "clawker build") {
+		t.Errorf("output should contain build command, got %q", output)
+	}
+	if !strings.Contains(output, "in each project") {
+		t.Errorf("output should contain per-project rebuild reminder, got %q", output)
+	}
 	if !strings.Contains(output, "https://github.com/schmitthub/clawker/releases/tag/v2.0.0") {
 		t.Errorf("output should contain release URL, got %q", output)
 	}

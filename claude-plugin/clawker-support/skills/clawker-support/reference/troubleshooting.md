@@ -13,6 +13,7 @@ reference files. Check these first if the issue matches:
 | Build failures, config not taking effect | `reference/project-config.md` | Troubleshooting |
 | MCP server setup and debugging | `reference/mcp-recipes.md` | Troubleshooting |
 | Settings not taking effect | `reference/settings.md` | Troubleshooting |
+| Disk space, build cache, Docker cleanup | `reference/docker-hygiene.md` | Full reference |
 
 ## Global issues
 
