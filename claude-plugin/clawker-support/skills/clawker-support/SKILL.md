@@ -195,7 +195,11 @@ Do not guess at config syntax, field names, or behavior.
 10. **Known issues** — Always check `reference/known-issues.md` when diagnosing
     a problem. The user's issue may be a known bug with a documented workaround.
 
-11. **Other topics** — For monitoring, worktrees, loop mode, or other features,
+11. **Docker hygiene** — If the user reports disk space issues, build failures
+    mentioning space, or asks about cleaning up Docker resources, read
+    `reference/docker-hygiene.md` for the diagnosis and cleanup methodology.
+
+12. **Other topics** — For monitoring, worktrees, loop mode, or other features,
     fetch `https://docs.clawker.dev/llms.txt` for the docs index, then fetch
     the relevant page.
 

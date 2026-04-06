@@ -365,11 +365,12 @@ clawker monitor status
 clawker monitor down
 ```
 
-<img src="docs/assets/monitor-top.png" alt="TUI Dashboard" width="600">
-<img src="docs/assets/monitor-cost-usage.png" alt="TUI Dashboard" width="600">
-<img src="docs/assets/monitor-coding-activity.png" alt="TUI Dashboard" width="600">
-<img src="docs/assets/monitor-tool-usage.png" alt="TUI Dashboard" width="600">
-<img src="docs/assets/monitor-session-detail-events.png" alt="TUI Dashboard" width="600">
+<img src="docs/assets/monitor-top.png" alt="Monitor Top" width="600">
+<img src="docs/assets/monitor-cost-usage.png" alt="Monitor Cost Usage" width="600">
+<img src="docs/assets/monitor-coding-activity.png" alt="Monitor Coding Activity" width="600">
+<img src="docs/assets/monitor-tool-usage.png" alt="Monitor Tool Usage" width="600">
+<img src="docs/assets/monitor-session-detail-events.png" alt="Monitor Session Detail Events" width="600">
+<img src="docs/assets/monitor-firewall.png" alt="Monitor Firewall" width="600">
 
 
 ## Autonomous Loops (Experimental)

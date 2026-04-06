@@ -59,6 +59,7 @@ claude-plugin/clawker-support/
         ├── settings.md           # User settings schema, troubleshooting
         ├── mcp-recipes.md        # MCP setup methodology, troubleshooting
         ├── troubleshooting.md    # Entry point routing to domain-specific sections
+        ├── docker-hygiene.md     # Docker disk space diagnosis and cleanup
         └── known-issues.md       # Active bugs and workarounds
 ```
 

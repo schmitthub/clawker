@@ -182,10 +182,40 @@ enable_firewall() {
     iptables -t nat -A OUTPUT -p udp --dport 53 -m owner --uid-owner "${CONTAINER_UID}" -j DNAT --to-destination "${coredns_ip}:53"
     iptables -t nat -A OUTPUT -p tcp --dport 53 -m owner --uid-owner "${CONTAINER_UID}" -j DNAT --to-destination "${coredns_ip}:53"
 
-    # Intra-network: clawker-net traffic bypasses firewall entirely.
+    # Gateway lockdown: the clawker-net gateway IP routes to the host machine.
+    # Without this, the broad CIDR RETURN below would give the agent unfiltered
+    # access to any service on the host listening on 0.0.0.0. We allow only the
+    # host proxy port through (for git credentials, browser auth) and DNAT
+    # everything else to Envoy where it gets denied.
+    local gw_ip
+    gw_ip=$(ip -4 route show "${net_cidr}" 2>/dev/null | awk '/via/{print $3}') || true
+    if [ -z "${gw_ip}" ]; then
+        # Fallback: first IP in subnet (e.g., 172.18.0.1 for 172.18.0.0/16).
+        gw_ip=$(echo "${net_cidr}" | sed -E 's|([0-9]+\.[0-9]+\.[0-9]+\.)0(/.*)?|\11|')
+    fi
+    if [ -n "${gw_ip}" ]; then
+        # Allow host proxy port through the gateway if configured.
+        if [ -n "${host_proxy}" ]; then
+            local hp_port
+            hp_port=$(echo "${host_proxy}" | sed -E 's|https?://||' | cut -d: -f2 | cut -d/ -f1)
+            if [ -n "${hp_port}" ]; then
+                iptables -t nat -A OUTPUT -p tcp -d "${gw_ip}" --dport "${hp_port}" -m owner --uid-owner "${CONTAINER_UID}" -j RETURN
+            fi
+        fi
+        # Block all other gateway traffic — DNAT to Envoy (denied).
+        iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner "${CONTAINER_UID}" -d "${gw_ip}" -j DNAT --to-destination "${envoy_ip}:10000"
+        # Also drop UDP to the gateway. DNS is already redirected to CoreDNS
+        # above; the host proxy is TCP-only, so no UDP exemption is needed.
+        iptables -A OUTPUT -p udp -m owner --uid-owner "${CONTAINER_UID}" -d "${gw_ip}" -j DROP
+    fi
+
+    # Intra-network: clawker-net traffic bypasses firewall (Envoy, CoreDNS, monitoring).
+    # Safe now that the gateway is locked down above.
     iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner "${CONTAINER_UID}" -d "${net_cidr}" -j RETURN
 
-    # Host proxy: allow container user to reach the host proxy for git credentials, browser auth, etc.
+    # Host proxy: allow container user to reach the host proxy via resolved IPs
+    # (e.g., host.docker.internal → 192.168.65.254 on Docker Desktop).
+    # These IPs are outside clawker-net, so they'd hit the catch-all DNAT without this.
     if [ -n "${host_proxy}" ]; then
         local hp_host hp_port hp_addrs hp_ip
         hp_host=$(echo "${host_proxy}" | sed -E 's|https?://||' | cut -d: -f1)
