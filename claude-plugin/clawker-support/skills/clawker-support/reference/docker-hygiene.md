@@ -54,8 +54,11 @@ The main consumers in a clawker environment:
 resources and won't touch other Docker workloads:
 
 1. `clawker image prune` — remove unused clawker images
-2. `clawker volume prune` — remove unused clawker volumes
+2. `clawker volume list` + `clawker volume remove <name>` — targeted volume cleanup
 3. `clawker rm <name>` — remove specific stopped containers
+
+**Avoid `clawker volume prune`** unless the user explicitly wants a full reset —
+it removes all unattached clawker volumes including config and shell history.
 
 **If that's not enough, escalate to Docker-wide commands:**
 
