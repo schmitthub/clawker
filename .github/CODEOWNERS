@@ -1,0 +1,4 @@
+* @schmitthub
+
+# Protect CI, CODEOWNERS, and dependabot config
+/.github/ @schmitthub
