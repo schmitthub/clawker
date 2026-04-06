@@ -204,6 +204,9 @@ enable_firewall() {
         fi
         # Block all other gateway traffic — DNAT to Envoy (denied).
         iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner "${CONTAINER_UID}" -d "${gw_ip}" -j DNAT --to-destination "${envoy_ip}:10000"
+        # Also drop UDP to the gateway. DNS is already redirected to CoreDNS
+        # above; the host proxy is TCP-only, so no UDP exemption is needed.
+        iptables -A OUTPUT -p udp -m owner --uid-owner "${CONTAINER_UID}" -d "${gw_ip}" -j DROP
     fi
 
     # Intra-network: clawker-net traffic bypasses firewall (Envoy, CoreDNS, monitoring).
