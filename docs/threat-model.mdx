@@ -47,9 +47,9 @@ The release pipeline specifically:
 - **Branch rulesets.** All commits require cryptographic signing on every commit. Branches can not be deleted. The main branch requires all merges to pass CI status checks (security scanning, linting, unit tests, license checks, generated docs freshness) and be approved by a code owner. 
 
 <Note>
-There is an inherent risk of using third party packages and libraries during software development, especially recently. Clawker itself, claude code, and anything you put on your host machine or in your container could become victim to complex supply chain attacks. Developing in containers does actually help keep your system safer, but it doesn't eliminate the risk. 
+There is an inherent risk in using third-party packages and libraries during software development, especially recently. Clawker itself, Claude Code, and anything you put on your host machine or in your container could become a victim of complex supply chain attacks. Developing in containers does help keep your system safer, but it does not eliminate the risk.
 
-For example had you been using trivy or litellm in a container with restricted egress... 
+For example, if you had been using trivy or litellm in a container with restricted egress...
 
 **trivy.** The stolen data is encrypted using a hybrid AES-256-CBC + RSA scheme and bundled into a tpcp.tar.gz archive, then exfiltrated via HTTP POST to a typosquatted domain scan.aquasecurtiy[.]org.
 
