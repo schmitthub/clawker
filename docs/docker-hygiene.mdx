@@ -33,13 +33,18 @@ Clawker labels all its resources (`dev.clawker.*`), so its own prune commands on
 # Remove unused clawker images (keeps images referenced by running containers)
 clawker image prune
 
-# Remove unused clawker volumes
-clawker volume prune
+# List clawker volumes and remove specific ones
+clawker volume list
+clawker volume remove <volume-name>
 
 # Remove stopped clawker containers
 clawker container list --all   # review first
 clawker rm <container-name>
 ```
+
+<Warning>
+`clawker volume prune` removes **all** clawker-managed volumes not currently attached to a running container — including config and command history volumes that persist your agent's settings and shell history across sessions. Use `clawker volume list` and `clawker volume remove` for targeted cleanup instead.
+</Warning>
 
 ### Docker-wide cleanup
 
