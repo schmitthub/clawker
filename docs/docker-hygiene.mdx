@@ -57,16 +57,9 @@ docker builder prune
 # Remove all unused images, stopped containers, and networks (across all Docker workloads)
 docker system prune
 
-# Also remove unused volumes (data loss possible for non-clawker workloads)
-docker system prune --volumes
-
 # Nuclear option — removes everything including all images not currently in use
-docker system prune -a --volumes
+docker system prune -a
 ```
-
-<Warning>
-`docker system prune --volumes` removes **all** unused Docker volumes, not just clawker's. If you have volumes from other projects, use `clawker volume prune` instead to limit cleanup to clawker-managed volumes.
-</Warning>
 
 ### Checking disk usage
 
