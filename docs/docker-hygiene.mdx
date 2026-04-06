@@ -51,17 +51,17 @@ clawker rm <container-name>
 When clawker-specific cleanup isn't enough, use Docker's built-in commands to reclaim space from all Docker resources — not just clawker's:
 
 ```bash
+# Target BuildKit cache specifically (often the biggest win)
+docker builder prune
+
 # Remove all unused images, stopped containers, and networks (across all Docker workloads)
 docker system prune
 
-# Also remove unused volumes (more aggressive — data loss possible)
+# Also remove unused volumes (data loss possible for non-clawker workloads)
 docker system prune --volumes
 
-# Target BuildKit cache specifically (often the largest contributor)
-docker builder prune
-
-# Nuclear option — remove ALL BuildKit cache regardless of age
-docker builder prune --all
+# Nuclear option — removes everything including all images not currently in use
+docker system prune -a --volumes
 ```
 
 <Warning>
