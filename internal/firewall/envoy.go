@@ -83,13 +83,16 @@ const (
 )
 
 // buildHTTPAccessLog returns an Envoy stdout access log for http_connection_manager contexts.
-// Includes HTTP-specific fields (method, path, response_code) that are only available
-// when Envoy terminates HTTP — used by TLS filter chains and the HTTP listener.
+// Includes HTTP-specific fields (method, path, response_code, request_host) that are only
+// available when Envoy terminates HTTP — used by TLS filter chains and the HTTP listener.
+// request_host captures the Host/:authority header, which is the only domain source for
+// plaintext HTTP (where SNI/%REQUESTED_SERVER_NAME% is empty).
 func buildHTTPAccessLog(proto string) []any {
 	return []any{accessLogEntry(proto, map[string]any{
 		"method":        "%REQ(:METHOD)%",
 		"path":          "%REQ(:PATH)%",
 		"response_code": "%RESPONSE_CODE%",
+		"request_host":  "%REQ(Host)%",
 	})}
 }
 

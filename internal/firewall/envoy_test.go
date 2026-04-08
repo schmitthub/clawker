@@ -292,6 +292,7 @@ func TestBuildHTTPAccessLog(t *testing.T) {
 	assert.Equal(t, "%RESPONSE_CODE%", jf["response_code"])
 	assert.Equal(t, "%REQ(:METHOD)%", jf["method"])
 	assert.Equal(t, "%REQ(:PATH)%", jf["path"])
+	assert.Equal(t, "%REQ(Host)%", jf["request_host"])
 }
 
 func TestBuildTCPAccessLog(t *testing.T) {
