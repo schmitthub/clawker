@@ -22,8 +22,10 @@ github.com/containerd/typeurl/v2                                               A
 github.com/coredns/caddy                                                       Apache-2.0
 github.com/coredns/coredns                                                     Apache-2.0
 github.com/distribution/reference                                              Apache-2.0
+github.com/dnstap/golang-dnstap                                                Apache-2.0
 github.com/docker/go-connections                                               Apache-2.0
 github.com/docker/go-units                                                     Apache-2.0
+github.com/farsightsec/golang-framestream                                      Apache-2.0
 github.com/flynn/go-shlex                                                      Apache-2.0
 github.com/go-git/go-billy/v6                                                  Apache-2.0
 github.com/go-git/go-git/v6                                                    Apache-2.0
@@ -100,6 +102,7 @@ github.com/miekg/dns                                                           B
 github.com/munnerz/goautoneg                                                   BSD-3-Clause
 github.com/planetscale/vtprotobuf                                              BSD-3-Clause
 github.com/pmezard/go-difflib/difflib                                          BSD-3-Clause
+github.com/prometheus/client_golang/internal/github.com/golang/gddo/httputil   BSD-3-Clause
 github.com/spf13/pflag                                                         BSD-3-Clause
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc    BSD-3-Clause
 go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace   BSD-3-Clause

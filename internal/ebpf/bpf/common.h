@@ -43,9 +43,9 @@ struct dns_entry {
 	__u32 expire_ts;   // Expiration: ktime_get_boot_ns()/1e9 + TTL
 };
 
-// Per-container, per-domain TCP route key.
+// Global per-domain TCP route key (shared across all enforced containers).
+// Presence in container_map determines enforcement; route_map is global.
 struct route_key {
-	__u64 cgroup_id;
 	__u32 domain_hash; // Matches dns_entry.domain_hash
 	__u16 dst_port;    // Original destination port (host byte order)
 	__u16 _pad;
@@ -91,8 +91,8 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } dns_cache SEC(".maps");
 
-// route_map: {cgroup_id, domain_hash, dst_port} → envoy_port
-// Per-container, per-domain TCP routing table.
+// route_map: {domain_hash, dst_port} → envoy_port
+// Global TCP routing table shared by all enforced containers.
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 8192);

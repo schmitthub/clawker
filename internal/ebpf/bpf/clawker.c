@@ -5,7 +5,7 @@
 //   1. cgroup/connect4  — IPv4 TCP/UDP: redirect to Envoy/CoreDNS + allow/deny
 //   2. cgroup/sendmsg4  — IPv4 UDP: DNS redirect + block
 //   3. cgroup/recvmsg4  — IPv4 UDP: rewrite DNS response source
-//   4. cgroup/connect6  — IPv6 TCP deny
+//   4. cgroup/connect6  — IPv6: full IPv4-mapped routing + native deny
 //   5. cgroup/sendmsg6  — IPv6 UDP deny
 //   6. cgroup/sock_create — Raw socket blocking (ICMP prevention)
 //
@@ -98,7 +98,6 @@ int clawker_connect4(struct bpf_sock_addr *ctx)
 	struct dns_entry *dns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
 	if (dns) {
 		struct route_key rk = {
-			.cgroup_id = cgroup_id,
 			.domain_hash = dns->domain_hash,
 			.dst_port = dst_port,
 		};
@@ -190,7 +189,7 @@ int clawker_recvmsg4(struct bpf_sock_addr *ctx)
 }
 
 // ---------------------------------------------------------------------------
-// Program 3: cgroup/connect6 — IPv6 TCP deny
+// Program 3: cgroup/connect6 — IPv6 routing (IPv4-mapped) + native deny
 // ---------------------------------------------------------------------------
 
 SEC("cgroup/connect6")
@@ -203,8 +202,10 @@ int clawker_connect6(struct bpf_sock_addr *ctx)
 	__u64 cgroup_id = bpf_get_current_cgroup_id();
 
 	__u8 *bypassed = bpf_map_lookup_elem(&bypass_map, &cgroup_id);
-	if (bypassed && *bypassed == 1)
+	if (bypassed && *bypassed == 1) {
+		metric_inc(cgroup_id, 0, 0, ACTION_BYPASS);
 		return 1;
+	}
 
 	struct container_config *cfg = bpf_map_lookup_elem(&container_map, &cgroup_id);
 	if (!cfg)
@@ -215,14 +216,81 @@ int clawker_connect6(struct bpf_sock_addr *ctx)
 	    ctx->user_ip6[2] == 0 && ctx->user_ip6[3] == bpf_htonl(1))
 		return 1;
 
-	// Allow IPv4-mapped IPv6 addresses (::ffff:x.x.x.x).
-	// Dual-stack sockets (Node.js, Python, curl) use AF_INET6 with
-	// IPv4-mapped addresses for IPv4 connections. The connect4 program
-	// handles the actual routing — we just need to not block them here.
+	// IPv4-mapped IPv6 (::ffff:x.x.x.x): dual-stack sockets.
+	// Apply the same routing logic as connect4. Only user_ip6[3] (the IPv4
+	// part) is rewritten — [0],[1],[2] stay as the ::ffff: prefix.
 	if (ctx->user_ip6[0] == 0 && ctx->user_ip6[1] == 0 &&
-	    ctx->user_ip6[2] == bpf_htonl(0x0000ffff))
-		return 1;
+	    ctx->user_ip6[2] == bpf_htonl(0x0000ffff)) {
 
+		if (ctx->type != SOCK_STREAM && ctx->type != SOCK_DGRAM)
+			return 1;
+
+		__u32 mark = 0;
+		bpf_getsockopt(ctx, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
+		if (mark == CLAWKER_MARK)
+			return 1;
+
+		__u32 dst_ip = ctx->user_ip6[3];
+		__u16 dst_port = bpf_ntohs(ctx->user_port);
+
+		// DNS redirect.
+		if (dst_port == 53) {
+			ctx->user_ip6[3] = cfg->coredns_ip;
+			ctx->user_port = bpf_htons(53);
+			metric_inc(cgroup_id, 0, 53, ACTION_ALLOW);
+			return 1;
+		}
+
+		if (is_loopback(dst_ip))
+			return 1;
+
+		if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask))
+			return 1;
+
+		if (cfg->host_proxy_ip != 0 &&
+		    dst_ip == cfg->host_proxy_ip && dst_port == cfg->host_proxy_port)
+			return 1;
+
+		// Gateway lockdown.
+		if (dst_ip == cfg->gateway_ip) {
+			if (cfg->host_proxy_port != 0 && dst_port == cfg->host_proxy_port)
+				return 1;
+			ctx->user_ip6[3] = cfg->envoy_ip;
+			ctx->user_port = bpf_htons(cfg->egress_port);
+			metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
+			return 1;
+		}
+
+		// Non-DNS UDP: deny.
+		if (ctx->type == SOCK_DGRAM) {
+			metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
+			return 0;
+		}
+
+		// TCP per-domain routing via DNS cache.
+		struct dns_entry *dns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
+		if (dns) {
+			struct route_key rk = {
+				.domain_hash = dns->domain_hash,
+				.dst_port = dst_port,
+			};
+			struct route_val *rv = bpf_map_lookup_elem(&route_map, &rk);
+			if (rv) {
+				ctx->user_ip6[3] = cfg->envoy_ip;
+				ctx->user_port = bpf_htons(rv->envoy_port);
+				metric_inc(cgroup_id, dns->domain_hash, dst_port, ACTION_ALLOW);
+				return 1;
+			}
+		}
+
+		// Catch-all: Envoy egress listener (TLS/SNI inspection).
+		ctx->user_ip6[3] = cfg->envoy_ip;
+		ctx->user_port = bpf_htons(cfg->egress_port);
+		metric_inc(cgroup_id, dns ? dns->domain_hash : 0, dst_port, ACTION_ALLOW);
+		return 1;
+	}
+
+	// Native IPv6: deny (not supported).
 	metric_inc(cgroup_id, 0, bpf_ntohs(ctx->user_port), ACTION_DENY);
 	return 0;
 }

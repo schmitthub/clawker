@@ -10,6 +10,17 @@
 package main
 
 import (
+	// Standard CoreDNS plugins used by our Corefile. coremain does NOT
+	// transitively import these — zplugin.go's blank imports must be
+	// replicated here for each plugin we use. We import only the plugins
+	// our Corefile needs (not the full core/plugin set which drags in
+	// Azure, AWS, K8s, etc.).
+	_ "github.com/coredns/coredns/plugin/forward"
+	_ "github.com/coredns/coredns/plugin/health"
+	_ "github.com/coredns/coredns/plugin/log"
+	_ "github.com/coredns/coredns/plugin/reload"
+	_ "github.com/coredns/coredns/plugin/template"
+
 	_ "github.com/schmitthub/clawker/internal/dnsbpf"
 
 	"github.com/coredns/coredns/core/dnsserver"

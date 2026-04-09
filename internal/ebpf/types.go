@@ -44,8 +44,8 @@ type DNSEntry struct {
 }
 
 // RouteKey mirrors struct route_key in bpf/common.h.
+// Global (not per-container) — container enforcement is via container_map.
 type RouteKey struct {
-	CgroupID   uint64
 	DomainHash uint32
 	DstPort    uint16
 	_          uint16 // padding

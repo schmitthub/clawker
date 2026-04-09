@@ -179,25 +179,13 @@ func (m *Manager) Close() error {
 
 // Enable attaches BPF programs to a container's cgroup and populates routing maps.
 // Cleans up any stale links for this cgroup before attaching.
-func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContainerConfig, routes []Route) error {
+func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContainerConfig) error {
 	// Clean up stale links from previous Enable() calls for this cgroup.
 	// Stale links keep old programs attached, causing silent misbehavior.
 	m.cleanupLinks(cgroupID)
 
 	if err := m.objs.ContainerMap.Update(cgroupID, cfg, ebpf.UpdateAny); err != nil {
 		return fmt.Errorf("ebpf enable: updating container_map: %w", err)
-	}
-
-	for _, r := range routes {
-		key := clawkerRouteKey{
-			CgroupId:   cgroupID,
-			DomainHash: r.DomainHash,
-			DstPort:    r.DstPort,
-		}
-		val := clawkerRouteVal{EnvoyPort: r.EnvoyPort}
-		if err := m.objs.RouteMap.Update(key, val, ebpf.UpdateAny); err != nil {
-			m.log.Warn().Err(err).Uint32("domain_hash", r.DomainHash).Msg("ebpf enable: updating route_map")
-		}
 	}
 
 	type attachment struct {
@@ -240,7 +228,7 @@ func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContaine
 	}
 
 	m.links[cgroupID] = linked
-	m.log.Info().Uint64("cgroup_id", cgroupID).Int("routes", len(routes)).Msg("eBPF programs attached")
+	m.log.Info().Uint64("cgroup_id", cgroupID).Msg("eBPF programs attached")
 	return nil
 }
 
@@ -272,21 +260,41 @@ func (m *Manager) Disable(cgroupID uint64) error {
 	}
 	_ = m.objs.BypassMap.Delete(cgroupID)
 
-	// Remove all route_map entries for this cgroup.
+	// route_map is global (not per-container) — no cleanup needed here.
+
+	m.log.Info().Uint64("cgroup_id", cgroupID).Msg("eBPF programs detached")
+	return nil
+}
+
+// SyncRoutes replaces the global route_map with the given routes.
+// Called by the firewall manager whenever egress rules change (add/remove/reload).
+// All enforced containers immediately see the updated routes.
+func (m *Manager) SyncRoutes(routes []Route) error {
+	// Clear existing routes.
 	var keysToDelete []clawkerRouteKey
 	var rk clawkerRouteKey
 	var rv clawkerRouteVal
 	iter := m.objs.RouteMap.Iterate()
 	for iter.Next(&rk, &rv) {
-		if rk.CgroupId == cgroupID {
-			keysToDelete = append(keysToDelete, rk)
-		}
+		keysToDelete = append(keysToDelete, rk)
 	}
 	for _, k := range keysToDelete {
 		_ = m.objs.RouteMap.Delete(k)
 	}
 
-	m.log.Info().Uint64("cgroup_id", cgroupID).Msg("eBPF programs detached")
+	// Populate with new routes.
+	for _, r := range routes {
+		key := clawkerRouteKey{
+			DomainHash: r.DomainHash,
+			DstPort:    r.DstPort,
+		}
+		val := clawkerRouteVal{EnvoyPort: r.EnvoyPort}
+		if err := m.objs.RouteMap.Update(key, val, ebpf.UpdateAny); err != nil {
+			m.log.Warn().Err(err).Uint32("domain_hash", r.DomainHash).Msg("ebpf sync-routes: updating route_map")
+		}
+	}
+
+	m.log.Info().Int("routes", len(routes)).Msg("global route_map synced")
 	return nil
 }
 

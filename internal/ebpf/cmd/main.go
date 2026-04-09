@@ -6,8 +6,9 @@
 // Usage:
 //
 //	ebpf-manager init                                    Load + pin BPF programs and maps
-//	ebpf-manager enable  <cgroupPath> <configJSON>       Populate maps + attach programs to cgroup
-//	ebpf-manager disable <cgroupPath>                    Clear maps + detach programs from cgroup
+//	ebpf-manager enable  <cgroupPath> <configJSON>       Add to container_map + attach programs to cgroup
+//	ebpf-manager disable <cgroupPath>                    Remove from container_map + detach programs
+//	ebpf-manager sync-routes <routesJSON>                Replace global route_map with new routes
 //	ebpf-manager bypass  <cgroupPath>                    Set bypass flag (unrestricted egress)
 //	ebpf-manager unbypass <cgroupPath>                   Clear bypass flag
 //	ebpf-manager dns-update <ip> <domainHash> <ttl>      Update DNS cache entry
@@ -27,14 +28,13 @@ import (
 
 // enableArgs is the JSON payload for the enable command.
 type enableArgs struct {
-	EnvoyIP       string              `json:"envoy_ip"`
-	CoreDNSIP     string              `json:"coredns_ip"`
-	GatewayIP     string              `json:"gateway_ip"`
-	CIDR          string              `json:"cidr"`
-	HostProxyIP   string              `json:"host_proxy_ip"`
-	HostProxyPort uint16              `json:"host_proxy_port"`
-	EgressPort    uint16              `json:"egress_port"`
-	Routes        []clawkerebpf.Route `json:"routes"`
+	EnvoyIP       string `json:"envoy_ip"`
+	CoreDNSIP     string `json:"coredns_ip"`
+	GatewayIP     string `json:"gateway_ip"`
+	CIDR          string `json:"cidr"`
+	HostProxyIP   string `json:"host_proxy_ip"`
+	HostProxyPort uint16 `json:"host_proxy_port"`
+	EgressPort    uint16 `json:"egress_port"`
 }
 
 func main() {
@@ -61,6 +61,9 @@ func main() {
 	case "unbypass":
 		requireArgs(3) // unbypass <cgroupPath>
 		runUnbypass(log, os.Args[2])
+	case "sync-routes":
+		requireArgs(3) // sync-routes <routesJSON>
+		runSyncRoutes(log, os.Args[2])
 	case "dns-update":
 		requireArgs(5) // dns-update <ip> <domainHash> <ttl>
 		runDNSUpdate(log, os.Args[2], os.Args[3], os.Args[4])
@@ -113,11 +116,30 @@ func runEnable(log *logger.Logger, cgroupPath, configJSON string) {
 	}
 	defer mgr.Close()
 
-	if err := mgr.Enable(cgroupID, cgroupPath, cfg, args.Routes); err != nil {
+	if err := mgr.Enable(cgroupID, cgroupPath, cfg); err != nil {
 		fatal("enable", err)
 	}
 
-	fmt.Printf("enabled cgroup_id=%d routes=%d\n", cgroupID, len(args.Routes))
+	fmt.Printf("enabled cgroup_id=%d\n", cgroupID)
+}
+
+func runSyncRoutes(log *logger.Logger, routesJSON string) {
+	var routes []clawkerebpf.Route
+	if err := json.Unmarshal([]byte(routesJSON), &routes); err != nil {
+		fatal("sync-routes", fmt.Errorf("parsing routes JSON: %w", err))
+	}
+
+	mgr := clawkerebpf.NewManager(log)
+	if err := mgr.OpenPinned(); err != nil {
+		fatal("sync-routes", err)
+	}
+	defer mgr.Close()
+
+	if err := mgr.SyncRoutes(routes); err != nil {
+		fatal("sync-routes", err)
+	}
+
+	fmt.Printf("synced %d routes\n", len(routes))
 }
 
 func runDisable(log *logger.Logger, cgroupPath string) {
@@ -266,8 +288,9 @@ func usage() {
 
 Commands:
   init                                    Load + pin BPF programs and maps
-  enable  <cgroupPath> <configJSON>       Populate maps + attach programs
-  disable <cgroupPath>                    Clear maps + detach programs
+  enable  <cgroupPath> <configJSON>       Add to container_map + attach programs
+  disable <cgroupPath>                    Remove from container_map + detach
+  sync-routes <routesJSON>                Replace global route_map
   bypass  <cgroupPath>                    Set bypass flag
   unbypass <cgroupPath>                   Clear bypass flag
   dns-update <ip> <domainHash> <ttl>      Update DNS cache entry

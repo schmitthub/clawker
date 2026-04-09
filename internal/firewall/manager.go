@@ -132,6 +132,9 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 	if err := m.ebpfExec(ctx, "init"); err != nil {
 		return fmt.Errorf("firewall: initializing eBPF programs: %w", err)
 	}
+	if err := m.syncRoutes(ctx); err != nil {
+		return fmt.Errorf("firewall: %w", err)
+	}
 
 	// Step 6: Start remaining containers (Envoy + CoreDNS).
 	if err := m.ensureContainer(ctx, envoyContainer, m.envoyContainerConfig(netInfo, dataDir)); err != nil {
@@ -452,6 +455,11 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		return fmt.Errorf("firewall enable: initializing eBPF programs: %w", err)
 	}
 
+	// Sync global routes (idempotent — safe to call on every Enable).
+	if err := m.syncRoutes(ctx); err != nil {
+		return fmt.Errorf("firewall enable: %w", err)
+	}
+
 	// Host proxy bypass: read from project config (authoritative), not container env.
 	var hostProxyIP string
 	var hostProxyPort uint16
@@ -466,31 +474,15 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		}
 	}
 
-	// Build per-domain TCP routes from the rules store.
-	rules, warnings := normalizeAndDedup(m.store.Read().Rules)
-	for _, w := range warnings {
-		m.log.Warn().Msg(w)
-	}
-	ports := m.envoyPorts()
-	tcpMappings := TCPMappings(rules, ports)
-
-	routes := make([]ebpfRoute, 0, len(tcpMappings))
-	for _, mp := range tcpMappings {
-		routes = append(routes, ebpfRoute{
-			DomainHash: DomainHash(mp.Dst),
-			DstPort:    uint16(mp.DstPort),
-			EnvoyPort:  uint16(mp.EnvoyPort),
-		})
-	}
-
 	// Compute gateway IP from CIDR.
 	gatewayIP := computeGateway(netInfo.CIDR)
+	ports := m.envoyPorts()
 
-	// Build JSON config for the eBPF manager.
+	// Build JSON config for the eBPF manager (container_map entry only, no routes).
 	cfgJSON := fmt.Sprintf(
-		`{"envoy_ip":%q,"coredns_ip":%q,"gateway_ip":%q,"cidr":%q,"host_proxy_ip":%q,"host_proxy_port":%d,"egress_port":%d,"routes":%s}`,
+		`{"envoy_ip":%q,"coredns_ip":%q,"gateway_ip":%q,"cidr":%q,"host_proxy_ip":%q,"host_proxy_port":%d,"egress_port":%d}`,
 		netInfo.EnvoyIP, netInfo.CoreDNSIP, gatewayIP, netInfo.CIDR,
-		hostProxyIP, hostProxyPort, ports.EgressPort, marshalRoutes(routes),
+		hostProxyIP, hostProxyPort, ports.EgressPort,
 	)
 
 	cgroupPath := ebpfCgroupPath(m.cgroupDriver(ctx), containerID)
@@ -503,7 +495,7 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		m.log.Warn().Err(err).Msg("failed to touch firewall-ready signal file")
 	}
 
-	m.log.Debug().Str("container", containerID).Int("routes", len(routes)).Msg("firewall enabled via eBPF")
+	m.log.Debug().Str("container", containerID).Msg("firewall enabled via eBPF")
 	return nil
 }
 
@@ -738,6 +730,11 @@ func (m *Manager) regenerateAndRestart(ctx context.Context) error {
 	// The dnsbpf plugin opens the pinned dns_cache map on startup.
 	if err := m.ebpfExec(ctx, "init"); err != nil {
 		return fmt.Errorf("ensuring eBPF maps before restart: %w", err)
+	}
+
+	// Sync global route_map so running containers see the new rules immediately.
+	if err := m.syncRoutes(ctx); err != nil {
+		return err
 	}
 
 	if err := m.restartContainer(ctx, envoyContainer); err != nil {
@@ -1186,6 +1183,32 @@ func (m *Manager) restartContainer(ctx context.Context, name firewallContainer) 
 }
 
 // --- eBPF helpers ---
+
+// syncRoutes updates the global BPF route_map with TCP/SSH routes derived from
+// the current egress rules store. Called during EnsureRunning, Enable, and
+// regenerateAndRestart so all enforced containers immediately see rule changes.
+func (m *Manager) syncRoutes(ctx context.Context) error {
+	rules, warnings := normalizeAndDedup(m.store.Read().Rules)
+	for _, w := range warnings {
+		m.log.Warn().Msg(w)
+	}
+	ports := m.envoyPorts()
+	tcpMappings := TCPMappings(rules, ports)
+
+	routes := make([]ebpfRoute, 0, len(tcpMappings))
+	for _, mp := range tcpMappings {
+		routes = append(routes, ebpfRoute{
+			DomainHash: DomainHash(mp.Dst),
+			DstPort:    uint16(mp.DstPort),
+			EnvoyPort:  uint16(mp.EnvoyPort),
+		})
+	}
+
+	if err := m.ebpfExec(ctx, "sync-routes", marshalRoutes(routes)); err != nil {
+		return fmt.Errorf("syncing BPF route_map: %w", err)
+	}
+	return nil
+}
 
 // ebpfRoute is the JSON-serializable route type for the eBPF manager container.
 type ebpfRoute struct {

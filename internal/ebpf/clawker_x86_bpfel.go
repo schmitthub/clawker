@@ -42,7 +42,6 @@ type clawkerMetricKey struct {
 
 type clawkerRouteKey struct {
 	_          structs.HostLayout
-	CgroupId   uint64
 	DomainHash uint32
 	DstPort    uint16
 	Pad        uint16
