@@ -12,13 +12,14 @@
 |------|--------|-------|
 | Task 1: Build the CoreDNS dns-to-bpf plugin Go package | `complete` | main |
 | Task 2: Build custom CoreDNS image with embedded plugin | `complete` | main |
-| Task 3: Integrate custom CoreDNS into firewall manager | `pending` | — |
+| Task 3: Integrate custom CoreDNS into firewall manager | `complete` | main |
 | Task 4: End-to-end UAT — SSH routing via dns_cache | `pending` | — |
 
 ## Key Learnings
 
 (Agents append here as they complete tasks)
 
+- Task 3: The `regenerateAndRestart` (Reload) path must also ensure BPF maps are pinned before restarting CoreDNS — same ordering invariant as `EnsureRunning`. `CAP_BPF` alone is insufficient for `BPF_MAP_UPDATE_ELEM` on kernels < 5.19 — add `CAP_SYS_ADMIN` too. The dnsbpf plugin's `sync.Once` + `OnShutdown(Close)` pattern creates permanent FD invalidation after Corefile reload — removed the `OnShutdown` handler since the pinned map FD is valid for the process lifetime. The `restartContainer` method had a pre-existing nil-error-wrapping bug producing `%!w(<nil>)` — split into separate error/not-found cases.
 - Task 2: Custom CoreDNS builds work by importing `coremain` + blank-importing the plugin package for its `init()` side effect, then prepending the plugin name to `dnsserver.Directives`. The `plugin.cfg`/`go generate` approach only works inside the CoreDNS repo. The embedded binary approach was unified into a shared `embeddedImageSpec` struct + `ensureEmbeddedImage` method, eliminating duplication with the eBPF pattern. `go.uber.org/automaxprocs` is a transitive dep from `coremain` — needs `go mod tidy` after adding the import. The `containerd/errdefs.IsNotFound` check is important for `ImageInspect` — without it, any Docker API error (daemon down, context cancelled) triggers an unnecessary rebuild attempt.
 - Task 1: CoreDNS v1.14.2 uses Go 1.25, compatible with our module. `coredns/caddy` is the plugin registration framework (not the web server Caddy). The `nonwriter.New(w)` pattern captures responses cleanly. `test.NextHandler` takes `(rcode, error)` not a msg — need a custom `cannedHandler` for tests with canned DNS responses. The `dnsserver.GetConfig(c).Zone` gives us the Corefile zone name in setup, which is critical for wildcard domain hashing. CoreDNS pulls in a large dependency tree (k8s client-go, etc.) but it's isolated to binaries that import the plugin.
 

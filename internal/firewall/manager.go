@@ -42,8 +42,7 @@ const (
 
 // Infrastructure container constants.
 const (
-	envoyImage   = "envoyproxy/envoy:distroless-v1.37.1@sha256:4d9226b9fd4d1449887de7cde785beb24b12e47d6e79021dec3c79e362609432"
-	corednsImage = "coredns/coredns:1.14.2@sha256:e7e6440cfd1e919280958f5b5a6ab2b184d385bba774c12ad2a9e1e4183f90d9"
+	envoyImage = "envoyproxy/envoy:distroless-v1.37.1@sha256:4d9226b9fd4d1449887de7cde785beb24b12e47d6e79021dec3c79e362609432"
 
 	// ebpfImageTag is the local Docker image tag for the eBPF manager.
 	// Built on-demand from the embedded binary when the image doesn't exist locally.
@@ -124,25 +123,25 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 		return fmt.Errorf("firewall: %w", err)
 	}
 
-	// Step 5: Ensure containers are running.
-	if err := m.ensureContainer(ctx, envoyContainer, m.envoyContainerConfig(netInfo, dataDir)); err != nil {
-		return fmt.Errorf("firewall: ensuring envoy: %w", err)
-	}
-
-	if err := m.ensureContainer(ctx, corednsContainer, m.corednsContainerConfig(netInfo, dataDir)); err != nil {
-		return fmt.Errorf("firewall: ensuring coredns: %w", err)
-	}
-
+	// Step 5: Start eBPF container and initialize BPF programs.
+	// This MUST happen before CoreDNS starts because the dnsbpf plugin opens
+	// the pinned dns_cache map on startup — the map must already exist.
 	if err := m.ensureContainer(ctx, ebpfContainer, m.ebpfContainerConfig(netInfo)); err != nil {
 		return fmt.Errorf("firewall: ensuring ebpf manager: %w", err)
 	}
-
-	// Initialize BPF programs inside the eBPF manager container.
 	if err := m.ebpfExec(ctx, "init"); err != nil {
 		return fmt.Errorf("firewall: initializing eBPF programs: %w", err)
 	}
 
-	// Step 6: Wait for services to be healthy before declaring ready.
+	// Step 6: Start remaining containers (Envoy + CoreDNS).
+	if err := m.ensureContainer(ctx, envoyContainer, m.envoyContainerConfig(netInfo, dataDir)); err != nil {
+		return fmt.Errorf("firewall: ensuring envoy: %w", err)
+	}
+	if err := m.ensureContainer(ctx, corednsContainer, m.corednsContainerConfig(netInfo, dataDir)); err != nil {
+		return fmt.Errorf("firewall: ensuring coredns: %w", err)
+	}
+
+	// Step 7: Wait for services to be healthy before declaring ready.
 	if err := m.WaitForHealthy(ctx); err != nil {
 		return fmt.Errorf("firewall: %w", err)
 	}
@@ -478,7 +477,6 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 	routes := make([]ebpfRoute, 0, len(tcpMappings))
 	for _, mp := range tcpMappings {
 		routes = append(routes, ebpfRoute{
-			Domain:     mp.Dst,
 			DomainHash: DomainHash(mp.Dst),
 			DstPort:    uint16(mp.DstPort),
 			EnvoyPort:  uint16(mp.EnvoyPort),
@@ -736,6 +734,12 @@ func (m *Manager) regenerateAndRestart(ctx context.Context) error {
 		return nil
 	}
 
+	// Ensure BPF maps are pinned before CoreDNS restarts.
+	// The dnsbpf plugin opens the pinned dns_cache map on startup.
+	if err := m.ebpfExec(ctx, "init"); err != nil {
+		return fmt.Errorf("ensuring eBPF maps before restart: %w", err)
+	}
+
 	if err := m.restartContainer(ctx, envoyContainer); err != nil {
 		return err
 	}
@@ -789,7 +793,7 @@ func (m *Manager) envoyContainerConfig(net *NetworkInfo, dataDir string) contain
 func (m *Manager) corednsContainerConfig(net *NetworkInfo, dataDir string) containerSpec {
 	healthPort := m.cfg.CoreDNSHealthHostPort()
 	return containerSpec{
-		image:       corednsImage,
+		image:       corednsImageTag,
 		networkName: m.cfg.ClawkerNetwork(),
 		networkID:   net.NetworkID,
 		staticIP:    net.CoreDNSIP,
@@ -805,6 +809,13 @@ func (m *Manager) corednsContainerConfig(net *NetworkInfo, dataDir string) conta
 				Target:   "/etc/coredns/Corefile",
 				ReadOnly: true,
 			},
+			{
+				// BPF filesystem: the dnsbpf plugin writes to the pinned
+				// dns_cache map at /sys/fs/bpf/clawker/dns_cache.
+				Type:   mount.TypeBind,
+				Source: "/sys/fs/bpf",
+				Target: "/sys/fs/bpf",
+			},
 		},
 		// Publish health endpoint for host-side health probes.
 		portBindings: network.PortMap{
@@ -812,6 +823,10 @@ func (m *Manager) corednsContainerConfig(net *NetworkInfo, dataDir string) conta
 				{HostPort: strconv.Itoa(healthPort)},
 			},
 		},
+		// CAP_BPF + CAP_SYS_ADMIN: CAP_BPF is required for bpf(BPF_OBJ_GET) to open
+		// the pinned dns_cache map. CAP_SYS_ADMIN is needed for bpf(BPF_MAP_UPDATE_ELEM)
+		// on kernels < 5.19 where CAP_BPF alone is insufficient for map writes.
+		capAdd: []string{"BPF", "SYS_ADMIN"},
 	}
 }
 
@@ -1154,8 +1169,11 @@ func (m *Manager) restartContainer(ctx context.Context, name firewallContainer) 
 		All:     true,
 		Filters: filters,
 	})
-	if err != nil || len(result.Items) == 0 {
+	if err != nil {
 		return fmt.Errorf("finding container %s: %w", n, err)
+	}
+	if len(result.Items) == 0 {
+		return fmt.Errorf("container %s not found", n)
 	}
 
 	timeout := 10
@@ -1171,7 +1189,6 @@ func (m *Manager) restartContainer(ctx context.Context, name firewallContainer) 
 
 // ebpfRoute is the JSON-serializable route type for the eBPF manager container.
 type ebpfRoute struct {
-	Domain     string `json:"domain"`
 	DomainHash uint32 `json:"domain_hash"`
 	DstPort    uint16 `json:"dst_port"`
 	EnvoyPort  uint16 `json:"envoy_port"`

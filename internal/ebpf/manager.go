@@ -344,9 +344,8 @@ func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, erro
 	return cfg, err
 }
 
-// Route describes a per-domain TCP route for a container.
+// Route describes a per-domain TCP route for a container, identified by domain hash.
 type Route struct {
-	Domain     string `json:"domain"`
 	DomainHash uint32 `json:"domain_hash"`
 	DstPort    uint16 `json:"dst_port"`
 	EnvoyPort  uint16 `json:"envoy_port"`

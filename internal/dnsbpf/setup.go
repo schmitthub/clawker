@@ -45,13 +45,10 @@ func setup(c *caddy.Controller) error {
 			DefaultPinPath, sharedMapErr))
 	}
 
-	// Close the BPF map FD on CoreDNS shutdown (Corefile reload).
-	c.OnShutdown(func() error {
-		if sm, ok := sharedMap.(*BPFMap); ok && sm != nil {
-			return sm.Close()
-		}
-		return nil
-	})
+	// NOTE: no OnShutdown handler to close the BPF map. The pinned map FD is
+	// valid for the lifetime of the process. CoreDNS's reload plugin tears down
+	// and rebuilds server blocks without restarting the process — closing the FD
+	// here would invalidate it permanently because sync.Once won't re-execute.
 
 	// Capture the zone from the server block.
 	zone := dnsserver.GetConfig(c).Zone

@@ -1,50 +1,60 @@
 github.com {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    dnsbpf
     forward . 1.1.1.2 1.0.0.2
 }
 
 api.github.com {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    dnsbpf
     forward . 1.1.1.2 1.0.0.2
 }
 
 registry.npmjs.org {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    dnsbpf
     forward . 1.1.1.2 1.0.0.2
 }
 
 proxy.golang.org {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    dnsbpf
     forward . 1.1.1.2 1.0.0.2
 }
 
 docker.internal {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    dnsbpf
     forward . 127.0.0.11
 }
 
 otel-collector {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    dnsbpf
     forward . 127.0.0.11
 }
 
 jaeger {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    dnsbpf
     forward . 127.0.0.11
 }
 
 prometheus {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    dnsbpf
     forward . 127.0.0.11
 }
 
 loki {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    dnsbpf
     forward . 127.0.0.11
 }
 
 grafana {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    dnsbpf
     forward . 127.0.0.11
 }
 

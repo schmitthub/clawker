@@ -67,14 +67,17 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	for _, domain := range domains {
 		fmt.Fprintf(&b, "%s {\n", domain)
 		fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
+		b.WriteString("    dnsbpf\n")
 		fmt.Fprintf(&b, "    forward . %s\n", strings.Join(upstreamDNS, " "))
 		fmt.Fprintf(&b, "}\n\n")
 	}
 
 	// Internal host forward zones (Docker DNS).
+	// dnsbpf is included so host.docker.internal resolution populates dns_cache.
 	for _, host := range internalHosts {
 		fmt.Fprintf(&b, "%s {\n", host)
 		fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
+		b.WriteString("    dnsbpf\n")
 		b.WriteString("    forward . 127.0.0.11\n")
 		b.WriteString("}\n\n")
 	}

@@ -117,33 +117,7 @@ func runEnable(log *logger.Logger, cgroupPath, configJSON string) {
 		fatal("enable", err)
 	}
 
-	// Pre-populate dns_cache for route domains so per-domain TCP routing
-	// works immediately (before CoreDNS plugin writes dynamic entries).
-	dnsSeeded := 0
-	for _, r := range args.Routes {
-		if r.Domain == "" {
-			continue
-		}
-		addrs, err := net.LookupHost(r.Domain)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: dns_cache seed: %s: %v\n", r.Domain, err)
-			continue
-		}
-		for _, a := range addrs {
-			ip := net.ParseIP(a)
-			if ip == nil || ip.To4() == nil {
-				continue
-			}
-			// 300s TTL — CoreDNS dynamic entries will refresh before expiry.
-			if err := mgr.UpdateDNSCache(clawkerebpf.IPToUint32(ip), r.DomainHash, 300); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: dns_cache seed: %s (%s): %v\n", r.Domain, a, err)
-			} else {
-				dnsSeeded++
-			}
-		}
-	}
-
-	fmt.Printf("enabled cgroup_id=%d routes=%d dns_seeded=%d\n", cgroupID, len(args.Routes), dnsSeeded)
+	fmt.Printf("enabled cgroup_id=%d routes=%d\n", cgroupID, len(args.Routes))
 }
 
 func runDisable(log *logger.Logger, cgroupPath string) {
