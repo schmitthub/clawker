@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -47,6 +48,10 @@ const (
 	// ebpfImageTag is the local Docker image tag for the eBPF manager.
 	// Built on-demand from the embedded binary when the image doesn't exist locally.
 	ebpfImageTag = "clawker-ebpf:latest"
+
+	// corednsImageTag is the local Docker image tag for the custom CoreDNS
+	// with the dnsbpf plugin. Built on-demand from the embedded binary.
+	corednsImageTag = "clawker-coredns:latest"
 
 	// Health check timing.
 	healthCheckTimeout  = 60 * time.Second
@@ -111,8 +116,11 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 		return fmt.Errorf("firewall: %w", err)
 	}
 
-	// Step 4: Ensure the eBPF manager image exists (build from source if needed).
+	// Step 4: Ensure locally-built images exist (build from embedded binaries if needed).
 	if err := m.ensureEbpfImage(ctx); err != nil {
+		return fmt.Errorf("firewall: %w", err)
+	}
+	if err := m.ensureCorednsImage(ctx); err != nil {
 		return fmt.Errorf("firewall: %w", err)
 	}
 
@@ -958,79 +966,129 @@ func (m *Manager) ensureImage(ctx context.Context, image string) error {
 	return nil
 }
 
+// embeddedImageSpec describes an embedded binary that can be built into a
+// Docker image on-demand. Both the eBPF manager and custom CoreDNS images
+// use this same build-from-embedded-binary pattern.
+type embeddedImageSpec struct {
+	tag        string // Docker image tag (e.g. "clawker-ebpf:latest")
+	binary     []byte // Embedded binary bytes
+	binaryName string // Filename inside the tar context (e.g. "ebpf-manager")
+	dockerfile string // Dockerfile content
+	makeTarget string // Make target for building the binary (used in error messages)
+}
+
+var ebpfImageSpec = embeddedImageSpec{
+	tag:        ebpfImageTag,
+	binary:     nil, // populated per-call in ensureEbpfImage to avoid copying the large []byte
+	binaryName: "ebpf-manager",
+	dockerfile: "FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c\nRUN apk add --no-cache iproute2\nCOPY ebpf-manager /usr/local/bin/ebpf-manager\nCMD [\"sleep\", \"infinity\"]\n",
+	makeTarget: "ebpf-binary",
+}
+
+var corednsImageSpec = embeddedImageSpec{
+	tag:        corednsImageTag,
+	binary:     nil, // populated per-call in ensureCorednsImage to avoid copying the large []byte
+	binaryName: "coredns",
+	dockerfile: "FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c\nCOPY coredns /usr/local/bin/coredns\nENTRYPOINT [\"/usr/local/bin/coredns\"]\n",
+	makeTarget: "coredns-binary",
+}
+
 // ensureEbpfImage ensures the eBPF manager Docker image exists locally.
 // Builds it from the embedded binary if it doesn't exist.
 func (m *Manager) ensureEbpfImage(ctx context.Context) error {
-	_, err := m.client.ImageInspect(ctx, ebpfImageTag)
+	spec := ebpfImageSpec
+	spec.binary = ebpfManagerBinary
+	return m.ensureEmbeddedImage(ctx, spec)
+}
+
+// ensureCorednsImage ensures the custom CoreDNS image exists locally.
+// Builds it from the embedded binary if it doesn't exist.
+func (m *Manager) ensureCorednsImage(ctx context.Context) error {
+	spec := corednsImageSpec
+	spec.binary = corednsClawkerBinary
+	return m.ensureEmbeddedImage(ctx, spec)
+}
+
+// ensureEmbeddedImage checks if a locally-built image exists and builds it
+// from the embedded binary if not. Used for both eBPF manager and CoreDNS.
+func (m *Manager) ensureEmbeddedImage(ctx context.Context, spec embeddedImageSpec) error {
+	_, err := m.client.ImageInspect(ctx, spec.tag)
 	if err == nil {
 		return nil
 	}
-
-	m.log.Debug().Msg("building eBPF manager image from embedded binary")
-	return m.buildEbpfImage(ctx)
-}
-
-// buildEbpfImage creates the eBPF manager Docker image from the embedded binary.
-// Constructs a minimal build context (Dockerfile + binary) and calls Docker ImageBuild.
-func (m *Manager) buildEbpfImage(ctx context.Context) error {
-	if len(ebpfManagerBinary) == 0 {
-		return fmt.Errorf("ebpf-manager binary not embedded — run 'make ebpf-binary' then rebuild clawker")
+	if !cerrdefs.IsNotFound(err) {
+		return fmt.Errorf("checking %s image: %w", spec.tag, err)
 	}
 
-	buildContext, err := ebpfBuildContext()
+	if len(spec.binary) == 0 {
+		return fmt.Errorf("%s binary not embedded — run 'make %s' then rebuild clawker",
+			spec.binaryName, spec.makeTarget)
+	}
+
+	m.log.Debug().Str("image", spec.tag).Msg("building image from embedded binary")
+
+	buildCtx, err := embeddedBuildContext(spec)
 	if err != nil {
-		return fmt.Errorf("creating eBPF build context: %w", err)
+		return fmt.Errorf("creating %s build context: %w", spec.binaryName, err)
 	}
 
-	resp, err := m.client.ImageBuild(ctx, buildContext, client.ImageBuildOptions{
-		Tags:           []string{ebpfImageTag},
+	resp, err := m.client.ImageBuild(ctx, buildCtx, client.ImageBuildOptions{
+		Tags:           []string{spec.tag},
 		Dockerfile:     "Dockerfile",
 		Remove:         true,
 		ForceRemove:    true,
 		SuppressOutput: true,
 	})
 	if err != nil {
-		return fmt.Errorf("building eBPF manager image: %w", err)
+		return fmt.Errorf("building %s image: %w", spec.tag, err)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
+
+	// Drain the build output and check for build-time errors embedded in the
+	// JSON stream (Dockerfile RUN failures, COPY errors, base image pull failures).
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var msg struct {
+			Error string `json:"error"`
+		}
+		if err := dec.Decode(&msg); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			break // malformed JSON — build likely succeeded, don't mask it
+		}
+		if msg.Error != "" {
+			return fmt.Errorf("building %s image: %s", spec.tag, msg.Error)
+		}
+	}
 	return nil
 }
 
-// ebpfBuildContext creates a tar archive containing:
-//   - Dockerfile: minimal FROM scratch + COPY
-//   - ebpf-manager: the pre-compiled static binary
-func ebpfBuildContext() (io.Reader, error) {
-	const dockerfile = `FROM alpine:3.21
-RUN apk add --no-cache iproute2
-COPY ebpf-manager /usr/local/bin/ebpf-manager
-CMD ["sleep", "infinity"]
-`
-
+// embeddedBuildContext creates an in-memory tar archive containing a Dockerfile
+// and the embedded binary, suitable for Docker ImageBuild.
+func embeddedBuildContext(spec embeddedImageSpec) (io.Reader, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 
-	// Write Dockerfile.
 	if err := tw.WriteHeader(&tar.Header{
 		Name: "Dockerfile",
-		Size: int64(len(dockerfile)),
+		Size: int64(len(spec.dockerfile)),
 		Mode: 0644,
 	}); err != nil {
 		return nil, err
 	}
-	if _, err := tw.Write([]byte(dockerfile)); err != nil {
+	if _, err := tw.Write([]byte(spec.dockerfile)); err != nil {
 		return nil, err
 	}
 
-	// Write the embedded binary.
 	if err := tw.WriteHeader(&tar.Header{
-		Name: "ebpf-manager",
-		Size: int64(len(ebpfManagerBinary)),
+		Name: spec.binaryName,
+		Size: int64(len(spec.binary)),
 		Mode: 0755,
 	}); err != nil {
 		return nil, err
 	}
-	if _, err := tw.Write(ebpfManagerBinary); err != nil {
+	if _, err := tw.Write(spec.binary); err != nil {
 		return nil, err
 	}
 

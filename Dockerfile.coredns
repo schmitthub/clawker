@@ -1,0 +1,37 @@
+# Dockerfile.coredns — Builds the custom CoreDNS image with the dnsbpf plugin.
+#
+# Multi-stage build: compiles cmd/coredns-clawker into a static binary,
+# then copies it into a minimal Alpine image.
+#
+# Build from repo root:
+#   docker build -f Dockerfile.coredns -t clawker-coredns:latest .
+#
+# This Dockerfile is for standalone/CI builds. At runtime, the firewall
+# manager builds the CoreDNS image from the embedded binary via an
+# in-memory Dockerfile (see internal/firewall/manager.go corednsImageSpec).
+
+# --- Builder stage ---
+FROM golang:1.25.8-alpine@sha256:8e02eb337d9e0ea459e041f1ee5eece41cbb61f1d83e7d883a3e2fb4862063fa AS builder
+
+WORKDIR /build
+
+# Cache dependency download layer
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy only the packages needed for coredns-clawker
+COPY cmd/coredns-clawker/ cmd/coredns-clawker/
+COPY internal/dnsbpf/ internal/dnsbpf/
+COPY internal/ebpf/ internal/ebpf/
+COPY internal/logger/ internal/logger/
+
+# Build static binary
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o /coredns-clawker ./cmd/coredns-clawker
+
+# --- Runtime stage ---
+# Alpine for debugging tools (dig, nslookup). Switch to scratch if size matters.
+FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c
+
+COPY --from=builder /coredns-clawker /usr/local/bin/coredns
+
+ENTRYPOINT ["/usr/local/bin/coredns"]

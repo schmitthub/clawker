@@ -97,8 +97,9 @@ RALPH-TEST.md
 
 .clawker.local.yaml
 
-# Embedded eBPF manager binary (built by `make ebpf-binary`, not committed)
+# Embedded firewall binaries (built by `make ebpf-binary`/`make coredns-binary`, not committed)
 internal/firewall/assets/ebpf-manager
+internal/firewall/assets/coredns-clawker
 
 # Adversarial test artifacts
 test/adversarial/report.html

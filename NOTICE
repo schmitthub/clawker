@@ -171,6 +171,7 @@ github.com/tonistiigi/fsutil                                                   M
 github.com/xo/terminfo                                                         MIT
 github.com/zalando/go-keyring                                                  MIT
 github.com/zalando/go-keyring/internal/shellescape                             MIT
+go.uber.org/automaxprocs                                                       MIT
 gopkg.in/natefinch/lumberjack.v2                                               MIT
 gopkg.in/yaml.v3                                                               MIT
 

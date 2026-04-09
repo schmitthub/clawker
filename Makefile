@@ -85,10 +85,10 @@ help:
 # Clawker Build Targets
 # ============================================================================
 
-# Build the Clawker binary (includes embedded eBPF manager)
+# Build the Clawker binary (includes embedded eBPF manager + custom CoreDNS)
 clawker: clawker-build
 
-clawker-build: ebpf-binary
+clawker-build: ebpf-binary coredns-binary
 	@echo "Building $(BINARY_NAME) $(CLAWKER_VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
@@ -101,6 +101,15 @@ $(EBPF_BINARY): internal/ebpf/cmd/main.go internal/ebpf/manager.go internal/ebpf
 	@echo "Building ebpf-manager for linux/$(shell $(GO) env GOARCH)..."
 	@mkdir -p internal/firewall/assets
 	GOOS=linux CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
+
+# Cross-compile the custom CoreDNS binary for Linux (embedded in clawker via go:embed).
+# Includes the dnsbpf plugin for real-time BPF dns_cache population.
+COREDNS_BINARY := internal/firewall/assets/coredns-clawker
+coredns-binary: $(COREDNS_BINARY)
+$(COREDNS_BINARY): cmd/coredns-clawker/main.go $(wildcard internal/dnsbpf/*.go) internal/ebpf/types.go
+	@echo "Building coredns-clawker for linux/$(shell $(GO) env GOARCH)..."
+	@mkdir -p internal/firewall/assets
+	GOOS=linux CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
 
 # Build the standalone generate binary
 clawker-generate:
@@ -115,22 +124,27 @@ clawker-build-linux:
 	@echo "Building Clawker for Linux..."
 	@mkdir -p $(DIST_DIR)
 	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
+	@echo "  coredns-clawker linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
 	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/clawker
 	@echo "  ebpf-manager linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
+	@echo "  coredns-clawker linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
 	GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/clawker
 
 clawker-build-darwin:
 	@echo "Building Clawker for macOS..."
 	@mkdir -p $(DIST_DIR)
 	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
+	@echo "  coredns-clawker linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
 	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/clawker
 	@echo "  ebpf-manager linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
+	@echo "  coredns-clawker linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
 	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/clawker
 
 clawker-build-windows:
 	@echo "Building Clawker for Windows..."
 	@mkdir -p $(DIST_DIR)
 	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
+	@echo "  coredns-clawker linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
 	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/clawker
 
 # Run Clawker tests
@@ -207,7 +221,7 @@ clawker-install-global: clawker-build
 clawker-clean:
 	@echo "Cleaning Clawker build artifacts..."
 	rm -rf $(BIN_DIR) $(DIST_DIR)
-	rm -f $(EBPF_BINARY) coverage.out coverage.html
+	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) coverage.out coverage.html
 
 # ============================================================================
 # Test Targets
@@ -381,7 +395,7 @@ localenv:
 restart: clawker-clean clawker
 	@echo "Stopping firewall containers..."
 	@docker rm -f clawker-ebpf clawker-envoy clawker-coredns 2>/dev/null || true
-	@docker rmi clawker-ebpf:latest 2>/dev/null || true
+	@docker rmi clawker-ebpf:latest clawker-coredns:latest 2>/dev/null || true
 	@echo "Ready. Start with: ./bin/clawker run ..."
 
 # ============================================================================
