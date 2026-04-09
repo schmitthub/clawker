@@ -514,7 +514,7 @@ require.NoError(t, res.Err, "stderr: %s", res.Stderr)
 res := h.ExecInContainer("dev", "cat", "/etc/resolv.conf")
 
 // Exec as root
-res := h.ExecInContainerAsRoot("dev", "iptables", "-L")
+res := h.ExecInContainerAsRoot("dev", "cat", "/proc/self/cgroup")
 
 // Run arbitrary CLI commands
 res := h.Run("firewall", "status", "--json")

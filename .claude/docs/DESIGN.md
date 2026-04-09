@@ -657,37 +657,38 @@ This supplements environment variable passing for persistent credential storage.
 
 **Domain-based egress over IP allowlists**: IP-based firewall rules are fragile (CDN IPs rotate, cloud providers share ranges) and coarse-grained (an IP range may host both trusted and untrusted content). Domain-based rules let project configs express intent (`api.anthropic.com`, `registry.npmjs.org`) rather than infrastructure details. CoreDNS enforces deny-by-default at the DNS layer — agents cannot even resolve unlisted hosts.
 
-**Shared sidecar, not per-container iptables**: One Envoy+CoreDNS pair per host serves all agent containers. The alternative — per-container iptables with `CAP_NET_ADMIN` — duplicates rule state across containers and requires each container to manage its own firewall. A shared stack means rule changes propagate immediately and only two long-lived containers carry the infrastructure cost.
+**Shared infrastructure with eBPF routing**: One Envoy+CoreDNS+eBPF manager trio per host serves all agent containers. eBPF cgroup programs attached from outside each container steer traffic to Envoy (TCP) and CoreDNS (DNS). No per-container capabilities or firewall scripts needed — agent containers run fully unprivileged.
 
 **Path rules and MITM inspection**: For domains requiring API-level control (e.g., allow `GET /v1/models` but block arbitrary uploads), Envoy terminates TLS with per-domain MITM certificates (ECDSA P256 CA). Domains without path rules use TLS passthrough with zero inspection overhead. This gives fine-grained control without penalizing simple allow/deny use cases.
 
 **Hot-reload semantics**: Rule changes regenerate `envoy.yaml` and `Corefile` on disk. Envoy picks up config via container restart; CoreDNS via its reload plugin (2s poll). No agent container restarts required — agents see updated rules on their next DNS query or HTTPS connection.
 
-**Three-phase container start (bootstrap / start / post-bootstrap)**: During bootstrap, the entrypoint runs as root to execute `firewall.sh`, which sets up iptables DNAT rules redirecting DNS to CoreDNS and HTTPS to Envoy. After DNAT setup, `gosu` drops to the unprivileged `claude` user for the main process (start phase). Post-bootstrap hooks (e.g., `agent.post_init`) run after the container is started. This separation keeps privilege escalation minimal and auditable.
+**Three-phase container start (bootstrap / start / post-bootstrap)**: During bootstrap, the firewall manager attaches eBPF cgroup programs to the container, routing DNS to CoreDNS and TCP to Envoy. The entrypoint waits for a readiness signal, then `gosu` drops to the unprivileged `claude` user for the main process (start phase). Post-bootstrap hooks (e.g., `agent.post_init`) run after the container is started.
 
-**Entrypoint privilege model**: The entrypoint runs as root solely for `firewall.sh` iptables setup, then immediately drops privileges via `gosu`. Containers require `NET_ADMIN` + `NET_RAW` capabilities for the DNAT rules but run their workload unprivileged.
+**Entrypoint privilege model**: eBPF programs are attached from outside the container by the eBPF manager. Agent containers require no elevated capabilities — they run fully unprivileged. The entrypoint runs as root only for `chown` and config init, then drops to the `claude` user via `gosu`.
 
 #### Implementation
 
-The firewall uses an **Envoy proxy + CoreDNS** sidecar pair running as managed Docker containers, not per-container iptables rules.
+The firewall uses an **Envoy proxy + CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs replace iptables for all traffic routing. See `.claude/docs/EBPF-DESIGN.md` for the full eBPF design.
 
 **Why this architecture:**
 - **DNS deny-by-default**: CoreDNS returns NXDOMAIN for unlisted domains — agents can't even resolve blocked hosts. Upstream: Cloudflare malware-blocking (`1.1.1.2`, `1.0.0.2`).
 - **TLS inspection**: Envoy terminates TLS with per-domain MITM certificates (ECDSA P256 CA), enabling path-level filtering. Passthrough mode for domains without path rules.
 - **Hot reload**: Rule changes regenerate `envoy.yaml` and `Corefile` — Envoy picks up config via restart, CoreDNS via reload plugin (2s).
-- **Shared infrastructure**: One Envoy+CoreDNS pair serves all agent containers, rather than per-container iptables (which requires `CAP_NET_ADMIN` inside the container for rule management).
+- **eBPF per-container routing**: `cgroup/connect4` intercepts `connect()` syscalls per-container, rewriting destinations to the correct Envoy listener. DNS-aware routing via `dns_cache` BPF map enables per-domain TCP routing (solving the multi-SSH-provider problem that iptables couldn't).
+- **No container capabilities**: Agent containers need zero Linux capabilities. The eBPF manager container (privileged) handles all BPF program loading and cgroup attachment from outside.
 
 **Daemon isolation**: The firewall runs as a separate detached process (`EnsureDaemon()`), not as part of the CLI command. The daemon manages container lifecycle and runs dual health check loops (Envoy TCP + CoreDNS HTTP, 5s interval). A container watcher loop (30s) exits the daemon when no clawker containers are running.
 
-**Network design**: All firewall containers and agent containers share a `clawker-net` Docker bridge network. Envoy and CoreDNS get static IPs computed from the network gateway (`.2` and `.3`). Agent containers use iptables DNAT rules (set up by `firewall.sh` running as root before privilege drop) to redirect DNS to CoreDNS and HTTPS to Envoy.
+**Network design**: All firewall containers and agent containers share a `clawker-net` Docker bridge network. Envoy and CoreDNS get static IPs computed from the network gateway (`.2` and `.3`). The eBPF manager gets `.4`. eBPF `cgroup/connect4` programs rewrite agent container `connect()` calls to route traffic to Envoy/CoreDNS IPs.
 
 **Rule merge strategy**: System-required rules (Claude API, Docker registry) are always present. Project rules from `.clawker.yaml` (`add_domains`, `rules`) merge additively — project rules never replace system rules. Dedup key: `destination:protocol:port`. The rules store uses `storage.Store[EgressRulesFile]` with file-level locking.
 
 **Certificate PKI**: A persistent ECDSA P256 CA is generated on first run. Per-domain certificates are generated for domains requiring MITM inspection (path rules). The CA cert is injected into agent containers at creation time via `containerfs`. `clawker firewall rotate-ca` regenerates everything.
 
-**Bypass escape hatch**: `clawker firewall bypass` grants temporary unrestricted egress by flushing iptables rules, auto-re-enabling after a configurable timeout.
+**Bypass escape hatch**: `clawker firewall bypass` sets an eBPF bypass flag for instant unrestricted egress, auto-clearing after a configurable timeout. No rule flushing or re-application needed — just a BPF map update.
 
-**Entrypoint privilege model**: Container entrypoint runs as root → `firewall.sh` sets up iptables DNAT rules → `gosu` drops to unprivileged `claude` user. Containers still need `NET_ADMIN` + `NET_RAW` capabilities for the DNAT setup.
+**Entrypoint privilege model**: Agent containers run fully unprivileged. The entrypoint runs as root only for config init (`chown`, git setup), then drops to the `claude` user via `gosu`. eBPF programs attach from outside — no in-container firewall scripts or capabilities.
 
 ### 7.3 Strict Label Ownership
 

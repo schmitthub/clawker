@@ -13,7 +13,7 @@ The firewall uses two infrastructure containers managed automatically by the Cla
 - **CoreDNS** (port `53`) --- DNS-level deny-by-default. Only explicitly allowed domains resolve successfully. All other queries return NXDOMAIN. Uses Cloudflare malware-blocking upstream (`1.1.1.2`, `1.0.0.2`).
 - **Envoy** (port `10000` TLS, `10001+` TCP) --- TLS termination with per-domain certificates for all allowed domains. Envoy terminates TLS, inspects HTTP traffic (paths, methods, response codes visible), then re-encrypts upstream. Default deny (connection reset) for unrecognized SNI.
 
-Both containers run on the `clawker-net` bridge network with static IPs: Envoy at `.200`, CoreDNS at `.201`. Agent containers join the same network with Cloudflare DNS (`1.1.1.2`, `1.0.0.2`) as Docker's default external forwarders. When the firewall is enabled, `resolv.conf` is flipped to point to CoreDNS for filtered resolution. CoreDNS forwards Docker internal names (`host.docker.internal`, monitoring stack containers) back to Docker's embedded DNS at `127.0.0.11`, preserving internal networking. HTTPS is routed through Envoy via iptables DNAT rules.
+Both containers run on the `clawker-net` bridge network with static IPs: Envoy at `.200`, CoreDNS at `.201`. Agent containers join the same network with Cloudflare DNS (`1.1.1.2`, `1.0.0.2`) as Docker's default external forwarders. When the firewall is enabled, `resolv.conf` is flipped to point to CoreDNS for filtered resolution. CoreDNS forwards Docker internal names (`host.docker.internal`, monitoring stack containers) back to Docker's embedded DNS at `127.0.0.11`, preserving internal networking. HTTPS is routed through Envoy via eBPF cgroup programs.
 
 ```
 Agent Container        CoreDNS (.201)       Envoy (.200)         Internet
@@ -22,7 +22,7 @@ Agent Container        CoreDNS (.201)       Envoy (.200)         Internet
     |<-- NXDOMAIN (blocked)--|                    |                   |
     |<-- resolved IP (allow)-|                    |                   |
     |                        |                    |                   |
-    |--- HTTPS (iptables DNAT) ----------------->|                   |
+    |--- HTTPS (eBPF connect4) ----------------->|                   |
     |                        |                    |--- TLS inspect -->|
     |                        |                    |<-- response ------|
     |<--------------------------------------------+                   |
@@ -34,7 +34,7 @@ Agent Container        CoreDNS (.201)       Envoy (.200)         Internet
 2. The daemon creates the `clawker-net` bridge network and launches the Envoy and CoreDNS containers
 3. Project rules from `.clawker.yaml` are merged with system-required rules (additive merge, dedup by `destination:protocol:port`)
 4. Envoy and CoreDNS configs are regenerated from the merged ruleset
-5. Agent containers join the firewall network; `firewall.sh enable` flips `resolv.conf` to CoreDNS
+5. Agent containers join the firewall network; the eBPF manager attaches cgroup programs to route traffic through Envoy and DNS through CoreDNS
 6. The daemon runs health checks every 5 seconds --- TCP on Envoy (`:18901`), HTTP on CoreDNS (`:18902/health`)
 7. A container watcher polls every 30 seconds and exits the daemon when no Clawker containers are running
 
@@ -212,11 +212,11 @@ Full rule specification for fine-grained control:
 - **`ssh`** --- SSH traffic forwarding. Functionally identical to `tcp` but semantically distinct. See the port-level routing note below.
 
 <Warning>
-**TCP/SSH rules capture all traffic on the port, not just traffic to the whitelisted domain.** TLS and HTTP protocols carry domain metadata (SNI and Host header) that Envoy uses to match traffic to the correct rule. Raw TCP and SSH have no such mechanism. Resolving the domain to an IP and writing per-IP iptables rules is not viable — IPs change frequently for large services (CDN edge rotations, load balancer failovers, anycast shifts), making IP-based rules brittle. Instead, clawker creates a single iptables DNAT rule per destination port that redirects **all** traffic on that port to a dedicated Envoy TCP listener. Envoy resolves the whitelisted domain at connection time and forwards traffic there.
+**TCP/SSH rules capture all traffic on the port, not just traffic to the whitelisted domain.** TLS and HTTP protocols carry domain metadata (SNI and Host header) that Envoy uses to match traffic to the correct rule. Raw TCP and SSH have no such mechanism. Resolving the domain to an IP and writing per-IP routing rules is not viable — IPs change frequently for large services (CDN edge rotations, load balancer failovers, anycast shifts), making IP-based rules brittle. Instead, clawker creates a single eBPF routing rule per destination port that redirects **all** traffic on that port to a dedicated Envoy TCP listener. Envoy resolves the whitelisted domain at connection time and forwards traffic there.
 
 For example, a `proto: ssh` rule for `github.com` on port 22 means every outbound port 22 connection from the container — regardless of what IP or hostname the agent specifies — ends up at GitHub's SSH endpoint. The agent cannot reach any other SSH server. This is more restrictive than it might appear: it's not that arbitrary port 22 traffic is allowed through, it's that all port 22 traffic is funneled to a single destination.
 
-If multiple rules target the same port (e.g., SSH rules for both `github.com` and `gitlab.com` on port 22), the **first rule in the egress rules list wins** — iptables evaluates DNAT rules in order and the first `--dport` match captures all traffic for that port. The second rule's Envoy listener would exist but never receive traffic. For this reason, **only one domain can effectively be whitelisted per TCP/SSH port**. If you need SSH access to both GitHub and GitLab, configure one provider to use HTTPS git instead, or use a non-standard SSH port if the provider supports it.
+If multiple rules target the same port (e.g., SSH rules for both `github.com` and `gitlab.com` on port 22), the **first rule in the egress rules list wins** — the eBPF program evaluates rules in order and the first port match captures all traffic for that port. The second rule's Envoy listener would exist but never receive traffic. For this reason, **only one domain can effectively be whitelisted per TCP/SSH port**. If you need SSH access to both GitHub and GitLab, configure one provider to use HTTPS git instead, or use a non-standard SSH port if the provider supports it.
 
 <Info>
 Multi-domain support for TCP/SSH ports is a [tracked limitation](https://github.com/schmitthub/clawker/issues/235), deferred for after the control plane work. In the meantime, HTTPS git works for most multi-provider setups.
@@ -326,7 +326,7 @@ All firewall operations are available under `clawker firewall`:
 | `clawker firewall down` | Stop the firewall daemon |
 | `clawker firewall enable --agent AGENT` | Attach a container to the firewall network |
 | `clawker firewall disable --agent AGENT` | Remove a container from the firewall network |
-| `clawker firewall bypass` | Temporary unrestricted egress (iptables flush + timed re-enable) |
+| `clawker firewall bypass` | Temporary unrestricted egress (eBPF bypass flag + timed re-enable) |
 | `clawker firewall rotate-ca` | Regenerate CA and all domain certificates |
 
 ## Certificate Management
@@ -372,7 +372,7 @@ clawker firewall bypass 5m --agent dev
 clawker firewall bypass --stop --agent dev
 ```
 
-Bypass mode flushes the container's iptables rules, completely bypassing both DNS filtering and TLS inspection. A detached timer re-enables the firewall after the specified timeout.
+Bypass mode sets the eBPF bypass flag, completely bypassing both DNS filtering and TLS inspection. The flag auto-clears after the specified timeout, re-enabling the firewall.
 
 <Warning>
 Bypass mode removes all network restrictions for the specified agent. Use it sparingly and with short timeouts. The agent has full internet access during a bypass.

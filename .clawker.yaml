@@ -107,8 +107,6 @@ build:
     - man-db
     - unzip
     - gnupg2
-    - iptables
-    - ipset
     - iproute2
     - dnsutils
     - aggregate
@@ -121,6 +119,10 @@ build:
     - locales-all
     - iputils-ping
     - shellcheck
+    - clang
+    - llvm
+    - libbpf-dev
+    - bpftool
     - nodejs
     - npm
 loop:

@@ -2,9 +2,12 @@ package firewall
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -30,12 +33,18 @@ type firewallContainer string
 const (
 	envoyContainer   firewallContainer = "clawker-envoy"
 	corednsContainer firewallContainer = "clawker-coredns"
+	ebpfContainer    firewallContainer = "clawker-ebpf"
 )
 
 // Infrastructure container constants.
 const (
 	envoyImage   = "envoyproxy/envoy:distroless-v1.37.1@sha256:4d9226b9fd4d1449887de7cde785beb24b12e47d6e79021dec3c79e362609432"
 	corednsImage = "coredns/coredns:1.14.2@sha256:e7e6440cfd1e919280958f5b5a6ab2b184d385bba774c12ad2a9e1e4183f90d9"
+
+	// TODO(ebpf): Replace with version-pinned SHA256 image once the eBPF manager
+	// container image is built and published. Contains the ebpf-manager binary
+	// built from internal/ebpf/cmd/.
+	ebpfImage = "ghcr.io/schmitthub/clawker-ebpf:latest"
 
 	// Health check timing.
 	healthCheckTimeout  = 60 * time.Second
@@ -107,6 +116,15 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 
 	if err := m.ensureContainer(ctx, corednsContainer, m.corednsContainerConfig(netInfo, dataDir)); err != nil {
 		return fmt.Errorf("firewall: ensuring coredns: %w", err)
+	}
+
+	if err := m.ensureContainer(ctx, ebpfContainer, m.ebpfContainerConfig(netInfo)); err != nil {
+		return fmt.Errorf("firewall: ensuring ebpf manager: %w", err)
+	}
+
+	// Initialize BPF programs inside the eBPF manager container.
+	if err := m.ebpfExec(ctx, "init"); err != nil {
+		return fmt.Errorf("firewall: initializing eBPF programs: %w", err)
 	}
 
 	// Step 5: Wait for services to be healthy before declaring ready.
@@ -382,106 +400,64 @@ func (m *Manager) List(_ context.Context) ([]config.EgressRule, error) {
 	return rules, nil
 }
 
-// Disable disconnects a container from the firewall network, blocking all egress
-// through the firewall stack.
+// Disable detaches eBPF programs from a container's cgroup, removing all
+// traffic routing. The container gets unrestricted egress.
 func (m *Manager) Disable(ctx context.Context, containerID string) error {
-	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
-		User:         "root",
-		AttachStderr: true,
-		Cmd:          []string{"/usr/local/bin/firewall.sh", "disable"},
-	})
-	if err != nil {
-		return fmt.Errorf("firewall disable: creating exec: %w", err)
+	cgroupPath := ebpfCgroupPath(containerID)
+	if err := m.ebpfExec(ctx, "disable", cgroupPath); err != nil {
+		return fmt.Errorf("firewall disable: %w", err)
 	}
 
-	hijack, err := m.client.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
-	if err != nil {
-		return fmt.Errorf("firewall disable: attaching: %w", err)
-	}
-	defer hijack.Conn.Close()
-
-	// Read all output (blocks until exec completes).
-	output, _ := io.ReadAll(hijack.Reader)
-
-	inspectExec, err := m.client.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
-	if err != nil {
-		return fmt.Errorf("firewall disable: inspecting exec: %w", err)
-	}
-	if inspectExec.ExitCode != 0 {
-		return fmt.Errorf("firewall disable: script exited %d: %s", inspectExec.ExitCode, strings.TrimSpace(string(output)))
-	}
-
-	m.log.Debug().
-		Str("container", containerID).
-		Msg("firewall disabled")
-
-	// Emit disconnect mapping directly to Loki for the egress monitoring dashboard.
-	inspect, inspectErr := m.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
-	if inspectErr == nil {
-		m.emitAgentMapping(ctx, inspect, "disable")
-	}
-
+	m.log.Debug().Str("container", containerID).Msg("firewall disabled via eBPF")
 	return nil
 }
 
-// Enable re-applies DNAT + firewall DNS in an agent container via docker exec.
-// Reads the current rules from the store to compute TCP port mappings.
+// Enable attaches eBPF programs to a container's cgroup, routing traffic
+// through Envoy (TCP) and CoreDNS (DNS). Replaces iptables DNAT rules.
 func (m *Manager) Enable(ctx context.Context, containerID string) error {
 	netInfo, err := m.discoverNetwork(ctx)
 	if err != nil {
 		return fmt.Errorf("firewall enable: discovering network: %w", err)
 	}
 
-	// Best-effort: read host proxy URL from container env.
-	var hostProxy string
+	// Read host proxy URL from container env (best-effort).
+	var hostProxyIP string
+	var hostProxyPort uint16
 	inspect, inspectErr := m.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if inspectErr == nil {
-		for _, env := range inspect.Container.Config.Env {
-			if val, ok := strings.CutPrefix(env, "CLAWKER_HOST_PROXY="); ok {
-				hostProxy = val
-				break
-			}
-		}
+		hostProxyIP, hostProxyPort = parseHostProxy(inspect)
 	}
 
-	// Compute TCP port mappings from the current rule state.
-	tcpMappingsArg := m.FormatPortMappings()
-
-	args := []string{"/usr/local/bin/firewall.sh", "enable",
-		netInfo.EnvoyIP, netInfo.CoreDNSIP, netInfo.CIDR}
-	if hostProxy != "" {
-		args = append(args, hostProxy)
-	} else {
-		args = append(args, "") // placeholder so tcp_mappings lands in $5
+	// Build per-domain TCP routes from the rules store.
+	rules, warnings := normalizeAndDedup(m.store.Read().Rules)
+	for _, w := range warnings {
+		m.log.Warn().Msg(w)
 	}
-	if tcpMappingsArg != "" {
-		args = append(args, tcpMappingsArg)
-	}
+	ports := m.envoyPorts()
+	tcpMappings := TCPMappings(rules, ports)
 
-	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
-		User:         "root",
-		AttachStderr: true,
-		Cmd:          args,
-	})
-	if err != nil {
-		return fmt.Errorf("firewall enable: creating exec: %w", err)
+	routes := make([]ebpfRoute, 0, len(tcpMappings))
+	for _, mp := range tcpMappings {
+		routes = append(routes, ebpfRoute{
+			DomainHash: DomainHash(mp.Dst),
+			DstPort:    uint16(mp.DstPort),
+			EnvoyPort:  uint16(mp.EnvoyPort),
+		})
 	}
 
-	hijack, err := m.client.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
-	if err != nil {
-		return fmt.Errorf("firewall enable: attaching: %w", err)
-	}
-	defer hijack.Conn.Close()
+	// Compute gateway IP from CIDR.
+	gatewayIP := computeGateway(netInfo.CIDR)
 
-	// Read all output (blocks until exec completes).
-	output, _ := io.ReadAll(hijack.Reader)
+	// Build JSON config for the eBPF manager.
+	cfgJSON := fmt.Sprintf(
+		`{"envoy_ip":%q,"coredns_ip":%q,"gateway_ip":%q,"cidr":%q,"host_proxy_ip":%q,"host_proxy_port":%d,"egress_port":%d,"routes":%s}`,
+		netInfo.EnvoyIP, netInfo.CoreDNSIP, gatewayIP, netInfo.CIDR,
+		hostProxyIP, hostProxyPort, ports.EgressPort, marshalRoutes(routes),
+	)
 
-	inspectExec, err := m.client.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
-	if err != nil {
-		return fmt.Errorf("firewall enable: inspecting exec: %w", err)
-	}
-	if inspectExec.ExitCode != 0 {
-		return fmt.Errorf("firewall enable: script exited %d: %s", inspectExec.ExitCode, strings.TrimSpace(string(output)))
+	cgroupPath := ebpfCgroupPath(containerID)
+	if err := m.ebpfExec(ctx, "enable", cgroupPath, cfgJSON); err != nil {
+		return fmt.Errorf("firewall enable: %w", err)
 	}
 
 	// Signal the entrypoint that firewall is ready (unblocks CMD).
@@ -489,16 +465,7 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		m.log.Warn().Err(err).Msg("failed to touch firewall-ready signal file")
 	}
 
-	m.log.Debug().
-		Str("container", containerID).
-		Msg("firewall enabled")
-
-	// Emit agent IP mapping directly to Loki so this becomes a queryable
-	// agent_map entry in the egress monitoring dashboard.
-	if inspectErr == nil {
-		m.emitAgentMapping(ctx, inspect, "enable")
-	}
-
+	m.log.Debug().Str("container", containerID).Int("routes", len(routes)).Msg("firewall enabled via eBPF")
 	return nil
 }
 
@@ -519,135 +486,32 @@ func (m *Manager) touchSignalFile(ctx context.Context, containerID string) error
 	return err
 }
 
-// emitAgentMapping pushes an agent→IP mapping log entry directly to Loki.
-// The egress monitoring dashboard uses these entries to resolve agent names
-// from container IPs via the hidden $agent_ips variable.
-//
-// We push directly to Loki's HTTP API rather than writing to a container's
-// stdout because the Envoy container is distroless (no shell/echo available).
-func (m *Manager) emitAgentMapping(_ context.Context, inspect client.ContainerInspectResult, action string) {
-	agent := inspect.Container.Config.Labels[m.cfg.LabelAgent()]
-	if agent == "" {
-		return // not an agent container
-	}
+// emitAgentMapping was deleted — eBPF metrics replace the Loki agent_map pipeline.
+// See .claude/docs/EBPF-DESIGN.md § Observability.
 
-	// Get the container's IP on clawker-net.
-	var clientIP string
-	netName := m.cfg.ClawkerNetwork()
-	if inspect.Container.NetworkSettings != nil {
-		if ep, ok := inspect.Container.NetworkSettings.Networks[netName]; ok && ep != nil {
-			clientIP = ep.IPAddress.String()
-		}
-	}
-	if clientIP == "" {
-		m.log.Debug().Str("agent", agent).Msg("agent mapping: no IP on clawker-net, skipping")
-		return
-	}
-
-	project := inspect.Container.Config.Labels[m.cfg.LabelProject()]
-
-	lokiPort := m.cfg.SettingsStore().Read().Monitoring.LokiPort
-	if lokiPort == 0 {
-		lokiPort = 3100
-	}
-
-	ts := fmt.Sprintf("%d", time.Now().UnixNano())
-	line := fmt.Sprintf(
-		`{"source":"agent_map","agent":"%s","project":"%s","client_ip":"%s","action":"%s"}`,
-		agent, project, clientIP, action,
-	)
-
-	// Loki push API payload — labels must match what Promtail would produce
-	// so the dashboard's $agent_ips variable query finds these entries.
-	payload := fmt.Sprintf(
-		`{"streams":[{"stream":{"service_name":"envoy","source":"agent_map","agent":"%s","client_ip":"%s","project":"%s","action":"%s"},"values":[["%s",%q]]}]}`,
-		agent, clientIP, project, action, ts, line,
-	)
-
-	url := fmt.Sprintf("http://localhost:%d/loki/api/v1/push", lokiPort)
-
-	// Fire-and-forget: best-effort telemetry must never block Enable/Disable.
-	log := m.log
-	go func() {
-		pushCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-
-		req, err := http.NewRequestWithContext(pushCtx, http.MethodPost, url, strings.NewReader(payload))
-		if err != nil {
-			log.Debug().Err(err).Msg("agent mapping: failed to build request")
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			log.Debug().Err(err).Msg("agent mapping: loki push failed")
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode >= 300 {
-			body, _ := io.ReadAll(resp.Body)
-			log.Debug().Int("status", resp.StatusCode).Str("body", string(body)).Msg("agent mapping: loki rejected push")
-		} else {
-			log.Debug().Str("agent", agent).Str("ip", clientIP).Str("action", action).Msg("agent mapping: pushed to loki")
-		}
-	}()
-}
-
-// Bypass disables iptables rules and schedules re-enable after timeout.
-// Uses detached docker exec: sleep <timeout> && firewall.sh enable <args>.
+// Bypass sets the eBPF bypass flag for a container, allowing unrestricted egress.
+// Schedules automatic re-enable after timeout via a detached exec in the eBPF
+// manager container (sleep + unbypass).
 func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.Duration) error {
-	// Step 1: Disable firewall (flush iptables rules).
-	if err := m.Disable(ctx, containerID); err != nil {
+	cgroupPath := ebpfCgroupPath(containerID)
+
+	// Set bypass flag (instant, atomic).
+	if err := m.ebpfExec(ctx, "bypass", cgroupPath); err != nil {
 		return fmt.Errorf("firewall bypass: %w", err)
 	}
 
-	// Step 2: Schedule re-enable via detached exec inside the container.
-	netInfo, err := m.discoverNetwork(ctx)
-	if err != nil {
-		return fmt.Errorf("firewall bypass: discovering network: %w", err)
-	}
-
-	// Best-effort: read host proxy URL from container env.
-	var hostProxy string
-	inspect, inspectErr := m.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
-	if inspectErr == nil {
-		for _, env := range inspect.Container.Config.Env {
-			if val, ok := strings.CutPrefix(env, "CLAWKER_HOST_PROXY="); ok {
-				hostProxy = val
-				break
-			}
-		}
-	}
-
+	// Schedule automatic re-enable via detached exec in the eBPF manager container.
 	timeoutSecs := int(timeout.Seconds())
 	if timeoutSecs <= 0 {
 		timeoutSecs = 30
 	}
 
-	// Build the re-enable command: sleep <timeout> && firewall.sh enable <args>
-	tcpMappingsArg := m.FormatPortMappings()
-	hostProxyArg := hostProxy
-	if hostProxyArg == "" && tcpMappingsArg != "" {
-		hostProxyArg = "''" // placeholder so tcp_mappings lands in $5
-	}
-	enableCmd := fmt.Sprintf("/usr/local/bin/firewall.sh enable %s %s %s",
-		netInfo.EnvoyIP, netInfo.CoreDNSIP, netInfo.CIDR)
-	if hostProxyArg != "" {
-		enableCmd += " " + hostProxyArg
-	}
-	if tcpMappingsArg != "" {
-		enableCmd += " '" + tcpMappingsArg + "'"
-	}
-	shellCmd := fmt.Sprintf("sleep %d && %s", timeoutSecs, enableCmd)
-
-	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
-		User: "root",
-		Cmd:  []string{"sh", "-c", shellCmd},
+	shellCmd := fmt.Sprintf("sleep %d && /usr/local/bin/ebpf-manager unbypass %s", timeoutSecs, cgroupPath)
+	execResp, err := m.client.ExecCreate(ctx, string(ebpfContainer), client.ExecCreateOptions{
+		Cmd: []string{"sh", "-c", shellCmd},
 	})
 	if err != nil {
-		return fmt.Errorf("firewall bypass: creating timer exec: %w", err)
+		return fmt.Errorf("firewall bypass: creating timer: %w", err)
 	}
 
 	_, err = m.client.ExecStart(ctx, execResp.ID, client.ExecStartOptions{
@@ -660,7 +524,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 	m.log.Debug().
 		Str("container", containerID).
 		Int("timeout_secs", timeoutSecs).
-		Msg("firewall bypass started (re-enable scheduled)")
+		Msg("firewall bypass started (re-enable scheduled via eBPF)")
 
 	return nil
 }
@@ -714,106 +578,6 @@ func (m *Manager) NetCIDR() string {
 		return ""
 	}
 	return netInfo.CIDR
-}
-
-// FormatPortMappings reads rules from the store, computes TCP/SSH port mappings,
-// and returns the firewall.sh argument string (format: "dst_port|envoy_port;...").
-// Only TCP/SSH rules need per-port iptables DNAT entries — TLS rules are handled
-// by the egress listener's SNI filter chains and HTTP rules by the raw_buffer
-// filter chain (neither needs separate iptables).
-//
-// TODO: This method contains a temporary workaround that prepends rules from the
-// most-local config layer to ensure the current project's TCP/SSH rules get
-// priority iptables positions (first-match-wins). This works around the limitation
-// that only one iptables DNAT rule can match per destination port. Remove this
-// once a proper per-container TCP routing solution is implemented.
-func (m *Manager) FormatPortMappings() string {
-	// TODO(tcp-priority): Temporary workaround — prepend the most-local project
-	// config layer's rules so they win first-seen dedup and get priority positions
-	// in iptables DNAT ordering. Without this, a gitlab project's SSH rule added
-	// after a github project's would never match port 22.
-	var prioritized []config.EgressRule
-	if localRules := localLayerFirewallRules(m.cfg); len(localRules) > 0 {
-		prioritized = append(prioritized, localRules...)
-	}
-	prioritized = append(prioritized, m.store.Read().Rules...)
-
-	rules, warnings := normalizeAndDedup(prioritized)
-	for _, w := range warnings {
-		m.log.Warn().Msg(w)
-	}
-	ports := m.envoyPorts()
-	tcpMappings := TCPMappings(rules, ports)
-	if len(tcpMappings) == 0 {
-		return ""
-	}
-	var parts []string
-	for _, mp := range tcpMappings {
-		parts = append(parts, fmt.Sprintf("%d|%d", mp.DstPort, mp.EnvoyPort))
-	}
-	return strings.Join(parts, ";")
-}
-
-// localLayerFirewallRules extracts egress rules from the highest-priority project
-// config layer that contains firewall rules. Layers are ordered closest-to-CWD
-// first. Returns nil if no layer has firewall rules.
-//
-// Only SSH/TCP rules are extracted — these are the only rules that need per-port
-// iptables priority ordering. TLS rules are excluded since they share the egress
-// listener and don't compete for iptables DNAT positions.
-//
-// TODO(tcp-priority): Temporary helper for the FormatPortMappings workaround.
-// Remove once a proper per-container TCP routing solution is implemented.
-func localLayerFirewallRules(cfg config.Config) []config.EgressRule {
-	store := cfg.ProjectStore()
-	if store == nil {
-		return nil
-	}
-	layers := store.Layers()
-	for _, layer := range layers {
-		if layer.Path == "" {
-			continue // skip virtual/defaults layer
-		}
-		security, ok := layer.Data["security"].(map[string]any)
-		if !ok {
-			continue
-		}
-		fw, ok := security["firewall"].(map[string]any)
-		if !ok {
-			continue
-		}
-
-		var rules []config.EgressRule
-
-		if rawRules, ok := fw["rules"].([]any); ok {
-			for _, raw := range rawRules {
-				m, ok := raw.(map[string]any)
-				if !ok {
-					continue
-				}
-				proto, _ := m["proto"].(string)
-				if strings.ToLower(proto) != "ssh" && strings.ToLower(proto) != "tcp" {
-					continue // only SSH/TCP rules need iptables priority ordering
-				}
-				r := config.EgressRule{Proto: proto}
-				if v, ok := m["dst"].(string); ok {
-					r.Dst = v
-				}
-				if v, ok := m["port"].(int); ok {
-					r.Port = v
-				}
-				if v, ok := m["action"].(string); ok {
-					r.Action = v
-				}
-				rules = append(rules, r)
-			}
-		}
-
-		if len(rules) > 0 {
-			return rules
-		}
-	}
-	return nil
 }
 
 // envoyPorts returns the EnvoyPorts config from the manager's config.
@@ -1020,6 +784,7 @@ type containerSpec struct {
 	cmd          []string
 	mounts       []mount.Mount
 	portBindings network.PortMap
+	capAdd       []string // Linux capabilities (e.g., "BPF", "SYS_ADMIN")
 }
 
 // ensureContainer ensures a named container exists and is running.
@@ -1092,6 +857,9 @@ func (m *Manager) runContainer(ctx context.Context, name firewallContainer, spec
 	}
 	if len(spec.portBindings) > 0 {
 		hostConfig.PortBindings = spec.portBindings
+	}
+	if len(spec.capAdd) > 0 {
+		hostConfig.CapAdd = spec.capAdd
 	}
 
 	networkingConfig := &network.NetworkingConfig{
@@ -1220,4 +988,143 @@ func (m *Manager) restartContainer(ctx context.Context, name firewallContainer) 
 	}
 
 	return nil
+}
+
+// --- eBPF helpers ---
+
+// ebpfRoute is the JSON-serializable route type for the eBPF manager container.
+type ebpfRoute struct {
+	DomainHash uint32 `json:"domain_hash"`
+	DstPort    uint16 `json:"dst_port"`
+	EnvoyPort  uint16 `json:"envoy_port"`
+}
+
+// ebpfStaticIP computes the eBPF manager's static IP from the Envoy IP.
+// Envoy is .2, CoreDNS is .3, eBPF manager is .4.
+func ebpfStaticIP(envoyIP string) string {
+	ip := net.ParseIP(envoyIP).To4()
+	if ip == nil {
+		return ""
+	}
+	ip[3] = 4
+	return ip.String()
+}
+
+// ebpfCgroupPath returns the cgroup v2 path for a Docker container.
+func ebpfCgroupPath(containerID string) string {
+	return "/sys/fs/cgroup/system.slice/docker-" + containerID + ".scope"
+}
+
+// ebpfExec runs a command in the eBPF manager container via docker exec.
+func (m *Manager) ebpfExec(ctx context.Context, args ...string) error {
+	cmd := make([]string, 0, len(args)+1)
+	cmd = append(cmd, "/usr/local/bin/ebpf-manager")
+	cmd = append(cmd, args...)
+
+	execResp, err := m.client.ExecCreate(ctx, string(ebpfContainer), client.ExecCreateOptions{
+		AttachStderr: true,
+		Cmd:          cmd,
+	})
+	if err != nil {
+		return fmt.Errorf("creating exec in %s: %w", ebpfContainer, err)
+	}
+
+	hijack, err := m.client.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
+	if err != nil {
+		return fmt.Errorf("attaching exec in %s: %w", ebpfContainer, err)
+	}
+	defer hijack.Conn.Close()
+
+	output, _ := io.ReadAll(hijack.Reader)
+
+	inspectExec, err := m.client.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("inspecting exec in %s: %w", ebpfContainer, err)
+	}
+	if inspectExec.ExitCode != 0 {
+		return fmt.Errorf("ebpf-manager %s exited %d: %s", args[0], inspectExec.ExitCode, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// ebpfContainerConfig returns the container creation config for the eBPF manager.
+func (m *Manager) ebpfContainerConfig(net *NetworkInfo) containerSpec {
+	return containerSpec{
+		image:       ebpfImage,
+		networkName: m.cfg.ClawkerNetwork(),
+		networkID:   net.NetworkID,
+		staticIP:    ebpfStaticIP(net.EnvoyIP), // .4 on clawker-net
+		labels: map[string]string{
+			m.cfg.LabelManaged(): "true",
+			m.cfg.LabelPurpose(): m.cfg.PurposeFirewall(),
+		},
+		cmd: []string{"sleep", "infinity"},
+		mounts: []mount.Mount{
+			{
+				Type:     mount.TypeBind,
+				Source:   "/sys/fs/cgroup",
+				Target:   "/sys/fs/cgroup",
+				ReadOnly: true,
+			},
+			{
+				Type:   mount.TypeBind,
+				Source: "/sys/fs/bpf",
+				Target: "/sys/fs/bpf",
+			},
+		},
+		capAdd: []string{"BPF", "SYS_ADMIN", "NET_ADMIN"},
+	}
+}
+
+// parseHostProxy extracts the host proxy IP and port from a container's env.
+func parseHostProxy(inspect client.ContainerInspectResult) (string, uint16) {
+	for _, env := range inspect.Container.Config.Env {
+		if val, ok := strings.CutPrefix(env, "CLAWKER_HOST_PROXY="); ok {
+			val = strings.TrimPrefix(val, "http://")
+			val = strings.TrimPrefix(val, "https://")
+			host, portStr, found := strings.Cut(val, ":")
+			if found {
+				portStr = strings.TrimRight(portStr, "/")
+				port, err := strconv.ParseUint(portStr, 10, 16)
+				if err == nil {
+					return host, uint16(port)
+				}
+			}
+			return host, 0
+		}
+	}
+	return "", 0
+}
+
+// computeGateway extracts the gateway IP (.1) from a CIDR.
+func computeGateway(cidr string) string {
+	ip, _, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return ""
+	}
+	ip = ip.To4()
+	if ip == nil {
+		return ""
+	}
+	ip[3] = 1
+	return ip.String()
+}
+
+// DomainHash computes the FNV-1a hash of a domain name (exported for tests).
+func DomainHash(domain string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(strings.ToLower(domain)))
+	return h.Sum32()
+}
+
+// marshalRoutes serializes routes as a JSON array string.
+func marshalRoutes(routes []ebpfRoute) string {
+	if len(routes) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(routes)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }

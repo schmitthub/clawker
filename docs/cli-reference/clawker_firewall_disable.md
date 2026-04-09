@@ -8,8 +8,8 @@ Disable firewall for a container
 
 ### Synopsis
 
-Flush iptables DNAT rules and restore direct DNS in an agent container,
-giving it unrestricted outbound access. Use 'clawker firewall enable' to re-apply.
+Detach eBPF cgroup programs from an agent container, giving it
+unrestricted outbound access. Use 'clawker firewall enable' to re-apply.
 
 ```
 clawker firewall disable [flags]

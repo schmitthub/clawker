@@ -85,7 +85,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m["COLORTERM"] = "truecolor"
 	}
 
-	// Firewall (simple flag — iptables applied post-start via manager.Enable)
+	// Firewall (simple flag — eBPF programs attached post-start via manager.Enable)
 	if opts.FirewallEnabled {
 		m["CLAWKER_FIREWALL_ENABLED"] = "true"
 	}

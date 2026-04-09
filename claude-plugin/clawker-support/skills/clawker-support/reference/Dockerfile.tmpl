@@ -66,8 +66,6 @@ RUN apk add \
     man-db \
     unzip \
     gnupg \
-    iptables \
-    ipset \
     iproute2 \
     bind-tools \
     jq \
@@ -103,8 +101,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     man-db \
     unzip \
     gnupg2 \
-    iptables \
-    ipset \
     iproute2 \
     dnsutils \
     aggregate \
@@ -237,10 +233,8 @@ RUN mkdir -p /tmp/downloads && \
     dpkg -i "/tmp/downloads/$DEB"
 {{end}}
 
-# Copy firewall script (always included; execution gated at runtime via CLAWKER_FIREWALL_ENABLED).
-# firewall.sh is called as root in entrypoint and by host via docker exec for enable/disable.
-COPY firewall.sh /usr/local/bin/firewall.sh
-RUN chmod 700 /usr/local/bin/firewall.sh
+# Firewall: eBPF programs attach to container cgroups from outside — no in-container
+# firewall script or iptables needed. See .claude/docs/EBPF-DESIGN.md.
 
 # Clawker agent environment awareness
 RUN mkdir -p /etc/claude-code
@@ -390,7 +384,7 @@ HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=3 \
 {{- end}}
 {{- end}}
 
-# Entrypoint runs as root for privileged init (iptables, chown), then drops to $USERNAME via gosu.
+# Entrypoint runs as root for privileged init (chown), then drops to $USERNAME via gosu.
 USER root
 COPY entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["entrypoint.sh"]

@@ -121,13 +121,13 @@ User reports SSH, GPG, or git HTTPS failures inside the container.
    on the configured port and redirect it to the whitelisted domain. Unlike
    TLS (which has SNI) and HTTP (which has the Host header), raw TCP and SSH
    have no protocol-level domain metadata. Resolving domains to IPs for
-   per-IP iptables rules is not viable — IPs change frequently for large
-   services (CDN rotation, load balancer failover). Instead, iptables creates
-   one DNAT rule per port and Envoy resolves the domain at connection time.
+   per-IP routing rules is not viable — IPs change frequently for large
+   services (CDN rotation, load balancer failover). Instead, eBPF creates
+   one routing rule per port and Envoy resolves the domain at connection time.
    If the user has a `proto: ssh` rule for `github.com` on port 22, every
    port 22 connection goes to GitHub regardless of the intended destination.
    If multiple SSH rules exist on the same port, the first rule in the config
-   wins (iptables first-match). The user should verify with `ssh -T git@target`
+   wins (eBPF first-match). The user should verify with `ssh -T git@target`
    to confirm which host they reached. Only one domain per TCP/SSH port
    (tracked: github.com/schmitthub/clawker/issues/235, deferred to control plane).
 

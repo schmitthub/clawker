@@ -1,0 +1,344 @@
+package ebpf
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/link"
+
+	"github.com/schmitthub/clawker/internal/logger"
+)
+
+// Manager loads BPF programs and manages per-container map entries and cgroup attachments.
+type Manager struct {
+	pinPath string
+	log     *logger.Logger
+
+	objs clawkerObjects
+
+	// Per-container cgroup links, keyed by cgroup ID.
+	// Only populated when this Manager instance attaches programs (daemon mode).
+	links map[uint64][]link.Link
+}
+
+// NewManager creates a new eBPF manager. Call Load() or OpenPinned() before use.
+func NewManager(log *logger.Logger) *Manager {
+	return &Manager{
+		pinPath: PinPath,
+		log:     log,
+		links:   make(map[uint64][]link.Link),
+	}
+}
+
+// Load loads BPF programs from embedded ELF objects, pins maps and programs
+// to /sys/fs/bpf/clawker/. Called once at container startup (daemon mode).
+func (m *Manager) Load() error {
+	if err := os.MkdirAll(m.pinPath, 0o700); err != nil {
+		return fmt.Errorf("ebpf: creating pin path %s: %w", m.pinPath, err)
+	}
+
+	spec, err := loadClawker()
+	if err != nil {
+		return fmt.Errorf("ebpf: loading collection spec: %w", err)
+	}
+
+	for _, mapSpec := range spec.Maps {
+		mapSpec.Pinning = ebpf.PinByName
+	}
+
+	if err := spec.LoadAndAssign(&m.objs, &ebpf.CollectionOptions{
+		Maps: ebpf.MapOptions{PinPath: m.pinPath},
+	}); err != nil {
+		return fmt.Errorf("ebpf: loading objects: %w", err)
+	}
+
+	// Pin programs so command-mode instances can open them for cgroup attachment.
+	progs := map[string]*ebpf.Program{
+		"clawker_connect4":    m.objs.ClawkerConnect4,
+		"clawker_sendmsg4":    m.objs.ClawkerSendmsg4,
+		"clawker_connect6":    m.objs.ClawkerConnect6,
+		"clawker_sendmsg6":    m.objs.ClawkerSendmsg6,
+		"clawker_sock_create": m.objs.ClawkerSockCreate,
+	}
+	for name, prog := range progs {
+		pin := filepath.Join(m.pinPath, name)
+		if err := prog.Pin(pin); err != nil && !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("ebpf: pinning program %s: %w", name, err)
+		}
+	}
+
+	m.log.Info().Str("pin_path", m.pinPath).Msg("eBPF programs loaded and pinned")
+	return nil
+}
+
+// OpenPinned opens already-pinned maps and programs from /sys/fs/bpf/clawker/.
+// Used by command-mode instances (docker exec) that operate on maps without
+// re-loading the BPF programs.
+func (m *Manager) OpenPinned() error {
+	maps := map[string]**ebpf.Map{
+		"container_map": &m.objs.ContainerMap,
+		"bypass_map":    &m.objs.BypassMap,
+		"dns_cache":     &m.objs.DnsCache,
+		"route_map":     &m.objs.RouteMap,
+		"metrics_map":   &m.objs.MetricsMap,
+	}
+	for name, target := range maps {
+		mp, err := ebpf.LoadPinnedMap(filepath.Join(m.pinPath, name), nil)
+		if err != nil {
+			return fmt.Errorf("ebpf: opening pinned map %s: %w", name, err)
+		}
+		*target = mp
+	}
+
+	progs := map[string]**ebpf.Program{
+		"clawker_connect4":    &m.objs.ClawkerConnect4,
+		"clawker_sendmsg4":    &m.objs.ClawkerSendmsg4,
+		"clawker_connect6":    &m.objs.ClawkerConnect6,
+		"clawker_sendmsg6":    &m.objs.ClawkerSendmsg6,
+		"clawker_sock_create": &m.objs.ClawkerSockCreate,
+	}
+	for name, target := range progs {
+		p, err := ebpf.LoadPinnedProgram(filepath.Join(m.pinPath, name), nil)
+		if err != nil {
+			return fmt.Errorf("ebpf: opening pinned program %s: %w", name, err)
+		}
+		*target = p
+	}
+
+	return nil
+}
+
+// Close detaches all links and closes all programs and maps.
+func (m *Manager) Close() error {
+	for cgID, links := range m.links {
+		for _, l := range links {
+			if err := l.Close(); err != nil {
+				m.log.Warn().Err(err).Uint64("cgroup_id", cgID).Msg("closing cgroup link")
+			}
+		}
+	}
+	m.links = make(map[uint64][]link.Link)
+	return m.objs.Close()
+}
+
+// Enable attaches BPF programs to a container's cgroup and populates routing maps.
+func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContainerConfig, routes []Route) error {
+	if err := m.objs.ContainerMap.Update(cgroupID, cfg, ebpf.UpdateAny); err != nil {
+		return fmt.Errorf("ebpf enable: updating container_map: %w", err)
+	}
+
+	for _, r := range routes {
+		key := clawkerRouteKey{
+			CgroupId:   cgroupID,
+			DomainHash: r.DomainHash,
+			DstPort:    r.DstPort,
+		}
+		val := clawkerRouteVal{EnvoyPort: r.EnvoyPort}
+		if err := m.objs.RouteMap.Update(key, val, ebpf.UpdateAny); err != nil {
+			m.log.Warn().Err(err).Uint32("domain_hash", r.DomainHash).Msg("ebpf enable: updating route_map")
+		}
+	}
+
+	type attachment struct {
+		name string
+		prog *ebpf.Program
+		typ  ebpf.AttachType
+	}
+
+	attachments := []attachment{
+		{"connect4", m.objs.ClawkerConnect4, ebpf.AttachCGroupInet4Connect},
+		{"sendmsg4", m.objs.ClawkerSendmsg4, ebpf.AttachCGroupUDP4Sendmsg},
+		{"connect6", m.objs.ClawkerConnect6, ebpf.AttachCGroupInet6Connect},
+		{"sendmsg6", m.objs.ClawkerSendmsg6, ebpf.AttachCGroupUDP6Sendmsg},
+		{"sock_create", m.objs.ClawkerSockCreate, ebpf.AttachCGroupInetSockCreate},
+	}
+
+	var linked []link.Link
+	for _, a := range attachments {
+		l, err := link.AttachCgroup(link.CgroupOptions{
+			Path:    cgroupPath,
+			Attach:  a.typ,
+			Program: a.prog,
+		})
+		if err != nil {
+			for _, prev := range linked {
+				prev.Close()
+			}
+			return fmt.Errorf("ebpf enable: attaching %s: %w", a.name, err)
+		}
+
+		// Pin the link so it persists if this process exits.
+		pinPath := filepath.Join(m.pinPath, fmt.Sprintf("link_%s_%d", a.name, cgroupID))
+		if pinErr := l.Pin(pinPath); pinErr != nil && !errors.Is(pinErr, os.ErrExist) {
+			m.log.Warn().Err(pinErr).Str("program", a.name).Msg("ebpf enable: pinning link (non-fatal)")
+		}
+
+		linked = append(linked, l)
+	}
+
+	m.links[cgroupID] = linked
+	m.log.Info().Uint64("cgroup_id", cgroupID).Int("routes", len(routes)).Msg("eBPF programs attached")
+	return nil
+}
+
+// Disable detaches BPF programs from a container's cgroup and removes map entries.
+func (m *Manager) Disable(cgroupID uint64) error {
+	// Close in-memory links if we hold them.
+	if linked, ok := m.links[cgroupID]; ok {
+		for _, l := range linked {
+			l.Close()
+		}
+		delete(m.links, cgroupID)
+	}
+
+	// Also unpin any persisted links for this cgroup.
+	linkNames := []string{"connect4", "sendmsg4", "connect6", "sendmsg6", "sock_create"}
+	for _, name := range linkNames {
+		pinPath := filepath.Join(m.pinPath, fmt.Sprintf("link_%s_%d", name, cgroupID))
+		l, err := link.LoadPinnedLink(pinPath, nil)
+		if err == nil {
+			l.Unpin()
+			l.Close()
+		} else {
+			os.Remove(pinPath) // best-effort cleanup
+		}
+	}
+
+	if err := m.objs.ContainerMap.Delete(cgroupID); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		m.log.Warn().Err(err).Msg("ebpf disable: deleting container_map entry")
+	}
+	_ = m.objs.BypassMap.Delete(cgroupID)
+
+	// Remove all route_map entries for this cgroup.
+	var keysToDelete []clawkerRouteKey
+	var rk clawkerRouteKey
+	var rv clawkerRouteVal
+	iter := m.objs.RouteMap.Iterate()
+	for iter.Next(&rk, &rv) {
+		if rk.CgroupId == cgroupID {
+			keysToDelete = append(keysToDelete, rk)
+		}
+	}
+	for _, k := range keysToDelete {
+		_ = m.objs.RouteMap.Delete(k)
+	}
+
+	m.log.Info().Uint64("cgroup_id", cgroupID).Msg("eBPF programs detached")
+	return nil
+}
+
+// Bypass sets the bypass flag for a container, allowing unrestricted egress.
+func (m *Manager) Bypass(cgroupID uint64) error {
+	val := uint8(1)
+	if err := m.objs.BypassMap.Update(cgroupID, val, ebpf.UpdateAny); err != nil {
+		return fmt.Errorf("ebpf bypass: %w", err)
+	}
+	m.log.Info().Uint64("cgroup_id", cgroupID).Msg("eBPF bypass enabled")
+	return nil
+}
+
+// Unbypass removes the bypass flag, restoring firewall enforcement.
+func (m *Manager) Unbypass(cgroupID uint64) error {
+	if err := m.objs.BypassMap.Delete(cgroupID); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		return fmt.Errorf("ebpf unbypass: %w", err)
+	}
+	m.log.Info().Uint64("cgroup_id", cgroupID).Msg("eBPF bypass disabled")
+	return nil
+}
+
+// UpdateDNSCache writes a DNS resolution result to the dns_cache map.
+func (m *Manager) UpdateDNSCache(ip uint32, domainHash uint32, ttlSeconds uint32) error {
+	entry := clawkerDnsEntry{
+		DomainHash: domainHash,
+		ExpireTs:   uint32(time.Now().Unix()) + ttlSeconds,
+	}
+	return m.objs.DnsCache.Update(ip, entry, ebpf.UpdateAny)
+}
+
+// GarbageCollectDNS removes expired entries from the dns_cache map.
+func (m *Manager) GarbageCollectDNS() int {
+	now := uint32(time.Now().Unix())
+	var ip uint32
+	var entry clawkerDnsEntry
+	var expired []uint32
+
+	iter := m.objs.DnsCache.Iterate()
+	for iter.Next(&ip, &entry) {
+		if entry.ExpireTs < now {
+			expired = append(expired, ip)
+		}
+	}
+	for _, key := range expired {
+		_ = m.objs.DnsCache.Delete(key)
+	}
+	return len(expired)
+}
+
+// Route describes a per-domain TCP route for a container.
+type Route struct {
+	DomainHash uint32
+	DstPort    uint16
+	EnvoyPort  uint16
+}
+
+// NewContainerConfig builds a BPF container_config from network parameters.
+func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr string,
+	hostProxyIP string, hostProxyPort, egressPort uint16) (clawkerContainerConfig, error) {
+
+	netAddr, netMask, err := CIDRToAddrMask(cidr)
+	if err != nil {
+		return clawkerContainerConfig{}, fmt.Errorf("parsing CIDR %s: %w", cidr, err)
+	}
+
+	cfg := clawkerContainerConfig{
+		EnvoyIp:       IPToUint32(parseIP(envoyIP)),
+		CorednsIp:     IPToUint32(parseIP(corednsIP)),
+		GatewayIp:     IPToUint32(parseIP(gatewayIP)),
+		NetAddr:       netAddr,
+		NetMask:       netMask,
+		HostProxyPort: hostProxyPort,
+		EgressPort:    egressPort,
+	}
+	if hostProxyIP != "" {
+		cfg.HostProxyIp = IPToUint32(parseIP(hostProxyIP))
+	}
+	return cfg, nil
+}
+
+// CgroupPath returns the cgroup v2 path for a Docker container.
+func CgroupPath(containerID string) string {
+	return filepath.Join("/sys/fs/cgroup/system.slice", "docker-"+containerID+".scope")
+}
+
+// CgroupID reads the cgroup ID from a cgroup path (inode number on cgroup v2).
+func CgroupID(cgroupPath string) (uint64, error) {
+	f, err := os.Open(cgroupPath)
+	if err != nil {
+		return 0, fmt.Errorf("opening cgroup: %w", err)
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("stat cgroup: %w", err)
+	}
+
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, fmt.Errorf("unexpected stat type for cgroup %s", cgroupPath)
+	}
+	return stat.Ino, nil
+}
+
+// Supported checks if the current kernel supports eBPF cgroup programs.
+func Supported() error {
+	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err != nil {
+		return fmt.Errorf("cgroup v2 not available: %w", err)
+	}
+	return nil
+}

@@ -8,8 +8,8 @@ Enable firewall for a container
 
 ### Synopsis
 
-Re-apply iptables DNAT rules and firewall DNS in an agent container,
-restoring egress restrictions. Use after 'clawker firewall disable'.
+Re-attach eBPF cgroup programs to an agent container, restoring egress
+restrictions. Use after 'clawker firewall disable'.
 
 ```
 clawker firewall enable [flags]

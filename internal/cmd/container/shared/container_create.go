@@ -1618,8 +1618,8 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	// Set Cloudflare malware-blocking DNS as Docker's external forwarders.
 	// Docker's internal DNS (127.0.0.11) remains the container's nameserver and
 	// handles internal name resolution (container names, host.docker.internal).
-	// When the firewall is enabled, firewall.sh flips resolv.conf to CoreDNS;
-	// when disabled, it restores 127.0.0.11 which forwards here.
+	// When the firewall is enabled, eBPF redirects all DNS to CoreDNS;
+	// when disabled, 127.0.0.11 forwards to these upstreams.
 	if len(hostConfig.DNS) == 0 {
 		hostConfig.DNS = []netip.Addr{
 			netip.MustParseAddr("1.1.1.2"),
@@ -1834,7 +1834,7 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		AgentEnv:         agentEnv,
 		MonitoringActive: monitoringActive,
 	}
-	// Firewall: set the enabled flag (iptables applied post-start via BootstrapServicesPostStart)
+	// Firewall: set the enabled flag (eBPF programs attached post-start via BootstrapServicesPostStart)
 	if opts.Config.Settings().Firewall.FirewallEnabled() {
 		envOpts.FirewallEnabled = true
 	}

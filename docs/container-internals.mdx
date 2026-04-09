@@ -184,7 +184,7 @@ The entrypoint script (`entrypoint.sh`) runs as root on every container start. I
 
 ### Initialization Steps
 
-1. **Firewall readiness** (if `CLAWKER_FIREWALL_ENABLED=true`) — The entrypoint waits for the host-side firewall manager to apply iptables rules inside the container. The manager runs `firewall.sh enable` via `docker exec` after the container starts, then touches a signal file. The entrypoint polls for this file with a 30-second timeout. This ensures the agent's first network request goes through the firewall, not around it.
+1. **Firewall readiness** (if `CLAWKER_FIREWALL_ENABLED=true`) — The entrypoint waits for the host-side eBPF manager to attach cgroup programs to the container. The manager attaches eBPF programs from outside the container after it starts, then touches a signal file. The entrypoint polls for this file with a 30-second timeout. This ensures the agent's first network request goes through the firewall, not around it.
 
 2. **Config seeding** — If the config volume (`~/.claude`) doesn't have a `.config.json`, the entrypoint seeds it from the image's init directory. This bypasses Claude Code's first-run onboarding wizard. The `settings.json` is merged: image defaults first, then any existing user settings override.
 
@@ -203,11 +203,11 @@ The entrypoint script (`entrypoint.sh`) runs as root on every container start. I
 The firewall is intentionally **not** configured by the entrypoint. Instead:
 
 1. The container starts with default network connectivity
-2. The host-side firewall manager execs `firewall.sh enable` into the running container, which configures iptables DNAT rules to redirect traffic through Envoy and DNS queries through CoreDNS
+2. The host-side eBPF manager attaches cgroup programs to the container from outside, routing traffic through Envoy and DNS queries through CoreDNS
 3. The manager touches `/var/run/clawker/firewall-ready` as a signal
 4. The entrypoint unblocks and proceeds with user-level init
 
-This decoupled design means the container image has no baked-in network addresses. The firewall manager passes the Envoy and CoreDNS IPs at enable time, making the image portable across different Docker network configurations.
+This decoupled design means the container image has no baked-in network addresses and no container capabilities are needed for traffic routing — eBPF programs are attached from outside the container. The eBPF manager passes the Envoy and CoreDNS IPs at attach time, making the image portable across different Docker network configurations.
 
 ## Shared Directory
 

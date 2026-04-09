@@ -10,8 +10,8 @@ Temporarily bypass firewall for a container
 
 Grant a container unrestricted egress for a specified duration.
 
-Disables iptables rules for the container and schedules automatic
-re-enable after the timeout. The timer runs inside the container.
+Sets an eBPF bypass flag for the container and schedules automatic
+re-enable after the timeout. The timer runs in the eBPF manager container.
 
 By default the command blocks with a countdown timer. Press Ctrl+C to
 stop the bypass early (re-enables firewall). Press q/Esc to detach

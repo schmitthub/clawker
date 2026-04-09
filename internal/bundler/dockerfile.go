@@ -46,9 +46,6 @@ var DockerfileTemplate string
 //go:embed assets/entrypoint.sh
 var EntrypointScript string
 
-//go:embed assets/firewall.sh
-var FirewallScript string
-
 //go:embed assets/statusline.sh
 var StatuslineScript string
 
@@ -229,7 +226,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		mode    os.FileMode
 	}{
 		{"entrypoint.sh", EntrypointScript, 0755},
-		{"firewall.sh", FirewallScript, 0755},
+
 		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
@@ -416,11 +413,6 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
-	// Add firewall script (always included; execution gated at runtime)
-	if err := addFileToTar(tw, "firewall.sh", []byte(FirewallScript)); err != nil {
-		return nil, err
-	}
-
 	// Add agent prompt file for in-container agent awareness
 	if err := addFileToTar(tw, "clawker-agent-prompt.md", []byte(AgentPromptFile)); err != nil {
 		return nil, err
@@ -480,7 +472,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		mode    os.FileMode
 	}{
 		{"entrypoint.sh", EntrypointScript, 0755},
-		{"firewall.sh", FirewallScript, 0755},
+
 		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
@@ -541,7 +533,7 @@ func (g *ProjectGenerator) GetBuildContext() string {
 var basePackagesAlpine = map[string]bool{
 	"bash": true, "less": true, "git": true, "procps": true, "sudo": true,
 	"fzf": true, "zsh": true, "man-db": true, "unzip": true, "gnupg": true,
-	"iptables": true, "ipset": true, "iproute2": true, "bind-tools": true,
+	"iproute2": true, "bind-tools": true,
 	"jq": true, "nano": true, "vim": true, "wget": true, "curl": true,
 	"github-cli": true, "musl-locales": true, "musl-locales-lang": true,
 }
@@ -550,7 +542,7 @@ var basePackagesAlpine = map[string]bool{
 var basePackagesDebian = map[string]bool{
 	"less": true, "git": true, "procps": true, "sudo": true, "fzf": true,
 	"zsh": true, "man-db": true, "unzip": true, "gnupg2": true,
-	"iptables": true, "ipset": true, "iproute2": true, "dnsutils": true,
+	"iproute2": true, "dnsutils": true,
 	"aggregate": true, "jq": true, "nano": true, "vim": true, "wget": true,
 	"curl": true, "gh": true, "locales": true, "locales-all": true,
 }

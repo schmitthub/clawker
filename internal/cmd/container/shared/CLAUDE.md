@@ -112,12 +112,12 @@ Nil providers are safely skipped (debug logged). `Config` is the only required p
 
 **`BootstrapServicesPreStart(ctx, container, cmdOpts) error`** — Pre-start phase: syncs firewall project rules, ensures firewall daemon, waits for healthy (60s timeout), starts host proxy. Runs before Docker start so the network stack is ready.
 
-**`BootstrapServicesPostStart(ctx, container, cmdOpts) error`** — Post-start phase: enables firewall iptables inside the container, starts socket bridge for GPG/SSH forwarding. Runs after Docker start because the container must be running.
+**`BootstrapServicesPostStart(ctx, container, cmdOpts) error`** — Post-start phase: attaches eBPF programs for the container, starts socket bridge for GPG/SSH forwarding. Runs after Docker start because the container must be running.
 
 **`ContainerStart(ctx, cmdOpts, startOpts) (ContainerStartResult, error)`** — Three-phase orchestrator:
 1. `BootstrapServicesPreStart` — firewall daemon + rules + health + host proxy
 2. `client.ContainerStart` — Docker container start
-3. `BootstrapServicesPostStart` — firewall enable + socket bridge
+3. `BootstrapServicesPostStart` — eBPF program attachment + socket bridge
 
 Returns `mobyClient.ContainerStartResult` from the Docker start call. Errors at any phase abort immediately.
 
@@ -153,7 +153,7 @@ Returns `mobyClient.ContainerStartResult` from the Docker start call. Errors at 
 | `CreateContainer(ctx, cfg, events)` | Single entry point — workspace, config, env, create, inject. Events channel for progress (nil = silent) |
 | `NeedsSocketBridge(cfg)` | Check if GPG/SSH socket bridge is needed based on project config |
 | `BootstrapServicesPreStart(ctx, container, cmdOpts)` | Pre-start: firewall daemon + rules sync + health wait + host proxy |
-| `BootstrapServicesPostStart(ctx, container, cmdOpts)` | Post-start: firewall enable in container + socket bridge |
+| `BootstrapServicesPostStart(ctx, container, cmdOpts)` | Post-start: eBPF program attachment + socket bridge |
 | `ContainerStart(ctx, cmdOpts, startOpts)` | Three-phase orchestrator: pre-start bootstrap, Docker start, post-start bootstrap |
 | `InitContainerConfig(ctx, InitConfigOpts)` | Copy host Claude config (strategy=copy) and/or credentials (use_host_auth) to config volume |
 | `InjectPostInitScript(ctx, InjectPostInitOpts)` | Write `~/.clawker/post-init.sh` to a created container; entrypoint runs it once on first start |

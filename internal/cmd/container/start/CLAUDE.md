@@ -31,10 +31,10 @@ Phase A: Config + Docker connect + agent name resolution
 Phase B: Container start via shared.ContainerStart()
          ├── BootstrapServicesPreStart (firewall daemon, host proxy)
          ├── client.ContainerStart (Docker engine start)
-         └── BootstrapServicesPostStart (firewall iptables enable, socket bridge)
+         └── BootstrapServicesPostStart (eBPF program attachment, socket bridge)
 ```
 
-Both attach and non-attach paths delegate to `shared.ContainerStart()`, passing a `shared.CommandOpts` for DI. The `CommandOpts` wires: Config, Client, ProjectManager, HostProxy, SocketBridge, Logger. Firewall iptables are handled by the container entrypoint (`firewall.sh`), not the start command.
+Both attach and non-attach paths delegate to `shared.ContainerStart()`, passing a `shared.CommandOpts` for DI. The `CommandOpts` wires: Config, Client, ProjectManager, HostProxy, SocketBridge, Logger. Firewall eBPF programs are attached from outside the container by the eBPF manager, not by a container entrypoint.
 
 See `shared/CLAUDE.md` for `ContainerStart`, `BootstrapServicesPreStart`, and `BootstrapServicesPostStart` docs.
 
