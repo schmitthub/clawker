@@ -65,6 +65,7 @@ scrape_configs:
                 client_ip:
                 response_code:
                 response_flags:
+                upstream_host:
                 agent:
                 project:
                 action:
@@ -81,6 +82,9 @@ scrape_configs:
           stages:
             - static_labels:
                 detected_level: error
+      # Drop upstream_host after match evaluation to avoid label cardinality.
+      - labeldrop:
+          - upstream_host
 
       # CoreDNS log lines have an [INFO] prefix before the logfmt data:
       #   [INFO] source=coredns client_ip=172.18.0.8:12345 domain=example.com. qtype=A rcode=NOERROR duration=0.001s
