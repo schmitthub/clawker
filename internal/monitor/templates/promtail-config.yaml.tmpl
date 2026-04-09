@@ -61,7 +61,6 @@ scrape_configs:
             - labels:
                 source:
                 domain:
-                request_host:
                 proto:
                 client_ip:
                 response_code:
@@ -78,7 +77,7 @@ scrape_configs:
                 detected_level: error
       # HTTP 403 = deny_all virtual host rejecting unlisted Host headers.
       - match:
-          selector: '{service_name="envoy", proto="http", response_code="403"}'
+          selector: '{service_name="envoy", proto="http", response_code="403", upstream_host="-"}'
           stages:
             - static_labels:
                 detected_level: error

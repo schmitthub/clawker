@@ -2198,7 +2198,7 @@
             "type": "loki",
             "uid": "${lokidatasource}"
           },
-          "expr": "{service_name=\"envoy\", source=\"envoy\", client_ip=~\"${agent_ips:regex}\"} | json | line_format `{{if or (eq .proto \"deny\") (and (eq .proto \"http\") (eq .response_code \"403\"))}}✗ DENIED{{else}}✓ {{if eq .proto \"tls\"}}https{{else}}{{.proto}}{{end}}{{end}} → {{if and .request_host (ne .request_host \"-\")}}{{.request_host}}{{if and .path (ne .path \"-\")}}{{.path}}{{end}}{{else if .domain}}{{.domain}}{{else}}unknown from {{.client_ip}}{{end}}{{if .method}} {{.method}} {{.response_code}}{{end}}{{if and .upstream_host (ne .upstream_host \"-\")}} [{{.upstream_host}}]{{end}}{{if and .response_flags (ne .response_flags \"-\")}} flags={{.response_flags}}{{end}} ↑{{.bytes_sent}} ↓{{.bytes_received}} {{.duration_ms}}ms`",
+          "expr": "{service_name=\"envoy\", source=\"envoy\", client_ip=~\"${agent_ips:regex}\"} | json | line_format `{{if or (eq .proto \"deny\") (and (eq .response_code \"403\") (or (not .upstream_host) (eq .upstream_host \"-\")))}}✗ DENIED{{else}}✓ {{if eq .proto \"tls\"}}https{{else}}{{.proto}}{{end}}{{end}} → {{if and .request_host (ne .request_host \"-\")}}{{.request_host}}{{if and .path (ne .path \"-\")}}{{.path}}{{end}}{{else if .domain}}{{.domain}}{{else}}unknown from {{.client_ip}}{{end}}{{if .method}} {{.method}} {{.response_code}}{{end}}{{if and .upstream_host (ne .upstream_host \"-\")}} [{{.upstream_host}}]{{end}}{{if and .response_flags (ne .response_flags \"-\")}} flags={{.response_flags}}{{end}} ↑{{.bytes_sent}} ↓{{.bytes_received}} {{.duration_ms}}ms`",
           "legendFormat": "",
           "refId": "A"
         }
