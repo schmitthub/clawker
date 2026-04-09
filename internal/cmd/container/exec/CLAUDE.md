@@ -83,5 +83,5 @@ All errors use `return fmt.Errorf("context: %w", err)` for centralized rendering
 ## Testing
 
 - **Tier 1**: Flag parsing via `runF` trapdoor — all flags, agent mode, args parsing
-- **Tier 2**: Cobra+Factory with `dockertest.FakeClient` — Docker connection error, container not found, container not running, detach mode, non-TTY happy path, non-zero exit code
+- **Tier 2**: Cobra+Factory with `mocks.FakeClient` — Docker connection error, container not found, container not running, detach mode, non-TTY happy path, non-zero exit code
 - TTY path requires real terminal — covered by integration tests in `test/commands/`

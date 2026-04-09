@@ -193,7 +193,7 @@ Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `interna
 
 ## Testing
 
-Unit tests in `shared/init_test.go` — `CreateContainer` tests using `dockertest.FakeClient` + `hostproxytest.MockManager`.
+Unit tests in `shared/init_test.go` — `CreateContainer` tests using `mocks.FakeClient` + `hostproxytest.MockManager`.
 Unit tests in `shared/container_test.go` — Flag parsing, BuildConfigs, ValidateFlags, pflag.Value types.
 Unit tests in `shared/image_test.go` — `RebuildMissingDefaultImage` interactive flow, `progressStatus` mapping.
 Unit tests in `shared/containerfs_test.go` — uses mock CopyToVolume/CopyToContainer function trackers.

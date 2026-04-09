@@ -71,7 +71,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   │   └── storeui/           # Domain adapters for storeui: settings/, project/
 │   ├── containerfs/           # Host Claude config preparation for container init
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
-│   │   └── dockertest/        # FakeClient, test helpers
+│   │   └── mocks/             # FakeClient, test helpers, moby mock transport
 │   ├── docs/                  # CLI doc generation (man, markdown, rst, yaml)
 │   ├── firewall/              # Envoy+CoreDNS firewall stack: manager interface, config generators, certs, daemon, rules store
 │   │   └── mocks/             # FirewallManagerMock (moq-generated)

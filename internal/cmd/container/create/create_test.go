@@ -17,7 +17,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/mock"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -417,7 +417,7 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // ---------------------------------------------------------------------------
 
 // testFactory builds a *cmdutil.Factory backed by a FakeClient for Tier 2 create tests.
-func testFactory(t *testing.T, fake *mock.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	// Ensure CWD is inside $HOME so IsOutsideHome returns false (matters in containers).
 	cwd, _ := os.Getwd()
@@ -453,7 +453,7 @@ security: { enable_host_proxy: false }
 
 func TestCreateRun(t *testing.T) {
 	t.Run("basic create prints container ID", func(t *testing.T) {
-		fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 
@@ -478,7 +478,7 @@ func TestCreateRun(t *testing.T) {
 
 	t.Run("config init runs when config volume freshly created", func(t *testing.T) {
 		// Make all volumes report as not existing → EnsureVolume creates them → ConfigCreated=true
-		fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupVolumeExists("", false)
 		fake.FakeAPI.VolumeCreateFn = func(_ context.Context, _ moby.VolumeCreateOptions) (moby.VolumeCreateResult, error) {
 			return moby.VolumeCreateResult{}, nil
@@ -511,7 +511,7 @@ func TestCreateRun(t *testing.T) {
 
 	t.Run("config init skipped when config volume exists", func(t *testing.T) {
 		// Default fake: volumes exist → ConfigCreated=false → no init
-		fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 
@@ -550,7 +550,7 @@ agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 		useHostAuthCfg.GetProjectRootFunc = func() (string, error) {
 			return os.TempDir(), nil
 		}
-		fake := mock.NewFakeClient(useHostAuthCfg)
+		fake := mocks.NewFakeClient(useHostAuthCfg)
 		fake.SetupContainerCreate()
 		// No CopyToContainer setup — if called, it would panic
 

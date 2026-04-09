@@ -164,7 +164,7 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 | Package | Test Utils | Provides |
 |---------|------------|----------|
 | `internal/testenv` | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager; `WriteYAML` for config file placement |
-| `internal/docker` | `dockertest/` | `FakeClient` (wraps `whailtest.FakeAPIClient`), `SetupXxx` helpers, fixtures, assertions (`AssertCalled`, `AssertNotCalled`, `AssertCalledN`) |
+| `internal/docker` | `mocks/` | `FakeClient` (wraps `whailtest.FakeAPIClient`), `SetupXxx` helpers, fixtures, assertions (`AssertCalled`, `AssertNotCalled`, `AssertCalledN`) |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` (moq-generated) |
 | `internal/git` | `gittest/` | `InMemoryGitManager` (memfs-backed, seeded with initial commit) |
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
@@ -178,11 +178,11 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 
 ### Command Test Pattern
 
-Commands are tested using the Cobra+Factory pattern with `dockertest.FakeClient`. Each command's test file typically defines a `testFactory` helper that wires the minimum closures needed (Config, Logger, Client, etc.). The pattern looks like:
+Commands are tested using the Cobra+Factory pattern with `mocks.FakeClient`. Each command's test file typically defines a `testFactory` helper that wires the minimum closures needed (Config, Logger, Client, etc.). The pattern looks like:
 
 ```go
 func TestMyCommand(t *testing.T) {
-    fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+    fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
     fake.SetupContainerCreate()
     fake.SetupContainerStart()
 
@@ -230,7 +230,7 @@ result := h.Run("firewall", "status", "--json")
 require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
 ```
 
-Pass real constructors for any dependency you want to exercise against Docker. Some nil fields use test fakes (`configmocks.NewBlankConfig`, `dockertest.FakeClient`, `hostproxytest.MockManager`, `firewallmocks.FirewallManagerMock`), while `Logger` always creates a real file logger via `logger.New`, and `ProjectManager`, `GitManager`, and `SocketBridge` default to nil.
+Pass real constructors for any dependency you want to exercise against Docker. Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`, `hostproxytest.MockManager`, `firewallmocks.FirewallManagerMock`), while `Logger` always creates a real file logger via `logger.New`, and `ProjectManager`, `GitManager`, and `SocketBridge` default to nil.
 
 #### Harness Types
 

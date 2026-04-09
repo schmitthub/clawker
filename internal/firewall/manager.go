@@ -716,10 +716,11 @@ func (m *Manager) NetCIDR() string {
 	return netInfo.CIDR
 }
 
-// formatPortMappings reads rules from the store, computes TCP/SSH port mappings,
+// FormatPortMappings reads rules from the store, computes TCP/SSH port mappings,
 // and returns the firewall.sh argument string (format: "dst_port|envoy_port;...").
-// Only TCP/SSH rules need per-port iptables DNAT entries — HTTP rules are handled
-// by the egress listener's raw_buffer filter chain (no separate iptables needed).
+// Only TCP/SSH rules need per-port iptables DNAT entries — TLS rules are handled
+// by the egress listener's SNI filter chains and HTTP rules by the raw_buffer
+// filter chain (neither needs separate iptables).
 //
 // TODO: This method contains a temporary workaround that prepends rules from the
 // most-local config layer to ensure the current project's TCP/SSH rules get
@@ -753,10 +754,15 @@ func (m *Manager) FormatPortMappings() string {
 	return strings.Join(parts, ";")
 }
 
-// localLayerFirewallRules extracts egress rules from the most-local project config
-// layer (index 0 = closest to CWD). Returns nil if no local layer has firewall rules.
+// localLayerFirewallRules extracts egress rules from the highest-priority project
+// config layer that contains firewall rules. Layers are ordered closest-to-CWD
+// first. Returns nil if no layer has firewall rules.
 //
-// TODO(tcp-priority): Temporary helper for the formatPortMappings workaround.
+// Only SSH/TCP rules are extracted — these are the only rules that need per-port
+// iptables priority ordering. TLS rules are excluded since they share the egress
+// listener and don't compete for iptables DNAT positions.
+//
+// TODO(tcp-priority): Temporary helper for the FormatPortMappings workaround.
 // Remove once a proper per-container TCP routing solution is implemented.
 func localLayerFirewallRules(cfg config.Config) []config.EgressRule {
 	store := cfg.ProjectStore()
@@ -785,12 +791,13 @@ func localLayerFirewallRules(cfg config.Config) []config.EgressRule {
 				if !ok {
 					continue
 				}
-				r := config.EgressRule{}
+				proto, _ := m["proto"].(string)
+				if strings.ToLower(proto) != "ssh" && strings.ToLower(proto) != "tcp" {
+					continue // only SSH/TCP rules need iptables priority ordering
+				}
+				r := config.EgressRule{Proto: proto}
 				if v, ok := m["dst"].(string); ok {
 					r.Dst = v
-				}
-				if v, ok := m["proto"].(string); ok {
-					r.Proto = v
 				}
 				if v, ok := m["port"].(int); ok {
 					r.Port = v
@@ -799,16 +806,6 @@ func localLayerFirewallRules(cfg config.Config) []config.EgressRule {
 					r.Action = v
 				}
 				rules = append(rules, r)
-			}
-		}
-
-		if rawDomains, ok := fw["add_domains"].([]any); ok {
-			for _, d := range rawDomains {
-				if s, ok := d.(string); ok {
-					rules = append(rules, config.EgressRule{
-						Dst: s, Proto: "tls", Port: 443, Action: "allow",
-					})
-				}
 			}
 		}
 

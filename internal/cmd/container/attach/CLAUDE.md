@@ -64,5 +64,5 @@ Uses `stdcopy.StdCopy` to demultiplex Docker's multiplexed stdout/stderr stream.
 ## Testing
 
 - **Tier 1**: Flag parsing via `runF` trapdoor (no Docker)
-- **Tier 2**: Cobra+Factory with `dockertest.FakeClient` — tests Docker connection error, container not found, container not running, non-TTY happy path
+- **Tier 2**: Cobra+Factory with `mocks.FakeClient` — tests Docker connection error, container not found, container not running, non-TTY happy path
 - TTY path requires real terminal — covered by integration tests in `test/commands/`

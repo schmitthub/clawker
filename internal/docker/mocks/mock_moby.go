@@ -1,4 +1,4 @@
-package mock
+package mocks
 
 import (
 	"fmt"
@@ -13,8 +13,8 @@ import (
 	moby "github.com/moby/moby/client"
 )
 
-// testRoundTripper allows us to inject a mock-transport for testing. We define it
-// here so we can detect the tlsconfig and return nil for only this type.
+// testRoundTripper is a function type implementing http.RoundTripper,
+// used to inject mock HTTP transports for testing Docker API calls.
 type testRoundTripper func(*http.Request) (*http.Response, error)
 
 func (tf testRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -39,10 +39,9 @@ func ensureBody(f func(req *http.Request) (*http.Response, error)) testRoundTrip
 	}
 }
 
-// makeTestRoundTripper makes sure the response has a Body, using [http.NoBody] if
-// none is present, and returns it as a testRoundTripper. If withDefaults is set,
-// it also mocks the "/_ping" endpoint and sets default headers as returned
-// by the daemon.
+// makeTestRoundTripper wraps a doer function as a testRoundTripper, ensuring
+// responses have a Body (using http.NoBody if none is present). It also mocks
+// the "/_ping" endpoint and sets default daemon headers on all responses.
 func makeTestRoundTripper(f func(req *http.Request) (*http.Response, error)) testRoundTripper {
 	return func(req *http.Request) (*http.Response, error) {
 		if req.URL.Path == "/_ping" {
@@ -91,7 +90,7 @@ func applyDefaultHeaders(resp *http.Response) {
 }
 
 // WithMockClient is a test helper that allows you to inject a mock client for
-// testing. By default, it mocks the "/_ping" endpoint, so allow the client
+// testing. By default, it mocks the "/_ping" endpoint to allow the client
 // to perform API-version negotiation. Other endpoints are handled by "doer".
 func WithMockClient(doer func(*http.Request) (*http.Response, error)) moby.Opt {
 	return moby.WithHTTPClient(&http.Client{

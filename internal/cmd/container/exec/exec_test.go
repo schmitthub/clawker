@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/mock"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
@@ -258,7 +258,7 @@ security:
 
 func ptrBool(b bool) *bool { return &b }
 
-func testFactory(t *testing.T, fake *mock.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
@@ -298,7 +298,7 @@ func TestExecRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestExecRun_ContainerNotFound(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — no containers
 	f, _, out, errOut := testFactory(t, fake)
 
@@ -315,10 +315,10 @@ func TestExecRun_ContainerNotFound(t *testing.T) {
 
 func TestExecRun_ContainerNotRunning(t *testing.T) {
 	// Create a container fixture in "exited" state
-	fixture := mock.ContainerFixture("myapp", "dev", "node:20-slim")
+	fixture := mocks.ContainerFixture("myapp", "dev", "node:20-slim")
 	// fixture.State is "exited" by default
 
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	f, _, out, errOut := testFactory(t, fake)
 
@@ -334,9 +334,9 @@ func TestExecRun_ContainerNotRunning(t *testing.T) {
 }
 
 func TestExecRun_DetachMode(t *testing.T) {
-	fixture := mock.RunningContainerFixture("myapp", "dev")
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
 
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-abc123")
 	fake.SetupExecStart()
@@ -356,9 +356,9 @@ func TestExecRun_DetachMode(t *testing.T) {
 }
 
 func TestExecRun_NonTTYHappyPath(t *testing.T) {
-	fixture := mock.RunningContainerFixture("myapp", "dev")
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
 
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-xyz789")
 	fake.SetupExecAttach()
@@ -379,9 +379,9 @@ func TestExecRun_NonTTYHappyPath(t *testing.T) {
 }
 
 func TestExecRun_NonZeroExitCode(t *testing.T) {
-	fixture := mock.RunningContainerFixture("myapp", "dev")
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
 
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-fail")
 	fake.SetupExecAttach()

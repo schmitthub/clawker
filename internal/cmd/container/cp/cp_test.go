@@ -15,7 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/mock"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
@@ -271,7 +271,7 @@ func TestCmdCp_ArgsParsing(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests ---
 
-func testCpFactory(t *testing.T, fake *mock.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testCpFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 
@@ -288,8 +288,8 @@ func testCpFactory(t *testing.T, fake *mock.FakeClient) (*cmdutil.Factory, *byte
 }
 
 func TestCpRun_CopyFromContainer_Stdout(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := mock.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupCopyFromContainer()
 
@@ -307,8 +307,8 @@ func TestCpRun_CopyFromContainer_Stdout(t *testing.T) {
 }
 
 func TestCpRun_CopyToContainer_Stdin(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := mock.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupCopyToContainer()
 
@@ -350,7 +350,7 @@ func TestCpRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestCpRun_ContainerNotFound_CopyFrom(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, _, out, errOut := testCpFactory(t, fake)
@@ -367,7 +367,7 @@ func TestCpRun_ContainerNotFound_CopyFrom(t *testing.T) {
 }
 
 func TestCpRun_ContainerNotFound_CopyTo(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, _, out, errOut := testCpFactory(t, fake)
@@ -384,7 +384,7 @@ func TestCpRun_ContainerNotFound_CopyTo(t *testing.T) {
 }
 
 func TestCpRun_BothPathsContainer(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	f, _, out, errOut := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
@@ -399,7 +399,7 @@ func TestCpRun_BothPathsContainer(t *testing.T) {
 }
 
 func TestCpRun_BothPathsHost(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	f, _, out, errOut := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)

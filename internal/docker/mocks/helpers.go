@@ -1,4 +1,4 @@
-package mock
+package mocks
 
 import (
 	"context"
@@ -516,7 +516,7 @@ type BuildKitCapture = whailtest.BuildKitCapture
 // Returns a capture struct for asserting the builder was called with the
 // expected options. The fake builder succeeds by default (returns nil error).
 //
-//	fake := dockertest.NewFakeClient()
+//	fake := mock.NewFakeClient(cfg)
 //	capture := fake.SetupBuildKit()
 //	// exercise code that calls BuildImage with BuildKitEnabled=true
 //	if capture.CallCount != 1 { ... }

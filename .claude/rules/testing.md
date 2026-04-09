@@ -29,7 +29,7 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | Package | Test Utils | Provides |
 |---------|------------|----------|
 | `internal/testenv` | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
-| `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
+| `internal/docker` | `mocks/` | `FakeClient`, fixtures, assertions, moby mock transport |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
@@ -104,10 +104,10 @@ Golden files are managed per-package — there is no shared golden utility packa
 
 ## Command Test Pattern (Cobra+Factory)
 
-Use `NewCmd(f, nil)` with `dockertest.NewFakeClient` — exercises full pipeline without Docker daemon.
+Use `NewCmd(f, nil)` with `mocks.NewFakeClient` — exercises full pipeline without Docker daemon.
 
 ```go
-fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 fake.SetupContainerCreate()
 fake.SetupContainerStart()
 tio, _, _, _ := iostreams.Test()

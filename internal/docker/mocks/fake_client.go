@@ -1,4 +1,4 @@
-// Package dockertest provides test doubles for internal/docker.Client.
+// Package mock provides test doubles for internal/docker.Client.
 //
 // It composes whailtest.FakeAPIClient into a real *docker.Client, so
 // docker-layer methods (ListContainers, FindContainerByAgent, etc.) execute
@@ -7,12 +7,12 @@
 //
 // Usage:
 //
-//	fake := dockertest.NewFakeClient(cfg)
-//	fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "dev"))
+//	fake := mock.NewFakeClient(cfg)
+//	fake.SetupContainerList(mock.RunningContainerFixture("myapp", "dev"))
 //	containers, err := fake.Client.ListContainers(ctx, true)
 //
 //	fake.AssertCalled(t, "ContainerList")
-package mock
+package mocks
 
 import (
 	"context"

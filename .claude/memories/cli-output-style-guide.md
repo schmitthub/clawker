@@ -618,12 +618,12 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 }
 ```
 
-**Rendering tests** (uses dockertest fakes, exercises full listRun):
+**Rendering tests** (uses docker/mocks fakes, exercises full listRun):
 
 ```go
 t.Run("json_output", func(t *testing.T) {
-    fake := dockertest.NewFakeClient()
-    fake.SetupImageList(dockertest.ImageSummaryFixture("myapp:latest"))
+    fake := mocks.NewFakeClient()
+    fake.SetupImageList(mocks.ImageSummaryFixture("myapp:latest"))
     f, tio := testFactory(t, fake)
     cmd := NewCmdList(f, nil)  // nil runF = real implementation
     cmd.SetArgs([]string{"--json"})
@@ -636,10 +636,10 @@ t.Run("json_output", func(t *testing.T) {
 })
 
 t.Run("filter_reference", func(t *testing.T) {
-    fake := dockertest.NewFakeClient()
+    fake := mocks.NewFakeClient()
     fake.SetupImageList(
-        dockertest.ImageSummaryFixture("clawker-demo:latest"),
-        dockertest.ImageSummaryFixture("node:20-slim"),
+        mocks.ImageSummaryFixture("clawker-demo:latest"),
+        mocks.ImageSummaryFixture("node:20-slim"),
     )
     f, tio := testFactory(t, fake)
     cmd := NewCmdList(f, nil)
@@ -1251,7 +1251,7 @@ tio.SetSpinnerDisabled(true) // disable spinner animation
 
 ```go
 func TestCmdRun(t *testing.T) {
-    fake := dockertest.NewFakeClient()
+    fake := mocks.NewFakeClient()
     fake.SetupContainerCreate()
     fake.SetupContainerStart()
 

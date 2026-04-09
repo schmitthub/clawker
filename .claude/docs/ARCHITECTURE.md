@@ -656,7 +656,7 @@ Each package with complex dependencies provides test infrastructure:
 |------------|----------|
 | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager; `WriteYAML` |
 | `config/mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` (moq) |
-| `docker/dockertest/` | `FakeClient` (wraps `whailtest.FakeAPIClient`), `SetupXxx` helpers, fixtures, assertions |
+| `docker/mocks/` | `FakeClient` (wraps `whailtest.FakeAPIClient`), `SetupXxx` helpers, fixtures, assertions |
 | `project/mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `git/gittest/` | `InMemoryGitManager` (memfs-backed, seeded with initial commit) |
 | `whail/whailtest/` | `FakeAPIClient` (80+ Fn fields, call recording), build scenarios, `EventRecorder` |

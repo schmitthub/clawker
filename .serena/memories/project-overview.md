@@ -7,7 +7,7 @@ CLI tool for managing Docker-based development containers, with Claude Code inte
 - Go (1.22+), Cobra CLI, zerolog, BubbleTea/Lipgloss TUI
 - Docker SDK via `pkg/whail` abstraction layer
 - Config via `internal/storage.Store[T]` (replaced Viper 2026-02-22)
-- Function-field fakes via `dockertest.NewFakeClient()` (no gomock)
+- Function-field fakes via `mocks.NewFakeClient()` (no gomock)
 
 ## Key Commands
 ```bash
@@ -21,7 +21,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E (Docker)
 ```
 
 ## Testing Tiers
-1. **Unit** (`*_test.go` co-located): No Docker, uses `runF` test seams and dockertest fakes
+1. **Unit** (`*_test.go` co-located): No Docker, uses `runF` test seams and docker/mocks fakes
 2. **CLI** (`test/cli/`): Testscript-based CLI workflow validation
 3. **Commands** (`test/commands/`): Command integration tests
 4. **Internals** (`test/internals/`): Container scripts/services (firewall, SSH, entrypoint)

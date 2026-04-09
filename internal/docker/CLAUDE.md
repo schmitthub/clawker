@@ -99,7 +99,7 @@ type Container struct {
 
 Re-exports ~37 Docker types from whail. Key groups: container/exec options, image options/results, volume/network options, copy options, resource management, wait conditions.
 
-## Testing (`dockertest/`)
+## Testing (`mocks/`)
 
 `NewFakeClient(cfg config.Config, opts ...FakeClientOption)` — function-field fake backed by `whailtest.FakeAPIClient`. Config is required as first param (used for label keys and engine options). `FakeClient.Cfg` field stores the config for test assertions.
 
@@ -120,8 +120,9 @@ Standalone fixture functions (`ContainerFixture`, `RunningContainerFixture`) use
 
 ## Gotchas
 
-- **`cfg` is unexported** — `Client.cfg` is a private field. Production code uses `NewClient(ctx, cfg, opts...)`. Test code in other packages uses `NewClientFromEngine(engine, cfg)` or `dockertest.NewFakeClient(cfg)`.
+- **`cfg` is unexported** — `Client.cfg` is a private field. Production code uses `NewClient(ctx, cfg, opts...)`. Test code in other packages uses `NewClientFromEngine(engine, cfg)` or `mocks.NewFakeClient(cfg)`.
 - **No label constants exported** — all label keys come from `config.Config` methods. External packages that need label keys must hold a `config.Config` reference.
 - **`parseContainers` is a Client method** — it needs `c.cfg` for label keys when parsing container summaries.
 - **LSP false positives** — gopls reports false "no field or method" errors on `config.Config` interface and false "copylocks" warnings. These are stale LSP cache issues — the real compiler (`go build`) is authoritative.
 - **External caller cascade** — `NewFakeClient` signature changed from `NewFakeClient(opts...)` to `NewFakeClient(cfg, opts...)`. All ~150+ external callers need `configmocks.NewBlankConfig()` as first arg (`import configmocks "github.com/schmitthub/clawker/internal/config/mocks"`). `WithConfig` option was deleted.
+

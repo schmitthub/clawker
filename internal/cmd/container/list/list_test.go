@@ -12,7 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/mock"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testFactory(t *testing.T, fake *mock.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
@@ -195,9 +195,9 @@ func TestCmdList_Properties(t *testing.T) {
 // --- Tier 2: Integration tests ---
 
 func TestListRun_DefaultTable(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
-		mock.RunningContainerFixture("myapp", "dev"),
+		mocks.RunningContainerFixture("myapp", "dev"),
 	)
 
 	f, _, out, errOut := testFactory(t, fake)
@@ -219,9 +219,9 @@ func TestListRun_DefaultTable(t *testing.T) {
 }
 
 func TestListRun_JSONOutput(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
-		mock.RunningContainerFixture("myapp", "dev"),
+		mocks.RunningContainerFixture("myapp", "dev"),
 	)
 
 	f, _, out, errOut := testFactory(t, fake)
@@ -242,10 +242,10 @@ func TestListRun_JSONOutput(t *testing.T) {
 }
 
 func TestListRun_QuietMode(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
-		mock.RunningContainerFixture("myapp", "dev"),
-		mock.RunningContainerFixture("myapp", "worker"),
+		mocks.RunningContainerFixture("myapp", "dev"),
+		mocks.RunningContainerFixture("myapp", "worker"),
 	)
 
 	f, _, out, errOut := testFactory(t, fake)
@@ -267,9 +267,9 @@ func TestListRun_QuietMode(t *testing.T) {
 }
 
 func TestListRun_TemplateOutput(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
-		mock.RunningContainerFixture("myapp", "dev"),
+		mocks.RunningContainerFixture("myapp", "dev"),
 	)
 
 	f, _, out, errOut := testFactory(t, fake)
@@ -287,10 +287,10 @@ func TestListRun_TemplateOutput(t *testing.T) {
 }
 
 func TestListRun_FilterByStatus(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
-		mock.RunningContainerFixture("myapp", "dev"),
-		mock.ContainerFixture("myapp", "worker", "alpine:latest"),
+		mocks.RunningContainerFixture("myapp", "dev"),
+		mocks.ContainerFixture("myapp", "worker", "alpine:latest"),
 	)
 
 	f, _, out, errOut := testFactory(t, fake)
@@ -309,10 +309,10 @@ func TestListRun_FilterByStatus(t *testing.T) {
 }
 
 func TestListRun_FilterByAgent(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
-		mock.RunningContainerFixture("myapp", "dev"),
-		mock.RunningContainerFixture("myapp", "worker"),
+		mocks.RunningContainerFixture("myapp", "dev"),
+		mocks.RunningContainerFixture("myapp", "worker"),
 	)
 
 	f, _, out, errOut := testFactory(t, fake)
@@ -331,7 +331,7 @@ func TestListRun_FilterByAgent(t *testing.T) {
 }
 
 func TestListRun_FilterInvalidKey(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList()
 
 	f, _, out, errOut := testFactory(t, fake)
@@ -347,7 +347,7 @@ func TestListRun_FilterInvalidKey(t *testing.T) {
 }
 
 func TestListRun_EmptyResults(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList()
 
 	f, _, out, errOut := testFactory(t, fake)
@@ -365,7 +365,7 @@ func TestListRun_EmptyResults(t *testing.T) {
 }
 
 func TestListRun_EmptyResultsRunningOnly(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList()
 
 	f, _, out, errOut := testFactory(t, fake)
@@ -407,9 +407,9 @@ func TestListRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestListRun_ProjectFilter(t *testing.T) {
-	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
-		mock.RunningContainerFixture("myapp", "dev"),
+		mocks.RunningContainerFixture("myapp", "dev"),
 	)
 
 	f, _, out, errOut := testFactory(t, fake)

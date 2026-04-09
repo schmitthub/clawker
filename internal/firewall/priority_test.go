@@ -14,14 +14,6 @@ import (
 	"github.com/schmitthub/clawker/internal/testenv"
 )
 
-func chdir(t *testing.T, dir string) {
-	t.Helper()
-	orig, err := os.Getwd()
-	require.NoError(t, err)
-	require.NoError(t, os.Chdir(dir))
-	t.Cleanup(func() { _ = os.Chdir(orig) })
-}
-
 func TestFormatPortMappings_LocalLayerPriority(t *testing.T) {
 	// Store has gitlab SSH first (added earlier), then github SSH.
 	// Local layer (CWD) has github SSH.
@@ -52,7 +44,7 @@ security:
         action: allow
 `)
 
-	chdir(t, childDir)
+	t.Chdir(childDir)
 
 	cfg, err := config.NewConfig()
 	require.NoError(t, err)
@@ -95,7 +87,7 @@ security:
         action: allow
 `)
 
-	chdir(t, projectDir)
+	t.Chdir(projectDir)
 
 	cfg, err := config.NewConfig()
 	require.NoError(t, err)
@@ -157,7 +149,7 @@ security:
         action: allow
 `)
 
-	chdir(t, projectDir)
+	t.Chdir(projectDir)
 
 	cfg, err := config.NewConfig()
 	require.NoError(t, err)
@@ -193,4 +185,142 @@ func TestFormatPortMappings_OnlyTLSRules(t *testing.T) {
 	}))
 
 	assert.Empty(t, mgr.FormatPortMappings(), "TLS rules should not produce TCP port mappings")
+}
+
+func TestFormatPortMappings_LocalLayerTLSOnlyIgnored(t *testing.T) {
+	// Local layer has only TLS rules (add_domains style).
+	// Since localLayerFirewallRules only extracts SSH/TCP, these are ignored.
+	// Store order should be preserved.
+	env := testenv.New(t)
+
+	projectDir := filepath.Join(env.Dirs.Base, "project")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+
+	env.WriteYAML(t, testenv.ProjectConfig, projectDir, `
+security:
+  firewall:
+    add_domains:
+      - registry.npmjs.org
+    rules:
+      - dst: registry.npmjs.org
+        proto: tls
+        port: 443
+        action: allow
+`)
+
+	t.Chdir(projectDir)
+
+	cfg, err := config.NewConfig()
+	require.NoError(t, err)
+
+	mgr := fwmocks.NewTestManager(t, cfg)
+
+	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
+		{Dst: "gitlab.com", Proto: "ssh", Port: 22, Action: "allow"},
+		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
+	}))
+
+	result := mgr.FormatPortMappings()
+
+	// No SSH rules in local layer → store order preserved.
+	parts := strings.Split(result, ";")
+	require.Len(t, parts, 2)
+	assert.Equal(t, "22|10001", parts[0], "gitlab should stay first (no local SSH rules)")
+	assert.Equal(t, "22|10002", parts[1])
+}
+
+func TestFormatPortMappings_MixedSSHAndTLSLocalLayer(t *testing.T) {
+	// Local layer has both SSH and TLS rules.
+	// Only SSH rules are extracted for priority ordering.
+	env := testenv.New(t)
+
+	projectDir := filepath.Join(env.Dirs.Base, "project")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+
+	env.WriteYAML(t, testenv.ProjectConfig, projectDir, `
+security:
+  firewall:
+    add_domains:
+      - registry.npmjs.org
+    rules:
+      - dst: github.com
+        proto: ssh
+        port: 22
+        action: allow
+      - dst: api.example.com
+        proto: tls
+        port: 443
+        action: allow
+`)
+
+	t.Chdir(projectDir)
+
+	cfg, err := config.NewConfig()
+	require.NoError(t, err)
+
+	mgr := fwmocks.NewTestManager(t, cfg)
+
+	// Store has gitlab SSH first.
+	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
+		{Dst: "gitlab.com", Proto: "ssh", Port: 22, Action: "allow"},
+		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
+		{Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "registry.npmjs.org", Proto: "tls", Port: 443, Action: "allow"},
+	}))
+
+	result := mgr.FormatPortMappings()
+
+	// Only SSH rules produce TCP mappings. github (local SSH) should be first.
+	parts := strings.Split(result, ";")
+	require.Len(t, parts, 2, "expected 2 TCP mappings (SSH only), got: %s", result)
+	assert.Equal(t, "22|10001", parts[0], "github (local SSH) should be first")
+	assert.Equal(t, "22|10002", parts[1], "gitlab should be second")
+}
+
+func TestFormatPortMappings_LocalLayerFirewallSectionNoRules(t *testing.T) {
+	// Local layer has security.firewall but no rules or add_domains.
+	// Should fall through — store order preserved.
+	env := testenv.New(t)
+
+	parentDir := filepath.Join(env.Dirs.Base, "repo")
+	childDir := filepath.Join(parentDir, "child")
+	require.NoError(t, os.MkdirAll(childDir, 0o755))
+
+	// Child has firewall section but only enable flag, no rules.
+	env.WriteYAML(t, testenv.ProjectConfig, childDir, `
+security:
+  firewall:
+    enable: true
+`)
+
+	// Parent has SSH rules.
+	env.WriteYAML(t, testenv.ProjectConfig, parentDir, `
+security:
+  firewall:
+    rules:
+      - dst: github.com
+        proto: ssh
+        port: 22
+        action: allow
+`)
+
+	t.Chdir(childDir)
+
+	cfg, err := config.NewConfig()
+	require.NoError(t, err)
+
+	mgr := fwmocks.NewTestManager(t, cfg)
+
+	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
+		{Dst: "gitlab.com", Proto: "ssh", Port: 22, Action: "allow"},
+		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
+	}))
+
+	result := mgr.FormatPortMappings()
+
+	// Parent layer's github SSH rule should get priority (child has no SSH rules).
+	parts := strings.Split(result, ";")
+	require.Len(t, parts, 2)
+	assert.Equal(t, "22|10001", parts[0], "github (parent layer) should be first")
+	assert.Equal(t, "22|10002", parts[1])
 }

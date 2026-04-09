@@ -21,7 +21,7 @@ Clawker's packages follow a strict **DAG (Directed Acyclic Graph)**:
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
        │                                       │                   │
        ▼                                       ▼                   ▼
-   gittest/                               dockertest/         Factory DI
+   gittest/                               mock/               Factory DI
    config/mocks/                          whailtest/          + runF seam
 ```
 
@@ -39,7 +39,7 @@ Factory fields are closures that return dependencies. Tests inject fakes:
 f := &cmdutil.Factory{
     IOStreams: tio,
     Client: func(ctx context.Context) (*docker.Client, error) {
-        return fake.Client, nil  // Fake from dockertest
+        return fake.Client, nil  // Fake from docker/mocks
     },
     Config: func() (config.Config, error) {
         return configmocks.NewBlankConfig(), nil
@@ -71,7 +71,7 @@ Each package with complex dependencies provides test infrastructure:
 | Package | Test Location | What It Provides |
 |---------|---------------|------------------|
 | `internal/testenv` | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
-| `internal/docker` | `dockertest/` | `FakeClient`, `SetupContainerList`, fixtures |
+| `internal/docker` | `mock/` | `FakeClient`, `SetupContainerList`, fixtures |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
@@ -384,7 +384,7 @@ The canonical pattern for Tier 2 (integration) command tests. Exercises the full
 
 ```go
 // testFactory constructs a minimal *cmdutil.Factory for command-level testing.
-func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemocks.MockManager) (*cmdutil.Factory, *iostreams.IOStreams) {
+func testFactory(t *testing.T, fake *mocks.FakeClient, sbmock *sockebridgemocks.MockManager) (*cmdutil.Factory, *iostreams.IOStreams) {
     t.Helper()
     tio, _, _, _ := iostreams.Test()
 
@@ -398,9 +398,9 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemoc
         },
     }
 
-    if mock != nil {
+    if sbmock != nil {
         f.SocketBridge = func() socketbridge.SocketBridgeManager {
-            return mock
+            return sbmock
         }
     }
 
@@ -413,7 +413,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemoc
 ```go
 func TestRunRun(t *testing.T) {
     t.Run("detached mode prints container ID", func(t *testing.T) {
-        fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+        fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
         fake.SetupContainerCreate()
         fake.SetupContainerStart()
 
@@ -438,7 +438,7 @@ func TestRunRun(t *testing.T) {
     })
 
     t.Run("container create failure returns error", func(t *testing.T) {
-        fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+        fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
         fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
             return moby.ContainerCreateResult{}, fmt.Errorf("disk full")
         }
@@ -463,7 +463,7 @@ The cobra+Factory pattern exercises the same pipeline FakeCli would test:
 - **Cobra lifecycle**: `PersistentPreRunE` → `RunE` chain runs naturally via `cmd.Execute()`
 - **Real flag parsing**: cobra parses flags, `Changed()` works, mutual exclusion enforced
 - **Real run function**: `nil` runF means `runRun` (or equivalent) executes with all its logic
-- **Real docker-layer code**: `dockertest.FakeClient` composes through `whail.Engine` jail — label filtering, name generation, and middleware all run real code
+- **Real docker-layer code**: `mocks.FakeClient` composes through `whail.Engine` jail — label filtering, name generation, and middleware all run real code
 
 FakeCli would only add: (1) command routing tests (cobra's responsibility) and (2) PersistentPreRunE chain tests (simple/stable). Neither justifies the maintenance cost of a CLI test shell.
 
@@ -546,7 +546,7 @@ f, _, out, errOut := harness.NewFactory(t, &harness.FactoryOptions{
 | Field | Signature | Default |
 |-------|-----------|---------|
 | `Config` | `func() (config.Config, error)` | `configmocks.NewBlankConfig()` |
-| `Client` | `func(ctx, cfg, log, ...docker.ClientOption) (*docker.Client, error)` | `dockertest.FakeClient` |
+| `Client` | `func(ctx, cfg, log, ...docker.ClientOption) (*docker.Client, error)` | `mocks.FakeClient` |
 | `ProjectManager` | `func(cfg, log, project.GitManagerFactory) (project.ProjectManager, error)` | nil (no-op) |
 | `GitManager` | `func(string) (*git.GitManager, error)` | nil (no-op) |
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.MockManager` |
@@ -558,7 +558,7 @@ f, _, out, errOut := harness.NewFactory(t, &harness.FactoryOptions{
 For command unit tests with fake Docker (no `test/e2e/harness` dependency):
 
 ```go
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.IOStreams) {
+func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *iostreams.IOStreams) {
     tio, _, _, _ := iostreams.Test()
     return &cmdutil.Factory{
         IOStreams: tio,
@@ -583,11 +583,11 @@ make storage-golden                                                             
 
 ---
 
-## Docker Test Fakes (dockertest/)
+## Docker Test Fakes (docker/mocks/)
 
 ### FakeClient Architecture
 
-`dockertest.FakeClient` wraps a real `*docker.Client` backed by `whailtest.FakeAPIClient`:
+`mocks.FakeClient` wraps a real `*docker.Client` backed by `whailtest.FakeAPIClient`:
 
 ```go
 type FakeClient struct {
@@ -603,10 +603,10 @@ type FakeClient struct {
 
 ```go
 // Config is required (provides label keys for engine options)
-fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 
 // With specific config values
-fake := dockertest.NewFakeClient(cfg)
+fake := mocks.NewFakeClient(cfg)
 ```
 
 ### Setup Helpers Reference
@@ -935,12 +935,12 @@ Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
 - Module path: `github.com/schmitthub/clawker`
 - Container labels at `InspectResponse.Config.Labels`, volume at `Volume.Labels`, network at `Network.Labels`, image at `InspectResponse.Config.Labels` (OCI ImageConfig)
 
-### dockertest (Composite Fake) Pattern
+### docker/mocks (Composite Fake) Pattern
 
 - Must use `dev.clawker` label prefix (not `com.whailtest`) — docker-layer methods like `ListContainers` call `ClawkerFilter()` which filters by `dev.clawker.managed`; using test labels would cause zero results
 - `docker.Client.ImageExists` calls `c.APIClient.ImageInspect` directly (bypasses whail Engine jail) — the `errNotFound` type must satisfy `errdefs.IsNotFound` via `NotFound()` method
 - `FindContainerByName` uses `ContainerList` + `ContainerInspect` — `SetupFindContainer` must configure both Fn fields
-- No import cycles: `internal/docker/dockertest` -> `internal/docker` + `pkg/whail` + `pkg/whail/whailtest` is clean
+- No import cycles: `internal/docker/mocks` -> `internal/docker` + `pkg/whail` + `pkg/whail/whailtest` is clean
 
 ### Cobra+Factory Test Pattern
 
