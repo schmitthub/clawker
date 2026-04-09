@@ -54,35 +54,27 @@ Replace iptables with eBPF cgroup programs for per-container egress traffic rout
 - Added `dump` subcommand to ebpf-manager CLI — dumps container_map entry for a cgroup
 - Added `LookupContainer()` method to ebpf Manager
 
-## CRITICAL BLOCKER — ctx Write Issue
+## ROOT CAUSE FOUND — Byte Order Bug (NOT ctx writes)
 
-**The core problem that remains unsolved:**
+**Resolved 2026-04-09.** The "ctx write blocker" was a byte order bug in Go's `IPToUint32` / `CIDRToAddrMask`.
 
-When `cgroup/connect4` program contains ANY `ctx->user_ip4 = value` write instruction — even on a code path that doesn't execute for a given connection — ALL non-root TCP connections time out. Removing the write instructions makes everything work.
+### The bug
+`binary.BigEndian.Uint32(ip)` produces the "logical" big-endian uint32 value (e.g., 0xAC1200C8 for 172.18.0.200). But `ctx->user_ip4` in BPF is network-order bytes read as a NATIVE uint32 — on little-endian ARM64, that's 0xC80012AC. Every IP comparison and every ctx write was using the wrong value.
 
-### What was proven:
-- BPF programs load and attach correctly
-- container_map has correct values (verified via dump command)
-- `return 1` immediately after uid check → connections work
-- `return 1` after ctx reads + map lookups + subnet check → connections work  
-- Adding `ctx->user_ip4 = cfg->coredns_ip` on ANY code path → ALL connections break
-- Root (uid 0) is unaffected because programs return early before any ctx access
-- This happens on LinuxKit kernel 6.12.76 (Docker Desktop)
-- The issue is NOT: stale pins, wrong cgroup, wrong container_map values, IPv4-mapped IPv6
+### The fix
+Changed `IPToUint32`, `Uint32ToIP`, and `CIDRToAddrMask` to use `binary.NativeEndian` instead of `binary.BigEndian`. NativeEndian reads IP bytes the same way the CPU loads `ctx->user_ip4` from memory.
 
-### Hypothesis:
-The LinuxKit kernel's `cgroup/connect4` implementation may handle programs with ctx writes differently at the JIT/verifier level, causing the kernel to treat ALL return-1 paths as "address was modified" even when the specific execution path didn't write to ctx. This would cause the kernel to use a different (broken) connection handling path.
+### What confused the previous investigation
+- Root (uid 0) returns before any map/ctx access → always worked
+- Non-root hit map lookups with wrong byte-order values → subnet check failed → all traffic fell through to the catch-all → got redirected to Envoy with garbage IPs → connection timeouts
+- This LOOKED like "ctx writes break connections" but was actually "all comparisons fail, all traffic misroutes"
 
-### Possible approaches to investigate:
-1. **Split into two programs**: One that only does allow/deny (no ctx writes), attached with `BPF_F_ALLOW_MULTI`. Second program that only does rewrites. The allow/deny program runs first; if it allows, the rewrite program runs.
-2. **Use `bpf_bind()` helper** instead of direct ctx writes for address rewriting
-3. **Use `tc` (traffic control) eBPF hooks** instead of `cgroup/connect4` — operates at packet level, not socket level
-4. **Use `sk_lookup` program type** for routing decisions
-5. **Test on native Linux** to confirm this is Docker Desktop/LinuxKit specific
-6. **Fall back to iptables** with the original port-collision fix using content-addressed port assignment (the branch started with this approach)
+### How it was found
+- Used `bpftool map dump` on metrics_map to see that subnet traffic (172.18.0.7:3000) hit the catch-all instead of the subnet check
+- Traced back to `is_in_subnet` returning false because map values and ctx values were in different byte orders
 
 ## DNS Routing Order
-The correct order in connect4 must be:
+The correct order in connect4 is:
 1. DNS (port 53) → redirect to CoreDNS (BEFORE loopback check, because Docker embedded DNS at 127.0.0.11 is loopback)
 2. Loopback → allow
 3. Subnet → allow
