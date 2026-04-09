@@ -36,6 +36,7 @@ scrape_configs:
                 expressions:
                   source: source
                   domain: domain
+                  request_host: request_host
                   upstream_host: upstream_host
                   listener_port: listener_port
                   client_ip: client_ip
@@ -64,9 +65,26 @@ scrape_configs:
                 client_ip:
                 response_code:
                 response_flags:
+                upstream_host:
                 agent:
                 project:
                 action:
+      # Denied traffic gets error level for Grafana red coloring.
+      # Deny chain (proto=deny) logs from Envoy's TCP catch-all.
+      - match:
+          selector: '{service_name="envoy", proto="deny"}'
+          stages:
+            - static_labels:
+                detected_level: error
+      # HTTP 403 = deny_all virtual host rejecting unlisted Host headers.
+      - match:
+          selector: '{service_name="envoy", proto="http", response_code="403", upstream_host="-"}'
+          stages:
+            - static_labels:
+                detected_level: error
+      # Drop upstream_host after match evaluation to avoid label cardinality.
+      - labeldrop:
+          - upstream_host
 
       # CoreDNS log lines have an [INFO] prefix before the logfmt data:
       #   [INFO] source=coredns client_ip=172.18.0.8:12345 domain=example.com. qtype=A rcode=NOERROR duration=0.001s
