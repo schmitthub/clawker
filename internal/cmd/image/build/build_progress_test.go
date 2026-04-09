@@ -8,7 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mock"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -45,7 +45,7 @@ monitoring:
     include_account_uuid: true
     include_session_id: true
 `)
-			fake := dockertest.NewFakeClient(testCfg)
+			fake := mock.NewFakeClient(testCfg)
 			fake.SetupBuildKitWithProgress(scenario.Events)
 
 			tio, in, out, errOut := iostreams.Test()
@@ -113,7 +113,7 @@ monitoring:
     include_account_uuid: true
     include_session_id: true
 `)
-	fake := dockertest.NewFakeClient(testCfg)
+	fake := mock.NewFakeClient(testCfg)
 	fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
 	tio, in, out, errOut := iostreams.Test()
@@ -171,7 +171,7 @@ monitoring:
     include_account_uuid: true
     include_session_id: true
 `)
-	fake := dockertest.NewFakeClient(testCfg)
+	fake := mock.NewFakeClient(testCfg)
 	fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
 	tio, in, out, errOut := iostreams.Test()
@@ -224,7 +224,7 @@ monitoring:
     include_account_uuid: true
     include_session_id: true
 `)
-	fake := dockertest.NewFakeClient(testCfg)
+	fake := mock.NewFakeClient(testCfg)
 	capture := fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
 	tio, in, out, errOut := iostreams.Test()

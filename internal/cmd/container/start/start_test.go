@@ -12,7 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mock"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -193,7 +193,7 @@ func TestCmdStart_Properties(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests (non-attach path) ---
 
-func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testStartFactory(t *testing.T, fake *mock.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 
@@ -214,7 +214,7 @@ func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Facto
 
 // setupContainerStart configures the fake for the non-attach container start path.
 // The default FakeClient ContainerInspectFn handles IsContainerManaged checks.
-func setupContainerStart(fake *dockertest.FakeClient) {
+func setupContainerStart(fake *mock.FakeClient) {
 	fake.SetupNetworkExists(_blankCfg.ClawkerNetwork(), true)
 	fake.FakeAPI.NetworkConnectFn = func(_ context.Context, _ string, _ mobyclient.NetworkConnectOptions) (mobyclient.NetworkConnectResult, error) {
 		return mobyclient.NetworkConnectResult{}, nil
@@ -247,7 +247,7 @@ func TestStartRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestStartRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
 	f, in, out, errOut := testStartFactory(t, fake)
@@ -264,7 +264,7 @@ func TestStartRun_Success(t *testing.T) {
 }
 
 func TestStartRun_MultipleContainers(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
 	f, in, out, errOut := testStartFactory(t, fake)
@@ -284,7 +284,7 @@ func TestStartRun_MultipleContainers(t *testing.T) {
 }
 
 func TestStartRun_PartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupNetworkExists(_blankCfg.ClawkerNetwork(), true)
 	fake.FakeAPI.NetworkConnectFn = func(_ context.Context, _ string, _ mobyclient.NetworkConnectOptions) (mobyclient.NetworkConnectResult, error) {
 		return mobyclient.NetworkConnectResult{}, nil
@@ -313,7 +313,7 @@ func TestStartRun_PartialFailure(t *testing.T) {
 }
 
 func TestStartRun_NilHostProxy(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
 	tio, in, out, errOut := iostreams.Test()

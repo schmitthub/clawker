@@ -1,4 +1,4 @@
-package dockertest
+package mock
 
 import (
 	"context"

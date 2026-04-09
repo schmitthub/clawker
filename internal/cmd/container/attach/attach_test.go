@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mock"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
@@ -157,7 +157,7 @@ func TestCmdAttach_ArgsParsing(t *testing.T) {
 
 // --- Tier 2 Tests (Cobra+Factory) ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mock.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
@@ -197,7 +197,7 @@ func TestAttachRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestAttachRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — no containers
 	f, _, out, errOut := testFactory(t, fake)
 
@@ -214,10 +214,10 @@ func TestAttachRun_ContainerNotFound(t *testing.T) {
 
 func TestAttachRun_ContainerNotRunning(t *testing.T) {
 	// Create a container fixture in "exited" state
-	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
+	fixture := mock.ContainerFixture("myapp", "dev", "node:20-slim")
 	// fixture.State is "exited" by default
 
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupContainerInspect("clawker.myapp.dev", fixture)
 	f, _, out, errOut := testFactory(t, fake)
@@ -234,9 +234,9 @@ func TestAttachRun_ContainerNotRunning(t *testing.T) {
 }
 
 func TestAttachRun_NonTTYHappyPath(t *testing.T) {
-	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fixture := mock.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupContainerInspect("clawker.myapp.dev", fixture)
 	fake.SetupContainerAttach()

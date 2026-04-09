@@ -12,7 +12,7 @@
 //	containers, err := fake.Client.ListContainers(ctx, true)
 //
 //	fake.AssertCalled(t, "ContainerList")
-package dockertest
+package mock
 
 import (
 	"context"

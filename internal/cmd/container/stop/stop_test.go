@@ -12,7 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mock"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -148,8 +148,8 @@ func TestCmdStop_Properties(t *testing.T) {
 // --- Tier 2: Cobra+Factory integration tests ---
 
 func TestStopRun_StopsBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mock.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	// Track ordering: bridge must stop before docker stop
@@ -181,8 +181,8 @@ func TestStopRun_StopsBridge(t *testing.T) {
 }
 
 func TestStopRun_BridgeErrorDoesNotFailStop(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mock.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {
@@ -210,8 +210,8 @@ func TestStopRun_BridgeErrorDoesNotFailStop(t *testing.T) {
 }
 
 func TestStopRun_NilSocketBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mock.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {
@@ -234,8 +234,8 @@ func TestStopRun_NilSocketBridge(t *testing.T) {
 }
 
 func TestStopRun_StopsBridgeWithSignal(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mock.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	fake.FakeAPI.ContainerKillFn = func(_ context.Context, _ string, _ mobyclient.ContainerKillOptions) (mobyclient.ContainerKillResult, error) {
@@ -285,7 +285,7 @@ func TestStopRun_DockerConnectionError(t *testing.T) {
 
 // --- Per-package test helpers ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mock.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 

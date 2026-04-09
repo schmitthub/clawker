@@ -13,7 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mock"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -151,8 +151,8 @@ func TestCmdRemove_Properties(t *testing.T) {
 // --- Tier 2: Cobra+Factory integration tests ---
 
 func TestRemoveRun_StopsBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mock.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	// Track ordering: bridge must stop before docker remove
@@ -184,8 +184,8 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 }
 
 func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mock.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	fake.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
@@ -213,8 +213,8 @@ func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
 }
 
 func TestRemoveRun_NilSocketBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mock.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	fake.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
@@ -237,8 +237,8 @@ func TestRemoveRun_NilSocketBridge(t *testing.T) {
 }
 
 func TestRemoveRun_WithVolumes(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mock.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	// Override ContainerInspect to include State (RemoveContainerWithVolumes accesses State.Running)
@@ -306,7 +306,7 @@ func TestRemoveRun_DockerConnectionError(t *testing.T) {
 
 // --- Per-package test helpers ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mock.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 

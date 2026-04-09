@@ -445,7 +445,7 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 	}
 
 	// Compute TCP port mappings from the current rule state.
-	tcpMappingsArg := m.formatPortMappings()
+	tcpMappingsArg := m.FormatPortMappings()
 
 	args := []string{"/usr/local/bin/firewall.sh", "enable",
 		netInfo.EnvoyIP, netInfo.CoreDNSIP, netInfo.CIDR}
@@ -627,7 +627,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 	}
 
 	// Build the re-enable command: sleep <timeout> && firewall.sh enable <args>
-	tcpMappingsArg := m.formatPortMappings()
+	tcpMappingsArg := m.FormatPortMappings()
 	hostProxyArg := hostProxy
 	if hostProxyArg == "" && tcpMappingsArg != "" {
 		hostProxyArg = "''" // placeholder so tcp_mappings lands in $5
@@ -720,8 +720,24 @@ func (m *Manager) NetCIDR() string {
 // and returns the firewall.sh argument string (format: "dst_port|envoy_port;...").
 // Only TCP/SSH rules need per-port iptables DNAT entries — HTTP rules are handled
 // by the egress listener's raw_buffer filter chain (no separate iptables needed).
-func (m *Manager) formatPortMappings() string {
-	rules, warnings := normalizeAndDedup(m.store.Read().Rules)
+//
+// TODO: This method contains a temporary workaround that prepends rules from the
+// most-local config layer to ensure the current project's TCP/SSH rules get
+// priority iptables positions (first-match-wins). This works around the limitation
+// that only one iptables DNAT rule can match per destination port. Remove this
+// once a proper per-container TCP routing solution is implemented.
+func (m *Manager) FormatPortMappings() string {
+	// TODO(tcp-priority): Temporary workaround — prepend the most-local project
+	// config layer's rules so they win first-seen dedup and get priority positions
+	// in iptables DNAT ordering. Without this, a gitlab project's SSH rule added
+	// after a github project's would never match port 22.
+	var prioritized []config.EgressRule
+	if localRules := localLayerFirewallRules(m.cfg); len(localRules) > 0 {
+		prioritized = append(prioritized, localRules...)
+	}
+	prioritized = append(prioritized, m.store.Read().Rules...)
+
+	rules, warnings := normalizeAndDedup(prioritized)
 	for _, w := range warnings {
 		m.log.Warn().Msg(w)
 	}
@@ -735,6 +751,72 @@ func (m *Manager) formatPortMappings() string {
 		parts = append(parts, fmt.Sprintf("%d|%d", mp.DstPort, mp.EnvoyPort))
 	}
 	return strings.Join(parts, ";")
+}
+
+// localLayerFirewallRules extracts egress rules from the most-local project config
+// layer (index 0 = closest to CWD). Returns nil if no local layer has firewall rules.
+//
+// TODO(tcp-priority): Temporary helper for the formatPortMappings workaround.
+// Remove once a proper per-container TCP routing solution is implemented.
+func localLayerFirewallRules(cfg config.Config) []config.EgressRule {
+	store := cfg.ProjectStore()
+	if store == nil {
+		return nil
+	}
+	layers := store.Layers()
+	for _, layer := range layers {
+		if layer.Path == "" {
+			continue // skip virtual/defaults layer
+		}
+		security, ok := layer.Data["security"].(map[string]any)
+		if !ok {
+			continue
+		}
+		fw, ok := security["firewall"].(map[string]any)
+		if !ok {
+			continue
+		}
+
+		var rules []config.EgressRule
+
+		if rawRules, ok := fw["rules"].([]any); ok {
+			for _, raw := range rawRules {
+				m, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				r := config.EgressRule{}
+				if v, ok := m["dst"].(string); ok {
+					r.Dst = v
+				}
+				if v, ok := m["proto"].(string); ok {
+					r.Proto = v
+				}
+				if v, ok := m["port"].(int); ok {
+					r.Port = v
+				}
+				if v, ok := m["action"].(string); ok {
+					r.Action = v
+				}
+				rules = append(rules, r)
+			}
+		}
+
+		if rawDomains, ok := fw["add_domains"].([]any); ok {
+			for _, d := range rawDomains {
+				if s, ok := d.(string); ok {
+					rules = append(rules, config.EgressRule{
+						Dst: s, Proto: "tls", Port: 443, Action: "allow",
+					})
+				}
+			}
+		}
+
+		if len(rules) > 0 {
+			return rules
+		}
+	}
+	return nil
 }
 
 // envoyPorts returns the EnvoyPorts config from the manager's config.

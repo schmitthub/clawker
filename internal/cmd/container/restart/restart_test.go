@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mock"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
@@ -160,7 +160,7 @@ func TestCmdRestart_MultipleContainers(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests ---
 
-func testRestartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testRestartFactory(t *testing.T, fake *mock.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 
@@ -177,8 +177,8 @@ func testRestartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Fac
 }
 
 func TestRestartRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mock.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerRestart()
 
@@ -222,7 +222,7 @@ func TestRestartRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestRestartRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, in, out, errOut := testRestartFactory(t, fake)
@@ -239,8 +239,8 @@ func TestRestartRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestRestartRun_PartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture1 := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mock.NewFakeClient(configmocks.NewBlankConfig())
+	fixture1 := mock.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture1)
 	fake.SetupContainerRestart()
 
