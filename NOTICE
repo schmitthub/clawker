@@ -118,7 +118,6 @@ github.com/emirpasic/gods                                                      I
 MIT
 ================================================================================
 
-al.essio.dev/pkg/shellescape                                                   MIT
 github.com/aymanbagabas/go-osc52/v2                                            MIT
 github.com/cenkalti/backoff/v5                                                 MIT
 github.com/cespare/xxhash/v2                                                   MIT
@@ -153,6 +152,7 @@ github.com/stretchr/testify                                                    M
 github.com/tonistiigi/fsutil                                                   MIT
 github.com/xo/terminfo                                                         MIT
 github.com/zalando/go-keyring                                                  MIT
+github.com/zalando/go-keyring/internal/shellescape                             MIT
 gopkg.in/natefinch/lumberjack.v2                                               MIT
 gopkg.in/yaml.v3                                                               MIT
 
