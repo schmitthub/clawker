@@ -323,6 +323,9 @@ func (d *Daemon) countClawkerContainers(ctx context.Context) (int, error) {
 // --- EnsureDaemon: CLI entry point ---
 
 // EnsureDaemon checks if the firewall daemon is running and spawns it if not.
+// If the daemon PID is alive but the firewall stack isn't healthy (e.g. daemon
+// is winding down after its last container exited), kills the old daemon and
+// spawns a fresh one.
 // Returns immediately — does not wait for the daemon to become healthy.
 func EnsureDaemon(cfg config.Config, log *logger.Logger) error {
 	pidFile, err := cfg.FirewallPIDFilePath()
@@ -331,11 +334,29 @@ func EnsureDaemon(cfg config.Config, log *logger.Logger) error {
 	}
 
 	if IsDaemonRunning(pidFile) {
-		log.Debug().Msg("firewall daemon already running")
-		return nil
+		if isStackHealthy(cfg) {
+			log.Debug().Msg("firewall daemon running, stack healthy")
+			return nil
+		}
+		// Daemon alive but stack unhealthy — kill and respawn.
+		log.Warn().Msg("firewall daemon alive but stack unhealthy, restarting")
+		_ = StopDaemon(pidFile)
+		WaitForDaemonExit(pidFile, 5*time.Second)
 	}
 
 	return startDaemonProcess(cfg, log)
+}
+
+// isStackHealthy does a quick TCP probe to the Envoy health port.
+// If Envoy is responding, the firewall stack is up.
+func isStackHealthy(cfg config.Config) bool {
+	addr := fmt.Sprintf("localhost:%d", cfg.EnvoyHealthHostPort())
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // startDaemonProcess spawns `clawker firewall serve` as a detached subprocess.
@@ -440,6 +461,21 @@ func GetDaemonPID(pidFile string) int {
 		return 0
 	}
 	return pid
+}
+
+// WaitForDaemonExit polls until the daemon process exits or timeout elapses.
+func WaitForDaemonExit(pidFile string, timeout time.Duration) {
+	pid, err := readPIDFile(pidFile)
+	if err != nil {
+		return
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !isProcessAlive(pid) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 // StopDaemon sends SIGTERM to the firewall daemon. No-op if not running.

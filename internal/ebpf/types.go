@@ -74,29 +74,34 @@ const (
 )
 
 // IPToUint32 converts a net.IP to a uint32 in network byte order.
+// IPToUint32 converts a net.IP to a uint32 in network byte order.
+// The kernel stores ctx->user_ip4 as 4 network-order bytes in memory,
+// which the CPU reads as a native uint32. NativeEndian replicates this:
+// the IP bytes are placed into the uint32 exactly as the CPU would load them.
 func IPToUint32(ip net.IP) uint32 {
 	ip = ip.To4()
 	if ip == nil {
 		return 0
 	}
-	return binary.BigEndian.Uint32(ip)
+	return binary.NativeEndian.Uint32(ip)
 }
 
 // Uint32ToIP converts a uint32 in network byte order to a net.IP.
 func Uint32ToIP(n uint32) net.IP {
 	ip := make(net.IP, 4)
-	binary.BigEndian.PutUint32(ip, n)
+	binary.NativeEndian.PutUint32(ip, n)
 	return ip
 }
 
 // CIDRToAddrMask extracts the network address and mask from a CIDR string.
+// Values are in network byte order (matching ctx->user_ip4 in BPF).
 func CIDRToAddrMask(cidr string) (addr, mask uint32, err error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return 0, 0, err
 	}
-	addr = binary.BigEndian.Uint32(ipNet.IP.To4())
-	mask = binary.BigEndian.Uint32(net.IP(ipNet.Mask).To4())
+	addr = binary.NativeEndian.Uint32(ipNet.IP.To4())
+	mask = binary.NativeEndian.Uint32(net.IP(ipNet.Mask).To4())
 	return addr, mask, nil
 }
 

@@ -12,6 +12,14 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
+// Socket option constants — not in vmlinux.h, stable kernel ABI.
+#ifndef SOL_SOCKET
+#define SOL_SOCKET 1
+#endif
+#ifndef SO_MARK
+#define SO_MARK 36
+#endif
+
 // ---------------------------------------------------------------------------
 // Map value structs
 // ---------------------------------------------------------------------------
@@ -153,5 +161,10 @@ enum action {
 	ACTION_DENY  = 1,
 	ACTION_BYPASS = 2,
 };
+
+// Socket mark used by Envoy/CoreDNS upstream connections for loop prevention.
+// The connect4/sendmsg4 programs skip redirect for marked traffic.
+// Envoy sets this via upstream_bind_config.socket_options SO_MARK.
+#define CLAWKER_MARK 0xC1A4  // "CLA4" — clawker IPv4 mark
 
 #endif // __CLAWKER_COMMON_H

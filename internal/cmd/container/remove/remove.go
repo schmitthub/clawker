@@ -6,6 +6,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
@@ -18,6 +19,7 @@ type RemoveOptions struct {
 	IOStreams      *iostreams.IOStreams
 	Client         func(context.Context) (*docker.Client, error)
 	ProjectManager func() (project.ProjectManager, error)
+	Firewall       func(context.Context) (firewall.FirewallManager, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Logger         func() (*logger.Logger, error)
 
@@ -34,6 +36,7 @@ func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions)
 		IOStreams:      f.IOStreams,
 		Client:         f.Client,
 		ProjectManager: f.ProjectManager,
+		Firewall:       f.Firewall,
 		SocketBridge:   f.SocketBridge,
 		Logger:         f.Logger,
 	}
@@ -140,6 +143,15 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 	}
 	if container == nil {
 		return fmt.Errorf("container %q not found", name)
+	}
+
+	// Disable eBPF firewall for this container (best-effort).
+	if opts.Firewall != nil {
+		if fwMgr, fwErr := opts.Firewall(ctx); fwErr == nil {
+			if disableErr := fwMgr.Disable(ctx, container.ID); disableErr != nil {
+				log.Warn().Err(disableErr).Str("container", container.ID).Msg("failed to disable firewall")
+			}
+		}
 	}
 
 	// Stop socket bridge before removing the container (best-effort)

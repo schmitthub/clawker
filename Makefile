@@ -5,6 +5,7 @@
         docs docs-check \
         pre-commit pre-commit-install \
         localenv \
+        restart \
         release
 
 # Go Clawker variables
@@ -70,6 +71,7 @@ help:
 	@echo ""
 	@echo "Development targets:"
 	@echo "  localenv            (Re)create .clawkerlocal/ with XDG dirs and export env vars"
+	@echo "  restart             Full rebuild + nuke firewall containers/image for clean restart"
 	@echo ""
 	@echo "Release targets:"
 	@echo "  release             Tag and push a release (VERSION=v0.7.6 MESSAGE=\"...\" required)"
@@ -83,13 +85,22 @@ help:
 # Clawker Build Targets
 # ============================================================================
 
-# Build the Clawker binary
+# Build the Clawker binary (includes embedded eBPF manager)
 clawker: clawker-build
 
-clawker-build:
+clawker-build: ebpf-binary
 	@echo "Building $(BINARY_NAME) $(CLAWKER_VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
+
+# Cross-compile the eBPF manager binary for Linux (embedded in clawker via go:embed).
+# Architecture matches the host — Docker Desktop runs the matching Linux arch.
+EBPF_BINARY := internal/firewall/assets/ebpf-manager
+ebpf-binary: $(EBPF_BINARY)
+$(EBPF_BINARY): internal/ebpf/cmd/main.go internal/ebpf/manager.go internal/ebpf/types.go
+	@echo "Building ebpf-manager for linux/$(shell $(GO) env GOARCH)..."
+	@mkdir -p internal/firewall/assets
+	GOOS=linux CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
 
 # Build the standalone generate binary
 clawker-generate:
@@ -103,18 +114,23 @@ clawker-build-all: clawker-build-linux clawker-build-darwin clawker-build-window
 clawker-build-linux:
 	@echo "Building Clawker for Linux..."
 	@mkdir -p $(DIST_DIR)
+	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
 	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/clawker
+	@echo "  ebpf-manager linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
 	GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/clawker
 
 clawker-build-darwin:
 	@echo "Building Clawker for macOS..."
 	@mkdir -p $(DIST_DIR)
+	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
 	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/clawker
+	@echo "  ebpf-manager linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
 	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/clawker
 
 clawker-build-windows:
 	@echo "Building Clawker for Windows..."
 	@mkdir -p $(DIST_DIR)
+	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
 	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/clawker
 
 # Run Clawker tests
@@ -191,7 +207,7 @@ clawker-install-global: clawker-build
 clawker-clean:
 	@echo "Cleaning Clawker build artifacts..."
 	rm -rf $(BIN_DIR) $(DIST_DIR)
-	rm -f coverage.out coverage.html
+	rm -f $(EBPF_BINARY) coverage.out coverage.html
 
 # ============================================================================
 # Test Targets
@@ -359,6 +375,14 @@ localenv:
 	@echo "export CLAWKER_DATA_DIR=$(CURDIR)/$(LOCALENV_DATA)"
 	@echo "export CLAWKER_STATE_DIR=$(CURDIR)/$(LOCALENV_STATE)"
 	@echo "export CLAWKER_CACHE_DIR=$(CURDIR)/$(LOCALENV_CACHE)"
+
+# Full rebuild + nuke firewall containers/image for a clean restart.
+# Usage: make restart
+restart: clawker-clean clawker
+	@echo "Stopping firewall containers..."
+	@docker rm -f clawker-ebpf clawker-envoy clawker-coredns 2>/dev/null || true
+	@docker rmi clawker-ebpf:latest 2>/dev/null || true
+	@echo "Ready. Start with: ./bin/clawker run ..."
 
 # ============================================================================
 # Release Targets

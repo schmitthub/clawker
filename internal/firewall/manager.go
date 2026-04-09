@@ -1,6 +1,8 @@
 package firewall
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
@@ -41,10 +44,9 @@ const (
 	envoyImage   = "envoyproxy/envoy:distroless-v1.37.1@sha256:4d9226b9fd4d1449887de7cde785beb24b12e47d6e79021dec3c79e362609432"
 	corednsImage = "coredns/coredns:1.14.2@sha256:e7e6440cfd1e919280958f5b5a6ab2b184d385bba774c12ad2a9e1e4183f90d9"
 
-	// TODO(ebpf): Replace with version-pinned SHA256 image once the eBPF manager
-	// container image is built and published. Contains the ebpf-manager binary
-	// built from internal/ebpf/cmd/.
-	ebpfImage = "ghcr.io/schmitthub/clawker-ebpf:latest"
+	// ebpfImageTag is the local Docker image tag for the eBPF manager.
+	// Built on-demand from the embedded binary when the image doesn't exist locally.
+	ebpfImageTag = "clawker-ebpf:latest"
 
 	// Health check timing.
 	healthCheckTimeout  = 60 * time.Second
@@ -109,7 +111,12 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 		return fmt.Errorf("firewall: %w", err)
 	}
 
-	// Step 4: Ensure containers are running.
+	// Step 4: Ensure the eBPF manager image exists (build from source if needed).
+	if err := m.ensureEbpfImage(ctx); err != nil {
+		return fmt.Errorf("firewall: %w", err)
+	}
+
+	// Step 5: Ensure containers are running.
 	if err := m.ensureContainer(ctx, envoyContainer, m.envoyContainerConfig(netInfo, dataDir)); err != nil {
 		return fmt.Errorf("firewall: ensuring envoy: %w", err)
 	}
@@ -127,7 +134,7 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 		return fmt.Errorf("firewall: initializing eBPF programs: %w", err)
 	}
 
-	// Step 5: Wait for services to be healthy before declaring ready.
+	// Step 6: Wait for services to be healthy before declaring ready.
 	if err := m.WaitForHealthy(ctx); err != nil {
 		return fmt.Errorf("firewall: %w", err)
 	}
@@ -141,17 +148,19 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 func (m *Manager) Stop(ctx context.Context) error {
 	envoyErr := m.stopAndRemove(ctx, envoyContainer)
 	corednsErr := m.stopAndRemove(ctx, corednsContainer)
+	ebpfErr := m.stopAndRemove(ctx, ebpfContainer)
 
-	if err := errors.Join(envoyErr, corednsErr); err != nil {
+	if err := errors.Join(envoyErr, corednsErr, ebpfErr); err != nil {
 		return fmt.Errorf("firewall stop: %w", err)
 	}
 	return nil
 }
 
-// IsRunning reports whether both firewall containers are running.
+// IsRunning reports whether all firewall containers are running.
 func (m *Manager) IsRunning(ctx context.Context) bool {
 	return m.isContainerRunning(ctx, envoyContainer) &&
-		m.isContainerRunning(ctx, corednsContainer)
+		m.isContainerRunning(ctx, corednsContainer) &&
+		m.isContainerRunning(ctx, ebpfContainer)
 }
 
 // WaitForHealthy polls until both firewall services pass health probes (TCP+HTTP)
@@ -403,7 +412,7 @@ func (m *Manager) List(_ context.Context) ([]config.EgressRule, error) {
 // Disable detaches eBPF programs from a container's cgroup, removing all
 // traffic routing. The container gets unrestricted egress.
 func (m *Manager) Disable(ctx context.Context, containerID string) error {
-	cgroupPath := ebpfCgroupPath(containerID)
+	cgroupPath := ebpfCgroupPath(m.cgroupDriver(ctx), containerID)
 	if err := m.ebpfExec(ctx, "disable", cgroupPath); err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
@@ -415,17 +424,39 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 // Enable attaches eBPF programs to a container's cgroup, routing traffic
 // through Envoy (TCP) and CoreDNS (DNS). Replaces iptables DNAT rules.
 func (m *Manager) Enable(ctx context.Context, containerID string) error {
+	// Ensure the eBPF manager container is running (idempotent).
+	// The daemon's EnsureRunning creates it, but it may be missing if the daemon
+	// started before the eBPF feature was added, or if it was manually removed.
+	if err := m.ensureEbpfImage(ctx); err != nil {
+		return fmt.Errorf("firewall enable: %w", err)
+	}
+
 	netInfo, err := m.discoverNetwork(ctx)
 	if err != nil {
 		return fmt.Errorf("firewall enable: discovering network: %w", err)
 	}
 
-	// Read host proxy URL from container env (best-effort).
+	if err := m.ensureContainer(ctx, ebpfContainer, m.ebpfContainerConfig(netInfo)); err != nil {
+		return fmt.Errorf("firewall enable: ensuring ebpf container: %w", err)
+	}
+
+	// Initialize BPF programs (idempotent — pinned programs persist across execs).
+	if err := m.ebpfExec(ctx, "init"); err != nil {
+		return fmt.Errorf("firewall enable: initializing eBPF programs: %w", err)
+	}
+
+	// Host proxy bypass: read from project config (authoritative), not container env.
 	var hostProxyIP string
 	var hostProxyPort uint16
-	inspect, inspectErr := m.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
-	if inspectErr == nil {
-		hostProxyIP, hostProxyPort = parseHostProxy(inspect)
+	if m.cfg.Project().Security.HostProxyEnabled() {
+		hostProxyPort = uint16(m.cfg.Settings().HostProxy.Daemon.Port)
+		// Resolve host.docker.internal from inside the Docker network.
+		// On Docker Desktop it resolves to 192.168.65.254, not localhost.
+		if resolved, err := m.ebpfExecOutput(ctx, "resolve", "host.docker.internal"); err == nil {
+			hostProxyIP = strings.TrimSpace(resolved)
+		} else {
+			m.log.Warn().Err(err).Msg("could not resolve host.docker.internal, host proxy bypass disabled")
+		}
 	}
 
 	// Build per-domain TCP routes from the rules store.
@@ -439,6 +470,7 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 	routes := make([]ebpfRoute, 0, len(tcpMappings))
 	for _, mp := range tcpMappings {
 		routes = append(routes, ebpfRoute{
+			Domain:     mp.Dst,
 			DomainHash: DomainHash(mp.Dst),
 			DstPort:    uint16(mp.DstPort),
 			EnvoyPort:  uint16(mp.EnvoyPort),
@@ -455,7 +487,7 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		hostProxyIP, hostProxyPort, ports.EgressPort, marshalRoutes(routes),
 	)
 
-	cgroupPath := ebpfCgroupPath(containerID)
+	cgroupPath := ebpfCgroupPath(m.cgroupDriver(ctx), containerID)
 	if err := m.ebpfExec(ctx, "enable", cgroupPath, cfgJSON); err != nil {
 		return fmt.Errorf("firewall enable: %w", err)
 	}
@@ -493,7 +525,7 @@ func (m *Manager) touchSignalFile(ctx context.Context, containerID string) error
 // Schedules automatic re-enable after timeout via a detached exec in the eBPF
 // manager container (sleep + unbypass).
 func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.Duration) error {
-	cgroupPath := ebpfCgroupPath(containerID)
+	cgroupPath := ebpfCgroupPath(m.cgroupDriver(ctx), containerID)
 
 	// Set bypass flag (instant, atomic).
 	if err := m.ebpfExec(ctx, "bypass", cgroupPath); err != nil {
@@ -538,9 +570,10 @@ func (m *Manager) Status(ctx context.Context) (*FirewallStatus, error) {
 
 	envoyRunning := m.isContainerRunning(ctx, envoyContainer)
 	corednsRunning := m.isContainerRunning(ctx, corednsContainer)
+	ebpfRunning := m.isContainerRunning(ctx, ebpfContainer)
 
 	status := &FirewallStatus{
-		Running:       envoyRunning && corednsRunning,
+		Running:       envoyRunning && corednsRunning && ebpfRunning,
 		EnvoyHealth:   envoyRunning,
 		CoreDNSHealth: corednsRunning,
 		RuleCount:     len(rules),
@@ -785,6 +818,7 @@ type containerSpec struct {
 	mounts       []mount.Mount
 	portBindings network.PortMap
 	capAdd       []string // Linux capabilities (e.g., "BPF", "SYS_ADMIN")
+	stopTimeout  *int     // Seconds to wait for SIGTERM before SIGKILL (nil = Docker default 10s)
 }
 
 // ensureContainer ensures a named container exists and is running.
@@ -847,6 +881,9 @@ func (m *Manager) runContainer(ctx context.Context, name firewallContainer, spec
 	}
 	if len(spec.cmd) > 0 {
 		containerConfig.Cmd = spec.cmd
+	}
+	if spec.stopTimeout != nil {
+		containerConfig.StopTimeout = spec.stopTimeout
 	}
 
 	hostConfig := &container.HostConfig{
@@ -919,6 +956,88 @@ func (m *Manager) ensureImage(ctx context.Context, image string) error {
 	// Drain the pull output to completion.
 	_, _ = io.Copy(io.Discard, reader)
 	return nil
+}
+
+// ensureEbpfImage ensures the eBPF manager Docker image exists locally.
+// Builds it from the embedded binary if it doesn't exist.
+func (m *Manager) ensureEbpfImage(ctx context.Context) error {
+	_, err := m.client.ImageInspect(ctx, ebpfImageTag)
+	if err == nil {
+		return nil
+	}
+
+	m.log.Debug().Msg("building eBPF manager image from embedded binary")
+	return m.buildEbpfImage(ctx)
+}
+
+// buildEbpfImage creates the eBPF manager Docker image from the embedded binary.
+// Constructs a minimal build context (Dockerfile + binary) and calls Docker ImageBuild.
+func (m *Manager) buildEbpfImage(ctx context.Context) error {
+	if len(ebpfManagerBinary) == 0 {
+		return fmt.Errorf("ebpf-manager binary not embedded — run 'make ebpf-binary' then rebuild clawker")
+	}
+
+	buildContext, err := ebpfBuildContext()
+	if err != nil {
+		return fmt.Errorf("creating eBPF build context: %w", err)
+	}
+
+	resp, err := m.client.ImageBuild(ctx, buildContext, client.ImageBuildOptions{
+		Tags:           []string{ebpfImageTag},
+		Dockerfile:     "Dockerfile",
+		Remove:         true,
+		ForceRemove:    true,
+		SuppressOutput: true,
+	})
+	if err != nil {
+		return fmt.Errorf("building eBPF manager image: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// ebpfBuildContext creates a tar archive containing:
+//   - Dockerfile: minimal FROM scratch + COPY
+//   - ebpf-manager: the pre-compiled static binary
+func ebpfBuildContext() (io.Reader, error) {
+	const dockerfile = `FROM alpine:3.21
+RUN apk add --no-cache iproute2
+COPY ebpf-manager /usr/local/bin/ebpf-manager
+CMD ["sleep", "infinity"]
+`
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+
+	// Write Dockerfile.
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "Dockerfile",
+		Size: int64(len(dockerfile)),
+		Mode: 0644,
+	}); err != nil {
+		return nil, err
+	}
+	if _, err := tw.Write([]byte(dockerfile)); err != nil {
+		return nil, err
+	}
+
+	// Write the embedded binary.
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "ebpf-manager",
+		Size: int64(len(ebpfManagerBinary)),
+		Mode: 0755,
+	}); err != nil {
+		return nil, err
+	}
+	if _, err := tw.Write(ebpfManagerBinary); err != nil {
+		return nil, err
+	}
+
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return &buf, nil
 }
 
 // stopAndRemove stops and removes a firewall container.
@@ -994,25 +1113,42 @@ func (m *Manager) restartContainer(ctx context.Context, name firewallContainer) 
 
 // ebpfRoute is the JSON-serializable route type for the eBPF manager container.
 type ebpfRoute struct {
+	Domain     string `json:"domain"`
 	DomainHash uint32 `json:"domain_hash"`
 	DstPort    uint16 `json:"dst_port"`
 	EnvoyPort  uint16 `json:"envoy_port"`
 }
 
 // ebpfStaticIP computes the eBPF manager's static IP from the Envoy IP.
-// Envoy is .2, CoreDNS is .3, eBPF manager is .4.
+// Envoy is .200, CoreDNS is .201, eBPF manager is .202.
 func ebpfStaticIP(envoyIP string) string {
 	ip := net.ParseIP(envoyIP).To4()
 	if ip == nil {
 		return ""
 	}
-	ip[3] = 4
+	ip[3] = ip[3] + 2 // envoy(.200) + 2 = .202
 	return ip.String()
 }
 
 // ebpfCgroupPath returns the cgroup v2 path for a Docker container.
-func ebpfCgroupPath(containerID string) string {
-	return "/sys/fs/cgroup/system.slice/docker-" + containerID + ".scope"
+// The path format depends on the cgroup driver:
+//   - cgroupfs (Docker Desktop default): /sys/fs/cgroup/docker/<containerID>
+//   - systemd (native Linux):            /sys/fs/cgroup/system.slice/docker-<containerID>.scope
+func ebpfCgroupPath(cgroupDriver, containerID string) string {
+	if cgroupDriver == "systemd" {
+		return "/sys/fs/cgroup/system.slice/docker-" + containerID + ".scope"
+	}
+	return "/sys/fs/cgroup/docker/" + containerID
+}
+
+// cgroupDriver queries the Docker daemon for its cgroup driver (e.g. "cgroupfs" or "systemd").
+func (m *Manager) cgroupDriver(ctx context.Context) string {
+	info, err := m.client.Info(ctx, client.InfoOptions{})
+	if err != nil {
+		m.log.Warn().Err(err).Msg("failed to query Docker cgroup driver, assuming cgroupfs")
+		return "cgroupfs"
+	}
+	return info.Info.CgroupDriver
 }
 
 // ebpfExec runs a command in the eBPF manager container via docker exec.
@@ -1022,6 +1158,7 @@ func (m *Manager) ebpfExec(ctx context.Context, args ...string) error {
 	cmd = append(cmd, args...)
 
 	execResp, err := m.client.ExecCreate(ctx, string(ebpfContainer), client.ExecCreateOptions{
+		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          cmd,
 	})
@@ -1047,18 +1184,55 @@ func (m *Manager) ebpfExec(ctx context.Context, args ...string) error {
 	return nil
 }
 
+// ebpfExecOutput runs a command in the eBPF manager container and returns stdout.
+// Uses stdcopy to demultiplex Docker's stream headers from the exec output.
+func (m *Manager) ebpfExecOutput(ctx context.Context, args ...string) (string, error) {
+	cmd := make([]string, 0, len(args)+1)
+	cmd = append(cmd, "/usr/local/bin/ebpf-manager")
+	cmd = append(cmd, args...)
+
+	execResp, err := m.client.ExecCreate(ctx, string(ebpfContainer), client.ExecCreateOptions{
+		AttachStdout: true,
+		AttachStderr: true,
+		Cmd:          cmd,
+	})
+	if err != nil {
+		return "", fmt.Errorf("creating exec in %s: %w", ebpfContainer, err)
+	}
+
+	hijack, err := m.client.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
+	if err != nil {
+		return "", fmt.Errorf("attaching exec in %s: %w", ebpfContainer, err)
+	}
+	defer hijack.Conn.Close()
+
+	var stdout, stderr bytes.Buffer
+	_, _ = stdcopy.StdCopy(&stdout, &stderr, hijack.Reader)
+
+	inspectExec, err := m.client.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("inspecting exec in %s: %w", ebpfContainer, err)
+	}
+	if inspectExec.ExitCode != 0 {
+		return "", fmt.Errorf("ebpf-manager %s exited %d: %s", args[0], inspectExec.ExitCode, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
+}
+
 // ebpfContainerConfig returns the container creation config for the eBPF manager.
 func (m *Manager) ebpfContainerConfig(net *NetworkInfo) containerSpec {
+	stopTimeout := 1 // sleep infinity ignores SIGTERM; no graceful shutdown needed
 	return containerSpec{
-		image:       ebpfImage,
+		image:       ebpfImageTag,
 		networkName: m.cfg.ClawkerNetwork(),
 		networkID:   net.NetworkID,
-		staticIP:    ebpfStaticIP(net.EnvoyIP), // .4 on clawker-net
+		staticIP:    ebpfStaticIP(net.EnvoyIP),
 		labels: map[string]string{
 			m.cfg.LabelManaged(): "true",
 			m.cfg.LabelPurpose(): m.cfg.PurposeFirewall(),
 		},
-		cmd: []string{"sleep", "infinity"},
+		stopTimeout: &stopTimeout,
+		cmd:         []string{"sleep", "infinity"},
 		mounts: []mount.Mount{
 			{
 				Type:     mount.TypeBind,
@@ -1074,26 +1248,6 @@ func (m *Manager) ebpfContainerConfig(net *NetworkInfo) containerSpec {
 		},
 		capAdd: []string{"BPF", "SYS_ADMIN", "NET_ADMIN"},
 	}
-}
-
-// parseHostProxy extracts the host proxy IP and port from a container's env.
-func parseHostProxy(inspect client.ContainerInspectResult) (string, uint16) {
-	for _, env := range inspect.Container.Config.Env {
-		if val, ok := strings.CutPrefix(env, "CLAWKER_HOST_PROXY="); ok {
-			val = strings.TrimPrefix(val, "http://")
-			val = strings.TrimPrefix(val, "https://")
-			host, portStr, found := strings.Cut(val, ":")
-			if found {
-				portStr = strings.TrimRight(portStr, "/")
-				port, err := strconv.ParseUint(portStr, 10, 16)
-				if err == nil {
-					return host, uint16(port)
-				}
-			}
-			return host, 0
-		}
-	}
-	return "", 0
 }
 
 // computeGateway extracts the gateway IP (.1) from a CIDR.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,6 +43,11 @@ func (m *Manager) Load() error {
 		return fmt.Errorf("ebpf: creating pin path %s: %w", m.pinPath, err)
 	}
 
+	// Remove stale link pins from previous runs. Pinned links keep old
+	// programs alive and attached to dead cgroups. Clean them before
+	// loading new programs to avoid resource leaks.
+	m.cleanupAllLinks()
+
 	spec, err := loadClawker()
 	if err != nil {
 		return fmt.Errorf("ebpf: loading collection spec: %w", err)
@@ -58,16 +64,19 @@ func (m *Manager) Load() error {
 	}
 
 	// Pin programs so command-mode instances can open them for cgroup attachment.
+	// Remove stale pins first — the embedded ELF may have newer programs.
 	progs := map[string]*ebpf.Program{
 		"clawker_connect4":    m.objs.ClawkerConnect4,
 		"clawker_sendmsg4":    m.objs.ClawkerSendmsg4,
+		"clawker_recvmsg4":    m.objs.ClawkerRecvmsg4,
 		"clawker_connect6":    m.objs.ClawkerConnect6,
 		"clawker_sendmsg6":    m.objs.ClawkerSendmsg6,
 		"clawker_sock_create": m.objs.ClawkerSockCreate,
 	}
 	for name, prog := range progs {
 		pin := filepath.Join(m.pinPath, name)
-		if err := prog.Pin(pin); err != nil && !errors.Is(err, os.ErrExist) {
+		os.Remove(pin) // remove stale pin (best-effort)
+		if err := prog.Pin(pin); err != nil {
 			return fmt.Errorf("ebpf: pinning program %s: %w", name, err)
 		}
 	}
@@ -98,6 +107,7 @@ func (m *Manager) OpenPinned() error {
 	progs := map[string]**ebpf.Program{
 		"clawker_connect4":    &m.objs.ClawkerConnect4,
 		"clawker_sendmsg4":    &m.objs.ClawkerSendmsg4,
+		"clawker_recvmsg4":    &m.objs.ClawkerRecvmsg4,
 		"clawker_connect6":    &m.objs.ClawkerConnect6,
 		"clawker_sendmsg6":    &m.objs.ClawkerSendmsg6,
 		"clawker_sock_create": &m.objs.ClawkerSockCreate,
@@ -111,6 +121,47 @@ func (m *Manager) OpenPinned() error {
 	}
 
 	return nil
+}
+
+// cleanupAllLinks removes ALL pinned link files from the pin directory.
+// Called during Load() to clear stale links from previous runs that keep
+// old programs alive and attached to dead cgroups.
+func (m *Manager) cleanupAllLinks() {
+	entries, err := os.ReadDir(m.pinPath)
+	if err != nil {
+		return // pin dir may not exist yet
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "link_") {
+			pin := filepath.Join(m.pinPath, e.Name())
+			l, lerr := link.LoadPinnedLink(pin, nil)
+			if lerr == nil {
+				l.Unpin()
+				l.Close()
+			} else {
+				os.Remove(pin) // best-effort
+			}
+		}
+	}
+}
+
+// cleanupLinks removes stale pinned links for a cgroup ID.
+// This ensures re-Enable() attaches fresh programs, not stale ones from a previous run.
+func (m *Manager) cleanupLinks(cgroupID uint64) {
+	// Close in-memory links if we have them.
+	if links, ok := m.links[cgroupID]; ok {
+		for _, l := range links {
+			l.Close()
+		}
+		delete(m.links, cgroupID)
+	}
+
+	// Remove pinned link files for this cgroup.
+	progNames := []string{"connect4", "sendmsg4", "recvmsg4", "connect6", "sendmsg6", "sock_create"}
+	for _, name := range progNames {
+		pin := filepath.Join(m.pinPath, fmt.Sprintf("link_%s_%d", name, cgroupID))
+		os.Remove(pin)
+	}
 }
 
 // Close detaches all links and closes all programs and maps.
@@ -127,7 +178,12 @@ func (m *Manager) Close() error {
 }
 
 // Enable attaches BPF programs to a container's cgroup and populates routing maps.
+// Cleans up any stale links for this cgroup before attaching.
 func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContainerConfig, routes []Route) error {
+	// Clean up stale links from previous Enable() calls for this cgroup.
+	// Stale links keep old programs attached, causing silent misbehavior.
+	m.cleanupLinks(cgroupID)
+
 	if err := m.objs.ContainerMap.Update(cgroupID, cfg, ebpf.UpdateAny); err != nil {
 		return fmt.Errorf("ebpf enable: updating container_map: %w", err)
 	}
@@ -153,6 +209,7 @@ func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContaine
 	attachments := []attachment{
 		{"connect4", m.objs.ClawkerConnect4, ebpf.AttachCGroupInet4Connect},
 		{"sendmsg4", m.objs.ClawkerSendmsg4, ebpf.AttachCGroupUDP4Sendmsg},
+		{"recvmsg4", m.objs.ClawkerRecvmsg4, ebpf.AttachCGroupUDP4Recvmsg},
 		{"connect6", m.objs.ClawkerConnect6, ebpf.AttachCGroupInet6Connect},
 		{"sendmsg6", m.objs.ClawkerSendmsg6, ebpf.AttachCGroupUDP6Sendmsg},
 		{"sock_create", m.objs.ClawkerSockCreate, ebpf.AttachCGroupInetSockCreate},
@@ -174,7 +231,8 @@ func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContaine
 
 		// Pin the link so it persists if this process exits.
 		pinPath := filepath.Join(m.pinPath, fmt.Sprintf("link_%s_%d", a.name, cgroupID))
-		if pinErr := l.Pin(pinPath); pinErr != nil && !errors.Is(pinErr, os.ErrExist) {
+		os.Remove(pinPath) // remove stale pin
+		if pinErr := l.Pin(pinPath); pinErr != nil {
 			m.log.Warn().Err(pinErr).Str("program", a.name).Msg("ebpf enable: pinning link (non-fatal)")
 		}
 
@@ -197,7 +255,7 @@ func (m *Manager) Disable(cgroupID uint64) error {
 	}
 
 	// Also unpin any persisted links for this cgroup.
-	linkNames := []string{"connect4", "sendmsg4", "connect6", "sendmsg6", "sock_create"}
+	linkNames := []string{"connect4", "sendmsg4", "recvmsg4", "connect6", "sendmsg6", "sock_create"}
 	for _, name := range linkNames {
 		pinPath := filepath.Join(m.pinPath, fmt.Sprintf("link_%s_%d", name, cgroupID))
 		l, err := link.LoadPinnedLink(pinPath, nil)
@@ -279,11 +337,19 @@ func (m *Manager) GarbageCollectDNS() int {
 	return len(expired)
 }
 
+// LookupContainer returns the container_map entry for a given cgroup ID.
+func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, error) {
+	var cfg clawkerContainerConfig
+	err := m.objs.ContainerMap.Lookup(cgroupID, &cfg)
+	return cfg, err
+}
+
 // Route describes a per-domain TCP route for a container.
 type Route struct {
-	DomainHash uint32
-	DstPort    uint16
-	EnvoyPort  uint16
+	Domain     string `json:"domain"`
+	DomainHash uint32 `json:"domain_hash"`
+	DstPort    uint16 `json:"dst_port"`
+	EnvoyPort  uint16 `json:"envoy_port"`
 }
 
 // NewContainerConfig builds a BPF container_config from network parameters.

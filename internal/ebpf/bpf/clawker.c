@@ -1,27 +1,27 @@
 // SPDX-License-Identifier: GPL-2.0
 // clawker.c — All clawker eBPF programs in a single compilation unit.
 //
-// Five cgroup programs that replace iptables for per-container egress control:
-//   1. cgroup/connect4  — IPv4 TCP/UDP routing to Envoy/CoreDNS
-//   2. cgroup/sendmsg4  — IPv4 UDP routing (DNS redirect + block)
-//   3. cgroup/connect6  — IPv6 TCP deny
-//   4. cgroup/sendmsg6  — IPv6 UDP deny
-//   5. cgroup/sock_create — Raw socket blocking (ICMP prevention)
+// Six cgroup programs that replace iptables for per-container egress control:
+//   1. cgroup/connect4  — IPv4 TCP/UDP: redirect to Envoy/CoreDNS + allow/deny
+//   2. cgroup/sendmsg4  — IPv4 UDP: DNS redirect + block
+//   3. cgroup/recvmsg4  — IPv4 UDP: rewrite DNS response source
+//   4. cgroup/connect6  — IPv6 TCP deny
+//   5. cgroup/sendmsg6  — IPv6 UDP deny
+//   6. cgroup/sock_create — Raw socket blocking (ICMP prevention)
 //
 // All programs share pinned BPF maps defined in common.h. The Go userspace
 // code (internal/ebpf/) manages these maps and attaches programs to container
 // cgroups via the cilium/ebpf library.
+//
+// Loop prevention: Envoy sets SO_MARK on its upstream sockets. The connect4
+// program checks the mark and skips redirect for marked traffic, preventing
+// infinite redirect loops (ref: iximiuz.com eBPF transparent proxy pattern).
 
 #include "common.h"
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-static __always_inline bool is_loopback6(const __u32 ip6[4])
-{
-	return ip6[0] == 0 && ip6[1] == 0 && ip6[2] == 0 && ip6[3] == bpf_htonl(1);
-}
 
 // ---------------------------------------------------------------------------
 // Program 1: cgroup/connect4 — IPv4 TCP/UDP routing
@@ -49,8 +49,24 @@ int clawker_connect4(struct bpf_sock_addr *ctx)
 	if (!cfg)
 		return 1;
 
+	// Loop prevention: skip redirect for Envoy/CoreDNS upstream traffic.
+	// Envoy sets SO_MARK = CLAWKER_MARK on its upstream sockets.
+	__u32 mark = 0;
+	bpf_getsockopt(ctx, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
+	if (mark == CLAWKER_MARK)
+		return 1;
+
 	__u32 dst_ip = ctx->user_ip4;
 	__u16 dst_port = bpf_ntohs(ctx->user_port);
+
+	// DNS redirect — before loopback check because Docker embedded DNS
+	// (127.0.0.11) is loopback. All DNS must go through CoreDNS.
+	if (dst_port == 53) {
+		ctx->user_ip4 = cfg->coredns_ip;
+		ctx->user_port = bpf_htons(53);
+		metric_inc(cgroup_id, 0, 53, ACTION_ALLOW);
+		return 1;
+	}
 
 	if (is_loopback(dst_ip))
 		return 1;
@@ -69,14 +85,6 @@ int clawker_connect4(struct bpf_sock_addr *ctx)
 		ctx->user_ip4 = cfg->envoy_ip;
 		ctx->user_port = bpf_htons(cfg->egress_port);
 		metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
-		return 1;
-	}
-
-	// DNS redirect.
-	if (dst_port == 53) {
-		ctx->user_ip4 = cfg->coredns_ip;
-		ctx->user_port = bpf_htons(53);
-		metric_inc(cgroup_id, 0, 53, ACTION_ALLOW);
 		return 1;
 	}
 
@@ -134,20 +142,51 @@ int clawker_sendmsg4(struct bpf_sock_addr *ctx)
 	__u32 dst_ip = ctx->user_ip4;
 	__u16 dst_port = bpf_ntohs(ctx->user_port);
 
-	if (is_loopback(dst_ip))
-		return 1;
-
-	if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask))
-		return 1;
-
+	// DNS redirect before loopback (Docker embedded DNS is 127.0.0.11).
 	if (dst_port == 53) {
 		ctx->user_ip4 = cfg->coredns_ip;
 		ctx->user_port = bpf_htons(53);
 		return 1;
 	}
 
+	if (is_loopback(dst_ip))
+		return 1;
+
+	if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask))
+		return 1;
+
 	metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
 	return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Program 2b: cgroup/recvmsg4 — Rewrite UDP source on DNS responses
+// ---------------------------------------------------------------------------
+// Paired with sendmsg4: when sendmsg4 rewrites dst from 127.0.0.11→CoreDNS,
+// the response arrives FROM CoreDNS. The app expects the response FROM
+// 127.0.0.11. This program fixes the source address on the response.
+
+SEC("cgroup/recvmsg4")
+int clawker_recvmsg4(struct bpf_sock_addr *ctx)
+{
+	__u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
+	if (uid == 0)
+		return 1;
+
+	__u64 cgroup_id = bpf_get_current_cgroup_id();
+
+	struct container_config *cfg = bpf_map_lookup_elem(&container_map, &cgroup_id);
+	if (!cfg)
+		return 1;
+
+	// If the response is from CoreDNS port 53, rewrite source to
+	// Docker embedded DNS (127.0.0.11) so the app's socket accepts it.
+	if (ctx->user_ip4 == cfg->coredns_ip && bpf_ntohs(ctx->user_port) == 53) {
+		ctx->user_ip4 = bpf_htonl(0x7f00000b); // 127.0.0.11
+		ctx->user_port = bpf_htons(53);
+	}
+
+	return 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +210,17 @@ int clawker_connect6(struct bpf_sock_addr *ctx)
 	if (!cfg)
 		return 1;
 
-	if (is_loopback6(ctx->user_ip6))
+	// Allow IPv6 loopback (::1).
+	if (ctx->user_ip6[0] == 0 && ctx->user_ip6[1] == 0 &&
+	    ctx->user_ip6[2] == 0 && ctx->user_ip6[3] == bpf_htonl(1))
+		return 1;
+
+	// Allow IPv4-mapped IPv6 addresses (::ffff:x.x.x.x).
+	// Dual-stack sockets (Node.js, Python, curl) use AF_INET6 with
+	// IPv4-mapped addresses for IPv4 connections. The connect4 program
+	// handles the actual routing — we just need to not block them here.
+	if (ctx->user_ip6[0] == 0 && ctx->user_ip6[1] == 0 &&
+	    ctx->user_ip6[2] == bpf_htonl(0x0000ffff))
 		return 1;
 
 	metric_inc(cgroup_id, 0, bpf_ntohs(ctx->user_port), ACTION_DENY);
@@ -199,7 +248,14 @@ int clawker_sendmsg6(struct bpf_sock_addr *ctx)
 	if (!cfg)
 		return 1;
 
-	if (is_loopback6(ctx->user_ip6))
+	// Allow IPv6 loopback (::1).
+	if (ctx->user_ip6[0] == 0 && ctx->user_ip6[1] == 0 &&
+	    ctx->user_ip6[2] == 0 && ctx->user_ip6[3] == bpf_htonl(1))
+		return 1;
+
+	// Allow IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) — dual-stack sockets.
+	if (ctx->user_ip6[0] == 0 && ctx->user_ip6[1] == 0 &&
+	    ctx->user_ip6[2] == bpf_htonl(0x0000ffff))
 		return 1;
 
 	metric_inc(cgroup_id, 0, bpf_ntohs(ctx->user_port), ACTION_DENY);

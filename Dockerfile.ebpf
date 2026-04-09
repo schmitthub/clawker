@@ -1,0 +1,38 @@
+# Dockerfile.ebpf — Builds the clawker eBPF manager container image.
+#
+# Multi-stage build: compiles internal/ebpf/cmd into a static binary,
+# then copies it into a minimal Alpine image.
+#
+# Build from repo root:
+#   docker build -f Dockerfile.ebpf -t clawker-ebpf:latest .
+#
+# The resulting image runs as the eBPF manager sidecar alongside
+# Envoy and CoreDNS in the clawker firewall stack.
+
+# --- Builder stage ---
+FROM golang:1.25.8-alpine@sha256:8e02eb337d9e0ea459e041f1ee5eece41cbb61f1d83e7d883a3e2fb4862063fa AS builder
+
+WORKDIR /build
+
+# Cache dependency download layer
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy only the packages needed for ebpf-manager
+COPY internal/ebpf/ internal/ebpf/
+COPY internal/logger/ internal/logger/
+
+# Build static binary
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o /ebpf-manager ./internal/ebpf/cmd
+
+# --- Runtime stage ---
+# Alpine for debugging tools (nsenter, strace). Switch to scratch if size matters.
+FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c
+
+RUN apk add --no-cache iproute2
+
+COPY --from=builder /ebpf-manager /usr/local/bin/ebpf-manager
+
+# Default entrypoint keeps container alive for docker exec commands.
+# The firewall manager runs ebpf-manager subcommands via exec.
+CMD ["sleep", "infinity"]

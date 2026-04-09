@@ -3,6 +3,7 @@ package firewall
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -15,6 +16,7 @@ import (
 type DownOptions struct {
 	IOStreams *iostreams.IOStreams
 	Config    func() (config.Config, error)
+	Firewall  func(context.Context) (fw.FirewallManager, error)
 }
 
 // NewCmdDown creates the firewall down command.
@@ -22,6 +24,7 @@ func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) err
 	opts := &DownOptions{
 		IOStreams: f.IOStreams,
 		Config:    f.Config,
+		Firewall:  f.Firewall,
 	}
 
 	cmd := &cobra.Command{
@@ -44,7 +47,7 @@ No-op if the daemon is not running.`,
 	return cmd
 }
 
-func downRun(_ context.Context, opts *DownOptions) error {
+func downRun(ctx context.Context, opts *DownOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
@@ -60,13 +63,22 @@ func downRun(_ context.Context, opts *DownOptions) error {
 
 	if !fw.IsDaemonRunning(pidFile) {
 		fmt.Fprintf(ios.Out, "%s Firewall daemon is not running\n", cs.InfoIcon())
-		return nil
+	} else {
+		if err := fw.StopDaemon(pidFile); err != nil {
+			return fmt.Errorf("stopping firewall daemon: %w", err)
+		}
+		// Wait for the daemon to exit so its Stop() finishes before ours.
+		fw.WaitForDaemonExit(pidFile, 10*time.Second)
 	}
 
-	if err := fw.StopDaemon(pidFile); err != nil {
-		return fmt.Errorf("stopping firewall daemon: %w", err)
+	// Belt-and-suspenders: stop any remaining firewall containers.
+	// The daemon's Stop() should handle this, but if the daemon was started
+	// by an older binary (e.g. before eBPF support), it may leave containers behind.
+	fwMgr, err := opts.Firewall(ctx)
+	if err == nil {
+		_ = fwMgr.Stop(ctx) // best-effort, ignore "already removed" errors
 	}
 
-	fmt.Fprintf(ios.Out, "%s Firewall daemon stopped\n", cs.SuccessIcon())
+	fmt.Fprintf(ios.Out, "%s Firewall stopped\n", cs.SuccessIcon())
 	return nil
 }

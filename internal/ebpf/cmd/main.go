@@ -66,6 +66,12 @@ func main() {
 		runDNSUpdate(log, os.Args[2], os.Args[3], os.Args[4])
 	case "gc-dns":
 		runGCDNS(log)
+	case "dump":
+		requireArgs(3) // dump <cgroupPath>
+		runDump(log, os.Args[2])
+	case "resolve":
+		requireArgs(3) // resolve <hostname>
+		runResolve(os.Args[2])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		usage()
@@ -110,7 +116,34 @@ func runEnable(log *logger.Logger, cgroupPath, configJSON string) {
 	if err := mgr.Enable(cgroupID, cgroupPath, cfg, args.Routes); err != nil {
 		fatal("enable", err)
 	}
-	fmt.Printf("enabled cgroup_id=%d routes=%d\n", cgroupID, len(args.Routes))
+
+	// Pre-populate dns_cache for route domains so per-domain TCP routing
+	// works immediately (before CoreDNS plugin writes dynamic entries).
+	dnsSeeded := 0
+	for _, r := range args.Routes {
+		if r.Domain == "" {
+			continue
+		}
+		addrs, err := net.LookupHost(r.Domain)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: dns_cache seed: %s: %v\n", r.Domain, err)
+			continue
+		}
+		for _, a := range addrs {
+			ip := net.ParseIP(a)
+			if ip == nil || ip.To4() == nil {
+				continue
+			}
+			// 300s TTL — CoreDNS dynamic entries will refresh before expiry.
+			if err := mgr.UpdateDNSCache(clawkerebpf.IPToUint32(ip), r.DomainHash, 300); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: dns_cache seed: %s (%s): %v\n", r.Domain, a, err)
+			} else {
+				dnsSeeded++
+			}
+		}
+	}
+
+	fmt.Printf("enabled cgroup_id=%d routes=%d dns_seeded=%d\n", cgroupID, len(args.Routes), dnsSeeded)
 }
 
 func runDisable(log *logger.Logger, cgroupPath string) {
@@ -201,6 +234,50 @@ func runGCDNS(log *logger.Logger) {
 
 	removed := mgr.GarbageCollectDNS()
 	fmt.Printf("gc-dns: removed %d expired entries\n", removed)
+}
+
+func runDump(log *logger.Logger, cgroupPath string) {
+	cgroupID, err := clawkerebpf.CgroupID(cgroupPath)
+	if err != nil {
+		fatal("dump", fmt.Errorf("getting cgroup ID for %s: %w", cgroupPath, err))
+	}
+
+	mgr := clawkerebpf.NewManager(log)
+	if err := mgr.OpenPinned(); err != nil {
+		fatal("dump", err)
+	}
+	defer mgr.Close()
+
+	cfg, err := mgr.LookupContainer(cgroupID)
+	if err != nil {
+		fmt.Printf("cgroup_id=%d: no container_map entry: %v\n", cgroupID, err)
+	} else {
+		fmt.Printf("cgroup_id=%d\n", cgroupID)
+		fmt.Printf("  envoy_ip=%s coredns_ip=%s gateway_ip=%s\n",
+			clawkerebpf.Uint32ToIP(cfg.EnvoyIp),
+			clawkerebpf.Uint32ToIP(cfg.CorednsIp),
+			clawkerebpf.Uint32ToIP(cfg.GatewayIp))
+		fmt.Printf("  net_addr=%s net_mask=%s\n",
+			clawkerebpf.Uint32ToIP(cfg.NetAddr),
+			clawkerebpf.Uint32ToIP(cfg.NetMask))
+		fmt.Printf("  host_proxy_ip=%s host_proxy_port=%d egress_port=%d\n",
+			clawkerebpf.Uint32ToIP(cfg.HostProxyIp),
+			cfg.HostProxyPort, cfg.EgressPort)
+	}
+}
+
+func runResolve(hostname string) {
+	addrs, err := net.LookupHost(hostname)
+	if err != nil {
+		fatal("resolve", err)
+	}
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil && ip.To4() != nil {
+			fmt.Println(a)
+			return
+		}
+	}
+	fatal("resolve", fmt.Errorf("no IPv4 address for %s", hostname))
 }
 
 func requireArgs(n int) {

@@ -98,6 +98,7 @@ type clawkerSpecs struct {
 type clawkerProgramSpecs struct {
 	ClawkerConnect4   *ebpf.ProgramSpec `ebpf:"clawker_connect4"`
 	ClawkerConnect6   *ebpf.ProgramSpec `ebpf:"clawker_connect6"`
+	ClawkerRecvmsg4   *ebpf.ProgramSpec `ebpf:"clawker_recvmsg4"`
 	ClawkerSendmsg4   *ebpf.ProgramSpec `ebpf:"clawker_sendmsg4"`
 	ClawkerSendmsg6   *ebpf.ProgramSpec `ebpf:"clawker_sendmsg6"`
 	ClawkerSockCreate *ebpf.ProgramSpec `ebpf:"clawker_sock_create"`
@@ -169,6 +170,7 @@ type clawkerVariables struct {
 type clawkerPrograms struct {
 	ClawkerConnect4   *ebpf.Program `ebpf:"clawker_connect4"`
 	ClawkerConnect6   *ebpf.Program `ebpf:"clawker_connect6"`
+	ClawkerRecvmsg4   *ebpf.Program `ebpf:"clawker_recvmsg4"`
 	ClawkerSendmsg4   *ebpf.Program `ebpf:"clawker_sendmsg4"`
 	ClawkerSendmsg6   *ebpf.Program `ebpf:"clawker_sendmsg6"`
 	ClawkerSockCreate *ebpf.Program `ebpf:"clawker_sock_create"`
@@ -178,6 +180,7 @@ func (p *clawkerPrograms) Close() error {
 	return _ClawkerClose(
 		p.ClawkerConnect4,
 		p.ClawkerConnect6,
+		p.ClawkerRecvmsg4,
 		p.ClawkerSendmsg4,
 		p.ClawkerSendmsg6,
 		p.ClawkerSockCreate,
