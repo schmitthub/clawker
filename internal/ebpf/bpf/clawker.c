@@ -11,28 +11,56 @@
 //
 // clawker.c — All clawker eBPF programs in a single compilation unit.
 //
-// Seven cgroup programs that replace iptables for per-container egress control:
-//   1. cgroup/connect4  — IPv4 TCP/UDP: redirect to Envoy/CoreDNS + allow/deny
-//   2. cgroup/sendmsg4  — IPv4 UDP: DNS redirect + block
-//   3. cgroup/recvmsg4  — IPv4 UDP: rewrite DNS response source
-//   4. cgroup/connect6  — IPv6: full IPv4-mapped routing + native deny
-//   5. cgroup/sendmsg6  — IPv6 UDP: IPv4-mapped DNS redirect + native deny
-//   6. cgroup/recvmsg6  — IPv6 UDP: rewrite IPv4-mapped DNS response source
+// Seven cgroup programs that replace iptables for per-container egress
+// control:
+//   1. cgroup/connect4    — IPv4 TCP/UDP: redirect to Envoy/CoreDNS + deny
+//   2. cgroup/sendmsg4    — IPv4 UDP: DNS redirect + non-DNS deny
+//   3. cgroup/recvmsg4    — IPv4 UDP: rewrite DNS response source
+//   4. cgroup/connect6    — IPv6: full IPv4-mapped routing + native deny
+//   5. cgroup/sendmsg6    — IPv6 UDP: IPv4-mapped DNS redirect + native deny
+//   6. cgroup/recvmsg6    — IPv6 UDP: rewrite IPv4-mapped DNS response source
 //   7. cgroup/sock_create — Raw socket blocking (ICMP prevention)
 //
-// All programs share pinned BPF maps defined in common.h. The Go userspace
-// code (internal/ebpf/) manages these maps and attaches programs to container
-// cgroups via the cilium/ebpf library.
+// Routing DRY: the IPv4 and IPv4-mapped-over-IPv6 code paths share the same
+// routing decisions. All of that logic lives in decide_connect/decide_sendmsg
+// helpers in common.h — the per-program functions below are thin shims that
+// translate a route_result into the right ctx field write and return value.
 //
-// Loop prevention: Envoy sets SO_MARK on its upstream sockets. The connect4
-// program checks the mark and skips redirect for marked traffic, preventing
-// infinite redirect loops (ref: iximiuz.com eBPF transparent proxy pattern).
+// Loop prevention: Envoy sets SO_MARK on its upstream sockets. decide_connect
+// checks the mark and skips redirect for marked traffic, preventing infinite
+// redirect loops (ref: iximiuz.com eBPF transparent proxy pattern).
 
 #include "common.h"
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// apply_v4 is the thin connect4/sendmsg4 return-path wrapper: given a
+// route_result, write ctx->user_ip4/user_port and return the verdict mapped
+// to a BPF return value (1 = allow, 0 = drop).
+static __always_inline int apply_v4(struct bpf_sock_addr *ctx, struct route_result r)
+{
+	if (r.verdict == V_REWRITE) {
+		ctx->user_ip4  = r.new_ip;
+		ctx->user_port = r.new_port_nbo;
+		return 1;
+	}
+	if (r.verdict == V_DENY)
+		return 0;
+	return 1;
+}
+
+// apply_v6_mapped is the IPv4-mapped counterpart of apply_v4 for connect6
+// and sendmsg6. Only user_ip6[3] is rewritten — user_ip6[0..2] stay as the
+// ::ffff: prefix so the address remains a valid IPv4-mapped IPv6 literal.
+static __always_inline int apply_v6_mapped(struct bpf_sock_addr *ctx, struct route_result r)
+{
+	if (r.verdict == V_REWRITE) {
+		ctx->user_ip6[3] = r.new_ip;
+		ctx->user_port   = r.new_port_nbo;
+		return 1;
+	}
+	if (r.verdict == V_DENY)
+		return 0;
+	return 1;
+}
 
 // ---------------------------------------------------------------------------
 // Program 1: cgroup/connect4 — IPv4 TCP/UDP routing
@@ -44,88 +72,15 @@ int clawker_connect4(struct bpf_sock_addr *ctx)
 	if (ctx->type != SOCK_STREAM && ctx->type != SOCK_DGRAM)
 		return 1;
 
-	__u64 cgroup_id = bpf_get_current_cgroup_id();
-	__u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
-
-	if (uid == 0)
+	struct container_config *cfg;
+	__u64 cgroup_id;
+	if (enter_enforced(&cfg, &cgroup_id, true))
 		return 1;
 
-	__u8 *bypassed = bpf_map_lookup_elem(&bypass_map, &cgroup_id);
-	if (bypassed && *bypassed == 1) {
-		metric_inc(cgroup_id, 0, 0, ACTION_BYPASS);
-		return 1;
-	}
-
-	struct container_config *cfg = bpf_map_lookup_elem(&container_map, &cgroup_id);
-	if (!cfg)
-		return 1;
-
-	// Loop prevention: skip redirect for Envoy/CoreDNS upstream traffic.
-	// Envoy sets SO_MARK = CLAWKER_MARK on its upstream sockets.
-	__u32 mark = 0;
-	bpf_getsockopt(ctx, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
-	if (mark == CLAWKER_MARK)
-		return 1;
-
-	__u32 dst_ip = ctx->user_ip4;
-	__u16 dst_port = bpf_ntohs(ctx->user_port);
-
-	// DNS redirect — before loopback check because Docker embedded DNS
-	// (127.0.0.11) is loopback. All DNS must go through CoreDNS.
-	if (dst_port == 53) {
-		ctx->user_ip4 = cfg->coredns_ip;
-		ctx->user_port = bpf_htons(53);
-		metric_inc(cgroup_id, 0, 53, ACTION_ALLOW);
-		return 1;
-	}
-
-	if (is_loopback(dst_ip))
-		return 1;
-
-	if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask))
-		return 1;
-
-	if (cfg->host_proxy_ip != 0 &&
-	    dst_ip == cfg->host_proxy_ip && dst_port == cfg->host_proxy_port)
-		return 1;
-
-	// Gateway lockdown.
-	if (dst_ip == cfg->gateway_ip) {
-		if (cfg->host_proxy_port != 0 && dst_port == cfg->host_proxy_port)
-			return 1;
-		ctx->user_ip4 = cfg->envoy_ip;
-		ctx->user_port = bpf_htons(cfg->egress_port);
-		metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
-		return 1;
-	}
-
-	// Non-DNS UDP: deny.
-	if (ctx->type == SOCK_DGRAM) {
-		metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
-		return 0;
-	}
-
-	// TCP per-domain routing via DNS cache.
-	struct dns_entry *dns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
-	if (dns) {
-		struct route_key rk = {
-			.domain_hash = dns->domain_hash,
-			.dst_port = dst_port,
-		};
-		struct route_val *rv = bpf_map_lookup_elem(&route_map, &rk);
-		if (rv) {
-			ctx->user_ip4 = cfg->envoy_ip;
-			ctx->user_port = bpf_htons(rv->envoy_port);
-			metric_inc(cgroup_id, dns->domain_hash, dst_port, ACTION_ALLOW);
-			return 1;
-		}
-	}
-
-	// Catch-all: Envoy egress listener (TLS/SNI inspection).
-	ctx->user_ip4 = cfg->envoy_ip;
-	ctx->user_port = bpf_htons(cfg->egress_port);
-	metric_inc(cgroup_id, dns ? dns->domain_hash : 0, dst_port, ACTION_ALLOW);
-	return 1;
+	struct route_result r = decide_connect(ctx, cfg, cgroup_id,
+					       ctx->user_ip4,
+					       bpf_ntohs(ctx->user_port));
+	return apply_v4(ctx, r);
 }
 
 // ---------------------------------------------------------------------------
@@ -135,170 +90,65 @@ int clawker_connect4(struct bpf_sock_addr *ctx)
 SEC("cgroup/sendmsg4")
 int clawker_sendmsg4(struct bpf_sock_addr *ctx)
 {
-	__u64 cgroup_id = bpf_get_current_cgroup_id();
-	__u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
-
-	if (uid == 0)
+	struct container_config *cfg;
+	__u64 cgroup_id;
+	if (enter_enforced(&cfg, &cgroup_id, true))
 		return 1;
 
-	__u8 *bypassed = bpf_map_lookup_elem(&bypass_map, &cgroup_id);
-	if (bypassed && *bypassed == 1)
-		return 1;
-
-	struct container_config *cfg = bpf_map_lookup_elem(&container_map, &cgroup_id);
-	if (!cfg)
-		return 1;
-
-	__u32 dst_ip = ctx->user_ip4;
-	__u16 dst_port = bpf_ntohs(ctx->user_port);
-
-	// DNS redirect before loopback (Docker embedded DNS is 127.0.0.11).
-	if (dst_port == 53) {
-		ctx->user_ip4 = cfg->coredns_ip;
-		ctx->user_port = bpf_htons(53);
-		return 1;
-	}
-
-	if (is_loopback(dst_ip))
-		return 1;
-
-	if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask))
-		return 1;
-
-	metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
-	return 0;
+	struct route_result r = decide_sendmsg(cfg, cgroup_id,
+					       ctx->user_ip4,
+					       bpf_ntohs(ctx->user_port));
+	return apply_v4(ctx, r);
 }
 
 // ---------------------------------------------------------------------------
 // Program 2b: cgroup/recvmsg4 — Rewrite UDP source on DNS responses
 // ---------------------------------------------------------------------------
-// Paired with sendmsg4: when sendmsg4 rewrites dst from 127.0.0.11→CoreDNS,
+// Paired with sendmsg4: when sendmsg4 rewrites dst from 127.0.0.11 → CoreDNS,
 // the response arrives FROM CoreDNS. The app expects the response FROM
 // 127.0.0.11. This program fixes the source address on the response.
 
 SEC("cgroup/recvmsg4")
 int clawker_recvmsg4(struct bpf_sock_addr *ctx)
 {
-	__u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
-	if (uid == 0)
+	struct container_config *cfg;
+	__u64 cgroup_id;
+	if (enter_enforced(&cfg, &cgroup_id, false))
 		return 1;
 
-	__u64 cgroup_id = bpf_get_current_cgroup_id();
-
-	struct container_config *cfg = bpf_map_lookup_elem(&container_map, &cgroup_id);
-	if (!cfg)
-		return 1;
-
-	// If the response is from CoreDNS port 53, rewrite source to
-	// Docker embedded DNS (127.0.0.11) so the app's socket accepts it.
-	if (ctx->user_ip4 == cfg->coredns_ip && bpf_ntohs(ctx->user_port) == 53) {
-		ctx->user_ip4 = bpf_htonl(0x7f00000b); // 127.0.0.11
-		ctx->user_port = bpf_htons(53);
+	if (should_rewrite_dns_source(cfg, ctx->user_ip4, bpf_ntohs(ctx->user_port))) {
+		ctx->user_ip4  = bpf_htonl(DOCKER_EMBEDDED_DNS);
+		ctx->user_port = bpf_htons(DNS_PORT);
 	}
-
 	return 1;
 }
 
 // ---------------------------------------------------------------------------
 // Program 3: cgroup/connect6 — IPv6 routing (IPv4-mapped) + native deny
 // ---------------------------------------------------------------------------
+// Dual-stack sockets route IPv4 traffic through AF_INET6 as ::ffff:x.x.x.x.
+// Without an IPv4-mapped path here, applications using dual-stack sockets
+// would bypass connect4 entirely. Native IPv6 is not supported and is
+// denied outright.
 
 SEC("cgroup/connect6")
 int clawker_connect6(struct bpf_sock_addr *ctx)
 {
-	__u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
-	if (uid == 0)
+	struct container_config *cfg;
+	__u64 cgroup_id;
+	if (enter_enforced(&cfg, &cgroup_id, true))
 		return 1;
 
-	__u64 cgroup_id = bpf_get_current_cgroup_id();
-
-	__u8 *bypassed = bpf_map_lookup_elem(&bypass_map, &cgroup_id);
-	if (bypassed && *bypassed == 1) {
-		metric_inc(cgroup_id, 0, 0, ACTION_BYPASS);
-		return 1;
-	}
-
-	struct container_config *cfg = bpf_map_lookup_elem(&container_map, &cgroup_id);
-	if (!cfg)
+	if (is_ipv6_loopback(ctx))
 		return 1;
 
-	// Allow IPv6 loopback (::1).
-	if (ctx->user_ip6[0] == 0 && ctx->user_ip6[1] == 0 &&
-	    ctx->user_ip6[2] == 0 && ctx->user_ip6[3] == bpf_htonl(1))
-		return 1;
-
-	// IPv4-mapped IPv6 (::ffff:x.x.x.x): dual-stack sockets.
-	// Apply the same routing logic as connect4. Only user_ip6[3] (the IPv4
-	// part) is rewritten — [0],[1],[2] stay as the ::ffff: prefix.
-	if (ctx->user_ip6[0] == 0 && ctx->user_ip6[1] == 0 &&
-	    ctx->user_ip6[2] == bpf_htonl(0x0000ffff)) {
-
+	if (is_ipv4_mapped(ctx)) {
 		if (ctx->type != SOCK_STREAM && ctx->type != SOCK_DGRAM)
 			return 1;
-
-		__u32 mark = 0;
-		bpf_getsockopt(ctx, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
-		if (mark == CLAWKER_MARK)
-			return 1;
-
-		__u32 dst_ip = ctx->user_ip6[3];
-		__u16 dst_port = bpf_ntohs(ctx->user_port);
-
-		// DNS redirect.
-		if (dst_port == 53) {
-			ctx->user_ip6[3] = cfg->coredns_ip;
-			ctx->user_port = bpf_htons(53);
-			metric_inc(cgroup_id, 0, 53, ACTION_ALLOW);
-			return 1;
-		}
-
-		if (is_loopback(dst_ip))
-			return 1;
-
-		if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask))
-			return 1;
-
-		if (cfg->host_proxy_ip != 0 &&
-		    dst_ip == cfg->host_proxy_ip && dst_port == cfg->host_proxy_port)
-			return 1;
-
-		// Gateway lockdown.
-		if (dst_ip == cfg->gateway_ip) {
-			if (cfg->host_proxy_port != 0 && dst_port == cfg->host_proxy_port)
-				return 1;
-			ctx->user_ip6[3] = cfg->envoy_ip;
-			ctx->user_port = bpf_htons(cfg->egress_port);
-			metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
-			return 1;
-		}
-
-		// Non-DNS UDP: deny.
-		if (ctx->type == SOCK_DGRAM) {
-			metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
-			return 0;
-		}
-
-		// TCP per-domain routing via DNS cache.
-		struct dns_entry *dns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
-		if (dns) {
-			struct route_key rk = {
-				.domain_hash = dns->domain_hash,
-				.dst_port = dst_port,
-			};
-			struct route_val *rv = bpf_map_lookup_elem(&route_map, &rk);
-			if (rv) {
-				ctx->user_ip6[3] = cfg->envoy_ip;
-				ctx->user_port = bpf_htons(rv->envoy_port);
-				metric_inc(cgroup_id, dns->domain_hash, dst_port, ACTION_ALLOW);
-				return 1;
-			}
-		}
-
-		// Catch-all: Envoy egress listener (TLS/SNI inspection).
-		ctx->user_ip6[3] = cfg->envoy_ip;
-		ctx->user_port = bpf_htons(cfg->egress_port);
-		metric_inc(cgroup_id, dns ? dns->domain_hash : 0, dst_port, ACTION_ALLOW);
-		return 1;
+		struct route_result r = decide_connect(ctx, cfg, cgroup_id,
+						       ctx->user_ip6[3],
+						       bpf_ntohs(ctx->user_port));
+		return apply_v6_mapped(ctx, r);
 	}
 
 	// Native IPv6: deny (not supported).
@@ -307,57 +157,29 @@ int clawker_connect6(struct bpf_sock_addr *ctx)
 }
 
 // ---------------------------------------------------------------------------
-// Program 4: cgroup/sendmsg6 — IPv6 UDP deny
+// Program 4: cgroup/sendmsg6 — IPv6 UDP routing + native deny
 // ---------------------------------------------------------------------------
+// IPv4-mapped: apply the sendmsg4 routing logic. Without this, unconnected
+// UDP DNS queries via dual-stack sockets (nslookup, glibc resolver) bypass
+// CoreDNS and hit Docker's embedded DNS at ::ffff:127.0.0.11 directly.
+// Native IPv6 UDP is denied outright.
 
 SEC("cgroup/sendmsg6")
 int clawker_sendmsg6(struct bpf_sock_addr *ctx)
 {
-	__u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
-	if (uid == 0)
+	struct container_config *cfg;
+	__u64 cgroup_id;
+	if (enter_enforced(&cfg, &cgroup_id, true))
 		return 1;
 
-	__u64 cgroup_id = bpf_get_current_cgroup_id();
-
-	__u8 *bypassed = bpf_map_lookup_elem(&bypass_map, &cgroup_id);
-	if (bypassed && *bypassed == 1)
+	if (is_ipv6_loopback(ctx))
 		return 1;
 
-	struct container_config *cfg = bpf_map_lookup_elem(&container_map, &cgroup_id);
-	if (!cfg)
-		return 1;
-
-	// Allow IPv6 loopback (::1).
-	if (ctx->user_ip6[0] == 0 && ctx->user_ip6[1] == 0 &&
-	    ctx->user_ip6[2] == 0 && ctx->user_ip6[3] == bpf_htonl(1))
-		return 1;
-
-	// IPv4-mapped IPv6 (::ffff:x.x.x.x): apply the same UDP routing logic as
-	// sendmsg4. Without this, unconnected UDP DNS queries via dual-stack
-	// sockets (nslookup, glibc resolver) bypass CoreDNS and hit Docker's
-	// embedded DNS at ::ffff:127.0.0.11 directly.
-	if (ctx->user_ip6[0] == 0 && ctx->user_ip6[1] == 0 &&
-	    ctx->user_ip6[2] == bpf_htonl(0x0000ffff)) {
-
-		__u32 dst_ip = ctx->user_ip6[3];
-		__u16 dst_port = bpf_ntohs(ctx->user_port);
-
-		// DNS redirect (before loopback check — Docker DNS is 127.0.0.11).
-		if (dst_port == 53) {
-			ctx->user_ip6[3] = cfg->coredns_ip;
-			ctx->user_port = bpf_htons(53);
-			return 1;
-		}
-
-		if (is_loopback(dst_ip))
-			return 1;
-
-		if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask))
-			return 1;
-
-		// Non-DNS UDP: deny.
-		metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
-		return 0;
+	if (is_ipv4_mapped(ctx)) {
+		struct route_result r = decide_sendmsg(cfg, cgroup_id,
+						       ctx->user_ip6[3],
+						       bpf_ntohs(ctx->user_port));
+		return apply_v6_mapped(ctx, r);
 	}
 
 	// Native IPv6 UDP: deny.
@@ -376,57 +198,44 @@ int clawker_sendmsg6(struct bpf_sock_addr *ctx)
 SEC("cgroup/recvmsg6")
 int clawker_recvmsg6(struct bpf_sock_addr *ctx)
 {
-	__u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
-	if (uid == 0)
-		return 1;
-
-	__u64 cgroup_id = bpf_get_current_cgroup_id();
-
-	struct container_config *cfg = bpf_map_lookup_elem(&container_map, &cgroup_id);
-	if (!cfg)
+	struct container_config *cfg;
+	__u64 cgroup_id;
+	if (enter_enforced(&cfg, &cgroup_id, false))
 		return 1;
 
 	// Only IPv4-mapped responses — native IPv6 doesn't go through CoreDNS.
-	if (ctx->user_ip6[0] != 0 || ctx->user_ip6[1] != 0 ||
-	    ctx->user_ip6[2] != bpf_htonl(0x0000ffff))
+	if (!is_ipv4_mapped(ctx))
 		return 1;
 
-	// If the response is from CoreDNS port 53, rewrite source to
-	// Docker embedded DNS (127.0.0.11) so the app's socket accepts it.
-	if (ctx->user_ip6[3] == cfg->coredns_ip && bpf_ntohs(ctx->user_port) == 53) {
-		ctx->user_ip6[3] = bpf_htonl(0x7f00000b); // 127.0.0.11
-		ctx->user_port = bpf_htons(53);
+	if (should_rewrite_dns_source(cfg, ctx->user_ip6[3], bpf_ntohs(ctx->user_port))) {
+		ctx->user_ip6[3] = bpf_htonl(DOCKER_EMBEDDED_DNS);
+		ctx->user_port   = bpf_htons(DNS_PORT);
 	}
-
 	return 1;
 }
 
 // ---------------------------------------------------------------------------
 // Program 5: cgroup/sock_create — Raw socket blocking
 // ---------------------------------------------------------------------------
+// sock_create uses struct bpf_sock, not bpf_sock_addr. It can't share the
+// routing helpers but it still uses enter_enforced — bpf_get_current_* calls
+// work regardless of ctx type, so the preamble is identical.
 
 SEC("cgroup/sock_create")
 int clawker_sock_create(struct bpf_sock *ctx)
 {
-	__u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
-	if (uid == 0)
-		return 1;
-
-	__u64 cgroup_id = bpf_get_current_cgroup_id();
-
-	__u8 *bypassed = bpf_map_lookup_elem(&bypass_map, &cgroup_id);
-	if (bypassed && *bypassed == 1)
-		return 1;
-
-	struct container_config *cfg = bpf_map_lookup_elem(&container_map, &cgroup_id);
-	if (!cfg)
+	struct container_config *cfg;
+	__u64 cgroup_id;
+	// bpf_sock_addr* vs bpf_sock* — enter_enforced doesn't touch ctx, only
+	// bpf_get_current_uid_gid/bpf_get_current_cgroup_id, so the cast-free
+	// reuse is safe.
+	if (enter_enforced(&cfg, &cgroup_id, true))
 		return 1;
 
 	if (ctx->type == SOCK_RAW) {
 		metric_inc(cgroup_id, 0, 0, ACTION_DENY);
 		return 0;
 	}
-
 	return 1;
 }
 

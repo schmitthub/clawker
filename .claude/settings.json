@@ -1,6 +1,11 @@
 {
   "permissions": {
-    "deny": ["Read(./docs/cli-reference/*)", "Read(./.devcontainer/*)"]
+    "deny": [
+      "Read(./docs/cli-reference/*)",
+      "Read(./.devcontainer/*)"
+    ]
   },
-  "enabledPlugins": {}
+  "enabledPlugins": {
+    "mintlify@claude-plugins-official": true
+  }
 }

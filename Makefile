@@ -3,6 +3,7 @@
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean \
         licenses licenses-check \
         docs docs-check \
+        bpf-builder-image bpf-regenerate bpf-verify \
         pre-commit pre-commit-install \
         localenv \
         restart \
@@ -294,6 +295,91 @@ test-clean:
 	@docker network rm $$(docker network ls -q --filter "label=dev.clawker.test=true") 2>/dev/null || true
 	@docker rmi -f $$(docker images -q --filter "label=dev.clawker.test=true") 2>/dev/null || true
 	@echo "Test cleanup complete!"
+
+# ============================================================================
+# BPF Reproducible Bytecode Targets
+# ============================================================================
+#
+# `make bpf-regenerate` and `make bpf-verify` run BPF bytecode generation
+# inside a fully pinned Docker build environment (Dockerfile.bpf-builder) so
+# the output is byte-reproducible from pinned inputs: base image digest,
+# apt package versions, Go toolchain digest, and bpf2go version.
+#
+# The committed internal/ebpf/clawker_*_bpfel.{go,o} files are authoritative
+# for `go build`. `bpf-verify` is the reproducibility gate — it regenerates
+# in the pinned image and diffs against the committed bytecode. CI runs it
+# on every PR so committed .o files are never trust-on-first-use.
+#
+# See internal/ebpf/REPRODUCIBILITY.md for the provenance chain and the
+# procedure for updating pinned inputs.
+
+BPF_BUILDER_IMAGE := clawker-bpf-builder:latest
+BPF_GENERATED := internal/ebpf/clawker_x86_bpfel.go internal/ebpf/clawker_x86_bpfel.o \
+                 internal/ebpf/clawker_arm64_bpfel.go internal/ebpf/clawker_arm64_bpfel.o
+
+# Build the pinned BPF builder image. Re-runs whenever Dockerfile.bpf-builder
+# changes. The image tag is local-only; we re-derive it from pinned sources
+# each time rather than pushing to a registry.
+bpf-builder-image:
+	@echo "Building pinned BPF builder image..."
+	@if grep -q 'PIN_ME_BEFORE_MERGE' Dockerfile.bpf-builder; then \
+		echo "" >&2; \
+		echo "ERROR: Dockerfile.bpf-builder contains a PIN_ME_BEFORE_MERGE placeholder." >&2; \
+		echo "       Follow the pin-refresh recipe in internal/ebpf/REPRODUCIBILITY.md" >&2; \
+		echo "       to fill in the base image digest before running bpf-regenerate." >&2; \
+		echo "" >&2; \
+		exit 1; \
+	fi
+	docker build -f Dockerfile.bpf-builder -t $(BPF_BUILDER_IMAGE) .
+
+# Regenerate the BPF Go bindings + .o bytecode from clawker.c / common.h
+# inside the pinned builder image. Writes directly to the host tree so the
+# next `go build` picks up the fresh output.
+bpf-regenerate: bpf-builder-image
+	@echo "Regenerating BPF bytecode in pinned builder image..."
+	docker run --rm \
+		-v $(CURDIR):/src \
+		-u $(shell id -u):$(shell id -g) \
+		$(BPF_BUILDER_IMAGE)
+	@echo "Done. Committed bytecode under internal/ebpf/ has been rewritten."
+	@echo "If this differed from HEAD, commit the change."
+
+# Reproducibility gate: regenerate in the pinned image and fail if the output
+# differs from the committed bytecode. This is what CI runs on every PR to
+# guarantee the committed .o files match the committed .c sources under the
+# pinned recipe.
+bpf-verify: bpf-builder-image
+	@echo "Verifying BPF bytecode reproducibility..."
+	@for f in $(BPF_GENERATED); do \
+		if [ ! -f "$$f" ]; then \
+			echo "ERROR: committed BPF artifact missing: $$f" >&2; \
+			exit 1; \
+		fi; \
+	done
+	@tmpdir=$$(mktemp -d); \
+	trap "rm -rf $$tmpdir" EXIT; \
+	for f in $(BPF_GENERATED); do \
+		cp "$$f" "$$tmpdir/$$(basename $$f).orig"; \
+	done; \
+	docker run --rm \
+		-v $(CURDIR):/src \
+		-u $(shell id -u):$(shell id -g) \
+		$(BPF_BUILDER_IMAGE); \
+	fail=0; \
+	for f in $(BPF_GENERATED); do \
+		if ! cmp -s "$$f" "$$tmpdir/$$(basename $$f).orig"; then \
+			echo "" >&2; \
+			echo "ERROR: $$f drifted from committed bytecode." >&2; \
+			echo "       Run 'make bpf-regenerate' and commit the result." >&2; \
+			fail=1; \
+		fi; \
+	done; \
+	if [ $$fail -ne 0 ]; then \
+		echo "" >&2; \
+		echo "BPF bytecode reproducibility check FAILED." >&2; \
+		exit 1; \
+	fi
+	@echo "BPF bytecode is reproducible from committed sources + pinned recipe."
 
 # ============================================================================
 # License Targets

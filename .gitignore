@@ -101,6 +101,11 @@ RALPH-TEST.md
 internal/firewall/assets/ebpf-manager
 internal/firewall/assets/coredns-clawker
 
+# BPF kernel BTF dump — clawker does not use CO-RE and does not consume
+# vmlinux.h. Historical developer workflows may still generate it via
+# bpftool; this guard prevents it from sneaking back into the tree.
+internal/ebpf/bpf/vmlinux.h
+
 # Adversarial test artifacts
 test/adversarial/report.html
 test/adversarial/certs/

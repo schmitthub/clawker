@@ -4,6 +4,38 @@ Top-level tracker for features and architectural improvements that are known but
 
 ---
 
+## User notes on potential features
+
+- we prob dont need root bypassing anymore btw. that was only for an escape hatch when we were managing routing with iptables. might be safer to keep root's egress locked down too now if it doesn't effect eBPF's routing. now we are doing toggling via containerid mappings right?
+- Add a claude hook via managed settings in /etc/claude-code (https://code.claude.com/docs/en/settings#settings-files) to always require approval when editing clawker.yaml files might be a good defensive measure to prevent clawker image polution 
+
+---
+
+## 0. Finish the BPF reproducibility chain (pin digest + SLSA attestation)
+
+**Status:** infrastructure in place, two gaps remain
+**Scope:** small (pin) + medium (SLSA)
+
+The DRY refactor of `internal/ebpf/bpf/clawker.c` + `common.h` also dropped the committed `vmlinux.h` (clawker is non-CO-RE, UAPI types are sufficient) and introduced `Dockerfile.bpf-builder` + `make bpf-regenerate` / `make bpf-verify` + a CI reproducibility gate in `.github/workflows/test.yml`. See `internal/ebpf/REPRODUCIBILITY.md` for the full chain.
+
+Two loose ends from that work:
+
+1. **Pin the base image digest.** `Dockerfile.bpf-builder` currently has `FROM debian:bookworm-slim@sha256:PIN_ME_BEFORE_MERGE`. The CI `bpf-reproducibility` job detects the placeholder and emits a warning instead of running the verification, so the rest of the refactor could land without waiting on the pin. Before the next BPF change lands on trunk, fill in the real digest using the recipe in `internal/ebpf/REPRODUCIBILITY.md` ("Updating pinned inputs" → step 1). Also re-verify the `CLANG_VERSION`, `LIBBPF_DEV_VERSION`, `LINUX_LIBC_DEV_VERSION` ARGs still resolve in the chosen digest (step 2 of the same section).
+
+2. **SLSA provenance attestation on release binaries.** The BPF bytecode is now reproducible from pinned sources, but the released `clawker` binary itself should carry a SLSA attestation so end users can verify the chain. Check `.github/workflows/release.yml` — if it doesn't already emit SLSA attestations via the SLSA GitHub generator action, add it. The BPF `.o` is `go:embed`'d, so the binary attestation transitively covers the BPF bytecode. This is the last mile to an end-to-end SLSA L3 story for clawker's kernel-level surface.
+
+Files touched by the refactor (for context when picking this up):
+- `internal/ebpf/bpf/clawker.c`, `internal/ebpf/bpf/common.h` (refactor)
+- `internal/ebpf/clawker_*_bpfel.{go,o}` (regenerated)
+- `internal/ebpf/gen.go` (new cflags for UAPI headers)
+- `Dockerfile.bpf-builder` (new pinned builder)
+- `Makefile` (new `bpf-builder-image`, `bpf-regenerate`, `bpf-verify` targets)
+- `internal/ebpf/REPRODUCIBILITY.md` (provenance doc)
+- `.github/workflows/test.yml` (`bpf-reproducibility` job)
+- `CLAUDE.md` (version pinning table entry)
+
+---
+
 ## 1. `firewall enable --agent` — wrong cgroup path
 
 **Status:** broken (bug)

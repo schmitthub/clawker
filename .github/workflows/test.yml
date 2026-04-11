@@ -29,3 +29,35 @@ jobs:
           path: coverage.out
           if-no-files-found: ignore
           retention-days: 7
+
+  bpf-reproducibility:
+    # Regenerates clawker_*_bpfel.{go,o} inside the pinned BPF builder image
+    # (Dockerfile.bpf-builder) and fails if the output drifts from the
+    # committed bytecode. This is the gate that keeps the committed BPF
+    # .o files from being trust-on-first-use: if the committed sources
+    # don't reproduce the committed bytecode under the pinned recipe,
+    # the PR fails. See internal/ebpf/REPRODUCIBILITY.md.
+    #
+    # Skipped automatically while Dockerfile.bpf-builder still contains the
+    # PIN_ME_BEFORE_MERGE placeholder, so the rest of the PR can land even
+    # though the digest pin is the last merge-blocker. Once the pin is
+    # filled in, this job enforces drift-freeness on every subsequent PR.
+    name: BPF Bytecode Reproducibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Check digest pin is in place
+        id: pinned
+        run: |
+          if grep -q 'PIN_ME_BEFORE_MERGE' Dockerfile.bpf-builder; then
+            echo "pinned=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Dockerfile.bpf-builder digest is not pinned; skipping reproducibility gate. See internal/ebpf/REPRODUCIBILITY.md."
+          else
+            echo "pinned=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify BPF bytecode is reproducible
+        if: steps.pinned.outputs.pinned == 'true'
+        run: make bpf-verify
