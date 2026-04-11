@@ -66,8 +66,14 @@ func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 		if proto != "ssh" && proto != "tcp" {
 			continue
 		}
+		// Dst is normalized to the canonical domain (no leading/trailing
+		// dots) so that DomainHash(Dst) matches what the dnsbpf CoreDNS
+		// plugin writes into dns_cache — the Corefile zones are already
+		// normalized via normalizeDomain, so any leading-dot wildcard
+		// marker on the raw rule Dst must be stripped here too or the
+		// route_map lookup will miss for wildcard TCP/SSH rules.
 		mappings = append(mappings, TCPMapping{
-			Dst:       r.Dst,
+			Dst:       normalizeDomain(r.Dst),
 			DstPort:   tcpDefaultPort(r),
 			EnvoyPort: ports.TCPPortBase + idx,
 		})

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	clawkerebpf "github.com/schmitthub/clawker/internal/ebpf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -106,6 +107,29 @@ func TestTCPMappings(t *testing.T) {
 				{Dst: "github.com", DstPort: 22, EnvoyPort: 10001},
 			},
 		},
+		{
+			// Wildcard rules use a leading-dot convention. TCPMapping.Dst
+			// must strip it so DomainHash(Dst) matches the CoreDNS zone
+			// hash that the dnsbpf plugin writes into dns_cache for
+			// resolved subdomains (the Corefile generator already strips
+			// the leading dot via normalizeDomain).
+			name: "wildcard SSH rule normalized to canonical domain",
+			rules: []config.EgressRule{
+				{Dst: ".github.com", Proto: "ssh", Port: 22, Action: "allow"},
+			},
+			expected: []TCPMapping{
+				{Dst: "github.com", DstPort: 22, EnvoyPort: 10001},
+			},
+		},
+		{
+			name: "wildcard TCP rule normalized to canonical domain",
+			rules: []config.EgressRule{
+				{Dst: ".db.example.com", Proto: "tcp", Port: 5432, Action: "allow"},
+			},
+			expected: []TCPMapping{
+				{Dst: "db.example.com", DstPort: 5432, EnvoyPort: 10001},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -115,6 +139,45 @@ func TestTCPMappings(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// TestTCPMappings_WildcardDomainHashMatchesDnsbpfZone is a regression test
+// for a bug where wildcard TCP/SSH rules were never enforced at runtime
+// because the route_map lookup missed.
+//
+// The writer side (Manager.syncRoutes) hashed TCPMapping.Dst verbatim
+// (including the leading dot), while the reader side (dnsbpf plugin) hashed
+// the normalized CoreDNS zone name (with the leading dot already stripped
+// by normalizeDomain in the Corefile generator). DomainHash(".example.com")
+// ≠ DomainHash("example.com"), so a rule like `.example.com` ssh 22 would
+// generate an Envoy TCP listener but the BPF route_map entry was keyed on
+// a hash that dnsbpf would never produce — silent bypass.
+//
+// This test asserts the canonical invariant: for any wildcard rule, the
+// hash derived from TCPMapping.Dst must equal the hash of the corresponding
+// normalized Corefile zone.
+func TestTCPMappings_WildcardDomainHashMatchesDnsbpfZone(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: ".example.com", Proto: "ssh", Port: 22, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	mappings := TCPMappings(rules, ports)
+	require.Len(t, mappings, 1)
+
+	// What dnsbpf writes into dns_cache for the wildcard zone (the Corefile
+	// zone is normalizeDomain(".example.com") = "example.com").
+	wantHash := clawkerebpf.DomainHash(normalizeDomain(".example.com"))
+
+	// What Manager.syncRoutes writes into route_map.
+	gotHash := clawkerebpf.DomainHash(mappings[0].Dst)
+
+	assert.Equal(t, wantHash, gotHash,
+		"route_map hash for wildcard rule must match the dnsbpf dns_cache hash "+
+			"for the corresponding CoreDNS zone, otherwise wildcard TCP/SSH rules "+
+			"silently fail at runtime")
 }
 
 func TestGenerateEnvoyConfig_TCPListeners(t *testing.T) {

@@ -74,7 +74,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── config/                # Storage.Store[T] config engine: schema types, multi-file loading, constants (see internal/config/CLAUDE.md)
 │   │   └── storeui/           # Domain adapters for storeui: settings/, project/
 │   ├── containerfs/           # Host Claude config preparation for container init
-│   ├── dnsbpf/                # CoreDNS plugin: writes DNS A/AAAA resolutions to the BPF dns_cache map in real time (used by cmd/coredns-clawker)
+│   ├── dnsbpf/                # CoreDNS plugin: writes DNS A-record resolutions (IPv4) to the BPF dns_cache map in real time (used by cmd/coredns-clawker)
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
 │   │   └── mocks/             # FakeClient, test helpers, moby mock transport
 │   ├── docs/                  # CLI doc generation (man, markdown, rst, yaml)

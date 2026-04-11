@@ -636,7 +636,7 @@ t.Run("json_output", func(t *testing.T) {
 })
 
 t.Run("filter_reference", func(t *testing.T) {
-    fake := mocks.NewFakeClient()
+    fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
     fake.SetupImageList(
         mocks.ImageSummaryFixture("clawker-demo:latest"),
         mocks.ImageSummaryFixture("node:20-slim"),
@@ -1251,7 +1251,7 @@ tio.SetSpinnerDisabled(true) // disable spinner animation
 
 ```go
 func TestCmdRun(t *testing.T) {
-    fake := mocks.NewFakeClient()
+    fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
     fake.SetupContainerCreate()
     fake.SetupContainerStart()
 

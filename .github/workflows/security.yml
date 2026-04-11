@@ -114,7 +114,7 @@ jobs:
       # `undefined: clawkerRouteKey`. Manual install keeps the working tree
       # intact.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@d1f380186385b4f64e00313f31743df8e4b89a77 # v1.1.4
 
       - name: Run govulncheck
         run: govulncheck ./...

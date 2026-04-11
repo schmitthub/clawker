@@ -106,12 +106,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		Int("missed_threshold", missedCheckThreshold).
 		Msg("firewall daemon starting")
 
-	if err := writePIDFile(d.pidFile); err != nil {
-		return fmt.Errorf("failed to write PID file: %w", err)
-	}
-	defer removePIDFile(d.pidFile, d.log)
-
-	// Start the firewall stack (pulls images, creates containers, waits for healthy).
+	// Start the firewall stack (pulls images, creates containers, waits for
+	// healthy) BEFORE writing the PID file. Writing the PID first creates a
+	// TOCTOU race where concurrent EnsureDaemon callers observe
+	// isDaemonRunning=true + isStackHealthy=false during normal startup and
+	// SIGTERM a still-starting daemon, causing flapping.
 	d.log.Debug().Msg("calling EnsureRunning to start firewall stack")
 	if err := d.manager.EnsureRunning(ctx); err != nil {
 		d.log.Error().Err(err).Msg("firewall stack failed to start, tearing down")
@@ -122,6 +121,20 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		return fmt.Errorf("firewall startup failed: %w", err)
 	}
+
+	// Only advertise liveness to other CLI processes once the stack is
+	// actually healthy. Post-write, "PID present" ⇒ "stack was healthy a
+	// moment ago" — so if a concurrent caller later observes unhealthy,
+	// the restart path is correct (the stack actually died).
+	if err := writePIDFile(d.pidFile); err != nil {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stopCancel()
+		if stopErr := d.manager.Stop(stopCtx); stopErr != nil {
+			d.log.Warn().Err(stopErr).Msg("failed to tear down stack after PID file write failure")
+		}
+		return fmt.Errorf("failed to write PID file: %w", err)
+	}
+	defer removePIDFile(d.pidFile, d.log)
 
 	d.log.Info().Msg("firewall daemon started, stack healthy")
 

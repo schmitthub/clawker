@@ -12,16 +12,13 @@ package ebpf
 //      struct bpf_sock, BPF_MAP_TYPE_*, LIBBPF_PIN_BY_NAME) and use no CO-RE
 //      relocations, so vmlinux.h is unnecessary and has been removed.
 //
-// Regeneration is intended to run inside the pinned clawker BPF builder
-// image for byte-reproducible output. Developers iterating locally can run
-// `make bpf-regenerate`, which builds that image and runs `go generate`
-// inside it. See internal/ebpf/REPRODUCIBILITY.md.
-//
-// The generated files (clawker_*_bpfel.go, clawker_*_bpfel.o) are committed
-// to the repo so `go build` does NOT require clang. Every PR runs
-// `make bpf-verify` in CI to confirm the committed bytecode matches a fresh
-// regeneration in the pinned image — so the commit is always anchored to a
-// reproducible recipe, never trust-on-first-use.
+// The generated files (clawker_*_bpfel.go, clawker_*_bpfel.o) are NOT
+// committed to the repo — they are gitignored and produced fresh on every
+// build by `make ebpf-binary`, which runs `go generate` inside the pinned
+// bpf-builder stage of Dockerfile.firewall. Reproducibility is structural:
+// the pinned multi-stage Dockerfile is the source of truth; there is no
+// separate committed artifact to drift from. See
+// internal/ebpf/REPRODUCIBILITY.md for the full provenance chain.
 
 // bpf2go is pinned to match the cilium/ebpf library version in go.mod so the
 // generator and the runtime agree on the loader shape. Update both together.

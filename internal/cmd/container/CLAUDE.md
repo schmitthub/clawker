@@ -120,7 +120,7 @@ Auto-injects git credential env vars into exec'd processes. HTTPS via host proxy
 
 ## Testing
 
-Cobra+Factory pattern: `mocks.NewFakeClient()` → `testFactory(f)` → `NewCmdRun(f, nil)` → assert output + `fake.AssertCalled`. Per-package `testFactory`/`testConfig` helpers (not shared). See `.claude/memories/TESTING-REFERENCE.md`.
+Cobra+Factory pattern: `mocks.NewFakeClient(cfg)` → `testFactory(f)` → `NewCmdRun(f, nil)` → assert output + `fake.AssertCalled`. Per-package `testFactory`/`testConfig` helpers (not shared). See `.claude/memories/TESTING-REFERENCE.md`.
 
 **Tiers**: Tier 1 (flag parsing via `runF` trapdoor), Tier 2 (Cobra+Factory with `nil` runF), Tier 3 (unit, direct calls).
 

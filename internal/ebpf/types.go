@@ -4,11 +4,13 @@
 // connect() and sendmsg() syscalls, rewriting destinations to route traffic
 // through Envoy (TCP) and CoreDNS (DNS).
 //
-// The package manages five BPF programs attached per-container via cgroup:
+// The package manages seven BPF programs attached per-container via cgroup:
 //   - connect4:    IPv4 TCP/UDP routing to Envoy/CoreDNS
 //   - sendmsg4:    IPv4 UDP (DNS redirect + non-DNS block)
-//   - connect6:    IPv6 TCP deny
-//   - sendmsg6:    IPv6 UDP deny
+//   - recvmsg4:    IPv4 UDP (rewrite DNS response source)
+//   - connect6:    IPv6 + IPv4-mapped routing / native deny
+//   - sendmsg6:    IPv6 UDP (IPv4-mapped DNS redirect + native deny)
+//   - recvmsg6:    IPv6 UDP (rewrite IPv4-mapped DNS response source)
 //   - sock_create: Raw socket blocking (ICMP prevention)
 //
 // All programs share pinned BPF maps at /sys/fs/bpf/clawker/ for cross-process

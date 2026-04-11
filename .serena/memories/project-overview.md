@@ -7,7 +7,7 @@ CLI tool for managing Docker-based development containers, with Claude Code inte
 - Go (1.22+), Cobra CLI, zerolog, BubbleTea/Lipgloss TUI
 - Docker SDK via `pkg/whail` abstraction layer
 - Config via `internal/storage.Store[T]` (replaced Viper 2026-02-22)
-- Function-field fakes via `mocks.NewFakeClient()` (no gomock)
+- Function-field fakes via `mocks.NewFakeClient` (no gomock)
 
 ## Key Commands
 ```bash

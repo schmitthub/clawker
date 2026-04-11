@@ -354,7 +354,7 @@ performSetup(ctx, opts, true, "bookworm")
 
 // Test with mock config + mocks.FakeClient
 cfg := config.NewBlankConfig()
-fake := mocks.NewFakeClient()
+fake := mocks.NewFakeClient(cfg)
 fake.SetupLegacyBuild()
 ```
 
