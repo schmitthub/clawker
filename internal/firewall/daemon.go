@@ -340,8 +340,14 @@ func EnsureDaemon(cfg config.Config, log *logger.Logger) error {
 		}
 		// Daemon alive but stack unhealthy — kill and respawn.
 		log.Warn().Msg("firewall daemon alive but stack unhealthy, restarting")
-		_ = StopDaemon(pidFile)
+		if err := StopDaemon(pidFile); err != nil {
+			return fmt.Errorf("failed to stop unhealthy firewall daemon: %w", err)
+		}
 		WaitForDaemonExit(pidFile, 5*time.Second)
+		// Refuse to spawn a competing daemon if the old one didn't exit.
+		if IsDaemonRunning(pidFile) {
+			return fmt.Errorf("firewall daemon did not exit within timeout; refusing to spawn a second daemon")
+		}
 	}
 
 	return startDaemonProcess(cfg, log)
