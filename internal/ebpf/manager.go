@@ -202,11 +202,19 @@ func (m *Manager) Close() error {
 }
 
 // Enable attaches BPF programs to a container's cgroup and populates routing maps.
-// Cleans up any stale links for this cgroup before attaching.
+// Cleans up any stale links for this cgroup before attaching and clears any
+// stale bypass flag so the container lands in a known enforced state.
 func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContainerConfig) error {
 	// Clean up stale links from previous Enable() calls for this cgroup.
 	// Stale links keep old programs attached, causing silent misbehavior.
 	m.cleanupLinks(cgroupID)
+
+	// Clear any lingering bypass flag so Enable() is a symmetric counterpart
+	// to Disable() (which also deletes the bypass entry). Without this,
+	// `firewall bypass --stop` (which calls Enable to re-enforce) would leave
+	// BypassMap[cgroupID] = 1 in place and the BPF fast path would keep
+	// bypassing enforcement. ErrKeyNotExist is the common case — not an error.
+	_ = m.objs.BypassMap.Delete(cgroupID)
 
 	if err := m.objs.ContainerMap.Update(cgroupID, cfg, ebpf.UpdateAny); err != nil {
 		return fmt.Errorf("ebpf enable: updating container_map: %w", err)

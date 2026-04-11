@@ -419,9 +419,32 @@ func (m *Manager) List(_ context.Context) ([]config.EgressRule, error) {
 	return rules, nil
 }
 
+// resolveContainerID looks up a container by name, short ID, or long ID and
+// returns its canonical long ID. Required because ebpfCgroupPath builds a
+// literal filesystem path (/sys/fs/cgroup/docker/<long-id> with the cgroupfs
+// driver, or .../docker-<long-id>.scope under systemd) that only matches the
+// long ID — Docker's cgroup directories are never named after a container's
+// friendly name. Enable/Disable/Bypass accept either form so that CLI
+// callers (`clawker firewall {enable,disable,bypass} --agent foo`) can pass
+// a container name while container-lifecycle callers (container run/stop)
+// can pass the ID they already hold.
+func (m *Manager) resolveContainerID(ctx context.Context, ref string) (string, error) {
+	info, err := m.client.ContainerInspect(ctx, ref, client.ContainerInspectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("resolving container %q: %w", ref, err)
+	}
+	return info.Container.ID, nil
+}
+
 // Disable detaches eBPF programs from a container's cgroup, removing all
-// traffic routing. The container gets unrestricted egress.
+// traffic routing. The container gets unrestricted egress. The container
+// argument may be a name or ID — it is resolved to the canonical long ID
+// before the cgroup path is constructed.
 func (m *Manager) Disable(ctx context.Context, containerID string) error {
+	containerID, err := m.resolveContainerID(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("firewall disable: %w", err)
+	}
 	cgroupPath := ebpfCgroupPath(m.cgroupDriver(ctx), containerID)
 	if err := m.ebpfExec(ctx, "disable", cgroupPath); err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
@@ -432,8 +455,15 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 }
 
 // Enable attaches eBPF programs to a container's cgroup, routing traffic
-// through Envoy (TCP) and CoreDNS (DNS). Replaces iptables DNAT rules.
+// through Envoy (TCP) and CoreDNS (DNS). Replaces iptables DNAT rules. The
+// container argument may be a name or ID — it is resolved to the canonical
+// long ID before the cgroup path is constructed.
 func (m *Manager) Enable(ctx context.Context, containerID string) error {
+	containerID, err := m.resolveContainerID(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("firewall enable: %w", err)
+	}
+
 	// Ensure the eBPF manager container is running (idempotent).
 	// The daemon's EnsureRunning creates it, but it may be missing if the daemon
 	// started before the eBPF feature was added, or if it was manually removed.
@@ -522,8 +552,14 @@ func (m *Manager) touchSignalFile(ctx context.Context, containerID string) error
 
 // Bypass sets the eBPF bypass flag for a container, allowing unrestricted egress.
 // Schedules automatic re-enable after timeout via a detached exec in the eBPF
-// manager container (sleep + unbypass).
+// manager container (sleep + unbypass). The container argument may be a name
+// or ID — it is resolved to the canonical long ID before the cgroup path is
+// constructed.
 func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.Duration) error {
+	containerID, err := m.resolveContainerID(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("firewall bypass: %w", err)
+	}
 	cgroupPath := ebpfCgroupPath(m.cgroupDriver(ctx), containerID)
 
 	// Set bypass flag (instant, atomic).
@@ -1128,8 +1164,17 @@ func (m *Manager) stopAndRemove(ctx context.Context, name firewallContainer) err
 
 	ctr := result.Items[0]
 	if ctr.State == container.StateRunning {
-		timeout := 10
-		if _, err := m.client.ContainerStop(ctx, ctr.ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
+		// Timeout: nil → Docker honors the container-level StopTimeout set
+		// in ContainerConfig at creation time (see moby client_stop.go: "If
+		// the timeout is nil, the container's StopTimeout value is used, if
+		// set, otherwise the engine default"). This lets the ebpf manager
+		// container (which runs `sleep infinity` and cannot handle SIGTERM)
+		// exit in 1 second via its configured stopTimeout, while envoy and
+		// coredns fall back to Docker's 10-second default for graceful
+		// HTTP drain. Previously a hardcoded 10s override here meant ebpf
+		// always ate the full 10-second SIGTERM grace period, making
+		// `firewall down` unnecessarily slow.
+		if _, err := m.client.ContainerStop(ctx, ctr.ID, client.ContainerStopOptions{}); err != nil {
 			m.log.Warn().Err(err).Str("container", n).Msg("failed to stop container gracefully")
 		}
 	}

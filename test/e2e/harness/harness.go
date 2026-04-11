@@ -149,10 +149,12 @@ func cleanupTestEnvironment(t *testing.T, h *Harness) {
 	h.Run("host-proxy", "stop")
 
 	// 2. Remove shared firewall infrastructure containers (not test-labeled).
-	for _, name := range []string{"clawker-envoy", "clawker-coredns"} {
-		//nolint:gosec // name is hardcoded
-		if out, err := exec.CommandContext(ctx, "docker", "rm", "-f", name).CombinedOutput(); err != nil {
-			t.Logf("cleanup: docker rm %s: %s (%v)", name, strings.TrimSpace(string(out)), err)
+	firewallLabel := "dev.clawker.purpose=firewall"
+	if ids := dockerListByLabel(ctx, "container", firewallLabel); len(ids) > 0 {
+		//nolint:gosec // label is hardcoded
+		args := append([]string{"rm", "-f"}, ids...)
+		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
+			t.Logf("cleanup: docker rm firewall: %s (%v)", strings.TrimSpace(string(out)), err)
 		}
 	}
 
