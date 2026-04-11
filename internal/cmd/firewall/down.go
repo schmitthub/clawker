@@ -61,27 +61,49 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 		return fmt.Errorf("resolving PID file path: %w", err)
 	}
 
-	if !fw.IsDaemonRunning(pidFile) {
+	// Two paths converge on the same cleanup:
+	//  1. daemon running → SIGTERM, wait, run cleanup, report "Firewall stopped"
+	//  2. daemon not running (crashed/stale PID) → skip SIGTERM but still run
+	//     cleanup so leftover envoy/coredns/ebpf-manager containers don't collide
+	//     with the next `firewall up`.
+	daemonWasRunning := fw.IsDaemonRunning(pidFile)
+	if daemonWasRunning {
+		if err := fw.StopDaemon(pidFile); err != nil {
+			return fmt.Errorf("stopping firewall daemon: %w", err)
+		}
+		// Wait for the daemon to exit so its Stop() finishes before ours.
+		fw.WaitForDaemonExit(pidFile, 10*time.Second)
+	} else {
 		fmt.Fprintf(ios.Out, "%s Firewall daemon is not running\n", cs.InfoIcon())
-		return nil
 	}
-
-	if err := fw.StopDaemon(pidFile); err != nil {
-		return fmt.Errorf("stopping firewall daemon: %w", err)
-	}
-	// Wait for the daemon to exit so its Stop() finishes before ours.
-	fw.WaitForDaemonExit(pidFile, 10*time.Second)
 
 	// Belt-and-suspenders: stop any remaining firewall containers.
-	// The daemon's Stop() should handle this, but if the daemon was started
-	// by an older binary (e.g. before eBPF support), it may leave containers behind.
+	// The daemon's Stop() should have handled this on the running path, and
+	// on the not-running path the daemon isn't there to clean up stale
+	// containers at all. Either way, this is the last line of defense before
+	// the next `firewall up` tries to bind the same ports.
 	// Skip when Firewall isn't wired (unit tests with a partial Factory).
+	cleanedOrphans := false
 	if opts.Firewall != nil {
-		if fwMgr, err := opts.Firewall(ctx); err == nil {
-			_ = fwMgr.Stop(ctx) // best-effort, ignore "already removed" errors
+		if fwMgr, fwErr := opts.Firewall(ctx); fwErr == nil {
+			// Detect stale state before Stop() so we can honestly report
+			// whether there was anything to clean up on the not-running path.
+			hadOrphans := !daemonWasRunning && fwMgr.IsRunning(ctx)
+			if err := fwMgr.Stop(ctx); err != nil {
+				fmt.Fprintf(ios.ErrOut, "%s firewall cleanup: %v\n", cs.WarningIcon(), err)
+			} else if hadOrphans {
+				cleanedOrphans = true
+			}
+		} else {
+			fmt.Fprintf(ios.ErrOut, "%s firewall cleanup: %v\n", cs.WarningIcon(), fwErr)
 		}
 	}
 
-	fmt.Fprintf(ios.Out, "%s Firewall stopped\n", cs.SuccessIcon())
+	switch {
+	case daemonWasRunning:
+		fmt.Fprintf(ios.Out, "%s Firewall stopped\n", cs.SuccessIcon())
+	case cleanedOrphans:
+		fmt.Fprintf(ios.Out, "%s Removed leftover firewall containers\n", cs.SuccessIcon())
+	}
 	return nil
 }

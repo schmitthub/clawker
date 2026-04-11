@@ -67,6 +67,17 @@ type Manager struct {
 	cfg    config.Config
 	log    *logger.Logger
 	store  *storage.Store[EgressRulesFile]
+
+	// Test seams — all nil in production, wired to the real implementations
+	// in NewManager. Tests in package firewall can override these to observe
+	// arguments or inject failures without standing up a full Docker API
+	// mock. Each field is called by the corresponding method below — the
+	// real methods are named with an "Impl" suffix so that the public
+	// names remain the canonical entry points.
+	cgroupDriverFn    func(ctx context.Context) (string, error)
+	ebpfExecFn        func(ctx context.Context, args ...string) error
+	ebpfExecOutputFn  func(ctx context.Context, args ...string) (string, error)
+	touchSignalFileFn func(ctx context.Context, containerID string) error
 }
 
 // NewManager creates a new DockerFirewallManager.
@@ -78,12 +89,19 @@ func NewManager(client client.APIClient, cfg config.Config, log *logger.Logger) 
 	if err != nil {
 		return nil, fmt.Errorf("firewall: creating rules store: %w", err)
 	}
-	return &Manager{
+	m := &Manager{
 		client: client,
 		cfg:    cfg,
 		log:    log,
 		store:  store,
-	}, nil
+	}
+	// Wire test seams to the real implementations. Tests can overwrite
+	// any of these fields directly (they live in package firewall).
+	m.cgroupDriverFn = m.cgroupDriverImpl
+	m.ebpfExecFn = m.ebpfExecImpl
+	m.ebpfExecOutputFn = m.ebpfExecOutputImpl
+	m.touchSignalFileFn = m.touchSignalFileImpl
+	return m, nil
 }
 
 // EnsureRunning starts the firewall stack if not already running.
@@ -429,11 +447,32 @@ func (m *Manager) List(_ context.Context) ([]config.EgressRule, error) {
 // a container name while container-lifecycle callers (container run/stop)
 // can pass the ID they already hold.
 func (m *Manager) resolveContainerID(ctx context.Context, ref string) (string, error) {
+	// Fast-path: if the caller already holds a canonical 64-char hex
+	// container ID, skip the ContainerInspect round-trip. This matches
+	// Docker's own "is this an ID?" heuristic (64 lowercase hex chars) and
+	// is hit by every container-lifecycle caller (run/stop) that already
+	// has the ID in hand.
+	if len(ref) == 64 && isAllHex(ref) {
+		return ref, nil
+	}
 	info, err := m.client.ContainerInspect(ctx, ref, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("resolving container %q: %w", ref, err)
 	}
 	return info.Container.ID, nil
+}
+
+// isAllHex reports whether s contains only lowercase hexadecimal characters
+// (0-9 and a-f). Docker container IDs are represented as lowercase hex in the
+// API, so this matches the exact wire format.
+func isAllHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 // Disable detaches eBPF programs from a container's cgroup, removing all
@@ -445,7 +484,11 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 	if err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
-	cgroupPath := ebpfCgroupPath(m.cgroupDriver(ctx), containerID)
+	driver, err := m.cgroupDriver(ctx)
+	if err != nil {
+		return fmt.Errorf("firewall disable: %w", err)
+	}
+	cgroupPath := ebpfCgroupPath(driver, containerID)
 	if err := m.ebpfExec(ctx, "disable", cgroupPath); err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
@@ -492,16 +535,24 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 	}
 
 	// Host proxy bypass: read from project config (authoritative), not container env.
+	// If the project has the host proxy enabled we MUST have a valid IP — a
+	// silent Warn-and-continue here leaves the container unable to reach the
+	// host proxy, breaking browser auth, git credential forwarding, and
+	// everything else that tunnels through it. Surface resolve failures so the
+	// daemon path fails loudly instead of producing a subtly-broken container.
 	var hostProxyIP string
 	var hostProxyPort uint16
 	if m.cfg.Project().Security.HostProxyEnabled() {
 		hostProxyPort = uint16(m.cfg.Settings().HostProxy.Daemon.Port)
 		// Resolve host.docker.internal from inside the Docker network.
 		// On Docker Desktop it resolves to 192.168.65.254, not localhost.
-		if resolved, err := m.ebpfExecOutput(ctx, "resolve", "host.docker.internal"); err == nil {
-			hostProxyIP = strings.TrimSpace(resolved)
-		} else {
-			m.log.Warn().Err(err).Msg("could not resolve host.docker.internal, host proxy bypass disabled")
+		resolved, resolveErr := m.ebpfExecOutput(ctx, "resolve", "host.docker.internal")
+		if resolveErr != nil {
+			return fmt.Errorf("firewall enable: resolving host.docker.internal for host-proxy bypass: %w", resolveErr)
+		}
+		hostProxyIP = strings.TrimSpace(resolved)
+		if hostProxyIP == "" {
+			return fmt.Errorf("firewall enable: host.docker.internal resolved to empty address for host-proxy bypass")
 		}
 	}
 
@@ -516,14 +567,22 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		hostProxyIP, hostProxyPort, ports.EgressPort,
 	)
 
-	cgroupPath := ebpfCgroupPath(m.cgroupDriver(ctx), containerID)
+	driver, err := m.cgroupDriver(ctx)
+	if err != nil {
+		return fmt.Errorf("firewall enable: %w", err)
+	}
+	cgroupPath := ebpfCgroupPath(driver, containerID)
 	if err := m.ebpfExec(ctx, "enable", cgroupPath, cfgJSON); err != nil {
 		return fmt.Errorf("firewall enable: %w", err)
 	}
 
-	// Signal the entrypoint that firewall is ready (unblocks CMD).
+	// Signal the entrypoint that firewall is ready (unblocks CMD). The
+	// entrypoint script in internal/bundler/assets/entrypoint.sh blocks on
+	// this file — a silent failure here leaves the container hanging forever
+	// waiting for a signal that will never come, so we propagate instead of
+	// logging and continuing.
 	if err := m.touchSignalFile(ctx, containerID); err != nil {
-		m.log.Warn().Err(err).Msg("failed to touch firewall-ready signal file")
+		return fmt.Errorf("firewall enable: touching firewall-ready signal: %w", err)
 	}
 
 	m.log.Debug().Str("container", containerID).Msg("firewall enabled via eBPF")
@@ -534,8 +593,14 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 const firewallReadyPath = "/var/run/clawker/firewall-ready"
 
 // touchSignalFile creates the firewall-ready signal file inside the container,
-// unblocking the entrypoint's wait loop.
+// unblocking the entrypoint's wait loop. Routed through touchSignalFileFn for
+// test override.
 func (m *Manager) touchSignalFile(ctx context.Context, containerID string) error {
+	return m.touchSignalFileFn(ctx, containerID)
+}
+
+// touchSignalFileImpl is the production implementation of touchSignalFile.
+func (m *Manager) touchSignalFileImpl(ctx context.Context, containerID string) error {
 	execResp, err := m.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		User: "root",
 		Cmd:  []string{"touch", firewallReadyPath},
@@ -560,7 +625,11 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 	if err != nil {
 		return fmt.Errorf("firewall bypass: %w", err)
 	}
-	cgroupPath := ebpfCgroupPath(m.cgroupDriver(ctx), containerID)
+	driver, err := m.cgroupDriver(ctx)
+	if err != nil {
+		return fmt.Errorf("firewall bypass: %w", err)
+	}
+	cgroupPath := ebpfCgroupPath(driver, containerID)
 
 	// Set bypass flag (instant, atomic).
 	if err := m.ebpfExec(ctx, "bypass", cgroupPath); err != nil {
@@ -603,9 +672,21 @@ func (m *Manager) Status(ctx context.Context) (*FirewallStatus, error) {
 	// Discover network state from Docker (best-effort; fields stay empty if network doesn't exist).
 	netInfo, _ := m.discoverNetwork(ctx)
 
-	envoyRunning := m.isContainerRunning(ctx, envoyContainer)
-	corednsRunning := m.isContainerRunning(ctx, corednsContainer)
-	ebpfRunning := m.isContainerRunning(ctx, ebpfContainer)
+	// Status must propagate Docker API errors rather than silently reporting
+	// "not running" — callers (CLI, daemon) distinguish "firewall is down"
+	// from "we couldn't talk to Docker" to decide what to do next.
+	envoyRunning, envoyErr := m.isContainerRunningE(ctx, envoyContainer)
+	if envoyErr != nil {
+		return nil, fmt.Errorf("firewall status: %w", envoyErr)
+	}
+	corednsRunning, corednsErr := m.isContainerRunningE(ctx, corednsContainer)
+	if corednsErr != nil {
+		return nil, fmt.Errorf("firewall status: %w", corednsErr)
+	}
+	ebpfRunning, ebpfErr := m.isContainerRunningE(ctx, ebpfContainer)
+	if ebpfErr != nil {
+		return nil, fmt.Errorf("firewall status: %w", ebpfErr)
+	}
 
 	status := &FirewallStatus{
 		Running:       envoyRunning && corednsRunning && ebpfRunning,
@@ -758,8 +839,23 @@ func (m *Manager) regenerateAndRestart(ctx context.Context) error {
 	}
 
 	// Only restart containers if they're running. If not, the daemon will
-	// start them with the fresh configs when it brings the stack up.
-	if !m.IsRunning(ctx) {
+	// start them with the fresh configs when it brings the stack up. We
+	// use the error-returning form so that a transient Docker API failure
+	// doesn't silently degrade to a no-op (which would leave the stack
+	// running with stale rules until the daemon's next reconcile pass).
+	envoyRunning, err := m.isContainerRunningE(ctx, envoyContainer)
+	if err != nil {
+		return fmt.Errorf("firewall reload: %w", err)
+	}
+	corednsRunning, err := m.isContainerRunningE(ctx, corednsContainer)
+	if err != nil {
+		return fmt.Errorf("firewall reload: %w", err)
+	}
+	ebpfRunning, err := m.isContainerRunningE(ctx, ebpfContainer)
+	if err != nil {
+		return fmt.Errorf("firewall reload: %w", err)
+	}
+	if !(envoyRunning && corednsRunning && ebpfRunning) {
 		return nil
 	}
 
@@ -1145,7 +1241,9 @@ func embeddedBuildContext(spec embeddedImageSpec) (io.Reader, error) {
 }
 
 // stopAndRemove stops and removes a firewall container.
-// Not-found is silently ignored.
+// Not-found is silently ignored, but any Docker API error is surfaced so
+// that Daemon.Run's Stop-error propagation (see daemon.go) can bubble
+// failures up to the caller instead of silently leaving orphaned containers.
 func (m *Manager) stopAndRemove(ctx context.Context, name firewallContainer) error {
 	n := string(name)
 	filters := client.Filters{}.Add("name", n)
@@ -1154,8 +1252,8 @@ func (m *Manager) stopAndRemove(ctx context.Context, name firewallContainer) err
 		Filters: filters,
 	})
 	if err != nil {
-		m.log.Debug().Str("container", n).Err(err).Msg("container lookup failed, skipping stop")
-		return nil
+		m.log.Error().Str("container", n).Err(err).Msg("container lookup failed during stop")
+		return fmt.Errorf("listing container %s: %w", n, err)
 	}
 	if len(result.Items) == 0 {
 		m.log.Debug().Str("container", n).Msg("container not found, skipping stop")
@@ -1188,17 +1286,35 @@ func (m *Manager) stopAndRemove(ctx context.Context, name firewallContainer) err
 	return nil
 }
 
-// isContainerRunning checks whether a firewall container is running.
-func (m *Manager) isContainerRunning(ctx context.Context, name firewallContainer) bool {
+// isContainerRunningE checks whether a firewall container is running,
+// returning the Docker API error instead of swallowing it. Internal callers
+// (Status, regenerateAndRestart) use this form so that transient Docker API
+// failures propagate to the caller rather than masquerading as "not
+// running" and triggering an unintended code path.
+func (m *Manager) isContainerRunningE(ctx context.Context, name firewallContainer) (bool, error) {
 	n := string(name)
 	filters := client.Filters{}.Add("name", n)
 	result, err := m.client.ContainerList(ctx, client.ContainerListOptions{
 		Filters: filters, // default: running only
 	})
 	if err != nil {
+		return false, fmt.Errorf("listing container %s: %w", n, err)
+	}
+	return len(result.Items) > 0, nil
+}
+
+// isContainerRunning is the boolean-only wrapper used by the public
+// IsRunning() method. IsRunning is part of the FirewallManager interface
+// and cannot be broken to return an error, so lookup failures are logged
+// at Warn and reported as "not running". All other internal callers use
+// isContainerRunningE and propagate.
+func (m *Manager) isContainerRunning(ctx context.Context, name firewallContainer) bool {
+	running, err := m.isContainerRunningE(ctx, name)
+	if err != nil {
+		m.log.Warn().Str("container", string(name)).Err(err).Msg("firewall container lookup failed, reporting not running")
 		return false
 	}
-	return len(result.Items) > 0
+	return running
 }
 
 // restartContainer restarts a firewall container.
@@ -1282,18 +1398,32 @@ func ebpfCgroupPath(cgroupDriver, containerID string) string {
 	return "/sys/fs/cgroup/docker/" + containerID
 }
 
-// cgroupDriver queries the Docker daemon for its cgroup driver (e.g. "cgroupfs" or "systemd").
-func (m *Manager) cgroupDriver(ctx context.Context) string {
+// cgroupDriver queries the Docker daemon for its cgroup driver
+// (e.g. "cgroupfs" or "systemd"). Routed through cgroupDriverFn for test
+// override. Errors are surfaced to the caller rather than silently defaulted —
+// a bad assumption on a systemd-driver host produces a cgroup path that does
+// not exist and leads to cryptic ENOENT from ebpfExec downstream.
+func (m *Manager) cgroupDriver(ctx context.Context) (string, error) {
+	return m.cgroupDriverFn(ctx)
+}
+
+// cgroupDriverImpl is the production implementation of cgroupDriver.
+func (m *Manager) cgroupDriverImpl(ctx context.Context) (string, error) {
 	info, err := m.client.Info(ctx, client.InfoOptions{})
 	if err != nil {
-		m.log.Warn().Err(err).Msg("failed to query Docker cgroup driver, assuming cgroupfs")
-		return "cgroupfs"
+		return "", fmt.Errorf("querying Docker cgroup driver: %w", err)
 	}
-	return info.Info.CgroupDriver
+	return info.Info.CgroupDriver, nil
 }
 
 // ebpfExec runs a command in the eBPF manager container via docker exec.
+// Routed through ebpfExecFn for test override.
 func (m *Manager) ebpfExec(ctx context.Context, args ...string) error {
+	return m.ebpfExecFn(ctx, args...)
+}
+
+// ebpfExecImpl is the production implementation of ebpfExec.
+func (m *Manager) ebpfExecImpl(ctx context.Context, args ...string) error {
 	cmd := append([]string{"/usr/local/bin/ebpf-manager"}, args...)
 
 	execResp, err := m.client.ExecCreate(ctx, string(ebpfContainer), client.ExecCreateOptions{
@@ -1325,7 +1455,13 @@ func (m *Manager) ebpfExec(ctx context.Context, args ...string) error {
 
 // ebpfExecOutput runs a command in the eBPF manager container and returns stdout.
 // Uses stdcopy to demultiplex Docker's stream headers from the exec output.
+// Routed through ebpfExecOutputFn for test override.
 func (m *Manager) ebpfExecOutput(ctx context.Context, args ...string) (string, error) {
+	return m.ebpfExecOutputFn(ctx, args...)
+}
+
+// ebpfExecOutputImpl is the production implementation of ebpfExecOutput.
+func (m *Manager) ebpfExecOutputImpl(ctx context.Context, args ...string) (string, error) {
 	cmd := append([]string{"/usr/local/bin/ebpf-manager"}, args...)
 
 	execResp, err := m.client.ExecCreate(ctx, string(ebpfContainer), client.ExecCreateOptions{

@@ -344,8 +344,19 @@ func TestRemoveRun_FirewallDisableErrorDoesNotFailRemove(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	require.Len(t, fwMock.DisableCalls(), 1)
 	fake.AssertCalled(t, "ContainerRemove")
+
+	// A user-visible warning must be surfaced on stderr so operators learn
+	// about the leak even though the remove itself looks green.
+	require.Contains(t, errOut.String(), "firewall disable failed")
+	require.Contains(t, errOut.String(), "BPF resources may leak")
 }
 
+// TestRemoveRun_NilFirewall guards against a specific regression: earlier
+// versions of removeContainer dereferenced opts.Firewall unconditionally and
+// panicked when tests (or CLI call sites) wired a Factory without a Firewall
+// closure. This test keeps that call path wired with an explicit nil so any
+// future refactor that reintroduces an unchecked dereference fails loudly
+// instead of silently panicking during cleanup. Do not delete as redundant.
 func TestRemoveRun_NilFirewall(t *testing.T) {
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := mocks.ContainerFixture("myapp", "dev", "node:20-slim")

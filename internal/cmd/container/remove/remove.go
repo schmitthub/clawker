@@ -121,7 +121,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 
 	var errs []error
 	for _, name := range containers {
-		if err := removeContainer(ctx, client, name, opts, log); err != nil {
+		if err := removeContainer(ctx, client, name, opts, log, ios, cs); err != nil {
 			errs = append(errs, err)
 			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, err)
 		} else {
@@ -135,7 +135,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	return nil
 }
 
-func removeContainer(ctx context.Context, client *docker.Client, name string, opts *RemoveOptions, log *logger.Logger) error {
+func removeContainer(ctx context.Context, client *docker.Client, name string, opts *RemoveOptions, log *logger.Logger, ios *iostreams.IOStreams, cs *iostreams.ColorScheme) error {
 	// Find container by name
 	container, err := client.FindContainerByName(ctx, name)
 	if err != nil {
@@ -146,10 +146,16 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 	}
 
 	// Disable eBPF firewall for this container (best-effort).
+	// Must happen before remove so the ebpf container can still exec into the cgroup.
+	// If Disable fails we still proceed with remove (design intent), but we surface
+	// a user-visible warning because orphaned BPF links leak until the next
+	// firewall restart's cleanup sweep.
 	if opts.Firewall != nil {
 		if fwMgr, fwErr := opts.Firewall(ctx); fwErr == nil {
 			if disableErr := fwMgr.Disable(ctx, container.ID); disableErr != nil {
 				log.Warn().Err(disableErr).Str("container", container.ID).Msg("failed to disable firewall")
+				fmt.Fprintf(ios.ErrOut, "%s firewall disable failed for %s: %v (BPF resources may leak until next firewall restart)\n",
+					cs.WarningIcon(), name, disableErr)
 			}
 		}
 	}

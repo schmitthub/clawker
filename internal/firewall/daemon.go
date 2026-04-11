@@ -164,8 +164,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stopCancel()
 
+	// Propagate Stop errors. A silent failure here leaves orphaned envoy/coredns/ebpf
+	// containers behind after the PID file is removed, so the next EnsureDaemon would
+	// happily spawn a fresh daemon that collides with the stale stack (same class of
+	// bug as the startup-path failure fixed in e770cf25).
 	if err := d.manager.Stop(stopCtx); err != nil {
 		d.log.Warn().Err(err).Msg("error stopping firewall containers")
+		return fmt.Errorf("stopping firewall containers: %w", err)
 	}
 
 	return nil
@@ -252,6 +257,7 @@ func (d *Daemon) watchContainers(ctx context.Context) {
 	defer ticker.Stop()
 
 	missedChecks := 0
+	consecutivePollErrors := 0
 	pollCount := 0
 
 	for {
@@ -263,9 +269,22 @@ func (d *Daemon) watchContainers(ctx context.Context) {
 			pollCount++
 			count, err := d.countClawkerContainers(ctx)
 			if err != nil {
-				d.log.Warn().Err(err).Int("poll", pollCount).Msg("container watcher: failed to count containers")
+				consecutivePollErrors++
+				d.log.Warn().
+					Err(err).
+					Int("poll", pollCount).
+					Int("consecutive_errors", consecutivePollErrors).
+					Int("max_errors", maxHealthCheckFailures).
+					Msg("container watcher: failed to count containers")
+				if consecutivePollErrors >= maxHealthCheckFailures {
+					d.log.Error().
+						Int("consecutive_errors", consecutivePollErrors).
+						Msg("container watcher: docker polling has failed repeatedly, daemon exiting")
+					return
+				}
 				continue
 			}
+			consecutivePollErrors = 0
 			if count == 0 {
 				missedChecks++
 				d.log.Warn().
@@ -322,35 +341,72 @@ func (d *Daemon) countClawkerContainers(ctx context.Context) (int, error) {
 
 // --- EnsureDaemon: CLI entry point ---
 
+// daemonDeps collects the side-effecting hooks that EnsureDaemon relies on so
+// tests can stub them out without spawning real processes or touching Docker.
+// The real wiring lives in defaultDaemonDeps — production callers go through
+// EnsureDaemon, which forwards to ensureDaemonWith with those defaults.
+type daemonDeps struct {
+	isDaemonRunning    func(pidFile string) bool
+	isStackHealthy     func(cfg config.Config) bool
+	stopDaemon         func(pidFile string) error
+	waitForDaemonExit  func(pidFile string, timeout time.Duration) (bool, error)
+	startDaemonProcess func(cfg config.Config, log *logger.Logger) error
+}
+
+// defaultDaemonDeps returns the production dependency set.
+func defaultDaemonDeps() daemonDeps {
+	return daemonDeps{
+		isDaemonRunning:    IsDaemonRunning,
+		isStackHealthy:     isStackHealthy,
+		stopDaemon:         StopDaemon,
+		waitForDaemonExit:  WaitForDaemonExitReport,
+		startDaemonProcess: startDaemonProcess,
+	}
+}
+
 // EnsureDaemon checks if the firewall daemon is running and spawns it if not.
 // If the daemon PID is alive but the firewall stack isn't healthy (e.g. daemon
 // is winding down after its last container exited), kills the old daemon and
 // spawns a fresh one.
 // Returns immediately — does not wait for the daemon to become healthy.
 func EnsureDaemon(cfg config.Config, log *logger.Logger) error {
+	return ensureDaemonWith(cfg, log, defaultDaemonDeps())
+}
+
+// ensureDaemonWith is the testable core of EnsureDaemon. Dependencies are
+// injected via daemonDeps so unit tests can simulate running/hung daemons,
+// Stop failures, and competing-daemon races without any real subprocess or
+// Docker interaction.
+func ensureDaemonWith(cfg config.Config, log *logger.Logger, deps daemonDeps) error {
 	pidFile, err := cfg.FirewallPIDFilePath()
 	if err != nil {
 		return fmt.Errorf("resolving firewall PID file path: %w", err)
 	}
 
-	if IsDaemonRunning(pidFile) {
-		if isStackHealthy(cfg) {
+	if deps.isDaemonRunning(pidFile) {
+		if deps.isStackHealthy(cfg) {
 			log.Debug().Msg("firewall daemon running, stack healthy")
 			return nil
 		}
 		// Daemon alive but stack unhealthy — kill and respawn.
 		log.Warn().Msg("firewall daemon alive but stack unhealthy, restarting")
-		if err := StopDaemon(pidFile); err != nil {
+		if err := deps.stopDaemon(pidFile); err != nil {
 			return fmt.Errorf("failed to stop unhealthy firewall daemon: %w", err)
 		}
-		WaitForDaemonExit(pidFile, 5*time.Second)
+		exited, waitErr := deps.waitForDaemonExit(pidFile, 5*time.Second)
+		if waitErr != nil {
+			log.Debug().Err(waitErr).Msg("firewall daemon wait observed unreadable PID file")
+		}
 		// Refuse to spawn a competing daemon if the old one didn't exit.
-		if IsDaemonRunning(pidFile) {
+		// Trust waitForDaemonExit's report first — it observed the process
+		// directly — and cross-check with isDaemonRunning as a final guard
+		// against a new daemon that raced in and replaced the PID file.
+		if !exited || deps.isDaemonRunning(pidFile) {
 			return fmt.Errorf("firewall daemon did not exit within timeout; refusing to spawn a second daemon")
 		}
 	}
 
-	return startDaemonProcess(cfg, log)
+	return deps.startDaemonProcess(cfg, log)
 }
 
 // isStackHealthy does a quick TCP probe to the Envoy health port.
@@ -470,18 +526,42 @@ func GetDaemonPID(pidFile string) int {
 }
 
 // WaitForDaemonExit polls until the daemon process exits or timeout elapses.
+//
+// Deprecated: callers cannot distinguish "process exited" from "PID file missing or
+// unreadable" because both paths return silently. Prefer WaitForDaemonExitReport for
+// new code — this function is retained as a thin wrapper for backward compatibility
+// with callers that don't need the distinction (e.g. `clawker firewall down`).
 func WaitForDaemonExit(pidFile string, timeout time.Duration) {
+	_, _ = WaitForDaemonExitReport(pidFile, timeout)
+}
+
+// WaitForDaemonExitReport polls until the daemon process exits or timeout elapses,
+// reporting whether the daemon actually exited within the window.
+//
+// Return values:
+//   - (true, nil)   — the daemon process exited (either cleanly, or its PID file was
+//     removed to signal shutdown completion) within the timeout.
+//   - (false, nil)  — the PID file still points at a live process after the deadline;
+//     the daemon has not exited. Callers can safely treat this as "refuse to respawn".
+//   - (true, err)   — the PID file could not be read (e.g. already gone, or unparseable).
+//     Treated as "exited" for safety but err surfaces the underlying cause so callers
+//     that care (like EnsureDaemon's competing-daemon guard) can log or re-check.
+func WaitForDaemonExitReport(pidFile string, timeout time.Duration) (bool, error) {
 	pid, err := readPIDFile(pidFile)
 	if err != nil {
-		return
+		// No readable PID file — from a "is the daemon alive?" perspective, it isn't.
+		// Return exited=true so callers treat it as "safe to spawn", but pass err up
+		// so they can distinguish "we observed a clean exit" from "we don't know".
+		return true, err
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if !isProcessAlive(pid) {
-			return
+			return true, nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	return false, nil
 }
 
 // StopDaemon sends SIGTERM to the firewall daemon. No-op if not running.

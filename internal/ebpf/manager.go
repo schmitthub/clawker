@@ -201,6 +201,32 @@ func (m *Manager) Close() error {
 	return m.objs.Close()
 }
 
+// bypassMap is the minimal subset of *ebpf.Map used by clearBypass. It exists
+// purely as a test seam so the bypass-clear behavior in Enable can be exercised
+// without a live kernel + bpf2go objects. The production *ebpf.Map satisfies
+// this interface via its Delete method.
+type bypassMap interface {
+	Delete(key any) error
+}
+
+// clearBypass removes any lingering bypass entry for cgroupID. ErrKeyNotExist
+// is the common/expected case and is treated as success. Any other error
+// (EPERM, ENOMEM, EINVAL, ...) is logged at Warn level here so forensics are
+// captured regardless of what the caller does, and returned so callers can
+// choose whether to additionally surface or propagate it. The current callers
+// (Enable, Disable) log-only — the bypass-clear is best-effort — but the
+// return value is retained so a future caller can hard-fail if needed.
+func clearBypass(m bypassMap, cgroupID uint64, log *logger.Logger) error {
+	err := m.Delete(cgroupID)
+	if err == nil || errors.Is(err, ebpf.ErrKeyNotExist) {
+		return nil
+	}
+	if log != nil {
+		log.Warn().Err(err).Uint64("cgroup_id", cgroupID).Msg("ebpf: failed to clear bypass flag (non-fatal)")
+	}
+	return err
+}
+
 // Enable attaches BPF programs to a container's cgroup and populates routing maps.
 // Cleans up any stale links for this cgroup before attaching and clears any
 // stale bypass flag so the container lands in a known enforced state.
@@ -213,8 +239,11 @@ func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContaine
 	// to Disable() (which also deletes the bypass entry). Without this,
 	// `firewall bypass --stop` (which calls Enable to re-enforce) would leave
 	// BypassMap[cgroupID] = 1 in place and the BPF fast path would keep
-	// bypassing enforcement. ErrKeyNotExist is the common case — not an error.
-	_ = m.objs.BypassMap.Delete(cgroupID)
+	// bypassing enforcement. Non-ErrKeyNotExist failures are already logged
+	// inside clearBypass; we discard the return here because Enable is
+	// best-effort-symmetric with Disable and should not fail just because
+	// the old bypass entry could not be cleaned up.
+	_ = clearBypass(m.objs.BypassMap, cgroupID, m.log)
 
 	if err := m.objs.ContainerMap.Update(cgroupID, cfg, ebpf.UpdateAny); err != nil {
 		return fmt.Errorf("ebpf enable: updating container_map: %w", err)
@@ -291,7 +320,12 @@ func (m *Manager) Disable(cgroupID uint64) error {
 	if err := m.objs.ContainerMap.Delete(cgroupID); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 		m.log.Warn().Err(err).Msg("ebpf disable: deleting container_map entry")
 	}
-	_ = m.objs.BypassMap.Delete(cgroupID)
+	// Reuse the same helper as Enable so bypass-clear error handling is
+	// consistent everywhere. ErrKeyNotExist is the common case (container
+	// never had a bypass set); non-ENOENT errors are Warn-logged but left
+	// non-fatal so Disable still returns nil and the caller can proceed
+	// with cleanup.
+	_ = clearBypass(m.objs.BypassMap, cgroupID, m.log)
 
 	// route_map is global (not per-container) — no cleanup needed here.
 
@@ -302,7 +336,14 @@ func (m *Manager) Disable(cgroupID uint64) error {
 // SyncRoutes replaces the global route_map with the given routes.
 // Called by the firewall manager whenever egress rules change (add/remove/reload).
 // All enforced containers immediately see the updated routes.
+//
+// Per-iteration Delete/Update failures are logged at Warn level for forensics
+// and collected into a single joined error. When every operation succeeds the
+// returned error is nil (errors.Join of an empty slice returns nil). Previously
+// these errors were silently discarded and a partial sync returned success.
 func (m *Manager) SyncRoutes(routes []Route) error {
+	var errs []error
+
 	// Clear existing routes.
 	var keysToDelete []clawkerRouteKey
 	var rk clawkerRouteKey
@@ -312,7 +353,13 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 		keysToDelete = append(keysToDelete, rk)
 	}
 	for _, k := range keysToDelete {
-		_ = m.objs.RouteMap.Delete(k)
+		if err := m.objs.RouteMap.Delete(k); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			m.log.Warn().Err(err).
+				Uint32("domain_hash", k.DomainHash).
+				Uint16("dst_port", k.DstPort).
+				Msg("ebpf sync-routes: deleting stale route_map entry")
+			errs = append(errs, fmt.Errorf("delete route_map[domain_hash=%d, dst_port=%d]: %w", k.DomainHash, k.DstPort, err))
+		}
 	}
 
 	// Populate with new routes.
@@ -323,12 +370,16 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 		}
 		val := clawkerRouteVal{EnvoyPort: r.EnvoyPort}
 		if err := m.objs.RouteMap.Update(key, val, ebpf.UpdateAny); err != nil {
-			m.log.Warn().Err(err).Uint32("domain_hash", r.DomainHash).Msg("ebpf sync-routes: updating route_map")
+			m.log.Warn().Err(err).
+				Uint32("domain_hash", r.DomainHash).
+				Uint16("dst_port", r.DstPort).
+				Msg("ebpf sync-routes: updating route_map")
+			errs = append(errs, fmt.Errorf("update route_map[domain_hash=%d, dst_port=%d]: %w", r.DomainHash, r.DstPort, err))
 		}
 	}
 
-	m.log.Info().Int("routes", len(routes)).Msg("global route_map synced")
-	return nil
+	m.log.Info().Int("routes", len(routes)).Int("errors", len(errs)).Msg("global route_map synced")
+	return errors.Join(errs...)
 }
 
 // Bypass sets the bypass flag for a container, allowing unrestricted egress.
@@ -359,7 +410,11 @@ func (m *Manager) UpdateDNSCache(ip uint32, domainHash uint32, ttlSeconds uint32
 	return m.objs.DnsCache.Update(ip, entry, ebpf.UpdateAny)
 }
 
-// GarbageCollectDNS removes expired entries from the dns_cache map.
+// GarbageCollectDNS removes expired entries from the dns_cache map. Delete
+// failures are logged at Debug level (this routine is retry-safe — the next
+// GC pass will try again) but never cause an error to surface. ErrKeyNotExist
+// is expected when another actor raced us (e.g. the dnsbpf CoreDNS plugin
+// rewrote the entry between Iterate and Delete) and is intentionally silent.
 func (m *Manager) GarbageCollectDNS() int {
 	now := uint32(time.Now().Unix())
 	var ip uint32
@@ -373,7 +428,9 @@ func (m *Manager) GarbageCollectDNS() int {
 		}
 	}
 	for _, key := range expired {
-		_ = m.objs.DnsCache.Delete(key)
+		if err := m.objs.DnsCache.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			m.log.Debug().Err(err).Uint32("ip", key).Msg("ebpf gc-dns: deleting expired dns_cache entry (non-fatal)")
+		}
 	}
 	return len(expired)
 }
