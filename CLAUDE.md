@@ -56,7 +56,11 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 ## Repository Structure
 
 ```
-├── cmd/clawker/              # Main CLI binary
+├── cmd/
+│   ├── clawker/               # Main CLI binary
+│   ├── clawker-generate/      # Code generation helper
+│   ├── coredns-clawker/       # Custom CoreDNS build embedding the dnsbpf plugin (Linux; embedded via go:embed into internal/firewall)
+│   └── gen-docs/              # CLI doc generator (man/markdown/rst/yaml)
 ├── internal/
 │   ├── build/                 # Build-time metadata (version, date) — leaf, stdlib only
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
@@ -70,10 +74,12 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── config/                # Storage.Store[T] config engine: schema types, multi-file loading, constants (see internal/config/CLAUDE.md)
 │   │   └── storeui/           # Domain adapters for storeui: settings/, project/
 │   ├── containerfs/           # Host Claude config preparation for container init
+│   ├── dnsbpf/                # CoreDNS plugin: writes DNS A/AAAA resolutions to the BPF dns_cache map in real time (used by cmd/coredns-clawker)
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
 │   │   └── mocks/             # FakeClient, test helpers, moby mock transport
 │   ├── docs/                  # CLI doc generation (man, markdown, rst, yaml)
-│   ├── firewall/              # Envoy+CoreDNS firewall stack: manager interface, config generators, certs, daemon, rules store
+│   ├── ebpf/                  # eBPF cgroup programs + Go manager (clawker.c compiled via bpf2go); `cmd/` host-side subcommand invoked by firewall manager (init, sync-routes, enable, disable)
+│   ├── firewall/              # Envoy+CoreDNS firewall stack: manager interface, config generators, certs, daemon, rules store; embeds pre-built ebpf-manager and coredns-clawker binaries (ebpf_embed.go, coredns_embed.go)
 │   │   └── mocks/             # FirewallManagerMock (moq-generated)
 │   ├── git/                   # Git operations, worktree management (leaf — no internal imports, uses go-git)
 │   │   └── gittest/           # InMemoryGitManager for testing
@@ -106,8 +112,13 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   │   └── harness/           # CLI test harness (delegates dirs to testenv, adds chdir + Factory + Run)
 │   └── whail/                 # Whail BuildKit integration tests (Docker + BuildKit)
 ├── scripts/
-│   ├── install.sh             # curl|bash installer (downloads pre-built binary from GitHub releases)
-│   └── check-claude-freshness.sh  # CLAUDE.md staleness checker
+│   ├── install.sh                 # curl|bash installer (downloads pre-built binary from GitHub releases)
+│   ├── install-hooks.sh           # Install pre-commit hooks
+│   ├── check-claude-freshness.sh  # CLAUDE.md staleness checker
+│   ├── clawker-leak-monitor.sh    # Docker resource leak monitor
+│   ├── gen-dep-graphs.sh          # Dependency graph generator
+│   ├── gen-notice.sh              # Third-party notice generator
+│   └── localenv-dotenv.sh         # Local env .env updater (used by `make localenv`)
 └── templates/                 # clawker.yaml scaffolding
 ```
 
@@ -169,6 +180,10 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `firewall.FirewallManager` | Interface for Envoy+CoreDNS firewall stack (15 methods: lifecycle, rules, container control, bypass, status); mock: `firewall/mocks/FirewallManagerMock` |
 | `firewall.Daemon` | Detached firewall process with dual-loop (health 5s + container watcher 30s), PID file management. `EnsureDaemon()` called during container creation |
 | `firewall.ProjectRules()` | Builds complete rule set from project config (security.firewall rules + required internal rules like Claude API, Docker registry) |
+| `firewall.embeddedImageSpec` / `ensureEmbeddedImage` | Unified pattern for building Docker images from embedded Linux binaries on-demand. Drives both the eBPF manager (`ebpf_embed.go`) and the custom CoreDNS build (`coredns_embed.go`) |
+| `firewall.syncRoutes` | Manager helper that invokes the ebpf-manager `sync-routes` subcommand to repopulate the global BPF route_map from current rules. Called on `EnsureRunning`, `regenerateAndRestart`, and container enable |
+| `dnsbpf.Handler` | CoreDNS plugin (`internal/dnsbpf`) that intercepts DNS responses and writes IP → {domain_hash, TTL} entries to the BPF dns_cache map. Registered as `dnsbpf` directive in `cmd/coredns-clawker` |
+| `ebpf.Manager` | Host-side Go manager for clawker cgroup/sock programs (compiled via bpf2go). Its `cmd/` subcommand (init, sync-routes, enable, disable) is embedded as a Linux binary and invoked by the firewall manager |
 | `shared.CommandOpts` | DI container for container start orchestration — function closures: Client, Config, ProjectManager, HostProxy, Firewall, SocketBridge, Logger |
 | `shared.ContainerStart()` | Three-phase container start: `BootstrapServicesPreStart` → docker start → `BootstrapServicesPostStart`. Used by `run` and `start` |
 | `firewall.Manager` | Docker implementation of `FirewallManager` — manages Envoy/CoreDNS containers, config generation, certificate PKI, rule persistence |
@@ -291,6 +306,8 @@ loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permis
 11. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
 12. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `f.Logger` (Factory lazy noun captured on Options struct), library-layer code accepts `*logger.Logger` in constructors. Logger init happens lazily on first `f.Logger()` call
 13. Package boundary rule: path resolution + config file I/O belongs to `internal/config`; project identity/CRUD/worktree lifecycle orchestration belongs to `internal/project`
+14. Firewall uses a **global BPF route_map** keyed by `{domain_hash, dst_port}` (not per-container). Per-container enforcement comes from presence in `container_map`, which enables live rule sync across all running containers via `ebpf-manager sync-routes`. `connect6` routes IPv4-mapped addresses so dual-stack sockets cannot bypass the firewall.
+15. CoreDNS is a **custom build** (`cmd/coredns-clawker`) that embeds the `internal/dnsbpf` plugin. The binary is `go:embed`'d into `internal/firewall/coredns_embed.go` and built into a Docker image on-demand by `ensureEmbeddedImage`, replacing the stock `coredns/coredns` image. `corednsContainerConfig` runs with `CAP_BPF + CAP_SYS_ADMIN` and a `/sys/fs/bpf` mount so the plugin can write the dns_cache map directly. `EnsureRunning` initializes eBPF before starting CoreDNS; DNS seeding from the Go side has been removed — the plugin is the source of truth.
 
 ## Mock Generation
 
