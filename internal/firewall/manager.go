@@ -450,10 +450,11 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		return fmt.Errorf("firewall enable: ensuring ebpf container: %w", err)
 	}
 
-	// Initialize BPF programs (idempotent — pinned programs persist across execs).
-	if err := m.ebpfExec(ctx, "init"); err != nil {
-		return fmt.Errorf("firewall enable: initializing eBPF programs: %w", err)
-	}
+	// DO NOT call ebpfExec("init") here — that would re-run Load() which
+	// calls cleanupAllLinks() and detaches BPF programs from ALL other
+	// running containers. Programs are loaded by EnsureRunning at daemon
+	// startup and pinned to the host bpffs; they persist for the daemon
+	// lifetime. No re-init is needed for per-container enable.
 
 	// Sync global routes (idempotent — safe to call on every Enable).
 	if err := m.syncRoutes(ctx); err != nil {
@@ -726,13 +727,10 @@ func (m *Manager) regenerateAndRestart(ctx context.Context) error {
 		return nil
 	}
 
-	// Ensure BPF maps are pinned before CoreDNS restarts.
-	// The dnsbpf plugin opens the pinned dns_cache map on startup.
-	if err := m.ebpfExec(ctx, "init"); err != nil {
-		return fmt.Errorf("ensuring eBPF maps before restart: %w", err)
-	}
-
-	// Sync global route_map so running containers see the new rules immediately.
+	// DO NOT call ebpfExec("init") here — that would re-run Load() which
+	// calls cleanupAllLinks() and detaches BPF programs from ALL running
+	// containers. Maps are already pinned from the initial EnsureRunning,
+	// so we just need to sync routes for the rule change.
 	if err := m.syncRoutes(ctx); err != nil {
 		return err
 	}

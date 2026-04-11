@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 // clawker.c — All clawker eBPF programs in a single compilation unit.
 //
-// Six cgroup programs that replace iptables for per-container egress control:
+// Seven cgroup programs that replace iptables for per-container egress control:
 //   1. cgroup/connect4  — IPv4 TCP/UDP: redirect to Envoy/CoreDNS + allow/deny
 //   2. cgroup/sendmsg4  — IPv4 UDP: DNS redirect + block
 //   3. cgroup/recvmsg4  — IPv4 UDP: rewrite DNS response source
 //   4. cgroup/connect6  — IPv6: full IPv4-mapped routing + native deny
-//   5. cgroup/sendmsg6  — IPv6 UDP deny
-//   6. cgroup/sock_create — Raw socket blocking (ICMP prevention)
+//   5. cgroup/sendmsg6  — IPv6 UDP: IPv4-mapped DNS redirect + native deny
+//   6. cgroup/recvmsg6  — IPv6 UDP: rewrite IPv4-mapped DNS response source
+//   7. cgroup/sock_create — Raw socket blocking (ICMP prevention)
 //
 // All programs share pinned BPF maps defined in common.h. The Go userspace
 // code (internal/ebpf/) manages these maps and attaches programs to container
@@ -321,13 +322,73 @@ int clawker_sendmsg6(struct bpf_sock_addr *ctx)
 	    ctx->user_ip6[2] == 0 && ctx->user_ip6[3] == bpf_htonl(1))
 		return 1;
 
-	// Allow IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) — dual-stack sockets.
+	// IPv4-mapped IPv6 (::ffff:x.x.x.x): apply the same UDP routing logic as
+	// sendmsg4. Without this, unconnected UDP DNS queries via dual-stack
+	// sockets (nslookup, glibc resolver) bypass CoreDNS and hit Docker's
+	// embedded DNS at ::ffff:127.0.0.11 directly.
 	if (ctx->user_ip6[0] == 0 && ctx->user_ip6[1] == 0 &&
-	    ctx->user_ip6[2] == bpf_htonl(0x0000ffff))
-		return 1;
+	    ctx->user_ip6[2] == bpf_htonl(0x0000ffff)) {
 
+		__u32 dst_ip = ctx->user_ip6[3];
+		__u16 dst_port = bpf_ntohs(ctx->user_port);
+
+		// DNS redirect (before loopback check — Docker DNS is 127.0.0.11).
+		if (dst_port == 53) {
+			ctx->user_ip6[3] = cfg->coredns_ip;
+			ctx->user_port = bpf_htons(53);
+			return 1;
+		}
+
+		if (is_loopback(dst_ip))
+			return 1;
+
+		if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask))
+			return 1;
+
+		// Non-DNS UDP: deny.
+		metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
+		return 0;
+	}
+
+	// Native IPv6 UDP: deny.
 	metric_inc(cgroup_id, 0, bpf_ntohs(ctx->user_port), ACTION_DENY);
 	return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Program 4b: cgroup/recvmsg6 — Rewrite UDP source on DNS responses
+// ---------------------------------------------------------------------------
+// Paired with sendmsg6: when sendmsg6 rewrites dst from ::ffff:127.0.0.11
+// to ::ffff:<coredns_ip>, the response arrives from CoreDNS. The app expects
+// the response from 127.0.0.11. This program fixes the source address on
+// the response, matching recvmsg4's behavior for IPv4 sockets.
+
+SEC("cgroup/recvmsg6")
+int clawker_recvmsg6(struct bpf_sock_addr *ctx)
+{
+	__u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
+	if (uid == 0)
+		return 1;
+
+	__u64 cgroup_id = bpf_get_current_cgroup_id();
+
+	struct container_config *cfg = bpf_map_lookup_elem(&container_map, &cgroup_id);
+	if (!cfg)
+		return 1;
+
+	// Only IPv4-mapped responses — native IPv6 doesn't go through CoreDNS.
+	if (ctx->user_ip6[0] != 0 || ctx->user_ip6[1] != 0 ||
+	    ctx->user_ip6[2] != bpf_htonl(0x0000ffff))
+		return 1;
+
+	// If the response is from CoreDNS port 53, rewrite source to
+	// Docker embedded DNS (127.0.0.11) so the app's socket accepts it.
+	if (ctx->user_ip6[3] == cfg->coredns_ip && bpf_ntohs(ctx->user_port) == 53) {
+		ctx->user_ip6[3] = bpf_htonl(0x7f00000b); // 127.0.0.11
+		ctx->user_port = bpf_htons(53);
+	}
+
+	return 1;
 }
 
 // ---------------------------------------------------------------------------

@@ -651,7 +651,7 @@ Note: Environment variables are visible in `docker inspect`. This is accepted fo
 the config volume. The `docker.CopyToVolume` two-phase chown ensures UID 1001 ownership.
 This supplements environment variable passing for persistent credential storage.
 
-### 7.2 Firewall — Envoy+CoreDNS Sidecar Architecture
+### 7.2 Firewall — Envoy + Custom CoreDNS + eBPF Architecture
 
 #### Design Rationale
 
@@ -661,7 +661,7 @@ This supplements environment variable passing for persistent credential storage.
 
 **Path rules and MITM inspection**: For domains requiring API-level control (e.g., allow `GET /v1/models` but block arbitrary uploads), Envoy terminates TLS with per-domain MITM certificates (ECDSA P256 CA). Domains without path rules use TLS passthrough with zero inspection overhead. This gives fine-grained control without penalizing simple allow/deny use cases.
 
-**Hot-reload semantics**: Rule changes regenerate `envoy.yaml` and `Corefile` on disk. Envoy picks up config via container restart; CoreDNS via its reload plugin (2s poll). No agent container restarts required — agents see updated rules on their next DNS query or HTTPS connection.
+**Hot-reload semantics**: Rule changes regenerate `envoy.yaml` and `Corefile` on disk AND atomically replace the global BPF `route_map` via `syncRoutes`. Envoy picks up config via container restart; CoreDNS via its reload plugin (2s poll). No agent container restarts required — all running containers immediately see the updated rules. The `regenerateAndRestart` path also re-runs `ebpfExec("init")` to ensure the pinned `dns_cache` map exists before CoreDNS restarts (the `dnsbpf` plugin opens the map on startup).
 
 **Three-phase container start (bootstrap / start / post-bootstrap)**: During bootstrap, the firewall manager attaches eBPF cgroup programs to the container, routing DNS to CoreDNS and TCP to Envoy. The entrypoint waits for a readiness signal, then `gosu` drops to the unprivileged `claude` user for the main process (start phase). Post-bootstrap hooks (e.g., `agent.post_init`) run after the container is started.
 
@@ -669,18 +669,25 @@ This supplements environment variable passing for persistent credential storage.
 
 #### Implementation
 
-The firewall uses an **Envoy proxy + CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs replace iptables for all traffic routing. See `.claude/docs/EBPF-DESIGN.md` for the full eBPF design.
+The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs replace iptables for all traffic routing. The CoreDNS image is a custom build (`clawker-coredns:latest`) of `cmd/coredns-clawker` embedding `internal/dnsbpf` — not stock `coredns/coredns`. See `.claude/docs/EBPF-DESIGN.md` for the full eBPF design.
 
 **Why this architecture:**
 - **DNS deny-by-default**: CoreDNS returns NXDOMAIN for unlisted domains — agents can't even resolve blocked hosts. Upstream: Cloudflare malware-blocking (`1.1.1.2`, `1.0.0.2`).
+- **Real-time dns_cache via dnsbpf plugin**: Every successful A-record response goes through the `dnsbpf` CoreDNS plugin, which writes `IP → {domain_hash, TTL}` into the pinned BPF `dns_cache` map. This replaced the previous startup-time DNS seed approach that was vulnerable to DNS round-robin. NXDOMAIN responses are never written to the cache.
 - **TLS inspection**: Envoy terminates TLS with per-domain MITM certificates (ECDSA P256 CA), enabling path-level filtering. Passthrough mode for domains without path rules.
-- **Hot reload**: Rule changes regenerate `envoy.yaml` and `Corefile` — Envoy picks up config via restart, CoreDNS via reload plugin (2s).
-- **eBPF per-container routing**: `cgroup/connect4` intercepts `connect()` syscalls per-container, rewriting destinations to the correct Envoy listener. DNS-aware routing via `dns_cache` BPF map enables per-domain TCP routing (solving the multi-SSH-provider problem that iptables couldn't).
-- **No container capabilities**: Agent containers need zero Linux capabilities. The eBPF manager container (privileged) handles all BPF program loading and cgroup attachment from outside.
+- **Live hot reload**: Rule changes regenerate `envoy.yaml` and `Corefile` AND atomically replace the global BPF `route_map` via `syncRoutes`. All running agent containers immediately see the new rules — no container restarts.
+- **Global BPF route_map**: `route_key` is `{domain_hash, dst_port}` (no `cgroup_id`). Container enforcement is gated on presence in `container_map` — all enforced containers share the same routes. Enables live rule sync and eliminates 1×N route duplication.
+- **Dual-stack IPv6 handling**: `cgroup/connect4` handles AF_INET sockets. `cgroup/connect6` routes IPv4-mapped IPv6 destinations (`::ffff:x.x.x.x`) with the same logic as connect4 — this closed a prior security bug where dual-stack sockets (SSH, curl, Node.js) bypassed the firewall entirely. `cgroup/sendmsg6` and `cgroup/recvmsg6` similarly handle UDP DNS via dual-stack sockets so `nslookup`-style resolvers can't bypass CoreDNS. Native IPv6 is denied (documented limitation).
+- **Stale pin recovery**: `ebpf.Manager.Load()` detects pinned maps whose key/value sizes changed (e.g., after the `route_key` schema change) and removes them before loading new programs. Prevents startup failures after BPF struct changes.
+- **Agent container capabilities**: Agent containers need zero Linux capabilities. The eBPF manager container handles BPF program loading/attachment from outside. The custom CoreDNS container requires `CAP_BPF + CAP_SYS_ADMIN` (plus a `/sys/fs/bpf` bind mount) so the `dnsbpf` plugin can open the pinned `dns_cache` map and write entries.
 
-**Daemon isolation**: The firewall runs as a separate detached process (`EnsureDaemon()`), not as part of the CLI command. The daemon manages container lifecycle and runs dual health check loops (Envoy TCP + CoreDNS HTTP, 5s interval). A container watcher loop (30s) exits the daemon when no clawker containers are running.
+**Daemon isolation**: The firewall runs as a separate detached process (`EnsureDaemon()`), not as part of the CLI command. The daemon manages container lifecycle and runs dual health check loops (Envoy HTTP + CoreDNS HTTP, 5s interval). A container watcher loop (30s) exits the daemon when no clawker containers are running.
 
-**Network design**: All firewall containers and agent containers share a `clawker-net` Docker bridge network. Envoy and CoreDNS get static IPs computed from the network gateway (`.2` and `.3`). The eBPF manager gets `.4`. eBPF `cgroup/connect4` programs rewrite agent container `connect()` calls to route traffic to Envoy/CoreDNS IPs.
+**Network design**: All firewall containers and agent containers share a `clawker-net` Docker bridge network. Envoy gets `.2`, CoreDNS `.3`, and the eBPF manager `.4` (static IPs computed from the network gateway). eBPF `cgroup/connect4`/`connect6` programs rewrite agent container `connect()` calls to route traffic to Envoy/CoreDNS IPs.
+
+**Startup ordering is security-critical**: `EnsureRunning` starts the eBPF container and runs `init` BEFORE Envoy and CoreDNS, because the `dnsbpf` plugin opens the pinned `dns_cache` map on CoreDNS startup and fails to boot if it doesn't exist. The `regenerateAndRestart` path preserves this invariant — it re-runs init and `syncRoutes` before restarting Envoy/CoreDNS.
+
+**Unified embedded image pattern**: Both the eBPF manager and custom CoreDNS binaries are cross-compiled for Linux, embedded in the clawker binary via `go:embed` (`ebpf_embed.go`, `coredns_embed.go`), and built into Docker images on first use via the shared `embeddedImageSpec` + `ensureEmbeddedImage` pattern. Inline Dockerfiles are SHA-pinned to `alpine:3.21`.
 
 **Rule merge strategy**: System-required rules (Claude API, Docker registry) are always present. Project rules from `.clawker.yaml` (`add_domains`, `rules`) merge additively — project rules never replace system rules. Dedup key: `destination:protocol:port`. The rules store uses `storage.Store[EgressRulesFile]` with file-level locking.
 

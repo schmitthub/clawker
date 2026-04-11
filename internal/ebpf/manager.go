@@ -57,6 +57,28 @@ func (m *Manager) Load() error {
 		mapSpec.Pinning = ebpf.PinByName
 	}
 
+	// Remove stale pinned maps whose schema has changed (e.g., key size).
+	// The BPF loader refuses to reuse a pinned map with incompatible specs.
+	for name, mapSpec := range spec.Maps {
+		pin := filepath.Join(m.pinPath, name)
+		existing, err := ebpf.LoadPinnedMap(pin, nil)
+		if err != nil {
+			continue // not pinned or can't open — Load will handle it
+		}
+		info, err := existing.Info()
+		existing.Close()
+		if err != nil {
+			continue
+		}
+		if info.KeySize != mapSpec.KeySize || info.ValueSize != mapSpec.ValueSize {
+			m.log.Warn().Str("map", name).
+				Uint32("old_key", info.KeySize).Uint32("new_key", mapSpec.KeySize).
+				Uint32("old_val", info.ValueSize).Uint32("new_val", mapSpec.ValueSize).
+				Msg("pinned map schema changed, removing stale pin")
+			os.Remove(pin)
+		}
+	}
+
 	if err := spec.LoadAndAssign(&m.objs, &ebpf.CollectionOptions{
 		Maps: ebpf.MapOptions{PinPath: m.pinPath},
 	}); err != nil {
@@ -71,6 +93,7 @@ func (m *Manager) Load() error {
 		"clawker_recvmsg4":    m.objs.ClawkerRecvmsg4,
 		"clawker_connect6":    m.objs.ClawkerConnect6,
 		"clawker_sendmsg6":    m.objs.ClawkerSendmsg6,
+		"clawker_recvmsg6":    m.objs.ClawkerRecvmsg6,
 		"clawker_sock_create": m.objs.ClawkerSockCreate,
 	}
 	for name, prog := range progs {
@@ -110,6 +133,7 @@ func (m *Manager) OpenPinned() error {
 		"clawker_recvmsg4":    &m.objs.ClawkerRecvmsg4,
 		"clawker_connect6":    &m.objs.ClawkerConnect6,
 		"clawker_sendmsg6":    &m.objs.ClawkerSendmsg6,
+		"clawker_recvmsg6":    &m.objs.ClawkerRecvmsg6,
 		"clawker_sock_create": &m.objs.ClawkerSockCreate,
 	}
 	for name, target := range progs {
@@ -157,7 +181,7 @@ func (m *Manager) cleanupLinks(cgroupID uint64) {
 	}
 
 	// Remove pinned link files for this cgroup.
-	progNames := []string{"connect4", "sendmsg4", "recvmsg4", "connect6", "sendmsg6", "sock_create"}
+	progNames := []string{"connect4", "sendmsg4", "recvmsg4", "connect6", "sendmsg6", "recvmsg6", "sock_create"}
 	for _, name := range progNames {
 		pin := filepath.Join(m.pinPath, fmt.Sprintf("link_%s_%d", name, cgroupID))
 		os.Remove(pin)
@@ -200,6 +224,7 @@ func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContaine
 		{"recvmsg4", m.objs.ClawkerRecvmsg4, ebpf.AttachCGroupUDP4Recvmsg},
 		{"connect6", m.objs.ClawkerConnect6, ebpf.AttachCGroupInet6Connect},
 		{"sendmsg6", m.objs.ClawkerSendmsg6, ebpf.AttachCGroupUDP6Sendmsg},
+		{"recvmsg6", m.objs.ClawkerRecvmsg6, ebpf.AttachCGroupUDP6Recvmsg},
 		{"sock_create", m.objs.ClawkerSockCreate, ebpf.AttachCGroupInetSockCreate},
 	}
 
@@ -243,7 +268,7 @@ func (m *Manager) Disable(cgroupID uint64) error {
 	}
 
 	// Also unpin any persisted links for this cgroup.
-	linkNames := []string{"connect4", "sendmsg4", "recvmsg4", "connect6", "sendmsg6", "sock_create"}
+	linkNames := []string{"connect4", "sendmsg4", "recvmsg4", "connect6", "sendmsg6", "recvmsg6", "sock_create"}
 	for _, name := range linkNames {
 		pinPath := filepath.Join(m.pinPath, fmt.Sprintf("link_%s_%d", name, cgroupID))
 		l, err := link.LoadPinnedLink(pinPath, nil)
