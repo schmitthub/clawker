@@ -16,15 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version-file: go.mod
-
       # Build the embedded firewall binaries first. internal/firewall uses
-      # go:embed on assets/ebpf-manager and assets/coredns-clawker, so
-      # typecheck fails without these files being present.
+      # go:embed on assets/ebpf-manager and assets/coredns-clawker and
+      # internal/ebpf/manager.go references types from the bpf2go-generated
+      # wrappers, so typecheck fails without these files on disk.
+      # The composite action handles setup-go + make ebpf-binary coredns-binary.
       - name: Build embedded firewall binaries
-        run: make ebpf-binary coredns-binary
+        uses: ./.github/actions/build-firewall-binaries
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
