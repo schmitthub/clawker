@@ -201,10 +201,13 @@ func (m *Manager) Close() error {
 	return m.objs.Close()
 }
 
-// bypassMap is the minimal subset of *ebpf.Map used by clearBypass. It exists
-// purely as a test seam so the bypass-clear behavior in Enable can be exercised
-// without a live kernel + bpf2go objects. The production *ebpf.Map satisfies
-// this interface via its Delete method.
+// bypassMap is the minimal subset of *ebpf.Map used by clearBypass and the
+// dns_cache GC helper. It exists purely as a test seam so BPF map delete
+// behavior can be exercised without a live kernel + bpf2go objects. The
+// production *ebpf.Map satisfies this interface via its Delete method —
+// the same seam is reused for both BypassMap (uint64 keys) and DnsCache
+// (uint32 keys) because Go's structural typing makes the concrete key
+// type an implementation detail of the caller.
 type bypassMap interface {
 	Delete(key any) error
 }
@@ -410,11 +413,33 @@ func (m *Manager) UpdateDNSCache(ip uint32, domainHash uint32, ttlSeconds uint32
 	return m.objs.DnsCache.Update(ip, entry, ebpf.UpdateAny)
 }
 
-// GarbageCollectDNS removes expired entries from the dns_cache map. Delete
-// failures are logged at Debug level (this routine is retry-safe — the next
-// GC pass will try again) but never cause an error to surface. ErrKeyNotExist
-// is expected when another actor raced us (e.g. the dnsbpf CoreDNS plugin
-// rewrote the entry between Iterate and Delete) and is intentionally silent.
+// deleteExpiredDNSEntries clears the given keys from a BPF map, returning
+// the number of entries actually cleared. ErrKeyNotExist counts as cleared
+// (end-state matches intent — entry is gone, usually because another actor
+// raced us, e.g. the dnsbpf CoreDNS plugin rewrote the entry between
+// Iterate and Delete). Real delete failures (EPERM, ENOMEM, ...) are
+// logged at Debug level and NOT counted, so the caller's return value is
+// an honest "entries cleared" metric rather than an "entries we tried to
+// clear" count. Split out from GarbageCollectDNS for unit testability.
+func deleteExpiredDNSEntries(m bypassMap, keys []uint32, log *logger.Logger) int {
+	cleared := 0
+	for _, key := range keys {
+		err := m.Delete(key)
+		if err == nil || errors.Is(err, ebpf.ErrKeyNotExist) {
+			cleared++
+			continue
+		}
+		if log != nil {
+			log.Debug().Err(err).Uint32("ip", key).Msg("ebpf gc-dns: deleting expired dns_cache entry (non-fatal)")
+		}
+	}
+	return cleared
+}
+
+// GarbageCollectDNS removes expired entries from the dns_cache map and
+// returns the number of entries that were actually cleared. This routine
+// is retry-safe — transient delete failures are logged at Debug and the
+// next GC pass will try again.
 func (m *Manager) GarbageCollectDNS() int {
 	now := uint32(time.Now().Unix())
 	var ip uint32
@@ -427,12 +452,7 @@ func (m *Manager) GarbageCollectDNS() int {
 			expired = append(expired, ip)
 		}
 	}
-	for _, key := range expired {
-		if err := m.objs.DnsCache.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			m.log.Debug().Err(err).Uint32("ip", key).Msg("ebpf gc-dns: deleting expired dns_cache entry (non-fatal)")
-		}
-	}
-	return len(expired)
+	return deleteExpiredDNSEntries(m.objs.DnsCache, expired, m.log)
 }
 
 // LookupContainer returns the container_map entry for a given cgroup ID.

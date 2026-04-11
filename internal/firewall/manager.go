@@ -669,8 +669,15 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 func (m *Manager) Status(ctx context.Context) (*FirewallStatus, error) {
 	rules, _ := normalizeAndDedup(m.store.Read().Rules)
 
-	// Discover network state from Docker (best-effort; fields stay empty if network doesn't exist).
-	netInfo, _ := m.discoverNetwork(ctx)
+	// Discover network state. A NotFound error is legitimate (the firewall
+	// hasn't been brought up yet, so the clawker-net bridge doesn't exist);
+	// in that case we leave the network fields empty and continue. Any other
+	// error means we genuinely can't talk to Docker, which must propagate so
+	// callers distinguish "firewall down" from "Docker unreachable".
+	netInfo, err := m.discoverNetwork(ctx)
+	if err != nil && !cerrdefs.IsNotFound(err) {
+		return nil, fmt.Errorf("firewall status: %w", err)
+	}
 
 	// Status must propagate Docker API errors rather than silently reporting
 	// "not running" — callers (CLI, daemon) distinguish "firewall is down"

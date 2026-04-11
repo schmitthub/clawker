@@ -269,6 +269,90 @@ func TestClearBypass_WrapsOtherErrors(t *testing.T) {
 	}
 }
 
+// fakeDNSMap is the dns_cache counterpart to fakeBypassMap — it holds
+// uint32 keys (dns_cache is keyed by IPv4 address as uint32) and records
+// every Delete invocation so deleteExpiredDNSEntries' count-vs-try
+// semantics can be asserted. missing is the set of keys that return
+// ErrKeyNotExist on Delete; forcedErr sets a non-ENOENT error for all
+// other keys (simulating EPERM/EINVAL).
+type fakeDNSMap struct {
+	missing     map[uint32]bool
+	forcedErr   error
+	deleteCalls []uint32
+}
+
+func (f *fakeDNSMap) Delete(key any) error {
+	k, ok := key.(uint32)
+	if !ok {
+		return errors.New("fakeDNSMap: key must be uint32")
+	}
+	f.deleteCalls = append(f.deleteCalls, k)
+	if f.missing[k] {
+		return ebpf.ErrKeyNotExist
+	}
+	if f.forcedErr != nil {
+		return f.forcedErr
+	}
+	return nil
+}
+
+// TestDeleteExpiredDNSEntries_CountsOnlyRealAndENOENTSuccess is the
+// regression guard for the "return value lies" bug in GarbageCollectDNS.
+// The old code returned len(expired) regardless of whether the deletes
+// actually succeeded, so the metric misrepresented GC effectiveness.
+// The helper now counts entries that ended up cleared (including
+// ErrKeyNotExist, since the end-state matches the intent) and excludes
+// real failures like EPERM/EINVAL.
+func TestDeleteExpiredDNSEntries_CountsOnlyRealAndENOENTSuccess(t *testing.T) {
+	t.Parallel()
+	// Scenario: 5 expired keys.
+	//   - keys 1, 2 delete cleanly → counted
+	//   - key 3 returns ErrKeyNotExist (another actor raced us) → counted
+	//     (end-state is correct: the entry is gone)
+	//   - keys 4, 5 return EPERM → NOT counted, logged at Debug
+	fake := &fakeDNSMap{
+		missing:   map[uint32]bool{3: true},
+		forcedErr: nil,
+	}
+	// First assert the happy path (keys 1, 2, 3) yields 3 cleared.
+	cleared := deleteExpiredDNSEntries(fake, []uint32{1, 2, 3}, logger.Nop())
+	if cleared != 3 {
+		t.Errorf("happy path: expected 3 cleared, got %d", cleared)
+	}
+	if len(fake.deleteCalls) != 3 {
+		t.Errorf("expected 3 Delete calls, got %d", len(fake.deleteCalls))
+	}
+
+	// Now force EPERM and assert keys 4, 5 are NOT counted.
+	fake.deleteCalls = nil
+	fake.missing = nil
+	fake.forcedErr = syscall.EPERM
+	cleared = deleteExpiredDNSEntries(fake, []uint32{4, 5}, logger.Nop())
+	if cleared != 0 {
+		t.Errorf("EPERM path: expected 0 cleared (deletes failed), got %d", cleared)
+	}
+	if len(fake.deleteCalls) != 2 {
+		t.Errorf("expected 2 Delete attempts, got %d", len(fake.deleteCalls))
+	}
+}
+
+// TestDeleteExpiredDNSEntries_EmptyReturnsZero is the trivial but
+// load-bearing case: no expired keys means zero cleared, no map
+// interaction. Locks in the happy-path boundary so a future refactor
+// that adds an off-by-one or initializes cleared incorrectly would
+// be caught immediately.
+func TestDeleteExpiredDNSEntries_EmptyReturnsZero(t *testing.T) {
+	t.Parallel()
+	fake := &fakeDNSMap{}
+	cleared := deleteExpiredDNSEntries(fake, nil, logger.Nop())
+	if cleared != 0 {
+		t.Errorf("empty input: expected 0 cleared, got %d", cleared)
+	}
+	if len(fake.deleteCalls) != 0 {
+		t.Errorf("empty input must not invoke Delete; got %d calls", len(fake.deleteCalls))
+	}
+}
+
 // TestCgroupID_RejectsMaliciousPath asserts CgroupID refuses to open a file
 // whose path does not live under /sys/fs/cgroup/. This is the end-to-end
 // counterpart to TestValidateCgroupPath: the validator is called from inside

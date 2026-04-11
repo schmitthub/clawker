@@ -595,8 +595,9 @@ func TestStatus_PropagatesListError(t *testing.T) {
 	// all three containers as "not running" (which masks infra failures).
 	mgr, fake, _ := newManagerWithFake(t)
 
-	// NetworkInspect may or may not be called — return a not-found so
-	// discoverNetwork gracefully yields nil (Status uses it best-effort).
+	// NetworkInspect returns NotFound so discoverNetwork is treated as
+	// "firewall not brought up yet" and Status continues on to the
+	// container probes — where the real ContainerList error lives.
 	fake.NetworkInspectFn = func(context.Context, string, client.NetworkInspectOptions) (client.NetworkInspectResult, error) {
 		return client.NetworkInspectResult{}, errTestNotFound{msg: "no network"}
 	}
@@ -609,6 +610,55 @@ func TestStatus_PropagatesListError(t *testing.T) {
 	_, err := mgr.Status(t.Context())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, listErr)
+}
+
+func TestStatus_PropagatesDiscoverNetworkError(t *testing.T) {
+	// A non-NotFound NetworkInspect error (e.g. Docker daemon unreachable)
+	// must propagate out of Status instead of being silently dropped. The
+	// legitimate "network doesn't exist yet" case uses a NotFound error
+	// and is covered by TestStatus_PropagatesListError above — the two
+	// cases must be distinguishable because a user running `firewall
+	// status` needs to tell "firewall not brought up" apart from "can't
+	// talk to Docker".
+	mgr, fake, _ := newManagerWithFake(t)
+
+	networkErr := errors.New("dial unix /var/run/docker.sock: connection refused")
+	fake.NetworkInspectFn = func(context.Context, string, client.NetworkInspectOptions) (client.NetworkInspectResult, error) {
+		return client.NetworkInspectResult{}, networkErr
+	}
+	// ContainerListFn left unset: if Status incorrectly continues past the
+	// network check, the test will explode on notImplemented rather than
+	// silently masking the regression.
+
+	_, err := mgr.Status(t.Context())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, networkErr, "non-NotFound network errors must propagate from Status")
+}
+
+func TestStatus_NetworkNotFoundIsNotAnError(t *testing.T) {
+	// The inverse of the above: when the clawker-net network legitimately
+	// doesn't exist yet (e.g. immediately after install, before the user
+	// runs firewall up), Status must NOT treat that as a Docker failure.
+	// It should report a healthy-looking empty status with empty network
+	// fields — that's how the CLI distinguishes "firewall not brought up"
+	// from real infra failures.
+	mgr, fake, _ := newManagerWithFake(t)
+
+	fake.NetworkInspectFn = func(context.Context, string, client.NetworkInspectOptions) (client.NetworkInspectResult, error) {
+		return client.NetworkInspectResult{}, errTestNotFound{msg: "no such network"}
+	}
+	// All three container probes return empty lists (none running).
+	fake.ContainerListFn = func(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
+		return client.ContainerListResult{Items: nil}, nil
+	}
+
+	status, err := mgr.Status(t.Context())
+	require.NoError(t, err, "NetworkNotFound must be treated as 'firewall not brought up', not a failure")
+	require.NotNil(t, status)
+	assert.False(t, status.Running)
+	assert.Empty(t, status.EnvoyIP)
+	assert.Empty(t, status.CoreDNSIP)
+	assert.Empty(t, status.NetworkID)
 }
 
 // --- helpers: stub the clawker-net Docker network for Enable tests -----------
