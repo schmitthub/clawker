@@ -148,7 +148,7 @@ clawker-build-windows:
 	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/clawker
 
 # Run Clawker tests
-clawker-test:
+clawker-test: ebpf-binary coredns-binary
 	@echo "Running Clawker tests..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -156,7 +156,7 @@ endif
 	$(TEST_CMD_VERBOSE) ./...
 
 # Run Clawker internals tests
-clawker-test-internals:
+clawker-test-internals: ebpf-binary coredns-binary
 	@echo "Running Clawker internal integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -164,7 +164,7 @@ endif
 	$(TEST_CMD_VERBOSE) -timeout 10m ./test/internals/...
 
 # Run Clawker tests with coverage
-clawker-test-coverage:
+clawker-test-coverage: ebpf-binary coredns-binary
 	@echo "Running Clawker tests with coverage..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -173,12 +173,12 @@ endif
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
 # Run short tests (skip internals tests)
-clawker-test-short:
+clawker-test-short: ebpf-binary coredns-binary
 	@echo "Running short Clawker tests..."
 	$(TEST_CMD) -short ./...
 
 # Run linter
-clawker-lint:
+clawker-lint: ebpf-binary coredns-binary
 	@echo "Running linter..."
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run ./...; \
@@ -188,7 +188,7 @@ clawker-lint:
 	fi
 
 # Run staticcheck
-clawker-staticcheck:
+clawker-staticcheck: ebpf-binary coredns-binary
 	@echo "Running staticcheck..."
 	@if command -v staticcheck >/dev/null 2>&1; then \
 		staticcheck ./...; \
@@ -254,7 +254,7 @@ test-ci: ebpf-binary coredns-binary
 	$(GO) test -race -count=1 -coverprofile=coverage.out $$PKGS
 
 # E2E integration tests (requires Docker)
-test-e2e:
+test-e2e: ebpf-binary coredns-binary
 	@echo "Running E2E integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -262,7 +262,7 @@ endif
 	$(TEST_CMD_VERBOSE) -timeout 10m ./test/e2e/...
 
 # Whail BuildKit integration tests (requires Docker + BuildKit)
-test-whail:
+test-whail: ebpf-binary coredns-binary
 	@echo "Running whail integration tests (requires Docker + BuildKit)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -273,7 +273,7 @@ endif
 test-all: test test-e2e test-whail
 
 # Unit tests with coverage
-test-coverage:
+test-coverage: ebpf-binary coredns-binary
 	@echo "Running unit tests with coverage..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
