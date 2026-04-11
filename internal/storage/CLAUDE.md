@@ -8,17 +8,15 @@
 
 ## Architecture
 
-Generic layered YAML store engine. Zero internal imports (leaf package). Both `internal/config` and `internal/project` compose a `Store[T]` with their own schema types. Replaces Viper.
+Generic layered YAML store engine. Leaf package (zero internal imports). Both `internal/config` and `internal/project` compose a `Store[T]` with their own schema types. Replaces Viper.
 
-**Copy-on-write architecture:** The node tree (`map[string]any`) is the merge engine and persistence layer. Immutable `*T` snapshots are published via `atomic.Pointer` — readers get lock-free access. Writers deep-copy the tree, deserialize a fresh `*T`, apply the mutation, sync back to the tree, and atomically swap the snapshot.
+**Copy-on-write model**: the node tree (`map[string]any`) is the merge and persistence layer. Immutable `*T` snapshots are published via `atomic.Pointer` — readers are lock-free. `Set` deep-copies the tree, deserializes into a fresh `*T`, applies the mutation, re-serializes via `structToMap`, merges back into the tree, and atomically swaps the published snapshot.
 
 ```
-Load:   file → node tree ─┐
-                           ├→ merge node trees → deserialize → immutable *T snapshot
-        string → node tree ─┘
-Read:   atomic.Load → *T (lock-free, zero alloc)
-Set:    deep copy tree → unmarshal → fn(copy) → structToMap → merge into tree → atomic.Store(copy)
-Write:  node tree → route by provenance → per-file atomic write
+Load:  file/string → node tree → merge → deserialize → immutable *T snapshot
+Read:  atomic.Load → *T                 (lock-free, zero alloc)
+Set:   deep copy → unmarshal → fn(copy) → structToMap → merge → atomic.Store
+Write: node tree → route by provenance → per-file atomic write (temp+fsync+rename, flock)
 ```
 
 **Imported by:** `internal/config`, `internal/project`
@@ -171,25 +169,7 @@ Empty strings are excluded at the struct-field level because config schemas use 
 
 ## Composition by Consumers
 
-```go
-// internal/config
-projectStore, _ := storage.New[Project](
-    storage.WithFilenames("clawker.local.yaml", "clawker.yaml"),
-    storage.WithDefaultsFromStruct[Project](),
-    storage.WithWalkUp(),
-    storage.WithConfigDir(),
-    storage.WithMigrations(configMigrations...),
-)
-
-// internal/project
-registryStore, _ := storage.NewStore[Registry](
-    storage.WithFilenames("registry.yaml"),
-    storage.WithDataDir(),
-    storage.WithLock(),
-)
-```
-
-Consumer mock APIs stay unchanged. Callers never see `Store[T]` directly — they use `Config` and `ProjectManager` interfaces.
+`internal/config` composes `Store[Project]` (walk-up + user config dir + migrations + defaults-from-struct) and `Store[Settings]`. `internal/project` composes `Store[Registry]` with `WithDataDir() + WithLock()`. Callers never touch `Store[T]` directly — they use `Config` and `ProjectManager` interfaces.
 
 ## Testing
 
@@ -197,68 +177,24 @@ Consumer mock APIs stay unchanged. Callers never see `Store[T]` directly — the
 
 Test env vars: `CLAWKER_DATA_DIR` (isolate registry), `CLAWKER_TEST_REPO_DIR` (walk-up tests).
 
-### Recent Hardening (2026-02)
+## Oracle + Golden Merge Tests
 
-The following regressions were reproduced with tests and fixed in package logic:
+Defense in depth — the merge engine has two independent guards:
 
-- **Empty map clear persistence**: `Set` + `Write` now correctly persists explicit empty maps (e.g. `env: {}`) instead of retaining stale keys from prior tree state.
-- **Union panic on non-comparable elements**: `merge:"union"` no longer panics when slices contain unhashable values (e.g. maps inside `[]any`); dedupe is deep-equality based.
-- **Implicit YAML field-name tag mapping**: merge-tag lookup now correctly handles tags like `yaml:",omitempty"` by using YAML default field naming (`strings.ToLower(field.Name)`), so `merge:"union"` still applies.
-- **`walkType` pointer-dereference order**: `walkType` must dereference `reflect.Ptr` before the `reflect.Struct` guard. Flipped order silently returns an empty tag registry for pointer schema types (`*T`), causing union slices to fall back to overwrite. Not caught by oracle/golden tests because all callers pre-dereference before calling `walkType`.
-- **Empty string layer override**: `structToMap`/`encodeValue` now treats empty strings as "not set" (returns nil). Previously, `Set()` round-tripped zero-value string fields through the Go struct back into the node tree, writing `""` entries to config files that overrode values from higher-priority layers during merge. Root cause: project init wrote `agent.editor: ""` to the project file, overriding `agent.editor: vim` from the user-level config.
+- **Oracle (randomized)**: `TestStore_Oracle_*` computes the expected merge from spec rules (~15 lines, independent of prod code), fresh seed each run. Catches merge bugs that surface under any random layer layout.
+- **Golden (fixed seed)**: Hardcoded struct literal blessed from a known-correct run. No `GOLDEN_UPDATE=1` sweep — values must be updated via `make storage-golden`, which prints diffs and requires an interactive bless via `STORAGE_GOLDEN_BLESS=1`. Scoped to this one test so a stray env var can't blow away the baseline.
 
-Regression tests added:
+Deepest fixture level always has both `config.local.yaml` and `config.yaml` with distinct data so filename priority is exercised on every run. See `.claude/docs/TESTING-REFERENCE.md` for the full oracle/golden pattern.
 
-- `TestStore_Set_ClearMapPersistsEmpty`
-- `TestStore_Set_EmptyStringsNotWritten`
-- `TestStore_Set_EmptyStringsDontOverrideLowerLayers`
-- `TestStore_Set_EmptyStringsPreservedInSlicesAndMaps`
-- `TestStore_Merge_UnionHandlesNonComparableValues`
-- `TestStore_Merge_UnionWithImplicitYAMLFieldName`
-- `TestWalkType_PointerToStruct`
+## Strict Type Mapping — No Silent Fallbacks
 
-## Oracle and Golden Test Strategy
+Storage **panics on unrecognized Go types** in `NormalizeFields` / `normalizeStruct`. No lenient defaults, no degradation. Storage classifies these primitives natively: `string`, `bool`, `*bool`, `int`, `int64`, `time.Duration`, `[]string`, `map[string]string` (`KindMap`), `[]struct` (`KindStructSlice`), nested structs (recursed).
 
-Defense in depth — two independent guards for merge correctness:
-
-| Layer | How it works | What it catches |
-|-------|-------------|-----------------|
-| Oracle (randomized) | Computes expected merge from spec rules (~15 lines), independent of prod code. Runs every time with a new seed. | Any merge bug that manifests for the random placement |
-| Golden (fixed seed) | Hardcoded struct literal blessed from known-correct state. No auto-update. | Any regression from the blessed baseline, including oracle bugs |
-
-**Key design decisions:**
-
-| Decision | Rationale |
-|----------|-----------|
-| Deepest level forced to have both `config.local.yaml` and `config.yaml` | Guarantees filename priority is always exercised |
-| Main/local files have distinct names (`level3-main` vs `level3-local`) | Scalar assertions can distinguish which file won |
-| Golden values are code, not files | Must be hand-edited to change — no accidental `GOLDEN_UPDATE=1` sweep |
-| `make storage-golden` prints new values with interactive confirmation | Blocks CI — human must review and approve |
-| `STORAGE_GOLDEN_BLESS` env var is specific to this one test | No global sweep risk |
-
-## Layered Inheritance Model
-
-The store is a **layered inheritance system**, not a flat config. Walk-up file discovery + merge strategies produce a cascading config where closer files win. The same key in different layer files is **inheritance**, not duplication — merge strategies (`union`, `override`) resolve how values combine.
-
-Consumers (like storeui) show the **merged state** as a read-only view. Writes target specific layer files. Validation belongs at the write boundary (per-layer), not in consumers — only the write path knows the target layer's contents and can enforce per-file integrity.
-
-## Important: Strict Type Mapping — No Silent Fallbacks
-
-### Storage layer: panic on unrecognized types
-
-`NormalizeFields` and `normalizeStruct` **must panic on unrecognized Go types**. There are no lenient fallbacks, no "safe defaults", no silent degradation. If a Go type reaches the classification switch and doesn't match an explicit case, that is a programming error — the schema author must account for it.
-
-Storage owns classification for primitive/common types: `string`, `bool`, `*bool`, `int`, `int64`, `time.Duration`, `[]string`, `map[string]string` (→ `KindMap`), `[]struct` (→ `KindStructSlice`), nested structs (recursed). Everything else panics by default.
-
-### Extensible kind system (`KindFunc`)
-
-Domain-specific types (e.g., `map[string]WorktreeEntry`) do NOT belong in the storage package. Instead, consumers register custom kinds via `WithKindFunc` on `NormalizeFields`:
+**Extension via `KindFunc`**: domain-specific types (e.g. `map[string]WorktreeEntry`) do NOT belong in storage. Consumers register custom kinds on their schema's `Fields()` method:
 
 ```go
-// Consumer defines their kind constant:
 const KindWorktreeMap storage.FieldKind = storage.KindLast + 1
 
-// Consumer registers it in their Schema.Fields() implementation:
 func (r ProjectRegistry) Fields() storage.FieldSet {
     return storage.NormalizeFields(r, storage.WithKindFunc(func(ft reflect.Type) (storage.FieldKind, bool) {
         if ft == reflect.TypeOf(map[string]WorktreeEntry{}) {
@@ -269,19 +205,9 @@ func (r ProjectRegistry) Fields() storage.FieldSet {
 }
 ```
 
-`KindLast` is the boundary constant. Consumer kinds start at `KindLast + 1`. When `normalizeStruct` hits an unknown type, it tries the `KindFunc` before panicking. No `KindFunc` registered, or `KindFunc` returns `false` → panic.
+Consumer kinds must be `> KindLast`. StoreUI enforces read-only on consumer-defined kinds in `fieldsToBrowserFields` to prevent data corruption via the raw textarea fallback.
 
-### StoreUI layer: unknown kinds enforced read-only
-
-StoreUI has a **different contract** than storage. Storage is the schema authority — it must classify every type (panic if it can't). StoreUI is the presentation layer — if it doesn't have a specialized editor for a `FieldKind`, it enforces read-only. No panic, no data loss.
-
-- `classifyAndFormat` in `storeui/reflect.go` — **lenient fallback** to `KindStructSlice` for unrecognized `reflect.Type` (expected when `KindFunc` is in use; `enrichWithSchema` overwrites the kind from schema metadata afterward)
-- `fieldKindToBrowserKind` in `storeui/edit.go` — maps unrecognized `FieldKind` to `BrowserStructSlice`
-- `fieldsToBrowserFields` in `storeui/edit.go` — forces `ReadOnly = true` for consumer-defined kinds (`> KindLast`), preventing data corruption via the raw textarea fallback
-
-### Rationale
-
-Silent fallbacks (e.g., returning `KindMap` for unknown types) create latent data-loss bugs. A `map[string]WorktreeEntry` routed to a KV editor would silently destroy structured data. Panicking forces the issue to be resolved at schema-definition time, not discovered in production. The `KindFunc` escape hatch lets consumers resolve it without bloating storage with domain-specific types.
+**Rationale**: silent fallbacks create latent data-loss bugs — a `map[string]WorktreeEntry` routed to a KV editor would silently destroy structured data. Panicking forces resolution at schema-definition time, not in production.
 
 ## Gotchas
 

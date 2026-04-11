@@ -14,18 +14,15 @@ CLI tool for managing Docker-based development containers, with Claude Code inte
 go build -o bin/clawker ./cmd/clawker
 make test                                        # Unit tests (no Docker)
 make test-all                                    # All test suites
-go test ./test/cli/... -v -timeout 15m           # CLI workflow tests (Docker)
-go test ./test/commands/... -v -timeout 10m      # Command integration (Docker)
-go test ./test/internals/... -v -timeout 10m     # Internal integration (Docker)
-go test ./test/agents/... -v -timeout 15m        # Agent E2E (Docker)
+go test ./test/e2e/... -v -timeout 10m           # E2E integration tests (Docker)
+go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration (Docker)
 ```
 
 ## Testing Tiers
 1. **Unit** (`*_test.go` co-located): No Docker, uses `runF` test seams and docker/mocks fakes
-2. **CLI** (`test/cli/`): Testscript-based CLI workflow validation
-3. **Commands** (`test/commands/`): Command integration tests
-4. **Internals** (`test/internals/`): Container scripts/services (firewall, SSH, entrypoint)
-5. **Agents** (`test/agents/`): Full agent lifecycle, loop tests
+2. **E2E** (`test/e2e/`): Full CLI harness — firewall, mounts, migrations, presets, workflows
+3. **Whail** (`test/whail/`): BuildKit integration tests against real Docker
+4. **Adversarial** (`test/adversarial/`): Live red-team C2 harness (not an automated suite)
 
 No build tags — directory separation only.
 

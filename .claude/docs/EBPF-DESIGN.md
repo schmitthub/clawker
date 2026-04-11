@@ -2,7 +2,9 @@
 
 > Replaces iptables-based traffic routing with eBPF cgroup hooks for per-container, DNS-aware egress enforcement.
 
-## Status: Design Draft
+## Status: Implemented
+
+This document captures the original design intent and rationale. For the as-built architecture (`internal/ebpf`, `internal/dnsbpf`, `cmd/coredns-clawker`, global BPF `route_map`, embedded image pattern), see `.claude/docs/ARCHITECTURE.md` — specifically the sections on the firewall manager, CoreDNS custom build, and BPF map layout. Anywhere this doc disagrees with ARCHITECTURE.md, ARCHITECTURE.md wins.
 
 ## Problem
 

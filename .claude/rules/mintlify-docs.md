@@ -10,7 +10,7 @@ paths: ["docs/**"]
 - `docs/docs.json` — Mintlify config (theme, nav, colors, integrations). **Not** `mint.json` (legacy name)
 - `docs/index.mdx` — Homepage
 - `docs/*.mdx` — Hand-authored pages (quickstart, installation, configuration)
-- `docs/cli-reference/*.md` — Auto-generated CLI reference (82 files, **never edit directly**). Generated via Makefile, checked in, freshness verified separately in CI
+- `docs/cli-reference/*.md` — Auto-generated CLI reference (**never edit directly**). Generated via Makefile, checked in, freshness verified separately in CI
 - `docs/architecture.mdx`, `docs/design.mdx`, `docs/testing.md` — Developer docs with Mintlify frontmatter
 - `docs/custom.css` — Dark terminal theme overrides (surface colors, glassmorphism navbar, amber hover glow)
 - `docs/favicon.svg` — `>_` terminal prompt icon (amber `#f59e0b` on dark `#09090b`)

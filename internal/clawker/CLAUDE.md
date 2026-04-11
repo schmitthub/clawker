@@ -12,7 +12,9 @@ func Main() int     // Entry point: builds root command via internal/cmd/root, e
 
 Called from `cmd/clawker/main.go`. Build metadata (version, date) lives in `internal/build` — this package reads it at the top of `Main()` and passes the version string to `factory.New()`.
 
-All symbols are in `cmd.go`.
+After Factory construction, `Main()` calls `storage.ValidateDirectories()` to fail fast if XDG directories collide (e.g. `CLAWKER_DATA_DIR == CLAWKER_CONFIG_DIR`) before any file I/O. On exit, a deferred `f.Logger().Close()` flushes zerolog file output and shuts down the OTEL provider.
+
+All symbols are in `cmd.go` (`Main`, `checkForUpdate`, `printUpdateNotification`, `updateStatePath`, `printDockerInstallHelper`, `printError`, `userFormattedError` duck-type interface).
 
 ## Background Update Check
 

@@ -37,10 +37,12 @@ type Config struct {
 ### Constructors
 
 ```go
-func NewStrategy(mode config.Mode, cfg Config) (Strategy, error) // Factory
-func NewBindStrategy(cfg Config) *BindStrategy
-func NewSnapshotStrategy(cfg Config) (*SnapshotStrategy, error)
+func NewStrategy(mode config.Mode, cfg Config, log *logger.Logger) (Strategy, error) // Factory
+func NewBindStrategy(cfg Config, log *logger.Logger) *BindStrategy
+func NewSnapshotStrategy(cfg Config, log *logger.Logger) (*SnapshotStrategy, error)
 ```
+
+All constructors take a `*logger.Logger` — pass `logger.Nop()` in tests.
 
 ## Mount Setup
 
@@ -87,9 +89,9 @@ type GitCredentialSetupResult struct {
     Env    []string
 }
 
-func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool) GitCredentialSetupResult
+func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool, log *logger.Logger) GitCredentialSetupResult
 func GitConfigExists() bool
-func GetGitConfigMount() []mount.Mount
+func GetGitConfigMount(log *logger.Logger) []mount.Mount
 ```
 
 **HTTPS**: Forwarded via host proxy (`git-credential-clawker`).

@@ -82,39 +82,17 @@ func NewManager(client client.APIClient, cfg config.Config, log *logger.Logger) 
 
 Container name arguments use the `firewallContainer` typed constant (`envoyContainer`, `corednsContainer`, `ebpfContainer`) for type safety.
 
-### `EnsureRunning` ordering (critical)
+### Lifecycle ordering (critical invariants)
 
-The startup order is load-bearing because the `dnsbpf` plugin opens the pinned `dns_cache` BPF map on CoreDNS startup — the map must exist first:
+The `dnsbpf` plugin opens the pinned `dns_cache` BPF map on CoreDNS startup — the map **must** exist first. That drives the ordering for all three lifecycle paths:
 
-1. `ensureNetwork` — create/discover `clawker-net`
-2. `discoverNetwork` — compute Envoy/CoreDNS static IPs + CIDR
-3. `ensureConfigs` — regenerate Corefile, envoy.yaml, and per-domain certs
-4. `ensureEbpfImage` + `ensureCorednsImage` — build locally-tagged images from embedded Linux binaries if missing
-5. `ensureContainer(ebpfContainer)` + `ebpfExec("init")` — start the eBPF manager container and load/pin BPF programs and maps (this creates `/sys/fs/bpf/clawker/dns_cache`)
-6. `syncRoutes` — populate the global `route_map` from current egress rules (`ebpf-manager sync-routes`)
-7. `ensureContainer(envoyContainer)` + `ensureContainer(corednsContainer)` — start Envoy and CoreDNS (the dnsbpf plugin opens the pre-existing pinned map)
-8. `WaitForHealthy` — HTTP GET Envoy `:18901/`, HTTP GET CoreDNS `:18902/health`
+- **`EnsureRunning`**: `ensureNetwork` → `discoverNetwork` (IPs/CIDR) → `ensureConfigs` (Corefile, envoy.yaml, certs) → `ensureEbpfImage` + `ensureCorednsImage` → `ensureContainer(ebpfContainer)` + `ebpfExec("init")` (creates the pinned map) → `syncRoutes` → `ensureContainer(envoyContainer)` + `ensureContainer(corednsContainer)` → `WaitForHealthy` (Envoy `:18901/`, CoreDNS `:18902/health`).
+- **`regenerateAndRestart`** (used by `Reload`/`AddRules`/`RemoveRules`): `ensureConfigs` → early-return if stack is not running → `ebpfExec("init")` (idempotent re-pin so CoreDNS reload doesn't find a dangling map) → `syncRoutes` (live update of already-running containers) → `restartContainer(envoy)` + `restartContainer(coredns)` → `WaitForHealthy`.
+- **`Enable(containerID)`**: `ensureEbpfImage` + `ensureContainer(ebpfContainer)` + `ebpfExec("init")` → `syncRoutes` (defense-in-depth after daemon restart) → `ebpfExec("resolve", "host.docker.internal")` if host-proxy is enabled → `ebpfExec("enable", cgroupPath, cfgJSON)` (writes `container_map[cgroup_id]` and attaches the six cgroup programs) → `touchSignalFile` to unblock the container's entrypoint.
 
-### `regenerateAndRestart` (used by `Reload`, `AddRules`, `RemoveRules`)
+### Global `route_map`
 
-1. `ensureConfigs` — regenerate Corefile, envoy.yaml, certs
-2. Early-return if the stack is not running (daemon will start it with fresh configs)
-3. `ebpfExec("init")` — ensure BPF maps remain pinned before CoreDNS restarts (the dnsbpf plugin re-opens them)
-4. `syncRoutes` — update the global `route_map` so **already-running** containers see new rules immediately without needing to be restarted
-5. `restartContainer(envoyContainer)` + `restartContainer(corednsContainer)`
-6. `WaitForHealthy`
-
-### `Enable(containerID)` — attach a container to the firewall
-
-1. `ensureEbpfImage` + `ensureContainer(ebpfContainer)` + `ebpfExec("init")` — idempotent
-2. `syncRoutes` — idempotent; ensures the global route_map is populated before the container starts enforcing
-3. Resolve host-proxy IP (if enabled) via `ebpfExec("resolve", "host.docker.internal")`
-4. Build a container-config JSON (IPs, ports — no routes; the route_map is global) and invoke `ebpfExec("enable", cgroupPath, cfgJSON)` — this writes a `container_map` entry (cgroup_id → container_config) and attaches the six cgroup programs
-5. `touchSignalFile` — unblock the container's entrypoint
-
-### Global `route_map` architecture
-
-The BPF `route_map` key is a `{domain_hash, dst_port}` pair (see `internal/ebpf/bpf/common.h`), shared across all enforced containers. Presence in `container_map` is what marks a cgroup as "clawker-enforced"; the route_map itself is **global**. This lets `firewall add/remove/reload` propagate new rules to all running containers via a single `sync-routes` call, without restarting any agent containers.
+The BPF `route_map` key is `{domain_hash, dst_port}` — **global**, not per-container. Presence in `container_map` is what marks a cgroup as "clawker-enforced". This is why `firewall add/remove/reload` can propagate new rules to every running container via one `sync-routes` call, with no agent-container restarts.
 
 Key internal methods: `ensureNetwork`, `ensureContainer`, `ensureConfigs`, `regenerateAndRestart`, `ensureEbpfImage`, `ensureCorednsImage`, `ensureEmbeddedImage`, `syncRoutes`, `ebpfExec`, `ebpfExecOutput`.
 
@@ -221,47 +199,21 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 
 ## Custom CoreDNS image (`clawker-coredns:latest`)
 
-The firewall stack does **not** use the stock `coredns/coredns` image. It builds a custom `clawker-coredns:latest` image on-demand from an embedded Linux binary:
+The firewall does NOT use the stock `coredns/coredns` image. `cmd/coredns-clawker/main.go` wraps `coremain.Run()` with blank-imports of the stock plugins we use (`forward`, `health`, `log`, `reload`, `template`) plus `internal/dnsbpf`, and prepends `"dnsbpf"` to `dnsserver.Directives`. The binary is cross-compiled to `internal/firewall/assets/coredns-clawker`, embedded via `//go:embed`, and baked into a tiny Alpine image on first use by `ensureCorednsImage` / `ensureEmbeddedImage` — same pattern as `ensureEbpfImage`. `corednsContainerConfig` adds `CAP_BPF + CAP_SYS_ADMIN` (CAP_BPF alone is insufficient for `BPF_MAP_UPDATE_ELEM` on kernels < 5.19) and bind-mounts `/sys/fs/bpf` so the plugin can open the pinned `dns_cache`.
 
-- `cmd/coredns-clawker/main.go` — a thin wrapper around `coremain.Run()` that blank-imports the stock plugins we actually use (`forward`, `health`, `log`, `reload`, `template`) plus our own `internal/dnsbpf` plugin, then prepends `"dnsbpf"` to `dnsserver.Directives` so the plugin sees every DNS response before the client does
-- `Makefile` target `coredns-binary` cross-compiles this into `internal/firewall/assets/coredns-clawker` (linux/$GOARCH, CGO disabled, static)
-- `internal/firewall/coredns_embed.go` embeds the binary via `//go:embed assets/coredns-clawker`
-- `ensureCorednsImage` / `ensureEmbeddedImage` (manager.go) lazily build a tiny Alpine-based Docker image with the binary as ENTRYPOINT on first use — same shared pattern as `ensureEbpfImage`
-- `corednsContainerConfig` uses this image, mounts the generated Corefile, bind-mounts `/sys/fs/bpf` (so the dnsbpf plugin can open the pinned `dns_cache` map), and adds `CAP_BPF` + `CAP_SYS_ADMIN` capabilities (CAP_BPF alone is insufficient for `BPF_MAP_UPDATE_ELEM` on kernels < 5.19)
+## dnsbpf plugin (pointer)
 
-## dnsbpf plugin (`internal/dnsbpf`)
+The `dnsbpf` CoreDNS plugin lives in `internal/dnsbpf` (see `internal/dnsbpf/CLAUDE.md`). It replaces an earlier startup-time seeding approach that drifted from live round-robin/CDN responses and broke per-domain SSH routing. The firewall only cares that the plugin exists in the custom `clawker-coredns:latest` image and that the manager ensures BPF maps are pinned **before** CoreDNS starts — the plugin will crash out loud if `dns_cache` isn't pinned yet.
 
-The `dnsbpf` CoreDNS plugin is a first-party plugin that bridges DNS resolution into eBPF. It replaces an earlier startup-time "seed" approach that resolved allowed domains once and wrote stale mappings into `dns_cache` — seeded entries drifted from live round-robin/CDN responses, breaking per-domain TCP routing (most visibly for SSH).
+## sync-routes flow
 
-| File | Purpose |
-|------|---------|
-| `setup.go` | Registers the `dnsbpf` plugin with CoreDNS/Caddy, parses the empty `dnsbpf {}` block, opens the pinned `dns_cache` map **once** (guarded by `sync.Once` so reloads don't close the FD), and attaches a `Handler` to each server block capturing its Zone |
-| `dnsbpf.go` | `Handler.ServeDNS` wraps the next plugin with `nonwriter.New(w)`, inspects the returned `*dns.Msg` for `dns.A` records, writes each resolved IP to the BPF map, then forwards the original response to the client. `zoneToDomain` trims the trailing `.` so the zone hash matches `route_map`'s keys |
-| `bpfmap.go` | `OpenBPFMap` / `BPFMap.Update` wrap `cilium/ebpf.LoadPinnedMap` for `/sys/fs/bpf/clawker/dns_cache`; `Update` encodes `dnsEntry{DomainHash, ExpireTs = now + ttl}` (min 60 s floor). `Update` logs on failure and never crashes CoreDNS |
-| `log.go` | Trivial `clog` shim |
-
-Design notes:
-
-- **Zone hash, not query hash**: `writeARecords` hashes `Handler.Zone` (e.g., `.example.com` for a wildcard zone), not the queried name. This matches how the manager populates `route_map` from egress-rule `Dst` values, so a lookup for `sub.example.com` finds the same wildcard route entry.
-- **No `OnShutdown` close**: CoreDNS's `reload` plugin recreates server blocks without restarting the process. A `sync.Once`-guarded open would never re-execute after close, so the handler intentionally leaves the pinned map FD open for the process lifetime.
-- **Imports `internal/ebpf` directly**: since the plugin lives in the same Go module, there is no duplication of `DomainHash` (FNV-1a) or `IPToUint32` — these come from `internal/ebpf/types.go`.
-- Tests in `internal/dnsbpf/dnsbpf_test.go` exercise `ServeDNS`, `writeARecords`, and zone parsing with an in-memory `MapWriter` fake.
-
-## sync-routes flow (global `route_map`)
-
-The eBPF manager binary exposes a `sync-routes <jsonArray>` subcommand. The manager calls it in three places, each via `m.syncRoutes(ctx)`:
+The eBPF manager binary exposes `sync-routes <jsonArray>`. The firewall manager calls it in three places via `m.syncRoutes(ctx)`:
 
 - `EnsureRunning` — initial population after `ebpfExec("init")` creates the pinned maps
-- `regenerateAndRestart` (Reload/AddRules/RemoveRules) — propagates rule edits to every running container live, because the map is global and `container_map` presence is what gates enforcement
-- `Enable(containerID)` — idempotent re-sync before enabling a new container (defense-in-depth for first-container-after-daemon-restart)
+- `regenerateAndRestart` (Reload / AddRules / RemoveRules) — propagates rule edits to every running container live, because `route_map` is global and enforcement is gated on `container_map` presence
+- `Enable(containerID)` — idempotent re-sync before enabling a new container
 
-`syncRoutes` calls `TCPMappings(rules, envoyPorts)` (from `envoy.go`) to compute one `ebpfRoute{DomainHash, DstPort, EnvoyPort}` per TCP/SSH mapping, JSON-encodes them via `marshalRoutes`, and passes the result through `ebpfExec`. On the eBPF side (`internal/ebpf/manager.go`), `SyncRoutes` first iterates and deletes the entire current `route_map`, then writes the new set — this is why a single `firewall add` call takes effect everywhere without restarting anything.
-
-The `ebpfRoute` / `ebpf.Route` structs contain only `{DomainHash, DstPort, EnvoyPort}` — there is no `Domain` field (the seed-time design fed domain strings back into the manager; post-dnsbpf the domain string is not needed at all because hashes are authoritative).
-
-## Stale pinned map cleanup
-
-`ebpf.Manager.Load()` runs before program load and compares each pinned map on disk (`/sys/fs/bpf/clawker/<name>`) against the spec's `KeySize` / `ValueSize`. If either dimension changed, the stale pin is removed so the loader can create a fresh map — this is how the `route_key` size change (dropping `cgroup_id`, going from per-container to global) survives rolling upgrades without forcing users to manually unpin anything.
+`syncRoutes` calls `TCPMappings(rules, envoyPorts)` (from `envoy.go`) to compute one `ebpfRoute{DomainHash, DstPort, EnvoyPort}` per TCP/SSH mapping, JSON-encodes them via `marshalRoutes`, and passes the result through `ebpfExec`. The kernel-side `SyncRoutes` iterates and deletes the current `route_map` before writing the new set, so a single `firewall add` takes effect everywhere without restarting anything. `ebpf.Route` carries no `Domain` field — hashes are authoritative post-dnsbpf.
 
 ## Relationships
 

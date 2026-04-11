@@ -12,7 +12,13 @@ Autonomous Claude Code loops — repeated execution with circuit breaker protect
 | `shared/result.go` | `ResultOutput`, `NewResultOutput`, `WriteResult` — result output formatting |
 | `shared/lifecycle.go` | `SetupLoopContainer`, `InjectLoopHooks` — container lifecycle + hook injection |
 | `shared/concurrency.go` | `CheckConcurrency` — detect concurrent sessions, prompt for worktree |
-| `shared/dashboard.go` | `WireLoopDashboard` — bridge Runner callbacks to TUI dashboard channel |
+| `shared/dashboard.go` | `WireLoopDashboard`, `RunLoop` — bridge Runner callbacks to TUI dashboard channel, mode selection |
+| `shared/loopdash.go` | `RunLoopDashboard` — BubbleTea dashboard renderer for loop commands |
+| `shared/runner.go` | `Runner`, `Options` — core loop execution engine |
+| `shared/circuit.go` | Circuit breaker (stagnation/error/test-loop thresholds) |
+| `shared/analyzer.go` | Exit-reason analysis from LOOP_STATUS blocks |
+| `shared/session.go` | Session state persistence (reset, status) |
+| `shared/ratelimit.go`, `shared/stream.go`, `shared/naming.go`, `shared/hooks.go`, `shared/prompt.go`, `shared/history.go`, `shared/loopconfig.go`, `shared/monitor.go` | Runner internals (not exhaustive — see `internal/cmd/loop/shared/` directly) |
 | `iterate/iterate.go` | `NewCmdIterate(f, runF)` — repeated-prompt loop |
 | `tasks/tasks.go` | `NewCmdTasks(f, runF)` — task-file-driven loop |
 | `status/status.go` | `NewCmdStatus(f, runF)` — show session status |

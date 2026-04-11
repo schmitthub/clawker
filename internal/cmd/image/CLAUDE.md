@@ -32,10 +32,12 @@ Parent command only (no RunE). Aggregates subcommands from dedicated packages.
 
 ```go
 type BuildOptions struct {
-    IOStreams *iostreams.IOStreams
-    TUI       *tui.TUI
-    Config    func() (config.Config, error)
-    Client    func(context.Context) (*docker.Client, error)
+    IOStreams      *iostreams.IOStreams
+    TUI            *tui.TUI
+    Config         func() (config.Config, error)
+    Logger         func() (*logger.Logger, error)
+    Client         func(context.Context) (*docker.Client, error)
+    ProjectManager func() (project.ProjectManager, error)
 
     File      string   // -f, --file
     Tags      []string // -t, --tag
@@ -51,4 +53,4 @@ type BuildOptions struct {
 func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) error) *cobra.Command
 ```
 
-Uses **live-display** output scenario: `BuildOptions` captures both `IOStreams` and `TUI` from Factory. Build progress is displayed via `opts.TUI.RunProgress(opts.Progress, cfg)` which renders a tree display (BubbleTea in TTY, plain text otherwise). BuildKit progress events flow through `whail.BuildProgressFunc` callback → `chan tui.ProgressStep` → TUI renderer.
+Uses **live-display** output scenario: `BuildOptions` captures `IOStreams` and `TUI` from Factory plus lazy closures for `Config`, `Logger`, `Client`, and `ProjectManager`. Build progress is rendered via `opts.TUI.RunProgress(opts.Progress, cfg, ch)` — BubbleTea tree in TTY, plain text otherwise. BuildKit progress events flow through a `buildOpts.OnProgress` callback that forwards `whail.BuildProgressEvent` → `tui.ProgressStep` on a `chan tui.ProgressStep`. The builder runs in a goroutine; channel closure signals done. When `--quiet` or `--progress=none`, output is suppressed and `builder.Build` runs synchronously with no progress channel. Before building, the command calls `docker.BuildKitEnabled` and emits a warning if BuildKit is unavailable (cache mount directives are silently ignored in legacy mode).
