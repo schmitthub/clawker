@@ -267,8 +267,8 @@ func TestStopRun_DisablesFirewallBeforeStop(t *testing.T) {
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	// Track ordering: firewall disable must happen before docker stop so the
-	// ebpf sidecar can still exec into the container's cgroup while detaching
-	// programs. Encodes the invariant from stop.go's "Must happen before stop"
+	// clawker-ebpf container can still exec into the user container's cgroup
+	// while detaching programs. Encodes the invariant from stop.go's "Must happen before stop"
 	// comment as an executable assertion.
 	var dockerStopCalled bool
 	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {

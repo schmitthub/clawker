@@ -1,9 +1,9 @@
 .PHONY: help \
         clawker clawker-build clawker-generate clawker-test clawker-test-internals clawker-lint clawker-staticcheck clawker-install clawker-clean \
+        ebpf-binary coredns-binary \
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean \
         licenses licenses-check \
         docs docs-check \
-        bpf-builder-image bpf-regenerate bpf-verify \
         pre-commit pre-commit-install \
         localenv \
         restart \
@@ -94,23 +94,123 @@ clawker-build: ebpf-binary coredns-binary
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
 
-# Cross-compile the eBPF manager binary for Linux (embedded in clawker via go:embed).
-# Architecture matches the host — Docker Desktop runs the matching Linux arch.
-EBPF_BINARY := internal/firewall/assets/ebpf-manager
-ebpf-binary: $(EBPF_BINARY)
-$(EBPF_BINARY): internal/ebpf/cmd/main.go internal/ebpf/manager.go internal/ebpf/types.go
-	@echo "Building ebpf-manager for linux/$(shell $(GO) env GOARCH)..."
-	@mkdir -p internal/firewall/assets
-	GOOS=linux CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
+# =============================================================================
+# Embedded firewall stack binaries (reproducible Docker builds)
+# =============================================================================
+#
+# The clawker CLI go:embed's two Linux binaries: ebpf-manager (with compiled
+# BPF bytecode baked in via bpf2go) and coredns-clawker (with the dnsbpf
+# plugin baked in). At clawker-run time the firewall manager builds tiny
+# Alpine-based Docker images from those embedded bytes via a 3-line in-memory
+# Dockerfile (internal/firewall/manager.go → ebpfImageSpec, corednsImageSpec).
+# They are NOT sidecars — one firewall stack is shared by all clawker-managed
+# containers on the host.
+#
+# Both targets build through `docker buildx build` against a single pinned
+# multi-stage Dockerfile.firewall whose `bpf-builder` stage is shared between
+# the ebpf-manager and coredns-clawker compile paths (coredns-clawker imports
+# internal/ebpf and so needs the bpf2go-generated wrappers at compile time).
+# Every input is pinned — base image digest, apt package versions, Go
+# toolchain digest, bpf2go version — so a fresh `make` on any host produces
+# byte-identical output. Nothing generated is ever committed to the repo:
+# .o files, bpf2go Go wrappers, and the extracted binaries are all gitignored.
+#
+# See internal/ebpf/REPRODUCIBILITY.md for the full provenance chain and the
+# pin update procedure.
 
-# Cross-compile the custom CoreDNS binary for Linux (embedded in clawker via go:embed).
-# Includes the dnsbpf plugin for real-time BPF dns_cache population.
+EBPF_BINARY := internal/firewall/assets/ebpf-manager
 COREDNS_BINARY := internal/firewall/assets/coredns-clawker
+
+# bpf2go-generated Go wrappers + compiled BPF bytecode extracted to the host
+# tree so host-side `go test` / `go vet` / `gopls` can compile
+# internal/ebpf/manager.go (which references clawkerObjects, clawkerRouteKey,
+# etc. declared in the wrappers). Gitignored — never committed.
+BPF_BINDINGS := \
+	internal/ebpf/clawker_x86_bpfel.go \
+	internal/ebpf/clawker_x86_bpfel.o \
+	internal/ebpf/clawker_arm64_bpfel.go \
+	internal/ebpf/clawker_arm64_bpfel.o
+
+# Source inputs to the BPF bindings. An edit to these retriggers the
+# bpf-bindings extraction (and transitively the binary builds that depend
+# on it).
+BPF_BINDING_DEPS := \
+	Dockerfile.firewall \
+	go.mod \
+	go.sum \
+	internal/ebpf/bpf/clawker.c \
+	internal/ebpf/bpf/common.h \
+	internal/ebpf/gen.go
+
+# Source dependencies for the ebpf-manager binary.
+EBPF_BINARY_DEPS := \
+	$(BPF_BINDING_DEPS) \
+	internal/ebpf/manager.go \
+	internal/ebpf/types.go \
+	internal/ebpf/cmd/main.go
+
+COREDNS_BINARY_DEPS := \
+	$(BPF_BINDING_DEPS) \
+	cmd/coredns-clawker/main.go \
+	$(wildcard internal/dnsbpf/*.go) \
+	internal/ebpf/types.go
+
+# `docker buildx build --output=type=local,dest=...` exports a stage's
+# filesystem to a host directory. The `*-extract` stages in Dockerfile.firewall
+# are `FROM scratch` containers holding exactly the files we want exported,
+# so the export lands them at the destination path with no extra layers.
+BUILDX_BUILD := docker buildx build
+BUILDX_TARGETARCH := $(shell $(GO) env GOARCH)
+
+# bpf-bindings: extract bpf2go-generated Go wrappers + .o bytecode to
+# internal/ebpf/. This is a prerequisite for any host-side Go tool (go build,
+# go test, golangci-lint, staticcheck, gopls) touching the internal/ebpf
+# package — manager.go references types declared in the generated wrappers.
+.PHONY: bpf-bindings
+bpf-bindings: $(BPF_BINDINGS)
+$(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
+	@echo "Extracting bpf2go bindings to internal/ebpf/ via pinned Dockerfile.firewall..."
+	@rm -rf internal/ebpf/.bpf-bindings-extract
+	$(BUILDX_BUILD) \
+		-f Dockerfile.firewall \
+		--target=bpf-bindings-extract \
+		--output=type=local,dest=internal/ebpf/.bpf-bindings-extract \
+		.
+	@mv internal/ebpf/.bpf-bindings-extract/clawker_x86_bpfel.go  internal/ebpf/
+	@mv internal/ebpf/.bpf-bindings-extract/clawker_x86_bpfel.o   internal/ebpf/
+	@mv internal/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.go internal/ebpf/
+	@mv internal/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.o  internal/ebpf/
+	@rm -rf internal/ebpf/.bpf-bindings-extract
+
+ebpf-binary: $(EBPF_BINARY)
+$(EBPF_BINARY): $(EBPF_BINARY_DEPS) $(BPF_BINDINGS)
+	@echo "Building ebpf-manager for linux/$(BUILDX_TARGETARCH) via pinned Dockerfile.firewall..."
+	@mkdir -p $(@D)
+	@rm -rf $(@D)/.ebpf-extract
+	$(BUILDX_BUILD) \
+		-f Dockerfile.firewall \
+		--target=ebpf-manager-extract \
+		--build-arg TARGETOS=linux \
+		--build-arg TARGETARCH=$(BUILDX_TARGETARCH) \
+		--output=type=local,dest=$(@D)/.ebpf-extract \
+		.
+	@mv $(@D)/.ebpf-extract/ebpf-manager $@
+	@rm -rf $(@D)/.ebpf-extract
+
 coredns-binary: $(COREDNS_BINARY)
-$(COREDNS_BINARY): cmd/coredns-clawker/main.go $(wildcard internal/dnsbpf/*.go) internal/ebpf/types.go
-	@echo "Building coredns-clawker for linux/$(shell $(GO) env GOARCH)..."
-	@mkdir -p internal/firewall/assets
-	GOOS=linux CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
+$(COREDNS_BINARY): $(COREDNS_BINARY_DEPS) $(BPF_BINDINGS)
+	@echo "Building coredns-clawker for linux/$(BUILDX_TARGETARCH) via pinned Dockerfile.firewall..."
+	@mkdir -p $(@D)
+	@rm -rf $(@D)/.coredns-extract
+	$(BUILDX_BUILD) \
+		-f Dockerfile.firewall \
+		--target=coredns-extract \
+		--build-arg TARGETOS=linux \
+		--build-arg TARGETARCH=$(BUILDX_TARGETARCH) \
+		--output=type=local,dest=$(@D)/.coredns-extract \
+		.
+	@mv $(@D)/.coredns-extract/coredns-clawker $@
+	@rm -rf $(@D)/.coredns-extract
 
 # Build the standalone generate binary
 clawker-generate:
@@ -295,91 +395,6 @@ test-clean:
 	@docker network rm $$(docker network ls -q --filter "label=dev.clawker.test=true") 2>/dev/null || true
 	@docker rmi -f $$(docker images -q --filter "label=dev.clawker.test=true") 2>/dev/null || true
 	@echo "Test cleanup complete!"
-
-# ============================================================================
-# BPF Reproducible Bytecode Targets
-# ============================================================================
-#
-# `make bpf-regenerate` and `make bpf-verify` run BPF bytecode generation
-# inside a fully pinned Docker build environment (Dockerfile.bpf-builder) so
-# the output is byte-reproducible from pinned inputs: base image digest,
-# apt package versions, Go toolchain digest, and bpf2go version.
-#
-# The committed internal/ebpf/clawker_*_bpfel.{go,o} files are authoritative
-# for `go build`. `bpf-verify` is the reproducibility gate — it regenerates
-# in the pinned image and diffs against the committed bytecode. CI runs it
-# on every PR so committed .o files are never trust-on-first-use.
-#
-# See internal/ebpf/REPRODUCIBILITY.md for the provenance chain and the
-# procedure for updating pinned inputs.
-
-BPF_BUILDER_IMAGE := clawker-bpf-builder:latest
-BPF_GENERATED := internal/ebpf/clawker_x86_bpfel.go internal/ebpf/clawker_x86_bpfel.o \
-                 internal/ebpf/clawker_arm64_bpfel.go internal/ebpf/clawker_arm64_bpfel.o
-
-# Build the pinned BPF builder image. Re-runs whenever Dockerfile.bpf-builder
-# changes. The image tag is local-only; we re-derive it from pinned sources
-# each time rather than pushing to a registry.
-bpf-builder-image:
-	@echo "Building pinned BPF builder image..."
-	@if grep -q 'PIN_ME_BEFORE_MERGE' Dockerfile.bpf-builder; then \
-		echo "" >&2; \
-		echo "ERROR: Dockerfile.bpf-builder contains a PIN_ME_BEFORE_MERGE placeholder." >&2; \
-		echo "       Follow the pin-refresh recipe in internal/ebpf/REPRODUCIBILITY.md" >&2; \
-		echo "       to fill in the base image digest before running bpf-regenerate." >&2; \
-		echo "" >&2; \
-		exit 1; \
-	fi
-	docker build -f Dockerfile.bpf-builder -t $(BPF_BUILDER_IMAGE) .
-
-# Regenerate the BPF Go bindings + .o bytecode from clawker.c / common.h
-# inside the pinned builder image. Writes directly to the host tree so the
-# next `go build` picks up the fresh output.
-bpf-regenerate: bpf-builder-image
-	@echo "Regenerating BPF bytecode in pinned builder image..."
-	docker run --rm \
-		-v $(CURDIR):/src \
-		-u $(shell id -u):$(shell id -g) \
-		$(BPF_BUILDER_IMAGE)
-	@echo "Done. Committed bytecode under internal/ebpf/ has been rewritten."
-	@echo "If this differed from HEAD, commit the change."
-
-# Reproducibility gate: regenerate in the pinned image and fail if the output
-# differs from the committed bytecode. This is what CI runs on every PR to
-# guarantee the committed .o files match the committed .c sources under the
-# pinned recipe.
-bpf-verify: bpf-builder-image
-	@echo "Verifying BPF bytecode reproducibility..."
-	@for f in $(BPF_GENERATED); do \
-		if [ ! -f "$$f" ]; then \
-			echo "ERROR: committed BPF artifact missing: $$f" >&2; \
-			exit 1; \
-		fi; \
-	done
-	@tmpdir=$$(mktemp -d); \
-	trap "rm -rf $$tmpdir" EXIT; \
-	for f in $(BPF_GENERATED); do \
-		cp "$$f" "$$tmpdir/$$(basename $$f).orig"; \
-	done; \
-	docker run --rm \
-		-v $(CURDIR):/src \
-		-u $(shell id -u):$(shell id -g) \
-		$(BPF_BUILDER_IMAGE); \
-	fail=0; \
-	for f in $(BPF_GENERATED); do \
-		if ! cmp -s "$$f" "$$tmpdir/$$(basename $$f).orig"; then \
-			echo "" >&2; \
-			echo "ERROR: $$f drifted from committed bytecode." >&2; \
-			echo "       Run 'make bpf-regenerate' and commit the result." >&2; \
-			fail=1; \
-		fi; \
-	done; \
-	if [ $$fail -ne 0 ]; then \
-		echo "" >&2; \
-		echo "BPF bytecode reproducibility check FAILED." >&2; \
-		exit 1; \
-	fi
-	@echo "BPF bytecode is reproducible from committed sources + pinned recipe."
 
 # ============================================================================
 # License Targets

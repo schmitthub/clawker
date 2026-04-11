@@ -4,7 +4,7 @@ description: "eBPF + CoreDNS + Envoy network firewall architecture, configuratio
 icon: "fire-flame-curved"
 ---
 
-Clawker ships a **deny-by-default network firewall** that restricts all container egress to explicitly allowed domains. The firewall runs as three sidecar containers (Envoy proxy, a custom CoreDNS with a `dnsbpf` plugin, and an eBPF manager) on a shared Docker bridge network, providing DNS-level blocking, per-domain TCP routing, and TLS-level inspection without modifying your agent containers.
+Clawker ships a **deny-by-default network firewall** that restricts all container egress to explicitly allowed domains. The firewall runs as a shared stack of three containers — an Envoy egress proxy, a custom CoreDNS resolver with a `dnsbpf` plugin, and an eBPF control-plane agent — on an isolated Docker bridge network. One firewall stack serves all clawker-managed containers on the host (1:N). It provides DNS-level blocking, per-domain TCP routing, and TLS-level inspection without modifying your agent containers.
 
 ## Architecture
 
@@ -460,7 +460,7 @@ clawker firewall down
 clawker firewall up
 ```
 
-This stops all three sidecar containers, which allows the next `EnsureRunning` to rebuild the pinned maps from scratch.
+This stops all three firewall containers, which allows the next `EnsureRunning` to rebuild the pinned maps from scratch.
 
 ### IPv6-only service unreachable
 

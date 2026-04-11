@@ -11,28 +11,59 @@ Top-level tracker for features and architectural improvements that are known but
 
 ---
 
-## 0. Finish the BPF reproducibility chain (pin digest + SLSA attestation)
+## 0. SLSA provenance attestation for release binaries
 
-**Status:** infrastructure in place, two gaps remain
-**Scope:** small (pin) + medium (SLSA)
+**Status:** not yet wired
+**Scope:** small-to-medium
 
-The DRY refactor of `internal/ebpf/bpf/clawker.c` + `common.h` also dropped the committed `vmlinux.h` (clawker is non-CO-RE, UAPI types are sufficient) and introduced `Dockerfile.bpf-builder` + `make bpf-regenerate` / `make bpf-verify` + a CI reproducibility gate in `.github/workflows/test.yml`. See `internal/ebpf/REPRODUCIBILITY.md` for the full chain.
+The BPF bytecode, `ebpf-manager`, and `coredns-clawker` binaries are all
+produced from a single pinned multi-stage Docker build
+(`Dockerfile.firewall`) — no committed artifacts, reproducible by
+construction. See `internal/ebpf/REPRODUCIBILITY.md` for the provenance
+chain.
 
-Two loose ends from that work:
+What's still missing: the released `clawker` CLI binary itself should
+carry a SLSA provenance attestation so end users can verify the full chain
+from source → pinned build recipe → published binary. Check
+`.github/workflows/release.yml` — if it doesn't already emit SLSA
+attestations via the SLSA GitHub generator action
+(`slsa-framework/slsa-github-generator`), add it. The embedded
+`ebpf-manager` and `coredns-clawker` binaries (and the BPF bytecode inside
+them) are covered transitively because they're `go:embed`'d into the Go
+CLI. This is the last mile to an end-to-end SLSA L3 story for clawker's
+kernel-level surface.
 
-1. **Pin the base image digest.** `Dockerfile.bpf-builder` currently has `FROM debian:bookworm-slim@sha256:PIN_ME_BEFORE_MERGE`. The CI `bpf-reproducibility` job detects the placeholder and emits a warning instead of running the verification, so the rest of the refactor could land without waiting on the pin. Before the next BPF change lands on trunk, fill in the real digest using the recipe in `internal/ebpf/REPRODUCIBILITY.md` ("Updating pinned inputs" → step 1). Also re-verify the `CLANG_VERSION`, `LIBBPF_DEV_VERSION`, `LINUX_LIBC_DEV_VERSION` ARGs still resolve in the chosen digest (step 2 of the same section).
+---
 
-2. **SLSA provenance attestation on release binaries.** The BPF bytecode is now reproducible from pinned sources, but the released `clawker` binary itself should carry a SLSA attestation so end users can verify the chain. Check `.github/workflows/release.yml` — if it doesn't already emit SLSA attestations via the SLSA GitHub generator action, add it. The BPF `.o` is `go:embed`'d, so the binary attestation transitively covers the BPF bytecode. This is the last mile to an end-to-end SLSA L3 story for clawker's kernel-level surface.
+## 0b. Clawker control plane / eliminate the long-running clawker-ebpf container
 
-Files touched by the refactor (for context when picking this up):
-- `internal/ebpf/bpf/clawker.c`, `internal/ebpf/bpf/common.h` (refactor)
-- `internal/ebpf/clawker_*_bpfel.{go,o}` (regenerated)
-- `internal/ebpf/gen.go` (new cflags for UAPI headers)
-- `Dockerfile.bpf-builder` (new pinned builder)
-- `Makefile` (new `bpf-builder-image`, `bpf-regenerate`, `bpf-verify` targets)
-- `internal/ebpf/REPRODUCIBILITY.md` (provenance doc)
-- `.github/workflows/test.yml` (`bpf-reproducibility` job)
-- `CLAUDE.md` (version pinning table entry)
+**Status:** planned (control plane work upcoming)
+**Scope:** large
+
+The `clawker-ebpf` container currently runs `sleep infinity` as a resident
+RPC endpoint so the firewall manager can `docker exec` subcommands into it
+(`init`, `enable`, `disable`, `sync-routes`, `bypass`, `unbypass`,
+`resolve`). This is **not** a sidecar — the BPF programs themselves live
+in kernel state (pinned under `/sys/fs/bpf/clawker/`) and would continue
+enforcing even if `clawker-ebpf` were stopped.
+
+Why it's currently a container: historical + macOS Docker Desktop quirks.
+Running BPF operations from the host on macOS requires going through the
+Docker Desktop Linux VM; having a container with the right capabilities
+(`CAP_BPF` + `CAP_SYS_ADMIN`) + `/sys/fs/cgroup` bind-mount is the
+cheapest way to get a privileged code-execution surface that works
+identically across macOS and native Linux.
+
+Why it's worth revisiting: a whole container existing purely to sleep and
+serve exec calls is wasteful. Once the dedicated clawker control plane
+daemon lands (separate from the CLI, which is a short-lived process), it
+can own the privileged BPF surface directly — either running on the host
+(native Linux) or inside a Docker Desktop VM-level helper (macOS). At
+that point `clawker-ebpf` can be retired entirely and `init` / `enable` /
+`disable` / `sync-routes` / `bypass` / `resolve` become direct calls from
+the control plane to the kernel.
+
+Dependencies: needs the control plane architecture to land first.
 
 ---
 

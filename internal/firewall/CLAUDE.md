@@ -72,7 +72,7 @@ Sentinel errors: `ErrEnvoyUnhealthy`, `ErrCoreDNSUnhealthy`.
 
 ## Manager (`manager.go`)
 
-Docker implementation of `FirewallManager`. Creates and manages three sidecar containers on an isolated Docker network with static IPs: Envoy, custom CoreDNS (`clawker-coredns:latest`), and the eBPF manager (`clawker-ebpf:latest`).
+Docker implementation of `FirewallManager`. Creates and manages the clawker firewall stack — three shared-infrastructure containers on an isolated Docker network with static IPs: the Envoy egress proxy, the custom CoreDNS resolver (`clawker-coredns:latest`), and the eBPF control-plane agent (`clawker-ebpf:latest`). These are **not** sidecars — they do not share network/PID/mount namespaces with user containers, and one firewall stack is shared by all clawker-managed containers on the host (1:N). The eBPF programs are attached to user container cgroups via `bpf_prog_attach` from inside `clawker-ebpf`; once pinned at `/sys/fs/bpf/clawker/` they persist in kernel state independently of the container that loaded them.
 
 ```go
 func NewManager(client client.APIClient, cfg config.Config, log *logger.Logger) (*Manager, error)
@@ -90,7 +90,7 @@ The startup order is load-bearing because the `dnsbpf` plugin opens the pinned `
 2. `discoverNetwork` — compute Envoy/CoreDNS static IPs + CIDR
 3. `ensureConfigs` — regenerate Corefile, envoy.yaml, and per-domain certs
 4. `ensureEbpfImage` + `ensureCorednsImage` — build locally-tagged images from embedded Linux binaries if missing
-5. `ensureContainer(ebpfContainer)` + `ebpfExec("init")` — start the eBPF sidecar and load/pin BPF programs and maps (this creates `/sys/fs/bpf/clawker/dns_cache`)
+5. `ensureContainer(ebpfContainer)` + `ebpfExec("init")` — start the eBPF manager container and load/pin BPF programs and maps (this creates `/sys/fs/bpf/clawker/dns_cache`)
 6. `syncRoutes` — populate the global `route_map` from current egress rules (`ebpf-manager sync-routes`)
 7. `ensureContainer(envoyContainer)` + `ensureContainer(corednsContainer)` — start Envoy and CoreDNS (the dnsbpf plugin opens the pre-existing pinned map)
 8. `WaitForHealthy` — HTTP GET Envoy `:18901/`, HTTP GET CoreDNS `:18902/health`
@@ -267,7 +267,7 @@ The `ebpfRoute` / `ebpf.Route` structs contain only `{DomainHash, DstPort, Envoy
 
 - **`internal/config`** — `EgressRule` and `PathRule` types come from the config schema. The firewall package imports config; config does NOT import firewall.
 - **`internal/storage`** — `EgressRulesFile` is the document type passed to `storage.Store[EgressRulesFile]` for persisting active rules.
-- **`internal/ebpf`** — the firewall manager executes `ebpf-manager` subcommands (`init`, `enable`, `disable`, `sync-routes`, `bypass`, `unbypass`, `resolve`) inside the `clawker-ebpf` sidecar via `docker exec`. The eBPF manager exposes pinned BPF maps; `internal/dnsbpf` opens the `dns_cache` pin directly from inside the CoreDNS container.
+- **`internal/ebpf`** — the firewall manager executes `ebpf-manager` subcommands (`init`, `enable`, `disable`, `sync-routes`, `bypass`, `unbypass`, `resolve`) inside the long-running `clawker-ebpf` container via `docker exec`. The container stays resident purely as an RPC endpoint — the BPF programs themselves live in kernel state (pinned under `/sys/fs/bpf/clawker/`) and would continue enforcing even if the container were stopped. `internal/dnsbpf` opens the `dns_cache` pin directly from inside the CoreDNS container.
 - **`internal/dnsbpf`** — custom CoreDNS plugin package, linked into `cmd/coredns-clawker` and baked into the `clawker-coredns:latest` image.
 - **`github.com/moby/moby/client`** — `Manager` receives `client.APIClient` (raw moby) in its constructor. Does NOT use `internal/docker` or `pkg/whail` — avoids jail label filtering that hides containers from the daemon's watcher.
 - **`internal/cmd/factory`** — Factory exposes `f.Firewall()` as a lazy noun returning `FirewallManager`.

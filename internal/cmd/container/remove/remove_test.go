@@ -288,8 +288,8 @@ func TestRemoveRun_DisablesFirewallBeforeRemove(t *testing.T) {
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	// Track ordering: firewall disable must happen before docker remove so the
-	// ebpf sidecar can still exec into the container's cgroup while detaching
-	// programs.
+	// clawker-ebpf container can still exec into the user container's cgroup
+	// while detaching programs.
 	var dockerRemoveCalled bool
 	fake.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
 		dockerRemoveCalled = true

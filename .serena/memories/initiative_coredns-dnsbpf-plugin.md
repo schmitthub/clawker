@@ -61,7 +61,7 @@ The eBPF firewall routes per-container egress traffic through Envoy (TCP/TLS) an
 | `internal/firewall/manager.go` | `corednsContainerConfig()` — CoreDNS container spec (stock image, Corefile mount, health port) |
 | `internal/firewall/manager.go` | `ensureEbpfImage()` / `ebpfBuildContext()` — pattern for building Docker images from embedded binaries |
 | `internal/firewall/ebpf_embed.go` | `go:embed` pattern for embedded binary |
-| `Dockerfile.ebpf` | Multi-stage build pattern for firewall sidecar containers |
+| `Dockerfile.ebpf` | Multi-stage build pattern for firewall stack containers |
 | `Makefile` | `ebpf-binary` target — cross-compile pattern for embedded Linux binaries |
 
 ### Design Patterns

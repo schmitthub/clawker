@@ -179,7 +179,7 @@ func TestResolveContainerID_NotFoundPropagates(t *testing.T) {
 
 // execCapture records every args slice passed to ebpfExec / ebpfExecOutput so
 // tests can assert the cgroupPath + command the manager sent to the eBPF
-// sidecar.
+// manager container.
 type execCapture struct {
 	mu   sync.Mutex
 	args [][]string
@@ -446,7 +446,7 @@ func TestEnable_HostProxyResolveFailurePropagates(t *testing.T) {
 	mgr.cgroupDriverFn = func(context.Context) (string, error) { return "cgroupfs", nil }
 	mgr.ebpfExecFn = func(context.Context, ...string) error { return nil }
 
-	// Inject the failure: the eBPF sidecar cannot resolve host.docker.internal.
+	// Inject the failure: the eBPF manager container cannot resolve host.docker.internal.
 	resolveErr := errors.New("DNS lookup failed")
 	mgr.ebpfExecOutputFn = func(_ context.Context, args ...string) (string, error) {
 		if len(args) >= 2 && args[0] == "resolve" && args[1] == "host.docker.internal" {
