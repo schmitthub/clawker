@@ -400,13 +400,17 @@ test-clean:
 # License Targets
 # ============================================================================
 
-# Generate NOTICE file with third-party license attributions
-licenses:
+# Generate NOTICE file with third-party license attributions.
+# Depends on the embedded firewall binaries + bpf2go bindings because
+# gen-notice.sh runs `go-licenses report ./...` which loads every package
+# in the module — internal/firewall needs go:embed targets and internal/ebpf
+# needs the bpf2go-generated Go wrappers to compile.
+licenses: ebpf-binary coredns-binary
 	@echo "Generating NOTICE file..."
 	bash scripts/gen-notice.sh
 
 # Check NOTICE file is up to date (used by CI)
-licenses-check:
+licenses-check: ebpf-binary coredns-binary
 	@echo "Checking NOTICE freshness..."
 	@bash scripts/gen-notice.sh
 	@if ! git diff --quiet NOTICE; then \
