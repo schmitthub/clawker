@@ -117,8 +117,19 @@ clawker-generate:
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/clawker-generate ./cmd/clawker-generate
 
-# Build Clawker for multiple platforms
-clawker-build-all: clawker-build-linux clawker-build-darwin clawker-build-windows
+# Build Clawker for all supported platforms (linux, darwin — windows is not
+# currently supported).
+#
+# clawker-build-linux and clawker-build-darwin each overwrite the shared
+# $(EBPF_BINARY)/$(COREDNS_BINARY) asset paths during their recipe (first
+# amd64, then arm64). Under `make -j clawker-build-all` the platform targets
+# would run concurrently and stomp each other's asset files, silently
+# embedding the wrong-arch binaries into the cross-compiled clawker output.
+# Invoke each platform as a sub-make so -j does not parallelize them.
+clawker-build-all:
+	@echo "Building Clawker for all platforms..."
+	$(MAKE) clawker-build-linux
+	$(MAKE) clawker-build-darwin
 
 clawker-build-linux:
 	@echo "Building Clawker for Linux..."
@@ -139,13 +150,6 @@ clawker-build-darwin:
 	@echo "  ebpf-manager linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
 	@echo "  coredns-clawker linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
 	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/clawker
-
-clawker-build-windows:
-	@echo "Building Clawker for Windows..."
-	@mkdir -p $(DIST_DIR)
-	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/ebpf/cmd
-	@echo "  coredns-clawker linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
-	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/clawker
 
 # Run Clawker tests
 clawker-test: ebpf-binary coredns-binary

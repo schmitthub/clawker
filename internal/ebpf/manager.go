@@ -413,8 +413,44 @@ func CgroupPath(containerID string) string {
 	return filepath.Join("/sys/fs/cgroup/system.slice", "docker-"+containerID+".scope")
 }
 
+// cgroupRoot is the only legitimate filesystem root for cgroup v2 paths.
+// Validated in CgroupID to sanitize caller-supplied paths against traversal
+// and injection — defense-in-depth for the privileged ebpf-manager binary
+// running with CAP_BPF + CAP_SYS_ADMIN.
+const cgroupRoot = "/sys/fs/cgroup/"
+
+// validateCgroupPath canonicalizes p and ensures it points inside the
+// cgroup v2 hierarchy. Returns the cleaned path or an error. The
+// filepath.Clean + HasPrefix(constant) + ".." rejection chain is
+// recognized by CodeQL's go/path-injection query as a sanitizer barrier.
+func validateCgroupPath(p string) (string, error) {
+	if p == "" {
+		return "", errors.New("cgroup path is empty")
+	}
+	if strings.ContainsAny(p, "\x00\n\r") {
+		return "", fmt.Errorf("cgroup path contains illegal characters: %q", p)
+	}
+	if strings.Contains(p, "..") {
+		return "", fmt.Errorf("cgroup path must not contain '..': %q", p)
+	}
+	cleaned := filepath.Clean(p)
+	if !strings.HasPrefix(cleaned, cgroupRoot) {
+		return "", fmt.Errorf("cgroup path must be under %s: %q", cgroupRoot, p)
+	}
+	return cleaned, nil
+}
+
 // CgroupID reads the cgroup ID from a cgroup path (inode number on cgroup v2).
+// The path is validated against validateCgroupPath before being opened, which
+// both enforces the /sys/fs/cgroup/ invariant and acts as the CodeQL
+// go/path-injection sanitizer for the ebpf-manager entry points that pass
+// os.Args through to here.
 func CgroupID(cgroupPath string) (uint64, error) {
+	cgroupPath, err := validateCgroupPath(cgroupPath)
+	if err != nil {
+		return 0, err
+	}
+
 	f, err := os.Open(cgroupPath)
 	if err != nil {
 		return 0, fmt.Errorf("opening cgroup: %w", err)

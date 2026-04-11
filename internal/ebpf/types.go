@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"hash/fnv"
 	"net"
+	"strings"
 )
 
 // PinPath is the filesystem path where BPF maps are pinned.
@@ -40,7 +41,10 @@ type ContainerConfig struct {
 // DNSEntry mirrors struct dns_entry in bpf/common.h.
 type DNSEntry struct {
 	DomainHash uint32 // FNV-1a hash of normalized domain
-	ExpireTS   uint32 // Expiration timestamp (kernel monotonic seconds)
+	// Wall-clock expiration: time.Now().Unix() + TTL seconds. Only
+	// userspace GC (Manager.GarbageCollectDNS) reads this field — the
+	// BPF fast path in clawker.c never inspects expire_ts.
+	ExpireTS uint32
 }
 
 // RouteKey mirrors struct route_key in bpf/common.h.
@@ -105,10 +109,16 @@ func CIDRToAddrMask(cidr string) (addr, mask uint32, err error) {
 }
 
 // DomainHash computes the FNV-1a hash of a normalized domain name.
-// This must match the hash used by the CoreDNS dns-to-bpf plugin.
+//
+// Normalization is a case-insensitive lowercase fold. Both the firewall
+// route_map writer (internal/firewall/manager.go) and the dnsbpf CoreDNS
+// plugin (internal/dnsbpf) call this single function so BPF lookups
+// succeed regardless of how the user capitalized the rule destination.
+// Callers must strip FQDN trailing dots and wildcard leading dots
+// themselves (see firewall.normalizeDomain).
 func DomainHash(domain string) uint32 {
 	h := fnv.New32a()
-	h.Write([]byte(domain))
+	h.Write([]byte(strings.ToLower(domain)))
 	return h.Sum32()
 }
 

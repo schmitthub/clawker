@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net"
 	"net/http"
@@ -26,6 +25,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/schmitthub/clawker/internal/config"
+	clawkerebpf "github.com/schmitthub/clawker/internal/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 )
@@ -1196,7 +1196,7 @@ func (m *Manager) syncRoutes(ctx context.Context) error {
 	routes := make([]ebpfRoute, 0, len(tcpMappings))
 	for _, mp := range tcpMappings {
 		routes = append(routes, ebpfRoute{
-			DomainHash: DomainHash(mp.Dst),
+			DomainHash: clawkerebpf.DomainHash(mp.Dst),
 			DstPort:    uint16(mp.DstPort),
 			EnvoyPort:  uint16(mp.EnvoyPort),
 		})
@@ -1354,13 +1354,6 @@ func computeGateway(cidr string) string {
 	}
 	ip[3] = 1
 	return ip.String()
-}
-
-// DomainHash computes the FNV-1a hash of a domain name (exported for tests).
-func DomainHash(domain string) uint32 {
-	h := fnv.New32a()
-	h.Write([]byte(strings.ToLower(domain)))
-	return h.Sum32()
 }
 
 // marshalRoutes serializes routes as a JSON array string.
