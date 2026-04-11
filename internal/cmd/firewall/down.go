@@ -74,9 +74,11 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 	// Belt-and-suspenders: stop any remaining firewall containers.
 	// The daemon's Stop() should handle this, but if the daemon was started
 	// by an older binary (e.g. before eBPF support), it may leave containers behind.
-	fwMgr, err := opts.Firewall(ctx)
-	if err == nil {
-		_ = fwMgr.Stop(ctx) // best-effort, ignore "already removed" errors
+	// Skip when Firewall isn't wired (unit tests with a partial Factory).
+	if opts.Firewall != nil {
+		if fwMgr, err := opts.Firewall(ctx); err == nil {
+			_ = fwMgr.Stop(ctx) // best-effort, ignore "already removed" errors
+		}
 	}
 
 	fmt.Fprintf(ios.Out, "%s Firewall stopped\n", cs.SuccessIcon())

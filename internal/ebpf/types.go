@@ -74,7 +74,6 @@ const (
 )
 
 // IPToUint32 converts a net.IP to a uint32 in network byte order.
-// IPToUint32 converts a net.IP to a uint32 in network byte order.
 // The kernel stores ctx->user_ip4 as 4 network-order bytes in memory,
 // which the CPU reads as a native uint32. NativeEndian replicates this:
 // the IP bytes are placed into the uint32 exactly as the CPU would load them.

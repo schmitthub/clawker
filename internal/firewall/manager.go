@@ -1249,9 +1249,7 @@ func (m *Manager) cgroupDriver(ctx context.Context) string {
 
 // ebpfExec runs a command in the eBPF manager container via docker exec.
 func (m *Manager) ebpfExec(ctx context.Context, args ...string) error {
-	cmd := make([]string, 0, len(args)+1)
-	cmd = append(cmd, "/usr/local/bin/ebpf-manager")
-	cmd = append(cmd, args...)
+	cmd := append([]string{"/usr/local/bin/ebpf-manager"}, args...)
 
 	execResp, err := m.client.ExecCreate(ctx, string(ebpfContainer), client.ExecCreateOptions{
 		AttachStdout: true,
@@ -1283,9 +1281,7 @@ func (m *Manager) ebpfExec(ctx context.Context, args ...string) error {
 // ebpfExecOutput runs a command in the eBPF manager container and returns stdout.
 // Uses stdcopy to demultiplex Docker's stream headers from the exec output.
 func (m *Manager) ebpfExecOutput(ctx context.Context, args ...string) (string, error) {
-	cmd := make([]string, 0, len(args)+1)
-	cmd = append(cmd, "/usr/local/bin/ebpf-manager")
-	cmd = append(cmd, args...)
+	cmd := append([]string{"/usr/local/bin/ebpf-manager"}, args...)
 
 	execResp, err := m.client.ExecCreate(ctx, string(ebpfContainer), client.ExecCreateOptions{
 		AttachStdout: true,

@@ -12,4 +12,6 @@ package ebpf
 // The generated files (clawker_bpfel.go, clawker_bpfeb.go, *.o) are checked
 // into the repo so that building clawker does NOT require clang.
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" -target amd64,arm64 clawker ./bpf/clawker.c -- -I./bpf
+// bpf2go is pinned to match the cilium/ebpf library version in go.mod so the
+// generator and the runtime agree on the loader shape. Update both together.
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go@v0.21.0 -cc clang -cflags "-O2 -g -Wall -Werror" -target amd64,arm64 clawker ./bpf/clawker.c -- -I./bpf

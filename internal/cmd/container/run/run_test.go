@@ -776,7 +776,7 @@ func TestImageArg(t *testing.T) {
 // These tests go through cmd.Execute() with a faked *cmdutil.Factory.
 // The real runRun executes (runF is nil), exercising the full command path
 // including flag parsing, config loading, workspace setup, and Docker calls.
-// Docker operations are faked via mock.FakeClient.
+// Docker operations are faked via internal/docker/mocks.FakeClient.
 
 // testFactory constructs a minimal *cmdutil.Factory for command-level testing.
 // The returned Factory wires fake Docker client, test config, and test IOStreams.

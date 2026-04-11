@@ -232,7 +232,10 @@ UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/whail' | grep -v '/test/e2e')
 
 # Unit tests only (fast, no Docker)
 # Excludes test/e2e, test/whail which require Docker
-test:
+# Depends on the embedded firewall binaries because internal/firewall uses
+# go:embed on assets/ebpf-manager and assets/coredns-clawker — tests that
+# compile the firewall package will fail without them.
+test: ebpf-binary coredns-binary
 	@echo "Running unit tests..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -245,7 +248,7 @@ test-unit: test
 
 # CI-mode unit tests: race detector, no caching, coverage
 # Called by .github/workflows/test.yml
-test-ci:
+test-ci: ebpf-binary coredns-binary
 	@echo "Running unit tests (CI mode: race, no cache, coverage)..."
 	@PKGS="$(UNIT_PKGS)"; if [ -z "$$PKGS" ]; then echo "ERROR: no packages found" >&2; exit 1; fi; \
 	$(GO) test -race -count=1 -coverprofile=coverage.out $$PKGS
@@ -315,12 +318,14 @@ licenses-check:
 # ============================================================================
 
 # Generate CLI reference + config reference docs
-docs:
+# Depends on the embedded firewall binaries because cmd/gen-docs links
+# the full cobra tree, which imports internal/firewall (go:embed assets).
+docs: ebpf-binary coredns-binary
 	@echo "Generating CLI reference + config reference docs..."
 	$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
 
 # Check all generated docs are up to date (used by CI)
-docs-check:
+docs-check: ebpf-binary coredns-binary
 	@echo "Checking generated docs freshness..."
 	@$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
 	@if ! git diff --quiet docs/cli-reference/ docs/configuration.mdx; then \

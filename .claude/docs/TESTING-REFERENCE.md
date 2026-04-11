@@ -21,7 +21,7 @@ Clawker's packages follow a strict **DAG (Directed Acyclic Graph)**:
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
        │                                       │                   │
        ▼                                       ▼                   ▼
-   gittest/                               mock/               Factory DI
+   gittest/                               docker/mocks/       Factory DI
    config/mocks/                          whailtest/          + runF seam
 ```
 

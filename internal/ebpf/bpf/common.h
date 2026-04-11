@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
+//
+// GPL-2.0 is required here (see clawker.c licensing note) because the BPF
+// helpers invoked from files that #include this header are kernel-gated to
+// GPL-licensed programs. The rest of the clawker repository is MIT-licensed.
+//
 // common.h — Shared types and map definitions for clawker eBPF programs.
 //
 // All BPF programs include this header. Map definitions are shared across
@@ -37,10 +42,13 @@ struct container_config {
 };
 
 // DNS cache entry: resolved IP → domain identity.
-// Written by CoreDNS dns-to-bpf plugin on every resolution.
+// Written by the CoreDNS dnsbpf plugin on every resolution; read by userspace
+// garbage collection (internal/ebpf Manager.GarbageCollectDNS). The BPF fast
+// path (clawker.c) only uses domain_hash for routing and does NOT check
+// expire_ts — expiration is enforced exclusively by userspace GC.
 struct dns_entry {
 	__u32 domain_hash; // FNV-1a hash of normalized domain
-	__u32 expire_ts;   // Expiration: ktime_get_boot_ns()/1e9 + TTL
+	__u32 expire_ts;   // Wall-clock expiration: time.Now().Unix() + TTL seconds
 };
 
 // Global per-domain TCP route key (shared across all enforced containers).
