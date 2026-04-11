@@ -11,27 +11,125 @@ Top-level tracker for features and architectural improvements that are known but
 
 ---
 
-## 0. SLSA provenance attestation for release binaries
+## 0. Release pipeline adaptation for Dockerfile.firewall build chain
 
-**Status:** not yet wired
-**Scope:** small-to-medium
+**Status:** release pipeline is currently broken on main's build system — **must land before the next tag push**
+**Scope:** medium
 
-The BPF bytecode, `ebpf-manager`, and `coredns-clawker` binaries are all
-produced from a single pinned multi-stage Docker build
-(`Dockerfile.firewall`) — no committed artifacts, reproducible by
-construction. See `internal/ebpf/REPRODUCIBILITY.md` for the provenance
-chain.
+Background: commits `a50ac9e4` + `5ce36b1c` on branch
+`fix/project-egress-priority` replaced the host-native Go build of
+`internal/firewall/assets/{ebpf-manager,coredns-clawker}` with a pinned
+multi-stage `Dockerfile.firewall` + `docker buildx build` extraction.
+Nothing generated is committed anymore (no `clawker_*_bpfel.{go,o}`, no
+firewall asset binaries). `make clawker-build` works end-to-end locally
+because Make's dep graph triggers the pinned Docker build, which produces
+the firewall stack binaries into `internal/firewall/assets/` before the
+host-native `go build ./cmd/clawker` runs with them `go:embed`'d.
 
-What's still missing: the released `clawker` CLI binary itself should
-carry a SLSA provenance attestation so end users can verify the full chain
-from source → pinned build recipe → published binary. Check
-`.github/workflows/release.yml` — if it doesn't already emit SLSA
-attestations via the SLSA GitHub generator action
-(`slsa-framework/slsa-github-generator`), add it. The embedded
-`ebpf-manager` and `coredns-clawker` binaries (and the BPF bytecode inside
-them) are covered transitively because they're `go:embed`'d into the Go
-CLI. This is the last mile to an end-to-end SLSA L3 story for clawker's
-kernel-level surface.
+The release pipeline does NOT go through `make clawker-build`. It will
+fail on the next tag push as-is.
+
+### What's broken in `.github/workflows/release.yml`
+
+| Step | Breakage |
+|---|---|
+| `Verify build` → `go build ./cmd/clawker` | `internal/firewall/assets/{ebpf-manager,coredns-clawker}` don't exist on the runner; `go:embed` fails at compile time |
+| GoReleaser step (invokes goreleaser which runs `go generate ./...` + `go build`) | `go generate` needs pinned `clang` + `llvm` + `libbpf-dev` + `linux-libc-dev`; `go build` needs the embedded assets |
+
+Everything downstream of the Go build is fine:
+- `archives` / `homebrew_casks` / `sboms` / `signs` / `changelog` /
+  `release` in `.goreleaser.yaml` all operate on already-built binaries
+- The `actions/attest-build-provenance` step in release.yml that emits
+  SLSA provenance on `dist/checksums.txt` works unchanged — the
+  attestation covers whatever GoReleaser put in `dist/` transitively
+
+### What's broken in `.goreleaser.yaml`
+
+| Section | Breakage |
+|---|---|
+| `before.hooks: go generate ./...` | Runs on the ubuntu-latest runner with no BPF toolchain and no pinned versions. Even if the packages were installed, bypassing `Dockerfile.firewall` defeats the reproducibility story |
+| `builds: - id: clawker … main: ./cmd/clawker` | Missing `go:embed` assets. Also needs to run per-target-arch so each clawker binary embeds a matching-arch ebpf-manager + coredns-clawker (darwin/arm64 clawker embeds linux/arm64 sidecars, darwin/amd64 embeds linux/amd64, etc.) |
+
+### Recommended fix: switch to `builder: prebuilt`
+
+Cleanest path is to stop having GoReleaser build Go at all. Instead, the
+Makefile produces all four cross-arch clawker binaries via the pinned
+Docker chain, and GoReleaser just packages / signs / publishes them.
+
+1. **Extend Dockerfile.firewall or add a new stage** to support
+   cross-compiling the ebpf-manager + coredns-clawker binaries for both
+   `linux/amd64` and `linux/arm64` in a single build (using `TARGETARCH`
+   build args). The current build already supports `--build-arg TARGETARCH=<arch>`
+   via the Makefile's `BUILDX_TARGETARCH` — adapt it to be controllable
+   per-invocation from the release Makefile target.
+
+2. **Update `Makefile`** `clawker-build-linux` / `clawker-build-darwin`
+   recipes to:
+   - Call `make ebpf-binary BUILDX_TARGETARCH=amd64` for the linux/amd64
+     and darwin/amd64 slots
+   - Call `make ebpf-binary BUILDX_TARGETARCH=arm64` for the linux/arm64
+     and darwin/arm64 slots
+   - Same for `coredns-binary`
+   - Then `go build` for the matching target OS with `GOOS=<os> GOARCH=<arch>`
+   - Keep the existing "run sequentially, not in parallel, because the
+     shared asset path gets stomped" structure (the existing comment at
+     the top of `clawker-build-all` documents this)
+   - Drop the outputs into `dist/<os>-<arch>/clawker` in a layout GoReleaser's
+     `prebuilt` builder can pick up
+
+3. **Replace `.goreleaser.yaml`'s `builds`** section with:
+   ```yaml
+   before:
+     hooks: []  # no go generate — the Makefile target ran everything already
+   builds:
+     - id: clawker
+       builder: prebuilt
+       goos: [linux, darwin]
+       goarch: [amd64, arm64]
+       prebuilt:
+         path: dist/{{ .Os }}-{{ .Arch }}/clawker
+       binary: clawker
+   ```
+
+4. **Update `.github/workflows/release.yml`**:
+   - Delete the `Verify build` step (or replace it with `make clawker-build-all`)
+   - Add a step before GoReleaser: `make clawker-build-all` — this triggers
+     the full pinned Docker chain + cross-compile all four binaries into
+     `dist/<os>-<arch>/clawker`
+   - GoReleaser picks them up via the `prebuilt` builder
+
+### Things that keep working unchanged
+
+- `attest-build-provenance` step (SLSA provenance on `checksums.txt`) —
+  already wired in release.yml:66-69, operates on GoReleaser's output,
+  unaffected by how the binaries got built. The existing `actions/attest-build-provenance@v4`
+  emits a SLSA v1.0 predicate that transitively covers every embedded
+  binary / BPF bytecode / everything `go:embed`'d into the clawker CLI
+- `cosign sign-blob` of the checksum file — works unchanged
+- SBOM generation (`sboms:` in goreleaser config) — works unchanged
+- Homebrew tap push — works unchanged
+
+### Test plan for the follow-up PR
+
+- Local dry-run: `goreleaser release --clean --snapshot --skip=publish` against
+  a Makefile-populated `dist/` tree — verify it produces archives for all
+  four target platforms and doesn't try to `go generate`
+- Push a test tag (e.g. `v0.0.0-rcN`) to a fork and watch the full workflow
+  run through to `attest-build-provenance`
+- Verify the SLSA attestation covers the final clawker binary and its
+  transitively-embedded sidecars (can be inspected with
+  `gh attestation verify` or `slsa-verifier`)
+
+### SLSA attestation status (was originally this memory's contents)
+
+Release provenance attestation is **already wired** via
+`actions/attest-build-provenance@v4` in `release.yml:66-69`, covering
+`dist/checksums.txt`. Once the Makefile-driven prebuilt flow above lands,
+the attestation transitively covers the entire stack including BPF
+bytecode, via `go:embed`. No additional SLSA work should be needed beyond
+the release pipeline adaptation described above — unless we later want to
+produce per-binary attestations instead of the current checksums-file
+attestation, which is a nice-to-have but not required for SLSA L3.
 
 ---
 
