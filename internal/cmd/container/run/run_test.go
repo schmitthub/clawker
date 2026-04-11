@@ -18,7 +18,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -603,7 +603,7 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // TestImageArg tests image argument handling for the run command.
 // Tests @ symbol resolution (using mock Docker client) and explicit image pass-through.
 func TestImageArg(t *testing.T) {
-	// Tests for @ symbol resolution (uses dockertest.FakeClient)
+	// Tests for @ symbol resolution (uses mocks.FakeClient)
 	// ResolveImageWithSource resolves project images only (no default image fallback).
 	// Returns nil when no project image with :latest tag is found.
 	t.Run("@ symbol resolution", func(t *testing.T) {
@@ -656,7 +656,7 @@ func TestImageArg(t *testing.T) {
 				testCfg := configmocks.NewBlankConfig()
 
 				// Create fake Docker client with the config
-				fake := dockertest.NewFakeClient(testCfg)
+				fake := mocks.NewFakeClient(testCfg)
 
 				// Build image summaries and configure fake
 				var summaries []whail.ImageSummary
@@ -776,11 +776,11 @@ func TestImageArg(t *testing.T) {
 // These tests go through cmd.Execute() with a faked *cmdutil.Factory.
 // The real runRun executes (runF is nil), exercising the full command path
 // including flag parsing, config loading, workspace setup, and Docker calls.
-// Docker operations are faked via dockertest.FakeClient.
+// Docker operations are faked via internal/docker/mocks.FakeClient.
 
 // testFactory constructs a minimal *cmdutil.Factory for command-level testing.
 // The returned Factory wires fake Docker client, test config, and test IOStreams.
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	// Ensure CWD is inside $HOME so IsOutsideHome returns false (matters in containers).
 	cwd, _ := os.Getwd()
@@ -816,7 +816,7 @@ security: { enable_host_proxy: false }
 
 func TestRunRun(t *testing.T) {
 	t.Run("detached mode prints container ID", func(t *testing.T) {
-		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 		fake.SetupContainerStart()
@@ -842,7 +842,7 @@ func TestRunRun(t *testing.T) {
 	})
 
 	t.Run("container create failure returns error", func(t *testing.T) {
-		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
 			return moby.ContainerCreateResult{}, fmt.Errorf("disk full")
 		}
@@ -862,7 +862,7 @@ func TestRunRun(t *testing.T) {
 	})
 
 	t.Run("container start failure returns error", func(t *testing.T) {
-		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 		fake.FakeAPI.ContainerStartFn = func(_ context.Context, _ string, _ moby.ContainerStartOptions) (moby.ContainerStartResult, error) {
@@ -895,7 +895,7 @@ security: { enable_host_proxy: false }
 		testCfg.GetProjectRootFunc = func() (string, error) {
 			return os.TempDir(), nil
 		}
-		fake := dockertest.NewFakeClient(testCfg)
+		fake := mocks.NewFakeClient(testCfg)
 		fake.SetupImageList() // empty — no project image found
 
 		tio, in, out, errOut := iostreams.Test() // non-interactive

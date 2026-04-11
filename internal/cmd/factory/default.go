@@ -184,9 +184,11 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 // firewallFunc returns a lazy closure that creates a FirewallManager once.
 //
 // INTENTIONALLY uses raw moby client (mobyclient.New) instead of f.Client(ctx)/whail.Engine.
-// The firewall Manager is an infrastructure container orchestrator — it manages Envoy and
-// CoreDNS sidecar containers that live OUTSIDE whail's label-isolated scope. These containers
-// carry dev.clawker.purpose=firewall and must be visible to the daemon's container watcher
+// The firewall Manager is an infrastructure container orchestrator — it manages the Envoy
+// egress proxy, CoreDNS resolver, and eBPF manager containers that live OUTSIDE whail's
+// label-isolated scope. These are shared firewall stack containers, not sidecars — one
+// stack serves all clawker-managed containers on the host. They carry
+// dev.clawker.purpose=firewall and must be visible to the daemon's container watcher
 // without whail's managed-label filter hiding them.
 // See .claude/rules/docker-client.md for the exception policy.
 func firewallFunc(f *cmdutil.Factory) func(context.Context) (firewall.FirewallManager, error) {

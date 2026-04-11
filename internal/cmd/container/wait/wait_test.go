@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
@@ -122,7 +122,7 @@ func TestNewCmdWait_Properties(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests ---
 
-func testWaitFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testWaitFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 
@@ -139,8 +139,8 @@ func testWaitFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factor
 }
 
 func TestWaitRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerWait(0)
 
@@ -161,8 +161,8 @@ func TestWaitRun_Success(t *testing.T) {
 }
 
 func TestWaitRun_NonZeroExitCode(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerWait(42)
 
@@ -206,7 +206,7 @@ func TestWaitRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestWaitRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, in, out, errOut := testWaitFactory(t, fake)
@@ -223,8 +223,8 @@ func TestWaitRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestWaitRun_PartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerWait(0)
 

@@ -14,7 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -87,7 +87,7 @@ func streamJSONLines(text string) string {
 
 // setupContainerFakes wires the Docker API fakes needed for Runner.StartContainer:
 // ContainerAttach (with stdcopy-framed NDJSON output), ContainerStart, ContainerWait.
-func setupContainerFakes(fake *dockertest.FakeClient, output string, exitCode int64) {
+func setupContainerFakes(fake *mocks.FakeClient, output string, exitCode int64) {
 	fake.SetupContainerAttachWithOutput(output)
 	fake.SetupContainerStart()
 	fake.SetupContainerWait(exitCode)
@@ -95,7 +95,7 @@ func setupContainerFakes(fake *dockertest.FakeClient, output string, exitCode in
 
 // newTestRunner creates a Runner with temp stores and returns it along with
 // the store and history for assertions.
-func newTestRunner(t *testing.T, client *dockertest.FakeClient) (*shared.Runner, *shared.SessionStore, *shared.HistoryStore) {
+func newTestRunner(t *testing.T, client *mocks.FakeClient) (*shared.Runner, *shared.SessionStore, *shared.HistoryStore) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	store := shared.NewSessionStore(filepath.Join(tmpDir, "sessions"))
@@ -116,7 +116,7 @@ func makeCreateContainer(containerID string) func(context.Context) (*shared.Cont
 }
 
 func TestRunnerRun_SingleLoopCompletion(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	text := loopStatusText("COMPLETE", true, 5, 3)
 	output := streamJSONLines(text)
 	setupContainerFakes(fake, output, 0)
@@ -149,7 +149,7 @@ func TestRunnerRun_SingleLoopCompletion(t *testing.T) {
 }
 
 func TestRunnerRun_MaxLoopsReached(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	// Output that always says IN_PROGRESS with some progress (no exit signal)
 	text := loopStatusText("IN_PROGRESS", false, 1, 1)
 	output := streamJSONLines(text)
@@ -177,7 +177,7 @@ func TestRunnerRun_MaxLoopsReached(t *testing.T) {
 }
 
 func TestRunnerRun_CircuitBreakerTrips(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	// Output with no progress (0 tasks, 0 files, no exit signal) — triggers stagnation
 	text := loopStatusText("IN_PROGRESS", false, 0, 0)
 	output := streamJSONLines(text)
@@ -206,7 +206,7 @@ func TestRunnerRun_CircuitBreakerTrips(t *testing.T) {
 }
 
 func TestRunnerRun_ContextCancellation(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	text := loopStatusText("IN_PROGRESS", false, 1, 1)
 	output := streamJSONLines(text)
 	setupContainerFakes(fake, output, 0)
@@ -243,7 +243,7 @@ func TestRunnerRun_ContextCancellation(t *testing.T) {
 }
 
 func TestRunnerRun_CallbacksFired(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	text := loopStatusText("COMPLETE", true, 2, 1)
 	output := streamJSONLines(text)
 	setupContainerFakes(fake, output, 0)
@@ -282,7 +282,7 @@ func TestRunnerRun_CallbacksFired(t *testing.T) {
 }
 
 func TestRunnerRun_PreCancelledContext(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	// No container fakes needed — context is pre-cancelled so Run exits immediately
 	runner, _, _ := newTestRunner(t, fake)
 
@@ -305,7 +305,7 @@ func TestRunnerRun_PreCancelledContext(t *testing.T) {
 }
 
 func TestRunnerRun_RepeatedErrorHistoryEntry(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 
 	// Output with an error signature that will repeat every loop
 	text := "Error: compilation failed\n" + loopStatusText("IN_PROGRESS", false, 1, 1)
@@ -348,7 +348,7 @@ func TestRunnerRun_RepeatedErrorHistoryEntry(t *testing.T) {
 }
 
 func TestRunnerRun_CircuitAlreadyTripped(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	runner, store, _ := newTestRunner(t, fake)
 
 	// Pre-trip the circuit

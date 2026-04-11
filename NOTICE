@@ -19,9 +19,14 @@ github.com/containerd/log                                                      A
 github.com/containerd/platforms                                                Apache-2.0
 github.com/containerd/ttrpc                                                    Apache-2.0
 github.com/containerd/typeurl/v2                                               Apache-2.0
+github.com/coredns/caddy                                                       Apache-2.0
+github.com/coredns/coredns                                                     Apache-2.0
 github.com/distribution/reference                                              Apache-2.0
+github.com/dnstap/golang-dnstap                                                Apache-2.0
 github.com/docker/go-connections                                               Apache-2.0
 github.com/docker/go-units                                                     Apache-2.0
+github.com/farsightsec/golang-framestream                                      Apache-2.0
+github.com/flynn/go-shlex                                                      Apache-2.0
 github.com/go-git/go-billy/v6                                                  Apache-2.0
 github.com/go-git/go-git/v6                                                    Apache-2.0
 github.com/go-logr/logr                                                        Apache-2.0
@@ -38,7 +43,13 @@ github.com/moby/patternmatcher                                                 A
 github.com/moby/sys/signal                                                     Apache-2.0
 github.com/opencontainers/go-digest                                            Apache-2.0
 github.com/opencontainers/image-spec/specs-go                                  Apache-2.0
+github.com/opentracing/opentracing-go                                          Apache-2.0
+github.com/pires/go-proxyproto                                                 Apache-2.0
 github.com/pjbgf/sha1cd                                                        Apache-2.0
+github.com/prometheus/client_golang/prometheus                                 Apache-2.0
+github.com/prometheus/client_model/go                                          Apache-2.0
+github.com/prometheus/common                                                   Apache-2.0
+github.com/prometheus/procfs                                                   Apache-2.0
 github.com/shibumi/go-pathspec                                                 Apache-2.0
 github.com/spf13/cobra                                                         Apache-2.0
 go.opentelemetry.io/auto/sdk                                                   Apache-2.0
@@ -55,6 +66,7 @@ go.opentelemetry.io/otel/sdk                                                   A
 go.opentelemetry.io/otel/sdk/log                                               Apache-2.0
 go.opentelemetry.io/otel/trace                                                 Apache-2.0
 go.opentelemetry.io/proto/otlp                                                 Apache-2.0
+go.yaml.in/yaml/v2                                                             Apache-2.0
 google.golang.org/genproto/googleapis/api/httpbody                             Apache-2.0
 google.golang.org/genproto/googleapis/rpc/status                               Apache-2.0
 google.golang.org/grpc                                                         Apache-2.0
@@ -83,10 +95,14 @@ github.com/golang/protobuf/ptypes                                              B
 github.com/google/go-cmp/cmp                                                   BSD-3-Clause
 github.com/google/uuid                                                         BSD-3-Clause
 github.com/grpc-ecosystem/grpc-gateway/v2                                      BSD-3-Clause
+github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc                           BSD-3-Clause
 github.com/klauspost/compress                                                  BSD-3-Clause
 github.com/klauspost/compress/internal/snapref                                 BSD-3-Clause
+github.com/miekg/dns                                                           BSD-3-Clause
+github.com/munnerz/goautoneg                                                   BSD-3-Clause
 github.com/planetscale/vtprotobuf                                              BSD-3-Clause
 github.com/pmezard/go-difflib/difflib                                          BSD-3-Clause
+github.com/prometheus/client_golang/internal/github.com/golang/gddo/httputil   BSD-3-Clause
 github.com/spf13/pflag                                                         BSD-3-Clause
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc    BSD-3-Clause
 go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace   BSD-3-Clause
@@ -118,7 +134,9 @@ github.com/emirpasic/gods                                                      I
 MIT
 ================================================================================
 
+github.com/apparentlymart/go-cidr/cidr                                         MIT
 github.com/aymanbagabas/go-osc52/v2                                            MIT
+github.com/beorn7/perks/quantile                                               MIT
 github.com/cenkalti/backoff/v5                                                 MIT
 github.com/cespare/xxhash/v2                                                   MIT
 github.com/charmbracelet/bubbles                                               MIT
@@ -128,6 +146,7 @@ github.com/charmbracelet/lipgloss                                              M
 github.com/charmbracelet/x/ansi                                                MIT
 github.com/charmbracelet/x/cellbuf                                             MIT
 github.com/charmbracelet/x/term                                                MIT
+github.com/cilium/ebpf                                                         MIT
 github.com/clipperhouse/displaywidth                                           MIT
 github.com/clipperhouse/uax29/v2/graphemes                                     MIT
 github.com/cpuguy83/go-md2man/v2/md2man                                        MIT
@@ -143,6 +162,8 @@ github.com/mattn/go-runewidth                                                  M
 github.com/muesli/ansi                                                         MIT
 github.com/muesli/cancelreader                                                 MIT
 github.com/muesli/termenv                                                      MIT
+github.com/quic-go/qpack                                                       MIT
+github.com/quic-go/quic-go                                                     MIT
 github.com/rivo/uniseg                                                         MIT
 github.com/rs/zerolog                                                          MIT
 github.com/secure-systems-lab/go-securesystemslib                              MIT
@@ -153,6 +174,7 @@ github.com/tonistiigi/fsutil                                                   M
 github.com/xo/terminfo                                                         MIT
 github.com/zalando/go-keyring                                                  MIT
 github.com/zalando/go-keyring/internal/shellescape                             MIT
+go.uber.org/automaxprocs                                                       MIT
 gopkg.in/natefinch/lumberjack.v2                                               MIT
 gopkg.in/yaml.v3                                                               MIT
 

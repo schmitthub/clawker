@@ -47,7 +47,7 @@ Present **all** of the following options to the user so they can choose. These a
    clawker firewall add <hostname>
    ```
 
-2. **Temporary bypass** (escape hatch — temporarily disables iptables rules):
+2. **Temporary bypass** (escape hatch — temporarily disables firewall rules):
    ```
    clawker firewall bypass <duration> --agent $CLAWKER_AGENT
    ```
@@ -65,7 +65,7 @@ Present **all** of the following options to the user so they can choose. These a
 
 ### How the bypass works (agent reference)
 
-The bypass temporarily disables the iptables rules that redirect your traffic through Envoy/CoreDNS. During a bypass, all outbound traffic from your user goes directly to the network without filtering. After the specified timeout, the iptables rules are automatically re-applied, restoring firewall enforcement. No proxy routing is needed — all tools (including built-in ones like WebFetch) work normally during an active bypass.
+The bypass sets an eBPF flag that allows all outbound traffic to go directly to the network without filtering. After the specified timeout, the flag is automatically cleared, restoring firewall enforcement. No proxy routing is needed — all tools (including built-in ones like WebFetch) work normally during an active bypass.
 
 ### How rules are managed (agent reference)
 

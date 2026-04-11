@@ -100,7 +100,7 @@ When you run this command, Clawker:
 1. Creates the container with your project directory mounted at its real host path
 2. Creates persistent volumes for Claude Code config (`~/.claude`) and shell history
 3. Starts the firewall daemon (Envoy + CoreDNS) if it isn't already running
-4. Applies iptables rules inside the container to redirect traffic through the firewall
+4. Attaches eBPF programs to the container to redirect traffic through the firewall
 5. Copies your host Claude Code settings, plugins, and authentication into the container
 6. Forwards SSH/GPG agent sockets and Git HTTPS credentials from your host
 7. Runs any `post_init` script you've configured

@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/firewall"
 	firewallmocks "github.com/schmitthub/clawker/internal/firewall/mocks"
 	"github.com/schmitthub/clawker/internal/git"
@@ -26,7 +26,7 @@ import (
 )
 
 // FactoryOptions holds dependency constructor overrides.
-// Some nil fields use test fakes (configmocks, dockertest.FakeClient, hostproxytest.MockManager,
+// Some nil fields use test fakes (configmocks, mocks.FakeClient, hostproxytest.MockManager,
 // firewallmocks.FirewallManagerMock). Logger always uses logger.New (real file logger).
 // ProjectManager, GitManager, and SocketBridge default to nil.
 // Set a field to the real constructor (e.g. config.NewConfig) for integration tests.
@@ -108,7 +108,7 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 					docker.WithLabels(docker.TestLabelConfig(c, t.Name())))
 			} else {
 				c, _ := resolveConfig()
-				fake := dockertest.NewFakeClient(c)
+				fake := mocks.NewFakeClient(c)
 				client = fake.Client
 			}
 		})

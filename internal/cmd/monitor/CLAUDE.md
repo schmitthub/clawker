@@ -28,6 +28,7 @@ Parent command only (no RunE). Aggregates subcommands from dedicated packages.
 type InitOptions struct {
     IOStreams *iostreams.IOStreams
     Config    func() (config.Config, error)
+    Logger    func() (*logger.Logger, error)
     Force     bool
 }
 func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command
@@ -42,6 +43,7 @@ type UpOptions struct {
     IOStreams *iostreams.IOStreams
     Client    func(context.Context) (*docker.Client, error)
     Config    func() (config.Config, error)
+    Logger    func() (*logger.Logger, error)
     Detach    bool
 }
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command
@@ -55,6 +57,7 @@ Starts monitoring stack via Docker Compose. Ensures `clawker-net` network exists
 type DownOptions struct {
     IOStreams *iostreams.IOStreams
     Config    func() (config.Config, error)
+    Logger    func() (*logger.Logger, error)
     Volumes   bool
 }
 func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) error) *cobra.Command
@@ -68,6 +71,7 @@ Stops monitoring stack via Docker Compose. Flags: `--volumes/-v` (remove named v
 type StatusOptions struct {
     IOStreams *iostreams.IOStreams
     Config    func() (config.Config, error)
+    Logger    func() (*logger.Logger, error)
 }
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command
 ```

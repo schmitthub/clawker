@@ -15,6 +15,8 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
 
@@ -149,17 +151,26 @@ func cleanupTestEnvironment(t *testing.T, h *Harness) {
 	h.Run("host-proxy", "stop")
 
 	// 2. Remove shared firewall infrastructure containers (not test-labeled).
-	for _, name := range []string{"clawker-envoy", "clawker-coredns"} {
-		//nolint:gosec // name is hardcoded
-		if out, err := exec.CommandContext(ctx, "docker", "rm", "-f", name).CombinedOutput(); err != nil {
-			t.Logf("cleanup: docker rm %s: %s (%v)", name, strings.TrimSpace(string(out)), err)
+	// Build the label key=value from config accessors so we stay consistent
+	// with how production code (internal/firewall/manager.go) stamps labels.
+	cfg := resolveCleanupConfig(t, h)
+	firewallLabel := fmt.Sprintf("%s=%s", cfg.LabelPurpose(), cfg.PurposeFirewall())
+	if ids, err := dockerListByLabel(ctx, "container", firewallLabel); err != nil {
+		t.Logf("cleanup: docker ps firewall label=%s: %v (firewall containers may leak)", firewallLabel, err)
+	} else if len(ids) > 0 {
+		//nolint:gosec // label is derived from config accessors, not user input
+		args := append([]string{"rm", "-f"}, ids...)
+		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
+			t.Logf("cleanup: docker rm firewall: %s (%v)", strings.TrimSpace(string(out)), err)
 		}
 	}
 
 	// 3. Remove test-labeled containers, volumes, networks.
-	label := fmt.Sprintf("dev.clawker.test.name=%s", t.Name())
+	label := fmt.Sprintf("%s.test.name=%s", cfg.LabelDomain(), t.Name())
 
-	if ids := dockerListByLabel(ctx, "container", label); len(ids) > 0 {
+	if ids, err := dockerListByLabel(ctx, "container", label); err != nil {
+		t.Logf("cleanup: docker ps label=%s: %v (containers may leak)", label, err)
+	} else if len(ids) > 0 {
 		//nolint:gosec // label is derived from t.Name(), not user input
 		args := append([]string{"rm", "-f"}, ids...)
 		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
@@ -167,7 +178,9 @@ func cleanupTestEnvironment(t *testing.T, h *Harness) {
 		}
 	}
 
-	if ids := dockerListByLabel(ctx, "volume", label); len(ids) > 0 {
+	if ids, err := dockerListByLabel(ctx, "volume", label); err != nil {
+		t.Logf("cleanup: docker volume ls label=%s: %v (volumes may leak)", label, err)
+	} else if len(ids) > 0 {
 		//nolint:gosec // label is derived from t.Name(), not user input
 		args := append([]string{"volume", "rm", "-f"}, ids...)
 		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
@@ -175,7 +188,9 @@ func cleanupTestEnvironment(t *testing.T, h *Harness) {
 		}
 	}
 
-	if ids := dockerListByLabel(ctx, "network", label); len(ids) > 0 {
+	if ids, err := dockerListByLabel(ctx, "network", label); err != nil {
+		t.Logf("cleanup: docker network ls label=%s: %v (networks may leak)", label, err)
+	} else if len(ids) > 0 {
 		for _, id := range ids {
 			//nolint:gosec // id comes from docker ls output
 			if out, err := exec.CommandContext(ctx, "docker", "network", "rm", id).CombinedOutput(); err != nil {
@@ -185,8 +200,29 @@ func cleanupTestEnvironment(t *testing.T, h *Harness) {
 	}
 }
 
+// resolveCleanupConfig returns a config.Config for label accessors during
+// cleanup. It uses the harness' own Config constructor when set so labels
+// match the test's isolated env exactly; otherwise it falls back to a blank
+// config, which still exposes the canonical label/purpose constants. Any
+// failure to construct the configured Config is non-fatal for cleanup —
+// we log and fall back to the blank config.
+func resolveCleanupConfig(t *testing.T, h *Harness) config.Config {
+	t.Helper()
+	if h != nil && h.Opts != nil && h.Opts.Config != nil {
+		if cfg, err := h.Opts.Config(); err == nil && cfg != nil {
+			return cfg
+		} else if err != nil {
+			t.Logf("cleanup: resolving harness config: %v (falling back to blank config)", err)
+		}
+	}
+	return configmocks.NewBlankConfig()
+}
+
 // dockerListByLabel returns IDs of Docker resources matching a label filter.
-func dockerListByLabel(ctx context.Context, resourceType, label string) []string {
+// Returns an error when `docker` fails to execute so callers can surface the
+// underlying reason (daemon down, permission denied) instead of silently
+// assuming "nothing to clean", which would leak resources into the next test.
+func dockerListByLabel(ctx context.Context, resourceType, label string) ([]string, error) {
 	var cmd *exec.Cmd
 	switch resourceType {
 	case "container":
@@ -196,12 +232,18 @@ func dockerListByLabel(ctx context.Context, resourceType, label string) []string
 	case "network":
 		cmd = exec.CommandContext(ctx, "docker", "network", "ls", "-q", "--filter", "label="+label)
 	default:
-		return nil
+		return nil, fmt.Errorf("dockerListByLabel: unsupported resource type %q", resourceType)
 	}
 
 	out, err := cmd.Output()
 	if err != nil {
-		return nil
+		// Include stderr from docker on ExitError so the failure mode is
+		// visible in test logs (e.g. "Cannot connect to the Docker daemon").
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return nil, fmt.Errorf("docker %s: %w: %s", resourceType, err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, fmt.Errorf("docker %s: %w", resourceType, err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	var ids []string
@@ -210,7 +252,7 @@ func dockerListByLabel(ctx context.Context, resourceType, label string) []string
 			ids = append(ids, id)
 		}
 	}
-	return ids
+	return ids, nil
 }
 
 // Run creates a fresh Factory and executes a CLI command through the full

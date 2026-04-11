@@ -63,8 +63,6 @@ build:
     - man-db
     - unzip
     - gnupg2
-    - iptables
-    - ipset
     - iproute2
     - dnsutils
     - aggregate

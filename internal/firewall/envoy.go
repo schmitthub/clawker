@@ -40,7 +40,7 @@ func (p EnvoyPorts) Validate() error {
 	return nil
 }
 
-// TCPMapping describes a per-destination iptables DNAT entry for non-TLS traffic.
+// TCPMapping describes a per-destination eBPF DNAT entry for non-TLS traffic.
 // Each TCP/SSH rule gets a dedicated Envoy listener port.
 type TCPMapping struct {
 	Dst       string // Destination domain or IP.
@@ -50,7 +50,7 @@ type TCPMapping struct {
 
 // TCPMappings computes TCP port mappings from egress rules.
 // The result is deterministic for a given rule set — same rules produce same mappings.
-// Used by both GenerateEnvoyConfig (to build listeners) and Enable (to build iptables args).
+// Used by both GenerateEnvoyConfig (to build listeners) and Enable (to build eBPF args).
 func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 	var mappings []TCPMapping
 	idx := 0
@@ -66,8 +66,14 @@ func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 		if proto != "ssh" && proto != "tcp" {
 			continue
 		}
+		// Dst is normalized to the canonical domain (no leading/trailing
+		// dots) so that DomainHash(Dst) matches what the dnsbpf CoreDNS
+		// plugin writes into dns_cache — the Corefile zones are already
+		// normalized via normalizeDomain, so any leading-dot wildcard
+		// marker on the raw rule Dst must be stripped here too or the
+		// route_map lookup will miss for wildcard TCP/SSH rules.
 		mappings = append(mappings, TCPMapping{
-			Dst:       r.Dst,
+			Dst:       normalizeDomain(r.Dst),
 			DstPort:   tcpDefaultPort(r),
 			EnvoyPort: ports.TCPPortBase + idx,
 		})
@@ -219,7 +225,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 		}
 	}
 
-	// Compute TCP port mappings (same function used by manager.Enable for iptables args).
+	// Compute TCP port mappings (same function used by manager.Enable for eBPF args).
 	tcpMappings := TCPMappings(rules, ports)
 
 	// Validate derived TCP listener ports: range check + collision detection.

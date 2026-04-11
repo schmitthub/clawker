@@ -70,7 +70,7 @@ Container flag types, domain logic, container creation, and container start orch
 
 1. **Pre-start** (`BootstrapServicesPreStart`) — firewall rules sync + daemon ensure + health wait (60s) + host proxy start
 2. **Docker start** — `client.ContainerStart` (the actual Docker API call)
-3. **Post-start** (`BootstrapServicesPostStart`) — firewall iptables enable inside the container + socket bridge for GPG/SSH forwarding
+3. **Post-start** (`BootstrapServicesPostStart`) — eBPF program attachment for the container + socket bridge for GPG/SSH forwarding
 
 Errors at any phase abort immediately. See `shared/CLAUDE.md` section "Container Start Orchestration" for `CommandOpts` fields, function signatures, and full details.
 
@@ -120,7 +120,7 @@ Auto-injects git credential env vars into exec'd processes. HTTPS via host proxy
 
 ## Testing
 
-Cobra+Factory pattern: `dockertest.NewFakeClient()` → `testFactory(f)` → `NewCmdRun(f, nil)` → assert output + `fake.AssertCalled`. Per-package `testFactory`/`testConfig` helpers (not shared). See `.claude/memories/TESTING-REFERENCE.md`.
+Cobra+Factory pattern: `mocks.NewFakeClient(cfg)` → `testFactory(f)` → `NewCmdRun(f, nil)` → assert output + `fake.AssertCalled`. Per-package `testFactory`/`testConfig` helpers (not shared). See `.claude/memories/TESTING-REFERENCE.md`.
 
 **Tiers**: Tier 1 (flag parsing via `runF` trapdoor), Tier 2 (Cobra+Factory with `nil` runF), Tier 3 (unit, direct calls).
 

@@ -1,0 +1,192 @@
+# Dockerfile.firewall — Reproducible build recipe for clawker firewall stack binaries.
+#
+# This is the single source of truth for building the two Linux binaries
+# that clawker go:embed's into its CLI:
+#
+#   * ebpf-manager    — compiled from ./internal/ebpf/cmd with BPF bytecode
+#                       baked in via bpf2go + go:embed. Runs as a long-lived
+#                       container to serve `docker exec` subcommands from
+#                       the firewall manager. NOT a sidecar — the BPF programs
+#                       live in kernel state once pinned under /sys/fs/bpf/clawker/
+#                       and outlive the container that loaded them.
+#   * coredns-clawker — compiled from ./cmd/coredns-clawker, embeds the
+#                       first-party internal/dnsbpf plugin which writes
+#                       DNS resolutions into the pinned dns_cache BPF map
+#                       in real time.
+#
+# Stages:
+#   1. bpf-builder             — pinned debian + clang + llvm + libbpf-dev +
+#                                linux-libc-dev + Go; runs `go generate` to
+#                                produce clawker_*_bpfel.{go,o} from the BPF C
+#   2. ebpf-manager-builder    — pinned golang:alpine; overlays stage 1's
+#                                generated bindings and `go build`s the
+#                                ebpf-manager Linux binary
+#   3. ebpf-manager-extract    — scratch stage with only the final binary,
+#                                used by `docker buildx build
+#                                --target=ebpf-manager-extract
+#                                --output=type=local,dest=...`
+#   4. coredns-builder         — pinned golang:alpine; overlays stage 1's
+#                                generated BPF bindings (coredns-clawker
+#                                imports internal/ebpf which requires them
+#                                at compile time) and `go build`s the
+#                                coredns-clawker Linux binary
+#   5. coredns-extract         — scratch stage with only the final binary,
+#                                same `--target=coredns-extract` extraction
+#                                pattern as ebpf-manager-extract
+#
+# Reproducibility: every input is pinned by digest or exact version. A fresh
+# `make clawker` on any host with Docker + buildx produces byte-identical
+# output. The repo contains no committed generated artifacts — the .o files,
+# bpf2go Go wrappers, and final binaries are all produced inside this build
+# and the binaries extracted to the host tree only via buildx local output.
+# See internal/ebpf/REPRODUCIBILITY.md for the full pin table and update
+# procedure.
+
+# -----------------------------------------------------------------------------
+# Stage 1: bpf-builder
+# -----------------------------------------------------------------------------
+#
+# Compiles internal/ebpf/bpf/clawker.c → clawker_*_bpfel.{go,o} via bpf2go.
+# Uses pinned clang + llvm (for llvm-strip) + libbpf-dev + linux-libc-dev
+# from Debian bookworm. The UAPI header set (linux/bpf.h, linux/types.h) is
+# what anchors the BPF build since clawker's programs touch only stable
+# kernel UAPI and do not use CO-RE.
+FROM debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d AS bpf-builder
+
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+# Exact apt package versions shipped by this debian digest. If the digest
+# changes these need to be re-resolved via:
+#   docker run --rm debian:bookworm-slim@sha256:<digest> bash -c \
+#     'apt-get update >/dev/null && apt-cache policy clang llvm libbpf-dev linux-libc-dev'
+ARG CLANG_VERSION=1:14.0-55.7~deb12u1
+ARG LLVM_VERSION=1:14.0-55.7~deb12u1
+ARG LIBBPF_DEV_VERSION=1:1.1.2-0+deb12u1
+ARG LINUX_LIBC_DEV_VERSION=6.1.164-1
+
+# `llvm` provides llvm-strip, which bpf2go shells out to after compiling
+# the .o to strip debug symbols. The `clang` meta package does not pull it in.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        clang="${CLANG_VERSION}" \
+        llvm="${LLVM_VERSION}" \
+        libbpf-dev="${LIBBPF_DEV_VERSION}" \
+        linux-libc-dev="${LINUX_LIBC_DEV_VERSION}" \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Go toolchain copied from the pinned golang:alpine image used by stages 2
+# and 4 so bpf2go runs under the exact same Go version. Update this digest
+# in lockstep with the two `FROM golang:...` lines below.
+COPY --from=golang:1.25.9-alpine@sha256:7a00384194cf2cb68924bbb918d675f1517357433c8541bac0ab2f929b9d5447 /usr/local/go /usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}"
+ENV GOCACHE=/tmp/gocache
+ENV GOMODCACHE=/tmp/gomodcache
+
+WORKDIR /build
+
+# Cache dependency layer.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# The bpf2go compile only needs the BPF C source + gen.go.
+COPY internal/ebpf/bpf/ internal/ebpf/bpf/
+COPY internal/ebpf/gen.go internal/ebpf/
+
+RUN go generate ./internal/ebpf/...
+
+# -----------------------------------------------------------------------------
+# Stage 2: ebpf-manager-builder
+# -----------------------------------------------------------------------------
+#
+# Compiles ./internal/ebpf/cmd → /ebpf-manager. Pulls the generated BPF
+# bindings from stage 1 via `COPY --from=bpf-builder` so this stage doesn't
+# need clang.
+FROM golang:1.25.9-alpine@sha256:7a00384194cf2cb68924bbb918d675f1517357433c8541bac0ab2f929b9d5447 AS ebpf-manager-builder
+
+WORKDIR /build
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY internal/ebpf/ internal/ebpf/
+COPY internal/logger/ internal/logger/
+
+COPY --from=bpf-builder /build/internal/ebpf/clawker_x86_bpfel.go /build/internal/ebpf/
+COPY --from=bpf-builder /build/internal/ebpf/clawker_x86_bpfel.o  /build/internal/ebpf/
+COPY --from=bpf-builder /build/internal/ebpf/clawker_arm64_bpfel.go /build/internal/ebpf/
+COPY --from=bpf-builder /build/internal/ebpf/clawker_arm64_bpfel.o  /build/internal/ebpf/
+
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
+    go build -ldflags="-s -w" -trimpath -o /ebpf-manager ./internal/ebpf/cmd
+
+# -----------------------------------------------------------------------------
+# Stage 3: ebpf-manager-extract
+# -----------------------------------------------------------------------------
+FROM scratch AS ebpf-manager-extract
+COPY --from=ebpf-manager-builder /ebpf-manager /ebpf-manager
+
+# -----------------------------------------------------------------------------
+# Stage 4: coredns-builder
+# -----------------------------------------------------------------------------
+#
+# Compiles ./cmd/coredns-clawker → /coredns-clawker. coredns-clawker imports
+# internal/ebpf for helpers (DomainHash, IPToUint32) and the DNSEntry struct,
+# so it must overlay the bpf2go-generated wrappers from stage 1 the same way
+# ebpf-manager-builder does — otherwise `go build` fails with "undefined:
+# clawkerRouteKey" etc.
+FROM golang:1.25.9-alpine@sha256:7a00384194cf2cb68924bbb918d675f1517357433c8541bac0ab2f929b9d5447 AS coredns-builder
+
+WORKDIR /build
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd/coredns-clawker/ cmd/coredns-clawker/
+COPY internal/dnsbpf/ internal/dnsbpf/
+COPY internal/ebpf/ internal/ebpf/
+COPY internal/logger/ internal/logger/
+
+COPY --from=bpf-builder /build/internal/ebpf/clawker_x86_bpfel.go /build/internal/ebpf/
+COPY --from=bpf-builder /build/internal/ebpf/clawker_x86_bpfel.o  /build/internal/ebpf/
+COPY --from=bpf-builder /build/internal/ebpf/clawker_arm64_bpfel.go /build/internal/ebpf/
+COPY --from=bpf-builder /build/internal/ebpf/clawker_arm64_bpfel.o  /build/internal/ebpf/
+
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
+    go build -ldflags="-s -w" -trimpath -o /coredns-clawker ./cmd/coredns-clawker
+
+# -----------------------------------------------------------------------------
+# Stage 5: coredns-extract
+# -----------------------------------------------------------------------------
+FROM scratch AS coredns-extract
+COPY --from=coredns-builder /coredns-clawker /coredns-clawker
+
+# -----------------------------------------------------------------------------
+# Stage 6: bpf-bindings-extract
+# -----------------------------------------------------------------------------
+#
+# Exposes the bpf2go-generated Go wrappers (.go) and compiled BPF bytecode
+# (.o) to the host tree so that host-side `go test` / `go vet` / `gopls`
+# can compile internal/ebpf/manager.go, which references the clawkerObjects,
+# clawkerRouteKey, etc. types declared in those wrappers.
+#
+# These files are gitignored — they never get committed. They are produced
+# fresh on every Make invocation that transitively depends on them (test,
+# clawker-build, lint, etc.) and land in internal/ebpf/ via buildx
+# `--output=type=local,dest=...`.
+#
+# The final binaries (stages 3 and 5) still `go:embed` the .o via the
+# bindings that land in stages 2 and 4 from COPY --from=bpf-builder — so
+# this stage is strictly for the host-side Go toolchain, not part of the
+# shipping-binary build chain.
+FROM scratch AS bpf-bindings-extract
+COPY --from=bpf-builder /build/internal/ebpf/clawker_x86_bpfel.go  /clawker_x86_bpfel.go
+COPY --from=bpf-builder /build/internal/ebpf/clawker_x86_bpfel.o   /clawker_x86_bpfel.o
+COPY --from=bpf-builder /build/internal/ebpf/clawker_arm64_bpfel.go /clawker_arm64_bpfel.go
+COPY --from=bpf-builder /build/internal/ebpf/clawker_arm64_bpfel.o  /clawker_arm64_bpfel.o

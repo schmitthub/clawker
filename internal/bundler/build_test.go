@@ -53,7 +53,6 @@ security:
 		"callback-forwarder.go",
 		"git-credential-clawker.sh",
 		"clawker-socket-server.go",
-		"firewall.sh", // firewall script (always included)
 	}
 	for _, name := range expectedFiles {
 		_, err := os.Stat(filepath.Join(dir, name))
@@ -61,31 +60,11 @@ security:
 	}
 
 	// Verify scripts are executable
-	for _, name := range []string{"entrypoint.sh", "host-open.sh", "firewall.sh"} {
+	for _, name := range []string{"entrypoint.sh", "host-open.sh"} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		require.NoError(t, err)
 		assert.NotZero(t, info.Mode()&0111, "%s should be executable", name)
 	}
 }
 
-func TestWriteBuildContextToDir_NoFirewall(t *testing.T) {
-	// Firewall script is always included regardless of config — execution is gated at runtime.
-	cfg := testConfig(t, `
-version: "1"
-build:
-  image: "buildpack-deps:bookworm-scm"
-security:
-  firewall:
-    enable: false
-`)
-	gen := NewProjectGenerator(cfg, t.TempDir())
-	dir := t.TempDir()
-
-	err := gen.WriteBuildContextToDir(dir, []byte("FROM alpine\n"))
-	require.NoError(t, err)
-
-	// Firewall script should always be written (runtime-gated, not build-gated)
-	info, err := os.Stat(filepath.Join(dir, "firewall.sh"))
-	require.NoError(t, err, "firewall.sh should always exist in build context")
-	assert.NotZero(t, info.Mode()&0111, "firewall.sh should be executable")
-}
+// TestWriteBuildContextToDir_NoFirewall deleted — firewall.sh replaced by eBPF.

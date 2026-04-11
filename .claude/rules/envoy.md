@@ -49,7 +49,7 @@ Fetch via: `gh api "repos/envoyproxy/examples/contents/<path>" --jq '.content' |
 ### Egress Listener (single port, tls_inspector)
 
 ```
-Client → iptables DNAT → Envoy :10000
+Client → eBPF connect4 rewrite → Envoy :10000
                             ├─ TLS (SNI match) → per-domain filter chain → LOGICAL_DNS cluster (re-encrypt upstream)
                             ├─ HTTP (raw_buffer) → Host header routing → per-domain LOGICAL_DNS cluster (plaintext)
                             └─ Unknown → deny chain (tcp_proxy → deny_cluster → reset)

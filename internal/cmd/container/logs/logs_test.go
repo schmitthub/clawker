@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
@@ -183,7 +183,7 @@ func TestCmdLogs_Properties(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
@@ -199,8 +199,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 }
 
 func TestLogsRun_HappyPath(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	c := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	c := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerLogs("line1\nline2\nline3\n")
 
@@ -241,7 +241,7 @@ func TestLogsRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestLogsRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
 	f, in, out, errOut := testFactory(t, fake)
@@ -257,8 +257,8 @@ func TestLogsRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestLogsRun_WithTailFlag(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	c := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	c := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerLogs("last line\n")
 

@@ -18,18 +18,18 @@ Clawker is a CLI tool that manages isolated Docker containers for AI coding agen
 └──────┬────────────────────────┬────────────────────┬─────────────────┘
        │                        │                    │
        ▼                        ▼                    ▼
-┌──────────────┐  ┌─────────────────────┐  ┌───────────────────────┐
-│ Container    │  │ Configuration       │  │ Security              │
-│ Subsystem    │  │ Subsystem           │  │ Subsystem             │
-│              │  │                     │  │                       │
-│ docker/      │  │ storage/ (engine)   │  │ firewall/ (Envoy+DNS) │
-│ workspace/   │  │ config/ (project)   │  │ hostproxy/ (auth)     │
-│ containerfs/ │  │ config/ (settings)  │  │ socketbridge/ (SSH)   │
-│ bundler/     │  │ project/ (registry) │  │ keyring/ (creds)      │
-│              │  │ storeui/ (TUI edit) │  │                       │
-│ pkg/whail    │  │                     │  │                       │
-│ (engine lib) │  │                     │  │                       │
-└──────┬───────┘  └─────────────────────┘  └───────────────────────┘
+┌──────────────┐  ┌─────────────────────┐  ┌────────────────────────────┐
+│ Container    │  │ Configuration       │  │ Security                   │
+│ Subsystem    │  │ Subsystem           │  │ Subsystem                  │
+│              │  │                     │  │                            │
+│ docker/      │  │ storage/ (engine)   │  │ firewall/ (Envoy+CoreDNS+  │
+│ workspace/   │  │ config/ (project)   │  │            eBPF manager)   │
+│ containerfs/ │  │ config/ (settings)  │  │ ebpf/  (BPF loader/maps)   │
+│ bundler/     │  │ project/ (registry) │  │ dnsbpf/ (CoreDNS plugin)   │
+│              │  │ storeui/ (TUI edit) │  │ hostproxy/ (auth)          │
+│ pkg/whail    │  │                     │  │ socketbridge/ (SSH)        │
+│ (engine lib) │  │                     │  │ keyring/ (creds)           │
+└──────┬───────┘  └─────────────────────┘  └────────────────────────────┘
        │
        ▼
   moby/moby (Docker SDK)
@@ -85,6 +85,7 @@ Universally imported infrastructure. Their imports are leaf-only.
 |---------|---------|---------|
 | `config` | storage | Config loading/validation, schema types, path resolution. Composes `Store[Project]` + `Store[Settings]` |
 | `iostreams` | term, text | I/O streams, TTY detection, colors, styles, spinners, progress |
+| `ebpf` | logger | eBPF program loader/manager (cilium/ebpf) — pins maps and programs, attaches to container cgroups, `SyncRoutes` replaces the global `route_map` atomically |
 
 ### Domain Packages (import leaves + foundation)
 
@@ -97,7 +98,8 @@ Core business logic. Import leaves and foundation packages only.
 | `tui` | iostreams, text | BubbleTea models, viewports, panels, progress display |
 | `prompter` | iostreams | Interactive prompts with TTY/CI awareness |
 | `storeui` | iostreams, storage, tui | Generic TUI editor for `Store[T]` instances |
-| `firewall` | config, logger, storage | Envoy+CoreDNS firewall: daemon, config gen, PKI, rules |
+| `firewall` | config, logger, storage | Envoy + CoreDNS + eBPF firewall: daemon, config gen, PKI, rules, embedded image builds |
+| `dnsbpf` | ebpf | CoreDNS plugin that writes DNS resolutions to the BPF `dns_cache` map in real time (embedded in `cmd/coredns-clawker`) |
 | `hostproxy` | config, logger | Host proxy for container-to-host communication |
 | `socketbridge` | config, logger | SSH/GPG agent forwarding via muxrpc |
 | `containerfs` | config, keyring, logger | Host config preparation for container init |
@@ -171,7 +173,10 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 | `docker.Client` | `internal/docker` | Clawker middleware (labels, naming) wrapping whail |
 | `cmdutil.Factory` | `internal/cmdutil` | DI struct (closure fields); constructor in `cmd/factory` |
 | `CreateContainer()` | `internal/cmd/container/shared` | Single entry point for container creation |
-| `firewall.FirewallManager` | `internal/firewall` | Envoy+CoreDNS firewall lifecycle, rules, bypass |
+| `firewall.FirewallManager` | `internal/firewall` | Envoy + CoreDNS + eBPF firewall lifecycle, rules, bypass |
+| `dnsbpf.Handler` | `internal/dnsbpf` | CoreDNS plugin populating the BPF `dns_cache` map in real time |
+| `ebpf.Manager` | `internal/ebpf` | BPF program loader; `SyncRoutes` replaces the global `route_map` atomically |
+| `cmd/coredns-clawker` | `cmd/coredns-clawker` | Custom CoreDNS entrypoint embedding `dnsbpf`; built into `clawker-coredns:latest` by the firewall manager on demand |
 | `tui.TUI` | `internal/tui` | Factory noun for presentation layer |
 
 ## Container Naming and Labels

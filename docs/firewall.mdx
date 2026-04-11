@@ -1,42 +1,57 @@
 ---
 title: "Firewall Guide"
-description: "Envoy + CoreDNS network firewall architecture, configuration, CLI commands, and troubleshooting"
+description: "eBPF + CoreDNS + Envoy network firewall architecture, configuration, CLI commands, and troubleshooting"
 icon: "fire-flame-curved"
 ---
 
-Clawker ships a **deny-by-default network firewall** that restricts all container egress to explicitly allowed domains and IP ranges. The firewall runs as a pair of sidecar containers (Envoy proxy + CoreDNS) on a shared Docker bridge network, providing DNS-level blocking and TLS-level inspection without modifying your agent containers.
+Clawker ships a **deny-by-default network firewall** that restricts all container egress to explicitly allowed domains. The firewall runs as a shared stack of three containers — an Envoy egress proxy, a custom CoreDNS resolver with a `dnsbpf` plugin, and an eBPF control-plane agent — on an isolated Docker bridge network. One firewall stack serves all clawker-managed containers on the host (1:N). It provides DNS-level blocking, per-domain TCP routing, and TLS-level inspection without modifying your agent containers.
 
 ## Architecture
 
-The firewall uses two infrastructure containers managed automatically by the Clawker daemon:
+The firewall uses three infrastructure containers managed automatically by the Clawker daemon:
 
-- **CoreDNS** (port `53`) --- DNS-level deny-by-default. Only explicitly allowed domains resolve successfully. All other queries return NXDOMAIN. Uses Cloudflare malware-blocking upstream (`1.1.1.2`, `1.0.0.2`).
+- **eBPF manager** (`clawker-ebpf:latest`) --- loads and pins the cgroup BPF programs (`connect4`, `connect6`, `sendmsg4`, `recvmsg4`, `sendmsg6`, `sock_create`) that do the actual enforcement. It also owns the pinned BPF maps under `/sys/fs/bpf/clawker/` (`container_map`, `route_map`, `dns_cache`, `bypass_map`, `metrics_map`).
+- **CoreDNS** (`clawker-coredns:latest`, port `53`) --- a *custom* CoreDNS build baked from `cmd/coredns-clawker`. In addition to deny-by-default DNS filtering (NXDOMAIN for anything not in the allowlist, Cloudflare malware-blocking upstream `1.1.1.2` / `1.0.0.2`), it embeds the first-party `dnsbpf` plugin that writes every resolved IP to the BPF `dns_cache` map in real time — this is what lets the BPF `connect4/connect6` programs do per-domain TCP routing.
 - **Envoy** (port `10000` TLS, `10001+` TCP) --- TLS termination with per-domain certificates for all allowed domains. Envoy terminates TLS, inspects HTTP traffic (paths, methods, response codes visible), then re-encrypts upstream. Default deny (connection reset) for unrecognized SNI.
 
-Both containers run on the `clawker-net` bridge network with static IPs: Envoy at `.200`, CoreDNS at `.201`. Agent containers join the same network with Cloudflare DNS (`1.1.1.2`, `1.0.0.2`) as Docker's default external forwarders. When the firewall is enabled, `resolv.conf` is flipped to point to CoreDNS for filtered resolution. CoreDNS forwards Docker internal names (`host.docker.internal`, monitoring stack containers) back to Docker's embedded DNS at `127.0.0.11`, preserving internal networking. HTTPS is routed through Envoy via iptables DNAT rules.
+All three containers run on the `clawker-net` bridge network. Envoy has static IP `.200` and CoreDNS `.201`. Agent containers join the same network; resolv.conf is pointed at CoreDNS for filtered resolution, and cgroup BPF programs redirect all outbound TCP to Envoy while sending DNS to CoreDNS. CoreDNS forwards Docker internal names (`host.docker.internal`, monitoring stack containers) back to Docker's embedded DNS at `127.0.0.11` so internal networking keeps working.
 
 ```
-Agent Container        CoreDNS (.201)       Envoy (.200)         Internet
-    |                        |                    |                   |
-    |--- DNS query --------->|                    |                   |
-    |<-- NXDOMAIN (blocked)--|                    |                   |
-    |<-- resolved IP (allow)-|                    |                   |
-    |                        |                    |                   |
-    |--- HTTPS (iptables DNAT) ----------------->|                   |
-    |                        |                    |--- TLS inspect -->|
-    |                        |                    |<-- response ------|
-    |<--------------------------------------------+                   |
+Agent Container      CoreDNS (.201)     eBPF maps       Envoy (.200)      Internet
+    |                      |                |                |               |
+    |-- DNS query -------->|                |                |               |
+    |                      |-- dnsbpf write IP->hash ------->|               |
+    |<- NXDOMAIN (blocked)-|                                                  |
+    |<- resolved IP -------|                                                  |
+    |                                                                          |
+    |-- TCP (connect4/connect6 rewrite via route_map + dns_cache) --->|       |
+    |                                                        |-- TLS inspect ->|
+    |                                                        |<- response ----|
+    |<-------------------------------------------------------|               |
 ```
 
 ## How It Works
 
 1. When you run `clawker run` or `clawker container create` with the firewall enabled, the **firewall daemon** starts automatically via `EnsureDaemon()`
-2. The daemon creates the `clawker-net` bridge network and launches the Envoy and CoreDNS containers
+2. The daemon creates the `clawker-net` bridge network and launches the stack in a specific order: **eBPF manager first** (so the pinned `dns_cache` map exists), then CoreDNS (the `dnsbpf` plugin opens the map on startup), then Envoy
 3. Project rules from `.clawker.yaml` are merged with system-required rules (additive merge, dedup by `destination:protocol:port`)
-4. Envoy and CoreDNS configs are regenerated from the merged ruleset
-5. Agent containers join the firewall network; `firewall.sh enable` flips `resolv.conf` to CoreDNS
-6. The daemon runs health checks every 5 seconds --- TCP on Envoy (`:18901`), HTTP on CoreDNS (`:18902/health`)
-7. A container watcher polls every 30 seconds and exits the daemon when no Clawker containers are running
+4. Envoy, CoreDNS, and the global `route_map` are (re)generated from the merged ruleset
+5. Agent containers join the firewall network; the eBPF manager attaches cgroup programs and writes an entry to `container_map` (cgroup_id → container config) for that container. Presence in `container_map` is what gates enforcement — the `route_map` itself is global
+6. As the agent resolves DNS, the `dnsbpf` plugin writes `IP → {domain_hash, TTL}` entries to the `dns_cache` map. On each outbound TCP connection, the `connect4`/`connect6` programs look up the destination IP in `dns_cache`, then look up `{domain_hash, dst_port}` in `route_map` to decide which Envoy listener to redirect to
+7. The daemon runs health checks every 5 seconds --- HTTP GET on Envoy (`:18901/`), HTTP GET on CoreDNS (`:18902/health`)
+8. A container watcher polls every 30 seconds and exits the daemon when no Clawker containers are running
+
+<Note>
+Because `route_map` is global, `clawker firewall add`, `clawker firewall remove`, and `clawker firewall reload` immediately propagate rule changes to **all** running agent containers via a `sync-routes` call — no container restart required.
+</Note>
+
+### IPv4, IPv6, and dual-stack
+
+The BPF `connect6` program applies the full `connect4` routing logic to **IPv4-mapped IPv6 addresses** (`::ffff:x.x.x.x`). Dual-stack clients — SSH, curl, Node.js, Go's default resolver — use IPv4-mapped sockets, so they get the same per-domain routing through Envoy as native IPv4.
+
+<Warning>
+**Native IPv6 is denied.** The firewall does not currently route native IPv6 egress (only loopback `::1` and IPv4-mapped addresses pass through). If your agent truly needs native IPv6 to reach a service, it will fail with a connection reset. In practice this is rare because dual-stack clients fall back to IPv4-mapped automatically.
+</Warning>
 
 ## Default Allowed Domains
 
@@ -212,11 +227,11 @@ Full rule specification for fine-grained control:
 - **`ssh`** --- SSH traffic forwarding. Functionally identical to `tcp` but semantically distinct. See the port-level routing note below.
 
 <Warning>
-**TCP/SSH rules capture all traffic on the port, not just traffic to the whitelisted domain.** TLS and HTTP protocols carry domain metadata (SNI and Host header) that Envoy uses to match traffic to the correct rule. Raw TCP and SSH have no such mechanism. Resolving the domain to an IP and writing per-IP iptables rules is not viable — IPs change frequently for large services (CDN edge rotations, load balancer failovers, anycast shifts), making IP-based rules brittle. Instead, clawker creates a single iptables DNAT rule per destination port that redirects **all** traffic on that port to a dedicated Envoy TCP listener. Envoy resolves the whitelisted domain at connection time and forwards traffic there.
+**TCP/SSH rules capture all traffic on the port, not just traffic to the whitelisted domain.** TLS and HTTP protocols carry domain metadata (SNI and Host header) that Envoy uses to match traffic to the correct rule. Raw TCP and SSH have no such mechanism. Resolving the domain to an IP and writing per-IP routing rules is not viable — IPs change frequently for large services (CDN edge rotations, load balancer failovers, anycast shifts), making IP-based rules brittle. Instead, clawker creates a single eBPF routing rule per destination port that redirects **all** traffic on that port to a dedicated Envoy TCP listener. Envoy resolves the whitelisted domain at connection time and forwards traffic there.
 
 For example, a `proto: ssh` rule for `github.com` on port 22 means every outbound port 22 connection from the container — regardless of what IP or hostname the agent specifies — ends up at GitHub's SSH endpoint. The agent cannot reach any other SSH server. This is more restrictive than it might appear: it's not that arbitrary port 22 traffic is allowed through, it's that all port 22 traffic is funneled to a single destination.
 
-If multiple rules target the same port (e.g., SSH rules for both `github.com` and `gitlab.com` on port 22), the **first rule in the egress rules list wins** — iptables evaluates DNAT rules in order and the first `--dport` match captures all traffic for that port. The second rule's Envoy listener would exist but never receive traffic. For this reason, **only one domain can effectively be whitelisted per TCP/SSH port**. If you need SSH access to both GitHub and GitLab, configure one provider to use HTTPS git instead, or use a non-standard SSH port if the provider supports it.
+If multiple rules target the same port (e.g., SSH rules for both `github.com` and `gitlab.com` on port 22), the **first rule in the egress rules list wins** — the eBPF program evaluates rules in order and the first port match captures all traffic for that port. The second rule's Envoy listener would exist but never receive traffic. For this reason, **only one domain can effectively be whitelisted per TCP/SSH port**. If you need SSH access to both GitHub and GitLab, configure one provider to use HTTPS git instead, or use a non-standard SSH port if the provider supports it.
 
 <Info>
 Multi-domain support for TCP/SSH ports is a [tracked limitation](https://github.com/schmitthub/clawker/issues/235), deferred for after the control plane work. In the meantime, HTTPS git works for most multi-provider setups.
@@ -297,12 +312,6 @@ security:
         action: allow
 ```
 
-### `ip_range_sources` (deprecated)
-
-<Warning>
-The `ip_range_sources` field is recognized by the YAML parser but **ignored at runtime**. IP range allowlisting via cloud provider CIDR blocks is not currently implemented. Remove any `ip_range_sources` entries from your configuration --- they have no effect.
-</Warning>
-
 ## Global vs Project Rules
 
 - **System-required rules** (from `cfg.RequiredFirewallRules()`) are always present --- Claude API, OAuth, error tracking, and feature flags
@@ -326,7 +335,7 @@ All firewall operations are available under `clawker firewall`:
 | `clawker firewall down` | Stop the firewall daemon |
 | `clawker firewall enable --agent AGENT` | Attach a container to the firewall network |
 | `clawker firewall disable --agent AGENT` | Remove a container from the firewall network |
-| `clawker firewall bypass` | Temporary unrestricted egress (iptables flush + timed re-enable) |
+| `clawker firewall bypass` | Temporary unrestricted egress (eBPF bypass flag + timed re-enable) |
 | `clawker firewall rotate-ca` | Regenerate CA and all domain certificates |
 
 ## Certificate Management
@@ -372,7 +381,7 @@ clawker firewall bypass 5m --agent dev
 clawker firewall bypass --stop --agent dev
 ```
 
-Bypass mode flushes the container's iptables rules, completely bypassing both DNS filtering and TLS inspection. A detached timer re-enables the firewall after the specified timeout.
+Bypass mode sets the eBPF bypass flag, completely bypassing both DNS filtering and TLS inspection. The flag auto-clears after the specified timeout, re-enabling the firewall.
 
 <Warning>
 Bypass mode removes all network restrictions for the specified agent. Use it sparingly and with short timeouts. The agent has full internet access during a bypass.
@@ -396,7 +405,7 @@ Disabling the firewall removes **all** outbound network restrictions. The agent 
 
 ### Health check failures
 
-Run `clawker firewall status` to see the health of Envoy and CoreDNS. The daemon checks Envoy on port `18901` (HTTP GET to `/`) and CoreDNS on port `18902` (HTTP GET to `/health`) every 5 seconds.
+Run `clawker firewall status` to see the health of the stack (Envoy, CoreDNS, and the eBPF manager). The daemon checks Envoy on port `18901` (HTTP GET to `/`) and CoreDNS on port `18902` (HTTP GET to `/health`) every 5 seconds. The eBPF manager is considered healthy if the container is running — all actual BPF programs and maps are pinned under `/sys/fs/bpf/clawker/` and persist across process restarts.
 
 If a container is unhealthy, try:
 
@@ -442,8 +451,17 @@ clawker firewall rotate-ca
 
 Then rebuild the image (`clawker build`) and restart containers.
 
-### GitHub IP range fetch fails
+### Stale `dns_cache` or `route_map` after upgrade
 
-<Note>
-The `ip_range_sources` feature is deprecated and ignored at runtime. If you see errors related to IP range fetching, remove any `ip_range_sources` entries from your configuration — they have no effect.
-</Note>
+The eBPF manager's `Load()` detects pinned maps whose key/value sizes have changed (for example, after a clawker upgrade that ships a new `route_key` layout) and removes them before reloading. If you still suspect a stale pin, bring the firewall fully down and back up:
+
+```bash
+clawker firewall down
+clawker firewall up
+```
+
+This stops all three firewall containers, which allows the next `EnsureRunning` to rebuild the pinned maps from scratch.
+
+### IPv6-only service unreachable
+
+If a service you need is only reachable over native IPv6, the firewall will deny the connection. Most services also publish IPv4 (or dual-stack), which dual-stack clients pick up automatically. There is no opt-in setting for native IPv6 at this time.

@@ -46,12 +46,14 @@ type Session struct {
 }
 // Methods: GetMetadata, SetMetadata, CaptureOnce, IsExpired
 
+// ContainerLister is the minimal Docker subset the daemon's container watcher
+// needs; satisfied by *docker.Client. Keeps hostproxy a leaf package.
 type ContainerLister interface {
     ContainerList(ctx, options) (ContainerListResult, error)
     io.Closer
 }
 
-// Functional options for Daemon (CLI flag overrides without mutating config)
+// Functional Daemon options — CLI flag overrides without mutating config.
 type DaemonOption func(*Daemon)
 func WithDaemonPort(port int) DaemonOption
 func WithPollInterval(d time.Duration) DaemonOption
@@ -84,57 +86,13 @@ func NewCallbackChannel(store *SessionStore) *CallbackChannel
 
 **Validation**: Both `NewManager` and `NewDaemon` validate port at construction via shared `validatePort()` helper. `NewDaemon` also validates poll interval (>0), grace period (>=0), and max consecutive errors (>0).
 
-## Manager Methods
+## Core methods
 
-```go
-(*Manager).ProxyURL() string      // http://host.docker.internal:<port>
-(*Manager).IsRunning() bool       // PID file + health check
-(*Manager).Port() int
-(*Manager).EnsureRunning() error  // Spawns daemon if needed
-(*Manager).Stop()                 // No-op (daemon self-terminates)
-(*Manager).StopDaemon() error     // Explicit stop
-```
-
-## Daemon Methods & Utilities
-
-```go
-(*Daemon).Run(ctx) error           // Blocks until signal or auto-exit
-func IsDaemonRunning(pidFile) bool
-func GetDaemonPID(pidFile) int
-func StopDaemon(pidFile) error
-```
-
-## SessionStore Methods
-
-```go
-(*SessionStore).Create(sessionType, ttl, metadata) (*Session, error)
-(*SessionStore).Get(id) *Session
-(*SessionStore).Delete(id)
-(*SessionStore).Count() int
-(*SessionStore).Stop()
-(*SessionStore).SetOnDelete(fn func(*Session))
-```
-
-## CallbackChannel Methods
-
-```go
-(*CallbackChannel).Register(port, path, ttl) (*Session, error)
-(*CallbackChannel).Capture(sessionID, *http.Request) error
-(*CallbackChannel).GetData(sessionID) (*CallbackData, bool)
-(*CallbackChannel).GetPort(sessionID) (int, bool)
-(*CallbackChannel).GetPath(sessionID) (string, bool)
-(*CallbackChannel).Delete(sessionID)
-(*CallbackChannel).IsReceived(sessionID) bool
-```
-
-## Server Methods
-
-```go
-(*Server).Start() error  // Listens on IPv4+IPv6 loopback
-(*Server).Stop(ctx) error
-(*Server).IsRunning() bool
-(*Server).Port() int
-```
+- **`Manager`** — `ProxyURL() string` (`http://host.docker.internal:<port>`), `IsRunning() bool` (PID file + health check), `Port() int`, `EnsureRunning() error` (spawns daemon if needed), `Stop()` (no-op — daemon self-terminates), `StopDaemon() error` (explicit stop).
+- **`Daemon`** — `Run(ctx) error` blocks until signal or auto-exit. Package helpers: `IsDaemonRunning(pidFile)`, `GetDaemonPID(pidFile)`, `StopDaemon(pidFile)`.
+- **`SessionStore`** — `Create(sessionType, ttl, metadata) (*Session, error)`, `Get(id)`, `Delete(id)`, `Count() int`, `Stop()`, `SetOnDelete(fn)`.
+- **`CallbackChannel`** — `Register(port, path, ttl) (*Session, error)`, `Capture(sessionID, *http.Request) error`, `GetData(sessionID) (*CallbackData, bool)`, `GetPort`/`GetPath`/`Delete`/`IsReceived(sessionID)`.
+- **`Server`** — `Start()` (listens on IPv4+IPv6 loopback), `Stop(ctx)`, `IsRunning() bool`, `Port() int`.
 
 ## API Endpoints
 
@@ -150,27 +108,16 @@ func StopDaemon(pidFile) error
 
 ## Egress Enforcement (`egress_check.go`)
 
-The `/open/url` endpoint enforces egress rules before opening URLs in the host browser. This closes a proven exfil vector where a container agent could encode stolen secrets in URL query params and use the host browser as an out-of-band channel (bypassing the Envoy+CoreDNS firewall entirely).
+The `/open/url` endpoint enforces egress rules before opening URLs in the host browser. This closes a proven exfil vector: a container agent could otherwise encode stolen secrets in URL query params and use the host browser as an out-of-band channel, bypassing the Envoy+CoreDNS firewall entirely.
 
-### How it works
+`handleOpenURL` calls `CheckURLAgainstEgressRules(targetURL, rulesFilePath)` before `openBrowser()`. The function reads `egress-rules.yaml` just-in-time on every request (rules change at runtime — no caching), protected by `gofrs/flock` to avoid torn reads. The URL is parsed and matched against rules: scheme→proto, host→dst (exact + wildcard), port, path (longest prefix). Empty `rulesFilePath` (firewall disabled) skips the check for backwards compat.
 
-1. `handleOpenURL` calls `CheckURLAgainstEgressRules(targetURL, rulesFilePath)` before `openBrowser()`
-2. The function reads `egress-rules.yaml` just-in-time on every request (no caching — rules change at runtime)
-3. File read is protected by shared flock (`gofrs/flock`) to avoid torn reads from concurrent writes
-4. URL is parsed and matched against rules: scheme→proto, host→dst (exact + wildcard), port, path (longest prefix)
-5. If no matching allow rule → 403 "blocked by egress policy"
-6. If `rulesFilePath` is empty (firewall not enabled) → skip check, allow all (backwards compatible)
-
-### Key design decisions
-
-- **Leaf package**: Does NOT import `internal/firewall` or `internal/storage`. Reads YAML directly with `os.ReadFile` + `yaml.Unmarshal`. Mirror types for `EgressRulesFile`/`EgressRule`/`PathRule` are intentional copies.
-- **Fail-closed**: Missing/unreadable rules file → block all URLs. Rule action validation uses `!strings.EqualFold(action, "allow")` to reject typos.
-- **No caching**: Rules are a moving target (CLI adds/removes, project configs merge during startup). Each request reads fresh.
+**Design constraints:**
+- **Leaf package**: does NOT import `internal/firewall` or `internal/storage`. Reads YAML directly with `os.ReadFile` + `yaml.Unmarshal`. Mirror types for `EgressRulesFile`/`EgressRule`/`PathRule` are intentional copies.
+- **Fail-closed**: missing/unreadable rules file → block all URLs. Action validation uses `!strings.EqualFold(action, "allow")` so typos fail closed.
 - **Userinfo rejection**: URLs with `user:pass@host` are rejected — no legitimate browser URL uses this and it enables smuggling.
 
-### Git Credential Injection Protection
-
-`handleGitCredential` rejects requests where any credential field (Protocol, Host, Path, Username, Password) contains `\n`, `\r`, or `\0` (400 response). `formatGitCredentialInput` also sanitizes as defense-in-depth.
+**Git credential injection protection**: `handleGitCredential` rejects requests where any field (`Protocol`/`Host`/`Path`/`Username`/`Password`) contains `\n`, `\r`, or `\0` (400). `formatGitCredentialInput` sanitizes as defense-in-depth.
 
 ## OAuth Callback Flow
 

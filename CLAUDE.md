@@ -56,7 +56,11 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 ## Repository Structure
 
 ```
-├── cmd/clawker/              # Main CLI binary
+├── cmd/
+│   ├── clawker/               # Main CLI binary
+│   ├── clawker-generate/      # Code generation helper
+│   ├── coredns-clawker/       # Custom CoreDNS build embedding the dnsbpf plugin (Linux; embedded via go:embed into internal/firewall)
+│   └── gen-docs/              # CLI doc generator (man/markdown/rst/yaml)
 ├── internal/
 │   ├── build/                 # Build-time metadata (version, date) — leaf, stdlib only
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
@@ -70,10 +74,12 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── config/                # Storage.Store[T] config engine: schema types, multi-file loading, constants (see internal/config/CLAUDE.md)
 │   │   └── storeui/           # Domain adapters for storeui: settings/, project/
 │   ├── containerfs/           # Host Claude config preparation for container init
+│   ├── dnsbpf/                # CoreDNS plugin: writes DNS A-record resolutions (IPv4) to the BPF dns_cache map in real time (used by cmd/coredns-clawker)
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
-│   │   └── dockertest/        # FakeClient, test helpers
+│   │   └── mocks/             # FakeClient, test helpers, moby mock transport
 │   ├── docs/                  # CLI doc generation (man, markdown, rst, yaml)
-│   ├── firewall/              # Envoy+CoreDNS firewall stack: manager interface, config generators, certs, daemon, rules store
+│   ├── ebpf/                  # eBPF cgroup programs + Go manager (clawker.c compiled via bpf2go); `cmd/` host-side subcommand invoked by firewall manager (init, sync-routes, enable, disable)
+│   ├── firewall/              # Envoy+CoreDNS firewall stack: manager interface, config generators, certs, daemon, rules store; embeds pre-built ebpf-manager and coredns-clawker binaries (ebpf_embed.go, coredns_embed.go)
 │   │   └── mocks/             # FirewallManagerMock (moq-generated)
 │   ├── git/                   # Git operations, worktree management (leaf — no internal imports, uses go-git)
 │   │   └── gittest/           # InMemoryGitManager for testing
@@ -106,8 +112,13 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   │   └── harness/           # CLI test harness (delegates dirs to testenv, adds chdir + Factory + Run)
 │   └── whail/                 # Whail BuildKit integration tests (Docker + BuildKit)
 ├── scripts/
-│   ├── install.sh             # curl|bash installer (downloads pre-built binary from GitHub releases)
-│   └── check-claude-freshness.sh  # CLAUDE.md staleness checker
+│   ├── install.sh                 # curl|bash installer (downloads pre-built binary from GitHub releases)
+│   ├── install-hooks.sh           # Install pre-commit hooks
+│   ├── check-claude-freshness.sh  # CLAUDE.md staleness checker
+│   ├── clawker-leak-monitor.sh    # Docker resource leak monitor
+│   ├── gen-dep-graphs.sh          # Dependency graph generator
+│   ├── gen-notice.sh              # Third-party notice generator
+│   └── localenv-dotenv.sh         # Local env .env updater (used by `make localenv`)
 └── templates/                 # clawker.yaml scaffolding
 ```
 
@@ -148,90 +159,11 @@ pre-commit run gitleaks --all-files    # Run a single hook
 
 ## Key Concepts
 
-| Abstraction | Purpose |
-|-------------|---------|
-| `Factory` | Slim DI struct with eager IO/TUI/version fields and lazy noun closures (`Config`, `Logger`, `Client`, `ProjectManager`, `GitManager`, etc.); constructor in `internal/cmd/factory` |
-| `git.GitManager` | Git repository operations, worktree management (leaf package, no internal imports) |
-| `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming. `cfg config.Config` (interface) provides all label keys. `NewClient(ctx, cfg, opts...)` (production), `NewClientFromEngine(engine, cfg)` (tests) |
-| `whail.Engine` | Reusable Docker engine with label-based resource isolation |
-| `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
-| `PTYHandler` | Raw terminal mode, bidirectional streaming (in `docker` package) |
-| `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
-| `CreateContainer()` | Single entry point for container creation (workspace, config, env, create, inject); shared by `run` and `create` via events channel for progress |
-| `IsOutsideHome(dir)` | Pure bool function in `container/shared/safety.go` — returns true when dir is `$HOME` or not within `$HOME`. Used by `run`/`create` (prompt) and `loop` (hard error) |
-| `CreateContainerConfig` / `CreateContainerResult` | Input/output types for `CreateContainer()` — all deps and runtime values |
-| `CreateContainerEvent` | Channel event: Step, Status (`StepRunning`/`StepComplete`/`StepCached`), Type (`MessageInfo`/`MessageWarning`), Message |
-| `clawker-share` | Optional read-only bind mount from `cfg.ShareSubdir()` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker project init`, re-created if missing during mount setup |
-| `containerfs` | Host Claude config preparation for container init: copies settings, plugins (incl. cache), credentials to config volume; rewrites host paths in plugin JSON files; prepares post-init script tar |
-| `ConfigVolumeResult` | Bool flags tracking which config volumes were freshly created (`ConfigCreated`, `HistoryCreated`) — returned by `workspace.EnsureConfigVolumes` |
-| `InitConfigOpts` | Options for `shared.InitContainerConfig` — project/agent names, container work dir, ClaudeCodeConfig, CopyToVolumeFn (DI) |
-| `InjectPostInitOpts` | Options for `shared.InjectPostInitScript` — container ID, script content, CopyToContainerFn (DI) |
-| `firewall.FirewallManager` | Interface for Envoy+CoreDNS firewall stack (15 methods: lifecycle, rules, container control, bypass, status); mock: `firewall/mocks/FirewallManagerMock` |
-| `firewall.Daemon` | Detached firewall process with dual-loop (health 5s + container watcher 30s), PID file management. `EnsureDaemon()` called during container creation |
-| `firewall.ProjectRules()` | Builds complete rule set from project config (security.firewall rules + required internal rules like Claude API, Docker registry) |
-| `shared.CommandOpts` | DI container for container start orchestration — function closures: Client, Config, ProjectManager, HostProxy, Firewall, SocketBridge, Logger |
-| `shared.ContainerStart()` | Three-phase container start: `BootstrapServicesPreStart` → docker start → `BootstrapServicesPostStart`. Used by `run` and `start` |
-| `firewall.Manager` | Docker implementation of `FirewallManager` — manages Envoy/CoreDNS containers, config generation, certificate PKI, rule persistence |
-| `hostproxy.HostProxyService` | Interface for host proxy operations (EnsureRunning, IsRunning, ProxyURL); mock: `hostproxytest.MockManager` |
-| `hostproxy.Manager` | Concrete host proxy daemon manager (spawns subprocess); implements `HostProxyService` |
-| `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `sockebridgemocks.MockManager` |
-| `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
-| `iostreams.IOStreams` | I/O streams, TTY detection, colors, styles, spinners, progress, layout |
-| `logger.Logger` | Struct-based zerolog wrapper with file rotation + optional OTEL bridge. Factory lazy noun (`f.Logger`). Commands capture on Options, library packages accept in constructors. Tests use `logger.Nop()` |
-| `iostreams.ColorScheme` | Color palette + semantic colors + icons; canonical style source for all clawker output |
-| `iostreams.SpinnerFrame` | Pure spinner rendering function used by the iostreams goroutine spinner |
-| `text.*` | Pure ANSI-aware text utilities (leaf package): Truncate, PadRight, CountVisibleWidth, StripANSI, etc. |
-| `tui.TablePrinter` | Table output: `bubbles/table` styled mode + tabwriter plain mode; content-aware column widths |
-| `cmdutil.FlagError` | Error type triggering usage display in Main()'s centralized `printError` |
-| `cmdutil.SilentError` | Sentinel error: already displayed, Main() just exits non-zero |
-| `cmdutil.FormatFlags` | Reusable `--format`/`--json`/`--quiet` flag handling for list commands; populated during PreRunE. Convenience delegates (`IsJSON()`, `IsTemplate()`, etc.) avoid `Format.Format.` stutter. `ToAny[T any]` generic for template slice conversion |
-| `cmdutil.FilterFlags` | Reusable `--filter key=value` flag handling; per-command key validation via `ValidateFilterKeys` |
-| `cmdutil.WriteJSON` | Pretty-printed JSON output for `--json`/`--format json` modes; HTML escaping disabled (replaces deprecated `OutputJSON`) |
-| `tui.TUI` | Factory noun for presentation layer; owns hooks + delegates to RunProgress. Commands capture `*TUI` eagerly, hooks registered later via `RegisterHooks()` |
-| `tui.RunProgress` | Generic progress display: BubbleTea TTY mode (sliding window) + plain text; domain-agnostic via callbacks |
-| `tui.ProgressStep` | Channel event type for progress display (ID, Name, Status, LogLine, Cached, Error) |
-| `tui.ProgressDisplayConfig` | Configuration with CompletionVerb and callback functions: IsInternal, CleanName, ParseGroup, FormatDuration, OnLifecycle |
-| `tui.LifecycleHook` | Generic hook function type for TUI lifecycle events; threaded via config structs, nil = no-op |
-| `tui.HookResult` | Hook return type: Continue (bool), Message (string), Err (error) — controls post-hook execution flow |
-| `whail.BuildProgressFunc` | Callback type threading build progress events through the options chain |
-| `tui.RunProgram` | Launches BubbleTea programs wired to IOStreams (input/output) |
-| `tui.PanelModel` | Bordered panel with focus; `PanelGroup` manages multi-panel layouts |
-| `tui.ListModel` | Selectable list with scrolling; `ListItem` interface |
-| `tui.ViewportModel` | Scrollable content wrapping bubbles/viewport |
-| `tui.WizardField / WizardResult` | Multi-step wizard: field definitions + collected values + submit/cancel; `TUI.RunWizard` |
-| `tui.SelectField / TextField / ConfirmField` | Standalone BubbleTea field models for forms; value semantics |
-| `tui.RenderStepperBar` | Pure render function for horizontal step progress (icons: checkmark, filled circle, empty circle) |
-| `prompter.Prompter` | Interactive prompts with TTY/CI awareness |
-| `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |
-| `update.CheckForUpdate` | Background GitHub release check — 24h cached, suppressed in CI/DEV; wired into `Main()` via goroutine + channel |
-| `update.CheckResult` | Returned when newer version available: `CurrentVersion`, `LatestVersion`, `ReleaseURL` |
-| `storage.Schema` | Interface: `Fields() FieldSet`. Implemented by all `Store[T]` types (`Project`, `Settings`, `EgressRulesFile`, `ProjectRegistry`). Compile-time enforced via `Store[T Schema]` constraint. Default values come from `default` struct tags; `GenerateDefaultsYAML[T]()` produces YAML from them |
-| `storage.Field` / `storage.FieldSet` | Interfaces describing configuration field metadata (Path, Kind, Label, Description, Default, Required). `NormalizeFields[T]()` reads struct tags (`yaml`, `label`, `desc`, `default`, `required`) and produces a `FieldSet` |
-| `storeui.Edit[T]` | Generic orchestrator for browsing/editing `Store[T Schema]` — a **config placement tool** (not an override editor). Browser shows merged state across all layers; edits target specific layer files. Same key across layers is inheritance, not duplication. Validation guards writes (per-layer), not editors. Schema metadata from struct tags via `enrichWithSchema`; domain adapters provide TUI-specific overrides only (Hidden, ReadOnly, Kind, Options) |
-| `storeui.WalkFields` | Reflection-based struct walker: discovers all exported fields → `[]Field` with dotted YAML paths, type-mapped `FieldKind`, current values. Schema metadata enriched by `enrichWithSchema` |
-| `storeui.SetFieldValue` | Reverse reflection writer: sets struct field by dotted YAML path with type-aware parsing (bool, int, duration, `[]string`, `*bool`) |
-| `storeui.ApplyOverrides` | Merges domain `[]Override` onto schema-enriched fields: hidden, read-only, select options, sort order. Labels/descriptions now come from struct tags, not overrides |
-| `storeui.LayerTarget` | Save destination for per-field writes: Label, Description (shortened path), Path (absolute). Domain adapters build these from `store.Layers()` |
-| `tui.FieldBrowserModel` | Generic tabbed field browser/editor. Domain-agnostic — knows nothing about stores, reflection, or config schemas. Used by `storeui` to provide interactive editing for any `Store[T]`. States: Browse → Edit → PickLayer |
-| `tui.ListEditorModel` | Generic string list editor with add/edit/delete: parses comma-separated input into items, returns comma-separated output |
-| `tui.TextareaEditorModel` | Multiline text editor wrapping `bubbles/textarea`: Ctrl+S to save, Esc to cancel |
-| `storage.Provenance` | `Store[T].Provenance(path) (LayerInfo, bool)` — returns which layer won a specific dotted field path |
-| `storage.ProvenanceMap` | `Store[T].ProvenanceMap() map[string]string` — all dotted paths → source file paths |
-| `storage.Write(ToPath)` | `Store[T].Write(ToPath(path)) error` — persist to explicit absolute path, bypassing provenance routing |
-| `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
-| `ProjectRegistry` | Persistent slug→path map (`cfg.ProjectRegistryFileName()`); CRUD/orchestration is owned by `internal/project` |
-| `project.ProjectManager` | Project-layer domain API: registration, resolution, worktree lifecycle. Constructor: `NewProjectManager(cfg, gitFactory)`. `ListWorktrees(ctx)` aggregates across all projects; `Project.ListWorktrees(ctx)` returns enriched state for one project |
-| `config.Config` | Configuration and path-resolution contract. Owns config file I/O and path helpers (`GetProjectRoot`, `GetProjectIgnoreFile`, `ConfigDir`, `Write`). It does not own project CRUD/worktree lifecycle orchestration |
-| `build.Version` / `build.Date` | Build-time metadata injected via ldflags; `DEV` default with `debug.ReadBuildInfo` fallback |
-| `WorktreeStatus` | String enum for worktree health: `WorktreeHealthy`, `WorktreeRegistryOnly`, `WorktreeGitOnly`, `WorktreeBroken`, `WorktreeDotGitMissing`, `WorktreeGitMetadataMissing` |
-| `storage.ValidateDirectories` | Resolves all 4 XDG dirs (config/data/state/cache) and returns error if any pair collides — catches env var misconfiguration |
-| `testenv.Env` | Unified test environment: `New(t)` creates isolated dirs + env vars; `WithConfig()` adds config; `WithProjectManager(gf)` adds PM. Accessors: `Dirs`, `Config()`, `ProjectManager()` |
-
-Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API references.
+See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index (one-liners for `Factory`, `docker.Client`, `firewall.Manager`, `ebpf.Manager`, `dnsbpf.Handler`, `storage.Schema`, `storeui.Edit`, `tui.*`, and ~80 other named types). Load on demand when you need to remember which package owns a symbol or what a type is for — package-specific `internal/*/CLAUDE.md` files remain the source of truth for full API surface.
 
 ## CLI Commands
 
-See `.claude/docs/CLI-VERBS.md` for complete command reference.
+See `docs/cli-reference/` for the complete auto-generated command reference (regenerated via `go run ./cmd/gen-docs --doc-path docs --markdown`).
 
 **Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `generate`, `loop iterate/tasks/status/reset`, `version`
 
@@ -291,6 +223,8 @@ loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permis
 11. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
 12. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `f.Logger` (Factory lazy noun captured on Options struct), library-layer code accepts `*logger.Logger` in constructors. Logger init happens lazily on first `f.Logger()` call
 13. Package boundary rule: path resolution + config file I/O belongs to `internal/config`; project identity/CRUD/worktree lifecycle orchestration belongs to `internal/project`
+14. Firewall uses a **global BPF route_map** keyed by `{domain_hash, dst_port}` (not per-container). Per-container enforcement comes from presence in `container_map`, which enables live rule sync across all running containers via `ebpf-manager sync-routes`. `connect6` routes IPv4-mapped addresses so dual-stack sockets cannot bypass the firewall.
+15. CoreDNS is a **custom build** (`cmd/coredns-clawker`) that embeds the `internal/dnsbpf` plugin. The binary is `go:embed`'d into `internal/firewall/coredns_embed.go` and built into a Docker image on-demand by `ensureEmbeddedImage`, replacing the stock `coredns/coredns` image. `corednsContainerConfig` runs with `CAP_BPF + CAP_SYS_ADMIN` and a `/sys/fs/bpf` mount so the plugin can write the dns_cache map directly. `EnsureRunning` initializes eBPF before starting CoreDNS; DNS seeding from the Go side has been removed — the plugin is the source of truth.
 
 ## Mock Generation
 
@@ -339,8 +273,19 @@ All external dependencies must be pinned to exact versions with integrity verifi
 | Go tool installs (`go install`) | SHA commit hash or exact version | `go install tool@v2.0.1` or `tool@sha...` |
 | Container images in code | SHA256 digest in constants | `DefaultGoBuilderImage = "golang:1.24.1@sha256:..."` |
 | npm/pip installs in Dockerfiles | Exact version | `npm install -g @anthropic-ai/claude-code@${VERSION}` |
+| Firewall stack binaries (ebpf-manager, coredns-clawker) | Single pinned multi-stage `Dockerfile.firewall` — base image digest + apt package versions + Go toolchain digest + `bpf2go` version | `make ebpf-binary` / `make coredns-binary` invoke `docker buildx build` against the pinned recipe; no generated artifacts committed. See `internal/ebpf/REPRODUCIBILITY.md` |
 
 **Why:** Version tags are mutable — a compromised upstream can re-tag a release. SHA pins are immutable and verifiable. This is defense-in-depth against supply chain attacks (see `docs/threat-model.mdx`).
+
+**Multi-arch image pin rule:** every `@sha256:...` pin on a container image (`FROM` lines in any Dockerfile, `DefaultGoBuilderImage` in `internal/bundler/dockerfile.go`, `embeddedImageSpec.dockerfile` literals in `internal/firewall/manager.go`, etc.) **must** be a multi-arch manifest list (OCI image index, `application/vnd.oci.image.index.v1+json`), **not** a per-platform image digest. Single-platform digests break cross-platform builds because BuildKit can't select a matching per-arch manifest. Verify before committing with:
+
+```bash
+docker buildx imagetools inspect <image>@sha256:<digest>
+```
+
+`MediaType` must be `application/vnd.oci.image.index.v1+json`. `docker pull <image:tag>` + `docker inspect --format '{{index .RepoDigests 0}}'` typically returns the manifest-list digest for official images on Docker Hub, but always confirm via `imagetools inspect`.
+
+**Firewall stack binaries specifically:** `internal/firewall/assets/ebpf-manager` and `internal/firewall/assets/coredns-clawker` are Linux binaries `go:embed`'d into the clawker CLI, with BPF bytecode and the `dnsbpf` plugin baked in respectively. **Nothing generated is committed** — no `.o`, no `bpf2go` Go wrappers, no binaries. They are produced fresh on every `make ebpf-binary` / `make coredns-binary` (transitively triggered by `make test`, `make clawker-build`, etc.) inside the pinned multi-stage Docker builds. Reproducibility is structural: the pinned recipe *is* the binary, there is no separate committed artifact to drift from. See `internal/ebpf/REPRODUCIBILITY.md` for the full provenance chain and the pin-update procedure.
 
 **When adding any new external dependency**, look up the actual release SHA/digest — do not rely on training data or cached knowledge for version hashes.
 

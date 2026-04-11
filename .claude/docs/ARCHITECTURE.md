@@ -426,35 +426,64 @@ Runs Claude Code in per-iteration Docker containers with stream-json parsing and
 
 ### internal/firewall - Firewall Stack
 
-Envoy+CoreDNS sidecar architecture providing DNS-level egress blocking and TLS inspection for agent containers. The firewall is enabled by default (`security.firewall.enable: true`) and managed as a shared singleton across all clawker containers on the host.
+Envoy + custom CoreDNS + eBPF manager trio providing DNS-level egress blocking, TLS inspection, and per-container cgroup BPF enforcement. The firewall is enabled by default (`security.firewall.enable: true`) and managed as a shared singleton across all clawker containers on the host.
 
 **Architecture overview:**
 
 ```
-Daemon Process (host)       Envoy Container (.2)       CoreDNS Container (.3)
-    │                             │                          │
-    ├── Health probe (5s) ──────►│ TCP :18901               │
-    ├── Health probe (5s) ─────────────────────────────────►│ HTTP :18902/health
+Daemon Process (host)    Envoy (.2)    CoreDNS (.3)    eBPF Manager (.4)
+    │                        │              │                │
+    ├── Health probe (5s) ──►│ HTTP :18901  │                │
+    ├── Health probe (5s) ───────────────► │ HTTP :18902/health
     ├── Container watcher (30s) — auto-stops when no clawker containers remain
     │
-    ├── ensureConfigs() ────────►│ envoy.yaml (bind mount)  │ Corefile (bind mount)
-    ├── ensureContainer() ──────►│ envoyproxy/envoy         │ coredns/coredns
-    └── syncProjectRules() — merges required + project rules → regenerate configs
+    ├── ensureConfigs() ────►│ envoy.yaml   │ Corefile       │
+    ├── ensureEmbeddedImage()─────────────────────────────► │ clawker-ebpf:latest
+    │                         │              │               │ clawker-coredns:latest
+    ├── EnsureRunning():
+    │     1. ensure network (clawker-net, static IPs)
+    │     2. ensureConfigs (certs, envoy.yaml, Corefile)
+    │     3. build embedded images (ebpf + coredns on demand)
+    │     4. start eBPF container + init (loads/pins BPF programs and maps)
+    │     5. syncRoutes (writes global route_map via ebpfExec sync-routes)
+    │     6. start Envoy + CoreDNS (custom coredns must run AFTER BPF map is pinned)
+    │     7. WaitForHealthy
+    │
+    └── regenerateAndRestart() — AddRules/RemoveRules/Reload path:
+          ensureConfigs → ebpfExec(init) → syncRoutes → restartContainer(envoy, coredns)
 ```
 
-**Manager interface + Docker implementation:** `FirewallManager` defines the full contract — 16 methods spanning lifecycle (`EnsureRunning`, `Stop`, `WaitForHealthy`), rule management (`AddRules`, `RemoveRules`, `Reload`, `List`), per-container control (`Enable`, `Disable`, `Bypass`), and status (`Status`, `EnvoyIP`, `CoreDNSIP`, `NetCIDR`). The concrete `Manager` receives a raw `client.APIClient` (moby SDK) — deliberately NOT `docker.Client`/whail, because the daemon's container watcher must see all Docker containers including non-clawker ones, which whail's jail label filtering would hide.
+**Manager interface + Docker implementation:** `FirewallManager` defines the full contract — 15 methods spanning lifecycle (`EnsureRunning`, `Stop`, `WaitForHealthy`), rule management (`AddRules`, `RemoveRules`, `Reload`, `List`), per-container control (`Enable`, `Disable`, `Bypass`), and status (`Status`, `EnvoyIP`, `CoreDNSIP`, `NetCIDR`). The concrete `Manager` receives a raw `client.APIClient` (moby SDK) — deliberately NOT `docker.Client`/whail, because the daemon's container watcher must see all Docker containers including non-clawker ones, which whail's jail label filtering would hide.
 
-**Config generation:** Two pure functions translate egress rules into sidecar configs. `GenerateEnvoyConfig(rules)` produces an Envoy bootstrap YAML with a TLS listener (`:10000`, TLS Inspector) ordered as MITM chains (path rules) → SNI passthrough chains (domain-allow) → default deny, plus sequential TCP listeners (`:10001+`) for non-HTTP protocols. `GenerateCorefile(rules)` produces a CoreDNS Corefile with per-domain forward zones (Cloudflare malware-blocking `1.1.1.2`/`1.0.0.2`), Docker internal zones forwarding to `127.0.0.11`, and a catch-all NXDOMAIN template. Both are deterministic — same rules always produce the same config.
+**Config generation:** Two pure functions translate egress rules into firewall stack configs. `GenerateEnvoyConfig(rules)` produces an Envoy bootstrap YAML with a TLS listener (`:10000`, TLS Inspector) ordered as MITM chains (path rules) → SNI passthrough chains (domain-allow) → default deny, plus sequential TCP listeners (`:10001+`) for non-HTTP protocols. `GenerateCorefile(rules)` produces a CoreDNS Corefile with per-domain forward zones (Cloudflare malware-blocking `1.1.1.2`/`1.0.0.2`), Docker internal zones forwarding to `127.0.0.11`, and a catch-all NXDOMAIN template. **Every forward zone invokes the `dnsbpf` plugin** (between `log` and `forward`) which writes `IP → {domain_hash, TTL}` entries to the pinned BPF `dns_cache` map in real time — replacing the previous startup-time DNS seed approach that was vulnerable to DNS round-robin. Both generators are deterministic.
 
-**Certificate PKI:** Path-based egress rules (e.g., allow `api.github.com/repos/*` but deny other paths) require TLS interception. `EnsureCA` creates or loads a self-signed ECDSA P-256 CA keypair (`ca-cert.pem`, `ca-key.pem`) in the firewall data directory. `GenerateDomainCert` signs per-domain certificates with the CA for Envoy's MITM termination. `RegenerateDomainCerts` regenerates all domain certs when rules change. `RotateCA` replaces the CA and re-signs all domain certs. The CA certificate is injected into agent containers at build time so TLS verification succeeds through the proxy.
+**Unified embedded image pattern:** Both the eBPF manager binary (`internal/ebpf/cmd`) and the custom CoreDNS binary (`cmd/coredns-clawker`) are cross-compiled for Linux, embedded in the clawker binary via `go:embed` (`ebpf_embed.go`, `coredns_embed.go`), and built into Docker images on first use. The shared `embeddedImageSpec` struct + `ensureEmbeddedImage` method drive both builds with per-binary `ebpfImageSpec` and `corednsImageSpec` declarations. Image builds are SHA-pinned to `alpine:3.21`, use `errdefs.IsNotFound` to discriminate "image doesn't exist" from other Docker API errors, and decode the JSON stream from `ImageBuild` to catch build-time failures.
+
+**Global BPF route_map:** BPF `route_key` is `{domain_hash, dst_port}` — **global**, not per-container. Container enforcement is gated on presence in `container_map`. `syncRoutes()` replaces the global route_map atomically on startup (`EnsureRunning`), on rule changes (`regenerateAndRestart`), and as a safety measure in per-container `Enable`. `firewall add/remove/reload` propagates rules to all running containers without restarts. `ebpf.Manager.Load()` detects pinned maps whose key/value sizes changed (e.g., after the route_key schema change) and removes them before loading new programs.
+
+**Certificate PKI:** Path-based egress rules require TLS interception. `EnsureCA` creates or loads a self-signed ECDSA P-256 CA keypair in the firewall data directory. `GenerateDomainCert` signs per-domain certificates for Envoy's MITM termination. `RegenerateDomainCerts` regenerates all domain certs when rules change. `RotateCA` replaces the CA and re-signs all domain certs. The CA certificate is injected into agent containers at build time so TLS verification succeeds through the proxy.
 
 **Daemon:** A detached host process (`EnsureDaemon`) with PID file management and dual-loop architecture. The health probe loop (default 5s) monitors Envoy and CoreDNS container health. The container watcher loop (default 30s) lists running clawker containers and auto-stops the firewall stack after a grace period when none remain. `EnsureDaemon` is called during container creation — if already running, it returns immediately.
 
-**Rule persistence:** Active egress rules are stored via `storage.Store[EgressRulesFile]` backed by `egress-rules.yaml` in the firewall data subdirectory. Rules are deduped by `dst:proto:port` composite key. The `Manager` merges required rules (from clawker's own infrastructure needs) with project-specific rules from `clawker.yaml` and persists the union.
+**Rule persistence:** Active egress rules are stored via `storage.Store[EgressRulesFile]` backed by `egress-rules.yaml`. Rules are deduped by `dst:proto:port` composite key. The `Manager` merges required rules with project-specific rules from `clawker.yaml` and persists the union.
 
-**Network isolation:** The firewall creates an isolated Docker bridge network (`clawker-net`) with deterministic static IPs computed from the gateway address — gateway+1 for Envoy, gateway+2 for CoreDNS. Agent containers join this network with `--dns` pointing to the CoreDNS IP, ensuring all DNS resolution routes through the firewall. The network uses label-based discovery to find or create the bridge idempotently.
+**Network isolation:** The firewall creates an isolated Docker bridge network (`clawker-net`) with deterministic static IPs computed from the gateway address — gateway+1 for Envoy, gateway+2 for CoreDNS, gateway+3 for the eBPF manager. Agent containers join this network with `--dns` pointing to the CoreDNS IP. The network uses label-based discovery to find or create the bridge idempotently.
 
-**Integration points:** Factory exposes `f.Firewall()` as a lazy noun returning `FirewallManager`. Container creation calls `EnsureDaemon()` to guarantee the firewall is running before starting agent containers. Firewall CLI commands (`clawker firewall status/list/add/remove/reload/up/down/enable/disable/bypass/rotate-ca`) delegate to the `FirewallManager` interface.
+**Custom CoreDNS container:** Runs with `CAP_BPF + CAP_SYS_ADMIN` and a bind mount of `/sys/fs/bpf` so the `dnsbpf` plugin can open the pinned `dns_cache` map and write entries. The image is `clawker-coredns:latest` built from `cmd/coredns-clawker` (which imports `coremain.Run` + stock `forward`/`health`/`log`/`reload`/`template` plugins + `internal/dnsbpf` and inserts `dnsbpf` at the head of `dnsserver.Directives`). The stock `coredns/coredns:1.14.2` image is no longer used.
+
+**Integration points:** Factory exposes `f.Firewall()` as a lazy noun returning `FirewallManager`. Container creation calls `EnsureDaemon()` to guarantee the firewall is running before starting agent containers. Firewall CLI commands delegate to the `FirewallManager` interface.
+
+### internal/dnsbpf - CoreDNS Plugin
+
+In-tree CoreDNS plugin that populates the pinned BPF `dns_cache` map in real time. Files: `setup.go` (plugin registration, zone capture, pinned map open), `dnsbpf.go` (`ServeDNS` handler wrapping downstream with `nonwriter`, iterates `dns.A` answers, computes `IPToUint32` + `DomainHash`, writes to the map), `bpfmap.go` (thin `cilium/ebpf` wrapper matching `dns_entry` struct layout), `log.go` (CoreDNS-style logger). The domain hash uses the **Corefile zone name** rather than the response qname, so wildcard zones (`.example.com`) produce a single hash across all subdomains. Imports `internal/ebpf` directly for `IPToUint32`, `DomainHash`, and `Uint32ToIP` helpers — no duplication.
+
+The plugin is consumed exclusively by `cmd/coredns-clawker/main.go`, a custom CoreDNS entrypoint that blank-imports the stock plugins it needs (`forward`, `health`, `log`, `reload`, `template`) plus the dnsbpf plugin, and prepends `"dnsbpf"` to `dnsserver.Directives` so it runs outermost in every server block. The resulting binary is cross-compiled for Linux, embedded via `go:embed` in `internal/firewall/coredns_embed.go`, and built on demand into `clawker-coredns:latest` by the firewall manager.
+
+### internal/ebpf - BPF Loader and Manager
+
+Host-side manager for the cgroup BPF programs (connect4/6, sendmsg4/6, recvmsg4/6, sock_create) that implement per-container egress enforcement. Owns the BPF object lifecycle: `Load` (pin programs + maps, clean stale pins with changed schemas), `OpenPinned` (command-mode access to already-pinned maps), `Enable` (add cgroup to `container_map` + attach+pin links), `Disable` (detach links + remove from `container_map`), `SyncRoutes` (atomically replace the global `route_map`), `Bypass`/`Unbypass`, `UpdateDNSCache`/`GarbageCollectDNS`.
+
+The `cmd/ebpf-manager` binary is the command-mode entrypoint: `init` (load + pin), `enable <cgroup> <json>`, `disable <cgroup>`, `sync-routes <json>`, `bypass`/`unbypass`, `dns-update`/`gc-dns`, `dump`, `resolve`. Cross-compiled for Linux, embedded via `go:embed` in `internal/firewall/ebpf_embed.go`, and built on demand into `clawker-ebpf:latest` by the firewall manager.
 
 ## Command Dependency Injection Pattern
 
@@ -598,6 +627,7 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 │                                                                 │
 │  config → storage                                               │
 │  iostreams → term, text                                         │
+│  ebpf → logger (BPF loader, global route_map via SyncRoutes)    │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
@@ -611,7 +641,9 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 │  tui → iostreams, text                                          │
 │  prompter → iostreams                                           │
 │  storeui → iostreams, storage, tui                              │
-│  firewall → config, logger, storage                             │
+│  dnsbpf → ebpf (CoreDNS plugin, real-time dns_cache writes)     │
+│  firewall → config, logger, storage (+ embedded ebpf/coredns    │
+│             binaries via ebpf_embed.go/coredns_embed.go)        │
 │  hostproxy → config, logger                                     │
 │  socketbridge → config, logger                                  │
 │  containerfs → config, keyring, logger                          │
@@ -656,7 +688,7 @@ Each package with complex dependencies provides test infrastructure:
 |------------|----------|
 | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager; `WriteYAML` |
 | `config/mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` (moq) |
-| `docker/dockertest/` | `FakeClient` (wraps `whailtest.FakeAPIClient`), `SetupXxx` helpers, fixtures, assertions |
+| `docker/mocks/` | `FakeClient` (wraps `whailtest.FakeAPIClient`), `SetupXxx` helpers, fixtures, assertions |
 | `project/mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `git/gittest/` | `InMemoryGitManager` (memfs-backed, seeded with initial commit) |
 | `whail/whailtest/` | `FakeAPIClient` (80+ Fn fields, call recording), build scenarios, `EventRecorder` |

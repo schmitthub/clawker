@@ -45,7 +45,7 @@ This is a Go CLI project. Key testing details:
 - **Test file convention**: `*_test.go` in the same package (white-box) or `_test` suffix package (black-box)
 - **Test naming**: `TestFunctionName_Scenario` or table-driven with `t.Run(name, ...)`
 - **Mocks**: `moq`-generated mocks in `<package>/mocks/` subpackages — never hand-edited
-- **Fakes**: Hand-written fakes in `<package>test/` subpackages (e.g., `dockertest.FakeClient`, `gittest.InMemoryGitManager`)
+- **Fakes**: Hand-written fakes in `<package>test/` or `<package>/mocks/` subpackages (e.g., `mocks.FakeClient`, `gittest.InMemoryGitManager`)
 - **Test environment**: `testenv.New(t)` for isolated XDG dirs + config + project manager
 - **Golden files**: `GOLDEN_UPDATE=1` env var to regenerate; tests compare against `testdata/` files
 - **Integration tests**: Live in `test/` directory tree (Docker required), separated from unit tests
@@ -61,7 +61,7 @@ Read these files/directories to build your context:
 
 ```bash
 # Test doubles and fakes
-cat internal/docker/dockertest/*.go        # FakeClient, fixtures
+cat internal/docker/mocks/*.go             # FakeClient, fixtures
 cat internal/git/gittest/*.go              # InMemoryGitManager
 cat internal/config/mocks/*.go             # ConfigMock, NewBlankConfig, NewFromString, NewIsolatedTestConfig
 cat internal/project/mocks/*.go            # ProjectManagerMock, TestManagerHarness
@@ -109,7 +109,7 @@ them resolve to a module outside the test directory (excluding standard test
 utilities like `testenv`, `testify`, `configmocks`, etc.), it's self-serving.
 
 **Clawker rule:** Tests for test infrastructure (`testenv`, `configmocks`,
-`gittest`, `dockertest`, `whailtest`) ARE self-serving. If a fake is broken,
+`gittest`, `docker/mocks`, `whailtest`) ARE self-serving. If a fake is broken,
 the tests that use it will fail — that's sufficient. Flag these as **DELETE**.
 
 **Example:**
@@ -136,7 +136,7 @@ test. The question is: does the production code have any opportunity to get it
 wrong?
 
 **Clawker context:** `moq`-generated mocks and hand-written fakes are extensively
-used. A test using `dockertest.FakeClient` that verifies container labels are
+used. A test using `mocks.FakeClient` that verifies container labels are
 correctly applied IS meaningful — the production code builds those labels. A test
 that just reads back what the fake stored without any transformation is tautological.
 
@@ -363,7 +363,7 @@ file handling are not.
 ### 5. ~~Tests for test infrastructure~~ — REMOVED
 
 **Never test testing infrastructure itself.** No tests for `testenv/`,
-`configmocks/`, `dockertest/`, `gittest/`, `whailtest/`, or any other test
+`configmocks/`, `docker/mocks/`, `gittest/`, `whailtest/`, or any other test
 double/helper package. If a fake is broken, the tests that USE it will fail —
 that's the signal. Tests for test infra are self-serving by definition. Flag
 any such tests as **DELETE**.
@@ -393,7 +393,7 @@ wiring IS part of what the test validates.
 
 ```go
 // GOOD: Factory struct literal with appropriate deps
-fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 fake.SetupContainerCreate()
 tio, _, stdout, stderr := iostreams.Test()
 f := &cmdutil.Factory{
@@ -441,7 +441,7 @@ When auditing, also check: **does this test lack infrastructure it should use?**
 - Test builds `*cmdutil.Factory` by hand → should it use `test/e2e/harness.NewFactory()`?
 - Test mocks config with a struct literal → should it use `configmocks.NewBlankConfig()`
   or `configmocks.NewFromString()`?
-- Test skips Docker → could it use `dockertest.FakeClient` to exercise real wiring
+- Test skips Docker → could it use `mocks.FakeClient` to exercise real wiring
   without a daemon?
 - Test uses raw `os.WriteFile` + `os.ReadFile` for config → should it use `Store[T]`
   to exercise the real pipeline?
@@ -509,7 +509,7 @@ unless asked. A summary like "12 tests are pulling their weight" is enough.]
 
 Not everything is black and white. Here's how to handle gray areas:
 
-**Integration tests with fakes:** A test that uses `dockertest.FakeClient` but
+**Integration tests with fakes:** A test that uses `mocks.FakeClient` but
 tests real internal wiring is often legitimate. The question is whether the
 internal wiring has enough complexity to warrant testing.
 

@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
@@ -171,8 +171,8 @@ func TestKillRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestKillRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerKill()
 
@@ -192,7 +192,7 @@ func TestKillRun_Success(t *testing.T) {
 }
 
 func TestKillRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, _, out, errOut := testKillFactory(t, fake)
@@ -208,7 +208,7 @@ func TestKillRun_ContainerNotFound(t *testing.T) {
 	require.Contains(t, errOut.String(), "clawker.myapp.dev")
 }
 
-func testKillFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testKillFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 

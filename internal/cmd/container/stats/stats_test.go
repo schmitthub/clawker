@@ -12,7 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -297,7 +297,7 @@ func TestCalculateCPUPercent(t *testing.T) {
 
 // --- Tier 2 tests (Cobra+Factory, real run function) ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
@@ -336,8 +336,8 @@ const statsJSON = `{
 }`
 
 func TestStatsRun_NoStream_HappyPath(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	c := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	c := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerStats(statsJSON)
 
@@ -389,7 +389,7 @@ func TestStatsRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestStatsRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
 	f, in, out, errOut := testFactory(t, fake)
@@ -406,7 +406,7 @@ func TestStatsRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestStatsRun_NoRunningContainers(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — no running containers
 
 	f, in, out, errOut := testFactory(t, fake)

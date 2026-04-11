@@ -59,16 +59,16 @@ type FirewallManager interface {
 	// List returns all currently active egress rules.
 	List(ctx context.Context) ([]config.EgressRule, error)
 
-	// Disable flushes iptables rules in the container, giving unrestricted egress.
+	// Disable detaches eBPF programs from the container's cgroup, giving unrestricted egress.
 	Disable(ctx context.Context, containerID string) error
 
-	// Enable applies iptables rules in the container with current network info.
+	// Enable attaches eBPF programs to the container's cgroup, routing traffic
+	// through Envoy (TCP) and CoreDNS (DNS).
 	Enable(ctx context.Context, containerID string) error
 
-	// Bypass disables firewall and schedules re-enable after timeout.
-	// Uses detached docker exec: sleep <timeout> && firewall.sh enable <args>.
-	// Returns immediately — timer runs inside the container.
-	// To cancel early: call Enable() directly (idempotent, re-applies rules).
+	// Bypass sets the eBPF bypass flag for unrestricted egress, auto-reverts after timeout.
+	// Returns immediately — timer runs in the eBPF manager container.
+	// To cancel early: call Enable() directly (idempotent, re-attaches programs).
 	Bypass(ctx context.Context, containerID string, timeout time.Duration) error
 
 	// Status returns a health snapshot of the firewall stack.

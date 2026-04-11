@@ -84,6 +84,14 @@ jobs:
           sarif_file: results.sarif
           category: gitleaks
 
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout Repository'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: 'Dependency Review'
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+
   govulncheck:
     name: govulncheck SCA
     runs-on: ubuntu-latest
@@ -91,7 +99,22 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: govulncheck
-        uses: golang/govulncheck-action@31f7c5463448f83528bd771c2d978d940080c9fd # v1 (unreleased: checkout v6 compat)
-        with:
-          go-version-file: go.mod
+      # govulncheck loads every Go package in the module, so internal/firewall's
+      # go:embed targets (assets/ebpf-manager, assets/coredns-clawker) and
+      # internal/ebpf's bpf2go-generated bindings must exist on disk. Built via
+      # the pinned Dockerfile.firewall chain. See the action's own description
+      # for the "do this before any tool that re-checkouts" ordering rule.
+      - name: Build embedded firewall binaries
+        uses: ./.github/actions/build-firewall-binaries
+
+      # Install and run govulncheck directly instead of using
+      # golang/govulncheck-action — that action does its own `actions/checkout`
+      # internally, which clobbers the freshly-built firewall binaries and
+      # bpf2go wrappers from the step above, causing the scan to fail with
+      # `undefined: clawkerRouteKey`. Manual install keeps the working tree
+      # intact.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@d1f380186385b4f64e00313f31743df8e4b89a77 # v1.1.4
+
+      - name: Run govulncheck
+        run: govulncheck ./...

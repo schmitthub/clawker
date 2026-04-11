@@ -50,6 +50,17 @@ type OptionDoc struct {
 - `GenReST(cmd, w)` — write single command RST to writer
 - `GenReSTCustom(cmd, w, linkHandler)` — single command with custom link handler
 
+## Config Doc Generation (configdoc.go)
+
+Generates the Mintlify configuration reference page from the live `storage.Schema` — single source of truth for config field metadata across projects and settings.
+
+- `GenConfigDoc(w, tmplContent)` — executes a Go template against `ConfigDocData` (assembled from `internal/config` project + settings schemas) and writes the rendered MDX to `w`
+- `ConfigDocData`, `ConfigSection`, `ConfigGroup`, `ConfigField` — template data model (schema → sections → groups → fields)
+- Helpers: `buildSections`, `toConfigField`, `kindToType`, `renderFieldTable`, `renderYAMLSchema`, `renderStructSliceElement` — reflection-based rendering driven by `yaml`/`label`/`desc`/`default`/`required` struct tags
+- `escapeMDX(s)` — MDX-safe escaping for bare `<word>` angle brackets in descriptions
+
+Consumers: `cmd/gen-docs` writes `docs/configuration.mdx` from a template pipeline that calls `GenConfigDoc`.
+
 ## YAML Generation (yaml.go)
 
 - `GenYamlTree(cmd, dir)` — write YAML files for cmd tree to dir

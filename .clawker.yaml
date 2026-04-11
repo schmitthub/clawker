@@ -91,7 +91,7 @@ build:
       - go install golang.org/x/vuln/cmd/govulncheck@latest
       - go install golang.org/x/tools/cmd/goimports@latest
       - go install honnef.co/go/tools/cmd/staticcheck@latest
-      - go install golang.org/dl/go1.25.8@latest && go1.25.8 download
+      - go install golang.org/dl/go1.25.9@latest && go1.25.9 download
       - go install github.com/matryer/moq@latest
       - go install github.com/goreleaser/goreleaser/v2@latest
       - uv tool install semgrep
@@ -107,8 +107,6 @@ build:
     - man-db
     - unzip
     - gnupg2
-    - iptables
-    - ipset
     - iproute2
     - dnsutils
     - aggregate
@@ -121,6 +119,10 @@ build:
     - locales-all
     - iputils-ping
     - shellcheck
+    - clang
+    - llvm
+    - libbpf-dev
+    - bpftool
     - nodejs
     - npm
 loop:
@@ -180,7 +182,7 @@ security:
       - tmaproduction.blob.core.windows.net
     rules:
       - action: allow
-        dst: github.com
+        dst: gitlab.com
         port: 22
         proto: ssh
       - action: allow

@@ -242,21 +242,21 @@ func (c *configImpl) RequiredFirewallDomains() []string {
 }
 
 func (c *configImpl) Project() *Project {
-	return c.project.Get()
+	return c.project.Read()
 }
 
 func (c *configImpl) Settings() *Settings {
-	return c.settings.Get()
+	return c.settings.Read()
 }
 
 func (c *configImpl) LoggingConfig() LoggingConfig {
-	return c.settings.Get().Logging
+	return c.settings.Read().Logging
 }
 
 func (c *configImpl) HostProxyConfig() HostProxyConfig {
-	return c.settings.Get().HostProxy
+	return c.settings.Read().HostProxy
 }
 
 func (c *configImpl) MonitoringConfig() MonitoringConfig {
-	return c.settings.Get().Monitoring
+	return c.settings.Read().Monitoring
 }

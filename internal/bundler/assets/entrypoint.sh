@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# Entrypoint runs as root. Privileged init (iptables) runs directly.
+# Entrypoint runs as root. Privileged init (chown, config) runs directly.
 # User-level init and the final exec run via gosu $CLAWKER_USER.
 _USER="${CLAWKER_USER:-claude}"
 _HOME="/home/${_USER}"
@@ -87,11 +87,11 @@ emit_error() {
 }
 
 # =============================================================================
-# Firewall (decoupled — iptables applied post-start via manager.Enable)
+# Firewall (decoupled — eBPF programs attached post-start via manager.Enable)
 # =============================================================================
-# The host-side manager execs "firewall.sh enable ..." after container start,
-# then touches the signal file. We wait here so CMD doesn't run until the
-# firewall is applied. No network IPs baked into env vars.
+# The host-side manager attaches eBPF cgroup programs to this container after
+# start, then touches the signal file. We wait here so CMD doesn't run until
+# the firewall is applied. No in-container iptables or capabilities needed.
 if [ "${CLAWKER_FIREWALL_ENABLED:-}" = "true" ]; then
     emit_step "firewall (may be slow on first run)"
 

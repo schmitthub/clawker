@@ -22,7 +22,7 @@ go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
 ## Conventions
 
 - **Golden files**: Per-package strategies — whail recorded scenarios (`GOLDEN_UPDATE=1`), firewall corefile golden (hand-edit), storage struct-literal golden (`make storage-golden`)
-- **Fakes**: `internal/docker/dockertest/`, `pkg/whail/whailtest/`
+- **Fakes**: `internal/docker/mocks/`, `pkg/whail/whailtest/`
 - **Cleanup**: Always `t.Cleanup()` — never deferred functions
 - **Labels**: `dev.clawker.test=true` on all resources; `dev.clawker.test.name=TestName` per test
 - **Whail labels**: `test/whail/` uses `com.whail.test.managed=true`; self-contained cleanup
@@ -41,12 +41,12 @@ go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
 
 ### FactoryOptions (`factory.go`)
 
-Some nil fields use test fakes (`configmocks.NewBlankConfig`, `dockertest.FakeClient`, `hostproxytest.MockManager`, `firewallmocks.FirewallManagerMock`). `Logger` always creates a real file logger via `logger.New`. `ProjectManager`, `GitManager`, and `SocketBridge` default to nil. Set a field to the real constructor for integration tests.
+Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`, `hostproxytest.MockManager`, `firewallmocks.FirewallManagerMock`). `Logger` always creates a real file logger via `logger.New`. `ProjectManager`, `GitManager`, and `SocketBridge` default to nil. Set a field to the real constructor for integration tests.
 
 | Field | Signature | Default |
 |-------|-----------|---------|
 | `Config` | `func() (config.Config, error)` | `configmocks.NewBlankConfig()` |
-| `Client` | `func(ctx, cfg, log, ...docker.ClientOption) (*docker.Client, error)` | `dockertest.FakeClient` |
+| `Client` | `func(ctx, cfg, log, ...docker.ClientOption) (*docker.Client, error)` | `mocks.FakeClient` |
 | `ProjectManager` | `func(cfg, log, project.GitManagerFactory) (project.ProjectManager, error)` | nil (no-op) |
 | `GitManager` | `func(string) (*git.GitManager, error)` | nil (no-op) |
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.MockManager` |
@@ -116,4 +116,4 @@ All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestNa
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/docker/dockertest`, `internal/firewall`, `internal/firewall/mocks`, `internal/git`, `internal/hostproxy`, `internal/hostproxy/hostproxytest`, `internal/socketbridge`, `internal/cmdutil`, `internal/testenv`, `internal/iostreams`, `internal/logger`, `internal/project`
+Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/docker/mocks`, `internal/firewall`, `internal/firewall/mocks`, `internal/git`, `internal/hostproxy`, `internal/hostproxy/hostproxytest`, `internal/socketbridge`, `internal/cmdutil`, `internal/testenv`, `internal/iostreams`, `internal/logger`, `internal/project`

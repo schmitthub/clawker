@@ -2,7 +2,6 @@ package firewall_test
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -21,9 +20,17 @@ func newTestManager(t *testing.T) (*firewall.Manager, config.Config) {
 	t.Helper()
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	fake := &whailtest.FakeAPIClient{}
-	// Stub container ops so AddRules/RemoveRules error instead of panic.
+	// Return an empty list so regenerateAndRestart treats the firewall as
+	// "not running" and early-returns nil without touching restart paths.
+	// Previously this stub returned an error, which relied on IsRunning()
+	// silently swallowing ContainerList failures — that silent-fail
+	// behaviour has been fixed (errors now propagate through
+	// isContainerRunningE + regenerateAndRestart), so we flip to the
+	// "empty list" form which expresses the same intent ("no firewall
+	// containers are currently running") without being coupled to the
+	// old bug.
 	fake.ContainerListFn = func(_ context.Context, _ client.ContainerListOptions) (client.ContainerListResult, error) {
-		return client.ContainerListResult{}, fmt.Errorf("no docker in rules tests")
+		return client.ContainerListResult{}, nil
 	}
 	mgr, err := firewall.NewManager(fake, cfg, logger.Nop())
 	require.NoError(t, err)
@@ -39,8 +46,9 @@ func TestAddRules_NewRulesWritten(t *testing.T) {
 	}
 
 	// AddRules writes to the store first, then calls regenerateAndRestart.
-	// regenerateAndRestart checks IsRunning → ContainerList returns error →
-	// IsRunning returns false → early return nil. Store write succeeds.
+	// regenerateAndRestart checks IsRunning → ContainerList returns empty →
+	// isContainerRunningE returns (false, nil) → early return nil. Store
+	// write succeeds.
 	err := mgr.AddRules(t.Context(), incoming)
 	require.NoError(t, err)
 

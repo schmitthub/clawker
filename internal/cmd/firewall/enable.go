@@ -31,8 +31,8 @@ func NewCmdEnable(f *cmdutil.Factory, runF func(context.Context, *EnableOptions)
 	cmd := &cobra.Command{
 		Use:   "enable",
 		Short: "Enable firewall for a container",
-		Long: `Re-apply iptables DNAT rules and firewall DNS in an agent container,
-restoring egress restrictions. Use after 'clawker firewall disable'.`,
+		Long: `Re-attach eBPF cgroup programs to an agent container, restoring egress
+restrictions. Use after 'clawker firewall disable'.`,
 		Example: `  # Enable firewall for an agent container
   clawker firewall enable --agent dev`,
 		RunE: func(cmd *cobra.Command, args []string) error {

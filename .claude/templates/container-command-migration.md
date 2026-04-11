@@ -9,7 +9,7 @@
 
 | Task | Status | Agent |
 |------|--------|-------|
-| Task 1: dockertest Setup helpers for missing operations | `complete` | — |
+| Task 1: docker/mocks Setup helpers for missing operations | `complete` | — |
 | Task 2: stop + kill + remove (HandleError + review Tier 2) | `complete` | — |
 | Task 3: pause + unpause + rename + restart (HandleError + Tier 2) | `complete` | — |
 | Task 4: update + wait (HandleError + Tier 2) | `complete` | — |
@@ -35,7 +35,7 @@
 - **Task 8**: Straightforward migration. 2 HandleError calls → `fmt.Errorf`, tabwriter → `opts.TUI.NewTable(top.Titles...)` with dynamic headers from Docker API. `AddRow(proc...)` works cleanly since `top.Processes` is `[][]string`. Added `TUI *tui.TUI` to `TopOptions`, wired `f.TUI`. Removed unused `strings` and `text/tabwriter` imports. 3 new Tier 2 tests (happy path with process table rendering, Docker connection error, container not found). `IOStreams` field retained on struct for consistency even though `topRun` no longer uses it directly. 3614 total tests pass.
 - **Task 9**: 1 HandleError + 2 tabwriter usages migrated in stats. `showStatsOnce` replaced tabwriter with `opts.TUI.NewTable(headers...)`. `streamStats` creates a fresh `opts.TUI.NewTable` per refresh cycle (ANSI clear-screen approach kept — BubbleTea migration out of scope). Renamed `printStats(w *tabwriter.Writer, ...)` to `addStatsRow(tp *tui.TablePrinter, ...)` to reflect the new interface. Error output in `showStatsOnce` migrated from `"Error: ..."` to `cs.FailureIcon()` pattern; streaming warnings in `streamStats` migrated from `"Warning: ..."` and `"Error: ..."` to `cs.WarningIcon()`/`cs.FailureIcon()`. Code reviewer flagged dead `IOStreams` field on `TopOptions` (from Task 8) — cleaned up by removing field, assignment, and unused `iostreams` import. `SetupContainerStats(json)` works for `ContainerStatsOneShot` because both route through `FakeAPI.ContainerStatsFn`. 4 new Tier 2 tests (no-stream happy path, Docker connection error, container not found, no running containers). 3618 total tests pass.
 - **Task 10**: Straightforward migration — 2 HandleError calls + 1 StreamWithResize. Replaced `StreamWithResize` with `pty.Stream()` in goroutine + immediate resize (+1/-1 trick) + `signals.NewResizeHandler`. Key difference from `start.go`: no `waitForContainerExit` needed since container is already running — simplified to `return <-streamDone`. Non-TTY path (stdcopy demux) was already correct — left unchanged. `SetupContainerList(fixture) + SetupContainerInspect(name, fixture)` provides both the list for `FindContainerByName` and the richer inspect result with State. Config.Tty defaults to false (non-TTY path tested). 4 new Tier 2 tests (Docker connection error, container not found, container not running, non-TTY happy path), 3622 total pass.
-- **Task 11**: Exec has 6 HandleError calls (most of any command) — all replaced with contextual `fmt.Errorf`. The TTY path used `StreamWithResize` with an `ExecResize`-based resize function — migrated to `pty.Stream` goroutine + `signals.NewResizeHandler` (same canonical pattern as attach). Credential injection (host proxy + git credentials + socket bridge) left unchanged — it's correct and well-structured. For Tier 2 tests, `testConfig()` must disable host proxy (`EnableHostProxy = &false`) and null git credentials to avoid nil panics — `SecurityConfig.HostProxyEnabled()` defaults to `true` when nil. FakeAPIClient was missing `ExecStartFn`, `ExecAttachFn`, `ExecInspectFn` — added to `whailtest/fake_client.go` along with 3 new `SetupExec*` helpers in `dockertest/helpers.go`. `SetupExecAttach` uses `net.Pipe()` + `bufio.NewReader(strings.NewReader(""))` for the hijacked response. 6 new Tier 2 tests (Docker connection error, container not found, container not running, detach mode, non-TTY happy path, non-zero exit code), 3628 total pass.
+- **Task 11**: Exec has 6 HandleError calls (most of any command) — all replaced with contextual `fmt.Errorf`. The TTY path used `StreamWithResize` with an `ExecResize`-based resize function — migrated to `pty.Stream` goroutine + `signals.NewResizeHandler` (same canonical pattern as attach). Credential injection (host proxy + git credentials + socket bridge) left unchanged — it's correct and well-structured. For Tier 2 tests, `testConfig()` must disable host proxy (`EnableHostProxy = &false`) and null git credentials to avoid nil panics — `SecurityConfig.HostProxyEnabled()` defaults to `true` when nil. FakeAPIClient was missing `ExecStartFn`, `ExecAttachFn`, `ExecInspectFn` — added to `whailtest/fake_client.go` along with 3 new `SetupExec*` helpers in `mock/helpers.go`. `SetupExecAttach` uses `net.Pipe()` + `bufio.NewReader(strings.NewReader(""))` for the hijacked response. 6 new Tier 2 tests (Docker connection error, container not found, container not running, detach mode, non-TTY happy path, non-zero exit code), 3628 total pass.
 - **Task 12**: Final cleanup verified zero deprecated patterns across all container commands: `cmdutil.HandleError` (0), `tabwriter.NewWriter` (0), `StreamWithResize` (0), `"Error: %v"` (0), `"Warning: %v"` (0). Full unit test suite passes (3628 tests, 5 expected skips). Updated `internal/cmd/container/CLAUDE.md` with Migration Status section documenting canonical patterns (error handling, table rendering, Stream+resize, format/filter flags) and cross-references to `attach/`, `exec/`, `start/`, `shared/` CLAUDE.md files. Updated `presentation-integration` memory with initiative summary.
 - **Task 1**: All simple action helpers (Stop, Kill, Pause, Unpause, Rename, Restart, Update) return empty result structs — no recordCall needed since FakeAPIClient methods handle recording internally. `SetupContainerInspect` takes both containerID and Summary to populate State field (needed by remove's stop-before-remove flow). `SetupContainerStats` takes a JSON string param for flexibility; empty string gives minimal default. `SetupContainerLogs` returns plain ReadCloser (non-multiplexed, suitable for TTY logs). 14 new helpers added, all compile clean, 3543 tests pass.
 
@@ -109,8 +109,8 @@ Container commands in `internal/cmd/container/*/` are being migrated to canonica
 | `internal/cmd/container/start/CLAUDE.md` | Attach-then-start pattern documentation |
 | `internal/cmd/image/list/list.go` | Canonical list command — format/filter/TablePrinter reference |
 | `internal/cmd/image/list/list_test.go` | Canonical list Tier 2 tests — format modes, filters |
-| `internal/docker/dockertest/helpers.go` | FakeClient Setup helpers (some missing, Task 1 adds them) |
-| `internal/docker/dockertest/fixtures.go` | Container/image test fixtures |
+| `internal/docker/mocks/helpers.go` | FakeClient Setup helpers (some missing, Task 1 adds them) |
+| `internal/docker/mocks/fixtures.go` | Container/image test fixtures |
 | `pkg/whail/whailtest/fake_client.go` | FakeAPIClient with all `*Fn` function fields |
 | `.serena/memories/cli-output-style-guide` | Authoritative output patterns, error handling recipes, deprecated method migration guide |
 | `internal/cmd/container/CLAUDE.md` | Container package documentation |
@@ -119,7 +119,7 @@ Container commands in `internal/cmd/container/*/` are being migrated to canonica
 
 **Cobra+Factory Test Pattern (Tier 2):**
 ```go
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.IOStreams) {
+func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *iostreams.IOStreams) {
     t.Helper()
     tio, _, _, _ := iostreams.Test()
     return &cmdutil.Factory{
@@ -193,24 +193,24 @@ err := <-streamDone
 - Use Serena tools for code exploration — read symbol bodies only when needed
 - All new code must compile (`go build ./...`) and tests must pass (`make test`)
 - Follow existing test patterns in the package — copy `stop_test.go` structure for simple commands
-- When adding dockertest Setup helpers, follow the pattern of existing helpers in `internal/docker/dockertest/helpers.go`
+- When adding docker/mocks Setup helpers, follow the pattern of existing helpers in `internal/docker/mocks/helpers.go`
 - Do NOT remove `cmdutil.HandleError` itself — other non-container commands still use it; only remove from container commands
 - Do NOT add phase comments (Phase A/B/C) to simple action commands — those are for commands with distinct lifecycle phases (run, create, start)
 - TUI import: Only add `TUI *tui.TUI` to Options struct if the command needs `NewTable()` — simple action commands don't need it
 
 ---
 
-## Task 1: dockertest Setup Helpers for Missing Operations
+## Task 1: docker/mocks Setup Helpers for Missing Operations
 
-**Creates/modifies:** `internal/docker/dockertest/helpers.go`, `internal/docker/dockertest/fixtures.go`
+**Creates/modifies:** `internal/docker/mocks/helpers.go`, `internal/docker/mocks/fixtures.go`
 **Depends on:** Nothing
 
 ### Implementation Phase
 
-The FakeAPIClient (`pkg/whail/whailtest/fake_client.go`) already has `*Fn` function fields for every Docker operation. But the convenience `Setup*` helpers on `FakeClient` (`internal/docker/dockertest/helpers.go`) are missing helpers for: Stop, Kill, Pause, Unpause, Rename, Restart, Update, Inspect, Logs, Top, Stats, CopyFromContainer, ExecCreate.
+The FakeAPIClient (`pkg/whail/whailtest/fake_client.go`) already has `*Fn` function fields for every Docker operation. But the convenience `Setup*` helpers on `FakeClient` (`internal/docker/mocks/helpers.go`) are missing helpers for: Stop, Kill, Pause, Unpause, Rename, Restart, Update, Inspect, Logs, Top, Stats, CopyFromContainer, ExecCreate.
 
-1. Read `internal/docker/dockertest/helpers.go` to understand the existing Setup helper pattern
-2. Read `internal/docker/dockertest/fixtures.go` to understand existing fixtures
+1. Read `internal/docker/mocks/helpers.go` to understand the existing Setup helper pattern
+2. Read `internal/docker/mocks/fixtures.go` to understand existing fixtures
 3. Add the following Setup helpers to `helpers.go`, following the existing pattern:
 
 ```go
@@ -265,8 +265,8 @@ func (f *FakeClient) SetupExecCreate(execID string) { ... }
 ### Acceptance Criteria
 
 ```bash
-go build ./internal/docker/dockertest/...
-go test ./internal/docker/dockertest/... -v
+go build ./internal/docker/mocks/...
+go test ./internal/docker/mocks/... -v
 # All new Setup helpers compile and don't break existing tests
 ```
 
@@ -365,7 +365,7 @@ These 4 commands have Tier 1 tests (flag parsing) but NO Tier 2 tests. Each need
 3. Replace `fmt.Fprintf(ios.ErrOut, "Error: %v\n", err)` → `cs.FailureIcon()` pattern
 4. Create a per-package `testFactory` helper (copy from `stop_test.go`, remove SocketBridge since these don't need it):
    ```go
-   func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.IOStreams) {
+   func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *iostreams.IOStreams) {
        t.Helper()
        tio, _, _, _ := iostreams.Test()
        return &cmdutil.Factory{

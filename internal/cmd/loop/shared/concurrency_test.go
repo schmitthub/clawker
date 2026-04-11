@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +18,7 @@ import (
 var _testCfg = configmocks.NewBlankConfig()
 
 func TestCheckConcurrency_NoRunningContainers(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
 	tio, _, _, _ := iostreams.Test()
@@ -33,9 +33,9 @@ func TestCheckConcurrency_NoRunningContainers(t *testing.T) {
 }
 
 func TestCheckConcurrency_DifferentWorkDir(t *testing.T) {
-	ctr := dockertest.RunningContainerFixture("myproj", "loop-agent")
+	ctr := mocks.RunningContainerFixture("myproj", "loop-agent")
 	ctr.Labels[_testCfg.LabelWorkdir()] = "/other/dir"
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
 	tio, _, _, _ := iostreams.Test()
@@ -50,9 +50,9 @@ func TestCheckConcurrency_DifferentWorkDir(t *testing.T) {
 }
 
 func TestCheckConcurrency_SameWorkDir_NonInteractive(t *testing.T) {
-	ctr := dockertest.RunningContainerFixture("myproj", "loop-agent")
+	ctr := mocks.RunningContainerFixture("myproj", "loop-agent")
 	ctr.Labels[_testCfg.LabelWorkdir()] = "/workspace"
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
 	tio, _, _, errOut := iostreams.Test()
@@ -81,9 +81,9 @@ func selectionInput(idx int) string {
 }
 
 func TestCheckConcurrency_SameWorkDir_Interactive_Worktree(t *testing.T) {
-	ctr := dockertest.RunningContainerFixture("myproj", "loop-agent")
+	ctr := mocks.RunningContainerFixture("myproj", "loop-agent")
 	ctr.Labels[_testCfg.LabelWorkdir()] = "/workspace"
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
 	tio, in, _, _ := iostreams.Test()
@@ -101,9 +101,9 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Worktree(t *testing.T) {
 }
 
 func TestCheckConcurrency_SameWorkDir_Interactive_Proceed(t *testing.T) {
-	ctr := dockertest.RunningContainerFixture("myproj", "loop-agent")
+	ctr := mocks.RunningContainerFixture("myproj", "loop-agent")
 	ctr.Labels[_testCfg.LabelWorkdir()] = "/workspace"
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
 	tio, in, _, _ := iostreams.Test()
@@ -121,9 +121,9 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Proceed(t *testing.T) {
 }
 
 func TestCheckConcurrency_SameWorkDir_Interactive_Abort(t *testing.T) {
-	ctr := dockertest.RunningContainerFixture("myproj", "loop-agent")
+	ctr := mocks.RunningContainerFixture("myproj", "loop-agent")
 	ctr.Labels[_testCfg.LabelWorkdir()] = "/workspace"
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
 	tio, in, _, _ := iostreams.Test()
@@ -141,7 +141,7 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Abort(t *testing.T) {
 }
 
 func TestCheckConcurrency_DockerListError(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerListError(fmt.Errorf("docker daemon unavailable"))
 
 	tio, _, _, _ := iostreams.Test()
@@ -157,11 +157,11 @@ func TestCheckConcurrency_DockerListError(t *testing.T) {
 }
 
 func TestCheckConcurrency_MultipleRunning_WarnsAndProceeds(t *testing.T) {
-	ctr1 := dockertest.RunningContainerFixture("myproj", "loop-agent1")
+	ctr1 := mocks.RunningContainerFixture("myproj", "loop-agent1")
 	ctr1.Labels[_testCfg.LabelWorkdir()] = "/workspace"
-	ctr2 := dockertest.RunningContainerFixture("myproj", "loop-agent2")
+	ctr2 := mocks.RunningContainerFixture("myproj", "loop-agent2")
 	ctr2.Labels[_testCfg.LabelWorkdir()] = "/workspace"
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(ctr1, ctr2)
 
 	tio, _, _, errOut := iostreams.Test()

@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
@@ -147,7 +147,7 @@ func TestCmdInspect_Properties(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 	return &cmdutil.Factory{
@@ -163,8 +163,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 }
 
 func TestInspectRun_HappyPath(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	c := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	c := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
 	fake.SetupContainerInspect("clawker.myapp.dev", c)
 
@@ -181,8 +181,8 @@ func TestInspectRun_HappyPath(t *testing.T) {
 }
 
 func TestInspectRun_FormatTemplate(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	c := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	c := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
 	fake.SetupContainerInspect("clawker.myapp.dev", c)
 
@@ -223,7 +223,7 @@ func TestInspectRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestInspectRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
 	f, _, out, errOut := testFactory(t, fake)
@@ -239,8 +239,8 @@ func TestInspectRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestInspectRun_MultiContainerPartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
-	c := dockertest.RunningContainerFixture("myapp", "dev")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	c := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
 	fake.SetupContainerInspect("clawker.myapp.dev", c)
 

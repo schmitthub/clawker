@@ -97,6 +97,27 @@ RALPH-TEST.md
 
 .clawker.local.yaml
 
+# Embedded firewall stack binaries (built by `make ebpf-binary` / `make coredns-binary`
+# via the pinned Dockerfile.firewall multi-stage build; not committed).
+internal/firewall/assets/ebpf-manager
+internal/firewall/assets/coredns-clawker
+
+# bpf2go-generated Go wrappers + compiled BPF bytecode. Produced on every
+# build inside the pinned Dockerfile.firewall bpf-builder stage; never committed.
+# On fresh clones, `make ebpf-binary` (or anything that depends on it such as
+# `make test` / `make clawker-build`) regenerates these on first use. Expect
+# IDE red squiggles in internal/ebpf/manager.go until the first `make` run
+# populates these.
+internal/ebpf/clawker_x86_bpfel.go
+internal/ebpf/clawker_x86_bpfel.o
+internal/ebpf/clawker_arm64_bpfel.go
+internal/ebpf/clawker_arm64_bpfel.o
+
+# BPF kernel BTF dump — clawker does not use CO-RE and does not consume
+# vmlinux.h. Historical developer workflows may still generate it via
+# bpftool; this guard prevents it from sneaking back into the tree.
+internal/ebpf/bpf/vmlinux.h
+
 # Adversarial test artifacts
 test/adversarial/report.html
 test/adversarial/certs/

@@ -116,7 +116,7 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 		defer log.Close()
 	}
 
-	// Ensure firewall is running and enable iptables in the container.
+	// Ensure firewall is running and attach eBPF programs to the container.
 	if settings != nil && settings.Firewall.FirewallEnabled() {
 		if cmdOpts.Firewall == nil {
 			return fmt.Errorf("bootstrapping services: firewall is enabled but no firewall manager provided")
@@ -143,7 +143,7 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 			return fmt.Errorf("bootstrapping services: waiting for firewall health: %w", err)
 		}
 
-		// Apply iptables DNAT rules inside the container (docker exec → firewall.sh enable).
+		// Attach eBPF cgroup programs to the container (docker exec → ebpf-manager enable).
 		if err := fwMgr.Enable(ctx, container); err != nil {
 			return fmt.Errorf("bootstrapping services: enabling firewall in container: %w", err)
 		}

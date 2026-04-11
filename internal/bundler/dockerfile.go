@@ -46,9 +46,6 @@ var DockerfileTemplate string
 //go:embed assets/entrypoint.sh
 var EntrypointScript string
 
-//go:embed assets/firewall.sh
-var FirewallScript string
-
 //go:embed assets/statusline.sh
 var StatuslineScript string
 
@@ -108,8 +105,15 @@ const (
 	DefaultUsername          = "claude"
 	DefaultShell             = "/bin/zsh"
 	// DefaultGoBuilderImage is the Go toolchain image used for builder stages.
-	// Pinned to exact patch version + SHA digest matching go.mod (go 1.25.8).
-	DefaultGoBuilderImage = "golang:1.25.8-alpine@sha256:8e02eb337d9e0ea459e041f1ee5eece41cbb61f1d83e7d883a3e2fb4862063fa"
+	//
+	// Pinned to exact patch version + multi-arch manifest-list (OCI image
+	// index) SHA digest matching go.mod (go 1.25.9). The digest MUST be a
+	// manifest list so cross-platform builds can select the right per-arch
+	// manifest at pull time. Verify via:
+	//   docker buildx imagetools inspect golang:<version>-alpine
+	// MediaType must be `application/vnd.oci.image.index.v1+json` before
+	// updating this constant. Single-platform digests break multi-arch builds.
+	DefaultGoBuilderImage = "golang:1.25.9-alpine@sha256:7a00384194cf2cb68924bbb918d675f1517357433c8541bac0ab2f929b9d5447"
 )
 
 // DockerfileManager generates and persists Dockerfiles for each version/variant combination.
@@ -150,7 +154,7 @@ type DockerfileContext struct {
 	OtelIncludeSessionID   bool // OTEL_METRICS_INCLUDE_SESSION_ID=true
 
 	HasFirewallCA  bool   // CA cert exists for MITM inspection
-	GoBuilderImage string // Go toolchain image for builder stages (e.g. "golang:1.25.8-alpine@sha256:...")
+	GoBuilderImage string // Go toolchain image for builder stages (e.g. "golang:1.25.9-alpine@sha256:...")
 }
 
 // DockerfileInstructions contains type-safe Dockerfile instructions.
@@ -229,7 +233,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		mode    os.FileMode
 	}{
 		{"entrypoint.sh", EntrypointScript, 0755},
-		{"firewall.sh", FirewallScript, 0755},
+
 		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
@@ -416,11 +420,6 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
-	// Add firewall script (always included; execution gated at runtime)
-	if err := addFileToTar(tw, "firewall.sh", []byte(FirewallScript)); err != nil {
-		return nil, err
-	}
-
 	// Add agent prompt file for in-container agent awareness
 	if err := addFileToTar(tw, "clawker-agent-prompt.md", []byte(AgentPromptFile)); err != nil {
 		return nil, err
@@ -480,7 +479,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		mode    os.FileMode
 	}{
 		{"entrypoint.sh", EntrypointScript, 0755},
-		{"firewall.sh", FirewallScript, 0755},
+
 		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
@@ -541,7 +540,7 @@ func (g *ProjectGenerator) GetBuildContext() string {
 var basePackagesAlpine = map[string]bool{
 	"bash": true, "less": true, "git": true, "procps": true, "sudo": true,
 	"fzf": true, "zsh": true, "man-db": true, "unzip": true, "gnupg": true,
-	"iptables": true, "ipset": true, "iproute2": true, "bind-tools": true,
+	"iproute2": true, "bind-tools": true,
 	"jq": true, "nano": true, "vim": true, "wget": true, "curl": true,
 	"github-cli": true, "musl-locales": true, "musl-locales-lang": true,
 }
@@ -550,7 +549,7 @@ var basePackagesAlpine = map[string]bool{
 var basePackagesDebian = map[string]bool{
 	"less": true, "git": true, "procps": true, "sudo": true, "fzf": true,
 	"zsh": true, "man-db": true, "unzip": true, "gnupg2": true,
-	"iptables": true, "ipset": true, "iproute2": true, "dnsutils": true,
+	"iproute2": true, "dnsutils": true,
 	"aggregate": true, "jq": true, "nano": true, "vim": true, "wget": true,
 	"curl": true, "gh": true, "locales": true, "locales-all": true,
 }

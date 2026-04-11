@@ -114,7 +114,7 @@ func TestFirewall_Bypass(t *testing.T) {
 	require.NoError(t, bypassRes.Err, "firewall bypass failed\nstdout: %s\nstderr: %s",
 		bypassRes.Stdout, bypassRes.Stderr)
 
-	// Should succeed now — bypass disables iptables rules, all traffic goes direct.
+	// Should succeed now — bypass disables eBPF rules, all traffic goes direct.
 	allowedRes := h.ExecInContainer("firewall-test",
 		"curl", "-s", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}", "https://example.com")
 	require.NoError(t, allowedRes.Err, "curl after bypass should succeed\nstdout: %s\nstderr: %s",
@@ -370,7 +370,7 @@ agent:
 	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
 		buildRes.Stdout, buildRes.Stderr)
 
-	// Agent container with real host proxy — should reach /health via targeted iptables RETURN.
+	// Agent container with real host proxy — should reach /health via targeted eBPF RETURN.
 	healthRes := h.RunInContainer("hp-test",
 		"sh", "-c",
 		`curl -s --max-time 5 --connect-timeout 3 -o /dev/null -w "%{http_code}" "$CLAWKER_HOST_PROXY/health"`)
@@ -401,7 +401,7 @@ func TestFirewall_SSHTCPMapping(t *testing.T) {
 	setup := h.NewIsolatedFS(nil)
 
 	// Configure an SSH rule for github.com — exercises the TCP mapping path:
-	// iptables --dport 22 → DNAT envoy:10001 → LOGICAL_DNS cluster github.com:22
+	// eBPF --dport 22 → DNAT envoy:10001 → LOGICAL_DNS cluster github.com:22
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
@@ -431,7 +431,7 @@ security:
 		startRes.Stdout, startRes.Stderr)
 
 	// ssh-keyscan fetches host keys over SSH (port 22) without authentication.
-	// Full path: DNS → CoreDNS → iptables --dport 22 → DNAT envoy:10001 → LOGICAL_DNS cluster → github.com:22
+	// Full path: DNS → CoreDNS → eBPF --dport 22 → DNAT envoy:10001 → LOGICAL_DNS cluster → github.com:22
 	scanRes := h.ExecInContainer("ssh-test", "ssh-keyscan", "-T", "10", "github.com")
 	require.NoError(t, scanRes.Err,
 		"ssh-keyscan should succeed via TCP mapping\nstdout: %s\nstderr: %s",
@@ -439,7 +439,7 @@ security:
 	assert.Contains(t, scanRes.Stdout, "github.com", "should return github.com host keys")
 
 	// Verify DNS blocks non-allowed domains (CoreDNS returns NXDOMAIN).
-	// This is the sole domain gate for non-TLS protocols with port-only iptables matching.
+	// This is the sole domain gate for non-TLS protocols with port-only eBPF matching.
 	digRes := h.ExecInContainer("ssh-test", "dig", "+short", "+timeout=3", "gitlab.com")
 	t.Logf("dig gitlab.com result: stdout=%q stderr=%q err=%v", digRes.Stdout, digRes.Stderr, digRes.Err)
 	assert.Empty(t, strings.TrimSpace(digRes.Stdout), "gitlab.com should not resolve (CoreDNS NXDOMAIN)")
@@ -494,7 +494,7 @@ func TestFirewall_HTTPDomainDetection(t *testing.T) {
 	setup := h.NewIsolatedFS(nil)
 
 	// Configure an HTTP rule for example.com — exercises the consolidated egress listener:
-	// iptables --dport 80 → DNAT envoy:10000 → tls_inspector → raw_buffer filter chain → Host header → domain match
+	// eBPF --dport 80 → DNAT envoy:10000 → tls_inspector → raw_buffer filter chain → Host header → domain match
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
@@ -533,7 +533,7 @@ security:
 	assert.Contains(t, listRes.Stdout, "example.com", "HTTP rule should be in firewall list")
 
 	// Plain HTTP request to example.com — full path:
-	// DNS → CoreDNS allows example.com → iptables --dport 80 → DNAT envoy:10000
+	// DNS → CoreDNS allows example.com → eBPF --dport 80 → DNAT envoy:10000
 	// → tls_inspector → raw_buffer filter chain → Host header "example.com" → virtual host match
 	// → per-domain LOGICAL_DNS cluster → upstream example.com:80
 	httpRes := h.ExecInContainer("http-test",
@@ -621,7 +621,7 @@ func TestFirewall_PathRulesDefaultDeny(t *testing.T) {
 	setup := h.NewIsolatedFS(nil)
 
 	// Allow example.com on HTTP with path rules: only /test is allowed, default deny.
-	// Path: DNS → CoreDNS → iptables --dport 80 → DNAT envoy:10000
+	// Path: DNS → CoreDNS → eBPF --dport 80 → DNAT envoy:10000
 	// → tls_inspector → raw_buffer filter chain → Host header → virtual host → path prefix match
 	// /test → LOGICAL_DNS cluster → upstream; anything else → 403 (path_default: deny)
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
@@ -705,7 +705,7 @@ func TestFirewall_PathRulesExplicitDeny(t *testing.T) {
 	setup := h.NewIsolatedFS(nil)
 
 	// Allow example.com on HTTP with path rules: /evil is explicitly denied, default allow.
-	// Path: DNS → CoreDNS → iptables --dport 80 → DNAT envoy:10000
+	// Path: DNS → CoreDNS → eBPF --dport 80 → DNAT envoy:10000
 	// → tls_inspector → raw_buffer filter chain → Host header → virtual host → path prefix match
 	// /evil → 403; anything else → LOGICAL_DNS cluster → upstream (path_default: allow)
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
@@ -788,7 +788,7 @@ func TestFirewall_TLSPathRulesDefaultDeny(t *testing.T) {
 	setup := h.NewIsolatedFS(nil)
 
 	// TLS rule with MITM path inspection: only /test allowed, default deny.
-	// Path: DNS → CoreDNS → iptables --dport 443 → DNAT envoy:10000
+	// Path: DNS → CoreDNS → eBPF --dport 443 → DNAT envoy:10000
 	// → tls_inspector (SNI) → MITM filter chain (TLS termination + domain cert)
 	// → http_connection_manager → path prefix match → allow or 403
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
