@@ -13,6 +13,8 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
+	"github.com/schmitthub/clawker/internal/firewall"
+	firewallmocks "github.com/schmitthub/clawker/internal/firewall/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -164,7 +166,7 @@ func TestStopRun_StopsBridge(t *testing.T) {
 		require.False(t, dockerStopCalled, "bridge must stop before docker stop")
 		return nil
 	}
-	f, in, out, errOut := testFactory(t, fake, mock)
+	f, in, out, errOut := testFactory(t, fake, mock, nil)
 
 	cmd := NewCmdStop(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
@@ -193,7 +195,7 @@ func TestStopRun_BridgeErrorDoesNotFailStop(t *testing.T) {
 	mock.StopBridgeFunc = func(_ string) error {
 		return fmt.Errorf("bridge not found")
 	}
-	f, in, out, errOut := testFactory(t, fake, mock)
+	f, in, out, errOut := testFactory(t, fake, mock, nil)
 
 	cmd := NewCmdStop(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
@@ -219,7 +221,7 @@ func TestStopRun_NilSocketBridge(t *testing.T) {
 	}
 
 	// nil SocketBridge — no bridge configured
-	f, in, out, errOut := testFactory(t, fake, nil)
+	f, in, out, errOut := testFactory(t, fake, nil, nil)
 
 	cmd := NewCmdStop(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
@@ -243,7 +245,7 @@ func TestStopRun_StopsBridgeWithSignal(t *testing.T) {
 	}
 
 	mock := sockebridgemocks.NewMockManager()
-	f, in, out, errOut := testFactory(t, fake, mock)
+	f, in, out, errOut := testFactory(t, fake, mock, nil)
 
 	cmd := NewCmdStop(f, nil)
 	cmd.SetArgs([]string{"--signal", "SIGKILL", "clawker.myapp.dev"})
@@ -257,6 +259,93 @@ func TestStopRun_StopsBridgeWithSignal(t *testing.T) {
 	// StopBridge called even with --signal (kill path)
 	require.True(t, sockebridgemocks.CalledWith(mock, "StopBridge", fixture.ID))
 	fake.AssertCalled(t, "ContainerKill")
+}
+
+func TestStopRun_DisablesFirewallBeforeStop(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
+
+	// Track ordering: firewall disable must happen before docker stop so the
+	// ebpf sidecar can still exec into the container's cgroup while detaching
+	// programs. Encodes the invariant from stop.go's "Must happen before stop"
+	// comment as an executable assertion.
+	var dockerStopCalled bool
+	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {
+		dockerStopCalled = true
+		return mobyclient.ContainerStopResult{}, nil
+	}
+
+	var disabledID string
+	fwMock := &firewallmocks.FirewallManagerMock{
+		DisableFunc: func(_ context.Context, id string) error {
+			require.False(t, dockerStopCalled, "firewall must be disabled before docker stop")
+			disabledID = id
+			return nil
+		},
+	}
+	f, in, out, errOut := testFactory(t, fake, nil, fwMock)
+
+	cmd := NewCmdStop(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	require.NoError(t, cmd.Execute())
+	require.Len(t, fwMock.DisableCalls(), 1)
+	require.Equal(t, fixture.ID, disabledID)
+	fake.AssertCalled(t, "ContainerStop")
+}
+
+func TestStopRun_FirewallDisableErrorDoesNotFailStop(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
+
+	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {
+		return mobyclient.ContainerStopResult{}, nil
+	}
+
+	fwMock := &firewallmocks.FirewallManagerMock{
+		DisableFunc: func(_ context.Context, _ string) error {
+			return fmt.Errorf("bpf detach failed")
+		},
+	}
+	f, in, out, errOut := testFactory(t, fake, nil, fwMock)
+
+	cmd := NewCmdStop(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	// Disable error is best-effort — stop still succeeds.
+	require.NoError(t, cmd.Execute())
+	require.Len(t, fwMock.DisableCalls(), 1)
+	fake.AssertCalled(t, "ContainerStop")
+}
+
+func TestStopRun_NilFirewall(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
+
+	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {
+		return mobyclient.ContainerStopResult{}, nil
+	}
+
+	// nil Firewall — unit test with a partial Factory.
+	f, in, out, errOut := testFactory(t, fake, nil, nil)
+
+	cmd := NewCmdStop(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	require.NoError(t, cmd.Execute()) // no panic, stop succeeds
+	fake.AssertCalled(t, "ContainerStop")
 }
 
 func TestStopRun_DockerConnectionError(t *testing.T) {
@@ -285,7 +374,7 @@ func TestStopRun_DockerConnectionError(t *testing.T) {
 
 // --- Per-package test helpers ---
 
-func testFactory(t *testing.T, fake *mocks.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock, fwMock *firewallmocks.FirewallManagerMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 
@@ -303,6 +392,12 @@ func testFactory(t *testing.T, fake *mocks.FakeClient, mock *sockebridgemocks.So
 	if mock != nil {
 		f.SocketBridge = func() socketbridge.SocketBridgeManager {
 			return mock
+		}
+	}
+
+	if fwMock != nil {
+		f.Firewall = func(_ context.Context) (firewall.FirewallManager, error) {
+			return fwMock, nil
 		}
 	}
 

@@ -14,6 +14,8 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
+	"github.com/schmitthub/clawker/internal/firewall"
+	firewallmocks "github.com/schmitthub/clawker/internal/firewall/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -167,7 +169,7 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 		require.False(t, dockerRemoveCalled, "bridge must stop before docker remove")
 		return nil
 	}
-	f, in, out, errOut := testFactory(t, fake, mock)
+	f, in, out, errOut := testFactory(t, fake, mock, nil)
 
 	cmd := NewCmdRemove(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
@@ -196,7 +198,7 @@ func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
 	mock.StopBridgeFunc = func(_ string) error {
 		return fmt.Errorf("bridge not found")
 	}
-	f, in, out, errOut := testFactory(t, fake, mock)
+	f, in, out, errOut := testFactory(t, fake, mock, nil)
 
 	cmd := NewCmdRemove(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
@@ -222,7 +224,7 @@ func TestRemoveRun_NilSocketBridge(t *testing.T) {
 	}
 
 	// nil SocketBridge — no bridge configured
-	f, in, out, errOut := testFactory(t, fake, nil)
+	f, in, out, errOut := testFactory(t, fake, nil, nil)
 
 	cmd := NewCmdRemove(f, nil)
 	cmd.SetArgs([]string{"clawker.myapp.dev"})
@@ -264,7 +266,7 @@ func TestRemoveRun_WithVolumes(t *testing.T) {
 		return mobyclient.VolumeRemoveResult{}, nil
 	}
 
-	f, in, out, errOut := testFactory(t, fake, nil)
+	f, in, out, errOut := testFactory(t, fake, nil, nil)
 
 	cmd := NewCmdRemove(f, nil)
 	cmd.SetArgs([]string{"--force", "--volumes", "clawker.myapp.dev"})
@@ -278,6 +280,92 @@ func TestRemoveRun_WithVolumes(t *testing.T) {
 	// --volumes triggers RemoveContainerWithVolumes path (VolumeList called for cleanup)
 	fake.AssertCalled(t, "ContainerRemove")
 	fake.AssertCalled(t, "VolumeList")
+}
+
+func TestRemoveRun_DisablesFirewallBeforeRemove(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
+
+	// Track ordering: firewall disable must happen before docker remove so the
+	// ebpf sidecar can still exec into the container's cgroup while detaching
+	// programs.
+	var dockerRemoveCalled bool
+	fake.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
+		dockerRemoveCalled = true
+		return mobyclient.ContainerRemoveResult{}, nil
+	}
+
+	var disabledID string
+	fwMock := &firewallmocks.FirewallManagerMock{
+		DisableFunc: func(_ context.Context, id string) error {
+			require.False(t, dockerRemoveCalled, "firewall must be disabled before docker remove")
+			disabledID = id
+			return nil
+		},
+	}
+	f, in, out, errOut := testFactory(t, fake, nil, fwMock)
+
+	cmd := NewCmdRemove(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	require.NoError(t, cmd.Execute())
+	require.Len(t, fwMock.DisableCalls(), 1)
+	require.Equal(t, fixture.ID, disabledID)
+	fake.AssertCalled(t, "ContainerRemove")
+}
+
+func TestRemoveRun_FirewallDisableErrorDoesNotFailRemove(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
+
+	fake.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
+		return mobyclient.ContainerRemoveResult{}, nil
+	}
+
+	fwMock := &firewallmocks.FirewallManagerMock{
+		DisableFunc: func(_ context.Context, _ string) error {
+			return fmt.Errorf("bpf detach failed")
+		},
+	}
+	f, in, out, errOut := testFactory(t, fake, nil, fwMock)
+
+	cmd := NewCmdRemove(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	// Disable error is best-effort — remove still succeeds.
+	require.NoError(t, cmd.Execute())
+	require.Len(t, fwMock.DisableCalls(), 1)
+	fake.AssertCalled(t, "ContainerRemove")
+}
+
+func TestRemoveRun_NilFirewall(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
+
+	fake.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
+		return mobyclient.ContainerRemoveResult{}, nil
+	}
+
+	// nil Firewall — unit test with a partial Factory.
+	f, in, out, errOut := testFactory(t, fake, nil, nil)
+
+	cmd := NewCmdRemove(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	require.NoError(t, cmd.Execute()) // no panic, remove succeeds
+	fake.AssertCalled(t, "ContainerRemove")
 }
 
 func TestRemoveRun_DockerConnectionError(t *testing.T) {
@@ -306,7 +394,7 @@ func TestRemoveRun_DockerConnectionError(t *testing.T) {
 
 // --- Per-package test helpers ---
 
-func testFactory(t *testing.T, fake *mocks.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock, fwMock *firewallmocks.FirewallManagerMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 
@@ -324,6 +412,12 @@ func testFactory(t *testing.T, fake *mocks.FakeClient, mock *sockebridgemocks.So
 	if mock != nil {
 		f.SocketBridge = func() socketbridge.SocketBridgeManager {
 			return mock
+		}
+	}
+
+	if fwMock != nil {
+		f.Firewall = func(_ context.Context) (firewall.FirewallManager, error) {
+			return fwMock, nil
 		}
 	}
 

@@ -63,13 +63,14 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 
 	if !fw.IsDaemonRunning(pidFile) {
 		fmt.Fprintf(ios.Out, "%s Firewall daemon is not running\n", cs.InfoIcon())
-	} else {
-		if err := fw.StopDaemon(pidFile); err != nil {
-			return fmt.Errorf("stopping firewall daemon: %w", err)
-		}
-		// Wait for the daemon to exit so its Stop() finishes before ours.
-		fw.WaitForDaemonExit(pidFile, 10*time.Second)
+		return nil
 	}
+
+	if err := fw.StopDaemon(pidFile); err != nil {
+		return fmt.Errorf("stopping firewall daemon: %w", err)
+	}
+	// Wait for the daemon to exit so its Stop() finishes before ours.
+	fw.WaitForDaemonExit(pidFile, 10*time.Second)
 
 	// Belt-and-suspenders: stop any remaining firewall containers.
 	// The daemon's Stop() should handle this, but if the daemon was started

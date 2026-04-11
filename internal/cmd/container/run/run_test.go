@@ -603,7 +603,7 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // TestImageArg tests image argument handling for the run command.
 // Tests @ symbol resolution (using mock Docker client) and explicit image pass-through.
 func TestImageArg(t *testing.T) {
-	// Tests for @ symbol resolution (uses mock.FakeClient)
+	// Tests for @ symbol resolution (uses mocks.FakeClient)
 	// ResolveImageWithSource resolves project images only (no default image fallback).
 	// Returns nil when no project image with :latest tag is found.
 	t.Run("@ symbol resolution", func(t *testing.T) {
