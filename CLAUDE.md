@@ -360,6 +360,14 @@ All external dependencies must be pinned to exact versions with integrity verifi
 
 **Why:** Version tags are mutable — a compromised upstream can re-tag a release. SHA pins are immutable and verifiable. This is defense-in-depth against supply chain attacks (see `docs/threat-model.mdx`).
 
+**Multi-arch image pin rule:** every `@sha256:...` pin on a container image (`FROM` lines in any Dockerfile, `DefaultGoBuilderImage` in `internal/bundler/dockerfile.go`, `embeddedImageSpec.dockerfile` literals in `internal/firewall/manager.go`, etc.) **must** be a multi-arch manifest list (OCI image index, `application/vnd.oci.image.index.v1+json`), **not** a per-platform image digest. Single-platform digests break cross-platform builds because BuildKit can't select a matching per-arch manifest. Verify before committing with:
+
+```bash
+docker buildx imagetools inspect <image>@sha256:<digest>
+```
+
+`MediaType` must be `application/vnd.oci.image.index.v1+json`. `docker pull <image:tag>` + `docker inspect --format '{{index .RepoDigests 0}}'` typically returns the manifest-list digest for official images on Docker Hub, but always confirm via `imagetools inspect`.
+
 **Firewall stack binaries specifically:** `internal/firewall/assets/ebpf-manager` and `internal/firewall/assets/coredns-clawker` are Linux binaries `go:embed`'d into the clawker CLI, with BPF bytecode and the `dnsbpf` plugin baked in respectively. **Nothing generated is committed** — no `.o`, no `bpf2go` Go wrappers, no binaries. They are produced fresh on every `make ebpf-binary` / `make coredns-binary` (transitively triggered by `make test`, `make clawker-build`, etc.) inside the pinned multi-stage Docker builds. Reproducibility is structural: the pinned recipe *is* the binary, there is no separate committed artifact to drift from. See `internal/ebpf/REPRODUCIBILITY.md` for the full provenance chain and the pin-update procedure.
 
 **When adding any new external dependency**, look up the actual release SHA/digest — do not rely on training data or cached knowledge for version hashes.

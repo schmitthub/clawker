@@ -39,7 +39,7 @@ embedded Linux binaries and the BPF bytecode inside them.
 | `llvm` version | `Dockerfile.firewall` — `LLVM_VERSION` build arg | `llvm-strip` used by `bpf2go` to strip debug symbols from the emitted `.o` |
 | `libbpf-dev` version | `Dockerfile.firewall` — `LIBBPF_DEV_VERSION` build arg | `bpf/bpf_helpers.h`, `bpf/bpf_endian.h` |
 | `linux-libc-dev` version | `Dockerfile.firewall` — `LINUX_LIBC_DEV_VERSION` build arg | `linux/bpf.h`, `linux/types.h`, `asm/types.h` — the kernel UAPI types clawker consumes (clawker is non-CO-RE; UAPI is sufficient) |
-| Go toolchain | `Dockerfile.firewall` — `golang:1.25.8-alpine@sha256:...` used in three places (`COPY --from=` in the `bpf-builder` stage for `go generate`, and `FROM` lines of `ebpf-manager-builder` and `coredns-builder` stages); all three must be the same digest | All Go compilation including the `go:embed` of BPF bytecode |
+| Go toolchain | `Dockerfile.firewall` — `golang:1.25.9-alpine@sha256:...` used in three places (`COPY --from=` in the `bpf-builder` stage for `go generate`, and `FROM` lines of `ebpf-manager-builder` and `coredns-builder` stages); all three must be the same digest, and the digest MUST be a multi-arch manifest list (OCI image index) so cross-platform builds can select the right per-arch manifest | All Go compilation including the `go:embed` of BPF bytecode |
 | `bpf2go` | `internal/ebpf/gen.go` — `go run github.com/cilium/ebpf/cmd/bpf2go@v0.21.0` | BPF → Go code generation shape, loader compatibility with the `cilium/ebpf` runtime |
 | BPF C source | `internal/ebpf/bpf/clawker.c`, `common.h` | The program logic itself |
 | ebpf-manager Go source | `internal/ebpf/manager.go`, `types.go`, `cmd/main.go`, `gen.go` | The host-side BPF loader and RPC surface |
@@ -157,10 +157,25 @@ docker inspect --format '{{index .RepoDigests 0}}' golang:${GO_VER}-alpine
 The resulting `golang@sha256:...` reference appears **three times** in
 `Dockerfile.firewall` and all three must match:
 
-1. `COPY --from=golang:1.25.8-alpine@sha256:...` in the `bpf-builder` stage
+1. `COPY --from=golang:1.25.9-alpine@sha256:...` in the `bpf-builder` stage
    (used to copy the Go toolchain in for `go generate`)
-2. `FROM golang:1.25.8-alpine@sha256:... AS ebpf-manager-builder`
-3. `FROM golang:1.25.8-alpine@sha256:... AS coredns-builder`
+2. `FROM golang:1.25.9-alpine@sha256:... AS ebpf-manager-builder`
+3. `FROM golang:1.25.9-alpine@sha256:... AS coredns-builder`
+
+**Multi-arch constraint**: the digest MUST be a manifest list (OCI image
+index), not a per-platform image digest. Verify with:
+
+```bash
+docker buildx imagetools inspect golang:<version>-alpine@sha256:<digest>
+```
+
+`MediaType` must be `application/vnd.oci.image.index.v1+json`. Per-platform
+digests (like the output of `docker manifest inspect --verbose` showing a
+single architecture) break cross-platform builds because buildx can't
+pick a matching per-arch manifest from them. Same constraint applies to
+the `debian:bookworm-slim` and `alpine:3.21` pins below and to the
+`DefaultGoBuilderImage` constant in `internal/bundler/dockerfile.go` —
+every image pin in the project should be a manifest list.
 
 ### 4. `bpf2go` version
 

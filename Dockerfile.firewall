@@ -78,7 +78,7 @@ RUN apt-get update && \
 # Go toolchain copied from the pinned golang:alpine image used by stages 2
 # and 4 so bpf2go runs under the exact same Go version. Update this digest
 # in lockstep with the two `FROM golang:...` lines below.
-COPY --from=golang:1.25.8-alpine@sha256:8e02eb337d9e0ea459e041f1ee5eece41cbb61f1d83e7d883a3e2fb4862063fa /usr/local/go /usr/local/go
+COPY --from=golang:1.25.9-alpine@sha256:7a00384194cf2cb68924bbb918d675f1517357433c8541bac0ab2f929b9d5447 /usr/local/go /usr/local/go
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOCACHE=/tmp/gocache
 ENV GOMODCACHE=/tmp/gomodcache
@@ -102,7 +102,7 @@ RUN go generate ./internal/ebpf/...
 # Compiles ./internal/ebpf/cmd → /ebpf-manager. Pulls the generated BPF
 # bindings from stage 1 via `COPY --from=bpf-builder` so this stage doesn't
 # need clang.
-FROM golang:1.25.8-alpine@sha256:8e02eb337d9e0ea459e041f1ee5eece41cbb61f1d83e7d883a3e2fb4862063fa AS ebpf-manager-builder
+FROM golang:1.25.9-alpine@sha256:7a00384194cf2cb68924bbb918d675f1517357433c8541bac0ab2f929b9d5447 AS ebpf-manager-builder
 
 WORKDIR /build
 
@@ -138,7 +138,7 @@ COPY --from=ebpf-manager-builder /ebpf-manager /ebpf-manager
 # so it must overlay the bpf2go-generated wrappers from stage 1 the same way
 # ebpf-manager-builder does — otherwise `go build` fails with "undefined:
 # clawkerRouteKey" etc.
-FROM golang:1.25.8-alpine@sha256:8e02eb337d9e0ea459e041f1ee5eece41cbb61f1d83e7d883a3e2fb4862063fa AS coredns-builder
+FROM golang:1.25.9-alpine@sha256:7a00384194cf2cb68924bbb918d675f1517357433c8541bac0ab2f929b9d5447 AS coredns-builder
 
 WORKDIR /build
 

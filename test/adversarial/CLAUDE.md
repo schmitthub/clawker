@@ -178,7 +178,7 @@ test/adversarial/
 ├── Dockerfile                   # Multi-stage Go build for C2 server
 ├── compose.yml                  # Docker Compose (attacker on testnet)
 ├── attacker-server/
-│   ├── go.mod                   # Go 1.25.8, sqlite
+│   ├── go.mod                   # Go 1.25.9, sqlite
 │   ├── go.sum
 │   └── main.go                  # C2 server
 ├── payloads/
