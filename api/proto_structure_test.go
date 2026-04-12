@@ -72,7 +72,7 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 
 	t.Run("AdminService registered on gRPC server", func(t *testing.T) {
 		// Verify the generated registration function exists.
-		srv := grpc.NewServer() //nolint:staticcheck // test-only server, no TLS needed
+		srv := grpc.NewServer() //nolint:staticcheck // nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection -- test-only, no TLS needed
 		// This compiles only if the generated interface + registration exist.
 		adminv1.RegisterAdminServiceServer(srv, nil)
 	})

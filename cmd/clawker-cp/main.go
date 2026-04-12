@@ -1,9 +1,12 @@
 // clawker-cp is the containerized clawker control plane binary.
 //
 // It runs as the main process in the CP container, supervising Hydra,
-// Oathkeeper, and Kratos as subprocesses. It loads eBPF programs, serves
-// a gRPC AdminService with vendored Oathkeeper middleware, and reports
+// Oathkeeper, Kratos as subprocesses. It loads eBPF programs, serves a
+// gRPC AdminService with Hydra token introspection, and reports
 // readiness on /healthz.
+//
+// Oathkeeper runs as a subprocess for future webui HTTP auth. gRPC auth
+// (CLI + agents) uses direct Hydra introspection — no Ory Go imports.
 //
 // Startup sequence (any failure = crash with diagnostic error):
 //  1. Start Kratos subprocess
@@ -11,9 +14,9 @@
 //  3. Wait for both healthy
 //  4. Read CLI JWK from bind-mounted file
 //  5. Register CLI client via Hydra admin API
-//  6. Start Oathkeeper HTTP proxy subprocess
+//  6. Start Oathkeeper HTTP proxy subprocess (for future webui)
 //  7. Load eBPF programs
-//  8. Start gRPC admin API with Oathkeeper middleware
+//  8. Start gRPC admin API with Hydra token introspection
 //  9. Report healthy on /healthz
 package main
 
@@ -121,6 +124,9 @@ func run(adminPort, healthPort int, serverCertPath, serverKeyPath, jwkPath strin
 	log.Info().Msg("step 5: CLI client registration (placeholder — needs Hydra Go SDK)")
 
 	// --- Step 6: Start Oathkeeper ---
+	// Oathkeeper runs as an HTTP reverse proxy for future webui auth.
+	// gRPC auth (CLI + agents) bypasses Oathkeeper entirely — it uses
+	// direct Hydra token introspection via AuthInterceptor.
 	oathkeeperCmd := exec.Command("oathkeeper", "serve",
 		"--config", "/etc/clawker/oathkeeper.yaml",
 	)
@@ -165,10 +171,14 @@ func run(adminPort, healthPort int, serverCertPath, serverKeyPath, jwkPath strin
 		MinVersion:   tls.VersionTLS13,
 	}
 
+	// Auth interceptor: validates bearer tokens via Hydra introspection.
+	hydraIntrospectURL := fmt.Sprintf("http://127.0.0.1:%d/admin/oauth2/introspect", consts.HydraAdminPort)
+	authInterceptor := controlplane.NewAuthInterceptor(hydraIntrospectURL, controlplane.AdminMethodScopes(), log)
+
 	grpcServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
-		// TODO: Add authkeeper middleware interceptors here once
-		// Oathkeeper health check is confirmed. For now, TLS-only.
+		grpc.ChainUnaryInterceptor(authInterceptor.UnaryInterceptor()),
+		grpc.ChainStreamInterceptor(authInterceptor.StreamInterceptor()),
 	)
 
 	handler := controlplane.NewAdminHandler(ebpfMgr, log)

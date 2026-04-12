@@ -37,10 +37,6 @@ linters:
           - bodyclose
           - gosec
   settings:
-    gomoddirectives:
-      replace-allow-list:
-        - go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
-        - go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace
     gocritic:
       disabled-checks:
         - appendAssign

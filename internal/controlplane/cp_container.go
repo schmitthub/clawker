@@ -8,6 +8,7 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -38,8 +39,12 @@ var localhost = netip.MustParseAddr("127.0.0.1")
 // plane container. The config includes all bind mounts, port bindings,
 // labels, and capabilities needed to run the CP with the Ory auth stack.
 //
-// The dataDir is the clawker data directory containing auth material.
-// The adminPort is the gRPC admin API port from Settings.
+// Bind mounts:
+//   - CLI signing JWK (public key) → for Hydra client registration (read-only)
+//   - Server TLS cert + key → for gRPC TLS (read-only)
+//   - /sys/fs/cgroup, /sys/fs/bpf → for eBPF programs
+//
+// The CLI's private signing key NEVER enters the container.
 func BuildCPContainerConfig(dataDir string, adminPort int) (*CPContainerConfig, error) {
 	portBindings := network.PortMap{
 		// gRPC admin API — configurable port from Settings.
@@ -50,7 +55,7 @@ func BuildCPContainerConfig(dataDir string, adminPort int) (*CPContainerConfig, 
 		network.MustParsePort(fmt.Sprintf("%d/tcp", consts.HydraPublicPort)): {
 			{HostIP: localhost, HostPort: strconv.Itoa(consts.HydraPublicPort)},
 		},
-		// Oathkeeper HTTP proxy.
+		// Oathkeeper HTTP proxy (future webui auth).
 		network.MustParsePort(fmt.Sprintf("%d/tcp", consts.OathkeeperHTTPPort)): {
 			{HostIP: localhost, HostPort: strconv.Itoa(consts.OathkeeperHTTPPort)},
 		},
@@ -60,33 +65,36 @@ func BuildCPContainerConfig(dataDir string, adminPort int) (*CPContainerConfig, 
 		},
 	}
 
-	// Bind mounts: only public material is mounted into the container.
-	// Private keys (CA key, CLI signing key, CLI mTLS key) NEVER enter containers.
 	mounts := []mount.Mount{
+		// CLI's public signing key (JWK) for Hydra client registration.
 		{
 			Type:     mount.TypeBind,
-			Source:   consts.AuthCACertPath(dataDir),
-			Target:   "/etc/clawker/auth/ca/ca.pem",
+			Source:   auth.SigningJWKPath(dataDir),
+			Target:   "/etc/clawker/cli/signing-jwk.json",
 			ReadOnly: true,
 		},
+		// Server TLS certificate.
 		{
 			Type:     mount.TypeBind,
-			Source:   consts.AuthCLISigningJWKPath(dataDir),
-			Target:   "/etc/clawker/auth/cli/signing-jwk.json",
+			Source:   auth.ServerCertPath(dataDir),
+			Target:   "/etc/clawker/tls/server.pem",
 			ReadOnly: true,
 		},
+		// Server TLS private key (CP needs it to serve TLS).
 		{
 			Type:     mount.TypeBind,
-			Source:   consts.AuthServerCertDir(dataDir),
-			Target:   "/etc/clawker/auth/certs/server",
+			Source:   auth.ServerKeyPath(dataDir),
+			Target:   "/etc/clawker/tls/server.key",
 			ReadOnly: true,
 		},
+		// cgroup filesystem for eBPF program attachment.
 		{
 			Type:     mount.TypeBind,
 			Source:   "/sys/fs/cgroup",
 			Target:   "/sys/fs/cgroup",
 			ReadOnly: true,
 		},
+		// BPF filesystem for pinned maps.
 		{
 			Type:   mount.TypeBind,
 			Source: "/sys/fs/bpf",

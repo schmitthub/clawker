@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 )
@@ -42,13 +43,13 @@ func TestINV_B1_006_PrivateKeysNeverMounted(t *testing.T) {
 	require.NotNil(t, cpConfig, "BuildCPContainerConfig must return a non-nil config")
 
 	// These paths must NEVER appear as mount sources.
+	// The CLI's private signing key is used to sign JWT assertions
+	// and must never enter any container.
 	forbiddenPaths := []struct {
 		name string
 		path string
 	}{
-		{"CA private key", consts.AuthCAKeyPath(dataDir)},
-		{"CLI signing key", consts.AuthCLISigningKeyPath(dataDir)},
-		{"CLI mTLS key", consts.AuthCLIKeyPath(dataDir)},
+		{"CLI signing key", auth.SigningKeyPath(dataDir)},
 	}
 
 	for _, fp := range forbiddenPaths {
@@ -77,8 +78,9 @@ func TestINV_B1_006_PublicMaterialIsMounted(t *testing.T) {
 		name string
 		path string
 	}{
-		{"CA cert", consts.AuthCACertPath(dataDir)},
-		{"CLI signing JWK", consts.AuthCLISigningJWKPath(dataDir)},
+		{"CLI signing JWK", auth.SigningJWKPath(dataDir)},
+		{"Server TLS cert", auth.ServerCertPath(dataDir)},
+		{"Server TLS key", auth.ServerKeyPath(dataDir)},
 	}
 
 	for _, rs := range requiredSources {

@@ -1,22 +1,14 @@
 package controlplane
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-
-	"google.golang.org/grpc"
 
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/authkeeper"
 )
 
 // HydraClientRegistration represents the configuration for registering
@@ -42,7 +34,6 @@ func CLIClientRegistration() *HydraClientRegistration {
 	// validation, we need a structurally valid JWKS.
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		// Should not happen with P-256 + crypto/rand.
 		return nil
 	}
 
@@ -91,95 +82,17 @@ func buildJWKS(pub *ecdsa.PublicKey) (json.RawMessage, error) {
 	return json.Marshal(jwks)
 }
 
-// CPGRPCServerOptions returns the gRPC server options for the CP admin API,
-// including the Oathkeeper authorization interceptor.
-//
-// It generates a temporary Oathkeeper config file that configures:
-//   - bearer_token authenticator: validates tokens via Hydra's introspection endpoint
-//   - allow authorizer: delegates authz decisions to the bearer token check
-//   - noop mutator: passes the request through unchanged
-//
-// The hydraAdminURL is the base URL of the Hydra admin API (e.g.,
-// "http://127.0.0.1:4445") and requiredScope is the OAuth2 scope
-// required for admin API access (e.g., "firewall:admin").
-func CPGRPCServerOptions(hydraAdminURL, requiredScope string) []grpc.ServerOption {
-	ctx := context.Background()
-
-	configFile, err := writeOathkeeperConfig(hydraAdminURL, requiredScope)
-	if err != nil {
-		// Fall back to a deny-all interceptor if config generation fails.
-		// This is a safety net — production code should never reach here.
-		return []grpc.ServerOption{
-			grpc.UnaryInterceptor(denyAllUnaryInterceptor),
-			grpc.StreamInterceptor(denyAllStreamInterceptor),
-		}
-	}
-
-	mw, err := authkeeper.New(ctx, authkeeper.WithConfigFile(configFile))
-	if err != nil {
-		return []grpc.ServerOption{
-			grpc.UnaryInterceptor(denyAllUnaryInterceptor),
-			grpc.StreamInterceptor(denyAllStreamInterceptor),
-		}
-	}
-
-	return []grpc.ServerOption{
-		grpc.UnaryInterceptor(mw.UnaryInterceptor()),
-		grpc.StreamInterceptor(mw.StreamInterceptor()),
-	}
-}
-
-// writeOathkeeperConfig generates a temporary Oathkeeper config file for the
-// CP's embedded middleware. The config enables bearer_token authentication
-// against the provided Hydra admin URL.
-func writeOathkeeperConfig(hydraAdminURL, requiredScope string) (string, error) {
-	config := fmt.Sprintf(`authenticators:
-  bearer_token:
-    enabled: true
-    config:
-      check_session_url: %s/admin/oauth2/introspect
-      token_from:
-        header: authorization
-  noop:
-    enabled: true
-  anonymous:
-    enabled: true
-authorizers:
-  allow:
-    enabled: true
-mutators:
-  noop:
-    enabled: true
-`, hydraAdminURL)
-
-	dir, err := os.MkdirTemp("", "clawker-oathkeeper-*")
-	if err != nil {
-		return "", fmt.Errorf("create temp dir: %w", err)
-	}
-
-	configPath := filepath.Join(dir, "oathkeeper.yaml")
-	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
-		return "", fmt.Errorf("write config: %w", err)
-	}
-	return configPath, nil
-}
-
-func denyAllUnaryInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, _ grpc.UnaryHandler) (any, error) {
-	return nil, authkeeper.ErrDenied
-}
-
-func denyAllStreamInterceptor(_ any, _ grpc.ServerStream, _ *grpc.StreamServerInfo, _ grpc.StreamHandler) error {
-	return authkeeper.ErrDenied
-}
-
-// CPGRPCServerTLSConfig constructs the tls.Config that the CP gRPC server
-// uses for mTLS authentication. The config requires and verifies client
-// certificates signed by the given CA pool.
-func CPGRPCServerTLSConfig(serverCert tls.Certificate, clientCAPool *x509.CertPool) *tls.Config {
-	return &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    clientCAPool,
-		MinVersion:   tls.VersionTLS13,
+// AdminMethodScopes returns the method→scope map for the AdminService.
+// Used by NewAuthInterceptor when wiring the CP gRPC server.
+func AdminMethodScopes() map[string]string {
+	const svc = "/clawker.admin.v1.AdminService/"
+	return map[string]string{
+		svc + "Install":         consts.ScopeAdmin,
+		svc + "Remove":          consts.ScopeAdmin,
+		svc + "Enable":          consts.ScopeAdmin,
+		svc + "Disable":         consts.ScopeAdmin,
+		svc + "SyncRoutes":      consts.ScopeAdmin,
+		svc + "ResolveHostname": consts.ScopeAdmin,
+		svc + "Health":          consts.ScopeAdmin,
 	}
 }

@@ -1177,24 +1177,40 @@ type embeddedImageSpec struct {
 }
 
 // cpImageSpec is the template for the clawker-cp infrastructure image.
-// The image bundles two binaries:
+// Multi-stage distroless build:
 //
+//   - Stage "musl": alpine for musl libc (Ory binaries are dynamically linked)
+//   - Stages "hydra", "oathkeeper", "kratos": official Ory images, pinned by digest
+//   - Final stage: distroless/static-debian12 + musl + all binaries
+//
+// Bundled binaries:
 //   - clawker-cp: the CP daemon. Set as CMD, runs as PID 1.
-//   - ebpf-manager: the short-lived break-glass debug CLI, invoked
-//     manually via `docker exec clawker-cp ebpf-manager ...`. NOT the
-//     primary interface — all machine-to-machine calls go via the
-//     gRPC ControlPlaneService on the CP's UDS listener.
+//   - ebpf-manager: break-glass debug CLI via `docker exec`.
+//   - hydra: OAuth2 token server (subprocess managed by clawker-cp).
+//   - oathkeeper: HTTP auth proxy for future webui (subprocess).
+//   - kratos: identity server for future user management (subprocess).
 //
-// Binary bytes are populated per-call in ensureCPImage to avoid copying
-// the large []byte fields at package init time.
+// Binary bytes for clawker-cp and ebpf-manager are populated per-call
+// in ensureCPImage to avoid copying large []byte fields at package init time.
 var cpImageSpec = embeddedImageSpec{
 	tag: cpImageTag,
 	binaries: []embeddedBinary{
 		{fileName: "clawker-cp"},
 		{fileName: "ebpf-manager"},
 	},
-	dockerfile: "FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c\n" +
-		"RUN apk add --no-cache iproute2\n" +
+	dockerfile: "" +
+		// Ory binaries (musl-linked, pinned by multi-arch manifest digest).
+		"FROM oryd/hydra:v2.3.0@sha256:b94007e19a1f7f78157e7f4ea340da8a55b5f104a0f1198755c256f38ef32b4b AS hydra\n" +
+		"FROM oryd/oathkeeper:v0.40.9@sha256:dc3a4f04be20916940df0d77167c3b76cb3b5bb1636b4f8aabdd89d0691195a4 AS oathkeeper\n" +
+		"FROM oryd/kratos:v1.3.1@sha256:fe2428f103a6240c064b6ea77d3088610865c55fcebccb30355857eccdc25b4b AS kratos\n" +
+		// Alpine provides musl libc for the dynamically-linked Ory binaries.
+		"FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c AS musl\n" +
+		// Final stage: distroless with musl + all binaries.
+		"FROM gcr.io/distroless/static-debian12@sha256:20bc6c0bc4d625a22a8fde3e55f6515709b32055ef8fb9cfbddaa06d1760f838\n" +
+		"COPY --from=musl /lib/ld-musl-*.so.1 /lib/\n" +
+		"COPY --from=hydra /usr/bin/hydra /usr/local/bin/hydra\n" +
+		"COPY --from=oathkeeper /usr/bin/oathkeeper /usr/local/bin/oathkeeper\n" +
+		"COPY --from=kratos /usr/bin/kratos /usr/local/bin/kratos\n" +
 		"COPY clawker-cp /usr/local/bin/clawker-cp\n" +
 		"COPY ebpf-manager /usr/local/bin/ebpf-manager\n" +
 		"CMD [\"/usr/local/bin/clawker-cp\"]\n",
