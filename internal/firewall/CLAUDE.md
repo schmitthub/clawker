@@ -1,6 +1,19 @@
 # Firewall Package
 
-Domain contracts, Docker implementation, daemon, certificates, and network management for the eBPF + custom CoreDNS + Envoy firewall stack.
+Domain contracts, Docker implementation, daemon, certificates, and network management for the clawker-cp (control plane) + custom CoreDNS + Envoy firewall stack.
+
+## Control plane integration (important)
+
+As of the `feat/control-plane` branch, the firewall manager no longer uses `docker exec` as its interface to the BPF subsystem. The previous `clawker-ebpf` container (which ran `sleep infinity` + served short-lived `docker exec ebpf-manager <subcommand>` calls) has been replaced by `clawker-cp`, a long-lived Go daemon that owns `ebpf.Manager.Load()` lifetime in-process and serves a typed gRPC `ControlPlaneService` over a Unix domain socket with mTLS + OIDC + JWT authz.
+
+- `Manager` now holds a lazy `cpClient v1.ControlPlaneServiceClient` built on first use via `oidc_client.go` helpers. Cert material lives at `<firewallDataDir>/cp-certs/` (written by the CP at startup, read by the CLI).
+- `ebpfExecImpl` / `ebpfExecOutputImpl` are now gRPC dispatch shims over the legacy string-arg API. The `ebpfExecFn` / `ebpfExecOutputFn` test seams are unchanged — existing unit tests stubbing them continue to pass.
+- `waitForCPReady()` polls `<firewallDataDir>/cp-ready` after starting the container; the CP writes this file when certs + BPF + listeners are all up.
+- `ebpfExec("init")` calls are gone from `EnsureRunning` and `regenerateAndRestart`. The CP runs `Load()` exactly once per process lifetime, which permanently fixes the hot-reload pinning bug.
+- `cpContainerConfig()` bind-mounts `<firewallDataDir>` into `/var/run/clawker-cp` so host and container share the same cert / socket / ready-file directory.
+- The `clawker-cp` image bundles both `clawker-cp` (CMD, the daemon) and `ebpf-manager` (break-glass only — see `internal/controlplane/ebpf/cmd/CLAUDE.md`).
+
+See `internal/controlplane/CLAUDE.md` for the full auth architecture + component layout.
 
 <critical>
 ## Envoy References
@@ -18,11 +31,14 @@ That rule is auto-loaded when touching `envoy.go`, `envoy_test.go`, or `manager.
 | `envoy.go` | `GenerateEnvoyConfig(rules)` — Envoy bootstrap YAML from egress rules (with access logging) |
 | `certs.go` | CA and per-domain TLS certificate management for TLS inspection/termination |
 | `daemon.go` | Background daemon process — health probes + container watcher |
-| `manager.go` | `Manager` — Docker implementation of `FirewallManager`; also builds the custom CoreDNS + eBPF-manager images from embedded binaries |
+| `manager.go` | `Manager` — Docker implementation of `FirewallManager`; also builds the custom CoreDNS + clawker-cp images from embedded binaries; owns the gRPC client to the CP |
 | `network.go` | `NetworkInfo`, Docker network creation, static IP computation |
 | `rules.go` | `NewRulesStore(cfg)` — `storage.Store[EgressRulesFile]` factory |
-| `ebpf_embed.go` | `//go:embed assets/ebpf-manager` — Linux-static eBPF manager binary |
+| `oidc_client.go` | CLI-side OIDC client helpers: cert-path resolution, `BuildCPTLSConfig`, `NewCPTokenSource`, UDS dialer. Used by `Manager.cpClient()` to construct the gRPC client. |
+| `cp_embed.go` | `//go:embed assets/clawker-cp` — Linux-static control plane daemon |
+| `ebpf_embed.go` | `//go:embed assets/ebpf-manager` — Linux-static break-glass CLI bundled alongside clawker-cp in the image |
 | `coredns_embed.go` | `//go:embed assets/coredns-clawker` — Linux-static custom CoreDNS binary with dnsbpf plugin |
+| `cp_client_test.go` | End-to-end auth test: real CA + OIDC listener + gRPC listener + authz interceptor, exercising the full mTLS+JWT+scope chain through the CLI-side client helpers |
 | `mocks/manager_mock.go` | `FirewallManagerMock` — moq-generated test double |
 
 ## Interface

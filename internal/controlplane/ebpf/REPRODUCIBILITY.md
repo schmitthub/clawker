@@ -34,12 +34,12 @@ embedded Linux binaries and the BPF bytecode inside them.
 
 | Input | Pin location | What it anchors |
 |---|---|---|
-| Base OS image (BPF stage) | `Dockerfile.firewall` — `debian:bookworm-slim@sha256:...` | The apt archive contents the BPF compile resolves against |
-| `clang` version | `Dockerfile.firewall` — `CLANG_VERSION` build arg | BPF codegen output |
-| `llvm` version | `Dockerfile.firewall` — `LLVM_VERSION` build arg | `llvm-strip` used by `bpf2go` to strip debug symbols from the emitted `.o` |
-| `libbpf-dev` version | `Dockerfile.firewall` — `LIBBPF_DEV_VERSION` build arg | `bpf/bpf_helpers.h`, `bpf/bpf_endian.h` |
-| `linux-libc-dev` version | `Dockerfile.firewall` — `LINUX_LIBC_DEV_VERSION` build arg | `linux/bpf.h`, `linux/types.h`, `asm/types.h` — the kernel UAPI types clawker consumes (clawker is non-CO-RE; UAPI is sufficient) |
-| Go toolchain | `Dockerfile.firewall` — `golang:1.25.9-alpine@sha256:...` used in three places (`COPY --from=` in the `bpf-builder` stage for `go generate`, and `FROM` lines of `ebpf-manager-builder` and `coredns-builder` stages); all three must be the same digest, and the digest MUST be a multi-arch manifest list (OCI image index) so cross-platform builds can select the right per-arch manifest | All Go compilation including the `go:embed` of BPF bytecode |
+| Base OS image (BPF stage) | `Dockerfile.controlplane` — `debian:bookworm-slim@sha256:...` | The apt archive contents the BPF compile resolves against |
+| `clang` version | `Dockerfile.controlplane` — `CLANG_VERSION` build arg | BPF codegen output |
+| `llvm` version | `Dockerfile.controlplane` — `LLVM_VERSION` build arg | `llvm-strip` used by `bpf2go` to strip debug symbols from the emitted `.o` |
+| `libbpf-dev` version | `Dockerfile.controlplane` — `LIBBPF_DEV_VERSION` build arg | `bpf/bpf_helpers.h`, `bpf/bpf_endian.h` |
+| `linux-libc-dev` version | `Dockerfile.controlplane` — `LINUX_LIBC_DEV_VERSION` build arg | `linux/bpf.h`, `linux/types.h`, `asm/types.h` — the kernel UAPI types clawker consumes (clawker is non-CO-RE; UAPI is sufficient) |
+| Go toolchain | `Dockerfile.controlplane` — `golang:1.25.9-alpine@sha256:...` used in three places (`COPY --from=` in the `bpf-builder` stage for `go generate`, and `FROM` lines of `ebpf-manager-builder` and `coredns-builder` stages); all three must be the same digest, and the digest MUST be a multi-arch manifest list (OCI image index) so cross-platform builds can select the right per-arch manifest | All Go compilation including the `go:embed` of BPF bytecode |
 | `bpf2go` | `internal/ebpf/gen.go` — `go run github.com/cilium/ebpf/cmd/bpf2go@v0.21.0` | BPF → Go code generation shape, loader compatibility with the `cilium/ebpf` runtime |
 | BPF C source | `internal/ebpf/bpf/clawker.c`, `common.h` | The program logic itself |
 | ebpf-manager Go source | `internal/ebpf/manager.go`, `types.go`, `cmd/main.go`, `gen.go` | The host-side BPF loader and RPC surface |
@@ -55,19 +55,19 @@ Every field access in `clawker.c` targets stable kernel UAPI
 ```
 make clawker
   └── make clawker-build
-        ├── bpf-bindings  → docker buildx build -f Dockerfile.firewall
+        ├── bpf-bindings  → docker buildx build -f Dockerfile.controlplane
         │                     --target=bpf-bindings-extract
         │                     --output=type=local,dest=internal/ebpf/...
         │   produces: internal/ebpf/clawker_{x86,arm64}_bpfel.{go,o}
         │   (gitignored; exists so host-side go/gopls can compile
         │    internal/ebpf/manager.go, which references bpf2go types)
         │
-        ├── ebpf-binary   → docker buildx build -f Dockerfile.firewall
+        ├── ebpf-binary   → docker buildx build -f Dockerfile.controlplane
         │                     --target=ebpf-manager-extract
         │                     --output=type=local,dest=internal/firewall/assets
         │   produces: internal/firewall/assets/ebpf-manager
         │
-        ├── coredns-binary → docker buildx build -f Dockerfile.firewall
+        ├── coredns-binary → docker buildx build -f Dockerfile.controlplane
         │                     --target=coredns-extract
         │                     --output=type=local,dest=internal/firewall/assets
         │   produces: internal/firewall/assets/coredns-clawker
@@ -127,7 +127,7 @@ docker inspect --format '{{index .RepoDigests 0}}' debian:bookworm-slim
 ```
 
 Paste the full `debian@sha256:...` reference into the `FROM` line of the
-`bpf-builder` stage in `Dockerfile.firewall`.
+`bpf-builder` stage in `Dockerfile.controlplane`.
 
 ### 2. apt package versions
 
@@ -141,7 +141,7 @@ docker run --rm debian@sha256:<new-digest> bash -c '
 ```
 
 Paste each `Candidate:` version into the matching `ARG` in
-`Dockerfile.firewall` (`CLANG_VERSION`, `LLVM_VERSION`, `LIBBPF_DEV_VERSION`,
+`Dockerfile.controlplane` (`CLANG_VERSION`, `LLVM_VERSION`, `LIBBPF_DEV_VERSION`,
 `LINUX_LIBC_DEV_VERSION`).
 
 ### 3. Go toolchain digest
@@ -155,7 +155,7 @@ docker inspect --format '{{index .RepoDigests 0}}' golang:${GO_VER}-alpine
 ```
 
 The resulting `golang@sha256:...` reference appears **three times** in
-`Dockerfile.firewall` and all three must match:
+`Dockerfile.controlplane` and all three must match:
 
 1. `COPY --from=golang:1.25.9-alpine@sha256:...` in the `bpf-builder` stage
    (used to copy the Go toolchain in for `go generate`)

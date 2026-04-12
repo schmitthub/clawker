@@ -22,7 +22,7 @@ import (
 	"os"
 	"strconv"
 
-	clawkerebpf "github.com/schmitthub/clawker/internal/ebpf"
+	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 

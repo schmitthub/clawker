@@ -24,3 +24,7 @@ vendor/
 
 # Generated files
 *_generated.go
+
+# Protobuf generated code — protoc-gen-go uses unsafe internally for
+# descriptor compression; this is standard generated output, not our code.
+*.pb.go

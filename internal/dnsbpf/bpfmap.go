@@ -6,7 +6,7 @@ import (
 
 	"github.com/cilium/ebpf"
 
-	clawkerebpf "github.com/schmitthub/clawker/internal/ebpf"
+	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
 )
 
 // DefaultPinPath is where the eBPF manager pins the dns_cache map.

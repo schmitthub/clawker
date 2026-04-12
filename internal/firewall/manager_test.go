@@ -46,12 +46,18 @@ func (e errTestNotFound) NotFound()     {}
 // using an isolated config (so the rules-store write path works). Tests can
 // then mutate the fake's *Fn fields and the manager's test-seam hook fields
 // to inject specific behaviours.
+//
+// The CP readiness gate is stubbed to return nil immediately — tests that
+// exercise Enable/Disable/Bypass don't care about waiting for a real CP
+// container to write a cp-ready file. Individual tests that DO need to
+// observe readiness behavior should overwrite mgr.waitForCPReadyFn.
 func newManagerWithFake(t *testing.T) (*Manager, *whailtest.FakeAPIClient, config.Config) {
 	t.Helper()
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	fake := &whailtest.FakeAPIClient{}
 	mgr, err := NewManager(fake, cfg, logger.Nop())
 	require.NoError(t, err)
+	mgr.waitForCPReadyFn = func(context.Context) error { return nil }
 	return mgr, fake, cfg
 }
 

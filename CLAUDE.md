@@ -273,7 +273,7 @@ All external dependencies must be pinned to exact versions with integrity verifi
 | Go tool installs (`go install`) | SHA commit hash or exact version | `go install tool@v2.0.1` or `tool@sha...` |
 | Container images in code | SHA256 digest in constants | `DefaultGoBuilderImage = "golang:1.24.1@sha256:..."` |
 | npm/pip installs in Dockerfiles | Exact version | `npm install -g @anthropic-ai/claude-code@${VERSION}` |
-| Firewall stack binaries (ebpf-manager, coredns-clawker) | Single pinned multi-stage `Dockerfile.firewall` — base image digest + apt package versions + Go toolchain digest + `bpf2go` version | `make ebpf-binary` / `make coredns-binary` invoke `docker buildx build` against the pinned recipe; no generated artifacts committed. See `internal/ebpf/REPRODUCIBILITY.md` |
+| Firewall stack binaries (ebpf-manager, coredns-clawker) | Single pinned multi-stage `Dockerfile.controlplane` — base image digest + apt package versions + Go toolchain digest + `bpf2go` version | `make ebpf-binary` / `make coredns-binary` invoke `docker buildx build` against the pinned recipe; no generated artifacts committed. See `internal/ebpf/REPRODUCIBILITY.md` |
 
 **Why:** Version tags are mutable — a compromised upstream can re-tag a release. SHA pins are immutable and verifiable. This is defense-in-depth against supply chain attacks (see `docs/threat-model.mdx`).
 

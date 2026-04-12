@@ -15,7 +15,7 @@ package ebpf
 // The generated files (clawker_*_bpfel.go, clawker_*_bpfel.o) are NOT
 // committed to the repo — they are gitignored and produced fresh on every
 // build by `make ebpf-binary`, which runs `go generate` inside the pinned
-// bpf-builder stage of Dockerfile.firewall. Reproducibility is structural:
+// bpf-builder stage of Dockerfile.controlplane. Reproducibility is structural:
 // the pinned multi-stage Dockerfile is the source of truth; there is no
 // separate committed artifact to drift from. See
 // internal/ebpf/REPRODUCIBILITY.md for the full provenance chain.

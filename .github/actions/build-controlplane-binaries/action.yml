@@ -1,15 +1,16 @@
-name: Build embedded firewall binaries
+name: Build embedded control plane binaries
 description: >
-  Builds the `ebpf-manager` and `coredns-clawker` Linux binaries via the
-  pinned `Dockerfile.firewall` multi-stage build, and materializes the
-  bpf2go-generated Go wrappers at `internal/ebpf/clawker_*_bpfel.{go,o}`.
+  Builds the `clawker-cp`, `ebpf-manager`, and `coredns-clawker` Linux
+  binaries via the pinned `Dockerfile.controlplane` multi-stage build, and
+  materializes the bpf2go-generated Go wrappers at
+  `internal/controlplane/ebpf/clawker_*_bpfel.{go,o}`.
 
   This is the one-stop prerequisite for any CI job that needs to compile,
   lint, vet, or otherwise analyze the full Go module tree — `internal/firewall`
-  uses `go:embed` on the two Linux binaries, and `internal/ebpf/manager.go`
-  references types declared in the bpf2go wrappers. Jobs that touch the
-  whole module and skip this step will fail with `undefined: clawkerRouteKey`
-  or missing `go:embed` targets.
+  uses `go:embed` on the three Linux binaries, and
+  `internal/controlplane/ebpf/manager.go` references types declared in the
+  bpf2go wrappers. Jobs that touch the whole module and skip this step will
+  fail with `undefined: clawkerRouteKey` or missing `go:embed` targets.
 
   Ordering rule: call this AFTER `actions/checkout`, and BEFORE any tool
   that does its own working-tree checkout (e.g. `golang/govulncheck-action`
@@ -30,6 +31,6 @@ runs:
       with:
         go-version-file: ${{ inputs.go-version-file }}
 
-    - name: Build embedded firewall binaries
+    - name: Build embedded control plane binaries
       shell: bash
-      run: make ebpf-binary coredns-binary
+      run: make ebpf-binary coredns-binary cp-binary

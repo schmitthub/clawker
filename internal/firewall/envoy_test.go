@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
-	clawkerebpf "github.com/schmitthub/clawker/internal/ebpf"
+	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
