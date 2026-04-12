@@ -1,0 +1,167 @@
+package controlplane
+
+import (
+	"context"
+	"net"
+
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	ebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
+	"github.com/schmitthub/clawker/internal/logger"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// AdminHandler implements adminv1.AdminServiceServer. Thin wrapper over
+// ebpf.Manager — each RPC validates inputs, calls the corresponding
+// Manager method, and maps results to the gRPC response type.
+type AdminHandler struct {
+	adminv1.UnimplementedAdminServiceServer
+
+	mgr *ebpf.Manager
+	log *logger.Logger
+
+	// resolveHostFn is injectable for tests. nil defaults to
+	// net.DefaultResolver.LookupHost.
+	resolveHostFn func(ctx context.Context, host string) ([]string, error)
+}
+
+// NewAdminHandler wires a handler to a loaded ebpf.Manager.
+func NewAdminHandler(mgr *ebpf.Manager, log *logger.Logger) *AdminHandler {
+	if log == nil {
+		log = logger.Nop()
+	}
+	return &AdminHandler{mgr: mgr, log: log}
+}
+
+// Health is the readiness probe. Exempt from auth.
+func (h *AdminHandler) Health(_ context.Context, _ *adminv1.HealthRequest) (*adminv1.HealthResponse, error) {
+	return &adminv1.HealthResponse{Ok: true}, nil
+}
+
+// Install attaches BPF programs to a container's cgroup and populates
+// its container_map entry.
+func (h *AdminHandler) Install(_ context.Context, req *adminv1.InstallRequest) (*adminv1.InstallResponse, error) {
+	if req.GetConfig() == nil {
+		return nil, status.Error(codes.InvalidArgument, "config is required")
+	}
+	if req.GetCgroupPath() == "" {
+		return nil, status.Error(codes.InvalidArgument, "cgroup_path is required")
+	}
+
+	cgroupID, err := ebpf.CgroupID(req.GetCgroupPath())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid cgroup path: %v", err)
+	}
+
+	cfg, err := ebpf.NewContainerConfig(
+		req.GetConfig().GetEnvoyIp(),
+		req.GetConfig().GetCorednsIp(),
+		req.GetConfig().GetGatewayIp(),
+		req.GetConfig().GetCidr(),
+		req.GetConfig().GetHostProxyIp(),
+		uint16(req.GetConfig().GetHostProxyPort()),
+		uint16(req.GetConfig().GetEgressPort()),
+	)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "build container config: %v", err)
+	}
+
+	if err := h.mgr.Enable(cgroupID, req.GetCgroupPath(), cfg); err != nil {
+		h.log.Error().Err(err).
+			Str("cgroup_path", req.GetCgroupPath()).
+			Str("container_id", req.GetContainerId()).
+			Msg("Install failed")
+		return nil, status.Errorf(codes.Internal, "install failed: %v", err)
+	}
+
+	h.log.Info().
+		Str("container_id", req.GetContainerId()).
+		Uint64("cgroup_id", cgroupID).
+		Msg("firewall installed")
+	return &adminv1.InstallResponse{CgroupId: cgroupID}, nil
+}
+
+// Remove detaches BPF programs and removes the container_map entry.
+func (h *AdminHandler) Remove(_ context.Context, req *adminv1.RemoveRequest) (*adminv1.RemoveResponse, error) {
+	cgroupID, err := h.cgroupIDFromPath(req.GetCgroupPath())
+	if err != nil {
+		return nil, err
+	}
+	if err := h.mgr.Disable(cgroupID); err != nil {
+		return nil, status.Errorf(codes.Internal, "remove failed: %v", err)
+	}
+	h.log.Info().Uint64("cgroup_id", cgroupID).Msg("firewall removed")
+	return &adminv1.RemoveResponse{CgroupId: cgroupID}, nil
+}
+
+// Enable clears the bypass flag, restoring firewall enforcement.
+func (h *AdminHandler) Enable(_ context.Context, req *adminv1.EnableRequest) (*adminv1.EnableResponse, error) {
+	cgroupID, err := h.cgroupIDFromPath(req.GetCgroupPath())
+	if err != nil {
+		return nil, err
+	}
+	if err := h.mgr.Unbypass(cgroupID); err != nil {
+		return nil, status.Errorf(codes.Internal, "enable failed: %v", err)
+	}
+	return &adminv1.EnableResponse{CgroupId: cgroupID}, nil
+}
+
+// Disable sets the bypass flag, letting traffic skip enforcement.
+// No server-side timer — the CLI manages bypass duration locally
+// (Disable → sleep → Enable).
+func (h *AdminHandler) Disable(_ context.Context, req *adminv1.DisableRequest) (*adminv1.DisableResponse, error) {
+	cgroupID, err := h.cgroupIDFromPath(req.GetCgroupPath())
+	if err != nil {
+		return nil, err
+	}
+	if err := h.mgr.Bypass(cgroupID); err != nil {
+		return nil, status.Errorf(codes.Internal, "disable failed: %v", err)
+	}
+	return &adminv1.DisableResponse{CgroupId: cgroupID}, nil
+}
+
+// SyncRoutes atomically replaces the global route_map.
+func (h *AdminHandler) SyncRoutes(_ context.Context, req *adminv1.SyncRoutesRequest) (*adminv1.SyncRoutesResponse, error) {
+	routes := make([]ebpf.Route, 0, len(req.GetRoutes()))
+	for _, r := range req.GetRoutes() {
+		routes = append(routes, ebpf.Route{
+			DomainHash: r.GetDomainHash(),
+			DstPort:    uint16(r.GetDstPort()),
+			EnvoyPort:  uint16(r.GetEnvoyPort()),
+		})
+	}
+	if err := h.mgr.SyncRoutes(routes); err != nil {
+		return nil, status.Errorf(codes.Internal, "sync routes failed: %v", err)
+	}
+	return &adminv1.SyncRoutesResponse{Applied: uint32(len(routes))}, nil
+}
+
+// ResolveHostname performs a DNS lookup from the CP container's network
+// namespace.
+func (h *AdminHandler) ResolveHostname(ctx context.Context, req *adminv1.ResolveHostnameRequest) (*adminv1.ResolveHostnameResponse, error) {
+	if req.GetHostname() == "" {
+		return nil, status.Error(codes.InvalidArgument, "hostname is required")
+	}
+
+	resolve := h.resolveHostFn
+	if resolve == nil {
+		resolve = net.DefaultResolver.LookupHost
+	}
+
+	addrs, err := resolve(ctx, req.GetHostname())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "resolve %q: %v", req.GetHostname(), err)
+	}
+	return &adminv1.ResolveHostnameResponse{Addresses: addrs}, nil
+}
+
+func (h *AdminHandler) cgroupIDFromPath(path string) (uint64, error) {
+	if path == "" {
+		return 0, status.Error(codes.InvalidArgument, "cgroup_path is required")
+	}
+	id, err := ebpf.CgroupID(path)
+	if err != nil {
+		return 0, status.Errorf(codes.InvalidArgument, "invalid cgroup path: %v", err)
+	}
+	return id, nil
+}

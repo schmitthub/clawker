@@ -188,6 +188,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY cmd/clawker-cp/ cmd/clawker-cp/
+COPY api/ api/
 COPY internal/ internal/
 COPY pkg/ pkg/
 

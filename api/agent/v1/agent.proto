@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package clawker.agent.v1;
+
+option go_package = "github.com/schmitthub/clawker/api/agent/v1";
+
+// AgentService is the gRPC surface that clawkerd (per-container agent
+// daemon) calls on the control plane. Defined here as a stub for Branch 4.
+//
+// Transport: mTLS over TCP.
+// Authorization: OAuth2 access tokens with agent-scoped permissions,
+// validated by vendored Oathkeeper gRPC middleware.
+//
+// Branch 1 defines the package and empty service. Branch 4 adds RPCs
+// for agent registration, heartbeat, and capability negotiation.
+service AgentService {
+  // Placeholder — Branch 4 adds RPCs here.
+}

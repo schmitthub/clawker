@@ -58,9 +58,10 @@ const (
 const (
 	ManagedLabelValue = "true"
 
-	PurposeAgent      = "agent"
-	PurposeMonitoring = "monitoring"
-	PurposeFirewall   = "firewall"
+	PurposeAgent        = "agent"
+	PurposeMonitoring   = "monitoring"
+	PurposeFirewall     = "firewall"
+	PurposeControlPlane = "controlplane"
 )
 
 // Whail engine label configuration (without trailing dot — whail adds its own).
@@ -120,6 +121,12 @@ const (
 	ContainerCoreDNS = "clawker-coredns"
 )
 
+// Container images.
+const (
+	// CPBaseImage is the distroless base image for the control plane container.
+	CPBaseImage = "gcr.io/distroless/static-debian12"
+)
+
 // Static IP assignments (last octet on clawker-net).
 // Docker DHCP assigns from .2 upward; firewall infra uses high octets.
 const (
@@ -143,6 +150,20 @@ const (
 	CoreDNSHealthPath = "/health"
 )
 
+// Control plane ports.
+const (
+	// DefaultCPAdminPort is the default gRPC admin API port for the control plane.
+	DefaultCPAdminPort = 7443
+	// HydraPublicPort is the Hydra OAuth2 public API port (token endpoint).
+	HydraPublicPort = 4444
+	// HydraAdminPort is the Hydra admin API port (internal only, 127.0.0.1).
+	HydraAdminPort = 4445
+	// OathkeeperHTTPPort is the Oathkeeper HTTP proxy port.
+	OathkeeperHTTPPort = 4456
+	// CPHealthPort is the CP /healthz endpoint port.
+	CPHealthPort = 8080
+)
+
 // Container user identity.
 const (
 	ContainerUID = 1001
@@ -151,7 +172,7 @@ const (
 
 // Auth scopes (for gRPC method authorization).
 const (
-	ScopeFirewallAdmin = "firewall:admin"
+	ScopeAdmin         = "admin"
 	ScopeAgentAnnounce = "agent:announce"
 )
 
@@ -263,6 +284,16 @@ func AuthCLICertPath(dataDir string) string {
 }
 func AuthCLIKeyPath(dataDir string) string {
 	return filepath.Join(dataDir, "auth", "certs", "cli", "key.pem")
+}
+func AuthCLIDir(dataDir string) string { return filepath.Join(dataDir, "auth", "cli") }
+func AuthCLISigningKeyPath(dataDir string) string {
+	return filepath.Join(dataDir, "auth", "cli", "signing.key")
+}
+func AuthCLISigningJWKPath(dataDir string) string {
+	return filepath.Join(dataDir, "auth", "cli", "signing-jwk.json")
+}
+func AuthServerCertDir(dataDir string) string {
+	return filepath.Join(dataDir, "auth", "certs", "server")
 }
 
 // State dir paths (under StateDir).

@@ -311,10 +311,25 @@ func (e *KeyNotFoundError) Error() string { return "key not found: " + e.Key }
 
 // Settings represents user-level configuration stored in ~/.config/clawker/settings.yaml.
 type Settings struct {
-	Logging    LoggingConfig    `yaml:"logging,omitempty"`
-	Monitoring MonitoringConfig `yaml:"monitoring,omitempty"`
-	HostProxy  HostProxyConfig  `yaml:"host_proxy,omitempty"`
-	Firewall   FirewallSettings `yaml:"firewall,omitempty"`
+	Logging      LoggingConfig        `yaml:"logging,omitempty"`
+	Monitoring   MonitoringConfig     `yaml:"monitoring,omitempty"`
+	HostProxy    HostProxyConfig      `yaml:"host_proxy,omitempty"`
+	Firewall     FirewallSettings     `yaml:"firewall,omitempty"`
+	ControlPlane ControlPlaneSettings `yaml:"control_plane,omitempty"`
+}
+
+// ControlPlaneSettings configures the control plane in settings.yaml.
+type ControlPlaneSettings struct {
+	AdminPort int `yaml:"admin_port,omitempty" label:"Admin Port" desc:"gRPC admin API port for the control plane; published to 127.0.0.1 on the host" default:"7443"`
+}
+
+// AdminPortOrDefault returns the configured admin port, falling back to
+// the default (7443) if not set.
+func (c *ControlPlaneSettings) AdminPortOrDefault() int {
+	if c == nil || c.AdminPort == 0 {
+		return 7443
+	}
+	return c.AdminPort
 }
 
 // Fields implements [storage.Schema] for Settings.

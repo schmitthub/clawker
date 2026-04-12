@@ -498,6 +498,9 @@ host_proxy:
 firewall:
   # Master switch for the Envoy firewall; when off, containers have unrestricted network access
   enable: <boolean>  # default: true | required: true
+control_plane:
+  # gRPC admin API port for the control plane; published to 127.0.0.1 on the host
+  admin_port: <integer>  # default: 7443 | required: false
 
 ```
 
@@ -582,6 +585,13 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enable` | boolean | `true` | Master switch for the Envoy firewall; when off, containers have unrestricted network access **(required)** |
+
+
+### control_plane
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `admin_port` | integer | `7443` | gRPC admin API port for the control plane; published to 127.0.0.1 on the host |
 
 
 You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level project config defaults. This file is merged as the lowest-priority project config layer (just above built-in defaults), so any project-level `.clawker.yaml` overrides it.

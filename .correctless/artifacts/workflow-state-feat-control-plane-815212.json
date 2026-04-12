@@ -1,0 +1,17 @@
+{
+  "phase": "tdd-qa",
+  "task": "control-plane-initiative",
+  "spec_file": ".correctless/specs/control-plane-initiative.md",
+  "started_at": "2026-04-12T03:01:57Z",
+  "phase_entered_at": "2026-04-12T17:28:17Z",
+  "branch": "feat/control-plane",
+  "qa_rounds": 1,
+  "feature_intensity": "high",
+  "override": {
+    "active": true,
+    "reason": "Pre-existing authkeeper build error (ory/oathkeeper otelhttp.DefaultClient undefined) — not caused by this TDD cycle. All 4583 real tests pass.",
+    "started_at": "2026-04-12T17:16:42Z",
+    "remaining_calls": 10
+  },
+  "override_count": 1
+}

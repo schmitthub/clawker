@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package clawker.admin.v1;
+
+option go_package = "github.com/schmitthub/clawker/api/admin/v1";
+
+// AdminService is the gRPC surface the clawker CLI calls on the control
+// plane. The CP owns privileged kernel state (BPF programs + pinned maps)
+// and handles per-container firewall lifecycle.
+//
+// Transport: mTLS over TCP (port 7443, configurable via Settings).
+// Authorization: OAuth2 access tokens with "admin" scope, validated by
+// vendored Oathkeeper gRPC middleware via Hydra token introspection.
+//
+// RPC naming follows the container firewall lifecycle:
+//   Install/Remove — container start/stop (attach/detach BPF programs)
+//   Enable/Disable — toggle enforcement (clear/set bypass flag)
+//   SyncRoutes     — update global route_map on rule changes
+//   ResolveHostname — DNS resolution from inside CP network namespace
+service AdminService {
+  // Install attaches BPF cgroup programs to a container and populates
+  // its container_map entry with the routing configuration.
+  rpc Install(InstallRequest) returns (InstallResponse);
+
+  // Remove detaches BPF programs and removes the container_map entry.
+  rpc Remove(RemoveRequest) returns (RemoveResponse);
+
+  // Enable clears the bypass flag, restoring firewall enforcement.
+  rpc Enable(EnableRequest) returns (EnableResponse);
+
+  // Disable sets the bypass flag, letting the container's egress traffic
+  // skip firewall enforcement. The CLI manages the bypass timer locally
+  // (Disable → sleep → Enable). No server-side timer.
+  rpc Disable(DisableRequest) returns (DisableResponse);
+
+  // SyncRoutes replaces the global route_map atomically with the
+  // provided routes. Called on firewall rule add/remove/reload.
+  rpc SyncRoutes(SyncRoutesRequest) returns (SyncRoutesResponse);
+
+  // ResolveHostname performs a DNS lookup via the container's resolver.
+  // Used to resolve host.docker.internal from inside the CP's network
+  // namespace during Install.
+  rpc ResolveHostname(ResolveHostnameRequest) returns (ResolveHostnameResponse);
+
+  // Health is the readiness probe. No auth required — exempt from
+  // Oathkeeper middleware.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// ContainerConfig carries the fields that populate a BPF container_config
+// entry: the Envoy/CoreDNS/gateway addresses, CIDR, host-proxy settings,
+// and egress port.
+message ContainerConfig {
+  string envoy_ip = 1;
+  string coredns_ip = 2;
+  string gateway_ip = 3;
+  string cidr = 4;
+  string host_proxy_ip = 5;
+  uint32 host_proxy_port = 6;
+  uint32 egress_port = 7;
+}
+
+// Route is one entry in the global route_map.
+message Route {
+  uint32 domain_hash = 1;
+  uint32 dst_port = 2;
+  uint32 envoy_port = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Request/Response messages
+// ---------------------------------------------------------------------------
+
+message InstallRequest {
+  string container_id = 1;
+  string cgroup_path = 2;
+  ContainerConfig config = 3;
+}
+message InstallResponse {
+  uint64 cgroup_id = 1;
+}
+
+message RemoveRequest {
+  string cgroup_path = 1;
+}
+message RemoveResponse {
+  uint64 cgroup_id = 1;
+}
+
+message EnableRequest {
+  string cgroup_path = 1;
+}
+message EnableResponse {
+  uint64 cgroup_id = 1;
+}
+
+message DisableRequest {
+  string cgroup_path = 1;
+}
+message DisableResponse {
+  uint64 cgroup_id = 1;
+}
+
+message SyncRoutesRequest {
+  repeated Route routes = 1;
+}
+message SyncRoutesResponse {
+  uint32 applied = 1;
+}
+
+message ResolveHostnameRequest {
+  string hostname = 1;
+}
+message ResolveHostnameResponse {
+  repeated string addresses = 1;
+}
+
+message HealthRequest {}
+message HealthResponse {
+  bool ok = 1;
+}

@@ -24,14 +24,14 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
-	v1 "github.com/schmitthub/clawker/internal/clawkerd/protocol/v1"
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 	"google.golang.org/grpc"
-	grpccredentials "google.golang.org/grpc/credentials"
-	grpcoauth "google.golang.org/grpc/credentials/oauth"
 )
 
 // firewallContainer is a typed constant restricting container name arguments
@@ -102,7 +102,7 @@ type Manager struct {
 	// CP must be running and must have generated its cert material before
 	// the client can dial.
 	cpClientMu     sync.Mutex
-	cpClientCached v1.ControlPlaneServiceClient
+	cpClientCached adminv1.AdminServiceClient
 	cpClientConn   *grpc.ClientConn
 }
 
@@ -1548,9 +1548,9 @@ func (m *Manager) ebpfExecImpl(ctx context.Context, args ...string) error {
 		if err := json.Unmarshal([]byte(args[2]), &cfg); err != nil {
 			return fmt.Errorf("ebpfExec enable: parse config JSON: %w", err)
 		}
-		_, err := client.EnableContainerFirewall(ctx, &v1.EnableContainerFirewallRequest{
+		_, err := client.Install(ctx, &adminv1.InstallRequest{
 			CgroupPath: args[1],
-			Config: &v1.ContainerFirewallConfig{
+			Config: &adminv1.ContainerConfig{
 				EnvoyIp:       cfg.EnvoyIP,
 				CorednsIp:     cfg.CoreDNSIP,
 				GatewayIp:     cfg.GatewayIP,
@@ -1565,7 +1565,7 @@ func (m *Manager) ebpfExecImpl(ctx context.Context, args ...string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("ebpfExec disable: expected <cgroupPath>, got %d args", len(args))
 		}
-		_, err := client.DisableContainerFirewall(ctx, &v1.DisableContainerFirewallRequest{
+		_, err := client.Remove(ctx, &adminv1.RemoveRequest{
 			CgroupPath: args[1],
 		})
 		return err
@@ -1573,7 +1573,7 @@ func (m *Manager) ebpfExecImpl(ctx context.Context, args ...string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("ebpfExec bypass: expected <cgroupPath>, got %d args", len(args))
 		}
-		_, err := client.BypassContainer(ctx, &v1.BypassContainerRequest{
+		_, err := client.Disable(ctx, &adminv1.DisableRequest{
 			CgroupPath: args[1],
 		})
 		return err
@@ -1581,7 +1581,7 @@ func (m *Manager) ebpfExecImpl(ctx context.Context, args ...string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("ebpfExec unbypass: expected <cgroupPath>, got %d args", len(args))
 		}
-		_, err := client.UnbypassContainer(ctx, &v1.UnbypassContainerRequest{
+		_, err := client.Enable(ctx, &adminv1.EnableRequest{
 			CgroupPath: args[1],
 		})
 		return err
@@ -1593,15 +1593,15 @@ func (m *Manager) ebpfExecImpl(ctx context.Context, args ...string) error {
 		if err := json.Unmarshal([]byte(args[1]), &routes); err != nil {
 			return fmt.Errorf("ebpfExec sync-routes: parse routes JSON: %w", err)
 		}
-		protoRoutes := make([]*v1.Route, 0, len(routes))
+		protoRoutes := make([]*adminv1.Route, 0, len(routes))
 		for _, r := range routes {
-			protoRoutes = append(protoRoutes, &v1.Route{
+			protoRoutes = append(protoRoutes, &adminv1.Route{
 				DomainHash: r.DomainHash,
 				DstPort:    uint32(r.DstPort),
 				EnvoyPort:  uint32(r.EnvoyPort),
 			})
 		}
-		_, err := client.SyncFirewallRoutes(ctx, &v1.SyncFirewallRoutesRequest{Routes: protoRoutes})
+		_, err := client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{Routes: protoRoutes})
 		return err
 	default:
 		return fmt.Errorf("ebpfExec: unknown subcommand %q", args[0])
@@ -1644,7 +1644,7 @@ func (m *Manager) ebpfExecOutputImpl(ctx context.Context, args ...string) (strin
 		if len(args) != 2 {
 			return "", fmt.Errorf("ebpfExecOutput resolve: expected <hostname>, got %d args", len(args))
 		}
-		resp, err := client.ResolveHostname(ctx, &v1.ResolveHostnameRequest{Hostname: args[1]})
+		resp, err := client.ResolveHostname(ctx, &adminv1.ResolveHostnameRequest{Hostname: args[1]})
 		if err != nil {
 			return "", err
 		}
@@ -1657,33 +1657,35 @@ func (m *Manager) ebpfExecOutputImpl(ctx context.Context, args ...string) (strin
 	}
 }
 
-// waitForCPReady polls <firewallDataDir>/cp-ready until the clawker-cp
-// container has finished initialization (certs generated, BPF programs
-// loaded, listeners bound). Called after ensureContainer(cpContainer)
-// and before any gRPC call — the CP is only reachable once this returns
-// nil. Routed through waitForCPReadyFn for test override.
+// waitForCPReady polls the CP's HTTP /healthz endpoint until it returns
+// 200, indicating full initialization (subprocesses healthy, eBPF loaded,
+// gRPC server serving). Called after ensureContainer(cpContainer) and
+// before any gRPC call. Routed through waitForCPReadyFn for test override.
 func (m *Manager) waitForCPReady(ctx context.Context) error {
 	return m.waitForCPReadyFn(ctx)
 }
 
-// waitForCPReadyImpl is the production implementation of waitForCPReady.
+// waitForCPReadyImpl polls http://127.0.0.1:<CPHealthPort>/healthz.
 func (m *Manager) waitForCPReadyImpl(ctx context.Context) error {
-	dataDir, err := m.cfg.FirewallDataSubdir()
-	if err != nil {
-		return fmt.Errorf("firewall data dir: %w", err)
-	}
-	readyPath := filepath.Join(dataDir, "cp-ready")
+	healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", consts.CPHealthPort)
+	client := &http.Client{Timeout: 2 * time.Second}
 
 	deadline := time.Now().Add(cpReadyTimeout)
 	for {
-		if _, err := os.Stat(readyPath); err == nil {
-			return nil
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("stat %s: %w", readyPath, err)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+		if err != nil {
+			return fmt.Errorf("build healthz request: %w", err)
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("clawker-cp did not become ready within %s (missing %s)",
-				cpReadyTimeout, readyPath)
+			return fmt.Errorf("clawker-cp did not become ready within %s (healthz at %s)",
+				cpReadyTimeout, healthURL)
 		}
 		select {
 		case <-ctx.Done():
@@ -1693,44 +1695,27 @@ func (m *Manager) waitForCPReadyImpl(ctx context.Context) error {
 	}
 }
 
-// cpClient returns the gRPC ControlPlaneServiceClient for the CP. Built
-// lazily on first use: constructing it earlier than this would race with
-// the CP generating its cert material for the first time, since clients
-// rely on cp-ca / cp-client-cli existing on disk under the firewall
-// data dir.
-func (m *Manager) cpClient() (v1.ControlPlaneServiceClient, error) {
+// cpClient returns the gRPC AdminServiceClient for the CP. Built lazily on
+// first use. Uses auth.DialCPAdmin which handles mTLS + private_key_jwt
+// token exchange via Hydra's /oauth2/token endpoint.
+func (m *Manager) cpClient() (adminv1.AdminServiceClient, error) {
 	m.cpClientMu.Lock()
 	defer m.cpClientMu.Unlock()
 	if m.cpClientCached != nil {
 		return m.cpClientCached, nil
 	}
 
-	dataDir, err := m.cfg.FirewallDataSubdir()
-	if err != nil {
-		return nil, fmt.Errorf("firewall data dir: %w", err)
-	}
-	paths := LoadCPClientPaths(dataDir)
-	if err := ensureCPClientReady(paths); err != nil {
-		return nil, err
-	}
-	tlsConfig, err := BuildCPTLSConfig(paths)
-	if err != nil {
-		return nil, err
-	}
+	dataDir := config.DataDir()
+	settings := m.cfg.Settings()
+	adminPort := settings.ControlPlane.AdminPortOrDefault()
 
-	tokenSource := NewCPTokenSource(context.Background(), paths, tlsConfig)
-
-	conn, err := grpc.NewClient(
-		"unix:"+paths.GRPCSocket,
-		grpc.WithTransportCredentials(grpccredentials.NewTLS(tlsConfig)),
-		grpc.WithPerRPCCredentials(grpcoauth.TokenSource{TokenSource: tokenSource}),
-	)
+	client, conn, err := auth.DialCPAdmin(context.Background(), dataDir, adminPort, consts.HydraPublicPort)
 	if err != nil {
-		return nil, fmt.Errorf("dial cp grpc: %w", err)
+		return nil, fmt.Errorf("dial cp: %w", err)
 	}
-	m.cpClientCached = v1.NewControlPlaneServiceClient(conn)
+	m.cpClientCached = client
 	m.cpClientConn = conn
-	return m.cpClientCached, nil
+	return client, nil
 }
 
 // cpContainerConfig returns the container creation config for the clawker

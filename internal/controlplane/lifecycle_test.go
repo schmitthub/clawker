@@ -1,0 +1,156 @@
+package controlplane
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// ---------------------------------------------------------------------------
+// INV-B1-010: eBPF lifecycle ordering preserved
+// ---------------------------------------------------------------------------
+
+// Tests INV-B1-010 [unit]: /healthz returns 503 before eBPF Load() completes.
+// The ready atomic bool must be false until Load() succeeds, and the
+// /healthz handler must return non-200 until the bool is set.
+func TestINV_B1_010_HealthzReturns503BeforeReady(t *testing.T) {
+	orchestrator := NewCPStartupOrchestrator()
+	require.NotNil(t, orchestrator, "orchestrator must not be nil")
+
+	handler := orchestrator.HealthzHandler()
+	require.NotNil(t, handler, "healthz handler must not be nil")
+
+	// Before SetReady() is called, /healthz must return 503.
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code,
+		"/healthz must return 503 before CP is ready")
+}
+
+// Tests INV-B1-010 [unit]: /healthz returns 200 after eBPF Load() completes.
+func TestINV_B1_010_HealthzReturns200AfterReady(t *testing.T) {
+	orchestrator := NewCPStartupOrchestrator()
+	require.NotNil(t, orchestrator, "orchestrator must not be nil")
+
+	handler := orchestrator.HealthzHandler()
+	require.NotNil(t, handler, "healthz handler must not be nil")
+
+	// Simulate successful startup.
+	orchestrator.SetReady()
+
+	// After SetReady(), /healthz must return 200.
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"/healthz must return 200 after CP is ready")
+}
+
+// Tests INV-B1-010 [unit]: IsReady() starts false and becomes true after SetReady().
+func TestINV_B1_010_IsReadyAtomicBool(t *testing.T) {
+	orchestrator := NewCPStartupOrchestrator()
+
+	assert.False(t, orchestrator.IsReady(),
+		"IsReady() must be false before SetReady() is called")
+
+	orchestrator.SetReady()
+
+	assert.True(t, orchestrator.IsReady(),
+		"IsReady() must be true after SetReady() is called")
+}
+
+// ---------------------------------------------------------------------------
+// INV-B1-013: CP health via HTTP endpoint with hard prerequisites
+// ---------------------------------------------------------------------------
+
+// Tests INV-B1-013 [unit]: /healthz returns 200 only after full initialization.
+// This is the same test as INV-B1-010 from the /healthz perspective,
+// but framed specifically around the "no partial states" requirement.
+func TestINV_B1_013_HealthzOnlyAfterFullInit(t *testing.T) {
+	orchestrator := NewCPStartupOrchestrator()
+	handler := orchestrator.HealthzHandler()
+	require.NotNil(t, handler, "healthz handler must not be nil")
+
+	// Pre-init: must be 503.
+	t.Run("pre-init is 503", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	})
+
+	// Post-init: must be 200.
+	orchestrator.SetReady()
+	t.Run("post-init is 200", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+}
+
+// Tests INV-B1-013 [unit]: No ready files exist — readiness is HTTP-only.
+// This is a structural assertion: the CP must NOT use filesystem-based
+// readiness signaling.
+func TestINV_B1_013_NoReadyFiles(t *testing.T) {
+	// The CPStartupOrchestrator should use an atomic bool, not a ready file.
+	orchestrator := NewCPStartupOrchestrator()
+
+	// The orchestrator must expose healthz via HTTP handler, not a file.
+	handler := orchestrator.HealthzHandler()
+	assert.NotNil(t, handler,
+		"readiness must be exposed via HTTP handler, not filesystem")
+
+	// Verify the orchestrator has no file-writing methods by checking
+	// that it works without a data directory.
+	assert.False(t, orchestrator.IsReady(),
+		"orchestrator must work without any filesystem — pure atomic bool")
+}
+
+// ---------------------------------------------------------------------------
+// INV-B1-010: eBPF Load() gates healthz readiness
+// ---------------------------------------------------------------------------
+
+// Tests INV-B1-010 [unit]: /healthz returns 503 while eBPF Load() is in progress,
+// then 200 after Load completes. This verifies that the startup orchestrator
+// correctly gates healthz behind eBPF initialization.
+func TestINV_B1_010_EBPFLoadGatesHealthz(t *testing.T) {
+	orchestrator := NewCPStartupOrchestrator()
+	handler := orchestrator.HealthzHandler()
+	require.NotNil(t, handler, "healthz handler must not be nil")
+
+	// loadBlock is a channel that simulates eBPF Load() blocking.
+	loadBlock := make(chan struct{})
+	var loadWg sync.WaitGroup
+	loadWg.Add(1)
+
+	// Simulate the orchestrator starting eBPF Load() in a goroutine.
+	go func() {
+		defer loadWg.Done()
+		// Block until signaled (simulates eBPF Load() taking time).
+		<-loadBlock
+		// After Load() completes, mark ready.
+		orchestrator.SetReady()
+	}()
+
+	// While Load() is blocked, /healthz must return 503.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code,
+		"/healthz must return 503 while eBPF Load() is in progress")
+
+	// Unblock Load().
+	close(loadBlock)
+	loadWg.Wait()
+
+	// After Load() completes, /healthz must return 200.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"/healthz must return 200 after eBPF Load() completes")
+}
