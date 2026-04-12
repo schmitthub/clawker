@@ -25,7 +25,6 @@ const (
 	AdminService_Disable_FullMethodName         = "/clawker.admin.v1.AdminService/Disable"
 	AdminService_SyncRoutes_FullMethodName      = "/clawker.admin.v1.AdminService/SyncRoutes"
 	AdminService_ResolveHostname_FullMethodName = "/clawker.admin.v1.AdminService/ResolveHostname"
-	AdminService_Health_FullMethodName          = "/clawker.admin.v1.AdminService/Health"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -36,9 +35,9 @@ const (
 // plane. The CP owns privileged kernel state (BPF programs + pinned maps)
 // and handles per-container firewall lifecycle.
 //
-// Transport: mTLS over TCP (port 7443, configurable via Settings).
-// Authorization: OAuth2 access tokens with "admin" scope, validated by
-// vendored Oathkeeper gRPC middleware via Hydra token introspection.
+// Transport: TLS over TCP (port 7443, configurable via Settings).
+// Authorization: OAuth2 access tokens with "admin" scope, validated
+// via Hydra token introspection.
 //
 // RPC naming follows the container firewall lifecycle:
 //
@@ -65,9 +64,6 @@ type AdminServiceClient interface {
 	// Used to resolve host.docker.internal from inside the CP's network
 	// namespace during Install.
 	ResolveHostname(ctx context.Context, in *ResolveHostnameRequest, opts ...grpc.CallOption) (*ResolveHostnameResponse, error)
-	// Health is the readiness probe. No auth required — exempt from
-	// Oathkeeper middleware.
-	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
 }
 
 type adminServiceClient struct {
@@ -138,16 +134,6 @@ func (c *adminServiceClient) ResolveHostname(ctx context.Context, in *ResolveHos
 	return out, nil
 }
 
-func (c *adminServiceClient) Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(HealthResponse)
-	err := c.cc.Invoke(ctx, AdminService_Health_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -156,9 +142,9 @@ func (c *adminServiceClient) Health(ctx context.Context, in *HealthRequest, opts
 // plane. The CP owns privileged kernel state (BPF programs + pinned maps)
 // and handles per-container firewall lifecycle.
 //
-// Transport: mTLS over TCP (port 7443, configurable via Settings).
-// Authorization: OAuth2 access tokens with "admin" scope, validated by
-// vendored Oathkeeper gRPC middleware via Hydra token introspection.
+// Transport: TLS over TCP (port 7443, configurable via Settings).
+// Authorization: OAuth2 access tokens with "admin" scope, validated
+// via Hydra token introspection.
 //
 // RPC naming follows the container firewall lifecycle:
 //
@@ -185,9 +171,6 @@ type AdminServiceServer interface {
 	// Used to resolve host.docker.internal from inside the CP's network
 	// namespace during Install.
 	ResolveHostname(context.Context, *ResolveHostnameRequest) (*ResolveHostnameResponse, error)
-	// Health is the readiness probe. No auth required — exempt from
-	// Oathkeeper middleware.
-	Health(context.Context, *HealthRequest) (*HealthResponse, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -215,9 +198,6 @@ func (UnimplementedAdminServiceServer) SyncRoutes(context.Context, *SyncRoutesRe
 }
 func (UnimplementedAdminServiceServer) ResolveHostname(context.Context, *ResolveHostnameRequest) (*ResolveHostnameResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ResolveHostname not implemented")
-}
-func (UnimplementedAdminServiceServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Health not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -348,24 +328,6 @@ func _AdminService_ResolveHostname_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-func _AdminService_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(HealthRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AdminServiceServer).Health(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AdminService_Health_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AdminServiceServer).Health(ctx, req.(*HealthRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -396,10 +358,6 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResolveHostname",
 			Handler:    _AdminService_ResolveHostname_Handler,
-		},
-		{
-			MethodName: "Health",
-			Handler:    _AdminService_Health_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -15,6 +15,22 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+// BPFContainerConfig is the exported alias for the bpf2go-generated
+// clawkerContainerConfig type (derived from C struct container_config).
+type BPFContainerConfig = clawkerContainerConfig
+
+// EBPFManager is the interface consumed by the AdminHandler. It covers the
+// subset of Manager methods needed to serve gRPC admin RPCs.
+//
+//go:generate moq -rm -pkg mocks -out mocks/ebpf_manager_mock.go . EBPFManager
+type EBPFManager interface {
+	Install(cgroupID uint64, cgroupPath string, cfg BPFContainerConfig) error
+	Remove(cgroupID uint64) error
+	Enable(cgroupID uint64) error
+	Disable(cgroupID uint64) error
+	SyncRoutes(routes []Route) error
+}
+
 // Manager loads BPF programs and manages per-container map entries and cgroup attachments.
 type Manager struct {
 	pinPath string
@@ -230,10 +246,10 @@ func clearBypass(m bypassMap, cgroupID uint64, log *logger.Logger) error {
 	return err
 }
 
-// Enable attaches BPF programs to a container's cgroup and populates routing maps.
+// Install attaches BPF programs to a container's cgroup and populates routing maps.
 // Cleans up any stale links for this cgroup before attaching and clears any
 // stale bypass flag so the container lands in a known enforced state.
-func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContainerConfig) error {
+func (m *Manager) Install(cgroupID uint64, cgroupPath string, cfg clawkerContainerConfig) error {
 	// Clean up stale links from previous Enable() calls for this cgroup.
 	// Stale links keep old programs attached, causing silent misbehavior.
 	m.cleanupLinks(cgroupID)
@@ -297,8 +313,8 @@ func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContaine
 	return nil
 }
 
-// Disable detaches BPF programs from a container's cgroup and removes map entries.
-func (m *Manager) Disable(cgroupID uint64) error {
+// Remove detaches BPF programs from a container's cgroup and removes map entries.
+func (m *Manager) Remove(cgroupID uint64) error {
 	// Close in-memory links if we hold them.
 	if linked, ok := m.links[cgroupID]; ok {
 		for _, l := range linked {
@@ -385,8 +401,8 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 	return errors.Join(errs...)
 }
 
-// Bypass sets the bypass flag for a container, allowing unrestricted egress.
-func (m *Manager) Bypass(cgroupID uint64) error {
+// Disable sets the bypass flag for a container, allowing unrestricted egress.
+func (m *Manager) Disable(cgroupID uint64) error {
 	val := uint8(1)
 	if err := m.objs.BypassMap.Update(cgroupID, val, ebpf.UpdateAny); err != nil {
 		return fmt.Errorf("ebpf bypass: %w", err)
@@ -395,8 +411,8 @@ func (m *Manager) Bypass(cgroupID uint64) error {
 	return nil
 }
 
-// Unbypass removes the bypass flag, restoring firewall enforcement.
-func (m *Manager) Unbypass(cgroupID uint64) error {
+// Enable removes the bypass flag, restoring firewall enforcement.
+func (m *Manager) Enable(cgroupID uint64) error {
 	if err := m.objs.BypassMap.Delete(cgroupID); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 		return fmt.Errorf("ebpf unbypass: %w", err)
 	}

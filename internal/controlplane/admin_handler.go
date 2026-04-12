@@ -12,12 +12,12 @@ import (
 )
 
 // AdminHandler implements adminv1.AdminServiceServer. Thin wrapper over
-// ebpf.Manager — each RPC validates inputs, calls the corresponding
-// Manager method, and maps results to the gRPC response type.
+// ebpf.EBPFManager — each RPC validates inputs, calls the corresponding
+// method, and maps results to the gRPC response type.
 type AdminHandler struct {
 	adminv1.UnimplementedAdminServiceServer
 
-	mgr *ebpf.Manager
+	mgr ebpf.EBPFManager
 	log *logger.Logger
 
 	// resolveHostFn is injectable for tests. nil defaults to
@@ -25,17 +25,12 @@ type AdminHandler struct {
 	resolveHostFn func(ctx context.Context, host string) ([]string, error)
 }
 
-// NewAdminHandler wires a handler to a loaded ebpf.Manager.
-func NewAdminHandler(mgr *ebpf.Manager, log *logger.Logger) *AdminHandler {
+// NewAdminHandler wires a handler to an ebpf.EBPFManager.
+func NewAdminHandler(mgr ebpf.EBPFManager, log *logger.Logger) *AdminHandler {
 	if log == nil {
 		log = logger.Nop()
 	}
 	return &AdminHandler{mgr: mgr, log: log}
-}
-
-// Health is the readiness probe. Exempt from auth.
-func (h *AdminHandler) Health(_ context.Context, _ *adminv1.HealthRequest) (*adminv1.HealthResponse, error) {
-	return &adminv1.HealthResponse{Ok: true}, nil
 }
 
 // Install attaches BPF programs to a container's cgroup and populates
@@ -66,7 +61,7 @@ func (h *AdminHandler) Install(_ context.Context, req *adminv1.InstallRequest) (
 		return nil, status.Errorf(codes.InvalidArgument, "build container config: %v", err)
 	}
 
-	if err := h.mgr.Enable(cgroupID, req.GetCgroupPath(), cfg); err != nil {
+	if err := h.mgr.Install(cgroupID, req.GetCgroupPath(), cfg); err != nil {
 		h.log.Error().Err(err).
 			Str("cgroup_path", req.GetCgroupPath()).
 			Str("container_id", req.GetContainerId()).
@@ -87,7 +82,7 @@ func (h *AdminHandler) Remove(_ context.Context, req *adminv1.RemoveRequest) (*a
 	if err != nil {
 		return nil, err
 	}
-	if err := h.mgr.Disable(cgroupID); err != nil {
+	if err := h.mgr.Remove(cgroupID); err != nil {
 		return nil, status.Errorf(codes.Internal, "remove failed: %v", err)
 	}
 	h.log.Info().Uint64("cgroup_id", cgroupID).Msg("firewall removed")
@@ -100,7 +95,7 @@ func (h *AdminHandler) Enable(_ context.Context, req *adminv1.EnableRequest) (*a
 	if err != nil {
 		return nil, err
 	}
-	if err := h.mgr.Unbypass(cgroupID); err != nil {
+	if err := h.mgr.Enable(cgroupID); err != nil {
 		return nil, status.Errorf(codes.Internal, "enable failed: %v", err)
 	}
 	return &adminv1.EnableResponse{CgroupId: cgroupID}, nil
@@ -114,7 +109,7 @@ func (h *AdminHandler) Disable(_ context.Context, req *adminv1.DisableRequest) (
 	if err != nil {
 		return nil, err
 	}
-	if err := h.mgr.Bypass(cgroupID); err != nil {
+	if err := h.mgr.Disable(cgroupID); err != nil {
 		return nil, status.Errorf(codes.Internal, "disable failed: %v", err)
 	}
 	return &adminv1.DisableResponse{CgroupId: cgroupID}, nil

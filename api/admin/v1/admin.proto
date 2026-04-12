@@ -8,9 +8,9 @@ option go_package = "github.com/schmitthub/clawker/api/admin/v1";
 // plane. The CP owns privileged kernel state (BPF programs + pinned maps)
 // and handles per-container firewall lifecycle.
 //
-// Transport: mTLS over TCP (port 7443, configurable via Settings).
-// Authorization: OAuth2 access tokens with "admin" scope, validated by
-// vendored Oathkeeper gRPC middleware via Hydra token introspection.
+// Transport: TLS over TCP (port 7443, configurable via Settings).
+// Authorization: OAuth2 access tokens with "admin" scope, validated
+// via Hydra token introspection.
 //
 // RPC naming follows the container firewall lifecycle:
 //   Install/Remove — container start/stop (attach/detach BPF programs)
@@ -41,10 +41,6 @@ service AdminService {
   // Used to resolve host.docker.internal from inside the CP's network
   // namespace during Install.
   rpc ResolveHostname(ResolveHostnameRequest) returns (ResolveHostnameResponse);
-
-  // Health is the readiness probe. No auth required — exempt from
-  // Oathkeeper middleware.
-  rpc Health(HealthRequest) returns (HealthResponse);
 }
 
 // ContainerConfig carries the fields that populate a BPF container_config
@@ -115,7 +111,3 @@ message ResolveHostnameResponse {
   repeated string addresses = 1;
 }
 
-message HealthRequest {}
-message HealthResponse {
-  bool ok = 1;
-}

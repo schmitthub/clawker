@@ -93,6 +93,5 @@ func AdminMethodScopes() map[string]string {
 		svc + "Disable":         consts.ScopeAdmin,
 		svc + "SyncRoutes":      consts.ScopeAdmin,
 		svc + "ResolveHostname": consts.ScopeAdmin,
-		svc + "Health":          consts.ScopeAdmin,
 	}
 }

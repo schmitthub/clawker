@@ -27,9 +27,9 @@ import (
 
 // ControlPlaneService is the consumer-facing contract for the control plane.
 // CLI commands and other packages depend on this interface; tests use
-// controlplanetest.MockServer.
+// mocks.MockServer.
 //
-//go:generate moq -rm -pkg controlplanetest -out controlplanetest/controlplane_mock.go . ControlPlaneService
+//go:generate moq -rm -pkg mocks -out mocks/controlplane_mock.go . ControlPlaneService
 type ControlPlaneService interface {
 	// Serve starts serving gRPC on the given listener. Blocks until Stop.
 	Serve(lis net.Listener) error

@@ -62,7 +62,7 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 
 		expectedRPCs := []string{
 			"Install", "Remove", "Enable", "Disable",
-			"SyncRoutes", "ResolveHostname", "Health",
+			"SyncRoutes", "ResolveHostname",
 		}
 		for _, rpc := range expectedRPCs {
 			assert.True(t, methods[rpc],

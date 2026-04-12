@@ -173,7 +173,8 @@ func run(adminPort, healthPort int, serverCertPath, serverKeyPath, jwkPath strin
 
 	// Auth interceptor: validates bearer tokens via Hydra introspection.
 	hydraIntrospectURL := fmt.Sprintf("http://127.0.0.1:%d/admin/oauth2/introspect", consts.HydraAdminPort)
-	authInterceptor := controlplane.NewAuthInterceptor(hydraIntrospectURL, controlplane.AdminMethodScopes(), log)
+	introspector := controlplane.NewHydraIntrospector(hydraIntrospectURL)
+	authInterceptor := controlplane.NewAuthInterceptor(introspector, controlplane.AdminMethodScopes(), log)
 
 	grpcServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),

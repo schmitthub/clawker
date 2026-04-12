@@ -116,7 +116,7 @@ func runEnable(log *logger.Logger, cgroupPath, configJSON string) {
 	}
 	defer mgr.Close()
 
-	if err := mgr.Enable(cgroupID, cgroupPath, cfg); err != nil {
+	if err := mgr.Install(cgroupID, cgroupPath, cfg); err != nil {
 		fatal("enable", err)
 	}
 
@@ -154,7 +154,7 @@ func runDisable(log *logger.Logger, cgroupPath string) {
 	}
 	defer mgr.Close()
 
-	if err := mgr.Disable(cgroupID); err != nil {
+	if err := mgr.Remove(cgroupID); err != nil {
 		fatal("disable", err)
 	}
 	fmt.Printf("disabled cgroup_id=%d\n", cgroupID)
@@ -172,7 +172,7 @@ func runBypass(log *logger.Logger, cgroupPath string) {
 	}
 	defer mgr.Close()
 
-	if err := mgr.Bypass(cgroupID); err != nil {
+	if err := mgr.Disable(cgroupID); err != nil {
 		fatal("bypass", err)
 	}
 	fmt.Printf("bypass enabled cgroup_id=%d\n", cgroupID)
@@ -190,7 +190,7 @@ func runUnbypass(log *logger.Logger, cgroupPath string) {
 	}
 	defer mgr.Close()
 
-	if err := mgr.Unbypass(cgroupID); err != nil {
+	if err := mgr.Enable(cgroupID); err != nil {
 		fatal("unbypass", err)
 	}
 	fmt.Printf("bypass disabled cgroup_id=%d\n", cgroupID)

@@ -18,28 +18,95 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// AuthInterceptor validates bearer tokens against Hydra's introspection
-// endpoint (RFC 7662) and enforces per-method scope requirements.
-//
-// Flow: extract bearer token from gRPC metadata → POST to Hydra introspection
-// → check active + scope → allow or deny. Fail-closed on any error.
-type AuthInterceptor struct {
-	introspectURL string            // e.g. "http://127.0.0.1:4445/admin/oauth2/introspect"
-	methodScopes  map[string]string // gRPC full method → required scope
-	client        *http.Client
-	log           *logger.Logger
+// IntrospectionResult represents the relevant fields from an OAuth2
+// token introspection response (RFC 7662).
+type IntrospectionResult struct {
+	Active   bool   `json:"active"`
+	Scope    string `json:"scope"`
+	ClientID string `json:"client_id"`
+	Sub      string `json:"sub"`
+	Exp      int64  `json:"exp"`
 }
 
-// NewAuthInterceptor creates an interceptor that validates tokens via Hydra.
-// introspectURL is Hydra's admin introspection endpoint.
-// methodScopes maps gRPC method names (e.g. "/clawker.admin.v1.AdminService/Install")
-// to required OAuth2 scopes (e.g. "admin").
-func NewAuthInterceptor(introspectURL string, methodScopes map[string]string, log *logger.Logger) *AuthInterceptor {
+// Introspector validates an OAuth2 bearer token and returns its
+// introspection result. Implementations must be safe for concurrent use.
+//
+//go:generate moq -out mocks/introspector_mock.go -pkg mocks . Introspector
+type Introspector interface {
+	Introspect(ctx context.Context, token, requiredScope string) (*IntrospectionResult, error)
+}
+
+// HydraIntrospector implements Introspector by calling Hydra's admin
+// introspection endpoint (POST /admin/oauth2/introspect, RFC 7662).
+type HydraIntrospector struct {
+	url    string
+	client *http.Client
+}
+
+// NewHydraIntrospector creates an introspector that validates tokens
+// against the given Hydra admin introspection URL.
+func NewHydraIntrospector(introspectURL string) *HydraIntrospector {
+	return &HydraIntrospector{
+		url:    introspectURL,
+		client: &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+func (h *HydraIntrospector) Introspect(ctx context.Context, token, requiredScope string) (*IntrospectionResult, error) {
+	form := url.Values{
+		"token": {token},
+		"scope": {requiredScope},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("build introspection request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("introspection request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("introspection returned %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read introspection response: %w", err)
+	}
+
+	var result IntrospectionResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode introspection response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// AuthInterceptor validates bearer tokens via an Introspector and
+// enforces per-method scope requirements.
+//
+// Flow: extract bearer token from gRPC metadata → introspect →
+// check active + scope → allow or deny. Fail-closed on any error.
+type AuthInterceptor struct {
+	introspector Introspector
+	methodScopes map[string]string // gRPC full method → required scope
+	log          *logger.Logger
+}
+
+// NewAuthInterceptor creates an interceptor that validates tokens via
+// the given Introspector. methodScopes maps gRPC method names
+// (e.g. "/clawker.admin.v1.AdminService/Install") to required OAuth2
+// scopes (e.g. "admin").
+func NewAuthInterceptor(introspector Introspector, methodScopes map[string]string, log *logger.Logger) *AuthInterceptor {
 	return &AuthInterceptor{
-		introspectURL: introspectURL,
-		methodScopes:  methodScopes,
-		client:        &http.Client{Timeout: 5 * time.Second},
-		log:           log,
+		introspector: introspector,
+		methodScopes: methodScopes,
+		log:          log,
 	}
 }
 
@@ -74,9 +141,13 @@ func (a *AuthInterceptor) GRPCServerOptions() []grpc.ServerOption {
 func (a *AuthInterceptor) authorize(ctx context.Context, fullMethod string) error {
 	requiredScope, ok := a.methodScopes[fullMethod]
 	if !ok {
-		// Fail-closed: unmapped methods are denied.
 		a.log.Warn().Str("method", fullMethod).Msg("authz: unmapped method denied")
 		return status.Error(codes.Unauthenticated, "unauthorized")
+	}
+
+	// Empty scope means the method is public (e.g. Health).
+	if requiredScope == "" {
+		return nil
 	}
 
 	token, err := extractBearerToken(ctx)
@@ -85,7 +156,7 @@ func (a *AuthInterceptor) authorize(ctx context.Context, fullMethod string) erro
 		return status.Error(codes.Unauthenticated, "missing bearer token")
 	}
 
-	result, err := a.introspect(ctx, token, requiredScope)
+	result, err := a.introspector.Introspect(ctx, token, requiredScope)
 	if err != nil {
 		a.log.Warn().Err(err).Str("method", fullMethod).Msg("authz: introspection failed")
 		return status.Error(codes.Unauthenticated, "token validation failed")
@@ -102,51 +173,6 @@ func (a *AuthInterceptor) authorize(ctx context.Context, fullMethod string) erro
 		Str("scope", result.Scope).
 		Msg("authz: access granted")
 	return nil
-}
-
-// introspectionResult represents the relevant fields from Hydra's
-// OAuth2 token introspection response (RFC 7662).
-type introspectionResult struct {
-	Active   bool   `json:"active"`
-	Scope    string `json:"scope"`
-	ClientID string `json:"client_id"`
-	Sub      string `json:"sub"`
-	Exp      int64  `json:"exp"`
-}
-
-func (a *AuthInterceptor) introspect(ctx context.Context, token, requiredScope string) (*introspectionResult, error) {
-	form := url.Values{
-		"token": {token},
-		"scope": {requiredScope},
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.introspectURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, fmt.Errorf("build introspection request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("introspection request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("introspection returned %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read introspection response: %w", err)
-	}
-
-	var result introspectionResult
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("decode introspection response: %w", err)
-	}
-
-	return &result, nil
 }
 
 // extractBearerToken pulls the bearer token from gRPC metadata.
