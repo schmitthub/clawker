@@ -78,7 +78,11 @@ func (h *HydraIntrospector) Introspect(ctx context.Context, token, requiredScope
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("introspection returned %d", resp.StatusCode)
+		hint, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if err != nil {
+			return nil, fmt.Errorf("introspection returned %d (body read failed: %w)", resp.StatusCode, err)
+		}
+		return nil, fmt.Errorf("introspection returned %d: %s", resp.StatusCode, hint)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -174,7 +178,7 @@ func (a *AuthInterceptor) authorize(ctx context.Context, fullMethod string) erro
 		return status.Error(codes.Unauthenticated, "token inactive or invalid")
 	}
 
-	if !strings.Contains(result.Scope, requiredScope) {
+	if !hasScope(result.Scope, requiredScope) {
 		a.log.Warn().
 			Str("method", fullMethod).
 			Str("required_scope", requiredScope).
@@ -210,4 +214,15 @@ func extractBearerToken(ctx context.Context) (string, error) {
 	}
 
 	return strings.TrimPrefix(auth, prefix), nil
+}
+
+// hasScope checks whether the space-delimited scope string (RFC 7662)
+// contains the exact required scope.
+func hasScope(scopeStr, required string) bool {
+	for _, s := range strings.Fields(scopeStr) {
+		if s == required {
+			return true
+		}
+	}
+	return false
 }

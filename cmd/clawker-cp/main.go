@@ -273,6 +273,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	select {
 	case sig := <-sigCh:
 		log.Info().Stringer("signal", sig).Msg("shutdown signal received")
+		// Suppress crash reporting immediately — any subprocess exit from
+		// this point forward is expected (part of graceful shutdown).
+		subMgr.BeginShutdown()
 	case err := <-subMgr.CrashChan():
 		log.Error().Err(err).Msg("subprocess crashed — shutting down")
 		return err

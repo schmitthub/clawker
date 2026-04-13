@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -31,13 +32,16 @@ type ManagedSubprocess struct {
 }
 
 // SubprocessManager starts, monitors, and shuts down a set of subprocesses.
-// Fail-fast: if any subprocess exits, the crash is reported via CrashChan.
+// Fail-fast: if any subprocess exits unexpectedly, the crash is reported via
+// CrashChan. Once Shutdown begins, subsequent subprocess exits are expected
+// and are NOT reported as crashes.
 // Shutdown is reverse order of start.
 type SubprocessManager struct {
-	log       *logger.Logger
-	mu        sync.Mutex
-	processes []*ManagedSubprocess
-	crashed   chan error
+	log          *logger.Logger
+	mu           sync.Mutex
+	processes    []*ManagedSubprocess
+	crashed      chan error
+	shuttingDown atomic.Bool
 }
 
 // NewSubprocessManager creates a new subprocess manager.
@@ -72,9 +76,15 @@ func (m *SubprocessManager) Start(name string, cmd *exec.Cmd) error {
 	go func() {
 		proc.waitErr = cmd.Wait()
 		close(proc.done)
+		// Only report unexpected exits. Once Shutdown() has been called,
+		// subprocess exits are expected and must not be misclassified as crashes.
+		if m.shuttingDown.Load() {
+			m.log.Info().Str("subprocess", name).Msg("exited during shutdown (expected)")
+			return
+		}
 		// Report crash to the manager — first one wins.
 		select {
-		case m.crashed <- fmt.Errorf("subprocess %s exited: %v", name, proc.waitErr):
+		case m.crashed <- fmt.Errorf("subprocess %s exited unexpectedly: %v", name, proc.waitErr):
 		default:
 		}
 	}()
@@ -90,13 +100,15 @@ func (m *SubprocessManager) Start(name string, cmd *exec.Cmd) error {
 // WaitHealthy polls a health endpoint until it returns 200 or the timeout
 // expires. Returns an error if the subprocess crashes before becoming healthy.
 func (m *SubprocessManager) WaitHealthy(ctx context.Context, name string, check HealthCheck) error {
+	ctx, cancel := context.WithTimeout(ctx, check.Timeout)
+	defer cancel()
+
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if check.TLS != nil {
 		transport.TLSClientConfig = check.TLS
 		transport.ForceAttemptHTTP2 = true
 	}
 	client := &http.Client{Timeout: 2 * time.Second, Transport: transport}
-	deadline := time.Now().Add(check.Timeout)
 
 	proc := m.findProcess(name)
 	if proc == nil {
@@ -127,13 +139,9 @@ func (m *SubprocessManager) WaitHealthy(ctx context.Context, name string, check 
 			}
 		}
 
-		if time.Now().After(deadline) {
-			return fmt.Errorf("subprocess %s did not become healthy within %s", name, check.Timeout)
-		}
-
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("subprocess %s did not become healthy within %s", name, check.Timeout)
 		case <-ticker.C:
 		}
 	}
@@ -146,9 +154,23 @@ func (m *SubprocessManager) CrashChan() <-chan error {
 	return m.crashed
 }
 
+// BeginShutdown marks the manager as shutting down, suppressing crash
+// reporting for any subprocess that exits from this point forward.
+// Call this as early as possible in the shutdown sequence — before
+// stopping servers or other components that may cause cascading
+// subprocess exits. Shutdown() also sets this flag, but calling
+// BeginShutdown early closes the window between signal receipt
+// and Shutdown() invocation.
+func (m *SubprocessManager) BeginShutdown() {
+	m.shuttingDown.Store(true)
+}
+
 // Shutdown sends SIGTERM to all subprocesses in reverse start order,
 // waits up to timeout for each to exit, then sends SIGKILL if needed.
+// Sets the shuttingDown flag if BeginShutdown was not already called.
 func (m *SubprocessManager) Shutdown(timeout time.Duration) {
+	m.shuttingDown.Store(true)
+
 	m.mu.Lock()
 	procs := make([]*ManagedSubprocess, len(m.processes))
 	copy(procs, m.processes)
