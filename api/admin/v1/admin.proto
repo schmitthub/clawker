@@ -37,6 +37,13 @@ service AdminService {
   // provided routes. Called on firewall rule add/remove/reload.
   rpc SyncRoutes(SyncRoutesRequest) returns (SyncRoutesResponse);
 
+  // Bypass sets the bypass flag and starts a server-side dead-man timer
+  // that automatically clears the flag after timeout_seconds. Acts as a
+  // failsafe — if the CLI crashes during a bypass, the CP re-enables
+  // enforcement. The CLI can call Enable early to cancel (the timer
+  // no-ops if the flag is already cleared).
+  rpc Bypass(BypassRequest) returns (BypassResponse);
+
   // ResolveHostname performs a DNS lookup via the container's resolver.
   // Used to resolve host.docker.internal from inside the CP's network
   // namespace during Install.
@@ -102,6 +109,14 @@ message SyncRoutesRequest {
 }
 message SyncRoutesResponse {
   uint32 applied = 1;
+}
+
+message BypassRequest {
+  string cgroup_path = 1;
+  uint32 timeout_seconds = 2;
+}
+message BypassResponse {
+  uint64 cgroup_id = 1;
 }
 
 message ResolveHostnameRequest {

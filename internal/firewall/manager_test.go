@@ -2,27 +2,29 @@ package firewall
 
 // These tests live in package firewall (not firewall_test) so they can
 // access the Manager's unexported test-seam hook fields
-// (cgroupDriverFn, ebpfExecFn, ebpfExecOutputFn, touchSignalFileFn).
+// (cgroupDriverFn, adminClientFn, touchSignalFileFn, waitForCPReadyFn).
 // The seams let us exercise Enable/Disable/Bypass and related failure
 // paths without standing up a full Docker API mock — we only need to
-// stub the raw ContainerInspect/ContainerList/Info/Exec* surface for
-// the narrowly-scoped operations under test.
+// stub the raw ContainerInspect/ContainerList/Info surface for the
+// narrowly-scoped operations under test.
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/netip"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -42,15 +44,93 @@ type errTestNotFound struct{ msg string }
 func (e errTestNotFound) Error() string { return e.msg }
 func (e errTestNotFound) NotFound()     {}
 
+// recordingAdminClient is a test double for adminv1.AdminServiceClient that
+// records all calls with their request payloads. Each method field can be
+// overridden to inject errors or custom responses.
+type recordingAdminClient struct {
+	mu sync.Mutex
+
+	InstallCalls []*adminv1.InstallRequest
+	RemoveCalls  []*adminv1.RemoveRequest
+	EnableCalls  []*adminv1.EnableRequest
+	DisableCalls []*adminv1.DisableRequest
+	BypassCalls  []*adminv1.BypassRequest
+	SyncCalls    []*adminv1.SyncRoutesRequest
+	ResolveCalls []*adminv1.ResolveHostnameRequest
+
+	InstallErr    error
+	RemoveErr     error
+	EnableErr     error
+	DisableErr    error
+	BypassErr     error
+	SyncErr       error
+	ResolveResult *adminv1.ResolveHostnameResponse
+	ResolveErr    error
+}
+
+func (m *recordingAdminClient) Install(_ context.Context, req *adminv1.InstallRequest, _ ...grpc.CallOption) (*adminv1.InstallResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.InstallCalls = append(m.InstallCalls, req)
+	return &adminv1.InstallResponse{}, m.InstallErr
+}
+
+func (m *recordingAdminClient) Remove(_ context.Context, req *adminv1.RemoveRequest, _ ...grpc.CallOption) (*adminv1.RemoveResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.RemoveCalls = append(m.RemoveCalls, req)
+	return &adminv1.RemoveResponse{}, m.RemoveErr
+}
+
+func (m *recordingAdminClient) Enable(_ context.Context, req *adminv1.EnableRequest, _ ...grpc.CallOption) (*adminv1.EnableResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.EnableCalls = append(m.EnableCalls, req)
+	return &adminv1.EnableResponse{}, m.EnableErr
+}
+
+func (m *recordingAdminClient) Disable(_ context.Context, req *adminv1.DisableRequest, _ ...grpc.CallOption) (*adminv1.DisableResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.DisableCalls = append(m.DisableCalls, req)
+	return &adminv1.DisableResponse{}, m.DisableErr
+}
+
+func (m *recordingAdminClient) Bypass(_ context.Context, req *adminv1.BypassRequest, _ ...grpc.CallOption) (*adminv1.BypassResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.BypassCalls = append(m.BypassCalls, req)
+	return &adminv1.BypassResponse{}, m.BypassErr
+}
+
+func (m *recordingAdminClient) SyncRoutes(_ context.Context, req *adminv1.SyncRoutesRequest, _ ...grpc.CallOption) (*adminv1.SyncRoutesResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.SyncCalls = append(m.SyncCalls, req)
+	return &adminv1.SyncRoutesResponse{Applied: uint32(len(req.GetRoutes()))}, m.SyncErr
+}
+
+func (m *recordingAdminClient) ResolveHostname(_ context.Context, req *adminv1.ResolveHostnameRequest, _ ...grpc.CallOption) (*adminv1.ResolveHostnameResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ResolveCalls = append(m.ResolveCalls, req)
+	if m.ResolveErr != nil {
+		return nil, m.ResolveErr
+	}
+	if m.ResolveResult != nil {
+		return m.ResolveResult, nil
+	}
+	return &adminv1.ResolveHostnameResponse{Addresses: []string{"192.168.65.254"}}, nil
+}
+
 // newManagerWithFake builds a real Manager backed by a whailtest.FakeAPIClient,
 // using an isolated config (so the rules-store write path works). Tests can
 // then mutate the fake's *Fn fields and the manager's test-seam hook fields
 // to inject specific behaviours.
 //
-// The CP readiness gate is stubbed to return nil immediately — tests that
-// exercise Enable/Disable/Bypass don't care about waiting for a real CP
-// container to write a cp-ready file. Individual tests that DO need to
-// observe readiness behavior should overwrite mgr.waitForCPReadyFn.
+// The CP readiness gate and admin client are stubbed — tests that exercise
+// Enable/Disable/Bypass don't need a real CP container. Individual tests
+// that need specific admin client behavior should overwrite mgr.adminClientFn.
 func newManagerWithFake(t *testing.T) (*Manager, *whailtest.FakeAPIClient, config.Config) {
 	t.Helper()
 	cfg := configmocks.NewIsolatedTestConfig(t)
@@ -59,6 +139,14 @@ func newManagerWithFake(t *testing.T) (*Manager, *whailtest.FakeAPIClient, confi
 	require.NoError(t, err)
 	mgr.waitForCPReadyFn = func(context.Context) error { return nil }
 	return mgr, fake, cfg
+}
+
+// withRecordingAdmin injects a recordingAdminClient into the manager and
+// returns it for assertion.
+func withRecordingAdmin(mgr *Manager) *recordingAdminClient {
+	rec := &recordingAdminClient{}
+	mgr.adminClientFn = func() (adminv1.AdminServiceClient, error) { return rec, nil }
+	return rec
 }
 
 // disableHostProxy sets Security.EnableHostProxy=false on the isolated test
@@ -183,31 +271,6 @@ func TestResolveContainerID_NotFoundPropagates(t *testing.T) {
 
 // --- C7 / Bypass / Disable / Enable name→ID resolution ----------------------
 
-// execCapture records every args slice passed to ebpfExec / ebpfExecOutput so
-// tests can assert the cgroupPath + command the manager sent to the eBPF
-// manager container.
-type execCapture struct {
-	mu   sync.Mutex
-	args [][]string
-}
-
-func (c *execCapture) record(args []string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// copy to defeat slice aliasing (append reuses backing arrays).
-	cp := make([]string, len(args))
-	copy(cp, args)
-	c.args = append(c.args, cp)
-}
-
-func (c *execCapture) all() [][]string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := make([][]string, len(c.args))
-	copy(out, c.args)
-	return out
-}
-
 func TestManager_Disable_ResolvesName(t *testing.T) {
 	mgr, fake, _ := newManagerWithFake(t)
 
@@ -219,30 +282,18 @@ func TestManager_Disable_ResolvesName(t *testing.T) {
 		}, nil
 	}
 
-	// Force cgroupfs driver (deterministic cgroup path) and capture ebpfExec.
 	mgr.cgroupDriverFn = func(context.Context) (string, error) { return "cgroupfs", nil }
-	cap := &execCapture{}
-	mgr.ebpfExecFn = func(_ context.Context, args ...string) error {
-		cap.record(args)
-		return nil
-	}
+	rec := withRecordingAdmin(mgr)
 
 	require.NoError(t, mgr.Disable(t.Context(), friendly))
 
-	calls := cap.all()
-	require.Len(t, calls, 1)
-	require.Len(t, calls[0], 2)
-	assert.Equal(t, "disable", calls[0][0])
-	// Expect cgroupfs-style path with the CANONICAL long hex ID appended —
-	// the whole point of resolveContainerID is that the friendly name is
-	// never baked into the cgroup path.
-	assert.Equal(t, "/sys/fs/cgroup/docker/"+longHexID, calls[0][1])
-	assert.NotContains(t, calls[0][1], friendly)
+	// Disable calls gRPC Remove (detach BPF programs).
+	require.Len(t, rec.RemoveCalls, 1)
+	assert.Equal(t, "/sys/fs/cgroup/docker/"+longHexID, rec.RemoveCalls[0].GetCgroupPath())
+	assert.NotContains(t, rec.RemoveCalls[0].GetCgroupPath(), friendly)
 }
 
 func TestManager_Disable_SystemdDriver(t *testing.T) {
-	// Systemd cgroup drivers use a different path layout — also exercised to
-	// lock in the driver→path mapping.
 	mgr, fake, _ := newManagerWithFake(t)
 
 	fake.ContainerInspectFn = func(_ context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
@@ -251,17 +302,12 @@ func TestManager_Disable_SystemdDriver(t *testing.T) {
 		}, nil
 	}
 	mgr.cgroupDriverFn = func(context.Context) (string, error) { return "systemd", nil }
-	cap := &execCapture{}
-	mgr.ebpfExecFn = func(_ context.Context, args ...string) error {
-		cap.record(args)
-		return nil
-	}
+	rec := withRecordingAdmin(mgr)
 
 	require.NoError(t, mgr.Disable(t.Context(), "clawker.myapp.dev"))
 
-	calls := cap.all()
-	require.Len(t, calls, 1)
-	assert.Equal(t, "/sys/fs/cgroup/system.slice/docker-"+longHexID+".scope", calls[0][1])
+	require.Len(t, rec.RemoveCalls, 1)
+	assert.Equal(t, "/sys/fs/cgroup/system.slice/docker-"+longHexID+".scope", rec.RemoveCalls[0].GetCgroupPath())
 }
 
 func TestManager_Bypass_ResolvesName(t *testing.T) {
@@ -274,96 +320,49 @@ func TestManager_Bypass_ResolvesName(t *testing.T) {
 		}, nil
 	}
 	mgr.cgroupDriverFn = func(context.Context) (string, error) { return "cgroupfs", nil }
+	rec := withRecordingAdmin(mgr)
 
-	cap := &execCapture{}
-	mgr.ebpfExecFn = func(_ context.Context, args ...string) error {
-		cap.record(args)
-		return nil
-	}
+	require.NoError(t, mgr.Bypass(t.Context(), friendly, 30*time.Second))
 
-	// Bypass schedules a detached "sleep N && unbypass" via ExecCreate+ExecStart.
-	// Stub both to record the call.
-	var scheduledCmd []string
-	fake.ExecCreateFn = func(_ context.Context, _ string, opts client.ExecCreateOptions) (client.ExecCreateResult, error) {
-		scheduledCmd = opts.Cmd
-		return client.ExecCreateResult{ID: "exec-123"}, nil
-	}
-	fake.ExecStartFn = func(_ context.Context, _ string, _ client.ExecStartOptions) (client.ExecStartResult, error) {
-		return client.ExecStartResult{}, nil
-	}
-
-	require.NoError(t, mgr.Bypass(t.Context(), friendly, 30_000_000_000 /* 30s */))
-
-	calls := cap.all()
-	require.Len(t, calls, 1)
-	assert.Equal(t, "bypass", calls[0][0])
-	assert.Equal(t, "/sys/fs/cgroup/docker/"+longHexID, calls[0][1])
-	assert.NotContains(t, calls[0][1], friendly)
-
-	// The detached unbypass timer shell command must reference the resolved
-	// cgroup path, not the friendly name.
-	require.NotEmpty(t, scheduledCmd)
-	shell := strings.Join(scheduledCmd, " ")
-	assert.Contains(t, shell, longHexID)
-	assert.NotContains(t, shell, friendly)
+	// Bypass calls gRPC Bypass (set bypass flag + server-side dead-man timer).
+	require.Len(t, rec.BypassCalls, 1)
+	assert.Equal(t, "/sys/fs/cgroup/docker/"+longHexID, rec.BypassCalls[0].GetCgroupPath())
+	assert.Equal(t, uint32(30), rec.BypassCalls[0].GetTimeoutSeconds())
+	assert.NotContains(t, rec.BypassCalls[0].GetCgroupPath(), friendly)
 }
 
 func TestManager_Enable_ResolvesNameAndPropagatesTouchFailure(t *testing.T) {
 	// Enable() is the most-invasive path — it goes through ensureEbpfImage,
-	// discoverNetwork, ensureContainer, syncRoutes, cgroupDriver, ebpfExec,
+	// discoverNetwork, ensureContainer, syncRoutes, adminClient.Install,
 	// and touchSignalFile. We stub each dependency at the narrowest seam so
 	// the test focuses on two invariants:
-	//  1. The resolved long ID is what reaches the cgroupPath / ebpfExec args
-	//     (C7 name→ID resolution).
-	//  2. A failing touchSignalFile now surfaces as a returned error instead
-	//     of being silently logged as a Warn (C3 regression guard).
+	//  1. The resolved long ID is what reaches the cgroup path in the Install request.
+	//  2. A failing touchSignalFile surfaces as a returned error (C3 regression guard).
 	mgr, fake, cfg := newManagerWithFake(t)
-
-	// Rule out host-proxy resolution — not what we're testing here.
 	disableHostProxy(t, cfg)
 
 	const friendly = "clawker.myapp.dev"
 
-	// ContainerInspect → map friendly name to canonical long ID.
 	fake.ContainerInspectFn = func(_ context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
 		return client.ContainerInspectResult{
 			Container: container.InspectResponse{ID: longHexID},
 		}, nil
 	}
-
-	// ImageInspect → the eBPF image exists (skip the build path).
 	fake.ImageInspectFn = func(_ context.Context, _ string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
 		return client.ImageInspectResult{}, nil
 	}
-
-	// NetworkInspect → minimal network info so discoverNetwork returns
-	// without erroring. We return a realistic IPAM config matching what
-	// the firewall network looks like in production.
 	fake.NetworkInspectFn = stubFirewallNetworkInspect()
-
-	// ContainerList → ensureContainer(ebpfContainer) sees a running
-	// container already, so no Create/Start path is taken.
 	fake.ContainerListFn = func(_ context.Context, _ client.ContainerListOptions) (client.ContainerListResult, error) {
 		return client.ContainerListResult{
-			Items: []container.Summary{{
-				ID:    "fake-ebpf-id",
-				State: container.StateRunning,
-			}},
+			Items: []container.Summary{{ID: "fake-ebpf-id", State: container.StateRunning}},
 		}, nil
 	}
 
-	// Capture all ebpfExec calls (sync-routes + enable).
-	cap := &execCapture{}
-	mgr.ebpfExecFn = func(_ context.Context, args ...string) error {
-		cap.record(args)
-		return nil
-	}
+	rec := withRecordingAdmin(mgr)
 	mgr.cgroupDriverFn = func(context.Context) (string, error) { return "cgroupfs", nil }
 
-	// Inject touchSignalFile failure: should propagate as an error now.
 	touchErr := errors.New("docker exec failed")
 	mgr.touchSignalFileFn = func(_ context.Context, id string) error {
-		// Invariant: the ID passed to touchSignalFile is the resolved long ID.
 		assert.Equal(t, longHexID, id)
 		return touchErr
 	}
@@ -373,30 +372,16 @@ func TestManager_Enable_ResolvesNameAndPropagatesTouchFailure(t *testing.T) {
 	assert.ErrorIs(t, err, touchErr)
 	assert.Contains(t, err.Error(), "firewall-ready signal")
 
-	// Check the ebpfExec invocations — we expect at least:
-	//   - one "sync-routes" call (from syncRoutes)
-	//   - one "enable" call with the resolved cgroup path
-	var sawEnable bool
-	for _, call := range cap.all() {
-		if len(call) == 0 {
-			continue
-		}
-		if call[0] == "enable" {
-			require.GreaterOrEqual(t, len(call), 3, "enable call should pass cgroupPath + cfgJSON")
-			assert.Equal(t, "/sys/fs/cgroup/docker/"+longHexID, call[1])
-			assert.NotContains(t, call[1], friendly)
-			sawEnable = true
-		}
-	}
-	assert.True(t, sawEnable, "Enable() should invoke ebpfExec(\"enable\", ...)")
+	// Verify the Install RPC was called with the correct cgroup path.
+	require.NotEmpty(t, rec.InstallCalls, "Enable should call adminClient.Install")
+	lastInstall := rec.InstallCalls[len(rec.InstallCalls)-1]
+	assert.Equal(t, "/sys/fs/cgroup/docker/"+longHexID, lastInstall.GetCgroupPath())
+	assert.NotContains(t, lastInstall.GetCgroupPath(), friendly)
 }
 
 // --- C3 / touchSignalFile error propagation from Enable ---------------------
 
 func TestTouchSignalFile_ErrorSurfacesFromEnable(t *testing.T) {
-	// Focused version of the Enable touchSignal check: driven purely through
-	// the seam, without wiring Docker mocks. It locks in that any
-	// touchSignalFileFn failure propagates as a returned error from Enable.
 	mgr, fake, cfg := newManagerWithFake(t)
 	disableHostProxy(t, cfg)
 
@@ -416,7 +401,7 @@ func TestTouchSignalFile_ErrorSurfacesFromEnable(t *testing.T) {
 	}
 
 	mgr.cgroupDriverFn = func(context.Context) (string, error) { return "cgroupfs", nil }
-	mgr.ebpfExecFn = func(context.Context, ...string) error { return nil }
+	withRecordingAdmin(mgr)
 
 	sentinel := errors.New("copy failed")
 	mgr.touchSignalFileFn = func(context.Context, string) error { return sentinel }
@@ -429,9 +414,9 @@ func TestTouchSignalFile_ErrorSurfacesFromEnable(t *testing.T) {
 // --- C5 / host-proxy resolve failure propagation ----------------------------
 
 func TestEnable_HostProxyResolveFailurePropagates(t *testing.T) {
-	// Default config has HostProxyEnabled=true. If the eBPF-side DNS resolve
-	// for host.docker.internal fails, Enable() must now return an error
-	// instead of silently disabling host-proxy bypass.
+	// Default config has HostProxyEnabled=true. If the CP's ResolveHostname
+	// for host.docker.internal fails, Enable() must return an error instead
+	// of silently disabling host-proxy bypass.
 	mgr, fake, _ := newManagerWithFake(t)
 
 	fake.ContainerInspectFn = func(_ context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
@@ -450,16 +435,9 @@ func TestEnable_HostProxyResolveFailurePropagates(t *testing.T) {
 	}
 
 	mgr.cgroupDriverFn = func(context.Context) (string, error) { return "cgroupfs", nil }
-	mgr.ebpfExecFn = func(context.Context, ...string) error { return nil }
-
-	// Inject the failure: the eBPF manager container cannot resolve host.docker.internal.
+	rec := withRecordingAdmin(mgr)
 	resolveErr := errors.New("DNS lookup failed")
-	mgr.ebpfExecOutputFn = func(_ context.Context, args ...string) (string, error) {
-		if len(args) >= 2 && args[0] == "resolve" && args[1] == "host.docker.internal" {
-			return "", resolveErr
-		}
-		return "", fmt.Errorf("unexpected ebpfExecOutput args: %v", args)
-	}
+	rec.ResolveErr = resolveErr
 
 	err := mgr.Enable(t.Context(), "clawker.myapp.dev")
 	require.Error(t, err)
@@ -468,9 +446,8 @@ func TestEnable_HostProxyResolveFailurePropagates(t *testing.T) {
 }
 
 func TestEnable_HostProxyResolveEmptyAddressPropagates(t *testing.T) {
-	// Resolve returns no error but an empty string — equally broken, must
-	// still surface as an error since the resulting cfgJSON would embed
-	// "host_proxy_ip" = "" and silently disable the bypass.
+	// Resolve returns no error but empty addresses — must still error since
+	// an empty host_proxy_ip silently disables the bypass.
 	mgr, fake, _ := newManagerWithFake(t)
 
 	fake.ContainerInspectFn = func(_ context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
@@ -489,8 +466,8 @@ func TestEnable_HostProxyResolveEmptyAddressPropagates(t *testing.T) {
 	}
 
 	mgr.cgroupDriverFn = func(context.Context) (string, error) { return "cgroupfs", nil }
-	mgr.ebpfExecFn = func(context.Context, ...string) error { return nil }
-	mgr.ebpfExecOutputFn = func(context.Context, ...string) (string, error) { return "   ", nil }
+	rec := withRecordingAdmin(mgr)
+	rec.ResolveResult = &adminv1.ResolveHostnameResponse{Addresses: []string{"   "}}
 
 	err := mgr.Enable(t.Context(), "clawker.myapp.dev")
 	require.Error(t, err)
@@ -541,8 +518,6 @@ func TestCgroupDriverImpl_PropagatesInfoError(t *testing.T) {
 }
 
 func TestCgroupDriverImpl_ReturnsDriverFromInfo(t *testing.T) {
-	// Sanity: when cgroupDriverFn returns a value, it flows through to the
-	// cgroup path unchanged.
 	mgr, fake, _ := newManagerWithFake(t)
 
 	fake.ContainerInspectFn = func(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
@@ -551,17 +526,12 @@ func TestCgroupDriverImpl_ReturnsDriverFromInfo(t *testing.T) {
 		}, nil
 	}
 	mgr.cgroupDriverFn = func(context.Context) (string, error) { return "systemd", nil }
-
-	cap := &execCapture{}
-	mgr.ebpfExecFn = func(_ context.Context, args ...string) error {
-		cap.record(args)
-		return nil
-	}
+	rec := withRecordingAdmin(mgr)
 
 	require.NoError(t, mgr.Disable(t.Context(), "clawker.myapp.dev"))
-	calls := cap.all()
-	require.Len(t, calls, 1)
-	assert.Equal(t, "/sys/fs/cgroup/system.slice/docker-"+longHexID+".scope", calls[0][1])
+
+	require.Len(t, rec.RemoveCalls, 1)
+	assert.Equal(t, "/sys/fs/cgroup/system.slice/docker-"+longHexID+".scope", rec.RemoveCalls[0].GetCgroupPath())
 }
 
 // --- C2 / isContainerRunning error handling at the interface boundary -------

@@ -143,7 +143,7 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 			return fmt.Errorf("bootstrapping services: waiting for firewall health: %w", err)
 		}
 
-		// Attach eBPF cgroup programs to the container (docker exec → ebpf-manager enable).
+		// Attach eBPF cgroup programs to the container via CP gRPC (AdminService.Install).
 		if err := fwMgr.Enable(ctx, container); err != nil {
 			return fmt.Errorf("bootstrapping services: enabling firewall in container: %w", err)
 		}

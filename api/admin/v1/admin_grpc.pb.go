@@ -24,6 +24,7 @@ const (
 	AdminService_Enable_FullMethodName          = "/clawker.admin.v1.AdminService/Enable"
 	AdminService_Disable_FullMethodName         = "/clawker.admin.v1.AdminService/Disable"
 	AdminService_SyncRoutes_FullMethodName      = "/clawker.admin.v1.AdminService/SyncRoutes"
+	AdminService_Bypass_FullMethodName          = "/clawker.admin.v1.AdminService/Bypass"
 	AdminService_ResolveHostname_FullMethodName = "/clawker.admin.v1.AdminService/ResolveHostname"
 )
 
@@ -60,6 +61,12 @@ type AdminServiceClient interface {
 	// SyncRoutes replaces the global route_map atomically with the
 	// provided routes. Called on firewall rule add/remove/reload.
 	SyncRoutes(ctx context.Context, in *SyncRoutesRequest, opts ...grpc.CallOption) (*SyncRoutesResponse, error)
+	// Bypass sets the bypass flag and starts a server-side dead-man timer
+	// that automatically clears the flag after timeout_seconds. Acts as a
+	// failsafe — if the CLI crashes during a bypass, the CP re-enables
+	// enforcement. The CLI can call Enable early to cancel (the timer
+	// no-ops if the flag is already cleared).
+	Bypass(ctx context.Context, in *BypassRequest, opts ...grpc.CallOption) (*BypassResponse, error)
 	// ResolveHostname performs a DNS lookup via the container's resolver.
 	// Used to resolve host.docker.internal from inside the CP's network
 	// namespace during Install.
@@ -124,6 +131,16 @@ func (c *adminServiceClient) SyncRoutes(ctx context.Context, in *SyncRoutesReque
 	return out, nil
 }
 
+func (c *adminServiceClient) Bypass(ctx context.Context, in *BypassRequest, opts ...grpc.CallOption) (*BypassResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BypassResponse)
+	err := c.cc.Invoke(ctx, AdminService_Bypass_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *adminServiceClient) ResolveHostname(ctx context.Context, in *ResolveHostnameRequest, opts ...grpc.CallOption) (*ResolveHostnameResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ResolveHostnameResponse)
@@ -167,6 +184,12 @@ type AdminServiceServer interface {
 	// SyncRoutes replaces the global route_map atomically with the
 	// provided routes. Called on firewall rule add/remove/reload.
 	SyncRoutes(context.Context, *SyncRoutesRequest) (*SyncRoutesResponse, error)
+	// Bypass sets the bypass flag and starts a server-side dead-man timer
+	// that automatically clears the flag after timeout_seconds. Acts as a
+	// failsafe — if the CLI crashes during a bypass, the CP re-enables
+	// enforcement. The CLI can call Enable early to cancel (the timer
+	// no-ops if the flag is already cleared).
+	Bypass(context.Context, *BypassRequest) (*BypassResponse, error)
 	// ResolveHostname performs a DNS lookup via the container's resolver.
 	// Used to resolve host.docker.internal from inside the CP's network
 	// namespace during Install.
@@ -195,6 +218,9 @@ func (UnimplementedAdminServiceServer) Disable(context.Context, *DisableRequest)
 }
 func (UnimplementedAdminServiceServer) SyncRoutes(context.Context, *SyncRoutesRequest) (*SyncRoutesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SyncRoutes not implemented")
+}
+func (UnimplementedAdminServiceServer) Bypass(context.Context, *BypassRequest) (*BypassResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Bypass not implemented")
 }
 func (UnimplementedAdminServiceServer) ResolveHostname(context.Context, *ResolveHostnameRequest) (*ResolveHostnameResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ResolveHostname not implemented")
@@ -310,6 +336,24 @@ func _AdminService_SyncRoutes_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_Bypass_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BypassRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).Bypass(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_Bypass_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).Bypass(ctx, req.(*BypassRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _AdminService_ResolveHostname_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ResolveHostnameRequest)
 	if err := dec(in); err != nil {
@@ -354,6 +398,10 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SyncRoutes",
 			Handler:    _AdminService_SyncRoutes_Handler,
+		},
+		{
+			MethodName: "Bypass",
+			Handler:    _AdminService_Bypass_Handler,
 		},
 		{
 			MethodName: "ResolveHostname",

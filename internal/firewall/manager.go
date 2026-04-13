@@ -28,6 +28,7 @@ import (
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/controlplane"
 	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -41,22 +42,15 @@ type firewallContainer string
 const (
 	envoyContainer   firewallContainer = "clawker-envoy"
 	corednsContainer firewallContainer = "clawker-coredns"
-	// cpContainer is the clawker control plane container. Replaces the
-	// historical clawker-ebpf container (which ran `sleep infinity` as a
-	// docker-exec target). The CP now owns ebpf.Manager.Load() lifetime
-	// directly and serves ControlPlaneService over mTLS gRPC on a UDS.
+	// cpContainer is the clawker control plane container. Owns
+	// ebpf.Manager.Load() lifetime in-process, serves AdminService over
+	// mTLS gRPC on TCP, and runs the Ory auth stack (Hydra/Oathkeeper/Kratos).
 	cpContainer firewallContainer = "clawker-cp"
 )
 
 // Infrastructure container constants.
 const (
 	envoyImage = "envoyproxy/envoy:distroless-v1.37.1@sha256:4d9226b9fd4d1449887de7cde785beb24b12e47d6e79021dec3c79e362609432"
-
-	// cpImageTag is the local Docker image tag for the clawker control plane.
-	// Built on-demand from the embedded clawker-cp binary when the image
-	// doesn't exist locally. The image also bundles the ebpf-manager binary
-	// as a break-glass debug tool (not the primary interface).
-	cpImageTag = "clawker-cp:latest"
 
 	// corednsImageTag is the local Docker image tag for the custom CoreDNS
 	// with the dnsbpf plugin. Built on-demand from the embedded binary.
@@ -93,10 +87,13 @@ type Manager struct {
 	// real methods are named with an "Impl" suffix so that the public
 	// names remain the canonical entry points.
 	cgroupDriverFn    func(ctx context.Context) (string, error)
-	ebpfExecFn        func(ctx context.Context, args ...string) error
-	ebpfExecOutputFn  func(ctx context.Context, args ...string) (string, error)
 	touchSignalFileFn func(ctx context.Context, containerID string) error
 	waitForCPReadyFn  func(ctx context.Context) error
+
+	// adminClientFn returns the AdminServiceClient for typed gRPC calls
+	// to the control plane. Production: cpClient() (lazy TLS+OAuth2 dial).
+	// Tests: inject a mock AdminServiceClient directly.
+	adminClientFn func() (adminv1.AdminServiceClient, error)
 
 	// CP gRPC client. Built lazily on first use by cpClient() because the
 	// CP must be running and must have generated its cert material before
@@ -124,10 +121,9 @@ func NewManager(client client.APIClient, cfg config.Config, log *logger.Logger) 
 	// Wire test seams to the real implementations. Tests can overwrite
 	// any of these fields directly (they live in package firewall).
 	m.cgroupDriverFn = m.cgroupDriverImpl
-	m.ebpfExecFn = m.ebpfExecImpl
-	m.ebpfExecOutputFn = m.ebpfExecOutputImpl
 	m.touchSignalFileFn = m.touchSignalFileImpl
 	m.waitForCPReadyFn = m.waitForCPReadyImpl
+	m.adminClientFn = m.cpClient
 	return m, nil
 }
 
@@ -160,7 +156,13 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 		return fmt.Errorf("firewall: %w", err)
 	}
 
-	// Step 4: Ensure locally-built images exist (build from embedded binaries if needed).
+	// Step 4a: Ensure auth material (CLI signing key + server TLS cert) exists.
+	// The CP container bind-mounts these files — they must exist before creation.
+	if err := auth.EnsureAuthMaterial(); err != nil {
+		return fmt.Errorf("firewall: ensuring auth material: %w", err)
+	}
+
+	// Step 4b: Ensure locally-built images exist (build from embedded binaries if needed).
 	if err := m.ensureCPImage(ctx); err != nil {
 		return fmt.Errorf("firewall: %w", err)
 	}
@@ -182,9 +184,9 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 	if err := m.waitForCPReady(ctx); err != nil {
 		return fmt.Errorf("firewall: waiting for clawker-cp readiness: %w", err)
 	}
-	// NOTE: no ebpfExec("init") here. The CP owns ebpf.Manager.Load()
-	// lifetime in-process — calling init again would re-run cleanupAllLinks
-	// and strip BPF programs from any other running containers.
+	// NOTE: no explicit eBPF init here. The CP owns ebpf.Manager.Load()
+	// lifetime in-process — it runs once at CP startup and programs stay
+	// pinned for the process lifetime.
 	if err := m.syncRoutes(ctx); err != nil {
 		return fmt.Errorf("firewall: %w", err)
 	}
@@ -255,9 +257,10 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 
 	envoyURL := fmt.Sprintf("http://localhost:%d/", m.cfg.EnvoyHealthHostPort())
 	corednsURL := fmt.Sprintf("http://localhost:%d%s", m.cfg.CoreDNSHealthHostPort(), m.cfg.CoreDNSHealthPath())
+	cpHealthURL := fmt.Sprintf("http://localhost:%d/healthz", m.cfg.Settings().ControlPlane.HealthPort)
 
-	var envoyReady, corednsReady bool
-	var lastEnvoyErr, lastCorednsErr error
+	var envoyReady, corednsReady, cpReady bool
+	var lastEnvoyErr, lastCorednsErr, lastCPErr error
 
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
@@ -298,11 +301,32 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 			}
 		}
 
-		if envoyReady && corednsReady {
+		if !cpReady {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, cpHealthURL, nil)
+			if err != nil {
+				lastCPErr = err
+			} else if resp, err := httpClient.Do(req); err != nil {
+				lastCPErr = err
+			} else {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					cpReady = true
+					m.log.Debug().Msg("clawker-cp health check passed (HTTP 200)")
+				} else {
+					lastCPErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+				}
+			}
+		}
+
+		if envoyReady && corednsReady && cpReady {
 			return nil
 		}
 
-		time.Sleep(healthCheckInterval)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(healthCheckInterval):
+		}
 	}
 
 	// Prefer context error (e.g., user Ctrl+C) over timeout.
@@ -324,6 +348,13 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 			corednsErr = fmt.Errorf("%w: last probe: %v", ErrCoreDNSUnhealthy, lastCorednsErr)
 		}
 		unhealthy = errors.Join(unhealthy, corednsErr)
+	}
+	if !cpReady {
+		cpErr := ErrCPUnhealthy
+		if lastCPErr != nil {
+			cpErr = fmt.Errorf("%w: last probe: %v", ErrCPUnhealthy, lastCPErr)
+		}
+		unhealthy = errors.Join(unhealthy, cpErr)
 	}
 	return &HealthTimeoutError{Timeout: timeout, Err: unhealthy}
 }
@@ -524,7 +555,12 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
 	cgroupPath := ebpfCgroupPath(driver, containerID)
-	if err := m.ebpfExec(ctx, "disable", cgroupPath); err != nil {
+
+	cpClient, err := m.adminClientFn()
+	if err != nil {
+		return fmt.Errorf("firewall disable: %w", err)
+	}
+	if _, err := cpClient.Remove(ctx, &adminv1.RemoveRequest{CgroupPath: cgroupPath}); err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
 
@@ -542,10 +578,10 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		return fmt.Errorf("firewall enable: %w", err)
 	}
 
-	// Ensure the clawker-cp container is running (idempotent).
-	// The daemon's EnsureRunning creates it, but it may be missing if the
-	// daemon started before the CP feature was added, or if it was
-	// manually removed.
+	// Ensure auth material + CP container are running (idempotent).
+	if err := auth.EnsureAuthMaterial(); err != nil {
+		return fmt.Errorf("firewall enable: ensuring auth material: %w", err)
+	}
 	if err := m.ensureCPImage(ctx); err != nil {
 		return fmt.Errorf("firewall enable: %w", err)
 	}
@@ -575,6 +611,11 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		return fmt.Errorf("firewall enable: %w", err)
 	}
 
+	cpClient, err := m.adminClientFn()
+	if err != nil {
+		return fmt.Errorf("firewall enable: %w", err)
+	}
+
 	// Host proxy bypass: read from project config (authoritative), not container env.
 	// If the project has the host proxy enabled we MUST have a valid IP — a
 	// silent Warn-and-continue here leaves the container unable to reach the
@@ -587,11 +628,16 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 		hostProxyPort = uint16(m.cfg.Settings().HostProxy.Daemon.Port)
 		// Resolve host.docker.internal from inside the Docker network.
 		// On Docker Desktop it resolves to 192.168.65.254, not localhost.
-		resolved, resolveErr := m.ebpfExecOutput(ctx, "resolve", "host.docker.internal")
+		resp, resolveErr := cpClient.ResolveHostname(ctx, &adminv1.ResolveHostnameRequest{
+			Hostname: "host.docker.internal",
+		})
 		if resolveErr != nil {
 			return fmt.Errorf("firewall enable: resolving host.docker.internal for host-proxy bypass: %w", resolveErr)
 		}
-		hostProxyIP = strings.TrimSpace(resolved)
+		if len(resp.GetAddresses()) == 0 {
+			return fmt.Errorf("firewall enable: host.docker.internal resolved to no addresses for host-proxy bypass")
+		}
+		hostProxyIP = strings.TrimSpace(resp.GetAddresses()[0])
 		if hostProxyIP == "" {
 			return fmt.Errorf("firewall enable: host.docker.internal resolved to empty address for host-proxy bypass")
 		}
@@ -601,19 +647,24 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 	gatewayIP := computeGateway(netInfo.CIDR)
 	ports := m.envoyPorts()
 
-	// Build JSON config for the eBPF manager (container_map entry only, no routes).
-	cfgJSON := fmt.Sprintf(
-		`{"envoy_ip":%q,"coredns_ip":%q,"gateway_ip":%q,"cidr":%q,"host_proxy_ip":%q,"host_proxy_port":%d,"egress_port":%d}`,
-		netInfo.EnvoyIP, netInfo.CoreDNSIP, gatewayIP, netInfo.CIDR,
-		hostProxyIP, hostProxyPort, ports.EgressPort,
-	)
-
 	driver, err := m.cgroupDriver(ctx)
 	if err != nil {
 		return fmt.Errorf("firewall enable: %w", err)
 	}
 	cgroupPath := ebpfCgroupPath(driver, containerID)
-	if err := m.ebpfExec(ctx, "enable", cgroupPath, cfgJSON); err != nil {
+
+	if _, err := cpClient.Install(ctx, &adminv1.InstallRequest{
+		CgroupPath: cgroupPath,
+		Config: &adminv1.ContainerConfig{
+			EnvoyIp:       netInfo.EnvoyIP,
+			CorednsIp:     netInfo.CoreDNSIP,
+			GatewayIp:     gatewayIP,
+			Cidr:          netInfo.CIDR,
+			HostProxyIp:   hostProxyIP,
+			HostProxyPort: uint32(hostProxyPort),
+			EgressPort:    uint32(ports.EgressPort),
+		},
+	}); err != nil {
 		return fmt.Errorf("firewall enable: %w", err)
 	}
 
@@ -657,10 +708,10 @@ func (m *Manager) touchSignalFileImpl(ctx context.Context, containerID string) e
 // See .claude/docs/EBPF-DESIGN.md § Observability.
 
 // Bypass sets the eBPF bypass flag for a container, allowing unrestricted egress.
-// Schedules automatic re-enable after timeout via a detached exec in the eBPF
-// manager container (sleep + unbypass). The container argument may be a name
-// or ID — it is resolved to the canonical long ID before the cgroup path is
-// constructed.
+// The CP starts a server-side dead-man timer that automatically re-enables
+// enforcement after timeout — acts as a failsafe if the CLI crashes mid-bypass.
+// The container argument may be a name or ID — it is resolved to the canonical
+// long ID before the cgroup path is constructed.
 func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.Duration) error {
 	containerID, err := m.resolveContainerID(ctx, containerID)
 	if err != nil {
@@ -672,37 +723,26 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 	}
 	cgroupPath := ebpfCgroupPath(driver, containerID)
 
-	// Set bypass flag (instant, atomic).
-	if err := m.ebpfExec(ctx, "bypass", cgroupPath); err != nil {
-		return fmt.Errorf("firewall bypass: %w", err)
-	}
-
-	// Schedule automatic re-enable via detached exec in the eBPF manager container.
-	timeoutSecs := int(timeout.Seconds())
-	if timeoutSecs <= 0 {
+	timeoutSecs := uint32(timeout.Seconds())
+	if timeoutSecs == 0 {
 		timeoutSecs = 30
 	}
 
-	shellCmd := fmt.Sprintf("sleep %d && /usr/local/bin/ebpf-manager unbypass %s", timeoutSecs, cgroupPath)
-	execResp, err := m.client.ExecCreate(ctx, string(cpContainer), client.ExecCreateOptions{
-		Cmd: []string{"sh", "-c", shellCmd},
-	})
+	cpClient, err := m.adminClientFn()
 	if err != nil {
-		return fmt.Errorf("firewall bypass: creating timer: %w", err)
+		return fmt.Errorf("firewall bypass: %w", err)
 	}
-
-	_, err = m.client.ExecStart(ctx, execResp.ID, client.ExecStartOptions{
-		Detach: true,
-	})
-	if err != nil {
-		return fmt.Errorf("firewall bypass: starting timer: %w", err)
+	if _, err := cpClient.Bypass(ctx, &adminv1.BypassRequest{
+		CgroupPath:     cgroupPath,
+		TimeoutSeconds: timeoutSecs,
+	}); err != nil {
+		return fmt.Errorf("firewall bypass: %w", err)
 	}
 
 	m.log.Debug().
 		Str("container", containerID).
-		Int("timeout_secs", timeoutSecs).
-		Msg("firewall bypass started (re-enable scheduled via eBPF)")
-
+		Uint32("timeout_seconds", timeoutSecs).
+		Msg("firewall bypass started with server-side failsafe")
 	return nil
 }
 
@@ -907,8 +947,8 @@ func (m *Manager) regenerateAndRestart(ctx context.Context) error {
 		return nil
 	}
 
-	// DO NOT call ebpfExec("init") here — that would re-run Load() which
-	// calls cleanupAllLinks() and detaches BPF programs from ALL running
+	// DO NOT re-init eBPF here — that would re-run Load() which calls
+	// cleanupAllLinks() and detaches BPF programs from ALL running
 	// containers. Maps are already pinned from the initial EnsureRunning,
 	// so we just need to sync routes for the rule change.
 	if err := m.syncRoutes(ctx); err != nil {
@@ -1013,6 +1053,7 @@ type containerSpec struct {
 	staticIP     string
 	labels       map[string]string
 	cmd          []string
+	env          []string
 	mounts       []mount.Mount
 	portBindings network.PortMap
 	capAdd       []string // Linux capabilities (e.g., "BPF", "SYS_ADMIN")
@@ -1079,6 +1120,9 @@ func (m *Manager) runContainer(ctx context.Context, name firewallContainer, spec
 	}
 	if len(spec.cmd) > 0 {
 		containerConfig.Cmd = spec.cmd
+	}
+	if len(spec.env) > 0 {
+		containerConfig.Env = spec.env
 	}
 	if spec.stopTimeout != nil {
 		containerConfig.StopTimeout = spec.stopTimeout
@@ -1193,16 +1237,17 @@ type embeddedImageSpec struct {
 // Binary bytes for clawker-cp and ebpf-manager are populated per-call
 // in ensureCPImage to avoid copying large []byte fields at package init time.
 var cpImageSpec = embeddedImageSpec{
-	tag: cpImageTag,
+	tag: consts.CPImageTag,
 	binaries: []embeddedBinary{
 		{fileName: "clawker-cp"},
 		{fileName: "ebpf-manager"},
 	},
 	dockerfile: "" +
 		// Ory binaries (musl-linked, pinned by multi-arch manifest digest).
-		"FROM oryd/hydra:v2.3.0@sha256:b94007e19a1f7f78157e7f4ea340da8a55b5f104a0f1198755c256f38ef32b4b AS hydra\n" +
-		"FROM oryd/oathkeeper:v0.40.9@sha256:dc3a4f04be20916940df0d77167c3b76cb3b5bb1636b4f8aabdd89d0691195a4 AS oathkeeper\n" +
-		"FROM oryd/kratos:v1.3.1@sha256:fe2428f103a6240c064b6ea77d3088610865c55fcebccb30355857eccdc25b4b AS kratos\n" +
+		// Versions verified against v26.2.0 config schemas and smoke-tested 2026-04-13.
+		"FROM oryd/hydra:v26.2.0@sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9 AS hydra\n" +
+		"FROM oryd/oathkeeper:v26.2.0@sha256:467329abde34feefca217b7af76fff59e77fe1795a19376e9d479f33c7c198fc AS oathkeeper\n" +
+		"FROM oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643 AS kratos\n" +
 		// Alpine provides musl libc for the dynamically-linked Ory binaries.
 		"FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c AS musl\n" +
 		// Final stage: distroless with musl + all binaries.
@@ -1374,13 +1419,9 @@ func (m *Manager) stopAndRemove(ctx context.Context, name firewallContainer) err
 		// Timeout: nil → Docker honors the container-level StopTimeout set
 		// in ContainerConfig at creation time (see moby client_stop.go: "If
 		// the timeout is nil, the container's StopTimeout value is used, if
-		// set, otherwise the engine default"). This lets the ebpf manager
-		// container (which runs `sleep infinity` and cannot handle SIGTERM)
-		// exit in 1 second via its configured stopTimeout, while envoy and
-		// coredns fall back to Docker's 10-second default for graceful
-		// HTTP drain. Previously a hardcoded 10s override here meant ebpf
-		// always ate the full 10-second SIGTERM grace period, making
-		// `firewall down` unnecessarily slow.
+		// set, otherwise the engine default"). The CP container has a 30s
+		// stopTimeout for GracefulStop + Manager.Close; envoy and coredns
+		// fall back to Docker's 10s default for graceful HTTP drain.
 		if _, err := m.client.ContainerStop(ctx, ctr.ID, client.ContainerStopOptions{}); err != nil {
 			m.log.Warn().Err(err).Str("container", n).Msg("failed to stop container gracefully")
 		}
@@ -1463,31 +1504,28 @@ func (m *Manager) syncRoutes(ctx context.Context) error {
 	ports := m.envoyPorts()
 	tcpMappings := TCPMappings(rules, ports)
 
-	routes := make([]ebpfRoute, 0, len(tcpMappings))
+	protoRoutes := make([]*adminv1.Route, 0, len(tcpMappings))
 	for _, mp := range tcpMappings {
-		routes = append(routes, ebpfRoute{
+		protoRoutes = append(protoRoutes, &adminv1.Route{
 			DomainHash: clawkerebpf.DomainHash(mp.Dst),
-			DstPort:    uint16(mp.DstPort),
-			EnvoyPort:  uint16(mp.EnvoyPort),
+			DstPort:    uint32(mp.DstPort),
+			EnvoyPort:  uint32(mp.EnvoyPort),
 		})
 	}
 
-	if err := m.ebpfExec(ctx, "sync-routes", marshalRoutes(routes)); err != nil {
+	cpClient, err := m.adminClientFn()
+	if err != nil {
+		return fmt.Errorf("syncing BPF route_map: %w", err)
+	}
+	if _, err := cpClient.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{Routes: protoRoutes}); err != nil {
 		return fmt.Errorf("syncing BPF route_map: %w", err)
 	}
 	return nil
 }
 
-// ebpfRoute is the JSON-serializable route type for the eBPF manager container.
-type ebpfRoute struct {
-	DomainHash uint32 `json:"domain_hash"`
-	DstPort    uint16 `json:"dst_port"`
-	EnvoyPort  uint16 `json:"envoy_port"`
-}
-
-// ebpfStaticIP computes the eBPF manager's static IP from the Envoy IP.
-// Envoy is .200, CoreDNS is .201, eBPF manager is .202.
-func ebpfStaticIP(envoyIP string) string {
+// cpStaticIP computes the clawker-cp container's static IP from the Envoy IP.
+// Envoy is .200, CoreDNS is .201, CP is .202.
+func cpStaticIP(envoyIP string) string {
 	ip := net.ParseIP(envoyIP).To4()
 	if ip == nil {
 		return ""
@@ -1511,7 +1549,7 @@ func ebpfCgroupPath(cgroupDriver, containerID string) string {
 // (e.g. "cgroupfs" or "systemd"). Routed through cgroupDriverFn for test
 // override. Errors are surfaced to the caller rather than silently defaulted —
 // a bad assumption on a systemd-driver host produces a cgroup path that does
-// not exist and leads to cryptic ENOENT from ebpfExec downstream.
+// not exist and leads to cryptic ENOENT from the CP's Install RPC downstream.
 func (m *Manager) cgroupDriver(ctx context.Context) (string, error) {
 	return m.cgroupDriverFn(ctx)
 }
@@ -1525,154 +1563,6 @@ func (m *Manager) cgroupDriverImpl(ctx context.Context) (string, error) {
 	return info.Info.CgroupDriver, nil
 }
 
-// ebpfExec dispatches a legacy-string-arg command to the clawker-cp's
-// ControlPlaneService gRPC surface. The name is retained for backward
-// compatibility with the existing ebpfExecFn test seam — unit tests that
-// stub ebpfExecFn continue to work unchanged. Over time the intent is to
-// migrate call sites to typed gRPC calls on a ControlPlaneServiceClient
-// mock and delete this shim entirely.
-//
-// Routed through ebpfExecFn for test override.
-func (m *Manager) ebpfExec(ctx context.Context, args ...string) error {
-	return m.ebpfExecFn(ctx, args...)
-}
-
-// ebpfExecImpl is the production implementation of ebpfExec. It dispatches
-// on the first arg (the old ebpf-manager subcommand name) to the matching
-// typed gRPC method on ControlPlaneService.
-func (m *Manager) ebpfExecImpl(ctx context.Context, args ...string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("ebpfExec: missing subcommand")
-	}
-	client, err := m.cpClient()
-	if err != nil {
-		return err
-	}
-	switch args[0] {
-	case "init":
-		// No-op: the CP runs ebpf.Manager.Load() once at startup and
-		// keeps link handles alive for the process lifetime. Historical
-		// callers that ran `ebpf-manager init` on every reload caused
-		// the 2026-04-10 hot-reload pinning bug; eliminating the call
-		// is the permanent fix.
-		return nil
-	case "enable":
-		if len(args) != 3 {
-			return fmt.Errorf("ebpfExec enable: expected <cgroupPath> <configJSON>, got %d args", len(args))
-		}
-		var cfg enableArgs
-		if err := json.Unmarshal([]byte(args[2]), &cfg); err != nil {
-			return fmt.Errorf("ebpfExec enable: parse config JSON: %w", err)
-		}
-		_, err := client.Install(ctx, &adminv1.InstallRequest{
-			CgroupPath: args[1],
-			Config: &adminv1.ContainerConfig{
-				EnvoyIp:       cfg.EnvoyIP,
-				CorednsIp:     cfg.CoreDNSIP,
-				GatewayIp:     cfg.GatewayIP,
-				Cidr:          cfg.CIDR,
-				HostProxyIp:   cfg.HostProxyIP,
-				HostProxyPort: uint32(cfg.HostProxyPort),
-				EgressPort:    uint32(cfg.EgressPort),
-			},
-		})
-		return err
-	case "disable":
-		if len(args) != 2 {
-			return fmt.Errorf("ebpfExec disable: expected <cgroupPath>, got %d args", len(args))
-		}
-		_, err := client.Remove(ctx, &adminv1.RemoveRequest{
-			CgroupPath: args[1],
-		})
-		return err
-	case "bypass":
-		if len(args) != 2 {
-			return fmt.Errorf("ebpfExec bypass: expected <cgroupPath>, got %d args", len(args))
-		}
-		_, err := client.Disable(ctx, &adminv1.DisableRequest{
-			CgroupPath: args[1],
-		})
-		return err
-	case "unbypass":
-		if len(args) != 2 {
-			return fmt.Errorf("ebpfExec unbypass: expected <cgroupPath>, got %d args", len(args))
-		}
-		_, err := client.Enable(ctx, &adminv1.EnableRequest{
-			CgroupPath: args[1],
-		})
-		return err
-	case "sync-routes":
-		if len(args) != 2 {
-			return fmt.Errorf("ebpfExec sync-routes: expected <routesJSON>, got %d args", len(args))
-		}
-		var routes []ebpfRoute
-		if err := json.Unmarshal([]byte(args[1]), &routes); err != nil {
-			return fmt.Errorf("ebpfExec sync-routes: parse routes JSON: %w", err)
-		}
-		protoRoutes := make([]*adminv1.Route, 0, len(routes))
-		for _, r := range routes {
-			protoRoutes = append(protoRoutes, &adminv1.Route{
-				DomainHash: r.DomainHash,
-				DstPort:    uint32(r.DstPort),
-				EnvoyPort:  uint32(r.EnvoyPort),
-			})
-		}
-		_, err := client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{Routes: protoRoutes})
-		return err
-	default:
-		return fmt.Errorf("ebpfExec: unknown subcommand %q", args[0])
-	}
-}
-
-// enableArgs is the JSON payload historically passed to `ebpf-manager enable`.
-// Retained so the ebpfExecImpl → gRPC shim can parse call-site JSON without
-// touching every existing call site. Future follow-ups should migrate call
-// sites to typed EnableContainerFirewallRequest construction and delete this.
-type enableArgs struct {
-	EnvoyIP       string `json:"envoy_ip"`
-	CoreDNSIP     string `json:"coredns_ip"`
-	GatewayIP     string `json:"gateway_ip"`
-	CIDR          string `json:"cidr"`
-	HostProxyIP   string `json:"host_proxy_ip"`
-	HostProxyPort uint16 `json:"host_proxy_port"`
-	EgressPort    uint16 `json:"egress_port"`
-}
-
-// ebpfExecOutput dispatches a legacy-string-arg read-only command to the
-// CP's ControlPlaneService. Currently only "resolve <host>" is used; kept
-// as a separate seam because its return value is a string rather than an
-// error.
-func (m *Manager) ebpfExecOutput(ctx context.Context, args ...string) (string, error) {
-	return m.ebpfExecOutputFn(ctx, args...)
-}
-
-// ebpfExecOutputImpl is the production implementation of ebpfExecOutput.
-func (m *Manager) ebpfExecOutputImpl(ctx context.Context, args ...string) (string, error) {
-	if len(args) == 0 {
-		return "", fmt.Errorf("ebpfExecOutput: missing subcommand")
-	}
-	client, err := m.cpClient()
-	if err != nil {
-		return "", err
-	}
-	switch args[0] {
-	case "resolve":
-		if len(args) != 2 {
-			return "", fmt.Errorf("ebpfExecOutput resolve: expected <hostname>, got %d args", len(args))
-		}
-		resp, err := client.ResolveHostname(ctx, &adminv1.ResolveHostnameRequest{Hostname: args[1]})
-		if err != nil {
-			return "", err
-		}
-		if len(resp.GetAddresses()) == 0 {
-			return "", fmt.Errorf("resolve %s: no addresses", args[1])
-		}
-		return resp.GetAddresses()[0], nil
-	default:
-		return "", fmt.Errorf("ebpfExecOutput: unknown subcommand %q", args[0])
-	}
-}
-
 // waitForCPReady polls the CP's HTTP /healthz endpoint until it returns
 // 200, indicating full initialization (subprocesses healthy, eBPF loaded,
 // gRPC server serving). Called after ensureContainer(cpContainer) and
@@ -1683,7 +1573,7 @@ func (m *Manager) waitForCPReady(ctx context.Context) error {
 
 // waitForCPReadyImpl polls http://127.0.0.1:<CPHealthPort>/healthz.
 func (m *Manager) waitForCPReadyImpl(ctx context.Context) error {
-	healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", consts.CPHealthPort)
+	healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", m.cfg.Settings().ControlPlane.HealthPort)
 	client := &http.Client{Timeout: 2 * time.Second}
 
 	deadline := time.Now().Add(cpReadyTimeout)
@@ -1721,11 +1611,10 @@ func (m *Manager) cpClient() (adminv1.AdminServiceClient, error) {
 		return m.cpClientCached, nil
 	}
 
-	dataDir := config.DataDir()
 	settings := m.cfg.Settings()
-	adminPort := settings.ControlPlane.AdminPortOrDefault()
+	adminPort := settings.ControlPlane.AdminPort
 
-	client, conn, err := auth.DialCPAdmin(context.Background(), dataDir, adminPort, consts.HydraPublicPort)
+	client, conn, err := auth.DialCPAdmin(context.Background(), adminPort, m.cfg.Settings().ControlPlane.HydraPublicPort)
 	if err != nil {
 		return nil, fmt.Errorf("dial cp: %w", err)
 	}
@@ -1734,58 +1623,31 @@ func (m *Manager) cpClient() (adminv1.AdminServiceClient, error) {
 	return client, nil
 }
 
-// cpContainerConfig returns the container creation config for the clawker
-// control plane. The CP replaces the sleep-infinity ebpf-manager container:
-// it runs ebpf.Manager.Load() in-process, serves ControlPlaneService over
-// mTLS gRPC on a UDS, and hosts the OIDC /token endpoint for CLI client
-// credentials.
-//
-// The container mounts <firewallDataDir> into /var/run/clawker-cp so that
-// cp-ca.{pem,key}, cp-oidc-signing.{pem,key}, cp-certs/, cp.sock,
-// cp-oidc.sock, and cp-ready all live in a directory the host CLI can
-// also read. Host-side code (internal/firewall/oidc_client.go) reads the
-// certs from <firewallDataDir>/cp-certs/ and dials the UDS sockets
-// directly.
+// cpContainerConfig builds a containerSpec for the clawker control plane
+// by delegating to controlplane.BuildCPContainerConfig (single source of
+// truth for auth mounts, port bindings, capabilities) and mapping the
+// result into the firewall manager's internal containerSpec, adding the
+// network-specific fields (network name/ID, static IP) that only the
+// firewall manager knows.
 func (m *Manager) cpContainerConfig(netInfo *NetworkInfo) (containerSpec, error) {
-	// 30 seconds is plenty for GracefulStop + Manager.Close to finish.
-	stopTimeout := 30
-	dataDir, err := m.cfg.FirewallDataSubdir()
+	cpCfg, err := controlplane.BuildCPContainerConfig(m.cfg)
 	if err != nil {
-		return containerSpec{}, fmt.Errorf("firewall data dir: %w", err)
+		return containerSpec{}, fmt.Errorf("build cp container config: %w", err)
 	}
+
+	stopTimeout := 30
 	return containerSpec{
-		image:       cpImageTag,
-		networkName: m.cfg.ClawkerNetwork(),
-		networkID:   netInfo.NetworkID,
-		staticIP:    ebpfStaticIP(netInfo.EnvoyIP),
-		labels: map[string]string{
-			m.cfg.LabelManaged(): "true",
-			m.cfg.LabelPurpose(): m.cfg.PurposeFirewall(),
-		},
-		stopTimeout: &stopTimeout,
-		cmd:         []string{"/usr/local/bin/clawker-cp"},
-		mounts: []mount.Mount{
-			{
-				Type:     mount.TypeBind,
-				Source:   "/sys/fs/cgroup",
-				Target:   "/sys/fs/cgroup",
-				ReadOnly: true,
-			},
-			{
-				Type:   mount.TypeBind,
-				Source: "/sys/fs/bpf",
-				Target: "/sys/fs/bpf",
-			},
-			{
-				// The CP writes CA, OIDC signing key, leaf certs, and
-				// the UDS socket + ready file into this directory.
-				// Host-side CLI reads the same directory.
-				Type:   mount.TypeBind,
-				Source: dataDir,
-				Target: "/var/run/clawker-cp",
-			},
-		},
-		capAdd: []string{"BPF", "SYS_ADMIN", "NET_ADMIN"},
+		image:        cpCfg.Image,
+		networkName:  cpCfg.NetworkName,
+		networkID:    netInfo.NetworkID,
+		staticIP:     cpStaticIP(netInfo.EnvoyIP),
+		labels:       cpCfg.Labels,
+		stopTimeout:  &stopTimeout,
+		cmd:          cpCfg.Cmd,
+		env:          cpCfg.Env,
+		mounts:       cpCfg.Mounts,
+		portBindings: cpCfg.PortBindings,
+		capAdd:       cpCfg.CapAdd,
 	}, nil
 }
 
@@ -1801,16 +1663,4 @@ func computeGateway(cidr string) string {
 	}
 	ip[3] = 1
 	return ip.String()
-}
-
-// marshalRoutes serializes routes as a JSON array string.
-func marshalRoutes(routes []ebpfRoute) string {
-	if len(routes) == 0 {
-		return "[]"
-	}
-	b, err := json.Marshal(routes)
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
 }

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,11 +45,17 @@ type HydraIntrospector struct {
 }
 
 // NewHydraIntrospector creates an introspector that validates tokens
-// against the given Hydra admin introspection URL.
-func NewHydraIntrospector(introspectURL string) *HydraIntrospector {
+// against the given Hydra admin introspection URL. The optional TLS
+// config is used when Hydra serves HTTPS (self-signed cert).
+func NewHydraIntrospector(introspectURL string, tlsCfg *tls.Config) *HydraIntrospector {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if tlsCfg != nil {
+		transport.TLSClientConfig = tlsCfg
+		transport.ForceAttemptHTTP2 = true
+	}
 	return &HydraIntrospector{
 		url:    introspectURL,
-		client: &http.Client{Timeout: 5 * time.Second},
+		client: &http.Client{Timeout: 5 * time.Second, Transport: transport},
 	}
 }
 

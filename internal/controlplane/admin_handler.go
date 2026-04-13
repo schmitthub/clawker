@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"net"
+	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
@@ -102,8 +103,6 @@ func (h *AdminHandler) Enable(_ context.Context, req *adminv1.EnableRequest) (*a
 }
 
 // Disable sets the bypass flag, letting traffic skip enforcement.
-// No server-side timer — the CLI manages bypass duration locally
-// (Disable → sleep → Enable).
 func (h *AdminHandler) Disable(_ context.Context, req *adminv1.DisableRequest) (*adminv1.DisableResponse, error) {
 	cgroupID, err := h.cgroupIDFromPath(req.GetCgroupPath())
 	if err != nil {
@@ -113,6 +112,48 @@ func (h *AdminHandler) Disable(_ context.Context, req *adminv1.DisableRequest) (
 		return nil, status.Errorf(codes.Internal, "disable failed: %v", err)
 	}
 	return &adminv1.DisableResponse{CgroupId: cgroupID}, nil
+}
+
+// Bypass sets the bypass flag and starts a server-side dead-man timer.
+// After timeout_seconds the CP automatically clears the flag via Enable.
+// Acts as a failsafe — if the CLI crashes mid-bypass, enforcement is
+// restored. The CLI can call Enable early; the timer no-ops if the flag
+// is already cleared.
+func (h *AdminHandler) Bypass(_ context.Context, req *adminv1.BypassRequest) (*adminv1.BypassResponse, error) {
+	cgroupID, err := h.cgroupIDFromPath(req.GetCgroupPath())
+	if err != nil {
+		return nil, err
+	}
+
+	timeout := time.Duration(req.GetTimeoutSeconds()) * time.Second
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
+	if err := h.mgr.Disable(cgroupID); err != nil {
+		return nil, status.Errorf(codes.Internal, "bypass: disable failed: %v", err)
+	}
+
+	// Server-side dead-man timer (monotonic via time.AfterFunc). If the CLI
+	// dies, enforcement is restored after timeout. Enable is idempotent —
+	// double-clear is harmless.
+	time.AfterFunc(timeout, func() {
+		if err := h.mgr.Enable(cgroupID); err != nil {
+			h.log.Error().Err(err).
+				Uint64("cgroup_id", cgroupID).
+				Msg("bypass auto-enable failed")
+		} else {
+			h.log.Info().
+				Uint64("cgroup_id", cgroupID).
+				Msg("bypass timer expired, enforcement restored")
+		}
+	})
+
+	h.log.Info().
+		Uint64("cgroup_id", cgroupID).
+		Dur("timeout", timeout).
+		Msg("bypass started with server-side failsafe")
+	return &adminv1.BypassResponse{CgroupId: cgroupID}, nil
 }
 
 // SyncRoutes atomically replaces the global route_map.

@@ -7,9 +7,11 @@
 //   - True Go `const` values (strings, ints, ports, label keys, file names)
 //   - Pure accessor functions that combine consts with a caller-provided base
 //     (e.g. join a dataDir with a subdir name, format a host+port into a URL)
+//   - Methods that ensure directory existence on the caller-provided base
+//   - Values that read from env vars
 //
 // What stays on Config:
-//   - Anything that requires env var lookup, file I/O, os.MkdirAll, or runtime context
+//   - Anything that requires yaml backed file i/o via storage layer
 //
 // Migration: callers that previously accessed these via Config interface
 // methods (e.g. cfg.ClawkerNetwork()) can import this package directly.
@@ -92,6 +94,7 @@ const (
 	MonitorSubdir   = "monitor"
 	FirewallSubdir  = "firewall"
 	FirewallCertDir = FirewallSubdir + "/certs"
+	AuthSubdir      = "auth"
 	BuildSubdir     = "build"
 	DockerfilesDir  = "dockerfiles"
 	WorktreesSubdir = "worktrees"
@@ -102,10 +105,11 @@ const (
 
 // PID and log file names.
 const (
-	HostProxyPIDFile = "hostproxy.pid"
-	HostProxyLogFile = "hostproxy.log"
-	FirewallPIDFile  = "firewall.pid"
-	FirewallLogFile  = "firewall.log"
+	HostProxyPIDFile    = "hostproxy.pid"
+	HostProxyLogFile    = "hostproxy.log"
+	FirewallPIDFile     = "firewall.pid"
+	FirewallLogFile     = "firewall.log"
+	ControlPlaneLogFile = "clawker-cp.log"
 )
 
 // Network.
@@ -123,8 +127,9 @@ const (
 
 // Container images.
 const (
-	// CPBaseImage is the distroless base image for the control plane container.
-	CPBaseImage = "gcr.io/distroless/static-debian12"
+	// CPImageTag is the local Docker image tag for the built control plane image.
+	// Built on-demand from embedded binaries by ensureCPImage in the firewall manager.
+	CPImageTag = "clawker-cp:latest"
 )
 
 // Static IP assignments (last octet on clawker-net).
@@ -150,18 +155,16 @@ const (
 	CoreDNSHealthPath = "/health"
 )
 
-// Control plane ports.
+// Control plane port defaults. These are flag defaults for the CP binary
+// and test constants. Production callers should read from
+// cfg.Settings().ControlPlane.<field> which gets defaults from struct tags
+// via the storage layer.
 const (
-	// DefaultCPAdminPort is the default gRPC admin API port for the control plane.
-	DefaultCPAdminPort = 7443
-	// HydraPublicPort is the Hydra OAuth2 public API port (token endpoint).
-	HydraPublicPort = 4444
-	// HydraAdminPort is the Hydra admin API port (internal only, 127.0.0.1).
-	HydraAdminPort = 4445
-	// OathkeeperHTTPPort is the Oathkeeper HTTP proxy port.
-	OathkeeperHTTPPort = 4456
-	// CPHealthPort is the CP /healthz endpoint port.
-	CPHealthPort = 8080
+	DefaultCPAdminPort     = 7443
+	DefaultCPHealthPort    = 7080
+	DefaultHydraPublicPort = 4444
+	DefaultHydraAdminPort  = 4445
+	DefaultOathkeeperPort  = 4456
 )
 
 // Container user identity.
@@ -192,6 +195,28 @@ const (
 	xdgDataHome   = "XDG_DATA_HOME"
 	xdgStateHome  = "XDG_STATE_HOME"
 )
+
+func subdirPath(subdir string, baseDirFunc func() string) (string, error) {
+	configDir := baseDirFunc()
+	return subdirPathUnder(subdir, configDir)
+}
+
+func subdirPathUnder(subdir string, baseDir string) (string, error) {
+	fullPath := filepath.Join(baseDir, subdir)
+	if err := os.MkdirAll(fullPath, 0o755); err != nil {
+		return "", fmt.Errorf("creating config subdir %s: %w", fullPath, err)
+	}
+	return fullPath, nil
+}
+
+func absConfigFilePath(fileName string) (string, error) {
+	path := filepath.Join(ConfigDir(), fileName)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolving absolute config path for %s: %w", fileName, err)
+	}
+	return absPath, nil
+}
 
 // ConfigDir returns the clawker config directory.
 // Resolution: CLAWKER_CONFIG_DIR > XDG_CONFIG_HOME/clawker > ~/.config/clawker
@@ -262,38 +287,59 @@ func WorktreesDir(dataDir string) string     { return filepath.Join(dataDir, Wor
 func ShareDir(dataDir string) string         { return filepath.Join(dataDir, ShareSubdir) }
 
 // Auth material paths (under DataDir).
+// Layout: auth/cli/ for CLI signing material, auth/tls/ for server TLS.
+// All accessors idempotently ensure their parent directory exists.
 
-func AuthDir(dataDir string) string        { return filepath.Join(dataDir, "auth") }
-func AuthCADir(dataDir string) string      { return filepath.Join(dataDir, "auth", "ca") }
-func AuthCACertPath(dataDir string) string { return filepath.Join(dataDir, "auth", "ca", "ca.pem") }
-func AuthCAKeyPath(dataDir string) string  { return filepath.Join(dataDir, "auth", "ca", "ca.key") }
-func AuthOIDCDir(dataDir string) string    { return filepath.Join(dataDir, "auth", "oidc") }
-func AuthSigningKeyPath(dataDir string) string {
-	return filepath.Join(dataDir, "auth", "oidc", "signing.key")
+func AuthCADir() (string, error)  { return subdirPathUnder("auth/ca", DataDir()) }
+func AuthCLIDir() (string, error) { return subdirPathUnder("auth/cli", DataDir()) }
+func AuthTLSDir() (string, error) { return subdirPathUnder("auth/tls", DataDir()) }
+
+func AuthCACertPath() (string, error) {
+	dir, err := AuthCADir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "ca.pem"), nil
 }
-func AuthCertsDir(dataDir string) string { return filepath.Join(dataDir, "auth", "certs") }
-func AuthServerCertPath(dataDir string) string {
-	return filepath.Join(dataDir, "auth", "certs", "server.pem")
+
+func AuthCAKeyPath() (string, error) {
+	dir, err := AuthCADir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "ca.key"), nil
 }
-func AuthServerKeyPath(dataDir string) string {
-	return filepath.Join(dataDir, "auth", "certs", "server.key")
+
+func AuthCLISigningKeyPath() (string, error) {
+	dir, err := AuthCLIDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "signing.key"), nil
 }
-func AuthCLICertDir(dataDir string) string { return filepath.Join(dataDir, "auth", "certs", "cli") }
-func AuthCLICertPath(dataDir string) string {
-	return filepath.Join(dataDir, "auth", "certs", "cli", "cert.pem")
+
+func AuthCLISigningJWKPath() (string, error) {
+	dir, err := AuthCLIDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "signing-jwk.json"), nil
 }
-func AuthCLIKeyPath(dataDir string) string {
-	return filepath.Join(dataDir, "auth", "certs", "cli", "key.pem")
+
+func AuthServerCertPath() (string, error) {
+	dir, err := AuthTLSDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "server.pem"), nil
 }
-func AuthCLIDir(dataDir string) string { return filepath.Join(dataDir, "auth", "cli") }
-func AuthCLISigningKeyPath(dataDir string) string {
-	return filepath.Join(dataDir, "auth", "cli", "signing.key")
-}
-func AuthCLISigningJWKPath(dataDir string) string {
-	return filepath.Join(dataDir, "auth", "cli", "signing-jwk.json")
-}
-func AuthServerCertDir(dataDir string) string {
-	return filepath.Join(dataDir, "auth", "certs", "server")
+
+func AuthServerKeyPath() (string, error) {
+	dir, err := AuthTLSDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "server.key"), nil
 }
 
 // State dir paths (under StateDir).
@@ -326,6 +372,16 @@ func FirewallPIDPath(stateDir string) string {
 
 func FirewallLogPath(stateDir string) string {
 	return filepath.Join(stateDir, LogsSubdir, FirewallLogFile)
+}
+
+// ControlPlaneLogFilePath ensures the logs subdirectory and returns the
+// control plane log file path.
+func ControlPlaneLogFilePath() (string, error) {
+	logsDir, err := subdirPath(LogsSubdir, StateDir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(logsDir, ControlPlaneLogFile), nil
 }
 
 // ---------------------------------------------------------------------------

@@ -1,85 +1,93 @@
 package controlplane
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"encoding/base64"
+	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// HydraClientRegistration represents the configuration for registering
-// the CLI client with Hydra. This corresponds to the Hydra client model
-// from github.com/ory/hydra-client-go.
-type HydraClientRegistration struct {
-	ClientID                    string
-	GrantTypes                  []string
-	TokenEndpointAuthMethod     string
-	TokenEndpointAuthSigningAlg string
-	Scope                       string
-	// JWKS is the JSON Web Key Set containing the client's public key(s)
-	// for verifying private_key_jwt assertions.
-	JWKS json.RawMessage
+// RegisterCLIClient registers the clawker-cli OAuth2 client with Hydra
+// via the admin API. The jwkData is the raw JSON of the CLI's public
+// JWKS (bind-mounted from the host). Idempotent: returns nil if the
+// client already exists (409 Conflict).
+func RegisterCLIClient(hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config) error {
+	// Parse the JWK data to embed as the jwks field.
+	var jwks json.RawMessage
+	if err := json.Unmarshal(jwkData, &jwks); err != nil {
+		return fmt.Errorf("parse CLI JWK data: %w", err)
+	}
+
+	// Wrap single JWK in a JWKS if needed.
+	jwks, err := ensureJWKS(jwks)
+	if err != nil {
+		return fmt.Errorf("normalize CLI JWK: %w", err)
+	}
+
+	body := map[string]any{
+		"client_id":                       consts.ClientIDCLI,
+		"grant_types":                     []string{"client_credentials"},
+		"token_endpoint_auth_method":      "private_key_jwt",
+		"token_endpoint_auth_signing_alg": "ES256",
+		"scope":                           consts.ScopeAdmin,
+		"jwks":                            jwks,
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal client registration: %w", err)
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig:   tlsCfg,
+			ForceAttemptHTTP2: true,
+		},
+	}
+
+	url := hydraAdminURL + "/admin/clients"
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("build registration request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("hydra admin POST /admin/clients: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	switch resp.StatusCode {
+	case http.StatusCreated, http.StatusOK:
+		return nil
+	case http.StatusConflict:
+		// Client already exists — idempotent success.
+		return nil
+	default:
+		return fmt.Errorf("hydra admin returned %d: %s", resp.StatusCode, string(respBody))
+	}
 }
 
-// CLIClientRegistration returns the Hydra client registration config
-// for the CLI client. This is used during CP startup to register
-// the CLI with Hydra via the Go SDK.
-func CLIClientRegistration() *HydraClientRegistration {
-	// Generate a temporary ES256 key pair for the JWK. In production,
-	// this would use the persisted signing key; for registration config
-	// validation, we need a structurally valid JWKS.
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil
+// ensureJWKS wraps a bare JWK object in a JWKS envelope if needed.
+// If the input already has a "keys" field, it's returned as-is.
+func ensureJWKS(data json.RawMessage) (json.RawMessage, error) {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, err
 	}
-
-	jwks, err := buildJWKS(&key.PublicKey)
-	if err != nil {
-		return nil
+	if _, ok := probe["keys"]; ok {
+		return data, nil // Already a JWKS.
 	}
-
-	return &HydraClientRegistration{
-		ClientID:                    consts.ClientIDCLI,
-		GrantTypes:                  []string{"client_credentials"},
-		TokenEndpointAuthMethod:     "private_key_jwt",
-		TokenEndpointAuthSigningAlg: "ES256",
-		Scope:                       consts.ScopeAdmin,
-		JWKS:                        jwks,
-	}
-}
-
-// buildJWKS exports an ECDSA P-256 public key as a JWKS JSON document.
-func buildJWKS(pub *ecdsa.PublicKey) (json.RawMessage, error) {
-	if pub.Curve != elliptic.P256() {
-		return nil, fmt.Errorf("unsupported curve: expected P-256")
-	}
-
-	// Encode x and y coordinates as base64url (no padding), 32 bytes each for P-256.
-	xBytes := pub.X.Bytes()
-	yBytes := pub.Y.Bytes()
-
-	// Pad to 32 bytes (P-256 coordinate size).
-	xPadded := make([]byte, 32)
-	yPadded := make([]byte, 32)
-	copy(xPadded[32-len(xBytes):], xBytes)
-	copy(yPadded[32-len(yBytes):], yBytes)
-
-	jwk := map[string]any{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   base64.RawURLEncoding.EncodeToString(xPadded),
-		"y":   base64.RawURLEncoding.EncodeToString(yPadded),
-	}
-
-	jwks := map[string]any{
-		"keys": []any{jwk},
-	}
-
-	return json.Marshal(jwks)
+	// Bare JWK — wrap it.
+	wrapped := map[string]any{"keys": []json.RawMessage{data}}
+	return json.Marshal(wrapped)
 }
 
 // AdminMethodScopes returns the method→scope map for the AdminService.
@@ -91,6 +99,7 @@ func AdminMethodScopes() map[string]string {
 		svc + "Remove":          consts.ScopeAdmin,
 		svc + "Enable":          consts.ScopeAdmin,
 		svc + "Disable":         consts.ScopeAdmin,
+		svc + "Bypass":          consts.ScopeAdmin,
 		svc + "SyncRoutes":      consts.ScopeAdmin,
 		svc + "ResolveHostname": consts.ScopeAdmin,
 	}

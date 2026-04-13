@@ -17,14 +17,27 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
+
+// CleanupReport captures what infrastructure was running when cleanup ran.
+// Tests can inspect this to fail if expected services were never started.
+type CleanupReport struct {
+	FirewallContainers int // count of purpose=firewall containers found
+	CPContainers       int // count of purpose=controlplane containers found
+	AgentContainers    int // count of test-labeled containers found
+}
 
 // Harness provides an isolated filesystem environment for integration tests.
 // Each Run() creates a fresh Factory from Opts — mirroring a real CLI process.
 type Harness struct {
 	T    *testing.T
 	Opts *FactoryOptions
+
+	// Cleanup stores the cleanup report after the test environment is torn down.
+	// Firewall tests can check this to fail if the stack was never running.
+	Cleanup *CleanupReport
 }
 
 // RunResult holds the outcome of a CLI command execution.
@@ -92,6 +105,10 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 			}
 			h.T.Logf("=== %s ===\n%s", name, string(data))
 		}
+		// CP logs go to the same state/logs dir as everything else.
+		if data, err := os.ReadFile(filepath.Join(logDir, "clawker-cp.log")); err == nil {
+			h.T.Logf("=== clawker-cp.log ===\n%s", string(data))
+		}
 	})
 
 	// Single cleanup: daemons, firewall infra, then test-labeled resources.
@@ -140,21 +157,37 @@ func ensureClawkerBinary(t *testing.T) {
 }
 
 // cleanupTestEnvironment is the single cleanup entrypoint for all e2e tests.
-// Order: stop daemons → remove firewall infra → remove test-labeled resources.
+// Order: snapshot what's running → stop daemons → remove firewall infra → remove test-labeled resources.
+// The snapshot is stored on h.Cleanup so tests can inspect it post-cleanup.
 func cleanupTestEnvironment(t *testing.T, h *Harness) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	cfg := resolveCleanupConfig(t, h)
+	report := &CleanupReport{}
+
+	// Snapshot infrastructure state BEFORE tearing anything down.
+	firewallLabel := fmt.Sprintf("%s=%s", cfg.LabelPurpose(), cfg.PurposeFirewall())
+	cpLabel := fmt.Sprintf("%s=%s", cfg.LabelPurpose(), consts.PurposeControlPlane)
+	testLabel := fmt.Sprintf("%s.test.name=%s", cfg.LabelDomain(), t.Name())
+
+	if ids, err := dockerListByLabel(ctx, "container", firewallLabel); err == nil {
+		report.FirewallContainers = len(ids)
+	}
+	if ids, err := dockerListByLabel(ctx, "container", cpLabel); err == nil {
+		report.CPContainers = len(ids)
+	}
+	if ids, err := dockerListByLabel(ctx, "container", testLabel); err == nil {
+		report.AgentContainers = len(ids)
+	}
+	h.Cleanup = report
 
 	// 1. Stop daemons (via CLI so they use the test's isolated env vars).
 	h.Run("firewall", "down")
 	h.Run("host-proxy", "stop")
 
 	// 2. Remove shared firewall infrastructure containers (not test-labeled).
-	// Build the label key=value from config accessors so we stay consistent
-	// with how production code (internal/firewall/manager.go) stamps labels.
-	cfg := resolveCleanupConfig(t, h)
-	firewallLabel := fmt.Sprintf("%s=%s", cfg.LabelPurpose(), cfg.PurposeFirewall())
 	if ids, err := dockerListByLabel(ctx, "container", firewallLabel); err != nil {
 		t.Logf("cleanup: docker ps firewall label=%s: %v (firewall containers may leak)", firewallLabel, err)
 	} else if len(ids) > 0 {
@@ -165,8 +198,19 @@ func cleanupTestEnvironment(t *testing.T, h *Harness) {
 		}
 	}
 
-	// 3. Remove test-labeled containers, volumes, networks.
-	label := fmt.Sprintf("%s.test.name=%s", cfg.LabelDomain(), t.Name())
+	// 3. Remove control plane container if left running (not test-labeled).
+	if ids, err := dockerListByLabel(ctx, "container", cpLabel); err != nil {
+		t.Logf("cleanup: docker ps control plane label=%s: %v (control plane containers may leak)", cpLabel, err)
+	} else if len(ids) > 0 {
+		//nolint:gosec // label is derived from config accessors, not user input
+		args := append([]string{"rm", "-f"}, ids...)
+		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
+			t.Logf("cleanup: docker rm control plane: %s (%v)", strings.TrimSpace(string(out)), err)
+		}
+	}
+
+	// 4. Remove test-labeled containers, volumes, networks.
+	label := testLabel
 
 	if ids, err := dockerListByLabel(ctx, "container", label); err != nil {
 		t.Logf("cleanup: docker ps label=%s: %v (containers may leak)", label, err)
@@ -253,6 +297,32 @@ func dockerListByLabel(ctx context.Context, resourceType, label string) ([]strin
 		}
 	}
 	return ids, nil
+}
+
+// RequireServicesWereRunning fails the test if the cleanup report shows
+// that the specified services were not running. Callers specify which
+// services they expect — tests using fakes don't call this at all.
+//
+// Valid service names: "firewall", "controlplane".
+func (h *Harness) RequireServicesWereRunning(t *testing.T, services ...string) {
+	t.Helper()
+	if h.Cleanup == nil {
+		t.Fatal("RequireServicesWereRunning called but cleanup has not run yet")
+	}
+	for _, svc := range services {
+		switch svc {
+		case "firewall":
+			if h.Cleanup.FirewallContainers == 0 {
+				t.Fatal("firewall stack was not running during this test (no firewall containers found at cleanup) — test results are invalid")
+			}
+		case "controlplane":
+			if h.Cleanup.CPContainers == 0 {
+				t.Fatal("control plane was not running during this test (no CP container found at cleanup) — test results are invalid")
+			}
+		default:
+			t.Fatalf("RequireServicesWereRunning: unknown service %q", svc)
+		}
+	}
 }
 
 // Run creates a fresh Factory and executes a CLI command through the full

@@ -319,17 +319,22 @@ type Settings struct {
 }
 
 // ControlPlaneSettings configures the control plane in settings.yaml.
+// All ports are published to 127.0.0.1 on the host (never exposed to
+// the network). Internal-only ports (Hydra admin, Kratos, Oathkeeper API)
+// bind to 127.0.0.1 inside the container.
+//
+// Defaults come from struct tags via the storage layer — no OrDefault
+// methods needed. cfg.Settings().ControlPlane.AdminPort always has a value.
 type ControlPlaneSettings struct {
-	AdminPort int `yaml:"admin_port,omitempty" label:"Admin Port" desc:"gRPC admin API port for the control plane; published to 127.0.0.1 on the host" default:"7443"`
-}
-
-// AdminPortOrDefault returns the configured admin port, falling back to
-// the default (7443) if not set.
-func (c *ControlPlaneSettings) AdminPortOrDefault() int {
-	if c == nil || c.AdminPort == 0 {
-		return 7443
-	}
-	return c.AdminPort
+	AdminPort         int `yaml:"admin_port,omitempty" label:"Admin Port" desc:"gRPC admin API port (CLI ↔ CP)" default:"7443"`
+	HealthPort        int `yaml:"health_port,omitempty" label:"Health Port" desc:"Plain HTTP /healthz readiness endpoint" default:"7080"`
+	HydraPublicPort   int `yaml:"hydra_public_port,omitempty" label:"Hydra Public Port" desc:"Hydra OAuth2 token endpoint (HTTPS)" default:"4444"`
+	HydraAdminPort    int `yaml:"hydra_admin_port,omitempty" label:"Hydra Admin Port" desc:"Hydra admin API for introspection and client registration (HTTPS, container-internal)" default:"4445"`
+	OathkeeperPort    int `yaml:"oathkeeper_port,omitempty" label:"Oathkeeper Port" desc:"Oathkeeper HTTP auth proxy for future webui (HTTPS)" default:"4456"`
+	OathkeeperAPIPort int `yaml:"oathkeeper_api_port,omitempty" label:"Oathkeeper API Port" desc:"Oathkeeper management API (HTTPS, container-internal)" default:"4457"`
+	KratosPublicPort  int `yaml:"kratos_public_port,omitempty" label:"Kratos Public Port" desc:"Kratos identity public API (HTTPS, container-internal)" default:"4433"`
+	KratosAdminPort   int `yaml:"kratos_admin_port,omitempty" label:"Kratos Admin Port" desc:"Kratos identity admin API (HTTPS, container-internal)" default:"4434"`
+	AgentAPIPort      int `yaml:"agent_api_port,omitempty" label:"Agent API Port" desc:"Agent reporting API port (future: clawkerd agent checkins)" default:"7444"`
 }
 
 // Fields implements [storage.Schema] for Settings.

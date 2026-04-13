@@ -220,8 +220,7 @@ the pinned recipe files.
   need to read in-kernel types (`struct task_struct`, etc.), the strategy
   changes — at that point we'd reintroduce a `vmlinux.h` source, but pinned
   via BTFHub or libbpf-bootstrap minimal rather than committed blind.
-- **Removing the clawker-ebpf long-running container.** The current design
-  keeps `clawker-ebpf` resident purely as an RPC endpoint for `docker exec`
-  subcommand invocations; the BPF programs themselves live in kernel state
-  and don't need a running container. Tracked as a follow-up along with
-  the upcoming clawker control plane.
+- ~~**Removing the clawker-ebpf long-running container.**~~ **Done.** Replaced
+  by `clawker-cp` on `feat/control-plane`. The CP owns `ebpf.Manager.Load()`
+  in-process, serves typed gRPC (AdminService), and runs the Ory auth stack.
+  The old `docker exec ebpf-manager <subcommand>` pattern is eliminated.

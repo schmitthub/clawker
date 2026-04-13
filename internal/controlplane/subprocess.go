@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,9 +16,10 @@ import (
 
 // HealthCheck defines how to check if a subprocess is healthy.
 type HealthCheck struct {
-	URL      string        // e.g. "http://127.0.0.1:4444/health/alive"
+	URL      string        // e.g. "https://127.0.0.1:4444/health/alive"
 	Interval time.Duration // polling interval
 	Timeout  time.Duration // overall timeout before giving up
+	TLS      *tls.Config   // optional TLS config for HTTPS health endpoints
 }
 
 // ManagedSubprocess tracks a running subprocess.
@@ -84,7 +86,12 @@ func (m *SubprocessManager) Start(name string, cmd *exec.Cmd) error {
 // WaitHealthy polls a health endpoint until it returns 200 or the timeout
 // expires. Returns an error if the subprocess crashes before becoming healthy.
 func (m *SubprocessManager) WaitHealthy(ctx context.Context, name string, check HealthCheck) error {
-	client := &http.Client{Timeout: 2 * time.Second}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if check.TLS != nil {
+		transport.TLSClientConfig = check.TLS
+		transport.ForceAttemptHTTP2 = true
+	}
+	client := &http.Client{Timeout: 2 * time.Second, Transport: transport}
 	deadline := time.Now().Add(check.Timeout)
 
 	proc := m.findProcess(name)

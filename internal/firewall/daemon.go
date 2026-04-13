@@ -189,8 +189,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	return nil
 }
 
-// healthCheckLoop probes envoy (TCP) and coredns (HTTP) via published localhost
-// ports on a fixed interval. Returns after maxHealthCheckFailures consecutive failures.
+// healthCheckLoop probes envoy (TCP), coredns (HTTP), and the CP (HTTP /healthz)
+// via published localhost ports on a fixed interval. The CP healthz is plain HTTP
+// on a dedicated port — it carries no credentials and reports aggregate health
+// of all internal services (Hydra, Kratos, Oathkeeper, eBPF, gRPC).
 func (d *Daemon) healthCheckLoop(ctx context.Context) {
 	ticker := time.NewTicker(d.healthCheckInterval)
 	defer ticker.Stop()
@@ -198,6 +200,7 @@ func (d *Daemon) healthCheckLoop(ctx context.Context) {
 	consecutiveFailures := 0
 	envoyAddr := fmt.Sprintf("localhost:%d", d.cfg.EnvoyHealthHostPort())
 	corednsURL := fmt.Sprintf("http://localhost:%d%s", d.cfg.CoreDNSHealthHostPort(), d.cfg.CoreDNSHealthPath())
+	cpHealthURL := fmt.Sprintf("http://localhost:%d/healthz", d.cfg.Settings().ControlPlane.HealthPort)
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
 	for {
@@ -205,7 +208,7 @@ func (d *Daemon) healthCheckLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			healthy := d.probeHealth(envoyAddr, corednsURL, httpClient)
+			healthy := d.probeHealth(envoyAddr, corednsURL, cpHealthURL, httpClient)
 			if healthy {
 				if consecutiveFailures > 0 {
 					d.log.Debug().Msg("firewall healthcheck recovered")
@@ -228,9 +231,9 @@ func (d *Daemon) healthCheckLoop(ctx context.Context) {
 	}
 }
 
-// probeHealth checks envoy via TCP and coredns via HTTP.
-// Returns true only if both are healthy.
-func (d *Daemon) probeHealth(envoyAddr, corednsURL string, httpClient *http.Client) bool {
+// probeHealth checks envoy via TCP, coredns via HTTP, and the CP via HTTP /healthz.
+// Returns true only if all three are healthy.
+func (d *Daemon) probeHealth(envoyAddr, corednsURL, cpHealthURL string, httpClient *http.Client) bool {
 	// Envoy: TCP connect to TLS listener.
 	conn, err := net.DialTimeout("tcp", envoyAddr, 2*time.Second)
 	if err != nil {
@@ -248,6 +251,18 @@ func (d *Daemon) probeHealth(envoyAddr, corednsURL string, httpClient *http.Clie
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		d.log.Debug().Int("status", resp.StatusCode).Msg("coredns health probe unexpected status")
+		return false
+	}
+
+	// Control plane: HTTP /healthz (dedicated health port, no credentials).
+	resp, err = httpClient.Get(cpHealthURL)
+	if err != nil {
+		d.log.Debug().Err(err).Str("url", cpHealthURL).Msg("clawker-cp health probe failed")
+		return false
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		d.log.Debug().Int("status", resp.StatusCode).Msg("clawker-cp health probe unexpected status")
 		return false
 	}
 
@@ -422,16 +437,27 @@ func ensureDaemonWith(cfg config.Config, log *logger.Logger, deps daemonDeps) er
 	return deps.startDaemonProcess(cfg, log)
 }
 
-// isStackHealthy does a quick TCP probe to the Envoy health port.
-// If Envoy is responding, the firewall stack is up.
+// isStackHealthy does a quick probe to Envoy (TCP) and the CP (/healthz).
+// Both must be responding for the stack to be considered healthy. Used by
+// EnsureDaemon to decide whether a running daemon needs a restart.
 func isStackHealthy(cfg config.Config) bool {
-	addr := fmt.Sprintf("localhost:%d", cfg.EnvoyHealthHostPort())
-	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	// Envoy: TCP connect to health listener.
+	envoyAddr := fmt.Sprintf("localhost:%d", cfg.EnvoyHealthHostPort())
+	conn, err := net.DialTimeout("tcp", envoyAddr, 2*time.Second)
 	if err != nil {
 		return false
 	}
 	conn.Close()
-	return true
+
+	// CP: plain HTTP /healthz on dedicated port (no credentials, aggregate health only).
+	cpURL := fmt.Sprintf("http://localhost:%d/healthz", cfg.Settings().ControlPlane.HealthPort)
+	cpClient := &http.Client{Timeout: 2 * time.Second}
+	resp, err := cpClient.Get(cpURL)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // startDaemonProcess spawns `clawker firewall serve` as a detached subprocess.

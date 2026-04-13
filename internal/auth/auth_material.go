@@ -18,54 +18,161 @@ import (
 	"math/big"
 	"net"
 	"os"
-	"path/filepath"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // Directory layout under <DataDir>/auth/:
 //
+//	ca/
+//	  ca.pem             ← CLI CA cert (bind-mounted into CP, read-only)
+//	  ca.key             ← CLI CA key (0600, NEVER enters any container)
 //	cli/
-//	  signing.key        ← ES256 private key (NEVER enters container)
+//	  signing.key        ← ES256 private key (0600, NEVER enters any container)
 //	  signing-jwk.json   ← public JWK (bind-mounted into CP for Hydra)
 //	tls/
-//	  server.pem         ← self-signed server cert (bind-mounted into CP)
+//	  server.pem         ← server cert signed by CLI CA (bind-mounted into CP)
 //	  server.key         ← server private key (bind-mounted into CP)
 
 // EnsureAuthMaterial checks for existing auth material and creates any
 // that is missing. Idempotent — safe to call on every CLI invocation.
-func EnsureAuthMaterial(dataDir string) error {
-	if err := ensureSigningKey(dataDir); err != nil {
+// Directories are created by the consts accessors.
+//
+// The CLI is the root of trust. It generates:
+//  1. CA keypair — signs server certs, never enters containers
+//  2. ES256 signing keypair — for private_key_jwt auth with Hydra
+//  3. Server cert — signed by the CLI CA, bind-mounted into CP
+func EnsureAuthMaterial() error {
+	if err := ensureCA(); err != nil {
+		return fmt.Errorf("CA: %w", err)
+	}
+	if err := ensureSigningKey(); err != nil {
 		return fmt.Errorf("signing key: %w", err)
 	}
-	if err := ensureServerCert(dataDir); err != nil {
+	if err := ensureServerCert(); err != nil {
 		return fmt.Errorf("server cert: %w", err)
 	}
 	return nil
 }
 
-// --- Paths ---
+// --- CLI CA (root of trust) ---
 
-func AuthDir(dataDir string) string { return filepath.Join(dataDir, "auth") }
-func CLIDir(dataDir string) string  { return filepath.Join(dataDir, "auth", "cli") }
-func SigningKeyPath(dataDir string) string {
-	return filepath.Join(dataDir, "auth", "cli", "signing.key")
+func ensureCA() error {
+	certPath, err := consts.AuthCACertPath()
+	if err != nil {
+		return err
+	}
+	keyPath, err := consts.AuthCAKeyPath()
+	if err != nil {
+		return err
+	}
+
+	// Check if both files exist.
+	if _, err := os.Stat(certPath); err == nil {
+		if _, err := os.Stat(keyPath); err == nil {
+			return nil // both exist
+		}
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate CA key: %w", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generate CA serial: %w", err)
+	}
+
+	now := time.Now().UTC()
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   "clawker CLI CA",
+			Organization: []string{"clawker"},
+		},
+		NotBefore:             now.Add(-5 * time.Minute),
+		NotAfter:              now.AddDate(5, 0, 0), // 5 years
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            1,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return fmt.Errorf("sign CA cert: %w", err)
+	}
+
+	if err := writeCert(certPath, certDER); err != nil {
+		return fmt.Errorf("write CA cert: %w", err)
+	}
+	if err := writeECDSAKey(keyPath, key, 0o600); err != nil {
+		return fmt.Errorf("write CA key: %w", err)
+	}
+	return nil
 }
-func SigningJWKPath(dataDir string) string {
-	return filepath.Join(dataDir, "auth", "cli", "signing-jwk.json")
+
+// loadCA reads the CLI CA cert and key from disk.
+func loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
+	certPath, err := consts.AuthCACertPath()
+	if err != nil {
+		return nil, nil, err
+	}
+	keyPath, err := consts.AuthCAKeyPath()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certData, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read CA cert: %w", err)
+	}
+	block, _ := pem.Decode(certData)
+	if block == nil {
+		return nil, nil, fmt.Errorf("CA cert: no PEM block")
+	}
+	caCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse CA cert: %w", err)
+	}
+
+	caKey, err := loadECDSAKey(keyPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load CA key: %w", err)
+	}
+
+	return caCert, caKey, nil
 }
-func TLSDir(dataDir string) string { return filepath.Join(dataDir, "auth", "tls") }
-func ServerCertPath(dataDir string) string {
-	return filepath.Join(dataDir, "auth", "tls", "server.pem")
+
+// CACert reads the CLI CA certificate. The CLI uses this to verify
+// server certs it signed.
+func CACert() (*x509.Certificate, error) {
+	certPath, err := consts.AuthCACertPath()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, errors.New("CA cert: no PEM block")
+	}
+	return x509.ParseCertificate(block.Bytes)
 }
-func ServerKeyPath(dataDir string) string { return filepath.Join(dataDir, "auth", "tls", "server.key") }
 
 // --- Signing key (ES256 for private_key_jwt) ---
 
-func ensureSigningKey(dataDir string) error {
-	keyPath := SigningKeyPath(dataDir)
-	jwkPath := SigningJWKPath(dataDir)
-
-	if err := os.MkdirAll(CLIDir(dataDir), 0o755); err != nil {
+func ensureSigningKey() error {
+	keyPath, err := consts.AuthCLISigningKeyPath()
+	if err != nil {
+		return err
+	}
+	jwkPath, err := consts.AuthCLISigningJWKPath()
+	if err != nil {
 		return err
 	}
 
@@ -98,17 +205,23 @@ func ensureSigningKey(dataDir string) error {
 }
 
 // LoadSigningKey reads the CLI's ES256 private key.
-func LoadSigningKey(dataDir string) (*ecdsa.PrivateKey, error) {
-	return loadECDSAKey(SigningKeyPath(dataDir))
+func LoadSigningKey() (*ecdsa.PrivateKey, error) {
+	keyPath, err := consts.AuthCLISigningKeyPath()
+	if err != nil {
+		return nil, err
+	}
+	return loadECDSAKey(keyPath)
 }
 
-// --- Server TLS cert (self-signed) ---
+// --- Server TLS cert (signed by CLI CA) ---
 
-func ensureServerCert(dataDir string) error {
-	certPath := ServerCertPath(dataDir)
-	keyPath := ServerKeyPath(dataDir)
-
-	if err := os.MkdirAll(TLSDir(dataDir), 0o755); err != nil {
+func ensureServerCert() error {
+	certPath, err := consts.AuthServerCertPath()
+	if err != nil {
+		return err
+	}
+	keyPath, err := consts.AuthServerKeyPath()
+	if err != nil {
 		return err
 	}
 
@@ -119,7 +232,13 @@ func ensureServerCert(dataDir string) error {
 		}
 	}
 
-	// Generate self-signed server cert.
+	// Load the CLI CA to sign the server cert.
+	caCert, caKey, err := loadCA()
+	if err != nil {
+		return fmt.Errorf("load CA for signing: %w", err)
+	}
+
+	// Generate server key.
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("generate key: %w", err)
@@ -145,7 +264,8 @@ func ensureServerCert(dataDir string) error {
 		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
 	}
 
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	// Sign with CLI CA — not self-signed.
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
 	if err != nil {
 		return fmt.Errorf("sign cert: %w", err)
 	}
@@ -191,6 +311,8 @@ func writeJWK(path string, pub *ecdsa.PublicKey) error {
 	jwk := map[string]any{
 		"kty": "EC",
 		"crv": "P-256",
+		"use": "sig",
+		"alg": "ES256",
 		"x":   base64.RawURLEncoding.EncodeToString(pub.X.Bytes()),
 		"y":   base64.RawURLEncoding.EncodeToString(pub.Y.Bytes()),
 	}
@@ -202,20 +324,10 @@ func writeJWK(path string, pub *ecdsa.PublicKey) error {
 }
 
 // ReadJWK reads the CLI's public signing key as raw JSON bytes.
-func ReadJWK(dataDir string) (json.RawMessage, error) {
-	return os.ReadFile(SigningJWKPath(dataDir))
-}
-
-// ServerTLSCert reads the server cert for TLS trust. The CLI uses this
-// to verify the CP's identity when dialing gRPC.
-func ServerTLSCert(dataDir string) (*x509.Certificate, error) {
-	data, err := os.ReadFile(ServerCertPath(dataDir))
+func ReadJWK() (json.RawMessage, error) {
+	p, err := consts.AuthCLISigningJWKPath()
 	if err != nil {
 		return nil, err
 	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, errors.New("server cert: no PEM block")
-	}
-	return x509.ParseCertificate(block.Bytes)
+	return os.ReadFile(p)
 }

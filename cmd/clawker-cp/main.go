@@ -24,7 +24,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/pem"
 	"flag"
 	"fmt"
 	"net"
@@ -38,7 +37,7 @@ import (
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/controlplane"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -53,26 +52,49 @@ const (
 )
 
 func main() {
-	adminPort := flag.Int("admin-port", consts.DefaultCPAdminPort, "gRPC admin API port")
-	healthPort := flag.Int("health-port", consts.CPHealthPort, "healthz HTTP port")
+	caCertPath := flag.String("tls-ca", "/etc/clawker/tls/ca.pem", "CLI CA certificate (for health check trust)")
 	serverCertPath := flag.String("tls-cert", "/etc/clawker/tls/server.pem", "TLS server certificate")
 	serverKeyPath := flag.String("tls-key", "/etc/clawker/tls/server.key", "TLS server key")
 	jwkPath := flag.String("jwk", "/etc/clawker/cli/signing-jwk.json", "CLI signing JWK (bind-mounted)")
+	logDir := flag.String("log-dir", "/var/log/clawker", "directory for persistent audit logs")
 	flag.Parse()
 
-	if err := run(*adminPort, *healthPort, *serverCertPath, *serverKeyPath, *jwkPath); err != nil {
+	if err := run(*caCertPath, *serverCertPath, *serverKeyPath, *jwkPath, *logDir); err != nil {
 		fmt.Fprintf(os.Stderr, "clawker-cp: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(adminPort, healthPort int, serverCertPath, serverKeyPath, jwkPath string) error {
-	log := logger.NewWriter(os.Stderr).With("component", "clawker-cp")
+func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) error {
+	log, err := logger.New(logger.Options{
+		LogsDir:  logDir,
+		Filename: "clawker-cp.log",
+	})
+	if err != nil {
+		// Fall back to stderr-only if log dir isn't writable.
+		log = logger.NewWriter(os.Stderr)
+		fmt.Fprintf(os.Stderr, "clawker-cp: warning: file logging unavailable (%v), using stderr only\n", err)
+	}
+	log = log.With("component", "clawker-cp")
 	defer log.Close()
 	log.Info().Msg("starting")
 
+	// Load config from the mounted config dir (CLAWKER_CONFIG_DIR set by
+	// the container env). All port values come from settings.ControlPlane.
+	cfg, err := config.NewConfig()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	cp := cfg.Settings().ControlPlane
+
 	subMgr := controlplane.NewSubprocessManager(log)
 	orchestrator := controlplane.NewCPStartupOrchestrator()
+
+	// --- Step 0: Write Ory config files ---
+	if err := controlplane.WriteOryConfigs(cp); err != nil {
+		return fmt.Errorf("step 0 (write ory configs): %w", err)
+	}
+	log.Info().Msg("Ory config files written")
 
 	// --- Step 1: Start Kratos ---
 	kratosCmd := exec.Command("kratos", "serve",
@@ -96,13 +118,30 @@ func run(adminPort, healthPort int, serverCertPath, serverKeyPath, jwkPath strin
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Build TLS config trusting the CLI CA for health checks.
+	// All Ory services use server certs signed by the CLI CA.
+	caCertPEM, err := os.ReadFile(caCertPath)
+	if err != nil {
+		return fmt.Errorf("step 3 (read CA cert for health): %w", err)
+	}
+	healthCertPool := x509.NewCertPool()
+	if !healthCertPool.AppendCertsFromPEM(caCertPEM) {
+		return fmt.Errorf("step 3: failed to parse CA cert for health checks")
+	}
+	healthTLS := &tls.Config{
+		RootCAs:    healthCertPool,
+		MinVersion: tls.VersionTLS13,
+	}
+
 	if err := subMgr.WaitHealthy(ctx, "kratos", controlplane.HealthCheck{
-		URL: "http://127.0.0.1:4433/health/alive", Interval: healthCheckInterval, Timeout: healthCheckTimeout,
+		URL: fmt.Sprintf("https://127.0.0.1:%d/health/alive", cp.KratosPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
+		TLS: healthTLS,
 	}); err != nil {
 		return fmt.Errorf("step 3 (kratos health): %w", err)
 	}
 	if err := subMgr.WaitHealthy(ctx, "hydra", controlplane.HealthCheck{
-		URL: "http://127.0.0.1:4444/health/alive", Interval: healthCheckInterval, Timeout: healthCheckTimeout,
+		URL: fmt.Sprintf("https://127.0.0.1:%d/health/alive", cp.HydraPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
+		TLS: healthTLS,
 	}); err != nil {
 		return fmt.Errorf("step 3 (hydra health): %w", err)
 	}
@@ -113,15 +152,13 @@ func run(adminPort, healthPort int, serverCertPath, serverKeyPath, jwkPath strin
 		return fmt.Errorf("step 4 (read JWK %s): %w", jwkPath, err)
 	}
 	log.Info().Str("jwk_path", jwkPath).Msg("CLI JWK loaded")
-	_ = jwkData // Used in Step 5 for Hydra client registration.
 
 	// --- Step 5: Register CLI client with Hydra ---
-	// TODO: Use Hydra Go SDK (github.com/ory/hydra-client-go/v2) to register
-	// the CLI OAuth2 client with private_key_jwt auth method, ES256 signing
-	// alg, client_credentials grant, admin scope, and the CLI's JWKS.
-	// For now, this step logs a placeholder — Hydra client registration
-	// requires the Go SDK dependency which will be added when GOPROXY is available.
-	log.Info().Msg("step 5: CLI client registration (placeholder — needs Hydra Go SDK)")
+	hydraAdminURL := fmt.Sprintf("https://127.0.0.1:%d", cp.HydraAdminPort)
+	if err := controlplane.RegisterCLIClient(hydraAdminURL, jwkData, healthTLS); err != nil {
+		return fmt.Errorf("step 5 (register CLI client): %w", err)
+	}
+	log.Info().Msg("CLI client registered with Hydra")
 
 	// --- Step 6: Start Oathkeeper ---
 	// Oathkeeper runs as an HTTP reverse proxy for future webui auth.
@@ -152,19 +189,8 @@ func run(adminPort, healthPort int, serverCertPath, serverKeyPath, jwkPath strin
 		return fmt.Errorf("step 8 (load server cert): %w", err)
 	}
 
-	// Build the server cert pool for client trust (self-signed cert IS the CA).
-	certPEM, err := os.ReadFile(serverCertPath)
-	if err != nil {
-		return fmt.Errorf("step 8 (read server cert): %w", err)
-	}
-	certPool := x509.NewCertPool()
-	block, _ := pem.Decode(certPEM)
-	if block != nil {
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err == nil {
-			certPool.AddCert(cert)
-		}
-	}
+	// No client cert pool needed — authorization is via OAuth2 tokens,
+	// not mTLS. The server presents its CA-signed cert; clients trust the CA.
 
 	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{serverCert},
@@ -172,8 +198,8 @@ func run(adminPort, healthPort int, serverCertPath, serverKeyPath, jwkPath strin
 	}
 
 	// Auth interceptor: validates bearer tokens via Hydra introspection.
-	hydraIntrospectURL := fmt.Sprintf("http://127.0.0.1:%d/admin/oauth2/introspect", consts.HydraAdminPort)
-	introspector := controlplane.NewHydraIntrospector(hydraIntrospectURL)
+	hydraIntrospectURL := fmt.Sprintf("https://127.0.0.1:%d/admin/oauth2/introspect", cp.HydraAdminPort)
+	introspector := controlplane.NewHydraIntrospector(hydraIntrospectURL, healthTLS)
 	authInterceptor := controlplane.NewAuthInterceptor(introspector, controlplane.AdminMethodScopes(), log)
 
 	grpcServer := grpc.NewServer(
@@ -185,13 +211,13 @@ func run(adminPort, healthPort int, serverCertPath, serverKeyPath, jwkPath strin
 	handler := controlplane.NewAdminHandler(ebpfMgr, log)
 	adminv1.RegisterAdminServiceServer(grpcServer, handler)
 
-	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(adminPort))
+	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
 	if err != nil {
 		return fmt.Errorf("step 8 (grpc listen): %w", err)
 	}
 
 	go func() {
-		log.Info().Int("port", adminPort).Msg("gRPC admin API serving")
+		log.Info().Int("port", cp.AdminPort).Msg("gRPC admin API serving")
 		if err := grpcServer.Serve(grpcLis); err != nil {
 			log.Error().Err(err).Msg("gRPC serve error")
 		}
@@ -203,11 +229,11 @@ func run(adminPort, healthPort int, serverCertPath, serverKeyPath, jwkPath strin
 	healthMux := http.NewServeMux()
 	healthMux.Handle("/healthz", orchestrator.HealthzHandler())
 	healthServer := &http.Server{
-		Addr:    "0.0.0.0:" + strconv.Itoa(healthPort),
+		Addr:    "0.0.0.0:" + strconv.Itoa(cp.HealthPort),
 		Handler: healthMux,
 	}
 	go func() {
-		log.Info().Int("port", healthPort).Msg("healthz serving")
+		log.Info().Int("port", cp.HealthPort).Msg("healthz serving")
 		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error().Err(err).Msg("healthz serve error")
 		}

@@ -4,8 +4,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"os"
 	"strings"
 	"testing"
@@ -14,75 +16,110 @@ import (
 	josejwt "github.com/go-jose/go-jose/v4/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // --- EnsureAuthMaterial ---
 
 func TestEnsureAuthMaterial_CreatesFiles(t *testing.T) {
-	dataDir := t.TempDir()
-	require.NoError(t, EnsureAuthMaterial(dataDir))
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
 
-	for _, path := range []string{
-		SigningKeyPath(dataDir),
-		SigningJWKPath(dataDir),
-		ServerCertPath(dataDir),
-		ServerKeyPath(dataDir),
+	for _, pathFn := range []func() (string, error){
+		consts.AuthCACertPath, consts.AuthCAKeyPath,
+		consts.AuthCLISigningKeyPath, consts.AuthCLISigningJWKPath,
+		consts.AuthServerCertPath, consts.AuthServerKeyPath,
 	} {
-		_, err := os.Stat(path)
-		assert.NoError(t, err, "expected file: %s", path)
+		p, err := pathFn()
+		require.NoError(t, err)
+		_, statErr := os.Stat(p)
+		assert.NoError(t, statErr, "expected file: %s", p)
 	}
 }
 
 func TestEnsureAuthMaterial_Idempotent(t *testing.T) {
-	dataDir := t.TempDir()
-	require.NoError(t, EnsureAuthMaterial(dataDir))
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
 
-	first, err := os.ReadFile(SigningKeyPath(dataDir))
+	keyPath, err := consts.AuthCLISigningKeyPath()
+	require.NoError(t, err)
+	first, err := os.ReadFile(keyPath)
 	require.NoError(t, err)
 
-	require.NoError(t, EnsureAuthMaterial(dataDir))
+	require.NoError(t, EnsureAuthMaterial())
 
-	second, err := os.ReadFile(SigningKeyPath(dataDir))
+	second, err := os.ReadFile(keyPath)
 	require.NoError(t, err)
 
 	assert.Equal(t, first, second, "signing key must not change on idempotent call")
 }
 
 func TestEnsureAuthMaterial_PrivateKeyPermissions(t *testing.T) {
-	dataDir := t.TempDir()
-	require.NoError(t, EnsureAuthMaterial(dataDir))
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
 
-	for _, path := range []string{SigningKeyPath(dataDir), ServerKeyPath(dataDir)} {
-		info, err := os.Stat(path)
+	for _, pathFn := range []func() (string, error){
+		consts.AuthCAKeyPath, consts.AuthCLISigningKeyPath, consts.AuthServerKeyPath,
+	} {
+		p, err := pathFn()
 		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "%s must be 0600", path)
+		info, statErr := os.Stat(p)
+		require.NoError(t, statErr)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "%s must be 0600", p)
 	}
 }
 
 func TestLoadSigningKey(t *testing.T) {
-	dataDir := t.TempDir()
-	require.NoError(t, EnsureAuthMaterial(dataDir))
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
 
-	key, err := LoadSigningKey(dataDir)
+	key, err := LoadSigningKey()
 	require.NoError(t, err)
 	assert.Equal(t, "P-256", key.Curve.Params().Name)
 }
 
-func TestServerTLSCert(t *testing.T) {
-	dataDir := t.TempDir()
-	require.NoError(t, EnsureAuthMaterial(dataDir))
+func TestCACert(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
 
-	cert, err := ServerTLSCert(dataDir)
+	cert, err := CACert()
 	require.NoError(t, err)
-	assert.Equal(t, "clawker-cp", cert.Subject.CommonName)
-	assert.Contains(t, cert.DNSNames, "localhost")
+	assert.Equal(t, "clawker CLI CA", cert.Subject.CommonName)
+	assert.True(t, cert.IsCA)
+}
+
+func TestServerCertSignedByCA(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	caCert, err := CACert()
+	require.NoError(t, err)
+
+	certPath, err := consts.AuthServerCertPath()
+	require.NoError(t, err)
+	certPEM, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	serverCert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	_, err = serverCert.Verify(x509.VerifyOptions{Roots: pool})
+	require.NoError(t, err, "server cert must be signed by CLI CA")
+	assert.Equal(t, "clawker-cp", serverCert.Subject.CommonName)
+	assert.Contains(t, serverCert.DNSNames, "localhost")
 }
 
 func TestReadJWK(t *testing.T) {
-	dataDir := t.TempDir()
-	require.NoError(t, EnsureAuthMaterial(dataDir))
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
 
-	jwk, err := ReadJWK(dataDir)
+	jwk, err := ReadJWK()
 	require.NoError(t, err)
 	assert.Contains(t, string(jwk), `"kty"`)
 	assert.Contains(t, string(jwk), `"EC"`)

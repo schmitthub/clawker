@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -72,6 +74,12 @@ func Main() int {
 
 	// Silence Cobra's built-in error printing — we handle it in printError.
 	rootCmd.SilenceErrors = true
+
+	// Wire SIGINT/SIGTERM to the root context so Ctrl+C propagates through
+	// cmd.Context() to every caller (WaitForHealthy, etc.) instead of hanging.
+	signalCtx, signalStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer signalStop()
+	rootCmd.SetContext(signalCtx)
 
 	cmd, err := rootCmd.ExecuteC()
 

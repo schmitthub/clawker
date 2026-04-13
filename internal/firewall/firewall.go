@@ -13,6 +13,7 @@ import (
 var (
 	ErrEnvoyUnhealthy   = errors.New("envoy not healthy")
 	ErrCoreDNSUnhealthy = errors.New("coredns not healthy")
+	ErrCPUnhealthy      = errors.New("clawker-cp not healthy")
 )
 
 // HealthTimeoutError is returned when WaitForHealthy exceeds its deadline.
@@ -66,9 +67,9 @@ type FirewallManager interface {
 	// through Envoy (TCP) and CoreDNS (DNS).
 	Enable(ctx context.Context, containerID string) error
 
-	// Bypass sets the eBPF bypass flag for unrestricted egress, auto-reverts after timeout.
-	// Returns immediately — timer runs in the eBPF manager container.
-	// To cancel early: call Enable() directly (idempotent, re-attaches programs).
+	// Bypass sets the eBPF bypass flag with a server-side dead-man timer.
+	// The CP automatically re-enables enforcement after timeout if the CLI
+	// doesn't call Enable first. Acts as a failsafe against CLI crashes.
 	Bypass(ctx context.Context, containerID string, timeout time.Duration) error
 
 	// Status returns a health snapshot of the firewall stack.
