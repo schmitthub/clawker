@@ -198,11 +198,6 @@ func run() int {
 		return 1
 	}
 
-	// Normalize socket paths from environment input.
-	for i := range sockets {
-		sockets[i].Path = filepath.Clean(sockets[i].Path)
-	}
-
 	f := &Forwarder{
 		sockets: sockets,
 		streams: make(map[uint32]net.Conn),

@@ -1400,7 +1400,7 @@ func filterSocketMountsForMacOS(mounts []mount.Mount) (filteredMounts []mount.Mo
 		}
 
 		// Check if the source is a socket file
-		fi, err := os.Stat(filepath.Clean(m.Source))
+		fi, err := os.Stat(m.Source)
 		if err != nil {
 			// Can't stat - keep in Mounts, let Docker handle the error
 			filteredMounts = append(filteredMounts, m)

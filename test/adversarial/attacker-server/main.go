@@ -134,7 +134,7 @@ var payloadSpecs = []payloadSpec{
 
 func main() {
 	// Init DB
-	dbPath := filepath.Clean(getEnv("DB_PATH", "/data/captures.db"))
+	dbPath := getEnv("DB_PATH", "/data/captures.db")
 	os.MkdirAll(filepath.Dir(dbPath), 0755)
 	initDB(dbPath)
 
@@ -155,7 +155,7 @@ func main() {
 	mux.HandleFunc("/ws/", wsRouter)
 
 	// Payload download endpoints — each spec gets its own benign path
-	payloadsDir := filepath.Clean(getEnv("PAYLOADS_DIR", "/payloads"))
+	payloadsDir := getEnv("PAYLOADS_DIR", "/payloads")
 	for _, spec := range payloadSpecs {
 		s := spec
 		mux.HandleFunc(s.Path, func(w http.ResponseWriter, r *http.Request) {
@@ -207,8 +207,8 @@ func main() {
 	mux.HandleFunc("/api/v1/credentials", serveCredsHandler)
 
 	// TLS config (optional — if no cert, all listeners run plain HTTP)
-	certFile := filepath.Clean(getEnv("TLS_CERT", ""))
-	keyFile := filepath.Clean(getEnv("TLS_KEY", ""))
+	certFile := getEnv("TLS_CERT", "")
+	keyFile := getEnv("TLS_KEY", "")
 	addr := getEnv("LISTEN_ADDR", ":443")
 	altPort1 := getEnv("ALT_PORT_1", ":8443")
 	altPort2 := getEnv("ALT_PORT_2", ":9443")

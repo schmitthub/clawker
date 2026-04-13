@@ -362,7 +362,6 @@ func matchPattern(log *logger.Logger, path, pattern string) bool {
 
 // LoadIgnorePatterns reads patterns from an ignore file.
 func LoadIgnorePatterns(ignoreFile string) ([]string, error) {
-	ignoreFile = filepath.Clean(ignoreFile)
 	file, err := os.Open(ignoreFile)
 	if err != nil {
 		if os.IsNotExist(err) {
