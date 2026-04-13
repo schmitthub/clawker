@@ -46,6 +46,9 @@ type SubprocessManager struct {
 
 // NewSubprocessManager creates a new subprocess manager.
 func NewSubprocessManager(log *logger.Logger) *SubprocessManager {
+	if log == nil {
+		log = logger.Nop()
+	}
 	return &SubprocessManager{
 		log: log,
 		// crashed has buffer size 1: only the first subprocess crash is

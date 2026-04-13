@@ -3,7 +3,6 @@ package controlplane
 import (
 	"fmt"
 	"net/netip"
-	"os"
 	"path/filepath"
 	"strconv"
 
@@ -104,11 +103,6 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 	serverKeyPath, err := consts.AuthServerKeyPath()
 	if err != nil {
 		return nil, fmt.Errorf("resolve server key path: %w", err)
-	}
-
-	// Verify Docker socket exists before adding it as a mount.
-	if _, err := os.Stat(dockerSockPath); err != nil {
-		return nil, fmt.Errorf("Docker socket not found at %s: %w (required for container state verification)", dockerSockPath, err)
 	}
 
 	// Config dir — CP loads config.NewConfig() from this mount.

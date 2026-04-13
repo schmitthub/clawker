@@ -38,7 +38,7 @@ Docker-exec-as-an-interface between the firewall manager and a long-running cont
 
 ## Security
 
-Runs inside `clawker-cp` with `CAP_BPF + CAP_SYS_ADMIN + CAP_NET_ADMIN` and bind mounts of `/sys/fs/bpf` + `/sys/fs/cgroup`. Every subcommand that accepts a `<cgroupPath>` passes it through `ebpf.CgroupID`, which runs `validateCgroupPath` (rejects empty, NUL/CR/LF, `..`, anything outside `/sys/fs/cgroup/`). This is the CodeQL `go/path-injection` sanitizer for the `os.Args[n] → file open` flow.
+Runs inside `clawker-cp` with `CAP_BPF + CAP_SYS_ADMIN` and bind mounts of `/sys/fs/bpf` + `/sys/fs/cgroup`. Every subcommand that accepts a `<cgroupPath>` passes it through `ebpf.CgroupID`, which runs `validateCgroupPath` (rejects empty, NUL/CR/LF, `..`, anything outside `/sys/fs/cgroup/`). This is the CodeQL `go/path-injection` sanitizer for the `os.Args[n] → file open` flow.
 
 ## Provenance
 

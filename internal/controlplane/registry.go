@@ -48,19 +48,26 @@ func NewRegistry(log *logger.Logger) *Registry {
 }
 
 // Register adds or updates an agent entry. If an existing entry has an
-// open ClientConn, it is closed before replacement to prevent gRPC leaks.
+// open ClientConn, it is closed after releasing the lock to prevent gRPC leaks
+// without blocking other registry operations.
 func (r *Registry) Register(containerID string, listenPort uint32, version string) {
+	var oldConn *grpc.ClientConn
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if existing, ok := r.agents[containerID]; ok && existing.ClientConn != nil {
-		if err := existing.ClientConn.Close(); err != nil {
-			r.log.Warn().Err(err).Str("container_id", containerID).Msg("registry: failed to close replaced ClientConn")
-		}
+		oldConn = existing.ClientConn
 	}
 	r.agents[containerID] = &AgentConnection{
 		ContainerID: containerID,
 		ListenPort:  listenPort,
 		Version:     version,
+	}
+	r.mu.Unlock()
+
+	if oldConn != nil {
+		if err := oldConn.Close(); err != nil {
+			r.log.Warn().Err(err).Str("container_id", containerID).Msg("registry: failed to close replaced ClientConn")
+		}
 	}
 }
 
@@ -88,17 +95,24 @@ func (r *Registry) IsRegistered(containerID string) bool {
 }
 
 // SetClientConn stores the gRPC client connection for an agent.
-// Closes any previously stored connection to prevent gRPC leaks.
+// Closes any previously stored connection outside the lock to prevent gRPC leaks
+// without blocking other registry operations.
 func (r *Registry) SetClientConn(containerID string, conn *grpc.ClientConn) {
+	var oldConn *grpc.ClientConn
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if agent, ok := r.agents[containerID]; ok {
 		if agent.ClientConn != nil && agent.ClientConn != conn {
-			if err := agent.ClientConn.Close(); err != nil {
-				r.log.Warn().Err(err).Str("container_id", containerID).Msg("registry: failed to close replaced ClientConn")
-			}
+			oldConn = agent.ClientConn
 		}
 		agent.ClientConn = conn
+	}
+	r.mu.Unlock()
+
+	if oldConn != nil {
+		if err := oldConn.Close(); err != nil {
+			r.log.Warn().Err(err).Str("container_id", containerID).Msg("registry: failed to close replaced ClientConn")
+		}
 	}
 }
 
@@ -129,15 +143,23 @@ func (r *Registry) SetInitFailed(containerID string) {
 	}
 }
 
-// Close closes all gRPC client connections.
+// Close closes all gRPC client connections outside the lock to avoid
+// blocking registry operations during shutdown.
 func (r *Registry) Close() {
+	var conns []*grpc.ClientConn
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	for id, agent := range r.agents {
+	for _, agent := range r.agents {
 		if agent.ClientConn != nil {
-			if err := agent.ClientConn.Close(); err != nil {
-				r.log.Warn().Err(err).Str("container_id", id).Msg("registry: failed to close ClientConn on shutdown")
-			}
+			conns = append(conns, agent.ClientConn)
+			agent.ClientConn = nil
+		}
+	}
+	r.mu.Unlock()
+
+	for _, conn := range conns {
+		if err := conn.Close(); err != nil {
+			r.log.Warn().Err(err).Msg("registry: failed to close ClientConn on shutdown")
 		}
 	}
 }
