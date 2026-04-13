@@ -8,6 +8,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -31,6 +32,8 @@ import (
 //	cli/
 //	  signing.key        ← ES256 private key (0600, NEVER enters any container)
 //	  signing-jwk.json   ← public JWK (bind-mounted into CP for Hydra)
+//	  client.pem         ← CLI mTLS client cert signed by CLI CA (host-only)
+//	  client.key         ← CLI mTLS client key (0600, NEVER enters any container)
 //	tls/
 //	  server.pem         ← server cert signed by CLI CA (bind-mounted into CP)
 //	  server.key         ← server private key (bind-mounted into CP)
@@ -40,9 +43,10 @@ import (
 // Directories are created by the consts accessors.
 //
 // The CLI is the root of trust. It generates:
-//  1. CA keypair — signs server certs, never enters containers
+//  1. CA keypair — signs server and client certs, never enters containers
 //  2. ES256 signing keypair — for private_key_jwt auth with Hydra
 //  3. Server cert — signed by the CLI CA, bind-mounted into CP
+//  4. Client cert — signed by the CLI CA, used for mTLS to AdminService
 func EnsureAuthMaterial() error {
 	if err := ensureCA(); err != nil {
 		return fmt.Errorf("CA: %w", err)
@@ -52,6 +56,9 @@ func EnsureAuthMaterial() error {
 	}
 	if err := ensureServerCert(); err != nil {
 		return fmt.Errorf("server cert: %w", err)
+	}
+	if err := ensureClientCert(); err != nil {
+		return fmt.Errorf("client cert: %w", err)
 	}
 	return nil
 }
@@ -76,6 +83,12 @@ func RotateAuthMaterial(forceSigningKey bool) error {
 	}
 	if err := removeIfExists(consts.AuthServerKeyPath); err != nil {
 		return fmt.Errorf("remove server key: %w", err)
+	}
+	if err := removeIfExists(consts.AuthCLIClientCertPath); err != nil {
+		return fmt.Errorf("remove client cert: %w", err)
+	}
+	if err := removeIfExists(consts.AuthCLIClientKeyPath); err != nil {
+		return fmt.Errorf("remove client key: %w", err)
 	}
 
 	if forceSigningKey {
@@ -115,6 +128,8 @@ func CheckAuthMaterial() ([]AuthFileStatus, error) {
 		{"CLI signing JWK", consts.AuthCLISigningJWKPath, false},
 		{"Server certificate", consts.AuthServerCertPath, true},
 		{"Server private key", consts.AuthServerKeyPath, false},
+		{"CLI client certificate", consts.AuthCLIClientCertPath, true},
+		{"CLI client key", consts.AuthCLIClientKeyPath, false},
 	}
 
 	var results []AuthFileStatus
@@ -389,6 +404,83 @@ func ensureServerCert() error {
 		return fmt.Errorf("write key: %w", err)
 	}
 	return nil
+}
+
+// --- CLI mTLS client cert (signed by CLI CA) ---
+
+func ensureClientCert() error {
+	certPath, err := consts.AuthCLIClientCertPath()
+	if err != nil {
+		return err
+	}
+	keyPath, err := consts.AuthCLIClientKeyPath()
+	if err != nil {
+		return err
+	}
+
+	// Check if both files exist.
+	if _, err := os.Stat(certPath); err == nil {
+		if _, err := os.Stat(keyPath); err == nil {
+			return nil // both exist
+		}
+	}
+
+	// Load the CLI CA to sign the client cert.
+	caCert, caKey, err := loadCA()
+	if err != nil {
+		return fmt.Errorf("load CA for signing: %w", err)
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generate serial: %w", err)
+	}
+
+	now := time.Now().UTC()
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   "clawker-cli",
+			Organization: []string{"clawker"},
+		},
+		NotBefore:   now.Add(-5 * time.Minute),
+		NotAfter:    now.AddDate(1, 0, 0),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+
+	// Sign with CLI CA — not self-signed.
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		return fmt.Errorf("sign cert: %w", err)
+	}
+
+	if err := writeCert(certPath, certDER); err != nil {
+		return fmt.Errorf("write cert: %w", err)
+	}
+	if err := writeECDSAKey(keyPath, key, 0o600); err != nil {
+		return fmt.Errorf("write key: %w", err)
+	}
+	return nil
+}
+
+// LoadClientCert reads the CLI's mTLS client certificate and key
+// as a tls.Certificate for use with grpc.WithTransportCredentials.
+func LoadClientCert() (tls.Certificate, error) {
+	certPath, err := consts.AuthCLIClientCertPath()
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	keyPath, err := consts.AuthCLIClientKeyPath()
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.LoadX509KeyPair(certPath, keyPath)
 }
 
 // --- PEM helpers ---

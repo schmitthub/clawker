@@ -38,16 +38,30 @@ func DialCPAdmin(ctx context.Context, adminPort, hydraPort int) (adminv1.AdminSe
 		return nil, nil, fmt.Errorf("load CA cert: %w", err)
 	}
 
+	clientCert, err := LoadClientCert()
+	if err != nil {
+		return nil, nil, fmt.Errorf("load client cert: %w", err)
+	}
+
 	certPool := x509.NewCertPool()
 	certPool.AddCert(caCert)
-	tlsCfg := &tls.Config{
+
+	// Plain TLS for Hydra token endpoint (no client cert).
+	tokenTLSCfg := &tls.Config{
 		RootCAs:    certPool,
-		ServerName: "clawker-cp",
 		MinVersion: tls.VersionTLS13,
 	}
 
+	// mTLS for gRPC AdminService (presents client cert).
+	grpcTLSCfg := &tls.Config{
+		RootCAs:      certPool,
+		Certificates: []tls.Certificate{clientCert},
+		ServerName:   "clawker-cp",
+		MinVersion:   tls.VersionTLS13,
+	}
+
 	hydraTokenURL := fmt.Sprintf("https://127.0.0.1:%d/oauth2/token", hydraPort)
-	ts := newTokenSource(signingKey, hydraTokenURL, tlsCfg)
+	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg)
 
 	// Eagerly fetch the first token so dial-time errors surface immediately.
 	if _, err := ts.token(ctx); err != nil {
@@ -57,7 +71,7 @@ func DialCPAdmin(ctx context.Context, adminPort, hydraPort int) (adminv1.AdminSe
 	target := fmt.Sprintf("127.0.0.1:%d", adminPort)
 	conn, err := grpc.NewClient(
 		target,
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithTransportCredentials(credentials.NewTLS(grpcTLSCfg)),
 		grpc.WithUnaryInterceptor(ts.unaryInterceptor()),
 	)
 	if err != nil {

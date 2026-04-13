@@ -31,6 +31,7 @@ func TestEnsureAuthMaterial_CreatesFiles(t *testing.T) {
 		consts.AuthCACertPath, consts.AuthCAKeyPath,
 		consts.AuthCLISigningKeyPath, consts.AuthCLISigningJWKPath,
 		consts.AuthServerCertPath, consts.AuthServerKeyPath,
+		consts.AuthCLIClientCertPath, consts.AuthCLIClientKeyPath,
 	} {
 		p, err := pathFn()
 		require.NoError(t, err)
@@ -99,6 +100,7 @@ func TestRotateAuthMaterial_Permissions(t *testing.T) {
 
 	for _, pathFn := range []func() (string, error){
 		consts.AuthCAKeyPath, consts.AuthCLISigningKeyPath, consts.AuthServerKeyPath,
+		consts.AuthCLIClientKeyPath,
 	} {
 		p, err := pathFn()
 		require.NoError(t, err)
@@ -114,7 +116,7 @@ func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 6)
+	require.Len(t, status, 8)
 
 	for _, s := range status {
 		assert.True(t, s.Exists, "%s should exist", s.Name)
@@ -130,6 +132,11 @@ func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
 	assert.Equal(t, "Server certificate", serverCert.Name)
 	assert.False(t, serverCert.Expires.IsZero(), "server cert should have expiry")
 	assert.False(t, serverCert.Expired, "server cert should not be expired")
+
+	clientCert := status[6]
+	assert.Equal(t, "CLI client certificate", clientCert.Name)
+	assert.False(t, clientCert.Expires.IsZero(), "client cert should have expiry")
+	assert.False(t, clientCert.Expired, "client cert should not be expired")
 }
 
 func TestCheckAuthMaterial_MissingFiles(t *testing.T) {
@@ -138,7 +145,7 @@ func TestCheckAuthMaterial_MissingFiles(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 6)
+	require.Len(t, status, 8)
 
 	for _, s := range status {
 		assert.False(t, s.Exists, "%s should not exist", s.Name)
@@ -151,6 +158,7 @@ func TestEnsureAuthMaterial_PrivateKeyPermissions(t *testing.T) {
 
 	for _, pathFn := range []func() (string, error){
 		consts.AuthCAKeyPath, consts.AuthCLISigningKeyPath, consts.AuthServerKeyPath,
+		consts.AuthCLIClientKeyPath,
 	} {
 		p, err := pathFn()
 		require.NoError(t, err)
@@ -202,6 +210,43 @@ func TestServerCertSignedByCA(t *testing.T) {
 	require.NoError(t, err, "server cert must be signed by CLI CA")
 	assert.Equal(t, "clawker-cp", serverCert.Subject.CommonName)
 	assert.Contains(t, serverCert.DNSNames, "localhost")
+}
+
+func TestClientCertSignedByCA(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	caCert, err := CACert()
+	require.NoError(t, err)
+
+	certPath, err := consts.AuthCLIClientCertPath()
+	require.NoError(t, err)
+	certPEM, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	clientCert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	_, err = clientCert.Verify(x509.VerifyOptions{
+		Roots:     pool,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	})
+	require.NoError(t, err, "client cert must be signed by CLI CA")
+	assert.Equal(t, "clawker-cli", clientCert.Subject.CommonName)
+	assert.Contains(t, clientCert.ExtKeyUsage, x509.ExtKeyUsageClientAuth)
+}
+
+func TestLoadClientCert(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	cert, err := LoadClientCert()
+	require.NoError(t, err)
+	assert.NotEmpty(t, cert.Certificate)
 }
 
 func TestReadJWK(t *testing.T) {

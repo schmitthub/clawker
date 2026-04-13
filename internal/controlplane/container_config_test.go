@@ -40,10 +40,14 @@ func TestINV_B1_006_PrivateKeysNeverMounted(t *testing.T) {
 
 	signingKeyPath, err := consts.AuthCLISigningKeyPath()
 	require.NoError(t, err)
+	clientKeyPath, err := consts.AuthCLIClientKeyPath()
+	require.NoError(t, err)
 
 	for _, m := range cpConfig.Mounts {
 		assert.False(t, strings.HasSuffix(m.Source, signingKeyPath) || m.Source == signingKeyPath,
 			"CLI signing key must never be bind-mounted into the CP container, but found mount source: %s", m.Source)
+		assert.False(t, strings.HasSuffix(m.Source, clientKeyPath) || m.Source == clientKeyPath,
+			"CLI client key must never be bind-mounted into the CP container, but found mount source: %s", m.Source)
 	}
 }
 

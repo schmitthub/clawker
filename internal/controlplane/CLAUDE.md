@@ -15,11 +15,13 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 
 | Layer | Purpose | Implementation |
 |-------|---------|----------------|
-| mTLS over TCP | Authenticate the channel; bind peer to CA-signed cert | Server cert/key bind-mounted from host, `credentials.NewTLS` |
+| mTLS over TCP | Authenticate the channel; server cert + CLI client cert both signed by CLI CA | Server: `RequireAndVerifyClientCert` + `ClientCAs` from bind-mounted CA. Client: `LoadClientCert()` in `cp_dial.go` |
 | Hydra OAuth2 | Issue JWTs via `client_credentials` + `private_key_jwt` (ES256) | Hydra subprocess with in-memory DSN |
 | gRPC AuthInterceptor | Validate bearer tokens via Hydra introspection (RFC 7662); enforce per-method scopes | `authz.go` — `HydraIntrospector` calls POST `/admin/oauth2/introspect` |
 
-**CLI auth flow**: CLI signs a JWT assertion with its ES256 private key → POST to Hydra `/oauth2/token` with `client_credentials` grant + `client_assertion` → Hydra validates signature against registered JWKS → returns access token (JWT) → CLI sends bearer token on gRPC calls → CP's AuthInterceptor introspects token via Hydra admin API → grants/denies based on scope.
+**CLI auth flow**: CLI presents mTLS client cert (signed by CLI CA) during TLS handshake → server verifies against CA → CLI signs a JWT assertion with its ES256 private key → POST to Hydra `/oauth2/token` (plain TLS, separate config) with `client_credentials` grant + `client_assertion` → Hydra validates signature against registered JWKS → returns access token (JWT) → CLI sends bearer token on gRPC calls → CP's AuthInterceptor introspects token via Hydra admin API → grants/denies based on scope.
+
+**Two TLS configs on CLI side** (`cp_dial.go`): `tokenTLSCfg` (plain TLS for Hydra token endpoint) and `grpcTLSCfg` (mTLS with client cert for AdminService). This pattern scales to future agent clients that will have their own CA-signed certs.
 
 **Failure mode**: Fail-closed. Any error (network, introspection failure, unmapped method) returns `codes.Unauthenticated`.
 
@@ -62,7 +64,7 @@ All RPCs require `admin` scope. Future scopes add entries to `AdminMethodScopes(
 4. Read CLI public JWK from bind-mount, register CLI client with Hydra (`RegisterCLIClient`)
 5. Start Oathkeeper subprocess
 6. Load eBPF programs (`ebpfMgr.Load()`)
-7. Start gRPC AdminService with TLS + AuthInterceptor
+7. Start gRPC AdminService with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor
 8. Configure service probes (`orchestrator.SetServiceProbes(cp, tlsCfg)`)
 9. Mark ready (`orchestrator.SetReady()`)
 10. Serve `/healthz` on HealthPort
@@ -173,7 +175,8 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 | File | Invariants | What |
 |------|------------|------|
 | `authz_test.go` | INV-B1-011 | Token validation, scope enforcement, unmapped method denial, Hydra introspection mock |
-| `container_config_test.go` | INV-B1-005, 006, 008, 009, 015, 017, 018, 020 | Port bindings, mounts, labels, private key exclusion, config-driven ports |
+| `grpc_mtls_test.go` | — | mTLS connection acceptance (valid cert), rejection (no cert), rejection (no TLS) |
+| `container_config_test.go` | INV-B1-005, 006, 008, 009, 015, 017, 018, 020 | Port bindings, mounts, labels, private key exclusion (signing + client), config-driven ports |
 | `lifecycle_test.go` | INV-B1-010, 013 | /healthz 503→200 transition, eBPF lifecycle gating, aggregate probes |
 | `ebpf/manager_test.go` | — | Link cleanup, map schema detection, Install/Remove/Enable/Disable, SyncRoutes, DNS cache GC |
 | `subprocess_test.go` | — | Start/WaitHealthy, crash detection, SIGTERM/SIGKILL shutdown |

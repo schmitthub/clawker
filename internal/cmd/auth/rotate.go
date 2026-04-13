@@ -34,9 +34,10 @@ With --force, regenerates the CA certificate, server certificate, and
 signing key. The CP must be restarted to pick up new material.
 
 Auth material:
-  - CA certificate and key (signs server certs, 5-year validity)
+  - CA certificate and key (signs server and client certs, 5-year validity)
   - CLI signing key and JWK (ES256 for OAuth2 private_key_jwt auth)
   - Server TLS certificate and key (signed by CLI CA, 1-year validity)
+  - Client mTLS certificate and key (signed by CLI CA, 1-year validity)
 
 Private keys are always created with 0600 permissions.`,
 		Example: `  # Check auth material and create any missing files

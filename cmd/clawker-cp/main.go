@@ -52,7 +52,7 @@ const (
 )
 
 func main() {
-	caCertPath := flag.String("tls-ca", "/etc/clawker/tls/ca.pem", "CLI CA certificate (for health check trust)")
+	caCertPath := flag.String("tls-ca", "/etc/clawker/tls/ca.pem", "CLI CA certificate")
 	serverCertPath := flag.String("tls-cert", "/etc/clawker/tls/server.pem", "TLS server certificate")
 	serverKeyPath := flag.String("tls-key", "/etc/clawker/tls/server.key", "TLS server key")
 	jwkPath := flag.String("jwk", "/etc/clawker/cli/signing-jwk.json", "CLI signing JWK (bind-mounted)")
@@ -118,30 +118,30 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Build TLS config trusting the CLI CA for health checks.
-	// All Ory services use server certs signed by the CLI CA.
+	// Build CLI CA cert pool — used for health checks, Hydra introspection,
+	// client registration, and mTLS client cert verification.
 	caCertPEM, err := os.ReadFile(caCertPath)
 	if err != nil {
-		return fmt.Errorf("step 3 (read CA cert for health): %w", err)
+		return fmt.Errorf("step 3 (read CA cert): %w", err)
 	}
-	healthCertPool := x509.NewCertPool()
-	if !healthCertPool.AppendCertsFromPEM(caCertPEM) {
-		return fmt.Errorf("step 3: failed to parse CA cert for health checks")
+	caCertPool := x509.NewCertPool()
+	if !caCertPool.AppendCertsFromPEM(caCertPEM) {
+		return fmt.Errorf("step 3: failed to parse CA cert")
 	}
-	healthTLS := &tls.Config{
-		RootCAs:    healthCertPool,
+	caTLS := &tls.Config{
+		RootCAs:    caCertPool,
 		MinVersion: tls.VersionTLS13,
 	}
 
 	if err := subMgr.WaitHealthy(ctx, "kratos", controlplane.HealthCheck{
 		URL: fmt.Sprintf("https://127.0.0.1:%d/health/alive", cp.KratosPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
-		TLS: healthTLS,
+		TLS: caTLS,
 	}); err != nil {
 		return fmt.Errorf("step 3 (kratos health): %w", err)
 	}
 	if err := subMgr.WaitHealthy(ctx, "hydra", controlplane.HealthCheck{
 		URL: fmt.Sprintf("https://127.0.0.1:%d/health/alive", cp.HydraPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
-		TLS: healthTLS,
+		TLS: caTLS,
 	}); err != nil {
 		return fmt.Errorf("step 3 (hydra health): %w", err)
 	}
@@ -152,14 +152,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	// that may take longer under resource pressure. Wait for it explicitly.
 	if err := subMgr.WaitHealthy(ctx, "hydra-admin", controlplane.HealthCheck{
 		URL: fmt.Sprintf("https://127.0.0.1:%d/health/alive", cp.HydraAdminPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
-		TLS: healthTLS,
+		TLS: caTLS,
 	}); err != nil {
 		return fmt.Errorf("step 3b (hydra admin health): %w", err)
 	}
 
 	// Configure aggregate health probes. The /healthz endpoint will actively
 	// probe ALL service ports — it only returns 200 when every one responds.
-	orchestrator.SetServiceProbes(cp, healthTLS)
+	orchestrator.SetServiceProbes(cp, caTLS)
 
 	// --- Step 4: Read CLI JWK ---
 	jwkData, err := os.ReadFile(jwkPath)
@@ -170,7 +170,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 
 	// --- Step 5: Register CLI client with Hydra ---
 	hydraAdminURL := fmt.Sprintf("https://127.0.0.1:%d", cp.HydraAdminPort)
-	if err := controlplane.RegisterCLIClient(hydraAdminURL, jwkData, healthTLS); err != nil {
+	if err := controlplane.RegisterCLIClient(hydraAdminURL, jwkData, caTLS); err != nil {
 		return fmt.Errorf("step 5 (register CLI client): %w", err)
 	}
 	log.Info().Msg("CLI client registered with Hydra")
@@ -204,17 +204,20 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		return fmt.Errorf("step 8 (load server cert): %w", err)
 	}
 
-	// No client cert pool needed — authorization is via OAuth2 tokens,
-	// not mTLS. The server presents its CA-signed cert; clients trust the CA.
-
+	// mTLS: require client certificates signed by the CLI CA.
+	// caCertPool already contains the CA cert (parsed at step 3).
+	// Authorization is still via OAuth2 bearer tokens — mTLS authenticates
+	// the transport channel.
 	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    caCertPool,
 		MinVersion:   tls.VersionTLS13,
 	}
 
 	// Auth interceptor: validates bearer tokens via Hydra introspection.
 	hydraIntrospectURL := fmt.Sprintf("https://127.0.0.1:%d/admin/oauth2/introspect", cp.HydraAdminPort)
-	introspector := controlplane.NewHydraIntrospector(hydraIntrospectURL, healthTLS)
+	introspector := controlplane.NewHydraIntrospector(hydraIntrospectURL, caTLS)
 	authInterceptor := controlplane.NewAuthInterceptor(introspector, controlplane.AdminMethodScopes(), log)
 
 	grpcServer := grpc.NewServer(

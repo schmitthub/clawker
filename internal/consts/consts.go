@@ -317,6 +317,22 @@ func AuthCLISigningJWKPath() (string, error) {
 	return filepath.Join(dir, "signing-jwk.json"), nil
 }
 
+func AuthCLIClientCertPath() (string, error) {
+	dir, err := AuthCLIDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "client.pem"), nil
+}
+
+func AuthCLIClientKeyPath() (string, error) {
+	dir, err := AuthCLIDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "client.key"), nil
+}
+
 func AuthServerCertPath() (string, error) {
 	dir, err := AuthTLSDir()
 	if err != nil {
