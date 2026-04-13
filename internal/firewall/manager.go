@@ -61,9 +61,9 @@ const (
 	healthCheckInterval = 500 * time.Millisecond
 
 	// Readiness gate timing for the clawker-cp container after start.
-	// The CP writes <firewallDataDir>/cp-ready when it has loaded the BPF
-	// programs and bound its listeners — the firewall manager polls that
-	// file before proceeding with SyncRoutes and Envoy/CoreDNS startup.
+	// The firewall manager polls the CP's /healthz endpoint (aggregate
+	// probe of all service ports) before proceeding with SyncRoutes
+	// and Envoy/CoreDNS startup.
 	cpReadyTimeout  = 30 * time.Second
 	cpReadyInterval = 100 * time.Millisecond
 )
@@ -1238,7 +1238,7 @@ type embeddedBinary struct {
 // image uses this same build-from-embedded-binary pattern so we can
 // stamp out privileged images without a registry.
 type embeddedImageSpec struct {
-	tag        string           // Docker image tag (e.g. "clawker-cp:latest")
+	tag        string           // Docker image tag (e.g. "clawker-controlplane:latest")
 	binaries   []embeddedBinary // One or more binaries to COPY in
 	dockerfile string           // Dockerfile content
 	makeTarget string           // Make target for building the binary set (error messages)

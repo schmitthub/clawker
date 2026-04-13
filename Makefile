@@ -619,7 +619,7 @@ localenv:
 restart: clawker-clean clawker
 	@echo "Stopping firewall stack containers..."
 	@docker rm -f clawker-cp clawker-envoy clawker-coredns 2>/dev/null || true
-	@docker rmi clawker-cp:latest clawker-coredns:latest 2>/dev/null || true
+	@docker rmi clawker-controlplane:latest clawker-coredns:latest 2>/dev/null || true
 	@echo "Ready. Start with: ./bin/clawker run ..."
 
 # ============================================================================

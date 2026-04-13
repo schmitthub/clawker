@@ -129,7 +129,7 @@ const (
 const (
 	// CPImageTag is the local Docker image tag for the built control plane image.
 	// Built on-demand from embedded binaries by ensureCPImage in the firewall manager.
-	CPImageTag = "clawker-cp:latest"
+	CPImageTag = "clawker-controlplane:latest"
 )
 
 // Static IP assignments (last octet on clawker-net).

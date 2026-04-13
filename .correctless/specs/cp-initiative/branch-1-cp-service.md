@@ -194,9 +194,9 @@ No CA hierarchy — the server cert is self-signed. The CLI trusts it directly v
 ### INV-B1-002: OAuth2 access tokens are the authorization layer
 - **Type**: must
 - **Category**: security
-- **Statement**: After mTLS authenticates the gRPC connection, every RPC (except Health) requires a valid OAuth2 access token with the `admin` scope, validated by the vendored Oathkeeper gRPC middleware via Hydra token introspection. Authorization is distinct from authentication.
-- **Violated when**: An RPC succeeds with valid mTLS but no access token, or with a token lacking the required scope
-- **Test approach**: integration (mTLS + no token → rejected; mTLS + token without `admin` scope → rejected; mTLS + valid `admin` token → accepted)
+- **Statement**: After TLS authenticates the gRPC connection, every RPC (except Health) requires a valid OAuth2 access token with the `admin` scope, validated via Hydra token introspection. Authorization is distinct from authentication.
+- **Violated when**: An RPC succeeds with valid TLS but no access token, or with a token lacking the required scope
+- **Test approach**: integration (TLS + no token → rejected; TLS + token without `admin` scope → rejected; TLS + valid `admin` token → accepted)
 - **Risk**: critical
 
 ### INV-B1-003: Hydra is the sole token issuer

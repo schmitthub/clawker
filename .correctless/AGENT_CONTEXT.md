@@ -13,7 +13,9 @@ See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Critical
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | CLI entry | `cmd/clawker/` | Main binary, Cobra root |
-| Control plane | `internal/controlplane/` | CP daemon, auth (mTLS+OIDC+JWT), gRPC service |
+| Control plane | `internal/controlplane/` | CP daemon, auth (TLS+OAuth2 via Hydra), gRPC AdminService |
+| Auth | `internal/auth/` | CLI-side key material (CA, signing key, server cert), CP dial helper |
+| Auth CLI | `internal/cmd/auth/` | `clawker auth rotate` — check/rotate auth material |
 | CP binary | `cmd/clawker-cp/` | Containerized CP daemon entry point |
 | Firewall | `internal/firewall/` | Envoy+CoreDNS+eBPF stack, rules store, MITM certs |
 | eBPF | `internal/controlplane/ebpf/` | Cgroup BPF programs, manager |
