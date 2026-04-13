@@ -28,18 +28,18 @@ const (
 // On Windows, falls back to AppData before the POSIX-style default.
 func resolveDir(clawkerEnv, xdgEnv, defaultSuffix string) string {
 	if v := os.Getenv(clawkerEnv); v != "" {
-		return v
+		return filepath.Clean(v)
 	}
 	if v := os.Getenv(xdgEnv); v != "" {
-		return filepath.Join(v, "clawker")
+		return filepath.Clean(filepath.Join(v, "clawker"))
 	}
 	if runtime.GOOS == "windows" {
 		if v := os.Getenv(appData); v != "" {
-			return filepath.Join(v, "clawker")
+			return filepath.Clean(filepath.Join(v, "clawker"))
 		}
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, defaultSuffix)
+	return filepath.Clean(filepath.Join(home, defaultSuffix))
 }
 
 // configDir returns the clawker config directory.
@@ -53,16 +53,16 @@ func configDir() string {
 func dataDir() string {
 	if runtime.GOOS == "windows" {
 		if v := os.Getenv(clawkerDataDirEnv); v != "" {
-			return v
+			return filepath.Clean(v)
 		}
 		if v := os.Getenv(xdgDataHome); v != "" {
-			return filepath.Join(v, "clawker")
+			return filepath.Clean(filepath.Join(v, "clawker"))
 		}
 		if v := os.Getenv(localAppData); v != "" {
-			return filepath.Join(v, "clawker")
+			return filepath.Clean(filepath.Join(v, "clawker"))
 		}
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".local", "share", "clawker")
+		return filepath.Clean(filepath.Join(home, ".local", "share", "clawker"))
 	}
 	return resolveDir(clawkerDataDirEnv, xdgDataHome, filepath.Join(".local", "share", "clawker"))
 }
@@ -72,16 +72,16 @@ func dataDir() string {
 func stateDir() string {
 	if runtime.GOOS == "windows" {
 		if v := os.Getenv(clawkerStateDirEnv); v != "" {
-			return v
+			return filepath.Clean(v)
 		}
 		if v := os.Getenv(xdgStateHome); v != "" {
-			return filepath.Join(v, "clawker")
+			return filepath.Clean(filepath.Join(v, "clawker"))
 		}
 		if v := os.Getenv(appData); v != "" {
-			return filepath.Join(v, "clawker", "state")
+			return filepath.Clean(filepath.Join(v, "clawker", "state"))
 		}
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".local", "state", "clawker")
+		return filepath.Clean(filepath.Join(home, ".local", "state", "clawker"))
 	}
 	return resolveDir(clawkerStateDirEnv, xdgStateHome, filepath.Join(".local", "state", "clawker"))
 }
@@ -94,20 +94,20 @@ func stateDir() string {
 // directory is available — cache is transient and can live anywhere.
 func cacheDir() string {
 	if v := os.Getenv(clawkerCacheDirEnv); v != "" {
-		return v
+		return filepath.Clean(v)
 	}
 	if v := os.Getenv(xdgCacheHome); v != "" {
-		return filepath.Join(v, "clawker")
+		return filepath.Clean(filepath.Join(v, "clawker"))
 	}
 	if runtime.GOOS == "windows" {
 		if v := os.Getenv(localAppData); v != "" {
-			return filepath.Join(v, "clawker", "cache")
+			return filepath.Clean(filepath.Join(v, "clawker", "cache"))
 		}
 	}
 	if home, _ := os.UserHomeDir(); home != "" {
-		return filepath.Join(home, ".cache", "clawker")
+		return filepath.Clean(filepath.Join(home, ".cache", "clawker"))
 	}
-	return filepath.Join(os.TempDir(), "clawker-cache")
+	return filepath.Clean(filepath.Join(os.TempDir(), "clawker-cache"))
 }
 
 // dirEntry pairs a resolved path with its human-readable category name.

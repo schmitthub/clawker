@@ -26,6 +26,7 @@ import (
 // Returns error if the directory doesn't exist.
 func ResolveHostConfigDir() (string, error) {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		dir = filepath.Clean(dir)
 		info, err := os.Stat(dir)
 		if err != nil {
 			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path is invalid: %w", dir, err)

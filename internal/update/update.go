@@ -202,6 +202,7 @@ func parseSemver(v string) []int {
 
 // readState reads the cached state file.
 func readState(path string) (*StateEntry, error) {
+	path = filepath.Clean(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -215,6 +216,7 @@ func readState(path string) (*StateEntry, error) {
 
 // writeState atomically writes the state file (write to temp, rename).
 func writeState(path string, entry StateEntry) error {
+	path = filepath.Clean(path)
 	data, err := yaml.Marshal(entry)
 	if err != nil {
 		return err

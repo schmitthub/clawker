@@ -100,9 +100,9 @@ func resolvePath(path, projectDir string) (string, error) {
 		return "", err
 	}
 	if filepath.IsAbs(expanded) {
-		return expanded, nil
+		return filepath.Clean(expanded), nil
 	}
-	return filepath.Join(projectDir, expanded), nil
+	return filepath.Clean(filepath.Join(projectDir, expanded)), nil
 }
 
 // expandPath expands ~ and environment variables in a path.

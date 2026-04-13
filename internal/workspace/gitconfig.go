@@ -23,7 +23,7 @@ func GetGitConfigMount(log *logger.Logger) []mount.Mount {
 		return nil
 	}
 
-	gitconfigPath := filepath.Join(homeDir, ".gitconfig")
+	gitconfigPath := filepath.Clean(filepath.Join(homeDir, ".gitconfig"))
 
 	// Check if file exists
 	info, err := os.Stat(gitconfigPath)
@@ -61,7 +61,7 @@ func GitConfigExists() bool {
 		return false
 	}
 
-	gitconfigPath := filepath.Join(homeDir, ".gitconfig")
+	gitconfigPath := filepath.Clean(filepath.Join(homeDir, ".gitconfig"))
 	info, err := os.Stat(gitconfigPath)
 	if err != nil {
 		return false
