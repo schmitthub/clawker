@@ -2,6 +2,11 @@ name: Security
 
 on:
   workflow_call:
+    inputs:
+      run_dependency_review:
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -85,6 +90,8 @@ jobs:
           category: gitleaks
 
   dependency-review:
+    name: Dependency Review
+    if: ${{ inputs.run_dependency_review }}
     runs-on: ubuntu-latest
     steps:
       - name: 'Checkout Repository'
