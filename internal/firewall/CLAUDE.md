@@ -1,6 +1,6 @@
 # Firewall Package
 
-Domain contracts, Docker implementation, daemon, certificates, and network management for the clawker firewall stack: Envoy (egress proxy) + custom CoreDNS (DNS resolver with BPF plugin) + clawker-cp (control plane with eBPF + Ory auth).
+Domain contracts, Docker implementation, daemon, certificates, and network management for the clawker firewall stack: Envoy (egress proxy) + custom CoreDNS (DNS resolver with BPF plugin) + clawker-controlplane (control plane with eBPF + Ory auth).
 
 ## Control plane integration
 
@@ -98,7 +98,7 @@ Sentinel errors: `ErrEnvoyUnhealthy`, `ErrCoreDNSUnhealthy`, `ErrCPUnhealthy`.
 
 ## Manager (`manager.go`)
 
-Docker implementation of `FirewallManager`. Creates and manages three shared-infrastructure containers on an isolated Docker network with static IPs: Envoy (`clawker-envoy`, .200), CoreDNS (`clawker-coredns`, .201), and CP (`clawker-cp`, .202). These are **not** sidecars — one firewall stack is shared by all clawker-managed containers on the host (1:N).
+Docker implementation of `FirewallManager`. Creates and manages three shared-infrastructure containers on an isolated Docker network with static IPs: Envoy (`clawker-envoy`, .200), CoreDNS (`clawker-coredns`, .201), and CP (`clawker-controlplane`, .202). These are **not** sidecars — one firewall stack is shared by all clawker-managed containers on the host (1:N).
 
 ```go
 func NewManager(client client.APIClient, cfg config.Config, log *logger.Logger) (*Manager, error)
@@ -221,7 +221,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 
 All three images are built on-demand from `//go:embed`'d Linux-static binaries:
 
-- **clawker-cp**: Multi-stage Dockerfile — Ory binaries (Hydra, Oathkeeper, Kratos) + clawker-cp + ebpf-manager on distroless base
+- **clawker-controlplane**: Multi-stage Dockerfile — Ory binaries (Hydra, Oathkeeper, Kratos) + clawker-cp + ebpf-manager on distroless base
 - **clawker-coredns**: Alpine + custom CoreDNS binary with dnsbpf plugin, `CAP_BPF + CAP_SYS_ADMIN`, `/sys/fs/bpf` mount
 - **ebpf-manager**: Break-glass only (bundled in CP image)
 

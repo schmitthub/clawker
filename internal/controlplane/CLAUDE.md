@@ -1,6 +1,6 @@
 # Control Plane Package
 
-The clawker control plane. A containerized, privileged, long-lived Go service that owns authoritative state for managed containers. Runs as `clawker-cp` in the firewall stack, replacing the historical `clawker-ebpf` container.
+The clawker control plane. A containerized, privileged, long-lived Go service that owns authoritative state for managed containers. Runs as `clawker-controlplane` in the firewall stack, replacing the historical `clawker-ebpf` container.
 
 ## Responsibilities (v1)
 
@@ -185,7 +185,7 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 
 **Uses**: `internal/config`, `internal/consts`, `internal/logger`, `internal/controlplane/ebpf`, `api/admin/v1`, `internal/clawkerd/protocol/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`.
 
-**Used by**: `internal/firewall` (BuildCPContainerConfig, ebpf.DomainHash), `cmd/clawker-cp` (startup sequence), `internal/dnsbpf` (ebpf types), `internal/auth` (cert paths).
+**Used by**: `internal/firewall` (BuildCPContainerConfig, ebpf.DomainHash), `cmd/clawker-cp/` (startup sequence), `internal/dnsbpf` (ebpf types), `internal/auth` (cert paths).
 
 No circular dependencies.
 

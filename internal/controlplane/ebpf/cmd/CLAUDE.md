@@ -2,11 +2,11 @@
 
 **Break-glass only.** Not a supported interface.
 
-This binary is kept in the `clawker-cp` container image as a resilience last-ditch tool for humans debugging a misbehaving control plane. It is **not** the interface between the firewall manager and the CP — that channel is typed gRPC via `ControlPlaneService` on the CP's UDS listener.
+This binary is kept in the `clawker-controlplane` container image as a resilience last-ditch tool for humans debugging a misbehaving control plane. It is **not** the interface between the firewall manager and the CP — that channel is typed gRPC via `ControlPlaneService` on the CP's UDS listener.
 
 ## When to use it
 
-Use `ebpf-manager` via `docker exec clawker-cp ebpf-manager <subcommand>` when:
+Use `ebpf-manager` via `docker exec clawker-controlplane ebpf-manager <subcommand>` when:
 - The CP process is unresponsive but the BPF programs are still pinned in the kernel
 - You need to inspect raw `container_map` / `bypass_map` / `dns_cache` state via `dump`
 - You need to manually poke pinned maps during an incident response
@@ -38,8 +38,8 @@ Docker-exec-as-an-interface between the firewall manager and a long-running cont
 
 ## Security
 
-Runs inside `clawker-cp` with `CAP_BPF + CAP_SYS_ADMIN` and bind mounts of `/sys/fs/bpf` + `/sys/fs/cgroup`. Every subcommand that accepts a `<cgroupPath>` passes it through `ebpf.CgroupID`, which runs `validateCgroupPath` (rejects empty, NUL/CR/LF, `..`, anything outside `/sys/fs/cgroup/`). This is the CodeQL `go/path-injection` sanitizer for the `os.Args[n] → file open` flow.
+Runs inside `clawker-controlplane` with `CAP_BPF + CAP_SYS_ADMIN` and bind mounts of `/sys/fs/bpf` + `/sys/fs/cgroup`. Every subcommand that accepts a `<cgroupPath>` passes it through `ebpf.CgroupID`, which runs `validateCgroupPath` (rejects empty, NUL/CR/LF, `..`, anything outside `/sys/fs/cgroup/`). This is the CodeQL `go/path-injection` sanitizer for the `os.Args[n] → file open` flow.
 
 ## Provenance
 
-Binary lives at `internal/firewall/assets/ebpf-manager` after `make ebpf-binary`. The Makefile target delegates to `docker buildx build` against the pinned multi-stage `Dockerfile.controlplane`. The `clawker-cp` image bundles both `clawker-cp` (the CMD) and `ebpf-manager` (this binary) via `cpImageSpec.binaries` in `internal/firewall/manager.go`. Nothing about this binary is committed — the Dockerfile is the build recipe and the binary is regenerated on every build.
+Binary lives at `internal/firewall/assets/ebpf-manager` after `make ebpf-binary`. The Makefile target delegates to `docker buildx build` against the pinned multi-stage `Dockerfile.controlplane`. The `clawker-controlplane` image bundles both `clawker-cp` (the CMD) and `ebpf-manager` (this binary) via `cpImageSpec.binaries` in `internal/firewall/manager.go`. Nothing about this binary is committed — the Dockerfile is the build recipe and the binary is regenerated on every build.

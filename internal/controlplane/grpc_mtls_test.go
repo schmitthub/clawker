@@ -92,7 +92,7 @@ func TestMTLS_ValidClientCert_Accepted(t *testing.T) {
 	tlsCfg := &tls.Config{
 		RootCAs:      caCertPool,
 		Certificates: []tls.Certificate{clientCert},
-		ServerName:   "clawker-cp",
+		ServerName:   consts.ContainerCP,
 		MinVersion:   tls.VersionTLS13,
 	}
 
@@ -118,7 +118,7 @@ func TestMTLS_NoClientCert_Rejected(t *testing.T) {
 	// TLS config trusts the server but does NOT present a client cert.
 	tlsCfg := &tls.Config{
 		RootCAs:    caCertPool,
-		ServerName: "clawker-cp",
+		ServerName: consts.ContainerCP,
 		MinVersion: tls.VersionTLS13,
 	}
 

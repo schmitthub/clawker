@@ -425,14 +425,14 @@ func ensureServerCert() error {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "clawker-cp",
+			CommonName:   consts.ContainerCP,
 			Organization: []string{"clawker"},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),
 		NotAfter:    now.AddDate(1, 0, 0),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:    []string{"localhost", "clawker-cp"},
+		DNSNames:    []string{"localhost", consts.ContainerCP},
 		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
 	}
 

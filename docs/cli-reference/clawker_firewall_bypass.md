@@ -12,7 +12,7 @@ Grant a container unrestricted egress for a specified duration.
 
 Sets an eBPF bypass flag for the container and starts a server-side
 dead-man timer that automatically re-enables enforcement. The timer
-runs in the clawker-cp control plane and survives CLI exit.
+runs in the clawker-controlplane control plane and survives CLI exit.
 
 By default the command blocks with a countdown timer. Press Ctrl+C to
 stop the bypass early (re-enables firewall). Press q/Esc to detach

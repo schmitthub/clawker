@@ -106,8 +106,8 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 			h.T.Logf("=== %s ===\n%s", name, string(data))
 		}
 		// CP logs go to the same state/logs dir as everything else.
-		if data, err := os.ReadFile(filepath.Join(logDir, "clawker-cp.log")); err == nil {
-			h.T.Logf("=== clawker-cp.log ===\n%s", string(data))
+		if data, err := os.ReadFile(filepath.Join(logDir, consts.ControlPlaneLogFile)); err == nil {
+			h.T.Logf("=== %s ===\n%s", consts.ControlPlaneLogFile, string(data))
 		}
 	})
 

@@ -50,7 +50,7 @@ func DialCPAdmin(ctx context.Context, adminPort, hydraPort int) (adminv1.AdminSe
 	// Plain TLS for Hydra token endpoint (no client cert).
 	tokenTLSCfg := &tls.Config{
 		RootCAs:    certPool,
-		ServerName: "clawker-cp",
+		ServerName: consts.ContainerCP,
 		MinVersion: tls.VersionTLS13,
 	}
 
@@ -58,7 +58,7 @@ func DialCPAdmin(ctx context.Context, adminPort, hydraPort int) (adminv1.AdminSe
 	grpcTLSCfg := &tls.Config{
 		RootCAs:      certPool,
 		Certificates: []tls.Certificate{clientCert},
-		ServerName:   "clawker-cp",
+		ServerName:   consts.ContainerCP,
 		MinVersion:   tls.VersionTLS13,
 	}
 

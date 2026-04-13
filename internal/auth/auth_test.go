@@ -208,7 +208,7 @@ func TestServerCertSignedByCA(t *testing.T) {
 
 	_, err = serverCert.Verify(x509.VerifyOptions{Roots: pool})
 	require.NoError(t, err, "server cert must be signed by CLI CA")
-	assert.Equal(t, "clawker-cp", serverCert.Subject.CommonName)
+	assert.Equal(t, consts.ContainerCP, serverCert.Subject.CommonName)
 	assert.Contains(t, serverCert.DNSNames, "localhost")
 }
 

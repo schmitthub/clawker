@@ -46,7 +46,7 @@ const (
 	// cpContainer is the clawker control plane container. Owns
 	// ebpf.Manager.Load() lifetime in-process, serves AdminService over
 	// mTLS gRPC on TCP, and runs the Ory auth stack (Hydra/Oathkeeper/Kratos).
-	cpContainer firewallContainer = "clawker-cp"
+	cpContainer firewallContainer = consts.ContainerCP
 )
 
 // Infrastructure container constants.

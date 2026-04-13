@@ -13,7 +13,7 @@ import (
 var (
 	ErrEnvoyUnhealthy   = errors.New("envoy not healthy")
 	ErrCoreDNSUnhealthy = errors.New("coredns not healthy")
-	ErrCPUnhealthy      = errors.New("clawker-cp not healthy")
+	ErrCPUnhealthy      = errors.New("clawker-controlplane not healthy")
 )
 
 // HealthTimeoutError is returned when WaitForHealthy exceeds its deadline.

@@ -42,6 +42,7 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -64,7 +65,7 @@ func main() {
 	flag.Parse()
 
 	if err := run(*caCertPath, *serverCertPath, *serverKeyPath, *jwkPath, *logDir); err != nil {
-		fmt.Fprintf(os.Stderr, "clawker-cp: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", consts.ContainerCP, err)
 		os.Exit(1)
 	}
 }
@@ -72,14 +73,14 @@ func main() {
 func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) error {
 	log, err := logger.New(logger.Options{
 		LogsDir:  logDir,
-		Filename: "clawker-cp.log",
+		Filename: consts.ControlPlaneLogFile,
 	})
 	if err != nil {
 		// Fall back to stderr-only if log dir isn't writable.
 		log = logger.NewWriter(os.Stderr)
-		fmt.Fprintf(os.Stderr, "clawker-cp: warning: file logging unavailable (%v), using stderr only\n", err)
+		fmt.Fprintf(os.Stderr, "%s: warning: file logging unavailable (%v), using stderr only\n", consts.ContainerCP, err)
 	}
-	log = log.With("component", "clawker-cp")
+	log = log.With("component", consts.ContainerCP)
 	defer log.Close()
 	log.Info().Msg("starting")
 

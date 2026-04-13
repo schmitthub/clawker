@@ -21,7 +21,7 @@ REPRODUCIBILITY.md   Provenance chain — pin-update procedure for the BPF toolc
 
 ## Lifetime ownership
 
-The `clawker-cp` container runs `clawker-cp` (the daemon binary) as PID 1. That binary imports `internal/controlplane/ebpf` directly and calls `Manager.Load()` **exactly once** at startup. The resulting `link.Link` handles live in-process for the CP's lifetime; BPF pinning at `/sys/fs/bpf/clawker/` is purely a crash-recovery mechanism, not load-bearing state.
+The `clawker-controlplane` container runs `clawker-cp` (the daemon binary) as PID 1. That binary imports `internal/controlplane/ebpf` directly and calls `Manager.Load()` **exactly once** at startup. The resulting `link.Link` handles live in-process for the CP's lifetime; BPF pinning at `/sys/fs/bpf/clawker/` is purely a crash-recovery mechanism, not load-bearing state.
 
 `Load()` runs `cleanupStaleLinks()` which checks each pinned `link_*` file against `container_map` — links to dead cgroups are removed, links to live cgroups are preserved. This ensures enforcement survives CP restarts while cleaning up resource leaks from dead containers. `CleanupAllLinks()` is a separate method that removes ALL pinned links — called ONLY by the daemon on shutdown when no agent containers remain.
 

@@ -109,7 +109,7 @@ const (
 	HostProxyLogFile    = "hostproxy.log"
 	FirewallPIDFile     = "firewall.pid"
 	FirewallLogFile     = "firewall.log"
-	ControlPlaneLogFile = "clawker-cp.log"
+	ControlPlaneLogFile = "clawker-controlplane.log"
 )
 
 // Network.
@@ -120,7 +120,7 @@ const (
 
 // Container names.
 const (
-	ContainerCP      = "clawker-cp"
+	ContainerCP      = "clawker-controlplane"
 	ContainerEnvoy   = "clawker-envoy"
 	ContainerCoreDNS = "clawker-coredns"
 )
