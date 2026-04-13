@@ -150,7 +150,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	// The public health check (step 3) confirms the public listener is ready,
 	// but client registration goes to the admin port — a separate listener
 	// that may take longer under resource pressure. Wait for it explicitly.
-	if err := subMgr.WaitHealthy(ctx, "hydra-admin", controlplane.HealthCheck{
+	if err := subMgr.WaitHealthy(ctx, "hydra", controlplane.HealthCheck{
 		URL: fmt.Sprintf("https://127.0.0.1:%d/health/alive", cp.HydraAdminPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
 		TLS: caTLS,
 	}); err != nil {
