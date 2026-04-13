@@ -56,6 +56,118 @@ func EnsureAuthMaterial() error {
 	return nil
 }
 
+// RotateAuthMaterial regenerates all auth material unconditionally.
+// Unlike EnsureAuthMaterial which is idempotent (no-op if files exist),
+// this deletes existing material and creates fresh keypairs.
+//
+// The server cert is always regenerated because it depends on the CA.
+// The signing key is regenerated only if forceSigningKey is true (it
+// requires re-registering the CLI client with Hydra on next CP start).
+func RotateAuthMaterial(forceSigningKey bool) error {
+	// Always rotate CA + server cert.
+	if err := removeIfExists(consts.AuthCACertPath); err != nil {
+		return fmt.Errorf("remove CA cert: %w", err)
+	}
+	if err := removeIfExists(consts.AuthCAKeyPath); err != nil {
+		return fmt.Errorf("remove CA key: %w", err)
+	}
+	if err := removeIfExists(consts.AuthServerCertPath); err != nil {
+		return fmt.Errorf("remove server cert: %w", err)
+	}
+	if err := removeIfExists(consts.AuthServerKeyPath); err != nil {
+		return fmt.Errorf("remove server key: %w", err)
+	}
+
+	if forceSigningKey {
+		if err := removeIfExists(consts.AuthCLISigningKeyPath); err != nil {
+			return fmt.Errorf("remove signing key: %w", err)
+		}
+		if err := removeIfExists(consts.AuthCLISigningJWKPath); err != nil {
+			return fmt.Errorf("remove signing JWK: %w", err)
+		}
+	}
+
+	return EnsureAuthMaterial()
+}
+
+// AuthFileStatus describes the state of a single auth material file.
+type AuthFileStatus struct {
+	Name    string // human-readable name (e.g., "CA certificate")
+	Path    string // filesystem path
+	Exists  bool
+	Mode    os.FileMode // only valid if Exists
+	Expires time.Time   // only valid for certificates
+	Expired bool        // only valid for certificates
+}
+
+// CheckAuthMaterial inspects all auth material files and returns their status.
+func CheckAuthMaterial() ([]AuthFileStatus, error) {
+	type fileSpec struct {
+		name   string
+		pathFn func() (string, error)
+		isCert bool
+	}
+
+	specs := []fileSpec{
+		{"CA certificate", consts.AuthCACertPath, true},
+		{"CA private key", consts.AuthCAKeyPath, false},
+		{"CLI signing key", consts.AuthCLISigningKeyPath, false},
+		{"CLI signing JWK", consts.AuthCLISigningJWKPath, false},
+		{"Server certificate", consts.AuthServerCertPath, true},
+		{"Server private key", consts.AuthServerKeyPath, false},
+	}
+
+	var results []AuthFileStatus
+	for _, s := range specs {
+		path, err := s.pathFn()
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s path: %w", s.name, err)
+		}
+
+		st := AuthFileStatus{Name: s.name, Path: path}
+		info, err := os.Stat(path)
+		if err != nil {
+			// File doesn't exist — leave Exists=false.
+			results = append(results, st)
+			continue
+		}
+
+		st.Exists = true
+		st.Mode = info.Mode().Perm()
+
+		if s.isCert {
+			data, err := os.ReadFile(path)
+			if err == nil {
+				block, _ := pem.Decode(data)
+				if block != nil {
+					cert, err := x509.ParseCertificate(block.Bytes)
+					if err == nil {
+						st.Expires = cert.NotAfter
+						st.Expired = time.Now().After(cert.NotAfter)
+					}
+				}
+			}
+		}
+
+		results = append(results, st)
+	}
+
+	return results, nil
+}
+
+// removeIfExists removes a file if it exists. The path is resolved from
+// a consts accessor function that returns (string, error).
+func removeIfExists(pathFn func() (string, error)) error {
+	path, err := pathFn()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // --- CLI CA (root of trust) ---
 
 func ensureCA() error {

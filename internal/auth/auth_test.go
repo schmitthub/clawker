@@ -56,6 +56,95 @@ func TestEnsureAuthMaterial_Idempotent(t *testing.T) {
 	assert.Equal(t, first, second, "signing key must not change on idempotent call")
 }
 
+// Tests INV-B1-014 [unit]: Running rotate with --force produces new files.
+func TestRotateAuthMaterial_ForceRegeneratesFiles(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	// Capture original CA cert content.
+	caPath, err := consts.AuthCACertPath()
+	require.NoError(t, err)
+	original, err := os.ReadFile(caPath)
+	require.NoError(t, err)
+
+	require.NoError(t, RotateAuthMaterial(true))
+
+	rotated, err := os.ReadFile(caPath)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, original, rotated, "CA cert must change after forced rotation")
+}
+
+// Tests INV-B1-014 [unit]: Running rotate without force preserves signing key.
+func TestRotateAuthMaterial_PreservesSigningKeyWithoutForce(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	keyPath, err := consts.AuthCLISigningKeyPath()
+	require.NoError(t, err)
+	before, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+
+	require.NoError(t, RotateAuthMaterial(false))
+
+	after, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "signing key must be preserved when forceSigningKey=false")
+}
+
+// Tests INV-B1-014 [unit]: Private keys have 0600 permissions after rotation.
+func TestRotateAuthMaterial_Permissions(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, RotateAuthMaterial(true))
+
+	for _, pathFn := range []func() (string, error){
+		consts.AuthCAKeyPath, consts.AuthCLISigningKeyPath, consts.AuthServerKeyPath,
+	} {
+		p, err := pathFn()
+		require.NoError(t, err)
+		info, statErr := os.Stat(p)
+		require.NoError(t, statErr)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "%s must be 0600", p)
+	}
+}
+
+func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	status, err := CheckAuthMaterial()
+	require.NoError(t, err)
+	require.Len(t, status, 6)
+
+	for _, s := range status {
+		assert.True(t, s.Exists, "%s should exist", s.Name)
+	}
+
+	// Certificates should have expiry info.
+	caCert := status[0]
+	assert.Equal(t, "CA certificate", caCert.Name)
+	assert.False(t, caCert.Expires.IsZero(), "CA cert should have expiry")
+	assert.False(t, caCert.Expired, "CA cert should not be expired")
+
+	serverCert := status[4]
+	assert.Equal(t, "Server certificate", serverCert.Name)
+	assert.False(t, serverCert.Expires.IsZero(), "server cert should have expiry")
+	assert.False(t, serverCert.Expired, "server cert should not be expired")
+}
+
+func TestCheckAuthMaterial_MissingFiles(t *testing.T) {
+	testenv.New(t)
+	// Don't create any material — everything should be missing.
+
+	status, err := CheckAuthMaterial()
+	require.NoError(t, err)
+	require.Len(t, status, 6)
+
+	for _, s := range status {
+		assert.False(t, s.Exists, "%s should not exist", s.Name)
+	}
+}
+
 func TestEnsureAuthMaterial_PrivateKeyPermissions(t *testing.T) {
 	testenv.New(t)
 	require.NoError(t, EnsureAuthMaterial())

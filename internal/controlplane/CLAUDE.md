@@ -1,63 +1,195 @@
 # Control Plane Package
 
-The clawker control plane. A containerized, privileged, long-lived Go service that owns authoritative state for managed containers. Runs as `clawker-cp` in the firewall stack, replacing the historical `clawker-ebpf` container that ran `sleep infinity` as a `docker exec` target.
+The clawker control plane. A containerized, privileged, long-lived Go service that owns authoritative state for managed containers. Runs as `clawker-cp` in the firewall stack, replacing the historical `clawker-ebpf` container.
 
 ## Responsibilities (v1)
 
-1. **Authoritative ebpf management** — the CP holds `internal/controlplane/ebpf.Manager.Load()` lifetime for its process lifetime. BPF programs are attached once at boot and stay live; no more `docker exec ebpf-manager <subcommand>` round-trips. The hot-reload pinning bug from 2026-04-10 is fixed by construction: the CP owns `Load()` so it never runs twice.
-2. **ControlPlaneService gRPC surface** — the host-side `clawker` CLI calls firewall/ebpf operations (Enable, Disable, Bypass, SyncFirewallRoutes, ...) as typed gRPC over a Unix domain socket. The plan docs this as the "primitive clawker control plane" — the first member of a family of clawkerd-related services.
+1. **Authoritative eBPF management** — the CP owns `ebpf.Manager.Load()` lifetime for its process lifetime. BPF programs are loaded once at boot and stay live.
+2. **AdminService gRPC surface** — the host CLI calls firewall/eBPF operations as typed gRPC over mTLS TCP with OAuth2 JWT authorization.
+3. **Ory auth stack** — Hydra (OAuth2), Oathkeeper (reverse proxy), Kratos (identity, placeholder for webui).
+4. **Aggregate health reporting** — `/healthz` actively probes all 7 service ports before returning 200.
 
-## Auth (mTLS + OIDC + JWT, full stack from day 1)
+## Auth (Hydra introspection + mTLS + JWT)
+
+The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custom OIDC provider):
 
 | Layer | Purpose | Implementation |
-|------|---------|----------------|
-| mTLS over UDS | Authenticate the channel; bind peer identity to a CA-signed cert | `ca.go` + `controlplane.NewServer(Config{ServerOptions: ...})` with `credentials.NewTLS` |
-| OIDC `/token` + `/keys` + `/.well-known/openid-configuration` | Issue short-lived JWTs via `client_credentials` + RFC 8705 `tls_client_auth` | `oidc_provider.go` — wire-compatible with OIDC, implemented directly via `go-jose/v4` |
-| gRPC authz interceptor | Verify JWT signature, audience, expiration; cross-check mTLS peer CN vs JWT sub; enforce per-method scopes | `authz.go` |
+|-------|---------|----------------|
+| mTLS over TCP | Authenticate the channel; bind peer to CA-signed cert | Server cert/key bind-mounted from host, `credentials.NewTLS` |
+| Hydra OAuth2 | Issue JWTs via `client_credentials` + `private_key_jwt` (ES256) | Hydra subprocess with in-memory DSN |
+| gRPC AuthInterceptor | Validate bearer tokens via Hydra introspection (RFC 7662); enforce per-method scopes | `authz.go` — `HydraIntrospector` calls POST `/admin/oauth2/introspect` |
 
-**The shape is final.** Multi-caller expansion (clawkerd, webui, agents, ...) adds new `ClientRegistration` entries in `oidc_clients.go` and new `methodScopes` entries in `authz.go`. It does **not** rewire the interceptor, the client-side, the proto, the token format, or the cert management. v1's auth code is load-bearing forever.
+**CLI auth flow**: CLI signs a JWT assertion with its ES256 private key → POST to Hydra `/oauth2/token` with `client_credentials` grant + `client_assertion` → Hydra validates signature against registered JWKS → returns access token (JWT) → CLI sends bearer token on gRPC calls → CP's AuthInterceptor introspects token via Hydra admin API → grants/denies based on scope.
 
-**Not** full OIDC provider machinery. We speak the wire protocol (POST `/token` returns `{access_token, token_type, expires_in}`, JWTs are RS256 with standard claims) directly without embedding `zitadel/oidc`. When the first browser-delivered caller (webui) arrives, the `/token` handler can be swapped for `zitadel/oidc` without touching the interceptor, clients, or JWT format. This keeps v1 scope contained without taking on ~400 lines of `op.Storage` stubs for features v1 doesn't use (authorization_code, refresh tokens, userinfo, introspection).
+**Failure mode**: Fail-closed. Any error (network, introspection failure, unmapped method) returns `codes.Unauthenticated`.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `server.go` | Cherry-picked from feature/clawkerd. `Server` struct, `ControlPlaneService` facade interface, `Registry`, `AgentReportingService` handler. Extended in this work to accept `*tls.Config` + gRPC interceptors via `Config.ServerOptions` and to expose the underlying `grpc.Server` via `GRPCServer()` for additional service registration. |
-| `registry.go` | Cherry-picked. Tracks registered clawkerd agents by container ID. Unused in v1 (no TCP listener, no clients). |
-| `controlplanetest/mock_server.go` | Cherry-picked. moq-style test double for `ControlPlaneService`. |
-| `ebpf/` | eBPF subsystem: cgroup programs, manager, shared types. Moved from `internal/ebpf/` because ebpf is a feature of the CP, not a peer service. Owns `Manager.Load()` at runtime. Imported by `internal/dnsbpf/` for `DomainHash`/`IPToUint32`/types. |
-| `ca.go` | Self-signed CA generation + persistence, server/client cert issuance via `crypto/x509`, OIDC RSA signing key management. `LoadOrGenerateTLSMaterial(dataDir)` is the single entry point — persists CA + signing key, regenerates leaf certs every call. |
-| `uds_http.go` | Helpers for serving HTTPS over Unix domain sockets + the client-side `UnixHTTPTransport` factory for dialing them. |
-| `oidc_clients.go` | Static `ClientRegistration` registry + scope constants. v1 has one client (`clawker-cli`) with one scope (`firewall:admin`). |
-| `oidc_provider.go` | `TokenIssuer` (signs JWTs via `go-jose`) + `TokenVerifier` (validates them) + the `/token` / `/keys` / `/.well-known` HTTP handlers. |
-| `authz.go` | `methodScopes` map (method → required scope) + `AuthUnaryInterceptor` / `AuthStreamInterceptor`. Cross-checks mTLS peer CN vs JWT `sub`; fail-closed on unmapped methods. |
-| `controlplane_handler.go` | `v1.ControlPlaneServiceServer` implementation. Thin wrappers over `ebpf.Manager`. `BypassContainer` includes an in-CP timer goroutine for auto-unbypass — the timer survives the CLI exiting, unlike the old docker-exec pattern. |
+| `server.go` | `Server` struct, `ControlPlaneService` interface, `Registry`, `AgentReportingService` handler |
+| `registry.go` | Thread-safe agent registry keyed by container ID |
+| `admin_handler.go` | `AdminHandler` — implements `adminv1.AdminServiceServer` (Install, Remove, Enable, Disable, Bypass, SyncRoutes, ResolveHostname) |
+| `authz.go` | `AuthInterceptor` — validates OAuth2 bearer tokens via Hydra introspection, enforces per-method scopes |
+| `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup; `AdminMethodScopes` — maps gRPC method → required scope |
+| `startup.go` | `CPStartupOrchestrator` — startup sequencing + aggregate `/healthz` endpoint (probes all 7 service ports) |
+| `cp_container.go` | `BuildCPContainerConfig(cfg)` → `CPContainerConfig` struct for Docker container creation |
+| `ory_configs.go` | `WriteOryConfigs(cp)` — generates Hydra/Kratos/Oathkeeper YAML config files |
+| `subprocess.go` | `SubprocessManager` — manages Ory subprocess lifecycle (start, health, crash detection, shutdown) |
+| `ebpf/` | eBPF subsystem: `Manager` (Load, Install, Remove, Enable, Disable, SyncRoutes), shared types, link cleanup |
+| `controlplanetest/` | `MockServer` — hand-written test double for `ControlPlaneService` |
+| `mocks/` | moq-generated mocks: `ControlPlaneServiceMock`, `IntrospectorMock`, `EBPFManagerMock` |
+
+## AdminService RPCs (`admin_handler.go`)
+
+| RPC | Purpose | eBPF Operation |
+|-----|---------|----------------|
+| `Install` | Full container enrollment — attach BPF to cgroup, populate container_map | `mgr.Install(cgroupID, cgroupPath, cfg)` |
+| `Remove` | Full de-enrollment — detach BPF, clear container_map entry | `mgr.Remove(cgroupID)` |
+| `Enable` | Clear bypass flag (restore enforcement) | `mgr.Enable(cgroupID)` |
+| `Disable` | Set bypass flag (unrestricted egress) | `mgr.Disable(cgroupID)` |
+| `Bypass` | Disable + server-side dead-man timer (`time.AfterFunc`) | `mgr.Disable` then auto-`mgr.Enable` after timeout |
+| `SyncRoutes` | Atomically replace global route_map | `mgr.SyncRoutes(routes)` |
+| `ResolveHostname` | DNS lookup from CP network namespace | `net.DefaultResolver.LookupHost` |
+
+All RPCs require `admin` scope. Future scopes add entries to `AdminMethodScopes()`.
+
+## Startup Sequence (`cmd/clawker-cp/main.go`)
+
+1. Write Ory config files (`WriteOryConfigs(cp)`)
+2. Start Kratos + Hydra subprocesses, wait healthy
+3. Wait for Hydra admin port healthy (explicit check before client registration)
+4. Read CLI public JWK from bind-mount, register CLI client with Hydra (`RegisterCLIClient`)
+5. Start Oathkeeper subprocess
+6. Load eBPF programs (`ebpfMgr.Load()`)
+7. Start gRPC AdminService with TLS + AuthInterceptor
+8. Configure service probes (`orchestrator.SetServiceProbes(cp, tlsCfg)`)
+9. Mark ready (`orchestrator.SetReady()`)
+10. Serve `/healthz` on HealthPort
+
+## Aggregate Health (`startup.go`)
+
+`CPStartupOrchestrator` manages the `/healthz` endpoint:
+
+- **Before ready**: returns 503
+- **After ready**: actively probes all 7 service ports on every request:
+  - Hydra public (TLS), Hydra admin (TLS)
+  - Kratos public (TLS), Kratos admin (TLS)
+  - Oathkeeper proxy (TLS), Oathkeeper API (TLS)
+  - gRPC admin (raw TCP)
+- Returns 200 only when ALL probes succeed
+
+## Container Config (`cp_container.go`)
+
+```go
+func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error)
+```
+
+All ports from `cfg.Settings().ControlPlane` (defaults via struct tags). Published to `127.0.0.1` only:
+
+| Published Port | Purpose |
+|----------------|---------|
+| AdminPort (7443) | gRPC AdminService |
+| HydraPublicPort (4444) | OAuth2 token endpoint |
+| OathkeeperPort (4456) | HTTP reverse proxy (future webui) |
+| HealthPort (7080) | /healthz endpoint |
+
+**Not published**: Hydra admin (4445), Kratos ports, Oathkeeper API — internal-only (`127.0.0.1` bind inside container).
+
+**Key mounts**: config dir (RO), CA cert (RO), CLI public JWK (RO), server TLS cert+key (RO), /sys/fs/cgroup (RO), /sys/fs/bpf (RW), logs dir.
+
+**Invariant INV-B1-006**: CLI private signing key is NEVER mounted into the container.
+
+**Capabilities**: `BPF`, `SYS_ADMIN` (for eBPF program attachment).
+
+## eBPF Subsystem (`ebpf/`)
+
+### Manager lifecycle
+
+```go
+func NewManager(log *logger.Logger) *Manager
+func (m *Manager) Load() error       // Called once at CP startup
+func (m *Manager) OpenPinned() error  // Break-glass mode (reads existing pins)
+func (m *Manager) Close() error
+```
+
+`Load()` creates pin directory, calls `cleanupStaleLinks()`, loads ELF, pins maps/programs at `/sys/fs/bpf/clawker/`.
+
+### EBPFManager interface
+
+```go
+type EBPFManager interface {
+    Install(cgroupID uint64, cgroupPath string, cfg BPFContainerConfig) error
+    Remove(cgroupID uint64) error
+    Enable(cgroupID uint64) error
+    Disable(cgroupID uint64) error
+    SyncRoutes(routes []Route) error
+}
+```
+
+### Link cleanup (critical invariant)
+
+- **`cleanupStaleLinks()`** — called during `Load()`. Parses cgroup IDs from link pin filenames (`link_{prog}_{cgroupID}`), checks each against `container_map`. Removes links for dead cgroups, preserves links for live cgroups. This ensures enforcement survives CP restarts.
+- **`cleanupLinks(cgroupID)`** — removes stale links for ONE cgroup. Called by `Install` before attaching fresh programs.
+- **`CleanupAllLinks()`** — removes ALL pinned links. Called ONLY by the firewall daemon on shutdown when no agent containers remain.
+
+### Shared types (`ebpf/types.go`)
+
+`PinPath`, `ContainerConfig`, `DNSEntry`, `RouteKey/Val`, `MetricKey`, `Action` constants, helper functions (`IPToUint32`, `DomainHash` FNV-1a, `CgroupPath`, `CgroupID` with path injection validation, `Supported`).
+
+## Ory Config Generation (`ory_configs.go`)
+
+```go
+func WriteOryConfigs(cp config.ControlPlaneSettings) error
+```
+
+Generates `/etc/clawker/{hydra,kratos,oathkeeper}.yaml`:
+
+- **Hydra**: in-memory DSN, JWT access tokens, admin at `127.0.0.1:4445` (internal-only), public at `0.0.0.0:4444`, 1h access token TTL
+- **Kratos**: in-memory DSN, `127.0.0.1:4480` (placeholder for future webui identity)
+- **Oathkeeper**: HTTP reverse proxy at `0.0.0.0:4455` (placeholder for future webui auth), API at `127.0.0.1:4456`
+
+## Subprocess Management (`subprocess.go`)
+
+```go
+type SubprocessManager struct { ... }
+func (sm *SubprocessManager) Start(name string, cmd *exec.Cmd, health HealthCheck) (*ManagedSubprocess, error)
+func (sm *SubprocessManager) WaitHealthy(ctx context.Context) error
+func (sm *SubprocessManager) CrashChan() <-chan error
+func (sm *SubprocessManager) Shutdown()
+```
+
+Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTERM then SIGKILL, reverse start order.
 
 ## Test seam overview
 
-The Go facade `ControlPlaneService` (not to be confused with the gRPC service of the same name) is the interface CLI-side consumers depend on. Tests use `controlplanetest.MockServer` to avoid standing up a real gRPC server.
+- `ControlPlaneService` interface — CLI consumers depend on this. `controlplanetest.MockServer` avoids real gRPC.
+- `EBPFManager` interface — `ebpf/mocks/EBPFManagerMock` for admin handler tests.
+- `Introspector` interface — `mocks/IntrospectorMock` for authz tests (no real Hydra).
+- `AdminHandler.resolveHostFn` — injectable DNS resolver.
 
-Package unit tests live at:
-- `ca_test.go` — CA round-trip, persistence, cert validation, mTLS CN invariants.
-- `oidc_provider_test.go` — Token issue/verify round-trip, bad-signature rejection, expiry, scope narrowing, bearer-header parsing, method-scope coverage.
+## Test coverage
 
-The end-to-end auth pipeline test (full cert generation → listeners → oauth2 TokenSource → gRPC call → interceptor → handler) lives at `internal/firewall/cp_client_test.go` because it exercises both the CP and the firewall manager's CLI-side client helpers.
-
-## What's deferred to the multi-caller follow-up
-
-Called out explicitly to track the "v1 is final shape, v2 is pure addition" commitment:
-
-- **TCP listener** — v1 is UDS-only. Adding a TCP listener in v2 is a pure addition; the auth layer is ready to serve it without changes.
-- **Embedding `zitadel/oidc`** — replaces our in-file `/token` handler with the full OIDC provider. Wire format stays identical; clients don't notice. Unlocks `/authorize` + PKCE for the webui.
-- **Additional OIDC clients** — clawkerd, clawker-webui, etc. Each adds one entry to `registeredClients`.
-- **Per-method scopes beyond `firewall:admin`** — finer-grained authz like `agent:register`, `webui:read`. Each adds one entry to `methodScopes`.
-- **Docker socket** into the CP — arrives when the CP starts managing container lifecycles (metrics follow-up).
-- **Agent reporting active usage** — the `AgentReportingService` handler is registered but unreachable in v1 (no TCP listener, no clawkerd). Lights up with the multi-caller PR.
+| File | Invariants | What |
+|------|------------|------|
+| `authz_test.go` | INV-B1-011 | Token validation, scope enforcement, unmapped method denial, Hydra introspection mock |
+| `container_config_test.go` | INV-B1-005, 006, 008, 009, 015, 017, 018, 020 | Port bindings, mounts, labels, private key exclusion, config-driven ports |
+| `lifecycle_test.go` | INV-B1-010, 013 | /healthz 503→200 transition, eBPF lifecycle gating, aggregate probes |
+| `ebpf/manager_test.go` | — | Link cleanup, map schema detection, Install/Remove/Enable/Disable, SyncRoutes, DNS cache GC |
+| `subprocess_test.go` | — | Start/WaitHealthy, crash detection, SIGTERM/SIGKILL shutdown |
+| `ebpf_regression_test.go` | — | eBPF package regressions (no kernel required) |
 
 ## Package imports
 
-- `internal/controlplane` imports `internal/controlplane/ebpf` for Manager + types, `internal/clawkerd/protocol/v1` for the gRPC service types, `internal/logger` for structured logging, `internal/config` + `internal/docker` for the cherry-picked agent registration flow.
-- External: `google.golang.org/grpc`, `github.com/go-jose/go-jose/v4` (JWT signing/verification), `golang.org/x/oauth2` (client-side TokenSource, used via firewall manager).
-- `internal/dnsbpf/` imports `internal/controlplane/ebpf` for shared types (no cycle).
-- `internal/firewall/` imports `internal/controlplane` for cert management and gRPC helpers when building the CLI-side client.
+**Uses**: `internal/config`, `internal/consts`, `internal/logger`, `internal/controlplane/ebpf`, `api/admin/v1`, `internal/clawkerd/protocol/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`.
+
+**Used by**: `internal/firewall` (BuildCPContainerConfig, ebpf.DomainHash), `cmd/clawker-cp` (startup sequence), `internal/dnsbpf` (ebpf types), `internal/auth` (cert paths).
+
+No circular dependencies.
+
+## What's deferred
+
+- **TCP listener for agents** — v1 serves gRPC on localhost only. Adding agent TCP listener is pure addition.
+- **Kratos active usage** — running as subprocess placeholder. Lights up with webui.
+- **Oathkeeper active routing** — running with empty rules. Lights up with webui HTTP auth.
+- **Per-method scopes beyond `admin`** — finer-grained scopes (`agent:register`, `webui:read`) add entries to `AdminMethodScopes()`.

@@ -23,6 +23,7 @@ Workspace modes:
 ### Subcommands
 
 * [clawker attach](clawker_attach) - Attach local standard input, output, and error streams to a running container
+* [clawker auth](clawker_auth) - Manage control plane authentication material
 * [clawker build](clawker_build) - Build an image from a clawker project
 * [clawker container](clawker_container) - Manage containers
 * [clawker cp](clawker_cp) - Copy files/folders between a container and the local filesystem
