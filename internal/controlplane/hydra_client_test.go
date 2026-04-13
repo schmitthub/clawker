@@ -113,7 +113,7 @@ func TestRegisterCLIClient_ErrorResponse(t *testing.T) {
 	}
 }
 
-func TestEnsureJWKS_WrapsBarJWK(t *testing.T) {
+func TestEnsureJWKS_WrapsBareJWK(t *testing.T) {
 	t.Parallel()
 
 	bare := json.RawMessage(`{"kty":"EC","crv":"P-256","x":"a","y":"b"}`)

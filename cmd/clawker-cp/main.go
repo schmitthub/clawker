@@ -139,6 +139,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	}
 	caTLS := &tls.Config{
 		RootCAs:    caCertPool,
+		ServerName: consts.ContainerCP,
 		MinVersion: tls.VersionTLS13,
 	}
 

@@ -126,6 +126,9 @@ type AuthInterceptor struct {
 // (e.g. "/clawker.admin.v1.AdminService/Install") to required OAuth2
 // scopes (e.g. "admin").
 func NewAuthInterceptor(introspector Introspector, methodScopes map[string]string, log *logger.Logger) *AuthInterceptor {
+	if log == nil {
+		log = logger.Nop()
+	}
 	return &AuthInterceptor{
 		introspector: introspector,
 		methodScopes: methodScopes,
