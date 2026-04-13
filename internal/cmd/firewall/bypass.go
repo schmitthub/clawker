@@ -179,8 +179,14 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 
 	if result.Interrupted {
 		// Ctrl+C: re-enable firewall immediately.
+		// The parent ctx is already cancelled by signal.NotifyContext (SIGINT),
+		// so we derive from context.Background() — this is deferred cleanup that
+		// must complete. The timeout bounds the call so the CLI doesn't hang if
+		// the CP is unresponsive.
+		enableCtx, enableCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer enableCancel()
 		fmt.Fprintf(ios.Out, "%s Stopping bypass for agent %s...\n", cs.WarningIcon(), opts.Agent)
-		if err := fwMgr.Enable(context.Background(), containerName); err != nil {
+		if err := fwMgr.Enable(enableCtx, containerName); err != nil {
 			return fmt.Errorf("stopping bypass for %s: %w", opts.Agent, err)
 		}
 		fmt.Fprintf(ios.Out, "%s Bypass stopped for agent %s\n", cs.SuccessIcon(), opts.Agent)
@@ -197,7 +203,10 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 	}
 
 	// Timer expired — re-enable firewall.
-	if err := fwMgr.Enable(context.Background(), containerName); err != nil {
+	// Use a bounded context so the CLI doesn't hang if the CP is unresponsive.
+	expireCtx, expireCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer expireCancel()
+	if err := fwMgr.Enable(expireCtx, containerName); err != nil {
 		return fmt.Errorf("re-enabling firewall for %s after bypass: %w", opts.Agent, err)
 	}
 	fmt.Fprintf(ios.Out, "%s Bypass expired for agent %s\n", cs.SuccessIcon(), opts.Agent)

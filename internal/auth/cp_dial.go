@@ -50,6 +50,7 @@ func DialCPAdmin(ctx context.Context, adminPort, hydraPort int) (adminv1.AdminSe
 	// Plain TLS for Hydra token endpoint (no client cert).
 	tokenTLSCfg := &tls.Config{
 		RootCAs:    certPool,
+		ServerName: "clawker-cp",
 		MinVersion: tls.VersionTLS13,
 	}
 
@@ -164,6 +165,7 @@ func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenUR
 	}
 
 	client := &http.Client{
+		Timeout:   10 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))

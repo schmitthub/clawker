@@ -1,18 +1,25 @@
 # Dockerfile.controlplane — Reproducible build recipe for clawker firewall stack binaries.
 #
-# This is the single source of truth for building the two Linux binaries
+# This is the single source of truth for building the three Linux binaries
 # that clawker go:embed's into its CLI:
 #
 #   * ebpf-manager    — compiled from ./internal/controlplane/ebpf/cmd with BPF bytecode
-#                       baked in via bpf2go + go:embed. Runs as a long-lived
-#                       container to serve `docker exec` subcommands from
-#                       the firewall manager. NOT a sidecar — the BPF programs
-#                       live in kernel state once pinned under /sys/fs/bpf/clawker/
-#                       and outlive the container that loaded them.
+#                       baked in via bpf2go + go:embed. Break-glass debug tool
+#                       for humans — NOT the primary interface. The control plane
+#                       daemon (clawker-cp) owns eBPF management via in-process
+#                       Go imports. ebpf-manager is kept in the container image
+#                       for emergency inspection of pinned BPF maps when the CP
+#                       is unresponsive.
 #   * coredns-clawker — compiled from ./cmd/coredns-clawker, embeds the
 #                       first-party internal/dnsbpf plugin which writes
 #                       DNS resolutions into the pinned dns_cache BPF map
 #                       in real time.
+#   * clawker-cp      — compiled from ./cmd/clawker-cp, the control plane
+#                       daemon. Owns ebpf.Manager.Load() lifetime, serves
+#                       AdminService gRPC over mTLS TCP, and runs the Ory
+#                       auth stack (Hydra/Oathkeeper/Kratos). This is the
+#                       primary interface between the firewall manager and
+#                       the eBPF subsystem.
 #
 # Stages:
 #   1. bpf-builder             — pinned debian + clang + llvm + libbpf-dev +
@@ -21,18 +28,18 @@
 #   2. ebpf-manager-builder    — pinned golang:alpine; overlays stage 1's
 #                                generated bindings and `go build`s the
 #                                ebpf-manager Linux binary
-#   3. ebpf-manager-extract    — scratch stage with only the final binary,
-#                                used by `docker buildx build
-#                                --target=ebpf-manager-extract
-#                                --output=type=local,dest=...`
+#   3. ebpf-manager-extract    — scratch stage with only the final binary
 #   4. coredns-builder         — pinned golang:alpine; overlays stage 1's
-#                                generated BPF bindings (coredns-clawker
-#                                imports internal/controlplane/ebpf which requires them
-#                                at compile time) and `go build`s the
+#                                generated BPF bindings and `go build`s the
 #                                coredns-clawker Linux binary
-#   5. coredns-extract         — scratch stage with only the final binary,
-#                                same `--target=coredns-extract` extraction
-#                                pattern as ebpf-manager-extract
+#   5. coredns-extract         — scratch stage with only the final binary
+#   6. clawker-cp-builder      — pinned golang:alpine; copies full internal/
+#                                + pkg/ trees and `go build`s the clawker-cp
+#                                control plane daemon
+#   7. clawker-cp-extract      — scratch stage with only the final binary
+#   8. bpf-bindings-extract    — exposes bpf2go-generated Go wrappers and
+#                                compiled BPF bytecode for host-side
+#                                `go test` / `go vet` / `gopls` compilation
 #
 # Reproducibility: every input is pinned by digest or exact version. A fresh
 # `make clawker` on any host with Docker + buildx produces byte-identical

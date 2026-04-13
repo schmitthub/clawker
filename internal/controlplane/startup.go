@@ -136,7 +136,10 @@ func (o *CPStartupOrchestrator) cachedHealth() (bool, string) {
 
 // probe checks if a single service endpoint is responding.
 func (o *CPStartupOrchestrator) probe(p serviceProbe) bool {
-	if p.tls && o.tlsCfg != nil {
+	if p.tls {
+		if o.tlsCfg == nil {
+			return false // fail-closed: TLS required but no config
+		}
 		conn, err := tls.DialWithDialer(
 			&net.Dialer{Timeout: o.timeout},
 			"tcp", p.addr, o.tlsCfg,

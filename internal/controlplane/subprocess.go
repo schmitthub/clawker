@@ -103,6 +103,9 @@ func (m *SubprocessManager) WaitHealthy(ctx context.Context, name string, check 
 		return fmt.Errorf("subprocess %s not found", name)
 	}
 
+	ticker := time.NewTicker(check.Interval)
+	defer ticker.Stop()
+
 	for {
 		// Check if the subprocess crashed.
 		select {
@@ -131,7 +134,7 @@ func (m *SubprocessManager) WaitHealthy(ctx context.Context, name string, check 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(check.Interval):
+		case <-ticker.C:
 		}
 	}
 }

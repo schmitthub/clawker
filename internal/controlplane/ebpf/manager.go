@@ -201,9 +201,9 @@ func (m *Manager) CleanupAllLinks() {
 // cleanupStaleLinks removes pinned link files whose target cgroups no longer
 // exist (dead containers). Links to live cgroups are preserved so their
 // enforcement survives CP restarts. The cgroup ID is extracted from the
-// pin filename (link_{prog}_{cgroupID}) and stat'd via /proc/self/fdinfo
-// on the link fd — if the link can't be opened or its cgroup is gone,
-// the pin is removed.
+// pin filename (link_{prog}_{cgroupID}) and looked up in container_map —
+// if the cgroup ID is absent from the map (or the map doesn't exist),
+// the link is considered stale and removed.
 func (m *Manager) cleanupStaleLinks() {
 	entries, err := os.ReadDir(m.pinPath)
 	if err != nil {
@@ -277,8 +277,12 @@ func (m *Manager) cleanupStaleLinks() {
 		cleaned++
 	}
 
+	// numBPFPrograms is the number of BPF programs attached per cgroup
+	// (connect4, sendmsg4, recvmsg4, connect6, sendmsg6, recvmsg6, sock_create).
+	const numBPFPrograms = 7
+
 	if cleaned > 0 {
-		m.log.Info().Int("cleaned", cleaned).Int("kept", len(liveIDs)*7).
+		m.log.Info().Int("cleaned", cleaned).Int("kept", len(liveIDs)*numBPFPrograms).
 			Msg("cleaned stale link pins from dead cgroups")
 	}
 }

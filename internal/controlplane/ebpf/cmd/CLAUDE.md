@@ -17,7 +17,7 @@ Do **not** wire new consumers to it. Adding new call sites is a signal that the 
 
 | Subcommand | Args | Purpose |
 |---|---|---|
-| `init` | — | `Manager.Load()` — parse embedded ELF, pin maps + programs to `/sys/fs/bpf/clawker/`. The CP runs this once at startup; calling it again re-runs `cleanupAllLinks()` which strips BPF programs from all enforced containers. Only run during disaster recovery when the CP is down and you need to re-pin. |
+| `init` | — | `Manager.Load()` — parse embedded ELF, pin maps + programs to `/sys/fs/bpf/clawker/`, and clean up stale links. The CP runs this once at startup; calling it again re-runs `cleanupStaleLinks()` which removes links for dead cgroups while preserving enforcement on live containers. Only run during disaster recovery when the CP is down and you need to re-pin. |
 | `enable` | `<cgroupPath> <configJSON>` | Manual container enrollment. Populates `container_map[cgroupID]` and attaches programs. |
 | `disable` | `<cgroupPath>` | Detach programs, delete `container_map` entry, clear bypass flag. |
 | `bypass` | `<cgroupPath>` | Set `bypass_map[cgroupID] = 1`. |

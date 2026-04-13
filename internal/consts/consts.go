@@ -202,7 +202,7 @@ func subdirPath(subdir string, baseDirFunc func() string) (string, error) {
 }
 
 func subdirPathUnder(subdir string, baseDir string) (string, error) {
-	fullPath := filepath.Join(baseDir, subdir)
+	fullPath := filepath.Join(filepath.Clean(baseDir), subdir)
 	if err := os.MkdirAll(fullPath, 0o755); err != nil {
 		return "", fmt.Errorf("creating config subdir %s: %w", fullPath, err)
 	}
