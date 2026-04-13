@@ -64,7 +64,7 @@ const (
 	// The firewall manager polls the CP's /healthz endpoint (aggregate
 	// probe of all service ports) before proceeding with SyncRoutes
 	// and Envoy/CoreDNS startup.
-	cpReadyTimeout  = 30 * time.Second
+	cpReadyTimeout  = 60 * time.Second
 	cpReadyInterval = 100 * time.Millisecond
 )
 
