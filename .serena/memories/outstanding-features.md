@@ -8,6 +8,7 @@ Top-level tracker for features and architectural improvements that are known but
 
 - we prob dont need root bypassing anymore btw. that was only for an escape hatch when we were managing routing with iptables. might be safer to keep root's egress locked down too now if it doesn't effect eBPF's routing. now we are doing toggling via containerid mappings right?
 - Add a claude hook via managed settings in /etc/claude-code (https://code.claude.com/docs/en/settings#settings-files) to always require approval when editing clawker.yaml files might be a good defensive measure to prevent clawker image polution 
+- iptables should default to failsafe fallbacks that just result in no traffic just in case eBPF/fw stack fails.  
 
 ---
 
