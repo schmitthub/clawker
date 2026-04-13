@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -48,6 +49,9 @@ import (
 //  3. Server cert — signed by the CLI CA, bind-mounted into CP
 //  4. Client cert — signed by the CLI CA, used for mTLS to AdminService
 func EnsureAuthMaterial() error {
+	if err := consts.EnsureAuthDirs(); err != nil {
+		return fmt.Errorf("ensure auth dirs: %w", err)
+	}
 	if err := ensureCA(); err != nil {
 		return fmt.Errorf("CA: %w", err)
 	}
@@ -105,12 +109,13 @@ func RotateAuthMaterial(forceSigningKey bool) error {
 
 // AuthFileStatus describes the state of a single auth material file.
 type AuthFileStatus struct {
-	Name    string // human-readable name (e.g., "CA certificate")
-	Path    string // filesystem path
-	Exists  bool
-	Mode    os.FileMode // only valid if Exists
-	Expires time.Time   // only valid for certificates
-	Expired bool        // only valid for certificates
+	Name       string // human-readable name (e.g., "CA certificate")
+	Path       string // filesystem path
+	Exists     bool
+	Mode       os.FileMode // only valid if Exists
+	ParseError error       // non-nil if stat/read/parse failed (not os.ErrNotExist)
+	Expires    time.Time   // only valid for certificates
+	Expired    bool        // only valid for certificates
 }
 
 // CheckAuthMaterial inspects all auth material files and returns their status.
@@ -142,7 +147,11 @@ func CheckAuthMaterial() ([]AuthFileStatus, error) {
 		st := AuthFileStatus{Name: s.name, Path: path}
 		info, err := os.Stat(path)
 		if err != nil {
-			// File doesn't exist — leave Exists=false.
+			if errors.Is(err, os.ErrNotExist) {
+				results = append(results, st)
+				continue
+			}
+			st.ParseError = fmt.Errorf("stat: %w", err)
 			results = append(results, st)
 			continue
 		}
@@ -152,11 +161,17 @@ func CheckAuthMaterial() ([]AuthFileStatus, error) {
 
 		if s.isCert {
 			data, err := os.ReadFile(path)
-			if err == nil {
+			if err != nil {
+				st.ParseError = fmt.Errorf("read cert: %w", err)
+			} else {
 				block, _ := pem.Decode(data)
-				if block != nil {
+				if block == nil {
+					st.ParseError = fmt.Errorf("no PEM block found")
+				} else {
 					cert, err := x509.ParseCertificate(block.Bytes)
-					if err == nil {
+					if err != nil {
+						st.ParseError = fmt.Errorf("parse certificate: %w", err)
+					} else {
 						st.Expires = cert.NotAfter
 						st.Expired = time.Now().After(cert.NotAfter)
 					}
@@ -181,6 +196,36 @@ func removeIfExists(pathFn func() (string, error)) error {
 		return err
 	}
 	return nil
+}
+
+// EnsureHydraSecret reads the persisted Hydra system secret from disk,
+// or generates a new 32-byte random hex secret and writes it with 0600
+// permissions. The secret is generated once and reused across restarts.
+func EnsureHydraSecret() (string, error) {
+	path, err := consts.HydraSystemSecretPath()
+	if err != nil {
+		return "", fmt.Errorf("hydra secret path: %w", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err == nil {
+		secret := string(data)
+		if len(secret) > 0 {
+			return secret, nil
+		}
+	}
+
+	// Generate 32 random bytes, hex-encode to 64-char string.
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate hydra secret: %w", err)
+	}
+	secret := hex.EncodeToString(buf)
+
+	if err := os.WriteFile(path, []byte(secret), 0o600); err != nil {
+		return "", fmt.Errorf("write hydra secret: %w", err)
+	}
+	return secret, nil
 }
 
 // --- CLI CA (root of trust) ---

@@ -37,6 +37,7 @@ import (
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/controlplane"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
@@ -91,7 +92,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	orchestrator := controlplane.NewCPStartupOrchestrator()
 
 	// --- Step 0: Write Ory config files ---
-	if err := controlplane.WriteOryConfigs(cp); err != nil {
+	hydraSecret, err := auth.EnsureHydraSecret()
+	if err != nil {
+		return fmt.Errorf("step 0 (hydra secret): %w", err)
+	}
+	if err := controlplane.WriteOryConfigs(cp, hydraSecret); err != nil {
 		return fmt.Errorf("step 0 (write ory configs): %w", err)
 	}
 	log.Info().Msg("Ory config files written")
@@ -170,7 +175,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 
 	// --- Step 5: Register CLI client with Hydra ---
 	hydraAdminURL := fmt.Sprintf("https://127.0.0.1:%d", cp.HydraAdminPort)
-	if err := controlplane.RegisterCLIClient(hydraAdminURL, jwkData, caTLS); err != nil {
+	if err := controlplane.RegisterCLIClient(ctx, hydraAdminURL, jwkData, caTLS); err != nil {
 		return fmt.Errorf("step 5 (register CLI client): %w", err)
 	}
 	log.Info().Msg("CLI client registered with Hydra")
@@ -234,10 +239,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		return fmt.Errorf("step 8 (grpc listen): %w", err)
 	}
 
+	serveFailed := make(chan error, 2)
+
 	go func() {
 		log.Info().Int("port", cp.AdminPort).Msg("gRPC admin API serving")
 		if err := grpcServer.Serve(grpcLis); err != nil {
-			log.Error().Err(err).Msg("gRPC serve error")
+			serveFailed <- fmt.Errorf("gRPC serve: %w", err)
 		}
 	}()
 
@@ -253,7 +260,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	go func() {
 		log.Info().Int("port", cp.HealthPort).Msg("healthz serving")
 		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error().Err(err).Msg("healthz serve error")
+			serveFailed <- fmt.Errorf("healthz serve: %w", err)
 		}
 	}()
 
@@ -268,6 +275,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		log.Info().Stringer("signal", sig).Msg("shutdown signal received")
 	case err := <-subMgr.CrashChan():
 		log.Error().Err(err).Msg("subprocess crashed — shutting down")
+		return err
+	case err := <-serveFailed:
+		log.Error().Err(err).Msg("server failed — shutting down")
 		return err
 	}
 
@@ -293,7 +303,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), defaultShutdownWait)
 	defer shutdownCancel()
-	_ = healthServer.Shutdown(shutdownCtx)
+	if err := healthServer.Shutdown(shutdownCtx); err != nil {
+		log.Warn().Err(err).Msg("healthz shutdown error")
+	}
 
 	subMgr.Shutdown(defaultShutdownWait)
 	log.Info().Msg("clawker-cp stopped")

@@ -33,6 +33,7 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 )
 
 // firewallContainer is a typed constant restricting container name arguments
@@ -93,7 +94,7 @@ type Manager struct {
 	// adminClientFn returns the AdminServiceClient for typed gRPC calls
 	// to the control plane. Production: cpClient() (lazy TLS+OAuth2 dial).
 	// Tests: inject a mock AdminServiceClient directly.
-	adminClientFn func() (adminv1.AdminServiceClient, error)
+	adminClientFn func(ctx context.Context) (adminv1.AdminServiceClient, error)
 
 	// CP gRPC client. Built lazily on first use by cpClient() because the
 	// CP must be running and must have generated its cert material before
@@ -556,7 +557,7 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 	}
 	cgroupPath := ebpfCgroupPath(driver, containerID)
 
-	cpClient, err := m.adminClientFn()
+	cpClient, err := m.adminClientFn(ctx)
 	if err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
@@ -581,7 +582,7 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 	}
 	cgroupPath := ebpfCgroupPath(driver, containerID)
 
-	cpClient, err := m.adminClientFn()
+	cpClient, err := m.adminClientFn(ctx)
 	if err != nil {
 		return fmt.Errorf("firewall enable: %w", err)
 	}
@@ -635,7 +636,7 @@ func (m *Manager) InstallFirewall(ctx context.Context, containerID string) error
 		return fmt.Errorf("firewall enable: %w", err)
 	}
 
-	cpClient, err := m.adminClientFn()
+	cpClient, err := m.adminClientFn(ctx)
 	if err != nil {
 		return fmt.Errorf("firewall enable: %w", err)
 	}
@@ -752,7 +753,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 		timeoutSecs = 30
 	}
 
-	cpClient, err := m.adminClientFn()
+	cpClient, err := m.adminClientFn(ctx)
 	if err != nil {
 		return fmt.Errorf("firewall bypass: %w", err)
 	}
@@ -1537,7 +1538,7 @@ func (m *Manager) syncRoutes(ctx context.Context) error {
 		})
 	}
 
-	cpClient, err := m.adminClientFn()
+	cpClient, err := m.adminClientFn(ctx)
 	if err != nil {
 		return fmt.Errorf("syncing BPF route_map: %w", err)
 	}
@@ -1628,23 +1629,46 @@ func (m *Manager) waitForCPReadyImpl(ctx context.Context) error {
 // cpClient returns the gRPC AdminServiceClient for the CP. Built lazily on
 // first use. Uses auth.DialCPAdmin which handles mTLS + private_key_jwt
 // token exchange via Hydra's /oauth2/token endpoint.
-func (m *Manager) cpClient() (adminv1.AdminServiceClient, error) {
+func (m *Manager) cpClient(ctx context.Context) (adminv1.AdminServiceClient, error) {
 	m.cpClientMu.Lock()
 	defer m.cpClientMu.Unlock()
 	if m.cpClientCached != nil {
-		return m.cpClientCached, nil
+		state := m.cpClientConn.GetState()
+		if state == connectivity.TransientFailure || state == connectivity.Shutdown {
+			m.cpClientConn.Close()
+			m.cpClientCached = nil
+			m.cpClientConn = nil
+		} else {
+			return m.cpClientCached, nil
+		}
 	}
 
 	settings := m.cfg.Settings()
 	adminPort := settings.ControlPlane.AdminPort
 
-	client, conn, err := auth.DialCPAdmin(context.Background(), adminPort, m.cfg.Settings().ControlPlane.HydraPublicPort)
+	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	client, conn, err := auth.DialCPAdmin(dialCtx, adminPort, m.cfg.Settings().ControlPlane.HydraPublicPort)
 	if err != nil {
 		return nil, fmt.Errorf("dial cp: %w", err)
 	}
 	m.cpClientCached = client
 	m.cpClientConn = conn
 	return client, nil
+}
+
+// Close releases the cached gRPC connection to the control plane.
+func (m *Manager) Close() error {
+	m.cpClientMu.Lock()
+	defer m.cpClientMu.Unlock()
+	if m.cpClientConn != nil {
+		err := m.cpClientConn.Close()
+		m.cpClientConn = nil
+		m.cpClientCached = nil
+		return err
+	}
+	return nil
 }
 
 // cpContainerConfig builds a containerSpec for the clawker control plane

@@ -43,7 +43,11 @@ type SubprocessManager struct {
 // NewSubprocessManager creates a new subprocess manager.
 func NewSubprocessManager(log *logger.Logger) *SubprocessManager {
 	return &SubprocessManager{
-		log:     log,
+		log: log,
+		// crashed has buffer size 1: only the first subprocess crash is
+		// reported. This is intentional — the CP exits on first crash, so
+		// only the triggering error matters. Subsequent crashes during
+		// shutdown are expected and silently dropped.
 		crashed: make(chan error, 1),
 	}
 }

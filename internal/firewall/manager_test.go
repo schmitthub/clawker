@@ -145,7 +145,7 @@ func newManagerWithFake(t *testing.T) (*Manager, *whailtest.FakeAPIClient, confi
 // returns it for assertion.
 func withRecordingAdmin(mgr *Manager) *recordingAdminClient {
 	rec := &recordingAdminClient{}
-	mgr.adminClientFn = func() (adminv1.AdminServiceClient, error) { return rec, nil }
+	mgr.adminClientFn = func(_ context.Context) (adminv1.AdminServiceClient, error) { return rec, nil }
 	return rec
 }
 

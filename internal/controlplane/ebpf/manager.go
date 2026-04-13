@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -39,6 +40,9 @@ type Manager struct {
 
 	objs clawkerObjects
 
+	// linksMu guards the links map. Install, Remove, and Close all mutate
+	// links and may be called from different goroutines (gRPC handlers).
+	linksMu sync.Mutex
 	// Per-container cgroup links, keyed by cgroup ID.
 	// Only populated when this Manager instance attaches programs (daemon mode).
 	links map[uint64][]link.Link
@@ -300,6 +304,8 @@ func (m *Manager) cleanupLinks(cgroupID uint64) {
 
 // Close detaches all links and closes all programs and maps.
 func (m *Manager) Close() error {
+	m.linksMu.Lock()
+	defer m.linksMu.Unlock()
 	for cgID, links := range m.links {
 		for _, l := range links {
 			if err := l.Close(); err != nil {
@@ -344,6 +350,8 @@ func clearBypass(m bypassMap, cgroupID uint64, log *logger.Logger) error {
 // Cleans up any stale links for this cgroup before attaching and clears any
 // stale bypass flag so the container lands in a known enforced state.
 func (m *Manager) Install(cgroupID uint64, cgroupPath string, cfg clawkerContainerConfig) error {
+	m.linksMu.Lock()
+	defer m.linksMu.Unlock()
 	// Clean up stale links from previous Enable() calls for this cgroup.
 	// Stale links keep old programs attached, causing silent misbehavior.
 	m.cleanupLinks(cgroupID)
@@ -409,6 +417,8 @@ func (m *Manager) Install(cgroupID uint64, cgroupPath string, cfg clawkerContain
 
 // Remove detaches BPF programs from a container's cgroup and removes map entries.
 func (m *Manager) Remove(cgroupID uint64) error {
+	m.linksMu.Lock()
+	defer m.linksMu.Unlock()
 	// Close in-memory links if we hold them.
 	if linked, ok := m.links[cgroupID]; ok {
 		for _, l := range linked {
@@ -588,17 +598,34 @@ func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr string,
 		return clawkerContainerConfig{}, fmt.Errorf("parsing CIDR %s: %w", cidr, err)
 	}
 
+	envoy, err := parseIP(envoyIP)
+	if err != nil {
+		return clawkerContainerConfig{}, fmt.Errorf("envoyIP: %w", err)
+	}
+	coredns, err := parseIP(corednsIP)
+	if err != nil {
+		return clawkerContainerConfig{}, fmt.Errorf("corednsIP: %w", err)
+	}
+	gateway, err := parseIP(gatewayIP)
+	if err != nil {
+		return clawkerContainerConfig{}, fmt.Errorf("gatewayIP: %w", err)
+	}
+
 	cfg := clawkerContainerConfig{
-		EnvoyIp:       IPToUint32(parseIP(envoyIP)),
-		CorednsIp:     IPToUint32(parseIP(corednsIP)),
-		GatewayIp:     IPToUint32(parseIP(gatewayIP)),
+		EnvoyIp:       IPToUint32(envoy),
+		CorednsIp:     IPToUint32(coredns),
+		GatewayIp:     IPToUint32(gateway),
 		NetAddr:       netAddr,
 		NetMask:       netMask,
 		HostProxyPort: hostProxyPort,
 		EgressPort:    egressPort,
 	}
 	if hostProxyIP != "" {
-		cfg.HostProxyIp = IPToUint32(parseIP(hostProxyIP))
+		hp, err := parseIP(hostProxyIP)
+		if err != nil {
+			return clawkerContainerConfig{}, fmt.Errorf("hostProxyIP: %w", err)
+		}
+		cfg.HostProxyIp = IPToUint32(hp)
 	}
 	return cfg, nil
 }

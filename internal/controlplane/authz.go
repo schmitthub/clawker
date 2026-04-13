@@ -174,6 +174,15 @@ func (a *AuthInterceptor) authorize(ctx context.Context, fullMethod string) erro
 		return status.Error(codes.Unauthenticated, "token inactive or invalid")
 	}
 
+	if !strings.Contains(result.Scope, requiredScope) {
+		a.log.Warn().
+			Str("method", fullMethod).
+			Str("required_scope", requiredScope).
+			Str("token_scope", result.Scope).
+			Msg("authz: token missing required scope")
+		return status.Errorf(codes.PermissionDenied, "token missing required scope %q", requiredScope)
+	}
+
 	a.log.Debug().
 		Str("method", fullMethod).
 		Str("client_id", result.ClientID).

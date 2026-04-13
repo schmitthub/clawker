@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
 )
+
+const healthCacheTTL = 2 * time.Second
 
 // CPStartupOrchestrator manages the control plane's subprocess startup
 // sequence and health reporting. The /healthz endpoint actively probes
@@ -20,6 +23,12 @@ type CPStartupOrchestrator struct {
 	probes  []serviceProbe
 	tlsCfg  *tls.Config
 	timeout time.Duration
+
+	// Cached health state
+	healthMu     sync.RWMutex
+	healthOK     bool
+	healthFailed string // name of first failed probe, empty if all OK
+	healthAt     time.Time
 }
 
 // serviceProbe defines a TCP or HTTPS endpoint to check.
@@ -68,24 +77,61 @@ func (o *CPStartupOrchestrator) SetReady() {
 
 // HealthzHandler returns an http.Handler for the /healthz endpoint.
 // Returns 200 only when SetReady was called AND all service probes pass.
-// If any service is down, returns 503.
+// If any service is down, returns 503 with a JSON body.
 func (o *CPStartupOrchestrator) HealthzHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
 		if !o.ready.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"status":"not_ready"}`)
 			return
 		}
 
-		// Active aggregate probe — every service must respond.
-		for _, p := range o.probes {
-			if !o.probe(p) {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
-			}
+		ok, failedProbe := o.cachedHealth()
+		if !ok {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"status":"unhealthy","failed_probe":%q}`, failedProbe)
+			return
 		}
 
 		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"status":"healthy"}`)
 	})
+}
+
+// cachedHealth returns the cached health state, refreshing it if the
+// cache has expired. Uses double-check locking to minimize probe overhead
+// under concurrent requests.
+func (o *CPStartupOrchestrator) cachedHealth() (bool, string) {
+	o.healthMu.RLock()
+	if time.Since(o.healthAt) < healthCacheTTL {
+		ok, failed := o.healthOK, o.healthFailed
+		o.healthMu.RUnlock()
+		return ok, failed
+	}
+	o.healthMu.RUnlock()
+
+	// Cache miss — probe and update.
+	o.healthMu.Lock()
+	defer o.healthMu.Unlock()
+
+	// Double-check after acquiring write lock.
+	if time.Since(o.healthAt) < healthCacheTTL {
+		return o.healthOK, o.healthFailed
+	}
+
+	o.healthOK = true
+	o.healthFailed = ""
+	for _, p := range o.probes {
+		if !o.probe(p) {
+			o.healthOK = false
+			o.healthFailed = p.name
+			break
+		}
+	}
+	o.healthAt = time.Now()
+	return o.healthOK, o.healthFailed
 }
 
 // probe checks if a single service endpoint is responding.

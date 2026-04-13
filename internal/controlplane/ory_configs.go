@@ -30,7 +30,7 @@ const oryConfigDir = "/etc/clawker"
 //   - TLS: uses the same self-signed cert as the gRPC admin API.
 //
 // Log level enum (Hydra v26.2.0): panic, fatal, error, warn, info, debug, trace.
-func buildHydraConfig(cp config.ControlPlaneSettings) string {
+func buildHydraConfig(cp config.ControlPlaneSettings, hydraSecret string) string {
 	return fmt.Sprintf(`dsn: memory
 serve:
   public:
@@ -49,7 +49,7 @@ strategies:
   access_token: jwt
 secrets:
   system:
-    - clawker-cp-system-secret-32chars-ok
+    - %s
 urls:
   self:
     issuer: https://127.0.0.1:%d/
@@ -61,7 +61,7 @@ ttl:
 log:
   level: warn
   format: json
-`, cp.HydraPublicPort, cp.HydraAdminPort, cp.HydraPublicPort)
+`, cp.HydraPublicPort, cp.HydraAdminPort, hydraSecret, cp.HydraPublicPort)
 }
 
 // buildKratosConfig generates the Kratos v26.2.0 config YAML.
@@ -176,13 +176,13 @@ log:
 // the config directory. Ports are read from ControlPlaneSettings. Called by
 // the CP binary at startup before launching subprocesses. Idempotent —
 // overwrites on every start so configs stay in sync with the binary version.
-func WriteOryConfigs(cp config.ControlPlaneSettings) error {
+func WriteOryConfigs(cp config.ControlPlaneSettings, hydraSecret string) error {
 	if err := os.MkdirAll(oryConfigDir, 0o755); err != nil {
 		return fmt.Errorf("create ory config dir: %w", err)
 	}
 
 	configs := map[string]string{
-		"hydra.yaml":      buildHydraConfig(cp),
+		"hydra.yaml":      buildHydraConfig(cp, hydraSecret),
 		"kratos.yaml":     buildKratosConfig(cp),
 		"oathkeeper.yaml": buildOathkeeperConfig(cp),
 	}

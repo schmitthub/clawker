@@ -23,7 +23,7 @@ REPRODUCIBILITY.md   Provenance chain — pin-update procedure for the BPF toolc
 
 The `clawker-cp` container runs `clawker-cp` (the daemon binary) as PID 1. That binary imports `internal/controlplane/ebpf` directly and calls `Manager.Load()` **exactly once** at startup. The resulting `link.Link` handles live in-process for the CP's lifetime; BPF pinning at `/sys/fs/bpf/clawker/` is purely a crash-recovery mechanism, not load-bearing state.
 
-`Load()` runs `cleanupAllLinks()` which wipes every pinned `link_*` file on the system. Calling it twice on an already-running system strips BPF programs from every enforced container — this is the hot-reload pinning bug the 2026-04-10 fix only half-solved. The v1 CP architecture fixes it by construction: there is only one process that calls `Load()`, and it calls it once.
+`Load()` runs `cleanupStaleLinks()` which checks each pinned `link_*` file against `container_map` — links to dead cgroups are removed, links to live cgroups are preserved. This ensures enforcement survives CP restarts while cleaning up resource leaks from dead containers. `CleanupAllLinks()` is a separate method that removes ALL pinned links — called ONLY by the daemon on shutdown when no agent containers remain.
 
 Command-mode access to pinned state is done via the `cmd/ebpf-manager` break-glass binary + `OpenPinned()` (which opens handles to already-pinned maps without re-running Load). That binary is packaged in the CP image alongside `clawker-cp` for emergency debugging.
 
@@ -33,8 +33,8 @@ All maps live at `PinPath = /sys/fs/bpf/clawker/`:
 
 | Map | Key | Value | Written by | Read by |
 |-----|-----|-------|-----------|---------|
-| `container_map` | cgroup ID (u64) | `container_config` | `Enable`/`Disable` | BPF fast path |
-| `bypass_map` | cgroup ID (u64) | u8 (1 = bypass) | `Bypass`/`Unbypass`, cleared by `Enable`/`Disable` | BPF fast path |
+| `container_map` | cgroup ID (u64) | `container_config` | `Install`/`Remove` | BPF fast path |
+| `bypass_map` | cgroup ID (u64) | u8 (1 = bypass) | `Disable`/`Enable`, cleared by `Install`/`Remove` | BPF fast path |
 | `dns_cache` | IPv4 (u32) | `dns_entry` {domain_hash, expire_ts} | `UpdateDNSCache` **and** `internal/dnsbpf` CoreDNS plugin | BPF fast path |
 | `route_map` | `{domain_hash, dst_port}` | `{envoy_port}` | `SyncRoutes` | BPF fast path |
 | `metrics_map` | `{cgroup_id, domain_hash, dst_port, action}` | counters | BPF fast path | userspace `dump` (break-glass) |
@@ -50,11 +50,11 @@ func NewManager(log *logger.Logger) *Manager
 func (m *Manager) Load() error                              // CP startup: parse ELF, pin all
 func (m *Manager) OpenPinned() error                        // break-glass: attach to pinned
 func (m *Manager) Close() error                             // detach links, close programs/maps
-func (m *Manager) Enable(cgroupID uint64, cgroupPath string, cfg clawkerContainerConfig) error
-func (m *Manager) Disable(cgroupID uint64) error
+func (m *Manager) Install(cgroupID uint64, cgroupPath string, cfg BPFContainerConfig) error
+func (m *Manager) Remove(cgroupID uint64) error
 func (m *Manager) SyncRoutes(routes []Route) error          // replace global route_map atomically
-func (m *Manager) Bypass(cgroupID uint64) error             // set bypass flag (unrestricted egress)
-func (m *Manager) Unbypass(cgroupID uint64) error
+func (m *Manager) Disable(cgroupID uint64) error            // set bypass flag (unrestricted egress)
+func (m *Manager) Enable(cgroupID uint64) error             // clear bypass flag (restore enforcement)
 func (m *Manager) UpdateDNSCache(ip, domainHash, ttl uint32) error
 func (m *Manager) GarbageCollectDNS() int                   // returns number cleared
 func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, error)
@@ -81,7 +81,7 @@ func Supported() error                                       // checks cgroup v2
 ## Invariants
 
 - `DomainHash` is the shared contract between this package, `internal/dnsbpf`, and `internal/firewall/manager.go`. All three **must** use the same normalization (lowercase fold, no trailing dot, no leading `*.`). Changing the hash function requires changing all three call sites and clearing the pinned `route_map`.
-- `Enable` is idempotent and clears stale links + bypass flags before attaching, so it is also the canonical "re-enforce after bypass" entry point.
+- `Install` is idempotent and clears stale links + bypass flags before attaching, so it is also the canonical "re-enforce after bypass" entry point.
 - `SyncRoutes` collects per-entry errors into `errors.Join` instead of returning on the first failure — a partial sync returns non-nil and callers can decide what to do.
 - `CgroupID(path)` validates `path` against `/sys/fs/cgroup/` + `..` + control-char sanitization (defense in depth for the privileged `ebpf-manager` break-glass paths).
 - Stale pinned maps with mismatched key/value sizes are detected in `Load()` and removed before loading.

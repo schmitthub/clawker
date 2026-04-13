@@ -29,8 +29,8 @@ service AdminService {
   rpc Enable(EnableRequest) returns (EnableResponse);
 
   // Disable sets the bypass flag, letting the container's egress traffic
-  // skip firewall enforcement. The CLI manages the bypass timer locally
-  // (Disable → sleep → Enable). No server-side timer.
+  // skip firewall enforcement. Used for `firewall disable` (persistent
+  // disable). For time-limited bypass, use the Bypass RPC.
   rpc Disable(DisableRequest) returns (DisableResponse);
 
   // SyncRoutes replaces the global route_map atomically with the

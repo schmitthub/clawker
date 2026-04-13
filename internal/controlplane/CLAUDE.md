@@ -39,7 +39,7 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 | `ory_configs.go` | `WriteOryConfigs(cp)` — generates Hydra/Kratos/Oathkeeper YAML config files |
 | `subprocess.go` | `SubprocessManager` — manages Ory subprocess lifecycle (start, health, crash detection, shutdown) |
 | `ebpf/` | eBPF subsystem: `Manager` (Load, Install, Remove, Enable, Disable, SyncRoutes), shared types, link cleanup |
-| `controlplanetest/` | `MockServer` — hand-written test double for `ControlPlaneService` |
+| `mocks/mock_server.go` | `MockServer` — hand-written test double for `ControlPlaneService` |
 | `mocks/` | moq-generated mocks: `ControlPlaneServiceMock`, `IntrospectorMock`, `EBPFManagerMock` |
 
 ## AdminService RPCs (`admin_handler.go`)
@@ -60,14 +60,13 @@ All RPCs require `admin` scope. Future scopes add entries to `AdminMethodScopes(
 
 1. Write Ory config files (`WriteOryConfigs(cp)`)
 2. Start Kratos + Hydra subprocesses, wait healthy
-3. Wait for Hydra admin port healthy (explicit check before client registration)
-4. Read CLI public JWK from bind-mount, register CLI client with Hydra (`RegisterCLIClient`)
-5. Start Oathkeeper subprocess
-6. Load eBPF programs (`ebpfMgr.Load()`)
-7. Start gRPC AdminService with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor
-8. Configure service probes (`orchestrator.SetServiceProbes(cp, tlsCfg)`)
-9. Mark ready (`orchestrator.SetReady()`)
-10. Serve `/healthz` on HealthPort
+3. Wait for Hydra admin port healthy, configure service probes (`orchestrator.SetServiceProbes(cp, tlsCfg)`)
+4. Read CLI public JWK from bind-mount
+5. Register CLI client with Hydra (`RegisterCLIClient`)
+6. Start Oathkeeper subprocess
+7. Load eBPF programs (`ebpfMgr.Load()`)
+8. Start gRPC AdminService with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor
+9. Mark ready (`orchestrator.SetReady()`), serve `/healthz` on HealthPort
 
 ## Aggregate Health (`startup.go`)
 
@@ -155,17 +154,17 @@ Generates `/etc/clawker/{hydra,kratos,oathkeeper}.yaml`:
 
 ```go
 type SubprocessManager struct { ... }
-func (sm *SubprocessManager) Start(name string, cmd *exec.Cmd, health HealthCheck) (*ManagedSubprocess, error)
-func (sm *SubprocessManager) WaitHealthy(ctx context.Context) error
+func (sm *SubprocessManager) Start(name string, cmd *exec.Cmd) error
+func (sm *SubprocessManager) WaitHealthy(ctx context.Context, name string, check HealthCheck) error
 func (sm *SubprocessManager) CrashChan() <-chan error
-func (sm *SubprocessManager) Shutdown()
+func (sm *SubprocessManager) Shutdown(timeout time.Duration)
 ```
 
 Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTERM then SIGKILL, reverse start order.
 
 ## Test seam overview
 
-- `ControlPlaneService` interface — CLI consumers depend on this. `controlplanetest.MockServer` avoids real gRPC.
+- `ControlPlaneService` interface — CLI consumers depend on this. `mocks.MockServer` avoids real gRPC.
 - `EBPFManager` interface — `ebpf/mocks/EBPFManagerMock` for admin handler tests.
 - `Introspector` interface — `mocks/IntrospectorMock` for authz tests (no real Hydra).
 - `AdminHandler.resolveHostFn` — injectable DNS resolver.

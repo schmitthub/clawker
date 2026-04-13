@@ -7,15 +7,24 @@ import (
 	"google.golang.org/grpc"
 )
 
+// InitStatus tracks the lifecycle of agent initialization.
+type InitStatus int
+
+const (
+	InitPending InitStatus = iota
+	InitRunning
+	InitCompleted
+	InitFailed
+)
+
 // AgentConnection tracks a registered agent and its init state.
 type AgentConnection struct {
-	ContainerID   string
-	ListenPort    uint32
-	Version       string
-	ClientConn    *grpc.ClientConn
-	InitCompleted bool
-	InitFailed    bool
-	InitEvents    []*v1.RunInitResponse
+	ContainerID string
+	ListenPort  uint32
+	Version     string
+	ClientConn  *grpc.ClientConn
+	InitStatus  InitStatus
+	InitEvents  []*v1.RunInitResponse
 }
 
 // Registry tracks connected agents by container ID.
@@ -89,7 +98,7 @@ func (r *Registry) SetInitCompleted(containerID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if agent, ok := r.agents[containerID]; ok {
-		agent.InitCompleted = true
+		agent.InitStatus = InitCompleted
 	}
 }
 
@@ -98,7 +107,7 @@ func (r *Registry) SetInitFailed(containerID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if agent, ok := r.agents[containerID]; ok {
-		agent.InitFailed = true
+		agent.InitStatus = InitFailed
 	}
 }
 

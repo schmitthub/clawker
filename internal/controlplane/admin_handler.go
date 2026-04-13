@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"net"
+	"sync"
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
@@ -21,6 +22,9 @@ type AdminHandler struct {
 	mgr ebpf.EBPFManager
 	log *logger.Logger
 
+	bypassTimersMu sync.Mutex
+	bypassTimers   map[uint64]*time.Timer
+
 	// resolveHostFn is injectable for tests. nil defaults to
 	// net.DefaultResolver.LookupHost.
 	resolveHostFn func(ctx context.Context, host string) ([]string, error)
@@ -31,7 +35,7 @@ func NewAdminHandler(mgr ebpf.EBPFManager, log *logger.Logger) *AdminHandler {
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &AdminHandler{mgr: mgr, log: log}
+	return &AdminHandler{mgr: mgr, log: log, bypassTimers: make(map[uint64]*time.Timer)}
 }
 
 // Install attaches BPF programs to a container's cgroup and populates
@@ -83,6 +87,12 @@ func (h *AdminHandler) Remove(_ context.Context, req *adminv1.RemoveRequest) (*a
 	if err != nil {
 		return nil, err
 	}
+	h.bypassTimersMu.Lock()
+	if t, ok := h.bypassTimers[cgroupID]; ok {
+		t.Stop()
+		delete(h.bypassTimers, cgroupID)
+	}
+	h.bypassTimersMu.Unlock()
 	if err := h.mgr.Remove(cgroupID); err != nil {
 		return nil, status.Errorf(codes.Internal, "remove failed: %v", err)
 	}
@@ -96,6 +106,12 @@ func (h *AdminHandler) Enable(_ context.Context, req *adminv1.EnableRequest) (*a
 	if err != nil {
 		return nil, err
 	}
+	h.bypassTimersMu.Lock()
+	if t, ok := h.bypassTimers[cgroupID]; ok {
+		t.Stop()
+		delete(h.bypassTimers, cgroupID)
+	}
+	h.bypassTimersMu.Unlock()
 	if err := h.mgr.Enable(cgroupID); err != nil {
 		return nil, status.Errorf(codes.Internal, "enable failed: %v", err)
 	}
@@ -134,20 +150,38 @@ func (h *AdminHandler) Bypass(_ context.Context, req *adminv1.BypassRequest) (*a
 		return nil, status.Errorf(codes.Internal, "bypass: disable failed: %v", err)
 	}
 
-	// Server-side dead-man timer (monotonic via time.AfterFunc). If the CLI
-	// dies, enforcement is restored after timeout. Enable is idempotent —
-	// double-clear is harmless.
-	time.AfterFunc(timeout, func() {
-		if err := h.mgr.Enable(cgroupID); err != nil {
-			h.log.Error().Err(err).
-				Uint64("cgroup_id", cgroupID).
-				Msg("bypass auto-enable failed")
-		} else {
+	// Cancel any existing timer for this cgroup.
+	h.bypassTimersMu.Lock()
+	if t, ok := h.bypassTimers[cgroupID]; ok {
+		t.Stop()
+	}
+	h.bypassTimers[cgroupID] = time.AfterFunc(timeout, func() {
+		const maxRetries = 3
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			if err := h.mgr.Enable(cgroupID); err != nil {
+				h.log.Error().Err(err).
+					Uint64("cgroup_id", cgroupID).
+					Int("attempt", attempt).
+					Msg("bypass auto-enable failed")
+				if attempt < maxRetries {
+					time.Sleep(time.Duration(attempt) * time.Second)
+					continue
+				}
+				h.log.Error().
+					Uint64("cgroup_id", cgroupID).
+					Msg("bypass auto-enable exhausted retries — enforcement NOT restored")
+				return
+			}
 			h.log.Info().
 				Uint64("cgroup_id", cgroupID).
 				Msg("bypass timer expired, enforcement restored")
+			break
 		}
+		h.bypassTimersMu.Lock()
+		delete(h.bypassTimers, cgroupID)
+		h.bypassTimersMu.Unlock()
 	})
+	h.bypassTimersMu.Unlock()
 
 	h.log.Info().
 		Uint64("cgroup_id", cgroupID).

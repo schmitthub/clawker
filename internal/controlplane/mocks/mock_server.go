@@ -27,11 +27,17 @@ func NewMockServer() *MockServer {
 }
 
 // NewMockServerWithAgent returns a MockServer with a single pre-registered agent.
+// When initCompleted is true the agent's InitStatus is set to InitCompleted;
+// otherwise it remains InitPending.
 func NewMockServerWithAgent(containerID string, initCompleted bool) *MockServer {
 	m := NewMockServer()
+	status := controlplane.InitPending
+	if initCompleted {
+		status = controlplane.InitCompleted
+	}
 	m.agents[containerID] = &controlplane.AgentConnection{
-		ContainerID:   containerID,
-		InitCompleted: initCompleted,
+		ContainerID: containerID,
+		InitStatus:  status,
 	}
 	return m
 }
@@ -80,7 +86,7 @@ func (m *MockServer) CompleteInit(containerID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if agent, ok := m.agents[containerID]; ok {
-		agent.InitCompleted = true
+		agent.InitStatus = controlplane.InitCompleted
 	}
 }
 
@@ -89,6 +95,6 @@ func (m *MockServer) FailInit(containerID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if agent, ok := m.agents[containerID]; ok {
-		agent.InitFailed = true
+		agent.InitStatus = controlplane.InitFailed
 	}
 }

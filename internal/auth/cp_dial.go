@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/consts"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -24,7 +25,7 @@ import (
 // DialCPAdmin connects to the CP's gRPC AdminService with TLS + OAuth2.
 //
 //  1. Load signing key + server cert from dataDir
-//  2. Build TLS config trusting the server cert
+//  2. Build TLS config trusting the CLI CA certificate
 //  3. Create a tokenSource that auto-refreshes via Hydra /oauth2/token
 //  4. Dial gRPC with TLS + auto-refreshing bearer token in metadata
 func DialCPAdmin(ctx context.Context, adminPort, hydraPort int) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
@@ -145,8 +146,8 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 // TTL (from expires_in, defaulting to 1 hour if absent).
 func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config) (string, time.Duration, error) {
 	assertion, err := BuildSignedAssertion(AssertionClaims{
-		Issuer:           "clawker-cli",
-		Subject:          "clawker-cli",
+		Issuer:           consts.ClientIDCLI,
+		Subject:          consts.ClientIDCLI,
 		Audience:         tokenURL,
 		JWTID:            uuid.NewString(),
 		ExpiresInSeconds: 30,
@@ -159,7 +160,7 @@ func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenUR
 		"grant_type":            {"client_credentials"},
 		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
 		"client_assertion":      {assertion},
-		"scope":                 {"admin"},
+		"scope":                 {consts.ScopeAdmin},
 	}
 
 	client := &http.Client{

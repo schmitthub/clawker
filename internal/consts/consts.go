@@ -279,11 +279,32 @@ func ShareDir(dataDir string) string         { return filepath.Join(dataDir, Sha
 
 // Auth material paths (under DataDir).
 // Layout: auth/cli/ for CLI signing material, auth/tls/ for server TLS.
-// All accessors idempotently ensure their parent directory exists.
+// Pure path accessors — no I/O. Call EnsureAuthDirs() before writing files.
 
-func AuthCADir() (string, error)  { return subdirPathUnder("auth/ca", DataDir()) }
-func AuthCLIDir() (string, error) { return subdirPathUnder("auth/cli", DataDir()) }
-func AuthTLSDir() (string, error) { return subdirPathUnder("auth/tls", DataDir()) }
+func AuthCADir() (string, error)  { return filepath.Join(DataDir(), "auth", "ca"), nil }
+func AuthCLIDir() (string, error) { return filepath.Join(DataDir(), "auth", "cli"), nil }
+func AuthTLSDir() (string, error) { return filepath.Join(DataDir(), "auth", "tls"), nil }
+
+// HydraSystemSecretPath returns the path to the persisted Hydra system secret
+// file under the auth/ directory. The parent directory is created if needed.
+func HydraSystemSecretPath() (string, error) {
+	dir, err := subdirPathUnder("auth", DataDir())
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "hydra-system-secret"), nil
+}
+
+// EnsureAuthDirs creates the auth material directory tree. Called by
+// auth.EnsureAuthMaterial before writing files.
+func EnsureAuthDirs() error {
+	for _, sub := range []string{"auth/ca", "auth/cli", "auth/tls"} {
+		if err := os.MkdirAll(filepath.Join(DataDir(), sub), 0o755); err != nil {
+			return fmt.Errorf("create %s: %w", sub, err)
+		}
+	}
+	return nil
+}
 
 func AuthCACertPath() (string, error) {
 	dir, err := AuthCADir()

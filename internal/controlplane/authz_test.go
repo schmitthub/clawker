@@ -264,12 +264,32 @@ func TestAdminMethodScopes_CoversAllRPCs(t *testing.T) {
 	scopes := controlplane.AdminMethodScopes()
 	desc := adminv1.AdminService_ServiceDesc
 
+	// Collect all methods from the proto service descriptor (unary + streams).
+	protoMethods := make(map[string]struct{})
 	for _, m := range desc.Methods {
-		fullMethod := "/" + desc.ServiceName + "/" + m.MethodName
-		_, ok := scopes[fullMethod]
-		assert.True(t, ok,
-			"method %s must have a scope in AdminMethodScopes()", fullMethod)
+		protoMethods["/"+desc.ServiceName+"/"+m.MethodName] = struct{}{}
 	}
+	for _, s := range desc.Streams {
+		protoMethods["/"+desc.ServiceName+"/"+s.StreamName] = struct{}{}
+	}
+
+	// Every proto RPC must have a scope entry (prevents missing auth on new RPCs).
+	for method := range protoMethods {
+		_, ok := scopes[method]
+		assert.True(t, ok,
+			"proto RPC %s has no scope in AdminMethodScopes() — add an entry to enforce auth", method)
+	}
+
+	// Every scope entry must correspond to a real proto RPC (prevents stale entries).
+	for method := range scopes {
+		_, ok := protoMethods[method]
+		assert.True(t, ok,
+			"AdminMethodScopes() contains %s which is not in AdminService_ServiceDesc — remove stale entry", method)
+	}
+
+	// Exact count match as a belt-and-suspenders check.
+	assert.Equal(t, len(protoMethods), len(scopes),
+		"AdminMethodScopes() count (%d) must equal proto RPC count (%d)", len(scopes), len(protoMethods))
 }
 
 // --- Helpers ---

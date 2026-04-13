@@ -6,7 +6,7 @@
 //
 // The Server struct is transport-agnostic: it can be served on any
 // net.Listener (UDS, TCP, in-memory). cmd/clawker-cp wires it up inside
-// the clawker-cp container; tests use controlplanetest.MockServer.
+// the clawker-cp container; tests use mocks.MockServer.
 package controlplane
 
 import (
@@ -16,13 +16,14 @@ import (
 	"net"
 	"time"
 
-	mobyclient "github.com/moby/moby/client"
 	v1 "github.com/schmitthub/clawker/internal/clawkerd/protocol/v1"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // ControlPlaneService is the consumer-facing contract for the control plane.
@@ -84,7 +85,16 @@ type Server struct {
 // AgentReportingService registered on its underlying grpc.Server. Callers
 // can obtain the grpc.Server via GRPCServer() to register additional
 // services (e.g. ControlPlaneService) before calling Serve.
-func NewServer(cfg Config) *Server {
+func NewServer(cfg Config) (*Server, error) {
+	if cfg.Secret == "" {
+		return nil, fmt.Errorf("controlplane: Secret is required")
+	}
+	if cfg.DockerClient == nil {
+		return nil, fmt.Errorf("controlplane: DockerClient is required")
+	}
+	if cfg.Cfg == nil {
+		return nil, fmt.Errorf("controlplane: Cfg is required")
+	}
 	log := cfg.Log
 	if log == nil {
 		log = logger.Nop()
@@ -96,7 +106,7 @@ func NewServer(cfg Config) *Server {
 		log:      log,
 	}
 	v1.RegisterAgentReportingServiceServer(s.grpc, s)
-	return s
+	return s, nil
 }
 
 // GRPCServer returns the underlying grpc.Server. Callers use this to register
@@ -151,10 +161,7 @@ func (s *Server) Register(ctx context.Context, req *v1.RegisterRequest) (*v1.Reg
 			Str("component", "controlplane").
 			Str("container_id", req.ContainerId).
 			Msg("agent registration rejected: invalid secret")
-		return &v1.RegisterResponse{
-			Accepted: false,
-			Reason:   "invalid secret",
-		}, nil
+		return nil, status.Error(codes.Unauthenticated, "invalid secret")
 	}
 
 	// Register the agent.
@@ -167,10 +174,7 @@ func (s *Server) Register(ctx context.Context, req *v1.RegisterRequest) (*v1.Reg
 			Str("component", "controlplane").
 			Str("container_id", req.ContainerId).
 			Msg("failed to resolve container IP")
-		return &v1.RegisterResponse{
-			Accepted: false,
-			Reason:   fmt.Sprintf("failed to resolve container IP: %v", err),
-		}, nil
+		return nil, status.Errorf(codes.Internal, "resolve container IP: %v", err)
 	}
 
 	s.log.Info().
@@ -226,7 +230,7 @@ func (s *Server) buildClawkerdConfig() *v1.ClawkerdConfiguration {
 // macOS/Docker Desktop where container IPs aren't routable from the host),
 // then falls back to the container's network IP.
 func (s *Server) resolveAgentAddress(ctx context.Context, containerID string, port uint32) (string, error) {
-	result, err := s.config.DockerClient.ContainerInspect(ctx, containerID, mobyclient.ContainerInspectOptions{})
+	result, err := s.config.DockerClient.ContainerInspect(ctx, containerID, docker.ContainerInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("inspect container %s: %w", containerID, err)
 	}

@@ -2,11 +2,13 @@ package controlplane
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/consts"
 )
@@ -15,7 +17,7 @@ import (
 // via the admin API. The jwkData is the raw JSON of the CLI's public
 // JWKS (bind-mounted from the host). Idempotent: returns nil if the
 // client already exists (409 Conflict).
-func RegisterCLIClient(hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config) error {
+func RegisterCLIClient(ctx context.Context, hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config) error {
 	// Parse the JWK data to embed as the jwks field.
 	var jwks json.RawMessage
 	if err := json.Unmarshal(jwkData, &jwks); err != nil {
@@ -43,6 +45,7 @@ func RegisterCLIClient(hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config)
 	}
 
 	client := &http.Client{
+		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig:   tlsCfg,
 			ForceAttemptHTTP2: true,
@@ -50,7 +53,7 @@ func RegisterCLIClient(hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config)
 	}
 
 	url := hydraAdminURL + "/admin/clients"
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("build registration request: %w", err)
 	}
@@ -62,7 +65,10 @@ func RegisterCLIClient(hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config)
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read hydra response: %w", err)
+	}
 
 	switch resp.StatusCode {
 	case http.StatusCreated, http.StatusOK:

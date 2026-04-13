@@ -19,6 +19,7 @@ package ebpf
 
 import (
 	"encoding/binary"
+	"fmt"
 	"hash/fnv"
 	"net"
 	"strings"
@@ -124,6 +125,10 @@ func DomainHash(domain string) uint32 {
 	return h.Sum32()
 }
 
-func parseIP(s string) net.IP {
-	return net.ParseIP(s).To4()
+func parseIP(s string) (net.IP, error) {
+	ip := net.ParseIP(s).To4()
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IPv4 address: %q", s)
+	}
+	return ip, nil
 }
