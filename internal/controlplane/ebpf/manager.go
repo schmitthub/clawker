@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -54,15 +55,20 @@ func NewManager(log *logger.Logger) *Manager {
 
 // Load loads BPF programs from embedded ELF objects, pins maps and programs
 // to /sys/fs/bpf/clawker/. Called once at container startup (daemon mode).
+//
+// Existing pinned maps are reused (PinByName) so container_map entries from
+// a previous CP lifetime survive. Stale links (whose target cgroups no
+// longer exist) are cleaned up to avoid resource leaks from dead containers.
+// Links to live cgroups are preserved so enforcement persists across CP restarts.
 func (m *Manager) Load() error {
 	if err := os.MkdirAll(m.pinPath, 0o700); err != nil {
 		return fmt.Errorf("ebpf: creating pin path %s: %w", m.pinPath, err)
 	}
 
-	// Remove stale link pins from previous runs. Pinned links keep old
-	// programs alive and attached to dead cgroups. Clean them before
-	// loading new programs to avoid resource leaks.
-	m.cleanupAllLinks()
+	// Clean up links to dead cgroups. Pinned links keep old programs alive
+	// and attached — for dead cgroups this is a resource leak; for live
+	// cgroups it's load-bearing enforcement that must survive CP restarts.
+	m.cleanupStaleLinks()
 
 	spec, err := loadClawker()
 	if err != nil {
@@ -163,10 +169,13 @@ func (m *Manager) OpenPinned() error {
 	return nil
 }
 
-// cleanupAllLinks removes ALL pinned link files from the pin directory.
-// Called during Load() to clear stale links from previous runs that keep
-// old programs alive and attached to dead cgroups.
-func (m *Manager) cleanupAllLinks() {
+// CleanupAllLinks removes ALL pinned link files from the pin directory.
+// Called by the daemon ONLY when no agent containers remain and the daemon
+// is shutting down — this ensures the next container start gets a clean
+// slate. Must NOT be called on health check failure, signal shutdown, or
+// CP restart, because agent containers may still be running with active
+// enforcement.
+func (m *Manager) CleanupAllLinks() {
 	entries, err := os.ReadDir(m.pinPath)
 	if err != nil {
 		return // pin dir may not exist yet
@@ -182,6 +191,91 @@ func (m *Manager) cleanupAllLinks() {
 				os.Remove(pin) // best-effort
 			}
 		}
+	}
+}
+
+// cleanupStaleLinks removes pinned link files whose target cgroups no longer
+// exist (dead containers). Links to live cgroups are preserved so their
+// enforcement survives CP restarts. The cgroup ID is extracted from the
+// pin filename (link_{prog}_{cgroupID}) and stat'd via /proc/self/fdinfo
+// on the link fd — if the link can't be opened or its cgroup is gone,
+// the pin is removed.
+func (m *Manager) cleanupStaleLinks() {
+	entries, err := os.ReadDir(m.pinPath)
+	if err != nil {
+		return
+	}
+
+	// Collect unique cgroup IDs from link pin filenames.
+	cgroupIDs := make(map[uint64]bool)
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), "link_") {
+			continue
+		}
+		// Format: link_{prog}_{cgroupID}
+		parts := strings.Split(e.Name(), "_")
+		if len(parts) < 3 {
+			continue
+		}
+		id, err := strconv.ParseUint(parts[len(parts)-1], 10, 64)
+		if err != nil {
+			continue
+		}
+		cgroupIDs[id] = true
+	}
+
+	if len(cgroupIDs) == 0 {
+		return
+	}
+
+	// Check which cgroup IDs are still alive by trying to look them up
+	// in the container_map (if it exists). A cgroup in container_map is
+	// an active enforcement target — keep its links. Everything else is stale.
+	liveIDs := make(map[uint64]bool)
+	containerMap, err := ebpf.LoadPinnedMap(filepath.Join(m.pinPath, "container_map"), nil)
+	if err == nil {
+		defer containerMap.Close()
+		for id := range cgroupIDs {
+			var val clawkerContainerConfig
+			if err := containerMap.Lookup(id, &val); err == nil {
+				liveIDs[id] = true
+			}
+		}
+	}
+	// If container_map doesn't exist (first boot), all links are stale.
+
+	// Remove links for dead cgroups.
+	cleaned := 0
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), "link_") {
+			continue
+		}
+		parts := strings.Split(e.Name(), "_")
+		if len(parts) < 3 {
+			continue
+		}
+		id, err := strconv.ParseUint(parts[len(parts)-1], 10, 64)
+		if err != nil {
+			continue
+		}
+		if liveIDs[id] {
+			continue // live cgroup — keep link
+		}
+
+		pin := filepath.Join(m.pinPath, e.Name())
+		l, lerr := link.LoadPinnedLink(pin, nil)
+		if lerr == nil {
+			l.Unpin()
+			l.Close()
+		} else {
+			os.Remove(pin)
+		}
+		cleaned++
+	}
+
+	if cleaned > 0 {
+		m.log.Info().Int("cleaned", cleaned).Int("kept", len(liveIDs)*7).
+			Msg("cleaned stale link pins from dead cgroups")
 	}
 }
 

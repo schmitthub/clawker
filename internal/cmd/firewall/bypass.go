@@ -48,7 +48,7 @@ By default the command blocks with a countdown timer. Press Ctrl+C to
 stop the bypass early (re-enables firewall). Press q/Esc to detach
 (bypass remains active until the server-side timer fires).
 
-Use --non-interactive to block for the duration then re-enable.
+Use --non-interactive to start bypass and return immediately (fire-and-forget).
 Use --stop to cancel an active bypass immediately.`,
 		Example: `  # Bypass firewall for 5 minutes (blocks with countdown)
   clawker firewall bypass 5m --agent dev
@@ -135,20 +135,14 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 		return fmt.Errorf("starting bypass for %s: %w", opts.Agent, err)
 	}
 
-	// Non-interactive: block for the duration, then re-enable.
+	// Non-interactive: fire-and-forget. The server-side dead-man timer in
+	// the CP handles re-enabling enforcement when the timeout expires.
+	// The CLI returns immediately so callers aren't blocked.
 	if opts.NonInteractive {
 		fmt.Fprintf(ios.Out, "%s Bypass active for agent %s (expires in %s)\n",
 			cs.SuccessIcon(), opts.Agent, opts.Duration)
-		fmt.Fprintf(ios.ErrOut, "%s Ctrl+C to stop early, or: clawker firewall bypass --stop --agent %s\n",
+		fmt.Fprintf(ios.ErrOut, "%s Stop early: clawker firewall bypass --stop --agent %s\n",
 			cs.WarningIcon(), opts.Agent)
-		select {
-		case <-time.After(opts.Duration):
-		case <-ctx.Done():
-		}
-		if err := fwMgr.Enable(context.Background(), containerName); err != nil {
-			return fmt.Errorf("re-enabling firewall for %s after bypass: %w", opts.Agent, err)
-		}
-		fmt.Fprintf(ios.Out, "%s Bypass expired for agent %s\n", cs.SuccessIcon(), opts.Agent)
 		return nil
 	}
 

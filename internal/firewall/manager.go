@@ -255,9 +255,9 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 	}
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
-	envoyURL := fmt.Sprintf("http://localhost:%d/", m.cfg.EnvoyHealthHostPort())
-	corednsURL := fmt.Sprintf("http://localhost:%d%s", m.cfg.CoreDNSHealthHostPort(), m.cfg.CoreDNSHealthPath())
-	cpHealthURL := fmt.Sprintf("http://localhost:%d/healthz", m.cfg.Settings().ControlPlane.HealthPort)
+	envoyURL := fmt.Sprintf("http://127.0.0.1:%d/", m.cfg.EnvoyHealthHostPort())
+	corednsURL := fmt.Sprintf("http://127.0.0.1:%d%s", m.cfg.CoreDNSHealthHostPort(), m.cfg.CoreDNSHealthPath())
+	cpHealthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", m.cfg.Settings().ControlPlane.HealthPort)
 
 	var envoyReady, corednsReady, cpReady bool
 	var lastEnvoyErr, lastCorednsErr, lastCPErr error
@@ -560,7 +560,7 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 	if err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
-	if _, err := cpClient.Remove(ctx, &adminv1.RemoveRequest{CgroupPath: cgroupPath}); err != nil {
+	if _, err := cpClient.Disable(ctx, &adminv1.DisableRequest{CgroupPath: cgroupPath}); err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
 
@@ -568,11 +568,35 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 	return nil
 }
 
-// Enable attaches eBPF programs to a container's cgroup, routing traffic
-// through Envoy (TCP) and CoreDNS (DNS). Replaces iptables DNAT rules. The
-// container argument may be a name or ID — it is resolved to the canonical
-// long ID before the cgroup path is constructed.
+// Enable clears the eBPF bypass flag for a container, restoring firewall
+// enforcement. The container must already be enrolled via InstallFirewall.
 func (m *Manager) Enable(ctx context.Context, containerID string) error {
+	containerID, err := m.resolveContainerID(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("firewall enable: %w", err)
+	}
+	driver, err := m.cgroupDriver(ctx)
+	if err != nil {
+		return fmt.Errorf("firewall enable: %w", err)
+	}
+	cgroupPath := ebpfCgroupPath(driver, containerID)
+
+	cpClient, err := m.adminClientFn()
+	if err != nil {
+		return fmt.Errorf("firewall enable: %w", err)
+	}
+	if _, err := cpClient.Enable(ctx, &adminv1.EnableRequest{CgroupPath: cgroupPath}); err != nil {
+		return fmt.Errorf("firewall enable: %w", err)
+	}
+
+	m.log.Debug().Str("container", containerID).Msg("firewall re-enabled via eBPF")
+	return nil
+}
+
+// InstallFirewall enrolls a container in the firewall — syncs routes, adds
+// to container_map, attaches eBPF programs, touches the entrypoint signal
+// file. Used by container start for initial enrollment.
+func (m *Manager) InstallFirewall(ctx context.Context, containerID string) error {
 	containerID, err := m.resolveContainerID(ctx, containerID)
 	if err != nil {
 		return fmt.Errorf("firewall enable: %w", err)

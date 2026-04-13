@@ -146,6 +146,21 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		return fmt.Errorf("step 3 (hydra health): %w", err)
 	}
 
+	// --- Step 3b: Wait for Hydra admin port ---
+	// The public health check (step 3) confirms the public listener is ready,
+	// but client registration goes to the admin port — a separate listener
+	// that may take longer under resource pressure. Wait for it explicitly.
+	if err := subMgr.WaitHealthy(ctx, "hydra-admin", controlplane.HealthCheck{
+		URL: fmt.Sprintf("https://127.0.0.1:%d/health/alive", cp.HydraAdminPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
+		TLS: healthTLS,
+	}); err != nil {
+		return fmt.Errorf("step 3b (hydra admin health): %w", err)
+	}
+
+	// Configure aggregate health probes. The /healthz endpoint will actively
+	// probe ALL service ports — it only returns 200 when every one responds.
+	orchestrator.SetServiceProbes(cp, healthTLS)
+
 	// --- Step 4: Read CLI JWK ---
 	jwkData, err := os.ReadFile(jwkPath)
 	if err != nil {

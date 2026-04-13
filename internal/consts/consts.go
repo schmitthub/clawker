@@ -209,15 +209,6 @@ func subdirPathUnder(subdir string, baseDir string) (string, error) {
 	return fullPath, nil
 }
 
-func absConfigFilePath(fileName string) (string, error) {
-	path := filepath.Join(ConfigDir(), fileName)
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return "", fmt.Errorf("resolving absolute config path for %s: %w", fileName, err)
-	}
-	return absPath, nil
-}
-
 // ConfigDir returns the clawker config directory.
 // Resolution: CLAWKER_CONFIG_DIR > XDG_CONFIG_HOME/clawker > ~/.config/clawker
 func ConfigDir() string {

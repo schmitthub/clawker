@@ -14,6 +14,7 @@ import (
 
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
+	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -22,6 +23,7 @@ const (
 	defaultPollInterval        = 30 * time.Second
 	defaultGracePeriod         = 60 * time.Second
 	maxHealthCheckFailures     = 3
+	maxHealthRestartAttempts   = 3
 	missedCheckThreshold       = 2 // exit after this many consecutive "no containers" polls
 )
 
@@ -145,7 +147,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
-	// Healthcheck loop — 5s interval, exits after 3 consecutive failures.
+	// Healthcheck loop — 5s interval, attempts stack restart on failures.
+	// Exits only after maxHealthRestartAttempts consecutive restart failures.
 	healthDone := make(chan struct{})
 	go func() {
 		defer close(healthDone)
@@ -160,18 +163,29 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}()
 
 	// Block until any exit condition.
+	noAgentContainers := false
 	select {
 	case sig := <-sigCh:
 		d.log.Debug().Str("signal", sig.String()).Msg("received signal, shutting down firewall")
 	case <-healthDone:
-		d.log.Error().Msg("firewall healthcheck failed, shutting down")
+		d.log.Error().Msg("firewall stack restart attempts exhausted, shutting down")
 	case <-watcherDone:
 		d.log.Debug().Msg("no clawker containers running, shutting down firewall")
+		noAgentContainers = true
 	case <-ctx.Done():
 		d.log.Debug().Msg("context cancelled, shutting down firewall")
 	}
 
 	runCancel()
+
+	// Only clean up BPF link pins when no agent containers remain. In all
+	// other shutdown paths (signal, health failure, context cancel), agent
+	// containers may still be running — their eBPF enforcement must survive
+	// the daemon exit so the next daemon startup picks up where we left off.
+	if noAgentContainers {
+		d.log.Debug().Msg("cleaning up BPF link pins (no agent containers)")
+		cleanupBPFLinks(d.log)
+	}
 
 	// Stop firewall containers.
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -193,14 +207,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 // via published localhost ports on a fixed interval. The CP healthz is plain HTTP
 // on a dedicated port — it carries no credentials and reports aggregate health
 // of all internal services (Hydra, Kratos, Oathkeeper, eBPF, gRPC).
+//
+// On maxHealthCheckFailures consecutive probe failures, the loop attempts to
+// restart the stack via EnsureRunning (up to maxHealthRestartAttempts times).
+// Only exits if all restart attempts are exhausted.
 func (d *Daemon) healthCheckLoop(ctx context.Context) {
 	ticker := time.NewTicker(d.healthCheckInterval)
 	defer ticker.Stop()
 
 	consecutiveFailures := 0
-	envoyAddr := fmt.Sprintf("localhost:%d", d.cfg.EnvoyHealthHostPort())
-	corednsURL := fmt.Sprintf("http://localhost:%d%s", d.cfg.CoreDNSHealthHostPort(), d.cfg.CoreDNSHealthPath())
-	cpHealthURL := fmt.Sprintf("http://localhost:%d/healthz", d.cfg.Settings().ControlPlane.HealthPort)
+	restartAttempts := 0
+	envoyAddr := fmt.Sprintf("127.0.0.1:%d", d.cfg.EnvoyHealthHostPort())
+	corednsURL := fmt.Sprintf("http://127.0.0.1:%d%s", d.cfg.CoreDNSHealthHostPort(), d.cfg.CoreDNSHealthPath())
+	cpHealthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", d.cfg.Settings().ControlPlane.HealthPort)
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
 	for {
@@ -214,6 +233,7 @@ func (d *Daemon) healthCheckLoop(ctx context.Context) {
 					d.log.Debug().Msg("firewall healthcheck recovered")
 				}
 				consecutiveFailures = 0
+				restartAttempts = 0
 				continue
 			}
 
@@ -223,10 +243,40 @@ func (d *Daemon) healthCheckLoop(ctx context.Context) {
 				Int("max_failures", maxHealthCheckFailures).
 				Msg("firewall healthcheck failed")
 
-			if consecutiveFailures >= maxHealthCheckFailures {
-				d.log.Error().Msg("firewall healthcheck exceeded max failures, daemon exiting")
+			if consecutiveFailures < maxHealthCheckFailures {
+				continue
+			}
+
+			// Threshold reached — attempt to restart the stack.
+			restartAttempts++
+			if restartAttempts > maxHealthRestartAttempts {
+				d.log.Error().
+					Int("restart_attempts", restartAttempts-1).
+					Msg("firewall stack restart attempts exhausted, daemon exiting")
 				return
 			}
+
+			d.log.Warn().
+				Int("attempt", restartAttempts).
+				Int("max_attempts", maxHealthRestartAttempts).
+				Msg("firewall stack unhealthy, attempting restart")
+
+			restartCtx, restartCancel := context.WithTimeout(ctx, 60*time.Second)
+			if err := d.manager.EnsureRunning(restartCtx); err != nil {
+				d.log.Error().Err(err).
+					Int("attempt", restartAttempts).
+					Msg("firewall stack restart failed")
+				restartCancel()
+				consecutiveFailures = 0 // reset so we get a fresh probe window
+				continue
+			}
+			restartCancel()
+
+			d.log.Info().
+				Int("attempt", restartAttempts).
+				Msg("firewall stack restarted successfully")
+			consecutiveFailures = 0
+			restartAttempts = 0
 		}
 	}
 }
@@ -442,7 +492,7 @@ func ensureDaemonWith(cfg config.Config, log *logger.Logger, deps daemonDeps) er
 // EnsureDaemon to decide whether a running daemon needs a restart.
 func isStackHealthy(cfg config.Config) bool {
 	// Envoy: TCP connect to health listener.
-	envoyAddr := fmt.Sprintf("localhost:%d", cfg.EnvoyHealthHostPort())
+	envoyAddr := fmt.Sprintf("127.0.0.1:%d", cfg.EnvoyHealthHostPort())
 	conn, err := net.DialTimeout("tcp", envoyAddr, 2*time.Second)
 	if err != nil {
 		return false
@@ -450,7 +500,7 @@ func isStackHealthy(cfg config.Config) bool {
 	conn.Close()
 
 	// CP: plain HTTP /healthz on dedicated port (no credentials, aggregate health only).
-	cpURL := fmt.Sprintf("http://localhost:%d/healthz", cfg.Settings().ControlPlane.HealthPort)
+	cpURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", cfg.Settings().ControlPlane.HealthPort)
 	cpClient := &http.Client{Timeout: 2 * time.Second}
 	resp, err := cpClient.Get(cpURL)
 	if err != nil {
@@ -625,6 +675,15 @@ func StopDaemon(pidFile string) error {
 		return fmt.Errorf("finding process %d: %w", pid, err)
 	}
 	return process.Signal(syscall.SIGTERM)
+}
+
+// cleanupBPFLinks removes all pinned BPF link files. Called only when the
+// daemon shuts down because no agent containers remain — the next container
+// start will get a clean slate. Uses a throwaway ebpf.Manager since it only
+// needs to read the pin directory and remove link_* files.
+func cleanupBPFLinks(log *logger.Logger) {
+	m := clawkerebpf.NewManager(log)
+	m.CleanupAllLinks()
 }
 
 // purposeFilter builds a Docker label filter for managed containers with a

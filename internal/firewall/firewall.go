@@ -60,12 +60,18 @@ type FirewallManager interface {
 	// List returns all currently active egress rules.
 	List(ctx context.Context) ([]config.EgressRule, error)
 
-	// Disable detaches eBPF programs from the container's cgroup, giving unrestricted egress.
+	// Disable sets the eBPF bypass flag for a container, giving unrestricted egress.
+	// The container stays enrolled in container_map — Enable clears the flag.
 	Disable(ctx context.Context, containerID string) error
 
-	// Enable attaches eBPF programs to the container's cgroup, routing traffic
-	// through Envoy (TCP) and CoreDNS (DNS).
+	// Enable clears the eBPF bypass flag, restoring firewall enforcement.
+	// The container must already be enrolled via InstallFirewall.
 	Enable(ctx context.Context, containerID string) error
+
+	// InstallFirewall enrolls a container in the firewall — syncs routes,
+	// adds to container_map, attaches eBPF programs, touches the entrypoint
+	// signal file. Used by container start for initial enrollment.
+	InstallFirewall(ctx context.Context, containerID string) error
 
 	// Bypass sets the eBPF bypass flag with a server-side dead-man timer.
 	// The CP automatically re-enables enforcement after timeout if the CLI

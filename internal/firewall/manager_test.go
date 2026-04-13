@@ -288,9 +288,9 @@ func TestManager_Disable_ResolvesName(t *testing.T) {
 	require.NoError(t, mgr.Disable(t.Context(), friendly))
 
 	// Disable calls gRPC Remove (detach BPF programs).
-	require.Len(t, rec.RemoveCalls, 1)
-	assert.Equal(t, "/sys/fs/cgroup/docker/"+longHexID, rec.RemoveCalls[0].GetCgroupPath())
-	assert.NotContains(t, rec.RemoveCalls[0].GetCgroupPath(), friendly)
+	require.Len(t, rec.DisableCalls, 1)
+	assert.Equal(t, "/sys/fs/cgroup/docker/"+longHexID, rec.DisableCalls[0].GetCgroupPath())
+	assert.NotContains(t, rec.DisableCalls[0].GetCgroupPath(), friendly)
 }
 
 func TestManager_Disable_SystemdDriver(t *testing.T) {
@@ -306,8 +306,8 @@ func TestManager_Disable_SystemdDriver(t *testing.T) {
 
 	require.NoError(t, mgr.Disable(t.Context(), "clawker.myapp.dev"))
 
-	require.Len(t, rec.RemoveCalls, 1)
-	assert.Equal(t, "/sys/fs/cgroup/system.slice/docker-"+longHexID+".scope", rec.RemoveCalls[0].GetCgroupPath())
+	require.Len(t, rec.DisableCalls, 1)
+	assert.Equal(t, "/sys/fs/cgroup/system.slice/docker-"+longHexID+".scope", rec.DisableCalls[0].GetCgroupPath())
 }
 
 func TestManager_Bypass_ResolvesName(t *testing.T) {
@@ -367,13 +367,13 @@ func TestManager_Enable_ResolvesNameAndPropagatesTouchFailure(t *testing.T) {
 		return touchErr
 	}
 
-	err := mgr.Enable(t.Context(), friendly)
+	err := mgr.InstallFirewall(t.Context(), friendly)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, touchErr)
 	assert.Contains(t, err.Error(), "firewall-ready signal")
 
 	// Verify the Install RPC was called with the correct cgroup path.
-	require.NotEmpty(t, rec.InstallCalls, "Enable should call adminClient.Install")
+	require.NotEmpty(t, rec.InstallCalls, "InstallFirewall should call adminClient.Install")
 	lastInstall := rec.InstallCalls[len(rec.InstallCalls)-1]
 	assert.Equal(t, "/sys/fs/cgroup/docker/"+longHexID, lastInstall.GetCgroupPath())
 	assert.NotContains(t, lastInstall.GetCgroupPath(), friendly)
@@ -406,17 +406,17 @@ func TestTouchSignalFile_ErrorSurfacesFromEnable(t *testing.T) {
 	sentinel := errors.New("copy failed")
 	mgr.touchSignalFileFn = func(context.Context, string) error { return sentinel }
 
-	err := mgr.Enable(t.Context(), "clawker.myapp.dev")
+	err := mgr.InstallFirewall(t.Context(), "clawker.myapp.dev")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, sentinel)
 }
 
 // --- C5 / host-proxy resolve failure propagation ----------------------------
 
-func TestEnable_HostProxyResolveFailurePropagates(t *testing.T) {
+func TestInstallFirewall_HostProxyResolveFailurePropagates(t *testing.T) {
 	// Default config has HostProxyEnabled=true. If the CP's ResolveHostname
-	// for host.docker.internal fails, Enable() must return an error instead
-	// of silently disabling host-proxy bypass.
+	// for host.docker.internal fails, InstallFirewall() must return an error
+	// instead of silently disabling host-proxy bypass.
 	mgr, fake, _ := newManagerWithFake(t)
 
 	fake.ContainerInspectFn = func(_ context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
@@ -439,13 +439,13 @@ func TestEnable_HostProxyResolveFailurePropagates(t *testing.T) {
 	resolveErr := errors.New("DNS lookup failed")
 	rec.ResolveErr = resolveErr
 
-	err := mgr.Enable(t.Context(), "clawker.myapp.dev")
+	err := mgr.InstallFirewall(t.Context(), "clawker.myapp.dev")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, resolveErr)
 	assert.Contains(t, err.Error(), "host-proxy bypass")
 }
 
-func TestEnable_HostProxyResolveEmptyAddressPropagates(t *testing.T) {
+func TestInstallFirewall_HostProxyResolveEmptyAddressPropagates(t *testing.T) {
 	// Resolve returns no error but empty addresses — must still error since
 	// an empty host_proxy_ip silently disables the bypass.
 	mgr, fake, _ := newManagerWithFake(t)
@@ -469,7 +469,7 @@ func TestEnable_HostProxyResolveEmptyAddressPropagates(t *testing.T) {
 	rec := withRecordingAdmin(mgr)
 	rec.ResolveResult = &adminv1.ResolveHostnameResponse{Addresses: []string{"   "}}
 
-	err := mgr.Enable(t.Context(), "clawker.myapp.dev")
+	err := mgr.InstallFirewall(t.Context(), "clawker.myapp.dev")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty address")
 }
@@ -530,8 +530,8 @@ func TestCgroupDriverImpl_ReturnsDriverFromInfo(t *testing.T) {
 
 	require.NoError(t, mgr.Disable(t.Context(), "clawker.myapp.dev"))
 
-	require.Len(t, rec.RemoveCalls, 1)
-	assert.Equal(t, "/sys/fs/cgroup/system.slice/docker-"+longHexID+".scope", rec.RemoveCalls[0].GetCgroupPath())
+	require.Len(t, rec.DisableCalls, 1)
+	assert.Equal(t, "/sys/fs/cgroup/system.slice/docker-"+longHexID+".scope", rec.DisableCalls[0].GetCgroupPath())
 }
 
 // --- C2 / isContainerRunning error handling at the interface boundary -------

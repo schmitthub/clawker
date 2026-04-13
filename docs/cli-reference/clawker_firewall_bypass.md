@@ -18,7 +18,7 @@ By default the command blocks with a countdown timer. Press Ctrl+C to
 stop the bypass early (re-enables firewall). Press q/Esc to detach
 (bypass remains active until the server-side timer fires).
 
-Use --non-interactive to block for the duration then re-enable.
+Use --non-interactive to start bypass and return immediately (fire-and-forget).
 Use --stop to cancel an active bypass immediately.
 
 ```
