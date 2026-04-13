@@ -12,7 +12,7 @@ import (
 
 func TestRegistry_Register_And_Get(t *testing.T) {
 	t.Parallel()
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	r.Register("ctr-1", 9090, "v0.1.0")
 
@@ -39,7 +39,7 @@ func TestRegistry_Register_And_Get(t *testing.T) {
 
 func TestRegistry_Get_Snapshot(t *testing.T) {
 	t.Parallel()
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	r.Register("ctr-snap", 8080, "v1")
 	r.AppendInitEvent("ctr-snap", &v1.RunInitResponse{StepName: "step-1"})
@@ -68,7 +68,7 @@ func TestRegistry_Get_Snapshot(t *testing.T) {
 
 func TestRegistry_Get_NotFound(t *testing.T) {
 	t.Parallel()
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	got := r.Get("nonexistent")
 	if got != nil {
@@ -78,7 +78,7 @@ func TestRegistry_Get_NotFound(t *testing.T) {
 
 func TestRegistry_IsRegistered(t *testing.T) {
 	t.Parallel()
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	if r.IsRegistered("ctr-x") {
 		t.Error("expected false before Register")
@@ -93,7 +93,7 @@ func TestRegistry_IsRegistered(t *testing.T) {
 
 func TestRegistry_Register_Overwrites(t *testing.T) {
 	t.Parallel()
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	r.Register("ctr-ow", 1000, "v1")
 	r.Register("ctr-ow", 2000, "v2")
@@ -112,7 +112,7 @@ func TestRegistry_Register_Overwrites(t *testing.T) {
 
 func TestRegistry_SetInitCompleted(t *testing.T) {
 	t.Parallel()
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	r.Register("ctr-c", 5000, "v1")
 	r.SetInitCompleted("ctr-c")
@@ -128,7 +128,7 @@ func TestRegistry_SetInitCompleted(t *testing.T) {
 
 func TestRegistry_SetInitFailed(t *testing.T) {
 	t.Parallel()
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	r.Register("ctr-f", 5000, "v1")
 	r.SetInitFailed("ctr-f")
@@ -144,7 +144,7 @@ func TestRegistry_SetInitFailed(t *testing.T) {
 
 func TestRegistry_SetClientConn(t *testing.T) {
 	t.Parallel()
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	r.Register("ctr-conn", 5000, "v1")
 
@@ -169,7 +169,7 @@ func TestRegistry_SetClientConn(t *testing.T) {
 
 func TestRegistry_AppendInitEvent(t *testing.T) {
 	t.Parallel()
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	r.Register("ctr-ev", 5000, "v1")
 	r.AppendInitEvent("ctr-ev", &v1.RunInitResponse{StepName: "packages"})
@@ -192,7 +192,7 @@ func TestRegistry_AppendInitEvent(t *testing.T) {
 
 func TestRegistry_Close(t *testing.T) {
 	t.Parallel()
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	// Register agents with real (idle) gRPC client connections.
 	conns := make([]*grpc.ClientConn, 3)
@@ -215,7 +215,7 @@ func TestRegistry_Close(t *testing.T) {
 
 func TestRegistry_Concurrent_Access(t *testing.T) {
 	t.Parallel()
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	const goroutines = 20
 	const opsPerGoroutine = 100

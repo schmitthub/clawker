@@ -32,9 +32,15 @@ func validContainerConfig() *adminv1.ContainerConfig {
 	}
 }
 
+// nopResolver is a ContainerResolver that always reports the container as alive
+// with testCgroupPath. Suitable for tests that don't exercise Docker verification.
+func nopResolver(_ context.Context, _ string) (string, bool, error) {
+	return testCgroupPath, true, nil
+}
+
 // newTestHandler creates an AdminHandler backed by the given mock.
 func newTestHandler(mock *ebpfmocks.EBPFManagerMock) *AdminHandler {
-	return NewAdminHandler(mock, logger.Nop())
+	return NewAdminHandler(mock, logger.Nop(), nopResolver)
 }
 
 // noopMock returns a mock with all methods set to no-op success.
@@ -190,7 +196,8 @@ func TestAdminHandler_Enable_Success(t *testing.T) {
 	h := newTestHandler(mock)
 
 	resp, err := h.Enable(context.Background(), &adminv1.EnableRequest{
-		CgroupPath: testCgroupPath,
+		CgroupPath:  testCgroupPath,
+		ContainerId: "ctr-enable-1",
 	})
 	if err != nil {
 		t.Fatalf("Enable returned error: %v", err)
@@ -203,6 +210,16 @@ func TestAdminHandler_Enable_Success(t *testing.T) {
 	}
 }
 
+func TestAdminHandler_Enable_EmptyContainerID(t *testing.T) {
+	mock := noopMock()
+	h := newTestHandler(mock)
+
+	_, err := h.Enable(context.Background(), &adminv1.EnableRequest{
+		CgroupPath: testCgroupPath,
+	})
+	assertCode(t, err, codes.InvalidArgument)
+}
+
 func TestAdminHandler_Enable_CancelsTimer(t *testing.T) {
 	mock := noopMock()
 	h := newTestHandler(mock)
@@ -210,6 +227,7 @@ func TestAdminHandler_Enable_CancelsTimer(t *testing.T) {
 	// Set up a bypass first to create a timer.
 	_, err := h.Bypass(context.Background(), &adminv1.BypassRequest{
 		CgroupPath:     testCgroupPath,
+		ContainerId:    "ctr-cancel-timer",
 		TimeoutSeconds: 3600, // very long so it won't fire during the test
 	})
 	if err != nil {
@@ -226,7 +244,8 @@ func TestAdminHandler_Enable_CancelsTimer(t *testing.T) {
 
 	// Enable should cancel the timer.
 	_, err = h.Enable(context.Background(), &adminv1.EnableRequest{
-		CgroupPath: testCgroupPath,
+		CgroupPath:  testCgroupPath,
+		ContainerId: "ctr-cancel-timer",
 	})
 	if err != nil {
 		t.Fatalf("Enable returned error: %v", err)
@@ -249,7 +268,8 @@ func TestAdminHandler_Enable_EBPFError(t *testing.T) {
 	h := newTestHandler(mock)
 
 	_, err := h.Enable(context.Background(), &adminv1.EnableRequest{
-		CgroupPath: testCgroupPath,
+		CgroupPath:  testCgroupPath,
+		ContainerId: "ctr-enable-err",
 	})
 	assertCode(t, err, codes.Internal)
 }
@@ -263,7 +283,8 @@ func TestAdminHandler_Disable_Success(t *testing.T) {
 	h := newTestHandler(mock)
 
 	resp, err := h.Disable(context.Background(), &adminv1.DisableRequest{
-		CgroupPath: testCgroupPath,
+		CgroupPath:  testCgroupPath,
+		ContainerId: "ctr-disable-1",
 	})
 	if err != nil {
 		t.Fatalf("Disable returned error: %v", err)
@@ -276,6 +297,16 @@ func TestAdminHandler_Disable_Success(t *testing.T) {
 	}
 }
 
+func TestAdminHandler_Disable_EmptyContainerID(t *testing.T) {
+	mock := noopMock()
+	h := newTestHandler(mock)
+
+	_, err := h.Disable(context.Background(), &adminv1.DisableRequest{
+		CgroupPath: testCgroupPath,
+	})
+	assertCode(t, err, codes.InvalidArgument)
+}
+
 func TestAdminHandler_Disable_EBPFError(t *testing.T) {
 	mock := noopMock()
 	mock.DisableFunc = func(_ uint64) error {
@@ -284,7 +315,8 @@ func TestAdminHandler_Disable_EBPFError(t *testing.T) {
 	h := newTestHandler(mock)
 
 	_, err := h.Disable(context.Background(), &adminv1.DisableRequest{
-		CgroupPath: testCgroupPath,
+		CgroupPath:  testCgroupPath,
+		ContainerId: "ctr-disable-err",
 	})
 	assertCode(t, err, codes.Internal)
 }
@@ -299,6 +331,7 @@ func TestAdminHandler_Bypass_Success(t *testing.T) {
 
 	resp, err := h.Bypass(context.Background(), &adminv1.BypassRequest{
 		CgroupPath:     testCgroupPath,
+		ContainerId:    "ctr-bypass-1",
 		TimeoutSeconds: 60,
 	})
 	if err != nil {
@@ -314,8 +347,8 @@ func TestAdminHandler_Bypass_Success(t *testing.T) {
 
 	// Clean up: stop the timer.
 	h.bypassTimersMu.Lock()
-	for _, timer := range h.bypassTimers {
-		timer.Stop()
+	for _, entry := range h.bypassTimers {
+		entry.timer.Stop()
 	}
 	h.bypassTimersMu.Unlock()
 }
@@ -328,6 +361,7 @@ func TestAdminHandler_Bypass_DefaultTimeout(t *testing.T) {
 
 	resp, err := h.Bypass(context.Background(), &adminv1.BypassRequest{
 		CgroupPath:     testCgroupPath,
+		ContainerId:    "ctr-default-timeout",
 		TimeoutSeconds: 0,
 	})
 	if err != nil {
@@ -339,8 +373,8 @@ func TestAdminHandler_Bypass_DefaultTimeout(t *testing.T) {
 
 	// Stop the timer to prevent the auto-enable goroutine from running.
 	h.bypassTimersMu.Lock()
-	for _, timer := range h.bypassTimers {
-		timer.Stop()
+	for _, entry := range h.bypassTimers {
+		entry.timer.Stop()
 	}
 	h.bypassTimersMu.Unlock()
 }
@@ -352,24 +386,22 @@ func TestAdminHandler_Bypass_CancelsPreviousTimer(t *testing.T) {
 	// First bypass.
 	_, err := h.Bypass(context.Background(), &adminv1.BypassRequest{
 		CgroupPath:     testCgroupPath,
+		ContainerId:    "ctr-cancel-test",
 		TimeoutSeconds: 3600,
 	})
 	if err != nil {
 		t.Fatalf("first Bypass returned error: %v", err)
 	}
 
-	// Capture the first timer.
-	cgroupID := uint64(0)
+	// Capture the first entry.
 	h.bypassTimersMu.Lock()
-	for id := range h.bypassTimers {
-		cgroupID = id
-	}
-	firstTimer := h.bypassTimers[cgroupID]
+	firstEntry := h.bypassTimers[testCgroupPath]
 	h.bypassTimersMu.Unlock()
 
-	// Second bypass replaces the timer.
+	// Second bypass replaces the entry.
 	_, err = h.Bypass(context.Background(), &adminv1.BypassRequest{
 		CgroupPath:     testCgroupPath,
+		ContainerId:    "ctr-cancel-test",
 		TimeoutSeconds: 3600,
 	})
 	if err != nil {
@@ -377,12 +409,12 @@ func TestAdminHandler_Bypass_CancelsPreviousTimer(t *testing.T) {
 	}
 
 	h.bypassTimersMu.Lock()
-	secondTimer := h.bypassTimers[cgroupID]
+	secondEntry := h.bypassTimers[testCgroupPath]
 	h.bypassTimersMu.Unlock()
 
-	// The timer object should have been replaced.
-	if firstTimer == secondTimer {
-		t.Error("second bypass should have replaced the timer, but got the same pointer")
+	// The entry should have been replaced.
+	if firstEntry == secondEntry {
+		t.Error("second bypass should have replaced the entry, but got the same pointer")
 	}
 
 	// Disable was called twice (once per Bypass call).
@@ -392,10 +424,33 @@ func TestAdminHandler_Bypass_CancelsPreviousTimer(t *testing.T) {
 
 	// Clean up.
 	h.bypassTimersMu.Lock()
-	for _, timer := range h.bypassTimers {
-		timer.Stop()
+	for _, entry := range h.bypassTimers {
+		entry.timer.Stop()
 	}
 	h.bypassTimersMu.Unlock()
+}
+
+func TestAdminHandler_Bypass_EmptyContainerID(t *testing.T) {
+	mock := noopMock()
+	h := newTestHandler(mock)
+
+	_, err := h.Bypass(context.Background(), &adminv1.BypassRequest{
+		CgroupPath:     testCgroupPath,
+		TimeoutSeconds: 60,
+	})
+	assertCode(t, err, codes.InvalidArgument)
+}
+
+func TestAdminHandler_Bypass_TimeoutExceedsMax(t *testing.T) {
+	mock := noopMock()
+	h := newTestHandler(mock)
+
+	_, err := h.Bypass(context.Background(), &adminv1.BypassRequest{
+		CgroupPath:     testCgroupPath,
+		ContainerId:    "ctr-timeout-max",
+		TimeoutSeconds: 7200, // 2 hours > 1 hour max
+	})
+	assertCode(t, err, codes.InvalidArgument)
 }
 
 func TestAdminHandler_Bypass_EBPFError(t *testing.T) {
@@ -407,6 +462,7 @@ func TestAdminHandler_Bypass_EBPFError(t *testing.T) {
 
 	_, err := h.Bypass(context.Background(), &adminv1.BypassRequest{
 		CgroupPath:     testCgroupPath,
+		ContainerId:    "ctr-bypass-err",
 		TimeoutSeconds: 60,
 	})
 	assertCode(t, err, codes.Internal)
@@ -476,6 +532,7 @@ func TestAdminHandler_Bypass_TimerAutoEnables(t *testing.T) {
 
 	_, err := h.Bypass(context.Background(), &adminv1.BypassRequest{
 		CgroupPath:     testCgroupPath,
+		ContainerId:    "ctr-auto-enable",
 		TimeoutSeconds: 1, // 1 second
 	})
 	if err != nil {
@@ -487,5 +544,191 @@ func TestAdminHandler_Bypass_TimerAutoEnables(t *testing.T) {
 		// Timer fired and called Enable.
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for bypass timer to auto-enable")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// resolveBypassCgroupID tests (#8 — branch coverage)
+// ---------------------------------------------------------------------------
+
+func TestResolveBypassCgroupID_EmptyContainerID_FallsBack(t *testing.T) {
+	mock := noopMock()
+	h := newTestHandler(mock)
+
+	entry := &bypassEntry{
+		containerID: "",
+		cgroupID:    99999,
+	}
+	got := h.resolveBypassCgroupID(entry)
+	if got != 99999 {
+		t.Errorf("expected fallback to stored cgroup ID 99999, got %d", got)
+	}
+}
+
+func TestResolveBypassCgroupID_DockerAPIError_FallsBack(t *testing.T) {
+	mock := noopMock()
+	resolver := func(_ context.Context, _ string) (string, bool, error) {
+		return "", false, errors.New("docker unavailable")
+	}
+	h := NewAdminHandler(mock, logger.Nop(), resolver)
+
+	entry := &bypassEntry{
+		containerID: "ctr-docker-err",
+		cgroupID:    12345,
+	}
+	got := h.resolveBypassCgroupID(entry)
+	if got != 12345 {
+		t.Errorf("expected fallback to stored cgroup ID 12345, got %d", got)
+	}
+}
+
+func TestResolveBypassCgroupID_ContainerGone_FallsBack(t *testing.T) {
+	mock := noopMock()
+	resolver := func(_ context.Context, _ string) (string, bool, error) {
+		return "", false, nil // container not found
+	}
+	h := NewAdminHandler(mock, logger.Nop(), resolver)
+
+	entry := &bypassEntry{
+		containerID: "ctr-gone",
+		cgroupID:    12345,
+	}
+	got := h.resolveBypassCgroupID(entry)
+	if got != 12345 {
+		t.Errorf("expected fallback to stored cgroup ID 12345, got %d", got)
+	}
+}
+
+func TestResolveBypassCgroupID_ContainerAlive_ReturnsFreshID(t *testing.T) {
+	mock := noopMock()
+	// Resolver returns testCgroupPath — CgroupID will stat it for inode.
+	h := newTestHandler(mock) // uses nopResolver → returns testCgroupPath
+
+	expectedID, err := ebpf.CgroupID(testCgroupPath)
+	if err != nil {
+		t.Fatalf("CgroupID(%s) failed: %v", testCgroupPath, err)
+	}
+
+	entry := &bypassEntry{
+		containerID: "ctr-alive",
+		cgroupID:    expectedID, // same as fresh — no drift
+	}
+	got := h.resolveBypassCgroupID(entry)
+	if got != expectedID {
+		t.Errorf("expected fresh cgroup ID %d, got %d", expectedID, got)
+	}
+}
+
+func TestResolveBypassCgroupID_ContainerAlive_DriftDetected(t *testing.T) {
+	mock := noopMock()
+	h := newTestHandler(mock)
+
+	expectedID, err := ebpf.CgroupID(testCgroupPath)
+	if err != nil {
+		t.Fatalf("CgroupID(%s) failed: %v", testCgroupPath, err)
+	}
+
+	entry := &bypassEntry{
+		containerID: "ctr-drift",
+		cgroupID:    expectedID + 1, // stale — differs from fresh
+	}
+	got := h.resolveBypassCgroupID(entry)
+	if got != expectedID {
+		t.Errorf("expected fresh cgroup ID %d (drift from stored %d), got %d", expectedID, entry.cgroupID, got)
+	}
+}
+
+func TestResolveBypassCgroupID_CgroupStatFails_FallsBack(t *testing.T) {
+	mock := noopMock()
+	// Resolver returns a path that doesn't exist under /sys/fs/cgroup.
+	resolver := func(_ context.Context, _ string) (string, bool, error) {
+		return "/sys/fs/cgroup/nonexistent/path", true, nil
+	}
+	h := NewAdminHandler(mock, logger.Nop(), resolver)
+
+	entry := &bypassEntry{
+		containerID: "ctr-stat-fail",
+		cgroupID:    12345,
+	}
+	got := h.resolveBypassCgroupID(entry)
+	if got != 12345 {
+		t.Errorf("expected fallback to stored cgroup ID 12345, got %d", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bypassTimerFired retry tests (#9)
+// ---------------------------------------------------------------------------
+
+func TestBypassTimerFired_AllRetriesExhausted_CleansUpEntry(t *testing.T) {
+	mock := noopMock()
+	mock.EnableFunc = func(_ uint64) error {
+		return errors.New("enable always fails")
+	}
+	h := newTestHandler(mock)
+
+	cgroupPath := testCgroupPath
+	entry := &bypassEntry{
+		containerID: "ctr-retry-exhaust",
+		cgroupID:    12345,
+		timer:       time.NewTimer(time.Hour), // dummy, won't fire
+	}
+	h.bypassTimersMu.Lock()
+	h.bypassTimers[cgroupPath] = entry
+	h.bypassTimersMu.Unlock()
+
+	// Call directly — skips the timer to avoid sleeping for the timeout.
+	// bypassTimerFired sleeps ~3s total (1s + 2s between retries).
+	h.bypassTimerFired(cgroupPath, entry)
+
+	// Entry must be cleaned up even after exhausted retries.
+	h.bypassTimersMu.Lock()
+	_, exists := h.bypassTimers[cgroupPath]
+	h.bypassTimersMu.Unlock()
+	if exists {
+		t.Error("bypass timer entry should be cleaned up after all retries exhausted")
+	}
+
+	// Enable was attempted 3 times.
+	if len(mock.EnableCalls()) != 3 {
+		t.Errorf("Enable called %d times, want 3", len(mock.EnableCalls()))
+	}
+}
+
+func TestBypassTimerFired_SucceedsOnRetry_CleansUpEntry(t *testing.T) {
+	var calls int
+	mock := noopMock()
+	mock.EnableFunc = func(_ uint64) error {
+		calls++
+		if calls == 1 {
+			return errors.New("transient failure")
+		}
+		return nil // succeed on second attempt
+	}
+	h := newTestHandler(mock)
+
+	cgroupPath := testCgroupPath
+	entry := &bypassEntry{
+		containerID: "ctr-retry-succeed",
+		cgroupID:    12345,
+		timer:       time.NewTimer(time.Hour),
+	}
+	h.bypassTimersMu.Lock()
+	h.bypassTimers[cgroupPath] = entry
+	h.bypassTimersMu.Unlock()
+
+	h.bypassTimerFired(cgroupPath, entry)
+
+	// Entry must be cleaned up after successful retry.
+	h.bypassTimersMu.Lock()
+	_, exists := h.bypassTimers[cgroupPath]
+	h.bypassTimersMu.Unlock()
+	if exists {
+		t.Error("bypass timer entry should be cleaned up after successful retry")
+	}
+
+	// Enable called twice: first fails, second succeeds.
+	if calls != 2 {
+		t.Errorf("Enable called %d times, want 2", calls)
 	}
 }

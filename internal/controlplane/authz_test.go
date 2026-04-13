@@ -35,7 +35,7 @@ func newTestServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfMgr
 		grpc.ChainStreamInterceptor(interceptor.StreamInterceptor()),
 	)
 
-	handler := controlplane.NewAdminHandler(ebpfMgr, log)
+	handler := controlplane.NewAdminHandler(ebpfMgr, log, nopContainerResolver)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis := bufconnListen(t)
@@ -167,7 +167,7 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
 	)
-	handler := controlplane.NewAdminHandler(noopEBPF(), log)
+	handler := controlplane.NewAdminHandler(noopEBPF(), log, nopContainerResolver)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis := bufconnListen(t)

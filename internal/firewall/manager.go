@@ -561,7 +561,7 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 	if err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
-	if _, err := cpClient.Disable(ctx, &adminv1.DisableRequest{CgroupPath: cgroupPath}); err != nil {
+	if _, err := cpClient.Disable(ctx, &adminv1.DisableRequest{CgroupPath: cgroupPath, ContainerId: containerID}); err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
 
@@ -586,7 +586,7 @@ func (m *Manager) Enable(ctx context.Context, containerID string) error {
 	if err != nil {
 		return fmt.Errorf("firewall enable: %w", err)
 	}
-	if _, err := cpClient.Enable(ctx, &adminv1.EnableRequest{CgroupPath: cgroupPath}); err != nil {
+	if _, err := cpClient.Enable(ctx, &adminv1.EnableRequest{CgroupPath: cgroupPath, ContainerId: containerID}); err != nil {
 		return fmt.Errorf("firewall enable: %w", err)
 	}
 
@@ -760,6 +760,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 	if _, err := cpClient.Bypass(ctx, &adminv1.BypassRequest{
 		CgroupPath:     cgroupPath,
 		TimeoutSeconds: timeoutSecs,
+		ContainerId:    containerID,
 	}); err != nil {
 		return fmt.Errorf("firewall bypass: %w", err)
 	}

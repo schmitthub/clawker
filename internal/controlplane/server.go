@@ -101,7 +101,7 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	s := &Server{
 		config:   cfg,
-		registry: NewRegistry(),
+		registry: NewRegistry(log),
 		grpc:     grpc.NewServer(cfg.ServerOptions...),
 		log:      log,
 	}

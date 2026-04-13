@@ -63,7 +63,7 @@ func startMTLSServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfM
 		grpc.ChainStreamInterceptor(interceptor.StreamInterceptor()),
 	)
 
-	handler := controlplane.NewAdminHandler(ebpfMgr, log)
+	handler := controlplane.NewAdminHandler(ebpfMgr, log, nopContainerResolver)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")

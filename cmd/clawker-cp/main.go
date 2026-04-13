@@ -15,6 +15,7 @@
 //  4. Read CLI JWK from bind-mounted file
 //  5. Register CLI client via Hydra admin API
 //  6. Start Oathkeeper HTTP proxy subprocess (for future webui)
+//     6b. Initialize Docker client (container state verification)
 //  7. Load eBPF programs
 //  8. Start gRPC admin API with Hydra token introspection
 //  9. Report healthy on /healthz
@@ -36,6 +37,8 @@ import (
 	"syscall"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
+	mobyclient "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
@@ -191,6 +194,43 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		return fmt.Errorf("step 6 (oathkeeper): %w", err)
 	}
 
+	// --- Step 6b: Docker client ---
+	// The CP needs Docker API access for container state verification
+	// (bypass dead-man timer) and future agent lifecycle operations.
+	dockerCli, err := mobyclient.New(mobyclient.FromEnv)
+	if err != nil {
+		return fmt.Errorf("step 6b (docker client): %w", err)
+	}
+	defer dockerCli.Close()
+
+	// Query cgroup driver once at startup — used to compute container cgroup
+	// paths matching internal/firewall/manager.go ebpfCgroupPath().
+	dockerInfo, err := dockerCli.Info(ctx, mobyclient.InfoOptions{})
+	if err != nil {
+		return fmt.Errorf("step 6b (docker info): %w", err)
+	}
+	cgroupDriver := dockerInfo.Info.CgroupDriver
+	log.Info().Str("cgroup_driver", cgroupDriver).Msg("Docker cgroup driver detected")
+
+	containerResolver := func(ctx context.Context, containerID string) (string, bool, error) {
+		_, err := dockerCli.ContainerInspect(ctx, containerID, mobyclient.ContainerInspectOptions{})
+		if err != nil {
+			if cerrdefs.IsNotFound(err) {
+				return "", false, nil
+			}
+			return "", false, err
+		}
+		// Compute actual cgroup path from container ID + cgroup driver,
+		// matching internal/firewall/manager.go ebpfCgroupPath().
+		var cgroupPath string
+		if cgroupDriver == "systemd" {
+			cgroupPath = "/sys/fs/cgroup/system.slice/docker-" + containerID + ".scope"
+		} else {
+			cgroupPath = "/sys/fs/cgroup/docker/" + containerID
+		}
+		return cgroupPath, true, nil
+	}
+
 	// --- Step 7: Load eBPF programs ---
 	ebpfMgr := ebpf.NewManager(log)
 	if err := ebpfMgr.Load(); err != nil {
@@ -231,7 +271,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		grpc.ChainStreamInterceptor(authInterceptor.StreamInterceptor()),
 	)
 
-	handler := controlplane.NewAdminHandler(ebpfMgr, log)
+	handler := controlplane.NewAdminHandler(ebpfMgr, log, containerResolver)
 	adminv1.RegisterAdminServiceServer(grpcServer, handler)
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))

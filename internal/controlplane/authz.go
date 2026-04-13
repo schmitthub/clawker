@@ -48,7 +48,19 @@ type HydraIntrospector struct {
 // against the given Hydra admin introspection URL. The optional TLS
 // config is used when Hydra serves HTTPS (self-signed cert).
 func NewHydraIntrospector(introspectURL string, tlsCfg *tls.Config) *HydraIntrospector {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	var transport *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = dt.Clone()
+	} else {
+		transport = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			ForceAttemptHTTP2:     true,
+		}
+	}
 	if tlsCfg != nil {
 		transport.TLSClientConfig = tlsCfg
 		transport.ForceAttemptHTTP2 = true

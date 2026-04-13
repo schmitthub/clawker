@@ -202,6 +202,29 @@ func TestINV_B1_020_ConfigDirMounted(t *testing.T) {
 	assert.True(t, found, "config dir must be bind-mounted into the CP container")
 }
 
+// Tests that Docker socket is bind-mounted read-only for container state verification.
+func TestCPContainerConfig_DockerSocketMounted(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg)
+	require.NoError(t, err)
+
+	found := false
+	for _, m := range cpConfig.Mounts {
+		if m.Target == "/var/run/docker.sock" {
+			found = true
+			assert.Equal(t, "/var/run/docker.sock", m.Source,
+				"Docker socket source must be /var/run/docker.sock")
+			assert.True(t, m.ReadOnly,
+				"Docker socket must be mounted read-only")
+			break
+		}
+	}
+	assert.True(t, found,
+		"Docker socket must be bind-mounted into the CP container")
+}
+
 // Tests INV-B1-020 [unit]: CLAWKER_CONFIG_DIR env var is set.
 func TestINV_B1_020_ConfigDirEnvVar(t *testing.T) {
 	testenv.New(t)

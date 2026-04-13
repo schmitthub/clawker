@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	v1 "github.com/schmitthub/clawker/internal/clawkerd/protocol/v1"
+	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
 )
 
@@ -32,19 +33,30 @@ type AgentConnection struct {
 type Registry struct {
 	mu     sync.RWMutex
 	agents map[string]*AgentConnection
+	log    *logger.Logger
 }
 
 // NewRegistry creates an empty agent registry.
-func NewRegistry() *Registry {
+func NewRegistry(log *logger.Logger) *Registry {
+	if log == nil {
+		log = logger.Nop()
+	}
 	return &Registry{
 		agents: make(map[string]*AgentConnection),
+		log:    log,
 	}
 }
 
-// Register adds or updates an agent entry.
+// Register adds or updates an agent entry. If an existing entry has an
+// open ClientConn, it is closed before replacement to prevent gRPC leaks.
 func (r *Registry) Register(containerID string, listenPort uint32, version string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if existing, ok := r.agents[containerID]; ok && existing.ClientConn != nil {
+		if err := existing.ClientConn.Close(); err != nil {
+			r.log.Warn().Err(err).Str("container_id", containerID).Msg("registry: failed to close replaced ClientConn")
+		}
+	}
 	r.agents[containerID] = &AgentConnection{
 		ContainerID: containerID,
 		ListenPort:  listenPort,
@@ -76,10 +88,16 @@ func (r *Registry) IsRegistered(containerID string) bool {
 }
 
 // SetClientConn stores the gRPC client connection for an agent.
+// Closes any previously stored connection to prevent gRPC leaks.
 func (r *Registry) SetClientConn(containerID string, conn *grpc.ClientConn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if agent, ok := r.agents[containerID]; ok {
+		if agent.ClientConn != nil && agent.ClientConn != conn {
+			if err := agent.ClientConn.Close(); err != nil {
+				r.log.Warn().Err(err).Str("container_id", containerID).Msg("registry: failed to close replaced ClientConn")
+			}
+		}
 		agent.ClientConn = conn
 	}
 }
@@ -115,9 +133,11 @@ func (r *Registry) SetInitFailed(containerID string) {
 func (r *Registry) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, agent := range r.agents {
+	for id, agent := range r.agents {
 		if agent.ClientConn != nil {
-			agent.ClientConn.Close()
+			if err := agent.ClientConn.Close(); err != nil {
+				r.log.Warn().Err(err).Str("container_id", id).Msg("registry: failed to close ClientConn on shutdown")
+			}
 		}
 	}
 }

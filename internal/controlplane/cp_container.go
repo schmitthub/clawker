@@ -3,6 +3,7 @@ package controlplane
 import (
 	"fmt"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -17,6 +18,9 @@ const (
 	// cpLogsContainerPath is the container-side directory for CP logs.
 	// Bind-mounted from the host's state/logs directory.
 	cpLogsContainerPath = "/var/log/clawker"
+
+	// dockerSockPath is the host-side Docker socket path.
+	dockerSockPath = "/var/run/docker.sock"
 )
 
 // CPContainerConfig holds the configuration for creating the control plane
@@ -53,6 +57,7 @@ var localhost = netip.MustParseAddr("127.0.0.1")
 //   - CLI signing JWK (public key) → for Hydra client registration (read-only)
 //   - Server TLS cert + key → for gRPC TLS (read-only)
 //   - /sys/fs/cgroup, /sys/fs/bpf → for eBPF programs
+//   - /var/run/docker.sock (read-only) → Docker API access for container state verification
 //
 // The CLI's private signing key NEVER enters the container.
 func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
@@ -99,6 +104,11 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 	serverKeyPath, err := consts.AuthServerKeyPath()
 	if err != nil {
 		return nil, fmt.Errorf("resolve server key path: %w", err)
+	}
+
+	// Verify Docker socket exists before adding it as a mount.
+	if _, err := os.Stat(dockerSockPath); err != nil {
+		return nil, fmt.Errorf("Docker socket not found at %s: %w (required for container state verification)", dockerSockPath, err)
 	}
 
 	// Config dir — CP loads config.NewConfig() from this mount.
@@ -160,6 +170,14 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 			Type:   mount.TypeBind,
 			Source: "/sys/fs/bpf",
 			Target: "/sys/fs/bpf",
+		},
+		// Docker socket — CP needs Docker API access to verify container
+		// existence (bypass timer dead-man switch, future lifecycle ops).
+		{
+			Type:     mount.TypeBind,
+			Source:   dockerSockPath,
+			Target:   "/var/run/docker.sock",
+			ReadOnly: true,
 		},
 	}
 

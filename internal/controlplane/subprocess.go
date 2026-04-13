@@ -103,7 +103,19 @@ func (m *SubprocessManager) WaitHealthy(ctx context.Context, name string, check 
 	ctx, cancel := context.WithTimeout(ctx, check.Timeout)
 	defer cancel()
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	var transport *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = dt.Clone()
+	} else {
+		transport = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			ForceAttemptHTTP2:     true,
+		}
+	}
 	if check.TLS != nil {
 		transport.TLSClientConfig = check.TLS
 		transport.ForceAttemptHTTP2 = true
