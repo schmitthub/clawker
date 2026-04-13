@@ -40,15 +40,16 @@ func NewCmdBypass(f *cmdutil.Factory, runF func(context.Context, *BypassOptions)
 		Short: "Temporarily bypass firewall for a container",
 		Long: `Grant a container unrestricted egress for a specified duration.
 
-Sets an eBPF bypass flag for the container and schedules automatic
-re-enable after the timeout. The timer runs in the eBPF manager container.
+Sets an eBPF bypass flag for the container and starts a server-side
+dead-man timer that automatically re-enables enforcement. The timer
+runs in the clawker-controlplane control plane and survives CLI exit.
 
 By default the command blocks with a countdown timer. Press Ctrl+C to
 stop the bypass early (re-enables firewall). Press q/Esc to detach
-(leave timer running in background).
+(bypass remains active until the server-side timer fires).
 
-Use --non-interactive to start the bypass in the background. In this
-mode, use --stop to cancel early (re-enables firewall immediately).`,
+Use --non-interactive to start bypass and return immediately (fire-and-forget).
+Use --stop to cancel an active bypass immediately.`,
 		Example: `  # Bypass firewall for 5 minutes (blocks with countdown)
   clawker firewall bypass 5m --agent dev
 
@@ -129,16 +130,18 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 		return nil
 	}
 
-	// Start bypass: disable firewall + schedule re-enable after timeout.
+	// Start bypass: set the bypass flag + server-side dead-man timer via CP gRPC.
 	if err := fwMgr.Bypass(ctx, containerName, opts.Duration); err != nil {
 		return fmt.Errorf("starting bypass for %s: %w", opts.Agent, err)
 	}
 
-	// Non-interactive: fire-and-forget.
+	// Non-interactive: fire-and-forget. The server-side dead-man timer in
+	// the CP handles re-enabling enforcement when the timeout expires.
+	// The CLI returns immediately so callers aren't blocked.
 	if opts.NonInteractive {
 		fmt.Fprintf(ios.Out, "%s Bypass active for agent %s (expires in %s)\n",
 			cs.SuccessIcon(), opts.Agent, opts.Duration)
-		fmt.Fprintf(ios.ErrOut, "%s Use --stop to cancel: clawker firewall bypass --stop --agent %s\n",
+		fmt.Fprintf(ios.ErrOut, "%s Stop early: clawker firewall bypass --stop --agent %s\n",
 			cs.WarningIcon(), opts.Agent)
 		return nil
 	}
@@ -176,8 +179,14 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 
 	if result.Interrupted {
 		// Ctrl+C: re-enable firewall immediately.
+		// The parent ctx is already cancelled by signal.NotifyContext (SIGINT),
+		// so we derive from context.Background() — this is deferred cleanup that
+		// must complete. The timeout bounds the call so the CLI doesn't hang if
+		// the CP is unresponsive.
+		enableCtx, enableCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer enableCancel()
 		fmt.Fprintf(ios.Out, "%s Stopping bypass for agent %s...\n", cs.WarningIcon(), opts.Agent)
-		if err := fwMgr.Enable(context.Background(), containerName); err != nil {
+		if err := fwMgr.Enable(enableCtx, containerName); err != nil {
 			return fmt.Errorf("stopping bypass for %s: %w", opts.Agent, err)
 		}
 		fmt.Fprintf(ios.Out, "%s Bypass stopped for agent %s\n", cs.SuccessIcon(), opts.Agent)
@@ -185,15 +194,21 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 	}
 
 	if result.Detached {
-		// q/Esc: detach, leave timer running in container.
-		fmt.Fprintf(ios.Out, "%s Detached — bypass continues in background for agent %s\n",
+		// q/Esc: detach, leave bypass active. User must --stop manually.
+		fmt.Fprintf(ios.Out, "%s Detached — bypass remains active for agent %s\n",
 			cs.InfoIcon(), opts.Agent)
-		fmt.Fprintf(ios.ErrOut, "%s Use --stop to cancel: clawker firewall bypass --stop --agent %s\n",
+		fmt.Fprintf(ios.ErrOut, "%s Use --stop to re-enable: clawker firewall bypass --stop --agent %s\n",
 			cs.WarningIcon(), opts.Agent)
 		return nil
 	}
 
-	// Timer expired.
+	// Timer expired — re-enable firewall.
+	// Use a bounded context so the CLI doesn't hang if the CP is unresponsive.
+	expireCtx, expireCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer expireCancel()
+	if err := fwMgr.Enable(expireCtx, containerName); err != nil {
+		return fmt.Errorf("re-enabling firewall for %s after bypass: %w", opts.Agent, err)
+	}
 	fmt.Fprintf(ios.Out, "%s Bypass expired for agent %s\n", cs.SuccessIcon(), opts.Agent)
 	return nil
 }

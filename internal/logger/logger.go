@@ -3,6 +3,7 @@ package logger
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -79,6 +80,24 @@ func (o *Options) maxBackups() int {
 // Nop returns a logger that discards all output.
 func Nop() *Logger {
 	return &Logger{zl: zerolog.Nop()}
+}
+
+// NewWriter creates a logger that writes structured JSON to the given
+// io.Writer. No file rotation, no OTEL bridge — this is the constructor
+// for containerized daemons (clawker-cp, clawkerd) that want their
+// structured logs captured by the container runtime's stdout/stderr
+// collection so `docker logs <container>` shows them.
+//
+// Use logger.New when you want file-based logging with rotation (that's
+// the CLI/host-side path). Use NewWriter inside containers where the
+// container runtime owns log lifecycle.
+func NewWriter(w io.Writer) *Logger {
+	zl := zerolog.New(w).
+		Level(zerolog.DebugLevel).
+		With().
+		Timestamp().
+		Logger()
+	return &Logger{zl: zl}
 }
 
 // New creates a logger with file output and optional OTEL bridge.

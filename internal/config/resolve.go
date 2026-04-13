@@ -2,61 +2,21 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"runtime"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
-// ConfigDir returns the clawker config directory.
-func ConfigDir() string {
-	if a := os.Getenv(clawkerConfigDirEnv); a != "" {
-		return a
-	}
-	if b := os.Getenv(xdgConfigHome); b != "" {
-		return filepath.Join(b, "clawker")
-	}
-	if runtime.GOOS == "windows" {
-		if c := os.Getenv(appData); c != "" {
-			return filepath.Join(c, "clawker")
-		}
-	}
-	d, _ := os.UserHomeDir()
-	return filepath.Join(d, ".config", "clawker")
-}
+// ConfigDir delegates to consts.ConfigDir. Kept for backward compatibility —
+// new callers should import internal/consts directly.
+func ConfigDir() string { return consts.ConfigDir() }
 
-func DataDir() string {
-	if a := os.Getenv(clawkerDataDirEnv); a != "" {
-		return a
-	}
-	if b := os.Getenv(xdgDataHome); b != "" {
-		return filepath.Join(b, "clawker")
-	}
-	if runtime.GOOS == "windows" {
-		if c := os.Getenv(localAppData); c != "" {
-			return filepath.Join(c, "clawker")
-		}
-	}
-	d, _ := os.UserHomeDir()
-	return filepath.Join(d, ".local", "share", "clawker")
-}
+// DataDir delegates to consts.DataDir.
+func DataDir() string { return consts.DataDir() }
 
-func StateDir() string {
-	if a := os.Getenv(clawkerStateDirEnv); a != "" {
-		return a
-	}
-	if b := os.Getenv(xdgStateHome); b != "" {
-		return filepath.Join(b, "clawker")
-	}
-	if runtime.GOOS == "windows" {
-		if c := os.Getenv(appData); c != "" {
-			return filepath.Join(c, "clawker", "state")
-		}
-	}
-	d, _ := os.UserHomeDir()
-	return filepath.Join(d, ".local", "state", "clawker")
-}
+// StateDir delegates to consts.StateDir.
+func StateDir() string { return consts.StateDir() }
 
 func (c *configImpl) GetProjectRoot() (string, error) {
 	root, err := storage.ResolveProjectRoot()
@@ -71,5 +31,5 @@ func (c *configImpl) GetProjectIgnoreFile() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, clawkerIgnoreFileName), nil
+	return filepath.Join(root, consts.IgnoreFile), nil
 }

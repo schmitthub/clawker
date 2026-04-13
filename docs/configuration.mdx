@@ -498,6 +498,25 @@ host_proxy:
 firewall:
   # Master switch for the Envoy firewall; when off, containers have unrestricted network access
   enable: <boolean>  # default: true | required: true
+control_plane:
+  # gRPC admin API port (CLI ↔ CP)
+  admin_port: <integer>  # default: 7443 | required: false
+  # Plain HTTP /healthz readiness endpoint
+  health_port: <integer>  # default: 7080 | required: false
+  # Hydra OAuth2 token endpoint (HTTPS)
+  hydra_public_port: <integer>  # default: 4444 | required: false
+  # Hydra admin API for introspection and client registration (HTTPS, container-internal)
+  hydra_admin_port: <integer>  # default: 4445 | required: false
+  # Oathkeeper HTTP auth proxy for future webui (HTTPS)
+  oathkeeper_port: <integer>  # default: 4456 | required: false
+  # Oathkeeper management API (HTTPS, container-internal)
+  oathkeeper_api_port: <integer>  # default: 4457 | required: false
+  # Kratos identity public API (HTTPS, container-internal)
+  kratos_public_port: <integer>  # default: 4433 | required: false
+  # Kratos identity admin API (HTTPS, container-internal)
+  kratos_admin_port: <integer>  # default: 4434 | required: false
+  # Agent reporting API port (future: clawkerd agent checkins)
+  agent_api_port: <integer>  # default: 7444 | required: false
 
 ```
 
@@ -582,6 +601,21 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enable` | boolean | `true` | Master switch for the Envoy firewall; when off, containers have unrestricted network access **(required)** |
+
+
+### control_plane
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `admin_port` | integer | `7443` | gRPC admin API port (CLI ↔ CP) |
+| `health_port` | integer | `7080` | Plain HTTP /healthz readiness endpoint |
+| `hydra_public_port` | integer | `4444` | Hydra OAuth2 token endpoint (HTTPS) |
+| `hydra_admin_port` | integer | `4445` | Hydra admin API for introspection and client registration (HTTPS, container-internal) |
+| `oathkeeper_port` | integer | `4456` | Oathkeeper HTTP auth proxy for future webui (HTTPS) |
+| `oathkeeper_api_port` | integer | `4457` | Oathkeeper management API (HTTPS, container-internal) |
+| `kratos_public_port` | integer | `4433` | Kratos identity public API (HTTPS, container-internal) |
+| `kratos_admin_port` | integer | `4434` | Kratos identity admin API (HTTPS, container-internal) |
+| `agent_api_port` | integer | `7444` | Agent reporting API port (future: clawkerd agent checkins) |
 
 
 You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level project config defaults. This file is merged as the lowest-priority project config layer (just above built-in defaults), so any project-level `.clawker.yaml` overrides it.

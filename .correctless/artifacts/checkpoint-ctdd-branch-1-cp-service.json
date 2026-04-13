@@ -1,0 +1,8 @@
+{
+  "skill": "ctdd",
+  "slug": "branch-1-cp-service",
+  "branch": "feat/control-plane",
+  "completed_phases": ["red", "test-audit", "green"],
+  "current_phase": "simplify",
+  "timestamp": "2026-04-12T08:45:00Z"
+}

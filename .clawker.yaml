@@ -94,6 +94,7 @@ build:
       - go install golang.org/dl/go1.25.9@latest && go1.25.9 download
       - go install github.com/matryer/moq@latest
       - go install github.com/goreleaser/goreleaser/v2@latest
+      - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
       - uv tool install semgrep
   packages:
     - git

@@ -42,6 +42,9 @@ var _ firewall.FirewallManager = &FirewallManagerMock{}
 //			EnvoyIPFunc: func() string {
 //				panic("mock out the EnvoyIP method")
 //			},
+//			InstallFirewallFunc: func(ctx context.Context, containerID string) error {
+//				panic("mock out the InstallFirewall method")
+//			},
 //			IsRunningFunc: func(ctx context.Context) bool {
 //				panic("mock out the IsRunning method")
 //			},
@@ -93,6 +96,9 @@ type FirewallManagerMock struct {
 
 	// EnvoyIPFunc mocks the EnvoyIP method.
 	EnvoyIPFunc func() string
+
+	// InstallFirewallFunc mocks the InstallFirewall method.
+	InstallFirewallFunc func(ctx context.Context, containerID string) error
 
 	// IsRunningFunc mocks the IsRunning method.
 	IsRunningFunc func(ctx context.Context) bool
@@ -161,6 +167,13 @@ type FirewallManagerMock struct {
 		// EnvoyIP holds details about calls to the EnvoyIP method.
 		EnvoyIP []struct {
 		}
+		// InstallFirewall holds details about calls to the InstallFirewall method.
+		InstallFirewall []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// ContainerID is the containerID argument value.
+			ContainerID string
+		}
 		// IsRunning holds details about calls to the IsRunning method.
 		IsRunning []struct {
 			// Ctx is the ctx argument value.
@@ -202,21 +215,22 @@ type FirewallManagerMock struct {
 			Ctx context.Context
 		}
 	}
-	lockAddRules       sync.RWMutex
-	lockBypass         sync.RWMutex
-	lockCoreDNSIP      sync.RWMutex
-	lockDisable        sync.RWMutex
-	lockEnable         sync.RWMutex
-	lockEnsureRunning  sync.RWMutex
-	lockEnvoyIP        sync.RWMutex
-	lockIsRunning      sync.RWMutex
-	lockList           sync.RWMutex
-	lockNetCIDR        sync.RWMutex
-	lockReload         sync.RWMutex
-	lockRemoveRules    sync.RWMutex
-	lockStatus         sync.RWMutex
-	lockStop           sync.RWMutex
-	lockWaitForHealthy sync.RWMutex
+	lockAddRules        sync.RWMutex
+	lockBypass          sync.RWMutex
+	lockCoreDNSIP       sync.RWMutex
+	lockDisable         sync.RWMutex
+	lockEnable          sync.RWMutex
+	lockEnsureRunning   sync.RWMutex
+	lockEnvoyIP         sync.RWMutex
+	lockInstallFirewall sync.RWMutex
+	lockIsRunning       sync.RWMutex
+	lockList            sync.RWMutex
+	lockNetCIDR         sync.RWMutex
+	lockReload          sync.RWMutex
+	lockRemoveRules     sync.RWMutex
+	lockStatus          sync.RWMutex
+	lockStop            sync.RWMutex
+	lockWaitForHealthy  sync.RWMutex
 }
 
 // AddRules calls AddRulesFunc.
@@ -450,6 +464,42 @@ func (mock *FirewallManagerMock) EnvoyIPCalls() []struct {
 	mock.lockEnvoyIP.RLock()
 	calls = mock.calls.EnvoyIP
 	mock.lockEnvoyIP.RUnlock()
+	return calls
+}
+
+// InstallFirewall calls InstallFirewallFunc.
+func (mock *FirewallManagerMock) InstallFirewall(ctx context.Context, containerID string) error {
+	if mock.InstallFirewallFunc == nil {
+		panic("FirewallManagerMock.InstallFirewallFunc: method is nil but FirewallManager.InstallFirewall was just called")
+	}
+	callInfo := struct {
+		Ctx         context.Context
+		ContainerID string
+	}{
+		Ctx:         ctx,
+		ContainerID: containerID,
+	}
+	mock.lockInstallFirewall.Lock()
+	mock.calls.InstallFirewall = append(mock.calls.InstallFirewall, callInfo)
+	mock.lockInstallFirewall.Unlock()
+	return mock.InstallFirewallFunc(ctx, containerID)
+}
+
+// InstallFirewallCalls gets all the calls that were made to InstallFirewall.
+// Check the length with:
+//
+//	len(mockedFirewallManager.InstallFirewallCalls())
+func (mock *FirewallManagerMock) InstallFirewallCalls() []struct {
+	Ctx         context.Context
+	ContainerID string
+} {
+	var calls []struct {
+		Ctx         context.Context
+		ContainerID string
+	}
+	mock.lockInstallFirewall.RLock()
+	calls = mock.calls.InstallFirewall
+	mock.lockInstallFirewall.RUnlock()
 	return calls
 }
 

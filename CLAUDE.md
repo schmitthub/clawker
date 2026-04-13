@@ -65,7 +65,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── build/                 # Build-time metadata (version, date) — leaf, stdlib only
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
 │   ├── clawker/               # Main application lifecycle
-│   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, version/, loop/, worktree/, firewall/, root/)
+│   ├── cmd/                   # Cobra commands (auth/, container/, volume/, network/, image/, version/, loop/, worktree/, firewall/, root/)
 │   │   ├── factory/           # Factory constructor — wires real dependencies
 │   │   ├── settings/          # Settings parent command + edit subcommand
 │   │   ├── skill/             # Skill plugin management (install/show/remove) — wraps claude CLI
@@ -167,7 +167,7 @@ See `docs/cli-reference/` for the complete auto-generated command reference (reg
 
 **Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `generate`, `loop iterate/tasks/status/reset`, `version`
 
-**Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`, `project edit`), `worktree *`, `firewall *` (status/list/add/remove/reload/up/down/enable/disable/bypass/rotate-ca), `settings *` (`settings edit`), `skill *` (install/show/remove)
+**Management commands**: `auth *` (rotate), `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`, `project edit`), `worktree *`, `firewall *` (status/list/add/remove/reload/up/down/enable/disable/bypass/rotate-ca), `settings *` (`settings edit`), `skill *` (install/show/remove)
 
 Commands use positional arguments for resource names (e.g., `clawker container stop clawker.myapp.dev`) matching Docker's interface.
 
@@ -273,7 +273,7 @@ All external dependencies must be pinned to exact versions with integrity verifi
 | Go tool installs (`go install`) | SHA commit hash or exact version | `go install tool@v2.0.1` or `tool@sha...` |
 | Container images in code | SHA256 digest in constants | `DefaultGoBuilderImage = "golang:1.24.1@sha256:..."` |
 | npm/pip installs in Dockerfiles | Exact version | `npm install -g @anthropic-ai/claude-code@${VERSION}` |
-| Firewall stack binaries (ebpf-manager, coredns-clawker) | Single pinned multi-stage `Dockerfile.firewall` — base image digest + apt package versions + Go toolchain digest + `bpf2go` version | `make ebpf-binary` / `make coredns-binary` invoke `docker buildx build` against the pinned recipe; no generated artifacts committed. See `internal/ebpf/REPRODUCIBILITY.md` |
+| Firewall stack binaries (ebpf-manager, coredns-clawker) | Single pinned multi-stage `Dockerfile.controlplane` — base image digest + apt package versions + Go toolchain digest + `bpf2go` version | `make ebpf-binary` / `make coredns-binary` invoke `docker buildx build` against the pinned recipe; no generated artifacts committed. See `internal/ebpf/REPRODUCIBILITY.md` |
 
 **Why:** Version tags are mutable — a compromised upstream can re-tag a release. SHA pins are immutable and verifiable. This is defense-in-depth against supply chain attacks (see `docs/threat-model.mdx`).
 
@@ -336,3 +336,13 @@ User-facing docs are powered by [Mintlify](https://mintlify.com/) and live in th
 * `bash scripts/check-claude-freshness.sh` — Check if CLAUDE.md files are stale vs Go source
 * `/audit-memory` — Comprehensive documentation health audit (in Claude Code)
 * `bash scripts/install-hooks.sh` — Install pre-commit hooks (all CI quality gates)
+
+## Correctless
+
+This project uses Correctless for structured development.
+Read .correctless/AGENT_CONTEXT.md before starting any work.
+Do NOT Read AGENT_CONTEXT.md from the project root — it may be stale or absent.
+Available commands: /csetup, /cspec, /creview, /cmodel, /creview-spec, /ctdd, /cverify, /caudit, /cupdate-arch, /cdocs, /cpostmortem, /cdevadv, /credteam, /crefactor, /cpr-review, /ccontribute, /cmaintain, /cstatus, /csummary, /cmetrics, /cdebug, /chelp, /cwtf, /cquick, /crelease, /cexplain
+
+## Correctless Learnings
+<!-- Auto-updated by Correctless workflow. Do not edit above this line. -->

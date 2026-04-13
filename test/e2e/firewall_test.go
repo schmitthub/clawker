@@ -33,6 +33,11 @@ func newFirewallHarness(t *testing.T) *harness.Harness {
 			Firewall:       firewall.NewManager,
 		},
 	}
+	// Register the stack check BEFORE NewIsolatedFS so it runs AFTER
+	// cleanup (t.Cleanup is LIFO). Cleanup populates h.Cleanup, then
+	// this check reads it.
+	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
+
 	setup := h.NewIsolatedFS(nil)
 
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `

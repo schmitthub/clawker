@@ -13,6 +13,7 @@ import (
 var (
 	ErrEnvoyUnhealthy   = errors.New("envoy not healthy")
 	ErrCoreDNSUnhealthy = errors.New("coredns not healthy")
+	ErrCPUnhealthy      = errors.New("clawker-controlplane not healthy")
 )
 
 // HealthTimeoutError is returned when WaitForHealthy exceeds its deadline.
@@ -59,16 +60,22 @@ type FirewallManager interface {
 	// List returns all currently active egress rules.
 	List(ctx context.Context) ([]config.EgressRule, error)
 
-	// Disable detaches eBPF programs from the container's cgroup, giving unrestricted egress.
+	// Disable sets the eBPF bypass flag for a container, giving unrestricted egress.
+	// The container stays enrolled in container_map — Enable clears the flag.
 	Disable(ctx context.Context, containerID string) error
 
-	// Enable attaches eBPF programs to the container's cgroup, routing traffic
-	// through Envoy (TCP) and CoreDNS (DNS).
+	// Enable clears the eBPF bypass flag, restoring firewall enforcement.
+	// The container must already be enrolled via InstallFirewall.
 	Enable(ctx context.Context, containerID string) error
 
-	// Bypass sets the eBPF bypass flag for unrestricted egress, auto-reverts after timeout.
-	// Returns immediately — timer runs in the eBPF manager container.
-	// To cancel early: call Enable() directly (idempotent, re-attaches programs).
+	// InstallFirewall enrolls a container in the firewall — syncs routes,
+	// adds to container_map, attaches eBPF programs, touches the entrypoint
+	// signal file. Used by container start for initial enrollment.
+	InstallFirewall(ctx context.Context, containerID string) error
+
+	// Bypass sets the eBPF bypass flag with a server-side dead-man timer.
+	// The CP automatically re-enables enforcement after timeout if the CLI
+	// doesn't call Enable first. Acts as a failsafe against CLI crashes.
 	Bypass(ctx context.Context, containerID string, timeout time.Duration) error
 
 	// Status returns a health snapshot of the firewall stack.

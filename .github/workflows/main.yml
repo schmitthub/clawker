@@ -24,6 +24,8 @@ jobs:
       security-events: write
       actions: read
     secrets: inherit
+    with:
+      run_dependency_review: false
 
   lint:
     name: Lint

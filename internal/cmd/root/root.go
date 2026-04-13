@@ -1,6 +1,7 @@
 package root
 
 import (
+	authcmd "github.com/schmitthub/clawker/internal/cmd/auth"
 	bridgecmd "github.com/schmitthub/clawker/internal/cmd/bridge"
 	"github.com/schmitthub/clawker/internal/cmd/container"
 	firewallcmd "github.com/schmitthub/clawker/internal/cmd/firewall"
@@ -69,6 +70,7 @@ Workspace modes:
 	cmd.AddCommand(loop.NewCmdLoop(f))
 
 	// Add management commands
+	cmd.AddCommand(authcmd.NewCmdAuth(f))
 	cmd.AddCommand(container.NewCmdContainer(f))
 	cmd.AddCommand(firewallcmd.NewCmdFirewall(f))
 	cmd.AddCommand(image.NewCmdImage(f))

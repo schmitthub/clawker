@@ -29,6 +29,7 @@ github.com/farsightsec/golang-framestream                                      A
 github.com/flynn/go-shlex                                                      Apache-2.0
 github.com/go-git/go-billy/v6                                                  Apache-2.0
 github.com/go-git/go-git/v6                                                    Apache-2.0
+github.com/go-jose/go-jose/v4                                                  Apache-2.0
 github.com/go-logr/logr                                                        Apache-2.0
 github.com/go-logr/stdr                                                        Apache-2.0
 github.com/golang/groupcache/lru                                               Apache-2.0
@@ -89,6 +90,7 @@ github.com/atotto/clipboard                                                    B
 github.com/cloudflare/circl                                                    BSD-3-Clause
 github.com/cyphar/filepath-securejoin                                          BSD-3-Clause
 github.com/go-git/gcfg/v2                                                      BSD-3-Clause
+github.com/go-jose/go-jose/v4/json                                             BSD-3-Clause
 github.com/gofrs/flock                                                         BSD-3-Clause
 github.com/gogo/protobuf/proto                                                 BSD-3-Clause
 github.com/golang/protobuf/ptypes                                              BSD-3-Clause
