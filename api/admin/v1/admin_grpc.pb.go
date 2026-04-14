@@ -64,8 +64,8 @@ type AdminServiceClient interface {
 	// Bypass sets the bypass flag and starts a server-side dead-man timer
 	// that automatically clears the flag after timeout_seconds. Acts as a
 	// failsafe — if the CLI crashes during a bypass, the CP re-enables
-	// enforcement. The CLI can call Enable early to cancel (the timer
-	// no-ops if the flag is already cleared).
+	// enforcement. The CLI can call Enable early; Enable is idempotent,
+	// so the timer harmlessly re-clears an already-cleared flag.
 	Bypass(ctx context.Context, in *BypassRequest, opts ...grpc.CallOption) (*BypassResponse, error)
 	// ResolveHostname performs a DNS lookup via the container's resolver.
 	// Used to resolve host.docker.internal from inside the CP's network
@@ -187,8 +187,8 @@ type AdminServiceServer interface {
 	// Bypass sets the bypass flag and starts a server-side dead-man timer
 	// that automatically clears the flag after timeout_seconds. Acts as a
 	// failsafe — if the CLI crashes during a bypass, the CP re-enables
-	// enforcement. The CLI can call Enable early to cancel (the timer
-	// no-ops if the flag is already cleared).
+	// enforcement. The CLI can call Enable early; Enable is idempotent,
+	// so the timer harmlessly re-clears an already-cleared flag.
 	Bypass(context.Context, *BypassRequest) (*BypassResponse, error)
 	// ResolveHostname performs a DNS lookup via the container's resolver.
 	// Used to resolve host.docker.internal from inside the CP's network

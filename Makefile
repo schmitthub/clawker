@@ -223,8 +223,8 @@ BUILDX_TARGETARCH := $(shell $(GO) env GOARCH)
 # `buf generate` if either binary is missing, without causing spurious
 # regenerations just because proto-tools is phony.
 BUF_VERSION := v1.47.2
-PROTOC_GEN_GO_VERSION := v1.36.5
-PROTOC_GEN_GO_GRPC_VERSION := v1.5.1
+PROTOC_GEN_GO_VERSION := v1.36.11
+PROTOC_GEN_GO_GRPC_VERSION := v1.6.1
 
 # PROTO_SOURCES and PROTO_GENERATED are defined earlier (with EBPF_BINARY
 # et al.) so any target above this line that references $(PROTO_GENERATED)
