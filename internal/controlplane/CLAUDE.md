@@ -32,10 +32,11 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 | `server.go` | `Server` struct, `ControlPlaneService` interface, `Registry`, `AgentReportingService` handler |
 | `registry.go` | Thread-safe agent registry keyed by container ID |
 | `embed_cp.go` / `embed_ebpf.go` | `//go:embed assets/clawker-cp` + `assets/ebpf-manager` — CP daemon + break-glass eBPF CLI binaries embedded into the clawker release |
-| (moved in B2 Task 1) | `admin_handler.go` → `firewall/handler.go` as `firewall.Handler`; `ebpf/` → `firewall/ebpf/` |
 | `authz.go` | `AuthInterceptor` — validates OAuth2 bearer tokens via Hydra introspection, enforces per-method scopes |
 | `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup; `AdminMethodScopes` — maps gRPC method → required scope |
 | `startup.go` | `CPStartupOrchestrator` — startup sequencing + aggregate `/healthz` endpoint (probes all 7 service ports) |
+| `bootstrap.go` | Host-side `EnsureRunning` + `Stop` — manage the CP container lifecycle via `*docker.Client` |
+| `watcher.go` | `AgentWatcher` — polls Docker for `purpose=agent` containers; invokes drain-to-zero callback past grace/threshold (INV-B2-007) |
 | `cp_container.go` | `BuildCPContainerConfig(cfg)` → `CPContainerConfig` struct for Docker container creation |
 | `ory_configs.go` | `WriteOryConfigs(cp)` — generates Hydra/Kratos/Oathkeeper YAML config files |
 | `subprocess.go` | `SubprocessManager` — manages Ory subprocess lifecycle (start, health, crash detection, shutdown) |
@@ -63,10 +64,11 @@ All RPCs require `admin` scope. Future scopes add entries to `AdminMethodScopes(
 3. Wait for Hydra admin port healthy, configure service probes (`orchestrator.SetServiceProbes(cp, tlsCfg)`)
 4. Read CLI public JWK from bind-mount
 5. Register CLI client with Hydra (`RegisterCLIClient`)
-6. Start Oathkeeper subprocess
-7. Load eBPF programs (`ebpfMgr.Load()`)
+6. Start Oathkeeper subprocess; build `*docker.Client`; build `firewall.Stack` (via `fwhandler.NewRulesStore`)
+7. Load eBPF programs (`ebpfMgr.Load()`); run defensive startup cleanup (`ebpfMgr.CleanupStaleBypass()` — INV-B2-013)
 8. Start gRPC AdminService with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor
 9. Mark ready (`orchestrator.SetReady()`), serve `/healthz` on HealthPort
+9b. Start `controlplane.AgentWatcher` goroutine — polls Docker for agents with `purpose=agent`; on drain-to-zero invokes callback that cancels bypass timers → `grpcServer.GracefulStop()` → `firewall.Stack.Stop()` → `ebpfMgr.FlushAll()` (INV-B2-007), then the outer shutdown path tears the CP container down (exit code 0 — the `on-failure` restart policy does NOT retrigger)
 
 ## Aggregate Health (`startup.go`)
 

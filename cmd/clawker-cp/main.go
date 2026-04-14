@@ -25,6 +25,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -46,6 +47,7 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -197,10 +199,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		return fmt.Errorf("step 6 (oathkeeper): %w", err)
 	}
 
-	// --- Step 6b: Docker client ---
-	// The CP needs Docker API access for container state verification
-	// (bypass dead-man timer) and future agent lifecycle operations.
-	dockerCli, err := mobyclient.New(mobyclient.FromEnv)
+	// Step 6b: Docker client. Used by the container resolver (bypass
+	// dead-man timer), the firewall stack (Envoy + CoreDNS sibling
+	// containers over DooD), and the AgentWatcher poll loop.
+	dockerCli, err := docker.NewClient(ctx, cfg, log)
 	if err != nil {
 		return fmt.Errorf("step 6b (docker client): %w", err)
 	}
@@ -223,8 +225,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 			}
 			return "", false, err
 		}
-		// Compute actual cgroup path from container ID + cgroup driver,
-		// matching internal/firewall/manager.go ebpfCgroupPath().
+		// Path format must match ebpfCgroupPath() in the firewall package.
 		var cgroupPath string
 		if cgroupDriver == "systemd" {
 			cgroupPath = "/sys/fs/cgroup/system.slice/docker-" + containerID + ".scope"
@@ -233,6 +234,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		}
 		return cgroupPath, true, nil
 	}
+
+	// Step 6c: Firewall stack handle. Host bootstrap owns EnsureRunning;
+	// the drain-to-zero path below owns Stop.
+	rulesStore, err := fwhandler.NewRulesStore(cfg)
+	if err != nil {
+		return fmt.Errorf("step 6c (rules store): %w", err)
+	}
+	stack := fwhandler.NewStack(dockerCli, cfg, log, rulesStore)
 
 	// --- Step 7: Load eBPF programs ---
 	ebpfMgr := ebpf.NewManager(log)
@@ -245,6 +254,20 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		}
 	}()
 	log.Info().Msg("eBPF programs loaded")
+
+	// Step 7b: Defensive startup cleanup (INV-B2-013).
+	// Load() already cleans up pinned link files for dead cgroups. A
+	// mirror pass for bypass_map is needed because cgroup IDs are
+	// reusable across container generations — a leftover bypass entry
+	// from a crashed previous CP could grant a fresh unrelated container
+	// unrestricted egress.
+	cleared, err := ebpfMgr.CleanupStaleBypass()
+	if err != nil {
+		return fmt.Errorf("step 7b (defensive bypass cleanup): %w", err)
+	}
+	if cleared > 0 {
+		log.Info().Int("cleared", cleared).Msg("defensive startup: cleared stale bypass_map entries")
+	}
 
 	// --- Step 8: Start gRPC admin API ---
 	serverCert, err := tls.LoadX509KeyPair(serverCertPath, serverKeyPath)
@@ -307,17 +330,79 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		}
 	}()
 
+	// Step 9b: AgentWatcher self-shutdown.
+	watcherCtx, watcherCancel := context.WithCancel(context.Background())
+	defer watcherCancel()
+
+	listAgents := func(ctx context.Context) (int, error) {
+		filter := mobyclient.Filters{}.
+			Add("label", cfg.LabelManaged()+"="+cfg.ManagedLabelValue()).
+			Add("label", cfg.LabelPurpose()+"="+cfg.PurposeAgent())
+		result, err := dockerCli.APIClient.ContainerList(ctx, mobyclient.ContainerListOptions{Filters: filter})
+		if err != nil {
+			return 0, err
+		}
+		return len(result.Items), nil
+	}
+
+	drainCallback := func(ctx context.Context) error {
+		// Strict ordering (INV-B2-007):
+		//  1. Cancel in-flight bypass timers so no scheduled Enable fires
+		//     against maps that are about to be emptied.
+		//  2. grpcServer.GracefulStop refuses new RPCs and waits for
+		//     in-flight ones to finish — without this, a late Install
+		//     could write container_map/bypass_map state after FlushAll
+		//     and the next CP instance would see a ghost entry, defeating
+		//     INV-B2-013.
+		//  3. Stop the firewall stack (Envoy + CoreDNS).
+		//  4. Flush per-container eBPF state so the next CP starts clean.
+		// Errors are aggregated so a broken drain exits non-zero and the
+		// on-failure restart policy legitimately retriggers investigation
+		// rather than silently blessing partial teardown.
+		handler.CancelAllBypassTimers()
+		grpcServer.GracefulStop()
+		var errs []error
+		if err := stack.Stop(ctx); err != nil {
+			log.Error().Err(err).Msg("drain: firewall stack stop failed")
+			errs = append(errs, fmt.Errorf("stack stop: %w", err))
+		}
+		if err := ebpfMgr.FlushAll(); err != nil {
+			log.Error().Err(err).Msg("drain: ebpf flush failed")
+			errs = append(errs, fmt.Errorf("ebpf flush: %w", err))
+		}
+		return errors.Join(errs...)
+	}
+
+	watcher := controlplane.NewAgentWatcher(log, listAgents, drainCallback, controlplane.AgentWatcherOptions{})
+	watcherDone := make(chan error, 1)
+	go func() {
+		watcherDone <- watcher.Run(watcherCtx)
+	}()
+
 	log.Info().Msg("clawker-cp ready")
 
-	// --- Block on signal or subprocess crash ---
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
+	var drainErr error
 	select {
 	case sig := <-sigCh:
 		log.Info().Stringer("signal", sig).Msg("shutdown signal received")
-		// Suppress crash reporting immediately — any subprocess exit from
-		// this point forward is expected (part of graceful shutdown).
+		// Any subprocess exit past this point is part of graceful shutdown;
+		// suppress crash reporting so it doesn't race with us.
+		subMgr.BeginShutdown()
+	case err := <-watcherDone:
+		switch {
+		case err == nil:
+			log.Info().Msg("agent drain-to-zero — shutting down")
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			log.Info().Err(err).Msg("agent watcher cancelled — shutting down")
+		default:
+			log.Error().Err(err).Msg("agent watcher error — shutting down")
+			// Drain failures (stack stop / ebpf flush) must propagate so the
+			// on-failure restart policy catches them.
+			drainErr = err
+		}
 		subMgr.BeginShutdown()
 	case err := <-subMgr.CrashChan():
 		log.Error().Err(err).Msg("subprocess crashed — shutting down")
@@ -326,8 +411,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		log.Error().Err(err).Msg("server failed — shutting down")
 		return err
 	}
+	watcherCancel()
 
-	// --- Graceful shutdown (reverse order) ---
+	// Reverse-order graceful shutdown.
 	shutdownDone := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -355,5 +441,5 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 
 	subMgr.Shutdown(defaultShutdownWait)
 	log.Info().Msg("clawker-cp stopped")
-	return nil
+	return drainErr
 }

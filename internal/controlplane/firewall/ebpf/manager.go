@@ -306,6 +306,93 @@ func (m *Manager) cleanupLinks(cgroupID uint64) {
 	}
 }
 
+// CleanupStaleBypass removes entries from bypass_map whose cgroup IDs
+// have no corresponding container_map entry. Called at CP startup
+// (INV-B2-013) — without this pass, dead containers' cgroup IDs retain
+// a bypass flag and a freshly created cgroup that reuses the same ID
+// could inherit unrestricted egress. Returns the number of stale
+// entries cleared and a joined error surfacing any per-entry failures
+// so the caller can fail startup rather than silently leaving
+// enforcement-relevant state in place.
+func (m *Manager) CleanupStaleBypass() (int, error) {
+	if m.objs.BypassMap == nil || m.objs.ContainerMap == nil {
+		return 0, nil
+	}
+
+	var stale []uint64
+	var key uint64
+	var val uint8
+	iter := m.objs.BypassMap.Iterate()
+	for iter.Next(&key, &val) {
+		var cfg clawkerContainerConfig
+		if err := m.objs.ContainerMap.Lookup(key, &cfg); err != nil {
+			stale = append(stale, key)
+		}
+	}
+
+	cleared := 0
+	var errs []error
+	for _, id := range stale {
+		if err := m.objs.BypassMap.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			m.log.Warn().Err(err).Uint64("cgroup_id", id).Msg("ebpf: failed to clear stale bypass entry")
+			errs = append(errs, fmt.Errorf("bypass_map[%d]: %w", id, err))
+			continue
+		}
+		cleared++
+	}
+	if cleared > 0 {
+		m.log.Info().Int("cleared", cleared).Msg("cleaned stale bypass_map entries")
+	}
+	return cleared, errors.Join(errs...)
+}
+
+// FlushAll clears all per-container eBPF state: empties container_map
+// and bypass_map, unpins every link. Called ONLY on drain-to-zero
+// shutdown (INV-B2-007) when no agents remain — this is the drain
+// complement to CleanupAllLinks, which only touches pinned links.
+//
+// After FlushAll, the BPF maps contain no entries but the programs
+// themselves stay loaded until Close is called; the caller drives the
+// final teardown order (typically: FlushAll → Close).
+//
+// Returns a joined error surfacing all per-entry failures.
+func (m *Manager) FlushAll() error {
+	var errs []error
+
+	if m.objs.ContainerMap != nil {
+		var keys []uint64
+		var key uint64
+		var val clawkerContainerConfig
+		iter := m.objs.ContainerMap.Iterate()
+		for iter.Next(&key, &val) {
+			keys = append(keys, key)
+		}
+		for _, id := range keys {
+			if err := m.objs.ContainerMap.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				errs = append(errs, fmt.Errorf("flush container_map[%d]: %w", id, err))
+			}
+		}
+	}
+
+	if m.objs.BypassMap != nil {
+		var keys []uint64
+		var key uint64
+		var val uint8
+		iter := m.objs.BypassMap.Iterate()
+		for iter.Next(&key, &val) {
+			keys = append(keys, key)
+		}
+		for _, id := range keys {
+			if err := m.objs.BypassMap.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				errs = append(errs, fmt.Errorf("flush bypass_map[%d]: %w", id, err))
+			}
+		}
+	}
+
+	m.CleanupAllLinks()
+	return errors.Join(errs...)
+}
+
 // Close detaches all links and closes all programs and maps.
 func (m *Manager) Close() error {
 	m.linksMu.Lock()

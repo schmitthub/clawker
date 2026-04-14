@@ -58,6 +58,11 @@ func (m *Manager) Enable(cgroupID uint64) error             // clear bypass flag
 func (m *Manager) UpdateDNSCache(ip, domainHash, ttl uint32) error
 func (m *Manager) GarbageCollectDNS() int                   // returns number cleared
 func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, error)
+
+// Startup / shutdown maintenance — not on EBPFManager interface; called
+// by cmd/clawker-cp directly so the RPC surface stays pure.
+func (m *Manager) CleanupStaleBypass() (int, error)         // INV-B2-013: clear orphan bypass_map entries at startup
+func (m *Manager) FlushAll() error                          // INV-B2-007: drain-to-zero — empty container_map + bypass_map, unpin links
 ```
 
 Helpers in `types.go`:

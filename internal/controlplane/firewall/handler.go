@@ -310,7 +310,6 @@ func (h *Handler) resolveBypassCgroupID(entry *bypassEntry) uint64 {
 	return freshID
 }
 
-// cancelBypassTimer stops and removes a bypass timer for the given cgroup path.
 func (h *Handler) cancelBypassTimer(cgroupPath string) {
 	h.bypassTimersMu.Lock()
 	defer h.bypassTimersMu.Unlock()
@@ -318,6 +317,28 @@ func (h *Handler) cancelBypassTimer(cgroupPath string) {
 		entry.timer.Stop()
 		delete(h.bypassTimers, cgroupPath)
 	}
+}
+
+// CancelAllBypassTimers stops every pending dead-man timer and replaces
+// the bypass-timers map. Called from the CP's drain-to-zero shutdown
+// (INV-B2-007) before eBPF flush so no scheduled Enable fires against a
+// map that is about to be emptied. A timer whose fire goroutine has
+// already started past timer.Stop's check will still reach Enable
+// once, but Enable is idempotent against a cleared BypassMap entry
+// (ErrKeyNotExist is treated as success) so the race is benign.
+// Returns the count cancelled.
+func (h *Handler) CancelAllBypassTimers() int {
+	h.bypassTimersMu.Lock()
+	defer h.bypassTimersMu.Unlock()
+	n := len(h.bypassTimers)
+	for _, entry := range h.bypassTimers {
+		entry.timer.Stop()
+	}
+	h.bypassTimers = make(map[string]*bypassEntry)
+	if n > 0 {
+		h.log.Info().Int("cancelled", n).Msg("cancelled all pending bypass timers")
+	}
+	return n
 }
 
 // SyncRoutes atomically replaces the global route_map.
