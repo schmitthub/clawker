@@ -370,9 +370,11 @@ func (x *RemoveResponse) GetCgroupId() uint64 {
 }
 
 type EnableRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CgroupPath    string                 `protobuf:"bytes,1,opt,name=cgroup_path,json=cgroupPath,proto3" json:"cgroup_path,omitempty"`
-	ContainerId   string                 `protobuf:"bytes,2,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	CgroupPath string                 `protobuf:"bytes,1,opt,name=cgroup_path,json=cgroupPath,proto3" json:"cgroup_path,omitempty"`
+	// container_id is the Docker container ID. Required — the CP uses it
+	// for audit logging and container state verification.
+	ContainerId   string `protobuf:"bytes,2,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -466,9 +468,11 @@ func (x *EnableResponse) GetCgroupId() uint64 {
 }
 
 type DisableRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CgroupPath    string                 `protobuf:"bytes,1,opt,name=cgroup_path,json=cgroupPath,proto3" json:"cgroup_path,omitempty"`
-	ContainerId   string                 `protobuf:"bytes,2,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	CgroupPath string                 `protobuf:"bytes,1,opt,name=cgroup_path,json=cgroupPath,proto3" json:"cgroup_path,omitempty"`
+	// container_id is the Docker container ID. Required — the CP uses it
+	// for audit logging and container state verification.
+	ContainerId   string `protobuf:"bytes,2,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

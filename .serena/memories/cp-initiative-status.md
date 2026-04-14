@@ -1,21 +1,33 @@
 # Control Plane Initiative — Current Status
 
-## Status: Initiative spec approved, pending `/creview`
+## Status: Branch 1 LANDED on main (PR #250, merged 2026-04-13)
 
-**Workflow phase**: review (next: run `/creview` on the initiative spec)
-**Branch**: `feat/control-plane` (Branch 1 work — CP primitive)
-**Spec**: `.correctless/specs/control-plane-initiative.md`
-**Context doc**: `.correctless/specs/cp-initiative/CONTEXT.md` (full decision record for fresh sessions)
+**Shipped**: Containerized `clawker-controlplane` service with Ory auth stack (Hydra + Oathkeeper + Kratos), `AdminService` gRPC over mTLS TCP with OAuth2 JWT, in-process eBPF `Manager.Load()` lifetime, aggregate `/healthz` endpoint.
+
+**Current branch**: `chore/docs-update` (docs catch-up after CP landed)
 
 ## Branch Sequence
-1. CP as proper service (current branch) — auth + gRPC, firewall still owns bootstrap
-2. Ownership reversal — CP owns firewall, Manager becomes thin client, daemon sunset
-3. Daemon consolidation — hostproxy + socketbridge under CP, Docker events
-4. clawkerd auth — PKCE registration, per-agent certs
-5. Init migration + agent lifecycle — clawkerd replaces init scripts, command channel
-6. Monitor + release + hardening — out of alpha
+1. [x] **CP as proper service** — auth + gRPC, firewall still owns bootstrap. **MERGED**
+2. [ ] Ownership reversal — CP owns firewall, Manager becomes thin client, daemon sunset
+3. [ ] Daemon consolidation — hostproxy + socketbridge under CP, Docker events
+4. [ ] clawkerd auth — PKCE registration, per-agent certs (proto reserved at `internal/clawkerd/protocol/v1/`)
+5. [ ] Init migration + agent lifecycle — clawkerd replaces init scripts, command channel
+6. [ ] Monitor + release + hardening — out of alpha
 
-Each branch gets its own `/cspec` kickoff before implementation.
+Each branch gets its own `/cspec` kickoff.
+
+## What landed in Branch 1
+- `internal/controlplane/` — `Server`, `Registry`, `AdminHandler`, `AuthInterceptor`, `HydraIntrospector`, `CPStartupOrchestrator`, `SubprocessManager`, `BuildCPContainerConfig`, `WriteOryConfigs`, `RegisterCLIClient`
+- `internal/controlplane/ebpf/` — moved from `internal/ebpf/`; owns `Manager.Load()` lifetime
+- `internal/auth/` — CLI-side auth material + `DialCPAdmin()` + ES256 assertion
+- `api/admin/v1/` — AdminService protobuf (CLI → CP)
+- `internal/clawkerd/protocol/v1/` — reserved for future agent↔CP
+- `cmd/clawker-cp/` — daemon entrypoint, built by `Dockerfile.controlplane`
+- `internal/consts/` — cross-package constants
+
+## Next: Branch 2 kickoff
+
+Ownership reversal — CP owns firewall bootstrap; `firewall.Manager` becomes thin client over gRPC. Daemon loop sunsets. Start with `/cspec`.
 
 ## Key Process Notes
 - Highway construction: old stays live until replacement proven
