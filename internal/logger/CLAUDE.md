@@ -56,11 +56,14 @@ type OtelOptions struct {
 ## Constructors
 
 ```go
-func New(opts Options) (*Logger, error)  // File logging + optional OTEL bridge
+func New(opts Options) (*Logger, error)  // File logging + optional OTEL bridge (CLI/host path)
+func NewWriter(w io.Writer) *Logger       // Structured JSON to io.Writer, no rotation, no OTEL (container daemon path)
 func Nop() *Logger                        // Discards all output (tests, disabled logging)
 ```
 
 `New` creates the log directory, configures lumberjack rotation, and optionally attaches the OTEL bridge. Returns error if `LogsDir` is empty or directory creation fails. OTEL failure is non-fatal (falls back to file-only).
+
+`NewWriter` is the constructor for **containerized daemons** (`clawker-cp`, future clawkerd) that want structured JSON on stdout/stderr so `docker logs <container>` surfaces them. No file rotation, no OTEL — the container runtime owns log lifecycle. Debug level by default.
 
 `Nop` returns a logger backed by `zerolog.Nop()` — zero allocation, no file I/O.
 

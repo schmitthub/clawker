@@ -426,39 +426,41 @@ Runs Claude Code in per-iteration Docker containers with stream-json parsing and
 
 ### internal/firewall - Firewall Stack
 
-Envoy + custom CoreDNS + **clawker-cp (control plane)** trio providing DNS-level egress blocking, TLS inspection, and per-container cgroup BPF enforcement. The firewall is enabled by default (`security.firewall.enable: true`) and managed as a shared singleton across all clawker containers on the host.
+Envoy + custom CoreDNS + **clawker-controlplane** trio providing DNS-level egress blocking, TLS inspection, and per-container cgroup BPF enforcement. Firewall enabled by default (`security.firewall.enable: true`); shared singleton across all clawker containers on host.
 
-As of the `feat/control-plane` branch the historical `clawker-ebpf` container (which ran `sleep infinity` as a `docker exec` target) is replaced by `clawker-cp`, a long-lived Go daemon that owns `ebpf.Manager.Load()` lifetime in-process and serves a typed gRPC `ControlPlaneService` over a Unix domain socket with mTLS + OIDC + JWT authz. See `internal/controlplane/CLAUDE.md` for the control plane's own package reference and auth architecture.
+Historical `clawker-ebpf` container (`sleep infinity` + `docker exec`) replaced by `clawker-controlplane` — long-lived Go daemon owning `ebpf.Manager.Load()` lifetime in-process and serving typed gRPC `AdminService` over **mTLS TCP** (127.0.0.1:AdminPort, default 7443) with **OAuth2 JWT** authz via Ory Hydra introspection. See `internal/controlplane/CLAUDE.md` for full auth architecture.
 
 **Architecture overview:**
 
 ```
-Daemon Process (host)    Envoy (.2)    CoreDNS (.3)    clawker-cp (.4)
+Daemon Process (host)    Envoy (.200)   CoreDNS (.201)   clawker-controlplane (.202)
     │                        │              │                │
-    ├── Health probe (5s) ──►│ HTTP :18901  │                │
-    ├── Health probe (5s) ───────────────► │ HTTP :18902/health
-    ├── Container watcher (30s) — auto-stops when no clawker containers remain
+    ├── Health probe (5s) ──►│ HTTP :18901  │ HTTP :18902/health
+    ├── Health probe (5s) ───────────────────────────────── │ HTTP :HealthPort /healthz (aggregate)
+    ├── Container watcher (30s) — auto-stops when no clawker agent containers remain
     │
-    ├── ensureConfigs() ────►│ envoy.yaml   │ Corefile       │
-    ├── ensureEmbeddedImage()─────────────────────────────► │ clawker-controlplane:latest
+    ├── ensureConfigs() ────►│ envoy.yaml   │ Corefile       │ hydra/kratos/oathkeeper.yaml
+    ├── ensureEmbeddedImage()─────────────────────────────► │ clawker-controlplane:latest (clawker-cp + ebpf-manager + Ory bins)
     │                         │              │               │ clawker-coredns:latest
     ├── EnsureRunning():
     │     1. ensure network (clawker-net, static IPs)
     │     2. ensureConfigs (certs, envoy.yaml, Corefile)
-    │     3. build embedded images (clawker-cp + coredns on demand)
-    │     4. start clawker-cp container; CP runs Manager.Load() in-process
-    │     5. waitForCPReady() — poll CP /healthz endpoint (aggregate probe of all service ports)
-    │     6. syncRoutes (gRPC AdminService.SyncRoutes)
-    │     7. start Envoy + CoreDNS (custom coredns must run AFTER BPF map is pinned)
-    │     8. WaitForHealthy
+    │     3. ensure auth material (CA, signing key, client cert, JWK — internal/auth)
+    │     4. build embedded images (CP + coredns on demand)
+    │     5. start clawker-controlplane container; CP orchestrator runs Kratos→Hydra→Oathkeeper→ebpf.Load→gRPC
+    │     6. waitForCPReady() — poll CP /healthz (actively probes all 7 service ports)
+    │     7. syncRoutes via gRPC AdminService.SyncRoutes
+    │     8. start Envoy + CoreDNS (custom coredns must run AFTER BPF dns_cache map pinned)
+    │     9. WaitForHealthy
     │
-    ├── gRPC client: internal/auth/cp_dial.go builds a TLS+OAuth2 client that
-    │                dials 127.0.0.1:<AdminPort> using CLI CA trust + Hydra token exchange.
+    ├── gRPC client: internal/auth.DialCPAdmin(ctx, adminPort, hydraPort) builds two TLS
+    │                configs — plain TLS to Hydra /oauth2/token (client_credentials +
+    │                ES256 private_key_jwt assertion → access token), mTLS to AdminService
+    │                with bearer token. Client cached on Manager.
     │
     └── regenerateAndRestart() — AddRules/RemoveRules/Reload path:
-          ensureConfigs → syncRoutes → restartContainer(envoy, coredns)
-          (no more ebpfExec("init") — CP owns Load() lifetime, so the old
-           hot-reload pinning bug is fixed by construction)
+          ensureConfigs → SyncRoutes RPC → restartContainer(envoy, coredns)
+          (CP owns Load() lifetime, old hot-reload pinning bug fixed by construction)
 ```
 
 **Manager interface + Docker implementation:** `FirewallManager` defines the full contract — 15 methods spanning lifecycle (`EnsureRunning`, `Stop`, `WaitForHealthy`), rule management (`AddRules`, `RemoveRules`, `Reload`, `List`), per-container control (`Enable`, `Disable`, `Bypass`), and status (`Status`, `EnvoyIP`, `CoreDNSIP`, `NetCIDR`). The concrete `Manager` receives a raw `client.APIClient` (moby SDK) — deliberately NOT `docker.Client`/whail, because the daemon's container watcher must see all Docker containers including non-clawker ones, which whail's jail label filtering would hide.
@@ -481,7 +483,7 @@ The shared `embeddedImageSpec` struct + `ensureEmbeddedImage` method now support
 
 **Rule persistence:** Active egress rules are stored via `storage.Store[EgressRulesFile]` backed by `egress-rules.yaml`. Rules are deduped by `dst:proto:port` composite key. The `Manager` merges required rules with project-specific rules from `clawker.yaml` and persists the union.
 
-**Network isolation:** The firewall creates an isolated Docker bridge network (`clawker-net`) with deterministic static IPs computed from the gateway address — gateway+1 for Envoy, gateway+2 for CoreDNS, gateway+3 for the clawker-cp container. Agent containers join this network with `--dns` pointing to the CoreDNS IP. The network uses label-based discovery to find or create the bridge idempotently.
+**Network isolation:** The firewall creates an isolated Docker bridge network (`clawker-net`) with deterministic static IPs — `.200` for Envoy, `.201` for CoreDNS, `.202` for the clawker-controlplane container. Agent containers join this network with `--dns` pointing to the CoreDNS IP. The network uses label-based discovery to find or create the bridge idempotently.
 
 **Custom CoreDNS container:** Runs with `CAP_BPF + CAP_SYS_ADMIN` and a bind mount of `/sys/fs/bpf` so the `dnsbpf` plugin can open the pinned `dns_cache` map and write entries. The image is `clawker-coredns:latest` built from `cmd/coredns-clawker` (which imports `coremain.Run` + stock `forward`/`health`/`log`/`reload`/`template` plugins + `internal/dnsbpf` and inserts `dnsbpf` at the head of `dnsserver.Directives`). The stock `coredns/coredns:1.14.2` image is no longer used.
 
@@ -495,25 +497,29 @@ The plugin is consumed exclusively by `cmd/coredns-clawker/main.go`, a custom Co
 
 ### internal/controlplane - Clawker Control Plane
 
-Containerized, privileged, long-lived Go service that owns authoritative state for managed containers. Runs as the `clawker-cp` container in the firewall stack. In v1, its concrete responsibilities are:
+Containerized, privileged, long-lived Go service owning authoritative state for managed containers. Runs as `clawker-controlplane` container in firewall stack. v1 responsibilities:
 
-1. **Authoritative ebpf management** — holds `Manager.Load()` lifetime for the process lifetime, eliminating the hot-reload pinning bug by construction.
-2. **ControlPlaneService gRPC surface** — the host-side CLI calls firewall/ebpf operations as typed gRPC over a UDS with mTLS + OIDC + JWT authz.
+1. **Authoritative eBPF management** — holds `Manager.Load()` lifetime for process lifetime, eliminating hot-reload pinning bug by construction.
+2. **AdminService gRPC surface** — host CLI calls firewall/eBPF ops as typed gRPC over mTLS TCP (127.0.0.1:AdminPort) with OAuth2 JWT authz.
+3. **Ory auth stack** — Hydra (OAuth2 token + introspection), Oathkeeper (reverse proxy placeholder for future webui), Kratos (identity placeholder).
+4. **Aggregate health reporting** — `/healthz` actively probes all 7 service ports before returning 200.
 
-The control plane's auth shape (mTLS cert chain + embedded OIDC `/token` endpoint + JWT bearer tokens + per-method scope enforcement in a gRPC interceptor) is deliberately final in v1 — future callers (clawkerd, webui) plug in as additional `ClientRegistration` entries and `methodScopes` entries without rewiring any auth layer. The OIDC wire protocol is handled directly via `go-jose/v4` rather than embedding a full provider library, but the wire format is OIDC-compliant so the `/token` handler can be swapped for `zitadel/oidc` when browser-delivered authz_code flows are needed.
+**Auth shape (final in v1):** mTLS over TCP (server + client certs signed by CLI-generated CA) + Ory Hydra OAuth2 (`client_credentials` + ES256 `private_key_jwt` assertion) + JWT bearer tokens + per-method scope enforcement via `AuthInterceptor`. Hydra is a subprocess managed by `SubprocessManager`. Token introspection via RFC 7662 `/oauth2/introspect`. Future callers (clawkerd agents, webui) add entries to `AdminMethodScopes()` without rewiring. Fail-closed: any introspection error → `codes.Unauthenticated`.
 
 Key packages:
-- `internal/controlplane` — `Server`, `Registry`, `ControlPlaneService` facade interface, `Config` (cherry-picked from `feature/clawkerd`), plus the new `ca.go`, `uds_http.go`, `oidc_clients.go`, `oidc_provider.go`, `authz.go`, `controlplane_handler.go`.
-- `internal/controlplane/ebpf` — BPF loader + manager + bpf2go bindings (moved from `internal/ebpf/` because ebpf is a feature of the CP, not a peer service).
-- `internal/controlplane/ebpf/cmd` — break-glass debug CLI bundled alongside `clawker-cp` in the container image. Not the primary interface; see `internal/controlplane/ebpf/cmd/CLAUDE.md`.
-- `internal/clawkerd/protocol/v1` — protobuf definitions: `agent.proto` (cherry-picked) for future clawkerd agents; `controlplane.proto` (new) for CLI→CP.
-- `cmd/clawker-cp/main.go` — the daemon entry point wired into `Dockerfile.controlplane` via a new multi-stage build target.
+- `internal/controlplane` — `Server`, `Registry`, `AdminHandler` (AdminService impl), `AuthInterceptor`, `HydraIntrospector`, `CPStartupOrchestrator`, `SubprocessManager`, `BuildCPContainerConfig`, `WriteOryConfigs`, `RegisterCLIClient`. Files: `server.go`, `registry.go`, `admin_handler.go`, `authz.go`, `hydra_client.go`, `startup.go`, `subprocess.go`, `ory_configs.go`, `cp_container.go`.
+- `internal/controlplane/ebpf` — BPF loader + `EBPFManager` interface + bpf2go bindings (moved from `internal/ebpf/`; ebpf is CP feature, not peer).
+- `internal/controlplane/ebpf/cmd` — break-glass debug CLI bundled alongside `clawker-cp` in CP image. Not primary interface; see `internal/controlplane/ebpf/cmd/CLAUDE.md`.
+- `internal/auth` — CLI-side auth material (CA, signing key, client cert, JWK, Hydra secret), `DialCPAdmin()`, `BuildSignedAssertion()`, `EnsureAuthMaterial()`, `RotateAuthMaterial()`.
+- `api/admin/v1` — AdminService protobuf (current CLI↔CP wire).
+- `internal/clawkerd/protocol/v1` — agent + controlplane protobuf (reserved for future clawkerd agents).
+- `cmd/clawker-cp/main.go` — daemon entry point; built by `Dockerfile.controlplane` multi-stage target.
 
 ### internal/controlplane/ebpf - BPF Loader and Manager
 
-Host-side manager for the cgroup BPF programs (connect4/6, sendmsg4/6, recvmsg4/6, sock_create) that implement per-container egress enforcement. Owns the BPF object lifecycle: `Load` (pin programs + maps, clean stale pins with changed schemas), `OpenPinned` (break-glass access to already-pinned maps), `Enable` (add cgroup to `container_map` + attach+pin links), `Disable` (detach links + remove from `container_map`), `SyncRoutes` (atomically replace the global `route_map`), `Bypass`/`Unbypass`, `UpdateDNSCache`/`GarbageCollectDNS`.
+Host-side manager for cgroup BPF programs (connect4/6, sendmsg4/6, recvmsg4/6, sock_create) implementing per-container egress enforcement. Owns BPF object lifecycle: `Load` (pin programs + maps, clean stale pins with changed schemas), `OpenPinned` (break-glass access to already-pinned maps), `Install`/`Remove` (attach/detach BPF to cgroup + manage `container_map`), `Enable`/`Disable` (clear/set bypass flag), `SyncRoutes` (atomically replace global `route_map`), `UpdateDNSCache`/`GarbageCollectDNS`. `EBPFManager` interface is the test seam used by `AdminHandler`.
 
-The CP binary (`cmd/clawker-cp`) imports this package directly and calls `Manager.Load()` once at boot, keeping link handles live for the process lifetime. The `cmd/ebpf-manager` binary in the same package is retained as a break-glass debug CLI (`init`, `enable`, `disable`, `sync-routes`, `bypass`, `unbypass`, `dns-update`, `gc-dns`, `dump`, `resolve`) for incident response via `docker exec clawker-cp ebpf-manager <subcommand>`. Both binaries are cross-compiled for Linux and embedded via `go:embed` in `internal/firewall/cp_embed.go` + `ebpf_embed.go`, then baked into the `clawker-controlplane:latest` image at runtime.
+CP binary (`cmd/clawker-cp`) imports this package directly and calls `Manager.Load()` once at boot, keeping link handles live for process lifetime. `cmd/ebpf-manager` break-glass CLI (subcommands: `init`, `install`, `remove`, `enable`, `disable`, `sync-routes`, `bypass`, `dns-update`, `gc-dns`, `dump`, `resolve`) runs via `docker exec clawker-controlplane ebpf-manager <subcommand>` for incident response. Both binaries bundled into same `clawker-controlplane:latest` image — `clawker-cp` embed in `internal/firewall/cp_embed.go`, `ebpf-manager` in `ebpf_embed.go`.
 
 ## Command Dependency Injection Pattern
 

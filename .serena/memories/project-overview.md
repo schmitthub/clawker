@@ -33,4 +33,5 @@ No build tags — directory separation only.
 - **Home dir safety**: `shared.IsOutsideHome(".")` guards `run`/`create` (prompt) and `loop` (hard error) when CWD is at or above `$HOME`.
 - **Image resolution**: 3-source chain — Docker labels (`ImageSourceProject`) → config `build.image` (`ImageSourceConfig`) → nil. `clawker init` persists built image to user-level `clawker.yaml`.
 - **Loop system**: `loop iterate` (repeated prompt) + `loop tasks` (task-file-driven) with TUI dashboard.
+- **Control Plane (landed 2026-04)**: `clawker-controlplane` container runs `clawker-cp` daemon (PID 1) + Ory stack (Hydra/Oathkeeper/Kratos). Firewall `Manager` dials CP via mTLS TCP + OAuth2 JWT (Hydra introspection). CP owns `ebpf.Manager.Load()` in-process. See `internal/controlplane/CLAUDE.md`.
 - **Test doubles**: `configmocks.NewBlankConfig()`, `configmocks.NewFromString()`, `configmocks.NewIsolatedTestConfig(t)`.

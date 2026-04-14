@@ -56,15 +56,20 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 ## Repository Structure
 
 ```
+├── api/
+│   └── admin/v1/              # AdminService protobuf (CLI → control plane gRPC, port 7443 mTLS)
 ├── cmd/
 │   ├── clawker/               # Main CLI binary
+│   ├── clawker-cp/            # Control plane daemon (PID 1 of clawker-controlplane container; gRPC AdminService + Ory stack + eBPF Manager.Load)
 │   ├── clawker-generate/      # Code generation helper
 │   ├── coredns-clawker/       # Custom CoreDNS build embedding the dnsbpf plugin (Linux; embedded via go:embed into internal/firewall)
 │   └── gen-docs/              # CLI doc generator (man/markdown/rst/yaml)
 ├── internal/
+│   ├── auth/                  # CLI-side auth material + mTLS dial to CP (ES256 signing key, client cert, JWK, JWT assertion, Hydra token exchange)
 │   ├── build/                 # Build-time metadata (version, date) — leaf, stdlib only
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
 │   ├── clawker/               # Main application lifecycle
+│   ├── clawkerd/protocol/v1/  # Future clawkerd agent + controlplane protobuf (reserved for agent→CP wire protocol)
 │   ├── cmd/                   # Cobra commands (auth/, container/, volume/, network/, image/, version/, loop/, worktree/, firewall/, root/)
 │   │   ├── factory/           # Factory constructor — wires real dependencies
 │   │   ├── settings/          # Settings parent command + edit subcommand
@@ -73,13 +78,16 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
 │   ├── config/                # Storage.Store[T] config engine: schema types, multi-file loading, constants (see internal/config/CLAUDE.md)
 │   │   └── storeui/           # Domain adapters for storeui: settings/, project/
+│   ├── consts/                # Cross-package constants (CP container name, network labels)
 │   ├── containerfs/           # Host Claude config preparation for container init
+│   ├── controlplane/          # Control plane package: Server, Registry, AdminHandler, AuthInterceptor, HydraIntrospector, Ory config generators, subprocess manager, CP container builder
+│   │   ├── ebpf/              # eBPF cgroup programs + Go Manager (clawker.c compiled via bpf2go); `cmd/` break-glass debug CLI bundled into clawker-controlplane image
+│   │   └── mocks/             # ControlPlaneServiceMock, IntrospectorMock, MockServer
 │   ├── dnsbpf/                # CoreDNS plugin: writes DNS A-record resolutions (IPv4) to the BPF dns_cache map in real time (used by cmd/coredns-clawker)
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
 │   │   └── mocks/             # FakeClient, test helpers, moby mock transport
 │   ├── docs/                  # CLI doc generation (man, markdown, rst, yaml)
-│   ├── ebpf/                  # eBPF cgroup programs + Go manager (clawker.c compiled via bpf2go); `cmd/` host-side subcommand invoked by firewall manager (init, sync-routes, enable, disable)
-│   ├── firewall/              # Envoy+CoreDNS firewall stack: manager interface, config generators, certs, daemon, rules store; embeds pre-built ebpf-manager and coredns-clawker binaries (ebpf_embed.go, coredns_embed.go)
+│   ├── firewall/              # Envoy+CoreDNS+clawker-cp stack: manager interface, config generators, certs, daemon, rules store; embeds clawker-cp, ebpf-manager (inside CP image), coredns binaries
 │   │   └── mocks/             # FirewallManagerMock (moq-generated)
 │   ├── git/                   # Git operations, worktree management (leaf — no internal imports, uses go-git)
 │   │   └── gittest/           # InMemoryGitManager for testing
@@ -273,7 +281,7 @@ All external dependencies must be pinned to exact versions with integrity verifi
 | Go tool installs (`go install`) | SHA commit hash or exact version | `go install tool@v2.0.1` or `tool@sha...` |
 | Container images in code | SHA256 digest in constants | `DefaultGoBuilderImage = "golang:1.24.1@sha256:..."` |
 | npm/pip installs in Dockerfiles | Exact version | `npm install -g @anthropic-ai/claude-code@${VERSION}` |
-| Firewall stack binaries (ebpf-manager, coredns-clawker) | Single pinned multi-stage `Dockerfile.controlplane` — base image digest + apt package versions + Go toolchain digest + `bpf2go` version | `make ebpf-binary` / `make coredns-binary` invoke `docker buildx build` against the pinned recipe; no generated artifacts committed. See `internal/ebpf/REPRODUCIBILITY.md` |
+| Firewall stack binaries (clawker-cp, ebpf-manager, coredns-clawker) | Single pinned multi-stage `Dockerfile.controlplane` — base image digest + apt package versions + Go toolchain digest + `bpf2go` version | `make cp-binary` / `make ebpf-binary` / `make coredns-binary` invoke `docker buildx build` against the pinned recipe; no generated artifacts committed. See `internal/controlplane/ebpf/REPRODUCIBILITY.md` |
 
 **Why:** Version tags are mutable — a compromised upstream can re-tag a release. SHA pins are immutable and verifiable. This is defense-in-depth against supply chain attacks (see `docs/threat-model.mdx`).
 
@@ -285,7 +293,7 @@ docker buildx imagetools inspect <image>@sha256:<digest>
 
 `MediaType` must be `application/vnd.oci.image.index.v1+json`. `docker pull <image:tag>` + `docker inspect --format '{{index .RepoDigests 0}}'` typically returns the manifest-list digest for official images on Docker Hub, but always confirm via `imagetools inspect`.
 
-**Firewall stack binaries specifically:** `internal/firewall/assets/ebpf-manager` and `internal/firewall/assets/coredns-clawker` are Linux binaries `go:embed`'d into the clawker CLI, with BPF bytecode and the `dnsbpf` plugin baked in respectively. **Nothing generated is committed** — no `.o`, no `bpf2go` Go wrappers, no binaries. They are produced fresh on every `make ebpf-binary` / `make coredns-binary` (transitively triggered by `make test`, `make clawker-build`, etc.) inside the pinned multi-stage Docker builds. Reproducibility is structural: the pinned recipe *is* the binary, there is no separate committed artifact to drift from. See `internal/ebpf/REPRODUCIBILITY.md` for the full provenance chain and the pin-update procedure.
+**Firewall stack binaries specifically:** `internal/firewall/assets/{clawker-cp,ebpf-manager,coredns-clawker}` are Linux binaries `go:embed`'d into the clawker CLI — `clawker-cp` is the control plane daemon (bundled with `ebpf-manager` as a break-glass debug CLI in the same image), `coredns-clawker` is the custom CoreDNS with the `dnsbpf` plugin baked in. **Nothing generated is committed** — no `.o`, no `bpf2go` Go wrappers, no binaries. They are produced fresh on every `make cp-binary` / `make ebpf-binary` / `make coredns-binary` (transitively triggered by `make test`, `make clawker-build`, etc.) inside the pinned multi-stage Docker builds. Reproducibility is structural: the pinned recipe *is* the binary, there is no separate committed artifact to drift from. See `internal/controlplane/ebpf/REPRODUCIBILITY.md` for the full provenance chain and the pin-update procedure.
 
 **When adding any new external dependency**, look up the actual release SHA/digest — do not rely on training data or cached knowledge for version hashes.
 

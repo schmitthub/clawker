@@ -1,8 +1,9 @@
 # Brainstorm: The Control Plane and clawkerd
 
-> **Status:** Active
+> **Status:** Branch 1 LANDED (PR #250, 2026-04-13). Active design doc for Branch 2+ (ownership reversal, clawkerd agents).
 > **Created:** 2026-02-16 (POC phase)
 > **Last major rewrite:** 2026-04-11 (primitive CP + terminal-state vision)
+> **Updated:** 2026-04-14 (Branch 1 shipped)
 
 ## Evolution note
 
@@ -10,9 +11,11 @@ This file originated 2026-02-16 as a scratchpad for the two-gRPC-server POC
 (clawkerd ↔ CP, validated in `test/controlplane/`). It has been rewritten as
 of 2026-04-11 to reflect where the design has actually landed:
 
-- The primitive clawker CP (v1, in flight) ships the **final auth shape**
-  from day 1 — mTLS + embedded OIDC provider + JWT bearer + per-method
-  scope enforcement. No throwaway auth gets built.
+- The primitive clawker CP (v1, **shipped 2026-04-13**) carries the **final auth shape**
+  from day 1 — mTLS + Ory Hydra OAuth2 + JWT bearer (via `private_key_jwt` + ES256) +
+  per-method scope enforcement via Hydra introspection. Replaces the earlier
+  "embedded OIDC provider" sketch with Ory subprocess stack (Hydra/Oathkeeper/Kratos).
+  No throwaway auth gets built.
 - The CP has been reframed from "a registration endpoint for clawkerd" to
   **the authoritative daemon for all clawker state on the machine**.
 - The firewall is a **subsystem of the CP**, not its parent. Monitoring,

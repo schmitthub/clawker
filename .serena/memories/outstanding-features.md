@@ -17,24 +17,17 @@ Top-level tracker for features and architectural improvements that are known but
 **Status:** release pipeline is currently broken on main's build system — **must land before the next tag push**
 **Scope:** medium
 
-Background: commits `a50ac9e4` + `5ce36b1c` on branch
-`fix/project-egress-priority` replaced the host-native Go build of
-`internal/firewall/assets/{ebpf-manager,coredns-clawker}` with a pinned
-multi-stage `Dockerfile.controlplane` + `docker buildx build` extraction.
-Nothing generated is committed anymore (no `clawker_*_bpfel.{go,o}`, no
-firewall asset binaries). `make clawker-build` works end-to-end locally
-because Make's dep graph triggers the pinned Docker build, which produces
-the firewall stack binaries into `internal/firewall/assets/` before the
-host-native `go build ./cmd/clawker` runs with them `go:embed`'d.
+Background: commits `a50ac9e4` + `5ce36b1c` (fix/project-egress-priority) and PR #250 (feat: clawker control plane) replaced the host-native Go build of `internal/firewall/assets/{clawker-cp,ebpf-manager,coredns-clawker}` with a pinned multi-stage `Dockerfile.controlplane` + `docker buildx build` extraction. Nothing generated is committed anymore (no `clawker_*_bpfel.{go,o}`, no firewall asset binaries). `make clawker-build` works end-to-end locally because Make's dep graph triggers the pinned Docker build, which produces all three firewall stack binaries into `internal/firewall/assets/` before the host-native `go build ./cmd/clawker` runs with them `go:embed`'d.
 
-The release pipeline does NOT go through `make clawker-build`. It will
-fail on the next tag push as-is.
+Makefile targets: `cp-binary`, `ebpf-binary`, `coredns-binary`. All three are required on the embed path for `clawker-build`.
+
+The release pipeline does NOT go through `make clawker-build`. It will fail on the next tag push as-is — still `go generate ./...` in `.goreleaser.yaml` as of 2026-04-14.
 
 ### What's broken in `.github/workflows/release.yml`
 
 | Step | Breakage |
 |---|---|
-| `Verify build` → `go build ./cmd/clawker` | `internal/firewall/assets/{ebpf-manager,coredns-clawker}` don't exist on the runner; `go:embed` fails at compile time |
+| `Verify build` → `go build ./cmd/clawker` | `internal/firewall/assets/{clawker-cp,ebpf-manager,coredns-clawker}` don't exist on the runner; `go:embed` fails at compile time |
 | GoReleaser step (invokes goreleaser which runs `go generate ./...` + `go build`) | `go generate` needs pinned `clang` + `llvm` + `libbpf-dev` + `linux-libc-dev`; `go build` needs the embedded assets |
 
 Everything downstream of the Go build is fine:
@@ -49,7 +42,7 @@ Everything downstream of the Go build is fine:
 | Section | Breakage |
 |---|---|
 | `before.hooks: go generate ./...` | Runs on the ubuntu-latest runner with no BPF toolchain and no pinned versions. Even if the packages were installed, bypassing `Dockerfile.controlplane` defeats the reproducibility story |
-| `builds: - id: clawker … main: ./cmd/clawker` | Missing `go:embed` assets. Also needs to run per-target-arch so each clawker binary embeds a matching-arch ebpf-manager + coredns-clawker (darwin/arm64 clawker embeds linux/arm64 sidecars, darwin/amd64 embeds linux/amd64, etc.) |
+| `builds: - id: clawker … main: ./cmd/clawker` | Missing `go:embed` assets. Also needs to run per-target-arch so each clawker binary embeds a matching-arch clawker-cp + ebpf-manager + coredns-clawker (darwin/arm64 clawker embeds linux/arm64 sidecars, darwin/amd64 embeds linux/amd64, etc.) |
 
 ### Recommended fix: switch to `builder: prebuilt`
 
@@ -58,7 +51,7 @@ Makefile produces all four cross-arch clawker binaries via the pinned
 Docker chain, and GoReleaser just packages / signs / publishes them.
 
 1. **Extend Dockerfile.controlplane or add a new stage** to support
-   cross-compiling the ebpf-manager + coredns-clawker binaries for both
+   cross-compiling the clawker-cp + ebpf-manager + coredns-clawker binaries for both
    `linux/amd64` and `linux/arm64` in a single build (using `TARGETARCH`
    build args). The current build already supports `--build-arg TARGETARCH=<arch>`
    via the Makefile's `BUILDX_TARGETARCH` — adapt it to be controllable
@@ -134,35 +127,13 @@ attestation, which is a nice-to-have but not required for SLSA L3.
 
 ---
 
-## 0b. Clawker control plane / eliminate the long-running clawker-ebpf container
+## ~~0b. Clawker control plane / eliminate the long-running clawker-ebpf container~~ [RESOLVED]
 
-**Status:** planned (control plane work upcoming)
-**Scope:** large
+Shipped in PR #250 (`feat: clawker control plane — containerized gRPC admin service with Ory auth stack, eBPF management, and mTLS`, 2026-04-13).
 
-The `clawker-ebpf` container currently runs `sleep infinity` as a resident
-RPC endpoint so the firewall manager can `docker exec` subcommands into it
-(`init`, `enable`, `disable`, `sync-routes`, `bypass`, `unbypass`,
-`resolve`). This is **not** a sidecar — the BPF programs themselves live
-in kernel state (pinned under `/sys/fs/bpf/clawker/`) and would continue
-enforcing even if `clawker-ebpf` were stopped.
+The old `clawker-ebpf` container (`sleep infinity` + `docker exec`) is replaced by `clawker-controlplane`, a long-lived Go daemon running `clawker-cp` (PID 1). The CP owns `ebpf.Manager.Load()` lifetime in-process; `Install`/`Remove`/`Enable`/`Disable`/`SyncRoutes`/`Bypass`/`ResolveHostname` are now typed gRPC methods on `AdminService` (mTLS TCP + OAuth2 JWT via Ory Hydra introspection). See `internal/controlplane/CLAUDE.md`.
 
-Why it's currently a container: historical + macOS Docker Desktop quirks.
-Running BPF operations from the host on macOS requires going through the
-Docker Desktop Linux VM; having a container with the right capabilities
-(`CAP_BPF` + `CAP_SYS_ADMIN`) + `/sys/fs/cgroup` bind-mount is the
-cheapest way to get a privileged code-execution surface that works
-identically across macOS and native Linux.
-
-Why it's worth revisiting: a whole container existing purely to sleep and
-serve exec calls is wasteful. Once the dedicated clawker control plane
-daemon lands (separate from the CLI, which is a short-lived process), it
-can own the privileged BPF surface directly — either running on the host
-(native Linux) or inside a Docker Desktop VM-level helper (macOS). At
-that point `clawker-ebpf` can be retired entirely and `init` / `enable` /
-`disable` / `sync-routes` / `bypass` / `resolve` become direct calls from
-the control plane to the kernel.
-
-Dependencies: needs the control plane architecture to land first.
+Remaining Branch 2+ work (ownership reversal — CP owns firewall bootstrap, daemon sunsets) is tracked in `.serena/memories/cp-initiative-status.md`.
 
 ---
 
@@ -196,9 +167,9 @@ Already fixed in commit `6a00a212` ("fix: firewall bypass/enable/disable name→
 **Complexity:** Touches almost every part of the firewall stack. Probably a multi-task initiative.
 
 **Files to start:**
-- `internal/ebpf/bpf/common.h` — map definitions, container_config struct
-- `internal/ebpf/bpf/clawker.c` — connect6/sendmsg6/recvmsg6
-- `internal/ebpf/types.go` + manager.go — IPv6 helpers + sync
+- `internal/controlplane/ebpf/bpf/common.h` — map definitions, container_config struct
+- `internal/controlplane/ebpf/bpf/clawker.c` — connect6/sendmsg6/recvmsg6
+- `internal/controlplane/ebpf/types.go` + manager.go — IPv6 helpers + sync
 - `internal/firewall/manager.go` — network setup, container config
 - `internal/firewall/envoy.go` — IPv6 listener + cluster config
 - `internal/dnsbpf/dnsbpf.go` — AAAA record handling
@@ -232,7 +203,7 @@ The control plane's auth shape (mTLS + OIDC + JWT with per-method scope enforcem
 2. **eBPF program logs** — events from the BPF programs themselves (verifier output, `bpf_printk` events via tracefs, attach/detach events) forwarded to the clawker logging stack (file + OTel bridge).
 
 **Existing infrastructure:**
-- `internal/ebpf/bpf/common.h` already defines a `metrics_map` with `MetricKey {cgroup_id, domain_hash, dst_port, action}` → counter struct. The BPF programs already call `metric_inc(...)` at every decision point (connect4, sendmsg4, etc.).
+- `internal/controlplane/ebpf/bpf/common.h` already defines a `metrics_map` with `MetricKey {cgroup_id, domain_hash, dst_port, action}` → counter struct. The BPF programs already call `metric_inc(...)` at every decision point (connect4, sendmsg4, etc.).
 - `internal/monitor/` has Grafana + Prometheus + Loki templates — the monitoring stack exists.
 - `internal/logger` has an OTel bridge already wired (see `logger.Logger` Factory noun) that forwards clawker's structured logs.
 - The firewall daemon already publishes CoreDNS query logs + Envoy access logs to Loki via Promtail (see `.claude/rules/envoy.md` and `internal/firewall/CLAUDE.md`).
@@ -248,10 +219,10 @@ The control plane's auth shape (mTLS + OIDC + JWT with per-method scope enforcem
 - Log transport: BPF ring buffer (`BPF_MAP_TYPE_RINGBUF`) for event stream, or just poll the metrics_map and synthesize events from deltas?
 
 **Files to touch:**
-- `internal/ebpf/bpf/common.h` — maybe add a ring buffer for structured events
-- `internal/ebpf/bpf/clawker.c` — optionally emit ring buffer events on key actions
-- `internal/ebpf/manager.go` — new `ScrapeMetrics()` method reading `metrics_map`
-- `internal/ebpf/cmd/main.go` — new `metrics` subcommand (or part of the `serve` daemon from #3)
+- `internal/controlplane/ebpf/bpf/common.h` — maybe add a ring buffer for structured events
+- `internal/controlplane/ebpf/bpf/clawker.c` — optionally emit ring buffer events on key actions
+- `internal/controlplane/ebpf/manager.go` — new `ScrapeMetrics()` method reading `metrics_map`
+- `internal/controlplane/ebpf/cmd/main.go` — new `metrics` subcommand (or part of the `serve` daemon from #3)
 - `internal/monitor/` — dashboard updates
 - Tie into the #3 long-running daemon naturally — scraping loop lives there
 
@@ -263,4 +234,4 @@ The control plane's auth shape (mTLS + OIDC + JWT with per-method scope enforcem
 
 **Not in scope here:** Any firewall changes tied to specific egress rule features (path rules, wildcards, IP ranges, etc.) — those are tracked separately via the regular feature pipeline.
 
-**Source of truth for architecture:** `.claude/docs/ARCHITECTURE.md` (§ `internal/firewall`, `internal/dnsbpf`, `internal/ebpf`) and `.claude/docs/DESIGN.md` §7.2 were refreshed in commit `24090e17` (2026-04-10) to reflect the current state.
+**Source of truth for architecture:** `.claude/docs/ARCHITECTURE.md` (§ `internal/firewall`, `internal/dnsbpf`, `internal/controlplane`, `internal/controlplane/ebpf`) and `.claude/docs/DESIGN.md` §7.2 were refreshed in commit `24090e17` (2026-04-10) and again after PR #250 (2026-04-14) to reflect the current state.
