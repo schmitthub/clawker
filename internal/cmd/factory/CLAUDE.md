@@ -47,6 +47,7 @@ f := &cmdutil.Factory{IOStreams: tio, TUI: tui.NewTUI(tio), Version: "1.0.0"}
 - `gitManagerFunc(f)` -- returns lazy git manager constructor; uses project root from `f.Config().ProjectCfg().RootDir()`
 - `hostProxyFunc()` -- returns lazy host proxy manager constructor
 - `adminClientFunc(f)` -- returns lazy `adminv1.AdminServiceClient` constructor; closes over `f.Config()`, `f.Logger()`, `f.Client(ctx)`. On first call (or after `grpc.ClientConn` transitions to `TransientFailure`/`Shutdown`) it invokes package-level `ensureRunning` (seam for `controlplane.EnsureRunning`), then dials via `auth.DialCPAdmin(ctx, adminPort, hydraPort, grpc.WithKeepaliveParams(...))`. No raw moby client — the firewall exception is gone.
+- `controlPlaneFunc(f)` -- returns a `sync.Once`-cached `func() controlplane.Manager` that constructs a single `controlplane.NewManager(f.Client, f.Config, f.Logger)` per Factory. The `Manager` holds lazy Factory closures, not eagerly resolved Docker/Config/Logger values, so a caller that never touches the CP never resolves them. Consumed by the break-glass verbs in `internal/cmd/controlplane/` and intended for any future caller that needs to drive the CP lifecycle without hitting the AdminService.
 - `socketBridgeFunc()` -- returns lazy `socketbridge.SocketBridgeManager` constructor (wraps `socketbridge.NewManager()`)
 - `prompterFunc(ios)` -- returns lazy prompter constructor
 

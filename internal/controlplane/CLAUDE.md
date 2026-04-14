@@ -35,7 +35,8 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 | `authz.go` | `AuthInterceptor` — validates OAuth2 bearer tokens via Hydra introspection, enforces per-method scopes |
 | `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup. `AdminMethodScopes` lives in `api/admin/v1/admin.go` so a new RPC fails closed (covered by `TestAdminMethodScopes_CoversAllRPCs`). |
 | `startup.go` | `CPStartupOrchestrator` — startup sequencing + aggregate `/healthz` endpoint (probes all 7 service ports) |
-| `bootstrap.go` | Host-side `EnsureRunning` + `Stop` — manage the CP container lifecycle via `*docker.Client` |
+| `bootstrap.go` | Host-side `EnsureRunning` + `Stop` + `CPRunning` — manage the CP container lifecycle via `*docker.Client` |
+| `manager.go` | `Manager` interface + `NewManager(client, cfg, log)` constructor — Factory-facing noun (`f.ControlPlane()`) that wraps the bootstrap functions with lazy Factory closures. Methods: `EnsureRunning`, `Stop`, `IsRunning`, `ProbeHealthz` |
 | `watcher.go` | `AgentWatcher` — polls Docker for `purpose=agent` containers; invokes drain-to-zero callback past grace/threshold (INV-B2-007) |
 | `cp_container.go` | `BuildCPContainerConfig(cfg)` → `CPContainerConfig` struct for Docker container creation |
 | `ory_configs.go` | `WriteOryConfigs(cp)` — generates Hydra/Kratos/Oathkeeper YAML config files |

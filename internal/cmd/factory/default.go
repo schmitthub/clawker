@@ -49,7 +49,8 @@ func New(version string) *cmdutil.Factory {
 	f.Client = clientFunc(f)                 // depends on Config
 	f.GitManager = gitManagerFunc(f)         // depends on Config
 	f.Prompter = prompterFunc(f)
-	f.AdminClient = adminClientFunc(f) // depends on Config, Logger, Client
+	f.AdminClient = adminClientFunc(f)   // depends on Config, Logger, Client
+	f.ControlPlane = controlPlaneFunc(f) // depends on Config, Logger, Client
 
 	return f
 }
@@ -349,5 +350,23 @@ func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 			mgr, mgrErr = git.NewGitManager(projectRoot)
 		})
 		return mgr, mgrErr
+	}
+}
+
+// controlPlaneFunc returns a lazy closure that constructs a
+// controlplane.Manager once. The Manager shares the Factory's Client,
+// Config, and Logger closures so every caller — `clawker controlplane
+// up/down/status` and any future break-glass verb — observes the same
+// cached Docker singleton and settings snapshot as the rest of the CLI.
+func controlPlaneFunc(f *cmdutil.Factory) func() controlplane.Manager {
+	var (
+		once sync.Once
+		mgr  controlplane.Manager
+	)
+	return func() controlplane.Manager {
+		once.Do(func() {
+			mgr = controlplane.NewManager(f.Client, f.Config, f.Logger)
+		})
+		return mgr
 	}
 }

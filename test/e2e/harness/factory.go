@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane"
 	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
@@ -40,6 +41,11 @@ type FactoryOptions struct {
 	// AdminClient optionally provides a real CP AdminService client.
 	// When nil the harness wires a no-op AdminServiceClientMock.
 	AdminClient func(context.Context, config.Config, *logger.Logger) (adminv1.AdminServiceClient, error)
+	// ControlPlane optionally provides a real Manager that drives the
+	// host-side CP container lifecycle. When nil the harness wires a
+	// no-op ManagerMock (every method returns zero values / nil) so
+	// tests that don't exercise the CP verbs never bootstrap a real CP.
+	ControlPlane func(config.Config, *logger.Logger) controlplane.Manager
 }
 
 // NewFactory constructs a *cmdutil.Factory with lazy singletons.
@@ -202,6 +208,26 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 			}
 		})
 		return adminCli, adminErr
+	}
+
+	// --- ControlPlane ---
+	var (
+		cpOnce sync.Once
+		cpMgr  controlplane.Manager
+	)
+	f.ControlPlane = func() controlplane.Manager {
+		cpOnce.Do(func() {
+			if opts.ControlPlane != nil {
+				c, cErr := resolveConfig()
+				if cErr != nil {
+					t.Fatalf("harness: config for control plane: %v", cErr)
+				}
+				cpMgr = opts.ControlPlane(c, logger.Nop())
+			} else {
+				cpMgr = &cpmocks.ManagerMock{}
+			}
+		})
+		return cpMgr
 	}
 
 	// --- Prompter ---

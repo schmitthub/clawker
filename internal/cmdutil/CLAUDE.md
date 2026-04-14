@@ -44,6 +44,7 @@ type Factory struct {
     SocketBridge   func() socketbridge.SocketBridgeManager
     Prompter       func() *prompter.Prompter
     AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
+    ControlPlane   func() controlplane.Manager
 }
 ```
 
@@ -59,6 +60,7 @@ type Factory struct {
 - `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `sockebridgemocks.MockManager`
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
 - `AdminClient(ctx)` -- lazy `adminv1.AdminServiceClient` (gRPC client to the CP AdminService). First call triggers `controlplane.EnsureRunning` then `auth.DialCPAdmin` with mTLS + OAuth2 JWT + keepalive; the closure caches `grpc.ClientConn` and only rebuilds on `TransientFailure`/`Shutdown`. Commands call the 13 `Firewall*` RPCs directly. Mock: `controlplane/mocks.AdminServiceClientMock`
+- `ControlPlane()` -- lazy `controlplane.Manager` (host-side CP container lifecycle noun). Methods: `EnsureRunning`, `Stop`, `IsRunning`, `ProbeHealthz`. Wraps `f.Client`/`f.Config`/`f.Logger` so callers don't re-resolve them. Used by the `clawker controlplane up/down/status` break-glass verbs. Mock: `controlplane/mocks.ManagerMock` (moq-generated)
 
 **Testing:** Construct minimal Factory structs directly:
 ```go

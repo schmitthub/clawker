@@ -4,6 +4,7 @@ import (
 	authcmd "github.com/schmitthub/clawker/internal/cmd/auth"
 	bridgecmd "github.com/schmitthub/clawker/internal/cmd/bridge"
 	"github.com/schmitthub/clawker/internal/cmd/container"
+	controlplanecmd "github.com/schmitthub/clawker/internal/cmd/controlplane"
 	firewallcmd "github.com/schmitthub/clawker/internal/cmd/firewall"
 	"github.com/schmitthub/clawker/internal/cmd/generate"
 	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
@@ -72,6 +73,7 @@ Workspace modes:
 	// Add management commands
 	cmd.AddCommand(authcmd.NewCmdAuth(f))
 	cmd.AddCommand(container.NewCmdContainer(f))
+	cmd.AddCommand(controlplanecmd.NewCmdControlPlane(f))
 	cmd.AddCommand(firewallcmd.NewCmdFirewall(f))
 	cmd.AddCommand(image.NewCmdImage(f))
 	cmd.AddCommand(volume.NewCmdVolume(f))
