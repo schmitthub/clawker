@@ -6,7 +6,7 @@ lifecycle control for the clawker control plane container.
 ## Why this exists
 
 Day-to-day, operators do not invoke these verbs. `f.AdminClient` transparently
-calls `controlplane.EnsureRunning` on first use, so the first `clawker firewall
+calls `cpboot.EnsureRunning` on first use, so the first `clawker firewall
 status` (or any admin RPC) auto-boots the CP. This package exposes that
 lifecycle explicitly for debugging, upgrades, and recovery paths.
 
@@ -31,10 +31,10 @@ lifecycle explicitly for debugging, upgrades, and recovery paths.
 ## Factory dependency
 
 Every verb here reaches the CP lifecycle through one noun: `f.ControlPlane()
-controlplane.Manager`. The `Manager` interface lives in `internal/controlplane/
-manager.go` and is wired in `internal/cmd/factory/default.go` via
+cpboot.Manager`. The `Manager` interface lives in `internal/controlplane/
+cpboot/manager.go` and is wired in `internal/cmd/factory/default.go` via
 `controlPlaneFunc(f)` (a `sync.Once`-cached closure that calls
-`controlplane.NewManager(f.Client, f.Config, f.Logger)`).
+`cpboot.NewManager(f.Client, f.Config, f.Logger)`).
 
 No package-level seams. Tests inject a `*mocks.ManagerMock` by overriding
 `tb.F.ControlPlane` on the per-test `testBed`; each test programs only the

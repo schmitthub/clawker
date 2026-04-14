@@ -5,19 +5,19 @@ package mocks
 
 import (
 	"context"
-	"github.com/schmitthub/clawker/internal/controlplane"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"sync"
 )
 
-// Ensure, that ManagerMock does implement controlplane.Manager.
+// Ensure, that ManagerMock does implement cpboot.Manager.
 // If this is not the case, regenerate this file with moq.
-var _ controlplane.Manager = &ManagerMock{}
+var _ cpboot.Manager = &ManagerMock{}
 
-// ManagerMock is a mock implementation of controlplane.Manager.
+// ManagerMock is a mock implementation of cpboot.Manager.
 //
 //	func TestSomethingThatUsesManager(t *testing.T) {
 //
-//		// make and configure a mocked controlplane.Manager
+//		// make and configure a mocked cpboot.Manager
 //		mockedManager := &ManagerMock{
 //			EnsureRunningFunc: func(ctx context.Context) error {
 //				panic("mock out the EnsureRunning method")

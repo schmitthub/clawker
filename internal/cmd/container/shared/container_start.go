@@ -119,7 +119,7 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 	//  1. FirewallInit — idempotent stack-up + BPF readiness check.
 	//  2. FirewallAddRules — sync project rules; returns after stack healthy.
 	//  3. FirewallEnable — drift-guarded per-container enroll (INV-B2-016).
-	// Getting the AdminClient transparently triggers controlplane.EnsureRunning.
+	// Getting the AdminClient transparently triggers cpboot.EnsureRunning.
 	if settings != nil && settings.Firewall.FirewallEnabled() {
 		if cmdOpts.AdminClient == nil {
 			return fmt.Errorf("bootstrapping services: firewall is enabled but no admin client provided")

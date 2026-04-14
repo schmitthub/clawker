@@ -106,11 +106,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # govulncheck loads every Go package in the module, so internal/firewall's
-      # go:embed targets (assets/clawker-cp, assets/ebpf-manager,
-      # assets/coredns-clawker) and internal/controlplane/ebpf's bpf2go-generated
-      # bindings must exist on disk. Built via the pinned Dockerfile.controlplane
-      # chain. See the action's own description for the "do this before any tool
+      # govulncheck loads every Go package in the module. The go:embed targets
+      # (internal/controlplane/cpboot/assets/clawker-cp + assets/ebpf-manager,
+      # internal/controlplane/firewall/assets/coredns-clawker) and
+      # internal/controlplane/firewall/ebpf's bpf2go-generated bindings must
+      # exist on disk. Built via the pinned Dockerfile.controlplane chain.
+      # See the action's own description for the "do this before any tool
       # that re-checkouts" ordering rule.
       - name: Build embedded control plane binaries
         uses: ./.github/actions/build-controlplane-binaries

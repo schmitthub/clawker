@@ -13,7 +13,7 @@ import (
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -49,12 +49,12 @@ func TestCPStartupCleanup_E2E(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := controlplane.Stop(cleanupCtx, dc); err != nil {
-			t.Logf("cleanup: controlplane.Stop: %v", err)
+		if err := cpboot.Stop(cleanupCtx, dc); err != nil {
+			t.Logf("cleanup: cpboot.Stop: %v", err)
 		}
 	})
 
-	require.NoError(t, controlplane.EnsureRunning(ctx, dc, cfg, log), "first EnsureRunning")
+	require.NoError(t, cpboot.EnsureRunning(ctx, dc, cfg, log), "first EnsureRunning")
 
 	// Pick a cgroup id that is guaranteed to have no corresponding
 	// container_map entry — 0xDEAD is an obvious sentinel, large enough
@@ -69,8 +69,8 @@ func TestCPStartupCleanup_E2E(t *testing.T) {
 	// the container down cleanly; the next EnsureRunning reloads the
 	// pinned maps via Manager.Load and then — by main.go wiring —
 	// invokes CleanupStaleBypass, which must remove the 0xDEAD entry.
-	require.NoError(t, controlplane.Stop(ctx, dc), "restarting CP: Stop")
-	require.NoError(t, controlplane.EnsureRunning(ctx, dc, cfg, log), "restarting CP: EnsureRunning")
+	require.NoError(t, cpboot.Stop(ctx, dc), "restarting CP: Stop")
+	require.NoError(t, cpboot.EnsureRunning(ctx, dc, cfg, log), "restarting CP: EnsureRunning")
 
 	// Give the CP a moment to settle post-/healthz.
 	select {

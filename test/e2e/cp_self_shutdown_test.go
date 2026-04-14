@@ -12,7 +12,7 @@ import (
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -47,12 +47,12 @@ func TestCPSelfShutdown_E2E(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := controlplane.Stop(cleanupCtx, dc); err != nil {
-			t.Logf("cleanup: controlplane.Stop: %v", err)
+		if err := cpboot.Stop(cleanupCtx, dc); err != nil {
+			t.Logf("cleanup: cpboot.Stop: %v", err)
 		}
 	})
 
-	require.NoError(t, controlplane.EnsureRunning(ctx, dc, cfg, log), "EnsureRunning")
+	require.NoError(t, cpboot.EnsureRunning(ctx, dc, cfg, log), "EnsureRunning")
 
 	// Give the watcher's grace period + two poll intervals to elapse,
 	// plus a margin for the drain callback to stop the stack and exit.

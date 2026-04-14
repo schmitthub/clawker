@@ -7,7 +7,7 @@ import (
 
 // NewCmdControlPlane creates the parent command for control plane break-glass
 // management. Day-to-day callers do not need these verbs: `f.AdminClient`
-// transparently invokes `controlplane.EnsureRunning` on first use, so the
+// transparently invokes `cpboot.EnsureRunning` on first use, so the
 // first `clawker firewall status` (or any other admin RPC) auto-boots the
 // CP. These commands exist for explicit lifecycle control during debugging
 // and recovery.

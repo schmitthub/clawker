@@ -31,18 +31,16 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 |------|---------|
 | `server.go` | `Server` struct, `ControlPlaneService` interface, `Registry`, `AgentReportingService` handler |
 | `registry.go` | Thread-safe agent registry keyed by container ID |
-| `embed_cp.go` / `embed_ebpf.go` | `//go:embed assets/clawker-cp` + `assets/ebpf-manager` — CP daemon + break-glass eBPF CLI binaries embedded into the clawker release |
 | `authz.go` | `AuthInterceptor` — validates OAuth2 bearer tokens via Hydra introspection, enforces per-method scopes |
 | `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup. `AdminMethodScopes` lives in `api/admin/v1/admin.go` so a new RPC fails closed (covered by `TestAdminMethodScopes_CoversAllRPCs`). |
 | `startup.go` | `CPStartupOrchestrator` — startup sequencing + aggregate `/healthz` endpoint (probes all 7 service ports) |
-| `bootstrap.go` | Host-side `EnsureRunning` + `Stop` + `CPRunning` — manage the CP container lifecycle via `*docker.Client` |
-| `manager.go` | `Manager` interface + `NewManager(client, cfg, log)` constructor — Factory-facing noun (`f.ControlPlane()`) that wraps the bootstrap functions with lazy Factory closures. Methods: `EnsureRunning`, `Stop`, `IsRunning`, `ProbeHealthz` |
 | `watcher.go` | `AgentWatcher` — polls Docker for `purpose=agent` containers; invokes drain-to-zero callback past grace/threshold (INV-B2-007) |
-| `cp_container.go` | `BuildCPContainerConfig(cfg)` → `CPContainerConfig` struct for Docker container creation |
 | `ory_configs.go` | `WriteOryConfigs(cp)` — generates Hydra/Kratos/Oathkeeper YAML config files |
 | `subprocess.go` | `SubprocessManager` — manages Ory subprocess lifecycle (start, health, crash detection, shutdown) |
+| `cpboot/` | **Host-side CP bootstrap subpackage.** Contains `embed_cp.go` / `embed_ebpf.go` (`//go:embed assets/clawker-cp` + `assets/ebpf-manager`), `bootstrap.go` (`EnsureRunning` / `Stop` / `CPRunning`), `cp_container.go` (`BuildCPContainerConfig` → `CPContainerConfig`), `manager.go` (`Manager` interface + `NewManager`). Split out so `cmd/clawker-cp` can import `internal/controlplane` for `SubprocessManager` / `AdminServer` / `AgentWatcher` without dragging in the `go:embed` directives that would otherwise require the daemon to embed itself during its own build. |
 | `mocks/mock_server.go` | `MockServer` — hand-written test double for `ControlPlaneService` |
-| `mocks/` | moq-generated mocks: `ControlPlaneServiceMock`, `IntrospectorMock`, `EBPFManagerMock` |
+| `mocks/` | moq-generated mocks: `ControlPlaneServiceMock`, `IntrospectorMock`, `AdminServiceClientMock` |
+| `cpboot/mocks/` | moq-generated `ManagerMock` for the host-side CP lifecycle noun |
 
 ## AdminService composition
 
@@ -77,10 +75,10 @@ All RPCs require the uniform `admin` scope (INV-B2-009). Per-method diversificat
   - gRPC admin (raw TCP)
 - Returns 200 only when ALL probes succeed
 
-## Container Config (`cp_container.go`)
+## Container Config (`cpboot/cp_container.go`)
 
 ```go
-func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error)
+func BuildCPContainerConfig(cfg config.Config) (*cpboot.CPContainerConfig, error)
 ```
 
 All ports from `cfg.Settings().ControlPlane` (defaults via struct tags). Published to `127.0.0.1` only:
@@ -139,7 +137,7 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 - `ControlPlaneService` interface — CLI consumers depend on this. `mocks.MockServer` avoids real gRPC.
 - `EBPFManager` interface — `firewall/ebpf/mocks/EBPFManagerMock` for firewall handler tests.
 - `Introspector` interface — `mocks/IntrospectorMock` for authz tests (no real Hydra).
-- `controlplane.Manager` interface — `mocks/ManagerMock` for break-glass `controlplane up/down/status` CLI tests.
+- `cpboot.Manager` interface — `cpboot/mocks/ManagerMock` for break-glass `controlplane up/down/status` CLI tests.
 - `adminv1.AdminServiceClient` — `mocks/AdminServiceClientMock` for CLI tests that speak to the AdminService.
 - `firewall.ContainerResolver` — handler-side injectable Docker lookup (see `firewall/CLAUDE.md`).
 

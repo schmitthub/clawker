@@ -100,8 +100,8 @@ RALPH-TEST.md
 # Embedded firewall stack binaries (built by `make ebpf-binary` /
 # `make coredns-binary` / `make cp-binary` via the pinned Dockerfile.controlplane
 # multi-stage build; not committed).
-internal/controlplane/assets/ebpf-manager
-internal/controlplane/assets/clawker-cp
+internal/controlplane/cpboot/assets/ebpf-manager
+internal/controlplane/cpboot/assets/clawker-cp
 internal/controlplane/firewall/assets/coredns-clawker
 
 # Root-level build artifact from ad-hoc `go build ./cmd/clawker-cp`

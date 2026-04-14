@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/controlplane"
-	"github.com/schmitthub/clawker/internal/controlplane/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
@@ -35,7 +35,7 @@ func newTestBed(t *testing.T) *testBed {
 	mgr := &mocks.ManagerMock{}
 	f := &cmdutil.Factory{
 		IOStreams:    ios,
-		ControlPlane: func() controlplane.Manager { return mgr },
+		ControlPlane: func() cpboot.Manager { return mgr },
 	}
 	return &testBed{F: f, Mock: mgr, Stdout: stdout, Stderr: stderr}
 }

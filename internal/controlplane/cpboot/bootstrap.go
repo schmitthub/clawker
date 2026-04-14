@@ -1,4 +1,4 @@
-package controlplane
+package cpboot
 
 import (
 	"archive/tar"

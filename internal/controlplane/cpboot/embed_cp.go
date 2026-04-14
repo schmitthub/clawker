@@ -1,4 +1,4 @@
-package controlplane
+package cpboot
 
 import _ "embed"
 
@@ -16,6 +16,11 @@ import _ "embed"
 // At runtime the CP bootstrapper (B2 Task 3) writes this binary into an
 // on-demand Alpine image and starts the clawker-cp container from that
 // image. The daemon runs inside the container as PID 1.
+//
+// Lives in the cpboot subpackage so cmd/clawker-cp can import
+// internal/controlplane without dragging in this embed directive —
+// the daemon would otherwise need to embed itself, which can't resolve
+// during its own build.
 //
 //go:embed assets/clawker-cp
 var ClawkerCPBinary []byte

@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/controlplane"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
@@ -151,7 +151,7 @@ func cleanupCPIfPresent(t *testing.T, timeout time.Duration) {
 		return
 	}
 	defer func() { _ = dc.Close() }()
-	if err := controlplane.Stop(ctx, dc); err != nil {
-		t.Logf("cleanup: controlplane.Stop: %v (ignoring — test robust)", err)
+	if err := cpboot.Stop(ctx, dc); err != nil {
+		t.Logf("cleanup: cpboot.Stop: %v (ignoring — test robust)", err)
 	}
 }

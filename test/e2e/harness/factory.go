@@ -10,7 +10,8 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/controlplane"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
+	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
@@ -45,7 +46,7 @@ type FactoryOptions struct {
 	// host-side CP container lifecycle. When nil the harness wires a
 	// no-op ManagerMock (every method returns zero values / nil) so
 	// tests that don't exercise the CP verbs never bootstrap a real CP.
-	ControlPlane func(config.Config, *logger.Logger) controlplane.Manager
+	ControlPlane func(config.Config, *logger.Logger) cpboot.Manager
 }
 
 // NewFactory constructs a *cmdutil.Factory with lazy singletons.
@@ -213,9 +214,9 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	// --- ControlPlane ---
 	var (
 		cpOnce sync.Once
-		cpMgr  controlplane.Manager
+		cpMgr  cpboot.Manager
 	)
-	f.ControlPlane = func() controlplane.Manager {
+	f.ControlPlane = func() cpboot.Manager {
 		cpOnce.Do(func() {
 			if opts.ControlPlane != nil {
 				c, cErr := resolveConfig()
@@ -224,7 +225,7 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 				}
 				cpMgr = opts.ControlPlane(c, logger.Nop())
 			} else {
-				cpMgr = &cpmocks.ManagerMock{}
+				cpMgr = &cpbootmocks.ManagerMock{}
 			}
 		})
 		return cpMgr

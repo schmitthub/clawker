@@ -10,8 +10,8 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/controlplane"
 	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -28,8 +28,8 @@ import (
 
 // ensureRunning is the test seam for AdminClient bootstrap. Tests may swap
 // this via t.Cleanup-protected assignment to avoid spawning real CP
-// containers; production always uses controlplane.EnsureRunning.
-var ensureRunning = controlplane.EnsureRunning
+// containers; production always uses cpboot.EnsureRunning.
+var ensureRunning = cpboot.EnsureRunning
 
 // dialAdmin is the test seam for the mTLS + OAuth2 dial. Tests swap this
 // to return a pre-built grpc.ClientConn (via grpc.NewClient against an
@@ -222,7 +222,7 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 
 // adminClientFunc returns a lazy closure that provides the CP AdminService
 // gRPC client. First call bootstraps the CP container via
-// controlplane.EnsureRunning then dials with mTLS + OAuth2 JWT; subsequent
+// cpboot.EnsureRunning then dials with mTLS + OAuth2 JWT; subsequent
 // calls return the cached client unless the gRPC connection has entered
 // TransientFailure or Shutdown, in which case the closure rebuilds.
 //
@@ -376,18 +376,18 @@ func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 }
 
 // controlPlaneFunc returns a lazy closure that constructs a
-// controlplane.Manager once. The Manager shares the Factory's Client,
+// cpboot.Manager once. The Manager shares the Factory's Client,
 // Config, and Logger closures so every caller — `clawker controlplane
 // up/down/status` and any future break-glass verb — observes the same
 // cached Docker singleton and settings snapshot as the rest of the CLI.
-func controlPlaneFunc(f *cmdutil.Factory) func() controlplane.Manager {
+func controlPlaneFunc(f *cmdutil.Factory) func() cpboot.Manager {
 	var (
 		once sync.Once
-		mgr  controlplane.Manager
+		mgr  cpboot.Manager
 	)
-	return func() controlplane.Manager {
+	return func() cpboot.Manager {
 		once.Do(func() {
-			mgr = controlplane.NewManager(f.Client, f.Config, f.Logger)
+			mgr = cpboot.NewManager(f.Client, f.Config, f.Logger)
 		})
 		return mgr
 	}

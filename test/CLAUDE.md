@@ -52,7 +52,7 @@ Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.MockManager` |
 | `SocketBridge` | `func(cfg, log) socketbridge.SocketBridgeManager` | nil (no-op) |
 | `AdminClient` | `func(ctx, cfg, log) (adminv1.AdminServiceClient, error)` | `cpmocks.AdminServiceClientMock` (no-op) |
-| `ControlPlane` | `func(cfg, log) controlplane.Manager` | `cpmocks.ManagerMock` (every method returns zero values so tests that don't touch CP verbs never bootstrap a real CP) |
+| `ControlPlane` | `func(cfg, log) cpboot.Manager` | `cpbootmocks.ManagerMock` (every method returns zero values so tests that don't touch CP verbs never bootstrap a real CP) |
 
 ### Functions
 
@@ -72,8 +72,8 @@ Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`
 h := &harness.Harness{T: t, Opts: &harness.FactoryOptions{
     Config: func(...config.NewConfigOption) (config.Config, error) { return testCfg, nil },
     // Wire a real CP for firewall integration tests. Omit both to stay on the mocks.
-    ControlPlane: func(cfg config.Config, log *logger.Logger) controlplane.Manager {
-        return controlplane.NewManager(
+    ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+        return cpboot.NewManager(
             func(ctx context.Context) (*docker.Client, error) { return dc, nil },
             func() (config.Config, error) { return cfg, nil },
             func() (*logger.Logger, error) { return log, nil },
@@ -119,7 +119,7 @@ Tests exercise the full Envoy+CoreDNS firewall stack with real Docker.
 | `TestFirewall_Status` | `firewall status --json` reports health + rule count |
 | `TestFirewall_PathRules*` | HTTP and TLS MITM path rule enforcement |
 
-Tests drive the CP AdminService through `f.AdminClient(ctx)`. Harness wires the real `controlplane.Manager` + lets `adminClientFunc` bootstrap the CP container via `controlplane.EnsureRunning`; tests exercise `FirewallInit` / `FirewallEnable` / etc. as real gRPC calls. Cleanup tears down Envoy+CoreDNS + the CP container before removing test resources.
+Tests drive the CP AdminService through `f.AdminClient(ctx)`. Harness wires the real `cpboot.Manager` + lets `adminClientFunc` bootstrap the CP container via `cpboot.EnsureRunning`; tests exercise `FirewallInit` / `FirewallEnable` / etc. as real gRPC calls. Cleanup tears down Envoy+CoreDNS + the CP container before removing test resources.
 
 ## Debugging Resource Leaks
 
@@ -127,4 +127,4 @@ All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestNa
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/docker/mocks`, `internal/controlplane`, `internal/controlplane/mocks`, `internal/git`, `internal/hostproxy`, `internal/hostproxy/hostproxytest`, `internal/socketbridge`, `internal/cmdutil`, `internal/testenv`, `internal/iostreams`, `internal/logger`, `internal/project`
+Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/docker/mocks`, `internal/controlplane`, `internal/controlplane/mocks`, `internal/controlplane/cpboot`, `internal/controlplane/cpboot/mocks`, `internal/git`, `internal/hostproxy`, `internal/hostproxy/hostproxytest`, `internal/socketbridge`, `internal/cmdutil`, `internal/testenv`, `internal/iostreams`, `internal/logger`, `internal/project`

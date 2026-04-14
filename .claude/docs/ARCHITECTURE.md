@@ -453,7 +453,7 @@ The CP container is the **single owner** of firewall state, eBPF lifetime, and E
                       /sys/fs/bpf/clawker/{container_map,bypass_map,dns_cache,route_map,metrics_map}
 ```
 
-**Host-side bootstrap (`internal/controlplane/bootstrap.go`):**
+**Host-side bootstrap (`internal/controlplane/cpboot/bootstrap.go`):**
 
 - `EnsureRunning(ctx, dc, cfg, log)` — idempotent, mutex-guarded. Steps: ensure CP image → `ContainerCreate` (static IP via `NetworkingConfig.IPAMConfig.IPv4Address`, `on-failure` restart policy max 3) → `ContainerStart` → poll `/healthz` on `127.0.0.1:<HealthPort>`. Mount-mode reconciliation (stop+remove+recreate) if `FirewallDataSubdir` is RO or mount set diverges (INV-B2-006).
 - `Stop(ctx, dc, log)` — stops the CP container only. Envoy/CoreDNS stay up until `FirewallRemove` RPC (INV-B2-008).
@@ -745,7 +745,7 @@ Each package with complex dependencies provides test infrastructure:
 
 ### Where `cmdutil` Fits
 
-`cmdutil` is a **composite package** by import count — it imports config, controlplane, docker, git, hostproxy, iostreams, logger, project, prompter, socketbridge, tui, and `api/admin/v1`. However, its high fan-out is structural (type declarations for Factory struct fields like `AdminClient func(ctx) (adminv1.AdminServiceClient, error)` and `ControlPlane func() controlplane.Manager`), not behavioral. It contains no construction logic — that lives in `cmd/factory/`. Commands and the entry point import cmdutil for the Factory type and shared utilities.
+`cmdutil` is a **composite package** by import count — it imports config, controlplane/cpboot, docker, git, hostproxy, iostreams, logger, project, prompter, socketbridge, tui, and `api/admin/v1`. However, its high fan-out is structural (type declarations for Factory struct fields like `AdminClient func(ctx) (adminv1.AdminServiceClient, error)` and `ControlPlane func() cpboot.Manager`), not behavioral. It contains no construction logic — that lives in `cmd/factory/`. Commands and the entry point import cmdutil for the Factory type and shared utilities.
 
 If a utility in `cmdutil` is also needed by domain packages outside commands, extract it into a leaf package:
 

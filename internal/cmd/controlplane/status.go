@@ -7,14 +7,14 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/controlplane"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 type StatusOptions struct {
 	IOStreams    *iostreams.IOStreams
-	ControlPlane func() controlplane.Manager
+	ControlPlane func() cpboot.Manager
 	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
 	Format       *cmdutil.FormatFlags
 }
