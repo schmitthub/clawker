@@ -79,6 +79,7 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.PrometheusURLFunc = cfg.PrometheusURL
 	mock.EnvoyIPLastOctetFunc = cfg.EnvoyIPLastOctet
 	mock.CoreDNSIPLastOctetFunc = cfg.CoreDNSIPLastOctet
+	mock.CPIPLastOctetFunc = cfg.CPIPLastOctet
 	mock.EnvoyEgressPortFunc = cfg.EnvoyEgressPort
 	mock.EnvoyTCPPortBaseFunc = cfg.EnvoyTCPPortBase
 	mock.EnvoyHealthPortFunc = cfg.EnvoyHealthPort

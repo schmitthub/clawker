@@ -137,6 +137,7 @@ const (
 const (
 	EnvoyIPLastOctet   = 200
 	CoreDNSIPLastOctet = 201
+	CPIPLastOctet      = 202
 )
 
 // Firewall stack ports.

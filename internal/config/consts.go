@@ -116,6 +116,9 @@ func (c *configImpl) EnvoyIPLastOctet() byte { return consts.EnvoyIPLastOctet }
 // CoreDNSIPLastOctet returns the last octet for CoreDNS's static IP on clawker-net.
 func (c *configImpl) CoreDNSIPLastOctet() byte { return consts.CoreDNSIPLastOctet }
 
+// CPIPLastOctet returns the last octet for the control plane's static IP on clawker-net.
+func (c *configImpl) CPIPLastOctet() byte { return consts.CPIPLastOctet }
+
 // EnvoyEgressPort returns the main Envoy egress listener port — handles TLS (SNI) and HTTP (raw_buffer) (inside container).
 func (c *configImpl) EnvoyEgressPort() int { return consts.EnvoyEgressPort }
 

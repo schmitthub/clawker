@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 
@@ -20,6 +21,15 @@ const (
 
 	// dockerSockPath is the host-side Docker socket path.
 	dockerSockPath = "/var/run/docker.sock"
+
+	// firewallDataContainerPath is where the CP reads+writes authoritative
+	// firewall state (egress-rules.yaml, MITM CA, per-domain certs).
+	firewallDataContainerPath = "/var/lib/clawker/firewall"
+
+	// cpMaxRestartRetries bounds Docker's on-failure restart loop so a
+	// persistently crashing CP stays down until the user runs
+	// `clawker controlplane up`.
+	cpMaxRestartRetries = 3
 )
 
 // CPContainerConfig holds the configuration for creating the control plane
@@ -42,6 +52,8 @@ type CPContainerConfig struct {
 	Cmd []string
 	// NetworkName is the Docker network to attach to.
 	NetworkName string
+	// RestartPolicy is the Docker restart policy for the container.
+	RestartPolicy container.RestartPolicy
 }
 
 // localhost is the 127.0.0.1 address used for all published port bindings.
@@ -108,6 +120,13 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 	// Config dir — CP loads config.NewConfig() from this mount.
 	configDir := config.ConfigDir()
 
+	// Firewall data dir — CP is sole writer of egress-rules.yaml, MITM CA,
+	// and per-domain certs under this dir. Envoy/CoreDNS mount subpaths RO.
+	firewallDataDir, err := cfg.FirewallDataSubdir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve firewall data dir: %w", err)
+	}
+
 	mounts := []mount.Mount{
 		// Clawker config directory — the CP reads settings (ports, etc.)
 		// from the same config the host CLI uses.
@@ -173,6 +192,14 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 			Target:   "/var/run/docker.sock",
 			ReadOnly: true,
 		},
+		// Firewall state dir — CP is the sole writer (INV-B2-001). Envoy
+		// and CoreDNS mount subpaths RO; only the CP mounts RW.
+		{
+			Type:     mount.TypeBind,
+			Source:   firewallDataDir,
+			Target:   firewallDataContainerPath,
+			ReadOnly: false,
+		},
 	}
 
 	labels := map[string]string{
@@ -189,5 +216,12 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 		Env:          []string{cfg.ConfigDirEnvVar() + "=/etc/clawker/config"},
 		Cmd:          []string{"/usr/local/bin/clawker-cp"},
 		NetworkName:  consts.Network,
+		// on-failure (not unless-stopped/always) so the CP's graceful
+		// drain-to-zero exit from AgentWatcher is not undone by Docker.
+		// Bounded retries keep a persistently crashing CP from thrashing.
+		RestartPolicy: container.RestartPolicy{
+			Name:              container.RestartPolicyOnFailure,
+			MaximumRetryCount: cpMaxRestartRetries,
+		},
 	}, nil
 }

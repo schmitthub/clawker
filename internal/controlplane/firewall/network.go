@@ -12,6 +12,7 @@ import (
 // NetworkInfo holds discovered state about the firewall Docker network.
 type NetworkInfo struct {
 	NetworkID string
+	Gateway   netip.Addr
 	EnvoyIP   string
 	CoreDNSIP string
 	CIDR      string
@@ -51,6 +52,7 @@ func DiscoverNetwork(ctx context.Context, dc *docker.Client, cfg config.Config) 
 
 	return &NetworkInfo{
 		NetworkID: result.Network.ID,
+		Gateway:   gateway,
 		EnvoyIP:   envoyIP.String(),
 		CoreDNSIP: corednsIP.String(),
 		CIDR:      ipamCfg.Subnet.String(),

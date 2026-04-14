@@ -28,6 +28,9 @@ var _ config.Config = &ConfigMock{}
 //			BuildSubdirFunc: func() (string, error) {
 //				panic("mock out the BuildSubdir method")
 //			},
+//			CPIPLastOctetFunc: func() byte {
+//				panic("mock out the CPIPLastOctet method")
+//			},
 //			ClawkerIgnoreNameFunc: func() string {
 //				panic("mock out the ClawkerIgnoreName method")
 //			},
@@ -248,6 +251,9 @@ type ConfigMock struct {
 	// BuildSubdirFunc mocks the BuildSubdir method.
 	BuildSubdirFunc func() (string, error)
 
+	// CPIPLastOctetFunc mocks the CPIPLastOctet method.
+	CPIPLastOctetFunc func() byte
+
 	// ClawkerIgnoreNameFunc mocks the ClawkerIgnoreName method.
 	ClawkerIgnoreNameFunc func() string
 
@@ -464,6 +470,9 @@ type ConfigMock struct {
 		}
 		// BuildSubdir holds details about calls to the BuildSubdir method.
 		BuildSubdir []struct {
+		}
+		// CPIPLastOctet holds details about calls to the CPIPLastOctet method.
+		CPIPLastOctet []struct {
 		}
 		// ClawkerIgnoreName holds details about calls to the ClawkerIgnoreName method.
 		ClawkerIgnoreName []struct {
@@ -685,6 +694,7 @@ type ConfigMock struct {
 	lockBridgePIDFilePath       sync.RWMutex
 	lockBridgesSubdir           sync.RWMutex
 	lockBuildSubdir             sync.RWMutex
+	lockCPIPLastOctet           sync.RWMutex
 	lockClawkerIgnoreName       sync.RWMutex
 	lockClawkerNetwork          sync.RWMutex
 	lockConfigDirEnvVar         sync.RWMutex
@@ -838,6 +848,33 @@ func (mock *ConfigMock) BuildSubdirCalls() []struct {
 	mock.lockBuildSubdir.RLock()
 	calls = mock.calls.BuildSubdir
 	mock.lockBuildSubdir.RUnlock()
+	return calls
+}
+
+// CPIPLastOctet calls CPIPLastOctetFunc.
+func (mock *ConfigMock) CPIPLastOctet() byte {
+	if mock.CPIPLastOctetFunc == nil {
+		panic("ConfigMock.CPIPLastOctetFunc: method is nil but Config.CPIPLastOctet was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockCPIPLastOctet.Lock()
+	mock.calls.CPIPLastOctet = append(mock.calls.CPIPLastOctet, callInfo)
+	mock.lockCPIPLastOctet.Unlock()
+	return mock.CPIPLastOctetFunc()
+}
+
+// CPIPLastOctetCalls gets all the calls that were made to CPIPLastOctet.
+// Check the length with:
+//
+//	len(mockedConfig.CPIPLastOctetCalls())
+func (mock *ConfigMock) CPIPLastOctetCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockCPIPLastOctet.RLock()
+	calls = mock.calls.CPIPLastOctet
+	mock.lockCPIPLastOctet.RUnlock()
 	return calls
 }
 
