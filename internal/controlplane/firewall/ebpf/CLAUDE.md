@@ -21,7 +21,7 @@ REPRODUCIBILITY.md   Provenance chain — pin-update procedure for the BPF toolc
 
 ## Lifetime ownership
 
-The `clawker-controlplane` container runs `clawker-cp` (the daemon binary) as PID 1. That binary imports `internal/controlplane/ebpf` directly and calls `Manager.Load()` **exactly once** at startup. The resulting `link.Link` handles live in-process for the CP's lifetime; BPF pinning at `/sys/fs/bpf/clawker/` is purely a crash-recovery mechanism, not load-bearing state.
+The `clawker-controlplane` container runs `clawker-cp` (the daemon binary) as PID 1. That binary imports `internal/controlplane/firewall/ebpf` directly and calls `Manager.Load()` **exactly once** at startup. The resulting `link.Link` handles live in-process for the CP's lifetime; BPF pinning at `/sys/fs/bpf/clawker/` is purely a crash-recovery mechanism, not load-bearing state.
 
 `Load()` runs `cleanupStaleLinks()` which checks each pinned `link_*` file against `container_map` — links to dead cgroups are removed, links to live cgroups are preserved. This ensures enforcement survives CP restarts while cleaning up resource leaks from dead containers. `CleanupAllLinks()` is a separate method that removes ALL pinned links — called ONLY by the daemon on shutdown when no agent containers remain.
 
@@ -89,11 +89,11 @@ func Supported() error                                       // checks cgroup v2
 
 ## Build and Provenance
 
-The BPF toolchain pins (clang, libbpf-dev, linux-libc-dev, bpf2go version, Go toolchain digest) are all captured in `Dockerfile.controlplane` at the repo root. `make ebpf-binary` runs `docker buildx build` against that pinned recipe, produces `internal/firewall/assets/ebpf-manager`, and does **not** commit any generated artifacts. See `REPRODUCIBILITY.md` for the full chain.
+The BPF toolchain pins (clang, libbpf-dev, linux-libc-dev, bpf2go version, Go toolchain digest) are all captured in `Dockerfile.controlplane` at the repo root. `make ebpf-binary` runs `docker buildx build` against that pinned recipe, produces `internal/controlplane/assets/ebpf-manager`, and does **not** commit any generated artifacts. See `REPRODUCIBILITY.md` for the full chain.
 
-`make cp-binary` builds the CP daemon `clawker-cp` via the same pinned Dockerfile.controlplane (new `clawker-cp-builder` stage added for this work). Both binaries end up in `internal/firewall/assets/` and are `go:embed`'d into the clawker CLI.
+`make cp-binary` builds the CP daemon `clawker-cp` via the same pinned Dockerfile.controlplane (new `clawker-cp-builder` stage added for this work). Both binaries end up in `internal/controlplane/assets/` and are `go:embed`'d into the clawker CLI.
 
 ## Imports
 
-- **Imported by**: `internal/controlplane` (the CP binary — imports `Manager`, `Route`, types), `internal/dnsbpf` (reuses `DomainHash`/`IPToUint32`/`Uint32ToIP` to stay in sync), `internal/controlplane/ebpf/cmd` (the break-glass CLI), and — historically — `internal/firewall` at build time via `go:embed` of the compiled binaries (no runtime import).
+- **Imported by**: `internal/controlplane` (the CP binary — imports `Manager`, `Route`, types), `internal/dnsbpf` (reuses `DomainHash`/`IPToUint32`/`Uint32ToIP` to stay in sync), `internal/controlplane/firewall/ebpf/cmd` (the break-glass CLI), and — historically — `internal/firewall` at build time via `go:embed` of the compiled binaries (no runtime import).
 - **Imports**: `github.com/cilium/ebpf`, `github.com/cilium/ebpf/link`, `internal/logger`.

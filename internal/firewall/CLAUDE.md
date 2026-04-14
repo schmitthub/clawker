@@ -1,5 +1,7 @@
 # Firewall Package
 
+> **Transitional state (CP Initiative Branch 2).** Task 1 relocated envoy/coredns/certs/rules/network/coredns-embed + admin handler + eBPF subsystem into `internal/controlplane/firewall/` and moved the CP + ebpf-manager embeds + their binaries into `internal/controlplane/`. This package now only holds `firewall.go` (interface + `FirewallStatus`), `manager.go`, `daemon.go`, `manager_network.go` (temporary raw-moby Network helpers), and the legacy `mocks/`. The package is scheduled for deletion in Task 6/8.
+
 Domain contracts, Docker implementation, daemon, certificates, and network management for the clawker firewall stack: Envoy (egress proxy) + custom CoreDNS (DNS resolver with BPF plugin) + clawker-controlplane (control plane with eBPF + Ory auth).
 
 ## Control plane integration
@@ -18,23 +20,28 @@ See `.claude/rules/envoy.md` for all Envoy references, documentation links, and 
 That rule is auto-loaded when touching `envoy.go`, `envoy_test.go`, or `manager.go`.
 </critical>
 
-## Contents
+## Contents (post-Task-1)
 
 | File | Purpose |
 |------|---------|
-| `firewall.go` | `FirewallManager` interface, `FirewallStatus`, `HealthTimeoutError`, sentinel errors |
-| `types.go` | `EgressRulesFile` — top-level document for `storage.Store[T]` |
-| `manager.go` | `Manager` — Docker implementation of `FirewallManager`; manages 3-container stack; owns lazy gRPC client to CP |
+| `firewall.go` | `FirewallManager` interface + `FirewallStatus` (sentinels + `HealthTimeoutError` moved to `internal/controlplane/firewall/errors.go`) |
+| `manager.go` | `Manager` — Docker implementation of `FirewallManager`; manages 3-container stack; owns lazy gRPC client to CP. Moved helpers (envoy/coredns/certs/rules/network types) are imported via alias `fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"` |
+| `manager_network.go` | Temporary raw-moby `(m *Manager).discoverNetwork` / `ensureNetwork` returning `fwcp.NetworkInfo` — removed with the Manager in Task 6/8 |
 | `daemon.go` | Background daemon — health check loop (5s) + container watcher loop (30s); restart logic; BPF cleanup on shutdown |
-| `envoy.go` | Envoy YAML config generation; per-domain filter chains (TLS + HTTP); LOGICAL_DNS clusters; TCP/SSH listeners |
-| `coredns.go` | Corefile generation; per-domain forward zones; `dnsbpf` plugin directive; catch-all NXDOMAIN |
-| `certs.go` | CA keypair generation/loading; per-domain certificate signing; wildcard SANs; rotation |
-| `network.go` | `NetworkInfo`, Docker network creation, static IP computation |
-| `rules.go` | `NewRulesStore(cfg)` — `storage.Store[EgressRulesFile]` factory; destination validation |
-| `cp_embed.go` | `//go:embed assets/clawker-cp` — Linux-static CP daemon + bundled Ory binaries |
-| `ebpf_embed.go` | `//go:embed assets/ebpf-manager` — Linux-static break-glass CLI |
-| `coredns_embed.go` | `//go:embed assets/coredns-clawker` — Linux-static custom CoreDNS with dnsbpf plugin |
 | `mocks/manager_mock.go` | `FirewallManagerMock` — moq-generated test double |
+
+### Relocated (see `internal/controlplane/firewall/`)
+
+| Was here | Now at |
+|----------|--------|
+| `envoy.go` | `internal/controlplane/firewall/envoy_config.go` |
+| `coredns.go` | `internal/controlplane/firewall/coredns_config.go` |
+| `certs.go` | `internal/controlplane/firewall/certs.go` |
+| `rules.go` + `types.go` | `internal/controlplane/firewall/rules_store.go` |
+| `network.go` (pure package fns only — raw-moby Manager methods stayed behind as `manager_network.go`) | `internal/controlplane/firewall/network.go` |
+| `coredns_embed.go` | `internal/controlplane/firewall/embed_coredns.go` (binary at `internal/controlplane/firewall/assets/coredns-clawker`) |
+| `cp_embed.go` | `internal/controlplane/embed_cp.go` (binary at `internal/controlplane/assets/clawker-cp`) |
+| `ebpf_embed.go` | `internal/controlplane/embed_ebpf.go` (binary at `internal/controlplane/assets/ebpf-manager`) |
 
 ## Interface
 

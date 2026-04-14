@@ -64,13 +64,13 @@ make clawker
         │
         ├── ebpf-binary   → docker buildx build -f Dockerfile.controlplane
         │                     --target=ebpf-manager-extract
-        │                     --output=type=local,dest=internal/firewall/assets
-        │   produces: internal/firewall/assets/ebpf-manager
+        │                     --output=type=local,dest=internal/controlplane/assets
+        │   produces: internal/controlplane/assets/ebpf-manager
         │
         ├── coredns-binary → docker buildx build -f Dockerfile.controlplane
         │                     --target=coredns-extract
-        │                     --output=type=local,dest=internal/firewall/assets
-        │   produces: internal/firewall/assets/coredns-clawker
+        │                     --output=type=local,dest=internal/controlplane/assets
+        │   produces: internal/controlplane/firewall/assets/coredns-clawker
         │
         └── go build ./cmd/clawker
               produces: bin/clawker
@@ -96,11 +96,11 @@ Rarely needed — Make normally drives this — but for debugging:
 
 ```bash
 # Force-rebuild the ebpf-manager binary from scratch:
-rm -f internal/firewall/assets/ebpf-manager
+rm -f internal/controlplane/assets/ebpf-manager
 make ebpf-binary
 
 # Same for coredns-clawker:
-rm -f internal/firewall/assets/coredns-clawker
+rm -f internal/controlplane/firewall/assets/coredns-clawker
 make coredns-binary
 ```
 
@@ -108,7 +108,7 @@ For a full clean rebuild with BuildKit cache bypass:
 
 ```bash
 docker buildx prune -f                      # clear buildx cache
-rm -f internal/firewall/assets/*
+rm -f internal/controlplane/assets/*
 make clawker
 ```
 
@@ -187,7 +187,7 @@ library version in `go.mod`.
 ### 5. Rebuild + verify
 
 ```bash
-rm -f internal/firewall/assets/*
+rm -f internal/controlplane/assets/*
 make clawker
 go test ./internal/ebpf/...
 # plus a local e2e run:

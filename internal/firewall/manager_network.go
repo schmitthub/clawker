@@ -3,23 +3,19 @@ package firewall
 import (
 	"context"
 	"fmt"
-	"net/netip"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
-)
 
-// NetworkInfo holds discovered state about the firewall Docker network.
-type NetworkInfo struct {
-	NetworkID string
-	EnvoyIP   string
-	CoreDNSIP string
-	CIDR      string
-}
+	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
+)
 
 // discoverNetwork inspects the firewall network and computes static IPs
 // for Envoy and CoreDNS from the gateway address using config-defined octets.
-func (m *Manager) discoverNetwork(ctx context.Context) (*NetworkInfo, error) {
+//
+// Temporary raw-moby mirror of fwcp.DiscoverNetwork kept until Task 6/8
+// replaces firewall.Manager with CLI calls to the CP's AdminService.
+func (m *Manager) discoverNetwork(ctx context.Context) (*fwcp.NetworkInfo, error) {
 	networkName := m.cfg.ClawkerNetwork()
 
 	result, err := m.client.NetworkInspect(ctx, networkName, client.NetworkInspectOptions{})
@@ -37,16 +33,16 @@ func (m *Manager) discoverNetwork(ctx context.Context) (*NetworkInfo, error) {
 		return nil, fmt.Errorf("network %s has no gateway", networkName)
 	}
 
-	envoyIP, err := computeStaticIP(gateway, m.cfg.EnvoyIPLastOctet())
+	envoyIP, err := fwcp.ComputeStaticIP(gateway, m.cfg.EnvoyIPLastOctet())
 	if err != nil {
 		return nil, fmt.Errorf("computing envoy IP: %w", err)
 	}
-	corednsIP, err := computeStaticIP(gateway, m.cfg.CoreDNSIPLastOctet())
+	corednsIP, err := fwcp.ComputeStaticIP(gateway, m.cfg.CoreDNSIPLastOctet())
 	if err != nil {
 		return nil, fmt.Errorf("computing coredns IP: %w", err)
 	}
 
-	return &NetworkInfo{
+	return &fwcp.NetworkInfo{
 		NetworkID: result.Network.ID,
 		EnvoyIP:   envoyIP.String(),
 		CoreDNSIP: corednsIP.String(),
@@ -55,17 +51,16 @@ func (m *Manager) discoverNetwork(ctx context.Context) (*NetworkInfo, error) {
 }
 
 // ensureNetwork creates the firewall Docker network if it doesn't already exist.
-// Returns the network ID.
+// Returns the network ID. Temporary raw-moby helper — removed with the Manager
+// in Task 6/8 once the CLI no longer drives firewall lifecycle directly.
 func (m *Manager) ensureNetwork(ctx context.Context) (string, error) {
 	networkName := m.cfg.ClawkerNetwork()
 
-	// Check if network already exists.
 	result, err := m.client.NetworkInspect(ctx, networkName, client.NetworkInspectOptions{})
 	if err == nil {
 		return result.Network.ID, nil
 	}
 
-	// Only proceed to create if the network doesn't exist.
 	if !cerrdefs.IsNotFound(err) {
 		return "", fmt.Errorf("inspecting network %s: %w", networkName, err)
 	}
@@ -81,15 +76,4 @@ func (m *Manager) ensureNetwork(ctx context.Context) (string, error) {
 	}
 
 	return resp.ID, nil
-}
-
-// computeStaticIP replaces the last octet of an IPv4 address with the given value.
-// For example, gateway 172.20.0.1 with lastOctet 2 produces 172.20.0.2.
-func computeStaticIP(gateway netip.Addr, lastOctet byte) (netip.Addr, error) {
-	if !gateway.Is4() {
-		return netip.Addr{}, fmt.Errorf("gateway %s is not IPv4", gateway)
-	}
-	octets := gateway.As4()
-	octets[3] = lastOctet
-	return netip.AddrFrom4(octets), nil
 }

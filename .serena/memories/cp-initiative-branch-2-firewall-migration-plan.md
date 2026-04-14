@@ -11,7 +11,7 @@
 
 | Task | Status | Agent |
 |------|--------|-------|
-| Task 1: Relocate firewall package files into `internal/controlplane/firewall/` (pure move) | `pending` | — |
+| Task 1: Relocate firewall package files into `internal/controlplane/firewall/` (pure move) | `complete` | opus |
 | Task 2: Add `firewall.Stack` + `firewall/cgroup.go` helpers | `pending` | — |
 | Task 3: Add `controlplane/bootstrap.go` — host-side `EnsureRunning` | `pending` | — |
 | Task 4: `AgentWatcher` + CP self-shutdown + restart policy `on-failure` | `pending` | — |
@@ -22,14 +22,17 @@
 
 ## Key Learnings
 
-(Agents append here as they complete tasks)
+- **Task 1 (Opus, 2026-04-14):** Package name `firewall` is intentionally identical in old (`internal/firewall`) and new (`internal/controlplane/firewall`) paths. Every consumer that imports both uses an alias (`fwcp`/`fwlegacy`/`fwhandler`/`cpfw`). The old package is deleted in Task 6/8, at which point aliases disappear.
+- **Task 1 (Opus):** `network.go` could not be moved clean because `firewall.Manager` uses raw moby (not `*docker.Client`). Resolution: moved `NetworkInfo` + added `DiscoverNetwork(ctx, *docker.Client, cfg)` + exported `ComputeStaticIP` in the new package; kept raw-moby `(m *Manager).discoverNetwork` / `ensureNetwork` as a temporary `internal/firewall/manager_network.go` that returns `fwcp.NetworkInfo`. Zero type divergence; single source of truth for `NetworkInfo`. Removed with Manager in Task 6/8.
+- **Task 1 (Opus):** `rules.go` helpers (`normalizeRule`, `ruleKey`, `normalizeAndDedup`) + embed vars (`clawkerCPBinary`, `ebpfManagerBinary`, `corednsClawkerBinary`) had to be exported (capital letter) so `firewall.Manager` can call them cross-package until Task 6/8.
+- **Task 1 (Opus):** `Makefile`, `Dockerfile.controlplane`, `.gitignore`, `REPRODUCIBILITY.md`, `internal/firewall/CLAUDE.md`, `internal/controlplane/CLAUDE.md`, `internal/controlplane/firewall/ebpf/{CLAUDE.md,cmd/CLAUDE.md}` all had hard-coded paths that needed updating. `COREDNS_BINARY` sits at `internal/controlplane/firewall/assets/coredns-clawker` (firewall subpkg); `EBPF_BINARY` and `CP_BINARY` sit at `internal/controlplane/assets/` (CP-core).
 
 ---
 
 ## Context Window Management
 
 **After completing each task, you MUST stop working immediately.** Do not begin the next task. Instead:
-1. Run acceptance criteria for the completed task.
+1. Run the acceptance gates for the completed task (build + vet + `make test`; author any required E2E tests — see **E2E Policy** below — but do NOT run them).
 2. Update the Progress Tracker in this memory.
 3. Append any key learnings to the Key Learnings section.
 4. Run `code-reviewer`, `silent-failure-hunter`, `test-hunter`, `code-simplifier`, `comment-analyzer`, `type-design-analyzer` subagents to review this task's changes, then fix any and all findings.
@@ -38,6 +41,18 @@
 7. Wait for the user to start a new conversation with the handoff prompt.
 
 Each task is designed to be self-contained — the handoff prompt provides all context the next agent needs.
+
+---
+
+## E2E Policy (applies to every task in this initiative)
+
+**Agents author E2E tests. Agents do NOT run E2E tests.**
+
+- Agents run in a clawker-managed container and cannot drive their own Docker stack reliably. Running `go test ./test/e2e/...`, `./bin/clawker run @`, or any other smoke path that spins up clawker infrastructure from inside the container is forbidden.
+- Every task that lists E2E work must **land the E2E test files in the same commit** as the production code they cover. Tests should compile (`go vet ./test/e2e/...`) but are never executed by agents.
+- End-to-end validation is deferred to a **final host-side review by the user** once the initiative is complete (all 8 tasks done + PR ready). The user will run the full E2E suite on the host and feed regressions back.
+- Acceptance gates agents actually run each task: `go build ./...`, `go vet ./...`, `make test` (unit). Everything else is written, committed, and deferred.
+- If an agent believes a task is blocked without E2E execution signal, stop and escalate to the user — do not loosen the test design or fabricate verification.
 
 ---
 
@@ -56,7 +71,7 @@ Additionally, B1's proto surface (`api/admin/v1/admin.proto`) had scope inversio
 **TDD is disabled on this project.** See `.correctless/learnings/tdd-phase-disabled.md` for the full post-mortem. Branch 1 ran `/ctdd` with a subagent and produced garbage unit tests; the next agent saw tests pass and skipped most requirements. User spent 12+ hours rescuing it.
 
 **What this branch uses instead:**
-- Integration tests + E2E over real Docker (`test/e2e/`, `test/whail/`).
+- Integration tests + E2E over real Docker (`test/e2e/`, `test/whail/`) — **authored** alongside production code, **not run** by agents (see **E2E Policy** above).
 - **Reuse the battle-tested test infra** listed below. Do not invent new fixtures when equivalents exist.
 - Unit tests are allowed but must exercise real behavior, not mock return values.
 - Tests land in the same commit as the code change they cover.
@@ -87,9 +102,9 @@ Core code locations:
 - `api/admin/v1/admin.proto` — proto surface (rewritten in Task 5)
 - `api/admin/v1/admin.go` — method-scope registration map
 - `internal/controlplane/` — CP core (grows with bootstrap.go, watcher.go, embed moves)
-- `internal/controlplane/admin_handler.go` — B1 AdminHandler (moves + renames to `firewall/handler.go` in Task 1)
-- `internal/controlplane/ebpf/` — eBPF subsystem (moves to `firewall/ebpf/` in Task 1)
-- `internal/firewall/` — entire package deleted in Task 8
+- `internal/controlplane/firewall/handler.go` — `firewall.Handler` (was `internal/controlplane/admin_handler.go` pre-Task-1; rewritten in Task 5)
+- `internal/controlplane/firewall/ebpf/` — eBPF subsystem (moved here in Task 1)
+- `internal/firewall/` — legacy package, deleted in Task 8 (Task 1 slimmed it to `firewall.go` + `manager.go` + `manager_network.go` + `daemon.go` + `mocks/`)
 - `internal/cmd/firewall/` — 13 subcommands rewired in Task 6
 - `internal/cmd/container/shared/container_start.go` — `BootstrapServicesPostStart` rewired in Task 6
 - `internal/cmd/factory/default.go` — `firewallFunc` → `adminClientFunc` in Task 6
@@ -103,7 +118,7 @@ Core code locations:
 - **Factory noun principle**: `f.AdminClient(ctx)` returns an `adminv1.AdminServiceClient` (a thing), not an action. Callers call methods on it: `adminClient.FirewallEnable(ctx, req)`.
 - **Whail enforcement**: only `pkg/whail` imports moby client; only `internal/docker` imports whail. CP uses `*docker.Client` (not raw moby — the `internal/firewall` exception is removed in Task 8). `docker.Client.Info(ctx) (system.Info, error)` is already promoted end-to-end via Go embedding (`whail.Engine` embeds `client.APIClient` at `pkg/whail/engine.go:34`). No new test infra needed beyond a tiny `InfoFn` stub on `whailtest.FakeAPIClient` in Task 5.
 - **gRPC + mTLS**: CP AdminService is mTLS (CLI-CA signed) + OAuth2 JWT (Hydra introspection) + uniform `"admin"` scope. All RPCs must appear in the registered-methods set (INV-B2-009 fail-closed).
-- **Drift guard**: Every `FirewallEnable` resolves container_id → fresh cgroup_path via Docker API before writing BPF state (INV-B2-016). The existing `resolveBypassCgroupID` in `admin_handler.go:267–311` is the reference implementation — extract into a shared helper in Task 5.
+- **Drift guard**: Every `FirewallEnable` resolves container_id → fresh cgroup_path via Docker API before writing BPF state (INV-B2-016). The existing `resolveBypassCgroupID` in handler.go (pre-rewrite) is the reference implementation — extract into a shared helper in Task 5.
 - **Domain handler embedding**: `adminServer` in `server.go` embeds `*firewall.Handler` so Go method promotion surfaces all 13 methods at the composite. Future branches embed `*monitor.Handler`, `*hostproxy.Handler`, etc.
 
 ### Rules
@@ -111,78 +126,33 @@ Core code locations:
 - Read `CLAUDE.md`, relevant `.claude/rules/` files, and package CLAUDE.md before starting each task.
 - Use Serena tools for code exploration — read symbol bodies only when needed.
 - Use deepwiki + Context7 for external library docs before guessing API.
-- All new code must compile (`go build ./...`), pass `go vet ./...`, pass `make test`, and preserve `clawker run @` functionality at each task boundary.
-- Follow the per-task acceptance gates — a task that builds but regresses E2E is a failed task.
-- Do not skip integration tests or rationalize away security boundary tests.
+- All new code must compile (`go build ./...`), pass `go vet ./...`, and pass `make test` at each task boundary. Author E2E tests but do NOT run them (see **E2E Policy**).
+- Do not skip integration tests or rationalize away security boundary tests — write them, commit them, defer execution to the final user review.
 - Never hand-edit moq-generated mocks — regenerate via `go generate ./...`.
 - Use `Config` interface accessors (`cfg.FirewallDataSubdir()`, etc.) — never hardcode paths.
 
 ---
 
-## Task 1: Relocate firewall package files into `internal/controlplane/firewall/` (pure move, no semantic change)
+## Task 1: Relocate firewall package files into `internal/controlplane/firewall/` (pure move, no semantic change) — COMPLETE
 
 > **Note on `docker.Client.Info`**: `whail.Engine` embeds `client.APIClient` directly (`pkg/whail/engine.go:34`), and `internal/docker.Client` composes `whail.Engine`, so `Info(ctx) (system.Info, error)` is already promoted end-to-end — no whail/docker changes required. The only test-infra gap is `whailtest.FakeAPIClient`, which embeds a nil `*client.Client` for unexported methods and does NOT explicitly stub `Info`. Task 5 (where `DetectCgroupDriver` is wired into Handler init — via CP-side `internal/docker.Client` with its existing label/name machinery) adds an `InfoFn func(context.Context) (system.Info, error)` field on `FakeAPIClient` and the dispatching method (~10 lines, identical to the existing `ContainerCreateFn` etc. pattern). `internal/docker/mocks/helpers.go` can gain a matching `SetupInfo(info system.Info)` helper if the call pattern shows up in multiple tests.
 
-**Creates/modifies:**
-- NEW: `internal/controlplane/firewall/` subpackage + `CLAUDE.md`
-- MOVE: `internal/controlplane/admin_handler.go` → `internal/controlplane/firewall/handler.go` (rename `AdminHandler` → `firewall.Handler`; keep B1 semantics, only the type name changes)
-- MOVE: `internal/controlplane/admin_handler_test.go` → `internal/controlplane/firewall/handler_test.go`
-- MOVE: `internal/controlplane/ebpf/` → `internal/controlplane/firewall/ebpf/` (package rename)
-- MOVE: from `internal/firewall/` into `internal/controlplane/firewall/`:
-  - `envoy.go` → `envoy_config.go` (package rename to `firewall`)
-  - `coredns.go` → `coredns_config.go`
-  - `certs.go`
-  - `rules.go` + `types.go` → merged into `rules_store.go`
-  - `network.go` (swap raw moby for `*docker.Client`; drop the now-unused `ensureNetwork` helper)
-  - `coredns_embed.go` → `embed_coredns.go`
-  - `testdata/corefile_basic.golden` → `testdata/`
-  - `assets/coredns-clawker` → `assets/`
-  - Sibling `_test.go` files for each moved source
-- MOVE: CP-core embeds to `internal/controlplane/`:
-  - `internal/firewall/cp_embed.go` → `internal/controlplane/embed_cp.go`
-  - `internal/firewall/ebpf_embed.go` → `internal/controlplane/embed_ebpf.go`
-  - `internal/firewall/assets/{clawker-cp,ebpf-manager}` → `internal/controlplane/assets/`
-- UPDATE: sentinels + `HealthTimeoutError` → `internal/controlplane/firewall/errors.go`
-- UPDATE: imports in `internal/dnsbpf/`, `cmd/clawker-cp/main.go` for the `ebpf/` relocation
-- NEW: `internal/controlplane/firewall/CLAUDE.md`
+Task 1 landed. See Key Learnings for the file-mapping surprises encountered (raw-moby Manager helpers kept as `manager_network.go`; `normalizeRule`/`ruleKey`/`normalizeAndDedup` + embed vars exported).
 
-**Depends on:** nothing — pure file moves. `docker.Client` already exposes `Info` via embedding; no prereq needed.
-
-### Implementation Phase
-
-1. Read Spec §"Current State Inventory" + §"Target Structure" for the exact file-mapping table.
-2. Create the subpackage skeleton: `internal/controlplane/firewall/` + empty `CLAUDE.md` stub (expanded in Task 5).
-3. Move files with `git mv` to preserve blame. Update package declarations (`package firewall` → stays `firewall`; internal/controlplane/admin_handler moves INTO `firewall` and becomes `package firewall`).
-4. Rename type `AdminHandler` → `Handler` using Serena's `rename_symbol` or `gopls rename` (NOT sed — preserve comment/docstring references).
-5. Update ALL importers of moved packages:
-   - `internal/dnsbpf/` — import path `internal/controlplane/ebpf` → `internal/controlplane/firewall/ebpf`
-   - `cmd/clawker-cp/main.go` — same + Handler construction uses `firewall.NewHandler` (was `NewAdminHandler`)
-   - `internal/firewall/manager.go` — temporarily keeps importing `internal/controlplane/firewall` for moved types; this is OK because manager is deleted in Task 8
-6. Swap raw moby for `*docker.Client` in the moved `network.go`. Drop the `ensureNetwork` helper (whail's `EnsureNetwork` container option handles it).
-7. Update any CLAUDE.md files touched in the moves to reflect new paths.
-8. Regenerate any moq mocks affected by the moves: `cd internal/controlplane/firewall && go generate ./...` (if go:generate directives exist on moved interfaces).
-
-### Acceptance Criteria
+### Acceptance Criteria (agent-run)
 
 ```bash
 go build ./...
 go vet ./...
 make test
-go test ./test/e2e/firewall_test.go -run TestFirewallEnforcement_E2E -timeout 5m
-./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @
 ```
 
-All tests must pass with B1 semantics intact — this task only moves files, it does NOT change behavior.
+Preserve B1 semantics intact — this task only moved files, it did NOT change behavior.
 
-### Wrap Up
+### Deferred to final host-side review
 
-1. Update Progress Tracker: Task 1 -> `complete`.
-2. Append to Key Learnings any file-mapping surprises.
-3. Run review subagents as listed in Context Window Management.
-4. Commit: `refactor(firewall): relocate package files into internal/controlplane/firewall/ (pure move)`
-5. **STOP.** Present handoff:
-
-> **Next agent prompt:** "Continue CP Initiative Branch 2. Read memory `cp-initiative-branch-2-firewall-migration-plan` — Task 1 is complete. Begin Task 2: Add `firewall.Stack` + `firewall/cgroup.go` helpers."
+- `go test ./test/e2e/firewall_test.go -timeout 5m`
+- `./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @`
 
 ---
 
@@ -194,8 +164,9 @@ All tests must pass with B1 semantics intact — this task only moves files, it 
 - NEW: `internal/controlplane/firewall/cgroup.go` — `DetectCgroupDriver`, `EBPFCgroupPath`, `ResolveContainerID`
 - NEW: `internal/controlplane/firewall/cgroup_test.go`
 - NEW: `internal/controlplane/firewall/status.go` — internal `Status` struct (used by Stack and later by FirewallStatus RPC)
+- NEW (authored, not run): `test/e2e/firewall_stack_test.go` — integration test exercising Stack lifecycle against real Docker
 
-**Depends on:** Task 1 (firewall subpackage must exist)
+**Depends on:** Task 1 (firewall subpackage exists)
 
 ### Implementation Phase
 
@@ -215,19 +186,23 @@ All tests must pass with B1 semantics intact — this task only moves files, it 
 3. Implement `DetectCgroupDriver(ctx, *docker.Client) (string, error)` — calls `docker.Client.SystemInfo` and returns the cgroup driver string (`"systemd"` or `"cgroupfs"`).
 4. Implement `EBPFCgroupPath(cgroupDriver, containerID string) string` — pure function, mirrors today's `ebpfCgroupPath` in `firewall/manager.go`.
 5. Implement `ResolveContainerID(ctx, *docker.Client, ref string) (string, error)` — fast-path 64-char hex, otherwise Docker API inspect.
-6. Integration test for Stack against real Docker (use `test/e2e/harness/` or test/e2e pattern).
+6. Author integration test for Stack against real Docker (drop in `test/e2e/firewall_stack_test.go`). Commit, do NOT run.
 7. Unit tests for cgroup helpers using stubbed `docker.Client.FakeClient`.
 
-### Acceptance Criteria
+### Acceptance Criteria (agent-run)
 
 ```bash
 go build ./...
 go vet ./...
+go vet ./test/e2e/...                               # ensure authored E2E at least compiles
 make test
 go test ./internal/controlplane/firewall/... -v
-go test ./test/e2e/... -run TestFirewallStack -timeout 10m   # if integration test added
-./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @
 ```
+
+### Deferred to final host-side review
+
+- `go test ./test/e2e/... -run TestFirewallStack -timeout 10m`
+- `./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @`
 
 ### Wrap Up
 
@@ -270,17 +245,20 @@ go test ./test/e2e/... -run TestFirewallStack -timeout 10m   # if integration te
    - Container already running + healthy → fast path, no-op.
 6. Update `container_config_test.go`: assert `ReadOnly == false` for FirewallDataSubdir mount; assert `RestartPolicy.Name == "on-failure"`; assert `clawker-net` in endpoint config.
 
-### Acceptance Criteria
+### Acceptance Criteria (agent-run)
 
 ```bash
 go build ./...
 go vet ./...
 make test
 go test ./internal/controlplane/... -v
-./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @
 ```
 
-New `controlplane.EnsureRunning` is unused by production code yet — `firewall.Manager.EnsureRunning` still owns the CP lifecycle path. Task 6 cuts over.
+### Deferred to final host-side review
+
+- `./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @`
+
+Note: new `controlplane.EnsureRunning` is unused by production code yet — `firewall.Manager.EnsureRunning` still owns the CP lifecycle path. Task 6 cuts over.
 
 ### Wrap Up
 
@@ -301,6 +279,7 @@ New `controlplane.EnsureRunning` is unused by production code yet — `firewall.
 - NEW: `internal/controlplane/watcher_test.go`
 - MODIFY: `cmd/clawker-cp/main.go` — wire watcher + drain-to-zero callback + graceful shutdown sequence
 - MODIFY: `internal/controlplane/startup.go` — add defensive eBPF cleanup pass on startup (INV-B2-013) BEFORE `SetReady()`
+- NEW (authored, not run): `test/e2e/cp_self_shutdown_test.go` + `test/e2e/cp_startup_cleanup_test.go`
 
 **Depends on:** Task 2 (Stack for shutdown), Task 3 (bootstrap for context)
 
@@ -335,21 +314,26 @@ New `controlplane.EnsureRunning` is unused by production code yet — `firewall.
    - Stub `listAgentsFn` returning 0 for N polls; assert `onDrainToZero` fires in exact order (Stack.Stop → BPF flush → GracefulStop → exit).
    - Stub returning non-zero; assert no exit.
    - Verify grace period respected.
-6. Integration test (E2E) in `test/e2e/`:
+6. **Author** integration tests in `test/e2e/`:
    - Start CP with zero agents → observe `(30s × 2) + 60s` grace → assert container exited (0) and NOT restarted (restart policy is `on-failure`).
    - Pre-seed BPF maps with stale entries; start CP; assert maps empty before first RPC.
+   - Commit the files; do NOT run them.
 
-### Acceptance Criteria
+### Acceptance Criteria (agent-run)
 
 ```bash
 go build ./...
 go vet ./...
+go vet ./test/e2e/...
 make test
 go test ./internal/controlplane/... -v
-go test ./test/e2e/... -run TestCPSelfShutdown -timeout 5m
-go test ./test/e2e/... -run TestCPStartupCleanup -timeout 5m
-./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @
 ```
+
+### Deferred to final host-side review
+
+- `go test ./test/e2e/... -run TestCPSelfShutdown -timeout 5m`
+- `go test ./test/e2e/... -run TestCPStartupCleanup -timeout 5m`
+- `./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @`
 
 ### Wrap Up
 
@@ -377,18 +361,19 @@ go test ./test/e2e/... -run TestCPStartupCleanup -timeout 5m
   - `FirewallBypass(container_id, timeout)` (per-container — timed Disable + dead-man Enable)
   - `FirewallAddRules` / `FirewallRemoveRules` / `FirewallListRules` / `FirewallReload` / `FirewallStatus` / `FirewallRotateCA` (global)
   - `FirewallSyncRoutes` / `FirewallResolveHostname` (global — unchanged from B1)
-- NEW: shared drift resolver extracted from `admin_handler.go:267–311` `resolveBypassCgroupID` — callable from both `FirewallEnable` and bypass timer restore.
+- NEW: shared drift resolver extracted from the old `resolveBypassCgroupID` — callable from both `FirewallEnable` and bypass timer restore.
 - MODIFY: `internal/controlplane/server.go` — `adminServer` struct embeds `*firewall.Handler`; register as sole `AdminServiceServer`.
 - MODIFY: `internal/controlplane/startup.go` — `CPStartupOrchestrator` constructs Stack + firewall.Handler.
 - MODIFY: `internal/firewall/manager.go` — adapter shims for B1-named methods that now call the renamed RPCs internally. **This is temporary** — deleted in Task 6.
 - UPDATE: `authz.go` registered-methods test to reflect all 13 methods via `AdminServiceServer` reflection.
 - UPDATE: `internal/controlplane/firewall/CLAUDE.md` with the 13-method surface.
+- AUTHOR (not run): E2E coverage in `test/e2e/firewall_test.go` for drift case, container-gone case, bypass expiry, full enroll→bypass→restore flow.
 
-**Depends on:** Tasks 2, 3, 4, 5 (subpackage + Stack + bootstrap + watcher all in place)
+**Depends on:** Tasks 2, 3, 4 (subpackage + Stack + bootstrap + watcher all in place)
 
 ### Implementation Phase
 
-1. Read Spec §5, §8, §9, §Context table. Study `resolveBypassCgroupID` in B1's `admin_handler.go:267–311`.
+1. Read Spec §5, §8, §9, §Context table. Study `resolveBypassCgroupID` in B1's handler.
 2. Rewrite `admin.proto`:
    - Drop B1's 7 short-named RPCs.
    - Add 13 prefixed RPCs per Spec §8.
@@ -396,7 +381,7 @@ go test ./test/e2e/... -run TestCPStartupCleanup -timeout 5m
    - `FirewallRemoveRequest` and `FirewallInitRequest` are empty (global).
    - `FirewallEnableRequest` carries `container_id` + `ContainerConfig`.
 3. Run `make proto`.
-4. Extract drift resolver from `admin_handler.go:267–311` into `internal/controlplane/firewall/drift.go` (or embed in handler.go). Shared by Enable and bypass timer.
+4. Extract drift resolver from old handler into `internal/controlplane/firewall/drift.go` (or embed in handler.go). Shared by Enable and bypass timer.
 5. Implement new `firewall.Handler`:
    - Constructor caches `cgroupDriver` from `DetectCgroupDriver` at init.
    - Each per-container RPC calls `ResolveContainerID` + drift resolver + `EBPFCgroupPath` internally.
@@ -409,24 +394,28 @@ go test ./test/e2e/... -run TestCPStartupCleanup -timeout 5m
 7. Update `CPStartupOrchestrator` to wire new Handler + Stack.
 8. Adapter shim in `internal/firewall/manager.go` — keep `FirewallManager` external shape intact but route to new RPCs. Example: manager's `InstallFirewall(containerID)` calls `adminClient.FirewallEnable(ctx, ...)`. This lets B1 CLI callers keep working until Task 6 deletes them.
 9. Update `authz.go` registered-methods test.
-10. Integration tests:
+10. Integration tests (authored — committed, not run):
     - `FirewallEnable` drift case: fake Docker resolver returns a different cgroup path than stored; assert warning logged + fresh ID written.
     - `FirewallEnable` container gone: fake resolver returns `!exists`; assert `FailedPrecondition`.
     - `FirewallBypass` timer expiry: stub time; assert drift-guarded Enable fires.
     - Full enroll → bypass → auto-restore flow end-to-end.
-    - E2E against real Docker.
+    - E2E scenarios against real Docker (file-level coverage; defer execution).
 
-### Acceptance Criteria
+### Acceptance Criteria (agent-run)
 
 ```bash
 go build ./...
 go vet ./...
+go vet ./test/e2e/...
 make test
 go test ./api/admin/... -v
 go test ./internal/controlplane/firewall/... -v
-go test ./test/e2e/firewall_test.go -timeout 10m
-./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @
 ```
+
+### Deferred to final host-side review
+
+- `go test ./test/e2e/firewall_test.go -timeout 10m`
+- `./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @`
 
 ### Wrap Up
 
@@ -457,8 +446,9 @@ go test ./test/e2e/firewall_test.go -timeout 10m
   - `internal/cmd/container/{start,stop,run,restart,remove}/*.go`
   - `internal/cmd/loop/{iterate,tasks,shared}/*.go`
 - UPDATE command tests: replace `FirewallManagerMock` with `AdminServiceClientMock`.
-- DELETE: `internal/firewall/manager.go`, `daemon.go`, and the adapter shims added in Task 5.
+- DELETE: `internal/firewall/manager.go`, `daemon.go`, `manager_network.go`, and the adapter shims added in Task 5.
 - DELETE: `internal/firewall/mocks/manager_mock.go`.
+- AUTHOR (not run): broad E2E coverage across the `clawker firewall *` verbs.
 
 **Depends on:** Task 5 (proto + handler rewritten)
 
@@ -475,20 +465,24 @@ go test ./test/e2e/firewall_test.go -timeout 10m
 6. Rewire `BootstrapServicesPostStart` flow (3 RPCs: Init, AddRules, Enable).
 7. Rewire container and loop commands — drop or swap `f.Firewall`.
 8. Update all command tests to use AdminServiceClientMock.
-9. Delete `internal/firewall/manager.go`, `daemon.go`, `mocks/`.
-10. Run full E2E — this is the atomic cutover moment.
+9. Delete `internal/firewall/manager.go`, `daemon.go`, `manager_network.go`, `mocks/`.
+10. **Author** broad E2E coverage (firewall list/add/remove, enroll, bypass, etc.). Commit; do NOT run.
 
-### Acceptance Criteria
+### Acceptance Criteria (agent-run)
 
 ```bash
 go build ./...
 go vet ./...
+go vet ./test/e2e/...
 make test
-go test ./test/e2e/... -timeout 10m
-./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @
-./bin/clawker firewall add example.com && ./bin/clawker firewall list | grep example.com
-./bin/clawker firewall remove example.com
 ```
+
+### Deferred to final host-side review
+
+- `go test ./test/e2e/... -timeout 10m`
+- `./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @`
+- `./bin/clawker firewall add example.com && ./bin/clawker firewall list | grep example.com`
+- `./bin/clawker firewall remove example.com`
 
 ### Wrap Up
 
@@ -508,6 +502,7 @@ go test ./test/e2e/... -timeout 10m
 - NEW: `internal/cmd/controlplane/` package with `controlplane.go` (parent), `up.go`, `down.go`, `status.go`, + `_test.go` siblings + `CLAUDE.md`.
 - MODIFY: `internal/clawker/cmd.go` (or wherever root command assembles) to register the new parent command.
 - REGENERATE: `docs/cli-reference/` via `go run ./cmd/gen-docs --doc-path docs --markdown --website`.
+- AUTHOR (not run): E2E coverage for the new `clawker controlplane` verbs.
 
 **Depends on:** Task 6 (f.AdminClient available)
 
@@ -521,22 +516,27 @@ go test ./test/e2e/... -timeout 10m
 6. Command tests using `docker/mocks.FakeClient` + `AdminServiceClientMock`.
 7. Register parent in root command.
 8. Regenerate docs.
+9. **Author** E2E coverage for `controlplane up/down/status`. Commit; do NOT run.
 
-### Acceptance Criteria
+### Acceptance Criteria (agent-run)
 
 ```bash
 go build ./...
 go vet ./...
+go vet ./test/e2e/...
 make test
 go test ./internal/cmd/controlplane/... -v
-./bin/clawker controlplane up
-./bin/clawker controlplane status
-./bin/clawker controlplane down
-./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @
 bash scripts/check-claude-freshness.sh
 ```
 
-Verify `docs/cli-reference/clawker_controlplane*.md` exist and match command output.
+Verify `docs/cli-reference/clawker_controlplane*.md` exist via `git status`.
+
+### Deferred to final host-side review
+
+- `./bin/clawker controlplane up`
+- `./bin/clawker controlplane status`
+- `./bin/clawker controlplane down`
+- `./bin/clawker run @ --detach && ./bin/clawker firewall status && ./bin/clawker container stop @`
 
 ### Wrap Up
 
@@ -576,7 +576,7 @@ Verify `docs/cli-reference/clawker_controlplane*.md` exist and match command out
 - UPDATE: `README.md` if it referenced firewall architecture or daemon.
 - UPDATE: `.serena/memories/cp-initiative-status.md` — mark Branch 2 complete.
 
-**Depends on:** Tasks 1–8 (entire migration)
+**Depends on:** Tasks 1–7 (entire migration)
 
 ### Implementation Phase
 
@@ -590,9 +590,9 @@ Verify `docs/cli-reference/clawker_controlplane*.md` exist and match command out
 8. Update threat model.
 9. Regenerate CLI reference docs.
 10. Run `bash scripts/check-claude-freshness.sh` — zero staleness warnings.
-11. Final sweep: `go build ./... && go vet ./... && make test && make test-all`.
+11. Final agent sweep: `go build ./... && go vet ./... && go vet ./test/e2e/... && make test`.
 
-### Acceptance Criteria
+### Acceptance Criteria (agent-run)
 
 ```bash
 # Deletion confirmed
@@ -600,14 +600,21 @@ test ! -d internal/firewall
 grep -rn "schmitthub/clawker/internal/firewall" --include="*.go" . | wc -l   # must be 0
 grep -n "FirewallPIDFilePath" internal/config/config.go                       # must be 0
 
-# All quality gates
+# Quality gates
 go build ./...
 go vet ./...
+go vet ./test/e2e/...
 make test
-make test-all
 bash scripts/check-claude-freshness.sh
 
-# Functional
+# Docs fresh
+git status docs/cli-reference/   # should be clean after regeneration
+```
+
+### Deferred to final host-side review (the "initiative review" run)
+
+```bash
+make test-all
 ./bin/clawker run @ --detach
 ./bin/clawker firewall status
 ./bin/clawker firewall add example.com
@@ -615,9 +622,7 @@ bash scripts/check-claude-freshness.sh
 ./bin/clawker firewall remove example.com
 ./bin/clawker controlplane status
 ./bin/clawker container stop @
-
-# Docs fresh
-git status docs/cli-reference/   # should be clean after regeneration
+go test ./test/e2e/... -timeout 10m
 ```
 
 ### Wrap Up
@@ -629,4 +634,4 @@ git status docs/cli-reference/   # should be clean after regeneration
 5. Update `.serena/memories/cp-initiative-status.md` — Branch 2 done, ready for Branch 3.
 6. **STOP.** Present final handoff:
 
-> **Branch 2 complete.** The firewall package is gone. The CP owns firewall state, container lifecycle, and the watcher. CLI calls go through `f.AdminClient(ctx)` and hit the 13-method scope-corrected AdminService. Branch 3 (daemon consolidation — hostproxy + socketbridge under CP, Docker events subscription replacing watcher polling) can begin. Open a PR against `main` when ready.
+> **Branch 2 agent work complete.** The firewall package is gone. The CP owns firewall state, container lifecycle, and the watcher. CLI calls go through `f.AdminClient(ctx)` and hit the 13-method scope-corrected AdminService. All E2E tests are authored and committed — user now runs the final host-side review (all deferred `bin/clawker ...` smokes + `go test ./test/e2e/... -timeout 10m` + `make test-all`). Branch 3 (daemon consolidation — hostproxy + socketbridge under CP, Docker events subscription replacing watcher polling) can begin after the host-side review signs off. Open a PR against `main` when ready.

@@ -31,14 +31,14 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 |------|---------|
 | `server.go` | `Server` struct, `ControlPlaneService` interface, `Registry`, `AgentReportingService` handler |
 | `registry.go` | Thread-safe agent registry keyed by container ID |
-| `admin_handler.go` | `AdminHandler` — implements `adminv1.AdminServiceServer` (Install, Remove, Enable, Disable, Bypass, SyncRoutes, ResolveHostname) |
+| `embed_cp.go` / `embed_ebpf.go` | `//go:embed assets/clawker-cp` + `assets/ebpf-manager` — CP daemon + break-glass eBPF CLI binaries embedded into the clawker release |
+| (moved in B2 Task 1) | `admin_handler.go` → `firewall/handler.go` as `firewall.Handler`; `ebpf/` → `firewall/ebpf/` |
 | `authz.go` | `AuthInterceptor` — validates OAuth2 bearer tokens via Hydra introspection, enforces per-method scopes |
 | `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup; `AdminMethodScopes` — maps gRPC method → required scope |
 | `startup.go` | `CPStartupOrchestrator` — startup sequencing + aggregate `/healthz` endpoint (probes all 7 service ports) |
 | `cp_container.go` | `BuildCPContainerConfig(cfg)` → `CPContainerConfig` struct for Docker container creation |
 | `ory_configs.go` | `WriteOryConfigs(cp)` — generates Hydra/Kratos/Oathkeeper YAML config files |
 | `subprocess.go` | `SubprocessManager` — manages Ory subprocess lifecycle (start, health, crash detection, shutdown) |
-| `ebpf/` | eBPF subsystem: `Manager` (Load, Install, Remove, Enable, Disable, SyncRoutes), shared types, link cleanup |
 | `mocks/mock_server.go` | `MockServer` — hand-written test double for `ControlPlaneService` |
 | `mocks/` | moq-generated mocks: `ControlPlaneServiceMock`, `IntrospectorMock`, `EBPFManagerMock` |
 

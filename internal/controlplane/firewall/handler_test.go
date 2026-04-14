@@ -1,11 +1,11 @@
 //go:build linux
 
-// These tests exercise AdminHandler against ebpf.CgroupID, which stats a real
+// These tests exercise Handler against ebpf.CgroupID, which stats a real
 // path under /sys/fs/cgroup/ to read the cgroup v2 inode. That path only
 // exists on Linux, so the suite is Linux-gated to keep macOS commits
 // unblocked. CI runs on Linux.
 
-package controlplane
+package firewall
 
 import (
 	"context"
@@ -14,8 +14,8 @@ import (
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
-	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/ebpf/mocks"
+	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -45,9 +45,9 @@ func nopResolver(_ context.Context, _ string) (string, bool, error) {
 	return testCgroupPath, true, nil
 }
 
-// newTestHandler creates an AdminHandler backed by the given mock.
-func newTestHandler(mock *ebpfmocks.EBPFManagerMock) *AdminHandler {
-	return NewAdminHandler(mock, logger.Nop(), nopResolver)
+// newTestHandler creates an Handler backed by the given mock.
+func newTestHandler(mock *ebpfmocks.EBPFManagerMock) *Handler {
+	return NewHandler(mock, logger.Nop(), nopResolver)
 }
 
 // noopMock returns a mock with all methods set to no-op success.
@@ -577,7 +577,7 @@ func TestResolveBypassCgroupID_DockerAPIError_FallsBack(t *testing.T) {
 	resolver := func(_ context.Context, _ string) (string, bool, error) {
 		return "", false, errors.New("docker unavailable")
 	}
-	h := NewAdminHandler(mock, logger.Nop(), resolver)
+	h := NewHandler(mock, logger.Nop(), resolver)
 
 	entry := &bypassEntry{
 		containerID: "ctr-docker-err",
@@ -594,7 +594,7 @@ func TestResolveBypassCgroupID_ContainerGone_FallsBack(t *testing.T) {
 	resolver := func(_ context.Context, _ string) (string, bool, error) {
 		return "", false, nil // container not found
 	}
-	h := NewAdminHandler(mock, logger.Nop(), resolver)
+	h := NewHandler(mock, logger.Nop(), resolver)
 
 	entry := &bypassEntry{
 		containerID: "ctr-gone",
@@ -651,7 +651,7 @@ func TestResolveBypassCgroupID_CgroupStatFails_FallsBack(t *testing.T) {
 	resolver := func(_ context.Context, _ string) (string, bool, error) {
 		return "/sys/fs/cgroup/nonexistent/path", true, nil
 	}
-	h := NewAdminHandler(mock, logger.Nop(), resolver)
+	h := NewHandler(mock, logger.Nop(), resolver)
 
 	entry := &bypassEntry{
 		containerID: "ctr-stat-fail",

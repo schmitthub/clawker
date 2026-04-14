@@ -15,8 +15,9 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/controlplane"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
-	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/ebpf/mocks"
+	cpfw "github.com/schmitthub/clawker/internal/controlplane/firewall"
+	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/mocks"
 	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -35,7 +36,7 @@ func newTestServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfMgr
 		grpc.ChainStreamInterceptor(interceptor.StreamInterceptor()),
 	)
 
-	handler := controlplane.NewAdminHandler(ebpfMgr, log, nopContainerResolver)
+	handler := cpfw.NewHandler(ebpfMgr, log, nopContainerResolver)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis := bufconnListen(t)
@@ -167,7 +168,7 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
 	)
-	handler := controlplane.NewAdminHandler(noopEBPF(), log, nopContainerResolver)
+	handler := cpfw.NewHandler(noopEBPF(), log, nopContainerResolver)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis := bufconnListen(t)

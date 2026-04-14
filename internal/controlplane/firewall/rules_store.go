@@ -8,6 +8,17 @@ import (
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
+// EgressRulesFile is the top-level document type for storage.Store[T].
+// It persists the active set of project-level egress rules to disk.
+type EgressRulesFile struct {
+	Rules []config.EgressRule `yaml:"rules" label:"Rules" desc:"Active egress firewall rules"`
+}
+
+// Fields implements [storage.Schema] for EgressRulesFile.
+func (f EgressRulesFile) Fields() storage.FieldSet {
+	return storage.NormalizeFields(f)
+}
+
 // NewRulesStore creates a storage.Store[EgressRulesFile] for egress-rules.yaml.
 // The store uses the firewall data subdirectory for file discovery.
 func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {
@@ -106,11 +117,11 @@ func ValidateDst(dst string) error {
 	return nil
 }
 
-// normalizeRule fills in missing fields before storage so rules are explicit and
+// NormalizeRule fills in missing fields before storage so rules are explicit and
 // unambiguous. Empty proto defaults to "tls", empty action to "allow", and TLS
 // rules with no port default to 443. Existing non-zero values are never overridden.
 // Users should set full rules — this is a storage safety net, not a feature.
-func normalizeRule(r config.EgressRule) config.EgressRule {
+func NormalizeRule(r config.EgressRule) config.EgressRule {
 	if r.Proto == "" {
 		r.Proto = "tls"
 	}
@@ -123,34 +134,34 @@ func normalizeRule(r config.EgressRule) config.EgressRule {
 	return r
 }
 
-// ruleKey returns the dedup key for an egress rule: dst:proto:port.
+// RuleKey returns the dedup key for an egress rule: dst:proto:port.
 // The Dst is used verbatim so that ".claude.ai" and "claude.ai" are distinct
 // rules — a wildcard and its apex carry independent semantics (e.g., different
 // PathRules) and must not be collapsed.
-func ruleKey(r config.EgressRule) string {
+func RuleKey(r config.EgressRule) string {
 	return fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
 }
 
-// normalizeAndDedup normalizes all rules and removes duplicates.
+// NormalizeAndDedup normalizes all rules and removes duplicates.
 // This handles legacy store files that contain port:0 rules written before
-// normalizeRule defaulted TLS to 443 — after normalization those become
+// NormalizeRule defaulted TLS to 443 — after normalization those become
 // duplicates of the correctly-ported entries.
 //
 // Wildcard (.claude.ai) and exact (claude.ai) rules are NOT deduped against
 // each other — they are semantically distinct. A user may want unrestricted
 // subdomain access while restricting paths on the apex, or vice versa.
-func normalizeAndDedup(rules []config.EgressRule) ([]config.EgressRule, []string) {
+func NormalizeAndDedup(rules []config.EgressRule) ([]config.EgressRule, []string) {
 	var warnings []string
 	seen := make(map[string]struct{}, len(rules))
 	out := make([]config.EgressRule, 0, len(rules))
 	for _, r := range rules {
-		r = normalizeRule(r)
+		r = NormalizeRule(r)
 		// Skip rules that normalize to an empty domain (e.g., "." or "..").
 		if normalizeDomain(r.Dst) == "" {
 			warnings = append(warnings, fmt.Sprintf("skipping rule with empty domain after normalization (dst=%q)", r.Dst))
 			continue
 		}
-		key := ruleKey(r)
+		key := RuleKey(r)
 		if _, exists := seen[key]; exists {
 			continue
 		}

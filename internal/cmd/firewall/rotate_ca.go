@@ -6,6 +6,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	fwpkg "github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
@@ -70,7 +71,7 @@ func rotateCA(ctx context.Context, opts *RotateCAOptions) error {
 		return fmt.Errorf("resolving firewall cert directory: %w", err)
 	}
 
-	if err := fwpkg.RotateCA(certDir, rules); err != nil {
+	if err := fwcp.RotateCA(certDir, rules); err != nil {
 		return fmt.Errorf("rotating CA: %w", err)
 	}
 

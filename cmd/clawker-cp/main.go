@@ -44,7 +44,8 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
+	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
+	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -273,7 +274,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		grpc.ChainStreamInterceptor(authInterceptor.StreamInterceptor()),
 	)
 
-	handler := controlplane.NewAdminHandler(ebpfMgr, log, containerResolver)
+	handler := fwhandler.NewHandler(ebpfMgr, log, containerResolver)
 	adminv1.RegisterAdminServiceServer(grpcServer, handler)
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))

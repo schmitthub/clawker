@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
+	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 )
 
 // cannedHandler returns a plugin.Handler that writes msg as the response.

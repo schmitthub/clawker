@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/firewall"
+	"github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -14,7 +14,7 @@ import (
 
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
-	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
+	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 

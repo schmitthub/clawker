@@ -100,9 +100,9 @@ RALPH-TEST.md
 # Embedded firewall stack binaries (built by `make ebpf-binary` /
 # `make coredns-binary` / `make cp-binary` via the pinned Dockerfile.controlplane
 # multi-stage build; not committed).
-internal/firewall/assets/ebpf-manager
-internal/firewall/assets/coredns-clawker
-internal/firewall/assets/clawker-cp
+internal/controlplane/assets/ebpf-manager
+internal/controlplane/assets/clawker-cp
+internal/controlplane/firewall/assets/coredns-clawker
 
 # Root-level build artifact from ad-hoc `go build ./cmd/clawker-cp`
 /clawker-cp
@@ -111,17 +111,17 @@ internal/firewall/assets/clawker-cp
 # build inside the pinned Dockerfile.controlplane bpf-builder stage; never committed.
 # On fresh clones, `make ebpf-binary` (or anything that depends on it such as
 # `make test` / `make clawker-build`) regenerates these on first use. Expect
-# IDE red squiggles in internal/controlplane/ebpf/manager.go until the first
+# IDE red squiggles in internal/controlplane/firewall/ebpf/manager.go until the first
 # `make` run populates these.
-internal/controlplane/ebpf/clawker_x86_bpfel.go
-internal/controlplane/ebpf/clawker_x86_bpfel.o
-internal/controlplane/ebpf/clawker_arm64_bpfel.go
-internal/controlplane/ebpf/clawker_arm64_bpfel.o
+internal/controlplane/firewall/ebpf/clawker_x86_bpfel.go
+internal/controlplane/firewall/ebpf/clawker_x86_bpfel.o
+internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.go
+internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.o
 
 # BPF kernel BTF dump — clawker does not use CO-RE and does not consume
 # vmlinux.h. Historical developer workflows may still generate it via
 # bpftool; this guard prevents it from sneaking back into the tree.
-internal/controlplane/ebpf/bpf/vmlinux.h
+internal/controlplane/firewall/ebpf/bpf/vmlinux.h
 
 # Adversarial test artifacts
 test/adversarial/report.html

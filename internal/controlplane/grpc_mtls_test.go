@@ -19,7 +19,8 @@ import (
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
-	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/ebpf/mocks"
+	cpfw "github.com/schmitthub/clawker/internal/controlplane/firewall"
+	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/mocks"
 	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/testenv"
@@ -63,7 +64,7 @@ func startMTLSServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfM
 		grpc.ChainStreamInterceptor(interceptor.StreamInterceptor()),
 	)
 
-	handler := controlplane.NewAdminHandler(ebpfMgr, log, nopContainerResolver)
+	handler := cpfw.NewHandler(ebpfMgr, log, nopContainerResolver)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")

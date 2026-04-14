@@ -1,4 +1,4 @@
-package controlplane
+package firewall
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
+	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -18,10 +18,10 @@ import (
 // state against Docker as the source of truth.
 type ContainerResolver func(ctx context.Context, containerID string) (cgroupPath string, exists bool, err error)
 
-// AdminHandler implements adminv1.AdminServiceServer. Thin wrapper over
+// Handler implements adminv1.AdminServiceServer. Thin wrapper over
 // ebpf.EBPFManager — each RPC validates inputs, calls the corresponding
 // method, and maps results to the gRPC response type.
-type AdminHandler struct {
+type Handler struct {
 	adminv1.UnimplementedAdminServiceServer
 
 	mgr ebpf.EBPFManager
@@ -32,7 +32,7 @@ type AdminHandler struct {
 
 	// resolveContainer queries Docker to verify a container is still
 	// running and returns its current cgroup path. Must be non-nil;
-	// NewAdminHandler panics otherwise.
+	// NewHandler panics otherwise.
 	resolveContainer ContainerResolver
 
 	// resolveHostFn is injectable for tests. nil defaults to
@@ -49,16 +49,16 @@ type bypassEntry struct {
 	cgroupID    uint64 // fallback — used when Docker API is unavailable
 }
 
-// NewAdminHandler wires a handler to an ebpf.EBPFManager.
+// NewHandler wires a handler to an ebpf.EBPFManager.
 // resolver must be non-nil — panics otherwise.
-func NewAdminHandler(mgr ebpf.EBPFManager, log *logger.Logger, resolver ContainerResolver) *AdminHandler {
+func NewHandler(mgr ebpf.EBPFManager, log *logger.Logger, resolver ContainerResolver) *Handler {
 	if log == nil {
 		log = logger.Nop()
 	}
 	if resolver == nil {
-		panic("controlplane: NewAdminHandler requires a non-nil ContainerResolver")
+		panic("firewall: NewHandler requires a non-nil ContainerResolver")
 	}
-	return &AdminHandler{
+	return &Handler{
 		mgr:              mgr,
 		log:              log,
 		bypassTimers:     make(map[string]*bypassEntry),
@@ -68,7 +68,7 @@ func NewAdminHandler(mgr ebpf.EBPFManager, log *logger.Logger, resolver Containe
 
 // Install attaches BPF programs to a container's cgroup and populates
 // its container_map entry.
-func (h *AdminHandler) Install(_ context.Context, req *adminv1.InstallRequest) (*adminv1.InstallResponse, error) {
+func (h *Handler) Install(_ context.Context, req *adminv1.InstallRequest) (*adminv1.InstallResponse, error) {
 	if req.GetConfig() == nil {
 		return nil, status.Error(codes.InvalidArgument, "config is required")
 	}
@@ -110,7 +110,7 @@ func (h *AdminHandler) Install(_ context.Context, req *adminv1.InstallRequest) (
 }
 
 // Remove detaches BPF programs and removes the container_map entry.
-func (h *AdminHandler) Remove(_ context.Context, req *adminv1.RemoveRequest) (*adminv1.RemoveResponse, error) {
+func (h *Handler) Remove(_ context.Context, req *adminv1.RemoveRequest) (*adminv1.RemoveResponse, error) {
 	cgroupID, err := h.cgroupIDFromPath(req.GetCgroupPath())
 	if err != nil {
 		return nil, err
@@ -124,7 +124,7 @@ func (h *AdminHandler) Remove(_ context.Context, req *adminv1.RemoveRequest) (*a
 }
 
 // Enable clears the bypass flag, restoring firewall enforcement.
-func (h *AdminHandler) Enable(_ context.Context, req *adminv1.EnableRequest) (*adminv1.EnableResponse, error) {
+func (h *Handler) Enable(_ context.Context, req *adminv1.EnableRequest) (*adminv1.EnableResponse, error) {
 	if req.GetContainerId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "container_id is required")
 	}
@@ -140,7 +140,7 @@ func (h *AdminHandler) Enable(_ context.Context, req *adminv1.EnableRequest) (*a
 }
 
 // Disable sets the bypass flag, letting traffic skip enforcement.
-func (h *AdminHandler) Disable(_ context.Context, req *adminv1.DisableRequest) (*adminv1.DisableResponse, error) {
+func (h *Handler) Disable(_ context.Context, req *adminv1.DisableRequest) (*adminv1.DisableResponse, error) {
 	if req.GetContainerId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "container_id is required")
 	}
@@ -168,7 +168,7 @@ func (h *AdminHandler) Disable(_ context.Context, req *adminv1.DisableRequest) (
 //  1. Docker says alive → recompute cgroup ID from Docker's cgroup path → Enable
 //  2. Docker says gone  → use stored cgroup ID to clear stale bypass_map entry → Enable
 //  3. Docker API error  → use stored cgroup ID as fallback → Enable
-func (h *AdminHandler) Bypass(_ context.Context, req *adminv1.BypassRequest) (*adminv1.BypassResponse, error) {
+func (h *Handler) Bypass(_ context.Context, req *adminv1.BypassRequest) (*adminv1.BypassResponse, error) {
 	cgroupPath := req.GetCgroupPath()
 	containerID := req.GetContainerId()
 	if containerID == "" {
@@ -220,7 +220,7 @@ func (h *AdminHandler) Bypass(_ context.Context, req *adminv1.BypassRequest) (*a
 // Docker as the source of truth for container state, then always calls
 // Enable to restore enforcement. The map entry is unconditionally cleaned
 // up regardless of whether Enable succeeds.
-func (h *AdminHandler) bypassTimerFired(cgroupPath string, entry *bypassEntry) {
+func (h *Handler) bypassTimerFired(cgroupPath string, entry *bypassEntry) {
 	defer func() {
 		h.bypassTimersMu.Lock()
 		delete(h.bypassTimers, cgroupPath)
@@ -264,7 +264,7 @@ func (h *AdminHandler) bypassTimerFired(cgroupPath string, entry *bypassEntry) {
 //  3. Docker API unreachable → use stored cgroup ID (fail-closed)
 //
 // Enable is NEVER skipped — every path returns a cgroup ID to call Enable on.
-func (h *AdminHandler) resolveBypassCgroupID(entry *bypassEntry) uint64 {
+func (h *Handler) resolveBypassCgroupID(entry *bypassEntry) uint64 {
 	if entry.containerID == "" {
 		// Should not happen — Bypass validates container_id.
 		return entry.cgroupID
@@ -311,7 +311,7 @@ func (h *AdminHandler) resolveBypassCgroupID(entry *bypassEntry) uint64 {
 }
 
 // cancelBypassTimer stops and removes a bypass timer for the given cgroup path.
-func (h *AdminHandler) cancelBypassTimer(cgroupPath string) {
+func (h *Handler) cancelBypassTimer(cgroupPath string) {
 	h.bypassTimersMu.Lock()
 	defer h.bypassTimersMu.Unlock()
 	if entry, ok := h.bypassTimers[cgroupPath]; ok {
@@ -321,7 +321,7 @@ func (h *AdminHandler) cancelBypassTimer(cgroupPath string) {
 }
 
 // SyncRoutes atomically replaces the global route_map.
-func (h *AdminHandler) SyncRoutes(_ context.Context, req *adminv1.SyncRoutesRequest) (*adminv1.SyncRoutesResponse, error) {
+func (h *Handler) SyncRoutes(_ context.Context, req *adminv1.SyncRoutesRequest) (*adminv1.SyncRoutesResponse, error) {
 	routes := make([]ebpf.Route, 0, len(req.GetRoutes()))
 	for _, r := range req.GetRoutes() {
 		routes = append(routes, ebpf.Route{
@@ -338,7 +338,7 @@ func (h *AdminHandler) SyncRoutes(_ context.Context, req *adminv1.SyncRoutesRequ
 
 // ResolveHostname performs a DNS lookup from the CP container's network
 // namespace.
-func (h *AdminHandler) ResolveHostname(ctx context.Context, req *adminv1.ResolveHostnameRequest) (*adminv1.ResolveHostnameResponse, error) {
+func (h *Handler) ResolveHostname(ctx context.Context, req *adminv1.ResolveHostnameRequest) (*adminv1.ResolveHostnameResponse, error) {
 	if req.GetHostname() == "" {
 		return nil, status.Error(codes.InvalidArgument, "hostname is required")
 	}
@@ -355,7 +355,7 @@ func (h *AdminHandler) ResolveHostname(ctx context.Context, req *adminv1.Resolve
 	return &adminv1.ResolveHostnameResponse{Addresses: addrs}, nil
 }
 
-func (h *AdminHandler) cgroupIDFromPath(path string) (uint64, error) {
+func (h *Handler) cgroupIDFromPath(path string) (uint64, error) {
 	if path == "" {
 		return 0, status.Error(codes.InvalidArgument, "cgroup_path is required")
 	}

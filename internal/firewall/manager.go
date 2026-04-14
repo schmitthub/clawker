@@ -29,7 +29,8 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
-	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
+	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
+	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 	"google.golang.org/grpc"
@@ -79,7 +80,7 @@ type Manager struct {
 	client client.APIClient
 	cfg    config.Config
 	log    *logger.Logger
-	store  *storage.Store[EgressRulesFile]
+	store  *storage.Store[fwcp.EgressRulesFile]
 
 	// Test seams — all nil in production, wired to the real implementations
 	// in NewManager. Tests in package firewall can override these to observe
@@ -109,7 +110,7 @@ func NewManager(client client.APIClient, cfg config.Config, log *logger.Logger) 
 	if log == nil {
 		log = logger.Nop()
 	}
-	store, err := NewRulesStore(cfg)
+	store, err := fwcp.NewRulesStore(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("firewall: creating rules store: %w", err)
 	}
@@ -237,7 +238,7 @@ func (m *Manager) IsRunning(ctx context.Context) bool {
 //   - CoreDNS: HTTP GET to localhost:18902/health (published health endpoint).
 func (m *Manager) WaitForHealthy(ctx context.Context) error {
 	// Fast-path: if context is already done, return immediately
-	// rather than falling through to HealthTimeoutError with a
+	// rather than falling through to fwcp.HealthTimeoutError with a
 	// misleading negative timeout duration.
 	if err := ctx.Err(); err != nil {
 		return err
@@ -337,27 +338,27 @@ func (m *Manager) WaitForHealthy(ctx context.Context) error {
 
 	var unhealthy error
 	if !envoyReady {
-		envoyErr := ErrEnvoyUnhealthy
+		envoyErr := fwcp.ErrEnvoyUnhealthy
 		if lastEnvoyErr != nil {
-			envoyErr = fmt.Errorf("%w: last probe: %v", ErrEnvoyUnhealthy, lastEnvoyErr)
+			envoyErr = fmt.Errorf("%w: last probe: %v", fwcp.ErrEnvoyUnhealthy, lastEnvoyErr)
 		}
 		unhealthy = errors.Join(unhealthy, envoyErr)
 	}
 	if !corednsReady {
-		corednsErr := ErrCoreDNSUnhealthy
+		corednsErr := fwcp.ErrCoreDNSUnhealthy
 		if lastCorednsErr != nil {
-			corednsErr = fmt.Errorf("%w: last probe: %v", ErrCoreDNSUnhealthy, lastCorednsErr)
+			corednsErr = fmt.Errorf("%w: last probe: %v", fwcp.ErrCoreDNSUnhealthy, lastCorednsErr)
 		}
 		unhealthy = errors.Join(unhealthy, corednsErr)
 	}
 	if !cpReady {
-		cpErr := ErrCPUnhealthy
+		cpErr := fwcp.ErrCPUnhealthy
 		if lastCPErr != nil {
-			cpErr = fmt.Errorf("%w: last probe: %v", ErrCPUnhealthy, lastCPErr)
+			cpErr = fmt.Errorf("%w: last probe: %v", fwcp.ErrCPUnhealthy, lastCPErr)
 		}
 		unhealthy = errors.Join(unhealthy, cpErr)
 	}
-	return &HealthTimeoutError{Timeout: timeout, Err: unhealthy}
+	return &fwcp.HealthTimeoutError{Timeout: timeout, Err: unhealthy}
 }
 
 // AddRules adds individual egress rules to the running firewall (CLI "firewall add").
@@ -405,7 +406,7 @@ func ProjectRules(cfg config.Config) []config.EgressRule {
 func (m *Manager) addRulesToStore(rules []config.EgressRule) (bool, error) {
 	// Validate all destinations before touching the store.
 	for _, r := range rules {
-		if err := ValidateDst(r.Dst); err != nil {
+		if err := fwcp.ValidateDst(r.Dst); err != nil {
 			return false, err
 		}
 	}
@@ -415,22 +416,22 @@ func (m *Manager) addRulesToStore(rules []config.EgressRule) (bool, error) {
 	// avoid TOCTOU races with concurrent CLI/daemon processes.
 	var normalized []config.EgressRule
 	for _, r := range rules {
-		normalized = append(normalized, normalizeRule(r))
+		normalized = append(normalized, fwcp.NormalizeRule(r))
 	}
 
 	var added bool
-	if err := m.store.Set(func(f *EgressRulesFile) {
+	if err := m.store.Set(func(f *fwcp.EgressRulesFile) {
 		// Normalize and dedup existing rules inside the closure so we
 		// operate on the authoritative COW copy, not a stale snapshot.
-		existing, _ := normalizeAndDedup(f.Rules)
+		existing, _ := fwcp.NormalizeAndDedup(f.Rules)
 
 		known := make(map[string]struct{}, len(existing))
 		for _, r := range existing {
-			known[ruleKey(r)] = struct{}{}
+			known[fwcp.RuleKey(r)] = struct{}{}
 		}
 
 		for _, r := range normalized {
-			key := ruleKey(r)
+			key := fwcp.RuleKey(r)
 			if _, exists := known[key]; exists {
 				continue
 			}
@@ -462,17 +463,17 @@ func (m *Manager) removeRulesFromStore(toRemove []config.EgressRule) error {
 
 	removeSet := make(map[string]struct{}, len(toRemove))
 	for _, r := range toRemove {
-		removeSet[ruleKey(normalizeRule(r))] = struct{}{}
+		removeSet[fwcp.RuleKey(fwcp.NormalizeRule(r))] = struct{}{}
 	}
 
 	var changed bool
-	if err := m.store.Set(func(f *EgressRulesFile) {
+	if err := m.store.Set(func(f *fwcp.EgressRulesFile) {
 		// Normalize and dedup inside the closure to operate on the
 		// authoritative COW copy, not a stale snapshot.
-		normalized, _ := normalizeAndDedup(f.Rules)
+		normalized, _ := fwcp.NormalizeAndDedup(f.Rules)
 		filtered := make([]config.EgressRule, 0, len(normalized))
 		for _, r := range normalized {
-			if _, remove := removeSet[ruleKey(r)]; !remove {
+			if _, remove := removeSet[fwcp.RuleKey(r)]; !remove {
 				filtered = append(filtered, r)
 			}
 		}
@@ -497,7 +498,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 
 // List returns all currently active egress rules.
 func (m *Manager) List(_ context.Context) ([]config.EgressRule, error) {
-	rules, warnings := normalizeAndDedup(m.store.Read().Rules)
+	rules, warnings := fwcp.NormalizeAndDedup(m.store.Read().Rules)
 	for _, w := range warnings {
 		m.log.Warn().Msg(w)
 	}
@@ -774,7 +775,7 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 
 // Status returns a health snapshot of the firewall stack.
 func (m *Manager) Status(ctx context.Context) (*FirewallStatus, error) {
-	rules, _ := normalizeAndDedup(m.store.Read().Rules)
+	rules, _ := fwcp.NormalizeAndDedup(m.store.Read().Rules)
 
 	// Discover network state. A NotFound error is legitimate (the firewall
 	// hasn't been brought up yet, so the clawker-net bridge doesn't exist);
@@ -843,9 +844,9 @@ func (m *Manager) NetCIDR() string {
 	return netInfo.CIDR
 }
 
-// envoyPorts returns the EnvoyPorts config from the manager's config.
-func (m *Manager) envoyPorts() EnvoyPorts {
-	return EnvoyPorts{
+// envoyPorts returns the fwcp.EnvoyPorts config from the manager's config.
+func (m *Manager) envoyPorts() fwcp.EnvoyPorts {
+	return fwcp.EnvoyPorts{
 		EgressPort:  m.cfg.EnvoyEgressPort(),
 		TCPPortBase: m.cfg.EnvoyTCPPortBase(),
 		HealthPort:  m.cfg.EnvoyHealthPort(),
@@ -870,7 +871,7 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 	}
 
 	// Ensure certs exist (CA + domain certs for TLS rules).
-	caCert, caKey, err := EnsureCA(certDir)
+	caCert, caKey, err := fwcp.EnsureCA(certDir)
 	if err != nil {
 		return "", fmt.Errorf("ensuring CA: %w", err)
 	}
@@ -880,9 +881,9 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 	// contain port:0 or empty proto/action rules that need normalization.
 	var allRules []config.EgressRule
 	var healed bool
-	if err := m.store.Set(func(f *EgressRulesFile) {
+	if err := m.store.Set(func(f *fwcp.EgressRulesFile) {
 		var ruleWarnings []string
-		allRules, ruleWarnings = normalizeAndDedup(f.Rules)
+		allRules, ruleWarnings = fwcp.NormalizeAndDedup(f.Rules)
 		for _, w := range ruleWarnings {
 			m.log.Warn().Msg(w)
 		}
@@ -912,12 +913,12 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 	}
 
 	// Regenerate domain certs for TLS rules.
-	if err := RegenerateDomainCerts(allRules, certDir, caCert, caKey); err != nil {
+	if err := fwcp.RegenerateDomainCerts(allRules, certDir, caCert, caKey); err != nil {
 		return "", fmt.Errorf("regenerating domain certs: %w", err)
 	}
 
 	// Generate Envoy config.
-	envoyYAML, warnings, err := GenerateEnvoyConfig(allRules, m.envoyPorts())
+	envoyYAML, warnings, err := fwcp.GenerateEnvoyConfig(allRules, m.envoyPorts())
 	if err != nil {
 		return "", fmt.Errorf("generating envoy config: %w", err)
 	}
@@ -930,7 +931,7 @@ func (m *Manager) ensureConfigs(_ context.Context) (string, error) {
 	}
 
 	// Generate Corefile.
-	corefile, err := GenerateCorefile(allRules, m.cfg.CoreDNSHealthHostPort())
+	corefile, err := fwcp.GenerateCorefile(allRules, m.cfg.CoreDNSHealthHostPort())
 	if err != nil {
 		return "", fmt.Errorf("generating Corefile: %w", err)
 	}
@@ -993,7 +994,7 @@ func (m *Manager) regenerateAndRestart(ctx context.Context) error {
 
 // envoyContainerConfig returns the container creation config for the Envoy proxy.
 // dataDir must be pre-validated (ensureConfigs checks FirewallDataSubdir before this is called).
-func (m *Manager) envoyContainerConfig(net *NetworkInfo, dataDir string) containerSpec {
+func (m *Manager) envoyContainerConfig(net *fwcp.NetworkInfo, dataDir string) containerSpec {
 	certDir, _ := m.cfg.FirewallCertSubdir() // already validated in ensureConfigs
 	return containerSpec{
 		image:       envoyImage,
@@ -1031,7 +1032,7 @@ func (m *Manager) envoyContainerConfig(net *NetworkInfo, dataDir string) contain
 
 // corednsContainerConfig returns the container creation config for the CoreDNS resolver.
 // dataDir must be pre-validated (ensureConfigs checks FirewallDataSubdir before this is called).
-func (m *Manager) corednsContainerConfig(net *NetworkInfo, dataDir string) containerSpec {
+func (m *Manager) corednsContainerConfig(net *fwcp.NetworkInfo, dataDir string) containerSpec {
 	healthPort := m.cfg.CoreDNSHealthHostPort()
 	return containerSpec{
 		image:       corednsImageTag,
@@ -1306,8 +1307,8 @@ func (m *Manager) ensureCPImage(ctx context.Context) error {
 	spec := cpImageSpec
 	// Populate binary bytes per-call.
 	spec.binaries = []embeddedBinary{
-		{fileName: "clawker-cp", binary: clawkerCPBinary},
-		{fileName: "ebpf-manager", binary: ebpfManagerBinary},
+		{fileName: "clawker-cp", binary: controlplane.ClawkerCPBinary},
+		{fileName: "ebpf-manager", binary: controlplane.EBPFManagerBinary},
 	}
 	return m.ensureEmbeddedImage(ctx, spec)
 }
@@ -1317,7 +1318,7 @@ func (m *Manager) ensureCPImage(ctx context.Context) error {
 func (m *Manager) ensureCorednsImage(ctx context.Context) error {
 	spec := corednsImageSpec
 	spec.binaries = []embeddedBinary{
-		{fileName: "coredns", binary: corednsClawkerBinary},
+		{fileName: "coredns", binary: fwcp.CorednsClawkerBinary},
 	}
 	return m.ensureEmbeddedImage(ctx, spec)
 }
@@ -1523,12 +1524,12 @@ func (m *Manager) restartContainer(ctx context.Context, name firewallContainer) 
 // the current egress rules store. Called during EnsureRunning, Enable, and
 // regenerateAndRestart so all enforced containers immediately see rule changes.
 func (m *Manager) syncRoutes(ctx context.Context) error {
-	rules, warnings := normalizeAndDedup(m.store.Read().Rules)
+	rules, warnings := fwcp.NormalizeAndDedup(m.store.Read().Rules)
 	for _, w := range warnings {
 		m.log.Warn().Msg(w)
 	}
 	ports := m.envoyPorts()
-	tcpMappings := TCPMappings(rules, ports)
+	tcpMappings := fwcp.TCPMappings(rules, ports)
 
 	protoRoutes := make([]*adminv1.Route, 0, len(tcpMappings))
 	for _, mp := range tcpMappings {
@@ -1678,7 +1679,7 @@ func (m *Manager) Close() error {
 // result into the firewall manager's internal containerSpec, adding the
 // network-specific fields (network name/ID, static IP) that only the
 // firewall manager knows.
-func (m *Manager) cpContainerConfig(netInfo *NetworkInfo) (containerSpec, error) {
+func (m *Manager) cpContainerConfig(netInfo *fwcp.NetworkInfo) (containerSpec, error) {
 	cpCfg, err := controlplane.BuildCPContainerConfig(m.cfg)
 	if err != nil {
 		return containerSpec{}, fmt.Errorf("build cp container config: %w", err)

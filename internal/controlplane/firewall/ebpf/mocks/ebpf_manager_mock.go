@@ -4,7 +4,7 @@
 package mocks
 
 import (
-	"github.com/schmitthub/clawker/internal/controlplane/ebpf"
+	"github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"sync"
 )
 

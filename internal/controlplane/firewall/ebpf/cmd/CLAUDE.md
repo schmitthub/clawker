@@ -42,4 +42,4 @@ Runs inside `clawker-controlplane` with `CAP_BPF + CAP_SYS_ADMIN` and bind mount
 
 ## Provenance
 
-Binary lives at `internal/firewall/assets/ebpf-manager` after `make ebpf-binary`. The Makefile target delegates to `docker buildx build` against the pinned multi-stage `Dockerfile.controlplane`. The `clawker-controlplane` image bundles both `clawker-cp` (the CMD) and `ebpf-manager` (this binary) via `cpImageSpec.binaries` in `internal/firewall/manager.go`. Nothing about this binary is committed — the Dockerfile is the build recipe and the binary is regenerated on every build.
+Binary lives at `internal/controlplane/assets/ebpf-manager` after `make ebpf-binary`. The Makefile target delegates to `docker buildx build` against the pinned multi-stage `Dockerfile.controlplane`. The `clawker-controlplane` image bundles both `clawker-cp` (the CMD) and `ebpf-manager` (this binary) via `cpImageSpec.binaries` in `internal/controlplane/firewall/handler.go`. Nothing about this binary is committed — the Dockerfile is the build recipe and the binary is regenerated on every build.

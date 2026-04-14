@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
-	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/ebpf"
+	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -468,7 +468,7 @@ func TestNormalizeAndDedup(t *testing.T) {
 		{Dst: "github.com", Proto: "tls", Port: 443, Action: "allow"},
 	}
 
-	result, _ := normalizeAndDedup(rules)
+	result, _ := NormalizeAndDedup(rules)
 	assert.Len(t, result, 2)
 	for _, r := range result {
 		assert.Equal(t, 443, r.Port, "rule for %s should have port 443", r.Dst)
@@ -484,7 +484,7 @@ func TestNormalizeAndDedup_WildcardAndExactCoexist(t *testing.T) {
 		{Dst: ".claude.ai", Proto: "tls", Port: 443, Action: "allow"},
 	}
 
-	result, _ := normalizeAndDedup(rules)
+	result, _ := NormalizeAndDedup(rules)
 	assert.Len(t, result, 2, "wildcard and exact are distinct rules")
 
 	dsts := []string{result[0].Dst, result[1].Dst}
@@ -500,7 +500,7 @@ func TestNormalizeAndDedup_ExactDuplicatesStillDeduped(t *testing.T) {
 		{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
 	}
 
-	result, _ := normalizeAndDedup(rules)
+	result, _ := NormalizeAndDedup(rules)
 	assert.Len(t, result, 1)
 	assert.Equal(t, "claude.ai", result[0].Dst)
 }
@@ -1007,7 +1007,7 @@ func TestNormalizeAndDedup_MalformedDomains(t *testing.T) {
 		{Dst: "valid.com", Proto: "tls", Port: 443, Action: "allow"},
 	}
 
-	result, warnings := normalizeAndDedup(rules)
+	result, warnings := NormalizeAndDedup(rules)
 	assert.Len(t, result, 1, "malformed domains should be filtered out")
 	assert.Equal(t, "valid.com", result[0].Dst)
 	assert.Len(t, warnings, 2, "should warn about each dropped malformed domain")

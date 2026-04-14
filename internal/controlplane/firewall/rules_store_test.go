@@ -11,12 +11,13 @@ import (
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/firewall"
+	"github.com/schmitthub/clawker/internal/controlplane/firewall"
+	fwlegacy "github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 )
 
-func newTestManager(t *testing.T) (*firewall.Manager, config.Config) {
+func newTestManager(t *testing.T) (*fwlegacy.Manager, config.Config) {
 	t.Helper()
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	fake := &whailtest.FakeAPIClient{}
@@ -32,7 +33,7 @@ func newTestManager(t *testing.T) (*firewall.Manager, config.Config) {
 	fake.ContainerListFn = func(_ context.Context, _ client.ContainerListOptions) (client.ContainerListResult, error) {
 		return client.ContainerListResult{}, nil
 	}
-	mgr, err := firewall.NewManager(fake, cfg, logger.Nop())
+	mgr, err := fwlegacy.NewManager(fake, cfg, logger.Nop())
 	require.NoError(t, err)
 	return mgr, cfg
 }
@@ -253,4 +254,11 @@ func TestAddRules_NormalizesEmptyFields(t *testing.T) {
 	assert.Equal(t, "ssh", rules[1].Proto)
 	assert.Equal(t, 22, rules[1].Port)
 	assert.Equal(t, "allow", rules[1].Action)
+}
+
+func TestEgressRulesFileFields_AllFieldsHaveDescriptions(t *testing.T) {
+	fs := firewall.EgressRulesFile{}.Fields()
+	for _, f := range fs.All() {
+		assert.NotEmptyf(t, f.Description(), "field %q has no desc tag", f.Path())
+	}
 }
