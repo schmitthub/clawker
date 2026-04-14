@@ -1,0 +1,30 @@
+{
+  "drift_debt": [
+    {
+      "id": "DRIFT-001",
+      "spec_id": "branch-2-cp-owns-firewall",
+      "rule_id": "INV-B2-010",
+      "description": "internal/hostproxy/egress_check.go and daemon.go read egress-rules.yaml directly via os.ReadFile + yaml.Unmarshal against mirror types. Documented as intentional in internal/hostproxy/CLAUDE.md (leaf-package discipline, defense-in-depth against URL-encoded exfil via /open/url). INV-B2-010 and PRH-B2-004 require all external rule readers go through the FirewallListRules RPC. Disposition: user must choose fix (migrate to gRPC client) vs. amend spec (carve-out exemption for hostproxy) vs. logged debt.",
+      "detected": "2026-04-14",
+      "status": "resolved",
+      "resolved": "2026-04-14",
+      "resolution": "Spec amended: INV-B2-010 and PRH-B2-004 now carve out internal/hostproxy/ as an allowed direct reader of egress-rules.yaml. Rationale: hostproxy must stay a leaf package (no internal/controlplane or internal/storage imports) to avoid dependency cycle — CP transitively reaches hostproxy through the factory. Flock + mirror types + unknown-field tolerance mitigate torn-read and schema-drift risk. See branch-2-cp-owns-firewall.md INV-B2-010 + PRH-B2-004."
+    },
+    {
+      "id": "DRIFT-002",
+      "spec_id": "branch-2-cp-owns-firewall",
+      "rule_id": ".correctless/ARCHITECTURE.md PAT-004",
+      "description": ".correctless/ARCHITECTURE.md PAT-004 describes the pre-B2 world (no mention of Stack, AgentWatcher, 13-RPC surface, f.AdminClient, f.ControlPlane). /cupdate-arch needed.",
+      "detected": "2026-04-14",
+      "status": "open"
+    },
+    {
+      "id": "DRIFT-003",
+      "spec_id": "branch-2-cp-owns-firewall",
+      "rule_id": ".correctless/AGENT_CONTEXT.md",
+      "description": ".correctless/AGENT_CONTEXT.md Key Components table lists internal/firewall/ as a live component. Package deleted; entry must be updated to internal/controlplane/firewall/.",
+      "detected": "2026-04-14",
+      "status": "open"
+    }
+  ]
+}

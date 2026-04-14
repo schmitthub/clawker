@@ -1020,14 +1020,14 @@ If a critical bug is discovered post-merge, revert the branch. No data migration
 - **Test approach**: unit — reflection over the registered `AdminServiceServer` interface enumerates all methods; assert each appears in the registered-methods set; assert interceptor rejects missing-scope and wrong-scope tokens for a sampled method; assert interceptor rejects a method that exists on `AdminServiceServer` but has no registered-methods entry.
 - **Risk**: critical
 
-### INV-B2-010: Rules store RPC is the only external read path
+### INV-B2-010: Rules store RPC is the only external read path (one carve-out)
 - **Type**: must
 - **Category**: data-integrity
-- **Statement**: `clawker firewall list` and every other external rule reader issues a `ListRules` gRPC call. No external package parses `egress-rules.yaml` directly. CP-internal code reads the store via `storage.Store`; external packages may not.
+- **Statement**: `clawker firewall list` and every other external rule reader issues a `ListRules` gRPC call. No external package parses `egress-rules.yaml` directly. CP-internal code reads the store via `storage.Store`; external packages may not — with one carve-out: `internal/hostproxy` reads `egress-rules.yaml` directly via `os.ReadFile` + `yaml.Unmarshal` with mirror types for its `/open/url` browser-auth egress check. Hostproxy must stay a leaf package (no `internal/controlplane` or `internal/storage` imports) to avoid a dependency cycle; the CP calls into hostproxy transitively via the factory, so hostproxy cannot call into CP. Flock-protected reads on every request mitigate torn-read risk; `yaml.Unmarshal` tolerates unknown fields, so additive rule-schema changes do not break hostproxy.
 - **Boundary**: TB-001
-- **Violated when**: Any package outside `internal/controlplane/` or `cmd/clawker-cp/` reads `egress-rules.yaml` directly.
-- **Guards against**: dual-reader races, source-of-truth drift.
-- **Test approach**: AST — `go/packages` load; collect every identifier reference resolving to type `EgressRulesFile` or the `EgressRulesFileName` accessor. Assert every reference comes from `internal/controlplane/...`, `internal/config/...` (path accessors only), or test files. The AST pass distinguishes true imports from string-literal mentions — grep would false-positive on comments and CLAUDE.md snippets embedded in Go docstrings.
+- **Violated when**: Any package outside `internal/controlplane/`, `cmd/clawker-cp/`, or `internal/hostproxy/` reads `egress-rules.yaml` directly; or hostproxy acquires an import on `internal/controlplane` or `internal/storage`.
+- **Guards against**: dual-reader races, source-of-truth drift, uncontrolled proliferation of direct readers.
+- **Test approach**: AST — `go/packages` load; collect every identifier reference resolving to type `EgressRulesFile` or the `EgressRulesFileName` accessor. Assert every reference comes from `internal/controlplane/...`, `internal/config/...` (path accessors only), `internal/hostproxy/...` (carve-out), or test files. The AST pass distinguishes true imports from string-literal mentions — grep would false-positive on comments and CLAUDE.md snippets embedded in Go docstrings.
 - **Risk**: medium
 
 ### INV-B2-012: Cgroup resolution is CP-side; proto carries no `cgroup_path`
@@ -1097,9 +1097,9 @@ If a critical bug is discovered post-merge, revert the branch. No data migration
 - **Detection**: grep for those method names targeting firewall/coredns labels outside `internal/controlplane/` — zero matches.
 - **Consequence**: Dual-owner race, state divergence, violates INV-001 from master.
 
-### PRH-B2-004: No direct file reads of `egress-rules.yaml` outside CP
-- **Statement**: Only `internal/controlplane/` and `cmd/clawker-cp/` may read `egress-rules.yaml`. External readers use `ListRules` RPC.
-- **Detection**: grep for `egress-rules.yaml` or `EgressRulesFile` outside allowed packages — zero matches.
+### PRH-B2-004: No direct file reads of `egress-rules.yaml` outside CP (one carve-out)
+- **Statement**: Only `internal/controlplane/`, `cmd/clawker-cp/`, and `internal/hostproxy/` may read `egress-rules.yaml`. External readers use `ListRules` RPC. The `internal/hostproxy/` carve-out exists because hostproxy must remain a leaf package (no `internal/controlplane` or `internal/storage` imports) — the CP reaches hostproxy through the factory, so hostproxy cannot dial the CP without a dependency cycle. Hostproxy uses `os.ReadFile` + `yaml.Unmarshal` with flock, mirror types, and unknown-field tolerance.
+- **Detection**: grep for `egress-rules.yaml` or `EgressRulesFile` outside allowed packages (`internal/controlplane/**`, `cmd/clawker-cp/**`, `internal/hostproxy/**`) — zero matches.
 - **Consequence**: Source-of-truth drift, mid-write reads, interface bypass.
 
 ### PRH-B2-005: No synchronous daemon pattern in new code

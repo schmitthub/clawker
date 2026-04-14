@@ -80,7 +80,9 @@ h := &harness.Harness{T: t, Opts: &harness.FactoryOptions{
         )
     },
     AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-        return auth.DialCPAdmin(ctx, cfg, log)
+        cp := cfg.Settings().ControlPlane
+        client, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+        return client, err
     },
 }}
 setup := h.NewIsolatedFS(nil)

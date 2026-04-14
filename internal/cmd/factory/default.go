@@ -8,10 +8,10 @@ import (
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/controlplane"
+	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -30,6 +30,35 @@ import (
 // this via t.Cleanup-protected assignment to avoid spawning real CP
 // containers; production always uses controlplane.EnsureRunning.
 var ensureRunning = controlplane.EnsureRunning
+
+// dialAdmin is the test seam for the mTLS + OAuth2 dial. Tests swap this
+// to return a pre-built grpc.ClientConn (via grpc.NewClient against an
+// unreachable target) so they can drive connectivity state transitions
+// without real auth material or a running CP.
+var dialAdmin = adminclient.Dial
+
+// adminClientKeepalive is the keepalive policy the CLI applies to the
+// long-lived CP AdminService connection. Values match the CP
+// server-side config in internal/controlplane/server.go. Time is how
+// long an idle connection sits before the client pings; Timeout is
+// how long we wait for the ping ack before declaring the path dead;
+// PermitWithoutStream is false because the CLI only pings when an
+// RPC is in flight (CP server enforces the same via
+// MinTime/PermitWithoutStream).
+var adminClientKeepalive = keepalive.ClientParameters{
+	Time:                30 * time.Second,
+	Timeout:             10 * time.Second,
+	PermitWithoutStream: false,
+}
+
+// cacheableState reports whether the closure should return the cached
+// AdminServiceClient without rebuilding. grpc.ClientConn auto-reconnects
+// with backoff in Idle/Connecting, and Ready is obviously healthy —
+// only TransientFailure (repeated backoff failures) and Shutdown
+// (closed) warrant tearing down and rebuilding the conn.
+func cacheableState(s connectivity.State) bool {
+	return s == connectivity.Ready || s == connectivity.Connecting || s == connectivity.Idle
+}
 
 // New creates a fully-wired Factory with lazy-initialized dependency closures.
 // Called exactly once at the CLI entry point (internal/clawker/cmd.go).
@@ -211,11 +240,8 @@ func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminSer
 		mu.Lock()
 		defer mu.Unlock()
 
-		// grpc.ClientConn auto-reconnects with backoff on transient
-		// network issues; only rebuild when the state is permanent.
 		if conn != nil {
-			s := conn.GetState()
-			if s == connectivity.Ready || s == connectivity.Connecting || s == connectivity.Idle {
+			if cacheableState(conn.GetState()) {
 				return client, nil
 			}
 			_ = conn.Close()
@@ -241,12 +267,8 @@ func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminSer
 		}
 
 		cp := cfg.Settings().ControlPlane
-		newClient, newConn, err := auth.DialCPAdmin(ctx, cp.AdminPort, cp.HydraPublicPort,
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                30 * time.Second,
-				Timeout:             10 * time.Second,
-				PermitWithoutStream: false,
-			}),
+		newClient, newConn, err := dialAdmin(ctx, cp.AdminPort, cp.HydraPublicPort,
+			grpc.WithKeepaliveParams(adminClientKeepalive),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("admin client: dial: %w", err)

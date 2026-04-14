@@ -1,4 +1,11 @@
-package auth
+// Package adminclient constructs the CLI's gRPC client to the control
+// plane's AdminService. It composes auth primitives (mTLS material +
+// signed JWT assertions) with CP-specific network topology
+// (127.0.0.1:adminPort target, Hydra token endpoint, ServerName).
+//
+// Auth primitives live in internal/auth — this package owns the wiring
+// that turns those primitives into a working AdminServiceClient.
+package adminclient
 
 import (
 	"context"
@@ -16,34 +23,35 @@ import (
 
 	"github.com/google/uuid"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 )
 
-// DialCPAdmin connects to the CP's gRPC AdminService with TLS + OAuth2.
+// Dial connects to the CP's gRPC AdminService with mTLS + OAuth2.
 //
-//  1. Load signing key + server cert from dataDir
-//  2. Build TLS config trusting the CLI CA certificate
+//  1. Load signing key + CA cert + client cert from auth material
+//  2. Build TLS config trusting the CLI CA
 //  3. Create a tokenSource that auto-refreshes via Hydra /oauth2/token
-//  4. Dial gRPC with TLS + auto-refreshing bearer token in metadata
+//  4. Dial gRPC with mTLS + auto-refreshing bearer token in metadata
 //
 // Callers may pass additional grpc.DialOption values (e.g. keepalive) —
-// these are appended after the transport-credentials + OAuth2 interceptor
-// so they can extend but not override the auth/TLS baseline.
-func DialCPAdmin(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
-	signingKey, err := LoadSigningKey()
+// these are appended after the transport-credentials + OAuth2
+// interceptor so they can extend but not override the auth/TLS baseline.
+func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
+	signingKey, err := auth.LoadSigningKey()
 	if err != nil {
 		return nil, nil, fmt.Errorf("load signing key: %w", err)
 	}
 
-	caCert, err := CACert()
+	caCert, err := auth.CACert()
 	if err != nil {
 		return nil, nil, fmt.Errorf("load CA cert: %w", err)
 	}
 
-	clientCert, err := LoadClientCert()
+	clientCert, err := auth.LoadClientCert()
 	if err != nil {
 		return nil, nil, fmt.Errorf("load client cert: %w", err)
 	}
@@ -150,7 +158,7 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 // /oauth2/token endpoint for an access token. Returns the token and its
 // TTL (from expires_in, defaulting to 1 hour if absent).
 func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config) (string, time.Duration, error) {
-	assertion, err := BuildSignedAssertion(AssertionClaims{
+	assertion, err := auth.BuildSignedAssertion(auth.AssertionClaims{
 		Issuer:           consts.ClientIDCLI,
 		Subject:          consts.ClientIDCLI,
 		Audience:         tokenURL,
