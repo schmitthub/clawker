@@ -64,9 +64,16 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	}
 
 	// Per-domain forward zones.
+	// AAAA queries return NODATA (NOERROR with empty answer) because the eBPF
+	// connect6 hook blocks all IPv6 to prevent dual-stack firewall bypass. Returning
+	// AAAA records that can't connect misleads clients (e.g., npm/node don't fall
+	// back on EPERM). NODATA tells clients to prefer IPv4.
 	for _, domain := range domains {
 		fmt.Fprintf(&b, "%s {\n", domain)
 		fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
+		b.WriteString("    template IN AAAA . {\n")
+		b.WriteString("        rcode NOERROR\n")
+		b.WriteString("    }\n")
 		b.WriteString("    dnsbpf\n")
 		fmt.Fprintf(&b, "    forward . %s\n", strings.Join(upstreamDNS, " "))
 		fmt.Fprintf(&b, "}\n\n")
@@ -74,9 +81,13 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 
 	// Internal host forward zones (Docker DNS).
 	// dnsbpf is included so host.docker.internal resolution populates dns_cache.
+	// AAAA NODATA applied for the same IPv6-block reason as public zones.
 	for _, host := range internalHosts {
 		fmt.Fprintf(&b, "%s {\n", host)
 		fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
+		b.WriteString("    template IN AAAA . {\n")
+		b.WriteString("        rcode NOERROR\n")
+		b.WriteString("    }\n")
 		b.WriteString("    dnsbpf\n")
 		b.WriteString("    forward . 127.0.0.11\n")
 		b.WriteString("}\n\n")

@@ -1,3 +1,10 @@
+//go:build linux
+
+// These tests exercise AdminHandler against ebpf.CgroupID, which stats a real
+// path under /sys/fs/cgroup/ to read the cgroup v2 inode. That path only
+// exists on Linux, so the suite is Linux-gated to keep macOS commits
+// unblocked. CI runs on Linux.
+
 package controlplane
 
 import (

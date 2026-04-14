@@ -203,6 +203,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 
 - Per-domain forward zones with `dnsbpf` plugin directive (before `forward`)
 - Docker internal forward zones (docker.internal, otel-collector, etc.) delegate to `127.0.0.11`
+- Every zone includes `template IN AAAA . { rcode NOERROR }` (NODATA) before `forward` so AAAA queries return empty. The eBPF `connect6` hook blocks non-IPv4-mapped IPv6, and some clients (npm/node) treat `EPERM` from `connect6()` as permanent and don't fall back to A. Returning NODATA steers them to A upfront. The catch-all `.` zone already NXDOMAINs AAAA via `template IN ANY`.
 - Catch-all `.` zone: `template IN ANY . { rcode NXDOMAIN }` + health endpoint + reload
 
 ### Envoy (`envoy.go`)
