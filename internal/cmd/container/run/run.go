@@ -9,11 +9,11 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -36,7 +36,7 @@ type RunOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
-	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
 	Logger         func() (*logger.Logger, error)
@@ -63,7 +63,7 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		Config:                 f.Config,
 		ProjectManager:         f.ProjectManager,
 		HostProxy:              f.HostProxy,
-		Firewall:               f.Firewall,
+		AdminClient:            f.AdminClient,
 		SocketBridge:           f.SocketBridge,
 		Prompter:               f.Prompter,
 		Logger:                 f.Logger,
@@ -261,7 +261,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			Config:         opts.Config,
 			ProjectManager: opts.ProjectManager,
 			HostProxy:      opts.HostProxy,
-			Firewall:       opts.Firewall,
+			AdminClient:    opts.AdminClient,
 			SocketBridge:   opts.SocketBridge,
 			Logger:         opts.Logger,
 		}, docker.ContainerStartOptions{ContainerID: o.result.ContainerID}); err != nil {
@@ -354,7 +354,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 			Config:         opts.Config,
 			ProjectManager: opts.ProjectManager,
 			HostProxy:      opts.HostProxy,
-			Firewall:       opts.Firewall,
+			AdminClient:    opts.AdminClient,
 			SocketBridge:   opts.SocketBridge,
 			Logger:         opts.Logger,
 		},

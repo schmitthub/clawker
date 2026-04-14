@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
@@ -16,7 +16,7 @@ import (
 type DisableOptions struct {
 	IOStreams      *iostreams.IOStreams
 	ProjectManager func() (project.ProjectManager, error)
-	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	Agent          string
 }
 
@@ -25,14 +25,15 @@ func NewCmdDisable(f *cmdutil.Factory, runF func(context.Context, *DisableOption
 	opts := &DisableOptions{
 		IOStreams:      f.IOStreams,
 		ProjectManager: f.ProjectManager,
-		Firewall:       f.Firewall,
+		AdminClient:    f.AdminClient,
 	}
 
 	cmd := &cobra.Command{
 		Use:   "disable",
 		Short: "Disable firewall for a container",
-		Long: `Detach eBPF cgroup programs from an agent container, giving it
-unrestricted outbound access. Use 'clawker firewall enable' to re-apply.`,
+		Long: `Remove an agent container from the firewall's per-container routing.
+BPF programs remain attached so re-enable is cheap; the fast path exits to
+bypass on lookup miss.`,
 		Example: `  # Disable firewall for an agent container
   clawker firewall disable --agent dev`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -70,12 +71,12 @@ func disableRun(ctx context.Context, opts *DisableOptions) error {
 		return fmt.Errorf("resolving container name: %w", err)
 	}
 
-	fwMgr, err := opts.Firewall(ctx)
+	client, err := opts.AdminClient(ctx)
 	if err != nil {
-		return fmt.Errorf("connecting to firewall: %w", err)
+		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	if err := fwMgr.Disable(ctx, containerName); err != nil {
+	if _, err := client.FirewallDisable(ctx, &adminv1.FirewallDisableRequest{ContainerId: containerName}); err != nil {
 		return fmt.Errorf("disabling firewall for %s: %w", opts.Agent, err)
 	}
 

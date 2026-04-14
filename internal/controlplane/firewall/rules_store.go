@@ -19,6 +19,22 @@ func (f EgressRulesFile) Fields() storage.FieldSet {
 	return storage.NormalizeFields(f)
 }
 
+// ProjectRules builds the full rule set from project config and required
+// rules. Called CLI-side before BootstrapServicesPostStart composes the
+// initial rule set that is pushed via FirewallAddRules.
+func ProjectRules(cfg config.Config) []config.EgressRule {
+	var rules []config.EgressRule
+	rules = append(rules, cfg.RequiredFirewallRules()...)
+	projectFw := cfg.Project().Security.Firewall
+	if projectFw != nil {
+		rules = append(rules, projectFw.Rules...)
+		for _, d := range projectFw.AddDomains {
+			rules = append(rules, config.EgressRule{Dst: d, Proto: "tls", Port: 443, Action: "allow"})
+		}
+	}
+	return rules
+}
+
 // NewRulesStore creates a storage.Store[EgressRulesFile] for egress-rules.yaml.
 // The store uses the firewall data subdirectory for file discovery.
 func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {

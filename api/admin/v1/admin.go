@@ -3,6 +3,8 @@
 // trust boundary between admin operations (CLI) and agent operations (clawkerd).
 package v1
 
+//go:generate moq -rm -pkg mocks -out ../../../internal/controlplane/mocks/admin_client_mock.go . AdminServiceClient
+
 import "github.com/schmitthub/clawker/internal/consts"
 
 // ServiceName is the fully-qualified gRPC service name for AdminService.

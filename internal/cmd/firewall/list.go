@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strconv"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
@@ -15,10 +15,10 @@ import (
 
 // ListOptions holds the options for the firewall list command.
 type ListOptions struct {
-	IOStreams *iostreams.IOStreams
-	TUI       *tui.TUI
-	Firewall  func(context.Context) (firewall.FirewallManager, error)
-	Format    *cmdutil.FormatFlags
+	IOStreams   *iostreams.IOStreams
+	TUI         *tui.TUI
+	AdminClient func(context.Context) (adminv1.AdminServiceClient, error)
+	Format      *cmdutil.FormatFlags
 }
 
 // ruleRow is the JSON/template-friendly representation of an egress rule.
@@ -32,9 +32,9 @@ type ruleRow struct {
 // NewCmdList creates the firewall list command.
 func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) error) *cobra.Command {
 	opts := &ListOptions{
-		IOStreams: f.IOStreams,
-		TUI:       f.TUI,
-		Firewall:  f.Firewall,
+		IOStreams:   f.IOStreams,
+		TUI:         f.TUI,
+		AdminClient: f.AdminClient,
 	}
 
 	cmd := &cobra.Command{
@@ -66,45 +66,44 @@ func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) err
 func listRun(ctx context.Context, opts *ListOptions) error {
 	ios := opts.IOStreams
 
-	fwMgr, err := opts.Firewall(ctx)
+	client, err := opts.AdminClient(ctx)
 	if err != nil {
-		return fmt.Errorf("connecting to firewall: %w", err)
+		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	rules, err := fwMgr.List(ctx)
+	resp, err := client.FirewallListRules(ctx, &adminv1.FirewallListRulesRequest{})
 	if err != nil {
 		return fmt.Errorf("listing firewall rules: %w", err)
 	}
 
+	rules := resp.GetRules()
 	if len(rules) == 0 {
 		fmt.Fprintln(ios.Out, "No active firewall rules.")
 		return nil
 	}
 
-	// Build display rows.
 	rows := make([]ruleRow, 0, len(rules))
 	for _, r := range rules {
-		proto := r.Proto
+		proto := r.GetProto()
 		if proto == "" {
 			proto = "tls"
 		}
-		action := r.Action
+		action := r.GetAction()
 		if action == "" {
 			action = "allow"
 		}
 		port := ""
-		if r.Port > 0 {
-			port = strconv.Itoa(r.Port)
+		if r.GetPort() > 0 {
+			port = strconv.FormatUint(uint64(r.GetPort()), 10)
 		}
 		rows = append(rows, ruleRow{
-			Domain: r.Dst,
+			Domain: r.GetDst(),
 			Proto:  proto,
 			Port:   port,
 			Action: action,
 		})
 	}
 
-	// Sort rows by domain, then proto, then port for fully deterministic output.
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Domain != rows[j].Domain {
 			return rows[i].Domain < rows[j].Domain
@@ -115,7 +114,6 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		return rows[i].Port < rows[j].Port
 	})
 
-	// Format dispatch.
 	switch {
 	case opts.Format.Quiet:
 		for _, r := range rows {

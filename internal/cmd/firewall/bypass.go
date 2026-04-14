@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -19,7 +19,7 @@ type BypassOptions struct {
 	IOStreams      *iostreams.IOStreams
 	TUI            *tui.TUI
 	ProjectManager func() (project.ProjectManager, error)
-	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	Agent          string
 	Duration       time.Duration
 	Stop           bool
@@ -32,7 +32,7 @@ func NewCmdBypass(f *cmdutil.Factory, runF func(context.Context, *BypassOptions)
 		IOStreams:      f.IOStreams,
 		TUI:            f.TUI,
 		ProjectManager: f.ProjectManager,
-		Firewall:       f.Firewall,
+		AdminClient:    f.AdminClient,
 	}
 
 	cmd := &cobra.Command{
@@ -40,9 +40,9 @@ func NewCmdBypass(f *cmdutil.Factory, runF func(context.Context, *BypassOptions)
 		Short: "Temporarily bypass firewall for a container",
 		Long: `Grant a container unrestricted egress for a specified duration.
 
-Sets an eBPF bypass flag for the container and starts a server-side
-dead-man timer that automatically re-enables enforcement. The timer
-runs in the clawker-controlplane control plane and survives CLI exit.
+Calls FirewallBypass on the control plane, which sets the BPF bypass flag
+and starts a server-side dead-man timer that automatically re-enables
+enforcement when the timer fires. The timer survives CLI exit.
 
 By default the command blocks with a countdown timer. Press Ctrl+C to
 stop the bypass early (re-enables firewall). Press q/Esc to detach
@@ -64,12 +64,10 @@ Use --stop to cancel an active bypass immediately.`,
 			}
 
 			if opts.Stop {
-				// --stop mode: no duration argument needed.
 				if len(args) > 0 {
 					return cmdutil.FlagErrorf("--stop does not accept a duration argument")
 				}
 			} else {
-				// Normal mode: duration argument required.
 				if len(args) < 1 {
 					return cmdutil.FlagErrorf("duration argument is required (e.g. 30s, 5m)")
 				}
@@ -116,28 +114,30 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 		return fmt.Errorf("resolving container name: %w", err)
 	}
 
-	fwMgr, err := opts.Firewall(ctx)
+	client, err := opts.AdminClient(ctx)
 	if err != nil {
-		return fmt.Errorf("connecting to firewall: %w", err)
+		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	// --stop: re-enable firewall immediately (cancels any running bypass timer).
+	// --stop: re-enable enforcement immediately by calling Enable.
 	if opts.Stop {
-		if err := fwMgr.Enable(ctx, containerName); err != nil {
+		if _, err := client.FirewallEnable(ctx, &adminv1.FirewallEnableRequest{ContainerId: containerName}); err != nil {
 			return fmt.Errorf("stopping bypass for %s: %w", opts.Agent, err)
 		}
 		fmt.Fprintf(ios.Out, "%s Bypass stopped for agent %s\n", cs.SuccessIcon(), opts.Agent)
 		return nil
 	}
 
-	// Start bypass: set the bypass flag + server-side dead-man timer via CP gRPC.
-	if err := fwMgr.Bypass(ctx, containerName, opts.Duration); err != nil {
+	// Start bypass: set BPF bypass flag + server-side dead-man timer.
+	if _, err := client.FirewallBypass(ctx, &adminv1.FirewallBypassRequest{
+		ContainerId:    containerName,
+		TimeoutSeconds: uint32(opts.Duration.Seconds()),
+	}); err != nil {
 		return fmt.Errorf("starting bypass for %s: %w", opts.Agent, err)
 	}
 
-	// Non-interactive: fire-and-forget. The server-side dead-man timer in
-	// the CP handles re-enabling enforcement when the timeout expires.
-	// The CLI returns immediately so callers aren't blocked.
+	// Non-interactive: fire-and-forget. Server-side dead-man timer handles
+	// re-enabling enforcement when the timeout expires.
 	if opts.NonInteractive {
 		fmt.Fprintf(ios.Out, "%s Bypass active for agent %s (expires in %s)\n",
 			cs.SuccessIcon(), opts.Agent, opts.Duration)
@@ -178,15 +178,25 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 	}
 
 	if result.Interrupted {
-		// Ctrl+C: re-enable firewall immediately.
-		// The parent ctx is already cancelled by signal.NotifyContext (SIGINT),
-		// so we derive from context.Background() — this is deferred cleanup that
-		// must complete. The timeout bounds the call so the CLI doesn't hang if
-		// the CP is unresponsive.
+		// Ctrl+C: re-enable firewall immediately via FirewallEnable
+		// (cancels the server-side bypass timer). Derive from
+		// context.Background() — parent ctx is cancelled by the signal
+		// handler, but this cleanup must still complete.
+		//
+		// Re-fetch the admin client so the Factory closure can rebuild a
+		// stale grpc.ClientConn (TransientFailure/Shutdown). The `client`
+		// captured at the top of this run is potentially hours old on a
+		// long `--duration` bypass — calling FirewallEnable on a stuck
+		// conn would leave enforcement off until the CP dead-man timer
+		// eventually fires, defeating the point of Ctrl+C.
 		enableCtx, enableCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer enableCancel()
 		fmt.Fprintf(ios.Out, "%s Stopping bypass for agent %s...\n", cs.WarningIcon(), opts.Agent)
-		if err := fwMgr.Enable(enableCtx, containerName); err != nil {
+		enableClient, err := opts.AdminClient(enableCtx)
+		if err != nil {
+			return fmt.Errorf("stopping bypass for %s: reconnecting to control plane: %w", opts.Agent, err)
+		}
+		if _, err := enableClient.FirewallEnable(enableCtx, &adminv1.FirewallEnableRequest{ContainerId: containerName}); err != nil {
 			return fmt.Errorf("stopping bypass for %s: %w", opts.Agent, err)
 		}
 		fmt.Fprintf(ios.Out, "%s Bypass stopped for agent %s\n", cs.SuccessIcon(), opts.Agent)
@@ -194,7 +204,6 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 	}
 
 	if result.Detached {
-		// q/Esc: detach, leave bypass active. User must --stop manually.
 		fmt.Fprintf(ios.Out, "%s Detached — bypass remains active for agent %s\n",
 			cs.InfoIcon(), opts.Agent)
 		fmt.Fprintf(ios.ErrOut, "%s Use --stop to re-enable: clawker firewall bypass --stop --agent %s\n",
@@ -202,11 +211,18 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 		return nil
 	}
 
-	// Timer expired — re-enable firewall.
-	// Use a bounded context so the CLI doesn't hang if the CP is unresponsive.
+	// Timer expired. The CP-side dead-man timer SHOULD have re-enabled
+	// enforcement already, but a CP restart mid-bypass drops the in-memory
+	// timer and leaves enforcement off silently. Defensive Enable is cheap
+	// (idempotent per B2 spec) and closes that gap. Re-fetch the admin
+	// client so the Factory closure can rebuild a stale grpc.ClientConn.
 	expireCtx, expireCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer expireCancel()
-	if err := fwMgr.Enable(expireCtx, containerName); err != nil {
+	expireClient, err := opts.AdminClient(expireCtx)
+	if err != nil {
+		return fmt.Errorf("re-enabling firewall for %s after bypass: reconnecting to control plane: %w", opts.Agent, err)
+	}
+	if _, err := expireClient.FirewallEnable(expireCtx, &adminv1.FirewallEnableRequest{ContainerId: containerName}); err != nil {
 		return fmt.Errorf("re-enabling firewall for %s after bypass: %w", opts.Agent, err)
 	}
 	fmt.Fprintf(ios.Out, "%s Bypass expired for agent %s\n", cs.SuccessIcon(), opts.Agent)

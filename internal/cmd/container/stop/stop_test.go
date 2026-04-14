@@ -8,18 +8,19 @@ import (
 
 	"github.com/google/shlex"
 	mobyclient "github.com/moby/moby/client"
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
-	"github.com/schmitthub/clawker/internal/firewall"
-	firewallmocks "github.com/schmitthub/clawker/internal/firewall/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	sockebridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 func TestNewCmdStop(t *testing.T) {
@@ -277,11 +278,11 @@ func TestStopRun_DisablesFirewallBeforeStop(t *testing.T) {
 	}
 
 	var disabledID string
-	fwMock := &firewallmocks.FirewallManagerMock{
-		DisableFunc: func(_ context.Context, id string) error {
+	fwMock := &cpmocks.AdminServiceClientMock{
+		FirewallDisableFunc: func(_ context.Context, req *adminv1.FirewallDisableRequest, _ ...grpc.CallOption) (*adminv1.FirewallDisableResponse, error) {
 			require.False(t, dockerStopCalled, "firewall must be disabled before docker stop")
-			disabledID = id
-			return nil
+			disabledID = req.GetContainerId()
+			return &adminv1.FirewallDisableResponse{}, nil
 		},
 	}
 	f, in, out, errOut := testFactory(t, fake, nil, fwMock)
@@ -293,7 +294,7 @@ func TestStopRun_DisablesFirewallBeforeStop(t *testing.T) {
 	cmd.SetErr(errOut)
 
 	require.NoError(t, cmd.Execute())
-	require.Len(t, fwMock.DisableCalls(), 1)
+	require.Len(t, fwMock.FirewallDisableCalls(), 1)
 	require.Equal(t, fixture.ID, disabledID)
 	fake.AssertCalled(t, "ContainerStop")
 }
@@ -307,9 +308,9 @@ func TestStopRun_FirewallDisableErrorDoesNotFailStop(t *testing.T) {
 		return mobyclient.ContainerStopResult{}, nil
 	}
 
-	fwMock := &firewallmocks.FirewallManagerMock{
-		DisableFunc: func(_ context.Context, _ string) error {
-			return fmt.Errorf("bpf detach failed")
+	fwMock := &cpmocks.AdminServiceClientMock{
+		FirewallDisableFunc: func(_ context.Context, _ *adminv1.FirewallDisableRequest, _ ...grpc.CallOption) (*adminv1.FirewallDisableResponse, error) {
+			return nil, fmt.Errorf("bpf detach failed")
 		},
 	}
 	f, in, out, errOut := testFactory(t, fake, nil, fwMock)
@@ -322,7 +323,7 @@ func TestStopRun_FirewallDisableErrorDoesNotFailStop(t *testing.T) {
 
 	// Disable error is best-effort — stop still succeeds.
 	require.NoError(t, cmd.Execute())
-	require.Len(t, fwMock.DisableCalls(), 1)
+	require.Len(t, fwMock.FirewallDisableCalls(), 1)
 	fake.AssertCalled(t, "ContainerStop")
 
 	// A user-visible warning must be surfaced on stderr so operators learn
@@ -385,7 +386,7 @@ func TestStopRun_DockerConnectionError(t *testing.T) {
 
 // --- Per-package test helpers ---
 
-func testFactory(t *testing.T, fake *mocks.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock, fwMock *firewallmocks.FirewallManagerMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock, adminMock *cpmocks.AdminServiceClientMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 
@@ -406,9 +407,9 @@ func testFactory(t *testing.T, fake *mocks.FakeClient, mock *sockebridgemocks.So
 		}
 	}
 
-	if fwMock != nil {
-		f.Firewall = func(_ context.Context) (firewall.FirewallManager, error) {
-			return fwMock, nil
+	if adminMock != nil {
+		f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+			return adminMock, nil
 		}
 	}
 

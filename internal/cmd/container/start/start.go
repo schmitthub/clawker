@@ -8,11 +8,11 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -29,7 +29,7 @@ type StartOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
-	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Logger         func() (*logger.Logger, error)
 
@@ -47,7 +47,7 @@ func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) e
 		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
 		HostProxy:      f.HostProxy,
-		Firewall:       f.Firewall,
+		AdminClient:    f.AdminClient,
 		SocketBridge:   f.SocketBridge,
 		Logger:         f.Logger,
 	}
@@ -237,7 +237,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.L
 			Config:         opts.Config,
 			ProjectManager: opts.ProjectManager,
 			HostProxy:      opts.HostProxy,
-			Firewall:       opts.Firewall,
+			AdminClient:    opts.AdminClient,
 			SocketBridge:   opts.SocketBridge,
 			Logger:         opts.Logger,
 		},
@@ -370,7 +370,7 @@ func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams,
 				Config:         opts.Config,
 				ProjectManager: opts.ProjectManager,
 				HostProxy:      opts.HostProxy,
-				Firewall:       opts.Firewall,
+				AdminClient:    opts.AdminClient,
 				SocketBridge:   opts.SocketBridge,
 				Logger:         opts.Logger,
 			},

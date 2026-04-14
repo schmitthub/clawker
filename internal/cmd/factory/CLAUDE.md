@@ -46,7 +46,7 @@ f := &cmdutil.Factory{IOStreams: tio, TUI: tui.NewTUI(tio), Version: "1.0.0"}
 - `configFunc()` -- returns lazy `config.Provider` gateway constructor (the `Config` implementation uses `os.Getwd()` internally and lazy-loads project, settings, registry via `sync.Once`)
 - `gitManagerFunc(f)` -- returns lazy git manager constructor; uses project root from `f.Config().ProjectCfg().RootDir()`
 - `hostProxyFunc()` -- returns lazy host proxy manager constructor
-- `firewallFunc(f)` -- returns lazy `firewall.FirewallManager` constructor; closes over `f.Config()` and `f.Logger()`, constructs a raw `mobyclient.New(FromEnv)` Docker client (not whail — firewall manages infrastructure containers outside label isolation), and calls `firewall.NewManager(client, cfg, log)`
+- `adminClientFunc(f)` -- returns lazy `adminv1.AdminServiceClient` constructor; closes over `f.Config()`, `f.Logger()`, `f.Client(ctx)`. On first call (or after `grpc.ClientConn` transitions to `TransientFailure`/`Shutdown`) it invokes package-level `ensureRunning` (seam for `controlplane.EnsureRunning`), then dials via `auth.DialCPAdmin(ctx, adminPort, hydraPort, grpc.WithKeepaliveParams(...))`. No raw moby client — the firewall exception is gone.
 - `socketBridgeFunc()` -- returns lazy `socketbridge.SocketBridgeManager` constructor (wraps `socketbridge.NewManager()`)
 - `prompterFunc(ios)` -- returns lazy prompter constructor
 

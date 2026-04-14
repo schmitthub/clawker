@@ -672,15 +672,15 @@ func TestProtoRulesRoundTrip(t *testing.T) {
 			PathDefault: "deny",
 		},
 	}
-	cfgs := protoRulesToConfig(in)
+	cfgs := ProtoRulesToConfig(in)
 	if len(cfgs) != 1 || cfgs[0].Dst != "api.example.com" || cfgs[0].PathDefault != "deny" {
-		t.Fatalf("protoRulesToConfig mismatch: %+v", cfgs)
+		t.Fatalf("ProtoRulesToConfig mismatch: %+v", cfgs)
 	}
 	if len(cfgs[0].PathRules) != 1 || cfgs[0].PathRules[0].Path != "/v1" {
 		t.Errorf("PathRules mismatch: %+v", cfgs[0].PathRules)
 	}
-	out := configRulesToProto(cfgs)
+	out := ConfigRulesToProto(cfgs)
 	if len(out) != 1 || out[0].GetDst() != "api.example.com" {
-		t.Fatalf("configRulesToProto mismatch: %+v", out)
+		t.Fatalf("ConfigRulesToProto mismatch: %+v", out)
 	}
 }

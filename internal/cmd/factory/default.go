@@ -7,11 +7,12 @@ import (
 	"sync"
 	"time"
 
-	mobyclient "github.com/moby/moby/client" // Exception: firewall Manager needs raw moby, not whail — see firewallFunc
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/controlplane"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -20,7 +21,15 @@ import (
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/keepalive"
 )
+
+// ensureRunning is the test seam for AdminClient bootstrap. Tests may swap
+// this via t.Cleanup-protected assignment to avoid spawning real CP
+// containers; production always uses controlplane.EnsureRunning.
+var ensureRunning = controlplane.EnsureRunning
 
 // New creates a fully-wired Factory with lazy-initialized dependency closures.
 // Called exactly once at the CLI entry point (internal/clawker/cmd.go).
@@ -40,7 +49,7 @@ func New(version string) *cmdutil.Factory {
 	f.Client = clientFunc(f)                 // depends on Config
 	f.GitManager = gitManagerFunc(f)         // depends on Config
 	f.Prompter = prompterFunc(f)
-	f.Firewall = firewallFunc(f) // depends on Config, Logger, Client
+	f.AdminClient = adminClientFunc(f) // depends on Config, Logger, Client
 
 	return f
 }
@@ -181,46 +190,69 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 	}
 }
 
-// firewallFunc returns a lazy closure that creates a FirewallManager once.
+// adminClientFunc returns a lazy closure that provides the CP AdminService
+// gRPC client. First call bootstraps the CP container via
+// controlplane.EnsureRunning then dials with mTLS + OAuth2 JWT; subsequent
+// calls return the cached client unless the gRPC connection has entered
+// TransientFailure or Shutdown, in which case the closure rebuilds.
 //
-// INTENTIONALLY uses raw moby client (mobyclient.New) instead of f.Client(ctx)/whail.Engine.
-// The firewall Manager is an infrastructure container orchestrator — it manages the Envoy
-// egress proxy, CoreDNS resolver, and eBPF manager containers that live OUTSIDE whail's
-// label-isolated scope. These are shared firewall stack containers, not sidecars — one
-// stack serves all clawker-managed containers on the host. They carry
-// dev.clawker.purpose=firewall and must be visible to the daemon's container watcher
-// without whail's managed-label filter hiding them.
-// See .claude/rules/docker-client.md for the exception policy.
-func firewallFunc(f *cmdutil.Factory) func(context.Context) (firewall.FirewallManager, error) {
+// Keepalive params (Time: 30s, Timeout: 10s, PermitWithoutStream: false)
+// let long-running CLI processes (loop, monitor, bypass dashboard) detect
+// dead paths before the next RPC hangs. Values match the CP server-side
+// configuration.
+func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminServiceClient, error) {
 	var (
-		once sync.Once
-		mgr  firewall.FirewallManager
-		err  error
+		mu     sync.Mutex
+		conn   *grpc.ClientConn
+		client adminv1.AdminServiceClient
 	)
-	return func(ctx context.Context) (firewall.FirewallManager, error) {
-		once.Do(func() {
-			cfg, cfgErr := f.Config()
-			if cfgErr != nil {
-				err = fmt.Errorf("failed to get config: %w", cfgErr)
-				return
+	return func(ctx context.Context) (adminv1.AdminServiceClient, error) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		// grpc.ClientConn auto-reconnects with backoff on transient
+		// network issues; only rebuild when the state is permanent.
+		if conn != nil {
+			s := conn.GetState()
+			if s == connectivity.Ready || s == connectivity.Connecting || s == connectivity.Idle {
+				return client, nil
 			}
-			log, logErr := f.Logger()
-			if logErr != nil {
-				err = fmt.Errorf("failed to get logger: %w", logErr)
-				return
-			}
-			dockerClient, clientErr := mobyclient.New(mobyclient.FromEnv)
-			if clientErr != nil {
-				err = fmt.Errorf("failed to get docker client: %w", clientErr)
-				return
-			}
-			mgr, err = firewall.NewManager(dockerClient, cfg, log)
-			if err != nil {
-				err = fmt.Errorf("failed to create firewall manager: %w", err)
-				return
-			}
-		})
-		return mgr, err
+			_ = conn.Close()
+			conn = nil
+			client = nil
+		}
+
+		cfg, err := f.Config()
+		if err != nil {
+			return nil, fmt.Errorf("admin client: config: %w", err)
+		}
+		log, err := f.Logger()
+		if err != nil {
+			return nil, fmt.Errorf("admin client: logger: %w", err)
+		}
+		dc, err := f.Client(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("admin client: docker: %w", err)
+		}
+
+		if err := ensureRunning(ctx, dc, cfg, log); err != nil {
+			return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+		}
+
+		cp := cfg.Settings().ControlPlane
+		newClient, newConn, err := auth.DialCPAdmin(ctx, cp.AdminPort, cp.HydraPublicPort,
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                30 * time.Second,
+				Timeout:             10 * time.Second,
+				PermitWithoutStream: false,
+			}),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("admin client: dial: %w", err)
+		}
+		conn = newConn
+		client = newClient
+		return client, nil
 	}
 }
 

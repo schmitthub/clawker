@@ -4,14 +4,14 @@ title: "clawker firewall down"
 
 ## clawker firewall down
 
-Stop the firewall daemon
+Tear down the firewall stack
 
 ### Synopsis
 
-Send SIGTERM to the firewall daemon process. The daemon will gracefully
-shut down the Envoy and CoreDNS containers before exiting.
+Stop the Envoy + CoreDNS firewall stack, detach all BPF programs,
+and flush eBPF state. Pending bypass timers are cancelled.
 
-No-op if the daemon is not running.
+No-op if the stack is already stopped.
 
 ```
 clawker firewall down [flags]
@@ -20,7 +20,7 @@ clawker firewall down [flags]
 ### Examples
 
 ```
-  # Stop the firewall daemon
+  # Tear down the firewall stack
   clawker firewall down
 ```
 

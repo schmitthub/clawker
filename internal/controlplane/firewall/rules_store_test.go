@@ -1,147 +1,17 @@
 package firewall_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
-	"github.com/moby/moby/client"
-	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/controlplane/firewall"
-	fwlegacy "github.com/schmitthub/clawker/internal/firewall"
-	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 )
 
-func newTestManager(t *testing.T) (*fwlegacy.Manager, config.Config) {
-	t.Helper()
-	cfg := configmocks.NewIsolatedTestConfig(t)
-	fake := &whailtest.FakeAPIClient{}
-	// Return an empty list so regenerateAndRestart treats the firewall as
-	// "not running" and early-returns nil without touching restart paths.
-	// Previously this stub returned an error, which relied on IsRunning()
-	// silently swallowing ContainerList failures — that silent-fail
-	// behaviour has been fixed (errors now propagate through
-	// isContainerRunningE + regenerateAndRestart), so we flip to the
-	// "empty list" form which expresses the same intent ("no firewall
-	// containers are currently running") without being coupled to the
-	// old bug.
-	fake.ContainerListFn = func(_ context.Context, _ client.ContainerListOptions) (client.ContainerListResult, error) {
-		return client.ContainerListResult{}, nil
-	}
-	mgr, err := fwlegacy.NewManager(fake, cfg, logger.Nop())
-	require.NoError(t, err)
-	return mgr, cfg
-}
-
-func TestAddRules_NewRulesWritten(t *testing.T) {
-	mgr, _ := newTestManager(t)
-
-	incoming := []config.EgressRule{
-		{Dst: "example.com", Proto: "tls", Action: "allow"},
-		{Dst: "api.example.com", Proto: "tls", Action: "allow"},
-	}
-
-	// AddRules writes to the store first, then calls regenerateAndRestart.
-	// regenerateAndRestart checks IsRunning → ContainerList returns empty →
-	// isContainerRunningE returns (false, nil) → early return nil. Store
-	// write succeeds.
-	err := mgr.AddRules(t.Context(), incoming)
-	require.NoError(t, err)
-
-	rules, listErr := mgr.List(t.Context())
-	require.NoError(t, listErr)
-	assert.Len(t, rules, 2)
-	assert.Equal(t, "example.com", rules[0].Dst)
-	assert.Equal(t, "api.example.com", rules[1].Dst)
-}
-
-func TestAddRules_Deduplication(t *testing.T) {
-	mgr, _ := newTestManager(t)
-
-	rule := config.EgressRule{Dst: "example.com", Proto: "tls", Action: "allow"}
-
-	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{rule}))
-	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{rule})) // duplicate
-
-	rules, err := mgr.List(t.Context())
-	require.NoError(t, err)
-	assert.Len(t, rules, 1)
-}
-
-func TestAddRules_DefaultProto(t *testing.T) {
-	mgr, _ := newTestManager(t)
-
-	// Empty proto defaults to "tls" before storage.
-	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
-		{Dst: "example.com"},
-	}))
-
-	rules, err := mgr.List(t.Context())
-	require.NoError(t, err)
-	require.Len(t, rules, 1)
-	assert.Equal(t, "tls", rules[0].Proto)
-	assert.Equal(t, 443, rules[0].Port)
-	assert.Equal(t, "allow", rules[0].Action)
-}
-
-func TestAddRules_DifferentPortsNotDuplicate(t *testing.T) {
-	mgr, _ := newTestManager(t)
-
-	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
-		{Dst: "example.com", Proto: "tcp", Port: 80, Action: "allow"},
-		{Dst: "example.com", Proto: "tcp", Port: 443, Action: "allow"},
-	}))
-
-	rules, err := mgr.List(t.Context())
-	require.NoError(t, err)
-	assert.Len(t, rules, 2)
-}
-
-func TestRemoveRules(t *testing.T) {
-	mgr, _ := newTestManager(t)
-
-	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
-		{Dst: "keep.com", Proto: "tls", Action: "allow"},
-		{Dst: "remove.com", Proto: "tls", Action: "allow"},
-	}))
-
-	require.NoError(t, mgr.RemoveRules(t.Context(), []config.EgressRule{
-		{Dst: "remove.com", Proto: "tls"},
-	}))
-
-	rules, err := mgr.List(t.Context())
-	require.NoError(t, err)
-	assert.Len(t, rules, 1)
-	assert.Equal(t, "keep.com", rules[0].Dst)
-}
-
-func TestAddRules_MultipleCallsAdditive(t *testing.T) {
-	mgr, _ := newTestManager(t)
-
-	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
-		{Dst: "first.com", Proto: "tls", Action: "allow"},
-	}))
-	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
-		{Dst: "second.com", Proto: "tls", Action: "allow"},
-	}))
-
-	rules, err := mgr.List(t.Context())
-	require.NoError(t, err)
-	assert.Len(t, rules, 2)
-
-	dsts := make(map[string]bool)
-	for _, r := range rules {
-		dsts[r.Dst] = true
-	}
-	assert.True(t, dsts["first.com"])
-	assert.True(t, dsts["second.com"])
-}
-
+// TestValidateDst exercises the pure ValidateDst function across the full
+// valid/invalid destination matrix. Lives at the store layer because
+// ValidateDst is the gatekeeper for anything written to egress-rules.yaml.
 func TestValidateDst(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -168,7 +38,7 @@ func TestValidateDst(t *testing.T) {
 		{name: "mixed case", dst: "Api.GitHub.Com", wantErr: true},
 		{name: "wildcard uppercase", dst: ".EXAMPLE.COM", wantErr: true},
 
-		// Multi-dot TLD and new gTLD (other TLDs exercise identical code paths).
+		// Multi-dot TLD and new gTLD.
 		{name: "co.uk", dst: "api.example.co.uk"},
 		{name: "new gTLD", dst: "my.example.technology"},
 
@@ -218,44 +88,9 @@ func TestValidateDst(t *testing.T) {
 	}
 }
 
-func TestAddRules_RejectsInvalidDomain(t *testing.T) {
-	mgr, _ := newTestManager(t)
-
-	err := mgr.AddRules(t.Context(), []config.EgressRule{
-		{Dst: "valid.com"},
-		{Dst: "has spaces.com"},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "has spaces.com")
-
-	// Valid rule should not have been stored either (atomic).
-	rules, listErr := mgr.List(t.Context())
-	require.NoError(t, listErr)
-	assert.Empty(t, rules)
-}
-
-func TestAddRules_NormalizesEmptyFields(t *testing.T) {
-	mgr, _ := newTestManager(t)
-
-	// Normalization fills in defaults before storage: proto→tls, action→allow,
-	// TLS port→443. Explicit values (ssh, port 22) are never overridden.
-	require.NoError(t, mgr.AddRules(t.Context(), []config.EgressRule{
-		{Dst: "a.com"},
-		{Dst: "b.com", Proto: "ssh", Port: 22},
-	}))
-
-	rules, err := mgr.List(t.Context())
-	require.NoError(t, err)
-	require.Len(t, rules, 2)
-
-	assert.Equal(t, "tls", rules[0].Proto)
-	assert.Equal(t, 443, rules[0].Port)
-	assert.Equal(t, "allow", rules[0].Action)
-	assert.Equal(t, "ssh", rules[1].Proto)
-	assert.Equal(t, 22, rules[1].Port)
-	assert.Equal(t, "allow", rules[1].Action)
-}
-
+// TestEgressRulesFileFields_AllFieldsHaveDescriptions guards the storage
+// schema contract: every YAML field on EgressRulesFile must carry a desc tag
+// so the storeui TUI can display meaningful help text.
 func TestEgressRulesFileFields_AllFieldsHaveDescriptions(t *testing.T) {
 	fs := firewall.EgressRulesFile{}.Fields()
 	for _, f := range fs.All() {

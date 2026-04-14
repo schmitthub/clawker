@@ -4,39 +4,33 @@ import (
 	"context"
 	"fmt"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
-	fw "github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
 )
 
 // UpOptions holds the options for the firewall up command.
 type UpOptions struct {
-	IOStreams *iostreams.IOStreams
-	Config    func() (config.Config, error)
-	Logger    func() (*logger.Logger, error)
+	IOStreams   *iostreams.IOStreams
+	AdminClient func(context.Context) (adminv1.AdminServiceClient, error)
 }
 
 // NewCmdUp creates the firewall up command.
-// This ensures the firewall daemon is running, then returns immediately.
+// Sends an idempotent FirewallInit RPC to the CP, which brings up the
+// Envoy + CoreDNS stack and confirms BPF programs are attached.
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command {
 	opts := &UpOptions{
-		IOStreams: f.IOStreams,
-		Config:    f.Config,
-		Logger:    firewallLogger(f.Config),
+		IOStreams:   f.IOStreams,
+		AdminClient: f.AdminClient,
 	}
 
 	cmd := &cobra.Command{
 		Use:   "up",
-		Short: "Start the firewall daemon",
-		Long: `Start the firewall daemon process in the background. This manages the Envoy+CoreDNS container
-lifecycle, monitors their health, and auto-exits when no clawker containers are running.
-
-Normally started automatically by container commands when firewall is enabled.
-Can also be started manually for debugging or pre-warming.`,
-		Example: `  # Start the firewall daemon in the background
+		Short: "Start the firewall stack",
+		Long: `Bring the Envoy + CoreDNS firewall stack up via the control plane.
+Idempotent — safe to invoke while the stack is already running.`,
+		Example: `  # Start the firewall stack
   clawker firewall up`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
@@ -49,90 +43,30 @@ Can also be started manually for debugging or pre-warming.`,
 	return cmd
 }
 
-// NewCmdServe creates the hidden blocking daemon entrypoint.
-// This is invoked by the detached firewall startup path.
-func NewCmdServe(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command {
-	opts := &UpOptions{
-		IOStreams: f.IOStreams,
-		Config:    f.Config,
-		Logger:    firewallLogger(f.Config),
-	}
+func upRun(ctx context.Context, opts *UpOptions) error {
+	ios := opts.IOStreams
+	cs := ios.ColorScheme()
 
-	cmd := &cobra.Command{
-		Use:    "serve",
-		Short:  "Run the firewall daemon",
-		Long:   "Internal command that runs the firewall daemon in the foreground.",
-		Hidden: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if runF != nil {
-				return runF(cmd.Context(), opts)
-			}
-			return serveRun(cmd.Context(), opts)
-		},
-	}
-
-	return cmd
-}
-
-// firewallLogger returns a logger closure that writes to firewall.log
-// instead of the shared clawker.log. The daemon is a long-lived subprocess
-// whose logs must be isolated for debugging.
-// Falls back to logger.Nop() if file logging cannot be initialized,
-// matching the pattern used by hostproxy and bridge daemons — a running
-// firewall without logging is preferable to no firewall at all.
-func firewallLogger(cfgFn func() (config.Config, error)) func() (*logger.Logger, error) {
-	return func() (*logger.Logger, error) {
-		log := logger.Nop()
-		if cfg, cfgErr := cfgFn(); cfgErr == nil {
-			if logsDir, dirErr := cfg.LogsSubdir(); dirErr == nil {
-				if l, lErr := logger.New(logger.Options{LogsDir: logsDir, Filename: "firewall.log"}); lErr == nil {
-					log = l
-				}
-			}
-		}
-		return log, nil
-	}
-}
-
-func upRun(_ context.Context, opts *UpOptions) error {
-	log, err := opts.Logger()
+	client, err := opts.AdminClient(ctx)
 	if err != nil {
-		return fmt.Errorf("initializing logger: %w", err)
+		return fmt.Errorf("connecting to control plane: %w", err)
 	}
-	defer func() {
-		_ = log.Close()
-	}()
 
-	cfg, err := opts.Config()
+	resp, err := client.FirewallInit(ctx, &adminv1.FirewallInitRequest{})
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return fmt.Errorf("starting firewall: %w", err)
 	}
 
-	if err := fw.EnsureDaemon(cfg, log); err != nil {
-		return fmt.Errorf("starting firewall daemon: %w", err)
+	fmt.Fprintf(ios.Out, "%s Firewall stack up\n", cs.SuccessIcon())
+	if resp.GetEnvoyIp() != "" {
+		fmt.Fprintf(ios.Out, "  Envoy:    %s\n", resp.GetEnvoyIp())
+	}
+	if resp.GetCorednsIp() != "" {
+		fmt.Fprintf(ios.Out, "  CoreDNS:  %s\n", resp.GetCorednsIp())
+	}
+	if resp.GetNetworkId() != "" {
+		fmt.Fprintf(ios.Out, "  Network:  %s\n", resp.GetNetworkId())
 	}
 
 	return nil
-}
-
-func serveRun(ctx context.Context, opts *UpOptions) error {
-	log, err := opts.Logger()
-	if err != nil {
-		return fmt.Errorf("initializing logger: %w", err)
-	}
-	defer func() {
-		_ = log.Close()
-	}()
-
-	cfg, err := opts.Config()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	daemon, err := fw.NewDaemon(cfg, log)
-	if err != nil {
-		return fmt.Errorf("initializing firewall daemon: %w", err)
-	}
-
-	return daemon.Run(ctx)
 }

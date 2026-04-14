@@ -4,27 +4,26 @@ import (
 	"context"
 	"fmt"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 // AddOptions holds the options for the firewall add command.
 type AddOptions struct {
-	IOStreams *iostreams.IOStreams
-	Firewall  func(context.Context) (firewall.FirewallManager, error)
-	Domain    string
-	Proto     string
-	Port      int
+	IOStreams   *iostreams.IOStreams
+	AdminClient func(context.Context) (adminv1.AdminServiceClient, error)
+	Domain      string
+	Proto       string
+	Port        int
 }
 
 // NewCmdAdd creates the firewall add command.
 func NewCmdAdd(f *cmdutil.Factory, runF func(context.Context, *AddOptions) error) *cobra.Command {
 	opts := &AddOptions{
-		IOStreams: f.IOStreams,
-		Firewall:  f.Firewall,
+		IOStreams:   f.IOStreams,
+		AdminClient: f.AdminClient,
 	}
 
 	cmd := &cobra.Command{
@@ -59,19 +58,19 @@ via hot-reload — no container restart required.`,
 func addRun(ctx context.Context, opts *AddOptions) error {
 	ios := opts.IOStreams
 
-	fwMgr, err := opts.Firewall(ctx)
+	client, err := opts.AdminClient(ctx)
 	if err != nil {
-		return fmt.Errorf("connecting to firewall: %w", err)
+		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	rule := config.EgressRule{
+	rule := &adminv1.EgressRule{
 		Dst:    opts.Domain,
 		Proto:  opts.Proto,
-		Port:   opts.Port,
+		Port:   uint32(opts.Port),
 		Action: "allow",
 	}
 
-	if err := fwMgr.AddRules(ctx, []config.EgressRule{rule}); err != nil {
+	if _, err := client.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{Rules: []*adminv1.EgressRule{rule}}); err != nil {
 		return fmt.Errorf("adding firewall rule: %w", err)
 	}
 

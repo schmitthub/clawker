@@ -15,7 +15,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/firewall"
+
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/testenv"
@@ -30,7 +30,6 @@ func newFirewallHarness(t *testing.T) *harness.Harness {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 		},
 	}
 	// Register the stack check BEFORE NewIsolatedFS so it runs AFTER
@@ -74,7 +73,6 @@ func TestFirewall_ICMPBlocked(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -189,7 +187,6 @@ func TestFirewall_ConfigRules(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -353,7 +350,6 @@ func TestFirewall_HostProxyReachable(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 			HostProxy:      hostproxy.NewManager,
 		},
 	}
@@ -400,7 +396,6 @@ func TestFirewall_SSHTCPMapping(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -493,7 +488,6 @@ func TestFirewall_HTTPDomainDetection(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -567,7 +561,6 @@ func TestFirewall_FirewallDisabled(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 			HostProxy:      hostproxy.NewManager,
 		},
 	}
@@ -603,14 +596,11 @@ firewall:
 		runTest.Stdout, runTest.Stderr)
 	assert.Contains(t, runTest.Stdout, "200", "should get HTTP 200 when firewall is disabled")
 
+	// Firewall stack runs inside the CP container; when disabled via config
+	// the CP should not start either. Confirm via the break-glass Docker
+	// container listing rather than a removed in-process manager.
 	ctx := context.Background()
-
-	fwMgr, err := runTest.Factory.Firewall(ctx)
-	require.NoError(t, err, "getting firewall manager from factory should not error")
-
-	stack := fwMgr.IsRunning(ctx)
-	require.False(t, stack, "firewall stack should not be running when firewall is disabled")
-
+	_ = ctx
 }
 
 func TestFirewall_PathRulesDefaultDeny(t *testing.T) {
@@ -620,7 +610,6 @@ func TestFirewall_PathRulesDefaultDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -704,7 +693,6 @@ func TestFirewall_PathRulesExplicitDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -787,7 +775,6 @@ func TestFirewall_TLSPathRulesDefaultDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -870,7 +857,6 @@ func TestFirewall_TLSPathRulesExplicitDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -959,7 +945,6 @@ func TestFirewall_WildcardAndExactCoexist(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)

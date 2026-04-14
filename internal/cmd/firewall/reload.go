@@ -4,23 +4,23 @@ import (
 	"context"
 	"fmt"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 // ReloadOptions holds the options for the firewall reload command.
 type ReloadOptions struct {
-	IOStreams *iostreams.IOStreams
-	Firewall  func(context.Context) (firewall.FirewallManager, error)
+	IOStreams   *iostreams.IOStreams
+	AdminClient func(context.Context) (adminv1.AdminServiceClient, error)
 }
 
 // NewCmdReload creates the firewall reload command.
 func NewCmdReload(f *cmdutil.Factory, runF func(context.Context, *ReloadOptions) error) *cobra.Command {
 	opts := &ReloadOptions{
-		IOStreams: f.IOStreams,
-		Firewall:  f.Firewall,
+		IOStreams:   f.IOStreams,
+		AdminClient: f.AdminClient,
 	}
 
 	cmd := &cobra.Command{
@@ -43,18 +43,17 @@ and trigger a hot-reload. Use this after manual config file edits.`,
 
 func reloadRun(ctx context.Context, opts *ReloadOptions) error {
 	ios := opts.IOStreams
+	cs := ios.ColorScheme()
 
-	fwMgr, err := opts.Firewall(ctx)
+	client, err := opts.AdminClient(ctx)
 	if err != nil {
-		return fmt.Errorf("connecting to firewall: %w", err)
+		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	if err := fwMgr.Reload(ctx); err != nil {
+	if _, err := client.FirewallReload(ctx, &adminv1.FirewallReloadRequest{}); err != nil {
 		return fmt.Errorf("reloading firewall: %w", err)
 	}
 
-	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.Out, "%s Firewall configuration reloaded\n", cs.SuccessIcon())
-
 	return nil
 }

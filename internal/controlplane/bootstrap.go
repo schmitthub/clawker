@@ -182,6 +182,22 @@ func findCPContainer(ctx context.Context, dc *docker.Client) (*container.Summary
 	return nil, nil
 }
 
+// CPRunning reports whether the CP container exists AND is in the running
+// state. Used by CLI commands (`firewall status`, `firewall down`) that
+// observe or tear down the CP without wanting to trigger EnsureRunning's
+// creation path as a side effect. Returns (false, nil) when absent; errors
+// only on Docker API failures.
+func CPRunning(ctx context.Context, dc *docker.Client) (bool, error) {
+	summary, err := findCPContainer(ctx, dc)
+	if err != nil {
+		return false, err
+	}
+	if summary == nil {
+		return false, nil
+	}
+	return summary.State == container.StateRunning, nil
+}
+
 // hasMountDivergence reports whether the existing CP container's mount
 // spec diverges from BuildCPContainerConfig's authoritative layout
 // (INV-B2-006). A missing mount, an extra mount, a flipped ReadOnly

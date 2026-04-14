@@ -28,7 +28,11 @@ import (
 //  2. Build TLS config trusting the CLI CA certificate
 //  3. Create a tokenSource that auto-refreshes via Hydra /oauth2/token
 //  4. Dial gRPC with TLS + auto-refreshing bearer token in metadata
-func DialCPAdmin(ctx context.Context, adminPort, hydraPort int) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
+//
+// Callers may pass additional grpc.DialOption values (e.g. keepalive) —
+// these are appended after the transport-credentials + OAuth2 interceptor
+// so they can extend but not override the auth/TLS baseline.
+func DialCPAdmin(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
 	signingKey, err := LoadSigningKey()
 	if err != nil {
 		return nil, nil, fmt.Errorf("load signing key: %w", err)
@@ -71,11 +75,11 @@ func DialCPAdmin(ctx context.Context, adminPort, hydraPort int) (adminv1.AdminSe
 	}
 
 	target := fmt.Sprintf("127.0.0.1:%d", adminPort)
-	conn, err := grpc.NewClient(
-		target,
+	dialOpts := append([]grpc.DialOption{
 		grpc.WithTransportCredentials(credentials.NewTLS(grpcTLSCfg)),
 		grpc.WithUnaryInterceptor(ts.unaryInterceptor()),
-	)
+	}, opts...)
+	conn, err := grpc.NewClient(target, dialOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dial cp grpc: %w", err)
 	}
