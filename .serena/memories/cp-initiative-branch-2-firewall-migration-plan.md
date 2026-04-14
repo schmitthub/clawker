@@ -26,6 +26,10 @@
 - **Task 1 (Opus):** `network.go` could not be moved clean because `firewall.Manager` uses raw moby (not `*docker.Client`). Resolution: moved `NetworkInfo` + added `DiscoverNetwork(ctx, *docker.Client, cfg)` + exported `ComputeStaticIP` in the new package; kept raw-moby `(m *Manager).discoverNetwork` / `ensureNetwork` as a temporary `internal/firewall/manager_network.go` that returns `fwcp.NetworkInfo`. Zero type divergence; single source of truth for `NetworkInfo`. Removed with Manager in Task 6/8.
 - **Task 1 (Opus):** `rules.go` helpers (`normalizeRule`, `ruleKey`, `normalizeAndDedup`) + embed vars (`clawkerCPBinary`, `ebpfManagerBinary`, `corednsClawkerBinary`) had to be exported (capital letter) so `firewall.Manager` can call them cross-package until Task 6/8.
 - **Task 1 (Opus):** `Makefile`, `Dockerfile.controlplane`, `.gitignore`, `REPRODUCIBILITY.md`, `internal/firewall/CLAUDE.md`, `internal/controlplane/CLAUDE.md`, `internal/controlplane/firewall/ebpf/{CLAUDE.md,cmd/CLAUDE.md}` all had hard-coded paths that needed updating. `COREDNS_BINARY` sits at `internal/controlplane/firewall/assets/coredns-clawker` (firewall subpkg); `EBPF_BINARY` and `CP_BINARY` sit at `internal/controlplane/assets/` (CP-core).
+- **Task 1 (Opus) — test-hunter follow-ups for Task 6/8:**
+  - `internal/controlplane/firewall/rules_store_test.go` has been merged from the old `rules_test.go`; of its ~10 tests only `TestValidateDst` + `TestEgressRulesFileFields_AllFieldsHaveDescriptions` actually exercise `rules_store.go`. The rest (`TestAddRules_*`, `TestRemoveRules`, `TestAddRules_RejectsInvalidDomain`, `TestAddRules_NormalizesEmptyFields`) exercise `fwlegacy.Manager.AddRules/RemoveRules/List`. When the legacy Manager is deleted in Task 6/8, split this file: keep the two real rules-store tests; move the Manager-driven tests onto whatever owns `AddRules` in the new CP `Stack` (Task 2 target) OR delete them as duplicated by `test/e2e/firewall_test.go` coverage. Do NOT bleed `fwlegacy` imports into the new package past Task 6.
+  - `internal/controlplane/firewall/handler_test.go` still uses function prefix `TestAdminHandler_*` after the `AdminHandler → firewall.Handler` rename. Cosmetic only — rename to `TestHandler_*` in Task 5 (where the handler is being rewritten anyway) or Task 8 (final cleanup pass). No behavior change.
+- **Task 1 (Opus) — pre-commit gotcha:** pre-commit stashes unstaged changes before running hooks. `git add` only adds named files; for modifications to tracked files (Makefile, Dockerfile.controlplane, .gitignore, sibling CLAUDE.mds) use `git add -u` (or `git commit -a`) BEFORE committing — otherwise the hook runs against the old tree and fails on stale paths that your unstaged edits already fixed.
 
 ---
 
@@ -35,8 +39,8 @@
 1. Run the acceptance gates for the completed task (build + vet + `make test`; author any required E2E tests — see **E2E Policy** below — but do NOT run them).
 2. Update the Progress Tracker in this memory.
 3. Append any key learnings to the Key Learnings section.
-4. Run `code-reviewer`, `silent-failure-hunter`, `test-hunter`, `code-simplifier`, `comment-analyzer`, `type-design-analyzer` subagents to review this task's changes, then fix any and all findings.
-5. Commit all changes from this task with a descriptive commit message.
+4. Run `code-reviewer`, `silent-failure-hunter`, `test-hunter`, `code-simplifier`, `comment-analyzer`, `type-design-analyzer` subagents to review this task's changes, then fix any and all findings. **All six must be invoked** even if you believe the diff is trivial — `test-hunter` in particular catches dead tests and self-serving assertions that mechanical moves accidentally preserve.
+5. Commit all changes from this task with a descriptive commit message. Stage with `git add -u` + explicit `git add <new>` (or `git commit -a`) before invoking commit so pre-commit hooks see the full tree.
 6. Present the handoff prompt from the task's Wrap Up section to the user.
 7. Wait for the user to start a new conversation with the handoff prompt.
 
@@ -137,7 +141,7 @@ Core code locations:
 
 > **Note on `docker.Client.Info`**: `whail.Engine` embeds `client.APIClient` directly (`pkg/whail/engine.go:34`), and `internal/docker.Client` composes `whail.Engine`, so `Info(ctx) (system.Info, error)` is already promoted end-to-end — no whail/docker changes required. The only test-infra gap is `whailtest.FakeAPIClient`, which embeds a nil `*client.Client` for unexported methods and does NOT explicitly stub `Info`. Task 5 (where `DetectCgroupDriver` is wired into Handler init — via CP-side `internal/docker.Client` with its existing label/name machinery) adds an `InfoFn func(context.Context) (system.Info, error)` field on `FakeAPIClient` and the dispatching method (~10 lines, identical to the existing `ContainerCreateFn` etc. pattern). `internal/docker/mocks/helpers.go` can gain a matching `SetupInfo(info system.Info)` helper if the call pattern shows up in multiple tests.
 
-Task 1 landed. See Key Learnings for the file-mapping surprises encountered (raw-moby Manager helpers kept as `manager_network.go`; `normalizeRule`/`ruleKey`/`normalizeAndDedup` + embed vars exported).
+Task 1 landed as commit `6d1a5c0a`. See Key Learnings for the file-mapping surprises encountered (raw-moby Manager helpers kept as `manager_network.go`; `normalizeRule`/`ruleKey`/`normalizeAndDedup` + embed vars exported; test-hunter deferred follow-ups for Task 5/6/8).
 
 ### Acceptance Criteria (agent-run)
 
@@ -208,7 +212,7 @@ go test ./internal/controlplane/firewall/... -v
 
 1. Update Progress Tracker: Task 2 -> `complete`.
 2. Append to Key Learnings.
-3. Run review subagents.
+3. Run all six review subagents (see Context Window Management step 4).
 4. Commit: `feat(firewall): add Stack + cgroup helpers in controlplane/firewall subpackage`
 5. **STOP.** Handoff:
 
@@ -264,7 +268,7 @@ Note: new `controlplane.EnsureRunning` is unused by production code yet — `fir
 
 1. Update Progress Tracker: Task 3 -> `complete`.
 2. Key Learnings.
-3. Review subagents.
+3. Run all six review subagents.
 4. Commit: `feat(controlplane): add host-side bootstrap.EnsureRunning + mount/restart-policy updates`
 5. **STOP.** Handoff:
 
@@ -339,7 +343,7 @@ go test ./internal/controlplane/... -v
 
 1. Update Progress Tracker: Task 4 -> `complete`.
 2. Key Learnings.
-3. Review subagents.
+3. Run all six review subagents.
 4. Commit: `feat(controlplane): add AgentWatcher + self-shutdown + defensive startup cleanup`
 5. **STOP.** Handoff:
 
@@ -367,6 +371,7 @@ go test ./internal/controlplane/... -v
 - MODIFY: `internal/firewall/manager.go` — adapter shims for B1-named methods that now call the renamed RPCs internally. **This is temporary** — deleted in Task 6.
 - UPDATE: `authz.go` registered-methods test to reflect all 13 methods via `AdminServiceServer` reflection.
 - UPDATE: `internal/controlplane/firewall/CLAUDE.md` with the 13-method surface.
+- **Cosmetic rename:** `internal/controlplane/firewall/handler_test.go` test prefix `TestAdminHandler_*` → `TestHandler_*` (carries over from Task 1's pure-move; rename them alongside the handler rewrite).
 - AUTHOR (not run): E2E coverage in `test/e2e/firewall_test.go` for drift case, container-gone case, bypass expiry, full enroll→bypass→restore flow.
 
 **Depends on:** Tasks 2, 3, 4 (subpackage + Stack + bootstrap + watcher all in place)
@@ -394,7 +399,8 @@ go test ./internal/controlplane/... -v
 7. Update `CPStartupOrchestrator` to wire new Handler + Stack.
 8. Adapter shim in `internal/firewall/manager.go` — keep `FirewallManager` external shape intact but route to new RPCs. Example: manager's `InstallFirewall(containerID)` calls `adminClient.FirewallEnable(ctx, ...)`. This lets B1 CLI callers keep working until Task 6 deletes them.
 9. Update `authz.go` registered-methods test.
-10. Integration tests (authored — committed, not run):
+10. Rename `TestAdminHandler_*` → `TestHandler_*` throughout `handler_test.go` (Task 1 carryover).
+11. Integration tests (authored — committed, not run):
     - `FirewallEnable` drift case: fake Docker resolver returns a different cgroup path than stored; assert warning logged + fresh ID written.
     - `FirewallEnable` container gone: fake resolver returns `!exists`; assert `FailedPrecondition`.
     - `FirewallBypass` timer expiry: stub time; assert drift-guarded Enable fires.
@@ -421,7 +427,7 @@ go test ./internal/controlplane/firewall/... -v
 
 1. Update Progress Tracker: Task 5 -> `complete`.
 2. Key Learnings — this is the highest-risk task, document anything surprising.
-3. Review subagents.
+3. Run all six review subagents.
 4. Commit: `feat(admin): scope-correct firewall surface to 13 methods with drift guard`
 5. **STOP.** Handoff:
 
@@ -448,6 +454,7 @@ go test ./internal/controlplane/firewall/... -v
 - UPDATE command tests: replace `FirewallManagerMock` with `AdminServiceClientMock`.
 - DELETE: `internal/firewall/manager.go`, `daemon.go`, `manager_network.go`, and the adapter shims added in Task 5.
 - DELETE: `internal/firewall/mocks/manager_mock.go`.
+- **Test-hunter follow-up from Task 1:** split `internal/controlplane/firewall/rules_store_test.go`. Keep `TestValidateDst` + `TestEgressRulesFileFields_AllFieldsHaveDescriptions`. Migrate `TestAddRules_*` / `TestRemoveRules` / `TestAddRules_RejectsInvalidDomain` / `TestAddRules_NormalizesEmptyFields` onto the new `Stack.AddRules` / `Stack.RemoveRules` / `Stack.List` surface (or delete if covered by E2E). Drop the `fwlegacy` alias import — nothing in the CP firewall package should import `internal/firewall` after this task.
 - AUTHOR (not run): broad E2E coverage across the `clawker firewall *` verbs.
 
 **Depends on:** Task 5 (proto + handler rewritten)
@@ -466,7 +473,8 @@ go test ./internal/controlplane/firewall/... -v
 7. Rewire container and loop commands — drop or swap `f.Firewall`.
 8. Update all command tests to use AdminServiceClientMock.
 9. Delete `internal/firewall/manager.go`, `daemon.go`, `manager_network.go`, `mocks/`.
-10. **Author** broad E2E coverage (firewall list/add/remove, enroll, bypass, etc.). Commit; do NOT run.
+10. Execute the `rules_store_test.go` split from the bullet above — verify `grep -rn "fwlegacy\|internal/firewall\"" --include='*.go'` returns zero in `internal/controlplane/`.
+11. **Author** broad E2E coverage (firewall list/add/remove, enroll, bypass, etc.). Commit; do NOT run.
 
 ### Acceptance Criteria (agent-run)
 
@@ -488,7 +496,7 @@ make test
 
 1. Update Progress Tracker: Task 6 -> `complete`.
 2. Key Learnings.
-3. Review subagents.
+3. Run all six review subagents.
 4. Commit: `refactor(cli): swap f.Firewall for f.AdminClient and delete firewall.Manager`
 5. **STOP.** Handoff:
 
@@ -542,7 +550,7 @@ Verify `docs/cli-reference/clawker_controlplane*.md` exist via `git status`.
 
 1. Update Progress Tracker: Task 7 -> `complete`.
 2. Key Learnings.
-3. Review subagents.
+3. Run all six review subagents.
 4. Commit: `feat(cli): add clawker controlplane up/down/status break-glass commands`
 5. **STOP.** Handoff:
 
@@ -566,7 +574,7 @@ Verify `docs/cli-reference/clawker_controlplane*.md` exist via `git status`.
   - UPDATE: `internal/cmd/firewall/CLAUDE.md` (drop `serve`; note gRPC transport)
   - UPDATE: `internal/cmd/factory/CLAUDE.md` (replace `firewallFunc` with `adminClientFunc`)
   - UPDATE: `internal/cmdutil/CLAUDE.md` (Factory field list)
-  - UPDATE: `internal/controlplane/CLAUDE.md` (core-only now; remove firewall-specific prose)
+  - UPDATE: `internal/controlplane/CLAUDE.md` (core-only now; remove firewall-specific prose including the "AdminService RPCs (admin_handler.go)" header left stale by Task 1)
   - NEW / EXPAND: `internal/controlplane/firewall/CLAUDE.md` (full — Handler, Stack, cgroup, rules_store, certs, Envoy/CoreDNS config, ebpf/, invariants, test patterns)
 - UPDATE: `.claude/docs/ARCHITECTURE.md` (firewall subsystem now CP-owned).
 - UPDATE: `.claude/docs/KEY-CONCEPTS.md` (remove `FirewallManager`; add `firewall.Handler`, `firewall.Stack`, `firewall.EBPFCgroupPath`, `controlplane.AgentWatcher`, `f.AdminClient`).
@@ -629,7 +637,7 @@ go test ./test/e2e/... -timeout 10m
 
 1. Update Progress Tracker: Task 8 -> `complete`.
 2. Key Learnings — full retrospective on the migration.
-3. Review subagents — this is the final pass.
+3. Run all six review subagents — this is the final pass.
 4. Commit: `chore(firewall): delete internal/firewall/ — migration complete`
 5. Update `.serena/memories/cp-initiative-status.md` — Branch 2 done, ready for Branch 3.
 6. **STOP.** Present final handoff:
