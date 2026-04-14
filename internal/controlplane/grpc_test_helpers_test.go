@@ -9,10 +9,12 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
-// nopContainerResolver is a ContainerResolver that always reports the container
-// as alive. Suitable for tests that don't exercise Docker verification.
-var nopContainerResolver cpfw.ContainerResolver = func(_ context.Context, _ string) (string, bool, error) {
-	return "/sys/fs/cgroup/cgroup.procs", true, nil
+// nopContainerResolver is a ContainerResolver that always reports the
+// container as alive at a fixed cgroup path. Suitable for tests that don't
+// exercise Docker verification — the returned cgroup path resolves to
+// /sys/fs/cgroup/cgroup.procs whose inode is stable inside the container.
+var nopContainerResolver cpfw.ContainerResolver = func(_ context.Context, ref string) (string, string, bool, error) {
+	return ref, "/sys/fs/cgroup/cgroup.procs", true, nil
 }
 
 const bufconnSize = 1024 * 1024

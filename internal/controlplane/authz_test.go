@@ -29,14 +29,18 @@ func newTestServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfMgr
 	t.Helper()
 
 	log := logger.Nop()
-	interceptor := controlplane.NewAuthInterceptor(introspector, controlplane.AdminMethodScopes(), log)
+	interceptor := controlplane.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
 
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
 		grpc.ChainStreamInterceptor(interceptor.StreamInterceptor()),
 	)
 
-	handler := cpfw.NewHandler(ebpfMgr, log, nopContainerResolver)
+	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+		EBPF:     ebpfMgr,
+		Resolver: nopContainerResolver,
+		Log:      log,
+	})
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis := bufconnListen(t)
@@ -90,6 +94,7 @@ func noopEBPF() *ebpfmocks.EBPFManagerMock {
 		EnableFunc:     func(_ uint64) error { return nil },
 		DisableFunc:    func(_ uint64) error { return nil },
 		SyncRoutesFunc: func(_ []ebpf.Route) error { return nil },
+		FlushAllFunc:   func() error { return nil },
 	}
 }
 
@@ -100,7 +105,7 @@ func TestAuthInterceptor_NoToken_Denied(t *testing.T) {
 	client := newTestServer(t, introspector, noopEBPF())
 
 	// Non-public method without a token must be denied.
-	_, err := client.Install(context.Background(), &adminv1.InstallRequest{})
+	_, err := client.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 	assert.Empty(t, introspector.IntrospectCalls())
@@ -111,7 +116,7 @@ func TestAuthInterceptor_InvalidToken_Denied(t *testing.T) {
 	client := newTestServer(t, introspector, noopEBPF())
 
 	ctx := withBearer(context.Background(), "bad-token")
-	_, err := client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{})
+	_, err := client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 	calls := introspector.IntrospectCalls()
@@ -137,7 +142,7 @@ func TestAuthInterceptor_ValidToken_WrongScope_Denied(t *testing.T) {
 	client := newTestServer(t, introspector, noopEBPF())
 
 	ctx := withBearer(context.Background(), "agent-token")
-	_, err := client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{})
+	_, err := client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 
@@ -152,7 +157,7 @@ func TestAuthInterceptor_ValidToken_CorrectScope_Allowed(t *testing.T) {
 	client := newTestServer(t, introspector, noopEBPF())
 
 	ctx := withBearer(context.Background(), "admin-token")
-	resp, err := client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{})
+	resp, err := client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.Len(t, introspector.IntrospectCalls(), 1)
@@ -168,7 +173,11 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
 	)
-	handler := cpfw.NewHandler(noopEBPF(), log, nopContainerResolver)
+	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+		EBPF:     noopEBPF(),
+		Resolver: nopContainerResolver,
+		Log:      log,
+	})
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis := bufconnListen(t)
@@ -185,7 +194,7 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 
 	client := adminv1.NewAdminServiceClient(conn)
 	ctx := withBearer(context.Background(), "admin-token")
-	_, err = client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{})
+	_, err = client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err),
 		"unmapped methods must be denied (fail-closed)")
@@ -201,7 +210,7 @@ func TestAuthInterceptor_IntrospectionError_Denied(t *testing.T) {
 	client := newTestServer(t, introspector, noopEBPF())
 
 	ctx := withBearer(context.Background(), "any-token")
-	_, err := client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{})
+	_, err := client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err),
 		"introspection failure must deny (fail-closed)")
@@ -213,7 +222,7 @@ func TestAuthInterceptor_MalformedAuthHeader_Denied(t *testing.T) {
 
 	ctx := metadata.AppendToOutgoingContext(context.Background(),
 		"authorization", "Basic YWRtaW46cGFzc3dvcmQ=")
-	_, err := client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{})
+	_, err := client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 	assert.Empty(t, introspector.IntrospectCalls())
@@ -226,7 +235,7 @@ func TestAdminHandler_SyncRoutes(t *testing.T) {
 	client := newTestServer(t, allowAllIntrospector(), ebpfMgr)
 
 	ctx := withBearer(context.Background(), "admin-token")
-	resp, err := client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{
+	resp, err := client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{
 		Routes: []*adminv1.Route{
 			{DomainHash: 12345, DstPort: 443, EnvoyPort: 10000},
 			{DomainHash: 67890, DstPort: 80, EnvoyPort: 10000},
@@ -252,7 +261,7 @@ func TestAdminHandler_SyncRoutes_EBPFError(t *testing.T) {
 	client := newTestServer(t, allowAllIntrospector(), ebpfMgr)
 
 	ctx := withBearer(context.Background(), "admin-token")
-	_, err := client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{
+	_, err := client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{
 		Routes: []*adminv1.Route{{DomainHash: 1, DstPort: 443, EnvoyPort: 10000}},
 	})
 	require.Error(t, err)
@@ -262,7 +271,7 @@ func TestAdminHandler_SyncRoutes_EBPFError(t *testing.T) {
 // --- Coverage test ---
 
 func TestAdminMethodScopes_CoversAllRPCs(t *testing.T) {
-	scopes := controlplane.AdminMethodScopes()
+	scopes := adminv1.AdminMethodScopes()
 	desc := adminv1.AdminService_ServiceDesc
 
 	// Collect all methods from the proto service descriptor (unary + streams).

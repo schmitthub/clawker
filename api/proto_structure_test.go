@@ -60,9 +60,16 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 			methods[s.StreamName] = true
 		}
 
+		// B2 13-method scope-corrected surface (see Spec §8 + INV-B2-009).
+		// Per-container RPCs lost the cgroup_path field; container_id is
+		// authoritative and the CP resolves cgroup paths internally with
+		// the drift guard.
 		expectedRPCs := []string{
-			"Install", "Remove", "Enable", "Disable",
-			"Bypass", "SyncRoutes", "ResolveHostname",
+			"FirewallInit", "FirewallRemove",
+			"FirewallEnable", "FirewallDisable", "FirewallBypass",
+			"FirewallAddRules", "FirewallRemoveRules", "FirewallListRules",
+			"FirewallReload", "FirewallStatus", "FirewallRotateCA",
+			"FirewallSyncRoutes", "FirewallResolveHostname",
 		}
 		for _, rpc := range expectedRPCs {
 			assert.True(t, methods[rpc],

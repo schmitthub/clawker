@@ -24,6 +24,9 @@ var _ ebpf.EBPFManager = &EBPFManagerMock{}
 //			EnableFunc: func(cgroupID uint64) error {
 //				panic("mock out the Enable method")
 //			},
+//			FlushAllFunc: func() error {
+//				panic("mock out the FlushAll method")
+//			},
 //			InstallFunc: func(cgroupID uint64, cgroupPath string, cfg ebpf.BPFContainerConfig) error {
 //				panic("mock out the Install method")
 //			},
@@ -46,6 +49,9 @@ type EBPFManagerMock struct {
 	// EnableFunc mocks the Enable method.
 	EnableFunc func(cgroupID uint64) error
 
+	// FlushAllFunc mocks the FlushAll method.
+	FlushAllFunc func() error
+
 	// InstallFunc mocks the Install method.
 	InstallFunc func(cgroupID uint64, cgroupPath string, cfg ebpf.BPFContainerConfig) error
 
@@ -66,6 +72,9 @@ type EBPFManagerMock struct {
 		Enable []struct {
 			// CgroupID is the cgroupID argument value.
 			CgroupID uint64
+		}
+		// FlushAll holds details about calls to the FlushAll method.
+		FlushAll []struct {
 		}
 		// Install holds details about calls to the Install method.
 		Install []struct {
@@ -89,6 +98,7 @@ type EBPFManagerMock struct {
 	}
 	lockDisable    sync.RWMutex
 	lockEnable     sync.RWMutex
+	lockFlushAll   sync.RWMutex
 	lockInstall    sync.RWMutex
 	lockRemove     sync.RWMutex
 	lockSyncRoutes sync.RWMutex
@@ -155,6 +165,33 @@ func (mock *EBPFManagerMock) EnableCalls() []struct {
 	mock.lockEnable.RLock()
 	calls = mock.calls.Enable
 	mock.lockEnable.RUnlock()
+	return calls
+}
+
+// FlushAll calls FlushAllFunc.
+func (mock *EBPFManagerMock) FlushAll() error {
+	if mock.FlushAllFunc == nil {
+		panic("EBPFManagerMock.FlushAllFunc: method is nil but EBPFManager.FlushAll was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockFlushAll.Lock()
+	mock.calls.FlushAll = append(mock.calls.FlushAll, callInfo)
+	mock.lockFlushAll.Unlock()
+	return mock.FlushAllFunc()
+}
+
+// FlushAllCalls gets all the calls that were made to FlushAll.
+// Check the length with:
+//
+//	len(mockedEBPFManager.FlushAllCalls())
+func (mock *EBPFManagerMock) FlushAllCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockFlushAll.RLock()
+	calls = mock.calls.FlushAll
+	mock.lockFlushAll.RUnlock()
 	return calls
 }
 

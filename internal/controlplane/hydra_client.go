@@ -95,18 +95,3 @@ func ensureJWKS(data json.RawMessage) (json.RawMessage, error) {
 	wrapped := map[string]any{"keys": []json.RawMessage{data}}
 	return json.Marshal(wrapped)
 }
-
-// AdminMethodScopes returns the method→scope map for the AdminService.
-// Used by NewAuthInterceptor when wiring the CP gRPC server.
-func AdminMethodScopes() map[string]string {
-	const svc = "/clawker.admin.v1.AdminService/"
-	return map[string]string{
-		svc + "Install":         consts.ScopeAdmin,
-		svc + "Remove":          consts.ScopeAdmin,
-		svc + "Enable":          consts.ScopeAdmin,
-		svc + "Disable":         consts.ScopeAdmin,
-		svc + "Bypass":          consts.ScopeAdmin,
-		svc + "SyncRoutes":      consts.ScopeAdmin,
-		svc + "ResolveHostname": consts.ScopeAdmin,
-	}
-}

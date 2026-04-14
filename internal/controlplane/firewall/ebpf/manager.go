@@ -21,8 +21,9 @@ import (
 // clawkerContainerConfig type (derived from C struct container_config).
 type BPFContainerConfig = clawkerContainerConfig
 
-// EBPFManager is the interface consumed by the AdminHandler. It covers the
-// subset of Manager methods needed to serve gRPC admin RPCs.
+// EBPFManager is the interface consumed by the firewall Handler. It covers
+// the subset of Manager methods needed to serve gRPC admin RPCs, including
+// the global FlushAll used by FirewallRemove.
 //
 //go:generate moq -rm -pkg mocks -out mocks/ebpf_manager_mock.go . EBPFManager
 type EBPFManager interface {
@@ -31,6 +32,7 @@ type EBPFManager interface {
 	Enable(cgroupID uint64) error
 	Disable(cgroupID uint64) error
 	SyncRoutes(routes []Route) error
+	FlushAll() error
 }
 
 // Manager loads BPF programs and manages per-container map entries and cgroup attachments.

@@ -53,6 +53,30 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
+// containerResolverFromDocker returns a firewall.ContainerResolver that
+// resolves a container reference to its canonical ID + BPF cgroup path
+// using the given cgroup driver. NotFound comes back as (cid, "", false,
+// nil) so the Handler can distinguish "container gone" from "Docker
+// unreachable". When the ref is itself a canonical 64-hex ID we preserve
+// it as the cid even on NotFound so the Handler's stored-cgroup_id
+// fallback in FirewallDisable still has a key to look up.
+func containerResolverFromDocker(dc *docker.Client, cgroupDriver string) fwhandler.ContainerResolver {
+	return func(ctx context.Context, ref string) (string, string, bool, error) {
+		cid, err := fwhandler.ResolveContainerID(ctx, dc, ref)
+		if err != nil {
+			if cerrdefs.IsNotFound(err) {
+				canonical := ""
+				if fwhandler.IsCanonicalContainerID(ref) {
+					canonical = ref
+				}
+				return canonical, "", false, nil
+			}
+			return "", "", false, err
+		}
+		return cid, fwhandler.EBPFCgroupPath(cgroupDriver, cid), true, nil
+	}
+}
+
 const (
 	defaultShutdownWait = 5 * time.Second
 	healthCheckInterval = 200 * time.Millisecond
@@ -208,32 +232,17 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	}
 	defer dockerCli.Close()
 
-	// Query cgroup driver once at startup — used to compute container cgroup
-	// paths matching internal/firewall/manager.go ebpfCgroupPath().
-	dockerInfo, err := dockerCli.Info(ctx, mobyclient.InfoOptions{})
+	// Query cgroup driver once at startup and cache on the resolver. BPF
+	// cgroup paths come from firewall.EBPFCgroupPath in the firewall
+	// subpackage — the single source of truth for the systemd/cgroupfs
+	// path formats.
+	cgroupDriver, err := fwhandler.DetectCgroupDriver(ctx, dockerCli)
 	if err != nil {
-		return fmt.Errorf("step 6b (docker info): %w", err)
+		return fmt.Errorf("step 6b (cgroup driver): %w", err)
 	}
-	cgroupDriver := dockerInfo.Info.CgroupDriver
 	log.Info().Str("cgroup_driver", cgroupDriver).Msg("Docker cgroup driver detected")
 
-	containerResolver := func(ctx context.Context, containerID string) (string, bool, error) {
-		_, err := dockerCli.ContainerInspect(ctx, containerID, mobyclient.ContainerInspectOptions{})
-		if err != nil {
-			if cerrdefs.IsNotFound(err) {
-				return "", false, nil
-			}
-			return "", false, err
-		}
-		// Path format must match ebpfCgroupPath() in the firewall package.
-		var cgroupPath string
-		if cgroupDriver == "systemd" {
-			cgroupPath = "/sys/fs/cgroup/system.slice/docker-" + containerID + ".scope"
-		} else {
-			cgroupPath = "/sys/fs/cgroup/docker/" + containerID
-		}
-		return cgroupPath, true, nil
-	}
+	containerResolver := containerResolverFromDocker(dockerCli, cgroupDriver)
 
 	// Step 6c: Firewall stack handle. Host bootstrap owns EnsureRunning;
 	// the drain-to-zero path below owns Stop.
@@ -289,7 +298,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	// Auth interceptor: validates bearer tokens via Hydra introspection.
 	hydraIntrospectURL := fmt.Sprintf("https://127.0.0.1:%d/admin/oauth2/introspect", cp.HydraAdminPort)
 	introspector := controlplane.NewHydraIntrospector(hydraIntrospectURL, caTLS)
-	authInterceptor := controlplane.NewAuthInterceptor(introspector, controlplane.AdminMethodScopes(), log)
+	authInterceptor := controlplane.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
 
 	grpcServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
@@ -297,8 +306,15 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		grpc.ChainStreamInterceptor(authInterceptor.StreamInterceptor()),
 	)
 
-	handler := fwhandler.NewHandler(ebpfMgr, log, containerResolver)
-	adminv1.RegisterAdminServiceServer(grpcServer, handler)
+	handler := fwhandler.NewHandler(fwhandler.HandlerDeps{
+		EBPF:     ebpfMgr,
+		Stack:    stack,
+		Store:    rulesStore,
+		Cfg:      cfg,
+		Resolver: containerResolver,
+		Log:      log,
+	})
+	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler))
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
 	if err != nil {

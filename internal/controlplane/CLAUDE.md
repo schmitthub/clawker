@@ -33,7 +33,7 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 | `registry.go` | Thread-safe agent registry keyed by container ID |
 | `embed_cp.go` / `embed_ebpf.go` | `//go:embed assets/clawker-cp` + `assets/ebpf-manager` — CP daemon + break-glass eBPF CLI binaries embedded into the clawker release |
 | `authz.go` | `AuthInterceptor` — validates OAuth2 bearer tokens via Hydra introspection, enforces per-method scopes |
-| `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup; `AdminMethodScopes` — maps gRPC method → required scope |
+| `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup. `AdminMethodScopes` lives in `api/admin/v1/admin.go` so a new RPC fails closed (covered by `TestAdminMethodScopes_CoversAllRPCs`). |
 | `startup.go` | `CPStartupOrchestrator` — startup sequencing + aggregate `/healthz` endpoint (probes all 7 service ports) |
 | `bootstrap.go` | Host-side `EnsureRunning` + `Stop` — manage the CP container lifecycle via `*docker.Client` |
 | `watcher.go` | `AgentWatcher` — polls Docker for `purpose=agent` containers; invokes drain-to-zero callback past grace/threshold (INV-B2-007) |
@@ -43,19 +43,13 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 | `mocks/mock_server.go` | `MockServer` — hand-written test double for `ControlPlaneService` |
 | `mocks/` | moq-generated mocks: `ControlPlaneServiceMock`, `IntrospectorMock`, `EBPFManagerMock` |
 
-## AdminService RPCs (`admin_handler.go`)
+## AdminService composition
 
-| RPC | Purpose | eBPF Operation |
-|-----|---------|----------------|
-| `Install` | Full container enrollment — attach BPF to cgroup, populate container_map | `mgr.Install(cgroupID, cgroupPath, cfg)` |
-| `Remove` | Full de-enrollment — detach BPF, clear container_map entry | `mgr.Remove(cgroupID)` |
-| `Enable` | Clear bypass flag (restore enforcement) | `mgr.Enable(cgroupID)` |
-| `Disable` | Set bypass flag (unrestricted egress) | `mgr.Disable(cgroupID)` |
-| `Bypass` | Disable + server-side dead-man timer (`time.AfterFunc`) | `mgr.Disable` then auto-`mgr.Enable` after timeout |
-| `SyncRoutes` | Atomically replace global route_map | `mgr.SyncRoutes(routes)` |
-| `ResolveHostname` | DNS lookup from CP network namespace | `net.DefaultResolver.LookupHost` |
+`server.go` exposes the unexported `adminServer` type that embeds `*fwhandler.Handler` (and, in future branches, additional domain handlers). Method promotion produces the AdminServiceServer surface; `NewAdminServer(fw)` is the wiring point used by `cmd/clawker-cp/main.go`.
 
-All RPCs require `admin` scope. Future scopes add entries to `AdminMethodScopes()`.
+The 13 firewall RPCs live in `internal/controlplane/firewall/handler.go` — see `internal/controlplane/firewall/CLAUDE.md` for the per-RPC table. Future domains (Monitor, Hostproxy, Clawkerd) embed alongside; the `<Domain><Action>[<Object>]` proto naming convention prevents method-name collisions.
+
+All RPCs require the uniform `admin` scope (INV-B2-009). Per-method diversification is intentionally not used — see Spec §8.
 
 ## Startup Sequence (`cmd/clawker-cp/main.go`)
 
@@ -196,4 +190,4 @@ No circular dependencies.
 - **TCP listener for agents** — v1 serves gRPC on localhost only. Adding agent TCP listener is pure addition.
 - **Kratos active usage** — running as subprocess placeholder. Lights up with webui.
 - **Oathkeeper active routing** — running with empty rules. Lights up with webui HTTP auth.
-- **Per-method scopes beyond `admin`** — finer-grained scopes (`agent:register`, `webui:read`) add entries to `AdminMethodScopes()`.
+- **Per-method scopes beyond `admin`** — finer-grained scopes (`agent:register`, `webui:read`) would add entries to `AdminMethodScopes()` in `api/admin/v1/admin.go`. INV-B2-009 currently mandates a uniform `admin` scope across all firewall methods.

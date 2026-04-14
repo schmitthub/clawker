@@ -56,7 +56,7 @@ func startMTLSServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfM
 	}
 
 	log := logger.Nop()
-	interceptor := controlplane.NewAuthInterceptor(introspector, controlplane.AdminMethodScopes(), log)
+	interceptor := controlplane.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
 
 	srv := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
@@ -64,7 +64,11 @@ func startMTLSServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfM
 		grpc.ChainStreamInterceptor(interceptor.StreamInterceptor()),
 	)
 
-	handler := cpfw.NewHandler(ebpfMgr, log, nopContainerResolver)
+	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+		EBPF:     ebpfMgr,
+		Resolver: nopContainerResolver,
+		Log:      log,
+	})
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -106,7 +110,7 @@ func TestMTLS_ValidClientCert_Accepted(t *testing.T) {
 
 	client := adminv1.NewAdminServiceClient(conn)
 	ctx := withBearer(context.Background(), "admin-token")
-	resp, err := client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{})
+	resp, err := client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 }
@@ -132,7 +136,7 @@ func TestMTLS_NoClientCert_Rejected(t *testing.T) {
 
 	client := adminv1.NewAdminServiceClient(conn)
 	ctx := withBearer(context.Background(), "admin-token")
-	_, err = client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{})
+	_, err = client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
 	require.Error(t, err, "server must reject connections without a client cert")
 
 	// The TLS handshake fails — gRPC surfaces this as Unavailable.
@@ -153,7 +157,7 @@ func TestMTLS_NoTLS_Rejected(t *testing.T) {
 
 	client := adminv1.NewAdminServiceClient(conn)
 	ctx := withBearer(context.Background(), "admin-token")
-	_, err = client.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{})
+	_, err = client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
 	require.Error(t, err, "server must reject plaintext connections")
 
 	assert.Equal(t, codes.Unavailable, status.Code(err))

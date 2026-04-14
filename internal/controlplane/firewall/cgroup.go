@@ -50,8 +50,12 @@ func ResolveContainerID(ctx context.Context, dc *docker.Client, ref string) (str
 	return info.Container.ID, nil
 }
 
-// isCanonicalContainerID reports whether s matches Docker's on-the-wire
-// container ID format: exactly 64 lowercase hex characters.
+// IsCanonicalContainerID reports whether s matches Docker's on-the-wire
+// container ID format: exactly 64 lowercase hex characters. Exported so
+// the host-side resolver factory in cmd/clawker-cp can apply the same
+// validation without re-implementing the predicate.
+func IsCanonicalContainerID(s string) bool { return isCanonicalContainerID(s) }
+
 func isCanonicalContainerID(s string) bool {
 	if len(s) != 64 {
 		return false

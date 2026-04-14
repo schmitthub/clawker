@@ -88,7 +88,6 @@ type Manager struct {
 	// mock. Each field is called by the corresponding method below — the
 	// real methods are named with an "Impl" suffix so that the public
 	// names remain the canonical entry points.
-	cgroupDriverFn    func(ctx context.Context) (string, error)
 	touchSignalFileFn func(ctx context.Context, containerID string) error
 	waitForCPReadyFn  func(ctx context.Context) error
 
@@ -122,7 +121,6 @@ func NewManager(client client.APIClient, cfg config.Config, log *logger.Logger) 
 	}
 	// Wire test seams to the real implementations. Tests can overwrite
 	// any of these fields directly (they live in package firewall).
-	m.cgroupDriverFn = m.cgroupDriverImpl
 	m.touchSignalFileFn = m.touchSignalFileImpl
 	m.waitForCPReadyFn = m.waitForCPReadyImpl
 	m.adminClientFn = m.cpClient
@@ -552,17 +550,15 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 	if err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
-	driver, err := m.cgroupDriver(ctx)
-	if err != nil {
-		return fmt.Errorf("firewall disable: %w", err)
-	}
-	cgroupPath := ebpfCgroupPath(driver, containerID)
 
 	cpClient, err := m.adminClientFn(ctx)
 	if err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
-	if _, err := cpClient.Disable(ctx, &adminv1.DisableRequest{CgroupPath: cgroupPath, ContainerId: containerID}); err != nil {
+	// B2: CP owns cgroup path resolution via drift-guarded Docker lookup.
+	// This adapter — deleted with the whole legacy manager in Task 6/8 —
+	// forwards only container_id.
+	if _, err := cpClient.FirewallDisable(ctx, &adminv1.FirewallDisableRequest{ContainerId: containerID}); err != nil {
 		return fmt.Errorf("firewall disable: %w", err)
 	}
 
@@ -573,26 +569,13 @@ func (m *Manager) Disable(ctx context.Context, containerID string) error {
 // Enable clears the eBPF bypass flag for a container, restoring firewall
 // enforcement. The container must already be enrolled via InstallFirewall.
 func (m *Manager) Enable(ctx context.Context, containerID string) error {
-	containerID, err := m.resolveContainerID(ctx, containerID)
-	if err != nil {
-		return fmt.Errorf("firewall enable: %w", err)
-	}
-	driver, err := m.cgroupDriver(ctx)
-	if err != nil {
-		return fmt.Errorf("firewall enable: %w", err)
-	}
-	cgroupPath := ebpfCgroupPath(driver, containerID)
-
-	cpClient, err := m.adminClientFn(ctx)
-	if err != nil {
-		return fmt.Errorf("firewall enable: %w", err)
-	}
-	if _, err := cpClient.Enable(ctx, &adminv1.EnableRequest{CgroupPath: cgroupPath, ContainerId: containerID}); err != nil {
-		return fmt.Errorf("firewall enable: %w", err)
-	}
-
-	m.log.Debug().Str("container", containerID).Msg("firewall re-enabled via eBPF")
-	return nil
+	// B1 Enable semantics (clear bypass on an already-enrolled container)
+	// fold into B2 FirewallEnable's idempotent re-enrollment. The legacy
+	// Enable path has no ContainerConfig to rebuild — callers that need a
+	// full re-enroll with config go through InstallFirewall below. Here we
+	// perform a drift-safe cheap enroll: resolve container_id, reuse the
+	// cached network/config plumbing via InstallFirewall.
+	return m.InstallFirewall(ctx, containerID)
 }
 
 // InstallFirewall enrolls a container in the firewall — syncs routes, adds
@@ -654,7 +637,7 @@ func (m *Manager) InstallFirewall(ctx context.Context, containerID string) error
 		hostProxyPort = uint16(m.cfg.Settings().HostProxy.Daemon.Port)
 		// Resolve host.docker.internal from inside the Docker network.
 		// On Docker Desktop it resolves to 192.168.65.254, not localhost.
-		resp, resolveErr := cpClient.ResolveHostname(ctx, &adminv1.ResolveHostnameRequest{
+		resp, resolveErr := cpClient.FirewallResolveHostname(ctx, &adminv1.FirewallResolveHostnameRequest{
 			Hostname: "host.docker.internal",
 		})
 		if resolveErr != nil {
@@ -673,14 +656,12 @@ func (m *Manager) InstallFirewall(ctx context.Context, containerID string) error
 	gatewayIP := computeGateway(netInfo.CIDR)
 	ports := m.envoyPorts()
 
-	driver, err := m.cgroupDriver(ctx)
-	if err != nil {
-		return fmt.Errorf("firewall enable: %w", err)
-	}
-	cgroupPath := ebpfCgroupPath(driver, containerID)
-
-	if _, err := cpClient.Install(ctx, &adminv1.InstallRequest{
-		CgroupPath: cgroupPath,
+	// B2: CP owns cgroup path resolution via drift-guarded Docker lookup.
+	// This legacy shim — deleted in Task 6/8 — forwards only container_id
+	// plus the container config; the CP recomputes cgroup_id per call so
+	// the stored value cannot drift across a restart.
+	if _, err := cpClient.FirewallEnable(ctx, &adminv1.FirewallEnableRequest{
+		ContainerId: containerID,
 		Config: &adminv1.ContainerConfig{
 			EnvoyIp:       netInfo.EnvoyIP,
 			CorednsIp:     netInfo.CoreDNSIP,
@@ -730,9 +711,6 @@ func (m *Manager) touchSignalFileImpl(ctx context.Context, containerID string) e
 	return err
 }
 
-// emitAgentMapping was deleted — eBPF metrics replace the Loki agent_map pipeline.
-// See .claude/docs/EBPF-DESIGN.md § Observability.
-
 // Bypass sets the eBPF bypass flag for a container, allowing unrestricted egress.
 // The CP starts a server-side dead-man timer that automatically re-enables
 // enforcement after timeout — acts as a failsafe if the CLI crashes mid-bypass.
@@ -743,11 +721,6 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 	if err != nil {
 		return fmt.Errorf("firewall bypass: %w", err)
 	}
-	driver, err := m.cgroupDriver(ctx)
-	if err != nil {
-		return fmt.Errorf("firewall bypass: %w", err)
-	}
-	cgroupPath := ebpfCgroupPath(driver, containerID)
 
 	timeoutSecs := uint32(timeout.Seconds())
 	if timeoutSecs == 0 {
@@ -758,10 +731,9 @@ func (m *Manager) Bypass(ctx context.Context, containerID string, timeout time.D
 	if err != nil {
 		return fmt.Errorf("firewall bypass: %w", err)
 	}
-	if _, err := cpClient.Bypass(ctx, &adminv1.BypassRequest{
-		CgroupPath:     cgroupPath,
-		TimeoutSeconds: timeoutSecs,
+	if _, err := cpClient.FirewallBypass(ctx, &adminv1.FirewallBypassRequest{
 		ContainerId:    containerID,
+		TimeoutSeconds: timeoutSecs,
 	}); err != nil {
 		return fmt.Errorf("firewall bypass: %w", err)
 	}
@@ -1544,7 +1516,7 @@ func (m *Manager) syncRoutes(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("syncing BPF route_map: %w", err)
 	}
-	if _, err := cpClient.SyncRoutes(ctx, &adminv1.SyncRoutesRequest{Routes: protoRoutes}); err != nil {
+	if _, err := cpClient.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{Routes: protoRoutes}); err != nil {
 		return fmt.Errorf("syncing BPF route_map: %w", err)
 	}
 	return nil
@@ -1559,35 +1531,6 @@ func cpStaticIP(envoyIP string) string {
 	}
 	ip[3] = ip[3] + 2 // envoy(.200) + 2 = .202
 	return ip.String()
-}
-
-// ebpfCgroupPath returns the cgroup v2 path for a Docker container.
-// The path format depends on the cgroup driver:
-//   - cgroupfs (Docker Desktop default): /sys/fs/cgroup/docker/<containerID>
-//   - systemd (native Linux):            /sys/fs/cgroup/system.slice/docker-<containerID>.scope
-func ebpfCgroupPath(cgroupDriver, containerID string) string {
-	if cgroupDriver == "systemd" {
-		return "/sys/fs/cgroup/system.slice/docker-" + containerID + ".scope"
-	}
-	return "/sys/fs/cgroup/docker/" + containerID
-}
-
-// cgroupDriver queries the Docker daemon for its cgroup driver
-// (e.g. "cgroupfs" or "systemd"). Routed through cgroupDriverFn for test
-// override. Errors are surfaced to the caller rather than silently defaulted —
-// a bad assumption on a systemd-driver host produces a cgroup path that does
-// not exist and leads to cryptic ENOENT from the CP's Install RPC downstream.
-func (m *Manager) cgroupDriver(ctx context.Context) (string, error) {
-	return m.cgroupDriverFn(ctx)
-}
-
-// cgroupDriverImpl is the production implementation of cgroupDriver.
-func (m *Manager) cgroupDriverImpl(ctx context.Context) (string, error) {
-	info, err := m.client.Info(ctx, client.InfoOptions{})
-	if err != nil {
-		return "", fmt.Errorf("querying Docker cgroup driver: %w", err)
-	}
-	return info.Info.CgroupDriver, nil
 }
 
 // waitForCPReady polls the CP's HTTP /healthz endpoint until it returns
