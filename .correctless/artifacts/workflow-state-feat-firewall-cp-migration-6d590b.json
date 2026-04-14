@@ -1,10 +1,18 @@
 {
-  "phase": "spec",
+  "phase": "documented",
   "task": "branch-2-cp-owns-firewall",
   "spec_file": ".correctless/specs/cp-initiative/branch-2-cp-owns-firewall.md",
   "started_at": "2026-04-14T04:56:29Z",
-  "phase_entered_at": "2026-04-14T04:56:29Z",
+  "phase_entered_at": "2026-04-14T22:02:42Z",
   "branch": "feat/firewall-cp-migration",
   "qa_rounds": 0,
-  "feature_intensity": "high"
+  "spec_updates": 1,
+  "feature_intensity": "high",
+  "override": {
+    "active": true,
+    "reason": "TDD phase disabled per project policy (.correctless/learnings/tdd-phase-disabled.md and No TDD on clawker memory) — implementation + verification complete; advancing past spec to verified",
+    "started_at": "2026-04-14T21:54:33Z",
+    "remaining_calls": 10
+  },
+  "override_count": 1
 }

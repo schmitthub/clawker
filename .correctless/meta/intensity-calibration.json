@@ -88,6 +88,30 @@
         "test/e2e/firewall_stack_test.go"
       ],
       "timestamp": "2026-04-14T20:45:00Z"
+    },
+    {
+      "feature_slug": "branch-2-cp-owns-firewall",
+      "recommended_intensity": "high",
+      "actual_intensity": "high",
+      "actual_qa_rounds": 0,
+      "actual_findings_count": 0,
+      "actual_tokens": 0,
+      "actual_spec_updates": 1,
+      "file_paths_touched": [
+        ".correctless/meta/drift-debt.json",
+        ".correctless/meta/intensity-calibration.json",
+        ".correctless/specs/cp-initiative/branch-2-cp-owns-firewall.md",
+        ".correctless/verification/branch-2-cp-owns-firewall-verification.md",
+        "internal/cmd/factory/CLAUDE.md",
+        "internal/cmd/factory/default.go",
+        "internal/cmd/factory/default_test.go",
+        "internal/cmdutil/CLAUDE.md",
+        "internal/controlplane/adminclient/dial.go",
+        "internal/controlplane/firewall/container_spec_test.go",
+        "test/CLAUDE.md"
+      ],
+      "timestamp": "2026-04-14T22:00:00Z",
+      "notes": "Re-verification pass after fc253a6c closed all 3 prior BLOCKING findings (INV-B2-005, INV-B2-011, INV-B2-010+PRH-B2-004). Verification status: PASS with 0 BLOCKING findings, 5 weak items, 2 open doc-drift items (DRIFT-002/003 — ARCHITECTURE.md PAT-004 + AGENT_CONTEXT.md Key Components table)."
     }
   ]
 }

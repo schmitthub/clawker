@@ -24,11 +24,14 @@
 - `pkg/whail` injects label filter on all list operations
 - See `.claude/docs/DESIGN.md` § Resource Identification
 
-### PAT-004: Firewall Stack (Envoy + CoreDNS + eBPF + CP)
+### PAT-004: CP Owns the Firewall (Envoy + CoreDNS + eBPF)
 - Domain-based egress rules, shared infra (1 stack per host, N agents)
 - Global BPF route_map keyed by {domain_hash, dst_port}
-- Control plane owns ebpf.Manager.Load() lifetime
-- See `internal/firewall/CLAUDE.md`, `internal/controlplane/CLAUDE.md`
+- **CP is the single owner** — no host-side firewall daemon, no `internal/firewall/` package, no PID file
+- CLI -> `f.AdminClient(ctx)` -> `AdminService` gRPC (13 RPCs, uniform `admin` scope, mTLS + OAuth2 JWT) -> `firewall.Handler` -> `Stack`/`ebpf.Manager`/`Store`/`ContainerResolver`
+- CP self-bootstraps on first admin call; `AgentWatcher` self-shuts-down on drain-to-zero (INV-B2-007)
+- `internal/hostproxy/` is the single carve-out allowed to read `egress-rules.yaml` directly (PRH-B2-004)
+- See `internal/controlplane/CLAUDE.md`, `internal/controlplane/firewall/CLAUDE.md`, `internal/cmd/controlplane/CLAUDE.md`
 
 ## Conventions
 
