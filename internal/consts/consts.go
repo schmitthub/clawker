@@ -107,8 +107,6 @@ const (
 const (
 	HostProxyPIDFile    = "hostproxy.pid"
 	HostProxyLogFile    = "hostproxy.log"
-	FirewallPIDFile     = "firewall.pid"
-	FirewallLogFile     = "firewall.log"
 	ControlPlaneLogFile = "clawker-controlplane.log"
 )
 
@@ -378,7 +376,6 @@ func GRPCSocketPath(stateDir string) string { return filepath.Join(stateDir, "so
 func OIDCSocketPath(stateDir string) string { return filepath.Join(stateDir, "sockets", "oidc.sock") }
 func ReadyFilePath(stateDir string) string  { return filepath.Join(stateDir, "ready") }
 func LogsDir(stateDir string) string        { return filepath.Join(stateDir, LogsSubdir) }
-func PidsDir(stateDir string) string        { return filepath.Join(stateDir, PidsSubdir) }
 func AuditLogPath(stateDir string) string   { return filepath.Join(stateDir, "audit", "audit.log") }
 
 // File paths composed from base + known file names.
@@ -393,14 +390,6 @@ func HostProxyPIDPath(stateDir string) string {
 
 func HostProxyLogPath(stateDir string) string {
 	return filepath.Join(stateDir, LogsSubdir, HostProxyLogFile)
-}
-
-func FirewallPIDPath(stateDir string) string {
-	return filepath.Join(stateDir, PidsSubdir, FirewallPIDFile)
-}
-
-func FirewallLogPath(stateDir string) string {
-	return filepath.Join(stateDir, LogsSubdir, FirewallLogFile)
 }
 
 // ControlPlaneLogFilePath ensures the logs subdirectory and returns the

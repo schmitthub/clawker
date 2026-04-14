@@ -52,8 +52,6 @@ type Config interface {
 	BridgePIDFilePath(containerID string) (string, error)
 	HostProxyLogFilePath() (string, error)
 	HostProxyPIDFilePath() (string, error)
-	FirewallPIDFilePath() (string, error)
-	FirewallLogFilePath() (string, error)
 	ShareSubdir() (string, error)
 	WorktreesSubdir() (string, error)
 	LabelPrefix() string

@@ -98,16 +98,12 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 		if !h.T.Failed() {
 			return
 		}
-		for _, name := range []string{"clawker.log", "firewall.log"} {
+		for _, name := range []string{"clawker.log", consts.ControlPlaneLogFile} {
 			data, err := os.ReadFile(filepath.Join(logDir, name))
 			if err != nil {
 				continue
 			}
 			h.T.Logf("=== %s ===\n%s", name, string(data))
-		}
-		// CP logs go to the same state/logs dir as everything else.
-		if data, err := os.ReadFile(filepath.Join(logDir, consts.ControlPlaneLogFile)); err == nil {
-			h.T.Logf("=== %s ===\n%s", consts.ControlPlaneLogFile, string(data))
 		}
 	})
 

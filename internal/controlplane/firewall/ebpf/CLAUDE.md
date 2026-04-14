@@ -85,7 +85,7 @@ func Supported() error                                       // checks cgroup v2
 
 ## Invariants
 
-- `DomainHash` is the shared contract between this package, `internal/dnsbpf`, and `internal/firewall/manager.go`. All three **must** use the same normalization (lowercase fold, no trailing dot, no leading `*.`). Changing the hash function requires changing all three call sites and clearing the pinned `route_map`.
+- `DomainHash` is the shared contract between this package, `internal/dnsbpf`, and the CP firewall domain (`internal/controlplane/firewall`, specifically `normalizeDomain` + `Handler.FirewallSyncRoutes`). All three **must** use the same normalization (lowercase fold, no trailing dot, no leading `*.`). Changing the hash function requires changing all three call sites and clearing the pinned `route_map`.
 - `Install` is idempotent and clears stale links + bypass flags before attaching, so it is also the canonical "re-enforce after bypass" entry point.
 - `SyncRoutes` collects per-entry errors into `errors.Join` instead of returning on the first failure — a partial sync returns non-nil and callers can decide what to do.
 - `CgroupID(path)` validates `path` against `/sys/fs/cgroup/` + `..` + control-char sanitization (defense in depth for the privileged `ebpf-manager` break-glass paths).
@@ -100,5 +100,5 @@ The BPF toolchain pins (clang, libbpf-dev, linux-libc-dev, bpf2go version, Go to
 
 ## Imports
 
-- **Imported by**: `internal/controlplane` (the CP binary — imports `Manager`, `Route`, types), `internal/dnsbpf` (reuses `DomainHash`/`IPToUint32`/`Uint32ToIP` to stay in sync), `internal/controlplane/firewall/ebpf/cmd` (the break-glass CLI), and — historically — `internal/firewall` at build time via `go:embed` of the compiled binaries (no runtime import).
+- **Imported by**: `internal/controlplane` (the CP binary — imports `Manager`, `Route`, types), `internal/controlplane/firewall` (the firewall domain handler — `Manager` interface satisfies `EBPFManager`), `internal/dnsbpf` (reuses `DomainHash`/`IPToUint32`/`Uint32ToIP` to stay in sync), `internal/controlplane/firewall/ebpf/cmd` (the break-glass CLI).
 - **Imports**: `github.com/cilium/ebpf`, `github.com/cilium/ebpf/link`, `internal/logger`.

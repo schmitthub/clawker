@@ -45,4 +45,6 @@ FIELD     (command imports package directly)
 | `internal/project/` | Project registration in user registry |
 | `internal/containerfs/` | Host Claude config preparation — tar archives for config volume (leaf — config types only, no docker runtime) |
 | `internal/docker/` | Container naming, image resolution, image building (`Builder`, `BuildDefaultImage`), Docker middleware |
-| `internal/firewall/` | Firewall manager interface, Envoy+CoreDNS config generators, certificate management, daemon lifecycle, rules store, network isolation |
+| `internal/controlplane/` | CP daemon core: startup orchestrator, Ory auth stack, AdminService composition, host-side bootstrap (`EnsureRunning`/`Stop`), agent watcher |
+| `internal/controlplane/firewall/` | Firewall `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS lifecycle), Envoy+CoreDNS config generators, certificate management, rules store, network discovery, cgroup helpers |
+| `internal/controlplane/firewall/ebpf/` | eBPF loader + `Manager` (cgroup programs, pinned maps); break-glass `ebpf-manager` CLI under `cmd/` |

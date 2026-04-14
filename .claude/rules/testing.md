@@ -34,8 +34,8 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
-| `internal/firewall` | `mocks/` | `FirewallManagerMock` (moq-generated) |
-| `internal/hostproxy` | `hostproxytest/` | `MockHostProxy` |
+| `internal/controlplane` | `mocks/` | `ControlPlaneServiceMock`, `ManagerMock`, `IntrospectorMock`, `AdminServiceClientMock`, `EBPFManagerMock` (all moq-generated) |
+| `internal/hostproxy` | `hostproxytest/` | `MockHostProxy`, `MockManager` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
 
@@ -99,7 +99,7 @@ func TestFeature_E2E(t *testing.T)            // E2E
 Golden files are managed per-package — there is no shared golden utility package. Each package handles its own approach:
 
 - **Whail build scenarios**: `GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios -v` (JSON testdata)
-- **Firewall corefile**: `internal/firewall/testdata/corefile_basic.golden` (hand-edit to update)
+- **Firewall corefile**: `internal/controlplane/firewall/testdata/corefile_basic.golden` (hand-edit to update)
 - **Storage merge engine**: struct literals in test code, not files — use `make storage-golden` for interactive update
 
 ## Command Test Pattern (Cobra+Factory)

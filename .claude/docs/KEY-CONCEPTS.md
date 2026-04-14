@@ -20,16 +20,22 @@
 | `ConfigVolumeResult` | Bool flags tracking which config volumes were freshly created (`ConfigCreated`, `HistoryCreated`) — returned by `workspace.EnsureConfigVolumes` |
 | `InitConfigOpts` | Options for `shared.InitContainerConfig` — project/agent names, container work dir, ClaudeCodeConfig, CopyToVolumeFn (DI) |
 | `InjectPostInitOpts` | Options for `shared.InjectPostInitScript` — container ID, script content, CopyToContainerFn (DI) |
-| `firewall.FirewallManager` | Interface for Envoy+CoreDNS firewall stack (15 methods: lifecycle, rules, container control, bypass, status); mock: `firewall/mocks/FirewallManagerMock` |
-| `firewall.Daemon` | Detached firewall process with dual-loop (health 5s + container watcher 30s), PID file management. `EnsureDaemon()` called during container creation |
-| `firewall.ProjectRules()` | Builds complete rule set from project config (security.firewall rules + required internal rules like Claude API, Docker registry) |
-| `firewall.embeddedImageSpec` / `ensureEmbeddedImage` | Unified pattern for building Docker images from embedded Linux binaries on-demand. Drives both the eBPF manager (`ebpf_embed.go`) and the custom CoreDNS build (`coredns_embed.go`) |
-| `firewall.syncRoutes` | Manager helper that invokes the ebpf-manager `sync-routes` subcommand to repopulate the global BPF route_map from current rules. Called on `EnsureRunning`, `regenerateAndRestart`, and container enable |
+| `firewall.Handler` | gRPC handler serving the 13-method scope-corrected AdminService firewall surface (`internal/controlplane/firewall`). Embedded by `controlplane.adminServer`. `NewHandler(HandlerDeps)` panics on missing `EBPF` or `Resolver` |
+| `firewall.Stack` | CP-side Envoy + CoreDNS container lifecycle — `EnsureRunning`/`Stop`/`Reload`/`WaitForHealthy`/`Status` + IP/CIDR accessors. Uses `*docker.Client` via DooD |
+| `firewall.ContainerResolver` | Injectable Docker lookup: `(ctx, ref) → (id, cgroupPath, exists, err)`. Production wiring: `cmd/clawker-cp/main.go::containerResolverFromDocker`. `exists=false` + `err=nil` is the "container gone" signal |
+| `firewall.EBPFCgroupPath` / `firewall.DetectCgroupDriver` / `firewall.ResolveContainerID` | Pure helpers for cgroup path resolution; driver cached on `Handler` at startup via `DetectCgroupDriver` |
+| `firewall.ProjectRules()` | Builds complete rule set from project config (security.firewall rules + required internal rules like Claude API, Docker registry). Consumed by `BootstrapServicesPostStart` |
+| `firewall.EgressRulesFile` | `storage.Schema` implementation for `egress-rules.yaml` (owned by CP at `FirewallDataSubdir`) |
+| `firewall.ProtoRulesToConfig` / `firewall.ConfigRulesToProto` | Exported wire ↔ config rule translation used by `BootstrapServicesPostStart` |
 | `dnsbpf.Handler` | CoreDNS plugin (`internal/dnsbpf`) that intercepts DNS responses and writes IP → {domain_hash, TTL} entries to the BPF dns_cache map. Registered as `dnsbpf` directive in `cmd/coredns-clawker` |
-| `ebpf.Manager` | Host-side Go manager for clawker cgroup/sock programs (compiled via bpf2go). Its `cmd/` subcommand (init, sync-routes, enable, disable) is embedded as a Linux binary and invoked by the firewall manager |
-| `shared.CommandOpts` | DI container for container start orchestration — function closures: Client, Config, ProjectManager, HostProxy, Firewall, SocketBridge, Logger |
-| `shared.ContainerStart()` | Three-phase container start: `BootstrapServicesPreStart` → docker start → `BootstrapServicesPostStart`. Used by `run` and `start` |
-| `firewall.Manager` | Docker implementation of `FirewallManager` — manages Envoy/CoreDNS containers, config generation, certificate PKI, rule persistence |
+| `ebpf.Manager` | Go-side loader for clawker cgroup/sock programs (`internal/controlplane/firewall/ebpf`, compiled via bpf2go). CP calls `Load()` once at startup; `CleanupStaleBypass`/`FlushAll` drive defensive startup + drain-to-zero |
+| `ebpf.EBPFManager` | Interface consumed by `firewall.Handler`: Install/Remove/Enable/Disable/SyncRoutes/FlushAll. Mock: `firewall/ebpf/mocks.EBPFManagerMock` |
+| `controlplane.Manager` | Factory-facing noun (`f.ControlPlane()`) wrapping host-side CP container lifecycle: `EnsureRunning`, `Stop`, `IsRunning`, `ProbeHealthz`. Consumed by the break-glass `clawker controlplane up/down/status` verbs |
+| `controlplane.EnsureRunning` | Package-level host-side CP container bootstrap (idempotent, mutex-guarded, mount-mode reconciliation, health-poll). Consumed via `ensureRunning` seam by `adminClientFunc` |
+| `controlplane.AgentWatcher` | Polls Docker for `purpose=agent` containers; on drain-to-zero (past grace/threshold, `ListErrCeiling`-bounded) fires drain callback for CP self-shutdown (INV-B2-007). `Run` is at-most-once (`atomic.Bool`) |
+| `f.AdminClient(ctx)` | Factory lazy noun returning `adminv1.AdminServiceClient` — transparent CP bootstrap on first call, mTLS + OAuth2 + keepalive. Rebuilds `grpc.ClientConn` only on `TransientFailure`/`Shutdown`. Mock: `controlplane/mocks.AdminServiceClientMock` |
+| `shared.CommandOpts` | DI container for container start orchestration — function closures: Client, Config, ProjectManager, HostProxy, AdminClient, SocketBridge, Logger |
+| `shared.ContainerStart()` | Three-phase container start: `BootstrapServicesPreStart` → docker start → `BootstrapServicesPostStart` (3 RPCs: FirewallInit → FirewallAddRules → FirewallEnable). Used by `run` and `start` |
 | `hostproxy.HostProxyService` | Interface for host proxy operations (EnsureRunning, IsRunning, ProxyURL); mock: `hostproxytest.MockManager` |
 | `hostproxy.Manager` | Concrete host proxy daemon manager (spawns subprocess); implements `HostProxyService` |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `sockebridgemocks.MockManager` |

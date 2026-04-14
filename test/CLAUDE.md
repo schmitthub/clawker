@@ -41,17 +41,18 @@ go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
 
 ### FactoryOptions (`factory.go`)
 
-Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`, `hostproxytest.MockManager`, `firewallmocks.FirewallManagerMock`). `Logger` always creates a real file logger via `logger.New`. `ProjectManager`, `GitManager`, and `SocketBridge` default to nil. Set a field to the real constructor for integration tests.
+Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`, `hostproxytest.MockManager`, `cpmocks.AdminServiceClientMock`, `cpmocks.ManagerMock`). `Logger` always creates a real file logger via `logger.New`. `ProjectManager`, `GitManager`, and `SocketBridge` default to nil. Set a field to the real constructor for integration tests.
 
 | Field | Signature | Default |
 |-------|-----------|---------|
-| `Config` | `func() (config.Config, error)` | `configmocks.NewBlankConfig()` |
+| `Config` | `func(...config.NewConfigOption) (config.Config, error)` | `configmocks.NewBlankConfig()` |
 | `Client` | `func(ctx, cfg, log, ...docker.ClientOption) (*docker.Client, error)` | `mocks.FakeClient` |
 | `ProjectManager` | `func(cfg, log, project.GitManagerFactory) (project.ProjectManager, error)` | nil (no-op) |
 | `GitManager` | `func(string) (*git.GitManager, error)` | nil (no-op) |
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.MockManager` |
 | `SocketBridge` | `func(cfg, log) socketbridge.SocketBridgeManager` | nil (no-op) |
-| `Firewall` | `func(mobyclient.APIClient, cfg, log) (*firewall.Manager, error)` | `firewallmocks.FirewallManagerMock` |
+| `AdminClient` | `func(ctx, cfg, log) (adminv1.AdminServiceClient, error)` | `cpmocks.AdminServiceClientMock` (no-op) |
+| `ControlPlane` | `func(cfg, log) controlplane.Manager` | `cpmocks.ManagerMock` (every method returns zero values so tests that don't touch CP verbs never bootstrap a real CP) |
 
 ### Functions
 
@@ -69,9 +70,17 @@ Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`
 
 ```go
 h := &harness.Harness{T: t, Opts: &harness.FactoryOptions{
-    Config: func() (config.Config, error) { return testCfg, nil },
-    Firewall: func(dc mobyclient.APIClient, cfg config.Config, log *logger.Logger) (*firewall.Manager, error) {
-        return firewall.NewManager(dc, cfg, log)
+    Config: func(...config.NewConfigOption) (config.Config, error) { return testCfg, nil },
+    // Wire a real CP for firewall integration tests. Omit both to stay on the mocks.
+    ControlPlane: func(cfg config.Config, log *logger.Logger) controlplane.Manager {
+        return controlplane.NewManager(
+            func(ctx context.Context) (*docker.Client, error) { return dc, nil },
+            func() (config.Config, error) { return cfg, nil },
+            func() (*logger.Logger, error) { return log, nil },
+        )
+    },
+    AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+        return auth.DialCPAdmin(ctx, cfg, log)
     },
 }}
 setup := h.NewIsolatedFS(nil)
@@ -84,11 +93,11 @@ require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
 ### Cleanup
 
 `NewIsolatedFS` registers a single cleanup chain:
-1. Stop daemons (`firewall down`, `host-proxy stop`)
-2. Remove shared firewall containers (`clawker-envoy`, `clawker-coredns`)
+1. Stop daemons (`firewall down` via AdminClient, `controlplane down` to tear the CP container, `host-proxy stop`)
+2. Remove shared firewall containers (`clawker-envoy`, `clawker-coredns`, `clawker-controlplane`)
 3. Remove test-labeled containers, volumes, networks (by `dev.clawker.test.name` label)
 
-On failure, dumps `clawker.log` and `firewall.log` from the test's state dir.
+On failure, dumps `clawker.log` and the CP container's `clawker-controlplane.log` from the test's state dir.
 
 ### Internal Helpers
 
@@ -108,7 +117,7 @@ Tests exercise the full Envoy+CoreDNS firewall stack with real Docker.
 | `TestFirewall_Status` | `firewall status --json` reports health + rule count |
 | `TestFirewall_PathRules*` | HTTP and TLS MITM path rule enforcement |
 
-Tests use `&harness.Harness{Opts: &harness.FactoryOptions{Firewall: firewall.NewManager}}` with real manager, not mock. Cleanup tears down Envoy+CoreDNS before removing test resources.
+Tests drive the CP AdminService through `f.AdminClient(ctx)`. Harness wires the real `controlplane.Manager` + lets `adminClientFunc` bootstrap the CP container via `controlplane.EnsureRunning`; tests exercise `FirewallInit` / `FirewallEnable` / etc. as real gRPC calls. Cleanup tears down Envoy+CoreDNS + the CP container before removing test resources.
 
 ## Debugging Resource Leaks
 
@@ -116,4 +125,4 @@ All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestNa
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/docker/mocks`, `internal/firewall`, `internal/firewall/mocks`, `internal/git`, `internal/hostproxy`, `internal/hostproxy/hostproxytest`, `internal/socketbridge`, `internal/cmdutil`, `internal/testenv`, `internal/iostreams`, `internal/logger`, `internal/project`
+Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/docker/mocks`, `internal/controlplane`, `internal/controlplane/mocks`, `internal/git`, `internal/hostproxy`, `internal/hostproxy/hostproxytest`, `internal/socketbridge`, `internal/cmdutil`, `internal/testenv`, `internal/iostreams`, `internal/logger`, `internal/project`

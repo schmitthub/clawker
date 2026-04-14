@@ -1,6 +1,6 @@
 # Control Plane Package
 
-The clawker control plane. A containerized, privileged, long-lived Go service that owns authoritative state for managed containers. Runs as `clawker-controlplane` in the firewall stack, replacing the historical `clawker-ebpf` container.
+The clawker control plane. A containerized, privileged, long-lived Go service that owns authoritative state for managed containers. The `clawker-controlplane` container runs `cmd/clawker-cp` as PID 1, owns the firewall stack (Envoy + CoreDNS) and eBPF state, and serves the `AdminService` gRPC surface consumed by the CLI via `f.AdminClient(ctx)`.
 
 ## Responsibilities (v1)
 
@@ -94,46 +94,21 @@ All ports from `cfg.Settings().ControlPlane` (defaults via struct tags). Publish
 
 **Not published**: Hydra admin (4445), Kratos ports, Oathkeeper API — internal-only (`127.0.0.1` bind inside container).
 
-**Key mounts**: config dir (RO), CA cert (RO), CLI public JWK (RO), server TLS cert+key (RO), /sys/fs/cgroup (RO), /sys/fs/bpf (RW), logs dir.
+**Key mounts**: config dir (RO), CA cert (RO), CLI public JWK (RO), server TLS cert+key (RO), `FirewallDataSubdir` → `/var/lib/clawker/firewall` (RW — egress rules, Envoy/CoreDNS configs, MITM CA), `/sys/fs/cgroup` (RO), `/sys/fs/bpf` (RW), logs dir.
+
+**Restart policy**: `on-failure` with `MaximumRetryCount=3`. A clean drain-to-zero exit (code 0 from `AgentWatcher`) does NOT retrigger the policy.
 
 **Invariant INV-B1-006**: CLI private signing key is NEVER mounted into the container.
 
 **Capabilities**: `BPF`, `SYS_ADMIN` (for eBPF program attachment).
 
-## eBPF Subsystem (`ebpf/`)
+## eBPF Subsystem
 
-### Manager lifecycle
+The eBPF subsystem lives at `firewall/ebpf/` — see `firewall/ebpf/CLAUDE.md` for full reference. Key surface consumed by CP core:
 
-```go
-func NewManager(log *logger.Logger) *Manager
-func (m *Manager) Load() error       // Called once at CP startup
-func (m *Manager) OpenPinned() error  // Break-glass mode (reads existing pins)
-func (m *Manager) Close() error
-```
-
-`Load()` creates pin directory, calls `cleanupStaleLinks()`, loads ELF, pins maps/programs at `/sys/fs/bpf/clawker/`.
-
-### EBPFManager interface
-
-```go
-type EBPFManager interface {
-    Install(cgroupID uint64, cgroupPath string, cfg BPFContainerConfig) error
-    Remove(cgroupID uint64) error
-    Enable(cgroupID uint64) error
-    Disable(cgroupID uint64) error
-    SyncRoutes(routes []Route) error
-}
-```
-
-### Link cleanup (critical invariant)
-
-- **`cleanupStaleLinks()`** — called during `Load()`. Parses cgroup IDs from link pin filenames (`link_{prog}_{cgroupID}`), checks each against `container_map`. Removes links for dead cgroups, preserves links for live cgroups. This ensures enforcement survives CP restarts.
-- **`cleanupLinks(cgroupID)`** — removes stale links for ONE cgroup. Called by `Install` before attaching fresh programs.
-- **`CleanupAllLinks()`** — removes ALL pinned links. Called ONLY by the firewall daemon on shutdown when no agent containers remain.
-
-### Shared types (`ebpf/types.go`)
-
-`PinPath`, `ContainerConfig`, `DNSEntry`, `RouteKey/Val`, `MetricKey`, `Action` constants, helper functions (`IPToUint32`, `DomainHash` FNV-1a, `CgroupPath`, `CgroupID` with path injection validation, `Supported`).
+- `ebpf.Manager` — concrete loader. `Load()` runs once at CP startup; `CleanupStaleBypass` runs before `SetReady` (INV-B2-013); `FlushAll` runs during drain-to-zero (INV-B2-007).
+- `ebpf.EBPFManager` interface — consumed by `firewall.Handler`. Methods: `Install`, `Remove`, `Enable`, `Disable`, `SyncRoutes`, `FlushAll`.
+- `ebpf.Route` + `ebpf.BPFContainerConfig` + `ebpf.DomainHash` — shared types / hash function used by `internal/dnsbpf` and `internal/controlplane/firewall` (`normalizeDomain`).
 
 ## Ory Config Generation (`ory_configs.go`)
 
@@ -162,9 +137,11 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 ## Test seam overview
 
 - `ControlPlaneService` interface — CLI consumers depend on this. `mocks.MockServer` avoids real gRPC.
-- `EBPFManager` interface — `ebpf/mocks/EBPFManagerMock` for admin handler tests.
+- `EBPFManager` interface — `firewall/ebpf/mocks/EBPFManagerMock` for firewall handler tests.
 - `Introspector` interface — `mocks/IntrospectorMock` for authz tests (no real Hydra).
-- `AdminHandler.resolveHostFn` — injectable DNS resolver.
+- `controlplane.Manager` interface — `mocks/ManagerMock` for break-glass `controlplane up/down/status` CLI tests.
+- `adminv1.AdminServiceClient` — `mocks/AdminServiceClientMock` for CLI tests that speak to the AdminService.
+- `firewall.ContainerResolver` — handler-side injectable Docker lookup (see `firewall/CLAUDE.md`).
 
 ## Test coverage
 
@@ -180,9 +157,9 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 
 ## Package imports
 
-**Uses**: `internal/config`, `internal/consts`, `internal/logger`, `internal/controlplane/ebpf`, `api/admin/v1`, `internal/clawkerd/protocol/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`.
+**Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/controlplane/firewall`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `internal/clawkerd/protocol/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`.
 
-**Used by**: `internal/firewall` (BuildCPContainerConfig, ebpf.DomainHash), `cmd/clawker-cp/` (startup sequence), `internal/dnsbpf` (ebpf types), `internal/auth` (cert paths).
+**Used by**: `cmd/clawker-cp/` (startup sequence), `internal/cmd/controlplane/` (break-glass up/down/status), `internal/cmd/factory/` (AdminClient + ControlPlane Factory closures), `internal/cmd/firewall/` (AdminService consumers via `f.AdminClient`), `internal/cmd/container/shared/` (BootstrapServicesPostStart), `internal/dnsbpf` (reuses ebpf types), `internal/auth` (cert paths).
 
 No circular dependencies.
 

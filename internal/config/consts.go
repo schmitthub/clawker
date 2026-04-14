@@ -195,24 +195,6 @@ func (c *configImpl) HostProxyPIDFilePath() (string, error) {
 	return filepath.Join(pidsDir, consts.HostProxyPIDFile), nil
 }
 
-// FirewallPIDFilePath ensures the PID subdirectory and returns the firewall daemon PID file path.
-func (c *configImpl) FirewallPIDFilePath() (string, error) {
-	pidsDir, err := c.PidsSubdir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(pidsDir, consts.FirewallPIDFile), nil
-}
-
-// FirewallLogFilePath ensures the logs subdirectory and returns the firewall daemon log file path.
-func (c *configImpl) FirewallLogFilePath() (string, error) {
-	logsDir, err := c.LogsSubdir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(logsDir, consts.FirewallLogFile), nil
-}
-
 // ShareSubdir ensures and returns the shared directory path under DataDir.
 func (c *configImpl) ShareSubdir() (string, error) { return subdirPath(consts.ShareSubdir, DataDir) }
 
