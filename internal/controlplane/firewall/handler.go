@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,7 @@ type StackLifecycle interface {
 	Stop(ctx context.Context) error
 	Reload(ctx context.Context) error
 	Status(ctx context.Context) (*Status, error)
+	NetworkInfo(ctx context.Context) (*NetworkInfo, error)
 }
 
 var _ StackLifecycle = (*Stack)(nil)
@@ -67,6 +69,11 @@ type Handler struct {
 	// resolveHostFn is injectable for tests. nil defaults to
 	// net.DefaultResolver.LookupHost.
 	resolveHostFn func(ctx context.Context, host string) ([]string, error)
+
+	// cgroupIDFn reads the cgroup_id for a cgroupfs path. Injectable for
+	// tests — the production path stats a real /sys/fs/cgroup/ inode,
+	// which doesn't exist on macOS dev hosts. Defaults to ebpf.CgroupID.
+	cgroupIDFn func(cgroupPath string) (uint64, error)
 
 	// bypassTimersMu guards bypassTimers. Bypass starts/stops entries on
 	// RPC calls; bypassTimerFired goroutines clean up on timer expiry.
@@ -141,6 +148,7 @@ func NewHandler(deps HandlerDeps) *Handler {
 		resolve:        deps.Resolver,
 		log:            log,
 		certDirF:       certDirFn,
+		cgroupIDFn:     ebpf.CgroupID,
 		bypassTimers:   make(map[string]*bypassEntry),
 		storedCgroupID: make(map[string]uint64),
 	}
@@ -205,12 +213,18 @@ func (h *Handler) FirewallRemove(ctx context.Context, _ *adminv1.FirewallRemoveR
 // drift-guarded (INV-B2-016): every call resolves container_id → fresh
 // cgroup_path via Docker, logs a warning on cgroup_id drift, and returns
 // FailedPrecondition if Docker says the container is gone.
+//
+// The BPF container_config is built entirely from CP-side state: Envoy/
+// CoreDNS/CIDR/gateway come from the firewall network discovery, the
+// egress port from settings, and the host-proxy bypass IP from resolving
+// host.docker.internal inside the CP netns when the project enables the
+// host proxy. Callers send only container_id.
 func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnableRequest) (*adminv1.FirewallEnableResponse, error) {
 	if req.GetContainerId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "container_id is required")
 	}
-	if req.GetConfig() == nil {
-		return nil, status.Error(codes.InvalidArgument, "config is required")
+	if h.cfg == nil {
+		return nil, status.Error(codes.FailedPrecondition, "firewall enable: cp config not wired")
 	}
 
 	cid, cgroupPath, cgroupID, err := h.resolveForEnable(ctx, req.GetContainerId())
@@ -218,17 +232,27 @@ func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnabl
 		return nil, err
 	}
 
+	netInfo, err := h.stack.NetworkInfo(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "firewall enable: discover network: %v", err)
+	}
+
+	hostProxyIP, hostProxyPort, err := h.resolveHostProxy(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "firewall enable: resolve host proxy: %v", err)
+	}
+
 	cfg, err := ebpf.NewContainerConfig(
-		req.GetConfig().GetEnvoyIp(),
-		req.GetConfig().GetCorednsIp(),
-		req.GetConfig().GetGatewayIp(),
-		req.GetConfig().GetCidr(),
-		req.GetConfig().GetHostProxyIp(),
-		uint16(req.GetConfig().GetHostProxyPort()),
-		uint16(req.GetConfig().GetEgressPort()),
+		netInfo.EnvoyIP,
+		netInfo.CoreDNSIP,
+		netInfo.Gateway.String(),
+		netInfo.CIDR,
+		hostProxyIP,
+		hostProxyPort,
+		uint16(h.cfg.EnvoyEgressPort()),
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "build container config: %v", err)
+		return nil, status.Errorf(codes.Internal, "firewall enable: build container config: %v", err)
 	}
 
 	if err := h.ebpf.Install(cgroupID, cgroupPath, cfg); err != nil {
@@ -265,7 +289,7 @@ func (h *Handler) FirewallDisable(ctx context.Context, req *adminv1.FirewallDisa
 
 	var cgroupID uint64
 	if exists {
-		cgroupID, err = ebpf.CgroupID(cgroupPath)
+		cgroupID, err = h.cgroupIDFn(cgroupPath)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "compute cgroup id: %v", err)
 		}
@@ -317,7 +341,7 @@ func (h *Handler) FirewallBypass(ctx context.Context, req *adminv1.FirewallBypas
 	if !exists {
 		return nil, status.Errorf(codes.FailedPrecondition, "container %q does not exist", req.GetContainerId())
 	}
-	cgroupID, err := ebpf.CgroupID(cgroupPath)
+	cgroupID, err := h.cgroupIDFn(cgroupPath)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "compute cgroup id: %v", err)
 	}
@@ -522,7 +546,7 @@ func (h *Handler) resolveForEnable(ctx context.Context, ref string) (cid, cgroup
 	if !exists {
 		return "", "", 0, status.Errorf(codes.FailedPrecondition, "container %q does not exist", ref)
 	}
-	cgroupID, err = ebpf.CgroupID(cgroupPath)
+	cgroupID, err = h.cgroupIDFn(cgroupPath)
 	if err != nil {
 		return "", "", 0, status.Errorf(codes.Internal, "compute cgroup id: %v", err)
 	}
@@ -539,6 +563,37 @@ func (h *Handler) resolveForEnable(ctx context.Context, ref string) (cid, cgroup
 	return cid, cgroupPath, cgroupID, nil
 }
 
+// resolveHostProxy returns the IP + port a container should use to reach
+// the host proxy via its bypass route. Empty IP + zero port when the
+// project has the host proxy disabled — callers pass those through to
+// ebpf.NewContainerConfig which treats them as "no bypass". Errors only
+// when the host proxy is enabled but its hostname fails to resolve, so
+// enforcement does not silently enroll a container with a broken proxy
+// path.
+func (h *Handler) resolveHostProxy(ctx context.Context) (ip string, port uint16, err error) {
+	if h.cfg == nil || !h.cfg.Project().Security.HostProxyEnabled() {
+		return "", 0, nil
+	}
+	port = uint16(h.cfg.Settings().HostProxy.Daemon.Port)
+
+	resolve := h.resolveHostFn
+	if resolve == nil {
+		resolve = net.DefaultResolver.LookupHost
+	}
+	addrs, err := resolve(ctx, "host.docker.internal")
+	if err != nil {
+		return "", 0, fmt.Errorf("looking up host.docker.internal: %w", err)
+	}
+	if len(addrs) == 0 {
+		return "", 0, fmt.Errorf("host.docker.internal resolved to no addresses")
+	}
+	ip = strings.TrimSpace(addrs[0])
+	if ip == "" {
+		return "", 0, fmt.Errorf("host.docker.internal resolved to empty address")
+	}
+	return ip, port, nil
+}
+
 func (h *Handler) bypassTimerFired(cid string, entry *bypassEntry) {
 	defer func() {
 		h.bypassTimersMu.Lock()
@@ -546,7 +601,7 @@ func (h *Handler) bypassTimerFired(cid string, entry *bypassEntry) {
 		h.bypassTimersMu.Unlock()
 	}()
 
-	enableID := resolveBypassCgroupID(entry, h.resolve, h.log)
+	enableID := resolveBypassCgroupID(entry, h.resolve, h.cgroupIDFn, h.log)
 
 	const maxRetries = 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {

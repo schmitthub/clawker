@@ -10,7 +10,6 @@ import (
 	"context"
 	"time"
 
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -29,7 +28,7 @@ const dockerLookupTimeout = 5 * time.Second
 //  3. Docker API unreachable     → stored cgroup ID (fail-closed).
 //
 // Enable is NEVER skipped — every branch returns an ID.
-func resolveBypassCgroupID(entry *bypassEntry, resolve ContainerResolver, log *logger.Logger) uint64 {
+func resolveBypassCgroupID(entry *bypassEntry, resolve ContainerResolver, cgroupIDFn func(string) (uint64, error), log *logger.Logger) uint64 {
 	if entry.containerID == "" {
 		// Bypass validates container_id up-front; reaching this branch
 		// means the proto validator regressed. Log loudly so the
@@ -60,7 +59,7 @@ func resolveBypassCgroupID(entry *bypassEntry, resolve ContainerResolver, log *l
 		return entry.cgroupID
 	}
 
-	freshID, err := ebpf.CgroupID(cgroupPath)
+	freshID, err := cgroupIDFn(cgroupPath)
 	if err != nil {
 		log.Warn().Err(err).
 			Str("docker_cgroup_path", cgroupPath).

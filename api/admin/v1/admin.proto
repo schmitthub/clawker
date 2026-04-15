@@ -78,19 +78,6 @@ service AdminService {
   rpc FirewallResolveHostname(FirewallResolveHostnameRequest) returns (FirewallResolveHostnameResponse);
 }
 
-// ContainerConfig carries the fields that populate a BPF container_config
-// entry: the Envoy/CoreDNS/gateway addresses, CIDR, host-proxy settings,
-// and egress port.
-message ContainerConfig {
-  string envoy_ip = 1;
-  string coredns_ip = 2;
-  string gateway_ip = 3;
-  string cidr = 4;
-  string host_proxy_ip = 5;
-  uint32 host_proxy_port = 6;
-  uint32 egress_port = 7;
-}
-
 // Route is one entry in the global route_map.
 message Route {
   uint32 domain_hash = 1;
@@ -135,7 +122,6 @@ message FirewallRemoveResponse {}
 
 message FirewallEnableRequest {
   string container_id = 1;
-  ContainerConfig config = 2;
 }
 message FirewallEnableResponse {}
 

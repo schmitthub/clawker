@@ -1,20 +1,16 @@
-//go:build linux
-
-// Tests exercise Handler against ebpf.CgroupID, which stats a real path
-// under /sys/fs/cgroup/ to read the cgroup v2 inode. That path only
-// exists on Linux, so the suite is Linux-gated to keep macOS commits
-// unblocked. CI runs on Linux.
-
 package firewall
 
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -22,22 +18,27 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// testCgroupPath is a real path under /sys/fs/cgroup/ that exists on
-// Linux test hosts. CgroupID opens and stats this path to get its inode
-// number, so it must be a real filesystem entry strictly under the
-// cgroup root.
-const testCgroupPath = "/sys/fs/cgroup/cgroup.procs"
+// testCgroupPath is the synthetic path the test resolver hands back for
+// alive containers. The handler never stats it — the injected
+// cgroupIDFn on newTestHandler returns testCgroupID unconditionally —
+// so the path only needs to be stable for logging + drift bookkeeping.
+// Real kernel paths would require Linux + a live cgroupfs, which is
+// exactly what we want to avoid on dev boxes.
+const (
+	testCgroupPath = "/test/cgroup/path"
+	testCgroupID   = uint64(42)
+)
 
-// validContainerConfig returns a proto ContainerConfig with valid IPs.
-func validContainerConfig() *adminv1.ContainerConfig {
-	return &adminv1.ContainerConfig{
-		EnvoyIp:       "172.20.0.2",
-		CorednsIp:     "172.20.0.3",
-		GatewayIp:     "172.20.0.1",
-		Cidr:          "172.20.0.0/16",
-		HostProxyIp:   "172.20.0.4",
-		HostProxyPort: 8080,
-		EgressPort:    10000,
+// testNetInfo returns the canonical topology the fakeStack hands back to
+// FirewallEnable. Handler builds the BPF container_config from these
+// fields + cfg — tests never populate that struct directly anymore.
+func testNetInfo() *NetworkInfo {
+	return &NetworkInfo{
+		NetworkID: "net-test",
+		Gateway:   netip.MustParseAddr("172.20.0.1"),
+		EnvoyIP:   "172.20.0.2",
+		CoreDNSIP: "172.20.0.3",
+		CIDR:      "172.20.0.0/16",
 	}
 }
 
@@ -56,6 +57,8 @@ type fakeStack struct {
 	ensureRunningCalls, reloadCalls int
 	ensureErr                       error
 	statusResult                    Status
+	netInfo                         *NetworkInfo
+	netInfoErr                      error
 }
 
 func (f *fakeStack) EnsureRunning(_ context.Context) error {
@@ -81,19 +84,47 @@ func (f *fakeStack) Status(_ context.Context) (*Status, error) {
 	return &st, nil
 }
 
+func (f *fakeStack) NetworkInfo(_ context.Context) (*NetworkInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.netInfoErr != nil {
+		return nil, f.netInfoErr
+	}
+	if f.netInfo != nil {
+		return f.netInfo, nil
+	}
+	return testNetInfo(), nil
+}
+
+// testConfig returns a mock Config with defaults (HostProxy enabled,
+// EnvoyEgressPort=10000). FirewallEnable reads host-proxy + egress port
+// from cfg, so the handler must be wired with one even for ebpf-only
+// tests. Blank is sufficient — we never mutate.
+func testConfig() config.Config {
+	return configmocks.NewBlankConfig()
+}
+
 // newTestHandler builds a Handler with the given EBPF mock and resolver,
 // a fake stack, and no rule store. Tests that exercise rule-store paths
-// build their own Handler with a real store via testenv.
+// build their own Handler with a real store via testenv. resolveHostFn
+// is wired to a fixed answer so FirewallEnable's host-proxy bypass path
+// (default-enabled in the mock config) doesn't hit the real resolver.
 func newTestHandler(mock *ebpfmocks.EBPFManagerMock, resolver ContainerResolver) *Handler {
 	if resolver == nil {
 		resolver = nopResolver
 	}
-	return NewHandler(HandlerDeps{
+	h := NewHandler(HandlerDeps{
 		EBPF:     mock,
 		Stack:    &fakeStack{},
+		Cfg:      testConfig(),
 		Resolver: resolver,
 		Log:      logger.Nop(),
 	})
+	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
+		return []string{"192.168.65.254"}, nil
+	}
+	h.cgroupIDFn = func(string) (uint64, error) { return testCgroupID, nil }
+	return h
 }
 
 // noopMock returns an ebpf mock with all methods set to no-op success.
@@ -131,7 +162,6 @@ func TestHandler_FirewallEnable_Success(t *testing.T) {
 
 	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
 		ContainerId: "ctr-1",
-		Config:      validContainerConfig(),
 	})
 	if err != nil {
 		t.Fatalf("FirewallEnable returned error: %v", err)
@@ -139,17 +169,22 @@ func TestHandler_FirewallEnable_Success(t *testing.T) {
 	if got := len(mock.InstallCalls()); got != 1 {
 		t.Fatalf("Install called %d times, want 1", got)
 	}
+	// Assert the BPF container_config was derived from stack+cfg, not
+	// the request. testNetInfo seeds 172.20.0.0/16 with gateway .1;
+	// testConfig() pins EnvoyEgressPort=10000 and the handler's
+	// resolveHostFn pins hostProxyIp=192.168.65.254.
+	got := mock.InstallCalls()[0].Cfg
+	if got.EgressPort != 10000 {
+		t.Errorf("EgressPort = %d, want 10000 (from cfg)", got.EgressPort)
+	}
+	if got.HostProxyPort == 0 {
+		t.Errorf("HostProxyPort = 0, want cfg default (host proxy enabled by default)")
+	}
 }
 
 func TestHandler_FirewallEnable_EmptyContainerID(t *testing.T) {
 	h := newTestHandler(noopMock(), nil)
-	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{Config: validContainerConfig()})
-	assertCode(t, err, codes.InvalidArgument)
-}
-
-func TestHandler_FirewallEnable_NilConfig(t *testing.T) {
-	h := newTestHandler(noopMock(), nil)
-	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{ContainerId: "ctr-1"})
+	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{})
 	assertCode(t, err, codes.InvalidArgument)
 }
 
@@ -160,28 +195,49 @@ func TestHandler_FirewallEnable_ContainerGone_FailedPrecondition(t *testing.T) {
 	h := newTestHandler(noopMock(), resolver)
 	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
 		ContainerId: "ctr-gone",
-		Config:      validContainerConfig(),
 	})
 	assertCode(t, err, codes.FailedPrecondition)
 }
 
-func TestHandler_FirewallEnable_DriftDetected_UsesFreshID(t *testing.T) {
+func TestHandler_FirewallEnable_NetworkInfoError_PropagatesInternal(t *testing.T) {
 	mock := noopMock()
 	h := newTestHandler(mock, nil)
-
-	freshID, err := ebpf.CgroupID(testCgroupPath)
-	if err != nil {
-		t.Fatalf("CgroupID: %v", err)
+	h.stack.(*fakeStack).netInfoErr = errors.New("docker unreachable")
+	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
+		ContainerId: "ctr-1",
+	})
+	assertCode(t, err, codes.Internal)
+	if got := len(mock.InstallCalls()); got != 0 {
+		t.Errorf("Install called %d times on network discovery failure, want 0", got)
 	}
+}
+
+func TestHandler_FirewallEnable_HostProxyResolveError_PropagatesInternal(t *testing.T) {
+	mock := noopMock()
+	h := newTestHandler(mock, nil)
+	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
+		return nil, errors.New("nxdomain")
+	}
+	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
+		ContainerId: "ctr-1",
+	})
+	assertCode(t, err, codes.Internal)
+	if got := len(mock.InstallCalls()); got != 0 {
+		t.Errorf("Install called %d times on resolve failure, want 0", got)
+	}
+}
+
+func TestHandler_FirewallEnable_DriftDetected_UsesFreshID(t *testing.T) {
+	mock := noopMock()
+	h := newTestHandler(mock, nil) // fresh cgroup ID from the fake is testCgroupID
 
 	// Pre-populate stored cgroup ID with a stale value.
 	h.cgroupIDMu.Lock()
-	h.storedCgroupID["ctr-drift"] = freshID + 1
+	h.storedCgroupID["ctr-drift"] = testCgroupID + 1
 	h.cgroupIDMu.Unlock()
 
-	_, err = h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
+	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
 		ContainerId: "ctr-drift",
-		Config:      validContainerConfig(),
 	})
 	if err != nil {
 		t.Fatalf("FirewallEnable returned error: %v", err)
@@ -191,15 +247,15 @@ func TestHandler_FirewallEnable_DriftDetected_UsesFreshID(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("Install called %d times, want 1", len(calls))
 	}
-	if calls[0].CgroupID != freshID {
-		t.Errorf("Install called with cgroupID=%d, want fresh %d (drift correction failed)", calls[0].CgroupID, freshID)
+	if calls[0].CgroupID != testCgroupID {
+		t.Errorf("Install called with cgroupID=%d, want fresh %d (drift correction failed)", calls[0].CgroupID, testCgroupID)
 	}
 
 	h.cgroupIDMu.Lock()
 	stored := h.storedCgroupID["ctr-drift"]
 	h.cgroupIDMu.Unlock()
-	if stored != freshID {
-		t.Errorf("storedCgroupID after Enable = %d, want fresh %d", stored, freshID)
+	if stored != testCgroupID {
+		t.Errorf("storedCgroupID after Enable = %d, want fresh %d", stored, testCgroupID)
 	}
 }
 
@@ -210,7 +266,7 @@ func TestHandler_FirewallEnable_EBPFError_PropagatesInternal(t *testing.T) {
 	}
 	h := newTestHandler(mock, nil)
 	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
-		ContainerId: "ctr-err", Config: validContainerConfig(),
+		ContainerId: "ctr-err",
 	})
 	assertCode(t, err, codes.Internal)
 }
@@ -234,7 +290,7 @@ func TestHandler_FirewallEnable_CancelsBypassTimer(t *testing.T) {
 	h.bypassTimersMu.Unlock()
 
 	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
-		ContainerId: cid, Config: validContainerConfig(),
+		ContainerId: cid,
 	})
 	if err != nil {
 		t.Fatalf("FirewallEnable returned error: %v", err)
@@ -500,9 +556,20 @@ func TestHandler_FirewallStatus_PropagatesStackFields(t *testing.T) {
 // resolveBypassCgroupID branches (drift helper)
 // ---------------------------------------------------------------------------
 
+// fakeCgroupIDFn builds a cgroupIDFn that returns id for any path.
+func fakeCgroupIDFn(id uint64) func(string) (uint64, error) {
+	return func(string) (uint64, error) { return id, nil }
+}
+
+// errCgroupIDFn builds a cgroupIDFn that always fails — drives the
+// stat-failure fallback branch.
+func errCgroupIDFn(err error) func(string) (uint64, error) {
+	return func(string) (uint64, error) { return 0, err }
+}
+
 func TestResolveBypassCgroupID_EmptyContainerID_FallsBack(t *testing.T) {
 	entry := &bypassEntry{cgroupID: 99999}
-	got := resolveBypassCgroupID(entry, nopResolver, logger.Nop())
+	got := resolveBypassCgroupID(entry, nopResolver, fakeCgroupIDFn(testCgroupID), logger.Nop())
 	if got != 99999 {
 		t.Errorf("expected fallback to stored cgroup ID 99999, got %d", got)
 	}
@@ -513,7 +580,7 @@ func TestResolveBypassCgroupID_DockerAPIError_FallsBack(t *testing.T) {
 		return "", "", false, errors.New("docker unavailable")
 	}
 	entry := &bypassEntry{containerID: "ctr-docker-err", cgroupID: 12345}
-	got := resolveBypassCgroupID(entry, resolver, logger.Nop())
+	got := resolveBypassCgroupID(entry, resolver, fakeCgroupIDFn(testCgroupID), logger.Nop())
 	if got != 12345 {
 		t.Errorf("expected fallback to stored cgroup ID 12345, got %d", got)
 	}
@@ -524,42 +591,36 @@ func TestResolveBypassCgroupID_ContainerGone_FallsBack(t *testing.T) {
 		return "", "", false, nil
 	}
 	entry := &bypassEntry{containerID: "ctr-gone", cgroupID: 12345}
-	got := resolveBypassCgroupID(entry, resolver, logger.Nop())
+	got := resolveBypassCgroupID(entry, resolver, fakeCgroupIDFn(testCgroupID), logger.Nop())
 	if got != 12345 {
 		t.Errorf("expected fallback to stored cgroup ID 12345, got %d", got)
 	}
 }
 
 func TestResolveBypassCgroupID_ContainerAlive_ReturnsFreshID(t *testing.T) {
-	expectedID, err := ebpf.CgroupID(testCgroupPath)
-	if err != nil {
-		t.Fatalf("CgroupID(%s) failed: %v", testCgroupPath, err)
-	}
-	entry := &bypassEntry{containerID: "ctr-alive", cgroupID: expectedID}
-	got := resolveBypassCgroupID(entry, nopResolver, logger.Nop())
-	if got != expectedID {
-		t.Errorf("expected fresh cgroup ID %d, got %d", expectedID, got)
+	const freshID = uint64(7777)
+	entry := &bypassEntry{containerID: "ctr-alive", cgroupID: freshID}
+	got := resolveBypassCgroupID(entry, nopResolver, fakeCgroupIDFn(freshID), logger.Nop())
+	if got != freshID {
+		t.Errorf("expected fresh cgroup ID %d, got %d", freshID, got)
 	}
 }
 
 func TestResolveBypassCgroupID_DriftDetected_UsesFresh(t *testing.T) {
-	expectedID, err := ebpf.CgroupID(testCgroupPath)
-	if err != nil {
-		t.Fatalf("CgroupID(%s) failed: %v", testCgroupPath, err)
-	}
-	entry := &bypassEntry{containerID: "ctr-drift", cgroupID: expectedID + 1}
-	got := resolveBypassCgroupID(entry, nopResolver, logger.Nop())
-	if got != expectedID {
-		t.Errorf("expected fresh cgroup ID %d (drift from stored %d), got %d", expectedID, entry.cgroupID, got)
+	const freshID = uint64(7777)
+	entry := &bypassEntry{containerID: "ctr-drift", cgroupID: freshID + 1}
+	got := resolveBypassCgroupID(entry, nopResolver, fakeCgroupIDFn(freshID), logger.Nop())
+	if got != freshID {
+		t.Errorf("expected fresh cgroup ID %d (drift from stored %d), got %d", freshID, entry.cgroupID, got)
 	}
 }
 
 func TestResolveBypassCgroupID_CgroupStatFails_FallsBack(t *testing.T) {
 	resolver := func(_ context.Context, _ string) (string, string, bool, error) {
-		return "ref", "/sys/fs/cgroup/nonexistent/path", true, nil
+		return "ref", testCgroupPath, true, nil
 	}
 	entry := &bypassEntry{containerID: "ctr-stat-fail", cgroupID: 12345}
-	got := resolveBypassCgroupID(entry, resolver, logger.Nop())
+	got := resolveBypassCgroupID(entry, resolver, errCgroupIDFn(errors.New("stat failed")), logger.Nop())
 	if got != 12345 {
 		t.Errorf("expected fallback to stored cgroup ID 12345, got %d", got)
 	}

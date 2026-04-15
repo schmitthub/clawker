@@ -265,6 +265,15 @@ func (s *Stack) CoreDNSIP() string { return s.discoverOrEmpty().CoreDNSIP }
 func (s *Stack) NetworkID() string { return s.discoverOrEmpty().NetworkID }
 func (s *Stack) CIDR() string      { return s.discoverOrEmpty().CIDR }
 
+// NetworkInfo returns the current firewall network topology (Envoy/CoreDNS
+// IPs, CIDR, gateway, network ID). Unlike the string accessors above it
+// surfaces discovery errors — callers on the enforcement path (FirewallEnable)
+// must fail loudly when topology is unknown rather than silently enrolling
+// with zero values.
+func (s *Stack) NetworkInfo(ctx context.Context) (*NetworkInfo, error) {
+	return DiscoverNetwork(ctx, s.docker, s.cfg)
+}
+
 func (s *Stack) discoverOrEmpty() NetworkInfo {
 	netInfo, err := DiscoverNetwork(context.Background(), s.docker, s.cfg)
 	if err != nil || netInfo == nil {
