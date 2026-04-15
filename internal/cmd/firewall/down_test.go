@@ -29,11 +29,11 @@ func newDownHarness(t *testing.T, rpcErr error) *downHarness {
 	ios, _, stdout, stderr := iostreams.Test()
 
 	mock := &cpmocks.AdminServiceClientMock{
-		FirewallRemoveFunc: func(_ context.Context, _ *adminv1.FirewallRemoveRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveResponse, error) {
+		FirewallRemoveFunc: func(_ context.Context, _ *adminv1.FirewallRemoveRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveResult, error) {
 			if rpcErr != nil {
 				return nil, rpcErr
 			}
-			return &adminv1.FirewallRemoveResponse{}, nil
+			return &adminv1.FirewallRemoveResult{}, nil
 		},
 	}
 

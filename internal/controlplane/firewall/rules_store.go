@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -156,6 +157,40 @@ func NormalizeRule(r config.EgressRule) config.EgressRule {
 // PathRules) and must not be collapsed.
 func RuleKey(r config.EgressRule) string {
 	return fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
+}
+
+// RoutesFromRules projects a rule set into the BPF route_map entry form.
+// Only "allow" rules produce routes — deny rules and rules with a non-
+// port (ssh path ports, etc.) fall through the fast path to Envoy
+// anyway. Destinations are normalized before hashing so the resulting
+// DomainHash matches whatever CoreDNS writes into dns_cache at resolve
+// time (INV: normalizeDomain + ebpf.DomainHash form the shared hashing
+// contract across firewall / dnsbpf / ebpf).
+//
+// envoyPort is the single Envoy egress listener port — the route_map's
+// only purpose is to route matched flows there, so every entry carries
+// the same value. Callers pass cfg.EnvoyEgressPort().
+func RoutesFromRules(rules []config.EgressRule, envoyPort uint16) []ebpf.Route {
+	out := make([]ebpf.Route, 0, len(rules))
+	for _, r := range rules {
+		if strings.ToLower(r.Action) != "allow" {
+			continue
+		}
+		dst := normalizeDomain(r.Dst)
+		if dst == "" || isIPOrCIDR(dst) {
+			continue
+		}
+		port := r.Port
+		if port <= 0 || port > 0xffff {
+			continue
+		}
+		out = append(out, ebpf.Route{
+			DomainHash: ebpf.DomainHash(dst),
+			DstPort:    uint16(port),
+			EnvoyPort:  envoyPort,
+		})
+	}
+	return out
 }
 
 // NormalizeAndDedup normalizes all rules and removes duplicates.

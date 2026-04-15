@@ -59,8 +59,8 @@ func TestStatusRun_RunningCP_HealthzOKAndFirewallRPC(t *testing.T) {
 	h := newStatusHarness(t)
 	h.tb.Mock.IsRunningFunc = func(_ context.Context) (bool, error) { return true, nil }
 	h.tb.Mock.ProbeHealthzFunc = func(_ context.Context) (int, error) { return http.StatusOK, nil }
-	h.adminMock.FirewallStatusFunc = func(_ context.Context, _ *adminv1.FirewallStatusRequest, _ ...grpc.CallOption) (*adminv1.FirewallStatusResponse, error) {
-		return &adminv1.FirewallStatusResponse{
+	h.adminMock.FirewallStatusFunc = func(_ context.Context, _ *adminv1.FirewallStatusRequest, _ ...grpc.CallOption) (*adminv1.FirewallStatusResult, error) {
+		return &adminv1.FirewallStatusResult{
 			Running: true, EnvoyHealth: true, CorednsHealth: true, RuleCount: 42,
 		}, nil
 	}
@@ -81,15 +81,15 @@ func TestStatusRun_BestEffortTolerance(t *testing.T) {
 		name           string
 		healthz        func(context.Context) (int, error)
 		adminClient    func(context.Context) (adminv1.AdminServiceClient, error)
-		firewallStatus func(context.Context, *adminv1.FirewallStatusRequest, ...grpc.CallOption) (*adminv1.FirewallStatusResponse, error)
+		firewallStatus func(context.Context, *adminv1.FirewallStatusRequest, ...grpc.CallOption) (*adminv1.FirewallStatusResult, error)
 		wantHealthzErr string
 		wantFWErr      string
 	}{
 		{
 			name:    "healthz transport error — firewall still queried",
 			healthz: func(context.Context) (int, error) { return 0, errors.New("connection refused") },
-			firewallStatus: func(_ context.Context, _ *adminv1.FirewallStatusRequest, _ ...grpc.CallOption) (*adminv1.FirewallStatusResponse, error) {
-				return &adminv1.FirewallStatusResponse{}, nil
+			firewallStatus: func(_ context.Context, _ *adminv1.FirewallStatusRequest, _ ...grpc.CallOption) (*adminv1.FirewallStatusResult, error) {
+				return &adminv1.FirewallStatusResult{}, nil
 			},
 			wantHealthzErr: "connection refused",
 		},
@@ -104,7 +104,7 @@ func TestStatusRun_BestEffortTolerance(t *testing.T) {
 		{
 			name:    "FirewallStatus RPC error",
 			healthz: func(context.Context) (int, error) { return http.StatusOK, nil },
-			firewallStatus: func(_ context.Context, _ *adminv1.FirewallStatusRequest, _ ...grpc.CallOption) (*adminv1.FirewallStatusResponse, error) {
+			firewallStatus: func(_ context.Context, _ *adminv1.FirewallStatusRequest, _ ...grpc.CallOption) (*adminv1.FirewallStatusResult, error) {
 				return nil, errors.New("admin service unavailable")
 			},
 			wantFWErr: "admin service unavailable",

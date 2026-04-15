@@ -64,10 +64,13 @@ func startMTLSServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfM
 		grpc.ChainStreamInterceptor(interceptor.StreamInterceptor()),
 	)
 
+	queue := cpfw.NewActionQueue(log)
+	t.Cleanup(func() { _ = queue.Close() })
 	handler := cpfw.NewHandler(cpfw.HandlerDeps{
 		EBPF:     ebpfMgr,
 		Resolver: nopContainerResolver,
 		Log:      log,
+		Queue:    queue,
 	})
 	adminv1.RegisterAdminServiceServer(srv, handler)
 

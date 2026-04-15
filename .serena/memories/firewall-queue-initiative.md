@@ -10,7 +10,7 @@
 | Task | Status | Agent |
 |------|--------|-------|
 | Task 1: Queue primitive + unit tests | `complete` | Opus 4.6 |
-| Task 2: Wire queue into Handler (all 13 RPCs) | `pending` | — |
+| Task 2: Wire queue into Handler (all 13 RPCs) | `complete` | Opus 4.6 |
 | Task 3: CP shutdown integration + E2E tests | `pending` | — |
 
 ## Key Learnings
@@ -25,6 +25,16 @@
 - **Coalesces on the type, not as a package-level predicate.** Moved `coalesces(k)` to `(k ActionKind) Coalesces() bool` so the coalescing property is discoverable from the `ActionKind` definition and future kinds force a decision.
 - **Hold the worker with a gate in tests instead of sleeping.** Submitting a slow `ActionBringup` behind a `gate` lets the test stack coalescing peers into the buffer deterministically. Without the gate, scheduler timing decides whether coalescing fires — sleep-based tests here would be flaky under load.
 - **`t.Fatal` inside a queued closure is a footgun.** Go's `t.Fatal` from a non-test goroutine calls `runtime.Goexit` on the worker — which means the panic-recovery path doesn't fire (it's not a panic), `q.done` is stranded, and every future test hangs. `TestActionQueue_PostCloseSubmitReturnsErrClosed` uses a signal channel instead.
+
+### Task 2 (2026-04-15)
+
+- **`FirewallSyncRoutes` semantic change is load-bearing, not cosmetic.** Original RPC forwarded caller-supplied routes directly to `ebpf.SyncRoutes`. Post-queue that's unsafe: if two SyncRoutes calls coalesce (both are `ActionReconcile`) the second's routes would be silently dropped by the head-wins coalescing rule. Handler now ignores `req.routes` and rebuilds routes from the current rules store inside `reconcileStackClosure` — which every rule-mutation RPC already does. Proto field retained for wire compat + documented as ignored. `TestAdminHandler_SyncRoutes` was rewritten around the new semantic (old test asserted caller-route pass-through — no longer true).
+- **Pre-Submit synchronous store writes vs queued reconcile is the invariant.** For AddRules/RemoveRules/RotateCA the split lets the RPC return `err=nil, stack_restarted=false` when the stack is down — the rule/cert material is durable on disk and next `firewall up` picks it up. Without pre-Submit persistence, a concurrent reconcile racing with a store write could drop the mutation. The three-layer failure model (CLI-dial → pre-Submit → queued-closure) maps to three sentinel categories in `errors.go`.
+- **`toStatus` fan-out, not concat.** When Stack.Reload fails on multiple steps (both Envoy and CoreDNS restart, then route sync), the closure joins them via `errors.Join`. `toStatus` iterates the catalog and attaches one `errdetails.ErrorInfo` per matched sentinel so the CLI can render per-step remediation. `status.Message` also carries the joined text as a fallback for clients that ignore details.
+- **`CancelAllBypassTimers` must run inside the Teardown closure, not pre-Submit.** Initially wired outside — a concurrent `FirewallBypass` could install a new timer between the pre-Submit cancel and the queued FlushAll, leaving orphan state. Moving it inside the closure serializes all bypass-state mutation behind the queue worker.
+- **Bypass timer fire path submits `ActionEnable` (not `ActionDisable`).** The restore operation is logically Enable-class; ActionDisable looked right because it was a misplaced copy-paste from the Disable path. Neither coalesces today, but mis-labeling would break telemetry and would matter if Enable/Disable ever become coalescing kinds.
+- **CLI `printStackRestartedNote` must gate on non-zero count.** When `AddedCount==0` (dedup hit) the RPC returns `stack_restarted=false` because no reconcile was submitted — but printing "will take effect on next firewall up" is misleading because there's nothing to take effect. Gate on `AddedCount > 0` / `RemovedCount > 0` in the CLI.
+- **NOTICE regeneration gotcha.** Adding `google.golang.org/genproto/googleapis/rpc/errdetails` as a direct dep (via errors.go importing it) shifted the license-report path from `rpc/status` to `rpc` root. `make licenses` regenerates, but pre-commit's `licenses-check` compares against the committed file — must `git add NOTICE` before commit or the hook fails.
 
 ---
 

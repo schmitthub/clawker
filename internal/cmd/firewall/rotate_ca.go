@@ -51,13 +51,18 @@ func rotateCA(ctx context.Context, opts *RotateCAOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	if _, err := client.FirewallRotateCA(ctx, &adminv1.FirewallRotateCARequest{}); err != nil {
-		return fmt.Errorf("rotating CA: %w", err)
+	resp, err := callWithSpinner(ctx, ios, "Rotating firewall CA...",
+		func(rpcCtx context.Context) (*adminv1.FirewallRotateCAResult, error) {
+			return client.FirewallRotateCA(rpcCtx, &adminv1.FirewallRotateCARequest{})
+		})
+	if err != nil {
+		return wrapRPCError("rotating CA", err)
 	}
 
 	fmt.Fprintf(ios.Out, "%s CA certificate rotated\n", cs.SuccessIcon())
 	fmt.Fprintf(ios.Out, "%s Rebuild images and recreate containers for changes to take effect\n",
 		cs.WarningIcon())
+	printStackRestartedNote(ios, resp.GetStackRestarted(), "CA + per-domain certs regenerated on disk")
 
 	return nil
 }

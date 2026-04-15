@@ -50,10 +50,15 @@ func reloadRun(ctx context.Context, opts *ReloadOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	if _, err := client.FirewallReload(ctx, &adminv1.FirewallReloadRequest{}); err != nil {
-		return fmt.Errorf("reloading firewall: %w", err)
+	resp, err := callWithSpinner(ctx, ios, "Reloading firewall...",
+		func(rpcCtx context.Context) (*adminv1.FirewallReloadResult, error) {
+			return client.FirewallReload(rpcCtx, &adminv1.FirewallReloadRequest{})
+		})
+	if err != nil {
+		return wrapRPCError("reloading firewall", err)
 	}
 
 	fmt.Fprintf(ios.Out, "%s Firewall configuration reloaded\n", cs.SuccessIcon())
+	printStackRestartedNote(ios, resp.GetStackRestarted(), "configuration regenerated")
 	return nil
 }

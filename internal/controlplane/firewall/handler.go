@@ -5,18 +5,66 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// --- Closure Result types ---
+//
+// Every queued closure returns a concrete Result on success. The RPC
+// wrapper type-asserts the ActionResult.Value, maps it onto the
+// generated proto type, and returns that to the gRPC caller. Empty
+// marker structs (EnableResult, DisableResult, BypassResult,
+// TeardownResult) let the queue's generic any-return surface carry a
+// distinguishable type without bloating the public API when there's
+// nothing meaningful to return.
+
+// StackReloadResult is produced by reconcileStackClosure. Restarted is
+// true when the live Envoy+CoreDNS pair was reloaded; false when the
+// stack was down at queue-time and only the on-disk state changed.
+// Callers map this onto the wire field `stack_restarted`.
+type StackReloadResult struct {
+	Restarted bool
+}
+
+// InitResult captures the network topology EnsureRunning settled on.
+type InitResult struct {
+	EnvoyIP, CoreDNSIP, NetworkID string
+}
+
+// TeardownResult, EnableResult, DisableResult, BypassResult are empty
+// markers — their RPCs report success/failure only.
+type TeardownResult struct{}
+type EnableResult struct{}
+type DisableResult struct{}
+type BypassResult struct{}
+
+// ListRulesResult carries the normalized rule snapshot.
+type ListRulesResult struct {
+	Rules []config.EgressRule
+}
+
+// StatusResult mirrors the firewall.Status summary.
+type StatusResult struct {
+	Status
+}
+
+// ResolveResult carries the answer set of a DNS lookup run inside the
+// CP's netns.
+type ResolveResult struct {
+	Addresses []string
+}
 
 // ContainerResolver looks up a container reference (name, short ID, or
 // canonical long ID) against Docker and returns its canonical ID, the
@@ -44,17 +92,12 @@ type StackLifecycle interface {
 var _ StackLifecycle = (*Stack)(nil)
 
 // Handler implements adminv1.AdminServiceServer for the firewall domain.
-// It owns the CP-side orchestration for the 13 Firewall* RPCs:
-//
-//   - Global lifecycle: FirewallInit, FirewallRemove.
-//   - Per-container enforcement: FirewallEnable, FirewallDisable,
-//     FirewallBypass. Each resolves the container's current cgroup path
-//     via Docker with INV-B2-016 drift guard.
-//   - Rules: FirewallAddRules, FirewallRemoveRules, FirewallListRules,
-//     FirewallReload. Mutations go through the rules store and hot-reload
-//     the Envoy+CoreDNS stack.
-//   - Introspection/utilities: FirewallStatus, FirewallRotateCA,
-//     FirewallSyncRoutes, FirewallResolveHostname.
+// Every Firewall* RPC submits its body as a closure to a single shared
+// ActionQueue so rapid-fire calls don't collide mid-restart (see
+// initiative memory `firewall-queue-initiative` for the full design).
+// Rule-CRUD and rotate-CA RPCs split store-side work (pre-Submit,
+// synchronous) from stack reconcile work (queued), so a durable rule
+// mutation is never lost even when the subsequent reload fails.
 type Handler struct {
 	adminv1.UnimplementedAdminServiceServer
 
@@ -64,6 +107,7 @@ type Handler struct {
 	cfg      config.Config
 	resolve  ContainerResolver
 	log      *logger.Logger
+	queue    *ActionQueue
 	certDirF func() (string, error)
 
 	// resolveHostFn is injectable for tests. nil defaults to
@@ -105,6 +149,7 @@ type HandlerDeps struct {
 	Cfg      config.Config
 	Resolver ContainerResolver
 	Log      *logger.Logger
+	Queue    *ActionQueue
 
 	// CertDirFn optionally overrides FirewallCertSubdir resolution —
 	// tests pass a temp dir so RotateCA does not touch the real data path.
@@ -118,19 +163,21 @@ type HandlerDeps struct {
 // days.
 const maxBypassTimeout = time.Hour
 
-// NewHandler wires a firewall Handler. Panics on missing EBPF or
-// Resolver — they are hit by every RPC and a nil value there would
-// surface as a confusing nil-deref deep inside the gRPC interceptor
-// chain. Stack / Store / Cfg are optional at construction so tests that
-// only exercise the ebpf-backed RPCs can skip them; calls that need them
-// fall through to a panic at the first nil access with a clear line
-// number.
+// NewHandler wires a firewall Handler. Panics on missing EBPF, Resolver,
+// or Queue — every RPC routes through the queue and hits eBPF/Resolver,
+// so nil there would surface as a confusing nil-deref deep inside the
+// gRPC interceptor chain. Stack / Store / Cfg are optional at
+// construction so tests that only exercise the ebpf-backed RPCs can skip
+// them; calls that need them fall through to a panic at the first nil
+// access with a clear line number.
 func NewHandler(deps HandlerDeps) *Handler {
 	switch {
 	case deps.EBPF == nil:
 		panic("firewall: NewHandler requires a non-nil EBPFManager")
 	case deps.Resolver == nil:
 		panic("firewall: NewHandler requires a non-nil ContainerResolver")
+	case deps.Queue == nil:
+		panic("firewall: NewHandler requires a non-nil ActionQueue")
 	}
 	log := deps.Log
 	if log == nil {
@@ -147,6 +194,7 @@ func NewHandler(deps HandlerDeps) *Handler {
 		cfg:            deps.Cfg,
 		resolve:        deps.Resolver,
 		log:            log,
+		queue:          deps.Queue,
 		certDirF:       certDirFn,
 		cgroupIDFn:     ebpf.CgroupID,
 		bypassTimers:   make(map[string]*bypassEntry),
@@ -154,72 +202,123 @@ func NewHandler(deps HandlerDeps) *Handler {
 	}
 }
 
+// submit routes a closure through the queue and type-asserts the
+// Result. Centralizes the "queue rejected" branch so every RPC
+// uniformly surfaces ErrQueueClosed when the CP is draining.
+func (h *Handler) submit(kind ActionKind, fn ActionFunc) (any, error) {
+	res := <-h.queue.Submit(kind, fn)
+	if res.Err != nil {
+		if errors.Is(res.Err, ErrClosed) {
+			return nil, fmt.Errorf("%w: %v", ErrQueueClosed, res.Err)
+		}
+		return nil, res.Err
+	}
+	return res.Value, nil
+}
+
 // --- Global lifecycle ---
 
-// FirewallInit brings the firewall stack (Envoy + CoreDNS) up. BPF
-// programs are loaded once at CP startup via ebpf.Manager.Load; this RPC
-// is the idempotent "stack up" signal from the CLI.
-func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitRequest) (*adminv1.FirewallInitResponse, error) {
-	if err := h.stack.EnsureRunning(ctx); err != nil {
-		return nil, status.Errorf(codes.Internal, "firewall init: %v", err)
-	}
-	st, err := h.stack.Status(ctx)
+// FirewallInit brings the firewall stack (Envoy + CoreDNS) up via a
+// queued bringup action. BPF programs are loaded once at CP startup via
+// ebpf.Manager.Load; this RPC is the idempotent "stack up" signal.
+func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitRequest) (*adminv1.FirewallInitResult, error) {
+	val, err := h.submit(ActionBringup, func(qctx context.Context) (any, error) {
+		if err := h.stack.EnsureRunning(qctx); err != nil {
+			return nil, err
+		}
+		st, err := h.stack.Status(qctx)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrStackProbe, err)
+		}
+		return InitResult{
+			EnvoyIP:   st.EnvoyIP,
+			CoreDNSIP: st.CoreDNSIP,
+			NetworkID: st.NetworkID,
+		}, nil
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "firewall init: status: %v", err)
+		return nil, toStatus(err)
 	}
-	return &adminv1.FirewallInitResponse{
-		EnvoyIp:   st.EnvoyIP,
-		CorednsIp: st.CoreDNSIP,
-		NetworkId: st.NetworkID,
+	r := val.(InitResult)
+	return &adminv1.FirewallInitResult{
+		EnvoyIp:   r.EnvoyIP,
+		CorednsIp: r.CoreDNSIP,
+		NetworkId: r.NetworkID,
 	}, nil
 }
 
-// FirewallRemove is global teardown: cancel bypass timers, stop the stack,
-// flush all per-container eBPF state, and wipe the rules store. Errors
-// aggregate rather than short-circuiting so partial teardown still makes
-// progress on the uncorrelated subsystems. The rules-store Write is
-// chained off Set: a Set failure means the in-memory mutation aborted,
-// so the on-disk file is still the pre-Remove baseline and Write would
-// only re-stamp stale state.
-func (h *Handler) FirewallRemove(ctx context.Context, _ *adminv1.FirewallRemoveRequest) (*adminv1.FirewallRemoveResponse, error) {
-	h.CancelAllBypassTimers()
+// FirewallRemove is global teardown. Pre-Submit: cancel pending bypass
+// timers so they can't fire against maps that are about to be flushed.
+// Queued closure: stop stack, flush eBPF state, delete generated config
+// files on disk, clear storedCgroupID. Unlike the pre-queue
+// implementation, the egress-rules file is preserved — the store is
+// authoritative across teardown so a user's removals after `firewall
+// down` apply to the next `firewall up`.
+func (h *Handler) FirewallRemove(ctx context.Context, _ *adminv1.FirewallRemoveRequest) (*adminv1.FirewallRemoveResult, error) {
+	_, err := h.submit(ActionTeardown, func(qctx context.Context) (any, error) {
+		// CancelAllBypassTimers runs inside the closure so no concurrent
+		// FirewallBypass call can install a new timer between a pre-
+		// Submit cancel and the queued FlushAll — everything mutating
+		// bypass state is serialized behind the single queue worker.
+		h.CancelAllBypassTimers()
 
-	var errs []error
-	if err := h.stack.Stop(ctx); err != nil {
-		errs = append(errs, fmt.Errorf("stack stop: %w", err))
-	}
-	if err := h.ebpf.FlushAll(); err != nil {
-		errs = append(errs, fmt.Errorf("ebpf flush: %w", err))
-	}
-	if err := h.store.Set(func(f *EgressRulesFile) { f.Rules = nil }); err != nil {
-		errs = append(errs, fmt.Errorf("clear rules: %w", err))
-	} else if err := h.store.Write(); err != nil {
-		errs = append(errs, fmt.Errorf("write rules: %w", err))
-	}
+		var errs []error
+		if err := h.stack.Stop(qctx); err != nil {
+			errs = append(errs, fmt.Errorf("stack stop: %w", err))
+		}
+		if err := h.ebpf.FlushAll(); err != nil {
+			errs = append(errs, fmt.Errorf("ebpf flush: %w", err))
+		}
+		if err := removeGeneratedConfigs(); err != nil {
+			errs = append(errs, fmt.Errorf("remove generated configs: %w", err))
+		}
 
-	h.cgroupIDMu.Lock()
-	h.storedCgroupID = make(map[string]uint64)
-	h.cgroupIDMu.Unlock()
+		h.cgroupIDMu.Lock()
+		h.storedCgroupID = make(map[string]uint64)
+		h.cgroupIDMu.Unlock()
 
-	if len(errs) > 0 {
-		return nil, status.Errorf(codes.Internal, "firewall remove: %v", errors.Join(errs...))
+		if err := errors.Join(errs...); err != nil {
+			return nil, err
+		}
+		return TeardownResult{}, nil
+	})
+	if err != nil {
+		return nil, toStatus(fmt.Errorf("firewall remove: %w", err))
 	}
-	return &adminv1.FirewallRemoveResponse{}, nil
+	return &adminv1.FirewallRemoveResult{}, nil
+}
+
+// removeGeneratedConfigs deletes envoy.yaml and Corefile from the
+// firewall data dir. Missing-file is not an error: teardown can run when
+// the stack never came up, and the next FirewallInit regenerates both
+// files. Path resolution failures propagate — they indicate a
+// misconfigured CP, not a missing artifact.
+func removeGeneratedConfigs() error {
+	envoyPath, err := consts.EnvoyConfigPath()
+	if err != nil {
+		return fmt.Errorf("resolving envoy config path: %w", err)
+	}
+	if err := os.Remove(envoyPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing envoy.yaml: %w", err)
+	}
+	corefilePath, err := consts.CorefilePath()
+	if err != nil {
+		return fmt.Errorf("resolving corefile path: %w", err)
+	}
+	if err := os.Remove(corefilePath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing Corefile: %w", err)
+	}
+	return nil
 }
 
 // --- Per-container enforcement ---
 
-// FirewallEnable enrolls a container into container_map. Idempotent and
-// drift-guarded (INV-B2-016): every call resolves container_id → fresh
-// cgroup_path via Docker, logs a warning on cgroup_id drift, and returns
-// FailedPrecondition if Docker says the container is gone.
-//
-// The BPF container_config is built entirely from CP-side state: Envoy/
-// CoreDNS/CIDR/gateway come from the firewall network discovery, the
-// egress port from settings, and the host-proxy bypass IP from resolving
-// host.docker.internal inside the CP netns when the project enables the
-// host proxy. Callers send only container_id.
-func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnableRequest) (*adminv1.FirewallEnableResponse, error) {
+// FirewallEnable enrolls a container. Pre-Submit resolves container_id →
+// cgroup_path and builds the BPF container_config from CP-side state
+// (network discovery, host-proxy resolution, egress port); the queued
+// closure installs the resulting config via ebpf.Install and cancels any
+// pending bypass timer.
+func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnableRequest) (*adminv1.FirewallEnableResult, error) {
 	if req.GetContainerId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "container_id is required")
 	}
@@ -242,7 +341,7 @@ func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnabl
 		return nil, status.Errorf(codes.Internal, "firewall enable: resolve host proxy: %v", err)
 	}
 
-	cfg, err := ebpf.NewContainerConfig(
+	bpfCfg, err := ebpf.NewContainerConfig(
 		netInfo.EnvoyIP,
 		netInfo.CoreDNSIP,
 		netInfo.Gateway.String(),
@@ -255,29 +354,34 @@ func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnabl
 		return nil, status.Errorf(codes.Internal, "firewall enable: build container config: %v", err)
 	}
 
-	if err := h.ebpf.Install(cgroupID, cgroupPath, cfg); err != nil {
+	_, err = h.submit(ActionEnable, func(_ context.Context) (any, error) {
+		if err := h.ebpf.Install(cgroupID, cgroupPath, bpfCfg); err != nil {
+			return nil, fmt.Errorf("install: %w", err)
+		}
+		// Mid-bypass Enable must cancel the dead-man timer so it does
+		// not fire a redundant Enable on an already-correct state.
+		h.cancelBypassTimer(cid)
+		return EnableResult{}, nil
+	})
+	if err != nil {
+		if errors.Is(err, ErrQueueClosed) {
+			return nil, toStatus(err)
+		}
 		return nil, status.Errorf(codes.Internal, "enable: %v", err)
 	}
-
-	// Mid-bypass Enable must cancel the dead-man timer so it does not fire
-	// a redundant Enable on a now-correct state. Safe no-op if no timer is
-	// pending.
-	h.cancelBypassTimer(cid)
 
 	h.log.Info().
 		Str("container_id", cid).
 		Uint64("cgroup_id", cgroupID).
 		Msg("firewall enabled")
-	return &adminv1.FirewallEnableResponse{}, nil
+	return &adminv1.FirewallEnableResult{}, nil
 }
 
-// FirewallDisable sets the per-container BPF bypass flag so the eBPF fast
-// path exits to unrestricted egress. BPF links remain attached so a
-// re-enable is cheap (see FirewallRemove for full teardown). When Docker
-// confirms the container is gone we fall back to the stored cgroup_id so
-// stale bypass_map entries can still be cleared; when the container is
-// unknown entirely (never enrolled) Disable is a no-op.
-func (h *Handler) FirewallDisable(ctx context.Context, req *adminv1.FirewallDisableRequest) (*adminv1.FirewallDisableResponse, error) {
+// FirewallDisable sets the per-container BPF bypass flag. Pre-Submit
+// resolves the target cgroup_id (or falls back to the last-known value
+// when Docker says the container is gone); the queued closure performs
+// the ebpf.Disable.
+func (h *Handler) FirewallDisable(ctx context.Context, req *adminv1.FirewallDisableRequest) (*adminv1.FirewallDisableResult, error) {
 	if req.GetContainerId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "container_id is required")
 	}
@@ -301,12 +405,21 @@ func (h *Handler) FirewallDisable(ctx context.Context, req *adminv1.FirewallDisa
 			h.log.Info().
 				Str("container_id", req.GetContainerId()).
 				Msg("firewall disable: container unknown to CP, no-op")
-			return &adminv1.FirewallDisableResponse{}, nil
+			return &adminv1.FirewallDisableResult{}, nil
 		}
 		cgroupID = stored
 	}
 
-	if err := h.ebpf.Disable(cgroupID); err != nil {
+	_, err = h.submit(ActionDisable, func(_ context.Context) (any, error) {
+		if err := h.ebpf.Disable(cgroupID); err != nil {
+			return nil, fmt.Errorf("disable: %w", err)
+		}
+		return DisableResult{}, nil
+	})
+	if err != nil {
+		if errors.Is(err, ErrQueueClosed) {
+			return nil, toStatus(err)
+		}
 		return nil, status.Errorf(codes.Internal, "disable: %v", err)
 	}
 
@@ -314,14 +427,14 @@ func (h *Handler) FirewallDisable(ctx context.Context, req *adminv1.FirewallDisa
 		Str("container_id", cid).
 		Uint64("cgroup_id", cgroupID).
 		Msg("firewall disabled")
-	return &adminv1.FirewallDisableResponse{}, nil
+	return &adminv1.FirewallDisableResult{}, nil
 }
 
-// FirewallBypass = Disable + CP dead-man timer that calls the shared drift
-// resolver and then Enable on expiry. The Enable restore path reuses the
-// same drift guard as direct FirewallEnable so enforcement returns on the
-// container's current cgroup_id, not the one it had at bypass-time.
-func (h *Handler) FirewallBypass(ctx context.Context, req *adminv1.FirewallBypassRequest) (*adminv1.FirewallBypassResponse, error) {
+// FirewallBypass = Disable (queued) + CP dead-man timer that submits a
+// queued Enable on expiry. The restore path reuses the same drift guard
+// as direct FirewallEnable so enforcement returns on the container's
+// current cgroup_id, not the one it had at bypass-time.
+func (h *Handler) FirewallBypass(ctx context.Context, req *adminv1.FirewallBypassRequest) (*adminv1.FirewallBypassResult, error) {
 	if req.GetContainerId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "container_id is required")
 	}
@@ -339,15 +452,24 @@ func (h *Handler) FirewallBypass(ctx context.Context, req *adminv1.FirewallBypas
 		return nil, status.Errorf(codes.Internal, "resolve container: %v", err)
 	}
 	if !exists {
-		return nil, status.Errorf(codes.FailedPrecondition, "container %q does not exist", req.GetContainerId())
+		return nil, toStatus(fmt.Errorf("%w: %q", ErrContainerGone, req.GetContainerId()))
 	}
 	cgroupID, err := h.cgroupIDFn(cgroupPath)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "compute cgroup id: %v", err)
 	}
 
-	if err := h.ebpf.Disable(cgroupID); err != nil {
-		return nil, status.Errorf(codes.Internal, "bypass: disable: %v", err)
+	_, err = h.submit(ActionBypass, func(_ context.Context) (any, error) {
+		if err := h.ebpf.Disable(cgroupID); err != nil {
+			return nil, fmt.Errorf("disable: %w", err)
+		}
+		return BypassResult{}, nil
+	})
+	if err != nil {
+		if errors.Is(err, ErrQueueClosed) {
+			return nil, toStatus(err)
+		}
+		return nil, status.Errorf(codes.Internal, "bypass: %v", err)
 	}
 
 	// Seed storedCgroupID so a Disable issued mid-bypass on a now-gone
@@ -374,76 +496,110 @@ func (h *Handler) FirewallBypass(ctx context.Context, req *adminv1.FirewallBypas
 		Uint64("cgroup_id", cgroupID).
 		Dur("timeout", timeout).
 		Msg("bypass started with server-side failsafe")
-	return &adminv1.FirewallBypassResponse{}, nil
+	return &adminv1.FirewallBypassResult{}, nil
 }
 
 // --- Rules + lifecycle ---
 
-// FirewallAddRules persists new egress rules, validates them all-or-
-// nothing before touching the store, then hot-reloads Envoy+CoreDNS so
-// caller code can treat a nil response as "stack already serving the new
-// rules".
-func (h *Handler) FirewallAddRules(ctx context.Context, req *adminv1.FirewallAddRulesRequest) (*adminv1.FirewallAddRulesResponse, error) {
+// FirewallAddRules persists new egress rules then reconciles the stack.
+// Store mutation is synchronous and pre-Submit so the rule is durable
+// the moment the RPC accepts it; the queued closure then regenerates
+// Envoy/CoreDNS config and restarts both. When the stack is down at
+// queue-time the closure short-circuits to StackReloadResult{Restarted:
+// false} — the rule is still saved, next FirewallInit picks it up.
+func (h *Handler) FirewallAddRules(ctx context.Context, req *adminv1.FirewallAddRulesRequest) (*adminv1.FirewallAddRulesResult, error) {
 	rules := ProtoRulesToConfig(req.GetRules())
 	for _, r := range rules {
 		if err := ValidateDst(r.Dst); err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "validate rule %q: %v", r.Dst, err)
+			return nil, toStatus(fmt.Errorf("%w: %q: %v", ErrRuleInvalid, r.Dst, err))
 		}
 	}
 	added, err := h.addRulesToStore(rules)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "add rules: %v", err)
+		return nil, toStatus(fmt.Errorf("%w: %v", ErrRuleStoreWrite, err))
 	}
 	if added == 0 {
-		return &adminv1.FirewallAddRulesResponse{AddedCount: 0}, nil
+		return &adminv1.FirewallAddRulesResult{AddedCount: 0}, nil
 	}
-	if err := h.stack.Reload(ctx); err != nil {
-		return nil, status.Errorf(codes.Internal, "reload stack: %v", err)
+
+	val, err := h.submit(ActionReconcile, h.reconcileStackClosure)
+	if err != nil {
+		return nil, toStatus(err)
 	}
-	return &adminv1.FirewallAddRulesResponse{AddedCount: int32(added), StackRestarted: true}, nil
+	rr := val.(StackReloadResult)
+	return &adminv1.FirewallAddRulesResult{
+		AddedCount:     int32(added),
+		StackRestarted: rr.Restarted,
+	}, nil
 }
 
-// FirewallRemoveRules deletes matching rules and hot-reloads.
-func (h *Handler) FirewallRemoveRules(ctx context.Context, req *adminv1.FirewallRemoveRulesRequest) (*adminv1.FirewallRemoveRulesResponse, error) {
+// FirewallRemoveRules deletes matching rules pre-Submit then reconciles
+// the stack. Mirrors the AddRules success/partial-success surface.
+func (h *Handler) FirewallRemoveRules(ctx context.Context, req *adminv1.FirewallRemoveRulesRequest) (*adminv1.FirewallRemoveRulesResult, error) {
 	rules := ProtoRulesToConfig(req.GetRules())
 	removed, err := h.removeRulesFromStore(rules)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "remove rules: %v", err)
+		return nil, toStatus(fmt.Errorf("%w: %v", ErrRuleStoreWrite, err))
 	}
 	if removed == 0 {
-		return &adminv1.FirewallRemoveRulesResponse{RemovedCount: 0}, nil
+		return &adminv1.FirewallRemoveRulesResult{RemovedCount: 0}, nil
 	}
-	if err := h.stack.Reload(ctx); err != nil {
-		return nil, status.Errorf(codes.Internal, "reload stack: %v", err)
+
+	val, err := h.submit(ActionReconcile, h.reconcileStackClosure)
+	if err != nil {
+		return nil, toStatus(err)
 	}
-	return &adminv1.FirewallRemoveRulesResponse{RemovedCount: int32(removed), StackRestarted: true}, nil
+	rr := val.(StackReloadResult)
+	return &adminv1.FirewallRemoveRulesResult{
+		RemovedCount:   int32(removed),
+		StackRestarted: rr.Restarted,
+	}, nil
 }
 
 // FirewallListRules returns the current normalized+deduped rule set.
-func (h *Handler) FirewallListRules(_ context.Context, _ *adminv1.FirewallListRulesRequest) (*adminv1.FirewallListRulesResponse, error) {
-	rules, warnings := NormalizeAndDedup(h.store.Read().Rules)
-	for _, w := range warnings {
-		h.log.Warn().Msg(w)
+// Routed through the queue under ActionRead so a read never races ahead
+// of pending writes (read-after-write consistency).
+func (h *Handler) FirewallListRules(ctx context.Context, _ *adminv1.FirewallListRulesRequest) (*adminv1.FirewallListRulesResult, error) {
+	val, err := h.submit(ActionRead, func(_ context.Context) (any, error) {
+		rules, warnings := NormalizeAndDedup(h.store.Read().Rules)
+		for _, w := range warnings {
+			h.log.Warn().Msg(w)
+		}
+		return ListRulesResult{Rules: rules}, nil
+	})
+	if err != nil {
+		return nil, toStatus(err)
 	}
-	return &adminv1.FirewallListRulesResponse{Rules: ConfigRulesToProto(rules)}, nil
+	r := val.(ListRulesResult)
+	return &adminv1.FirewallListRulesResult{Rules: ConfigRulesToProto(r.Rules)}, nil
 }
 
 // FirewallReload regenerates configs and restarts Envoy+CoreDNS without
-// mutating the rule set.
-func (h *Handler) FirewallReload(ctx context.Context, _ *adminv1.FirewallReloadRequest) (*adminv1.FirewallReloadResponse, error) {
-	if err := h.stack.Reload(ctx); err != nil {
-		return nil, status.Errorf(codes.Internal, "reload: %v", err)
+// mutating the rule set. No pre-Submit work — it is a pure reconcile
+// signal against the current store contents.
+func (h *Handler) FirewallReload(ctx context.Context, _ *adminv1.FirewallReloadRequest) (*adminv1.FirewallReloadResult, error) {
+	val, err := h.submit(ActionReconcile, h.reconcileStackClosure)
+	if err != nil {
+		return nil, toStatus(err)
 	}
-	return &adminv1.FirewallReloadResponse{StackRestarted: true}, nil
+	rr := val.(StackReloadResult)
+	return &adminv1.FirewallReloadResult{StackRestarted: rr.Restarted}, nil
 }
 
 // FirewallStatus returns a health snapshot.
-func (h *Handler) FirewallStatus(ctx context.Context, _ *adminv1.FirewallStatusRequest) (*adminv1.FirewallStatusResponse, error) {
-	st, err := h.stack.Status(ctx)
+func (h *Handler) FirewallStatus(ctx context.Context, _ *adminv1.FirewallStatusRequest) (*adminv1.FirewallStatusResult, error) {
+	val, err := h.submit(ActionRead, func(qctx context.Context) (any, error) {
+		st, err := h.stack.Status(qctx)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrStackProbe, err)
+		}
+		return StatusResult{Status: *st}, nil
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "status: %v", err)
+		return nil, toStatus(err)
 	}
-	return &adminv1.FirewallStatusResponse{
+	st := val.(StatusResult)
+	return &adminv1.FirewallStatusResult{
 		Running:       st.Running,
 		EnvoyHealth:   st.EnvoyHealth,
 		CorednsHealth: st.CoreDNSHealth,
@@ -454,59 +610,131 @@ func (h *Handler) FirewallStatus(ctx context.Context, _ *adminv1.FirewallStatusR
 	}, nil
 }
 
-// FirewallRotateCA regenerates the MITM CA + per-domain certs and reloads
-// the stack so Envoy picks up the new chain.
-func (h *Handler) FirewallRotateCA(ctx context.Context, _ *adminv1.FirewallRotateCARequest) (*adminv1.FirewallRotateCAResponse, error) {
+// FirewallRotateCA regenerates the MITM CA + per-domain certs
+// pre-Submit, then reconciles the stack so Envoy picks up the new chain.
+// Cert regen is synchronous so the CLI sees a clean ErrCertRegen if the
+// disk write fails, leaving the running stack on the prior certificates.
+func (h *Handler) FirewallRotateCA(ctx context.Context, _ *adminv1.FirewallRotateCARequest) (*adminv1.FirewallRotateCAResult, error) {
 	certDir, err := h.certDirF()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "resolve cert dir: %v", err)
+		return nil, toStatus(fmt.Errorf("%w: resolve cert dir: %v", ErrCertRegen, err))
 	}
 	rules, _ := NormalizeAndDedup(h.store.Read().Rules)
 	if err := RotateCA(certDir, rules); err != nil {
-		return nil, status.Errorf(codes.Internal, "rotate ca: %v", err)
+		return nil, toStatus(fmt.Errorf("%w: %v", ErrCertRegen, err))
 	}
-	if err := h.stack.Reload(ctx); err != nil {
-		return nil, status.Errorf(codes.Internal, "rotate ca: reload: %v", err)
+
+	val, err := h.submit(ActionReconcile, h.reconcileStackClosure)
+	if err != nil {
+		return nil, toStatus(err)
 	}
-	return &adminv1.FirewallRotateCAResponse{}, nil
+	rr := val.(StackReloadResult)
+	return &adminv1.FirewallRotateCAResult{StackRestarted: rr.Restarted}, nil
 }
 
 // --- Utilities ---
 
-// FirewallSyncRoutes atomically replaces the global route_map. Internal
-// callers normally drive this via AddRules/RemoveRules/Reload; the RPC is
-// kept on the surface for break-glass route re-sync.
-func (h *Handler) FirewallSyncRoutes(_ context.Context, req *adminv1.FirewallSyncRoutesRequest) (*adminv1.FirewallSyncRoutesResponse, error) {
-	routes := make([]ebpf.Route, 0, len(req.GetRoutes()))
-	for _, r := range req.GetRoutes() {
-		routes = append(routes, ebpf.Route{
-			DomainHash: r.GetDomainHash(),
-			DstPort:    uint16(r.GetDstPort()),
-			EnvoyPort:  uint16(r.GetEnvoyPort()),
-		})
+// FirewallSyncRoutes is a break-glass re-sync of the BPF route_map.
+// After the queue landed, it regenerates routes from the current store
+// (rather than trusting caller-supplied routes) — coalescing with
+// concurrent AddRules/Reload calls would otherwise silently discard a
+// caller's stale route set. reconcileStackClosure already syncs routes,
+// so routing through ActionReconcile gives SyncRoutes the stronger
+// "stack and route_map are consistent with the store" guarantee at a
+// cost of one extra container restart.
+func (h *Handler) FirewallSyncRoutes(ctx context.Context, _ *adminv1.FirewallSyncRoutesRequest) (*adminv1.FirewallSyncRoutesResult, error) {
+	val, err := h.submit(ActionReconcile, h.reconcileStackClosure)
+	if err != nil {
+		return nil, toStatus(err)
 	}
-	if err := h.ebpf.SyncRoutes(routes); err != nil {
-		return nil, status.Errorf(codes.Internal, "sync routes failed: %v", err)
+	_ = val.(StackReloadResult)
+	var applied uint32
+	if h.store != nil {
+		rules, _ := NormalizeAndDedup(h.store.Read().Rules)
+		applied = uint32(len(RoutesFromRules(rules, h.envoyEgressPort())))
 	}
-	return &adminv1.FirewallSyncRoutesResponse{Applied: uint32(len(routes))}, nil
+	return &adminv1.FirewallSyncRoutesResult{Applied: applied}, nil
 }
 
 // FirewallResolveHostname performs a DNS lookup from the CP's network
 // namespace — used to resolve host.docker.internal during per-container
 // enroll so the BPF container_config holds a routable address.
-func (h *Handler) FirewallResolveHostname(ctx context.Context, req *adminv1.FirewallResolveHostnameRequest) (*adminv1.FirewallResolveHostnameResponse, error) {
+func (h *Handler) FirewallResolveHostname(ctx context.Context, req *adminv1.FirewallResolveHostnameRequest) (*adminv1.FirewallResolveHostnameResult, error) {
 	if req.GetHostname() == "" {
 		return nil, status.Error(codes.InvalidArgument, "hostname is required")
 	}
-	resolve := h.resolveHostFn
-	if resolve == nil {
-		resolve = net.DefaultResolver.LookupHost
-	}
-	addrs, err := resolve(ctx, req.GetHostname())
+	val, err := h.submit(ActionRead, func(qctx context.Context) (any, error) {
+		resolve := h.resolveHostFn
+		if resolve == nil {
+			resolve = net.DefaultResolver.LookupHost
+		}
+		addrs, err := resolve(qctx, req.GetHostname())
+		if err != nil {
+			return nil, fmt.Errorf("resolve %q: %w", req.GetHostname(), err)
+		}
+		return ResolveResult{Addresses: addrs}, nil
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "resolve %q: %v", req.GetHostname(), err)
+		return nil, toStatus(err)
 	}
-	return &adminv1.FirewallResolveHostnameResponse{Addresses: addrs}, nil
+	r := val.(ResolveResult)
+	return &adminv1.FirewallResolveHostnameResult{Addresses: r.Addresses}, nil
+}
+
+// --- Closures shared across RPCs ---
+
+// reconcileStackClosure is the queued closure every rule-CRUD, reload,
+// rotate-CA, and sync-routes RPC submits. It probes whether the stack
+// is running; if not, short-circuits with Restarted=false because
+// pre-Submit work is already committed and there's nothing live to
+// update. If running, it runs Stack.Reload (which regenerates configs
+// and restarts both containers) and then replays the store's routes
+// into the BPF route_map. Step-level failures from Reload already carry
+// wrapped sentinels; RouteSync wraps its own ErrRouteSync, and the two
+// are joined via errors.Join so the RPC wrapper can emit one
+// errdetails.ErrorInfo per step.
+func (h *Handler) reconcileStackClosure(qctx context.Context) (any, error) {
+	if h.stack == nil {
+		// Handler wired without a Stack (common in tests): nothing to
+		// reconcile, pre-Submit work already committed.
+		return StackReloadResult{Restarted: false}, nil
+	}
+	st, err := h.stack.Status(qctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrStackProbe, err)
+	}
+	if !st.Running {
+		return StackReloadResult{Restarted: false}, nil
+	}
+
+	var errs []error
+	if err := h.stack.Reload(qctx); err != nil {
+		errs = append(errs, err)
+	}
+	// Route sync only runs when a store is wired. Test harnesses that
+	// omit Store skip this branch; production wiring in cmd/clawker-cp
+	// always provides one.
+	if h.store != nil {
+		rules, _ := NormalizeAndDedup(h.store.Read().Rules)
+		if err := h.ebpf.SyncRoutes(RoutesFromRules(rules, h.envoyEgressPort())); err != nil {
+			errs = append(errs, fmt.Errorf("%w: %v", ErrRouteSync, err))
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	return StackReloadResult{Restarted: true}, nil
+}
+
+// envoyEgressPort returns the Envoy egress listener port, falling back
+// to zero when no cfg is wired (test path). A zero port produces routes
+// that never match in the BPF fast path — callers in test surfaces that
+// care instantiate cfg explicitly.
+func (h *Handler) envoyEgressPort() uint16 {
+	if h.cfg == nil {
+		return 0
+	}
+	return uint16(h.cfg.EnvoyEgressPort())
 }
 
 // --- Shutdown helpers (called from drain-to-zero in cmd/clawker-cp) ---
@@ -515,10 +743,9 @@ func (h *Handler) FirewallResolveHostname(ctx context.Context, req *adminv1.Fire
 // the bypass-timers map. Part of INV-B2-007 drain-to-zero: cancelling
 // before eBPF FlushAll stops scheduled Enables from firing against
 // maps that are about to be emptied. A fire goroutine past
-// timer.Stop's check may still call ebpf.Enable once; that call only
-// touches bypass_map (ErrKeyNotExist treated as success), so post-Flush
-// it is a harmless delete of a non-existent key. Returns the count
-// cancelled.
+// timer.Stop's check will submit to the queue; after queue.Close that
+// submission returns ErrClosed and is a harmless retry-exhausted log.
+// Returns the count cancelled.
 func (h *Handler) CancelAllBypassTimers() int {
 	h.bypassTimersMu.Lock()
 	defer h.bypassTimersMu.Unlock()
@@ -537,14 +764,14 @@ func (h *Handler) CancelAllBypassTimers() int {
 
 // resolveForEnable enforces INV-B2-016 for the Enable path: fresh Docker
 // lookup, drift warning on stored-vs-fresh cgroup_id mismatch, and
-// FailedPrecondition when Docker reports the container gone.
+// ErrContainerGone when Docker reports the container missing.
 func (h *Handler) resolveForEnable(ctx context.Context, ref string) (cid, cgroupPath string, cgroupID uint64, err error) {
 	cid, cgroupPath, exists, resolveErr := h.resolve(ctx, ref)
 	if resolveErr != nil {
 		return "", "", 0, status.Errorf(codes.Internal, "resolve container: %v", resolveErr)
 	}
 	if !exists {
-		return "", "", 0, status.Errorf(codes.FailedPrecondition, "container %q does not exist", ref)
+		return "", "", 0, toStatus(fmt.Errorf("%w: %q", ErrContainerGone, ref))
 	}
 	cgroupID, err = h.cgroupIDFn(cgroupPath)
 	if err != nil {
@@ -605,26 +832,44 @@ func (h *Handler) bypassTimerFired(cid string, entry *bypassEntry) {
 
 	const maxRetries = 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if err := h.ebpf.Enable(enableID); err != nil {
-			h.log.Error().Err(err).
-				Uint64("cgroup_id", enableID).
-				Str("container_id", entry.containerID).
-				Int("attempt", attempt).
-				Msg("bypass auto-enable failed")
-			if attempt < maxRetries {
-				time.Sleep(time.Duration(attempt) * time.Second)
-				continue
+		// Route through the queue so the Enable can't collide with a
+		// simultaneous stack reconcile or a mid-shutdown FlushAll. Post-
+		// Close the queue returns ErrClosed — treat that as "CP is
+		// tearing down, nothing useful an Enable can do against a
+		// flushed map" and exit cleanly.
+		res := <-h.queue.Submit(ActionEnable, func(_ context.Context) (any, error) {
+			if err := h.ebpf.Enable(enableID); err != nil {
+				return nil, fmt.Errorf("enable: %w", err)
 			}
-			h.log.Error().
+			return EnableResult{}, nil
+		})
+		if res.Err == nil {
+			h.log.Info().
 				Uint64("cgroup_id", enableID).
 				Str("container_id", entry.containerID).
-				Msg("bypass auto-enable exhausted retries — enforcement NOT restored")
+				Msg("bypass timer expired, enforcement restored")
 			return
 		}
-		h.log.Info().
+		if errors.Is(res.Err, ErrClosed) {
+			h.log.Info().
+				Uint64("cgroup_id", enableID).
+				Str("container_id", entry.containerID).
+				Msg("bypass auto-enable skipped — queue closed (CP shutting down)")
+			return
+		}
+		h.log.Error().Err(res.Err).
 			Uint64("cgroup_id", enableID).
 			Str("container_id", entry.containerID).
-			Msg("bypass timer expired, enforcement restored")
+			Int("attempt", attempt).
+			Msg("bypass auto-enable failed")
+		if attempt < maxRetries {
+			time.Sleep(time.Duration(attempt) * time.Second)
+			continue
+		}
+		h.log.Error().
+			Uint64("cgroup_id", enableID).
+			Str("container_id", entry.containerID).
+			Msg("bypass auto-enable exhausted retries — enforcement NOT restored")
 		return
 	}
 }

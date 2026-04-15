@@ -279,10 +279,10 @@ func TestStopRun_DisablesFirewallBeforeStop(t *testing.T) {
 
 	var disabledID string
 	fwMock := &cpmocks.AdminServiceClientMock{
-		FirewallDisableFunc: func(_ context.Context, req *adminv1.FirewallDisableRequest, _ ...grpc.CallOption) (*adminv1.FirewallDisableResponse, error) {
+		FirewallDisableFunc: func(_ context.Context, req *adminv1.FirewallDisableRequest, _ ...grpc.CallOption) (*adminv1.FirewallDisableResult, error) {
 			require.False(t, dockerStopCalled, "firewall must be disabled before docker stop")
 			disabledID = req.GetContainerId()
-			return &adminv1.FirewallDisableResponse{}, nil
+			return &adminv1.FirewallDisableResult{}, nil
 		},
 	}
 	f, in, out, errOut := testFactory(t, fake, nil, fwMock)
@@ -309,7 +309,7 @@ func TestStopRun_FirewallDisableErrorDoesNotFailStop(t *testing.T) {
 	}
 
 	fwMock := &cpmocks.AdminServiceClientMock{
-		FirewallDisableFunc: func(_ context.Context, _ *adminv1.FirewallDisableRequest, _ ...grpc.CallOption) (*adminv1.FirewallDisableResponse, error) {
+		FirewallDisableFunc: func(_ context.Context, _ *adminv1.FirewallDisableRequest, _ ...grpc.CallOption) (*adminv1.FirewallDisableResult, error) {
 			return nil, fmt.Errorf("bpf detach failed")
 		},
 	}

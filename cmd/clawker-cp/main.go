@@ -306,6 +306,16 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		grpc.ChainStreamInterceptor(authInterceptor.StreamInterceptor()),
 	)
 
+	// ActionQueue is the single-goroutine FIFO worker every Firewall*
+	// RPC runs through so rule-mutation/stack-restart cycles never
+	// collide. Constructed before the Handler so HandlerDeps.Queue is
+	// non-nil at NewHandler time (NewHandler panics otherwise). The
+	// final drain ordering (queue.Close → GracefulStop → bypass timer
+	// cancel → stack.Stop → ebpf.FlushAll) is owned by the
+	// drain-to-zero callback below so a single on-exit defer here is
+	// sufficient as a belt-and-braces against non-drain exit paths.
+	actionQueue := fwhandler.NewActionQueue(log)
+	defer func() { _ = actionQueue.Close() }()
 	handler := fwhandler.NewHandler(fwhandler.HandlerDeps{
 		EBPF:     ebpfMgr,
 		Stack:    stack,
@@ -313,6 +323,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		Cfg:      cfg,
 		Resolver: containerResolver,
 		Log:      log,
+		Queue:    actionQueue,
 	})
 	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler))
 
@@ -363,20 +374,24 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 
 	drainCallback := func(ctx context.Context) error {
 		// Strict ordering (INV-B2-007):
-		//  1. Cancel in-flight bypass timers so no scheduled Enable fires
-		//     against maps that are about to be emptied.
+		//  1. actionQueue.Close drains accepted submissions to completion
+		//     then returns ErrClosed for any subsequent Submit — the
+		//     Handler's bypass-timer goroutines observe this and exit
+		//     cleanly instead of racing with FlushAll.
 		//  2. grpcServer.GracefulStop refuses new RPCs and waits for
-		//     in-flight ones to finish — without this, a late Install
-		//     could write container_map/bypass_map state after FlushAll
-		//     and the next CP instance would see a ghost entry, defeating
-		//     INV-B2-013.
-		//  3. Stop the firewall stack (Envoy + CoreDNS).
-		//  4. Flush per-container eBPF state so the next CP starts clean.
+		//     in-flight handlers to return. With the queue closed any
+		//     handler still running hits ErrClosed from its pending
+		//     Submit and returns, so GracefulStop unblocks quickly.
+		//  3. Cancel any bypass timer that was mid-retry when Close
+		//     landed; safe no-op if the queue already drained them.
+		//  4. Stop the firewall stack (Envoy + CoreDNS).
+		//  5. Flush per-container eBPF state so the next CP starts clean.
 		// Errors are aggregated so a broken drain exits non-zero and the
-		// on-failure restart policy legitimately retriggers investigation
-		// rather than silently blessing partial teardown.
-		handler.CancelAllBypassTimers()
+		// on-failure restart policy retriggers investigation rather than
+		// silently blessing partial teardown.
+		_ = actionQueue.Close()
 		grpcServer.GracefulStop()
+		handler.CancelAllBypassTimers()
 		var errs []error
 		if err := stack.Stop(ctx); err != nil {
 			log.Error().Err(err).Msg("drain: firewall stack stop failed")

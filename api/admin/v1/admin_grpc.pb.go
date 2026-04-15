@@ -53,49 +53,54 @@ const (
 // Clawkerd, ...) layer additional handlers onto the same AdminService so
 // the CLI sees one unified surface per CP. Every method is registered for
 // "admin" scope enforcement (INV-B2-009).
+//
+// Response messages are named `Firewall*Result` rather than
+// `Firewall*Response` to match Go's `(Result, error)` convention — the
+// handler returns typed Result structs from queued closures and maps
+// those into the wire messages below.
 type AdminServiceClient interface {
 	// FirewallInit brings the firewall stack (Envoy + CoreDNS) up. BPF
 	// programs are loaded once at CP startup; this RPC is the idempotent
 	// stack-up signal from the CLI. Global — no container_id.
-	FirewallInit(ctx context.Context, in *FirewallInitRequest, opts ...grpc.CallOption) (*FirewallInitResponse, error)
+	FirewallInit(ctx context.Context, in *FirewallInitRequest, opts ...grpc.CallOption) (*FirewallInitResult, error)
 	// FirewallRemove is global teardown — stops Envoy + CoreDNS, detaches
 	// all BPF programs, and flushes all eBPF state plus pending timers.
-	FirewallRemove(ctx context.Context, in *FirewallRemoveRequest, opts ...grpc.CallOption) (*FirewallRemoveResponse, error)
+	FirewallRemove(ctx context.Context, in *FirewallRemoveRequest, opts ...grpc.CallOption) (*FirewallRemoveResult, error)
 	// FirewallEnable enrolls a container into the global container_map
 	// routing. Idempotent. The CP resolves the container's cgroup path
 	// internally via Docker API with drift guard (INV-B2-016) — callers
 	// send only container_id.
-	FirewallEnable(ctx context.Context, in *FirewallEnableRequest, opts ...grpc.CallOption) (*FirewallEnableResponse, error)
+	FirewallEnable(ctx context.Context, in *FirewallEnableRequest, opts ...grpc.CallOption) (*FirewallEnableResult, error)
 	// FirewallDisable removes a container from container_map. BPF links
 	// remain attached so re-enable is cheap. BPF fast path exits to bypass
 	// on lookup miss.
-	FirewallDisable(ctx context.Context, in *FirewallDisableRequest, opts ...grpc.CallOption) (*FirewallDisableResponse, error)
+	FirewallDisable(ctx context.Context, in *FirewallDisableRequest, opts ...grpc.CallOption) (*FirewallDisableResult, error)
 	// FirewallBypass = timed Disable + CP-side dead-man timer that calls
 	// Enable on expiry. Drift guard inherited from the Enable path.
-	FirewallBypass(ctx context.Context, in *FirewallBypassRequest, opts ...grpc.CallOption) (*FirewallBypassResponse, error)
+	FirewallBypass(ctx context.Context, in *FirewallBypassRequest, opts ...grpc.CallOption) (*FirewallBypassResult, error)
 	// FirewallAddRules adds egress rules to the store and hot-reloads the
 	// stack. Synchronous: returns after the stack is healthy again.
-	FirewallAddRules(ctx context.Context, in *FirewallAddRulesRequest, opts ...grpc.CallOption) (*FirewallAddRulesResponse, error)
+	FirewallAddRules(ctx context.Context, in *FirewallAddRulesRequest, opts ...grpc.CallOption) (*FirewallAddRulesResult, error)
 	// FirewallRemoveRules removes egress rules and hot-reloads the stack.
-	FirewallRemoveRules(ctx context.Context, in *FirewallRemoveRulesRequest, opts ...grpc.CallOption) (*FirewallRemoveRulesResponse, error)
+	FirewallRemoveRules(ctx context.Context, in *FirewallRemoveRulesRequest, opts ...grpc.CallOption) (*FirewallRemoveRulesResult, error)
 	// FirewallListRules returns the current normalized/deduplicated rule
 	// set from the store. Read-only.
-	FirewallListRules(ctx context.Context, in *FirewallListRulesRequest, opts ...grpc.CallOption) (*FirewallListRulesResponse, error)
+	FirewallListRules(ctx context.Context, in *FirewallListRulesRequest, opts ...grpc.CallOption) (*FirewallListRulesResult, error)
 	// FirewallReload regenerates configs and restarts Envoy + CoreDNS from
 	// the current rules store state without mutating rules.
-	FirewallReload(ctx context.Context, in *FirewallReloadRequest, opts ...grpc.CallOption) (*FirewallReloadResponse, error)
+	FirewallReload(ctx context.Context, in *FirewallReloadRequest, opts ...grpc.CallOption) (*FirewallReloadResult, error)
 	// FirewallStatus is the firewall-domain health snapshot (stack running,
 	// Envoy/CoreDNS health, rule count, network topology).
-	FirewallStatus(ctx context.Context, in *FirewallStatusRequest, opts ...grpc.CallOption) (*FirewallStatusResponse, error)
+	FirewallStatus(ctx context.Context, in *FirewallStatusRequest, opts ...grpc.CallOption) (*FirewallStatusResult, error)
 	// FirewallRotateCA regenerates the MITM CA + per-domain certs. Restarts
 	// Envoy so the new chain is picked up.
-	FirewallRotateCA(ctx context.Context, in *FirewallRotateCARequest, opts ...grpc.CallOption) (*FirewallRotateCAResponse, error)
+	FirewallRotateCA(ctx context.Context, in *FirewallRotateCARequest, opts ...grpc.CallOption) (*FirewallRotateCAResult, error)
 	// FirewallSyncRoutes atomically replaces the global route_map.
-	FirewallSyncRoutes(ctx context.Context, in *FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*FirewallSyncRoutesResponse, error)
+	FirewallSyncRoutes(ctx context.Context, in *FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*FirewallSyncRoutesResult, error)
 	// FirewallResolveHostname performs a DNS lookup from inside the CP's
 	// network namespace — used to resolve host.docker.internal during
 	// per-container enroll.
-	FirewallResolveHostname(ctx context.Context, in *FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*FirewallResolveHostnameResponse, error)
+	FirewallResolveHostname(ctx context.Context, in *FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*FirewallResolveHostnameResult, error)
 }
 
 type adminServiceClient struct {
@@ -106,9 +111,9 @@ func NewAdminServiceClient(cc grpc.ClientConnInterface) AdminServiceClient {
 	return &adminServiceClient{cc}
 }
 
-func (c *adminServiceClient) FirewallInit(ctx context.Context, in *FirewallInitRequest, opts ...grpc.CallOption) (*FirewallInitResponse, error) {
+func (c *adminServiceClient) FirewallInit(ctx context.Context, in *FirewallInitRequest, opts ...grpc.CallOption) (*FirewallInitResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallInitResponse)
+	out := new(FirewallInitResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallInit_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -116,9 +121,9 @@ func (c *adminServiceClient) FirewallInit(ctx context.Context, in *FirewallInitR
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallRemove(ctx context.Context, in *FirewallRemoveRequest, opts ...grpc.CallOption) (*FirewallRemoveResponse, error) {
+func (c *adminServiceClient) FirewallRemove(ctx context.Context, in *FirewallRemoveRequest, opts ...grpc.CallOption) (*FirewallRemoveResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallRemoveResponse)
+	out := new(FirewallRemoveResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallRemove_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -126,9 +131,9 @@ func (c *adminServiceClient) FirewallRemove(ctx context.Context, in *FirewallRem
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallEnable(ctx context.Context, in *FirewallEnableRequest, opts ...grpc.CallOption) (*FirewallEnableResponse, error) {
+func (c *adminServiceClient) FirewallEnable(ctx context.Context, in *FirewallEnableRequest, opts ...grpc.CallOption) (*FirewallEnableResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallEnableResponse)
+	out := new(FirewallEnableResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallEnable_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -136,9 +141,9 @@ func (c *adminServiceClient) FirewallEnable(ctx context.Context, in *FirewallEna
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallDisable(ctx context.Context, in *FirewallDisableRequest, opts ...grpc.CallOption) (*FirewallDisableResponse, error) {
+func (c *adminServiceClient) FirewallDisable(ctx context.Context, in *FirewallDisableRequest, opts ...grpc.CallOption) (*FirewallDisableResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallDisableResponse)
+	out := new(FirewallDisableResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallDisable_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -146,9 +151,9 @@ func (c *adminServiceClient) FirewallDisable(ctx context.Context, in *FirewallDi
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallBypass(ctx context.Context, in *FirewallBypassRequest, opts ...grpc.CallOption) (*FirewallBypassResponse, error) {
+func (c *adminServiceClient) FirewallBypass(ctx context.Context, in *FirewallBypassRequest, opts ...grpc.CallOption) (*FirewallBypassResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallBypassResponse)
+	out := new(FirewallBypassResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallBypass_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -156,9 +161,9 @@ func (c *adminServiceClient) FirewallBypass(ctx context.Context, in *FirewallByp
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallAddRules(ctx context.Context, in *FirewallAddRulesRequest, opts ...grpc.CallOption) (*FirewallAddRulesResponse, error) {
+func (c *adminServiceClient) FirewallAddRules(ctx context.Context, in *FirewallAddRulesRequest, opts ...grpc.CallOption) (*FirewallAddRulesResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallAddRulesResponse)
+	out := new(FirewallAddRulesResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallAddRules_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -166,9 +171,9 @@ func (c *adminServiceClient) FirewallAddRules(ctx context.Context, in *FirewallA
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallRemoveRules(ctx context.Context, in *FirewallRemoveRulesRequest, opts ...grpc.CallOption) (*FirewallRemoveRulesResponse, error) {
+func (c *adminServiceClient) FirewallRemoveRules(ctx context.Context, in *FirewallRemoveRulesRequest, opts ...grpc.CallOption) (*FirewallRemoveRulesResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallRemoveRulesResponse)
+	out := new(FirewallRemoveRulesResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallRemoveRules_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -176,9 +181,9 @@ func (c *adminServiceClient) FirewallRemoveRules(ctx context.Context, in *Firewa
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallListRules(ctx context.Context, in *FirewallListRulesRequest, opts ...grpc.CallOption) (*FirewallListRulesResponse, error) {
+func (c *adminServiceClient) FirewallListRules(ctx context.Context, in *FirewallListRulesRequest, opts ...grpc.CallOption) (*FirewallListRulesResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallListRulesResponse)
+	out := new(FirewallListRulesResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallListRules_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -186,9 +191,9 @@ func (c *adminServiceClient) FirewallListRules(ctx context.Context, in *Firewall
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallReload(ctx context.Context, in *FirewallReloadRequest, opts ...grpc.CallOption) (*FirewallReloadResponse, error) {
+func (c *adminServiceClient) FirewallReload(ctx context.Context, in *FirewallReloadRequest, opts ...grpc.CallOption) (*FirewallReloadResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallReloadResponse)
+	out := new(FirewallReloadResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallReload_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -196,9 +201,9 @@ func (c *adminServiceClient) FirewallReload(ctx context.Context, in *FirewallRel
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallStatus(ctx context.Context, in *FirewallStatusRequest, opts ...grpc.CallOption) (*FirewallStatusResponse, error) {
+func (c *adminServiceClient) FirewallStatus(ctx context.Context, in *FirewallStatusRequest, opts ...grpc.CallOption) (*FirewallStatusResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallStatusResponse)
+	out := new(FirewallStatusResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallStatus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -206,9 +211,9 @@ func (c *adminServiceClient) FirewallStatus(ctx context.Context, in *FirewallSta
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallRotateCA(ctx context.Context, in *FirewallRotateCARequest, opts ...grpc.CallOption) (*FirewallRotateCAResponse, error) {
+func (c *adminServiceClient) FirewallRotateCA(ctx context.Context, in *FirewallRotateCARequest, opts ...grpc.CallOption) (*FirewallRotateCAResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallRotateCAResponse)
+	out := new(FirewallRotateCAResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallRotateCA_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -216,9 +221,9 @@ func (c *adminServiceClient) FirewallRotateCA(ctx context.Context, in *FirewallR
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallSyncRoutes(ctx context.Context, in *FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*FirewallSyncRoutesResponse, error) {
+func (c *adminServiceClient) FirewallSyncRoutes(ctx context.Context, in *FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*FirewallSyncRoutesResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallSyncRoutesResponse)
+	out := new(FirewallSyncRoutesResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallSyncRoutes_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -226,9 +231,9 @@ func (c *adminServiceClient) FirewallSyncRoutes(ctx context.Context, in *Firewal
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallResolveHostname(ctx context.Context, in *FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*FirewallResolveHostnameResponse, error) {
+func (c *adminServiceClient) FirewallResolveHostname(ctx context.Context, in *FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*FirewallResolveHostnameResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallResolveHostnameResponse)
+	out := new(FirewallResolveHostnameResult)
 	err := c.cc.Invoke(ctx, AdminService_FirewallResolveHostname_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -255,49 +260,54 @@ func (c *adminServiceClient) FirewallResolveHostname(ctx context.Context, in *Fi
 // Clawkerd, ...) layer additional handlers onto the same AdminService so
 // the CLI sees one unified surface per CP. Every method is registered for
 // "admin" scope enforcement (INV-B2-009).
+//
+// Response messages are named `Firewall*Result` rather than
+// `Firewall*Response` to match Go's `(Result, error)` convention — the
+// handler returns typed Result structs from queued closures and maps
+// those into the wire messages below.
 type AdminServiceServer interface {
 	// FirewallInit brings the firewall stack (Envoy + CoreDNS) up. BPF
 	// programs are loaded once at CP startup; this RPC is the idempotent
 	// stack-up signal from the CLI. Global — no container_id.
-	FirewallInit(context.Context, *FirewallInitRequest) (*FirewallInitResponse, error)
+	FirewallInit(context.Context, *FirewallInitRequest) (*FirewallInitResult, error)
 	// FirewallRemove is global teardown — stops Envoy + CoreDNS, detaches
 	// all BPF programs, and flushes all eBPF state plus pending timers.
-	FirewallRemove(context.Context, *FirewallRemoveRequest) (*FirewallRemoveResponse, error)
+	FirewallRemove(context.Context, *FirewallRemoveRequest) (*FirewallRemoveResult, error)
 	// FirewallEnable enrolls a container into the global container_map
 	// routing. Idempotent. The CP resolves the container's cgroup path
 	// internally via Docker API with drift guard (INV-B2-016) — callers
 	// send only container_id.
-	FirewallEnable(context.Context, *FirewallEnableRequest) (*FirewallEnableResponse, error)
+	FirewallEnable(context.Context, *FirewallEnableRequest) (*FirewallEnableResult, error)
 	// FirewallDisable removes a container from container_map. BPF links
 	// remain attached so re-enable is cheap. BPF fast path exits to bypass
 	// on lookup miss.
-	FirewallDisable(context.Context, *FirewallDisableRequest) (*FirewallDisableResponse, error)
+	FirewallDisable(context.Context, *FirewallDisableRequest) (*FirewallDisableResult, error)
 	// FirewallBypass = timed Disable + CP-side dead-man timer that calls
 	// Enable on expiry. Drift guard inherited from the Enable path.
-	FirewallBypass(context.Context, *FirewallBypassRequest) (*FirewallBypassResponse, error)
+	FirewallBypass(context.Context, *FirewallBypassRequest) (*FirewallBypassResult, error)
 	// FirewallAddRules adds egress rules to the store and hot-reloads the
 	// stack. Synchronous: returns after the stack is healthy again.
-	FirewallAddRules(context.Context, *FirewallAddRulesRequest) (*FirewallAddRulesResponse, error)
+	FirewallAddRules(context.Context, *FirewallAddRulesRequest) (*FirewallAddRulesResult, error)
 	// FirewallRemoveRules removes egress rules and hot-reloads the stack.
-	FirewallRemoveRules(context.Context, *FirewallRemoveRulesRequest) (*FirewallRemoveRulesResponse, error)
+	FirewallRemoveRules(context.Context, *FirewallRemoveRulesRequest) (*FirewallRemoveRulesResult, error)
 	// FirewallListRules returns the current normalized/deduplicated rule
 	// set from the store. Read-only.
-	FirewallListRules(context.Context, *FirewallListRulesRequest) (*FirewallListRulesResponse, error)
+	FirewallListRules(context.Context, *FirewallListRulesRequest) (*FirewallListRulesResult, error)
 	// FirewallReload regenerates configs and restarts Envoy + CoreDNS from
 	// the current rules store state without mutating rules.
-	FirewallReload(context.Context, *FirewallReloadRequest) (*FirewallReloadResponse, error)
+	FirewallReload(context.Context, *FirewallReloadRequest) (*FirewallReloadResult, error)
 	// FirewallStatus is the firewall-domain health snapshot (stack running,
 	// Envoy/CoreDNS health, rule count, network topology).
-	FirewallStatus(context.Context, *FirewallStatusRequest) (*FirewallStatusResponse, error)
+	FirewallStatus(context.Context, *FirewallStatusRequest) (*FirewallStatusResult, error)
 	// FirewallRotateCA regenerates the MITM CA + per-domain certs. Restarts
 	// Envoy so the new chain is picked up.
-	FirewallRotateCA(context.Context, *FirewallRotateCARequest) (*FirewallRotateCAResponse, error)
+	FirewallRotateCA(context.Context, *FirewallRotateCARequest) (*FirewallRotateCAResult, error)
 	// FirewallSyncRoutes atomically replaces the global route_map.
-	FirewallSyncRoutes(context.Context, *FirewallSyncRoutesRequest) (*FirewallSyncRoutesResponse, error)
+	FirewallSyncRoutes(context.Context, *FirewallSyncRoutesRequest) (*FirewallSyncRoutesResult, error)
 	// FirewallResolveHostname performs a DNS lookup from inside the CP's
 	// network namespace — used to resolve host.docker.internal during
 	// per-container enroll.
-	FirewallResolveHostname(context.Context, *FirewallResolveHostnameRequest) (*FirewallResolveHostnameResponse, error)
+	FirewallResolveHostname(context.Context, *FirewallResolveHostnameRequest) (*FirewallResolveHostnameResult, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -308,43 +318,43 @@ type AdminServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAdminServiceServer struct{}
 
-func (UnimplementedAdminServiceServer) FirewallInit(context.Context, *FirewallInitRequest) (*FirewallInitResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallInit(context.Context, *FirewallInitRequest) (*FirewallInitResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallInit not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallRemove(context.Context, *FirewallRemoveRequest) (*FirewallRemoveResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallRemove(context.Context, *FirewallRemoveRequest) (*FirewallRemoveResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallRemove not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallEnable(context.Context, *FirewallEnableRequest) (*FirewallEnableResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallEnable(context.Context, *FirewallEnableRequest) (*FirewallEnableResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallEnable not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallDisable(context.Context, *FirewallDisableRequest) (*FirewallDisableResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallDisable(context.Context, *FirewallDisableRequest) (*FirewallDisableResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallDisable not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallBypass(context.Context, *FirewallBypassRequest) (*FirewallBypassResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallBypass(context.Context, *FirewallBypassRequest) (*FirewallBypassResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallBypass not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallAddRules(context.Context, *FirewallAddRulesRequest) (*FirewallAddRulesResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallAddRules(context.Context, *FirewallAddRulesRequest) (*FirewallAddRulesResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallAddRules not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallRemoveRules(context.Context, *FirewallRemoveRulesRequest) (*FirewallRemoveRulesResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallRemoveRules(context.Context, *FirewallRemoveRulesRequest) (*FirewallRemoveRulesResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallRemoveRules not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallListRules(context.Context, *FirewallListRulesRequest) (*FirewallListRulesResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallListRules(context.Context, *FirewallListRulesRequest) (*FirewallListRulesResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallListRules not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallReload(context.Context, *FirewallReloadRequest) (*FirewallReloadResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallReload(context.Context, *FirewallReloadRequest) (*FirewallReloadResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallReload not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallStatus(context.Context, *FirewallStatusRequest) (*FirewallStatusResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallStatus(context.Context, *FirewallStatusRequest) (*FirewallStatusResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallStatus not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallRotateCA(context.Context, *FirewallRotateCARequest) (*FirewallRotateCAResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallRotateCA(context.Context, *FirewallRotateCARequest) (*FirewallRotateCAResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallRotateCA not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallSyncRoutes(context.Context, *FirewallSyncRoutesRequest) (*FirewallSyncRoutesResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallSyncRoutes(context.Context, *FirewallSyncRoutesRequest) (*FirewallSyncRoutesResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallSyncRoutes not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallResolveHostname(context.Context, *FirewallResolveHostnameRequest) (*FirewallResolveHostnameResponse, error) {
+func (UnimplementedAdminServiceServer) FirewallResolveHostname(context.Context, *FirewallResolveHostnameRequest) (*FirewallResolveHostnameResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallResolveHostname not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}

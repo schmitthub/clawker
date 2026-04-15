@@ -69,7 +69,7 @@ go.opentelemetry.io/otel/trace                                                 A
 go.opentelemetry.io/proto/otlp                                                 Apache-2.0
 go.yaml.in/yaml/v2                                                             Apache-2.0
 google.golang.org/genproto/googleapis/api/httpbody                             Apache-2.0
-google.golang.org/genproto/googleapis/rpc/status                               Apache-2.0
+google.golang.org/genproto/googleapis/rpc                                      Apache-2.0
 google.golang.org/grpc                                                         Apache-2.0
 
 ================================================================================

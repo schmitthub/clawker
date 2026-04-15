@@ -76,11 +76,23 @@ type HandlerDeps struct {
     Cfg        config.Config          // optional — read for rule defaults, CPIPLastOctet, etc.
     Resolver   ContainerResolver      // required — per-container RPCs
     Log        *logger.Logger         // optional — defaults to Nop
+    Queue      *ActionQueue           // required — every RPC submits through it
     CertDirFn  func() (string, error) // optional — certs path for RotateCA
 }
 
-func NewHandler(deps HandlerDeps) *Handler  // panics on missing EBPF or Resolver
+func NewHandler(deps HandlerDeps) *Handler  // panics on missing EBPF, Resolver, or Queue
 ```
+
+The `Queue` is a single-goroutine FIFO worker (see `queue.go`) that
+serializes all 13 firewall RPCs so rapid-fire rule mutations coalesce
+into one stack restart instead of colliding mid-restart. Rule-CRUD,
+Reload, RotateCA, and SyncRoutes submit `reconcileStackClosure`
+(coalescing kind `ActionReconcile`); per-container RPCs submit their
+own non-coalescing closures under `ActionEnable` / `ActionDisable` /
+`ActionBypass`; reads run under `ActionRead`. Submit is close-safe:
+post-`Close` submissions receive `ErrClosed` via a pre-closed reply
+channel, which the Handler translates to `ErrQueueClosed` +
+`codes.Unavailable` for CLI callers.
 
 ### `Stack`
 

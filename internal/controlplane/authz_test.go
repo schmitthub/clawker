@@ -36,10 +36,13 @@ func newTestServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfMgr
 		grpc.ChainStreamInterceptor(interceptor.StreamInterceptor()),
 	)
 
+	queue := cpfw.NewActionQueue(log)
+	t.Cleanup(func() { _ = queue.Close() })
 	handler := cpfw.NewHandler(cpfw.HandlerDeps{
 		EBPF:     ebpfMgr,
 		Resolver: nopContainerResolver,
 		Log:      log,
+		Queue:    queue,
 	})
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
@@ -173,10 +176,13 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
 	)
+	queue := cpfw.NewActionQueue(log)
+	t.Cleanup(func() { _ = queue.Close() })
 	handler := cpfw.NewHandler(cpfw.HandlerDeps{
 		EBPF:     noopEBPF(),
 		Resolver: nopContainerResolver,
 		Log:      log,
+		Queue:    queue,
 	})
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
@@ -229,43 +235,21 @@ func TestAuthInterceptor_MalformedAuthHeader_Denied(t *testing.T) {
 }
 
 // --- Handler tests (auth passes, exercises handler logic) ---
+//
+// The old FirewallSyncRoutes tests asserted "caller-supplied routes are
+// forwarded to ebpf.SyncRoutes verbatim". That semantic is gone — the
+// RPC now goes through the queue and the closure rebuilds routes from
+// the rules store (see internal/controlplane/firewall.FirewallSyncRoutes).
+// Route mapping coverage moved to the firewall handler test package
+// where a store can be wired; this file retains only the auth passes.
 
-func TestAdminHandler_SyncRoutes(t *testing.T) {
+func TestAdminHandler_SyncRoutes_AuthPasses(t *testing.T) {
 	ebpfMgr := noopEBPF()
 	client := newTestServer(t, allowAllIntrospector(), ebpfMgr)
 
 	ctx := withBearer(context.Background(), "admin-token")
-	resp, err := client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{
-		Routes: []*adminv1.Route{
-			{DomainHash: 12345, DstPort: 443, EnvoyPort: 10000},
-			{DomainHash: 67890, DstPort: 80, EnvoyPort: 10000},
-		},
-	})
+	_, err := client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
 	require.NoError(t, err)
-	assert.Equal(t, uint32(2), resp.GetApplied())
-
-	// Verify proto→domain field mapping — the real bug surface here.
-	calls := ebpfMgr.SyncRoutesCalls()
-	require.Len(t, calls, 1)
-	assert.Equal(t, []ebpf.Route{
-		{DomainHash: 12345, DstPort: 443, EnvoyPort: 10000},
-		{DomainHash: 67890, DstPort: 80, EnvoyPort: 10000},
-	}, calls[0].Routes)
-}
-
-func TestAdminHandler_SyncRoutes_EBPFError(t *testing.T) {
-	ebpfMgr := noopEBPF()
-	ebpfMgr.SyncRoutesFunc = func(_ []ebpf.Route) error {
-		return fmt.Errorf("map full")
-	}
-	client := newTestServer(t, allowAllIntrospector(), ebpfMgr)
-
-	ctx := withBearer(context.Background(), "admin-token")
-	_, err := client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{
-		Routes: []*adminv1.Route{{DomainHash: 1, DstPort: 443, EnvoyPort: 10000}},
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
 // --- Coverage test ---

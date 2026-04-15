@@ -108,11 +108,11 @@ func TestRemoveCompletion_DeduplicatesDomains(t *testing.T) {
 func mockAdminFunc(rules []*adminv1.EgressRule, listErr error) func(context.Context) (adminv1.AdminServiceClient, error) {
 	return func(_ context.Context) (adminv1.AdminServiceClient, error) {
 		return &cpmocks.AdminServiceClientMock{
-			FirewallListRulesFunc: func(_ context.Context, _ *adminv1.FirewallListRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallListRulesResponse, error) {
+			FirewallListRulesFunc: func(_ context.Context, _ *adminv1.FirewallListRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallListRulesResult, error) {
 				if listErr != nil {
 					return nil, listErr
 				}
-				return &adminv1.FirewallListRulesResponse{Rules: rules}, nil
+				return &adminv1.FirewallListRulesResult{Rules: rules}, nil
 			},
 		}, nil
 	}

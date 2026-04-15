@@ -125,30 +125,46 @@ func (s *Stack) Stop(ctx context.Context) error {
 // this after rule mutations land in the store. If the stack is not
 // currently running, Reload does nothing — the next EnsureRunning call
 // will pick up the fresh configs.
+//
+// Step-level failures are wrapped with their typed sentinel
+// (ErrConfigRegen, ErrStackProbe, ErrEnvoyRestart, ErrCoreDNSRestart,
+// ErrStackUnhealthy) and combined via errors.Join so the Handler's RPC
+// wrapper (toStatus) can attach one errdetails.ErrorInfo per failed
+// step. ErrConfigRegen short-circuits the rest — restarting against
+// stale configs would just thrash. Envoy/CoreDNS restart failures are
+// collected independently; WaitForHealthy runs only when both restarts
+// succeeded (otherwise the primary signal is the restart failure, not
+// the health probe's timeout).
 func (s *Stack) Reload(ctx context.Context) error {
 	if _, err := s.ensureConfigs(); err != nil {
-		return fmt.Errorf("firewall stack reload: %w", err)
+		return fmt.Errorf("%w: %v", ErrConfigRegen, err)
 	}
 
 	envoyRunning, err := s.isRunning(ctx, envoyContainerName)
 	if err != nil {
-		return fmt.Errorf("firewall stack reload: %w", err)
+		return fmt.Errorf("%w: envoy: %v", ErrStackProbe, err)
 	}
 	corednsRunning, err := s.isRunning(ctx, corednsContainerName)
 	if err != nil {
-		return fmt.Errorf("firewall stack reload: %w", err)
+		return fmt.Errorf("%w: coredns: %v", ErrStackProbe, err)
 	}
 	if !envoyRunning || !corednsRunning {
 		return nil
 	}
 
+	var errs []error
 	if err := s.restart(ctx, envoyContainerName); err != nil {
-		return fmt.Errorf("firewall stack reload: %w", err)
+		errs = append(errs, fmt.Errorf("%w: %v", ErrEnvoyRestart, err))
 	}
 	if err := s.restart(ctx, corednsContainerName); err != nil {
-		return fmt.Errorf("firewall stack reload: %w", err)
+		errs = append(errs, fmt.Errorf("%w: %v", ErrCoreDNSRestart, err))
 	}
-	return s.WaitForHealthy(ctx)
+	if len(errs) == 0 {
+		if err := s.WaitForHealthy(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("%w: %v", ErrStackUnhealthy, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // WaitForHealthy polls Envoy and CoreDNS health endpoints until both
