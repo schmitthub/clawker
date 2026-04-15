@@ -46,7 +46,7 @@ func TestContainerSpecs_FirewallDataMountsAreReadOnly(t *testing.T) {
 	}
 
 	t.Run("envoy", func(t *testing.T) {
-		spec := s.envoyContainerSpec(netInfo, dataDir)
+		spec := s.envoyContainerSpec(netInfo)
 		firewallMounts := 0
 		for _, m := range spec.mounts {
 			if !isFirewallData(m.Source) {
@@ -62,12 +62,12 @@ func TestContainerSpecs_FirewallDataMountsAreReadOnly(t *testing.T) {
 		// firewall-data mounts are present, the invariant is
 		// trivially satisfied — force the test to fail instead.
 		if firewallMounts < 2 {
-			t.Errorf("envoy spec has %d firewall-data mounts, want at least 2 (envoy.yaml + %s)", firewallMounts, certDir)
+			t.Errorf("envoy spec has %d firewall-data mounts, want at least 2 (envoy.yaml + %s)\n Got: %+v", firewallMounts, certDir, spec.mounts)
 		}
 	})
 
 	t.Run("coredns", func(t *testing.T) {
-		spec := s.corednsContainerSpec(netInfo, dataDir)
+		spec := s.corednsContainerSpec(netInfo)
 		firewallMounts := 0
 		for _, m := range spec.mounts {
 			if !isFirewallData(m.Source) {
@@ -79,7 +79,7 @@ func TestContainerSpecs_FirewallDataMountsAreReadOnly(t *testing.T) {
 			}
 		}
 		if firewallMounts < 1 {
-			t.Errorf("coredns spec has %d firewall-data mounts, want at least 1 (Corefile)", firewallMounts)
+			t.Errorf("coredns spec has %d firewall-data mounts, want at least 1 (Corefile)\n Got: %+v", firewallMounts, spec.mounts)
 		}
 	})
 }

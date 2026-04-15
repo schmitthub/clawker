@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +23,7 @@ import (
 	mobyclient "github.com/moby/moby/client"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -83,11 +83,6 @@ func (s *Stack) EnsureRunning(ctx context.Context) error {
 		return err
 	}
 
-	dataDir, err := s.ensureConfigs()
-	if err != nil {
-		return err
-	}
-
 	if err := s.ensureCorednsImage(ctx); err != nil {
 		return fmt.Errorf("firewall stack: %w", err)
 	}
@@ -95,10 +90,10 @@ func (s *Stack) EnsureRunning(ctx context.Context) error {
 		return fmt.Errorf("firewall stack: %w", err)
 	}
 
-	if err := s.ensureContainer(ctx, envoyContainerName, s.envoyContainerSpec(netInfo, dataDir)); err != nil {
+	if err := s.ensureContainer(ctx, envoyContainerName, s.envoyContainerSpec(netInfo)); err != nil {
 		return fmt.Errorf("firewall stack: envoy: %w", err)
 	}
-	if err := s.ensureContainer(ctx, corednsContainerName, s.corednsContainerSpec(netInfo, dataDir)); err != nil {
+	if err := s.ensureContainer(ctx, corednsContainerName, s.corednsContainerSpec(netInfo)); err != nil {
 		return fmt.Errorf("firewall stack: coredns: %w", err)
 	}
 
@@ -365,7 +360,10 @@ func (s *Stack) ensureConfigs() (string, error) {
 	for _, w := range warnings {
 		s.log.Warn().Str("component", "envoy").Msg(w)
 	}
-	envoyPath := filepath.Join(dataDir, "envoy.yaml")
+	envoyPath, err := consts.EnvoyConfigPath()
+	if err != nil {
+		return "", fmt.Errorf("resolving envoy config path: %w", err)
+	}
 	if err := os.WriteFile(envoyPath, envoyYAML, 0o644); err != nil {
 		return "", fmt.Errorf("writing envoy.yaml: %w", err)
 	}
@@ -374,7 +372,10 @@ func (s *Stack) ensureConfigs() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("generating Corefile: %w", err)
 	}
-	corefilePath := filepath.Join(dataDir, "Corefile")
+	corefilePath, err := consts.CorefilePath()
+	if err != nil {
+		return "", fmt.Errorf("resolving Corefile path: %w", err)
+	}
 	if err := os.WriteFile(corefilePath, corefile, 0o644); err != nil {
 		return "", fmt.Errorf("writing Corefile: %w", err)
 	}
@@ -404,8 +405,15 @@ type containerSpec struct {
 	capAdd       []string
 }
 
-func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo, dataDir string) containerSpec {
-	certDir, _ := s.cfg.FirewallCertSubdir() // validated in ensureConfigs
+func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
+	certDir, err := consts.FirewallCertSubdir()
+	if err != nil {
+		s.log.Error().Err(err).Msg("failed to get firewall cert dir")
+	}
+	envoyConfig, err := consts.EnvoyConfigPath()
+	if err != nil {
+		s.log.Error().Err(err).Msg("failed to get envoy config path")
+	}
 	return containerSpec{
 		image:     envoyImage,
 		staticIP:  netInfo.EnvoyIP,
@@ -413,7 +421,7 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo, dataDir string) contain
 		mounts: []mount.Mount{
 			{
 				Type:     mount.TypeBind,
-				Source:   filepath.Join(dataDir, "envoy.yaml"),
+				Source:   envoyConfig,
 				Target:   "/etc/envoy/envoy.yaml",
 				ReadOnly: true,
 			},
@@ -435,8 +443,12 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo, dataDir string) contain
 	}
 }
 
-func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo, dataDir string) containerSpec {
-	healthPort := s.cfg.CoreDNSHealthHostPort()
+func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
+	healthPort := consts.CoreDNSHealthHostPort
+	corefilePath, err := consts.CorefilePath()
+	if err != nil {
+		s.log.Error().Err(err).Msg("failed to get Corefile path")
+	}
 	return containerSpec{
 		image:     corednsImageTag,
 		staticIP:  netInfo.CoreDNSIP,
@@ -445,7 +457,7 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo, dataDir string) conta
 		mounts: []mount.Mount{
 			{
 				Type:     mount.TypeBind,
-				Source:   filepath.Join(dataDir, "Corefile"),
+				Source:   corefilePath,
 				Target:   "/etc/coredns/Corefile",
 				ReadOnly: true,
 			},
