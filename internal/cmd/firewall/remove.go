@@ -96,6 +96,10 @@ func domainCompletions(adminFn func(context.Context) (adminv1.AdminServiceClient
 func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	ios := opts.IOStreams
 
+	if err := validatePortFlag(opts.Port); err != nil {
+		return err
+	}
+
 	client, err := opts.AdminClient(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to control plane: %w", err)

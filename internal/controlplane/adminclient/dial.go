@@ -37,12 +37,20 @@ import (
 //  3. Create a tokenSource that auto-refreshes via Hydra /oauth2/token
 //  4. Dial gRPC with mTLS + auto-refreshing bearer token in metadata
 //
-// Callers may pass additional grpc.DialOption values (e.g. keepalive).
-// Per grpc-go semantics a later option of the same kind overrides the
-// earlier one, so caller opts are applied FIRST and the auth/TLS baseline
-// LAST — the baseline is non-overridable by caller intent. Chained
-// unary interceptors go through grpc.WithChainUnaryInterceptor (or pass
-// as a caller opt that grpc-go composes with the baseline).
+// Callers may pass additional grpc.DialOption values (e.g. keepalive,
+// observability interceptors via grpc.WithChainUnaryInterceptor). The
+// auth/TLS baseline is appended last:
+//
+//   - WithTransportCredentials: single-slot, last-wins — baseline mTLS
+//     cannot be disabled by caller intent.
+//   - Auth bearer-token interceptor: registered via
+//     grpc.WithChainUnaryInterceptor so it composes additively with
+//     caller chain interceptors; a caller's own grpc.WithUnaryInterceptor
+//     (if any) is prepended by grpc-go as the outermost wrapper.
+//
+// Do NOT pass grpc.WithUnaryInterceptor — grpc-go stores it in a single
+// field with last-wins semantics, so your interceptor will be silently
+// dropped (baseline auth wins). Use grpc.WithChainUnaryInterceptor.
 func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
 	signingKey, err := auth.LoadSigningKey()
 	if err != nil {
@@ -89,7 +97,11 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	dialOpts := append([]grpc.DialOption{}, opts...)
 	dialOpts = append(dialOpts,
 		grpc.WithTransportCredentials(credentials.NewTLS(grpcTLSCfg)),
-		grpc.WithUnaryInterceptor(ts.unaryInterceptor()),
+		// WithChainUnaryInterceptor is additive — caller chain
+		// interceptors (tracing, metrics, logging) compose cleanly and
+		// auth always runs. See doc comment above for WithUnaryInterceptor
+		// single-slot caveat.
+		grpc.WithChainUnaryInterceptor(ts.unaryInterceptor()),
 	)
 	conn, err := grpc.NewClient(target, dialOpts...)
 	if err != nil {

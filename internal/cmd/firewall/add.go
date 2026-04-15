@@ -58,6 +58,10 @@ via hot-reload — no container restart required.`,
 func addRun(ctx context.Context, opts *AddOptions) error {
 	ios := opts.IOStreams
 
+	if err := validatePortFlag(opts.Port); err != nil {
+		return err
+	}
+
 	client, err := opts.AdminClient(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to control plane: %w", err)
