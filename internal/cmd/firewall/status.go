@@ -89,9 +89,12 @@ func statusRun(ctx context.Context, opts *StatusOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	resp, err := adminClient.FirewallStatus(ctx, &adminv1.FirewallStatusRequest{})
+	resp, err := callWithSpinner(ctx, opts.IOStreams, "Fetching firewall status...",
+		func(rpcCtx context.Context) (*adminv1.FirewallStatusResult, error) {
+			return adminClient.FirewallStatus(rpcCtx, &adminv1.FirewallStatusRequest{})
+		})
 	if err != nil {
-		return fmt.Errorf("getting firewall status: %w", err)
+		return wrapRPCError("getting firewall status", err)
 	}
 
 	row = statusRow{

@@ -61,7 +61,7 @@ All RPCs require the uniform `admin` scope (INV-B2-009). Per-method diversificat
 7. Load eBPF programs (`ebpfMgr.Load()`); run defensive startup cleanup (`ebpfMgr.CleanupStaleBypass()` — INV-B2-013)
 8. Start gRPC AdminService with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor
 9. Mark ready (`orchestrator.SetReady()`), serve `/healthz` on HealthPort
-9b. Start `controlplane.AgentWatcher` goroutine — polls Docker for agents with `purpose=agent`; on drain-to-zero invokes callback that cancels bypass timers → `grpcServer.GracefulStop()` → `firewall.Stack.Stop()` → `ebpfMgr.FlushAll()` (INV-B2-007), then the outer shutdown path tears the CP container down (exit code 0 — the `on-failure` restart policy does NOT retrigger)
+9b. Start `controlplane.AgentWatcher` goroutine — polls Docker for agents with `purpose=agent`; on drain-to-zero invokes callback: `actionQueue.Close()` (drain queued work, reject new Submits with `ErrClosed`) → `grpcServer.GracefulStop()` (let in-flight RPCs return — any blocked on a Submit now observes `ErrClosed`) → `handler.CancelAllBypassTimers()` → `firewall.Stack.Stop()` → `ebpfMgr.FlushAll()` (INV-B2-007). Stack stop + eBPF flush run post-Close directly from the drain callback because the queue is dead; aggregated errors propagate back to `Run` for non-zero exit. Then the outer shutdown path tears the CP container down (exit code 0 — the `on-failure` restart policy does NOT retrigger)
 
 ## Aggregate Health (`startup.go`)
 

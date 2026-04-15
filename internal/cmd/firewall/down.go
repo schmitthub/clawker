@@ -77,8 +77,11 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	if _, err := adminClient.FirewallRemove(ctx, &adminv1.FirewallRemoveRequest{}); err != nil {
-		return fmt.Errorf("stopping firewall: %w", err)
+	if _, err := callWithSpinner(ctx, ios, "Stopping firewall stack...",
+		func(rpcCtx context.Context) (*adminv1.FirewallRemoveResult, error) {
+			return adminClient.FirewallRemove(rpcCtx, &adminv1.FirewallRemoveRequest{})
+		}); err != nil {
+		return wrapRPCError("stopping firewall", err)
 	}
 
 	fmt.Fprintf(ios.Out, "%s Firewall stopped\n", cs.SuccessIcon())

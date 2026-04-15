@@ -52,9 +52,12 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	resp, err := client.FirewallInit(ctx, &adminv1.FirewallInitRequest{})
+	resp, err := callWithSpinner(ctx, ios, "Starting firewall stack...",
+		func(rpcCtx context.Context) (*adminv1.FirewallInitResult, error) {
+			return client.FirewallInit(rpcCtx, &adminv1.FirewallInitRequest{})
+		})
 	if err != nil {
-		return fmt.Errorf("starting firewall: %w", err)
+		return wrapRPCError("starting firewall", err)
 	}
 
 	fmt.Fprintf(ios.Out, "%s Firewall stack up\n", cs.SuccessIcon())

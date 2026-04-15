@@ -364,10 +364,7 @@ func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnabl
 		return EnableResult{}, nil
 	})
 	if err != nil {
-		if errors.Is(err, ErrQueueClosed) {
-			return nil, toStatus(err)
-		}
-		return nil, status.Errorf(codes.Internal, "enable: %v", err)
+		return nil, toStatus(err)
 	}
 
 	h.log.Info().
@@ -417,10 +414,7 @@ func (h *Handler) FirewallDisable(ctx context.Context, req *adminv1.FirewallDisa
 		return DisableResult{}, nil
 	})
 	if err != nil {
-		if errors.Is(err, ErrQueueClosed) {
-			return nil, toStatus(err)
-		}
-		return nil, status.Errorf(codes.Internal, "disable: %v", err)
+		return nil, toStatus(err)
 	}
 
 	h.log.Info().
@@ -466,10 +460,7 @@ func (h *Handler) FirewallBypass(ctx context.Context, req *adminv1.FirewallBypas
 		return BypassResult{}, nil
 	})
 	if err != nil {
-		if errors.Is(err, ErrQueueClosed) {
-			return nil, toStatus(err)
-		}
-		return nil, status.Errorf(codes.Internal, "bypass: %v", err)
+		return nil, toStatus(err)
 	}
 
 	// Seed storedCgroupID so a Disable issued mid-bypass on a now-gone

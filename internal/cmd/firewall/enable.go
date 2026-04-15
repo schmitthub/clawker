@@ -77,8 +77,11 @@ func enableRun(ctx context.Context, opts *EnableOptions) error {
 
 	// CP resolves container_id → cgroup_path internally via Docker +
 	// INV-B2-016 drift guard; the CLI only carries the container ref.
-	if _, err := client.FirewallEnable(ctx, &adminv1.FirewallEnableRequest{ContainerId: containerName}); err != nil {
-		return fmt.Errorf("enabling firewall for %s: %w", opts.Agent, err)
+	if _, err := callWithSpinner(ctx, ios, fmt.Sprintf("Enabling firewall for %s...", opts.Agent),
+		func(rpcCtx context.Context) (*adminv1.FirewallEnableResult, error) {
+			return client.FirewallEnable(rpcCtx, &adminv1.FirewallEnableRequest{ContainerId: containerName})
+		}); err != nil {
+		return wrapRPCError(fmt.Sprintf("enabling firewall for %s", opts.Agent), err)
 	}
 
 	fmt.Fprintf(ios.Out, "%s Firewall enabled for agent %s\n", cs.SuccessIcon(), opts.Agent)

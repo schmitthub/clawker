@@ -152,10 +152,13 @@ func (q *ActionQueue) Submit(kind ActionKind, fn ActionFunc) <-chan ActionResult
 // Close stops accepting new submissions, waits for every submission
 // accepted before Close returned to run to completion, and cancels the
 // worker context so in-flight and drained closures can observe shutdown.
-// Drained closures execute with an already-cancelled context; ctx-aware
-// closures that short-circuit on cancellation will deliver ctx.Err() to
-// their submitters. Idempotent. Always returns nil — the error return
-// matches io.Closer so callers can treat the queue as a Closer.
+// Cancellation is published BEFORE the broadcast that wakes the worker
+// so any item the worker subsequently pops enters execute() with an
+// already-cancelled ctx — ctx-aware closures that short-circuit on
+// cancellation will deliver ctx.Err() to their submitters instead of
+// mutating stack/eBPF state mid-shutdown. Idempotent. Always returns
+// nil — the error return matches io.Closer so callers can treat the
+// queue as a Closer.
 func (q *ActionQueue) Close() error {
 	q.mu.Lock()
 	if q.closed {
@@ -164,9 +167,9 @@ func (q *ActionQueue) Close() error {
 		return nil
 	}
 	q.closed = true
+	q.cancel()
 	q.cond.Broadcast()
 	q.mu.Unlock()
-	q.cancel()
 	<-q.done
 	return nil
 }

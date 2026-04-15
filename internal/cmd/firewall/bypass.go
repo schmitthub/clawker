@@ -121,19 +121,25 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 
 	// --stop: re-enable enforcement immediately by calling Enable.
 	if opts.Stop {
-		if _, err := client.FirewallEnable(ctx, &adminv1.FirewallEnableRequest{ContainerId: containerName}); err != nil {
-			return fmt.Errorf("stopping bypass for %s: %w", opts.Agent, err)
+		if _, err := callWithSpinner(ctx, ios, fmt.Sprintf("Stopping bypass for %s...", opts.Agent),
+			func(rpcCtx context.Context) (*adminv1.FirewallEnableResult, error) {
+				return client.FirewallEnable(rpcCtx, &adminv1.FirewallEnableRequest{ContainerId: containerName})
+			}); err != nil {
+			return wrapRPCError(fmt.Sprintf("stopping bypass for %s", opts.Agent), err)
 		}
 		fmt.Fprintf(ios.Out, "%s Bypass stopped for agent %s\n", cs.SuccessIcon(), opts.Agent)
 		return nil
 	}
 
 	// Start bypass: set BPF bypass flag + server-side dead-man timer.
-	if _, err := client.FirewallBypass(ctx, &adminv1.FirewallBypassRequest{
-		ContainerId:    containerName,
-		TimeoutSeconds: uint32(opts.Duration.Seconds()),
-	}); err != nil {
-		return fmt.Errorf("starting bypass for %s: %w", opts.Agent, err)
+	if _, err := callWithSpinner(ctx, ios, fmt.Sprintf("Starting bypass for %s...", opts.Agent),
+		func(rpcCtx context.Context) (*adminv1.FirewallBypassResult, error) {
+			return client.FirewallBypass(rpcCtx, &adminv1.FirewallBypassRequest{
+				ContainerId:    containerName,
+				TimeoutSeconds: uint32(opts.Duration.Seconds()),
+			})
+		}); err != nil {
+		return wrapRPCError(fmt.Sprintf("starting bypass for %s", opts.Agent), err)
 	}
 
 	// Non-interactive: fire-and-forget. Server-side dead-man timer handles
@@ -197,7 +203,7 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 			return fmt.Errorf("stopping bypass for %s: reconnecting to control plane: %w", opts.Agent, err)
 		}
 		if _, err := enableClient.FirewallEnable(enableCtx, &adminv1.FirewallEnableRequest{ContainerId: containerName}); err != nil {
-			return fmt.Errorf("stopping bypass for %s: %w", opts.Agent, err)
+			return wrapRPCError(fmt.Sprintf("stopping bypass for %s", opts.Agent), err)
 		}
 		fmt.Fprintf(ios.Out, "%s Bypass stopped for agent %s\n", cs.SuccessIcon(), opts.Agent)
 		return nil
@@ -223,7 +229,7 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 		return fmt.Errorf("re-enabling firewall for %s after bypass: reconnecting to control plane: %w", opts.Agent, err)
 	}
 	if _, err := expireClient.FirewallEnable(expireCtx, &adminv1.FirewallEnableRequest{ContainerId: containerName}); err != nil {
-		return fmt.Errorf("re-enabling firewall for %s after bypass: %w", opts.Agent, err)
+		return wrapRPCError(fmt.Sprintf("re-enabling firewall for %s after bypass", opts.Agent), err)
 	}
 	fmt.Fprintf(ios.Out, "%s Bypass expired for agent %s\n", cs.SuccessIcon(), opts.Agent)
 	return nil

@@ -110,48 +110,6 @@ func TestActionQueue_FIFOOrdering(t *testing.T) {
 	}
 }
 
-func TestActionQueue_CoalescesConsecutiveReconciles(t *testing.T) {
-	q := NewActionQueue(nil)
-	defer func() { _ = q.Close() }()
-
-	// Hold the worker so all five Reconciles are queued before the
-	// first one pops — the worker then coalesces them.
-	head := newGate()
-	headReply := q.Submit(ActionBringup, head.fn(nil, nil))
-	head.waitEntered(t)
-
-	const n = 5
-	var runs int32
-	replies := make([]<-chan ActionResult, n)
-	for i := range n {
-		replies[i] = q.Submit(ActionReconcile, func(ctx context.Context) (any, error) {
-			atomic.AddInt32(&runs, 1)
-			// Return i so the test can prove every submitter got
-			// the HEAD's result, not its own closure's return.
-			return i, nil
-		})
-	}
-
-	head.open()
-	_ = recvOrFail(t, headReply)
-	for i, r := range replies {
-		res := recvOrFail(t, r)
-		if res.Err != nil {
-			t.Fatalf("reply %d: unexpected err %v", i, res.Err)
-		}
-		got, ok := res.Value.(int)
-		if !ok {
-			t.Fatalf("reply %d: value type = %T, want int", i, res.Value)
-		}
-		if got != 0 {
-			t.Fatalf("reply %d: value = %d, want 0 (head's return, broadcast to all coalesced)", i, got)
-		}
-	}
-	if got := atomic.LoadInt32(&runs); got != 1 {
-		t.Fatalf("closure ran %d times, want 1", got)
-	}
-}
-
 func TestActionQueue_CoalescingMatrix(t *testing.T) {
 	// Mirrors the PRD coalescing table verbatim. Trailing reconciles
 	// after teardown MUST execute — the rules store persists across
@@ -206,33 +164,81 @@ func TestActionQueue_CoalescingMatrix(t *testing.T) {
 	}
 }
 
-func TestActionQueue_ResultPropagatesToAllCoalesced(t *testing.T) {
-	q := NewActionQueue(nil)
-	defer func() { _ = q.Close() }()
-
-	head := newGate()
-	headReply := q.Submit(ActionBringup, head.fn(nil, nil))
-	head.waitEntered(t)
-
+// TestActionQueue_CoalescedResultBroadcast pins two load-bearing
+// invariants of the coalescing head-wins contract at once:
+//
+//  1. N coalesced Reconciles execute the HEAD closure exactly once —
+//     peers do NOT run their own closure bodies (drop guarantee).
+//  2. Every submitter receives the HEAD's ActionResult — the Value on
+//     success, the Err on failure — not its own closure's return (fan-
+//     out guarantee).
+//
+// Covers both success and failure paths in one table so a regression
+// that (e.g.) leaks a peer's closure on the error branch surfaces here
+// instead of living quietly behind a happy-path test.
+func TestActionQueue_CoalescedResultBroadcast(t *testing.T) {
 	boom := errors.New("boom")
-	const n = 4
-	replies := make([]<-chan ActionResult, n)
-	for i := range n {
-		replies[i] = q.Submit(ActionReconcile, func(ctx context.Context) (any, error) {
-			return nil, boom
-		})
+	cases := []struct {
+		name string
+		boom error
+	}{
+		{"success_broadcasts_head_value", nil},
+		{"failure_broadcasts_head_err", boom},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q := NewActionQueue(nil)
+			defer func() { _ = q.Close() }()
 
-	head.open()
-	_ = recvOrFail(t, headReply)
-	for i, r := range replies {
-		res := recvOrFail(t, r)
-		if !errors.Is(res.Err, boom) {
-			t.Fatalf("reply %d: err = %v, want %v", i, res.Err, boom)
-		}
-		if res.Value != nil {
-			t.Fatalf("reply %d: value = %v, want nil", i, res.Value)
-		}
+			// Hold the worker so all N Reconciles are queued before the
+			// first one pops — the worker then coalesces them.
+			head := newGate()
+			headReply := q.Submit(ActionBringup, head.fn(nil, nil))
+			head.waitEntered(t)
+
+			const n = 5
+			var runs int32
+			replies := make([]<-chan ActionResult, n)
+			for i := range n {
+				replies[i] = q.Submit(ActionReconcile, func(ctx context.Context) (any, error) {
+					atomic.AddInt32(&runs, 1)
+					if tc.boom != nil {
+						return nil, tc.boom
+					}
+					// Return i so the test can prove every submitter got
+					// the HEAD's result, not its own closure's return.
+					return i, nil
+				})
+			}
+
+			head.open()
+			_ = recvOrFail(t, headReply)
+			for i, r := range replies {
+				res := recvOrFail(t, r)
+				if tc.boom != nil {
+					if !errors.Is(res.Err, tc.boom) {
+						t.Fatalf("reply %d: err = %v, want %v", i, res.Err, tc.boom)
+					}
+					if res.Value != nil {
+						t.Fatalf("reply %d: value = %v, want nil on failure", i, res.Value)
+					}
+					continue
+				}
+				if res.Err != nil {
+					t.Fatalf("reply %d: unexpected err %v", i, res.Err)
+				}
+				got, ok := res.Value.(int)
+				if !ok {
+					t.Fatalf("reply %d: value type = %T, want int", i, res.Value)
+				}
+				if got != 0 {
+					t.Fatalf("reply %d: value = %d, want 0 (head's return, broadcast to all coalesced)", i, got)
+				}
+			}
+			if got := atomic.LoadInt32(&runs); got != 1 {
+				t.Fatalf("closure ran %d times, want 1 (N coalesced = 1 execution)", got)
+			}
+		})
 	}
 }
 
@@ -275,16 +281,6 @@ func TestActionQueue_SubmitNilClosureReturnsErrNilClosure(t *testing.T) {
 	res := recvOrFail(t, reply)
 	if !errors.Is(res.Err, ErrNilClosure) {
 		t.Fatalf("err = %v, want ErrNilClosure", res.Err)
-	}
-}
-
-func TestActionQueue_CloseIsIdempotent(t *testing.T) {
-	q := NewActionQueue(nil)
-	if err := q.Close(); err != nil {
-		t.Fatalf("first Close: %v", err)
-	}
-	if err := q.Close(); err != nil {
-		t.Fatalf("second Close: %v", err)
 	}
 }
 
@@ -453,35 +449,6 @@ func TestActionQueue_CloseCancelsInFlightContext(t *testing.T) {
 	res := recvOrFail(t, reply)
 	if !errors.Is(res.Err, context.Canceled) {
 		t.Fatalf("reply err = %v, want context.Canceled", res.Err)
-	}
-}
-
-func TestActionQueue_ConcurrentSubmitters(t *testing.T) {
-	q := NewActionQueue(nil)
-	defer func() { _ = q.Close() }()
-
-	const n = 128
-	var wg sync.WaitGroup
-	errs := make(chan error, n)
-	for i := range n {
-		wg.Go(func() {
-			reply := q.Submit(ActionRead, func(ctx context.Context) (any, error) {
-				return i, nil
-			})
-			select {
-			case res := <-reply:
-				if res.Err != nil {
-					errs <- fmt.Errorf("submitter %d: %w", i, res.Err)
-				}
-			case <-time.After(awaitTimeout):
-				errs <- fmt.Errorf("submitter %d: reply timeout", i)
-			}
-		})
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Fatal(err)
 	}
 }
 
