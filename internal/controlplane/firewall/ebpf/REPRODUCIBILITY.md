@@ -1,13 +1,19 @@
 # BPF Bytecode Reproducibility
 
-Clawker's firewall stack contains two Linux binaries that are `go:embed`'d
+Clawker's firewall stack contains three Linux binaries that are `go:embed`'d
 into the clawker CLI and built into runtime Docker images at clawker-run time:
 
-- **`ebpf-manager`** — compiled from `./internal/ebpf/cmd`; has the BPF
-  bytecode (`clawker.o`) from `internal/ebpf/bpf/clawker.c` + `common.h`
-  baked in via `bpf2go` + `go:embed`.
+- **`ebpf-manager`** — compiled from `./internal/controlplane/firewall/ebpf/cmd`;
+  has the BPF bytecode (`clawker.o`) from
+  `internal/controlplane/firewall/ebpf/bpf/clawker.c` + `common.h` baked in
+  via `bpf2go` + `go:embed`. Break-glass debug CLI; also embedded into the
+  CP container image for emergencies.
 - **`coredns-clawker`** — compiled from `./cmd/coredns-clawker`; has the
   `dnsbpf` plugin from `internal/dnsbpf` baked in.
+- **`clawker-cp`** — the control plane daemon; compiled from
+  `./cmd/clawker-cp`. Runs as PID 1 inside the `clawker-controlplane`
+  container and owns `ebpf.Manager.Load()` lifetime, AdminService gRPC, and
+  the Ory auth stack.
 
 Neither binary is committed to the repo. Neither are their intermediate
 artifacts (`clawker_*_bpfel.{go,o}`). Every `make` invocation that depends
@@ -40,10 +46,11 @@ embedded Linux binaries and the BPF bytecode inside them.
 | `libbpf-dev` version | `Dockerfile.controlplane` — `LIBBPF_DEV_VERSION` build arg | `bpf/bpf_helpers.h`, `bpf/bpf_endian.h` |
 | `linux-libc-dev` version | `Dockerfile.controlplane` — `LINUX_LIBC_DEV_VERSION` build arg | `linux/bpf.h`, `linux/types.h`, `asm/types.h` — the kernel UAPI types clawker consumes (clawker is non-CO-RE; UAPI is sufficient) |
 | Go toolchain | `Dockerfile.controlplane` — `golang:1.25.9-alpine@sha256:...` used in three places (`COPY --from=` in the `bpf-builder` stage for `go generate`, and `FROM` lines of `ebpf-manager-builder` and `coredns-builder` stages); all three must be the same digest, and the digest MUST be a multi-arch manifest list (OCI image index) so cross-platform builds can select the right per-arch manifest | All Go compilation including the `go:embed` of BPF bytecode |
-| `bpf2go` | `internal/ebpf/gen.go` — `go run github.com/cilium/ebpf/cmd/bpf2go@v0.21.0` | BPF → Go code generation shape, loader compatibility with the `cilium/ebpf` runtime |
-| BPF C source | `internal/ebpf/bpf/clawker.c`, `common.h` | The program logic itself |
-| ebpf-manager Go source | `internal/ebpf/manager.go`, `types.go`, `cmd/main.go`, `gen.go` | The host-side BPF loader and RPC surface |
+| `bpf2go` | `internal/controlplane/firewall/ebpf/gen.go` — `go run github.com/cilium/ebpf/cmd/bpf2go@v0.21.0` | BPF → Go code generation shape, loader compatibility with the `cilium/ebpf` runtime |
+| BPF C source | `internal/controlplane/firewall/ebpf/bpf/clawker.c`, `common.h` | The program logic itself |
+| ebpf-manager Go source | `internal/controlplane/firewall/ebpf/{manager.go,types.go,gen.go}`, `internal/controlplane/firewall/ebpf/cmd/main.go` | Break-glass BPF loader CLI |
 | coredns-clawker Go source | `cmd/coredns-clawker/main.go`, `internal/dnsbpf/*.go` | The custom CoreDNS entry point + dnsbpf plugin |
+| clawker-cp Go source | `cmd/clawker-cp/**`, `internal/controlplane/**` | CP daemon: AdminService, Ory auth stack, eBPF ownership |
 
 Note: clawker does **not** use CO-RE (`BPF_CORE_READ`, preserve-access-index).
 Every field access in `clawker.c` targets stable kernel UAPI
@@ -57,27 +64,36 @@ make clawker
   └── make clawker-build
         ├── bpf-bindings  → docker buildx build -f Dockerfile.controlplane
         │                     --target=bpf-bindings-extract
-        │                     --output=type=local,dest=internal/ebpf/...
-        │   produces: internal/ebpf/clawker_{x86,arm64}_bpfel.{go,o}
+        │                     --output=type=local,dest=internal/controlplane/firewall/ebpf/.bpf-bindings-extract
+        │   produces: internal/controlplane/firewall/ebpf/clawker_{x86,arm64}_bpfel.{go,o}
         │   (gitignored; exists so host-side go/gopls can compile
-        │    internal/ebpf/manager.go, which references bpf2go types)
+        │    internal/controlplane/firewall/ebpf/manager.go, which
+        │    references bpf2go types)
         │
         ├── ebpf-binary   → docker buildx build -f Dockerfile.controlplane
         │                     --target=ebpf-manager-extract
-        │                     --output=type=local,dest=internal/controlplane/assets
-        │   produces: internal/controlplane/assets/ebpf-manager
+        │                     --output=type=local,dest=internal/controlplane/cpboot/assets/.ebpf-extract
+        │                     (moved into place by the recipe)
+        │   produces: internal/controlplane/cpboot/assets/ebpf-manager
         │
         ├── coredns-binary → docker buildx build -f Dockerfile.controlplane
         │                     --target=coredns-extract
-        │                     --output=type=local,dest=internal/controlplane/assets
+        │                     --output=type=local,dest=internal/controlplane/firewall/assets/.coredns-extract
+        │                     (moved into place by the recipe)
         │   produces: internal/controlplane/firewall/assets/coredns-clawker
+        │
+        ├── cp-binary      → docker buildx build -f Dockerfile.controlplane
+        │                     --target=clawker-cp-extract
+        │                     --output=type=local,dest=internal/controlplane/cpboot/assets/.cp-extract
+        │                     (moved into place by the recipe)
+        │   produces: internal/controlplane/cpboot/assets/clawker-cp
         │
         └── go build ./cmd/clawker
               produces: bin/clawker
-              (go:embed's both Linux binaries into the CLI)
+              (go:embed's all three Linux binaries into the CLI)
 ```
 
-All three buildx invocations hit the same Dockerfile and share BuildKit
+All four buildx invocations hit the same Dockerfile and share BuildKit
 layer cache — the expensive `bpf-builder` stage runs once per source change,
 then serves its outputs to all three downstream extract stages.
 
@@ -85,10 +101,10 @@ Make's dep graph ensures the pinned Docker builds only run when their source
 inputs change. First build on a clean clone pulls the base images (~2 min).
 Subsequent builds hit BuildKit layer cache and are seconds.
 
-Targets that transitively trigger `ebpf-binary` + `coredns-binary`: every
-`make clawker*` target, every `make test*` target, `make docs*`, `make lint*`,
-`make staticcheck*`. There is no supported code path that builds clawker
-without the pinned Docker stage in the chain.
+Targets that transitively trigger `ebpf-binary` + `coredns-binary` + `cp-binary`:
+every `make clawker*` target, every `make test*` target, `make docs*`,
+`make lint*`, `make staticcheck*`. There is no supported code path that
+builds clawker without the pinned Docker stage in the chain.
 
 ## Regenerating by hand
 
@@ -96,19 +112,25 @@ Rarely needed — Make normally drives this — but for debugging:
 
 ```bash
 # Force-rebuild the ebpf-manager binary from scratch:
-rm -f internal/controlplane/assets/ebpf-manager
+rm -f internal/controlplane/cpboot/assets/ebpf-manager
 make ebpf-binary
 
 # Same for coredns-clawker:
 rm -f internal/controlplane/firewall/assets/coredns-clawker
 make coredns-binary
+
+# Same for clawker-cp:
+rm -f internal/controlplane/cpboot/assets/clawker-cp
+make cp-binary
 ```
 
 For a full clean rebuild with BuildKit cache bypass:
 
 ```bash
 docker buildx prune -f                      # clear buildx cache
-rm -f internal/controlplane/assets/*
+rm -f internal/controlplane/cpboot/assets/ebpf-manager
+rm -f internal/controlplane/cpboot/assets/clawker-cp
+rm -f internal/controlplane/firewall/assets/coredns-clawker
 make clawker
 ```
 
@@ -179,17 +201,20 @@ every image pin in the project should be a manifest list.
 
 ### 4. `bpf2go` version
 
-If `cilium/ebpf` is bumped in `go.mod`, the `@vX.Y.Z` in `internal/ebpf/gen.go`'s
-`//go:generate` line must bump in lockstep. Check
+If `cilium/ebpf` is bumped in `go.mod`, the `@vX.Y.Z` in
+`internal/controlplane/firewall/ebpf/gen.go`'s `//go:generate` line must
+bump in lockstep. Check
 `https://github.com/cilium/ebpf/releases` for the version that matches the
 library version in `go.mod`.
 
 ### 5. Rebuild + verify
 
 ```bash
-rm -f internal/controlplane/assets/*
+rm -f internal/controlplane/cpboot/assets/ebpf-manager \
+      internal/controlplane/cpboot/assets/clawker-cp \
+      internal/controlplane/firewall/assets/coredns-clawker
 make clawker
-go test ./internal/ebpf/...
+go test ./internal/controlplane/firewall/ebpf/...
 # plus a local e2e run:
 go test ./test/e2e/... -run TestFirewall -v
 ```
@@ -205,7 +230,7 @@ the pinned recipe files.
 | `docker buildx build` not found | buildx not installed | Docker Desktop ships buildx; on Linux install `docker-buildx-plugin` |
 | Long first-build on clean checkout | Expected — pulling base images and running the BPF + Go compilation in the pinned containers is a one-time cost per cache state. Subsequent builds hit BuildKit cache and are fast | N/A |
 | Compile error inside the bpf-builder stage | Usually a `clawker.c` / `common.h` syntax issue, or a header that moved. Check the build log — clang emits line-accurate errors | Fix the C source; `make` will re-run the pinned build |
-| IDE red squiggles in `internal/ebpf/manager.go` referencing `clawkerObjects`, `clawkerPrograms`, etc. on a fresh clone | The bpf2go-generated Go wrappers (`clawker_*_bpfel.go`) haven't been produced yet — they're gitignored and only materialize inside the Docker build context | Run `make ebpf-binary` once. The generated wrappers never leave the build context, so gopls will always show red until you've built at least once on this checkout. This is by design to keep the repo free of generated artifacts |
+| IDE red squiggles in `internal/controlplane/firewall/ebpf/manager.go` referencing `clawkerObjects`, `clawkerPrograms`, etc. on a fresh clone | The bpf2go-generated Go wrappers (`clawker_*_bpfel.go`) haven't been produced yet — they're gitignored and only materialize inside the Docker build context | Run `make ebpf-binary` once. The generated wrappers never leave the build context, so gopls will always show red until you've built at least once on this checkout. This is by design to keep the repo free of generated artifacts |
 | Verifier rejects bytecode at runtime on a specific kernel | The pinned `clang`/`libbpf-dev` may be emitting BPF the target kernel can't load | Roll the pinned versions forward and test on the oldest supported kernel |
 
 ## Out of scope for this document

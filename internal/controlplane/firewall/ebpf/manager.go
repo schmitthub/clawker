@@ -322,18 +322,28 @@ func (m *Manager) CleanupStaleBypass() (int, error) {
 	}
 
 	var stale []uint64
+	var errs []error
 	var key uint64
 	var val uint8
 	iter := m.objs.BypassMap.Iterate()
 	for iter.Next(&key, &val) {
 		var cfg clawkerContainerConfig
-		if err := m.objs.ContainerMap.Lookup(key, &cfg); err != nil {
+		err := m.objs.ContainerMap.Lookup(key, &cfg)
+		switch {
+		case err == nil:
+			// live container — keep bypass
+		case errors.Is(err, ebpf.ErrKeyNotExist):
 			stale = append(stale, key)
+		default:
+			m.log.Warn().Err(err).Uint64("cgroup_id", key).Msg("ebpf: container_map lookup failed; preserving bypass entry")
+			errs = append(errs, fmt.Errorf("container_map[%d] lookup: %w", key, err))
 		}
+	}
+	if err := iter.Err(); err != nil {
+		errs = append(errs, fmt.Errorf("bypass_map iterate: %w", err))
 	}
 
 	cleared := 0
-	var errs []error
 	for _, id := range stale {
 		if err := m.objs.BypassMap.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 			m.log.Warn().Err(err).Uint64("cgroup_id", id).Msg("ebpf: failed to clear stale bypass entry")
@@ -369,6 +379,9 @@ func (m *Manager) FlushAll() error {
 		for iter.Next(&key, &val) {
 			keys = append(keys, key)
 		}
+		if err := iter.Err(); err != nil {
+			errs = append(errs, fmt.Errorf("iterate container_map: %w", err))
+		}
 		for _, id := range keys {
 			if err := m.objs.ContainerMap.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 				errs = append(errs, fmt.Errorf("flush container_map[%d]: %w", id, err))
@@ -383,6 +396,9 @@ func (m *Manager) FlushAll() error {
 		iter := m.objs.BypassMap.Iterate()
 		for iter.Next(&key, &val) {
 			keys = append(keys, key)
+		}
+		if err := iter.Err(); err != nil {
+			errs = append(errs, fmt.Errorf("iterate bypass_map: %w", err))
 		}
 		for _, id := range keys {
 			if err := m.objs.BypassMap.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
@@ -568,6 +584,9 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 	for iter.Next(&rk, &rv) {
 		keysToDelete = append(keysToDelete, rk)
 	}
+	if err := iter.Err(); err != nil {
+		errs = append(errs, fmt.Errorf("iterate route_map: %w", err))
+	}
 	for _, k := range keysToDelete {
 		if err := m.objs.RouteMap.Delete(k); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 			m.log.Warn().Err(err).
@@ -664,6 +683,9 @@ func (m *Manager) GarbageCollectDNS() int {
 		if entry.ExpireTs < now {
 			expired = append(expired, ip)
 		}
+	}
+	if err := iter.Err(); err != nil {
+		m.log.Warn().Err(err).Msg("ebpf gc-dns: iterating dns_cache (next pass will retry)")
 	}
 	return deleteExpiredDNSEntries(m.objs.DnsCache, expired, m.log)
 }

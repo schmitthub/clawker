@@ -668,7 +668,7 @@ func (s *Stack) ensureCorednsImage(ctx context.Context) error {
 		return fmt.Errorf("checking %s image: %w", corednsImageTag, err)
 	}
 
-	if len(CorednsClawkerBinary) == 0 {
+	if len(CoreDNSClawkerBinary) == 0 {
 		return fmt.Errorf("%s binary not embedded — run 'make coredns-binary' then rebuild clawker", corednsImageTag)
 	}
 
@@ -732,12 +732,12 @@ func corednsBuildContext() (io.Reader, error) {
 	}
 	if err := tw.WriteHeader(&tar.Header{
 		Name: "coredns",
-		Size: int64(len(CorednsClawkerBinary)),
+		Size: int64(len(CoreDNSClawkerBinary)),
 		Mode: 0755,
 	}); err != nil {
 		return nil, err
 	}
-	if _, err := tw.Write(CorednsClawkerBinary); err != nil {
+	if _, err := tw.Write(CoreDNSClawkerBinary); err != nil {
 		return nil, err
 	}
 	if err := tw.Close(); err != nil {

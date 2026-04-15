@@ -93,10 +93,8 @@ func TestStack_Status_EmptyRulesEmptyStackWhenAbsent(t *testing.T) {
 	assert.False(t, status.EnvoyHealth)
 	assert.False(t, status.CoreDNSHealth)
 	assert.Equal(t, 0, status.RuleCount)
-	// Topology fields must at least be populated from the fake's IPAM
-	// data. Asserting the exact IP string here would re-implement the
-	// production arithmetic (gateway + last-octet) inside the test —
-	// that belongs in a focused ComputeStaticIP unit test, not here.
+	// Topology fields populated from the fake's IPAM data; exact IP
+	// arithmetic is covered by TestComputeStaticIP.
 	assert.NotEmpty(t, status.EnvoyIP)
 	assert.NotEmpty(t, status.CoreDNSIP)
 	assert.NotEmpty(t, status.NetworkID)

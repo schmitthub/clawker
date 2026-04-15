@@ -37,9 +37,12 @@ import (
 //  3. Create a tokenSource that auto-refreshes via Hydra /oauth2/token
 //  4. Dial gRPC with mTLS + auto-refreshing bearer token in metadata
 //
-// Callers may pass additional grpc.DialOption values (e.g. keepalive) —
-// these are appended after the transport-credentials + OAuth2
-// interceptor so they can extend but not override the auth/TLS baseline.
+// Callers may pass additional grpc.DialOption values (e.g. keepalive).
+// Per grpc-go semantics a later option of the same kind overrides the
+// earlier one, so caller opts are applied FIRST and the auth/TLS baseline
+// LAST — the baseline is non-overridable by caller intent. Chained
+// unary interceptors go through grpc.WithChainUnaryInterceptor (or pass
+// as a caller opt that grpc-go composes with the baseline).
 func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
 	signingKey, err := auth.LoadSigningKey()
 	if err != nil {
@@ -83,10 +86,11 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	}
 
 	target := fmt.Sprintf("127.0.0.1:%d", adminPort)
-	dialOpts := append([]grpc.DialOption{
+	dialOpts := append([]grpc.DialOption{}, opts...)
+	dialOpts = append(dialOpts,
 		grpc.WithTransportCredentials(credentials.NewTLS(grpcTLSCfg)),
 		grpc.WithUnaryInterceptor(ts.unaryInterceptor()),
-	}, opts...)
+	)
 	conn, err := grpc.NewClient(target, dialOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dial cp grpc: %w", err)

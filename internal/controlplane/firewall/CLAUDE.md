@@ -37,7 +37,7 @@ firewall.Handler (13 RPCs)
 | `certs.go` | CA keypair generation/loading; per-domain cert signing; wildcard SANs; `RotateCA` |
 | `rules_store.go` | `EgressRulesFile` schema + `NewRulesStore(cfg)` + `ProjectRules(cfg)` + rule helpers (`ValidateDst`, `NormalizeRule`, `RuleKey`, `NormalizeAndDedup`) |
 | `network.go` | `NetworkInfo` + `DiscoverNetwork(ctx, *docker.Client, cfg)` + `ComputeStaticIP(gateway, lastOctet)` |
-| `embed_coredns.go` | `//go:embed assets/coredns-clawker` — exported `CorednsClawkerBinary` |
+| `embed_coredns.go` | `//go:embed assets/coredns-clawker` — exported `CoreDNSClawkerBinary` |
 | `errors.go` | Sentinels (`ErrEnvoyUnhealthy`, `ErrCoreDNSUnhealthy`, `ErrCPUnhealthy`) + `HealthTimeoutError` |
 | `ebpf/` | eBPF subsystem — see `ebpf/CLAUDE.md` |
 | `mocks/` | Moq-generated mocks for handler-local interfaces used by handler tests |
