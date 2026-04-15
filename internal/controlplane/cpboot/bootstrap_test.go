@@ -480,9 +480,11 @@ func TestEnsureRunning_NameConflictRecovery_NoSecondCreate(t *testing.T) {
 	}
 
 	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
-	// Start fires twice: once during the conflict-recovery path on the
-	// found container, plus the create path never reaches its own start
-	// because ContainerCreate errored. Accept ≥1.
+	// The recovery path must NOT re-issue a second ContainerCreate after
+	// picking up the pre-existing container — that's the whole point of
+	// the test name. The conflict happens during the first attempted
+	// create; recovery reuses the found container and only starts it.
+	assert.Equal(t, int32(1), f.calls.create.Load(), "no second create after conflict recovery")
 	assert.GreaterOrEqual(t, f.calls.start.Load(), int32(1), "recovered container started at least once")
 }
 

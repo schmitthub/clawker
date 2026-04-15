@@ -13,10 +13,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
-
 	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/test/e2e/harness"
@@ -30,6 +34,35 @@ func newFirewallHarness(t *testing.T) *harness.Harness {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	// Register the stack check BEFORE NewIsolatedFS so it runs AFTER
@@ -73,6 +106,35 @@ func TestFirewall_ICMPBlocked(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -101,6 +163,9 @@ agent:
 	assert.NotNil(t, res.Err, "ping should fail — ICMP must be blocked to prevent tunneling")
 }
 
+// TestFirewall_Bypass exercises the full `firewall bypass` surface in one
+// composite flow: explicit --stop restore, natural dead-man timer expiry
+// (INV-B2-007), and the stopped-container error path (INV-B2-016).
 func TestFirewall_Bypass(t *testing.T) {
 	h := newFirewallHarness(t)
 
@@ -109,32 +174,55 @@ func TestFirewall_Bypass(t *testing.T) {
 	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
 		startRes.Stdout, startRes.Stderr)
 
-	// Blocked: example.com is NOT in the allowed rules.
+	// Baseline: example.com is NOT in the allowed rules.
 	blockRes := h.ExecInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
-	assert.NotNil(t, blockRes.Err, "curl to blocked domain should fail")
+	assert.NotNil(t, blockRes.Err, "baseline: curl to blocked domain should fail")
 
+	// --- Explicit --stop arc -------------------------------------------------
 	bypassRes := h.Run("firewall", "bypass", "30s", "--agent", "firewall-test", "--non-interactive")
 	require.NoError(t, bypassRes.Err, "firewall bypass failed\nstdout: %s\nstderr: %s",
 		bypassRes.Stdout, bypassRes.Stderr)
 
-	// Should succeed now — bypass disables eBPF rules, all traffic goes direct.
 	allowedRes := h.ExecInContainer("firewall-test",
 		"curl", "-s", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}", "https://example.com")
-	require.NoError(t, allowedRes.Err, "curl after bypass should succeed\nstdout: %s\nstderr: %s",
+	require.NoError(t, allowedRes.Err, "curl during bypass should succeed\nstdout: %s\nstderr: %s",
 		allowedRes.Stdout, allowedRes.Stderr)
-	assert.NotEmpty(t, strings.TrimSpace(allowedRes.Stdout), "should get HTTP response code")
+	code := strings.TrimSpace(allowedRes.Stdout)
+	assert.True(t, strings.HasPrefix(code, "2") || strings.HasPrefix(code, "3"),
+		"expected 2xx/3xx during bypass, got %q", code)
 
 	stopRes := h.Run("firewall", "bypass", "--stop", "--agent", "firewall-test")
-	require.NoError(t, stopRes.Err, "firewall bypass stop failed\nstdout: %s\nstderr: %s",
+	require.NoError(t, stopRes.Err, "firewall bypass --stop failed\nstdout: %s\nstderr: %s",
 		stopRes.Stdout, stopRes.Stderr)
 
-	// Should be blocked again after stopping bypass.
 	blockAgainRes := h.ExecInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
-	assert.NotNil(t, blockAgainRes.Err, "curl should be blocked again after stopping bypass")
+	assert.NotNil(t, blockAgainRes.Err, "curl should be blocked again after --stop")
 
+	// --- Natural expiry arc (INV-B2-007 dead-man timer) ---------------------
+	expiryRes := h.Run("firewall", "bypass", "5s", "--agent", "firewall-test", "--non-interactive")
+	require.NoError(t, expiryRes.Err, "short bypass failed\nstdout: %s\nstderr: %s",
+		expiryRes.Stdout, expiryRes.Stderr)
+
+	duringExpiry := h.ExecInContainer("firewall-test",
+		"curl", "-s", "--max-time", "3", "-o", "/dev/null", "-w", "%{http_code}", "https://example.com")
+	require.NoError(t, duringExpiry.Err, "curl during short bypass should succeed")
+	expiryCode := strings.TrimSpace(duringExpiry.Stdout)
+	assert.True(t, strings.HasPrefix(expiryCode, "2") || strings.HasPrefix(expiryCode, "3"),
+		"expected 2xx/3xx during short bypass, got %q", expiryCode)
+
+	// Wait past expiry + a small buffer for the dead-man timer to fire.
+	time.Sleep(8 * time.Second)
+
+	postExpiry := h.ExecInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
+	assert.NotNil(t, postExpiry.Err, "after bypass expiry, enforcement must be restored automatically")
+
+	// --- Stopped-container arc (INV-B2-016 drift guard) ---------------------
 	stopAgentRes := h.Run("container", "stop", "--agent", "firewall-test")
 	require.NoError(t, stopAgentRes.Err, "container stop failed\nstdout: %s\nstderr: %s",
 		stopAgentRes.Stdout, stopAgentRes.Stderr)
+
+	goneRes := h.Run("firewall", "bypass", "30s", "--agent", "firewall-test", "--non-interactive")
+	assert.NotNil(t, goneRes.Err, "bypass on stopped container must fail (INV-B2-016)")
 }
 
 func TestFirewall_AllowedDomain(t *testing.T) {
@@ -187,6 +275,35 @@ func TestFirewall_ConfigRules(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -351,6 +468,35 @@ func TestFirewall_HostProxyReachable(t *testing.T) {
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
 			HostProxy:      hostproxy.NewManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -396,6 +542,35 @@ func TestFirewall_SSHTCPMapping(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -488,6 +663,35 @@ func TestFirewall_HTTPDomainDetection(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -562,6 +766,35 @@ func TestFirewall_FirewallDisabled(t *testing.T) {
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
 			HostProxy:      hostproxy.NewManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -610,6 +843,35 @@ func TestFirewall_PathRulesDefaultDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -693,6 +955,35 @@ func TestFirewall_PathRulesExplicitDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -775,6 +1066,35 @@ func TestFirewall_TLSPathRulesDefaultDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -857,6 +1177,35 @@ func TestFirewall_TLSPathRulesExplicitDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -945,6 +1294,35 @@ func TestFirewall_WildcardAndExactCoexist(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
+				dc, err := docker.NewClient(ctx, cfg, log)
+				if err != nil {
+					return nil, fmt.Errorf("admin client: docker: %w", err)
+				}
+				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+					Docker: dc, Config: cfg, Logger: log,
+					HostDirs: cpboot.HostDirs{
+						Config: consts.ConfigDir(),
+						Data:   consts.DataDir(),
+						State:  consts.StateDir(),
+						Cache:  consts.CacheDir(),
+					},
+				}); err != nil {
+					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
+				}
+				cp := cfg.Settings().ControlPlane
+				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
+				return c, err
+			},
 		},
 	}
 	setup := h.NewIsolatedFS(nil)

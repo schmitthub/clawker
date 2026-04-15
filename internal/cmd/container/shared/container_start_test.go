@@ -66,7 +66,7 @@ func TestBootstrapServices_MissingOptionalProvidersAreSkipped(t *testing.T) {
 	t.Parallel()
 
 	err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-		Config: testRuntimeConfig("", ""),
+		Config: testRuntimeConfig("", `firewall: { enable: false }`),
 	})
 	if err != nil {
 		t.Fatalf("expected nil error when optional providers are omitted, got %v", err)

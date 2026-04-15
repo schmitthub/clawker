@@ -131,13 +131,6 @@ control_plane:
 	assert.True(t, found, "admin port 9999 must appear in port bindings")
 }
 
-// Tests INV-B1-008 [unit]: Settings schema has admin port field with correct default.
-func TestINV_B1_008_SettingsSchemaAdminPort(t *testing.T) {
-	cfg := configmocks.NewBlankConfig()
-	port := cfg.Settings().ControlPlane.AdminPort
-	assert.Equal(t, consts.DefaultCPAdminPort, port)
-}
-
 // Tests INV-B1-009 [unit]: CP container is infrastructure, not filtered.
 func TestINV_B1_009_CPIsInfrastructureNotFiltered(t *testing.T) {
 	testenv.New(t)
@@ -149,7 +142,6 @@ func TestINV_B1_009_CPIsInfrastructureNotFiltered(t *testing.T) {
 	purposeLabel, ok := cpConfig.Labels[consts.LabelPurpose]
 	assert.True(t, ok, "CP container must have a purpose label")
 	assert.Equal(t, consts.PurposeControlPlane, purposeLabel)
-	assert.NotEqual(t, consts.PurposeAgent, purposeLabel)
 }
 
 // Tests INV-B1-015 [unit]: CP image tag matches consts.

@@ -14,6 +14,8 @@ import (
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -53,12 +55,12 @@ func nopResolver(_ context.Context, ref string) (string, string, bool, error) {
 // counts the tests actually assert on (`ensureRunningCalls`,
 // `reloadCalls`); other methods just satisfy the interface.
 type fakeStack struct {
-	mu                              sync.Mutex
-	ensureRunningCalls, reloadCalls int
-	ensureErr                       error
-	statusResult                    Status
-	netInfo                         *NetworkInfo
-	netInfoErr                      error
+	mu                                           sync.Mutex
+	ensureRunningCalls, reloadCalls, statusCalls int
+	ensureErr                                    error
+	statusResult                                 Status
+	netInfo                                      *NetworkInfo
+	netInfoErr                                   error
 }
 
 func (f *fakeStack) EnsureRunning(_ context.Context) error {
@@ -80,6 +82,7 @@ func (f *fakeStack) Reload(_ context.Context) error {
 func (f *fakeStack) Status(_ context.Context) (*Status, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.statusCalls++
 	st := f.statusResult
 	return &st, nil
 }
@@ -492,20 +495,52 @@ func TestHandler_FirewallResolveHostname_DNSError(t *testing.T) {
 // FirewallInit / FirewallReload / FirewallStatus — drive the fake stack.
 // ---------------------------------------------------------------------------
 
-func TestHandler_FirewallInit_DelegatesToStack(t *testing.T) {
-	stack := &fakeStack{statusResult: Status{EnvoyIP: "1.2.3.4", CoreDNSIP: "1.2.3.5", NetworkID: "n1"}}
-	h := NewHandler(HandlerDeps{
-		EBPF: noopMock(), Stack: stack, Resolver: nopResolver, Log: logger.Nop(),
-	})
-	resp, err := h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
-	if err != nil {
-		t.Fatalf("FirewallInit returned error: %v", err)
+// TestHandler_StackRPCs_DelegateToStack covers the three stack-facing RPCs
+// that just forward to a Stack method: FirewallInit → EnsureRunning,
+// FirewallReload → Reload, FirewallStatus → Status. One table, one
+// per-RPC assertion that the stack was called exactly once — response
+// shapes are built from the fake's statusResult, so field round-trips
+// would be tautological.
+func TestHandler_StackRPCs_DelegateToStack(t *testing.T) {
+	tests := []struct {
+		name     string
+		call     func(h *Handler) error
+		getCalls func(s *fakeStack) int
+	}{
+		{
+			name: "FirewallInit",
+			call: func(h *Handler) error {
+				_, err := h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+				return err
+			},
+			getCalls: func(s *fakeStack) int { return s.ensureRunningCalls },
+		},
+		{
+			name: "FirewallReload",
+			call: func(h *Handler) error {
+				_, err := h.FirewallReload(context.Background(), &adminv1.FirewallReloadRequest{})
+				return err
+			},
+			getCalls: func(s *fakeStack) int { return s.reloadCalls },
+		},
+		{
+			name: "FirewallStatus",
+			call: func(h *Handler) error {
+				_, err := h.FirewallStatus(context.Background(), &adminv1.FirewallStatusRequest{})
+				return err
+			},
+			getCalls: func(s *fakeStack) int { return s.statusCalls },
+		},
 	}
-	if resp.GetEnvoyIp() != "1.2.3.4" || resp.GetCorednsIp() != "1.2.3.5" || resp.GetNetworkId() != "n1" {
-		t.Errorf("response mismatch: %+v", resp)
-	}
-	if stack.ensureRunningCalls != 1 {
-		t.Errorf("EnsureRunning called %d times, want 1", stack.ensureRunningCalls)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stack := &fakeStack{}
+			h := NewHandler(HandlerDeps{
+				EBPF: noopMock(), Stack: stack, Resolver: nopResolver, Log: logger.Nop(),
+			})
+			require.NoError(t, tc.call(h))
+			assert.Equal(t, 1, tc.getCalls(stack), "stack method called exactly once")
+		})
 	}
 }
 
@@ -516,40 +551,6 @@ func TestHandler_FirewallInit_StackFailure_PropagatesInternal(t *testing.T) {
 	})
 	_, err := h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
 	assertCode(t, err, codes.Internal)
-}
-
-func TestHandler_FirewallReload_DelegatesToStack(t *testing.T) {
-	stack := &fakeStack{}
-	h := NewHandler(HandlerDeps{
-		EBPF: noopMock(), Stack: stack, Resolver: nopResolver, Log: logger.Nop(),
-	})
-	resp, err := h.FirewallReload(context.Background(), &adminv1.FirewallReloadRequest{})
-	if err != nil {
-		t.Fatalf("FirewallReload returned error: %v", err)
-	}
-	if !resp.GetStackRestarted() {
-		t.Error("stack_restarted should be true")
-	}
-	if stack.reloadCalls != 1 {
-		t.Errorf("Reload called %d times, want 1", stack.reloadCalls)
-	}
-}
-
-func TestHandler_FirewallStatus_PropagatesStackFields(t *testing.T) {
-	stack := &fakeStack{statusResult: Status{
-		Running: true, EnvoyHealth: true, CoreDNSHealth: true,
-		RuleCount: 7, EnvoyIP: "10.0.0.2", CoreDNSIP: "10.0.0.3", NetworkID: "net-1",
-	}}
-	h := NewHandler(HandlerDeps{
-		EBPF: noopMock(), Stack: stack, Resolver: nopResolver, Log: logger.Nop(),
-	})
-	resp, err := h.FirewallStatus(context.Background(), &adminv1.FirewallStatusRequest{})
-	if err != nil {
-		t.Fatalf("FirewallStatus returned error: %v", err)
-	}
-	if !resp.GetRunning() || resp.GetRuleCount() != 7 || resp.GetEnvoyIp() != "10.0.0.2" {
-		t.Errorf("response mismatch: %+v", resp)
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -721,27 +722,67 @@ func TestHandler_CancelAllBypassTimers_StopsAndClears(t *testing.T) {
 // proto ↔ config rule round-trip
 // ---------------------------------------------------------------------------
 
-// TestProtoRulesRoundTrip pins the field map between adminv1.EgressRule
-// /PathRule and config.EgressRule/PathRule. A future field drift between
-// the two struct sets will surface here as a missing assertion target,
-// not as silent data loss across the gRPC boundary.
+// TestProtoRulesRoundTrip pins the field map between adminv1.EgressRule/
+// PathRule and config.EgressRule/PathRule via full round-trip equality.
+// A new field on either side without a matching translator update loses
+// data here and fails the test — not just the subset the test happens to
+// sample.
 func TestProtoRulesRoundTrip(t *testing.T) {
-	in := []*adminv1.EgressRule{
+	cases := []struct {
+		name string
+		in   []*adminv1.EgressRule
+	}{
 		{
-			Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
-			PathRules:   []*adminv1.PathRule{{Path: "/v1", Action: "allow"}},
-			PathDefault: "deny",
+			name: "tls with path rules",
+			in: []*adminv1.EgressRule{{
+				Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+				PathRules: []*adminv1.PathRule{
+					{Path: "/v1", Action: "allow"},
+					{Path: "/admin", Action: "deny"},
+				},
+				PathDefault: "deny",
+			}},
+		},
+		{
+			name: "wildcard dst, no path rules",
+			in: []*adminv1.EgressRule{{
+				Dst: "*.github.com", Proto: "tls", Port: 443, Action: "allow",
+			}},
+		},
+		{
+			name: "http proto, path default only",
+			in: []*adminv1.EgressRule{{
+				Dst: "plain.example.com", Proto: "http", Port: 80, Action: "allow",
+				PathDefault: "deny",
+			}},
+		},
+		{
+			name: "multiple rules, mixed protos",
+			in: []*adminv1.EgressRule{
+				{Dst: "a.example.com", Proto: "tls", Port: 443, Action: "allow"},
+				{Dst: "b.example.com", Proto: "tcp", Port: 22, Action: "allow"},
+				{Dst: "c.example.com", Proto: "http", Port: 80, Action: "deny"},
+			},
 		},
 	}
-	cfgs := ProtoRulesToConfig(in)
-	if len(cfgs) != 1 || cfgs[0].Dst != "api.example.com" || cfgs[0].PathDefault != "deny" {
-		t.Fatalf("ProtoRulesToConfig mismatch: %+v", cfgs)
-	}
-	if len(cfgs[0].PathRules) != 1 || cfgs[0].PathRules[0].Path != "/v1" {
-		t.Errorf("PathRules mismatch: %+v", cfgs[0].PathRules)
-	}
-	out := ConfigRulesToProto(cfgs)
-	if len(out) != 1 || out[0].GetDst() != "api.example.com" {
-		t.Fatalf("ConfigRulesToProto mismatch: %+v", out)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := ConfigRulesToProto(ProtoRulesToConfig(tc.in))
+			require.Equal(t, len(tc.in), len(out), "rule count preserved")
+			for i, want := range tc.in {
+				got := out[i]
+				assert.Equal(t, want.GetDst(), got.GetDst(), "Dst")
+				assert.Equal(t, want.GetProto(), got.GetProto(), "Proto")
+				assert.Equal(t, want.GetPort(), got.GetPort(), "Port")
+				assert.Equal(t, want.GetAction(), got.GetAction(), "Action")
+				assert.Equal(t, want.GetPathDefault(), got.GetPathDefault(), "PathDefault")
+				require.Equal(t, len(want.GetPathRules()), len(got.GetPathRules()), "PathRules len")
+				for j, wp := range want.GetPathRules() {
+					gp := got.GetPathRules()[j]
+					assert.Equal(t, wp.GetPath(), gp.GetPath(), "PathRules[%d].Path", j)
+					assert.Equal(t, wp.GetAction(), gp.GetAction(), "PathRules[%d].Action", j)
+				}
+			}
+		})
 	}
 }

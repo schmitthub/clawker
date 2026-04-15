@@ -38,16 +38,10 @@ func newControlPlaneHarness(t *testing.T) *harness.Harness {
 		},
 	}
 	h.NewIsolatedFS(nil)
-	t.Cleanup(func() {
-		// Nothing beyond the harness cleanup chain — the `controlplane
-		// down` verb under test is what tears the CP down. Harness
-		// cleanup still force-removes the container if a test fails
-		// before reaching the down step.
-	})
 	return h
 }
 
-// TestControlPlaneCLI_UpStatusDown_E2E walks the break-glass verbs in
+// TestControlPlaneCLI_UpStatusDown walks the break-glass verbs in
 // their intended order on a fresh env:
 //  1. `controlplane status` before up — container absent, exit 0.
 //  2. `controlplane up` — CP boots; `/healthz` green; idempotent on
@@ -56,7 +50,7 @@ func newControlPlaneHarness(t *testing.T) *harness.Harness {
 //  4. `controlplane down` — CP removed; stderr carries the orphan-firewall
 //     warning.
 //  5. `controlplane status` after down — back to the absent baseline.
-func TestControlPlaneCLI_UpStatusDown_E2E(t *testing.T) {
+func TestControlPlaneCLI_UpStatusDown(t *testing.T) {
 	if testing.Short() {
 		t.Skip("E2E CP lifecycle test")
 	}
@@ -103,10 +97,10 @@ func TestControlPlaneCLI_UpStatusDown_E2E(t *testing.T) {
 	assert.False(t, post.ContainerRunning, "CP must be absent after down")
 }
 
-// TestControlPlaneCLI_DownOnAbsentCP_E2E verifies that `controlplane down`
+// TestControlPlaneCLI_DownOnAbsentCP verifies that `controlplane down`
 // is a no-op when the CP is not running, preserving the short-circuit
 // contract: no ensureRunning side effect, no error, no warning spam.
-func TestControlPlaneCLI_DownOnAbsentCP_E2E(t *testing.T) {
+func TestControlPlaneCLI_DownOnAbsentCP(t *testing.T) {
 	h := newControlPlaneHarness(t)
 
 	// Best-effort pre-clean so the test is robust against stray state

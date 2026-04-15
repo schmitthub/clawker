@@ -83,6 +83,10 @@ func (s *Stack) EnsureRunning(ctx context.Context) error {
 		return err
 	}
 
+	if _, err := s.ensureConfigs(); err != nil {
+		return fmt.Errorf("firewall stack: %w", err)
+	}
+
 	if err := s.ensureCorednsImage(ctx); err != nil {
 		return fmt.Errorf("firewall stack: %w", err)
 	}

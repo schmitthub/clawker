@@ -52,7 +52,7 @@ By moving the embeds + bootstrap + container config + Manager into this leaf sub
 
 **Uses**: `internal/auth`, `internal/config`, `internal/consts`, `internal/controlplane/firewall` (for `fwcp.EnvoyStackName` etc.), `internal/docker`, `internal/logger`, `pkg/whail`, `github.com/moby/moby/api/types/{container,mount,network}`.
 
-**Used by**: `internal/cmdutil` (Factory field type), `internal/cmd/factory/default.go` (`ensureRunning` seam + `controlPlaneFunc`), `internal/cmd/controlplane/{up,down,status}.go`, `internal/cmd/firewall/{down,status}.go` (`CPRunning` short-circuit), `test/e2e/harness/factory.go`, `test/e2e/cp_*_test.go`.
+**Used by**: `internal/cmdutil` (Factory field type), `internal/cmd/factory/default.go` (`ensureRunning` seam + `controlPlaneFunc`), `internal/cmd/controlplane/{up,down,status}.go`, `internal/cmd/firewall/{down,status}.go` (`CPRunning` short-circuit), `test/e2e/harness/factory.go`, `test/e2e/controlplane_cli_test.go`.
 
 **Does NOT import** `internal/controlplane` — no circular dependency.
 
@@ -62,4 +62,4 @@ The CP runs inside the `clawker-controlplane` container with `CLAWKER_CONFIG_DIR
 
 `EnsureOpts.HostDirs` (required, validated in `HostDirs.Validate`) carries the host-resolved `Config` / `Data` / `State` / `Cache` dirs through `BuildCPContainerConfig`. They get serialized onto the CP container's env as `CLAWKER_HOST_{CONFIG,DATA,STATE,CACHE}_DIR`. The `internal/consts/controlplane.go` package then exposes `HostConfigDir` / `HostDataDir` / `HostStateDir` / `HostCacheDir` package vars (plus composed `HostFirewallDataSubdir` / `HostFirewallCertSubdir` / `HostEnvoyConfigPath` / `HostCorefilePath`) for the firewall Stack to read when it builds sibling container specs.
 
-CLI callers resolve `HostDirs` via `consts.{ConfigDir,DataDir,StateDir,CacheDir}()` (host-side) before invoking `EnsureRunning`. Unit tests use the `testHostDirs()` helper in `bootstrap_test.go`; Stack unit tests and `test/e2e/firewall_stack_test.go` override the `consts.Host*` package vars directly via `t.Cleanup`-scoped helpers because package init happens before `testenv` sets the env vars.
+CLI callers resolve `HostDirs` via `consts.{ConfigDir,DataDir,StateDir,CacheDir}()` (host-side) before invoking `EnsureRunning`. Unit tests use the `testHostDirs()` helper in `bootstrap_test.go`; Stack unit tests override the `consts.Host*` package vars directly via `t.Cleanup`-scoped helpers because package init happens before `testenv` sets the env vars.

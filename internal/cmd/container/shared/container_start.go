@@ -48,6 +48,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	}
 
 	projectCfg := cfg.Project()
+	settings := cfg.Settings()
 
 	var log *logger.Logger
 	if cmdOpts.Logger != nil {
@@ -83,6 +84,35 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		log.Debug().Msg("host proxy disabled by config")
 	}
 
+	// Bring the firewall stack up via CP before docker start so the
+	// entrypoint's /healthz poll resolves on first try. Two RPCs:
+	//  1. FirewallInit — idempotent stack-up (Envoy + CoreDNS).
+	//  2. FirewallAddRules — sync project rules; returns after stack healthy.
+	// Per-container FirewallEnable runs post-start because the cgroup only
+	// exists after docker start creates the container's init process.
+	// Getting the AdminClient transparently triggers cpboot.EnsureRunning.
+	if settings != nil && settings.Firewall.FirewallEnabled() {
+		if cmdOpts.AdminClient == nil {
+			return fmt.Errorf("bootstrapping services: firewall is enabled but no admin client provided")
+		}
+
+		client, err := cmdOpts.AdminClient(ctx)
+		if err != nil {
+			return fmt.Errorf("bootstrapping services: connecting to control plane: %w", err)
+		}
+
+		if _, err := client.FirewallInit(ctx, &adminv1.FirewallInitRequest{}); err != nil {
+			return fmt.Errorf("bootstrapping services: firewall init: %w", err)
+		}
+
+		projectRules := fwcp.ProjectRules(cfg)
+		if _, err := client.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
+			Rules: fwcp.ConfigRulesToProto(projectRules),
+		}); err != nil {
+			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -115,11 +145,10 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 		defer log.Close()
 	}
 
-	// Bring the firewall up via CP and enroll this container. Three RPCs:
-	//  1. FirewallInit — idempotent stack-up + BPF readiness check.
-	//  2. FirewallAddRules — sync project rules; returns after stack healthy.
-	//  3. FirewallEnable — drift-guarded per-container enroll (INV-B2-016).
-	// Getting the AdminClient transparently triggers cpboot.EnsureRunning.
+	// Enroll this container's cgroup into BPF container_map. Cgroup only
+	// exists after docker start creates the container's init process, so
+	// this must run post-start. CP + stack + rules came up in pre-start.
+	// Drift-guarded per-container enroll (INV-B2-016).
 	if settings != nil && settings.Firewall.FirewallEnabled() {
 		if cmdOpts.AdminClient == nil {
 			return fmt.Errorf("bootstrapping services: firewall is enabled but no admin client provided")
@@ -128,17 +157,6 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 		client, err := cmdOpts.AdminClient(ctx)
 		if err != nil {
 			return fmt.Errorf("bootstrapping services: connecting to control plane: %w", err)
-		}
-
-		if _, err := client.FirewallInit(ctx, &adminv1.FirewallInitRequest{}); err != nil {
-			return fmt.Errorf("bootstrapping services: firewall init: %w", err)
-		}
-
-		projectRules := fwcp.ProjectRules(cfg)
-		if _, err := client.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
-			Rules: fwcp.ConfigRulesToProto(projectRules),
-		}); err != nil {
-			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
 		}
 
 		if _, err := client.FirewallEnable(ctx, &adminv1.FirewallEnableRequest{

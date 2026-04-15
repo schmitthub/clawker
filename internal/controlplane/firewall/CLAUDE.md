@@ -143,7 +143,7 @@ Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E test
 - **FakeClient managed-label jail**: `whail.ContainerInspect` re-invokes `ContainerInspectFn` inside `IsContainerManaged` — test fakes must return `Config.Labels[managedKey]=ManagedLabelValue` in inspect responses, otherwise real callers see `ErrContainerNotFound`.
 - **Stop/Reload no-op tests** need affirmative assertions (`NotContains(fake.Calls, "ContainerStop")`, `FileExists(envoy.yaml)`) or they pass trivially without exercising the short-circuit.
 - **Golden files**: `testdata/corefile_basic.golden` is hand-edited to update (no `GOLDEN_UPDATE=1` hook).
-- **E2E tests**: `test/e2e/firewall_test.go`, `test/e2e/firewall_stack_test.go`, `test/e2e/cp_self_shutdown_test.go`, `test/e2e/cp_startup_cleanup_test.go`, `test/e2e/controlplane_cli_test.go`. Authored and committed; execution deferred to final host-side review per project policy.
+- **E2E tests**: `test/e2e/firewall_test.go` (composite flows through the CLI — blocked domain, allowed domain, add/remove rules, status, path rules, bypass end-to-end including natural-expiry + gone-container error paths) and `test/e2e/controlplane_cli_test.go` (break-glass `controlplane up/status/down` verbs). E2E means through `harness.Run(...)` — no direct `Stack`/`Handler` construction belongs under `test/e2e/`.
 
 ## Gotchas
 
