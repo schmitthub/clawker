@@ -19,7 +19,7 @@ func TestINV_B1_005_HydraAdminInternalOnly(t *testing.T) {
 	cfg := configmocks.NewBlankConfig()
 	cp := cfg.Settings().ControlPlane
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 	require.NotNil(t, cpConfig)
 
@@ -35,7 +35,7 @@ func TestINV_B1_006_PrivateKeysNeverMounted(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
 	signingKeyPath, err := consts.AuthCLISigningKeyPath()
@@ -56,7 +56,7 @@ func TestINV_B1_006_PublicMaterialIsMounted(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
 	jwkPath, err := consts.AuthCLISigningJWKPath()
@@ -97,7 +97,7 @@ func TestINV_B1_008_AllPortsPublishedToLocalhostOnly(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 	require.NotEmpty(t, cpConfig.PortBindings)
 
@@ -117,7 +117,7 @@ control_plane:
   admin_port: 9999
 `)
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
 	customPortKey := fmt.Sprintf("%d/tcp", 9999)
@@ -143,7 +143,7 @@ func TestINV_B1_009_CPIsInfrastructureNotFiltered(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
 	purposeLabel, ok := cpConfig.Labels[consts.LabelPurpose]
@@ -157,7 +157,7 @@ func TestINV_B1_015_CPImageTag(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 	assert.Equal(t, consts.CPImageTag, cpConfig.Image)
 }
@@ -167,7 +167,7 @@ func TestINV_B1_018_CPContainerLabels(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
 	t.Run("managed label", func(t *testing.T) {
@@ -188,12 +188,12 @@ func TestINV_B1_020_ConfigDirMounted(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
 	found := false
 	for _, m := range cpConfig.Mounts {
-		if m.Target == "/etc/clawker/config" {
+		if m.Target == consts.CPClawkerConfigDir {
 			found = true
 			assert.True(t, m.ReadOnly, "config dir must be mounted read-only")
 			break
@@ -207,7 +207,7 @@ func TestCPContainerConfig_DockerSocketMounted(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
 	found := false
@@ -230,10 +230,10 @@ func TestINV_B1_020_ConfigDirEnvVar(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
-	envVar := cfg.ConfigDirEnvVar() + "=/etc/clawker/config"
+	envVar := cfg.ConfigDirEnvVar() + "=" + consts.CPClawkerConfigDir
 	assert.Contains(t, cpConfig.Env, envVar,
 		"container env must set %s", cfg.ConfigDirEnvVar())
 }

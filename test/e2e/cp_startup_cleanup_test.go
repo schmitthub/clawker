@@ -54,7 +54,16 @@ func TestCPStartupCleanup_E2E(t *testing.T) {
 		}
 	})
 
-	require.NoError(t, cpboot.EnsureRunning(ctx, dc, cfg, log), "first EnsureRunning")
+	ensureOpts := cpboot.EnsureOpts{
+		Docker: dc, Config: cfg, Logger: log,
+		HostDirs: cpboot.HostDirs{
+			Config: consts.ConfigDir(),
+			Data:   consts.DataDir(),
+			State:  consts.StateDir(),
+			Cache:  consts.CacheDir(),
+		},
+	}
+	require.NoError(t, cpboot.EnsureRunning(ctx, ensureOpts), "first EnsureRunning")
 
 	// Pick a cgroup id that is guaranteed to have no corresponding
 	// container_map entry — 0xDEAD is an obvious sentinel, large enough
@@ -70,7 +79,7 @@ func TestCPStartupCleanup_E2E(t *testing.T) {
 	// pinned maps via Manager.Load and then — by main.go wiring —
 	// invokes CleanupStaleBypass, which must remove the 0xDEAD entry.
 	require.NoError(t, cpboot.Stop(ctx, dc), "restarting CP: Stop")
-	require.NoError(t, cpboot.EnsureRunning(ctx, dc, cfg, log), "restarting CP: EnsureRunning")
+	require.NoError(t, cpboot.EnsureRunning(ctx, ensureOpts), "restarting CP: EnsureRunning")
 
 	// Give the CP a moment to settle post-/healthz.
 	select {

@@ -136,10 +136,55 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 	return &bootstrapFixture{cfg: cfg, fake: fake, calls: calls}
 }
 
+// testHostDirs returns HostDirs populated from the current test-env XDG
+// dirs. Callable from any _test.go in this package — configmocks.
+// NewIsolatedTestConfig sets the CLAWKER_*_DIR env vars via t.Setenv,
+// so consts.{ConfigDir,DataDir,StateDir,CacheDir} resolve to the
+// testenv paths.
+func testHostDirs() HostDirs {
+	return HostDirs{
+		Config: consts.ConfigDir(),
+		Data:   consts.DataDir(),
+		State:  consts.StateDir(),
+		Cache:  consts.CacheDir(),
+	}
+}
+
+// testCPOpts returns CPContainerOpts wrapping testHostDirs.
+func testCPOpts() CPContainerOpts { return CPContainerOpts{HostDirs: testHostDirs()} }
+
+// hostDirs resolves the host-side XDG dirs from the isolated test env.
+// configmocks.NewIsolatedTestConfig sets CLAWKER_*_DIR env vars via
+// t.Setenv, so consts.{ConfigDir,DataDir,StateDir,CacheDir} return the
+// testenv-backed paths rather than real user paths.
+func (f *bootstrapFixture) hostDirs() HostDirs {
+	return HostDirs{
+		Config: consts.ConfigDir(),
+		Data:   consts.DataDir(),
+		State:  consts.StateDir(),
+		Cache:  consts.CacheDir(),
+	}
+}
+
+// ensureOpts returns a fully-populated EnsureOpts for the fixture.
+func (f *bootstrapFixture) ensureOpts() EnsureOpts {
+	return EnsureOpts{
+		Docker:   f.fake.Client,
+		Config:   f.cfg,
+		Logger:   logger.Nop(),
+		HostDirs: f.hostDirs(),
+	}
+}
+
+// cpOpts returns CPContainerOpts for the fixture.
+func (f *bootstrapFixture) cpOpts() CPContainerOpts {
+	return CPContainerOpts{HostDirs: f.hostDirs()}
+}
+
 func TestEnsureRunning_HappyPath_CreatesContainer(t *testing.T) {
 	f := newBootstrapFixture(t)
 
-	err := EnsureRunning(t.Context(), f.fake.Client, f.cfg, logger.Nop())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), f.calls.auth.Load(), "auth ensured once")
@@ -154,7 +199,7 @@ func TestEnsureRunning_AlreadyRunning_IsNoOp(t *testing.T) {
 
 	// Pretend the CP container is already running with the expected mount
 	// set — EnsureRunning should fast-path to healthz.
-	wantCfg, err := BuildCPContainerConfig(f.cfg)
+	wantCfg, err := BuildCPContainerConfig(f.cfg, f.cpOpts())
 	require.NoError(t, err)
 
 	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
@@ -179,7 +224,7 @@ func TestEnsureRunning_AlreadyRunning_IsNoOp(t *testing.T) {
 		}, nil
 	}
 
-	require.NoError(t, EnsureRunning(t.Context(), f.fake.Client, f.cfg, logger.Nop()))
+	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
 	assert.Zero(t, f.calls.create.Load(), "no create when already running")
 	assert.Zero(t, f.calls.start.Load(), "no start when already running")
 	assert.Equal(t, int32(1), f.calls.healthz.Load(), "healthz probed for running CP")
@@ -188,7 +233,7 @@ func TestEnsureRunning_AlreadyRunning_IsNoOp(t *testing.T) {
 func TestEnsureRunning_ExistingStopped_StartsWithoutRecreate(t *testing.T) {
 	f := newBootstrapFixture(t)
 
-	wantCfg, err := BuildCPContainerConfig(f.cfg)
+	wantCfg, err := BuildCPContainerConfig(f.cfg, f.cpOpts())
 	require.NoError(t, err)
 
 	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
@@ -213,7 +258,7 @@ func TestEnsureRunning_ExistingStopped_StartsWithoutRecreate(t *testing.T) {
 		}, nil
 	}
 
-	require.NoError(t, EnsureRunning(t.Context(), f.fake.Client, f.cfg, logger.Nop()))
+	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
 	assert.Zero(t, f.calls.create.Load(), "no create when only stopped")
 	assert.Equal(t, int32(1), f.calls.start.Load(), "existing container started")
 	assert.Zero(t, f.calls.remove.Load(), "no remove when mounts match")
@@ -225,20 +270,20 @@ func TestEnsureRunning_MountDivergence_RecreatesContainer(t *testing.T) {
 	// hasMountDivergence checks: missing mount, RO/RW flip, Source
 	// path change, and extra mount not in the want set.
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	wantCfg, err := BuildCPContainerConfig(cfg)
+	wantCfg, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
 	legacyRO := make([]mount.Mount, len(wantCfg.Mounts))
 	copy(legacyRO, wantCfg.Mounts)
 	for i := range legacyRO {
-		if legacyRO[i].Target == firewallDataContainerPath {
+		if legacyRO[i].Target == consts.CPFirewallDataDir {
 			legacyRO[i].ReadOnly = true
 		}
 	}
 	movedSource := make([]mount.Mount, len(wantCfg.Mounts))
 	copy(movedSource, wantCfg.Mounts)
 	for i := range movedSource {
-		if movedSource[i].Target == firewallDataContainerPath {
+		if movedSource[i].Target == consts.CPFirewallDataDir {
 			movedSource[i].Source = "/tmp/stale/path"
 		}
 	}
@@ -250,7 +295,7 @@ func TestEnsureRunning_MountDivergence_RecreatesContainer(t *testing.T) {
 		mounts []mount.Mount
 	}{
 		{"missing firewall-data mount", []mount.Mount{
-			{Type: mount.TypeBind, Source: "/anywhere", Target: "/etc/clawker/config", ReadOnly: true},
+			{Type: mount.TypeBind, Source: "/anywhere", Target: consts.CPClawkerConfigDir, ReadOnly: true},
 		}},
 		{"RO where RW expected", legacyRO},
 		{"divergent source path", movedSource},
@@ -283,7 +328,7 @@ func TestEnsureRunning_MountDivergence_RecreatesContainer(t *testing.T) {
 				}, nil
 			}
 
-			require.NoError(t, EnsureRunning(t.Context(), f.fake.Client, f.cfg, logger.Nop()))
+			require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
 			assert.Equal(t, int32(1), f.calls.stop.Load(), "divergent container stopped")
 			assert.Equal(t, int32(1), f.calls.remove.Load(), "divergent container removed")
 			assert.Equal(t, int32(1), f.calls.create.Load(), "fresh container created")
@@ -301,7 +346,7 @@ func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
 		return sentinel
 	}
 
-	err := EnsureRunning(t.Context(), f.fake.Client, f.cfg, logger.Nop())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.Error(t, err)
 	var got *CPHealthTimeoutError
 	require.ErrorAs(t, err, &got)
@@ -318,7 +363,7 @@ func TestEnsureRunning_ConcurrentCallers_SingleCreate(t *testing.T) {
 	// The mutex forces them to run one at a time — the second onward
 	// see the running container and fast-path to healthz.
 	f := newBootstrapFixture(t)
-	wantCfg, err := BuildCPContainerConfig(f.cfg)
+	wantCfg, err := BuildCPContainerConfig(f.cfg, f.cpOpts())
 	require.NoError(t, err)
 
 	const goroutines = 5
@@ -366,7 +411,7 @@ func TestEnsureRunning_ConcurrentCallers_SingleCreate(t *testing.T) {
 	for i := 0; i < goroutines; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			errs[idx] = EnsureRunning(t.Context(), f.fake.Client, f.cfg, logger.Nop())
+			errs[idx] = EnsureRunning(t.Context(), f.ensureOpts())
 		}(i)
 	}
 
@@ -396,7 +441,7 @@ func TestEnsureRunning_NameConflictRecovery_NoSecondCreate(t *testing.T) {
 	// findCPContainer and ContainerCreate. Docker returns "already in
 	// use"; we recover by starting the existing container.
 	f := newBootstrapFixture(t)
-	wantCfg, err := BuildCPContainerConfig(f.cfg)
+	wantCfg, err := BuildCPContainerConfig(f.cfg, f.cpOpts())
 	require.NoError(t, err)
 
 	// First list returns empty, second list (after name conflict) returns
@@ -434,7 +479,7 @@ func TestEnsureRunning_NameConflictRecovery_NoSecondCreate(t *testing.T) {
 		}, nil
 	}
 
-	require.NoError(t, EnsureRunning(t.Context(), f.fake.Client, f.cfg, logger.Nop()))
+	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
 	// Start fires twice: once during the conflict-recovery path on the
 	// found container, plus the create path never reaches its own start
 	// because ContainerCreate errored. Accept ≥1.
@@ -520,12 +565,12 @@ func portFromTestServer(srv *httptest.Server) (int, error) {
 func TestBuildCPContainerConfig_FirewallDataMountedRW(t *testing.T) {
 	// INV-B2-006 complement: the CP must mount FirewallDataSubdir RW.
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	cpCfg, err := BuildCPContainerConfig(cfg)
+	cpCfg, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
 	found := false
 	for _, m := range cpCfg.Mounts {
-		if m.Target == firewallDataContainerPath {
+		if m.Target == consts.CPFirewallDataDir {
 			found = true
 			assert.False(t, m.ReadOnly, "firewall data must be RW for the CP (sole writer)")
 			break
@@ -537,17 +582,17 @@ func TestBuildCPContainerConfig_FirewallDataMountedRW(t *testing.T) {
 func TestBuildCPContainerConfig_RestartPolicyOnFailure(t *testing.T) {
 	// INV-B2-007 guard: CP must not auto-restart on graceful exit.
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	cpCfg, err := BuildCPContainerConfig(cfg)
+	cpCfg, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 	assert.Equal(t, container.RestartPolicyOnFailure, cpCfg.RestartPolicy.Name)
-	assert.Equal(t, cpMaxRestartRetries, cpCfg.RestartPolicy.MaximumRetryCount)
+	assert.Equal(t, consts.CPMaxRestartRetries, cpCfg.RestartPolicy.MaximumRetryCount)
 }
 
 func TestBuildCPContainerConfig_ClawkerNetAttachment(t *testing.T) {
 	// INV-B2-014: CP container attaches to clawker-net so it can reach
 	// Envoy and CoreDNS by their internal IPs.
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	cpCfg, err := BuildCPContainerConfig(cfg)
+	cpCfg, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 	assert.Equal(t, consts.Network, cpCfg.NetworkName)
 }

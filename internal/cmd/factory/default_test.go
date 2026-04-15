@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
@@ -84,7 +85,7 @@ func newFakeConn(t *testing.T) *grpc.ClientConn {
 // withSeams swaps ensureRunning + dialAdmin for the duration of a
 // test. The t.Cleanup restores originals so parallel tests don't
 // bleed state.
-func withSeams(t *testing.T, er func(context.Context, *docker.Client, config.Config, *logger.Logger) error,
+func withSeams(t *testing.T, er func(context.Context, cpboot.EnsureOpts) error,
 	da func(context.Context, int, int, ...grpc.DialOption) (adminv1.AdminServiceClient, *grpc.ClientConn, error)) {
 	t.Helper()
 	origER := ensureRunning
@@ -107,7 +108,7 @@ func TestAdminClient_CachesOnSuccessiveCalls(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close() })
 
 	withSeams(t,
-		func(ctx context.Context, _ *docker.Client, _ config.Config, _ *logger.Logger) error {
+		func(_ context.Context, _ cpboot.EnsureOpts) error {
 			atomic.AddInt32(&ensureCalls, 1)
 			return nil
 		},
@@ -160,7 +161,7 @@ func TestAdminClient_RebuildsAfterShutdown(t *testing.T) {
 	conns := make([]*grpc.ClientConn, 0, 2)
 
 	withSeams(t,
-		func(ctx context.Context, _ *docker.Client, _ config.Config, _ *logger.Logger) error {
+		func(_ context.Context, _ cpboot.EnsureOpts) error {
 			atomic.AddInt32(&ensureCalls, 1)
 			return nil
 		},
@@ -240,7 +241,7 @@ func TestAdminClient_PassesKeepaliveToDial(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close() })
 
 	withSeams(t,
-		func(context.Context, *docker.Client, config.Config, *logger.Logger) error { return nil },
+		func(context.Context, cpboot.EnsureOpts) error { return nil },
 		func(_ context.Context, _, _ int, opts ...grpc.DialOption) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
 			capturedOpts = opts
 			return adminv1.NewAdminServiceClient(conn), conn, nil

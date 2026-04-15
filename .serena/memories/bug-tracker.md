@@ -17,6 +17,8 @@ Next Steps:
 - [ ] `clawker firewall up` fails with `✗ starting firewall: rpc error: code = Internal desc = firewall init: firewall stack: envoy: creating container clawker-envoy: Failed to create container: Error response from daemon: invalid mount config for type "bind": bind source path does not exist: /root/.local/share/clawker/firewall/envoy.yaml`
 - [ ] Not using `internal/docker` client in `cmd/clawker-cp/main.go` 
 - [ ] `cmd/clawker-cp/main.go` should probably be a light wrapper around `internal/controlplane` package instead of doing all the work itself.
+- [ ] `clawker firewall up` doesn't need to display the stack ip and network id (its not even the name lol its a long random id). its totally useless info to the user. 
+- [ ] CP should remove its container on shutdown imo. unless there is some functional benefit or constraint in doing so
 
 ## General
 

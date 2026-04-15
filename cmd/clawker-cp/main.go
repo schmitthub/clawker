@@ -84,10 +84,10 @@ const (
 )
 
 func main() {
-	caCertPath := flag.String("tls-ca", "/etc/clawker/tls/ca.pem", "CLI CA certificate")
-	serverCertPath := flag.String("tls-cert", "/etc/clawker/tls/server.pem", "TLS server certificate")
-	serverKeyPath := flag.String("tls-key", "/etc/clawker/tls/server.key", "TLS server key")
-	jwkPath := flag.String("jwk", "/etc/clawker/cli/signing-jwk.json", "CLI signing JWK (bind-mounted)")
+	caCertPath := flag.String("tls-ca", consts.CPCACertPath, "CLI CA certificate")
+	serverCertPath := flag.String("tls-cert", consts.CPTLSCertPath, "TLS server certificate")
+	serverKeyPath := flag.String("tls-key", consts.CPTLSKeyPath, "TLS server key")
+	jwkPath := flag.String("jwk", consts.CPCLIPubKeyPath, "CLI signing JWK (bind-mounted)")
 	logDir := flag.String("log-dir", "/var/log/clawker", "directory for persistent audit logs")
 	flag.Parse()
 
@@ -134,7 +134,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 
 	// --- Step 1: Start Kratos ---
 	kratosCmd := exec.Command("kratos", "serve",
-		"--config", "/etc/clawker/kratos.yaml",
+		"--config", consts.CPKratosConfigPath,
 	)
 	if err := subMgr.Start("kratos", kratosCmd); err != nil {
 		return fmt.Errorf("step 1 (kratos): %w", err)
@@ -142,7 +142,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 
 	// --- Step 2: Start Hydra ---
 	hydraCmd := exec.Command("hydra", "serve", "all",
-		"--config", "/etc/clawker/hydra.yaml",
+		"--config", consts.CPHydraConfigPath,
 		"--sqa-opt-out",
 		"--dev",
 	)
@@ -217,7 +217,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	// gRPC auth (CLI + agents) bypasses Oathkeeper entirely — it uses
 	// direct Hydra token introspection via AuthInterceptor.
 	oathkeeperCmd := exec.Command("oathkeeper", "serve",
-		"--config", "/etc/clawker/oathkeeper.yaml",
+		"--config", consts.CPOathkeeperConfigPath,
 	)
 	if err := subMgr.Start("oathkeeper", oathkeeperCmd); err != nil {
 		return fmt.Errorf("step 6 (oathkeeper): %w", err)

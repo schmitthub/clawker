@@ -15,8 +15,8 @@ Host-side orchestration for the clawker control plane container. Split out of `i
 |------|---------|
 | `embed_cp.go` | `ClawkerCPBinary []byte` — `//go:embed assets/clawker-cp` |
 | `embed_ebpf.go` | `EBPFManagerBinary []byte` — `//go:embed assets/ebpf-manager` |
-| `bootstrap.go` | `EnsureRunning(ctx, dc, cfg, log)` / `Stop(ctx, dc)` / `CPRunning(ctx, dc)` host-side lifecycle; `cpImageDockerfile` multi-stage recipe; `ensureCPImage` / `cpBuildContext` image build; `waitForCPHealthz` + `CPHealthTimeoutError` |
-| `cp_container.go` | `BuildCPContainerConfig(cfg)` → `*CPContainerConfig` — port bindings, mounts, labels, restart policy (INV-B1-005/006/008/009/015/017/018/020) |
+| `bootstrap.go` | `EnsureRunning(ctx, EnsureOpts)` / `Stop(ctx, dc)` / `CPRunning(ctx, dc)` host-side lifecycle; `EnsureOpts` bundles `Docker` / `Config` / `Logger` / `HostDirs`; `cpImageDockerfile` multi-stage recipe; `ensureCPImage` / `cpBuildContext` image build; `waitForCPHealthz` + `CPHealthTimeoutError` |
+| `cp_container.go` | `BuildCPContainerConfig(cfg, CPContainerOpts)` → `*CPContainerConfig` — port bindings, mounts, labels, restart policy (INV-B1-005/006/008/009/015/017/018/020); defines `HostDirs{Config,Data,State,Cache}` + `Validate()`; injects the four `CLAWKER_HOST_*_DIR` env vars so the CP can compute sibling container bind `Mount.Source` values from host-FS paths |
 | `manager.go` | `Manager` interface (`EnsureRunning` / `Stop` / `IsRunning` / `ProbeHealthz`) + `NewManager(client, cfg, log)` constructor. Holds lazy Factory closures so callers who never touch the CP never resolve Docker/Config/Logger. |
 | `bootstrap_test.go` | Unit tests for `EnsureRunning` happy-path, idempotency, mount-divergence recreation, name-conflict recovery, healthz timeout, concurrent callers (INV-B2-006) |
 | `container_config_test.go` | Unit tests asserting `BuildCPContainerConfig` invariants (INV-B1-005/006/008/009/015/017/018/020) |
@@ -55,3 +55,11 @@ By moving the embeds + bootstrap + container config + Manager into this leaf sub
 **Used by**: `internal/cmdutil` (Factory field type), `internal/cmd/factory/default.go` (`ensureRunning` seam + `controlPlaneFunc`), `internal/cmd/controlplane/{up,down,status}.go`, `internal/cmd/firewall/{down,status}.go` (`CPRunning` short-circuit), `test/e2e/harness/factory.go`, `test/e2e/cp_*_test.go`.
 
 **Does NOT import** `internal/controlplane` — no circular dependency.
+
+## Host path injection into the CP
+
+The CP runs inside the `clawker-controlplane` container with `CLAWKER_CONFIG_DIR` / `CLAWKER_DATA_DIR` pointing at container-local paths (`/etc/clawker/config`, `/usr/local/share/clawker`). Those paths are bind-mounted from the host XDG dirs — writes from the CP land on the host — but Docker-outside-of-Docker calls that spawn Envoy/CoreDNS siblings require **host-FS** `Mount.Source` values, not container-local ones.
+
+`EnsureOpts.HostDirs` (required, validated in `HostDirs.Validate`) carries the host-resolved `Config` / `Data` / `State` / `Cache` dirs through `BuildCPContainerConfig`. They get serialized onto the CP container's env as `CLAWKER_HOST_{CONFIG,DATA,STATE,CACHE}_DIR`. The `internal/consts/controlplane.go` package then exposes `HostConfigDir` / `HostDataDir` / `HostStateDir` / `HostCacheDir` package vars (plus composed `HostFirewallDataSubdir` / `HostFirewallCertSubdir` / `HostEnvoyConfigPath` / `HostCorefilePath`) for the firewall Stack to read when it builds sibling container specs.
+
+CLI callers resolve `HostDirs` via `consts.{ConfigDir,DataDir,StateDir,CacheDir}()` (host-side) before invoking `EnsureRunning`. Unit tests use the `testHostDirs()` helper in `bootstrap_test.go`; Stack unit tests and `test/e2e/firewall_stack_test.go` override the `consts.Host*` package vars directly via `t.Cleanup`-scoped helpers because package init happens before `testenv` sets the env vars.

@@ -18,7 +18,7 @@ func TestINV_B1_017_AllRequiredPortsPublished(t *testing.T) {
 	cfg := configmocks.NewBlankConfig()
 	cp := cfg.Settings().ControlPlane
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 	require.NotNil(t, cpConfig)
 
@@ -53,7 +53,7 @@ func TestINV_B1_017_CPNotInContainerMap(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
 
-	cpConfig, err := BuildCPContainerConfig(cfg)
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
 	purposeLabel := cpConfig.Labels[consts.LabelPurpose]

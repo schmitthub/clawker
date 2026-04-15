@@ -81,6 +81,7 @@ const (
 	EnvConfigDir   = "CLAWKER_CONFIG_DIR"
 	EnvDataDir     = "CLAWKER_DATA_DIR"
 	EnvStateDir    = "CLAWKER_STATE_DIR"
+	EnvCacheDir    = "CLAWKER_CACHE_DIR"
 	EnvTestRepoDir = "CLAWKER_TEST_REPO_DIR"
 )
 
@@ -206,6 +207,7 @@ const (
 	xdgConfigHome = "XDG_CONFIG_HOME"
 	xdgDataHome   = "XDG_DATA_HOME"
 	xdgStateHome  = "XDG_STATE_HOME"
+	xdgCacheHome  = "XDG_CACHE_HOME"
 )
 
 // subdirPath ensures and returns <baseDirFunc()>/<subdir>.
@@ -295,6 +297,24 @@ func StateDir() string {
 	}
 	d, _ := os.UserHomeDir()
 	return filepath.Join(d, ".local", "state", "clawker")
+}
+
+// CacheDir returns the clawker cache directory.
+// Resolution: CLAWKER_CACHE_DIR > XDG_CACHE_HOME/clawker > ~/.cache/clawker
+func CacheDir() string {
+	if a := os.Getenv(EnvCacheDir); a != "" {
+		return a
+	}
+	if b := os.Getenv(xdgCacheHome); b != "" {
+		return filepath.Join(b, "clawker")
+	}
+	if runtime.GOOS == "windows" {
+		if c := os.Getenv("LOCALAPPDATA"); c != "" {
+			return filepath.Join(c, "clawker", "cache")
+		}
+	}
+	d, _ := os.UserHomeDir()
+	return filepath.Join(d, ".cache", "clawker")
 }
 
 // ---------------------------------------------------------------------------

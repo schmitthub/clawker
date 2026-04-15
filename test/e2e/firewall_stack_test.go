@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,11 +10,39 @@ import (
 	"github.com/stretchr/testify/require"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
+
+// overrideHostPathsForFirewallStackTest points the consts.Host* package
+// vars at the testenv data dir so Stack bind Mount.Source values resolve
+// correctly when Stack runs host-side without the CP container env
+// injection. Restores via t.Cleanup.
+func overrideHostPathsForFirewallStackTest(t *testing.T, dataDir string) {
+	t.Helper()
+	origData := consts.HostDataDir
+	origFwData := consts.HostFirewallDataSubdir
+	origFwCert := consts.HostFirewallCertSubdir
+	origEnvoy := consts.HostEnvoyConfigPath
+	origCore := consts.HostCorefilePath
+
+	consts.HostDataDir = dataDir
+	consts.HostFirewallDataSubdir = filepath.Join(dataDir, "firewall")
+	consts.HostFirewallCertSubdir = filepath.Join(consts.HostFirewallDataSubdir, "certs")
+	consts.HostEnvoyConfigPath = filepath.Join(consts.HostFirewallDataSubdir, consts.EnvoyConfigFile)
+	consts.HostCorefilePath = filepath.Join(consts.HostFirewallDataSubdir, consts.Corefile)
+
+	t.Cleanup(func() {
+		consts.HostDataDir = origData
+		consts.HostFirewallDataSubdir = origFwData
+		consts.HostFirewallCertSubdir = origFwCert
+		consts.HostEnvoyConfigPath = origEnvoy
+		consts.HostCorefilePath = origCore
+	})
+}
 
 // TestFirewallStack_E2E exercises firewall.Stack lifecycle against real
 // Docker: bring clawker-net + Envoy + CoreDNS up, assert Status reflects
@@ -26,6 +55,13 @@ func TestFirewallStack_E2E(t *testing.T) {
 
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	log := logger.Nop()
+
+	// Stack runs host-side in this test (no CP container), so the
+	// CLAWKER_HOST_*_DIR env vars that normally feed the host-path
+	// package vars aren't set by the time consts init runs. Point them
+	// at the testenv data dir so sibling-container bind Mount.Source
+	// values resolve to a real host path.
+	overrideHostPathsForFirewallStackTest(t, consts.DataDir())
 
 	dc, err := docker.NewClient(ctx, cfg, log)
 	require.NoError(t, err, "constructing docker client")

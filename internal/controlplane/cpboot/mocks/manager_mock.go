@@ -33,7 +33,7 @@ var _ cpboot.Manager = &ManagerMock{}
 //			},
 //		}
 //
-//		// use mockedManager in code that requires controlplane.Manager
+//		// use mockedManager in code that requires cpboot.Manager
 //		// and then make assertions.
 //
 //	}

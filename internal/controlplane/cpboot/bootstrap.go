@@ -90,10 +90,31 @@ const cpImageDockerfile = "" +
 //
 // On partial failure (container created but /healthz timed out) the next
 // call observes the stopped/unhealthy container and reconciles.
-func EnsureRunning(ctx context.Context, dc *docker.Client, cfg config.Config, log *logger.Logger) error {
+// EnsureOpts bundles the inputs EnsureRunning needs. HostDirs is required;
+// callers resolve it host-side from consts.{ConfigDir,DataDir,StateDir,
+// CacheDir} before invoking. The CP container reads the host paths back
+// from the CLAWKER_HOST_*_DIR env vars injected by BuildCPContainerConfig
+// so it can compute sibling container bind mount sources via
+// Docker-outside-of-Docker.
+type EnsureOpts struct {
+	Docker   *docker.Client
+	Config   config.Config
+	Logger   *logger.Logger
+	HostDirs HostDirs
+}
+
+func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
+	if err := opts.HostDirs.Validate(); err != nil {
+		return fmt.Errorf("controlplane: %w", err)
+	}
+
+	dc := opts.Docker
+	cfg := opts.Config
+	log := opts.Logger
 	if log == nil {
 		log = logger.Nop()
 	}
+
 	ensureMu.Lock()
 	defer ensureMu.Unlock()
 
@@ -110,7 +131,7 @@ func EnsureRunning(ctx context.Context, dc *docker.Client, cfg config.Config, lo
 		return fmt.Errorf("controlplane: find cp: %w", err)
 	}
 	if summary != nil {
-		divergent, err := hasMountDivergence(ctx, dc, cfg, summary.ID)
+		divergent, err := hasMountDivergence(ctx, dc, cfg, summary.ID, opts.HostDirs)
 		if err != nil {
 			return fmt.Errorf("controlplane: inspect cp: %w", err)
 		}
@@ -142,7 +163,7 @@ func EnsureRunning(ctx context.Context, dc *docker.Client, cfg config.Config, lo
 		return fmt.Errorf("controlplane: compute cp static ip: %w", err)
 	}
 
-	if err := createCPContainer(ctx, dc, cfg, netInfo.NetworkID, cpIP); err != nil {
+	if err := createCPContainer(ctx, dc, cfg, netInfo.NetworkID, cpIP, opts.HostDirs); err != nil {
 		return fmt.Errorf("controlplane: %w", err)
 	}
 
@@ -204,12 +225,12 @@ func CPRunning(ctx context.Context, dc *docker.Client) (bool, error) {
 // flag, a different host Source path, or a different mount Type all
 // qualify. Any mismatch causes recreation rather than silent operation
 // with a broken config.
-func hasMountDivergence(ctx context.Context, dc *docker.Client, cfg config.Config, containerID string) (bool, error) {
+func hasMountDivergence(ctx context.Context, dc *docker.Client, cfg config.Config, containerID string, hostDirs HostDirs) (bool, error) {
 	inspect, err := dc.ContainerInspect(ctx, containerID, whail.ContainerInspectOptions{})
 	if err != nil {
 		return false, err
 	}
-	want, err := BuildCPContainerConfig(cfg)
+	want, err := BuildCPContainerConfig(cfg, CPContainerOpts{HostDirs: hostDirs})
 	if err != nil {
 		return false, err
 	}
@@ -252,8 +273,8 @@ func stopAndRemoveCP(ctx context.Context, dc *docker.Client, id string) error {
 // dispatches ContainerCreate + ContainerStart. Handles the "already in
 // use" race from concurrent bootstraps by recovering the existing
 // container and starting it.
-func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config, networkID string, ip netip.Addr) error {
-	cpCfg, err := BuildCPContainerConfig(cfg)
+func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config, networkID string, ip netip.Addr, hostDirs HostDirs) error {
+	cpCfg, err := BuildCPContainerConfig(cfg, CPContainerOpts{HostDirs: hostDirs})
 	if err != nil {
 		return fmt.Errorf("build cp container config: %w", err)
 	}
@@ -286,7 +307,7 @@ func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config
 		NetworkingConfig: netCfg,
 	})
 	if err != nil {
-		return recoverFromNameConflict(ctx, dc, cfg, err)
+		return recoverFromNameConflict(ctx, dc, cfg, hostDirs, err)
 	}
 	if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: createResp.ID}); err != nil {
 		return fmt.Errorf("starting cp container: %w", err)
@@ -301,7 +322,7 @@ func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config
 // divergent (stale B2 container from a prior config), we force a
 // re-bootstrap by surfacing the divergence. A NotConflict error
 // propagates unchanged; there is nothing to recover from.
-func recoverFromNameConflict(ctx context.Context, dc *docker.Client, cfg config.Config, createErr error) error {
+func recoverFromNameConflict(ctx context.Context, dc *docker.Client, cfg config.Config, hostDirs HostDirs, createErr error) error {
 	if !cerrdefs.IsConflict(createErr) {
 		return fmt.Errorf("creating cp container: %w", createErr)
 	}
@@ -315,7 +336,7 @@ func recoverFromNameConflict(ctx context.Context, dc *docker.Client, cfg config.
 		// on the name — safe recovery requires operator intervention.
 		return fmt.Errorf("cp container name %q in use by an unmanaged container: %w", consts.ContainerCP, createErr)
 	}
-	divergent, divErr := hasMountDivergence(ctx, dc, cfg, recovered.ID)
+	divergent, divErr := hasMountDivergence(ctx, dc, cfg, recovered.ID, hostDirs)
 	if divErr != nil {
 		return fmt.Errorf("inspecting recovered cp container %s: %w", recovered.ID, divErr)
 	}

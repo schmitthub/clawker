@@ -52,7 +52,15 @@ func TestCPSelfShutdown_E2E(t *testing.T) {
 		}
 	})
 
-	require.NoError(t, cpboot.EnsureRunning(ctx, dc, cfg, log), "EnsureRunning")
+	require.NoError(t, cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
+		Docker: dc, Config: cfg, Logger: log,
+		HostDirs: cpboot.HostDirs{
+			Config: consts.ConfigDir(),
+			Data:   consts.DataDir(),
+			State:  consts.StateDir(),
+			Cache:  consts.CacheDir(),
+		},
+	}), "EnsureRunning")
 
 	// Give the watcher's grace period + two poll intervals to elapse,
 	// plus a margin for the drain callback to stop the stack and exit.

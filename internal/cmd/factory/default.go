@@ -10,6 +10,7 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -262,7 +263,17 @@ func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminSer
 			return nil, fmt.Errorf("admin client: docker: %w", err)
 		}
 
-		if err := ensureRunning(ctx, dc, cfg, log); err != nil {
+		if err := ensureRunning(ctx, cpboot.EnsureOpts{
+			Docker: dc,
+			Config: cfg,
+			Logger: log,
+			HostDirs: cpboot.HostDirs{
+				Config: consts.ConfigDir(),
+				Data:   consts.DataDir(),
+				State:  consts.StateDir(),
+				Cache:  consts.CacheDir(),
+			},
+		}); err != nil {
 			return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
 		}
 

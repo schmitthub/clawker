@@ -3,7 +3,6 @@ package cpboot
 import (
 	"fmt"
 	"net/netip"
-	"path/filepath"
 	"strconv"
 
 	"github.com/moby/moby/api/types/container"
@@ -14,23 +13,42 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-const (
-	// cpLogsContainerPath is the container-side directory for CP logs.
-	// Bind-mounted from the host's state/logs directory.
-	cpLogsContainerPath = "/var/log/clawker"
+// HostDirs carries the host-FS XDG-shaped directory roots the CP needs to
+// compute sibling container bind mount sources when it creates Envoy /
+// CoreDNS / future containers via Docker-outside-of-Docker. All four
+// fields are REQUIRED — host-side callers resolve them via
+// consts.ConfigDir() / DataDir() / StateDir() / CacheDir(). Missing any
+// field fails fast at BuildCPContainerConfig and EnsureRunning rather
+// than silently producing a bad bind source that only surfaces when
+// Docker rejects the container-create request.
+type HostDirs struct {
+	Config string
+	Data   string
+	State  string
+	Cache  string
+}
 
-	// dockerSockPath is the host-side Docker socket path.
-	dockerSockPath = "/var/run/docker.sock"
+// Validate returns an error naming the first empty field, or nil when
+// all four are populated.
+func (h HostDirs) Validate() error {
+	switch {
+	case h.Config == "":
+		return fmt.Errorf("HostDirs.Config is required")
+	case h.Data == "":
+		return fmt.Errorf("HostDirs.Data is required")
+	case h.State == "":
+		return fmt.Errorf("HostDirs.State is required")
+	case h.Cache == "":
+		return fmt.Errorf("HostDirs.Cache is required")
+	}
+	return nil
+}
 
-	// firewallDataContainerPath is where the CP reads+writes authoritative
-	// firewall state (egress-rules.yaml, MITM CA, per-domain certs).
-	firewallDataContainerPath = "/var/lib/clawker/firewall"
-
-	// cpMaxRestartRetries bounds Docker's on-failure restart loop so a
-	// persistently crashing CP stays down until the user runs
-	// `clawker controlplane up`.
-	cpMaxRestartRetries = 3
-)
+// CPContainerOpts bundles the host-side inputs BuildCPContainerConfig
+// needs that cannot be derived from config.Config alone.
+type CPContainerOpts struct {
+	HostDirs HostDirs
+}
 
 // CPContainerConfig holds the configuration for creating the control plane
 // container. It is a structured representation that can be inspected and
@@ -71,7 +89,11 @@ var localhost = netip.MustParseAddr("127.0.0.1")
 //   - /var/run/docker.sock (read-only) → Docker API access for container state verification
 //
 // The CLI's private signing key NEVER enters the container.
-func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
+func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContainerConfig, error) {
+	if err := opts.HostDirs.Validate(); err != nil {
+		return nil, fmt.Errorf("cp container config: %w", err)
+	}
+
 	cp := cfg.Settings().ControlPlane
 
 	portBinding := func(port int) (network.Port, []network.PortBinding) {
@@ -91,14 +113,11 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 		healthPort:     healthBindings,
 	}
 
-	// Ensure host-side logs directory exists. ControlPlaneLogFilePath uses
-	// the state dir (via consts.StateDir → XDG), which respects test isolation.
-	cpLogPath, err := consts.ControlPlaneLogFilePath()
-	if err != nil {
-		return nil, fmt.Errorf("ensure CP log path: %w", err)
-	}
 	// The log file path is <stateDir>/logs/clawker-cp.log — mount the parent dir.
-	hostLogsDir := filepath.Dir(cpLogPath)
+	hostLogsDir, err := consts.LogsSubdir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve logs subdir: %w", err)
+	}
 
 	caCertPath, err := consts.AuthCACertPath()
 	if err != nil {
@@ -122,7 +141,7 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 
 	// Firewall data dir — CP is sole writer of egress-rules.yaml, MITM CA,
 	// and per-domain certs under this dir. Envoy/CoreDNS mount subpaths RO.
-	firewallDataDir, err := cfg.FirewallDataSubdir()
+	firewallDataDir, err := consts.FirewallDataSubdir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve firewall data dir: %w", err)
 	}
@@ -133,43 +152,43 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 		{
 			Type:     mount.TypeBind,
 			Source:   configDir,
-			Target:   "/etc/clawker/config",
+			Target:   consts.CPClawkerConfigDir,
 			ReadOnly: true,
 		},
-		// CLI CA cert — CP uses this to verify its own server cert chain
+		// CA cert — CP uses this to verify its own server cert chain
 		// and for internal health check TLS trust.
 		{
 			Type:     mount.TypeBind,
 			Source:   caCertPath,
-			Target:   "/etc/clawker/tls/ca.pem",
+			Target:   consts.CPCACertPath,
 			ReadOnly: true,
 		},
 		// CLI's public signing key (JWK) for Hydra client registration.
 		{
 			Type:     mount.TypeBind,
 			Source:   jwkPath,
-			Target:   "/etc/clawker/cli/signing-jwk.json",
+			Target:   consts.CPCLIPubKeyPath,
 			ReadOnly: true,
 		},
 		// Server TLS certificate.
 		{
 			Type:     mount.TypeBind,
 			Source:   serverCertPath,
-			Target:   "/etc/clawker/tls/server.pem",
+			Target:   consts.CPTLSCertPath,
 			ReadOnly: true,
 		},
 		// Server TLS private key (CP needs it to serve TLS).
 		{
 			Type:     mount.TypeBind,
 			Source:   serverKeyPath,
-			Target:   "/etc/clawker/tls/server.key",
+			Target:   consts.CPTLSKeyPath,
 			ReadOnly: true,
 		},
 		// CP logs — persisted to host for auditing.
 		{
 			Type:   mount.TypeBind,
 			Source: hostLogsDir,
-			Target: cpLogsContainerPath,
+			Target: consts.CPLogsPath,
 		},
 		// cgroup filesystem for eBPF program attachment.
 		{
@@ -188,8 +207,8 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 		// existence (bypass timer dead-man switch, future lifecycle ops).
 		{
 			Type:     mount.TypeBind,
-			Source:   dockerSockPath,
-			Target:   "/var/run/docker.sock",
+			Source:   consts.CPDockerSockPath,
+			Target:   consts.CPDockerSockPath,
 			ReadOnly: true,
 		},
 		// Firewall state dir — CP is the sole writer (INV-B2-001). Envoy
@@ -197,7 +216,7 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 		{
 			Type:     mount.TypeBind,
 			Source:   firewallDataDir,
-			Target:   firewallDataContainerPath,
+			Target:   consts.CPFirewallDataDir,
 			ReadOnly: false,
 		},
 	}
@@ -213,15 +232,22 @@ func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error) {
 		Mounts:       mounts,
 		PortBindings: portBindings,
 		CapAdd:       []string{"BPF", "SYS_ADMIN"},
-		Env:          []string{cfg.ConfigDirEnvVar() + "=/etc/clawker/config"},
-		Cmd:          []string{"/usr/local/bin/clawker-cp"},
-		NetworkName:  consts.Network,
+		Env: []string{
+			consts.EnvConfigDir + "=" + consts.CPClawkerConfigDir,
+			consts.EnvDataDir + "=" + consts.CPClawkerDataDir,
+			consts.EnvHostConfigDir + "=" + opts.HostDirs.Config,
+			consts.EnvHostDataDir + "=" + opts.HostDirs.Data,
+			consts.EnvHostStateDir + "=" + opts.HostDirs.State,
+			consts.EnvHostCacheDir + "=" + opts.HostDirs.Cache,
+		},
+		Cmd:         []string{"/usr/local/bin/clawker-cp"},
+		NetworkName: consts.Network,
 		// on-failure (not unless-stopped/always) so the CP's graceful
 		// drain-to-zero exit from AgentWatcher is not undone by Docker.
 		// Bounded retries keep a persistently crashing CP from thrashing.
 		RestartPolicy: container.RestartPolicy{
 			Name:              container.RestartPolicyOnFailure,
-			MaximumRetryCount: cpMaxRestartRetries,
+			MaximumRetryCount: consts.CPMaxRestartRetries,
 		},
 	}, nil
 }

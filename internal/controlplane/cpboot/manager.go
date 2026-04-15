@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -84,7 +85,17 @@ func (m *manager) EnsureRunning(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("initializing logger: %w", err)
 	}
-	return EnsureRunning(ctx, dc, cfg, log)
+	return EnsureRunning(ctx, EnsureOpts{
+		Docker: dc,
+		Config: cfg,
+		Logger: log,
+		HostDirs: HostDirs{
+			Config: consts.ConfigDir(),
+			Data:   consts.DataDir(),
+			State:  consts.StateDir(),
+			Cache:  consts.CacheDir(),
+		},
+	})
 }
 
 func (m *manager) Stop(ctx context.Context) error {

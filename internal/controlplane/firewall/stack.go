@@ -301,11 +301,11 @@ func (s *Stack) ensureNetworkAndDiscover(ctx context.Context) (*NetworkInfo, err
 // rules store state. Returns the firewall data dir where those files
 // live so container specs can bind-mount them.
 func (s *Stack) ensureConfigs() (string, error) {
-	dataDir, err := s.cfg.FirewallDataSubdir()
+	dataDir, err := consts.FirewallDataSubdir()
 	if err != nil {
 		return "", fmt.Errorf("resolving firewall data dir: %w", err)
 	}
-	certDir, err := s.cfg.FirewallCertSubdir()
+	certDir, err := consts.FirewallCertSubdir()
 	if err != nil {
 		return "", fmt.Errorf("resolving firewall cert dir: %w", err)
 	}
@@ -406,14 +406,12 @@ type containerSpec struct {
 }
 
 func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
-	certDir, err := consts.FirewallCertSubdir()
-	if err != nil {
-		s.log.Error().Err(err).Msg("failed to get firewall cert dir")
-	}
-	envoyConfig, err := consts.EnvoyConfigPath()
-	if err != nil {
-		s.log.Error().Err(err).Msg("failed to get envoy config path")
-	}
+	// Bind Mount.Source values must be host-FS paths — the Docker daemon
+	// resolves them on the host, not inside the CP container where the
+	// writer accessors (consts.EnvoyConfigPath / consts.FirewallCertSubdir)
+	// resolve to. consts.HostEnvoyConfigPath / consts.HostFirewallCertSubdir
+	// are derived from the CLAWKER_HOST_*_DIR env vars the CLI injects at
+	// CP container creation.
 	return containerSpec{
 		image:     envoyImage,
 		staticIP:  netInfo.EnvoyIP,
@@ -421,13 +419,13 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 		mounts: []mount.Mount{
 			{
 				Type:     mount.TypeBind,
-				Source:   envoyConfig,
+				Source:   consts.HostEnvoyConfigPath,
 				Target:   "/etc/envoy/envoy.yaml",
 				ReadOnly: true,
 			},
 			{
 				Type:     mount.TypeBind,
-				Source:   certDir,
+				Source:   consts.HostFirewallCertSubdir,
 				Target:   "/etc/envoy/certs",
 				ReadOnly: true,
 			},
@@ -445,10 +443,9 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 
 func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 	healthPort := consts.CoreDNSHealthHostPort
-	corefilePath, err := consts.CorefilePath()
-	if err != nil {
-		s.log.Error().Err(err).Msg("failed to get Corefile path")
-	}
+	// Mount.Source is a host-FS path; consts.HostCorefilePath is derived
+	// from the CLAWKER_HOST_DATA_DIR env var the CLI injects into the CP
+	// container at creation.
 	return containerSpec{
 		image:     corednsImageTag,
 		staticIP:  netInfo.CoreDNSIP,
@@ -457,7 +454,7 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 		mounts: []mount.Mount{
 			{
 				Type:     mount.TypeBind,
-				Source:   corefilePath,
+				Source:   consts.HostCorefilePath,
 				Target:   "/etc/coredns/Corefile",
 				ReadOnly: true,
 			},
