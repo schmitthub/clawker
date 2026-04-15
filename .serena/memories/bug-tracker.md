@@ -19,6 +19,7 @@ Next Steps:
 - [ ] `cmd/clawker-cp/main.go` should probably be a light wrapper around `internal/controlplane` package instead of doing all the work itself.
 - [ ] `clawker firewall up` doesn't need to display the stack ip and network id (its not even the name lol its a long random id). its totally useless info to the user. 
 - [ ] CP should remove its container on shutdown imo. unless there is some functional benefit or constraint in doing so
+- [ ] Per container firewall readiness probes for clawkerd / agent api. w/ clawkerd keeping networking locked down until it is ready. 
 
 ## General
 
