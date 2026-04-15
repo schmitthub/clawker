@@ -28,6 +28,9 @@ var _ config.Config = &ConfigMock{}
 //			BuildSubdirFunc: func() (string, error) {
 //				panic("mock out the BuildSubdir method")
 //			},
+//			CPIPLastOctetFunc: func() byte {
+//				panic("mock out the CPIPLastOctet method")
+//			},
 //			ClawkerIgnoreNameFunc: func() string {
 //				panic("mock out the ClawkerIgnoreName method")
 //			},
@@ -90,12 +93,6 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			FirewallDataSubdirFunc: func() (string, error) {
 //				panic("mock out the FirewallDataSubdir method")
-//			},
-//			FirewallLogFilePathFunc: func() (string, error) {
-//				panic("mock out the FirewallLogFilePath method")
-//			},
-//			FirewallPIDFilePathFunc: func() (string, error) {
-//				panic("mock out the FirewallPIDFilePath method")
 //			},
 //			GetProjectIgnoreFileFunc: func() (string, error) {
 //				panic("mock out the GetProjectIgnoreFile method")
@@ -248,6 +245,9 @@ type ConfigMock struct {
 	// BuildSubdirFunc mocks the BuildSubdir method.
 	BuildSubdirFunc func() (string, error)
 
+	// CPIPLastOctetFunc mocks the CPIPLastOctet method.
+	CPIPLastOctetFunc func() byte
+
 	// ClawkerIgnoreNameFunc mocks the ClawkerIgnoreName method.
 	ClawkerIgnoreNameFunc func() string
 
@@ -310,12 +310,6 @@ type ConfigMock struct {
 
 	// FirewallDataSubdirFunc mocks the FirewallDataSubdir method.
 	FirewallDataSubdirFunc func() (string, error)
-
-	// FirewallLogFilePathFunc mocks the FirewallLogFilePath method.
-	FirewallLogFilePathFunc func() (string, error)
-
-	// FirewallPIDFilePathFunc mocks the FirewallPIDFilePath method.
-	FirewallPIDFilePathFunc func() (string, error)
 
 	// GetProjectIgnoreFileFunc mocks the GetProjectIgnoreFile method.
 	GetProjectIgnoreFileFunc func() (string, error)
@@ -465,6 +459,9 @@ type ConfigMock struct {
 		// BuildSubdir holds details about calls to the BuildSubdir method.
 		BuildSubdir []struct {
 		}
+		// CPIPLastOctet holds details about calls to the CPIPLastOctet method.
+		CPIPLastOctet []struct {
+		}
 		// ClawkerIgnoreName holds details about calls to the ClawkerIgnoreName method.
 		ClawkerIgnoreName []struct {
 		}
@@ -527,12 +524,6 @@ type ConfigMock struct {
 		}
 		// FirewallDataSubdir holds details about calls to the FirewallDataSubdir method.
 		FirewallDataSubdir []struct {
-		}
-		// FirewallLogFilePath holds details about calls to the FirewallLogFilePath method.
-		FirewallLogFilePath []struct {
-		}
-		// FirewallPIDFilePath holds details about calls to the FirewallPIDFilePath method.
-		FirewallPIDFilePath []struct {
 		}
 		// GetProjectIgnoreFile holds details about calls to the GetProjectIgnoreFile method.
 		GetProjectIgnoreFile []struct {
@@ -685,6 +676,7 @@ type ConfigMock struct {
 	lockBridgePIDFilePath       sync.RWMutex
 	lockBridgesSubdir           sync.RWMutex
 	lockBuildSubdir             sync.RWMutex
+	lockCPIPLastOctet           sync.RWMutex
 	lockClawkerIgnoreName       sync.RWMutex
 	lockClawkerNetwork          sync.RWMutex
 	lockConfigDirEnvVar         sync.RWMutex
@@ -706,8 +698,6 @@ type ConfigMock struct {
 	lockEnvoyTCPPortBase        sync.RWMutex
 	lockFirewallCertSubdir      sync.RWMutex
 	lockFirewallDataSubdir      sync.RWMutex
-	lockFirewallLogFilePath     sync.RWMutex
-	lockFirewallPIDFilePath     sync.RWMutex
 	lockGetProjectIgnoreFile    sync.RWMutex
 	lockGetProjectRoot          sync.RWMutex
 	lockGrafanaURL              sync.RWMutex
@@ -838,6 +828,33 @@ func (mock *ConfigMock) BuildSubdirCalls() []struct {
 	mock.lockBuildSubdir.RLock()
 	calls = mock.calls.BuildSubdir
 	mock.lockBuildSubdir.RUnlock()
+	return calls
+}
+
+// CPIPLastOctet calls CPIPLastOctetFunc.
+func (mock *ConfigMock) CPIPLastOctet() byte {
+	if mock.CPIPLastOctetFunc == nil {
+		panic("ConfigMock.CPIPLastOctetFunc: method is nil but Config.CPIPLastOctet was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockCPIPLastOctet.Lock()
+	mock.calls.CPIPLastOctet = append(mock.calls.CPIPLastOctet, callInfo)
+	mock.lockCPIPLastOctet.Unlock()
+	return mock.CPIPLastOctetFunc()
+}
+
+// CPIPLastOctetCalls gets all the calls that were made to CPIPLastOctet.
+// Check the length with:
+//
+//	len(mockedConfig.CPIPLastOctetCalls())
+func (mock *ConfigMock) CPIPLastOctetCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockCPIPLastOctet.RLock()
+	calls = mock.calls.CPIPLastOctet
+	mock.lockCPIPLastOctet.RUnlock()
 	return calls
 }
 
@@ -1405,60 +1422,6 @@ func (mock *ConfigMock) FirewallDataSubdirCalls() []struct {
 	mock.lockFirewallDataSubdir.RLock()
 	calls = mock.calls.FirewallDataSubdir
 	mock.lockFirewallDataSubdir.RUnlock()
-	return calls
-}
-
-// FirewallLogFilePath calls FirewallLogFilePathFunc.
-func (mock *ConfigMock) FirewallLogFilePath() (string, error) {
-	if mock.FirewallLogFilePathFunc == nil {
-		panic("ConfigMock.FirewallLogFilePathFunc: method is nil but Config.FirewallLogFilePath was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockFirewallLogFilePath.Lock()
-	mock.calls.FirewallLogFilePath = append(mock.calls.FirewallLogFilePath, callInfo)
-	mock.lockFirewallLogFilePath.Unlock()
-	return mock.FirewallLogFilePathFunc()
-}
-
-// FirewallLogFilePathCalls gets all the calls that were made to FirewallLogFilePath.
-// Check the length with:
-//
-//	len(mockedConfig.FirewallLogFilePathCalls())
-func (mock *ConfigMock) FirewallLogFilePathCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockFirewallLogFilePath.RLock()
-	calls = mock.calls.FirewallLogFilePath
-	mock.lockFirewallLogFilePath.RUnlock()
-	return calls
-}
-
-// FirewallPIDFilePath calls FirewallPIDFilePathFunc.
-func (mock *ConfigMock) FirewallPIDFilePath() (string, error) {
-	if mock.FirewallPIDFilePathFunc == nil {
-		panic("ConfigMock.FirewallPIDFilePathFunc: method is nil but Config.FirewallPIDFilePath was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockFirewallPIDFilePath.Lock()
-	mock.calls.FirewallPIDFilePath = append(mock.calls.FirewallPIDFilePath, callInfo)
-	mock.lockFirewallPIDFilePath.Unlock()
-	return mock.FirewallPIDFilePathFunc()
-}
-
-// FirewallPIDFilePathCalls gets all the calls that were made to FirewallPIDFilePath.
-// Check the length with:
-//
-//	len(mockedConfig.FirewallPIDFilePathCalls())
-func (mock *ConfigMock) FirewallPIDFilePathCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockFirewallPIDFilePath.RLock()
-	calls = mock.calls.FirewallPIDFilePath
-	mock.lockFirewallPIDFilePath.RUnlock()
 	return calls
 }
 

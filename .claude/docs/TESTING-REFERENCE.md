@@ -76,8 +76,9 @@ Each package with complex dependencies provides test infrastructure:
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
-| `internal/firewall` | `mocks/` | `FirewallManagerMock` (moq-generated) |
-| `internal/hostproxy` | `hostproxytest/` | `MockHostProxy` |
+| `internal/controlplane` | `mocks/` | `ControlPlaneServiceMock`, `ManagerMock`, `IntrospectorMock`, `AdminServiceClientMock` (moq) |
+| `internal/controlplane/firewall/ebpf` | `mocks/` | `EBPFManagerMock` (moq) |
+| `internal/hostproxy` | `hostproxytest/` | `MockHostProxy`, `MockManager` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
 

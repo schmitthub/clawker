@@ -3,12 +3,12 @@ package shared
 import (
 	"context"
 	"fmt"
-	"time"
 
 	mobyClient "github.com/moby/moby/client"
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
+	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
@@ -20,7 +20,7 @@ type CommandOpts struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
-	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Logger         func() (*logger.Logger, error)
 }
@@ -48,6 +48,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	}
 
 	projectCfg := cfg.Project()
+	settings := cfg.Settings()
 
 	var log *logger.Logger
 	if cmdOpts.Logger != nil {
@@ -62,7 +63,6 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		defer log.Close()
 	}
 
-	// Ensure host proxy is running (if enabled)
 	if projectCfg != nil && projectCfg.Security.HostProxyEnabled() {
 		if cmdOpts.HostProxy == nil {
 			if log != nil {
@@ -82,6 +82,35 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		}
 	} else if log != nil {
 		log.Debug().Msg("host proxy disabled by config")
+	}
+
+	// Bring the firewall stack up via CP before docker start so the
+	// entrypoint's /healthz poll resolves on first try. Two RPCs:
+	//  1. FirewallInit — idempotent stack-up (Envoy + CoreDNS).
+	//  2. FirewallAddRules — sync project rules; returns after stack healthy.
+	// Per-container FirewallEnable runs post-start because the cgroup only
+	// exists after docker start creates the container's init process.
+	// Getting the AdminClient transparently triggers cpboot.EnsureRunning.
+	if settings != nil && settings.Firewall.FirewallEnabled() {
+		if cmdOpts.AdminClient == nil {
+			return fmt.Errorf("bootstrapping services: firewall is enabled but no admin client provided")
+		}
+
+		client, err := cmdOpts.AdminClient(ctx)
+		if err != nil {
+			return fmt.Errorf("bootstrapping services: connecting to control plane: %w", err)
+		}
+
+		if _, err := client.FirewallInit(ctx, &adminv1.FirewallInitRequest{}); err != nil {
+			return fmt.Errorf("bootstrapping services: firewall init: %w", err)
+		}
+
+		projectRules := fwcp.ProjectRules(cfg)
+		if _, err := client.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
+			Rules: fwcp.ConfigRulesToProto(projectRules),
+		}); err != nil {
+			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
+		}
 	}
 
 	return nil
@@ -116,44 +145,31 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 		defer log.Close()
 	}
 
-	// Ensure firewall is running and attach eBPF programs to the container.
+	// Enroll this container's cgroup into BPF container_map. Cgroup only
+	// exists after docker start creates the container's init process, so
+	// this must run post-start. CP + stack + rules came up in pre-start.
+	// Drift-guarded per-container enroll (INV-B2-016).
 	if settings != nil && settings.Firewall.FirewallEnabled() {
-		if cmdOpts.Firewall == nil {
-			return fmt.Errorf("bootstrapping services: firewall is enabled but no firewall manager provided")
+		if cmdOpts.AdminClient == nil {
+			return fmt.Errorf("bootstrapping services: firewall is enabled but no admin client provided")
 		}
 
-		fwMgr, err := cmdOpts.Firewall(ctx)
+		client, err := cmdOpts.AdminClient(ctx)
 		if err != nil {
-			return fmt.Errorf("bootstrapping services: initializing firewall manager: %w", err)
+			return fmt.Errorf("bootstrapping services: connecting to control plane: %w", err)
 		}
 
-		// Sync project rules — writes configs, restarts containers only if running.
-		projectRules := firewall.ProjectRules(cfg)
-		if err := fwMgr.AddRules(ctx, projectRules); err != nil {
-			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
+		if _, err := client.FirewallEnable(ctx, &adminv1.FirewallEnableRequest{
+			ContainerId: container,
+		}); err != nil {
+			return fmt.Errorf("bootstrapping services: enabling firewall for container: %w", err)
 		}
 
-		if err := firewall.EnsureDaemon(cfg, log); err != nil {
-			return fmt.Errorf("bootstrapping services: ensuring firewall daemon: %w", err)
-		}
-
-		waitCtx, waitCancel := context.WithTimeout(ctx, 90*time.Second)
-		defer waitCancel()
-		if err := fwMgr.WaitForHealthy(waitCtx); err != nil {
-			return fmt.Errorf("bootstrapping services: waiting for firewall health: %w", err)
-		}
-
-		// Enroll the container in the firewall — syncs routes, adds to
-		// container_map, attaches eBPF programs via CP gRPC (AdminService.Install).
-		if err := fwMgr.InstallFirewall(ctx, container); err != nil {
-			return fmt.Errorf("bootstrapping services: installing firewall in container: %w", err)
-		}
 		if log != nil {
 			log.Debug().Str("container", container).Msg("firewall enabled in container")
 		}
 	}
 
-	// Start socket bridge for GPG/SSH forwarding.
 	if NeedsSocketBridge(projectCfg) {
 		if cmdOpts.SocketBridge == nil {
 			if log != nil {
@@ -200,7 +216,6 @@ func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.C
 		return result, err
 	}
 
-	// Post-start services (firewall enable, socket bridge) — must run after container is up.
 	if postErr := BootstrapServicesPostStart(ctx, startOpts.ContainerID, cmdOpts); postErr != nil {
 		return result, postErr
 	}

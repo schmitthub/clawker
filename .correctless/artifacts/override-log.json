@@ -4,5 +4,11 @@
     "reason": "Pre-existing authkeeper build error (ory/oathkeeper otelhttp.DefaultClient undefined) — not caused by this TDD cycle. All 4583 real tests pass.",
     "timestamp": "2026-04-12T17:16:42Z",
     "branch": "feat/control-plane"
+  },
+  {
+    "phase": "spec",
+    "reason": "TDD phase disabled per project policy (.correctless/learnings/tdd-phase-disabled.md and No TDD on clawker memory) — implementation + verification complete; advancing past spec to verified",
+    "timestamp": "2026-04-14T21:54:33Z",
+    "branch": "feat/firewall-cp-migration"
   }
 ]

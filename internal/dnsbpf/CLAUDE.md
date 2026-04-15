@@ -2,6 +2,8 @@
 
 CoreDNS plugin that populates the clawker BPF `dns_cache` map in real time. Installed as a `dnsbpf` directive in the custom CoreDNS build (`cmd/coredns-clawker`), registered first in every server block so it wraps the downstream resolver (typically `forward`) and intercepts the response.
 
+Runtime owner: `internal/controlplane/firewall.Stack` builds the `clawker-coredns:latest` image on demand (embeds `cmd/coredns-clawker` via `//go:embed`), manages its container lifecycle, and provides the pinned `dns_cache` map at `/sys/fs/bpf/clawker/dns_cache`.
+
 Purpose: let the BPF `connect4` program route per-domain TCP traffic (e.g. `ssh github.com` vs `ssh gitlab.com`, both on port 22) to the correct Envoy listener. CoreDNS resolves → the plugin writes `dns_cache[resolved_ip] = {domain_hash, expire_ts}` → the BPF fast path looks it up on the next `connect()`.
 
 ## Files
@@ -38,11 +40,11 @@ const pluginName    = "dnsbpf"
 
 ## Domain Hash Contract
 
-The plugin computes the domain hash **from the Corefile zone name, not the query name**. This is load-bearing for wildcard zones: a `.example.com { dnsbpf; forward … }` block hashes `.example.com` once so every subdomain answered through that zone maps to the same hash that `internal/firewall/manager.go` wrote into `route_map`.
+The plugin computes the domain hash **from the Corefile zone name, not the query name**. This is load-bearing for wildcard zones: a `.example.com { dnsbpf; forward … }` block hashes `.example.com` once so every subdomain answered through that zone maps to the same hash that `internal/controlplane/firewall.Handler.FirewallSyncRoutes` wrote into `route_map`.
 
-The hash function is `clawkerebpf.DomainHash` (FNV-1a of `strings.ToLower(domain)`) — the exact same call `internal/ebpf` and `internal/firewall/manager.go` use. Do not inline a second hash implementation here; reuse the one from `internal/ebpf` so the three call sites stay synchronized.
+The hash function is `clawkerebpf.DomainHash` (FNV-1a of `strings.ToLower(domain)`) — the exact same call `internal/controlplane/firewall/ebpf` and `internal/controlplane/firewall` (via `normalizeDomain`) use. Do not inline a second hash implementation here; reuse the one from `internal/controlplane/firewall/ebpf` so the three call sites stay synchronized.
 
-`zoneToDomain(zone)` strips the trailing dot (`"github.com." → "github.com"`) before hashing, matching how the firewall manager normalizes destination strings before writing to the route map.
+`zoneToDomain(zone)` strips the trailing dot (`"github.com." → "github.com"`) before hashing, matching how the CP firewall normalizes destination strings before writing to the route map.
 
 ## Shared Map Lifecycle
 
@@ -55,7 +57,7 @@ The hash function is `clawkerebpf.DomainHash` (FNV-1a of `strings.ToLower(domain
 
 ## Runtime Requirements
 
-The custom CoreDNS container (`clawker-coredns:latest`, built on demand by `internal/firewall`) runs with `CAP_BPF + CAP_SYS_ADMIN` and a bind mount of `/sys/fs/bpf`. `CAP_BPF` alone is insufficient on kernels < 5.19 for `BPF_MAP_UPDATE_ELEM`, which is why `CAP_SYS_ADMIN` is added — this was observed during the CoreDNS plugin initiative. The eBPF manager must run its `init` pass **before** CoreDNS starts so the pinned map exists when `OpenBPFMap` runs.
+The custom CoreDNS container (`clawker-coredns:latest`, built on demand by the CP's `firewall.Stack`) runs with `CAP_BPF + CAP_SYS_ADMIN` and a bind mount of `/sys/fs/bpf`. `CAP_BPF` alone is insufficient on kernels < 5.19 for `BPF_MAP_UPDATE_ELEM`, which is why `CAP_SYS_ADMIN` is added — this was observed during the CoreDNS plugin initiative. The CP's `ebpf.Manager.Load()` must run **before** CoreDNS starts so the pinned map exists when `OpenBPFMap` runs.
 
 ## Test Seam
 
@@ -63,4 +65,4 @@ The custom CoreDNS container (`clawker-coredns:latest`, built on demand by `inte
 
 ## Imports
 
-Imports: `github.com/coredns/coredns/plugin` + `plugin/pkg/nonwriter` + `core/dnsserver`, `github.com/coredns/caddy`, `github.com/miekg/dns`, `github.com/cilium/ebpf`, and `internal/ebpf` (for `DomainHash`, `IPToUint32`, `Uint32ToIP`). Imported by `cmd/coredns-clawker` (the binary) and nothing else. `internal/firewall` embeds the built binary but does not import this package.
+Imports: `github.com/coredns/coredns/plugin` + `plugin/pkg/nonwriter` + `core/dnsserver`, `github.com/coredns/caddy`, `github.com/miekg/dns`, `github.com/cilium/ebpf`, and `internal/controlplane/firewall/ebpf` (for `DomainHash`, `IPToUint32`, `Uint32ToIP`). Imported by `cmd/coredns-clawker` (the binary) and nothing else. `internal/controlplane/firewall` embeds the built binary but does not import this package.

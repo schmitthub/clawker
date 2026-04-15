@@ -1,33 +1,41 @@
 # Control Plane Initiative — Current Status
 
-## Status: Branch 1 LANDED on main (PR #250, merged 2026-04-13)
+## Status: Branch 2 complete. Pending final host-side review.
 
-**Shipped**: Containerized `clawker-controlplane` service with Ory auth stack (Hydra + Oathkeeper + Kratos), `AdminService` gRPC over mTLS TCP with OAuth2 JWT, in-process eBPF `Manager.Load()` lifetime, aggregate `/healthz` endpoint.
-
-**Current branch**: `chore/docs-update` (docs catch-up after CP landed)
+**Workflow phase**: B2 agent work done; user's host-side E2E sweep + merge next.
+**Branch**: `feat/firewall-cp-migration` (Branch 2 — ownership reversal)
+**Next branch**: Branch 3 (daemon consolidation — hostproxy + socketbridge under CP)
 
 ## Branch Sequence
-1. [x] **CP as proper service** — auth + gRPC, firewall still owns bootstrap. **MERGED**
-2. [ ] Ownership reversal — CP owns firewall, Manager becomes thin client, daemon sunset
-3. [ ] Daemon consolidation — hostproxy + socketbridge under CP, Docker events
-4. [ ] clawkerd auth — PKCE registration, per-agent certs (proto reserved at `internal/clawkerd/protocol/v1/`)
-5. [ ] Init migration + agent lifecycle — clawkerd replaces init scripts, command channel
-6. [ ] Monitor + release + hardening — out of alpha
 
-Each branch gets its own `/cspec` kickoff.
+| # | Name | Status |
+|---|------|--------|
+| 1 | CP as proper service — auth + gRPC, firewall still owns bootstrap | `complete` (merged to `main`) |
+| 2 | Ownership reversal — CP owns firewall, `internal/firewall/` deleted, 13-method scope-corrected AdminService | `complete` (awaiting host-side review on `feat/firewall-cp-migration`) |
+| 3 | Daemon consolidation — hostproxy + socketbridge under CP, Docker events replacing watcher polling | pending |
+| 4 | clawkerd auth — PKCE registration, per-agent certs | pending |
+| 5 | Init migration + agent lifecycle — clawkerd replaces init scripts, command channel | pending |
+| 6 | Monitor + release + hardening — out of alpha | pending |
 
-## What landed in Branch 1
-- `internal/controlplane/` — `Server`, `Registry`, `AdminHandler`, `AuthInterceptor`, `HydraIntrospector`, `CPStartupOrchestrator`, `SubprocessManager`, `BuildCPContainerConfig`, `WriteOryConfigs`, `RegisterCLIClient`
-- `internal/controlplane/ebpf/` — moved from `internal/ebpf/`; owns `Manager.Load()` lifetime
-- `internal/auth/` — CLI-side auth material + `DialCPAdmin()` + ES256 assertion
-- `api/admin/v1/` — AdminService protobuf (CLI → CP)
-- `internal/clawkerd/protocol/v1/` — reserved for future agent↔CP
-- `cmd/clawker-cp/` — daemon entrypoint, built by `Dockerfile.controlplane`
-- `internal/consts/` — cross-package constants
+Each branch gets its own `/cspec` kickoff before implementation.
 
-## Next: Branch 2 kickoff
+## Branch 2 Delivery Summary (all 8 tasks)
 
-Ownership reversal — CP owns firewall bootstrap; `firewall.Manager` becomes thin client over gRPC. Daemon loop sunsets. Start with `/cspec`.
+- **13-method scope-corrected AdminService** (Task 5) replacing B1's 7 short-named RPCs. All RPCs uniform `"admin"` scope (INV-B2-009).
+- **Firewall ownership inverted**: `internal/firewall/` deleted (Task 6/8). `internal/controlplane/firewall/` owns handler, Stack, rules store, certs, Envoy+CoreDNS config, eBPF subsystem.
+- **Host-side bootstrap** (Task 3): `controlplane.EnsureRunning`/`Stop`/`CPRunning` with mount-mode reconciliation + restart policy `on-failure` max 3 + static-IP attachment.
+- **CP self-shutdown** (Task 4): `AgentWatcher` drives drain-to-zero callback (`CancelAllBypassTimers → GracefulStop → Stack.Stop → ebpf.FlushAll`) — INV-B2-007.
+- **Defensive startup cleanup** (Task 4): `ebpf.CleanupStaleBypass` runs before `SetReady` — INV-B2-013.
+- **Factory `f.AdminClient(ctx)` + `f.ControlPlane()`** (Task 6/7). `adminClientFunc` caches `grpc.ClientConn`, rebuilds only on `TransientFailure`/`Shutdown`, `ensureRunning` package-level seam for the CP bootstrap path.
+- **Drift guard** (Task 5 — INV-B2-016): every `FirewallEnable` resolves `container_id → cgroup_path` via Docker; bypass dead-man timer goes through the same `resolveBypassCgroupID`.
+- **Break-glass `clawker controlplane up/down/status`** (Task 7): new `controlplane.Manager` interface + moq, wired through Factory.
+- **Task 8 cleanup**: deleted `cfg.FirewallPIDFilePath`/`FirewallLogFilePath` + constants; dropped dead `consts.PidsDir`; fixed harness failure-dump slice; rewrote `internal/controlplane/firewall/CLAUDE.md` to a full reference; updated ARCHITECTURE.md + KEY-CONCEPTS.md + rules files. User-facing docs (`docs/*.mdx`, `README.md`) intentionally NOT touched per user instruction — those get updated at release time.
+
+## Quality Gates (Branch 2)
+
+- `go build ./...`, `go vet ./...`, `go vet ./test/e2e/...`: green
+- `make test`: 4625 tests pass, 7 skips (Windows/opt-in)
+- E2E suite authored + committed in every task; agents do NOT execute (host-side review runs them)
 
 ## Key Process Notes
 - Highway construction: old stays live until replacement proven
@@ -35,3 +43,5 @@ Ownership reversal — CP owns firewall bootstrap; `firewall.Manager` becomes th
 - No backward compat needed: eBPF never shipped in a release
 - Alpha project: larger branches OK, no official releases during work
 - HIGH intensity: security tool, trust boundaries, auth throughout
+- User rejected TDD on this project (see `.correctless/learnings/tdd-phase-disabled.md`) — use integration + E2E + battle-tested mocks instead
+- User-facing docs in `docs/` are not published yet; update at release time, not during branch work

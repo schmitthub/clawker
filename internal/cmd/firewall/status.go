@@ -4,17 +4,20 @@ import (
 	"context"
 	"fmt"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/firewall"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 // StatusOptions holds the options for the firewall status command.
 type StatusOptions struct {
-	IOStreams *iostreams.IOStreams
-	Firewall  func(context.Context) (firewall.FirewallManager, error)
-	Format    *cmdutil.FormatFlags
+	IOStreams   *iostreams.IOStreams
+	Client      func(context.Context) (*docker.Client, error)
+	AdminClient func(context.Context) (adminv1.AdminServiceClient, error)
+	Format      *cmdutil.FormatFlags
 }
 
 // statusRow is the JSON/template-friendly representation of firewall status.
@@ -31,8 +34,9 @@ type statusRow struct {
 // NewCmdStatus creates the firewall status command.
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {
 	opts := &StatusOptions{
-		IOStreams: f.IOStreams,
-		Firewall:  f.Firewall,
+		IOStreams:   f.IOStreams,
+		Client:      f.Client,
+		AdminClient: f.AdminClient,
 	}
 
 	cmd := &cobra.Command{
@@ -62,27 +66,49 @@ egress firewall, including container health, active rule count, and network info
 }
 
 func statusRun(ctx context.Context, opts *StatusOptions) error {
-	ios := opts.IOStreams
-
-	fwMgr, err := opts.Firewall(ctx)
-	if err != nil {
-		return fmt.Errorf("connecting to firewall: %w", err)
+	// Avoid bootstrapping the CP just to ask about state. If no CP
+	// container exists or it's stopped, synthesize a "stopped" row —
+	// matches the old host-side daemon `status` contract.
+	var row statusRow
+	if opts.Client != nil {
+		dc, err := opts.Client(ctx)
+		if err != nil {
+			return fmt.Errorf("connecting to Docker: %w", err)
+		}
+		running, err := cpboot.CPRunning(ctx, dc)
+		if err != nil {
+			return fmt.Errorf("checking control plane: %w", err)
+		}
+		if !running {
+			return renderStatus(opts, row)
+		}
 	}
 
-	status, err := fwMgr.Status(ctx)
+	adminClient, err := opts.AdminClient(ctx)
+	if err != nil {
+		return fmt.Errorf("connecting to control plane: %w", err)
+	}
+
+	resp, err := adminClient.FirewallStatus(ctx, &adminv1.FirewallStatusRequest{})
 	if err != nil {
 		return fmt.Errorf("getting firewall status: %w", err)
 	}
 
-	row := statusRow{
-		Running:       status.Running,
-		EnvoyHealth:   status.EnvoyHealth,
-		CoreDNSHealth: status.CoreDNSHealth,
-		RuleCount:     status.RuleCount,
-		EnvoyIP:       status.EnvoyIP,
-		CoreDNSIP:     status.CoreDNSIP,
-		NetworkID:     status.NetworkID,
+	row = statusRow{
+		Running:       resp.GetRunning(),
+		EnvoyHealth:   resp.GetEnvoyHealth(),
+		CoreDNSHealth: resp.GetCorednsHealth(),
+		RuleCount:     int(resp.GetRuleCount()),
+		EnvoyIP:       resp.GetEnvoyIp(),
+		CoreDNSIP:     resp.GetCorednsIp(),
+		NetworkID:     resp.GetNetworkId(),
 	}
+
+	return renderStatus(opts, row)
+}
+
+func renderStatus(opts *StatusOptions, row statusRow) error {
+	ios := opts.IOStreams
 
 	// Format dispatch.
 	switch {
@@ -103,22 +129,22 @@ func statusRun(ctx context.Context, opts *StatusOptions) error {
 		}
 
 		runningText := cs.Red("stopped")
-		if status.Running {
+		if row.Running {
 			runningText = cs.Green("running")
 		}
 
 		fmt.Fprintf(ios.Out, "Firewall:  %s\n", runningText)
-		fmt.Fprintf(ios.Out, "Envoy:     %s\n", healthIcon(status.EnvoyHealth))
-		fmt.Fprintf(ios.Out, "CoreDNS:   %s\n", healthIcon(status.CoreDNSHealth))
-		fmt.Fprintf(ios.Out, "Rules:     %d active\n", status.RuleCount)
-		if status.EnvoyIP != "" {
-			fmt.Fprintf(ios.Out, "Envoy IP:  %s\n", status.EnvoyIP)
+		fmt.Fprintf(ios.Out, "Envoy:     %s\n", healthIcon(row.EnvoyHealth))
+		fmt.Fprintf(ios.Out, "CoreDNS:   %s\n", healthIcon(row.CoreDNSHealth))
+		fmt.Fprintf(ios.Out, "Rules:     %d active\n", row.RuleCount)
+		if row.EnvoyIP != "" {
+			fmt.Fprintf(ios.Out, "Envoy IP:  %s\n", row.EnvoyIP)
 		}
-		if status.CoreDNSIP != "" {
-			fmt.Fprintf(ios.Out, "DNS IP:    %s\n", status.CoreDNSIP)
+		if row.CoreDNSIP != "" {
+			fmt.Fprintf(ios.Out, "DNS IP:    %s\n", row.CoreDNSIP)
 		}
-		if status.NetworkID != "" {
-			fmt.Fprintf(ios.Out, "Network:   %s\n", status.NetworkID)
+		if row.NetworkID != "" {
+			fmt.Fprintf(ios.Out, "Network:   %s\n", row.NetworkID)
 		}
 
 		return nil

@@ -43,7 +43,8 @@ type Factory struct {
     HostProxy      func() hostproxy.HostProxyService
     SocketBridge   func() socketbridge.SocketBridgeManager
     Prompter       func() *prompter.Prompter
-    Firewall       func(context.Context) (firewall.FirewallManager, error)
+    AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
+    ControlPlane   func() cpboot.Manager
 }
 ```
 
@@ -58,7 +59,8 @@ type Factory struct {
 - `HostProxy()` -- returns `hostproxy.HostProxyService` (interface); commands call `.EnsureRunning()` / `.IsRunning()` / `.ProxyURL()` on it. Mock: `hostproxytest.MockManager`
 - `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `sockebridgemocks.MockManager`
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
-- `Firewall(ctx)` -- lazy `firewall.FirewallManager` (connects Docker client + loads config/logger on first call); commands call `.EnsureRunning()` / `.Stop()` on it
+- `AdminClient(ctx)` -- lazy `adminv1.AdminServiceClient` (gRPC client to the CP AdminService). First call triggers `cpboot.EnsureRunning` then `adminclient.Dial` (package `internal/controlplane/adminclient`) with mTLS + OAuth2 JWT + keepalive; the closure caches `grpc.ClientConn` and only rebuilds on `TransientFailure`/`Shutdown`. Commands call the 13 `Firewall*` RPCs directly. Mock: `controlplane/mocks.AdminServiceClientMock`
+- `ControlPlane()` -- lazy `cpboot.Manager` (host-side CP container lifecycle noun). Methods: `EnsureRunning`, `Stop`, `IsRunning`, `ProbeHealthz`. Wraps `f.Client`/`f.Config`/`f.Logger` so callers don't re-resolve them. Used by the `clawker controlplane up/down/status` break-glass verbs. Mock: `controlplane/cpboot/mocks.ManagerMock` (moq-generated)
 
 **Testing:** Construct minimal Factory structs directly:
 ```go

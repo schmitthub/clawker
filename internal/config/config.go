@@ -52,8 +52,6 @@ type Config interface {
 	BridgePIDFilePath(containerID string) (string, error)
 	HostProxyLogFilePath() (string, error)
 	HostProxyPIDFilePath() (string, error)
-	FirewallPIDFilePath() (string, error)
-	FirewallLogFilePath() (string, error)
 	ShareSubdir() (string, error)
 	WorktreesSubdir() (string, error)
 	LabelPrefix() string
@@ -88,6 +86,7 @@ type Config interface {
 	RequiredFirewallRules() []EgressRule
 	EnvoyIPLastOctet() byte
 	CoreDNSIPLastOctet() byte
+	CPIPLastOctet() byte
 	EnvoyEgressPort() int
 	EnvoyTCPPortBase() int
 	EnvoyHealthPort() int

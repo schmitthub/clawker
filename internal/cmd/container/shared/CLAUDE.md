@@ -189,7 +189,7 @@ Returns `false` on any resolution error (conservative — don't block users when
 
 ## Dependencies
 
-Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/docker`, `internal/firewall`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/project`, `internal/socketbridge`, `internal/workspace`, `pkg/whail`
+Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/controlplane` (for `ensureRunning` seam consumed by `f.AdminClient`), `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/project`, `internal/socketbridge`, `internal/workspace`, `pkg/whail`, `api/admin/v1` (AdminService RPCs: FirewallInit, FirewallAddRules, FirewallEnable)
 
 ## Testing
 

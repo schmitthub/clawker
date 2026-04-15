@@ -9,12 +9,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	containershared "github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -35,7 +35,7 @@ type IterateOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
-	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
 	Logger         func() (*logger.Logger, error)
@@ -63,7 +63,7 @@ func NewCmdIterate(f *cmdutil.Factory, runF func(context.Context, *IterateOption
 		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
 		HostProxy:      f.HostProxy,
-		Firewall:       f.Firewall,
+		AdminClient:    f.AdminClient,
 		SocketBridge:   f.SocketBridge,
 		Prompter:       f.Prompter,
 		Logger:         f.Logger,
@@ -250,7 +250,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 		Version:        opts.Version,
 		ProjectManager: opts.ProjectManager,
 		HostProxy:      opts.HostProxy,
-		Firewall:       opts.Firewall,
+		AdminClient:    opts.AdminClient,
 		SocketBridge:   opts.SocketBridge,
 		IOStreams:      ios,
 		Log:            log,

@@ -85,6 +85,7 @@ type FakeAPIClient struct {
 
 	// --- System methods ---
 	PingFn  func(ctx context.Context, options client.PingOptions) (client.PingResult, error)
+	InfoFn  func(ctx context.Context, options client.InfoOptions) (client.SystemInfoResult, error)
 	CloseFn func() error
 }
 
@@ -471,6 +472,14 @@ func (f *FakeAPIClient) Ping(ctx context.Context, options client.PingOptions) (c
 	}
 	f.record("Ping")
 	return f.PingFn(ctx, options)
+}
+
+func (f *FakeAPIClient) Info(ctx context.Context, options client.InfoOptions) (client.SystemInfoResult, error) {
+	if f.InfoFn == nil {
+		notImplemented("Info")
+	}
+	f.record("Info")
+	return f.InfoFn(ctx, options)
 }
 
 // Close implements the APIClient Close method.

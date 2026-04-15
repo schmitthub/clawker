@@ -51,8 +51,6 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.HostProxyConfigFunc = cfg.HostProxyConfig
 	mock.RequiredFirewallDomainsFunc = cfg.RequiredFirewallDomains
 	mock.EgressRulesFileNameFunc = cfg.EgressRulesFileName
-	mock.FirewallPIDFilePathFunc = cfg.FirewallPIDFilePath
-	mock.FirewallLogFilePathFunc = cfg.FirewallLogFilePath
 	mock.RequiredFirewallRulesFunc = cfg.RequiredFirewallRules
 	mock.GetProjectRootFunc = cfg.GetProjectRoot
 	mock.GetProjectIgnoreFileFunc = cfg.GetProjectIgnoreFile
@@ -79,6 +77,7 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.PrometheusURLFunc = cfg.PrometheusURL
 	mock.EnvoyIPLastOctetFunc = cfg.EnvoyIPLastOctet
 	mock.CoreDNSIPLastOctetFunc = cfg.CoreDNSIPLastOctet
+	mock.CPIPLastOctetFunc = cfg.CPIPLastOctet
 	mock.EnvoyEgressPortFunc = cfg.EnvoyEgressPort
 	mock.EnvoyTCPPortBaseFunc = cfg.EnvoyTCPPortBase
 	mock.EnvoyHealthPortFunc = cfg.EnvoyHealthPort

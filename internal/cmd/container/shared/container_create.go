@@ -26,6 +26,7 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -1835,8 +1836,14 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		MonitoringActive: monitoringActive,
 	}
 	// Firewall: set the enabled flag (eBPF programs attached post-start via BootstrapServicesPostStart)
+	// + the CP /healthz URL the entrypoint polls before running CMD. Both
+	// containers share clawker-net, so Docker DNS resolves ContainerCP.
 	if opts.Config.Settings().Firewall.FirewallEnabled() {
 		envOpts.FirewallEnabled = true
+		envOpts.CPHealthzURL = "http://" + net.JoinHostPort(
+			consts.ContainerCP,
+			strconv.Itoa(opts.Config.Settings().ControlPlane.HealthPort),
+		) + "/healthz"
 	}
 	// Pass configured Loki port so container-side telemetry targets the right endpoint.
 	if lokiPort := opts.Config.Settings().Monitoring.LokiPort; lokiPort != 0 {

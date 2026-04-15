@@ -16,8 +16,10 @@ import (
 	"net"
 	"time"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	v1 "github.com/schmitthub/clawker/internal/clawkerd/protocol/v1"
 	"github.com/schmitthub/clawker/internal/config"
+	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
@@ -25,6 +27,30 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
+
+// adminServer composes the domain-specific handlers into the single
+// AdminServiceServer surface. Today only the firewall handler is
+// embedded; future domains (monitor, hostproxy, clawkerd) plug in by
+// embedding additional handlers whose Go method sets collectively satisfy
+// AdminServiceServer via method promotion. Method-name collisions are
+// prevented at the proto layer by the `<Domain><Action>[<Object>]`
+// naming convention.
+type adminServer struct {
+	// *fwhandler.Handler embeds adminv1.UnimplementedAdminServiceServer,
+	// so new proto RPCs fail open with codes.Unimplemented via promotion
+	// rather than blocking the whole CP on a partial domain rewrite.
+	*fwhandler.Handler
+}
+
+// compile-time: any future additions to AdminServiceServer must be
+// covered by one of the embedded domain handlers or this assertion fails.
+var _ adminv1.AdminServiceServer = (*adminServer)(nil)
+
+// NewAdminServer returns the composite AdminServiceServer wired from the
+// supplied domain handlers.
+func NewAdminServer(fw *fwhandler.Handler) adminv1.AdminServiceServer {
+	return &adminServer{Handler: fw}
+}
 
 // ControlPlaneService is the consumer-facing contract for the control plane.
 // CLI commands and other packages depend on this interface; tests use

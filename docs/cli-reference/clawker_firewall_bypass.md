@@ -10,9 +10,9 @@ Temporarily bypass firewall for a container
 
 Grant a container unrestricted egress for a specified duration.
 
-Sets an eBPF bypass flag for the container and starts a server-side
-dead-man timer that automatically re-enables enforcement. The timer
-runs in the clawker-controlplane control plane and survives CLI exit.
+Calls FirewallBypass on the control plane, which sets the BPF bypass flag
+and starts a server-side dead-man timer that automatically re-enables
+enforcement when the timer fires. The timer survives CLI exit.
 
 By default the command blocks with a countdown timer. Press Ctrl+C to
 stop the bypass early (re-enables firewall). Press q/Esc to detach

@@ -78,7 +78,7 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `WorktreesSubdir()`, `FirewallDataSubdir()`
 
-**PID/log file helpers**: `BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`, `FirewallPIDFilePath()`, `FirewallLogFilePath()`
+**PID/log file helpers**: `BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`
 
 **Domain/network**: `Domain()` ("clawker.dev"), `LabelDomain()` ("dev.clawker"), `ClawkerNetwork()` ("clawker-net")
 

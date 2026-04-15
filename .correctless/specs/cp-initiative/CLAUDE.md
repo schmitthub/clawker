@@ -5,55 +5,53 @@
 
 ## Current State
 
-> Last updated: 2026-04-12
+> Last updated: 2026-04-14
 
-- **Branch**: `feat/control-plane` (Branch 1 work in progress)
-- **Status**: Initiative spec in review
-- **Main branch**: eBPF-based firewall with `clawker-ebpf` sleep-infinity container, PID-file daemons for firewall/hostproxy/socketbridge
+- **Branch**: `feat/firewall-cp-migration` (Branch 2 complete; merge pending final host-side review)
+- **Status**: Branches 1 + 2 landed. Branch 3 (daemon consolidation) pending.
+- **Main branch**: CP-owned firewall. `internal/firewall/` deleted. 13-method scope-corrected AdminService. CLI talks to the CP via `f.AdminClient(ctx)` — mTLS + OAuth2 JWT.
 
-## Codebase Snapshot
+## Codebase Snapshot (post-Branch-2)
 
-### The God Object: `internal/firewall/manager.go` (1816 lines, 77 responsibilities)
-- Creates CP, Envoy, CoreDNS containers
-- Generates Envoy/CoreDNS configs
-- Manages rules store, MITM certs, Docker network
-- Runs eBPF operations via gRPC (after Branch 1)
-- Holds lazy gRPC client to CP
-- 15 public interface methods, 31 private methods, 5 test seams
+### Firewall ownership inverted
+- `internal/firewall/` — **deleted**. No host-side daemon, no PID file, no `FirewallManager` interface.
+- `internal/controlplane/firewall/` — CP firewall domain. `Handler` serves 13 RPCs; `Stack` owns Envoy + CoreDNS container lifecycle; `ebpf/` holds the loader + pinned maps.
+- `internal/controlplane/` — CP core. `bootstrap.go` is the host-side `EnsureRunning`/`Stop`; `watcher.go` is the `AgentWatcher` that drives drain-to-zero self-shutdown (INV-B2-007); `startup.go` is the CP-side orchestrator.
 
-### Four Independent Daemon Processes
-1. **Firewall daemon** (`internal/firewall/daemon.go`) — health loop + container watcher, PID file
-2. **Hostproxy daemon** (`internal/hostproxy/`) — HTTP server for browser auth + credential forwarding, PID file
-3. **Socketbridge daemons** (`internal/socketbridge/`) — one per container, muxrpc over docker exec, PID files
-4. **CP container** (`cmd/clawker-cp/`) — long-lived gRPC service (different pattern, Docker container)
+### Daemon inventory (post-B2)
+1. **CP container** (`cmd/clawker-cp/`) — long-lived gRPC service, loads eBPF once at boot, owns firewall state, self-shuts-down on drain-to-zero.
+2. **Hostproxy daemon** (`internal/hostproxy/`) — HTTP server for browser auth + credential forwarding, PID file. (Branch 3 target.)
+3. **Socketbridge daemons** (`internal/socketbridge/`) — one per container, muxrpc over docker exec, PID files. (Branch 3 target.)
 
-### Container Start Flow (current)
+### Container Start Flow (post-B2)
 ```
 BootstrapServicesPreStart:
-  → firewall.AddRules()
-  → firewall.EnsureDaemon()        ← PID-file daemon
-  → firewall.WaitForHealthy()      ← polls Envoy + CoreDNS HTTP health
-  → hostProxy.EnsureRunning()      ← PID-file daemon
-docker.ContainerStart()
-BootstrapServicesPostStart:
-  → firewall.Enable(containerID)   ← gRPC to CP: attach eBPF
-  → socketBridge.EnsureBridge()    ← spawns per-container daemon
+  → hostProxy.EnsureRunning()         ← PID-file daemon (Branch 3 target)
+BootstrapServicesPostStart (via f.AdminClient):
+  → adminClient.FirewallInit()        ← idempotent stack-up (brings CP up transparently on first call)
+  → adminClient.FirewallAddRules()    ← project rules
+  → adminClient.FirewallEnable()      ← per-container enroll (drift-guarded, INV-B2-016)
+  → socketBridge.EnsureBridge()       ← spawns per-container daemon
+docker.ContainerStart()                ← happens between PreStart and PostStart inside shared.ContainerStart()
 ```
 
-### Factory Wiring
-- `f.Firewall(ctx)` — lazy, uses raw moby client (NOT whail), creates `firewall.NewManager`
-- `f.HostProxy()` — lazy singleton
-- `f.SocketBridge()` — lazy singleton
-- `f.ControlPlane()` — does not exist yet (Branch 2 adds it)
+### Factory Wiring (post-B2)
+- `f.AdminClient(ctx)` — lazy `adminv1.AdminServiceClient`. First call triggers `controlplane.EnsureRunning` (package-level seam `ensureRunning`), then `auth.DialCPAdmin` with mTLS + OAuth2 + keepalive. Rebuilds `grpc.ClientConn` only on `TransientFailure`/`Shutdown`.
+- `f.ControlPlane()` — lazy `controlplane.Manager` (host-side CP lifecycle noun). Used by the break-glass `clawker controlplane up/down/status` verbs.
+- `f.HostProxy()` — lazy singleton (unchanged; Branch 3 target).
+- `f.SocketBridge()` — lazy singleton (unchanged; Branch 3 target).
+- `f.Firewall(ctx)` — **removed**.
 
 ## Reference Pointers
 
 | What | Where |
 |------|-------|
 | Master initiative spec | `../control-plane-initiative.md` |
-| Branch specs (created at kickoff) | `branch-N-*.md` in this directory |
+| Branch specs | `branch-N-*.md` in this directory |
 | Architecture docs | `.claude/docs/ARCHITECTURE.md`, `.claude/docs/DESIGN.md` |
 | Key concepts index | `.claude/docs/KEY-CONCEPTS.md` |
-| CP brainstorm (reference, not authority) | `.serena/memories/brainstorm_the-controlplane-and-clawkerd` |
-| Firewall package docs | `internal/firewall/CLAUDE.md` |
 | CP package docs | `internal/controlplane/CLAUDE.md` |
+| CP firewall domain docs | `internal/controlplane/firewall/CLAUDE.md` |
+| CP eBPF docs | `internal/controlplane/firewall/ebpf/CLAUDE.md` |
+| Branch 2 plan (active until merge) | `.serena/memories/cp-initiative-branch-2-firewall-migration-plan` |
+| Initiative status memory | `.serena/memories/cp-initiative-status` |

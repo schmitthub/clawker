@@ -65,7 +65,8 @@ cat internal/docker/mocks/*.go             # FakeClient, fixtures
 cat internal/git/gittest/*.go              # InMemoryGitManager
 cat internal/config/mocks/*.go             # ConfigMock, NewBlankConfig, NewFromString, NewIsolatedTestConfig
 cat internal/project/mocks/*.go            # ProjectManagerMock, TestManagerHarness
-cat internal/firewall/mocks/*.go           # FirewallManagerMock
+cat internal/controlplane/mocks/*.go       # ControlPlaneServiceMock, ManagerMock, IntrospectorMock, AdminServiceClientMock
+cat internal/controlplane/firewall/ebpf/mocks/*.go  # EBPFManagerMock
 cat internal/hostproxy/hostproxytest/*.go  # MockHostProxy
 cat pkg/whail/whailtest/*.go              # FakeAPIClient, BuildKitCapture, golden file seeding
 
@@ -218,8 +219,8 @@ miss. The hunter should be AGGRESSIVE about pushing unit tests in Docker-adjacen
 packages toward E2E replacements.
 
 **Docker-adjacent packages get extra scrutiny:** Unit tests in `internal/docker/`,
-`internal/firewall/`, `internal/containerfs/`, `internal/hostproxy/`,
-`internal/socketbridge/`, and `internal/workspace/` should be examined with a
+`internal/controlplane/`, `internal/controlplane/firewall/`, `internal/containerfs/`,
+`internal/hostproxy/`, `internal/socketbridge/`, and `internal/workspace/` should be examined with a
 strong bias toward E2E. If the behavior can be tested by running a real command
 through `test/e2e/harness`, that's almost always better than a unit test with
 fakes. The only unit tests worth keeping in these packages are for isolated

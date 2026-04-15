@@ -1,312 +1,243 @@
-// consts.go — Config interface method implementations backed by internal/consts.
+// consts.go — deprecated Config interface wrappers + a handful of
+// config-backed accessors.
 //
-// The true constants live in internal/consts/ (a zero-dependency leaf package).
-// This file provides the Config interface methods that return them, preserving
-// backward compatibility for callers that already have a Config instance.
-// New code should import internal/consts directly instead of going through Config.
+// All string constants, env var names, and path resolution helpers now live
+// in internal/consts (a zero-dependency leaf package). The pointer methods
+// in this file are thin delegations kept only for backward compatibility
+// with callers that still thread through the Config interface. New code
+// should import internal/consts directly.
+//
+// What stays here (genuinely config-backed):
+//   - RequiredFirewallRules() — backed by requiredFirewallRules in defaults.go
+//   - GrafanaURL/JaegerURL/PrometheusURL — read MonitoringConfig() ports
+//   - The Mode type and ModeBind/ModeSnapshot values (config-domain enum;
+//     ParseMode lives in schema.go)
 
 package config
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
 	"github.com/schmitthub/clawker/internal/consts"
 )
-
-// XDG/Windows env var names were here historically; they now live in
-// internal/consts as private constants used by the resolver functions.
-// These aliases exist only if something in this package still references
-// them directly (nothing should after the migration).
 
 type Mode string
 
 const (
-	// ModeBind represents direct host mount (live sync)
+	// ModeBind represents direct host mount (live sync).
 	ModeBind Mode = "bind"
-	// ModeSnapshot represents ephemeral volume copy (isolated)
+	// ModeSnapshot represents ephemeral volume copy (isolated).
 	ModeSnapshot Mode = "snapshot"
 )
 
-func subdirPath(subdir string, baseDirFunc func() string) (string, error) {
-	configDir := baseDirFunc()
-	return subdirPathUnder(subdir, configDir)
-}
+// ---------------------------------------------------------------------------
+// Package-level file path helpers — deprecated pass-throughs to internal/consts.
+// ---------------------------------------------------------------------------
 
-func subdirPathUnder(subdir string, baseDir string) (string, error) {
-	fullPath := filepath.Join(baseDir, subdir)
-	if err := os.MkdirAll(fullPath, 0o755); err != nil {
-		return "", fmt.Errorf("creating config subdir %s: %w", fullPath, err)
-	}
-	return fullPath, nil
-}
+// Deprecated: use consts.SettingsFilePath.
+func SettingsFilePath() (string, error) { return consts.SettingsFilePath() }
 
-func absConfigFilePath(fileName string) (string, error) {
-	path := filepath.Join(ConfigDir(), fileName)
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return "", fmt.Errorf("resolving absolute config path for %s: %w", fileName, err)
-	}
-	return absPath, nil
-}
+// Deprecated: use consts.UserProjectConfigFilePath.
+func UserProjectConfigFilePath() (string, error) { return consts.UserProjectConfigFilePath() }
 
-// SettingsFilePath returns the absolute path to the global settings file.
-func SettingsFilePath() (string, error) { return absConfigFilePath(consts.SettingsFile) }
+// Deprecated: use consts.ProjectRegistryFilePath.
+func ProjectRegistryFilePath() (string, error) { return consts.ProjectRegistryFilePath() }
 
-// UserProjectConfigFilePath returns the absolute path to the user-level clawker.yaml file.
-func UserProjectConfigFilePath() (string, error) {
-	return absConfigFilePath(consts.ProjectConfigFile)
-}
+// ---------------------------------------------------------------------------
+// Config interface methods — every method below is a one-line delegation to
+// internal/consts. Deprecated: import consts directly in new code.
+// ---------------------------------------------------------------------------
 
-// ProjectRegistryFilePath returns the absolute path to the project registry file.
-func ProjectRegistryFilePath() (string, error) { return absConfigFilePath(consts.ProjectRegistryFile) }
-
-// ClawkerIgnoreName returns the canonical ignore filename used by snapshot/bind workflows.
+// Deprecated: use consts.IgnoreFile.
 func (c *configImpl) ClawkerIgnoreName() string { return consts.IgnoreFile }
 
-// ProjectConfigFileName returns the canonical project config filename.
+// Deprecated: use consts.ProjectConfigFile.
 func (c *configImpl) ProjectConfigFileName() string { return consts.ProjectConfigFile }
 
-// SettingsFileName returns the canonical settings filename.
+// Deprecated: use consts.SettingsFile.
 func (c *configImpl) SettingsFileName() string { return consts.SettingsFile }
 
-// ProjectRegistryFileName returns the canonical project registry filename.
+// Deprecated: use consts.ProjectRegistryFile.
 func (c *configImpl) ProjectRegistryFileName() string { return consts.ProjectRegistryFile }
 
-// Domain returns the public clawker domain.
+// Deprecated: use consts.Domain.
 func (c *configImpl) Domain() string { return consts.Domain }
 
-// LabelDomain returns the base OCI/Docker label namespace.
+// Deprecated: use consts.LabelDomain.
 func (c *configImpl) LabelDomain() string { return consts.LabelDomain }
 
-// ConfigDirEnvVar returns the environment variable name that overrides config directory resolution.
+// Deprecated: use consts.EnvConfigDir.
 func (c *configImpl) ConfigDirEnvVar() string { return consts.EnvConfigDir }
 
-// StateDirEnvVar returns the environment variable name that overrides state directory resolution.
+// Deprecated: use consts.EnvStateDir.
 func (c *configImpl) StateDirEnvVar() string { return consts.EnvStateDir }
 
-// DataDirEnvVar returns the environment variable name that overrides data directory resolution.
+// Deprecated: use consts.EnvDataDir.
 func (c *configImpl) DataDirEnvVar() string { return consts.EnvDataDir }
 
-// TestRepoDirEnvVar returns the environment variable name that overrides test repository directory resolution.
+// Deprecated: use consts.EnvTestRepoDir.
 func (c *configImpl) TestRepoDirEnvVar() string { return consts.EnvTestRepoDir }
 
-// MonitorSubdir ensures and returns the monitor subdirectory path under DataDir.
-func (c *configImpl) MonitorSubdir() (string, error) {
-	return subdirPath(consts.MonitorSubdir, DataDir)
-}
+// Deprecated: use consts.MonitorSubdir.
+func (c *configImpl) MonitorSubdir() (string, error) { return consts.MonitorSubdir() }
 
-// FirewallDataSubdir ensures and returns the firewall data subdirectory path under DataDir.
-func (c *configImpl) FirewallDataSubdir() (string, error) {
-	return subdirPath(consts.FirewallSubdir, DataDir)
-}
+// Deprecated: use consts.FirewallDataSubdir.
+func (c *configImpl) FirewallDataSubdir() (string, error) { return consts.FirewallDataSubdir() }
 
-// FirewallCertSubdir ensures and returns the firewall certificate subdirectory path under DataDir.
-func (c *configImpl) FirewallCertSubdir() (string, error) {
-	return subdirPath(consts.FirewallCertDir, DataDir)
-}
+// Deprecated: use consts.FirewallCertSubdir.
+func (c *configImpl) FirewallCertSubdir() (string, error) { return consts.FirewallCertSubdir() }
 
-// EgressRulesFileName returns the filename for the egress rules state file.
+// Deprecated: use consts.EgressRulesFile.
 func (c *configImpl) EgressRulesFileName() string { return consts.EgressRulesFile }
 
-// EnvoyIPLastOctet returns the last octet for Envoy's static IP on clawker-net.
+// Deprecated: use consts.EnvoyIPLastOctet.
 func (c *configImpl) EnvoyIPLastOctet() byte { return consts.EnvoyIPLastOctet }
 
-// CoreDNSIPLastOctet returns the last octet for CoreDNS's static IP on clawker-net.
+// Deprecated: use consts.CoreDNSIPLastOctet.
 func (c *configImpl) CoreDNSIPLastOctet() byte { return consts.CoreDNSIPLastOctet }
 
-// EnvoyEgressPort returns the main Envoy egress listener port — handles TLS (SNI) and HTTP (raw_buffer) (inside container).
+// Deprecated: use consts.CPIPLastOctet.
+func (c *configImpl) CPIPLastOctet() byte { return consts.CPIPLastOctet }
+
+// Deprecated: use consts.EnvoyEgressPort.
 func (c *configImpl) EnvoyEgressPort() int { return consts.EnvoyEgressPort }
 
-// EnvoyTCPPortBase returns the starting port for TCP/SSH listeners (inside container).
+// Deprecated: use consts.EnvoyTCPPortBase.
 func (c *configImpl) EnvoyTCPPortBase() int { return consts.EnvoyTCPPortBase }
 
-// EnvoyHealthPort returns the Envoy dedicated health check listener port (inside container).
+// Deprecated: use consts.EnvoyHealthPort.
 func (c *configImpl) EnvoyHealthPort() int { return consts.EnvoyHealthPort }
 
-// EnvoyHealthHostPort returns the host port published for Envoy health probes.
+// Deprecated: use consts.EnvoyHealthHostPort.
 func (c *configImpl) EnvoyHealthHostPort() int { return consts.EnvoyHealthHostPort }
 
-// CoreDNSHealthHostPort returns the host port published for CoreDNS health probes.
+// Deprecated: use consts.CoreDNSHealthHostPort.
 func (c *configImpl) CoreDNSHealthHostPort() int { return consts.CoreDNSHealthHostPort }
 
-// CoreDNSHealthPath returns the HTTP path for CoreDNS health checks.
+// Deprecated: use consts.CoreDNSHealthPath.
 func (c *configImpl) CoreDNSHealthPath() string { return consts.CoreDNSHealthPath }
 
 // RequiredFirewallRules returns a copy of the required firewall egress rules.
+// The rule set is domain logic backed by requiredFirewallRules in defaults.go.
 func (c *configImpl) RequiredFirewallRules() []EgressRule {
 	result := make([]EgressRule, len(requiredFirewallRules))
 	copy(result, requiredFirewallRules)
 	return result
 }
 
-// BuildSubdir ensures and returns the build subdirectory path under DataDir.
-func (c *configImpl) BuildSubdir() (string, error) { return subdirPath(consts.BuildSubdir, DataDir) }
+// Deprecated: use consts.BuildSubdir.
+func (c *configImpl) BuildSubdir() (string, error) { return consts.BuildSubdir() }
 
-// DockerfilesSubdir ensures and returns the generated Dockerfiles subdirectory path under BuildSubdir.
-func (c *configImpl) DockerfilesSubdir() (string, error) {
-	buildDir, err := c.BuildSubdir()
-	if err != nil {
-		return "", err
-	}
-	return subdirPathUnder(consts.DockerfilesDir, buildDir)
-}
+// Deprecated: use consts.DockerfilesSubdir.
+func (c *configImpl) DockerfilesSubdir() (string, error) { return consts.DockerfilesSubdir() }
 
-// ClawkerNetwork returns the shared Docker network name used by clawker resources.
+// Deprecated: use consts.Network.
 func (c *configImpl) ClawkerNetwork() string { return consts.Network }
 
-// LogsSubdir ensures and returns the logs subdirectory path under StateDir.
-func (c *configImpl) LogsSubdir() (string, error) { return subdirPath(consts.LogsSubdir, StateDir) }
+// Deprecated: use consts.LogsSubdir.
+func (c *configImpl) LogsSubdir() (string, error) { return consts.LogsSubdir() }
 
-// BridgesSubdir ensures and returns the legacy bridge PID subdirectory path under StateDir.
-func (c *configImpl) BridgesSubdir() (string, error) { return subdirPath(consts.PidsSubdir, StateDir) } // TODO refactor callers to use to PidsSubdir
+// Deprecated: use consts.BridgesSubdir.
+func (c *configImpl) BridgesSubdir() (string, error) { return consts.BridgesSubdir() }
 
-// PidsSubdir ensures and returns the PID subdirectory path under StateDir.
-func (c *configImpl) PidsSubdir() (string, error) { return subdirPath(consts.PidsSubdir, StateDir) }
+// Deprecated: use consts.PidsSubdir.
+func (c *configImpl) PidsSubdir() (string, error) { return consts.PidsSubdir() }
 
-// BridgePIDFilePath ensures the PID subdirectory and returns the per-container bridge PID file path.
+// Deprecated: use consts.BridgePIDFilePath.
 func (c *configImpl) BridgePIDFilePath(containerID string) (string, error) {
-	pidsDir, err := c.PidsSubdir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(pidsDir, containerID+".pid"), nil
+	return consts.BridgePIDFilePath(containerID)
 }
 
-// HostProxyLogFilePath ensures the logs subdirectory and returns the host proxy log file path.
-func (c *configImpl) HostProxyLogFilePath() (string, error) {
-	logsDir, err := c.LogsSubdir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(logsDir, consts.HostProxyLogFile), nil
-}
+// Deprecated: use consts.HostProxyLogFilePath.
+func (c *configImpl) HostProxyLogFilePath() (string, error) { return consts.HostProxyLogFilePath() }
 
-// HostProxyPIDFilePath ensures the PID subdirectory and returns the host proxy PID file path.
-func (c *configImpl) HostProxyPIDFilePath() (string, error) {
-	pidsDir, err := c.PidsSubdir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(pidsDir, consts.HostProxyPIDFile), nil
-}
+// Deprecated: use consts.HostProxyPIDFilePath.
+func (c *configImpl) HostProxyPIDFilePath() (string, error) { return consts.HostProxyPIDFilePath() }
 
-// FirewallPIDFilePath ensures the PID subdirectory and returns the firewall daemon PID file path.
-func (c *configImpl) FirewallPIDFilePath() (string, error) {
-	pidsDir, err := c.PidsSubdir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(pidsDir, consts.FirewallPIDFile), nil
-}
+// Deprecated: use consts.ShareSubdir.
+func (c *configImpl) ShareSubdir() (string, error) { return consts.ShareSubdir() }
 
-// FirewallLogFilePath ensures the logs subdirectory and returns the firewall daemon log file path.
-func (c *configImpl) FirewallLogFilePath() (string, error) {
-	logsDir, err := c.LogsSubdir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(logsDir, consts.FirewallLogFile), nil
-}
+// Deprecated: use consts.WorktreesSubdir.
+func (c *configImpl) WorktreesSubdir() (string, error) { return consts.WorktreesSubdir() }
 
-// ShareSubdir ensures and returns the shared directory path under DataDir.
-func (c *configImpl) ShareSubdir() (string, error) { return subdirPath(consts.ShareSubdir, DataDir) }
-
-// WorktreesSubdir ensures and returns the worktrees subdirectory path under DataDir.
-func (c *configImpl) WorktreesSubdir() (string, error) {
-	return subdirPath(consts.WorktreesSubdir, DataDir)
-}
-
-// LabelPrefix returns the full label key prefix (with trailing dot).
+// Deprecated: use consts.LabelPrefix.
 func (c *configImpl) LabelPrefix() string { return consts.LabelPrefix }
 
-// LabelManaged returns the managed-resource label key.
+// Deprecated: use consts.LabelManaged.
 func (c *configImpl) LabelManaged() string { return consts.LabelManaged }
 
-// PurposeAgent returns the purpose label value for agent containers.
+// Deprecated: use consts.PurposeAgent.
 func (c *configImpl) PurposeAgent() string { return consts.PurposeAgent }
 
-// PurposeMonitoring returns the purpose label value for monitoring containers.
+// Deprecated: use consts.PurposeMonitoring.
 func (c *configImpl) PurposeMonitoring() string { return consts.PurposeMonitoring }
 
-// PurposeFirewall returns the purpose label value for firewall containers.
+// Deprecated: use consts.PurposeFirewall.
 func (c *configImpl) PurposeFirewall() string { return consts.PurposeFirewall }
 
-// LabelProject returns the project label key.
+// Deprecated: use consts.LabelProject.
 func (c *configImpl) LabelProject() string { return consts.LabelProject }
 
-// LabelAgent returns the agent label key.
+// Deprecated: use consts.LabelAgent.
 func (c *configImpl) LabelAgent() string { return consts.LabelAgent }
 
-// LabelVersion returns the clawker version label key.
+// Deprecated: use consts.LabelVersion.
 func (c *configImpl) LabelVersion() string { return consts.LabelVersion }
 
-// LabelImage returns the source image label key.
+// Deprecated: use consts.LabelImage.
 func (c *configImpl) LabelImage() string { return consts.LabelImage }
 
-// LabelCreated returns the creation timestamp label key.
+// Deprecated: use consts.LabelCreated.
 func (c *configImpl) LabelCreated() string { return consts.LabelCreated }
 
-// LabelWorkdir returns the host workdir label key.
+// Deprecated: use consts.LabelWorkdir.
 func (c *configImpl) LabelWorkdir() string { return consts.LabelWorkdir }
 
-// LabelPurpose returns the volume purpose label key.
+// Deprecated: use consts.LabelPurpose.
 func (c *configImpl) LabelPurpose() string { return consts.LabelPurpose }
 
-// LabelTestName returns the test-name label key.
+// Deprecated: use consts.LabelTestName.
 func (c *configImpl) LabelTestName() string { return consts.LabelTestName }
 
-// LabelBaseImage returns the base-image label key.
+// Deprecated: use consts.LabelBaseImage.
 func (c *configImpl) LabelBaseImage() string { return consts.LabelBaseImage }
 
-// LabelFlavor returns the Linux flavor label key.
+// Deprecated: use consts.LabelFlavor.
 func (c *configImpl) LabelFlavor() string { return consts.LabelFlavor }
 
-// LabelTest returns the test marker label key.
+// Deprecated: use consts.LabelTest.
 func (c *configImpl) LabelTest() string { return consts.LabelTest }
 
-// LabelE2ETest returns the E2E-test marker label key.
+// Deprecated: use consts.LabelE2ETest.
 func (c *configImpl) LabelE2ETest() string { return consts.LabelE2ETest }
 
-// ManagedLabelValue returns the canonical value used for managed labels.
-func (c *configImpl) ManagedLabelValue() string {
-	return consts.ManagedLabelValue
-}
+// Deprecated: use consts.ManagedLabelValue.
+func (c *configImpl) ManagedLabelValue() string { return consts.ManagedLabelValue }
 
-// EngineLabelPrefix returns the whail engine label prefix (without trailing dot).
+// Deprecated: use consts.EngineLabelPrefix.
 func (c *configImpl) EngineLabelPrefix() string { return consts.EngineLabelPrefix }
 
-// EngineManagedLabel returns the managed label key used by whail engine options.
-func (c *configImpl) EngineManagedLabel() string {
-	return consts.EngineManagedLabel
-}
+// Deprecated: use consts.EngineManagedLabel.
+func (c *configImpl) EngineManagedLabel() string { return consts.EngineManagedLabel }
 
-// ContainerUID returns the default non-root container user UID.
+// Deprecated: use consts.ContainerUID.
 func (c *configImpl) ContainerUID() int { return consts.ContainerUID }
 
-// ContainerGID returns the default non-root container user GID.
+// Deprecated: use consts.ContainerGID.
 func (c *configImpl) ContainerGID() int { return consts.ContainerGID }
 
 // GrafanaURL returns the Grafana dashboard URL for the given host.
+// Uses the port from the loaded settings file.
 func (c *configImpl) GrafanaURL(host string, https bool) string {
-	return serviceURL(host, c.MonitoringConfig().GrafanaPort, https)
+	return consts.ServiceURL(host, c.MonitoringConfig().GrafanaPort, https)
 }
 
 // JaegerURL returns the Jaeger UI URL for the given host.
+// Uses the port from the loaded settings file.
 func (c *configImpl) JaegerURL(host string, https bool) string {
-	return serviceURL(host, c.MonitoringConfig().JaegerPort, https)
+	return consts.ServiceURL(host, c.MonitoringConfig().JaegerPort, https)
 }
 
 // PrometheusURL returns the Prometheus UI URL for the given host.
+// Uses the port from the loaded settings file.
 func (c *configImpl) PrometheusURL(host string, https bool) string {
-	return serviceURL(host, c.MonitoringConfig().PrometheusPort, https)
-}
-
-func serviceURL(host string, port int, https bool) string {
-	scheme := "http"
-	if https {
-		scheme = "https"
-	}
-	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+	return consts.ServiceURL(host, c.MonitoringConfig().PrometheusPort, https)
 }

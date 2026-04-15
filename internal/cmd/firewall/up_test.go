@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -30,7 +31,6 @@ func TestNewCmdUp_RunFReceivesOptions(t *testing.T) {
 		called = true
 		require.NotNil(t, opts)
 		assert.NotNil(t, opts.IOStreams)
-		assert.NotNil(t, opts.Logger)
 		return nil
 	})
 
@@ -40,38 +40,22 @@ func TestNewCmdUp_RunFReceivesOptions(t *testing.T) {
 	assert.True(t, called)
 }
 
-func TestNewCmdServe_IsHiddenAndRunsInjectedHandler(t *testing.T) {
-	f := newTestFactory(t)
-
-	called := false
-	cmd := NewCmdServe(f, func(_ context.Context, opts *UpOptions) error {
-		called = true
-		require.NotNil(t, opts)
-		assert.NotNil(t, opts.IOStreams)
-		return nil
-	})
-
-	assert.True(t, cmd.Hidden)
-	assert.Equal(t, "serve", cmd.Use)
-
-	cmd.SetArgs(nil)
-	err := cmd.Execute()
-	require.NoError(t, err)
-	assert.True(t, called)
-}
-
-func TestNewCmdFirewall_RegistersServeSubcommand(t *testing.T) {
+func TestNewCmdFirewall_NoServeSubcommand(t *testing.T) {
 	f := newTestFactory(t)
 	cmd := NewCmdFirewall(f)
 
-	foundServe := false
 	for _, sub := range cmd.Commands() {
 		if sub.Name() == "serve" {
-			foundServe = true
-			assert.True(t, sub.Hidden)
-			break
+			t.Fatalf("firewall command must not register a serve subcommand — daemon path is dissolved in Branch 2")
 		}
 	}
+}
 
-	assert.True(t, foundServe, "expected firewall command to register hidden serve subcommand")
+// compile-time check that the mock package is wired; prevents the import
+// from being stripped as unused in small test files that only use the
+// factory via runF trapdoor tests.
+var _ adminv1.AdminServiceClient = (*stubAdminClient)(nil)
+
+type stubAdminClient struct {
+	adminv1.AdminServiceClient
 }

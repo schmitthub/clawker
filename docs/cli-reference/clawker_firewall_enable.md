@@ -8,8 +8,8 @@ Enable firewall for a container
 
 ### Synopsis
 
-Re-attach eBPF cgroup programs to an agent container, restoring egress
-restrictions. Use after 'clawker firewall disable'.
+Re-enroll an agent container in the firewall's per-container routing.
+Idempotent. Use after 'clawker firewall disable'.
 
 ```
 clawker firewall enable [flags]

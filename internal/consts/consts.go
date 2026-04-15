@@ -16,6 +16,10 @@
 // Migration: callers that previously accessed these via Config interface
 // methods (e.g. cfg.ClawkerNetwork()) can import this package directly.
 // The Config methods remain as deprecated wrappers backed by these values.
+//
+// Path accessors ensure their target directory exists on every call via
+// os.MkdirAll (0o755). Callers do not need to pre-create directories before
+// writing files underneath — accessing the parent directory path is enough.
 package consts
 
 import (
@@ -77,39 +81,47 @@ const (
 	EnvConfigDir   = "CLAWKER_CONFIG_DIR"
 	EnvDataDir     = "CLAWKER_DATA_DIR"
 	EnvStateDir    = "CLAWKER_STATE_DIR"
+	EnvCacheDir    = "CLAWKER_CACHE_DIR"
 	EnvTestRepoDir = "CLAWKER_TEST_REPO_DIR"
 )
 
-// File names (not paths — paths are runtime-resolved via Config).
+// File names (not paths — paths are runtime-resolved via accessor funcs below).
 const (
 	ProjectConfigFile   = "clawker.yaml"
 	SettingsFile        = "settings.yaml"
 	ProjectRegistryFile = "projects.yaml"
 	IgnoreFile          = ".clawkerignore"
 	EgressRulesFile     = "egress-rules.yaml"
+	EnvoyConfigFile     = "envoy.yaml"
+	Corefile            = "Corefile"
 )
 
 // Subdirectory names within XDG base dirs.
 const (
-	MonitorSubdir   = "monitor"
-	FirewallSubdir  = "firewall"
-	FirewallCertDir = FirewallSubdir + "/certs"
-	AuthSubdir      = "auth"
-	BuildSubdir     = "build"
-	DockerfilesDir  = "dockerfiles"
-	WorktreesSubdir = "worktrees"
-	LogsSubdir      = "logs"
-	PidsSubdir      = "pids"
-	ShareSubdir     = ".clawker-share"
+	monitorDir      = "monitor"
+	firewallDir     = "firewall"
+	firewallCertDir = "certs"
+	authDir         = "auth"
+	buildDir        = "build"
+	dockerfilesDir  = "dockerfiles"
+	worktreesDir    = "worktrees"
+	logsDir         = "logs"
+	pidsDir         = "pids"
+	shareDir        = ".clawker-share"
+	socketsDir      = "sockets"
+	auditDir        = "audit"
 )
 
 // PID and log file names.
 const (
 	HostProxyPIDFile    = "hostproxy.pid"
 	HostProxyLogFile    = "hostproxy.log"
-	FirewallPIDFile     = "firewall.pid"
-	FirewallLogFile     = "firewall.log"
 	ControlPlaneLogFile = "clawker-controlplane.log"
+	BridgePIDSuffix     = ".pid"
+	ReadyFile           = "ready"
+	GRPCSocketFile      = "grpc.sock"
+	OIDCSocketFile      = "oidc.sock"
+	AuditLogFile        = "audit.log"
 )
 
 // Network.
@@ -137,6 +149,7 @@ const (
 const (
 	EnvoyIPLastOctet   = 200
 	CoreDNSIPLastOctet = 201
+	CPIPLastOctet      = 202
 )
 
 // Firewall stack ports.
@@ -194,19 +207,42 @@ const (
 	xdgConfigHome = "XDG_CONFIG_HOME"
 	xdgDataHome   = "XDG_DATA_HOME"
 	xdgStateHome  = "XDG_STATE_HOME"
+	xdgCacheHome  = "XDG_CACHE_HOME"
 )
 
+// subdirPath ensures and returns <baseDirFunc()>/<subdir>.
 func subdirPath(subdir string, baseDirFunc func() string) (string, error) {
-	configDir := baseDirFunc()
-	return subdirPathUnder(subdir, configDir)
+	return subdirPathUnder(subdir, baseDirFunc())
 }
 
+// subdirPathUnder ensures and returns <baseDir>/<subdir>.
 func subdirPathUnder(subdir string, baseDir string) (string, error) {
 	fullPath := filepath.Join(baseDir, subdir)
 	if err := os.MkdirAll(fullPath, 0o755); err != nil {
 		return "", fmt.Errorf("creating config subdir %s: %w", fullPath, err)
 	}
 	return fullPath, nil
+}
+
+// ensureDir creates dir (and any parents) with 0o755 and returns dir.
+func ensureDir(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("creating dir %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// absConfigFilePath returns the absolute path <ConfigDir()>/<fileName>.
+// The config directory is NOT created by this helper — callers that need
+// the directory to exist should write through SettingsFilePath/
+// ProjectRegistryFilePath/UserProjectConfigFilePath and ensure as needed.
+func absConfigFilePath(fileName string) (string, error) {
+	path := filepath.Join(ConfigDir(), fileName)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolving absolute config path for %s: %w", fileName, err)
+	}
+	return absPath, nil
 }
 
 // ConfigDir returns the clawker config directory.
@@ -263,32 +299,82 @@ func StateDir() string {
 	return filepath.Join(d, ".local", "state", "clawker")
 }
 
+// CacheDir returns the clawker cache directory.
+// Resolution: CLAWKER_CACHE_DIR > XDG_CACHE_HOME/clawker > ~/.cache/clawker
+func CacheDir() string {
+	if a := os.Getenv(EnvCacheDir); a != "" {
+		return a
+	}
+	if b := os.Getenv(xdgCacheHome); b != "" {
+		return filepath.Join(b, "clawker")
+	}
+	if runtime.GOOS == "windows" {
+		if c := os.Getenv("LOCALAPPDATA"); c != "" {
+			return filepath.Join(c, "clawker", "cache")
+		}
+	}
+	d, _ := os.UserHomeDir()
+	return filepath.Join(d, ".cache", "clawker")
+}
+
 // ---------------------------------------------------------------------------
-// Path accessors — pure functions, no I/O. Callers provide the base dir
-// (from env var resolution or test fixture); these just compose.
+// Path accessors — no parameters, resolve base dirs via env-backed ConfigDir()/
+// DataDir()/StateDir(), and ensure every returned directory exists on disk.
+// Callers can safely write files underneath without pre-creating parents.
 // ---------------------------------------------------------------------------
 
-// Subsystem data paths (under DataDir).
+// --- Subsystem data paths (under DataDir) ---
 
-func FirewallDir(dataDir string) string      { return filepath.Join(dataDir, FirewallSubdir) }
-func FirewallCertsDir(dataDir string) string { return filepath.Join(dataDir, FirewallCertDir) }
-func MonitorDir(dataDir string) string       { return filepath.Join(dataDir, MonitorSubdir) }
-func BuildDir(dataDir string) string         { return filepath.Join(dataDir, BuildSubdir) }
-func WorktreesDir(dataDir string) string     { return filepath.Join(dataDir, WorktreesSubdir) }
-func ShareDir(dataDir string) string         { return filepath.Join(dataDir, ShareSubdir) }
+// FirewallDataSubdir ensures and returns the firewall data subdirectory path under DataDir.
+func FirewallDataSubdir() (string, error) { return subdirPath(firewallDir, DataDir) }
 
-// Auth material paths (under DataDir).
-// Layout: auth/cli/ for CLI signing material, auth/tls/ for server TLS.
-// Pure path accessors — no I/O. Call EnsureAuthDirs() before writing files.
+// FirewallCertSubdir ensures and returns the firewall certificate subdirectory path under DataDir.
+func FirewallCertSubdir() (string, error) {
+	fwDir, err := FirewallDataSubdir()
+	if err != nil {
+		return "", err
+	}
+	return subdirPathUnder(firewallCertDir, fwDir)
+}
 
-func AuthCADir() (string, error)  { return filepath.Join(DataDir(), "auth", "ca"), nil }
-func AuthCLIDir() (string, error) { return filepath.Join(DataDir(), "auth", "cli"), nil }
-func AuthTLSDir() (string, error) { return filepath.Join(DataDir(), "auth", "tls"), nil }
+// MonitorSubdir ensures and returns the monitor subdirectory path under DataDir.
+func MonitorSubdir() (string, error) { return subdirPath(monitorDir, DataDir) }
+
+// BuildSubdir ensures and returns the build subdirectory path under DataDir.
+func BuildSubdir() (string, error) { return subdirPath(buildDir, DataDir) }
+
+// WorktreesSubdir ensures and returns the worktrees subdirectory path under DataDir.
+func WorktreesSubdir() (string, error) { return subdirPath(worktreesDir, DataDir) }
+
+// ShareSubdir ensures and returns the shared directory path under DataDir.
+func ShareSubdir() (string, error) { return subdirPath(shareDir, DataDir) }
+
+// DockerfilesSubdir ensures and returns the generated Dockerfiles subdirectory path under BuildSubdir.
+func DockerfilesSubdir() (string, error) {
+	buildSub, err := BuildSubdir()
+	if err != nil {
+		return "", err
+	}
+	return subdirPathUnder(dockerfilesDir, buildSub)
+}
+
+// --- Auth material paths (under DataDir) ---
+// Layout: auth/ca/ for CA material, auth/cli/ for CLI signing material,
+// auth/tls/ for server TLS.
+
+// AuthCADir ensures and returns the auth/ca directory under DataDir.
+func AuthCADir() (string, error) { return subdirPathUnder(filepath.Join(authDir, "ca"), DataDir()) }
+
+// AuthCLIDir ensures and returns the auth/cli directory under DataDir.
+func AuthCLIDir() (string, error) { return subdirPathUnder(filepath.Join(authDir, "cli"), DataDir()) }
+
+// AuthTLSDir ensures and returns the auth/tls directory under DataDir.
+func AuthTLSDir() (string, error) { return subdirPathUnder(filepath.Join(authDir, "tls"), DataDir()) }
 
 // HydraSystemSecretPath returns the path to the persisted Hydra system secret
 // file under the auth/ directory. The parent directory is created if needed.
 func HydraSystemSecretPath() (string, error) {
-	dir, err := subdirPathUnder("auth", DataDir())
+	dir, err := subdirPathUnder(authDir, DataDir())
 	if err != nil {
 		return "", err
 	}
@@ -370,47 +456,141 @@ func AuthServerKeyPath() (string, error) {
 	return filepath.Join(dir, "server.key"), nil
 }
 
-// State dir paths (under StateDir).
+// --- State dir paths (under StateDir) ---
 
-func SocketsDir(stateDir string) string     { return filepath.Join(stateDir, "sockets") }
-func GRPCSocketPath(stateDir string) string { return filepath.Join(stateDir, "sockets", "grpc.sock") }
-func OIDCSocketPath(stateDir string) string { return filepath.Join(stateDir, "sockets", "oidc.sock") }
-func ReadyFilePath(stateDir string) string  { return filepath.Join(stateDir, "ready") }
-func LogsDir(stateDir string) string        { return filepath.Join(stateDir, LogsSubdir) }
-func PidsDir(stateDir string) string        { return filepath.Join(stateDir, PidsSubdir) }
-func AuditLogPath(stateDir string) string   { return filepath.Join(stateDir, "audit", "audit.log") }
+// LogsSubdir ensures and returns the logs subdirectory path under StateDir.
+func LogsSubdir() (string, error) { return subdirPath(logsDir, StateDir) }
 
-// File paths composed from base + known file names.
+// PidsSubdir ensures and returns the PID subdirectory path under StateDir.
+func PidsSubdir() (string, error) { return subdirPath(pidsDir, StateDir) }
 
-func EgressRulesPath(dataDir string) string {
-	return filepath.Join(dataDir, FirewallSubdir, EgressRulesFile)
+// BridgesSubdir ensures and returns the legacy bridge PID subdirectory path
+// under StateDir. Alias for PidsSubdir for backward compatibility.
+func BridgesSubdir() (string, error) { return PidsSubdir() }
+
+// SocketsDir ensures and returns the sockets subdirectory path under StateDir.
+func SocketsDir() (string, error) { return subdirPath(socketsDir, StateDir) }
+
+// GRPCSocketPath ensures the sockets subdirectory and returns the gRPC socket file path.
+func GRPCSocketPath() (string, error) {
+	dir, err := SocketsDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, GRPCSocketFile), nil
 }
 
-func HostProxyPIDPath(stateDir string) string {
-	return filepath.Join(stateDir, PidsSubdir, HostProxyPIDFile)
+// OIDCSocketPath ensures the sockets subdirectory and returns the OIDC socket file path.
+func OIDCSocketPath() (string, error) {
+	dir, err := SocketsDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, OIDCSocketFile), nil
 }
 
-func HostProxyLogPath(stateDir string) string {
-	return filepath.Join(stateDir, LogsSubdir, HostProxyLogFile)
+// ReadyFilePath ensures the state directory and returns the ready sentinel file path.
+func ReadyFilePath() (string, error) {
+	dir, err := ensureDir(StateDir())
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ReadyFile), nil
 }
 
-func FirewallPIDPath(stateDir string) string {
-	return filepath.Join(stateDir, PidsSubdir, FirewallPIDFile)
+// AuditLogPath ensures <StateDir>/audit and returns the audit log file path.
+func AuditLogPath() (string, error) {
+	dir, err := subdirPath(auditDir, StateDir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, AuditLogFile), nil
 }
 
-func FirewallLogPath(stateDir string) string {
-	return filepath.Join(stateDir, LogsSubdir, FirewallLogFile)
+// --- PID and log file paths ---
+
+// BridgePIDFilePath ensures the PID subdirectory and returns the per-container
+// bridge PID file path.
+func BridgePIDFilePath(containerID string) (string, error) {
+	dir, err := PidsSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, containerID+BridgePIDSuffix), nil
+}
+
+// HostProxyPIDFilePath ensures the PID subdirectory and returns the host proxy
+// PID file path.
+func HostProxyPIDFilePath() (string, error) {
+	dir, err := PidsSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, HostProxyPIDFile), nil
+}
+
+// HostProxyLogFilePath ensures the logs subdirectory and returns the host proxy
+// log file path.
+func HostProxyLogFilePath() (string, error) {
+	dir, err := LogsSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, HostProxyLogFile), nil
 }
 
 // ControlPlaneLogFilePath ensures the logs subdirectory and returns the
 // control plane log file path.
 func ControlPlaneLogFilePath() (string, error) {
-	logsDir, err := subdirPath(LogsSubdir, StateDir)
+	dir, err := LogsSubdir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(logsDir, ControlPlaneLogFile), nil
+	return filepath.Join(dir, ControlPlaneLogFile), nil
 }
+
+// --- Firewall data files ---
+
+// EgressRulesPath ensures the firewall data subdirectory and returns the
+// egress rules YAML file path.
+func EgressRulesPath() (string, error) {
+	dir, err := FirewallDataSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, EgressRulesFile), nil
+}
+
+func EnvoyConfigPath() (string, error) {
+	dir, err := FirewallDataSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, EnvoyConfigFile), nil
+}
+
+func CorefilePath() (string, error) {
+	dir, err := FirewallDataSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, Corefile), nil
+}
+
+// --- Config-dir absolute file paths ---
+
+// SettingsFilePath returns the absolute path to the global settings file.
+// The config directory itself is not created by this accessor; callers that
+// write to the returned path must ensure the parent exists (storage layer
+// does this via its atomic write helpers).
+func SettingsFilePath() (string, error) { return absConfigFilePath(SettingsFile) }
+
+// UserProjectConfigFilePath returns the absolute path to the user-level
+// clawker.yaml file.
+func UserProjectConfigFilePath() (string, error) { return absConfigFilePath(ProjectConfigFile) }
+
+// ProjectRegistryFilePath returns the absolute path to the project registry file.
+func ProjectRegistryFilePath() (string, error) { return absConfigFilePath(ProjectRegistryFile) }
 
 // ---------------------------------------------------------------------------
 // URI / address accessors

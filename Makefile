@@ -107,29 +107,30 @@ clawker: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 # Embedded firewall stack binaries (reproducible Docker builds)
 # =============================================================================
 #
-# The clawker CLI go:embed's two Linux binaries: ebpf-manager (with compiled
-# BPF bytecode baked in via bpf2go) and coredns-clawker (with the dnsbpf
-# plugin baked in). At clawker-run time the firewall manager builds tiny
-# Alpine-based Docker images from those embedded bytes via a 3-line in-memory
-# Dockerfile (internal/firewall/manager.go → ebpfImageSpec, corednsImageSpec).
-# They are NOT sidecars — one firewall stack is shared by all clawker-managed
-# containers on the host.
+# The clawker CLI go:embed's three Linux binaries: clawker-cp (CP daemon),
+# ebpf-manager (break-glass, with compiled BPF bytecode baked in via bpf2go),
+# and coredns-clawker (with the dnsbpf plugin baked in). At clawker-run time
+# internal/controlplane/bootstrap.go builds the clawker-cp image (bundling
+# clawker-cp + ebpf-manager) and internal/controlplane/firewall/stack.go
+# (corednsImageTag, ensureCorednsImage) builds the clawker-coredns image.
+# They are NOT sidecars — one control plane + firewall stack is shared by
+# all clawker-managed containers on the host.
 #
 # Both targets build through `docker buildx build` against a single pinned
 # multi-stage Dockerfile.controlplane whose `bpf-builder` stage is shared between
 # the ebpf-manager and coredns-clawker compile paths (coredns-clawker imports
-# internal/controlplane/ebpf and so needs the bpf2go-generated wrappers at compile time).
+# internal/controlplane/firewall/ebpf and so needs the bpf2go-generated wrappers at compile time).
 # Every input is pinned — base image digest, apt package versions, Go
 # toolchain digest, bpf2go version — so a fresh `make` on any host produces
 # byte-identical output. Nothing generated is ever committed to the repo:
 # .o files, bpf2go Go wrappers, and the extracted binaries are all gitignored.
 #
-# See internal/controlplane/ebpf/REPRODUCIBILITY.md for the full provenance chain and the
+# See internal/controlplane/firewall/ebpf/REPRODUCIBILITY.md for the full provenance chain and the
 # pin update procedure.
 
-EBPF_BINARY := internal/firewall/assets/ebpf-manager
-COREDNS_BINARY := internal/firewall/assets/coredns-clawker
-CP_BINARY := internal/firewall/assets/clawker-cp
+EBPF_BINARY := internal/controlplane/cpboot/assets/ebpf-manager
+COREDNS_BINARY := internal/controlplane/firewall/assets/coredns-clawker
+CP_BINARY := internal/controlplane/cpboot/assets/clawker-cp
 
 # Proto inputs + generated outputs. Declared early so targets that use
 # $(PROTO_GENERATED) further down in the file get a non-empty expansion
@@ -149,13 +150,13 @@ PROTO_GENERATED := \
 
 # bpf2go-generated Go wrappers + compiled BPF bytecode extracted to the host
 # tree so host-side `go test` / `go vet` / `gopls` can compile
-# internal/controlplane/ebpf/manager.go (which references clawkerObjects, clawkerRouteKey,
+# internal/controlplane/firewall/ebpf/manager.go (which references clawkerObjects, clawkerRouteKey,
 # etc. declared in the wrappers). Gitignored — never committed.
 BPF_BINDINGS := \
-	internal/controlplane/ebpf/clawker_x86_bpfel.go \
-	internal/controlplane/ebpf/clawker_x86_bpfel.o \
-	internal/controlplane/ebpf/clawker_arm64_bpfel.go \
-	internal/controlplane/ebpf/clawker_arm64_bpfel.o
+	internal/controlplane/firewall/ebpf/clawker_x86_bpfel.go \
+	internal/controlplane/firewall/ebpf/clawker_x86_bpfel.o \
+	internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.go \
+	internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.o
 
 # Source inputs to the BPF bindings. An edit to these retriggers the
 # bpf-bindings extraction (and transitively the binary builds that depend
@@ -164,25 +165,25 @@ BPF_BINDING_DEPS := \
 	Dockerfile.controlplane \
 	go.mod \
 	go.sum \
-	internal/controlplane/ebpf/bpf/clawker.c \
-	internal/controlplane/ebpf/bpf/common.h \
-	internal/controlplane/ebpf/gen.go
+	internal/controlplane/firewall/ebpf/bpf/clawker.c \
+	internal/controlplane/firewall/ebpf/bpf/common.h \
+	internal/controlplane/firewall/ebpf/gen.go
 
 # Source dependencies for the ebpf-manager binary.
 EBPF_BINARY_DEPS := \
 	$(BPF_BINDING_DEPS) \
-	internal/controlplane/ebpf/manager.go \
-	internal/controlplane/ebpf/types.go \
-	internal/controlplane/ebpf/cmd/main.go
+	internal/controlplane/firewall/ebpf/manager.go \
+	internal/controlplane/firewall/ebpf/types.go \
+	internal/controlplane/firewall/ebpf/cmd/main.go
 
 COREDNS_BINARY_DEPS := \
 	$(BPF_BINDING_DEPS) \
 	cmd/coredns-clawker/main.go \
 	$(wildcard internal/dnsbpf/*.go) \
-	internal/controlplane/ebpf/types.go
+	internal/controlplane/firewall/ebpf/types.go
 
 # Source dependencies for the clawker-cp (control plane) binary. It
-# imports both internal/controlplane and internal/controlplane/ebpf, plus
+# imports both internal/controlplane and internal/controlplane/firewall/ebpf, plus
 # the generated proto types in internal/clawkerd/protocol. PROTO_GENERATED
 # is listed explicitly so that editing a `.proto` triggers the regeneration
 # rule (above) before the binary is rebuilt.
@@ -191,8 +192,8 @@ CP_BINARY_DEPS := \
 	$(PROTO_GENERATED) \
 	$(wildcard cmd/clawker-cp/*.go) \
 	$(wildcard internal/controlplane/*.go) \
-	internal/controlplane/ebpf/manager.go \
-	internal/controlplane/ebpf/types.go
+	internal/controlplane/firewall/ebpf/manager.go \
+	internal/controlplane/firewall/ebpf/types.go
 
 # `docker buildx build --output=type=local,dest=...` exports a stage's
 # filesystem to a host directory. The `*-extract` stages in Dockerfile.controlplane
@@ -202,8 +203,8 @@ BUILDX_BUILD := docker buildx build
 BUILDX_TARGETARCH := $(shell $(GO) env GOARCH)
 
 # bpf-bindings: extract bpf2go-generated Go wrappers + .o bytecode to
-# internal/controlplane/ebpf/. This is a prerequisite for any host-side Go tool (go build,
-# go test, golangci-lint, staticcheck, gopls) touching the internal/controlplane/ebpf
+# internal/controlplane/firewall/ebpf/. This is a prerequisite for any host-side Go tool (go build,
+# go test, golangci-lint, staticcheck, gopls) touching the internal/controlplane/firewall/ebpf
 # package — manager.go references types declared in the generated wrappers.
 # proto: regenerate Go code from .proto files via buf.
 #
@@ -256,18 +257,18 @@ proto-tools:
 .PHONY: bpf-bindings
 bpf-bindings: $(BPF_BINDINGS)
 $(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
-	@echo "Extracting bpf2go bindings to internal/controlplane/ebpf/ via pinned Dockerfile.controlplane..."
-	@rm -rf internal/controlplane/ebpf/.bpf-bindings-extract
+	@echo "Extracting bpf2go bindings to internal/controlplane/firewall/ebpf/ via pinned Dockerfile.controlplane..."
+	@rm -rf internal/controlplane/firewall/ebpf/.bpf-bindings-extract
 	$(BUILDX_BUILD) \
 		-f Dockerfile.controlplane \
 		--target=bpf-bindings-extract \
-		--output=type=local,dest=internal/controlplane/ebpf/.bpf-bindings-extract \
+		--output=type=local,dest=internal/controlplane/firewall/ebpf/.bpf-bindings-extract \
 		.
-	@mv internal/controlplane/ebpf/.bpf-bindings-extract/clawker_x86_bpfel.go  internal/controlplane/ebpf/
-	@mv internal/controlplane/ebpf/.bpf-bindings-extract/clawker_x86_bpfel.o   internal/controlplane/ebpf/
-	@mv internal/controlplane/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.go internal/controlplane/ebpf/
-	@mv internal/controlplane/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.o  internal/controlplane/ebpf/
-	@rm -rf internal/controlplane/ebpf/.bpf-bindings-extract
+	@mv internal/controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_x86_bpfel.go  internal/controlplane/firewall/ebpf/
+	@mv internal/controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_x86_bpfel.o   internal/controlplane/firewall/ebpf/
+	@mv internal/controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.go internal/controlplane/firewall/ebpf/
+	@mv internal/controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.o  internal/controlplane/firewall/ebpf/
+	@rm -rf internal/controlplane/firewall/ebpf/.bpf-bindings-extract
 
 ebpf-binary: $(EBPF_BINARY)
 $(EBPF_BINARY): $(EBPF_BINARY_DEPS) $(BPF_BINDINGS)
@@ -301,8 +302,10 @@ $(COREDNS_BINARY): $(COREDNS_BINARY_DEPS) $(BPF_BINDINGS)
 
 # cp-binary builds the clawker-cp containerized control plane daemon via
 # the same pinned multi-stage Dockerfile.controlplane. The resulting binary is
-# go:embed'd into the clawker CLI and baked into the clawker-cp image at
-# runtime by internal/firewall/manager.go alongside ebpf-manager (break-glass).
+# go:embed'd into the clawker CLI (internal/controlplane/cpboot/embed_cp.go)
+# and baked into the clawker-cp image at runtime by
+# internal/controlplane/cpboot/bootstrap.go (cpImageDockerfile) alongside
+# ebpf-manager (break-glass).
 cp-binary: $(CP_BINARY)
 $(CP_BINARY): $(CP_BINARY_DEPS) $(BPF_BINDINGS)
 	@echo "Building clawker-cp for linux/$(BUILDX_TARGETARCH) via pinned Dockerfile.controlplane..."
@@ -341,11 +344,11 @@ clawker-build-all:
 clawker-build-linux:
 	@echo "Building Clawker for Linux..."
 	@mkdir -p $(DIST_DIR)
-	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/ebpf/cmd
+	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/firewall/ebpf/cmd
 	@echo "  coredns-clawker linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
 	@echo "  clawker-cp linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CP_BINARY) ./cmd/clawker-cp
 	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/clawker
-	@echo "  ebpf-manager linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/ebpf/cmd
+	@echo "  ebpf-manager linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/firewall/ebpf/cmd
 	@echo "  coredns-clawker linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
 	@echo "  clawker-cp linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CP_BINARY) ./cmd/clawker-cp
 	GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/clawker
@@ -353,17 +356,17 @@ clawker-build-linux:
 clawker-build-darwin:
 	@echo "Building Clawker for macOS..."
 	@mkdir -p $(DIST_DIR)
-	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/ebpf/cmd
+	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/firewall/ebpf/cmd
 	@echo "  coredns-clawker linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
 	@echo "  clawker-cp linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CP_BINARY) ./cmd/clawker-cp
 	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/clawker
-	@echo "  ebpf-manager linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/ebpf/cmd
+	@echo "  ebpf-manager linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/firewall/ebpf/cmd
 	@echo "  coredns-clawker linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
 	@echo "  clawker-cp linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CP_BINARY) ./cmd/clawker-cp
 	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/clawker
 
 # Run Clawker tests
-clawker-test: ebpf-binary coredns-binary cp-binary
+clawker-test: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running Clawker tests..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -371,7 +374,7 @@ endif
 	$(TEST_CMD_VERBOSE) ./...
 
 # Run Clawker internals tests
-clawker-test-internals: ebpf-binary coredns-binary cp-binary
+clawker-test-internals: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running Clawker internal integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -379,7 +382,7 @@ endif
 	$(TEST_CMD_VERBOSE) -timeout 10m ./test/internals/...
 
 # Run Clawker tests with coverage
-clawker-test-coverage: ebpf-binary coredns-binary cp-binary
+clawker-test-coverage: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running Clawker tests with coverage..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -388,12 +391,12 @@ endif
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
 # Run short tests (skip internals tests)
-clawker-test-short: ebpf-binary coredns-binary cp-binary
+clawker-test-short: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running short Clawker tests..."
 	$(TEST_CMD) -short ./...
 
 # Run linter
-clawker-lint: ebpf-binary coredns-binary cp-binary
+clawker-lint: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running linter..."
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run ./...; \
@@ -403,7 +406,7 @@ clawker-lint: ebpf-binary coredns-binary cp-binary
 	fi
 
 # Run staticcheck
-clawker-staticcheck: ebpf-binary coredns-binary cp-binary
+clawker-staticcheck: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running staticcheck..."
 	@if command -v staticcheck >/dev/null 2>&1; then \
 		staticcheck ./...; \
@@ -447,10 +450,11 @@ UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/whail' | grep -v '/test/e2e')
 
 # Unit tests only (fast, no Docker)
 # Excludes test/e2e, test/whail which require Docker
-# Depends on the embedded firewall binaries because internal/firewall uses
-# go:embed on assets/ebpf-manager and assets/coredns-clawker — tests that
-# compile the firewall package will fail without them.
-test: ebpf-binary coredns-binary cp-binary
+# Depends on the embedded control plane binaries. internal/controlplane/cpboot
+# uses go:embed on assets/clawker-cp + assets/ebpf-manager, and
+# internal/controlplane/firewall uses go:embed on assets/coredns-clawker —
+# tests that compile those packages will fail without the binaries on disk.
+test: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running unit tests..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -463,13 +467,13 @@ test-unit: test
 
 # CI-mode unit tests: race detector, no caching, coverage
 # Called by .github/workflows/test.yml
-test-ci: ebpf-binary coredns-binary cp-binary
+test-ci: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running unit tests (CI mode: race, no cache, coverage)..."
 	@PKGS="$(UNIT_PKGS)"; if [ -z "$$PKGS" ]; then echo "ERROR: no packages found" >&2; exit 1; fi; \
 	$(GO) test -race -count=1 -coverprofile=coverage.out $$PKGS
 
 # E2E integration tests (requires Docker)
-test-e2e: ebpf-binary coredns-binary cp-binary
+test-e2e: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running E2E integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -477,7 +481,7 @@ endif
 	$(TEST_CMD_VERBOSE) -timeout 10m ./test/e2e/...
 
 # Whail BuildKit integration tests (requires Docker + BuildKit)
-test-whail: ebpf-binary coredns-binary cp-binary
+test-whail: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running whail integration tests (requires Docker + BuildKit)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -488,7 +492,7 @@ endif
 test-all: test test-e2e test-whail
 
 # Unit tests with coverage
-test-coverage: ebpf-binary coredns-binary cp-binary
+test-coverage: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running unit tests with coverage..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -511,16 +515,17 @@ test-clean:
 # ============================================================================
 
 # Generate NOTICE file with third-party license attributions.
-# Depends on the embedded firewall binaries + bpf2go bindings because
+# Depends on the embedded control plane binaries + bpf2go bindings because
 # gen-notice.sh runs `go-licenses report ./...` which loads every package
-# in the module — internal/firewall needs go:embed targets and internal/controlplane/ebpf
-# needs the bpf2go-generated Go wrappers to compile.
-licenses: ebpf-binary coredns-binary cp-binary
+# in the module — internal/controlplane/cpboot and internal/controlplane/firewall
+# need go:embed targets, and internal/controlplane/firewall/ebpf needs the
+# bpf2go-generated Go wrappers to compile.
+licenses: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Generating NOTICE file..."
 	bash scripts/gen-notice.sh
 
 # Check NOTICE file is up to date (used by CI)
-licenses-check: ebpf-binary coredns-binary cp-binary
+licenses-check: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Checking NOTICE freshness..."
 	@bash scripts/gen-notice.sh
 	@if ! git diff --quiet NOTICE; then \
@@ -537,14 +542,15 @@ licenses-check: ebpf-binary coredns-binary cp-binary
 # ============================================================================
 
 # Generate CLI reference + config reference docs
-# Depends on the embedded firewall binaries because cmd/gen-docs links
-# the full cobra tree, which imports internal/firewall (go:embed assets).
-docs: ebpf-binary coredns-binary cp-binary
+# Depends on the embedded control plane binaries because cmd/gen-docs links
+# the full cobra tree, which imports internal/controlplane/cpboot and
+# internal/controlplane/firewall (both carry go:embed assets).
+docs: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Generating CLI reference + config reference docs..."
 	$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
 
 # Check all generated docs are up to date (used by CI)
-docs-check: ebpf-binary coredns-binary cp-binary
+docs-check: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Checking generated docs freshness..."
 	@$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
 	@if ! git diff --quiet docs/cli-reference/ docs/configuration.mdx; then \

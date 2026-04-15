@@ -3,14 +3,16 @@ description: >
   Builds the `clawker-cp`, `ebpf-manager`, and `coredns-clawker` Linux
   binaries via the pinned `Dockerfile.controlplane` multi-stage build, and
   materializes the bpf2go-generated Go wrappers at
-  `internal/controlplane/ebpf/clawker_*_bpfel.{go,o}`.
+  `internal/controlplane/firewall/ebpf/clawker_*_bpfel.{go,o}`.
 
   This is the one-stop prerequisite for any CI job that needs to compile,
-  lint, vet, or otherwise analyze the full Go module tree — `internal/firewall`
-  uses `go:embed` on the three Linux binaries, and
-  `internal/controlplane/ebpf/manager.go` references types declared in the
-  bpf2go wrappers. Jobs that touch the whole module and skip this step will
-  fail with `undefined: clawkerRouteKey` or missing `go:embed` targets.
+  lint, vet, or otherwise analyze the full Go module tree —
+  `internal/controlplane/cpboot` `go:embed`'s `clawker-cp` + `ebpf-manager`,
+  `internal/controlplane/firewall` `go:embed`'s `coredns-clawker`, and
+  `internal/controlplane/firewall/ebpf/manager.go` references types declared
+  in the bpf2go wrappers. Jobs that touch the whole module and skip this
+  step will fail with `undefined: clawkerRouteKey` or missing `go:embed`
+  targets.
 
   Ordering rule: call this AFTER `actions/checkout`, and BEFORE any tool
   that does its own working-tree checkout (e.g. `golang/govulncheck-action`

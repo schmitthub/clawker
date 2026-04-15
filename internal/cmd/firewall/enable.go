@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
@@ -16,7 +16,7 @@ import (
 type EnableOptions struct {
 	IOStreams      *iostreams.IOStreams
 	ProjectManager func() (project.ProjectManager, error)
-	Firewall       func(context.Context) (firewall.FirewallManager, error)
+	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	Agent          string
 }
 
@@ -25,14 +25,14 @@ func NewCmdEnable(f *cmdutil.Factory, runF func(context.Context, *EnableOptions)
 	opts := &EnableOptions{
 		IOStreams:      f.IOStreams,
 		ProjectManager: f.ProjectManager,
-		Firewall:       f.Firewall,
+		AdminClient:    f.AdminClient,
 	}
 
 	cmd := &cobra.Command{
 		Use:   "enable",
 		Short: "Enable firewall for a container",
-		Long: `Re-attach eBPF cgroup programs to an agent container, restoring egress
-restrictions. Use after 'clawker firewall disable'.`,
+		Long: `Re-enroll an agent container in the firewall's per-container routing.
+Idempotent. Use after 'clawker firewall disable'.`,
 		Example: `  # Enable firewall for an agent container
   clawker firewall enable --agent dev`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -70,12 +70,14 @@ func enableRun(ctx context.Context, opts *EnableOptions) error {
 		return fmt.Errorf("resolving container name: %w", err)
 	}
 
-	fwMgr, err := opts.Firewall(ctx)
+	client, err := opts.AdminClient(ctx)
 	if err != nil {
-		return fmt.Errorf("connecting to firewall: %w", err)
+		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	if err := fwMgr.Enable(ctx, containerName); err != nil {
+	// CP resolves container_id → cgroup_path internally via Docker +
+	// INV-B2-016 drift guard; the CLI only carries the container ref.
+	if _, err := client.FirewallEnable(ctx, &adminv1.FirewallEnableRequest{ContainerId: containerName}); err != nil {
 		return fmt.Errorf("enabling firewall for %s: %w", opts.Agent, err)
 	}
 

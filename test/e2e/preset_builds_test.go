@@ -11,7 +11,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/firewall"
+
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/testenv"
@@ -220,7 +220,6 @@ func TestPresetInit_SSHConnectivity(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			Firewall:       firewall.NewManager,
 		},
 	}
 	setup := h.NewIsolatedFS(&harness.FSOptions{

@@ -8,8 +8,9 @@ Disable firewall for a container
 
 ### Synopsis
 
-Detach eBPF cgroup programs from an agent container, giving it
-unrestricted outbound access. Use 'clawker firewall enable' to re-apply.
+Remove an agent container from the firewall's per-container routing.
+BPF programs remain attached so re-enable is cheap; the fast path exits to
+bypass on lookup miss.
 
 ```
 clawker firewall disable [flags]

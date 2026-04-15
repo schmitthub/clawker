@@ -5,8 +5,8 @@
 // decisions without stale seed data.
 //
 // Built by: make coredns-binary
-// Embedded in clawker via go:embed (internal/firewall/coredns_embed.go)
-// and built into a Docker image on-demand by the firewall manager.
+// Embedded in clawker via go:embed (internal/controlplane/firewall/embed_coredns.go)
+// and built into a Docker image on-demand by the CP firewall Stack.
 package main
 
 import (

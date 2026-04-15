@@ -3,7 +3,7 @@
 # This is the single source of truth for building the three Linux binaries
 # that clawker go:embed's into its CLI:
 #
-#   * ebpf-manager    — compiled from ./internal/controlplane/ebpf/cmd with BPF bytecode
+#   * ebpf-manager    — compiled from ./internal/controlplane/firewall/ebpf/cmd with BPF bytecode
 #                       baked in via bpf2go + go:embed. Break-glass debug tool
 #                       for humans — NOT the primary interface. The control plane
 #                       daemon (clawker-cp) owns eBPF management via in-process
@@ -46,14 +46,14 @@
 # output. The repo contains no committed generated artifacts — the .o files,
 # bpf2go Go wrappers, and final binaries are all produced inside this build
 # and the binaries extracted to the host tree only via buildx local output.
-# See internal/controlplane/ebpf/REPRODUCIBILITY.md for the full pin table and update
+# See internal/controlplane/firewall/ebpf/REPRODUCIBILITY.md for the full pin table and update
 # procedure.
 
 # -----------------------------------------------------------------------------
 # Stage 1: bpf-builder
 # -----------------------------------------------------------------------------
 #
-# Compiles internal/controlplane/ebpf/bpf/clawker.c → clawker_*_bpfel.{go,o} via bpf2go.
+# Compiles internal/controlplane/firewall/ebpf/bpf/clawker.c → clawker_*_bpfel.{go,o} via bpf2go.
 # Uses pinned clang + llvm (for llvm-strip) + libbpf-dev + linux-libc-dev
 # from Debian bookworm. The UAPI header set (linux/bpf.h, linux/types.h) is
 # what anchors the BPF build since clawker's programs touch only stable
@@ -97,16 +97,16 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # The bpf2go compile only needs the BPF C source + gen.go.
-COPY internal/controlplane/ebpf/bpf/ internal/controlplane/ebpf/bpf/
-COPY internal/controlplane/ebpf/gen.go internal/controlplane/ebpf/
+COPY internal/controlplane/firewall/ebpf/bpf/ internal/controlplane/firewall/ebpf/bpf/
+COPY internal/controlplane/firewall/ebpf/gen.go internal/controlplane/firewall/ebpf/
 
-RUN go generate ./internal/controlplane/ebpf/...
+RUN go generate ./internal/controlplane/firewall/ebpf/...
 
 # -----------------------------------------------------------------------------
 # Stage 2: ebpf-manager-builder
 # -----------------------------------------------------------------------------
 #
-# Compiles ./internal/controlplane/ebpf/cmd → /ebpf-manager. Pulls the generated BPF
+# Compiles ./internal/controlplane/firewall/ebpf/cmd → /ebpf-manager. Pulls the generated BPF
 # bindings from stage 1 via `COPY --from=bpf-builder` so this stage doesn't
 # need clang.
 FROM golang:1.25.9-alpine@sha256:7a00384194cf2cb68924bbb918d675f1517357433c8541bac0ab2f929b9d5447 AS ebpf-manager-builder
@@ -116,19 +116,19 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY internal/controlplane/ebpf/ internal/controlplane/ebpf/
+COPY internal/controlplane/firewall/ebpf/ internal/controlplane/firewall/ebpf/
 COPY internal/logger/ internal/logger/
 
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_x86_bpfel.go /build/internal/controlplane/ebpf/
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_x86_bpfel.o  /build/internal/controlplane/ebpf/
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_arm64_bpfel.go /build/internal/controlplane/ebpf/
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_arm64_bpfel.o  /build/internal/controlplane/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_x86_bpfel.go /build/internal/controlplane/firewall/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_x86_bpfel.o  /build/internal/controlplane/firewall/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.go /build/internal/controlplane/firewall/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.o  /build/internal/controlplane/firewall/ebpf/
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
-    go build -ldflags="-s -w" -trimpath -o /ebpf-manager ./internal/controlplane/ebpf/cmd
+    go build -ldflags="-s -w" -trimpath -o /ebpf-manager ./internal/controlplane/firewall/ebpf/cmd
 
 # -----------------------------------------------------------------------------
 # Stage 3: ebpf-manager-extract
@@ -141,7 +141,7 @@ COPY --from=ebpf-manager-builder /ebpf-manager /ebpf-manager
 # -----------------------------------------------------------------------------
 #
 # Compiles ./cmd/coredns-clawker → /coredns-clawker. coredns-clawker imports
-# internal/controlplane/ebpf for helpers (DomainHash, IPToUint32) and the DNSEntry struct,
+# internal/controlplane/firewall/ebpf for helpers (DomainHash, IPToUint32) and the DNSEntry struct,
 # so it must overlay the bpf2go-generated wrappers from stage 1 the same way
 # ebpf-manager-builder does — otherwise `go build` fails with "undefined:
 # clawkerRouteKey" etc.
@@ -154,13 +154,13 @@ RUN go mod download
 
 COPY cmd/coredns-clawker/ cmd/coredns-clawker/
 COPY internal/dnsbpf/ internal/dnsbpf/
-COPY internal/controlplane/ebpf/ internal/controlplane/ebpf/
+COPY internal/controlplane/firewall/ebpf/ internal/controlplane/firewall/ebpf/
 COPY internal/logger/ internal/logger/
 
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_x86_bpfel.go /build/internal/controlplane/ebpf/
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_x86_bpfel.o  /build/internal/controlplane/ebpf/
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_arm64_bpfel.go /build/internal/controlplane/ebpf/
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_arm64_bpfel.o  /build/internal/controlplane/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_x86_bpfel.go /build/internal/controlplane/firewall/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_x86_bpfel.o  /build/internal/controlplane/firewall/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.go /build/internal/controlplane/firewall/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.o  /build/internal/controlplane/firewall/ebpf/
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
@@ -199,10 +199,10 @@ COPY api/ api/
 COPY internal/ internal/
 COPY pkg/ pkg/
 
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_x86_bpfel.go /build/internal/controlplane/ebpf/
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_x86_bpfel.o  /build/internal/controlplane/ebpf/
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_arm64_bpfel.go /build/internal/controlplane/ebpf/
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_arm64_bpfel.o  /build/internal/controlplane/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_x86_bpfel.go /build/internal/controlplane/firewall/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_x86_bpfel.o  /build/internal/controlplane/firewall/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.go /build/internal/controlplane/firewall/ebpf/
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.o  /build/internal/controlplane/firewall/ebpf/
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
@@ -222,12 +222,12 @@ COPY --from=clawker-cp-builder /clawker-cp /clawker-cp
 #
 # Exposes the bpf2go-generated Go wrappers (.go) and compiled BPF bytecode
 # (.o) to the host tree so that host-side `go test` / `go vet` / `gopls`
-# can compile internal/controlplane/ebpf/manager.go, which references the clawkerObjects,
+# can compile internal/controlplane/firewall/ebpf/manager.go, which references the clawkerObjects,
 # clawkerRouteKey, etc. types declared in those wrappers.
 #
 # These files are gitignored — they never get committed. They are produced
 # fresh on every Make invocation that transitively depends on them (test,
-# clawker-build, lint, etc.) and land in internal/controlplane/ebpf/ via buildx
+# clawker-build, lint, etc.) and land in internal/controlplane/firewall/ebpf/ via buildx
 # `--output=type=local,dest=...`.
 #
 # The final binaries (stages 3 and 5) still `go:embed` the .o via the
@@ -235,7 +235,7 @@ COPY --from=clawker-cp-builder /clawker-cp /clawker-cp
 # this stage is strictly for the host-side Go toolchain, not part of the
 # shipping-binary build chain.
 FROM scratch AS bpf-bindings-extract
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_x86_bpfel.go  /clawker_x86_bpfel.go
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_x86_bpfel.o   /clawker_x86_bpfel.o
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_arm64_bpfel.go /clawker_arm64_bpfel.go
-COPY --from=bpf-builder /build/internal/controlplane/ebpf/clawker_arm64_bpfel.o  /clawker_arm64_bpfel.o
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_x86_bpfel.go  /clawker_x86_bpfel.go
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_x86_bpfel.o   /clawker_x86_bpfel.o
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.go /clawker_arm64_bpfel.go
+COPY --from=bpf-builder /build/internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.o  /clawker_arm64_bpfel.o

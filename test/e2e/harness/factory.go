@@ -6,14 +6,15 @@ import (
 	"sync"
 	"testing"
 
-	mobyclient "github.com/moby/moby/client"
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
+	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
+	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
-	"github.com/schmitthub/clawker/internal/firewall"
-	firewallmocks "github.com/schmitthub/clawker/internal/firewall/mocks"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
@@ -26,10 +27,11 @@ import (
 )
 
 // FactoryOptions holds dependency constructor overrides.
-// Some nil fields use test fakes (configmocks, mocks.FakeClient, hostproxytest.MockManager,
-// firewallmocks.FirewallManagerMock). Logger always uses logger.New (real file logger).
-// ProjectManager, GitManager, and SocketBridge default to nil.
-// Set a field to the real constructor (e.g. config.NewConfig) for integration tests.
+// Some nil fields use test fakes (configmocks, mocks.FakeClient,
+// hostproxytest.MockManager, cpmocks.AdminServiceClientMock). Logger always
+// uses logger.New (real file logger). ProjectManager, GitManager, and
+// SocketBridge default to nil. Set a field to the real constructor
+// (e.g. config.NewConfig) for integration tests.
 type FactoryOptions struct {
 	Config         func(...config.NewConfigOption) (config.Config, error)
 	Client         func(context.Context, config.Config, *logger.Logger, ...docker.ClientOption) (*docker.Client, error)
@@ -37,7 +39,14 @@ type FactoryOptions struct {
 	GitManager     func(string) (*git.GitManager, error)
 	HostProxy      func(config.Config, *logger.Logger) (*hostproxy.Manager, error)
 	SocketBridge   func(config.Config, *logger.Logger) socketbridge.SocketBridgeManager
-	Firewall       func(mobyclient.APIClient, config.Config, *logger.Logger) (*firewall.Manager, error)
+	// AdminClient optionally provides a real CP AdminService client.
+	// When nil the harness wires a no-op AdminServiceClientMock.
+	AdminClient func(context.Context, config.Config, *logger.Logger) (adminv1.AdminServiceClient, error)
+	// ControlPlane optionally provides a real Manager that drives the
+	// host-side CP container lifecycle. When nil the harness wires a
+	// no-op ManagerMock (every method returns zero values / nil) so
+	// tests that don't exercise the CP verbs never bootstrap a real CP.
+	ControlPlane func(config.Config, *logger.Logger) cpboot.Manager
 }
 
 // NewFactory constructs a *cmdutil.Factory with lazy singletons.
@@ -180,33 +189,46 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 		return nil
 	}
 
-	// --- Firewall ---
+	// --- AdminClient ---
 	var (
-		fwOnce sync.Once
-		fwMgr  firewall.FirewallManager
-		fwErr  error
+		adminOnce sync.Once
+		adminCli  adminv1.AdminServiceClient
+		adminErr  error
 	)
-	f.Firewall = func(ctx context.Context) (firewall.FirewallManager, error) {
-		fwOnce.Do(func() {
-			if opts.Firewall != nil {
+	f.AdminClient = func(ctx context.Context) (adminv1.AdminServiceClient, error) {
+		adminOnce.Do(func() {
+			if opts.AdminClient != nil {
 				c, cErr := resolveConfig()
 				if cErr != nil {
-					fwErr = cErr
+					adminErr = cErr
 					return
 				}
-				dockerClient, clErr := mobyclient.New(mobyclient.FromEnv)
-				if clErr != nil {
-					fwErr = clErr
-					return
-				}
-				fwMgr, fwErr = opts.Firewall(dockerClient, c, logger.Nop())
+				adminCli, adminErr = opts.AdminClient(ctx, c, logger.Nop())
 			} else {
-				fwMgr = &firewallmocks.FirewallManagerMock{
-					IsRunningFunc: func(_ context.Context) bool { return false },
-				}
+				adminCli = &cpmocks.AdminServiceClientMock{}
 			}
 		})
-		return fwMgr, fwErr
+		return adminCli, adminErr
+	}
+
+	// --- ControlPlane ---
+	var (
+		cpOnce sync.Once
+		cpMgr  cpboot.Manager
+	)
+	f.ControlPlane = func() cpboot.Manager {
+		cpOnce.Do(func() {
+			if opts.ControlPlane != nil {
+				c, cErr := resolveConfig()
+				if cErr != nil {
+					t.Fatalf("harness: config for control plane: %v", cErr)
+				}
+				cpMgr = opts.ControlPlane(c, logger.Nop())
+			} else {
+				cpMgr = &cpbootmocks.ManagerMock{}
+			}
+		})
+		return cpMgr
 	}
 
 	// --- Prompter ---

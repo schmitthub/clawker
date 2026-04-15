@@ -1,6 +1,6 @@
 ---
 description: Envoy proxy configuration guidelines for the firewall egress stack
-paths: ["internal/firewall/envoy.go", "internal/firewall/envoy_test.go", "internal/firewall/manager.go"]
+paths: ["internal/controlplane/firewall/envoy_config.go", "internal/controlplane/firewall/envoy_config_test.go", "internal/controlplane/firewall/stack.go", "internal/controlplane/firewall/handler.go"]
 ---
 
 # Envoy Configuration Rules
@@ -140,7 +140,7 @@ The firewall package imports these types from config; config does NOT import fir
 
 ## Testing Requirements
 
-- All Envoy config generation tests in `envoy_test.go`
+- All Envoy config generation tests in `envoy_config_test.go` (`internal/controlplane/firewall/`)
 - Test WebSocket assertions: `upgrade_type: websocket`, `envoy.network.application_protocols`
 - Test LOGICAL_DNS clusters: correct domain endpoint, correct port, type: LOGICAL_DNS
 - Test filter chain simplicity: http_filters should contain router only

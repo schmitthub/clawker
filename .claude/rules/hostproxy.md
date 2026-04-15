@@ -9,6 +9,6 @@ paths: ["internal/hostproxy/**"]
 - `CallbackChannel` handles OAuth callback registration, capture, and retrieval
 - Factory pattern: lazy init with `sync.Once`, call `EnsureRunning()` before container commands
 - `BROWSER` env var set to `/usr/local/bin/host-open` so CLI tools use proxy automatically
-- Daemon scope is strictly host proxy lifecycle — firewall (Envoy+CoreDNS) has its own daemon in `internal/firewall`
+- Daemon scope is strictly host proxy lifecycle — the firewall stack (Envoy+CoreDNS) is owned by the CP daemon (`internal/controlplane/firewall`, run by `cmd/clawker-cp`)
 - `Daemon.docker` field uses `ContainerLister` interface (satisfied by `*docker.Client`); `dockerClient` field holds the concrete client for container ops
 - See `internal/hostproxy/CLAUDE.md` for full architecture diagrams and endpoint reference

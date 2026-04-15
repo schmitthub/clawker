@@ -87,26 +87,31 @@ emit_error() {
 }
 
 # =============================================================================
-# Firewall (decoupled — eBPF programs attached post-start via manager.Enable)
+# Firewall readiness — poll CP /healthz before CMD
 # =============================================================================
-# The host-side manager attaches eBPF cgroup programs to this container after
-# start, then touches the signal file. We wait here so CMD doesn't run until
-# the firewall is applied. No in-container iptables or capabilities needed.
+# CP's /healthz endpoint returns 200 only when Envoy+CoreDNS+Ory+gRPC admin
+# are all up. We block here so the user process cannot egress until the
+# enforcement stack is serving. Per-container eBPF enrollment happens from
+# the host side and returns before this script's exec; the narrow window
+# between ContainerStart and FirewallEnable is covered by the healthz poll.
 if [ "${CLAWKER_FIREWALL_ENABLED:-}" = "true" ]; then
     emit_step "firewall (may be slow on first run)"
 
-    FIREWALL_READY="/var/run/clawker/firewall-ready"
-    FIREWALL_TIMEOUT="${CLAWKER_FIREWALL_TIMEOUT:-90}"
-    if ! [ "$FIREWALL_TIMEOUT" -eq "$FIREWALL_TIMEOUT" ] 2>/dev/null; then
-        emit_error "firewall" "CLAWKER_FIREWALL_TIMEOUT must be a number (got: ${CLAWKER_FIREWALL_TIMEOUT})"
+    HEALTHZ_URL="${CLAWKER_CP_HEALTHZ_URL:-}"
+    if [ -z "$HEALTHZ_URL" ]; then
+        emit_error "firewall" "CLAWKER_CP_HEALTHZ_URL is not set — cannot verify control plane readiness"
+    fi
+    TIMEOUT="${CLAWKER_CP_HEALTHZ_TIMEOUT:-90}"
+    if ! [ "$TIMEOUT" -eq "$TIMEOUT" ] 2>/dev/null; then
+        emit_error "firewall" "CLAWKER_CP_HEALTHZ_TIMEOUT must be a number (got: ${CLAWKER_CP_HEALTHZ_TIMEOUT})"
     fi
     SECONDS=0
-    while [ ! -f "${FIREWALL_READY}" ] && [ "${SECONDS}" -lt "${FIREWALL_TIMEOUT}" ]; do
-        sleep 0.2
+    until curl --silent --fail --max-time 2 --output /dev/null "$HEALTHZ_URL"; do
+        if [ "$SECONDS" -ge "$TIMEOUT" ]; then
+            emit_error "firewall" "control plane not healthy after ${TIMEOUT}s (healthz at ${HEALTHZ_URL}) — on first run, firewall container images may still be pulling; try 'docker ps -a --filter label=dev.clawker.purpose=firewall' or run again"
+        fi
+        sleep 0.5
     done
-    if [ ! -f "${FIREWALL_READY}" ]; then
-        emit_error "firewall" "timed out waiting for firewall enable (${FIREWALL_TIMEOUT}s) — on first run, firewall container images may still be pulling. Check 'docker ps -a --filter label=dev.clawker.purpose=firewall' or try starting again"
-    fi
 fi
 
 # =============================================================================

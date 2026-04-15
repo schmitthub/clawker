@@ -26,6 +26,7 @@ Workspace modes:
 * [clawker auth](clawker_auth) - Manage control plane authentication material
 * [clawker build](clawker_build) - Build an image from a clawker project
 * [clawker container](clawker_container) - Manage containers
+* [clawker controlplane](clawker_controlplane) - Break-glass control plane lifecycle
 * [clawker cp](clawker_cp) - Copy files/folders between a container and the local filesystem
 * [clawker create](clawker_create) - Create a new container
 * [clawker exec](clawker_exec) - Execute a command in a running container

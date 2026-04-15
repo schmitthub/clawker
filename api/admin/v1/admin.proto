@@ -6,61 +6,76 @@ option go_package = "github.com/schmitthub/clawker/api/admin/v1";
 
 // AdminService is the gRPC surface the clawker CLI calls on the control
 // plane. The CP owns privileged kernel state (BPF programs + pinned maps)
-// and handles per-container firewall lifecycle.
+// and the firewall stack (Envoy + CoreDNS) and handles per-container
+// firewall lifecycle.
 //
-// Transport: TLS over TCP (port 7443, configurable via Settings).
-// Authorization: OAuth2 access tokens with "admin" scope, validated
-// via Hydra token introspection.
+// Transport: mTLS over TCP (AdminPort, default 7443, configurable via
+// Settings). The CLI presents a client certificate signed by the CLI CA.
+// Authorization: OAuth2 access tokens with the uniform "admin" scope,
+// validated via Hydra token introspection (RFC 7662).
 //
-// RPC naming follows the container firewall lifecycle:
-//   Install/Remove — container start/stop (attach/detach BPF programs)
-//   Enable/Disable — toggle enforcement (clear/set bypass flag)
-//   SyncRoutes     — update global route_map on rule changes
-//   ResolveHostname — DNS resolution from inside CP network namespace
+// Method naming follows the `<Domain><Action>[<Object>]` convention.
+// Firewall is the only domain today; future domains (Monitor, Hostproxy,
+// Clawkerd, ...) layer additional handlers onto the same AdminService so
+// the CLI sees one unified surface per CP. Every method is registered for
+// "admin" scope enforcement (INV-B2-009).
 service AdminService {
-  // Install attaches BPF cgroup programs to a container and populates
-  // its container_map entry with the routing configuration.
-  rpc Install(InstallRequest) returns (InstallResponse);
+  // --- Firewall domain (13 methods) ---
 
-  // Remove detaches BPF programs and removes the container_map entry.
-  rpc Remove(RemoveRequest) returns (RemoveResponse);
+  // FirewallInit brings the firewall stack (Envoy + CoreDNS) up. BPF
+  // programs are loaded once at CP startup; this RPC is the idempotent
+  // stack-up signal from the CLI. Global — no container_id.
+  rpc FirewallInit(FirewallInitRequest) returns (FirewallInitResponse);
 
-  // Enable clears the bypass flag, restoring firewall enforcement.
-  rpc Enable(EnableRequest) returns (EnableResponse);
+  // FirewallRemove is global teardown — stops Envoy + CoreDNS, detaches
+  // all BPF programs, and flushes all eBPF state plus pending timers.
+  rpc FirewallRemove(FirewallRemoveRequest) returns (FirewallRemoveResponse);
 
-  // Disable sets the bypass flag, letting the container's egress traffic
-  // skip firewall enforcement. Used for `firewall disable` (persistent
-  // disable). For time-limited bypass, use the Bypass RPC.
-  rpc Disable(DisableRequest) returns (DisableResponse);
+  // FirewallEnable enrolls a container into the global container_map
+  // routing. Idempotent. The CP resolves the container's cgroup path
+  // internally via Docker API with drift guard (INV-B2-016) — callers
+  // send only container_id.
+  rpc FirewallEnable(FirewallEnableRequest) returns (FirewallEnableResponse);
 
-  // SyncRoutes replaces the global route_map atomically with the
-  // provided routes. Called on firewall rule add/remove/reload.
-  rpc SyncRoutes(SyncRoutesRequest) returns (SyncRoutesResponse);
+  // FirewallDisable removes a container from container_map. BPF links
+  // remain attached so re-enable is cheap. BPF fast path exits to bypass
+  // on lookup miss.
+  rpc FirewallDisable(FirewallDisableRequest) returns (FirewallDisableResponse);
 
-  // Bypass sets the bypass flag and starts a server-side dead-man timer
-  // that automatically clears the flag after timeout_seconds. Acts as a
-  // failsafe — if the CLI crashes during a bypass, the CP re-enables
-  // enforcement. The CLI can call Enable early; Enable is idempotent,
-  // so the timer harmlessly re-clears an already-cleared flag.
-  rpc Bypass(BypassRequest) returns (BypassResponse);
+  // FirewallBypass = timed Disable + CP-side dead-man timer that calls
+  // Enable on expiry. Drift guard inherited from the Enable path.
+  rpc FirewallBypass(FirewallBypassRequest) returns (FirewallBypassResponse);
 
-  // ResolveHostname performs a DNS lookup via the container's resolver.
-  // Used to resolve host.docker.internal from inside the CP's network
-  // namespace during Install.
-  rpc ResolveHostname(ResolveHostnameRequest) returns (ResolveHostnameResponse);
-}
+  // FirewallAddRules adds egress rules to the store and hot-reloads the
+  // stack. Synchronous: returns after the stack is healthy again.
+  rpc FirewallAddRules(FirewallAddRulesRequest) returns (FirewallAddRulesResponse);
 
-// ContainerConfig carries the fields that populate a BPF container_config
-// entry: the Envoy/CoreDNS/gateway addresses, CIDR, host-proxy settings,
-// and egress port.
-message ContainerConfig {
-  string envoy_ip = 1;
-  string coredns_ip = 2;
-  string gateway_ip = 3;
-  string cidr = 4;
-  string host_proxy_ip = 5;
-  uint32 host_proxy_port = 6;
-  uint32 egress_port = 7;
+  // FirewallRemoveRules removes egress rules and hot-reloads the stack.
+  rpc FirewallRemoveRules(FirewallRemoveRulesRequest) returns (FirewallRemoveRulesResponse);
+
+  // FirewallListRules returns the current normalized/deduplicated rule
+  // set from the store. Read-only.
+  rpc FirewallListRules(FirewallListRulesRequest) returns (FirewallListRulesResponse);
+
+  // FirewallReload regenerates configs and restarts Envoy + CoreDNS from
+  // the current rules store state without mutating rules.
+  rpc FirewallReload(FirewallReloadRequest) returns (FirewallReloadResponse);
+
+  // FirewallStatus is the firewall-domain health snapshot (stack running,
+  // Envoy/CoreDNS health, rule count, network topology).
+  rpc FirewallStatus(FirewallStatusRequest) returns (FirewallStatusResponse);
+
+  // FirewallRotateCA regenerates the MITM CA + per-domain certs. Restarts
+  // Envoy so the new chain is picked up.
+  rpc FirewallRotateCA(FirewallRotateCARequest) returns (FirewallRotateCAResponse);
+
+  // FirewallSyncRoutes atomically replaces the global route_map.
+  rpc FirewallSyncRoutes(FirewallSyncRoutesRequest) returns (FirewallSyncRoutesResponse);
+
+  // FirewallResolveHostname performs a DNS lookup from inside the CP's
+  // network namespace — used to resolve host.docker.internal during
+  // per-container enroll.
+  rpc FirewallResolveHostname(FirewallResolveHostnameRequest) returns (FirewallResolveHostnameResponse);
 }
 
 // Route is one entry in the global route_map.
@@ -70,69 +85,116 @@ message Route {
   uint32 envoy_port = 3;
 }
 
+// EgressRule is one egress firewall rule (mirrors config.EgressRule).
+message EgressRule {
+  string dst = 1;
+  string proto = 2;     // "tls" | "tcp" | "http" | "ssh" | "ip" | "cidr"
+  uint32 port = 3;
+  string action = 4;    // "allow" | "deny"
+  repeated PathRule path_rules = 5;
+  string path_default = 6;
+}
+
+message PathRule {
+  string path = 1;
+  string action = 2;
+}
+
 // ---------------------------------------------------------------------------
-// Request/Response messages
+// Global firewall lifecycle
 // ---------------------------------------------------------------------------
 
-message InstallRequest {
+message FirewallInitRequest {}
+message FirewallInitResponse {
+  string envoy_ip = 1;
+  string coredns_ip = 2;
+  string network_id = 3;
+}
+
+message FirewallRemoveRequest {}
+message FirewallRemoveResponse {}
+
+// ---------------------------------------------------------------------------
+// Per-container enforcement — CLI sends only container_id. CP resolves
+// cgroup path internally via Docker API + EBPFCgroupPath with drift guard
+// (INV-B2-016).
+// ---------------------------------------------------------------------------
+
+message FirewallEnableRequest {
   string container_id = 1;
-  string cgroup_path = 2;
-  ContainerConfig config = 3;
 }
-message InstallResponse {
-  uint64 cgroup_id = 1;
+message FirewallEnableResponse {}
+
+message FirewallDisableRequest {
+  string container_id = 1;
+}
+message FirewallDisableResponse {}
+
+message FirewallBypassRequest {
+  string container_id = 1;
+  uint32 timeout_seconds = 2;
+}
+message FirewallBypassResponse {}
+
+// ---------------------------------------------------------------------------
+// Rule management
+// ---------------------------------------------------------------------------
+
+message FirewallAddRulesRequest {
+  repeated EgressRule rules = 1;
+}
+message FirewallAddRulesResponse {
+  int32 added_count = 1;
+  bool stack_restarted = 2;
 }
 
-message RemoveRequest {
-  string cgroup_path = 1;
+message FirewallRemoveRulesRequest {
+  repeated EgressRule rules = 1;
 }
-message RemoveResponse {
-  uint64 cgroup_id = 1;
-}
-
-message EnableRequest {
-  string cgroup_path = 1;
-  // container_id is the Docker container ID. Required — the CP uses it
-  // for audit logging and container state verification.
-  string container_id = 2;
-}
-message EnableResponse {
-  uint64 cgroup_id = 1;
+message FirewallRemoveRulesResponse {
+  int32 removed_count = 1;
+  bool stack_restarted = 2;
 }
 
-message DisableRequest {
-  string cgroup_path = 1;
-  // container_id is the Docker container ID. Required — the CP uses it
-  // for audit logging and container state verification.
-  string container_id = 2;
-}
-message DisableResponse {
-  uint64 cgroup_id = 1;
+message FirewallListRulesRequest {}
+message FirewallListRulesResponse {
+  repeated EgressRule rules = 1;
 }
 
-message SyncRoutesRequest {
+message FirewallReloadRequest {}
+message FirewallReloadResponse {
+  bool stack_restarted = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Status + CA + low-level utilities
+// ---------------------------------------------------------------------------
+
+message FirewallStatusRequest {}
+message FirewallStatusResponse {
+  bool running = 1;
+  bool envoy_health = 2;
+  bool coredns_health = 3;
+  int32 rule_count = 4;
+  string envoy_ip = 5;
+  string coredns_ip = 6;
+  string network_id = 7;
+  string cidr = 8;
+}
+
+message FirewallRotateCARequest {}
+message FirewallRotateCAResponse {}
+
+message FirewallSyncRoutesRequest {
   repeated Route routes = 1;
 }
-message SyncRoutesResponse {
+message FirewallSyncRoutesResponse {
   uint32 applied = 1;
 }
 
-message BypassRequest {
-  string cgroup_path = 1;
-  uint32 timeout_seconds = 2;
-  // container_id is the Docker container ID. The CP uses this to verify
-  // container existence via the Docker API when the dead-man timer fires,
-  // ensuring enforcement is never left disabled on a live container.
-  string container_id = 3;
-}
-message BypassResponse {
-  uint64 cgroup_id = 1;
-}
-
-message ResolveHostnameRequest {
+message FirewallResolveHostnameRequest {
   string hostname = 1;
 }
-message ResolveHostnameResponse {
+message FirewallResolveHostnameResponse {
   repeated string addresses = 1;
 }
-

@@ -6,9 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 )
-
-const oryConfigDir = "/etc/clawker"
 
 // buildHydraConfig generates the Hydra v26.2.0 config YAML for the CP's
 // local auth stack. Ports come from ControlPlaneSettings (settings.yaml).
@@ -42,9 +41,9 @@ serve:
   tls:
     enabled: true
     cert:
-      path: /etc/clawker/tls/server.pem
+      path: %s
     key:
-      path: /etc/clawker/tls/server.key
+      path: %s
 strategies:
   access_token: jwt
 secrets:
@@ -61,7 +60,7 @@ ttl:
 log:
   level: warn
   format: json
-`, cp.HydraPublicPort, cp.HydraAdminPort, hydraSecret, cp.HydraPublicPort)
+`, cp.HydraPublicPort, cp.HydraAdminPort, consts.CPTLSCertPath, consts.CPTLSKeyPath, hydraSecret, cp.HydraPublicPort)
 }
 
 // buildKratosConfig generates the Kratos v26.2.0 config YAML.
@@ -88,17 +87,17 @@ serve:
     port: %d
     tls:
       cert:
-        path: /etc/clawker/tls/server.pem
+        path: %s
       key:
-        path: /etc/clawker/tls/server.key
+        path: %s
   admin:
     host: 127.0.0.1
     port: %d
     tls:
       cert:
-        path: /etc/clawker/tls/server.pem
+        path: %s
       key:
-        path: /etc/clawker/tls/server.key
+        path: %s
 selfservice:
   default_browser_return_url: https://127.0.0.1:4455/
 identity:
@@ -109,7 +108,7 @@ identity:
 log:
   level: warning
   format: json
-`, cp.KratosPublicPort, cp.KratosAdminPort)
+`, cp.KratosPublicPort, consts.CPTLSCertPath, consts.CPTLSKeyPath, cp.KratosAdminPort, consts.CPTLSCertPath, consts.CPTLSKeyPath)
 }
 
 // buildOathkeeperConfig generates the Oathkeeper v26.2.0 config YAML.
@@ -134,17 +133,17 @@ func buildOathkeeperConfig(cp config.ControlPlaneSettings) string {
     port: %d
     tls:
       cert:
-        path: /etc/clawker/tls/server.pem
+        path: %s
       key:
-        path: /etc/clawker/tls/server.key
+        path: %s
   api:
     host: 127.0.0.1
     port: %d
     tls:
       cert:
-        path: /etc/clawker/tls/server.pem
+        path: %s
       key:
-        path: /etc/clawker/tls/server.key
+        path: %s
 access_rules:
   matching_strategy: regexp
   repositories:
@@ -169,7 +168,7 @@ errors:
 log:
   level: warn
   format: json
-`, cp.OathkeeperPort, cp.OathkeeperAPIPort)
+`, cp.OathkeeperPort, consts.CPTLSCertPath, consts.CPTLSKeyPath, cp.OathkeeperAPIPort, consts.CPTLSCertPath, consts.CPTLSKeyPath)
 }
 
 // WriteOryConfigs writes config files for Hydra, Kratos, and Oathkeeper to
@@ -177,18 +176,18 @@ log:
 // the CP binary at startup before launching subprocesses. Idempotent —
 // overwrites on every start so configs stay in sync with the binary version.
 func WriteOryConfigs(cp config.ControlPlaneSettings, hydraSecret string) error {
-	if err := os.MkdirAll(oryConfigDir, 0o755); err != nil {
+	if err := os.MkdirAll(consts.CPClawkerDir, 0o755); err != nil {
 		return fmt.Errorf("create ory config dir: %w", err)
 	}
 
 	configs := map[string]string{
-		"hydra.yaml":      buildHydraConfig(cp, hydraSecret),
-		"kratos.yaml":     buildKratosConfig(cp),
-		"oathkeeper.yaml": buildOathkeeperConfig(cp),
+		consts.CPHydraConfigFilename:      buildHydraConfig(cp, hydraSecret),
+		consts.CPKratosConfigFilename:     buildKratosConfig(cp),
+		consts.CPOathkeeperConfigFilename: buildOathkeeperConfig(cp),
 	}
 
 	for name, content := range configs {
-		path := filepath.Join(oryConfigDir, name)
+		path := filepath.Join(consts.CPClawkerDir, name)
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", name, err)
 		}

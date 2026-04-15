@@ -1,6 +1,6 @@
 # Control Plane Package
 
-The clawker control plane. A containerized, privileged, long-lived Go service that owns authoritative state for managed containers. Runs as `clawker-controlplane` in the firewall stack, replacing the historical `clawker-ebpf` container.
+The clawker control plane. A containerized, privileged, long-lived Go service that owns authoritative state for managed containers. The `clawker-controlplane` container runs `cmd/clawker-cp` as PID 1, owns the firewall stack (Envoy + CoreDNS) and eBPF state, and serves the `AdminService` gRPC surface consumed by the CLI via `f.AdminClient(ctx)`.
 
 ## Responsibilities (v1)
 
@@ -31,30 +31,24 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 |------|---------|
 | `server.go` | `Server` struct, `ControlPlaneService` interface, `Registry`, `AgentReportingService` handler |
 | `registry.go` | Thread-safe agent registry keyed by container ID |
-| `admin_handler.go` | `AdminHandler` — implements `adminv1.AdminServiceServer` (Install, Remove, Enable, Disable, Bypass, SyncRoutes, ResolveHostname) |
 | `authz.go` | `AuthInterceptor` — validates OAuth2 bearer tokens via Hydra introspection, enforces per-method scopes |
-| `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup; `AdminMethodScopes` — maps gRPC method → required scope |
+| `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup. `AdminMethodScopes` lives in `api/admin/v1/admin.go` so a new RPC fails closed (covered by `TestAdminMethodScopes_CoversAllRPCs`). |
 | `startup.go` | `CPStartupOrchestrator` — startup sequencing + aggregate `/healthz` endpoint (probes all 7 service ports) |
-| `cp_container.go` | `BuildCPContainerConfig(cfg)` → `CPContainerConfig` struct for Docker container creation |
+| `watcher.go` | `AgentWatcher` — polls Docker for `purpose=agent` containers; invokes drain-to-zero callback past grace/threshold (INV-B2-007) |
 | `ory_configs.go` | `WriteOryConfigs(cp)` — generates Hydra/Kratos/Oathkeeper YAML config files |
 | `subprocess.go` | `SubprocessManager` — manages Ory subprocess lifecycle (start, health, crash detection, shutdown) |
-| `ebpf/` | eBPF subsystem: `Manager` (Load, Install, Remove, Enable, Disable, SyncRoutes), shared types, link cleanup |
+| `cpboot/` | **Host-side CP bootstrap subpackage.** Contains `embed_cp.go` / `embed_ebpf.go` (`//go:embed assets/clawker-cp` + `assets/ebpf-manager`), `bootstrap.go` (`EnsureRunning` / `Stop` / `CPRunning`), `cp_container.go` (`BuildCPContainerConfig` → `CPContainerConfig`), `manager.go` (`Manager` interface + `NewManager`). Split out so `cmd/clawker-cp` can import `internal/controlplane` for `SubprocessManager` / `AdminServer` / `AgentWatcher` without dragging in the `go:embed` directives that would otherwise require the daemon to embed itself during its own build. |
 | `mocks/mock_server.go` | `MockServer` — hand-written test double for `ControlPlaneService` |
-| `mocks/` | moq-generated mocks: `ControlPlaneServiceMock`, `IntrospectorMock`, `EBPFManagerMock` |
+| `mocks/` | moq-generated mocks: `ControlPlaneServiceMock`, `IntrospectorMock`, `AdminServiceClientMock` |
+| `cpboot/mocks/` | moq-generated `ManagerMock` for the host-side CP lifecycle noun |
 
-## AdminService RPCs (`admin_handler.go`)
+## AdminService composition
 
-| RPC | Purpose | eBPF Operation |
-|-----|---------|----------------|
-| `Install` | Full container enrollment — attach BPF to cgroup, populate container_map | `mgr.Install(cgroupID, cgroupPath, cfg)` |
-| `Remove` | Full de-enrollment — detach BPF, clear container_map entry | `mgr.Remove(cgroupID)` |
-| `Enable` | Clear bypass flag (restore enforcement) | `mgr.Enable(cgroupID)` |
-| `Disable` | Set bypass flag (unrestricted egress) | `mgr.Disable(cgroupID)` |
-| `Bypass` | Disable + server-side dead-man timer (`time.AfterFunc`) | `mgr.Disable` then auto-`mgr.Enable` after timeout |
-| `SyncRoutes` | Atomically replace global route_map | `mgr.SyncRoutes(routes)` |
-| `ResolveHostname` | DNS lookup from CP network namespace | `net.DefaultResolver.LookupHost` |
+`server.go` exposes the unexported `adminServer` type that embeds `*fwhandler.Handler` (and, in future branches, additional domain handlers). Method promotion produces the AdminServiceServer surface; `NewAdminServer(fw)` is the wiring point used by `cmd/clawker-cp/main.go`.
 
-All RPCs require `admin` scope. Future scopes add entries to `AdminMethodScopes()`.
+The 13 firewall RPCs live in `internal/controlplane/firewall/handler.go` — see `internal/controlplane/firewall/CLAUDE.md` for the per-RPC table. Future domains (Monitor, Hostproxy, Clawkerd) embed alongside; the `<Domain><Action>[<Object>]` proto naming convention prevents method-name collisions.
+
+All RPCs require the uniform `admin` scope (INV-B2-009). Per-method diversification is intentionally not used — see Spec §8.
 
 ## Startup Sequence (`cmd/clawker-cp/main.go`)
 
@@ -63,10 +57,11 @@ All RPCs require `admin` scope. Future scopes add entries to `AdminMethodScopes(
 3. Wait for Hydra admin port healthy, configure service probes (`orchestrator.SetServiceProbes(cp, tlsCfg)`)
 4. Read CLI public JWK from bind-mount
 5. Register CLI client with Hydra (`RegisterCLIClient`)
-6. Start Oathkeeper subprocess
-7. Load eBPF programs (`ebpfMgr.Load()`)
+6. Start Oathkeeper subprocess; build `*docker.Client`; build `firewall.Stack` (via `fwhandler.NewRulesStore`)
+7. Load eBPF programs (`ebpfMgr.Load()`); run defensive startup cleanup (`ebpfMgr.CleanupStaleBypass()` — INV-B2-013)
 8. Start gRPC AdminService with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor
 9. Mark ready (`orchestrator.SetReady()`), serve `/healthz` on HealthPort
+9b. Start `controlplane.AgentWatcher` goroutine — polls Docker for agents with `purpose=agent`; on drain-to-zero invokes callback that cancels bypass timers → `grpcServer.GracefulStop()` → `firewall.Stack.Stop()` → `ebpfMgr.FlushAll()` (INV-B2-007), then the outer shutdown path tears the CP container down (exit code 0 — the `on-failure` restart policy does NOT retrigger)
 
 ## Aggregate Health (`startup.go`)
 
@@ -80,10 +75,10 @@ All RPCs require `admin` scope. Future scopes add entries to `AdminMethodScopes(
   - gRPC admin (raw TCP)
 - Returns 200 only when ALL probes succeed
 
-## Container Config (`cp_container.go`)
+## Container Config (`cpboot/cp_container.go`)
 
 ```go
-func BuildCPContainerConfig(cfg config.Config) (*CPContainerConfig, error)
+func BuildCPContainerConfig(cfg config.Config) (*cpboot.CPContainerConfig, error)
 ```
 
 All ports from `cfg.Settings().ControlPlane` (defaults via struct tags). Published to `127.0.0.1` only:
@@ -97,46 +92,21 @@ All ports from `cfg.Settings().ControlPlane` (defaults via struct tags). Publish
 
 **Not published**: Hydra admin (4445), Kratos ports, Oathkeeper API — internal-only (`127.0.0.1` bind inside container).
 
-**Key mounts**: config dir (RO), CA cert (RO), CLI public JWK (RO), server TLS cert+key (RO), /sys/fs/cgroup (RO), /sys/fs/bpf (RW), logs dir.
+**Key mounts**: config dir (RO), CA cert (RO), CLI public JWK (RO), server TLS cert+key (RO), `FirewallDataSubdir` → `/var/lib/clawker/firewall` (RW — egress rules, Envoy/CoreDNS configs, MITM CA), `/sys/fs/cgroup` (RO), `/sys/fs/bpf` (RW), logs dir.
+
+**Restart policy**: `on-failure` with `MaximumRetryCount=3`. A clean drain-to-zero exit (code 0 from `AgentWatcher`) does NOT retrigger the policy.
 
 **Invariant INV-B1-006**: CLI private signing key is NEVER mounted into the container.
 
 **Capabilities**: `BPF`, `SYS_ADMIN` (for eBPF program attachment).
 
-## eBPF Subsystem (`ebpf/`)
+## eBPF Subsystem
 
-### Manager lifecycle
+The eBPF subsystem lives at `firewall/ebpf/` — see `firewall/ebpf/CLAUDE.md` for full reference. Key surface consumed by CP core:
 
-```go
-func NewManager(log *logger.Logger) *Manager
-func (m *Manager) Load() error       // Called once at CP startup
-func (m *Manager) OpenPinned() error  // Break-glass mode (reads existing pins)
-func (m *Manager) Close() error
-```
-
-`Load()` creates pin directory, calls `cleanupStaleLinks()`, loads ELF, pins maps/programs at `/sys/fs/bpf/clawker/`.
-
-### EBPFManager interface
-
-```go
-type EBPFManager interface {
-    Install(cgroupID uint64, cgroupPath string, cfg BPFContainerConfig) error
-    Remove(cgroupID uint64) error
-    Enable(cgroupID uint64) error
-    Disable(cgroupID uint64) error
-    SyncRoutes(routes []Route) error
-}
-```
-
-### Link cleanup (critical invariant)
-
-- **`cleanupStaleLinks()`** — called during `Load()`. Parses cgroup IDs from link pin filenames (`link_{prog}_{cgroupID}`), checks each against `container_map`. Removes links for dead cgroups, preserves links for live cgroups. This ensures enforcement survives CP restarts.
-- **`cleanupLinks(cgroupID)`** — removes stale links for ONE cgroup. Called by `Install` before attaching fresh programs.
-- **`CleanupAllLinks()`** — removes ALL pinned links. Called ONLY by the firewall daemon on shutdown when no agent containers remain.
-
-### Shared types (`ebpf/types.go`)
-
-`PinPath`, `ContainerConfig`, `DNSEntry`, `RouteKey/Val`, `MetricKey`, `Action` constants, helper functions (`IPToUint32`, `DomainHash` FNV-1a, `CgroupPath`, `CgroupID` with path injection validation, `Supported`).
+- `ebpf.Manager` — concrete loader. `Load()` runs once at CP startup; `CleanupStaleBypass` runs before `SetReady` (INV-B2-013); `FlushAll` runs during drain-to-zero (INV-B2-007).
+- `ebpf.EBPFManager` interface — consumed by `firewall.Handler`. Methods: `Install`, `Remove`, `Enable`, `Disable`, `SyncRoutes`, `FlushAll`.
+- `ebpf.Route` + `ebpf.BPFContainerConfig` + `ebpf.DomainHash` — shared types / hash function used by `internal/dnsbpf` and `internal/controlplane/firewall` (`normalizeDomain`).
 
 ## Ory Config Generation (`ory_configs.go`)
 
@@ -165,9 +135,11 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 ## Test seam overview
 
 - `ControlPlaneService` interface — CLI consumers depend on this. `mocks.MockServer` avoids real gRPC.
-- `EBPFManager` interface — `ebpf/mocks/EBPFManagerMock` for admin handler tests.
+- `EBPFManager` interface — `firewall/ebpf/mocks/EBPFManagerMock` for firewall handler tests.
 - `Introspector` interface — `mocks/IntrospectorMock` for authz tests (no real Hydra).
-- `AdminHandler.resolveHostFn` — injectable DNS resolver.
+- `cpboot.Manager` interface — `cpboot/mocks/ManagerMock` for break-glass `controlplane up/down/status` CLI tests.
+- `adminv1.AdminServiceClient` — `mocks/AdminServiceClientMock` for CLI tests that speak to the AdminService.
+- `firewall.ContainerResolver` — handler-side injectable Docker lookup (see `firewall/CLAUDE.md`).
 
 ## Test coverage
 
@@ -183,9 +155,9 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 
 ## Package imports
 
-**Uses**: `internal/config`, `internal/consts`, `internal/logger`, `internal/controlplane/ebpf`, `api/admin/v1`, `internal/clawkerd/protocol/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`.
+**Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/controlplane/firewall`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `internal/clawkerd/protocol/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`.
 
-**Used by**: `internal/firewall` (BuildCPContainerConfig, ebpf.DomainHash), `cmd/clawker-cp/` (startup sequence), `internal/dnsbpf` (ebpf types), `internal/auth` (cert paths).
+**Used by**: `cmd/clawker-cp/` (startup sequence), `internal/cmd/controlplane/` (break-glass up/down/status), `internal/cmd/factory/` (AdminClient + ControlPlane Factory closures), `internal/cmd/firewall/` (AdminService consumers via `f.AdminClient`), `internal/cmd/container/shared/` (BootstrapServicesPostStart), `internal/dnsbpf` (reuses ebpf types), `internal/auth` (cert paths).
 
 No circular dependencies.
 
@@ -194,4 +166,4 @@ No circular dependencies.
 - **TCP listener for agents** — v1 serves gRPC on localhost only. Adding agent TCP listener is pure addition.
 - **Kratos active usage** — running as subprocess placeholder. Lights up with webui.
 - **Oathkeeper active routing** — running with empty rules. Lights up with webui HTTP auth.
-- **Per-method scopes beyond `admin`** — finer-grained scopes (`agent:register`, `webui:read`) add entries to `AdminMethodScopes()`.
+- **Per-method scopes beyond `admin`** — finer-grained scopes (`agent:register`, `webui:read`) would add entries to `AdminMethodScopes()` in `api/admin/v1/admin.go`. INV-B2-009 currently mandates a uniform `admin` scope across all firewall methods.
