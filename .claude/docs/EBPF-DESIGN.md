@@ -4,7 +4,9 @@
 
 ## Status: Implemented
 
-This document captures the original design intent and rationale. For the as-built architecture (`internal/ebpf`, `internal/dnsbpf`, `cmd/coredns-clawker`, global BPF `route_map`, embedded image pattern), see `.claude/docs/ARCHITECTURE.md` — specifically the sections on the firewall manager, CoreDNS custom build, and BPF map layout. Anywhere this doc disagrees with ARCHITECTURE.md, ARCHITECTURE.md wins.
+This document captures the original design intent and rationale. For the as-built architecture (`internal/controlplane/ebpf`, `internal/dnsbpf`, `cmd/coredns-clawker`, global BPF `route_map`, embedded image pattern, control plane ownership of `Manager.Load()`), see `.claude/docs/ARCHITECTURE.md` — specifically the sections on the firewall manager, control plane, CoreDNS custom build, and BPF map layout. Anywhere this doc disagrees with ARCHITECTURE.md, ARCHITECTURE.md wins.
+
+**Ownership note (2026-04):** eBPF is now a feature of the control plane (`clawker-controlplane` container), not a peer service. `Manager.Load()` is called exactly once at CP boot and link handles live in-process for the CP's lifetime. The CP exposes BPF operations as typed gRPC via `AdminService` (`Install`/`Remove`/`Enable`/`Disable`/`SyncRoutes`). The historical `docker exec ebpf-manager <subcommand>` path is retained as a break-glass debug CLI only — it is no longer invoked on the hot path.
 
 ## Problem
 
@@ -84,7 +86,7 @@ Replace all iptables rules with eBPF cgroup programs attached per-container from
 A new managed container alongside Envoy and CoreDNS. Privileged, with access to the host cgroup and BPF filesystems.
 
 **Container spec:**
-- Image: minimal Go binary (built from `internal/ebpf/cmd/`)
+- Image: minimal Go binary (built from `internal/controlplane/ebpf/cmd/`; bundled in `clawker-controlplane:latest` alongside `clawker-cp`)
 - Capabilities: `CAP_BPF`, `CAP_SYS_ADMIN`, `CAP_NET_ADMIN`
 - Mounts: `/sys/fs/cgroup` (ro), `/sys/fs/bpf` (rw)
 - Labels: `dev.clawker.purpose=firewall`, `dev.clawker.firewall.role=ebpf`

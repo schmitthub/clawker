@@ -224,7 +224,7 @@ BUILDX_TARGETARCH := $(shell $(GO) env GOARCH)
 # `buf generate` if either binary is missing, without causing spurious
 # regenerations just because proto-tools is phony.
 BUF_VERSION := v1.47.2
-PROTOC_GEN_GO_VERSION := v1.36.5
+PROTOC_GEN_GO_VERSION := v1.36.11
 PROTOC_GEN_GO_GRPC_VERSION := v1.6.1
 
 # PROTO_SOURCES and PROTO_GENERATED are defined earlier (with EBPF_BINARY
@@ -366,7 +366,7 @@ clawker-build-darwin:
 	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/clawker
 
 # Run Clawker tests
-clawker-test: ebpf-binary coredns-binary cp-binary
+clawker-test: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running Clawker tests..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -374,7 +374,7 @@ endif
 	$(TEST_CMD_VERBOSE) ./...
 
 # Run Clawker internals tests
-clawker-test-internals: ebpf-binary coredns-binary cp-binary
+clawker-test-internals: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running Clawker internal integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -382,7 +382,7 @@ endif
 	$(TEST_CMD_VERBOSE) -timeout 10m ./test/internals/...
 
 # Run Clawker tests with coverage
-clawker-test-coverage: ebpf-binary coredns-binary cp-binary
+clawker-test-coverage: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running Clawker tests with coverage..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -391,12 +391,12 @@ endif
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
 # Run short tests (skip internals tests)
-clawker-test-short: ebpf-binary coredns-binary cp-binary
+clawker-test-short: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running short Clawker tests..."
 	$(TEST_CMD) -short ./...
 
 # Run linter
-clawker-lint: ebpf-binary coredns-binary cp-binary
+clawker-lint: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running linter..."
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run ./...; \
@@ -406,7 +406,7 @@ clawker-lint: ebpf-binary coredns-binary cp-binary
 	fi
 
 # Run staticcheck
-clawker-staticcheck: ebpf-binary coredns-binary cp-binary
+clawker-staticcheck: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running staticcheck..."
 	@if command -v staticcheck >/dev/null 2>&1; then \
 		staticcheck ./...; \
@@ -454,7 +454,7 @@ UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/whail' | grep -v '/test/e2e')
 # uses go:embed on assets/clawker-cp + assets/ebpf-manager, and
 # internal/controlplane/firewall uses go:embed on assets/coredns-clawker —
 # tests that compile those packages will fail without the binaries on disk.
-test: ebpf-binary coredns-binary cp-binary
+test: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running unit tests..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -467,13 +467,13 @@ test-unit: test
 
 # CI-mode unit tests: race detector, no caching, coverage
 # Called by .github/workflows/test.yml
-test-ci: ebpf-binary coredns-binary cp-binary
+test-ci: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running unit tests (CI mode: race, no cache, coverage)..."
 	@PKGS="$(UNIT_PKGS)"; if [ -z "$$PKGS" ]; then echo "ERROR: no packages found" >&2; exit 1; fi; \
 	$(GO) test -race -count=1 -coverprofile=coverage.out $$PKGS
 
 # E2E integration tests (requires Docker)
-test-e2e: ebpf-binary coredns-binary cp-binary
+test-e2e: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running E2E integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -481,7 +481,7 @@ endif
 	$(TEST_CMD_VERBOSE) -timeout 10m ./test/e2e/...
 
 # Whail BuildKit integration tests (requires Docker + BuildKit)
-test-whail: ebpf-binary coredns-binary cp-binary
+test-whail: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running whail integration tests (requires Docker + BuildKit)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -492,7 +492,7 @@ endif
 test-all: test test-e2e test-whail
 
 # Unit tests with coverage
-test-coverage: ebpf-binary coredns-binary cp-binary
+test-coverage: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Running unit tests with coverage..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -520,12 +520,12 @@ test-clean:
 # in the module — internal/controlplane/cpboot and internal/controlplane/firewall
 # need go:embed targets, and internal/controlplane/firewall/ebpf needs the
 # bpf2go-generated Go wrappers to compile.
-licenses: ebpf-binary coredns-binary cp-binary
+licenses: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Generating NOTICE file..."
 	bash scripts/gen-notice.sh
 
 # Check NOTICE file is up to date (used by CI)
-licenses-check: ebpf-binary coredns-binary cp-binary
+licenses-check: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Checking NOTICE freshness..."
 	@bash scripts/gen-notice.sh
 	@if ! git diff --quiet NOTICE; then \
@@ -545,12 +545,12 @@ licenses-check: ebpf-binary coredns-binary cp-binary
 # Depends on the embedded control plane binaries because cmd/gen-docs links
 # the full cobra tree, which imports internal/controlplane/cpboot and
 # internal/controlplane/firewall (both carry go:embed assets).
-docs: ebpf-binary coredns-binary cp-binary
+docs: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Generating CLI reference + config reference docs..."
 	$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
 
 # Check all generated docs are up to date (used by CI)
-docs-check: ebpf-binary coredns-binary cp-binary
+docs-check: ebpf-binary coredns-binary cp-binary $(PROTO_GENERATED)
 	@echo "Checking generated docs freshness..."
 	@$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
 	@if ! git diff --quiet docs/cli-reference/ docs/configuration.mdx; then \

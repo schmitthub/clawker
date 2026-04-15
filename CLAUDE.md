@@ -56,6 +56,9 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 ## Repository Structure
 
 ```
+├── api/
+│   ├── admin/v1/              # AdminService protobuf (CLI → CP gRPC, mTLS on AdminPort)
+│   └── agent/v1/              # AgentService protobuf (future clawkerd agent surface)
 ├── cmd/
 │   ├── clawker/               # Main CLI binary
 │   ├── clawker-generate/      # Code generation helper
@@ -63,9 +66,11 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── coredns-clawker/       # Custom CoreDNS build embedding the dnsbpf plugin (Linux; embedded via go:embed into internal/controlplane/firewall)
 │   └── gen-docs/              # CLI doc generator (man/markdown/rst/yaml)
 ├── internal/
+│   ├── auth/                  # CLI-side auth material + CP dial helpers (ES256 signing key, client cert, JWK, JWT assertion)
 │   ├── build/                 # Build-time metadata (version, date) — leaf, stdlib only
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
 │   ├── clawker/               # Main application lifecycle
+│   ├── clawkerd/protocol/v1/  # Generated protobuf for agent + controlplane wire protocol
 │   ├── cmd/                   # Cobra commands (auth/, container/, volume/, network/, image/, version/, loop/, worktree/, firewall/, controlplane/, root/)
 │   │   ├── factory/           # Factory constructor — wires real dependencies
 │   │   ├── settings/          # Settings parent command + edit subcommand
@@ -74,6 +79,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
 │   ├── config/                # Storage.Store[T] config engine: schema types, multi-file loading, constants (see internal/config/CLAUDE.md)
 │   │   └── storeui/           # Domain adapters for storeui: settings/, project/
+│   ├── consts/                # Cross-package constants (CP container name, network labels, scopes)
 │   ├── containerfs/           # Host Claude config preparation for container init
 │   ├── controlplane/          # Control plane daemon: Ory auth stack, AdminService composition, startup orchestrator, agent watcher
 │   │   ├── cpboot/            # Host-side CP lifecycle: `EnsureRunning`/`Stop`/`CPRunning`, `BuildCPContainerConfig`, `Manager` interface + `NewManager`, embedded clawker-cp + ebpf-manager binaries (split out so `cmd/clawker-cp` doesn't drag in its own `go:embed`)
