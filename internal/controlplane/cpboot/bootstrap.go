@@ -162,6 +162,9 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 	if err != nil {
 		return fmt.Errorf("controlplane: compute cp static ip: %w", err)
 	}
+	if netInfo.Subnet.IsValid() && !netInfo.Subnet.Contains(cpIP) {
+		return fmt.Errorf("controlplane: cp static IP %s is outside network subnet %s (check CPIPLastOctet setting)", cpIP, netInfo.Subnet)
+	}
 
 	if err := createCPContainer(ctx, dc, cfg, netInfo.NetworkID, cpIP, opts.HostDirs); err != nil {
 		return fmt.Errorf("controlplane: %w", err)
