@@ -98,7 +98,7 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 		if !h.T.Failed() {
 			return
 		}
-		for _, name := range []string{"clawker.log", consts.ControlPlaneLogFile} {
+		for _, name := range []string{"clawker.log", consts.CPBootLogFile, consts.ControlPlaneLogFile} {
 			data, err := os.ReadFile(filepath.Join(logDir, name))
 			if err != nil {
 				continue

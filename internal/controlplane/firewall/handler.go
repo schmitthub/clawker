@@ -642,7 +642,7 @@ func (h *Handler) FirewallSyncRoutes(ctx context.Context, _ *adminv1.FirewallSyn
 	var applied uint32
 	if h.store != nil {
 		rules, _ := NormalizeAndDedup(h.store.Read().Rules)
-		applied = uint32(len(RoutesFromRules(rules, h.envoyEgressPort())))
+		applied = uint32(len(RoutesFromRules(rules, h.envoyPorts())))
 	}
 	return &adminv1.FirewallSyncRoutesResult{Applied: applied}, nil
 }
@@ -707,7 +707,7 @@ func (h *Handler) reconcileStackClosure(qctx context.Context) (any, error) {
 	// always provides one.
 	if h.store != nil {
 		rules, _ := NormalizeAndDedup(h.store.Read().Rules)
-		if err := h.ebpf.SyncRoutes(RoutesFromRules(rules, h.envoyEgressPort())); err != nil {
+		if err := h.ebpf.SyncRoutes(RoutesFromRules(rules, h.envoyPorts())); err != nil {
 			errs = append(errs, fmt.Errorf("%w: %v", ErrRouteSync, err))
 		}
 	}
@@ -717,15 +717,16 @@ func (h *Handler) reconcileStackClosure(qctx context.Context) (any, error) {
 	return StackReloadResult{Restarted: true}, nil
 }
 
-// envoyEgressPort returns the Envoy egress listener port, falling back
-// to zero when no cfg is wired (test path). A zero port produces routes
-// that never match in the BPF fast path — callers in test surfaces that
-// care instantiate cfg explicitly.
-func (h *Handler) envoyEgressPort() uint16 {
+// envoyPorts returns the EnvoyPorts config for route building, falling
+// back to zero values when no cfg is wired (test path).
+func (h *Handler) envoyPorts() EnvoyPorts {
 	if h.cfg == nil {
-		return 0
+		return EnvoyPorts{}
 	}
-	return uint16(h.cfg.EnvoyEgressPort())
+	return EnvoyPorts{
+		EgressPort:  h.cfg.EnvoyEgressPort(),
+		TCPPortBase: h.cfg.EnvoyTCPPortBase(),
+	}
 }
 
 // --- Shutdown helpers (called from drain-to-zero in cmd/clawker-cp) ---

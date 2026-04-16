@@ -6,7 +6,7 @@ Host-side orchestration for the clawker control plane container. Split out of `i
 
 1. Embed the `clawker-cp` + `ebpf-manager` Linux binaries into the clawker CLI release via `//go:embed`.
 2. Build the clawker-cp Docker image on demand from the embedded binaries (multi-stage recipe, pinned digests).
-3. Reconcile the `clawker-controlplane` container lifecycle — create, start, health-wait, mount-divergence recreation, stop/remove.
+3. Reconcile the `clawker-controlplane` container lifecycle — create, start, health-wait, stop/remove. Existing CP containers are adopted as-is; mount spec is not inspected.
 4. Expose a `Manager` interface that wraps the bootstrap functions with lazy Factory closures so `f.ControlPlane()` can be consumed by CLI commands.
 
 ## Files
@@ -18,7 +18,7 @@ Host-side orchestration for the clawker control plane container. Split out of `i
 | `bootstrap.go` | `EnsureRunning(ctx, EnsureOpts)` / `Stop(ctx, dc)` / `CPRunning(ctx, dc)` host-side lifecycle; `EnsureOpts` bundles `Docker` / `Config` / `Logger` / `HostDirs`; `cpImageDockerfile` multi-stage recipe; `ensureCPImage` / `cpBuildContext` image build; `waitForCPHealthz` + `CPHealthTimeoutError` |
 | `cp_container.go` | `BuildCPContainerConfig(cfg, CPContainerOpts)` → `*CPContainerConfig` — port bindings, mounts, labels, restart policy (INV-B1-005/006/008/009/015/017/018/020); defines `HostDirs{Config,Data,State,Cache}` + `Validate()`; injects the four `CLAWKER_HOST_*_DIR` env vars so the CP can compute sibling container bind `Mount.Source` values from host-FS paths |
 | `manager.go` | `Manager` interface (`EnsureRunning` / `Stop` / `IsRunning` / `ProbeHealthz`) + `NewManager(client, cfg, log)` constructor. Holds lazy Factory closures so callers who never touch the CP never resolve Docker/Config/Logger. |
-| `bootstrap_test.go` | Unit tests for `EnsureRunning` happy-path, idempotency, mount-divergence recreation, name-conflict recovery, healthz timeout, concurrent callers (INV-B2-006) |
+| `bootstrap_test.go` | Unit tests for `EnsureRunning` happy-path, idempotency, existing-stopped start-without-recreate, name-conflict recovery, healthz timeout, concurrent callers (INV-B2-006) |
 | `container_config_test.go` | Unit tests asserting `BuildCPContainerConfig` invariants (INV-B1-005/006/008/009/015/017/018/020) |
 | `ebpf_regression_test.go` | Port-publishing coverage + CP purpose-label exclusion from `container_map` (INV-B1-017) |
 | `mocks/manager_mock.go` | moq-generated `ManagerMock` for CLI tests that drive `controlplane up/down/status` without a real CP |

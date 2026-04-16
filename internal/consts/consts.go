@@ -117,11 +117,18 @@ const (
 	HostProxyPIDFile    = "hostproxy.pid"
 	HostProxyLogFile    = "hostproxy.log"
 	ControlPlaneLogFile = "clawker-controlplane.log"
-	BridgePIDSuffix     = ".pid"
-	ReadyFile           = "ready"
-	GRPCSocketFile      = "grpc.sock"
-	OIDCSocketFile      = "oidc.sock"
-	AuditLogFile        = "audit.log"
+	// CPBootLogFile is the host-side CP-lifecycle log. The CP daemon owns
+	// ControlPlaneLogFile (it writes to it from inside the container via
+	// the bind-mounted logs dir); the host-side cpboot code that manages
+	// CP container lifecycle writes here instead so the two processes
+	// never concurrently append to the same file and shear each other's
+	// log lines.
+	CPBootLogFile   = "clawker-cpboot.log"
+	BridgePIDSuffix = ".pid"
+	ReadyFile       = "ready"
+	GRPCSocketFile  = "grpc.sock"
+	OIDCSocketFile  = "oidc.sock"
+	AuditLogFile    = "audit.log"
 )
 
 // Network.

@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
@@ -195,6 +196,33 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 		adminCli  adminv1.AdminServiceClient
 		adminErr  error
 	)
+	// cpLogger builds a logger dedicated to host-side CP-lifecycle events
+	// (cpboot.EnsureRunning Warn/Debug, e.g. mount-divergence recreation).
+	// It writes to CPBootLogFile — NOT ControlPlaneLogFile, which the CP
+	// daemon owns from inside the container via the bind-mounted logs
+	// dir. Two processes cannot safely append to the same file without
+	// tearing log lines (zerolog/lumberjack do not synchronize across
+	// processes), so host-side CP events get their own file. Both files
+	// are captured by the harness's log-dump cleanup.
+	cpLogger := func() *logger.Logger {
+		c, err := resolveConfig()
+		if err != nil {
+			return logger.Nop()
+		}
+		dir, err := c.LogsSubdir()
+		if err != nil {
+			return logger.Nop()
+		}
+		l, err := logger.New(logger.Options{
+			LogsDir:  dir,
+			Filename: consts.CPBootLogFile,
+		})
+		if err != nil {
+			return logger.Nop()
+		}
+		return l
+	}
+
 	f.AdminClient = func(ctx context.Context) (adminv1.AdminServiceClient, error) {
 		adminOnce.Do(func() {
 			if opts.AdminClient != nil {
@@ -203,7 +231,7 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 					adminErr = cErr
 					return
 				}
-				adminCli, adminErr = opts.AdminClient(ctx, c, logger.Nop())
+				adminCli, adminErr = opts.AdminClient(ctx, c, cpLogger())
 			} else {
 				adminCli = &cpmocks.AdminServiceClientMock{}
 			}
@@ -223,7 +251,7 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 				if cErr != nil {
 					t.Fatalf("harness: config for control plane: %v", cErr)
 				}
-				cpMgr = opts.ControlPlane(c, logger.Nop())
+				cpMgr = opts.ControlPlane(c, cpLogger())
 			} else {
 				cpMgr = &cpbootmocks.ManagerMock{}
 			}

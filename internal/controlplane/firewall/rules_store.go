@@ -161,16 +161,21 @@ func RuleKey(r config.EgressRule) string {
 
 // RoutesFromRules projects a rule set into the BPF route_map entry form.
 // Only "allow" rules produce routes — deny rules and rules with a non-
-// port (ssh path ports, etc.) fall through the fast path to Envoy
-// anyway. Destinations are normalized before hashing so the resulting
-// DomainHash matches whatever CoreDNS writes into dns_cache at resolve
-// time (INV: normalizeDomain + ebpf.DomainHash form the shared hashing
-// contract across firewall / dnsbpf / ebpf).
+// port fall through. Destinations are normalized before hashing so the
+// resulting DomainHash matches whatever CoreDNS writes into dns_cache at
+// resolve time (INV: normalizeDomain + ebpf.DomainHash form the shared
+// hashing contract across firewall / dnsbpf / ebpf).
 //
-// envoyPort is the single Envoy egress listener port — the route_map's
-// only purpose is to route matched flows there, so every entry carries
-// the same value. Callers pass cfg.EnvoyEgressPort().
-func RoutesFromRules(rules []config.EgressRule, envoyPort uint16) []ebpf.Route {
+// TLS/HTTP rules route to the main egress listener (ports.EgressPort).
+// SSH/TCP rules route to their dedicated per-rule TCP listener port
+// (ports.TCPPortBase + index) — the same mapping TCPMappings computes
+// for the Envoy config side. This symmetry is critical: if the eBPF
+// route sends SSH traffic to the main TLS listener, tls_inspector sees
+// raw TCP, no SNI match, deny chain resets the connection.
+func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
+	tcpMappings := TCPMappings(rules, ports)
+	tcpIdx := 0
+
 	out := make([]ebpf.Route, 0, len(rules))
 	for _, r := range rules {
 		if strings.ToLower(r.Action) != "allow" {
@@ -183,6 +188,14 @@ func RoutesFromRules(rules []config.EgressRule, envoyPort uint16) []ebpf.Route {
 		port := r.Port
 		if port <= 0 || port > 0xffff {
 			continue
+		}
+		proto := strings.ToLower(r.Proto)
+		envoyPort := uint16(ports.EgressPort)
+		if proto == "ssh" || proto == "tcp" {
+			if tcpIdx < len(tcpMappings) {
+				envoyPort = uint16(tcpMappings[tcpIdx].EnvoyPort)
+				tcpIdx++
+			}
 		}
 		out = append(out, ebpf.Route{
 			DomainHash: ebpf.DomainHash(dst),

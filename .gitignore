@@ -127,3 +127,5 @@ internal/controlplane/firewall/ebpf/bpf/vmlinux.h
 test/adversarial/report.html
 test/adversarial/certs/
 test/adversarial/attacker-server/attacker-server
+
+firewall-tests-debug.log
