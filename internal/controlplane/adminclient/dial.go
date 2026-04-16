@@ -88,8 +88,11 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	hydraTokenURL := fmt.Sprintf("https://127.0.0.1:%d/oauth2/token", hydraPort)
 	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg)
 
-	// Eagerly fetch the first token so dial-time errors surface immediately.
-	if _, err := ts.token(ctx); err != nil {
+	// Eagerly fetch the first token with bounded retry so dial tolerates
+	// concurrent CP bring-up (e.g. one goroutine starts a container while
+	// another issues an admin RPC). CP cold-start takes ~5-10s; a 15s
+	// window covers that without hanging on truly dead CPs.
+	if err := retryInitialToken(ctx, ts); err != nil {
 		return nil, nil, fmt.Errorf("fetch initial access token: %w", err)
 	}
 
@@ -100,8 +103,9 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 		// WithChainUnaryInterceptor is additive — caller chain
 		// interceptors (tracing, metrics, logging) compose cleanly and
 		// auth always runs. See doc comment above for WithUnaryInterceptor
-		// single-slot caveat.
-		grpc.WithChainUnaryInterceptor(ts.unaryInterceptor()),
+		// single-slot caveat. Deadline interceptor runs first so auth
+		// token fetch inherits the same deadline as the RPC.
+		grpc.WithChainUnaryInterceptor(deadlineInterceptor(rpcDeadline), ts.unaryInterceptor()),
 	)
 	conn, err := grpc.NewClient(target, dialOpts...)
 	if err != nil {
@@ -109,6 +113,63 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	}
 
 	return adminv1.NewAdminServiceClient(conn), conn, nil
+}
+
+// initialTokenDeadline bounds the retry window for the first Hydra token
+// fetch in Dial. Covers concurrent CP bring-up: a typical cold start
+// (image pull + Ory services healthy) lands in ~5-10s; 15s leaves
+// headroom without hanging a CLI call on a truly dead CP.
+const initialTokenDeadline = 15 * time.Second
+
+// initialTokenRetryInterval is the backoff between retry attempts during
+// the initial token fetch. Short enough to catch CP transitioning to
+// ready quickly; long enough to avoid hammering a non-existent port.
+const initialTokenRetryInterval = 500 * time.Millisecond
+
+// rpcDeadline caps each AdminService RPC. Covers queue-wait + handler
+// work (stack restart, BPF reconcile, DNS resolve, etc.) without
+// hanging indefinitely when the CP is stuck or the caller forgot a
+// ctx deadline. Applied only when the caller hasn't set a tighter
+// deadline themselves.
+const rpcDeadline = 15 * time.Second
+
+// retryInitialToken calls ts.token with bounded retries so transient
+// connection-refused errors (CP mid-bootstrap) don't fail Dial.
+// Returns the last error when the deadline expires.
+func retryInitialToken(ctx context.Context, ts *tokenSource) error {
+	deadlineCtx, cancel := context.WithTimeout(ctx, initialTokenDeadline)
+	defer cancel()
+
+	var lastErr error
+	for {
+		if _, err := ts.token(deadlineCtx); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-deadlineCtx.Done():
+			return fmt.Errorf("timed out after %s waiting for CP: %w", initialTokenDeadline, lastErr)
+		case <-time.After(initialTokenRetryInterval):
+		}
+	}
+}
+
+// deadlineInterceptor enforces a default per-RPC deadline on client
+// calls. If the caller already provided a context with a deadline
+// (tighter or otherwise), we respect it; otherwise we apply the
+// package default. Ensures every admin RPC is bounded — callers who
+// just pass `cmd.Context()` can't accidentally block forever on a
+// stalled CP or queue backlog.
+func deadlineInterceptor(timeout time.Duration) grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
 }
 
 // tokenSource manages an auto-refreshing OAuth2 access token. It caches

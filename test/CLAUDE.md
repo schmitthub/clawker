@@ -51,7 +51,7 @@ Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`
 | `GitManager` | `func(string) (*git.GitManager, error)` | nil (no-op) |
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.MockManager` |
 | `SocketBridge` | `func(cfg, log) socketbridge.SocketBridgeManager` | nil (no-op) |
-| `AdminClient` | `func(ctx, cfg, log) (adminv1.AdminServiceClient, error)` | `cpmocks.AdminServiceClientMock` (no-op) |
+| `UseRealAdminClient` | `bool` — when true, wires a production-identical AdminClient (mirrors `adminClientFunc` in `internal/cmd/factory/default.go`: mutex cache + cacheableState re-dial + keepalive + `cpboot.EnsureRunning` via the shared Docker client). When false, `cpmocks.AdminServiceClientMock` (no-op). |
 | `ControlPlane` | `func(cfg, log) cpboot.Manager` | `cpbootmocks.ManagerMock` (every method returns zero values so tests that don't touch CP verbs never bootstrap a real CP) |
 
 ### Functions
@@ -79,11 +79,7 @@ h := &harness.Harness{T: t, Opts: &harness.FactoryOptions{
             func() (*logger.Logger, error) { return log, nil },
         )
     },
-    AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-        cp := cfg.Settings().ControlPlane
-        client, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-        return client, err
-    },
+    UseRealAdminClient: true, // harness wires production-identical closure
 }}
 setup := h.NewIsolatedFS(nil)
 // setup.Env has XDG dirs; setup.ProjectDir is cwd
@@ -119,7 +115,7 @@ Tests exercise the full Envoy+CoreDNS firewall stack with real Docker.
 | `TestFirewall_Status` | `firewall status --json` reports health + rule count |
 | `TestFirewall_PathRules*` | HTTP and TLS MITM path rule enforcement |
 
-Tests drive the CP AdminService through `f.AdminClient(ctx)`. Harness wires the real `cpboot.Manager` + lets `adminClientFunc` bootstrap the CP container via `cpboot.EnsureRunning`; tests exercise `FirewallInit` / `FirewallEnable` / etc. as real gRPC calls. Cleanup tears down Envoy+CoreDNS + the CP container before removing test resources.
+Tests drive the CP AdminService through `f.AdminClient(ctx)`. The harness wires a production-identical AdminClient closure when `Opts.UseRealAdminClient == true` — mirrors `adminClientFunc` in `internal/cmd/factory/default.go` line-for-line (mutex cache, `cacheableState` re-dial on `TransientFailure`/`Shutdown`, keepalive params, `cpboot.EnsureRunning` via the harness's shared Docker client so CP containers carry test labels, `adminclient.Dial`). Any divergence is a bug: E2E must exercise the code path the CLI ships with. Cleanup tears down Envoy+CoreDNS + the CP container before removing test resources.
 
 ## Debugging Resource Leaks
 

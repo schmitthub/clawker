@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -35,6 +36,7 @@ type TasksOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
+	ControlPlane   func() cpboot.Manager
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
@@ -66,6 +68,7 @@ func NewCmdTasks(f *cmdutil.Factory, runF func(context.Context, *TasksOptions) e
 		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
 		HostProxy:      f.HostProxy,
+		ControlPlane:   f.ControlPlane,
 		AdminClient:    f.AdminClient,
 		SocketBridge:   f.SocketBridge,
 		Prompter:       f.Prompter,
@@ -252,6 +255,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 		Version:        opts.Version,
 		ProjectManager: opts.ProjectManager,
 		HostProxy:      opts.HostProxy,
+		ControlPlane:   opts.ControlPlane,
 		AdminClient:    opts.AdminClient,
 		SocketBridge:   opts.SocketBridge,
 		IOStreams:      ios,

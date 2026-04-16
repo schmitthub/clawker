@@ -17,6 +17,8 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
+	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -809,6 +811,11 @@ security: { enable_host_proxy: false }
 		},
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()
+		},
+		ControlPlane: func() cpboot.Manager {
+			return &cpbootmocks.ManagerMock{
+				EnsureRunningFunc: func(context.Context) error { return nil },
+			}
 		},
 		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 	}, in, out, errOut

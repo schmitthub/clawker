@@ -11,6 +11,8 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
+	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -209,6 +211,11 @@ func testStartFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()
 		},
+		ControlPlane: func() cpboot.Manager {
+			return &cpbootmocks.ManagerMock{
+				EnsureRunningFunc: func(context.Context) error { return nil },
+			}
+		},
 	}, in, out, errOut
 }
 
@@ -328,6 +335,11 @@ func TestStartRun_NilHostProxy(t *testing.T) {
 			return configmocks.NewFromString(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`), nil
 		},
 		HostProxy: func() hostproxy.HostProxyService { return nil },
+		ControlPlane: func() cpboot.Manager {
+			return &cpbootmocks.ManagerMock{
+				EnsureRunningFunc: func(context.Context) error { return nil },
+			}
+		},
 	}
 
 	cmd := NewCmdStart(f, nil)

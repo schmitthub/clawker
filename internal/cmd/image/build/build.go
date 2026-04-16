@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -114,6 +115,14 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	defer cancel()
 
 	ios := opts.IOStreams
+
+	// Ensure CLI auth material on disk. The CLI is root of trust for its
+	// own crypto (CA, signing key, server cert, client cert); the firewall
+	// CA baked into this image also lands on disk here. Idempotent —
+	// no-op on subsequent builds.
+	if err := auth.EnsureAuthMaterial(); err != nil {
+		return fmt.Errorf("ensure auth material: %w", err)
+	}
 
 	log, err := opts.Logger()
 	if err != nil {

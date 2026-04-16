@@ -10,7 +10,6 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -26,17 +25,6 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/keepalive"
 )
-
-// ensureRunning is the test seam for AdminClient bootstrap. Tests may swap
-// this via t.Cleanup-protected assignment to avoid spawning real CP
-// containers; production always uses cpboot.EnsureRunning.
-var ensureRunning = cpboot.EnsureRunning
-
-// dialAdmin is the test seam for the mTLS + OAuth2 dial. Tests swap this
-// to return a pre-built grpc.ClientConn (via grpc.NewClient against an
-// unreachable target) so they can drive connectivity state transitions
-// without real auth material or a running CP.
-var dialAdmin = adminclient.Dial
 
 // adminClientKeepalive is the keepalive policy the CLI applies to the
 // long-lived CP AdminService connection. Values match the CP
@@ -221,11 +209,15 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 	}
 }
 
-// adminClientFunc returns a lazy closure that provides the CP AdminService
-// gRPC client. First call bootstraps the CP container via
-// cpboot.EnsureRunning then dials with mTLS + OAuth2 JWT; subsequent
-// calls return the cached client unless the gRPC connection has entered
-// TransientFailure or Shutdown, in which case the closure rebuilds.
+// adminClientFunc returns a lazy closure that dials the CP AdminService.
+// Pure dial — does NOT bootstrap the CP container. The CP is brought up
+// only by flows that need it (agent container start; explicit `clawker
+// controlplane up` / `clawker firewall up`). Admin commands invoked when
+// the CP is down fail fast — `controlplane down` stays down.
+//
+// First call dials with mTLS + OAuth2 JWT; subsequent calls return the
+// cached client unless the gRPC connection has entered TransientFailure
+// or Shutdown, in which case the closure rebuilds.
 //
 // Keepalive params (Time: 30s, Timeout: 10s, PermitWithoutStream: false)
 // let long-running CLI processes (loop, monitor, bypass dashboard) detect
@@ -254,31 +246,9 @@ func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminSer
 		if err != nil {
 			return nil, fmt.Errorf("admin client: config: %w", err)
 		}
-		log, err := f.Logger()
-		if err != nil {
-			return nil, fmt.Errorf("admin client: logger: %w", err)
-		}
-		dc, err := f.Client(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("admin client: docker: %w", err)
-		}
-
-		if err := ensureRunning(ctx, cpboot.EnsureOpts{
-			Docker: dc,
-			Config: cfg,
-			Logger: log,
-			HostDirs: cpboot.HostDirs{
-				Config: consts.ConfigDir(),
-				Data:   consts.DataDir(),
-				State:  consts.StateDir(),
-				Cache:  consts.CacheDir(),
-			},
-		}); err != nil {
-			return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-		}
 
 		cp := cfg.Settings().ControlPlane
-		newClient, newConn, err := dialAdmin(ctx, cp.AdminPort, cp.HydraPublicPort,
+		newClient, newConn, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort,
 			grpc.WithKeepaliveParams(adminClientKeepalive),
 		)
 		if err != nil {

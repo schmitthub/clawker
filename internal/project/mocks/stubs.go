@@ -58,6 +58,9 @@ func NewMockProject(name, repoPath string) *ProjectMock {
 				Worktrees: map[string]project.WorktreeRecord{},
 			}, nil
 		},
+		EgressRulesFunc: func() []config.EgressRule {
+			return nil
+		},
 		CreateWorktreeFunc: func(ctx context.Context, branch, base string) (string, error) {
 			return "", nil
 		},

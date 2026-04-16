@@ -13,6 +13,7 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	containershared "github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -61,6 +62,10 @@ type LoopContainerConfig struct {
 
 	// HostProxy returns the host proxy service.
 	HostProxy func() hostproxy.HostProxyService
+
+	// ControlPlane returns the CP lifecycle manager for ensuring the CP
+	// container is up before an agent container starts.
+	ControlPlane func() cpboot.Manager
 
 	// AdminClient returns the CP AdminService gRPC client.
 	AdminClient func(context.Context) (adminv1.AdminServiceClient, error)
@@ -319,6 +324,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 		Config:         func() (config.Config, error) { return cfg.Config, nil },
 		ProjectManager: cfg.ProjectManager,
 		HostProxy:      cfg.HostProxy,
+		ControlPlane:   cfg.ControlPlane,
 		AdminClient:    cfg.AdminClient,
 		SocketBridge:   cfg.SocketBridge,
 		Logger:         func() (*logger.Logger, error) { return cfg.Log, nil },

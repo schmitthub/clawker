@@ -8,9 +8,21 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
+	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// noopCPManager returns a CP manager mock whose EnsureRunning is a no-op.
+// Bootstrap tests need it because CP is unconditionally brought up in
+// BootstrapServicesPreStart (CP is core infra, not a firewall feature).
+func noopCPManager() func() cpboot.Manager {
+	m := &cpbootmocks.ManagerMock{
+		EnsureRunningFunc: func(context.Context) error { return nil },
+	}
+	return func() cpboot.Manager { return m }
+}
 
 func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 	t.Parallel()
@@ -44,10 +56,18 @@ func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 		{
 			name: "logger init error is wrapped",
 			cmdOpts: CommandOpts{
-				Config: testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
-				Logger: func() (*logger.Logger, error) { return nil, errors.New("logger boom") },
+				Config:       testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
+				Logger:       func() (*logger.Logger, error) { return nil, errors.New("logger boom") },
+				ControlPlane: noopCPManager(),
 			},
 			wantErr: "bootstrapping services: initializing logger: logger boom",
+		},
+		{
+			name: "missing control plane manager is an error",
+			cmdOpts: CommandOpts{
+				Config: testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
+			},
+			wantErr: "bootstrapping services: no control plane manager provided",
 		},
 	}
 
@@ -66,7 +86,8 @@ func TestBootstrapServices_MissingOptionalProvidersAreSkipped(t *testing.T) {
 	t.Parallel()
 
 	err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-		Config: testRuntimeConfig("", `firewall: { enable: false }`),
+		Config:       testRuntimeConfig("", `firewall: { enable: false }`),
+		ControlPlane: noopCPManager(),
 	})
 	if err != nil {
 		t.Fatalf("expected nil error when optional providers are omitted, got %v", err)
@@ -81,7 +102,8 @@ func TestBootstrapServices_NilProjectAndSettingsDoNotPanic(t *testing.T) {
 	cfg.SettingsFunc = func() *config.Settings { return nil }
 
 	err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-		Config: func() (config.Config, error) { return cfg, nil },
+		Config:       func() (config.Config, error) { return cfg, nil },
+		ControlPlane: noopCPManager(),
 	})
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
@@ -95,7 +117,8 @@ func TestContainerStart_ClientValidation(t *testing.T) {
 		t.Parallel()
 
 		_, err := ContainerStart(context.Background(), CommandOpts{
-			Config: testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
+			Config:       testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
+			ControlPlane: noopCPManager(),
 		}, docker.ContainerStartOptions{ContainerID: "ctr"})
 		if err == nil || !strings.Contains(err.Error(), "starting container: docker client provider is nil") {
 			t.Fatalf("expected nil client provider error, got %v", err)
@@ -106,8 +129,9 @@ func TestContainerStart_ClientValidation(t *testing.T) {
 		t.Parallel()
 
 		_, err := ContainerStart(context.Background(), CommandOpts{
-			Config: testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
-			Client: func(context.Context) (*docker.Client, error) { return nil, nil },
+			Config:       testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
+			Client:       func(context.Context) (*docker.Client, error) { return nil, nil },
+			ControlPlane: noopCPManager(),
 		}, docker.ContainerStartOptions{ContainerID: "ctr"})
 		if err == nil || !strings.Contains(err.Error(), "starting container: docker client is nil") {
 			t.Fatalf("expected nil client error, got %v", err)

@@ -38,7 +38,6 @@ type bootstrapFixture struct {
 }
 
 type bootstrapCalls struct {
-	auth    atomic.Int32
 	image   atomic.Int32
 	healthz atomic.Int32
 	create  atomic.Int32
@@ -113,11 +112,7 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 			},
 		}, nil
 	}
-	origAuth, origImage, origHealthz := ensureAuthFn, ensureCPImageFn, healthzFn
-	ensureAuthFn = func() error {
-		calls.auth.Add(1)
-		return nil
-	}
+	origImage, origHealthz := ensureCPImageFn, healthzFn
 	ensureCPImageFn = func(_ context.Context, _ *docker.Client, _ *logger.Logger) error {
 		calls.image.Add(1)
 		return nil
@@ -128,7 +123,6 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 	}
 
 	t.Cleanup(func() {
-		ensureAuthFn = origAuth
 		ensureCPImageFn = origImage
 		healthzFn = origHealthz
 	})
@@ -186,7 +180,6 @@ func TestEnsureRunning_HappyPath_CreatesContainer(t *testing.T) {
 	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 
-	assert.Equal(t, int32(1), f.calls.auth.Load(), "auth ensured once")
 	assert.Equal(t, int32(1), f.calls.image.Load(), "image ensured once")
 	assert.Equal(t, int32(1), f.calls.create.Load(), "container created once")
 	assert.Equal(t, int32(1), f.calls.start.Load(), "container started once")

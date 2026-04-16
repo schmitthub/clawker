@@ -102,6 +102,12 @@ type Project interface {
 	Name() string
 	RepoPath() string
 	Record() (ProjectRecord, error)
+	// EgressRules returns the full egress rule set for this project:
+	// the required baseline (Claude API, OAuth, etc.) plus anything the
+	// user configured under security.firewall in clawker.yaml
+	// (explicit rules + add_domains shorthand). Consumed by container
+	// start to populate the firewall via FirewallAddRules.
+	EgressRules() []config.EgressRule
 	CreateWorktree(ctx context.Context, branch, base string) (string, error)
 	AddWorktree(ctx context.Context, branch, base string) (WorktreeState, error)
 	RemoveWorktree(ctx context.Context, branch string, deleteBranch bool) error
@@ -331,6 +337,26 @@ func (p *projectHandle) Record() (ProjectRecord, error) {
 		return ProjectRecord{}, ErrProjectHandleNotInitialized
 	}
 	return p.record, nil
+}
+
+// EgressRules returns the full egress rule set for this project:
+// required baseline + anything configured under security.firewall
+// (explicit rules + add_domains shorthand).
+func (p *projectHandle) EgressRules() []config.EgressRule {
+	if p == nil || p.manager == nil || p.manager.cfg == nil {
+		return nil
+	}
+	cfg := p.manager.cfg
+	var rules []config.EgressRule
+	rules = append(rules, cfg.RequiredFirewallRules()...)
+	projectFw := cfg.Project().Security.Firewall
+	if projectFw != nil {
+		rules = append(rules, projectFw.Rules...)
+		for _, d := range projectFw.AddDomains {
+			rules = append(rules, config.EgressRule{Dst: d, Proto: "tls", Port: 443, Action: "allow"})
+		}
+	}
+	return rules
 }
 
 // CreateWorktree creates a worktree for this project.

@@ -17,7 +17,6 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 
-	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
@@ -42,12 +41,16 @@ const (
 // catches that race and reconciles to the existing container.
 var ensureMu sync.Mutex
 
-// Test seams. These are the three side-effecting steps of EnsureRunning
-// that unit tests need to stub: generating CLI auth material, building
-// the CP image, and polling /healthz. Production uses the real
-// implementations below; tests overwrite these package-level vars.
+// Test seams. These are the two side-effecting steps of EnsureRunning
+// that unit tests need to stub: building the CP image, and polling
+// /healthz. Production uses the real implementations below; tests
+// overwrite these package-level vars.
+//
+// CLI auth material is NOT ensured here. It's CLI-owned crypto and
+// must exist on disk eagerly — image builds embed the firewall CA
+// into container trust stores, and those builds happen when the CP
+// is not running. `factory.New` ensures auth material at CLI startup.
 var (
-	ensureAuthFn    = auth.EnsureAuthMaterial
 	ensureCPImageFn = ensureCPImage
 	healthzFn       = waitForCPHealthz
 )
@@ -122,10 +125,6 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 
 	ensureMu.Lock()
 	defer ensureMu.Unlock()
-
-	if err := ensureAuthFn(); err != nil {
-		return fmt.Errorf("controlplane: ensure auth material: %w", err)
-	}
 
 	if err := ensureCPImageFn(ctx, dc, log); err != nil {
 		return fmt.Errorf("controlplane: %w", err)

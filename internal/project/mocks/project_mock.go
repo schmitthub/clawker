@@ -5,6 +5,7 @@ package mocks
 
 import (
 	"context"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/project"
 	"sync"
 )
@@ -24,6 +25,9 @@ var _ project.Project = &ProjectMock{}
 //			},
 //			CreateWorktreeFunc: func(ctx context.Context, branch string, base string) (string, error) {
 //				panic("mock out the CreateWorktree method")
+//			},
+//			EgressRulesFunc: func() []config.EgressRule {
+//				panic("mock out the EgressRules method")
 //			},
 //			GetWorktreeFunc: func(ctx context.Context, branch string) (project.WorktreeState, error) {
 //				panic("mock out the GetWorktree method")
@@ -58,6 +62,9 @@ type ProjectMock struct {
 
 	// CreateWorktreeFunc mocks the CreateWorktree method.
 	CreateWorktreeFunc func(ctx context.Context, branch string, base string) (string, error)
+
+	// EgressRulesFunc mocks the EgressRules method.
+	EgressRulesFunc func() []config.EgressRule
 
 	// GetWorktreeFunc mocks the GetWorktree method.
 	GetWorktreeFunc func(ctx context.Context, branch string) (project.WorktreeState, error)
@@ -100,6 +107,9 @@ type ProjectMock struct {
 			// Base is the base argument value.
 			Base string
 		}
+		// EgressRules holds details about calls to the EgressRules method.
+		EgressRules []struct {
+		}
 		// GetWorktree holds details about calls to the GetWorktree method.
 		GetWorktree []struct {
 			// Ctx is the ctx argument value.
@@ -140,6 +150,7 @@ type ProjectMock struct {
 	}
 	lockAddWorktree         sync.RWMutex
 	lockCreateWorktree      sync.RWMutex
+	lockEgressRules         sync.RWMutex
 	lockGetWorktree         sync.RWMutex
 	lockListWorktrees       sync.RWMutex
 	lockName                sync.RWMutex
@@ -226,6 +237,33 @@ func (mock *ProjectMock) CreateWorktreeCalls() []struct {
 	mock.lockCreateWorktree.RLock()
 	calls = mock.calls.CreateWorktree
 	mock.lockCreateWorktree.RUnlock()
+	return calls
+}
+
+// EgressRules calls EgressRulesFunc.
+func (mock *ProjectMock) EgressRules() []config.EgressRule {
+	if mock.EgressRulesFunc == nil {
+		panic("ProjectMock.EgressRulesFunc: method is nil but Project.EgressRules was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEgressRules.Lock()
+	mock.calls.EgressRules = append(mock.calls.EgressRules, callInfo)
+	mock.lockEgressRules.Unlock()
+	return mock.EgressRulesFunc()
+}
+
+// EgressRulesCalls gets all the calls that were made to EgressRules.
+// Check the length with:
+//
+//	len(mockedProject.EgressRulesCalls())
+func (mock *ProjectMock) EgressRulesCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEgressRules.RLock()
+	calls = mock.calls.EgressRules
+	mock.lockEgressRules.RUnlock()
 	return calls
 }
 

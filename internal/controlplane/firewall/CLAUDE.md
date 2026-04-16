@@ -44,7 +44,7 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
 | `envoy_config.go` | Envoy YAML generation; per-domain filter chains; LOGICAL_DNS clusters; TCP/SSH listeners (`normalizeDomain` lives here — used by certs, coredns_config, rules_store, and shared with `internal/dnsbpf` via `ebpf.DomainHash`) |
 | `coredns_config.go` | Corefile generation; per-domain forward zones; `dnsbpf` plugin directive; catch-all NXDOMAIN |
 | `certs.go` | CA keypair generation/loading; per-domain cert signing; wildcard SANs; `RotateCA` |
-| `rules_store.go` | `EgressRulesFile` schema + `NewRulesStore(cfg)` + `ProjectRules(cfg)` + rule helpers (`ValidateDst`, `NormalizeRule`, `RuleKey`, `NormalizeAndDedup`) |
+| `rules_store.go` | `EgressRulesFile` schema + `NewRulesStore(cfg)` + rule helpers (`ValidateDst`, `NormalizeRule`, `RuleKey`, `NormalizeAndDedup`). Project-level rule composition lives on `project.Project.EgressRules()` — firewall doesn't know about project config. |
 | `network.go` | `NetworkInfo` + `DiscoverNetwork(ctx, *docker.Client, cfg)` + `ComputeStaticIP(gateway, lastOctet)` |
 | `embed_coredns.go` | `//go:embed assets/coredns-clawker` — exported `CoreDNSClawkerBinary` |
 | `errors.go` | Sentinels (`ErrEnvoyUnhealthy`, `ErrCoreDNSUnhealthy`, `ErrCPUnhealthy`) + `HealthTimeoutError` |
@@ -133,7 +133,7 @@ type ContainerResolver func(ctx context.Context, ref string) (id, cgroupPath str
 
 ### `EgressRulesFile` + rule helpers
 
-`EgressRulesFile` is the on-disk schema (`egress-rules.yaml`) — it implements `storage.Schema` via `Fields()` so the store engine can read field metadata. `ProjectRules(cfg)` builds the ruleset from `cfg.Project().Security.Firewall` + `cfg.RequiredFirewallDomains()` — consumed by `BootstrapServicesPostStart` before issuing `FirewallAddRules`.
+`EgressRulesFile` is the on-disk schema (`egress-rules.yaml`) — it implements `storage.Schema` via `Fields()` so the store engine can read field metadata. Project-level rule composition (required baseline + `security.firewall.rules` + `add_domains`) lives on `project.Project.EgressRules()` — the firewall package owns store/stack/certs, not project config. `BootstrapServicesPreStart` calls `proj.EgressRules()` and passes the result through `ConfigRulesToProto` to `FirewallAddRules`.
 
 Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E tests:
 
@@ -155,7 +155,7 @@ Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E test
 ## Imports
 
 - **Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/storage`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `pkg/whail` (labels only), `github.com/moby/moby/api/types/*`.
-- **Used by**: `internal/controlplane` (composite server embeds `*Handler`; startup wires `Stack`); `cmd/clawker-cp/main.go` (Handler ctor + container resolver); `internal/cmd/container/shared/container_start.go` (`BootstrapServicesPostStart` calls `ProjectRules` + `ProtoRulesToConfig`/`ConfigRulesToProto`).
+- **Used by**: `internal/controlplane` (composite server embeds `*Handler`; startup wires `Stack`); `cmd/clawker-cp/main.go` (Handler ctor + container resolver); `internal/cmd/container/shared/container_start.go` (`BootstrapServicesPreStart` calls `ProtoRulesToConfig`/`ConfigRulesToProto` — project-rule composition lives on `project.Project.EgressRules()`).
 - **Not imported by**: CLI commands — those go through `f.AdminClient(ctx)` which speaks gRPC to the running CP. No direct Go calls into `firewall.Handler` from CLI code.
 
 ## Test Patterns
