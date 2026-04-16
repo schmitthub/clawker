@@ -101,14 +101,15 @@ var _ StackLifecycle = (*Stack)(nil)
 type Handler struct {
 	adminv1.UnimplementedAdminServiceServer
 
-	ebpf     ebpf.EBPFManager
-	stack    StackLifecycle
-	store    *storage.Store[EgressRulesFile]
-	cfg      config.Config
-	resolve  ContainerResolver
-	log      *logger.Logger
-	queue    *ActionQueue
-	certDirF func() (string, error)
+	ebpf       ebpf.EBPFManager
+	stack      StackLifecycle
+	store      *storage.Store[EgressRulesFile]
+	cfg        config.Config
+	resolve    ContainerResolver
+	log        *logger.Logger
+	queue      *ActionQueue
+	certDirF   func() (string, error)
+	listAgents func(ctx context.Context) ([]string, error)
 
 	// resolveHostFn is injectable for tests. nil defaults to
 	// net.DefaultResolver.LookupHost.
@@ -155,6 +156,15 @@ type HandlerDeps struct {
 	// tests pass a temp dir so RotateCA does not touch the real data path.
 	// nil defaults to cfg.FirewallCertSubdir.
 	CertDirFn func() (string, error)
+
+	// ListAgents returns canonical container IDs of every running
+	// managed agent the CP knows about. FirewallInit uses it to rebuild
+	// per-container enforcement after a CP restart: FlushAll wipes
+	// container_map on shutdown, so agents that outlived the previous
+	// CP instance would otherwise egress unenforced until they were
+	// restarted. Nil means "no re-enrollment" (test wiring and flows
+	// that never want Init to touch agent state).
+	ListAgents func(ctx context.Context) ([]string, error)
 }
 
 // maxBypassTimeout caps how long a single FirewallBypass call can
@@ -196,6 +206,7 @@ func NewHandler(deps HandlerDeps) *Handler {
 		log:            log,
 		queue:          deps.Queue,
 		certDirF:       certDirFn,
+		listAgents:     deps.ListAgents,
 		cgroupIDFn:     ebpf.CgroupID,
 		bypassTimers:   make(map[string]*bypassEntry),
 		storedCgroupID: make(map[string]uint64),
@@ -221,6 +232,14 @@ func (h *Handler) submit(kind ActionKind, fn ActionFunc) (any, error) {
 // FirewallInit brings the firewall stack (Envoy + CoreDNS) up via a
 // queued bringup action. BPF programs are loaded once at CP startup via
 // ebpf.Manager.Load; this RPC is the idempotent "stack up" signal.
+//
+// After the stack is healthy, Init re-enrolls every running managed
+// agent it can find. On a cold CP start that follows a previous CP's
+// FlushAll, container_map is empty — without re-enrollment, long-lived
+// agents that outlived the previous CP would egress unenforced
+// (fail-open by BPF design). Re-enrollment is in-closure so it
+// serializes with concurrent Enable/Disable/Bypass through the same
+// ActionBringup work unit.
 func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitRequest) (*adminv1.FirewallInitResult, error) {
 	val, err := h.submit(ActionBringup, func(qctx context.Context) (any, error) {
 		if err := h.stack.EnsureRunning(qctx); err != nil {
@@ -230,6 +249,7 @@ func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitReque
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrStackProbe, err)
 		}
+		h.reenrollAgents(qctx)
 		return InitResult{
 			EnvoyIP:   st.EnvoyIP,
 			CoreDNSIP: st.CoreDNSIP,
@@ -245,6 +265,80 @@ func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitReque
 		CorednsIp: r.CoreDNSIP,
 		NetworkId: r.NetworkID,
 	}, nil
+}
+
+// reenrollAgents rebuilds per-container BPF enforcement for every
+// running managed agent. Best-effort: a bad container or missing dep
+// logs at warn and continues the loop so one stuck agent cannot block
+// a successful FirewallInit for the rest. Nil listAgents (test wiring,
+// no-docker handler builds) short-circuits silently. The loop uses
+// shared network/host-proxy state resolved once per Init so a large
+// agent fleet doesn't pay per-container discovery cost.
+func (h *Handler) reenrollAgents(ctx context.Context) {
+	if h.listAgents == nil || h.cfg == nil {
+		return
+	}
+	agents, err := h.listAgents(ctx)
+	if err != nil {
+		h.log.Warn().Err(err).Msg("re-enroll: list agents failed, skipping")
+		return
+	}
+	if len(agents) == 0 {
+		return
+	}
+	netInfo, err := h.stack.NetworkInfo(ctx)
+	if err != nil {
+		h.log.Warn().Err(err).Msg("re-enroll: network info failed, skipping")
+		return
+	}
+	hostProxyIP, hostProxyPort, err := h.resolveHostProxy(ctx)
+	if err != nil {
+		h.log.Warn().Err(err).Msg("re-enroll: resolve host proxy failed, skipping")
+		return
+	}
+	bpfCfg, err := ebpf.NewContainerConfig(
+		netInfo.EnvoyIP,
+		netInfo.CoreDNSIP,
+		netInfo.Gateway.String(),
+		netInfo.CIDR,
+		hostProxyIP,
+		hostProxyPort,
+		uint16(h.cfg.EnvoyEgressPort()),
+	)
+	if err != nil {
+		h.log.Warn().Err(err).Msg("re-enroll: build container config failed, skipping")
+		return
+	}
+	var enrolled, failed int
+	for _, cid := range agents {
+		rid, cgroupPath, exists, resolveErr := h.resolve(ctx, cid)
+		if resolveErr != nil {
+			h.log.Warn().Err(resolveErr).Str("container_id", cid).Msg("re-enroll: resolve failed, skipping container")
+			failed++
+			continue
+		}
+		if !exists {
+			// Container vanished between list and resolve — fine, move on.
+			continue
+		}
+		cgroupID, err := h.cgroupIDFn(cgroupPath)
+		if err != nil {
+			h.log.Warn().Err(err).Str("container_id", rid).Msg("re-enroll: cgroup id failed, skipping container")
+			failed++
+			continue
+		}
+		if err := h.ebpf.Install(cgroupID, cgroupPath, bpfCfg); err != nil {
+			h.log.Warn().Err(err).Str("container_id", rid).Msg("re-enroll: install failed, skipping container")
+			failed++
+			continue
+		}
+		h.cgroupIDMu.Lock()
+		h.storedCgroupID[rid] = cgroupID
+		h.cgroupIDMu.Unlock()
+		h.log.Info().Str("container_id", rid).Uint64("cgroup_id", cgroupID).Msg("re-enrolled agent")
+		enrolled++
+	}
+	h.log.Info().Int("enrolled", enrolled).Int("failed", failed).Int("total", len(agents)).Msg("re-enroll complete")
 }
 
 // FirewallRemove is global teardown. Pre-Submit: cancel pending bypass

@@ -564,6 +564,116 @@ func TestHandler_FirewallInit_StackFailure_PropagatesInternal(t *testing.T) {
 	assertCode(t, err, codes.Internal)
 }
 
+// TestHandler_FirewallInit_ReenrollsRunningAgents locks in the
+// regression fix for the "CP restart leaves running agents unenforced"
+// bug: after the firewall stack is healthy, Init must re-Install every
+// running managed agent. Without this, the previous CP's FlushAll
+// wipes container_map and long-lived agents egress unenforced
+// (fail-open by BPF design) until they are restarted or explicitly
+// re-enabled.
+func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
+	stack := &fakeStack{statusResult: Status{Running: true}}
+	mock := noopMock()
+
+	// Two agent containers — both resolve to distinct cgroup paths/ids
+	// so we can assert Install was called with the right arguments.
+	agents := []string{"agent-A", "agent-B"}
+	cgroupPaths := map[string]string{
+		"agent-A": "/test/cgroup/agent-A",
+		"agent-B": "/test/cgroup/agent-B",
+	}
+	cgroupIDs := map[string]uint64{
+		"agent-A": 111,
+		"agent-B": 222,
+	}
+	resolver := func(_ context.Context, ref string) (string, string, bool, error) {
+		p, ok := cgroupPaths[ref]
+		if !ok {
+			return ref, testCgroupPath, true, nil
+		}
+		return ref, p, true, nil
+	}
+
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
+	h := NewHandler(HandlerDeps{
+		EBPF:       mock,
+		Stack:      stack,
+		Cfg:        testConfig(),
+		Resolver:   resolver,
+		Log:        logger.Nop(),
+		Queue:      q,
+		ListAgents: func(_ context.Context) ([]string, error) { return agents, nil },
+	})
+	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
+		return []string{"192.168.65.254"}, nil
+	}
+	h.cgroupIDFn = func(path string) (uint64, error) {
+		for cid, p := range cgroupPaths {
+			if p == path {
+				return cgroupIDs[cid], nil
+			}
+		}
+		return testCgroupID, nil
+	}
+
+	_, err := h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+	require.NoError(t, err)
+	require.Len(t, mock.InstallCalls(), 2, "both agents must be enrolled during FirewallInit")
+
+	// InstallCalls order mirrors the agent list order. Assert per-call
+	// cgroup identity so a regression that accidentally installed the
+	// same config twice (or swapped indices) shows up clearly.
+	gotIDs := []uint64{mock.InstallCalls()[0].CgroupID, mock.InstallCalls()[1].CgroupID}
+	assert.ElementsMatch(t, []uint64{111, 222}, gotIDs)
+}
+
+// TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure verifies
+// the best-effort loop: one broken agent must not block enrollment for
+// the rest, and FirewallInit itself must succeed. Stack-wide init is
+// strictly more valuable than perfect per-container coverage — any
+// agent we failed to enroll stays fail-open exactly as it was before
+// Init ran.
+func TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure(t *testing.T) {
+	stack := &fakeStack{statusResult: Status{Running: true}}
+	mock := noopMock()
+	installCalls := 0
+	mock.InstallFunc = func(cgroupID uint64, _ string, _ ebpf.BPFContainerConfig) error {
+		installCalls++
+		if cgroupID == 111 {
+			return errors.New("cgroup 111 broken")
+		}
+		return nil
+	}
+	resolver := func(_ context.Context, ref string) (string, string, bool, error) {
+		return ref, "/test/cgroup/" + ref, true, nil
+	}
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
+	h := NewHandler(HandlerDeps{
+		EBPF:       mock,
+		Stack:      stack,
+		Cfg:        testConfig(),
+		Resolver:   resolver,
+		Log:        logger.Nop(),
+		Queue:      q,
+		ListAgents: func(_ context.Context) ([]string, error) { return []string{"broken", "healthy"}, nil },
+	})
+	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
+		return []string{"192.168.65.254"}, nil
+	}
+	h.cgroupIDFn = func(path string) (uint64, error) {
+		if path == "/test/cgroup/broken" {
+			return 111, nil
+		}
+		return 222, nil
+	}
+
+	_, err := h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+	require.NoError(t, err, "per-agent failure must not fail Init")
+	assert.Equal(t, 2, installCalls, "both agents attempted; failure on one does not short-circuit")
+}
+
 // ---------------------------------------------------------------------------
 // resolveBypassCgroupID branches (drift helper)
 // ---------------------------------------------------------------------------

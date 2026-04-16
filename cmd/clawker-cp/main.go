@@ -323,14 +323,34 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	// sufficient as a belt-and-braces against non-drain exit paths.
 	actionQueue := fwhandler.NewActionQueue(log)
 	defer func() { _ = actionQueue.Close() }()
+	// listAgentIDs enumerates every running managed agent container ID.
+	// Handler's FirewallInit uses this to re-enroll per-container BPF
+	// enforcement after a CP restart — FlushAll wiped container_map on
+	// the previous CP's shutdown, so a fresh FirewallInit rebuilds from
+	// live Docker state instead of a silent fail-open.
+	listAgentIDs := func(ctx context.Context) ([]string, error) {
+		filter := mobyclient.Filters{}.
+			Add("label", cfg.LabelManaged()+"="+cfg.ManagedLabelValue()).
+			Add("label", cfg.LabelPurpose()+"="+cfg.PurposeAgent())
+		result, err := dockerCli.APIClient.ContainerList(ctx, mobyclient.ContainerListOptions{Filters: filter})
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]string, 0, len(result.Items))
+		for _, c := range result.Items {
+			ids = append(ids, c.ID)
+		}
+		return ids, nil
+	}
 	handler := fwhandler.NewHandler(fwhandler.HandlerDeps{
-		EBPF:     ebpfMgr,
-		Stack:    stack,
-		Store:    rulesStore,
-		Cfg:      cfg,
-		Resolver: containerResolver,
-		Log:      log,
-		Queue:    actionQueue,
+		EBPF:       ebpfMgr,
+		Stack:      stack,
+		Store:      rulesStore,
+		Cfg:        cfg,
+		Resolver:   containerResolver,
+		Log:        log,
+		Queue:      actionQueue,
+		ListAgents: listAgentIDs,
 	})
 	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler))
 
@@ -369,14 +389,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	defer watcherCancel()
 
 	listAgents := func(ctx context.Context) (int, error) {
-		filter := mobyclient.Filters{}.
-			Add("label", cfg.LabelManaged()+"="+cfg.ManagedLabelValue()).
-			Add("label", cfg.LabelPurpose()+"="+cfg.PurposeAgent())
-		result, err := dockerCli.APIClient.ContainerList(ctx, mobyclient.ContainerListOptions{Filters: filter})
+		ids, err := listAgentIDs(ctx)
 		if err != nil {
 			return 0, err
 		}
-		return len(result.Items), nil
+		return len(ids), nil
 	}
 
 	drainCallbackBody := func(ctx context.Context) error {
