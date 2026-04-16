@@ -55,8 +55,12 @@ service AdminService {
   // stack. Synchronous: returns after the stack is healthy again.
   rpc FirewallAddRules(FirewallAddRulesRequest) returns (FirewallAddRulesResult);
 
-  // FirewallRemoveRules removes egress rules and hot-reloads the stack.
-  rpc FirewallRemoveRules(FirewallRemoveRulesRequest) returns (FirewallRemoveRulesResult);
+  // FirewallRemoveRule removes a single egress rule by (dst, proto, port)
+  // and hot-reloads the stack. Returns NOT_FOUND (sentinel
+  // RULE_NOT_FOUND) when no rule matches the key — typos and malformed
+  // hostnames both land here, since anything that can't match an
+  // existing rule key is a miss.
+  rpc FirewallRemoveRule(FirewallRemoveRuleRequest) returns (FirewallRemoveRuleResult);
 
   // FirewallListRules returns the current normalized/deduplicated rule
   // set from the store. Read-only.
@@ -156,12 +160,16 @@ message FirewallAddRulesResult {
   bool stack_restarted = 2;
 }
 
-message FirewallRemoveRulesRequest {
-  repeated EgressRule rules = 1;
+message FirewallRemoveRuleRequest {
+  string dst = 1;
+  string proto = 2;     // "tls" | "tcp" | "http" | "ssh" | "ip" | "cidr"
+  uint32 port = 3;
 }
-message FirewallRemoveRulesResult {
-  int32 removed_count = 1;
-  bool stack_restarted = 2;
+message FirewallRemoveRuleResult {
+  // stack_restarted is true when the live stack was reloaded; false when
+  // the stack was down at queue-time and only the on-disk rule change
+  // applied. In both cases err==nil — the rule is durable.
+  bool stack_restarted = 1;
 }
 
 message FirewallListRulesRequest {}

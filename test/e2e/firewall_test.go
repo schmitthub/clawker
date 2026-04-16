@@ -225,6 +225,11 @@ func TestFirewall_AddRemove(t *testing.T) {
 	// Verify blocked again after remove.
 	blockedAgain := h.RunInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, blockedAgain.Err, "example.com should be blocked after remove")
+
+	// remove non-existent domain should fail with non-zero exit code.
+	removeNonExistent := h.Run("firewall", "remove", "nonexistent.com")
+	assert.NotEqual(t, 0, removeNonExistent.ExitCode,
+		"removing a non-existent domain should fail with non-zero exit code")
 }
 
 func TestFirewall_ConfigRules(t *testing.T) {

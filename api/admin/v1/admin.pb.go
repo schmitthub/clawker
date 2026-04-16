@@ -734,27 +734,29 @@ func (x *FirewallAddRulesResult) GetStackRestarted() bool {
 	return false
 }
 
-type FirewallRemoveRulesRequest struct {
+type FirewallRemoveRuleRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Rules         []*EgressRule          `protobuf:"bytes,1,rep,name=rules,proto3" json:"rules,omitempty"`
+	Dst           string                 `protobuf:"bytes,1,opt,name=dst,proto3" json:"dst,omitempty"`
+	Proto         string                 `protobuf:"bytes,2,opt,name=proto,proto3" json:"proto,omitempty"` // "tls" | "tcp" | "http" | "ssh" | "ip" | "cidr"
+	Port          uint32                 `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *FirewallRemoveRulesRequest) Reset() {
-	*x = FirewallRemoveRulesRequest{}
+func (x *FirewallRemoveRuleRequest) Reset() {
+	*x = FirewallRemoveRuleRequest{}
 	mi := &file_admin_v1_admin_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *FirewallRemoveRulesRequest) String() string {
+func (x *FirewallRemoveRuleRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*FirewallRemoveRulesRequest) ProtoMessage() {}
+func (*FirewallRemoveRuleRequest) ProtoMessage() {}
 
-func (x *FirewallRemoveRulesRequest) ProtoReflect() protoreflect.Message {
+func (x *FirewallRemoveRuleRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_admin_v1_admin_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -766,64 +768,73 @@ func (x *FirewallRemoveRulesRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use FirewallRemoveRulesRequest.ProtoReflect.Descriptor instead.
-func (*FirewallRemoveRulesRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use FirewallRemoveRuleRequest.ProtoReflect.Descriptor instead.
+func (*FirewallRemoveRuleRequest) Descriptor() ([]byte, []int) {
 	return file_admin_v1_admin_proto_rawDescGZIP(), []int{15}
 }
 
-func (x *FirewallRemoveRulesRequest) GetRules() []*EgressRule {
+func (x *FirewallRemoveRuleRequest) GetDst() string {
 	if x != nil {
-		return x.Rules
+		return x.Dst
 	}
-	return nil
+	return ""
 }
 
-type FirewallRemoveRulesResult struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	RemovedCount   int32                  `protobuf:"varint,1,opt,name=removed_count,json=removedCount,proto3" json:"removed_count,omitempty"`
-	StackRestarted bool                   `protobuf:"varint,2,opt,name=stack_restarted,json=stackRestarted,proto3" json:"stack_restarted,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
-}
-
-func (x *FirewallRemoveRulesResult) Reset() {
-	*x = FirewallRemoveRulesResult{}
-	mi := &file_admin_v1_admin_proto_msgTypes[16]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FirewallRemoveRulesResult) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FirewallRemoveRulesResult) ProtoMessage() {}
-
-func (x *FirewallRemoveRulesResult) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_v1_admin_proto_msgTypes[16]
+func (x *FirewallRemoveRuleRequest) GetProto() string {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
+		return x.Proto
 	}
-	return mi.MessageOf(x)
+	return ""
 }
 
-// Deprecated: Use FirewallRemoveRulesResult.ProtoReflect.Descriptor instead.
-func (*FirewallRemoveRulesResult) Descriptor() ([]byte, []int) {
-	return file_admin_v1_admin_proto_rawDescGZIP(), []int{16}
-}
-
-func (x *FirewallRemoveRulesResult) GetRemovedCount() int32 {
+func (x *FirewallRemoveRuleRequest) GetPort() uint32 {
 	if x != nil {
-		return x.RemovedCount
+		return x.Port
 	}
 	return 0
 }
 
-func (x *FirewallRemoveRulesResult) GetStackRestarted() bool {
+type FirewallRemoveRuleResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// stack_restarted is true when the live stack was reloaded; false when
+	// the stack was down at queue-time and only the on-disk rule change
+	// applied. In both cases err==nil — the rule is durable.
+	StackRestarted bool `protobuf:"varint,1,opt,name=stack_restarted,json=stackRestarted,proto3" json:"stack_restarted,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *FirewallRemoveRuleResult) Reset() {
+	*x = FirewallRemoveRuleResult{}
+	mi := &file_admin_v1_admin_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FirewallRemoveRuleResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FirewallRemoveRuleResult) ProtoMessage() {}
+
+func (x *FirewallRemoveRuleResult) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_v1_admin_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FirewallRemoveRuleResult.ProtoReflect.Descriptor instead.
+func (*FirewallRemoveRuleResult) Descriptor() ([]byte, []int) {
+	return file_admin_v1_admin_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *FirewallRemoveRuleResult) GetStackRestarted() bool {
 	if x != nil {
 		return x.StackRestarted
 	}
@@ -1438,12 +1449,13 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x16FirewallAddRulesResult\x12\x1f\n" +
 	"\vadded_count\x18\x01 \x01(\x05R\n" +
 	"addedCount\x12'\n" +
-	"\x0fstack_restarted\x18\x02 \x01(\bR\x0estackRestarted\"P\n" +
-	"\x1aFirewallRemoveRulesRequest\x122\n" +
-	"\x05rules\x18\x01 \x03(\v2\x1c.clawker.admin.v1.EgressRuleR\x05rules\"i\n" +
-	"\x19FirewallRemoveRulesResult\x12#\n" +
-	"\rremoved_count\x18\x01 \x01(\x05R\fremovedCount\x12'\n" +
-	"\x0fstack_restarted\x18\x02 \x01(\bR\x0estackRestarted\"\x1a\n" +
+	"\x0fstack_restarted\x18\x02 \x01(\bR\x0estackRestarted\"W\n" +
+	"\x19FirewallRemoveRuleRequest\x12\x10\n" +
+	"\x03dst\x18\x01 \x01(\tR\x03dst\x12\x14\n" +
+	"\x05proto\x18\x02 \x01(\tR\x05proto\x12\x12\n" +
+	"\x04port\x18\x03 \x01(\rR\x04port\"C\n" +
+	"\x18FirewallRemoveRuleResult\x12'\n" +
+	"\x0fstack_restarted\x18\x01 \x01(\bR\x0estackRestarted\"\x1a\n" +
 	"\x18FirewallListRulesRequest\"M\n" +
 	"\x17FirewallListRulesResult\x122\n" +
 	"\x05rules\x18\x01 \x03(\v2\x1c.clawker.admin.v1.EgressRuleR\x05rules\"\x17\n" +
@@ -1473,7 +1485,7 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x1eFirewallResolveHostnameRequest\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\"=\n" +
 	"\x1dFirewallResolveHostnameResult\x12\x1c\n" +
-	"\taddresses\x18\x01 \x03(\tR\taddresses2\xdd\n" +
+	"\taddresses\x18\x01 \x03(\tR\taddresses2\xda\n" +
 	"\n" +
 	"\fAdminService\x12[\n" +
 	"\fFirewallInit\x12%.clawker.admin.v1.FirewallInitRequest\x1a$.clawker.admin.v1.FirewallInitResult\x12a\n" +
@@ -1481,8 +1493,8 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x0eFirewallEnable\x12'.clawker.admin.v1.FirewallEnableRequest\x1a&.clawker.admin.v1.FirewallEnableResult\x12d\n" +
 	"\x0fFirewallDisable\x12(.clawker.admin.v1.FirewallDisableRequest\x1a'.clawker.admin.v1.FirewallDisableResult\x12a\n" +
 	"\x0eFirewallBypass\x12'.clawker.admin.v1.FirewallBypassRequest\x1a&.clawker.admin.v1.FirewallBypassResult\x12g\n" +
-	"\x10FirewallAddRules\x12).clawker.admin.v1.FirewallAddRulesRequest\x1a(.clawker.admin.v1.FirewallAddRulesResult\x12p\n" +
-	"\x13FirewallRemoveRules\x12,.clawker.admin.v1.FirewallRemoveRulesRequest\x1a+.clawker.admin.v1.FirewallRemoveRulesResult\x12j\n" +
+	"\x10FirewallAddRules\x12).clawker.admin.v1.FirewallAddRulesRequest\x1a(.clawker.admin.v1.FirewallAddRulesResult\x12m\n" +
+	"\x12FirewallRemoveRule\x12+.clawker.admin.v1.FirewallRemoveRuleRequest\x1a*.clawker.admin.v1.FirewallRemoveRuleResult\x12j\n" +
 	"\x11FirewallListRules\x12*.clawker.admin.v1.FirewallListRulesRequest\x1a).clawker.admin.v1.FirewallListRulesResult\x12a\n" +
 	"\x0eFirewallReload\x12'.clawker.admin.v1.FirewallReloadRequest\x1a&.clawker.admin.v1.FirewallReloadResult\x12a\n" +
 	"\x0eFirewallStatus\x12'.clawker.admin.v1.FirewallStatusRequest\x1a&.clawker.admin.v1.FirewallStatusResult\x12g\n" +
@@ -1519,8 +1531,8 @@ var file_admin_v1_admin_proto_goTypes = []any{
 	(*FirewallBypassResult)(nil),           // 12: clawker.admin.v1.FirewallBypassResult
 	(*FirewallAddRulesRequest)(nil),        // 13: clawker.admin.v1.FirewallAddRulesRequest
 	(*FirewallAddRulesResult)(nil),         // 14: clawker.admin.v1.FirewallAddRulesResult
-	(*FirewallRemoveRulesRequest)(nil),     // 15: clawker.admin.v1.FirewallRemoveRulesRequest
-	(*FirewallRemoveRulesResult)(nil),      // 16: clawker.admin.v1.FirewallRemoveRulesResult
+	(*FirewallRemoveRuleRequest)(nil),      // 15: clawker.admin.v1.FirewallRemoveRuleRequest
+	(*FirewallRemoveRuleResult)(nil),       // 16: clawker.admin.v1.FirewallRemoveRuleResult
 	(*FirewallListRulesRequest)(nil),       // 17: clawker.admin.v1.FirewallListRulesRequest
 	(*FirewallListRulesResult)(nil),        // 18: clawker.admin.v1.FirewallListRulesResult
 	(*FirewallReloadRequest)(nil),          // 19: clawker.admin.v1.FirewallReloadRequest
@@ -1537,40 +1549,39 @@ var file_admin_v1_admin_proto_goTypes = []any{
 var file_admin_v1_admin_proto_depIdxs = []int32{
 	2,  // 0: clawker.admin.v1.EgressRule.path_rules:type_name -> clawker.admin.v1.PathRule
 	1,  // 1: clawker.admin.v1.FirewallAddRulesRequest.rules:type_name -> clawker.admin.v1.EgressRule
-	1,  // 2: clawker.admin.v1.FirewallRemoveRulesRequest.rules:type_name -> clawker.admin.v1.EgressRule
-	1,  // 3: clawker.admin.v1.FirewallListRulesResult.rules:type_name -> clawker.admin.v1.EgressRule
-	0,  // 4: clawker.admin.v1.FirewallSyncRoutesRequest.routes:type_name -> clawker.admin.v1.Route
-	3,  // 5: clawker.admin.v1.AdminService.FirewallInit:input_type -> clawker.admin.v1.FirewallInitRequest
-	5,  // 6: clawker.admin.v1.AdminService.FirewallRemove:input_type -> clawker.admin.v1.FirewallRemoveRequest
-	7,  // 7: clawker.admin.v1.AdminService.FirewallEnable:input_type -> clawker.admin.v1.FirewallEnableRequest
-	9,  // 8: clawker.admin.v1.AdminService.FirewallDisable:input_type -> clawker.admin.v1.FirewallDisableRequest
-	11, // 9: clawker.admin.v1.AdminService.FirewallBypass:input_type -> clawker.admin.v1.FirewallBypassRequest
-	13, // 10: clawker.admin.v1.AdminService.FirewallAddRules:input_type -> clawker.admin.v1.FirewallAddRulesRequest
-	15, // 11: clawker.admin.v1.AdminService.FirewallRemoveRules:input_type -> clawker.admin.v1.FirewallRemoveRulesRequest
-	17, // 12: clawker.admin.v1.AdminService.FirewallListRules:input_type -> clawker.admin.v1.FirewallListRulesRequest
-	19, // 13: clawker.admin.v1.AdminService.FirewallReload:input_type -> clawker.admin.v1.FirewallReloadRequest
-	21, // 14: clawker.admin.v1.AdminService.FirewallStatus:input_type -> clawker.admin.v1.FirewallStatusRequest
-	23, // 15: clawker.admin.v1.AdminService.FirewallRotateCA:input_type -> clawker.admin.v1.FirewallRotateCARequest
-	25, // 16: clawker.admin.v1.AdminService.FirewallSyncRoutes:input_type -> clawker.admin.v1.FirewallSyncRoutesRequest
-	27, // 17: clawker.admin.v1.AdminService.FirewallResolveHostname:input_type -> clawker.admin.v1.FirewallResolveHostnameRequest
-	4,  // 18: clawker.admin.v1.AdminService.FirewallInit:output_type -> clawker.admin.v1.FirewallInitResult
-	6,  // 19: clawker.admin.v1.AdminService.FirewallRemove:output_type -> clawker.admin.v1.FirewallRemoveResult
-	8,  // 20: clawker.admin.v1.AdminService.FirewallEnable:output_type -> clawker.admin.v1.FirewallEnableResult
-	10, // 21: clawker.admin.v1.AdminService.FirewallDisable:output_type -> clawker.admin.v1.FirewallDisableResult
-	12, // 22: clawker.admin.v1.AdminService.FirewallBypass:output_type -> clawker.admin.v1.FirewallBypassResult
-	14, // 23: clawker.admin.v1.AdminService.FirewallAddRules:output_type -> clawker.admin.v1.FirewallAddRulesResult
-	16, // 24: clawker.admin.v1.AdminService.FirewallRemoveRules:output_type -> clawker.admin.v1.FirewallRemoveRulesResult
-	18, // 25: clawker.admin.v1.AdminService.FirewallListRules:output_type -> clawker.admin.v1.FirewallListRulesResult
-	20, // 26: clawker.admin.v1.AdminService.FirewallReload:output_type -> clawker.admin.v1.FirewallReloadResult
-	22, // 27: clawker.admin.v1.AdminService.FirewallStatus:output_type -> clawker.admin.v1.FirewallStatusResult
-	24, // 28: clawker.admin.v1.AdminService.FirewallRotateCA:output_type -> clawker.admin.v1.FirewallRotateCAResult
-	26, // 29: clawker.admin.v1.AdminService.FirewallSyncRoutes:output_type -> clawker.admin.v1.FirewallSyncRoutesResult
-	28, // 30: clawker.admin.v1.AdminService.FirewallResolveHostname:output_type -> clawker.admin.v1.FirewallResolveHostnameResult
-	18, // [18:31] is the sub-list for method output_type
-	5,  // [5:18] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	1,  // 2: clawker.admin.v1.FirewallListRulesResult.rules:type_name -> clawker.admin.v1.EgressRule
+	0,  // 3: clawker.admin.v1.FirewallSyncRoutesRequest.routes:type_name -> clawker.admin.v1.Route
+	3,  // 4: clawker.admin.v1.AdminService.FirewallInit:input_type -> clawker.admin.v1.FirewallInitRequest
+	5,  // 5: clawker.admin.v1.AdminService.FirewallRemove:input_type -> clawker.admin.v1.FirewallRemoveRequest
+	7,  // 6: clawker.admin.v1.AdminService.FirewallEnable:input_type -> clawker.admin.v1.FirewallEnableRequest
+	9,  // 7: clawker.admin.v1.AdminService.FirewallDisable:input_type -> clawker.admin.v1.FirewallDisableRequest
+	11, // 8: clawker.admin.v1.AdminService.FirewallBypass:input_type -> clawker.admin.v1.FirewallBypassRequest
+	13, // 9: clawker.admin.v1.AdminService.FirewallAddRules:input_type -> clawker.admin.v1.FirewallAddRulesRequest
+	15, // 10: clawker.admin.v1.AdminService.FirewallRemoveRule:input_type -> clawker.admin.v1.FirewallRemoveRuleRequest
+	17, // 11: clawker.admin.v1.AdminService.FirewallListRules:input_type -> clawker.admin.v1.FirewallListRulesRequest
+	19, // 12: clawker.admin.v1.AdminService.FirewallReload:input_type -> clawker.admin.v1.FirewallReloadRequest
+	21, // 13: clawker.admin.v1.AdminService.FirewallStatus:input_type -> clawker.admin.v1.FirewallStatusRequest
+	23, // 14: clawker.admin.v1.AdminService.FirewallRotateCA:input_type -> clawker.admin.v1.FirewallRotateCARequest
+	25, // 15: clawker.admin.v1.AdminService.FirewallSyncRoutes:input_type -> clawker.admin.v1.FirewallSyncRoutesRequest
+	27, // 16: clawker.admin.v1.AdminService.FirewallResolveHostname:input_type -> clawker.admin.v1.FirewallResolveHostnameRequest
+	4,  // 17: clawker.admin.v1.AdminService.FirewallInit:output_type -> clawker.admin.v1.FirewallInitResult
+	6,  // 18: clawker.admin.v1.AdminService.FirewallRemove:output_type -> clawker.admin.v1.FirewallRemoveResult
+	8,  // 19: clawker.admin.v1.AdminService.FirewallEnable:output_type -> clawker.admin.v1.FirewallEnableResult
+	10, // 20: clawker.admin.v1.AdminService.FirewallDisable:output_type -> clawker.admin.v1.FirewallDisableResult
+	12, // 21: clawker.admin.v1.AdminService.FirewallBypass:output_type -> clawker.admin.v1.FirewallBypassResult
+	14, // 22: clawker.admin.v1.AdminService.FirewallAddRules:output_type -> clawker.admin.v1.FirewallAddRulesResult
+	16, // 23: clawker.admin.v1.AdminService.FirewallRemoveRule:output_type -> clawker.admin.v1.FirewallRemoveRuleResult
+	18, // 24: clawker.admin.v1.AdminService.FirewallListRules:output_type -> clawker.admin.v1.FirewallListRulesResult
+	20, // 25: clawker.admin.v1.AdminService.FirewallReload:output_type -> clawker.admin.v1.FirewallReloadResult
+	22, // 26: clawker.admin.v1.AdminService.FirewallStatus:output_type -> clawker.admin.v1.FirewallStatusResult
+	24, // 27: clawker.admin.v1.AdminService.FirewallRotateCA:output_type -> clawker.admin.v1.FirewallRotateCAResult
+	26, // 28: clawker.admin.v1.AdminService.FirewallSyncRoutes:output_type -> clawker.admin.v1.FirewallSyncRoutesResult
+	28, // 29: clawker.admin.v1.AdminService.FirewallResolveHostname:output_type -> clawker.admin.v1.FirewallResolveHostnameResult
+	17, // [17:30] is the sub-list for method output_type
+	4,  // [4:17] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_admin_v1_admin_proto_init() }

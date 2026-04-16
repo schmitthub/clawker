@@ -67,7 +67,7 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 		expectedRPCs := []string{
 			"FirewallInit", "FirewallRemove",
 			"FirewallEnable", "FirewallDisable", "FirewallBypass",
-			"FirewallAddRules", "FirewallRemoveRules", "FirewallListRules",
+			"FirewallAddRules", "FirewallRemoveRule", "FirewallListRules",
 			"FirewallReload", "FirewallStatus", "FirewallRotateCA",
 			"FirewallSyncRoutes", "FirewallResolveHostname",
 		}

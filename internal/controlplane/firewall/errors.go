@@ -38,6 +38,7 @@ var (
 	ErrFirewallNotInitialized = errors.New("firewall not initialized")
 	ErrContainerGone          = errors.New("container no longer exists")
 	ErrRuleInvalid            = errors.New("invalid rule")
+	ErrRuleNotFound           = errors.New("rule not found")
 	ErrRuleStoreWrite         = errors.New("rule store write failed")
 	ErrCertRegen              = errors.New("ca / per-domain cert regeneration failed")
 
@@ -60,6 +61,7 @@ const (
 	ReasonFirewallNotInitialized = "FIREWALL_NOT_INITIALIZED"
 	ReasonContainerGone          = "CONTAINER_GONE"
 	ReasonRuleInvalid            = "RULE_INVALID"
+	ReasonRuleNotFound           = "RULE_NOT_FOUND"
 	ReasonRuleStoreWrite         = "RULE_STORE_WRITE"
 	ReasonCertRegen              = "CERT_REGEN"
 	ReasonStackProbe             = "STACK_PROBE"
@@ -90,6 +92,7 @@ var sentinelDispatch = []struct {
 	{ErrFirewallNotInitialized, codes.FailedPrecondition, ReasonFirewallNotInitialized},
 	{ErrContainerGone, codes.FailedPrecondition, ReasonContainerGone},
 	{ErrRuleInvalid, codes.InvalidArgument, ReasonRuleInvalid},
+	{ErrRuleNotFound, codes.NotFound, ReasonRuleNotFound},
 	{ErrRuleStoreWrite, codes.Internal, ReasonRuleStoreWrite},
 	{ErrCertRegen, codes.Internal, ReasonCertRegen},
 

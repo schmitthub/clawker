@@ -10,7 +10,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // newRemoveCmd creates a remove command wired with a background context for
@@ -116,4 +119,55 @@ func mockAdminFunc(rules []*adminv1.EgressRule, listErr error) func(context.Cont
 			},
 		}, nil
 	}
+}
+
+// TestRemoveRun_Success verifies the run path forwards dst/proto/port
+// to FirewallRemoveRule and renders the success line on a matching
+// rule.
+func TestRemoveRun_Success(t *testing.T) {
+	f := newTestFactory(t)
+	var got *adminv1.FirewallRemoveRuleRequest
+	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+		return &cpmocks.AdminServiceClientMock{
+			FirewallRemoveRuleFunc: func(_ context.Context, req *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
+				got = req
+				return &adminv1.FirewallRemoveRuleResult{StackRestarted: true}, nil
+			},
+		}, nil
+	}
+	cmd := NewCmdRemove(f, nil)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"example.com", "--proto", "tls", "--port", "443"})
+	err := cmd.Execute()
+	require.NoError(t, err)
+	require.NotNil(t, got, "FirewallRemoveRule must be called")
+	assert.Equal(t, "example.com", got.GetDst())
+	assert.Equal(t, "tls", got.GetProto())
+	assert.Equal(t, uint32(443), got.GetPort())
+}
+
+// TestRemoveRun_NotFound is the whole reason this RPC shrunk: the
+// handler's codes.NotFound must surface as a CLI error, not a silent
+// success. wrapRPCError carries the RULE_NOT_FOUND remediation line
+// through to the returned error message.
+func TestRemoveRun_NotFound(t *testing.T) {
+	f := newTestFactory(t)
+	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+		return &cpmocks.AdminServiceClientMock{
+			FirewallRemoveRuleFunc: func(_ context.Context, _ *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
+				st := status.New(codes.NotFound, "rule not found: exmaple.com:tls:443")
+				det, _ := st.WithDetails(&errdetails.ErrorInfo{
+					Reason: "RULE_NOT_FOUND",
+					Domain: "firewall.clawker.dev",
+				})
+				return nil, det.Err()
+			},
+		}, nil
+	}
+	cmd := NewCmdRemove(f, nil)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"exmaple.com"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no matching rule", "RULE_NOT_FOUND remediation hint must reach the user")
 }

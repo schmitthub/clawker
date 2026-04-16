@@ -524,16 +524,25 @@ func (h *Handler) FirewallAddRules(ctx context.Context, req *adminv1.FirewallAdd
 	}, nil
 }
 
-// FirewallRemoveRules deletes matching rules pre-Submit then reconciles
-// the stack. Mirrors the AddRules success/partial-success surface.
-func (h *Handler) FirewallRemoveRules(ctx context.Context, req *adminv1.FirewallRemoveRulesRequest) (*adminv1.FirewallRemoveRulesResult, error) {
-	rules := ProtoRulesToConfig(req.GetRules())
-	removed, err := h.removeRulesFromStore(rules)
+// FirewallRemoveRule deletes a single rule matched by (dst, proto, port)
+// pre-Submit then reconciles the stack. A miss on the store lookup
+// returns ErrRuleNotFound → codes.NotFound so a typo or
+// wrong-proto/port never masquerades as success. No ValidateDst here:
+// anything that fails to match an existing key — typo, malformed
+// hostname, or legitimate absence — collapses into the same NotFound
+// outcome, which is exactly the behavior the CLI needs to render.
+func (h *Handler) FirewallRemoveRule(ctx context.Context, req *adminv1.FirewallRemoveRuleRequest) (*adminv1.FirewallRemoveRuleResult, error) {
+	rule := config.EgressRule{
+		Dst:   req.GetDst(),
+		Proto: req.GetProto(),
+		Port:  int(req.GetPort()),
+	}
+	matched, err := h.removeRuleFromStore(rule)
 	if err != nil {
 		return nil, toStatus(fmt.Errorf("%w: %v", ErrRuleStoreWrite, err))
 	}
-	if removed == 0 {
-		return &adminv1.FirewallRemoveRulesResult{RemovedCount: 0}, nil
+	if !matched {
+		return nil, toStatus(fmt.Errorf("%w: %s:%s:%d", ErrRuleNotFound, rule.Dst, rule.Proto, rule.Port))
 	}
 
 	val, err := h.submit(ActionReconcile, h.reconcileStackClosure)
@@ -541,8 +550,7 @@ func (h *Handler) FirewallRemoveRules(ctx context.Context, req *adminv1.Firewall
 		return nil, toStatus(err)
 	}
 	rr := val.(StackReloadResult)
-	return &adminv1.FirewallRemoveRulesResult{
-		RemovedCount:   int32(removed),
+	return &adminv1.FirewallRemoveRuleResult{
 		StackRestarted: rr.Restarted,
 	}, nil
 }
@@ -912,37 +920,33 @@ func (h *Handler) addRulesToStore(rules []config.EgressRule) (int, error) {
 	return added, nil
 }
 
-// removeRulesFromStore deletes matching rules. Returns the count removed.
-func (h *Handler) removeRulesFromStore(toRemove []config.EgressRule) (int, error) {
-	if len(toRemove) == 0 {
-		return 0, nil
-	}
-	removeSet := make(map[string]struct{}, len(toRemove))
-	for _, r := range toRemove {
-		removeSet[RuleKey(NormalizeRule(r))] = struct{}{}
-	}
-	var removed int
+// removeRuleFromStore deletes the single rule whose normalized key
+// matches. Returns matched=false when no stored rule shares the key, so
+// the handler can surface ErrRuleNotFound without touching disk.
+func (h *Handler) removeRuleFromStore(toRemove config.EgressRule) (bool, error) {
+	targetKey := RuleKey(NormalizeRule(toRemove))
+	var matched bool
 	if err := h.store.Set(func(f *EgressRulesFile) {
 		normalized, _ := NormalizeAndDedup(f.Rules)
 		filtered := make([]config.EgressRule, 0, len(normalized))
 		for _, r := range normalized {
-			if _, drop := removeSet[RuleKey(r)]; drop {
-				removed++
+			if RuleKey(r) == targetKey {
+				matched = true
 				continue
 			}
 			filtered = append(filtered, r)
 		}
 		f.Rules = filtered
 	}); err != nil {
-		return 0, fmt.Errorf("removing rules: %w", err)
+		return false, fmt.Errorf("removing rule: %w", err)
 	}
-	if removed == 0 {
-		return 0, nil
+	if !matched {
+		return false, nil
 	}
 	if err := h.store.Write(); err != nil {
-		return 0, fmt.Errorf("writing rules: %w", err)
+		return false, fmt.Errorf("writing rules: %w", err)
 	}
-	return removed, nil
+	return true, nil
 }
 
 // ProtoRulesToConfig copies []*adminv1.EgressRule → []config.EgressRule.

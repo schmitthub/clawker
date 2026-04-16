@@ -929,6 +929,106 @@ func TestHandler_FirewallRemove_PreservesRulesStore(t *testing.T) {
 	assert.Equal(t, "keep.example.com", listResp.GetRules()[0].GetDst())
 }
 
+// TestHandler_RemoveRule_Success covers the happy path: rule matches
+// exactly, store is mutated, reconcile fires.
+func TestHandler_RemoveRule_Success(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"}},
+	})
+	require.NoError(t, err)
+	reloadsBefore := stack.reloadCalls
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "example.com", Proto: "tls", Port: 443,
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.GetStackRestarted())
+	assert.Equal(t, reloadsBefore+1, stack.reloadCalls, "reconcile fires on successful remove")
+
+	listResp, err := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, listResp.GetRules(), "rule removed from store")
+}
+
+// TestHandler_RemoveRule_NotFound_Typo is the whole reason this RPC
+// shrunk: a typo in the dst MUST surface as NotFound so the CLI can
+// render a failure, never a bogus "Removed rule: exmaple.com".
+func TestHandler_RemoveRule_NotFound_Typo(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"}},
+	})
+	require.NoError(t, err)
+	reloadsBefore := stack.reloadCalls
+
+	_, err = h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "exmaple.com", Proto: "tls", Port: 443,
+	})
+	require.Error(t, err)
+	assertCode(t, err, codes.NotFound)
+	assertReason(t, err, ReasonRuleNotFound)
+
+	assert.Equal(t, reloadsBefore, stack.reloadCalls, "miss must not trigger reconcile")
+	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.Len(t, listResp.GetRules(), 1, "original rule untouched on miss")
+	assert.Equal(t, "example.com", listResp.GetRules()[0].GetDst())
+}
+
+// TestHandler_RemoveRule_NotFound_WrongProto covers the second failure
+// mode the user called out: stored example.com:tcp:80, asked to remove
+// example.com:tls:443 — proto+port disagree so the key misses.
+func TestHandler_RemoveRule_NotFound_WrongProto(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "tcp", Port: 80, Action: "allow"}},
+	})
+	require.NoError(t, err)
+
+	_, err = h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "example.com", Proto: "tls", Port: 443,
+	})
+	require.Error(t, err)
+	assertCode(t, err, codes.NotFound)
+	assertReason(t, err, ReasonRuleNotFound)
+
+	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.Len(t, listResp.GetRules(), 1, "tcp:80 rule untouched when tls:443 requested")
+}
+
+// TestHandler_RemoveRule_StackDown_PersistsRemoval mirrors AddRules's
+// stack-down path: removal is durable even when the stack is down, and
+// stack_restarted reports false so the CLI can emit the "takes effect
+// next firewall up" note.
+func TestHandler_RemoveRule_StackDown_PersistsRemoval(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"}},
+	})
+	require.NoError(t, err)
+
+	stack.statusResult = Status{Running: false}
+	reloadsBefore := stack.reloadCalls
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "example.com", Proto: "tls", Port: 443,
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.GetStackRestarted())
+	assert.Equal(t, reloadsBefore, stack.reloadCalls, "stack down: no reload")
+
+	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	assert.Empty(t, listResp.GetRules(), "removal durable on disk")
+}
+
 // assertReason inspects a gRPC status error and asserts that at least
 // one errdetails.ErrorInfo carries the expected Reason string. Keeps
 // the CLI wire contract verified: CLI dispatches on Reason, not Go-side

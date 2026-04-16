@@ -105,15 +105,13 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	rule := &adminv1.EgressRule{
-		Dst:   opts.Domain,
-		Proto: opts.Proto,
-		Port:  uint32(opts.Port),
-	}
-
 	resp, err := callWithSpinner(ctx, ios, fmt.Sprintf("Removing firewall rule %s...", opts.Domain),
-		func(rpcCtx context.Context) (*adminv1.FirewallRemoveRulesResult, error) {
-			return client.FirewallRemoveRules(rpcCtx, &adminv1.FirewallRemoveRulesRequest{Rules: []*adminv1.EgressRule{rule}})
+		func(rpcCtx context.Context) (*adminv1.FirewallRemoveRuleResult, error) {
+			return client.FirewallRemoveRule(rpcCtx, &adminv1.FirewallRemoveRuleRequest{
+				Dst:   opts.Domain,
+				Proto: opts.Proto,
+				Port:  uint32(opts.Port),
+			})
 		})
 	if err != nil {
 		return wrapRPCError("removing firewall rule", err)
@@ -121,12 +119,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 
 	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.Out, "%s Removed rule: %s\n", cs.SuccessIcon(), opts.Domain)
-	// Suppress the "not running" note on a no-op removal — the
-	// RemovedCount==0 case means the rule was not in the store, so
-	// there is nothing pending next `firewall up`.
-	if resp.GetRemovedCount() > 0 {
-		printStackRestartedNote(ios, resp.GetStackRestarted(), "rule removed")
-	}
+	printStackRestartedNote(ios, resp.GetStackRestarted(), "rule removed")
 
 	return nil
 }

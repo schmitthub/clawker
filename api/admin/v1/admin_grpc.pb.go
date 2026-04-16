@@ -25,7 +25,7 @@ const (
 	AdminService_FirewallDisable_FullMethodName         = "/clawker.admin.v1.AdminService/FirewallDisable"
 	AdminService_FirewallBypass_FullMethodName          = "/clawker.admin.v1.AdminService/FirewallBypass"
 	AdminService_FirewallAddRules_FullMethodName        = "/clawker.admin.v1.AdminService/FirewallAddRules"
-	AdminService_FirewallRemoveRules_FullMethodName     = "/clawker.admin.v1.AdminService/FirewallRemoveRules"
+	AdminService_FirewallRemoveRule_FullMethodName      = "/clawker.admin.v1.AdminService/FirewallRemoveRule"
 	AdminService_FirewallListRules_FullMethodName       = "/clawker.admin.v1.AdminService/FirewallListRules"
 	AdminService_FirewallReload_FullMethodName          = "/clawker.admin.v1.AdminService/FirewallReload"
 	AdminService_FirewallStatus_FullMethodName          = "/clawker.admin.v1.AdminService/FirewallStatus"
@@ -81,8 +81,12 @@ type AdminServiceClient interface {
 	// FirewallAddRules adds egress rules to the store and hot-reloads the
 	// stack. Synchronous: returns after the stack is healthy again.
 	FirewallAddRules(ctx context.Context, in *FirewallAddRulesRequest, opts ...grpc.CallOption) (*FirewallAddRulesResult, error)
-	// FirewallRemoveRules removes egress rules and hot-reloads the stack.
-	FirewallRemoveRules(ctx context.Context, in *FirewallRemoveRulesRequest, opts ...grpc.CallOption) (*FirewallRemoveRulesResult, error)
+	// FirewallRemoveRule removes a single egress rule by (dst, proto, port)
+	// and hot-reloads the stack. Returns NOT_FOUND (sentinel
+	// RULE_NOT_FOUND) when no rule matches the key — typos and malformed
+	// hostnames both land here, since anything that can't match an
+	// existing rule key is a miss.
+	FirewallRemoveRule(ctx context.Context, in *FirewallRemoveRuleRequest, opts ...grpc.CallOption) (*FirewallRemoveRuleResult, error)
 	// FirewallListRules returns the current normalized/deduplicated rule
 	// set from the store. Read-only.
 	FirewallListRules(ctx context.Context, in *FirewallListRulesRequest, opts ...grpc.CallOption) (*FirewallListRulesResult, error)
@@ -171,10 +175,10 @@ func (c *adminServiceClient) FirewallAddRules(ctx context.Context, in *FirewallA
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallRemoveRules(ctx context.Context, in *FirewallRemoveRulesRequest, opts ...grpc.CallOption) (*FirewallRemoveRulesResult, error) {
+func (c *adminServiceClient) FirewallRemoveRule(ctx context.Context, in *FirewallRemoveRuleRequest, opts ...grpc.CallOption) (*FirewallRemoveRuleResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallRemoveRulesResult)
-	err := c.cc.Invoke(ctx, AdminService_FirewallRemoveRules_FullMethodName, in, out, cOpts...)
+	out := new(FirewallRemoveRuleResult)
+	err := c.cc.Invoke(ctx, AdminService_FirewallRemoveRule_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -288,8 +292,12 @@ type AdminServiceServer interface {
 	// FirewallAddRules adds egress rules to the store and hot-reloads the
 	// stack. Synchronous: returns after the stack is healthy again.
 	FirewallAddRules(context.Context, *FirewallAddRulesRequest) (*FirewallAddRulesResult, error)
-	// FirewallRemoveRules removes egress rules and hot-reloads the stack.
-	FirewallRemoveRules(context.Context, *FirewallRemoveRulesRequest) (*FirewallRemoveRulesResult, error)
+	// FirewallRemoveRule removes a single egress rule by (dst, proto, port)
+	// and hot-reloads the stack. Returns NOT_FOUND (sentinel
+	// RULE_NOT_FOUND) when no rule matches the key — typos and malformed
+	// hostnames both land here, since anything that can't match an
+	// existing rule key is a miss.
+	FirewallRemoveRule(context.Context, *FirewallRemoveRuleRequest) (*FirewallRemoveRuleResult, error)
 	// FirewallListRules returns the current normalized/deduplicated rule
 	// set from the store. Read-only.
 	FirewallListRules(context.Context, *FirewallListRulesRequest) (*FirewallListRulesResult, error)
@@ -336,8 +344,8 @@ func (UnimplementedAdminServiceServer) FirewallBypass(context.Context, *Firewall
 func (UnimplementedAdminServiceServer) FirewallAddRules(context.Context, *FirewallAddRulesRequest) (*FirewallAddRulesResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallAddRules not implemented")
 }
-func (UnimplementedAdminServiceServer) FirewallRemoveRules(context.Context, *FirewallRemoveRulesRequest) (*FirewallRemoveRulesResult, error) {
-	return nil, status.Error(codes.Unimplemented, "method FirewallRemoveRules not implemented")
+func (UnimplementedAdminServiceServer) FirewallRemoveRule(context.Context, *FirewallRemoveRuleRequest) (*FirewallRemoveRuleResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method FirewallRemoveRule not implemented")
 }
 func (UnimplementedAdminServiceServer) FirewallListRules(context.Context, *FirewallListRulesRequest) (*FirewallListRulesResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallListRules not implemented")
@@ -486,20 +494,20 @@ func _AdminService_FirewallAddRules_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
-func _AdminService_FirewallRemoveRules_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FirewallRemoveRulesRequest)
+func _AdminService_FirewallRemoveRule_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FirewallRemoveRuleRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(AdminServiceServer).FirewallRemoveRules(ctx, in)
+		return srv.(AdminServiceServer).FirewallRemoveRule(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: AdminService_FirewallRemoveRules_FullMethodName,
+		FullMethod: AdminService_FirewallRemoveRule_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AdminServiceServer).FirewallRemoveRules(ctx, req.(*FirewallRemoveRulesRequest))
+		return srv.(AdminServiceServer).FirewallRemoveRule(ctx, req.(*FirewallRemoveRuleRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -644,8 +652,8 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _AdminService_FirewallAddRules_Handler,
 		},
 		{
-			MethodName: "FirewallRemoveRules",
-			Handler:    _AdminService_FirewallRemoveRules_Handler,
+			MethodName: "FirewallRemoveRule",
+			Handler:    _AdminService_FirewallRemoveRule_Handler,
 		},
 		{
 			MethodName: "FirewallListRules",
