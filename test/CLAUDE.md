@@ -51,7 +51,7 @@ Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`
 | `GitManager` | `func(string) (*git.GitManager, error)` | nil (no-op) |
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.MockManager` |
 | `SocketBridge` | `func(cfg, log) socketbridge.SocketBridgeManager` | nil (no-op) |
-| `UseRealAdminClient` | `bool` — when true, wires a production-identical AdminClient (mirrors `adminClientFunc` in `internal/cmd/factory/default.go`: mutex cache + cacheableState re-dial + keepalive + `cpboot.EnsureRunning` via the shared Docker client). When false, `cpmocks.AdminServiceClientMock` (no-op). |
+| `UseRealAdminClient` | `bool` — when true, wires a production-identical pure-dial AdminClient (mirrors `adminClientFunc` in `internal/cmd/factory/default.go`: mutex-guarded cache + `cacheableState` re-dial on TransientFailure/Shutdown + keepalive params via `adminclient.Dial`). Does **not** bootstrap the CP — CP lifecycle is owned by container-start and explicit `controlplane up` (see `ControlPlane` field below). When false, `cpmocks.AdminServiceClientMock` (no-op). |
 | `ControlPlane` | `func(cfg, log) cpboot.Manager` | `cpbootmocks.ManagerMock` (every method returns zero values so tests that don't touch CP verbs never bootstrap a real CP) |
 
 ### Functions
@@ -115,7 +115,7 @@ Tests exercise the full Envoy+CoreDNS firewall stack with real Docker.
 | `TestFirewall_Status` | `firewall status --json` reports health + rule count |
 | `TestFirewall_PathRules*` | HTTP and TLS MITM path rule enforcement |
 
-Tests drive the CP AdminService through `f.AdminClient(ctx)`. The harness wires a production-identical AdminClient closure when `Opts.UseRealAdminClient == true` — mirrors `adminClientFunc` in `internal/cmd/factory/default.go` line-for-line (mutex cache, `cacheableState` re-dial on `TransientFailure`/`Shutdown`, keepalive params, `cpboot.EnsureRunning` via the harness's shared Docker client so CP containers carry test labels, `adminclient.Dial`). Any divergence is a bug: E2E must exercise the code path the CLI ships with. Cleanup tears down Envoy+CoreDNS + the CP container before removing test resources.
+Tests drive the CP AdminService through `f.AdminClient(ctx)`. When `Opts.UseRealAdminClient == true`, the harness wires a production-identical pure-dial closure that mirrors `adminClientFunc` in `internal/cmd/factory/default.go` line-for-line (mutex-guarded cache, `cacheableState` re-dial on `TransientFailure`/`Shutdown`, keepalive params, `adminclient.Dial`). The closure does NOT bootstrap the CP — that's owned by container-start and explicit `controlplane up`. This is load-bearing for the fail-fast semantics: admin commands surface a clear error when the CP is down rather than silently spinning one up. Any divergence from production is a bug: E2E must exercise the code path the CLI ships with. Cleanup tears down Envoy+CoreDNS + the CP container before removing test resources.
 
 ## Debugging Resource Leaks
 

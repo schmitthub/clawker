@@ -67,7 +67,7 @@ func New(version string) *cmdutil.Factory {
 	f.Client = clientFunc(f)                 // depends on Config
 	f.GitManager = gitManagerFunc(f)         // depends on Config
 	f.Prompter = prompterFunc(f)
-	f.AdminClient = adminClientFunc(f)   // depends on Config, Logger, Client
+	f.AdminClient = adminClientFunc(f)   // depends on Config
 	f.ControlPlane = controlPlaneFunc(f) // depends on Config, Logger, Client
 
 	return f

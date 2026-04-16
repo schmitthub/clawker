@@ -92,8 +92,10 @@ type actionItem struct {
 // goroutine. Items execute in strict FIFO order across kinds; consecutive
 // items whose kind returns true from Coalesces collapse into one
 // execution and every drained submitter receives the same result. Submit
-// is close-safe: submissions accepted before Close returned run to
-// completion, submissions made after Close returned receive ErrClosed.
+// is close-safe: submissions accepted before Close was called run to
+// completion; once Close has been called (even before it returns),
+// further submissions receive ErrClosed. Close then blocks until the
+// worker has drained every accepted item.
 type ActionQueue struct {
 	log    *logger.Logger
 	ctx    context.Context
@@ -125,10 +127,10 @@ func NewActionQueue(log *logger.Logger) *ActionQueue {
 }
 
 // Submit enqueues fn for execution under kind and returns a channel that
-// will receive exactly one ActionResult. Submissions made after Close
-// returned receive a pre-closed channel carrying ErrClosed; a nil fn
-// likewise receives ErrNilClosure. Submit never panics and never waits
-// on the worker to drain (the reply channel is buffered).
+// will receive exactly one ActionResult. Once Close has been called,
+// further submissions receive a pre-closed channel carrying ErrClosed;
+// a nil fn likewise receives ErrNilClosure. Submit never panics and
+// never waits on the worker to drain (the reply channel is buffered).
 func (q *ActionQueue) Submit(kind ActionKind, fn ActionFunc) <-chan ActionResult {
 	reply := make(chan ActionResult, 1)
 	if fn == nil {

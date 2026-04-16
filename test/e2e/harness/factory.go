@@ -64,10 +64,13 @@ type FactoryOptions struct {
 	SocketBridge   func(config.Config, *logger.Logger) socketbridge.SocketBridgeManager
 	// UseRealAdminClient, when true, wires a production-identical
 	// AdminClient closure — the exact `adminClientFunc` in
-	// internal/cmd/factory/default.go (mutex-guarded cache + cacheableState
-	// re-dial + keepalive params + cpboot.EnsureRunning via the harness's
-	// shared Docker client/config/logger). When false the harness wires a
-	// no-op AdminServiceClientMock.
+	// internal/cmd/factory/default.go (mutex-guarded cache +
+	// cacheableState re-dial on TransientFailure/Shutdown +
+	// keepalive params + adminclient.Dial). Pure dial — does NOT
+	// bootstrap the CP; lifecycle is owned by container-start and
+	// explicit `controlplane up`, so E2E tests fail fast when the
+	// CP is down (matching CLI behavior). When false the harness
+	// wires a no-op AdminServiceClientMock.
 	UseRealAdminClient bool
 	// ControlPlane optionally provides a real Manager that drives the
 	// host-side CP container lifecycle. When nil the harness wires a

@@ -8,7 +8,6 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/runtime/protoiface"
 )
 
@@ -124,10 +123,10 @@ func toStatus(err error) error {
 			if len(details) == 0 {
 				primaryCode = d.code
 			}
-			details = append(details, adaptInfo(&errdetails.ErrorInfo{
+			details = append(details, &errdetails.ErrorInfo{
 				Reason: d.reason,
 				Domain: ErrorInfoDomain,
-			}))
+			})
 		}
 	}
 
@@ -141,22 +140,6 @@ func toStatus(err error) error {
 	}
 	return withDetails.Err()
 }
-
-// adaptInfo adapts errdetails.ErrorInfo (proto.MessageV2) to the V1
-// interface grpc/status.WithDetails expects. Confined here so no other
-// firewall file touches proto-interop shims.
-func adaptInfo(e *errdetails.ErrorInfo) protoiface.MessageV1 {
-	return v1Wrapper{e}
-}
-
-type v1Wrapper struct {
-	e *errdetails.ErrorInfo
-}
-
-func (v v1Wrapper) Reset()                             { v.e.Reset() }
-func (v v1Wrapper) String() string                     { return v.e.String() }
-func (v v1Wrapper) ProtoMessage()                      {}
-func (v v1Wrapper) ProtoReflect() protoreflect.Message { return v.e.ProtoReflect() }
 
 // HealthTimeoutError is returned when a firewall stack health wait
 // exceeds its deadline. Err wraps one or more of the stack health
