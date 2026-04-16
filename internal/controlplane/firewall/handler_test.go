@@ -16,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -108,20 +109,26 @@ func testConfig() config.Config {
 }
 
 // newTestHandler builds a Handler with the given EBPF mock and resolver,
-// a fake stack, and no rule store. Tests that exercise rule-store paths
-// build their own Handler with a real store via testenv. resolveHostFn
-// is wired to a fixed answer so FirewallEnable's host-proxy bypass path
-// (default-enabled in the mock config) doesn't hit the real resolver.
-func newTestHandler(mock *ebpfmocks.EBPFManagerMock, resolver ContainerResolver) *Handler {
+// a fake stack, no rule store, and a live ActionQueue. Tests register
+// the queue's Close with t.Cleanup so the worker goroutine exits with
+// the test. Tests that exercise rule-store paths build their own
+// Handler with a real store via testenv. resolveHostFn is wired to a
+// fixed answer so FirewallEnable's host-proxy bypass path (default-
+// enabled in the mock config) doesn't hit the real resolver.
+func newTestHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock, resolver ContainerResolver) *Handler {
+	t.Helper()
 	if resolver == nil {
 		resolver = nopResolver
 	}
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
 	h := NewHandler(HandlerDeps{
 		EBPF:     mock,
 		Stack:    &fakeStack{},
 		Cfg:      testConfig(),
 		Resolver: resolver,
 		Log:      logger.Nop(),
+		Queue:    q,
 	})
 	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
 		return []string{"192.168.65.254"}, nil
@@ -161,7 +168,7 @@ func assertCode(t *testing.T, err error, want codes.Code) {
 
 func TestHandler_FirewallEnable_Success(t *testing.T) {
 	mock := noopMock()
-	h := newTestHandler(mock, nil)
+	h := newTestHandler(t, mock, nil)
 
 	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
 		ContainerId: "ctr-1",
@@ -186,7 +193,7 @@ func TestHandler_FirewallEnable_Success(t *testing.T) {
 }
 
 func TestHandler_FirewallEnable_EmptyContainerID(t *testing.T) {
-	h := newTestHandler(noopMock(), nil)
+	h := newTestHandler(t, noopMock(), nil)
 	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{})
 	assertCode(t, err, codes.InvalidArgument)
 }
@@ -195,7 +202,7 @@ func TestHandler_FirewallEnable_ContainerGone_FailedPrecondition(t *testing.T) {
 	resolver := func(_ context.Context, _ string) (string, string, bool, error) {
 		return "", "", false, nil
 	}
-	h := newTestHandler(noopMock(), resolver)
+	h := newTestHandler(t, noopMock(), resolver)
 	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
 		ContainerId: "ctr-gone",
 	})
@@ -204,7 +211,7 @@ func TestHandler_FirewallEnable_ContainerGone_FailedPrecondition(t *testing.T) {
 
 func TestHandler_FirewallEnable_NetworkInfoError_PropagatesInternal(t *testing.T) {
 	mock := noopMock()
-	h := newTestHandler(mock, nil)
+	h := newTestHandler(t, mock, nil)
 	h.stack.(*fakeStack).netInfoErr = errors.New("docker unreachable")
 	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
 		ContainerId: "ctr-1",
@@ -217,7 +224,7 @@ func TestHandler_FirewallEnable_NetworkInfoError_PropagatesInternal(t *testing.T
 
 func TestHandler_FirewallEnable_HostProxyResolveError_PropagatesInternal(t *testing.T) {
 	mock := noopMock()
-	h := newTestHandler(mock, nil)
+	h := newTestHandler(t, mock, nil)
 	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
 		return nil, errors.New("nxdomain")
 	}
@@ -232,7 +239,7 @@ func TestHandler_FirewallEnable_HostProxyResolveError_PropagatesInternal(t *test
 
 func TestHandler_FirewallEnable_DriftDetected_UsesFreshID(t *testing.T) {
 	mock := noopMock()
-	h := newTestHandler(mock, nil) // fresh cgroup ID from the fake is testCgroupID
+	h := newTestHandler(t, mock, nil) // fresh cgroup ID from the fake is testCgroupID
 
 	// Pre-populate stored cgroup ID with a stale value.
 	h.cgroupIDMu.Lock()
@@ -267,7 +274,7 @@ func TestHandler_FirewallEnable_EBPFError_PropagatesInternal(t *testing.T) {
 	mock.InstallFunc = func(_ uint64, _ string, _ ebpf.BPFContainerConfig) error {
 		return errors.New("install failed")
 	}
-	h := newTestHandler(mock, nil)
+	h := newTestHandler(t, mock, nil)
 	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
 		ContainerId: "ctr-err",
 	})
@@ -276,7 +283,7 @@ func TestHandler_FirewallEnable_EBPFError_PropagatesInternal(t *testing.T) {
 
 func TestHandler_FirewallEnable_CancelsBypassTimer(t *testing.T) {
 	mock := noopMock()
-	h := newTestHandler(mock, nil)
+	h := newTestHandler(t, mock, nil)
 
 	// Plant a bypass entry whose timer would fire if not cancelled.
 	const cid = "ctr-bypassed"
@@ -319,7 +326,7 @@ func TestHandler_FirewallEnable_CancelsBypassTimer(t *testing.T) {
 
 func TestHandler_FirewallDisable_Success(t *testing.T) {
 	mock := noopMock()
-	h := newTestHandler(mock, nil)
+	h := newTestHandler(t, mock, nil)
 	_, err := h.FirewallDisable(context.Background(), &adminv1.FirewallDisableRequest{ContainerId: "ctr-1"})
 	if err != nil {
 		t.Fatalf("FirewallDisable returned error: %v", err)
@@ -330,7 +337,7 @@ func TestHandler_FirewallDisable_Success(t *testing.T) {
 }
 
 func TestHandler_FirewallDisable_EmptyContainerID(t *testing.T) {
-	h := newTestHandler(noopMock(), nil)
+	h := newTestHandler(t, noopMock(), nil)
 	_, err := h.FirewallDisable(context.Background(), &adminv1.FirewallDisableRequest{})
 	assertCode(t, err, codes.InvalidArgument)
 }
@@ -340,7 +347,7 @@ func TestHandler_FirewallDisable_ContainerGone_KnownStored_UsesFallback(t *testi
 	resolver := func(_ context.Context, ref string) (string, string, bool, error) {
 		return ref, "", false, nil
 	}
-	h := newTestHandler(mock, resolver)
+	h := newTestHandler(t, mock, resolver)
 	const cid = "ctr-gone"
 	h.cgroupIDMu.Lock()
 	h.storedCgroupID[cid] = 12345
@@ -361,7 +368,7 @@ func TestHandler_FirewallDisable_ContainerUnknown_NoOp(t *testing.T) {
 	resolver := func(_ context.Context, ref string) (string, string, bool, error) {
 		return ref, "", false, nil
 	}
-	h := newTestHandler(mock, resolver)
+	h := newTestHandler(t, mock, resolver)
 	_, err := h.FirewallDisable(context.Background(), &adminv1.FirewallDisableRequest{ContainerId: "never-seen"})
 	if err != nil {
 		t.Fatalf("FirewallDisable returned error: %v", err)
@@ -377,7 +384,7 @@ func TestHandler_FirewallDisable_ContainerUnknown_NoOp(t *testing.T) {
 
 func TestHandler_FirewallBypass_Success(t *testing.T) {
 	mock := noopMock()
-	h := newTestHandler(mock, nil)
+	h := newTestHandler(t, mock, nil)
 	_, err := h.FirewallBypass(context.Background(), &adminv1.FirewallBypassRequest{
 		ContainerId: "ctr-1", TimeoutSeconds: 30,
 	})
@@ -398,13 +405,13 @@ func TestHandler_FirewallBypass_Success(t *testing.T) {
 }
 
 func TestHandler_FirewallBypass_EmptyContainerID(t *testing.T) {
-	h := newTestHandler(noopMock(), nil)
+	h := newTestHandler(t, noopMock(), nil)
 	_, err := h.FirewallBypass(context.Background(), &adminv1.FirewallBypassRequest{TimeoutSeconds: 30})
 	assertCode(t, err, codes.InvalidArgument)
 }
 
 func TestHandler_FirewallBypass_TimeoutExceedsMax(t *testing.T) {
-	h := newTestHandler(noopMock(), nil)
+	h := newTestHandler(t, noopMock(), nil)
 	_, err := h.FirewallBypass(context.Background(), &adminv1.FirewallBypassRequest{
 		ContainerId: "ctr-1", TimeoutSeconds: uint32((maxBypassTimeout + time.Second).Seconds()),
 	})
@@ -415,7 +422,7 @@ func TestHandler_FirewallBypass_ContainerGone_FailedPrecondition(t *testing.T) {
 	resolver := func(_ context.Context, _ string) (string, string, bool, error) {
 		return "", "", false, nil
 	}
-	h := newTestHandler(noopMock(), resolver)
+	h := newTestHandler(t, noopMock(), resolver)
 	_, err := h.FirewallBypass(context.Background(), &adminv1.FirewallBypassRequest{
 		ContainerId: "ctr-gone", TimeoutSeconds: 30,
 	})
@@ -429,7 +436,7 @@ func TestHandler_FirewallBypass_TimerAutoEnables(t *testing.T) {
 		enableCalled <- cgroupID
 		return nil
 	}
-	h := newTestHandler(mock, nil)
+	h := newTestHandler(t, mock, nil)
 
 	_, err := h.FirewallBypass(context.Background(), &adminv1.FirewallBypassRequest{
 		ContainerId: "ctr-auto", TimeoutSeconds: 1,
@@ -456,7 +463,7 @@ func TestHandler_FirewallBypass_TimerAutoEnables(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandler_FirewallResolveHostname_Success(t *testing.T) {
-	h := newTestHandler(noopMock(), nil)
+	h := newTestHandler(t, noopMock(), nil)
 	h.resolveHostFn = func(_ context.Context, host string) ([]string, error) {
 		if host != "host.docker.internal" {
 			t.Fatalf("unexpected host %q", host)
@@ -475,13 +482,13 @@ func TestHandler_FirewallResolveHostname_Success(t *testing.T) {
 }
 
 func TestHandler_FirewallResolveHostname_Empty(t *testing.T) {
-	h := newTestHandler(noopMock(), nil)
+	h := newTestHandler(t, noopMock(), nil)
 	_, err := h.FirewallResolveHostname(context.Background(), &adminv1.FirewallResolveHostnameRequest{})
 	assertCode(t, err, codes.InvalidArgument)
 }
 
 func TestHandler_FirewallResolveHostname_DNSError(t *testing.T) {
-	h := newTestHandler(noopMock(), nil)
+	h := newTestHandler(t, noopMock(), nil)
 	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
 		return nil, errors.New("nxdomain")
 	}
@@ -534,9 +541,11 @@ func TestHandler_StackRPCs_DelegateToStack(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			stack := &fakeStack{}
+			stack := &fakeStack{statusResult: Status{Running: true}}
+			q := NewActionQueue(nil)
+			t.Cleanup(func() { _ = q.Close() })
 			h := NewHandler(HandlerDeps{
-				EBPF: noopMock(), Stack: stack, Resolver: nopResolver, Log: logger.Nop(),
+				EBPF: noopMock(), Stack: stack, Resolver: nopResolver, Log: logger.Nop(), Queue: q,
 			})
 			require.NoError(t, tc.call(h))
 			assert.Equal(t, 1, tc.getCalls(stack), "stack method called exactly once")
@@ -546,11 +555,123 @@ func TestHandler_StackRPCs_DelegateToStack(t *testing.T) {
 
 func TestHandler_FirewallInit_StackFailure_PropagatesInternal(t *testing.T) {
 	stack := &fakeStack{ensureErr: errors.New("docker down")}
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
 	h := NewHandler(HandlerDeps{
-		EBPF: noopMock(), Stack: stack, Resolver: nopResolver, Log: logger.Nop(),
+		EBPF: noopMock(), Stack: stack, Resolver: nopResolver, Log: logger.Nop(), Queue: q,
 	})
 	_, err := h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
 	assertCode(t, err, codes.Internal)
+}
+
+// TestHandler_FirewallInit_ReenrollsRunningAgents locks in the
+// regression fix for the "CP restart leaves running agents unenforced"
+// bug: after the firewall stack is healthy, Init must re-Install every
+// running managed agent. Without this, the previous CP's FlushAll
+// wipes container_map and long-lived agents egress unenforced
+// (fail-open by BPF design) until they are restarted or explicitly
+// re-enabled.
+func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
+	stack := &fakeStack{statusResult: Status{Running: true}}
+	mock := noopMock()
+
+	// Two agent containers — both resolve to distinct cgroup paths/ids
+	// so we can assert Install was called with the right arguments.
+	agents := []string{"agent-A", "agent-B"}
+	cgroupPaths := map[string]string{
+		"agent-A": "/test/cgroup/agent-A",
+		"agent-B": "/test/cgroup/agent-B",
+	}
+	cgroupIDs := map[string]uint64{
+		"agent-A": 111,
+		"agent-B": 222,
+	}
+	resolver := func(_ context.Context, ref string) (string, string, bool, error) {
+		p, ok := cgroupPaths[ref]
+		if !ok {
+			return ref, testCgroupPath, true, nil
+		}
+		return ref, p, true, nil
+	}
+
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
+	h := NewHandler(HandlerDeps{
+		EBPF:       mock,
+		Stack:      stack,
+		Cfg:        testConfig(),
+		Resolver:   resolver,
+		Log:        logger.Nop(),
+		Queue:      q,
+		ListAgents: func(_ context.Context) ([]string, error) { return agents, nil },
+	})
+	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
+		return []string{"192.168.65.254"}, nil
+	}
+	h.cgroupIDFn = func(path string) (uint64, error) {
+		for cid, p := range cgroupPaths {
+			if p == path {
+				return cgroupIDs[cid], nil
+			}
+		}
+		return testCgroupID, nil
+	}
+
+	_, err := h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+	require.NoError(t, err)
+	require.Len(t, mock.InstallCalls(), 2, "both agents must be enrolled during FirewallInit")
+
+	// InstallCalls order mirrors the agent list order. Assert per-call
+	// cgroup identity so a regression that accidentally installed the
+	// same config twice (or swapped indices) shows up clearly.
+	gotIDs := []uint64{mock.InstallCalls()[0].CgroupID, mock.InstallCalls()[1].CgroupID}
+	assert.ElementsMatch(t, []uint64{111, 222}, gotIDs)
+}
+
+// TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure verifies
+// the best-effort loop: one broken agent must not block enrollment for
+// the rest, and FirewallInit itself must succeed. Stack-wide init is
+// strictly more valuable than perfect per-container coverage — any
+// agent we failed to enroll stays fail-open exactly as it was before
+// Init ran.
+func TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure(t *testing.T) {
+	stack := &fakeStack{statusResult: Status{Running: true}}
+	mock := noopMock()
+	installCalls := 0
+	mock.InstallFunc = func(cgroupID uint64, _ string, _ ebpf.BPFContainerConfig) error {
+		installCalls++
+		if cgroupID == 111 {
+			return errors.New("cgroup 111 broken")
+		}
+		return nil
+	}
+	resolver := func(_ context.Context, ref string) (string, string, bool, error) {
+		return ref, "/test/cgroup/" + ref, true, nil
+	}
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
+	h := NewHandler(HandlerDeps{
+		EBPF:       mock,
+		Stack:      stack,
+		Cfg:        testConfig(),
+		Resolver:   resolver,
+		Log:        logger.Nop(),
+		Queue:      q,
+		ListAgents: func(_ context.Context) ([]string, error) { return []string{"broken", "healthy"}, nil },
+	})
+	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
+		return []string{"192.168.65.254"}, nil
+	}
+	h.cgroupIDFn = func(path string) (uint64, error) {
+		if path == "/test/cgroup/broken" {
+			return 111, nil
+		}
+		return 222, nil
+	}
+
+	_, err := h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+	require.NoError(t, err, "per-agent failure must not fail Init")
+	assert.Equal(t, 2, installCalls, "both agents attempted; failure on one does not short-circuit")
 }
 
 // ---------------------------------------------------------------------------
@@ -636,7 +757,7 @@ func TestBypassTimerFired_AllRetriesExhausted_CleansUpEntry(t *testing.T) {
 	mock.EnableFunc = func(_ uint64) error {
 		return errors.New("enable always fails")
 	}
-	h := newTestHandler(mock, nil)
+	h := newTestHandler(t, mock, nil)
 
 	const cid = "ctr-retry-exhaust"
 	entry := &bypassEntry{
@@ -671,7 +792,7 @@ func TestBypassTimerFired_SucceedsOnRetry_CleansUpEntry(t *testing.T) {
 		}
 		return nil
 	}
-	h := newTestHandler(mock, nil)
+	h := newTestHandler(t, mock, nil)
 
 	const cid = "ctr-retry-succeed"
 	entry := &bypassEntry{
@@ -701,7 +822,7 @@ func TestBypassTimerFired_SucceedsOnRetry_CleansUpEntry(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandler_CancelAllBypassTimers_StopsAndClears(t *testing.T) {
-	h := newTestHandler(noopMock(), nil)
+	h := newTestHandler(t, noopMock(), nil)
 
 	for _, cid := range []string{"ctr-a", "ctr-b", "ctr-c"} {
 		h.bypassTimers[cid] = &bypassEntry{
@@ -785,4 +906,251 @@ func TestProtoRulesRoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Queue behavior: coalescing, FIFO, sentinels
+// ---------------------------------------------------------------------------
+
+// ruleStoreHandler builds a Handler wired with a real rules store on an
+// isolated filesystem so tests can exercise the full add/remove/reload
+// paths end-to-end. The returned fakeStack reports Running=true by
+// default so reconcileStackClosure takes the reload branch; tests flip
+// statusResult.Running = false to exercise the down-stack path.
+func ruleStoreHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock) (*Handler, *fakeStack) {
+	t.Helper()
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	store, err := NewRulesStore(cfg)
+	require.NoError(t, err)
+
+	stack := &fakeStack{statusResult: Status{Running: true}}
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
+	h := NewHandler(HandlerDeps{
+		EBPF:     mock,
+		Stack:    stack,
+		Store:    store,
+		Cfg:      cfg,
+		Resolver: nopResolver,
+		Log:      logger.Nop(),
+		Queue:    q,
+	})
+	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
+		return []string{"192.168.65.254"}, nil
+	}
+	h.cgroupIDFn = func(string) (uint64, error) { return testCgroupID, nil }
+	return h, stack
+}
+
+// TestHandler_Reload_CallsSyncRoutesAfterReload verifies the
+// reconcileStackClosure runs Stack.Reload AND ebpf.SyncRoutes in order.
+// This is the "SyncRoutes bug" fix from the initiative: the old
+// FirewallAddRules/RemoveRules called Stack.Reload but NOT
+// ebpf.SyncRoutes, leaving route_map stale after rule mutations.
+func TestHandler_Reload_CallsSyncRoutesAfterReload(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"}},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, stack.reloadCalls, "Stack.Reload called once per reconcile")
+	require.Len(t, mock.SyncRoutesCalls(), 1, "ebpf.SyncRoutes called exactly once per reconcile")
+
+	// Routes derived from the store (not from req) and carry EnvoyPort
+	// from cfg.
+	routes := mock.SyncRoutesCalls()[0].Routes
+	require.Len(t, routes, 1)
+	assert.NotZero(t, routes[0].DomainHash)
+	assert.Equal(t, uint16(443), routes[0].DstPort)
+}
+
+// TestHandler_AddRules_StackDown_PersistsWithoutRestart proves the
+// partial-success semantic: when the stack is down, the rule still
+// lands in the store and the RPC returns stack_restarted=false rather
+// than failing.
+func TestHandler_AddRules_StackDown_PersistsWithoutRestart(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+	stack.statusResult = Status{Running: false}
+
+	resp, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "durable.example.com", Proto: "tls", Port: 443, Action: "allow"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), resp.GetAddedCount(), "added_count reflects the durable rule")
+	assert.False(t, resp.GetStackRestarted(), "stack was down — no restart fired")
+
+	// Rule is still in the store for the next firewall up.
+	listResp, err := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.NoError(t, err)
+	require.Len(t, listResp.GetRules(), 1)
+	assert.Equal(t, "durable.example.com", listResp.GetRules()[0].GetDst())
+
+	// No Reload should have fired since stack was down.
+	assert.Equal(t, 0, stack.reloadCalls)
+	assert.Empty(t, mock.SyncRoutesCalls(), "SyncRoutes skipped when stack is down")
+}
+
+// TestHandler_AddRules_InvalidDomain_ReturnsRuleInvalid verifies the
+// pre-Submit validation path: a bad destination aborts before the store
+// write and never queues a reconcile.
+func TestHandler_AddRules_InvalidDomain_ReturnsRuleInvalid(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "INVALID UPPERCASE", Proto: "tls", Port: 443, Action: "allow"}},
+	})
+	require.Error(t, err)
+	assertCode(t, err, codes.InvalidArgument)
+	assertReason(t, err, ReasonRuleInvalid)
+
+	assert.Equal(t, 0, stack.reloadCalls, "invalid rule must not trigger a reconcile")
+	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	assert.Empty(t, listResp.GetRules(), "invalid rule must not land in the store")
+}
+
+// TestHandler_FirewallRemove_PreservesRulesStore is the teardown-
+// semantic fix from the initiative. A user who runs `firewall remove
+// evil.com` after `firewall down` must see that removal reflected when
+// the firewall comes back up — which requires the store to survive
+// teardown.
+func TestHandler_FirewallRemove_PreservesRulesStore(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	// Seed a rule while the stack is running.
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "keep.example.com", Proto: "tls", Port: 443, Action: "allow"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, stack.reloadCalls)
+
+	// Tear down — rules file MUST survive.
+	_, err = h.FirewallRemove(context.Background(), &adminv1.FirewallRemoveRequest{})
+	require.NoError(t, err)
+
+	listResp, err := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.NoError(t, err)
+	require.Len(t, listResp.GetRules(), 1, "rules store must survive teardown (trailing-mutation invariant)")
+	assert.Equal(t, "keep.example.com", listResp.GetRules()[0].GetDst())
+}
+
+// TestHandler_RemoveRule_Success covers the happy path: rule matches
+// exactly, store is mutated, reconcile fires.
+func TestHandler_RemoveRule_Success(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"}},
+	})
+	require.NoError(t, err)
+	reloadsBefore := stack.reloadCalls
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "example.com", Proto: "tls", Port: 443,
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.GetStackRestarted())
+	assert.Equal(t, reloadsBefore+1, stack.reloadCalls, "reconcile fires on successful remove")
+
+	listResp, err := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, listResp.GetRules(), "rule removed from store")
+}
+
+// TestHandler_RemoveRule_NotFound_Typo is the whole reason this RPC
+// shrunk: a typo in the dst MUST surface as NotFound so the CLI can
+// render a failure, never a bogus "Removed rule: exmaple.com".
+func TestHandler_RemoveRule_NotFound_Typo(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"}},
+	})
+	require.NoError(t, err)
+	reloadsBefore := stack.reloadCalls
+
+	_, err = h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "exmaple.com", Proto: "tls", Port: 443,
+	})
+	require.Error(t, err)
+	assertCode(t, err, codes.NotFound)
+	assertReason(t, err, ReasonRuleNotFound)
+
+	assert.Equal(t, reloadsBefore, stack.reloadCalls, "miss must not trigger reconcile")
+	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.Len(t, listResp.GetRules(), 1, "original rule untouched on miss")
+	assert.Equal(t, "example.com", listResp.GetRules()[0].GetDst())
+}
+
+// TestHandler_RemoveRule_NotFound_WrongProto covers the second failure
+// mode the user called out: stored example.com:tcp:80, asked to remove
+// example.com:tls:443 — proto+port disagree so the key misses.
+func TestHandler_RemoveRule_NotFound_WrongProto(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "tcp", Port: 80, Action: "allow"}},
+	})
+	require.NoError(t, err)
+
+	_, err = h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "example.com", Proto: "tls", Port: 443,
+	})
+	require.Error(t, err)
+	assertCode(t, err, codes.NotFound)
+	assertReason(t, err, ReasonRuleNotFound)
+
+	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.Len(t, listResp.GetRules(), 1, "tcp:80 rule untouched when tls:443 requested")
+}
+
+// TestHandler_RemoveRule_StackDown_PersistsRemoval mirrors AddRules's
+// stack-down path: removal is durable even when the stack is down, and
+// stack_restarted reports false so the CLI can emit the "takes effect
+// next firewall up" note.
+func TestHandler_RemoveRule_StackDown_PersistsRemoval(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"}},
+	})
+	require.NoError(t, err)
+
+	stack.statusResult = Status{Running: false}
+	reloadsBefore := stack.reloadCalls
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "example.com", Proto: "tls", Port: 443,
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.GetStackRestarted())
+	assert.Equal(t, reloadsBefore, stack.reloadCalls, "stack down: no reload")
+
+	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	assert.Empty(t, listResp.GetRules(), "removal durable on disk")
+}
+
+// assertReason inspects a gRPC status error and asserts that at least
+// one errdetails.ErrorInfo carries the expected Reason string. Keeps
+// the CLI wire contract verified: CLI dispatches on Reason, not Go-side
+// sentinel identity.
+func assertReason(t *testing.T, err error, wantReason string) {
+	t.Helper()
+	st, ok := status.FromError(err)
+	require.True(t, ok, "expected gRPC status error, got %T: %v", err, err)
+	for _, d := range st.Details() {
+		if ei, ok := d.(*errdetails.ErrorInfo); ok && ei.GetReason() == wantReason {
+			return
+		}
+	}
+	t.Fatalf("no errdetails.ErrorInfo with Reason=%q found (got %+v)", wantReason, st.Details())
 }

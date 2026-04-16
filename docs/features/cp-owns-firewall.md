@@ -32,10 +32,10 @@ Break-glass CP lifecycle commands are new:
 ```bash
 clawker controlplane up      # start the CP container (idempotent)
 clawker controlplane status  # CP health + best-effort firewall status
-clawker controlplane down    # stop the CP (warns about orphan Envoy/CoreDNS)
+clawker controlplane down    # stop the CP — drains firewall + eBPF, no orphans
 ```
 
-Order matters for teardown: run `clawker firewall down` **before** `clawker controlplane down`, otherwise Envoy and CoreDNS keep running on `clawker-net` until the next `controlplane up` adopts them.
+`controlplane down` sends SIGTERM to the CP, whose own shutdown path stops Envoy + CoreDNS and flushes per-container eBPF state before exiting. No prerequisite verbs, no orphan containers, no stale BPF map entries.
 
 ## Architecture
 

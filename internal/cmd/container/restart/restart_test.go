@@ -10,6 +10,8 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
+	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -172,6 +174,11 @@ func testRestartFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory,
 		},
 		Config: func() (config.Config, error) {
 			return configmocks.NewFromString("", `firewall: { enable: false }`), nil
+		},
+		ControlPlane: func() cpboot.Manager {
+			return &cpbootmocks.ManagerMock{
+				EnsureRunningFunc: func(context.Context) error { return nil },
+			}
 		},
 	}, in, out, errOut
 }

@@ -6,23 +6,30 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 // UpOptions holds the options for the firewall up command.
 type UpOptions struct {
-	IOStreams   *iostreams.IOStreams
-	AdminClient func(context.Context) (adminv1.AdminServiceClient, error)
+	IOStreams    *iostreams.IOStreams
+	ControlPlane func() cpboot.Manager
+	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
 }
 
 // NewCmdUp creates the firewall up command.
-// Sends an idempotent FirewallInit RPC to the CP, which brings up the
-// Envoy + CoreDNS stack and confirms BPF programs are attached.
+// Ensures the control plane is running, then sends an idempotent
+// FirewallInit RPC which brings up the Envoy + CoreDNS stack and
+// confirms BPF programs are attached. `firewall up` is one of the
+// explicit verbs that owns CP bootstrap (alongside `controlplane up`
+// and `container start`); all other firewall admin commands fail fast
+// when the CP is down.
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command {
 	opts := &UpOptions{
-		IOStreams:   f.IOStreams,
-		AdminClient: f.AdminClient,
+		IOStreams:    f.IOStreams,
+		ControlPlane: f.ControlPlane,
+		AdminClient:  f.AdminClient,
 	}
 
 	cmd := &cobra.Command{
@@ -47,14 +54,21 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	if err := opts.ControlPlane().EnsureRunning(ctx); err != nil {
+		return fmt.Errorf("bringing control plane up: %w", err)
+	}
+
 	client, err := opts.AdminClient(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	resp, err := client.FirewallInit(ctx, &adminv1.FirewallInitRequest{})
+	resp, err := callWithSpinner(ctx, ios, "Starting firewall stack...",
+		func(rpcCtx context.Context) (*adminv1.FirewallInitResult, error) {
+			return client.FirewallInit(rpcCtx, &adminv1.FirewallInitRequest{})
+		})
 	if err != nil {
-		return fmt.Errorf("starting firewall: %w", err)
+		return wrapRPCError("starting firewall", err)
 	}
 
 	fmt.Fprintf(ios.Out, "%s Firewall stack up\n", cs.SuccessIcon())

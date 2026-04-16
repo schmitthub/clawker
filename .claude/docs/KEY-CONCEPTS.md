@@ -24,7 +24,7 @@
 | `firewall.Stack` | CP-side Envoy + CoreDNS container lifecycle — `EnsureRunning`/`Stop`/`Reload`/`WaitForHealthy`/`Status` + IP/CIDR accessors. Uses `*docker.Client` via DooD |
 | `firewall.ContainerResolver` | Injectable Docker lookup: `(ctx, ref) → (id, cgroupPath, exists, err)`. Production wiring: `cmd/clawker-cp/main.go::containerResolverFromDocker`. `exists=false` + `err=nil` is the "container gone" signal |
 | `firewall.EBPFCgroupPath` / `firewall.DetectCgroupDriver` / `firewall.ResolveContainerID` | Pure helpers for cgroup path resolution; driver cached on `Handler` at startup via `DetectCgroupDriver` |
-| `firewall.ProjectRules()` | Builds complete rule set from project config (security.firewall rules + required internal rules like Claude API, Docker registry). Consumed by `BootstrapServicesPostStart` |
+| `project.Project.EgressRules()` | Builds complete rule set from project config (security.firewall rules + required internal rules like Claude API, Docker registry). Consumed by `BootstrapServicesPreStart` |
 | `firewall.EgressRulesFile` | `storage.Schema` implementation for `egress-rules.yaml` (owned by CP at `FirewallDataSubdir`) |
 | `firewall.ProtoRulesToConfig` / `firewall.ConfigRulesToProto` | Exported wire ↔ config rule translation used by `BootstrapServicesPostStart` |
 | `dnsbpf.Handler` | CoreDNS plugin (`internal/dnsbpf`) that intercepts DNS responses and writes IP → {domain_hash, TTL} entries to the BPF dns_cache map. Registered as `dnsbpf` directive in `cmd/coredns-clawker` |

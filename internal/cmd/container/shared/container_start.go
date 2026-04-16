@@ -7,6 +7,7 @@ import (
 	mobyClient "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -20,6 +21,7 @@ type CommandOpts struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
+	ControlPlane   func() cpboot.Manager
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Logger         func() (*logger.Logger, error)
@@ -84,13 +86,23 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		log.Debug().Msg("host proxy disabled by config")
 	}
 
-	// Bring the firewall stack up via CP before docker start so the
-	// entrypoint's /healthz poll resolves on first try. Two RPCs:
-	//  1. FirewallInit — idempotent stack-up (Envoy + CoreDNS).
-	//  2. FirewallAddRules — sync project rules; returns after stack healthy.
-	// Per-container FirewallEnable runs post-start because the cgroup only
-	// exists after docker start creates the container's init process.
-	// Getting the AdminClient transparently triggers cpboot.EnsureRunning.
+	// CP is core infrastructure — always bring it up when an agent
+	// container is starting. The firewall, future webui, and any other
+	// CP-hosted service depend on the CP being live; individual features
+	// are configurable, CP itself is not. The container-start path is
+	// the single place that bootstraps CP — all other admin commands
+	// are pure dials and fail-fast if CP is absent.
+	if cmdOpts.ControlPlane == nil {
+		return fmt.Errorf("bootstrapping services: no control plane manager provided")
+	}
+	if err := cmdOpts.ControlPlane().EnsureRunning(ctx); err != nil {
+		return fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", err)
+	}
+
+	// Firewall is one feature hosted by the CP. Bring the stack up and
+	// sync project rules only when security.firewall is enabled.
+	// Per-container FirewallEnable runs post-start because the cgroup
+	// only exists after docker start creates the init process.
 	if settings != nil && settings.Firewall.FirewallEnabled() {
 		if cmdOpts.AdminClient == nil {
 			return fmt.Errorf("bootstrapping services: firewall is enabled but no admin client provided")
@@ -105,9 +117,19 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 			return fmt.Errorf("bootstrapping services: firewall init: %w", err)
 		}
 
-		projectRules := fwcp.ProjectRules(cfg)
+		if cmdOpts.ProjectManager == nil {
+			return fmt.Errorf("bootstrapping services: firewall is enabled but no project manager provided")
+		}
+		pm, err := cmdOpts.ProjectManager()
+		if err != nil {
+			return fmt.Errorf("bootstrapping services: loading project manager: %w", err)
+		}
+		proj, err := pm.CurrentProject(ctx)
+		if err != nil {
+			return fmt.Errorf("bootstrapping services: resolving current project: %w", err)
+		}
 		if _, err := client.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
-			Rules: fwcp.ConfigRulesToProto(projectRules),
+			Rules: fwcp.ConfigRulesToProto(proj.EgressRules()),
 		}); err != nil {
 			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
 		}

@@ -12,6 +12,15 @@ internal/controlplane/adminServer  (embeds *firewall.Handler)
     │
     ▼
 firewall.Handler (13 RPCs)
+    │  every RPC does pre-Submit work (validate, store write,
+    │  cert regen) then Submit → wait on reply channel
+    ▼
+ActionQueue (single-goroutine FIFO worker; queue.go)
+    │  coalesces consecutive ActionReconcile submissions;
+    │  Bringup / Teardown / Read / Enable / Disable / Bypass
+    │  never coalesce — they execute one-at-a-time.
+    ▼
+Closures (reconcileStackClosure + per-RPC bodies) call:
     ├── Stack         → Envoy + CoreDNS containers (on clawker-net)
     ├── ebpf.Manager  → pinned BPF maps + attached programs
     ├── Store         → egress-rules.yaml (gofrs/flock, atomic rename)
@@ -35,7 +44,7 @@ firewall.Handler (13 RPCs)
 | `envoy_config.go` | Envoy YAML generation; per-domain filter chains; LOGICAL_DNS clusters; TCP/SSH listeners (`normalizeDomain` lives here — used by certs, coredns_config, rules_store, and shared with `internal/dnsbpf` via `ebpf.DomainHash`) |
 | `coredns_config.go` | Corefile generation; per-domain forward zones; `dnsbpf` plugin directive; catch-all NXDOMAIN |
 | `certs.go` | CA keypair generation/loading; per-domain cert signing; wildcard SANs; `RotateCA` |
-| `rules_store.go` | `EgressRulesFile` schema + `NewRulesStore(cfg)` + `ProjectRules(cfg)` + rule helpers (`ValidateDst`, `NormalizeRule`, `RuleKey`, `NormalizeAndDedup`) |
+| `rules_store.go` | `EgressRulesFile` schema + `NewRulesStore(cfg)` + rule helpers (`ValidateDst`, `NormalizeRule`, `RuleKey`, `NormalizeAndDedup`). Project-level rule composition lives on `project.Project.EgressRules()` — firewall doesn't know about project config. |
 | `network.go` | `NetworkInfo` + `DiscoverNetwork(ctx, *docker.Client, cfg)` + `ComputeStaticIP(gateway, lastOctet)` |
 | `embed_coredns.go` | `//go:embed assets/coredns-clawker` — exported `CoreDNSClawkerBinary` |
 | `errors.go` | Sentinels (`ErrEnvoyUnhealthy`, `ErrCoreDNSUnhealthy`, `ErrCPUnhealthy`) + `HealthTimeoutError` |
@@ -51,17 +60,17 @@ Every RPC requires the uniform `"admin"` scope (INV-B2-009). Per-method scope di
 | RPC | Scope | Purpose |
 |-----|-------|---------|
 | `FirewallInit` | global | Idempotent stack-up: `ensureConfigs` → ensure Envoy/CoreDNS images → ensure containers attached to `clawker-net` at static IPs → `WaitForHealthy`. Returns Envoy/CoreDNS IPs + network ID. BPF attach happens at CP startup, not here. |
-| `FirewallRemove` | global | Global teardown: `CancelAllBypassTimers` → `Stack.Stop` → `ebpf.Manager.FlushAll` (wipe container_map + bypass_map + unpin links) → wipe rules store. |
+| `FirewallRemove` | global | Global teardown (queued, `ActionTeardown`): `CancelAllBypassTimers` → `Stack.Stop` → `ebpf.Manager.FlushAll` (wipe container_map + bypass_map + unpin links) → delete generated `envoy.yaml` + `Corefile`. **The egress rules store is preserved** so a subsequent `firewall remove <domain>` lands in the authoritative file and takes effect on next `firewall up` (trailing-mutation security invariant). |
 | `FirewallEnable(container_id)` | per-container | Idempotent enroll. `resolveForEnable` → Docker lookup → fresh `cgroup_id` via `EBPFCgroupPath`. BPF `container_config` is built CP-side from `Stack.NetworkInfo` (Envoy/CoreDNS/gateway/CIDR) + `cfg.EnvoyEgressPort()` + `resolveHostProxy` (resolves `host.docker.internal` when the project has host proxy enabled). Writes `container_map` + attaches links via `ebpf.Manager.Install` + clears any bypass flag. Drift guard logs stored-vs-fresh cgroup_id delta. Returns `FailedPrecondition` if Docker says the container is gone. Note: the bypass dead-man timer does NOT re-run `Install` — it calls the cheap `ebpf.Manager.Enable` path (clears bypass flag only). Full re-enroll happens only on the explicit `FirewallEnable` RPC. |
 | `FirewallDisable(container_id)` | per-container | Set BPF bypass for the container. Falls back to stored `cgroup_id` when Docker reports the container gone; no-op for unknown containers (both paths reach `ebpf.Manager.Disable`). |
 | `FirewallBypass(container_id, timeout)` | per-container | `FirewallDisable` + `time.AfterFunc` that calls drift-guarded `Enable` on expiry (`bypassTimerFired` → `resolveBypassCgroupID` → `ebpf.Manager.Enable`). Caps at `maxBypassTimeout = 1h`. Stores `storedCgroupID[cid]` so mid-bypass Disable on a now-gone container can still clear the orphan bypass_map entry. |
-| `FirewallAddRules` | global | `addRulesToStore` — all-or-nothing validation via `ValidateDst`, `NormalizeAndDedup`, `store.Set` + `store.Write`; then `Stack.Reload` + `ebpf.Manager.SyncRoutes` to hot-reload Envoy/CoreDNS + BPF route_map. |
-| `FirewallRemoveRules` | global | `removeRulesFromStore` — matches by `RuleKey`, reloads. |
+| `FirewallAddRules` | global | Pre-Submit (synchronous): `ValidateDst`, `NormalizeAndDedup`, `store.Set` + `store.Write` so the rule is durable before the queue wakes. Then Submit `reconcileStackClosure` (`ActionReconcile`) — inside the closure, if the stack is running call `Stack.Reload` + `ebpf.Manager.SyncRoutes`; if down, no-op. Response carries `stack_restarted=false` for the stack-down path so the CLI can emit the "takes effect on next `firewall up`" note. |
+| `FirewallRemoveRule` | global | Single-rule removal keyed by `(dst, proto, port)`. Pre-Submit lookup by `RuleKey`; miss → `ErrRuleNotFound` → `codes.NotFound` so the CLI never renders "Removed" on a typo or wrong-proto/port. On match: store write + shared `reconcileStackClosure`. No `ValidateDst` on this path — anything unmatched collapses into the same NotFound outcome. |
 | `FirewallListRules` | global | Read-only normalized rule dump from the store. |
 | `FirewallStatus` | global | `Stack.Status` — per-container up state, Envoy/CoreDNS IPs, network ID, rule count. Network-discovery errors log at Warn and leave topology empty; per-container `isRunning` is authoritative for "stack down". |
 | `FirewallReload` | global | Regenerate configs and restart the stack without rule mutation. |
 | `FirewallRotateCA` | global | Regenerate MITM CA + per-domain certs and `Stack.Reload`. |
-| `FirewallSyncRoutes` | global | Break-glass route re-sync — rebuilds BPF `route_map` from store. |
+| `FirewallSyncRoutes` | global | Break-glass route re-sync. Routed through `reconcileStackClosure`, which rebuilds routes from the **current rules store** (not the caller-supplied proto rules — those are ignored so two coalesced SyncRoutes calls can't smuggle different inputs past the head-wins coalescer). |
 | `FirewallResolveHostname` | global | DNS lookup from CP netns (used by container enroll for `host.docker.internal` resolution). |
 
 ## Types
@@ -76,11 +85,23 @@ type HandlerDeps struct {
     Cfg        config.Config          // optional — read for rule defaults, CPIPLastOctet, etc.
     Resolver   ContainerResolver      // required — per-container RPCs
     Log        *logger.Logger         // optional — defaults to Nop
+    Queue      *ActionQueue           // required — every RPC submits through it
     CertDirFn  func() (string, error) // optional — certs path for RotateCA
 }
 
-func NewHandler(deps HandlerDeps) *Handler  // panics on missing EBPF or Resolver
+func NewHandler(deps HandlerDeps) *Handler  // panics on missing EBPF, Resolver, or Queue
 ```
+
+The `Queue` is a single-goroutine FIFO worker (see `queue.go`) that
+serializes all 13 firewall RPCs so rapid-fire rule mutations coalesce
+into one stack restart instead of colliding mid-restart. Rule-CRUD,
+Reload, RotateCA, and SyncRoutes submit `reconcileStackClosure`
+(coalescing kind `ActionReconcile`); per-container RPCs submit their
+own non-coalescing closures under `ActionEnable` / `ActionDisable` /
+`ActionBypass`; reads run under `ActionRead`. Submit is close-safe:
+post-`Close` submissions receive `ErrClosed` via a pre-closed reply
+channel, which the Handler translates to `ErrQueueClosed` +
+`codes.Unavailable` for CLI callers.
 
 ### `Stack`
 
@@ -112,7 +133,7 @@ type ContainerResolver func(ctx context.Context, ref string) (id, cgroupPath str
 
 ### `EgressRulesFile` + rule helpers
 
-`EgressRulesFile` is the on-disk schema (`egress-rules.yaml`) — it implements `storage.Schema` via `Fields()` so the store engine can read field metadata. `ProjectRules(cfg)` builds the ruleset from `cfg.Project().Security.Firewall` + `cfg.RequiredFirewallDomains()` — consumed by `BootstrapServicesPostStart` before issuing `FirewallAddRules`.
+`EgressRulesFile` is the on-disk schema (`egress-rules.yaml`) — it implements `storage.Schema` via `Fields()` so the store engine can read field metadata. Project-level rule composition (required baseline + `security.firewall.rules` + `add_domains`) lives on `project.Project.EgressRules()` — the firewall package owns store/stack/certs, not project config. `BootstrapServicesPreStart` calls `proj.EgressRules()` and passes the result through `ConfigRulesToProto` to `FirewallAddRules`.
 
 Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E tests:
 
@@ -124,7 +145,7 @@ Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E test
 
 ## Invariants
 
-- **INV-B2-007 drain ordering**: `CancelAllBypassTimers` → `Stack.Stop` → `ebpf.Manager.FlushAll`. See `../CLAUDE.md` for drain callback composition in `cmd/clawker-cp/main.go`.
+- **INV-B2-007 drain ordering**: `ActionQueue.Close` → `grpcServer.GracefulStop` → `Handler.CancelAllBypassTimers` → `Stack.Stop` → `ebpf.Manager.FlushAll`. Closing the queue first makes in-flight RPCs observe `ErrClosed` on any pending Submit and return promptly, so `GracefulStop` unblocks quickly; `Stack.Stop` / `ebpf.FlushAll` run post-Close directly from `cmd/clawker-cp/main.go` because the queue is gone. See `../CLAUDE.md` for the drain callback composition.
 - **INV-B2-009 uniform scope**: every RPC in `AdminMethodScopes` maps to `"admin"`. `TestAdminMethodScopes_CoversAllRPCs` reflects over `AdminService_ServiceDesc` so a new RPC without a scope entry fails the build.
 - **INV-B2-013 defensive startup cleanup**: `ebpf.Manager.CleanupStaleBypass` runs before `orchestrator.SetReady()`. Any error here fails startup (by design — a broken drain should not silently bless stale BPF state).
 - **INV-B2-016 drift guard**: `FirewallEnable` always resolves `container_id → cgroup_path` via Docker, logs warning on stored-vs-fresh `cgroup_id` delta, returns `FailedPrecondition` if Docker says the container is gone. Bypass dead-man timer goes through the same `resolveBypassCgroupID` helper.
@@ -134,7 +155,7 @@ Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E test
 ## Imports
 
 - **Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/storage`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `pkg/whail` (labels only), `github.com/moby/moby/api/types/*`.
-- **Used by**: `internal/controlplane` (composite server embeds `*Handler`; startup wires `Stack`); `cmd/clawker-cp/main.go` (Handler ctor + container resolver); `internal/cmd/container/shared/container_start.go` (`BootstrapServicesPostStart` calls `ProjectRules` + `ProtoRulesToConfig`/`ConfigRulesToProto`).
+- **Used by**: `internal/controlplane` (composite server embeds `*Handler`; startup wires `Stack`); `cmd/clawker-cp/main.go` (Handler ctor + container resolver); `internal/cmd/container/shared/container_start.go` (`BootstrapServicesPreStart` calls `ProtoRulesToConfig`/`ConfigRulesToProto` — project-rule composition lives on `project.Project.EgressRules()`).
 - **Not imported by**: CLI commands — those go through `f.AdminClient(ctx)` which speaks gRPC to the running CP. No direct Go calls into `firewall.Handler` from CLI code.
 
 ## Test Patterns

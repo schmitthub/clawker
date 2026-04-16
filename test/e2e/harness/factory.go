@@ -3,13 +3,16 @@ package harness
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
@@ -24,7 +27,27 @@ import (
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/keepalive"
 )
+
+// harnessAdminKeepalive mirrors the production adminClientKeepalive in
+// internal/cmd/factory/default.go. Values must stay in lockstep — the
+// harness wires a production-identical AdminClient closure so E2E
+// exercises the exact keepalive policy the CLI ships with.
+var harnessAdminKeepalive = keepalive.ClientParameters{
+	Time:                30 * time.Second,
+	Timeout:             10 * time.Second,
+	PermitWithoutStream: false,
+}
+
+// cacheableState mirrors the production helper in internal/cmd/factory/
+// default.go. Ready/Connecting/Idle states are safe to reuse; TransientFailure
+// and Shutdown require a rebuild.
+func cacheableState(s connectivity.State) bool {
+	return s == connectivity.Ready || s == connectivity.Connecting || s == connectivity.Idle
+}
 
 // FactoryOptions holds dependency constructor overrides.
 // Some nil fields use test fakes (configmocks, mocks.FakeClient,
@@ -39,9 +62,16 @@ type FactoryOptions struct {
 	GitManager     func(string) (*git.GitManager, error)
 	HostProxy      func(config.Config, *logger.Logger) (*hostproxy.Manager, error)
 	SocketBridge   func(config.Config, *logger.Logger) socketbridge.SocketBridgeManager
-	// AdminClient optionally provides a real CP AdminService client.
-	// When nil the harness wires a no-op AdminServiceClientMock.
-	AdminClient func(context.Context, config.Config, *logger.Logger) (adminv1.AdminServiceClient, error)
+	// UseRealAdminClient, when true, wires a production-identical
+	// AdminClient closure — the exact `adminClientFunc` in
+	// internal/cmd/factory/default.go (mutex-guarded cache +
+	// cacheableState re-dial on TransientFailure/Shutdown +
+	// keepalive params + adminclient.Dial). Pure dial — does NOT
+	// bootstrap the CP; lifecycle is owned by container-start and
+	// explicit `controlplane up`, so E2E tests fail fast when the
+	// CP is down (matching CLI behavior). When false the harness
+	// wires a no-op AdminServiceClientMock.
+	UseRealAdminClient bool
 	// ControlPlane optionally provides a real Manager that drives the
 	// host-side CP container lifecycle. When nil the harness wires a
 	// no-op ManagerMock (every method returns zero values / nil) so
@@ -190,25 +220,52 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	}
 
 	// --- AdminClient ---
-	var (
-		adminOnce sync.Once
-		adminCli  adminv1.AdminServiceClient
-		adminErr  error
-	)
-	f.AdminClient = func(ctx context.Context) (adminv1.AdminServiceClient, error) {
-		adminOnce.Do(func() {
-			if opts.AdminClient != nil {
-				c, cErr := resolveConfig()
-				if cErr != nil {
-					adminErr = cErr
-					return
+	// Production-identical pure-dial closure. Mirrors adminClientFunc in
+	// internal/cmd/factory/default.go — mutex-guarded cache + cacheableState
+	// re-dial on TransientFailure/Shutdown + keepalive params. Does NOT
+	// bootstrap the CP — that's owned by container-start (and explicit
+	// `controlplane up`). Any divergence from production is a bug: E2E
+	// must exercise the same code path the CLI ships with.
+	if opts.UseRealAdminClient {
+		var (
+			adminMu     sync.Mutex
+			adminConn   *grpc.ClientConn
+			adminClient adminv1.AdminServiceClient
+		)
+		f.AdminClient = func(ctx context.Context) (adminv1.AdminServiceClient, error) {
+			adminMu.Lock()
+			defer adminMu.Unlock()
+
+			if adminConn != nil {
+				if cacheableState(adminConn.GetState()) {
+					return adminClient, nil
 				}
-				adminCli, adminErr = opts.AdminClient(ctx, c, logger.Nop())
-			} else {
-				adminCli = &cpmocks.AdminServiceClientMock{}
+				_ = adminConn.Close()
+				adminConn = nil
+				adminClient = nil
 			}
-		})
-		return adminCli, adminErr
+
+			cfg, err := resolveConfig()
+			if err != nil {
+				return nil, fmt.Errorf("admin client: config: %w", err)
+			}
+
+			cp := cfg.Settings().ControlPlane
+			newClient, newConn, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort,
+				grpc.WithKeepaliveParams(harnessAdminKeepalive),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("admin client: dial: %w", err)
+			}
+			adminConn = newConn
+			adminClient = newClient
+			return adminClient, nil
+		}
+	} else {
+		mockAdmin := &cpmocks.AdminServiceClientMock{}
+		f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+			return mockAdmin, nil
+		}
 	}
 
 	// --- ControlPlane ---
@@ -223,7 +280,11 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 				if cErr != nil {
 					t.Fatalf("harness: config for control plane: %v", cErr)
 				}
-				cpMgr = opts.ControlPlane(c, logger.Nop())
+				log, lErr := f.Logger()
+				if lErr != nil {
+					t.Fatalf("harness: logger for control plane: %v", lErr)
+				}
+				cpMgr = opts.ControlPlane(c, log)
 			} else {
 				cpMgr = &cpbootmocks.ManagerMock{}
 			}

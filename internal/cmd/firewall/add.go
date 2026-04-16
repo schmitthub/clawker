@@ -74,12 +74,23 @@ func addRun(ctx context.Context, opts *AddOptions) error {
 		Action: "allow",
 	}
 
-	if _, err := client.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{Rules: []*adminv1.EgressRule{rule}}); err != nil {
-		return fmt.Errorf("adding firewall rule: %w", err)
+	resp, err := callWithSpinner(ctx, ios, fmt.Sprintf("Adding firewall rule %s...", opts.Domain),
+		func(rpcCtx context.Context) (*adminv1.FirewallAddRulesResult, error) {
+			return client.FirewallAddRules(rpcCtx, &adminv1.FirewallAddRulesRequest{Rules: []*adminv1.EgressRule{rule}})
+		})
+	if err != nil {
+		return wrapRPCError("adding firewall rule", err)
 	}
 
 	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.Out, "%s Added rule: %s (%s)\n", cs.SuccessIcon(), opts.Domain, opts.Proto)
+	// Only print the "not running" note when a real rule change
+	// landed — an AddedCount==0 response means the rule was already
+	// present, so "will take effect on next firewall up" is
+	// misleading (nothing needs to take effect).
+	if resp.GetAddedCount() > 0 {
+		printStackRestartedNote(ios, resp.GetStackRestarted(), "rule persisted")
+	}
 
 	return nil
 }

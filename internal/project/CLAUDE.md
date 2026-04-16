@@ -65,6 +65,7 @@ type Project interface {
     Name() string
     RepoPath() string
     Record() (ProjectRecord, error)
+    EgressRules() []config.EgressRule
     CreateWorktree(ctx context.Context, branch, base string) (string, error)
     AddWorktree(ctx context.Context, branch, base string) (WorktreeState, error)
     RemoveWorktree(ctx context.Context, branch string, deleteBranch bool) error
@@ -73,6 +74,8 @@ type Project interface {
     GetWorktree(ctx context.Context, branch string) (WorktreeState, error)
 }
 ```
+
+- `EgressRules()` returns the full egress rule set for this project: required baseline (`cfg.RequiredFirewallRules()` — Claude API, OAuth, etc.) plus anything configured under `security.firewall` in clawker.yaml (explicit `rules` + `add_domains` shorthand normalized to TLS 443 allow rules). Consumed by `BootstrapServicesPreStart` in container start to populate the firewall via `FirewallAddRules`. Project-rule composition lives here rather than the firewall package because it's pure config projection — no firewall stack logic.
 
 - `AddWorktree` rejects duplicates with `ErrWorktreeExists`. Returns enriched `WorktreeState`.
 - `RemoveWorktree(deleteBranch=true)`: worktree always removed; `ErrBranchNotFound` swallowed, other branch errors wrapped.

@@ -15,7 +15,6 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	mobyclient "github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
@@ -39,7 +38,6 @@ type bootstrapFixture struct {
 }
 
 type bootstrapCalls struct {
-	auth    atomic.Int32
 	image   atomic.Int32
 	healthz atomic.Int32
 	create  atomic.Int32
@@ -102,8 +100,8 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 	}
 	fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
 		// Default: inspect for the managed-label jail check returns a
-		// minimal managed container; individual tests override this when
-		// they care about HostConfig.Mounts divergence detection.
+		// minimal managed container. Mount-spec reconciliation was retired
+		// (see spec §INV-B2-006 History) so tests no longer stub mounts.
 		return mobyclient.ContainerInspectResult{
 			Container: container.InspectResponse{
 				ID: id,
@@ -114,11 +112,7 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 			},
 		}, nil
 	}
-	origAuth, origImage, origHealthz := ensureAuthFn, ensureCPImageFn, healthzFn
-	ensureAuthFn = func() error {
-		calls.auth.Add(1)
-		return nil
-	}
+	origImage, origHealthz := ensureCPImageFn, healthzFn
 	ensureCPImageFn = func(_ context.Context, _ *docker.Client, _ *logger.Logger) error {
 		calls.image.Add(1)
 		return nil
@@ -129,7 +123,6 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 	}
 
 	t.Cleanup(func() {
-		ensureAuthFn = origAuth
 		ensureCPImageFn = origImage
 		healthzFn = origHealthz
 	})
@@ -187,7 +180,6 @@ func TestEnsureRunning_HappyPath_CreatesContainer(t *testing.T) {
 	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 
-	assert.Equal(t, int32(1), f.calls.auth.Load(), "auth ensured once")
 	assert.Equal(t, int32(1), f.calls.image.Load(), "image ensured once")
 	assert.Equal(t, int32(1), f.calls.create.Load(), "container created once")
 	assert.Equal(t, int32(1), f.calls.start.Load(), "container started once")
@@ -262,78 +254,6 @@ func TestEnsureRunning_ExistingStopped_StartsWithoutRecreate(t *testing.T) {
 	assert.Zero(t, f.calls.create.Load(), "no create when only stopped")
 	assert.Equal(t, int32(1), f.calls.start.Load(), "existing container started")
 	assert.Zero(t, f.calls.remove.Load(), "no remove when mounts match")
-}
-
-func TestEnsureRunning_MountDivergence_RecreatesContainer(t *testing.T) {
-	// INV-B2-006: any divergence from BuildCPContainerConfig's mount
-	// spec forces recreation. Table exercises each divergence mode
-	// hasMountDivergence checks: missing mount, RO/RW flip, Source
-	// path change, and extra mount not in the want set.
-	cfg := configmocks.NewIsolatedTestConfig(t)
-	wantCfg, err := BuildCPContainerConfig(cfg, testCPOpts())
-	require.NoError(t, err)
-
-	legacyRO := make([]mount.Mount, len(wantCfg.Mounts))
-	copy(legacyRO, wantCfg.Mounts)
-	for i := range legacyRO {
-		if legacyRO[i].Target == consts.CPFirewallDataDir {
-			legacyRO[i].ReadOnly = true
-		}
-	}
-	movedSource := make([]mount.Mount, len(wantCfg.Mounts))
-	copy(movedSource, wantCfg.Mounts)
-	for i := range movedSource {
-		if movedSource[i].Target == consts.CPFirewallDataDir {
-			movedSource[i].Source = "/tmp/stale/path"
-		}
-	}
-	extraMount := append([]mount.Mount(nil), wantCfg.Mounts...)
-	extraMount = append(extraMount, mount.Mount{Type: mount.TypeBind, Source: "/legacy", Target: "/legacy"})
-
-	cases := []struct {
-		name   string
-		mounts []mount.Mount
-	}{
-		{"missing firewall-data mount", []mount.Mount{
-			{Type: mount.TypeBind, Source: "/anywhere", Target: consts.CPClawkerConfigDir, ReadOnly: true},
-		}},
-		{"RO where RW expected", legacyRO},
-		{"divergent source path", movedSource},
-		{"extra mount not in want set", extraMount},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newBootstrapFixture(t)
-			f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
-				return mobyclient.ContainerListResult{Items: []container.Summary{
-					{
-						ID:     "divergent-cp",
-						Names:  []string{"/" + consts.ContainerCP},
-						State:  container.StateRunning,
-						Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()},
-					},
-				}}, nil
-			}
-			mounts := tc.mounts
-			f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
-				return mobyclient.ContainerInspectResult{
-					Container: container.InspectResponse{
-						ID: id,
-						Config: &container.Config{
-							Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()},
-						},
-						HostConfig: &container.HostConfig{Mounts: mounts},
-					},
-				}, nil
-			}
-
-			require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
-			assert.Equal(t, int32(1), f.calls.stop.Load(), "divergent container stopped")
-			assert.Equal(t, int32(1), f.calls.remove.Load(), "divergent container removed")
-			assert.Equal(t, int32(1), f.calls.create.Load(), "fresh container created")
-		})
-	}
 }
 
 func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
@@ -565,7 +485,9 @@ func portFromTestServer(srv *httptest.Server) (int, error) {
 }
 
 func TestBuildCPContainerConfig_FirewallDataMountedRW(t *testing.T) {
-	// INV-B2-006 complement: the CP must mount FirewallDataSubdir RW.
+	// INV-B2-011 complement: Envoy + CoreDNS mount FirewallDataSubdir
+	// read-only; the CP itself (sole authoritative writer of egress
+	// rules, MITM CA, per-domain certs) must mount it read-write.
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	cpCfg, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)

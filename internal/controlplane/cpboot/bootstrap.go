@@ -15,10 +15,8 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 
-	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
@@ -43,12 +41,16 @@ const (
 // catches that race and reconciles to the existing container.
 var ensureMu sync.Mutex
 
-// Test seams. These are the three side-effecting steps of EnsureRunning
-// that unit tests need to stub: generating CLI auth material, building
-// the CP image, and polling /healthz. Production uses the real
-// implementations below; tests overwrite these package-level vars.
+// Test seams. These are the two side-effecting steps of EnsureRunning
+// that unit tests need to stub: building the CP image, and polling
+// /healthz. Production uses the real implementations below; tests
+// overwrite these package-level vars.
+//
+// CLI auth material is NOT ensured here. It's CLI-owned crypto and
+// must exist on disk eagerly — image builds embed the firewall CA
+// into container trust stores, and those builds happen when the CP
+// is not running. `factory.New` ensures auth material at CLI startup.
 var (
-	ensureAuthFn    = auth.EnsureAuthMaterial
 	ensureCPImageFn = ensureCPImage
 	healthzFn       = waitForCPHealthz
 )
@@ -78,9 +80,15 @@ const cpImageDockerfile = "" +
 // Steps (in order):
 //  1. Ensure CLI auth material (CA, signing key, server cert).
 //  2. Ensure CP image present (build from embedded binaries if missing).
-//  3. Reconcile an existing CP container — if its mount spec diverges
-//     from BuildCPContainerConfig (INV-B2-006), stop + remove so step 6
-//     recreates with the authoritative mounts.
+//  3. If an existing CP container is found, start it (if stopped) and
+//     return once /healthz is green. Mount spec is NOT inspected: CP
+//     mounts are a function of install-level XDG env vars + compile-
+//     time constants, never of clawker.yaml or settings.yaml, so
+//     legitimate in-process divergence cannot happen. A host-level
+//     attacker who can mutate the CP container spec already has
+//     privileges that trivially bypass anything a mount-inspection
+//     guard could protect. (Spec INV-B2-006 originally defended the
+//     B1→B2 RO→RW upgrade — now vestigial and retired.)
 //  4. Ensure clawker-net exists (defensive guard — CLI bootstrap is
 //     normally the primary owner).
 //  5. Discover the network to compute the CP's static IP.
@@ -118,10 +126,6 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 	ensureMu.Lock()
 	defer ensureMu.Unlock()
 
-	if err := ensureAuthFn(); err != nil {
-		return fmt.Errorf("controlplane: ensure auth material: %w", err)
-	}
-
 	if err := ensureCPImageFn(ctx, dc, log); err != nil {
 		return fmt.Errorf("controlplane: %w", err)
 	}
@@ -131,23 +135,12 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("controlplane: find cp: %w", err)
 	}
 	if summary != nil {
-		divergent, err := hasMountDivergence(ctx, dc, cfg, summary.ID, opts.HostDirs)
-		if err != nil {
-			return fmt.Errorf("controlplane: inspect cp: %w", err)
-		}
-		if divergent {
-			log.Warn().Str("container", summary.ID).Msg("cp mount mode divergent — recreating")
-			if err := stopAndRemoveCP(ctx, dc, summary.ID); err != nil {
-				return fmt.Errorf("controlplane: reconcile cp: %w", err)
+		if summary.State != container.StateRunning {
+			if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: summary.ID}); err != nil {
+				return fmt.Errorf("controlplane: start existing cp: %w", err)
 			}
-		} else {
-			if summary.State != container.StateRunning {
-				if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: summary.ID}); err != nil {
-					return fmt.Errorf("controlplane: start existing cp: %w", err)
-				}
-			}
-			return healthzFn(ctx, cfg)
 		}
+		return healthzFn(ctx, cfg)
 	}
 
 	if _, err := dc.EnsureNetwork(ctx, whail.EnsureNetworkOptions{Name: cfg.ClawkerNetwork()}); err != nil {
@@ -174,8 +167,10 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 }
 
 // Stop removes the CP container. Used by `clawker controlplane down`.
-// Does NOT stop Envoy or CoreDNS — callers who want those torn down must
-// call the firewall handler's global-teardown RPC first (INV-B2-008).
+// Docker sends SIGTERM to PID 1 (clawker-cp), whose own shutdown path
+// drains the firewall stack (Envoy + CoreDNS) and flushes per-container
+// eBPF state before exiting — this call does not need to tear those down
+// separately (INV-B2-008).
 func Stop(ctx context.Context, dc *docker.Client) error {
 	summary, err := findCPContainer(ctx, dc)
 	if err != nil {
@@ -220,41 +215,6 @@ func CPRunning(ctx context.Context, dc *docker.Client) (bool, error) {
 		return false, nil
 	}
 	return summary.State == container.StateRunning, nil
-}
-
-// hasMountDivergence reports whether the existing CP container's mount
-// spec diverges from BuildCPContainerConfig's authoritative layout
-// (INV-B2-006). A missing mount, an extra mount, a flipped ReadOnly
-// flag, a different host Source path, or a different mount Type all
-// qualify. Any mismatch causes recreation rather than silent operation
-// with a broken config.
-func hasMountDivergence(ctx context.Context, dc *docker.Client, cfg config.Config, containerID string, hostDirs HostDirs) (bool, error) {
-	inspect, err := dc.ContainerInspect(ctx, containerID, whail.ContainerInspectOptions{})
-	if err != nil {
-		return false, err
-	}
-	want, err := BuildCPContainerConfig(cfg, CPContainerOpts{HostDirs: hostDirs})
-	if err != nil {
-		return false, err
-	}
-
-	got := make(map[string]mount.Mount, len(inspect.Container.HostConfig.Mounts))
-	for _, m := range inspect.Container.HostConfig.Mounts {
-		got[m.Target] = m
-	}
-	if len(got) != len(want.Mounts) {
-		return true, nil
-	}
-	for _, w := range want.Mounts {
-		g, present := got[w.Target]
-		if !present {
-			return true, nil
-		}
-		if g.ReadOnly != w.ReadOnly || g.Source != w.Source || g.Type != w.Type {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // stopAndRemoveCP stops then force-removes the CP container. A missing
@@ -310,7 +270,7 @@ func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config
 		NetworkingConfig: netCfg,
 	})
 	if err != nil {
-		return recoverFromNameConflict(ctx, dc, cfg, hostDirs, err)
+		return recoverFromNameConflict(ctx, dc, err)
 	}
 	if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: createResp.ID}); err != nil {
 		return fmt.Errorf("starting cp container: %w", err)
@@ -320,12 +280,10 @@ func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config
 
 // recoverFromNameConflict handles the cross-process race where another
 // bootstrapper created the CP container between findCPContainer and
-// ContainerCreate. It validates the recovered container against the
-// authoritative spec — if the name was taken by something mount-
-// divergent (stale B2 container from a prior config), we force a
-// re-bootstrap by surfacing the divergence. A NotConflict error
-// propagates unchanged; there is nothing to recover from.
-func recoverFromNameConflict(ctx context.Context, dc *docker.Client, cfg config.Config, hostDirs HostDirs, createErr error) error {
+// ContainerCreate. Adopts the recovered container as-is and starts it
+// if not already running. A NotConflict error propagates unchanged;
+// there is nothing to recover from.
+func recoverFromNameConflict(ctx context.Context, dc *docker.Client, createErr error) error {
 	if !cerrdefs.IsConflict(createErr) {
 		return fmt.Errorf("creating cp container: %w", createErr)
 	}
@@ -338,13 +296,6 @@ func recoverFromNameConflict(ctx context.Context, dc *docker.Client, cfg config.
 		// doesn't see it. Usually means an unmanaged container squatted
 		// on the name — safe recovery requires operator intervention.
 		return fmt.Errorf("cp container name %q in use by an unmanaged container: %w", consts.ContainerCP, createErr)
-	}
-	divergent, divErr := hasMountDivergence(ctx, dc, cfg, recovered.ID, hostDirs)
-	if divErr != nil {
-		return fmt.Errorf("inspecting recovered cp container %s: %w", recovered.ID, divErr)
-	}
-	if divergent {
-		return fmt.Errorf("recovered cp container %s has divergent mount spec; rerun to reconcile", recovered.ID)
 	}
 	if recovered.State == container.StateRunning {
 		return nil

@@ -76,8 +76,11 @@ func disableRun(ctx context.Context, opts *DisableOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	if _, err := client.FirewallDisable(ctx, &adminv1.FirewallDisableRequest{ContainerId: containerName}); err != nil {
-		return fmt.Errorf("disabling firewall for %s: %w", opts.Agent, err)
+	if _, err := callWithSpinner(ctx, ios, fmt.Sprintf("Disabling firewall for %s...", opts.Agent),
+		func(rpcCtx context.Context) (*adminv1.FirewallDisableResult, error) {
+			return client.FirewallDisable(rpcCtx, &adminv1.FirewallDisableRequest{ContainerId: containerName})
+		}); err != nil {
+		return wrapRPCError(fmt.Sprintf("disabling firewall for %s", opts.Agent), err)
 	}
 
 	fmt.Fprintf(ios.Out, "%s Firewall disabled for agent %s\n", cs.SuccessIcon(), opts.Agent)

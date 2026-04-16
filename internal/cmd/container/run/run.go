@@ -13,6 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -36,6 +37,7 @@ type RunOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
+	ControlPlane   func() cpboot.Manager
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Prompter       func() *prompter.Prompter
@@ -63,6 +65,7 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		Config:                 f.Config,
 		ProjectManager:         f.ProjectManager,
 		HostProxy:              f.HostProxy,
+		ControlPlane:           f.ControlPlane,
 		AdminClient:            f.AdminClient,
 		SocketBridge:           f.SocketBridge,
 		Prompter:               f.Prompter,
@@ -261,6 +264,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			Config:         opts.Config,
 			ProjectManager: opts.ProjectManager,
 			HostProxy:      opts.HostProxy,
+			ControlPlane:   opts.ControlPlane,
 			AdminClient:    opts.AdminClient,
 			SocketBridge:   opts.SocketBridge,
 			Logger:         opts.Logger,
@@ -354,6 +358,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 			Config:         opts.Config,
 			ProjectManager: opts.ProjectManager,
 			HostProxy:      opts.HostProxy,
+			ControlPlane:   opts.ControlPlane,
 			AdminClient:    opts.AdminClient,
 			SocketBridge:   opts.SocketBridge,
 			Logger:         opts.Logger,

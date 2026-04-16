@@ -20,43 +20,43 @@ var _ v1.AdminServiceClient = &AdminServiceClientMock{}
 //
 //		// make and configure a mocked v1.AdminServiceClient
 //		mockedAdminServiceClient := &AdminServiceClientMock{
-//			FirewallAddRulesFunc: func(ctx context.Context, in *v1.FirewallAddRulesRequest, opts ...grpc.CallOption) (*v1.FirewallAddRulesResponse, error) {
+//			FirewallAddRulesFunc: func(ctx context.Context, in *v1.FirewallAddRulesRequest, opts ...grpc.CallOption) (*v1.FirewallAddRulesResult, error) {
 //				panic("mock out the FirewallAddRules method")
 //			},
-//			FirewallBypassFunc: func(ctx context.Context, in *v1.FirewallBypassRequest, opts ...grpc.CallOption) (*v1.FirewallBypassResponse, error) {
+//			FirewallBypassFunc: func(ctx context.Context, in *v1.FirewallBypassRequest, opts ...grpc.CallOption) (*v1.FirewallBypassResult, error) {
 //				panic("mock out the FirewallBypass method")
 //			},
-//			FirewallDisableFunc: func(ctx context.Context, in *v1.FirewallDisableRequest, opts ...grpc.CallOption) (*v1.FirewallDisableResponse, error) {
+//			FirewallDisableFunc: func(ctx context.Context, in *v1.FirewallDisableRequest, opts ...grpc.CallOption) (*v1.FirewallDisableResult, error) {
 //				panic("mock out the FirewallDisable method")
 //			},
-//			FirewallEnableFunc: func(ctx context.Context, in *v1.FirewallEnableRequest, opts ...grpc.CallOption) (*v1.FirewallEnableResponse, error) {
+//			FirewallEnableFunc: func(ctx context.Context, in *v1.FirewallEnableRequest, opts ...grpc.CallOption) (*v1.FirewallEnableResult, error) {
 //				panic("mock out the FirewallEnable method")
 //			},
-//			FirewallInitFunc: func(ctx context.Context, in *v1.FirewallInitRequest, opts ...grpc.CallOption) (*v1.FirewallInitResponse, error) {
+//			FirewallInitFunc: func(ctx context.Context, in *v1.FirewallInitRequest, opts ...grpc.CallOption) (*v1.FirewallInitResult, error) {
 //				panic("mock out the FirewallInit method")
 //			},
-//			FirewallListRulesFunc: func(ctx context.Context, in *v1.FirewallListRulesRequest, opts ...grpc.CallOption) (*v1.FirewallListRulesResponse, error) {
+//			FirewallListRulesFunc: func(ctx context.Context, in *v1.FirewallListRulesRequest, opts ...grpc.CallOption) (*v1.FirewallListRulesResult, error) {
 //				panic("mock out the FirewallListRules method")
 //			},
-//			FirewallReloadFunc: func(ctx context.Context, in *v1.FirewallReloadRequest, opts ...grpc.CallOption) (*v1.FirewallReloadResponse, error) {
+//			FirewallReloadFunc: func(ctx context.Context, in *v1.FirewallReloadRequest, opts ...grpc.CallOption) (*v1.FirewallReloadResult, error) {
 //				panic("mock out the FirewallReload method")
 //			},
-//			FirewallRemoveFunc: func(ctx context.Context, in *v1.FirewallRemoveRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveResponse, error) {
+//			FirewallRemoveFunc: func(ctx context.Context, in *v1.FirewallRemoveRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveResult, error) {
 //				panic("mock out the FirewallRemove method")
 //			},
-//			FirewallRemoveRulesFunc: func(ctx context.Context, in *v1.FirewallRemoveRulesRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveRulesResponse, error) {
-//				panic("mock out the FirewallRemoveRules method")
+//			FirewallRemoveRuleFunc: func(ctx context.Context, in *v1.FirewallRemoveRuleRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveRuleResult, error) {
+//				panic("mock out the FirewallRemoveRule method")
 //			},
-//			FirewallResolveHostnameFunc: func(ctx context.Context, in *v1.FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*v1.FirewallResolveHostnameResponse, error) {
+//			FirewallResolveHostnameFunc: func(ctx context.Context, in *v1.FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*v1.FirewallResolveHostnameResult, error) {
 //				panic("mock out the FirewallResolveHostname method")
 //			},
-//			FirewallRotateCAFunc: func(ctx context.Context, in *v1.FirewallRotateCARequest, opts ...grpc.CallOption) (*v1.FirewallRotateCAResponse, error) {
+//			FirewallRotateCAFunc: func(ctx context.Context, in *v1.FirewallRotateCARequest, opts ...grpc.CallOption) (*v1.FirewallRotateCAResult, error) {
 //				panic("mock out the FirewallRotateCA method")
 //			},
-//			FirewallStatusFunc: func(ctx context.Context, in *v1.FirewallStatusRequest, opts ...grpc.CallOption) (*v1.FirewallStatusResponse, error) {
+//			FirewallStatusFunc: func(ctx context.Context, in *v1.FirewallStatusRequest, opts ...grpc.CallOption) (*v1.FirewallStatusResult, error) {
 //				panic("mock out the FirewallStatus method")
 //			},
-//			FirewallSyncRoutesFunc: func(ctx context.Context, in *v1.FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*v1.FirewallSyncRoutesResponse, error) {
+//			FirewallSyncRoutesFunc: func(ctx context.Context, in *v1.FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*v1.FirewallSyncRoutesResult, error) {
 //				panic("mock out the FirewallSyncRoutes method")
 //			},
 //		}
@@ -67,43 +67,43 @@ var _ v1.AdminServiceClient = &AdminServiceClientMock{}
 //	}
 type AdminServiceClientMock struct {
 	// FirewallAddRulesFunc mocks the FirewallAddRules method.
-	FirewallAddRulesFunc func(ctx context.Context, in *v1.FirewallAddRulesRequest, opts ...grpc.CallOption) (*v1.FirewallAddRulesResponse, error)
+	FirewallAddRulesFunc func(ctx context.Context, in *v1.FirewallAddRulesRequest, opts ...grpc.CallOption) (*v1.FirewallAddRulesResult, error)
 
 	// FirewallBypassFunc mocks the FirewallBypass method.
-	FirewallBypassFunc func(ctx context.Context, in *v1.FirewallBypassRequest, opts ...grpc.CallOption) (*v1.FirewallBypassResponse, error)
+	FirewallBypassFunc func(ctx context.Context, in *v1.FirewallBypassRequest, opts ...grpc.CallOption) (*v1.FirewallBypassResult, error)
 
 	// FirewallDisableFunc mocks the FirewallDisable method.
-	FirewallDisableFunc func(ctx context.Context, in *v1.FirewallDisableRequest, opts ...grpc.CallOption) (*v1.FirewallDisableResponse, error)
+	FirewallDisableFunc func(ctx context.Context, in *v1.FirewallDisableRequest, opts ...grpc.CallOption) (*v1.FirewallDisableResult, error)
 
 	// FirewallEnableFunc mocks the FirewallEnable method.
-	FirewallEnableFunc func(ctx context.Context, in *v1.FirewallEnableRequest, opts ...grpc.CallOption) (*v1.FirewallEnableResponse, error)
+	FirewallEnableFunc func(ctx context.Context, in *v1.FirewallEnableRequest, opts ...grpc.CallOption) (*v1.FirewallEnableResult, error)
 
 	// FirewallInitFunc mocks the FirewallInit method.
-	FirewallInitFunc func(ctx context.Context, in *v1.FirewallInitRequest, opts ...grpc.CallOption) (*v1.FirewallInitResponse, error)
+	FirewallInitFunc func(ctx context.Context, in *v1.FirewallInitRequest, opts ...grpc.CallOption) (*v1.FirewallInitResult, error)
 
 	// FirewallListRulesFunc mocks the FirewallListRules method.
-	FirewallListRulesFunc func(ctx context.Context, in *v1.FirewallListRulesRequest, opts ...grpc.CallOption) (*v1.FirewallListRulesResponse, error)
+	FirewallListRulesFunc func(ctx context.Context, in *v1.FirewallListRulesRequest, opts ...grpc.CallOption) (*v1.FirewallListRulesResult, error)
 
 	// FirewallReloadFunc mocks the FirewallReload method.
-	FirewallReloadFunc func(ctx context.Context, in *v1.FirewallReloadRequest, opts ...grpc.CallOption) (*v1.FirewallReloadResponse, error)
+	FirewallReloadFunc func(ctx context.Context, in *v1.FirewallReloadRequest, opts ...grpc.CallOption) (*v1.FirewallReloadResult, error)
 
 	// FirewallRemoveFunc mocks the FirewallRemove method.
-	FirewallRemoveFunc func(ctx context.Context, in *v1.FirewallRemoveRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveResponse, error)
+	FirewallRemoveFunc func(ctx context.Context, in *v1.FirewallRemoveRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveResult, error)
 
-	// FirewallRemoveRulesFunc mocks the FirewallRemoveRules method.
-	FirewallRemoveRulesFunc func(ctx context.Context, in *v1.FirewallRemoveRulesRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveRulesResponse, error)
+	// FirewallRemoveRuleFunc mocks the FirewallRemoveRule method.
+	FirewallRemoveRuleFunc func(ctx context.Context, in *v1.FirewallRemoveRuleRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveRuleResult, error)
 
 	// FirewallResolveHostnameFunc mocks the FirewallResolveHostname method.
-	FirewallResolveHostnameFunc func(ctx context.Context, in *v1.FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*v1.FirewallResolveHostnameResponse, error)
+	FirewallResolveHostnameFunc func(ctx context.Context, in *v1.FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*v1.FirewallResolveHostnameResult, error)
 
 	// FirewallRotateCAFunc mocks the FirewallRotateCA method.
-	FirewallRotateCAFunc func(ctx context.Context, in *v1.FirewallRotateCARequest, opts ...grpc.CallOption) (*v1.FirewallRotateCAResponse, error)
+	FirewallRotateCAFunc func(ctx context.Context, in *v1.FirewallRotateCARequest, opts ...grpc.CallOption) (*v1.FirewallRotateCAResult, error)
 
 	// FirewallStatusFunc mocks the FirewallStatus method.
-	FirewallStatusFunc func(ctx context.Context, in *v1.FirewallStatusRequest, opts ...grpc.CallOption) (*v1.FirewallStatusResponse, error)
+	FirewallStatusFunc func(ctx context.Context, in *v1.FirewallStatusRequest, opts ...grpc.CallOption) (*v1.FirewallStatusResult, error)
 
 	// FirewallSyncRoutesFunc mocks the FirewallSyncRoutes method.
-	FirewallSyncRoutesFunc func(ctx context.Context, in *v1.FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*v1.FirewallSyncRoutesResponse, error)
+	FirewallSyncRoutesFunc func(ctx context.Context, in *v1.FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*v1.FirewallSyncRoutesResult, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -179,12 +179,12 @@ type AdminServiceClientMock struct {
 			// Opts is the opts argument value.
 			Opts []grpc.CallOption
 		}
-		// FirewallRemoveRules holds details about calls to the FirewallRemoveRules method.
-		FirewallRemoveRules []struct {
+		// FirewallRemoveRule holds details about calls to the FirewallRemoveRule method.
+		FirewallRemoveRule []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 			// In is the in argument value.
-			In *v1.FirewallRemoveRulesRequest
+			In *v1.FirewallRemoveRuleRequest
 			// Opts is the opts argument value.
 			Opts []grpc.CallOption
 		}
@@ -233,7 +233,7 @@ type AdminServiceClientMock struct {
 	lockFirewallListRules       sync.RWMutex
 	lockFirewallReload          sync.RWMutex
 	lockFirewallRemove          sync.RWMutex
-	lockFirewallRemoveRules     sync.RWMutex
+	lockFirewallRemoveRule      sync.RWMutex
 	lockFirewallResolveHostname sync.RWMutex
 	lockFirewallRotateCA        sync.RWMutex
 	lockFirewallStatus          sync.RWMutex
@@ -241,7 +241,7 @@ type AdminServiceClientMock struct {
 }
 
 // FirewallAddRules calls FirewallAddRulesFunc.
-func (mock *AdminServiceClientMock) FirewallAddRules(ctx context.Context, in *v1.FirewallAddRulesRequest, opts ...grpc.CallOption) (*v1.FirewallAddRulesResponse, error) {
+func (mock *AdminServiceClientMock) FirewallAddRules(ctx context.Context, in *v1.FirewallAddRulesRequest, opts ...grpc.CallOption) (*v1.FirewallAddRulesResult, error) {
 	if mock.FirewallAddRulesFunc == nil {
 		panic("AdminServiceClientMock.FirewallAddRulesFunc: method is nil but AdminServiceClient.FirewallAddRules was just called")
 	}
@@ -281,7 +281,7 @@ func (mock *AdminServiceClientMock) FirewallAddRulesCalls() []struct {
 }
 
 // FirewallBypass calls FirewallBypassFunc.
-func (mock *AdminServiceClientMock) FirewallBypass(ctx context.Context, in *v1.FirewallBypassRequest, opts ...grpc.CallOption) (*v1.FirewallBypassResponse, error) {
+func (mock *AdminServiceClientMock) FirewallBypass(ctx context.Context, in *v1.FirewallBypassRequest, opts ...grpc.CallOption) (*v1.FirewallBypassResult, error) {
 	if mock.FirewallBypassFunc == nil {
 		panic("AdminServiceClientMock.FirewallBypassFunc: method is nil but AdminServiceClient.FirewallBypass was just called")
 	}
@@ -321,7 +321,7 @@ func (mock *AdminServiceClientMock) FirewallBypassCalls() []struct {
 }
 
 // FirewallDisable calls FirewallDisableFunc.
-func (mock *AdminServiceClientMock) FirewallDisable(ctx context.Context, in *v1.FirewallDisableRequest, opts ...grpc.CallOption) (*v1.FirewallDisableResponse, error) {
+func (mock *AdminServiceClientMock) FirewallDisable(ctx context.Context, in *v1.FirewallDisableRequest, opts ...grpc.CallOption) (*v1.FirewallDisableResult, error) {
 	if mock.FirewallDisableFunc == nil {
 		panic("AdminServiceClientMock.FirewallDisableFunc: method is nil but AdminServiceClient.FirewallDisable was just called")
 	}
@@ -361,7 +361,7 @@ func (mock *AdminServiceClientMock) FirewallDisableCalls() []struct {
 }
 
 // FirewallEnable calls FirewallEnableFunc.
-func (mock *AdminServiceClientMock) FirewallEnable(ctx context.Context, in *v1.FirewallEnableRequest, opts ...grpc.CallOption) (*v1.FirewallEnableResponse, error) {
+func (mock *AdminServiceClientMock) FirewallEnable(ctx context.Context, in *v1.FirewallEnableRequest, opts ...grpc.CallOption) (*v1.FirewallEnableResult, error) {
 	if mock.FirewallEnableFunc == nil {
 		panic("AdminServiceClientMock.FirewallEnableFunc: method is nil but AdminServiceClient.FirewallEnable was just called")
 	}
@@ -401,7 +401,7 @@ func (mock *AdminServiceClientMock) FirewallEnableCalls() []struct {
 }
 
 // FirewallInit calls FirewallInitFunc.
-func (mock *AdminServiceClientMock) FirewallInit(ctx context.Context, in *v1.FirewallInitRequest, opts ...grpc.CallOption) (*v1.FirewallInitResponse, error) {
+func (mock *AdminServiceClientMock) FirewallInit(ctx context.Context, in *v1.FirewallInitRequest, opts ...grpc.CallOption) (*v1.FirewallInitResult, error) {
 	if mock.FirewallInitFunc == nil {
 		panic("AdminServiceClientMock.FirewallInitFunc: method is nil but AdminServiceClient.FirewallInit was just called")
 	}
@@ -441,7 +441,7 @@ func (mock *AdminServiceClientMock) FirewallInitCalls() []struct {
 }
 
 // FirewallListRules calls FirewallListRulesFunc.
-func (mock *AdminServiceClientMock) FirewallListRules(ctx context.Context, in *v1.FirewallListRulesRequest, opts ...grpc.CallOption) (*v1.FirewallListRulesResponse, error) {
+func (mock *AdminServiceClientMock) FirewallListRules(ctx context.Context, in *v1.FirewallListRulesRequest, opts ...grpc.CallOption) (*v1.FirewallListRulesResult, error) {
 	if mock.FirewallListRulesFunc == nil {
 		panic("AdminServiceClientMock.FirewallListRulesFunc: method is nil but AdminServiceClient.FirewallListRules was just called")
 	}
@@ -481,7 +481,7 @@ func (mock *AdminServiceClientMock) FirewallListRulesCalls() []struct {
 }
 
 // FirewallReload calls FirewallReloadFunc.
-func (mock *AdminServiceClientMock) FirewallReload(ctx context.Context, in *v1.FirewallReloadRequest, opts ...grpc.CallOption) (*v1.FirewallReloadResponse, error) {
+func (mock *AdminServiceClientMock) FirewallReload(ctx context.Context, in *v1.FirewallReloadRequest, opts ...grpc.CallOption) (*v1.FirewallReloadResult, error) {
 	if mock.FirewallReloadFunc == nil {
 		panic("AdminServiceClientMock.FirewallReloadFunc: method is nil but AdminServiceClient.FirewallReload was just called")
 	}
@@ -521,7 +521,7 @@ func (mock *AdminServiceClientMock) FirewallReloadCalls() []struct {
 }
 
 // FirewallRemove calls FirewallRemoveFunc.
-func (mock *AdminServiceClientMock) FirewallRemove(ctx context.Context, in *v1.FirewallRemoveRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveResponse, error) {
+func (mock *AdminServiceClientMock) FirewallRemove(ctx context.Context, in *v1.FirewallRemoveRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveResult, error) {
 	if mock.FirewallRemoveFunc == nil {
 		panic("AdminServiceClientMock.FirewallRemoveFunc: method is nil but AdminServiceClient.FirewallRemove was just called")
 	}
@@ -560,48 +560,48 @@ func (mock *AdminServiceClientMock) FirewallRemoveCalls() []struct {
 	return calls
 }
 
-// FirewallRemoveRules calls FirewallRemoveRulesFunc.
-func (mock *AdminServiceClientMock) FirewallRemoveRules(ctx context.Context, in *v1.FirewallRemoveRulesRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveRulesResponse, error) {
-	if mock.FirewallRemoveRulesFunc == nil {
-		panic("AdminServiceClientMock.FirewallRemoveRulesFunc: method is nil but AdminServiceClient.FirewallRemoveRules was just called")
+// FirewallRemoveRule calls FirewallRemoveRuleFunc.
+func (mock *AdminServiceClientMock) FirewallRemoveRule(ctx context.Context, in *v1.FirewallRemoveRuleRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveRuleResult, error) {
+	if mock.FirewallRemoveRuleFunc == nil {
+		panic("AdminServiceClientMock.FirewallRemoveRuleFunc: method is nil but AdminServiceClient.FirewallRemoveRule was just called")
 	}
 	callInfo := struct {
 		Ctx  context.Context
-		In   *v1.FirewallRemoveRulesRequest
+		In   *v1.FirewallRemoveRuleRequest
 		Opts []grpc.CallOption
 	}{
 		Ctx:  ctx,
 		In:   in,
 		Opts: opts,
 	}
-	mock.lockFirewallRemoveRules.Lock()
-	mock.calls.FirewallRemoveRules = append(mock.calls.FirewallRemoveRules, callInfo)
-	mock.lockFirewallRemoveRules.Unlock()
-	return mock.FirewallRemoveRulesFunc(ctx, in, opts...)
+	mock.lockFirewallRemoveRule.Lock()
+	mock.calls.FirewallRemoveRule = append(mock.calls.FirewallRemoveRule, callInfo)
+	mock.lockFirewallRemoveRule.Unlock()
+	return mock.FirewallRemoveRuleFunc(ctx, in, opts...)
 }
 
-// FirewallRemoveRulesCalls gets all the calls that were made to FirewallRemoveRules.
+// FirewallRemoveRuleCalls gets all the calls that were made to FirewallRemoveRule.
 // Check the length with:
 //
-//	len(mockedAdminServiceClient.FirewallRemoveRulesCalls())
-func (mock *AdminServiceClientMock) FirewallRemoveRulesCalls() []struct {
+//	len(mockedAdminServiceClient.FirewallRemoveRuleCalls())
+func (mock *AdminServiceClientMock) FirewallRemoveRuleCalls() []struct {
 	Ctx  context.Context
-	In   *v1.FirewallRemoveRulesRequest
+	In   *v1.FirewallRemoveRuleRequest
 	Opts []grpc.CallOption
 } {
 	var calls []struct {
 		Ctx  context.Context
-		In   *v1.FirewallRemoveRulesRequest
+		In   *v1.FirewallRemoveRuleRequest
 		Opts []grpc.CallOption
 	}
-	mock.lockFirewallRemoveRules.RLock()
-	calls = mock.calls.FirewallRemoveRules
-	mock.lockFirewallRemoveRules.RUnlock()
+	mock.lockFirewallRemoveRule.RLock()
+	calls = mock.calls.FirewallRemoveRule
+	mock.lockFirewallRemoveRule.RUnlock()
 	return calls
 }
 
 // FirewallResolveHostname calls FirewallResolveHostnameFunc.
-func (mock *AdminServiceClientMock) FirewallResolveHostname(ctx context.Context, in *v1.FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*v1.FirewallResolveHostnameResponse, error) {
+func (mock *AdminServiceClientMock) FirewallResolveHostname(ctx context.Context, in *v1.FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*v1.FirewallResolveHostnameResult, error) {
 	if mock.FirewallResolveHostnameFunc == nil {
 		panic("AdminServiceClientMock.FirewallResolveHostnameFunc: method is nil but AdminServiceClient.FirewallResolveHostname was just called")
 	}
@@ -641,7 +641,7 @@ func (mock *AdminServiceClientMock) FirewallResolveHostnameCalls() []struct {
 }
 
 // FirewallRotateCA calls FirewallRotateCAFunc.
-func (mock *AdminServiceClientMock) FirewallRotateCA(ctx context.Context, in *v1.FirewallRotateCARequest, opts ...grpc.CallOption) (*v1.FirewallRotateCAResponse, error) {
+func (mock *AdminServiceClientMock) FirewallRotateCA(ctx context.Context, in *v1.FirewallRotateCARequest, opts ...grpc.CallOption) (*v1.FirewallRotateCAResult, error) {
 	if mock.FirewallRotateCAFunc == nil {
 		panic("AdminServiceClientMock.FirewallRotateCAFunc: method is nil but AdminServiceClient.FirewallRotateCA was just called")
 	}
@@ -681,7 +681,7 @@ func (mock *AdminServiceClientMock) FirewallRotateCACalls() []struct {
 }
 
 // FirewallStatus calls FirewallStatusFunc.
-func (mock *AdminServiceClientMock) FirewallStatus(ctx context.Context, in *v1.FirewallStatusRequest, opts ...grpc.CallOption) (*v1.FirewallStatusResponse, error) {
+func (mock *AdminServiceClientMock) FirewallStatus(ctx context.Context, in *v1.FirewallStatusRequest, opts ...grpc.CallOption) (*v1.FirewallStatusResult, error) {
 	if mock.FirewallStatusFunc == nil {
 		panic("AdminServiceClientMock.FirewallStatusFunc: method is nil but AdminServiceClient.FirewallStatus was just called")
 	}
@@ -721,7 +721,7 @@ func (mock *AdminServiceClientMock) FirewallStatusCalls() []struct {
 }
 
 // FirewallSyncRoutes calls FirewallSyncRoutesFunc.
-func (mock *AdminServiceClientMock) FirewallSyncRoutes(ctx context.Context, in *v1.FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*v1.FirewallSyncRoutesResponse, error) {
+func (mock *AdminServiceClientMock) FirewallSyncRoutes(ctx context.Context, in *v1.FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*v1.FirewallSyncRoutesResult, error) {
 	if mock.FirewallSyncRoutesFunc == nil {
 		panic("AdminServiceClientMock.FirewallSyncRoutesFunc: method is nil but AdminServiceClient.FirewallSyncRoutes was just called")
 	}

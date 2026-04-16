@@ -28,10 +28,10 @@ type Manager interface {
 	// is running and healthy.
 	EnsureRunning(ctx context.Context) error
 
-	// Stop removes the CP container. Does NOT stop Envoy or CoreDNS —
-	// callers who want the firewall torn down cleanly must invoke
-	// `clawker firewall down` first (INV-B2-008). No-op when the CP
-	// container is absent.
+	// Stop removes the CP container. SIGTERM reaches PID 1 (clawker-cp),
+	// which drains the firewall stack and flushes per-container eBPF
+	// state before exiting, so this leaves no orphans behind
+	// (INV-B2-008). No-op when the CP container is absent.
 	Stop(ctx context.Context) error
 
 	// IsRunning reports whether a managed CP container exists AND is in

@@ -20,6 +20,8 @@ Next Steps:
 - [ ] `clawker firewall up` doesn't need to display the stack ip and network id (its not even the name lol its a long random id). its totally useless info to the user. 
 - [ ] CP should remove its container on shutdown imo. unless there is some functional benefit or constraint in doing so
 - [ ] Per container firewall readiness probes for clawkerd / agent api. w/ clawkerd keeping networking locked down until it is ready. 
+- [ ] `clawker firewall remove` always returns a success message even if the domain doesn't exist. this is very dangerous because if a user has a rule for `example.com` and they try to remove `exmaple.com` (typo) it will appear like it succeeded. or if they have a rule for `example.com:80` it will appear like it was removed if they only passed `example.com`(tls). 
+- [ ] it appears that a container left running with old ebpf rules doesn't get them updated on firewall / CP restart.  
 
 ## General
 

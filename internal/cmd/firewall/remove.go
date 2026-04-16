@@ -105,18 +105,21 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	rule := &adminv1.EgressRule{
-		Dst:   opts.Domain,
-		Proto: opts.Proto,
-		Port:  uint32(opts.Port),
-	}
-
-	if _, err := client.FirewallRemoveRules(ctx, &adminv1.FirewallRemoveRulesRequest{Rules: []*adminv1.EgressRule{rule}}); err != nil {
-		return fmt.Errorf("removing firewall rule: %w", err)
+	resp, err := callWithSpinner(ctx, ios, fmt.Sprintf("Removing firewall rule %s...", opts.Domain),
+		func(rpcCtx context.Context) (*adminv1.FirewallRemoveRuleResult, error) {
+			return client.FirewallRemoveRule(rpcCtx, &adminv1.FirewallRemoveRuleRequest{
+				Dst:   opts.Domain,
+				Proto: opts.Proto,
+				Port:  uint32(opts.Port),
+			})
+		})
+	if err != nil {
+		return wrapRPCError("removing firewall rule", err)
 	}
 
 	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.Out, "%s Removed rule: %s\n", cs.SuccessIcon(), opts.Domain)
+	printStackRestartedNote(ios, resp.GetStackRestarted(), "rule removed")
 
 	return nil
 }

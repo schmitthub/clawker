@@ -81,6 +81,13 @@ const (
 	defaultShutdownWait = 5 * time.Second
 	healthCheckInterval = 200 * time.Millisecond
 	healthCheckTimeout  = 30 * time.Second
+	// cpDrainTimeout bounds the full teardown sequence (firewall stack
+	// stop + eBPF flush + queue drain). Must be below the Docker SIGTERM
+	// grace period (cpStopTimeout in cpboot/bootstrap.go = 30s) so we
+	// finish before SIGKILL arrives. Envoy + CoreDNS each use Docker's
+	// default 10s stop timeout, run sequentially → ~20s worst case,
+	// leaving headroom.
+	cpDrainTimeout = 25 * time.Second
 )
 
 func main() {
@@ -306,13 +313,44 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		grpc.ChainStreamInterceptor(authInterceptor.StreamInterceptor()),
 	)
 
+	// ActionQueue is the single-goroutine FIFO worker every Firewall*
+	// RPC runs through so rule-mutation/stack-restart cycles never
+	// collide. Constructed before the Handler so HandlerDeps.Queue is
+	// non-nil at NewHandler time (NewHandler panics otherwise). The
+	// final drain ordering (queue.Close → GracefulStop → bypass timer
+	// cancel → stack.Stop → ebpf.FlushAll) is owned by the
+	// drain-to-zero callback below so a single on-exit defer here is
+	// sufficient as a belt-and-braces against non-drain exit paths.
+	actionQueue := fwhandler.NewActionQueue(log)
+	defer func() { _ = actionQueue.Close() }()
+	// listAgentIDs enumerates every running managed agent container ID.
+	// Handler's FirewallInit uses this to re-enroll per-container BPF
+	// enforcement after a CP restart — FlushAll wiped container_map on
+	// the previous CP's shutdown, so a fresh FirewallInit rebuilds from
+	// live Docker state instead of a silent fail-open.
+	listAgentIDs := func(ctx context.Context) ([]string, error) {
+		filter := mobyclient.Filters{}.
+			Add("label", cfg.LabelManaged()+"="+cfg.ManagedLabelValue()).
+			Add("label", cfg.LabelPurpose()+"="+cfg.PurposeAgent())
+		result, err := dockerCli.APIClient.ContainerList(ctx, mobyclient.ContainerListOptions{Filters: filter})
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]string, 0, len(result.Items))
+		for _, c := range result.Items {
+			ids = append(ids, c.ID)
+		}
+		return ids, nil
+	}
 	handler := fwhandler.NewHandler(fwhandler.HandlerDeps{
-		EBPF:     ebpfMgr,
-		Stack:    stack,
-		Store:    rulesStore,
-		Cfg:      cfg,
-		Resolver: containerResolver,
-		Log:      log,
+		EBPF:       ebpfMgr,
+		Stack:      stack,
+		Store:      rulesStore,
+		Cfg:        cfg,
+		Resolver:   containerResolver,
+		Log:        log,
+		Queue:      actionQueue,
+		ListAgents: listAgentIDs,
 	})
 	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler))
 
@@ -351,32 +389,33 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	defer watcherCancel()
 
 	listAgents := func(ctx context.Context) (int, error) {
-		filter := mobyclient.Filters{}.
-			Add("label", cfg.LabelManaged()+"="+cfg.ManagedLabelValue()).
-			Add("label", cfg.LabelPurpose()+"="+cfg.PurposeAgent())
-		result, err := dockerCli.APIClient.ContainerList(ctx, mobyclient.ContainerListOptions{Filters: filter})
+		ids, err := listAgentIDs(ctx)
 		if err != nil {
 			return 0, err
 		}
-		return len(result.Items), nil
+		return len(ids), nil
 	}
 
-	drainCallback := func(ctx context.Context) error {
+	drainCallbackBody := func(ctx context.Context) error {
 		// Strict ordering (INV-B2-007):
-		//  1. Cancel in-flight bypass timers so no scheduled Enable fires
-		//     against maps that are about to be emptied.
+		//  1. actionQueue.Close drains accepted submissions to completion
+		//     then returns ErrClosed for any subsequent Submit — the
+		//     Handler's bypass-timer goroutines observe this and exit
+		//     cleanly instead of racing with FlushAll.
 		//  2. grpcServer.GracefulStop refuses new RPCs and waits for
-		//     in-flight ones to finish — without this, a late Install
-		//     could write container_map/bypass_map state after FlushAll
-		//     and the next CP instance would see a ghost entry, defeating
-		//     INV-B2-013.
-		//  3. Stop the firewall stack (Envoy + CoreDNS).
-		//  4. Flush per-container eBPF state so the next CP starts clean.
+		//     in-flight handlers to return. With the queue closed any
+		//     handler still running hits ErrClosed from its pending
+		//     Submit and returns, so GracefulStop unblocks quickly.
+		//  3. Cancel any bypass timer that was mid-retry when Close
+		//     landed; safe no-op if the queue already drained them.
+		//  4. Stop the firewall stack (Envoy + CoreDNS).
+		//  5. Flush per-container eBPF state so the next CP starts clean.
 		// Errors are aggregated so a broken drain exits non-zero and the
-		// on-failure restart policy legitimately retriggers investigation
-		// rather than silently blessing partial teardown.
-		handler.CancelAllBypassTimers()
+		// on-failure restart policy retriggers investigation rather than
+		// silently blessing partial teardown.
+		_ = actionQueue.Close()
 		grpcServer.GracefulStop()
+		handler.CancelAllBypassTimers()
 		var errs []error
 		if err := stack.Stop(ctx); err != nil {
 			log.Error().Err(err).Msg("drain: firewall stack stop failed")
@@ -387,6 +426,22 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 			errs = append(errs, fmt.Errorf("ebpf flush: %w", err))
 		}
 		return errors.Join(errs...)
+	}
+
+	// drainCallback wraps the body in sync.Once so SIGTERM and
+	// drain-to-zero converge on the same teardown. Whichever trigger
+	// wins runs the full sequence exactly once; the other observes the
+	// captured error via drainErr. This is what lets `clawker
+	// controlplane down` leave no orphan Envoy/CoreDNS containers —
+	// `docker stop` sends SIGTERM to PID 1, which now runs the same
+	// teardown as drain-to-zero.
+	var (
+		drainOnce sync.Once
+		drainErr  error
+	)
+	drainCallback := func(ctx context.Context) error {
+		drainOnce.Do(func() { drainErr = drainCallbackBody(ctx) })
+		return drainErr
 	}
 
 	watcher := controlplane.NewAgentWatcher(log, listAgents, drainCallback, controlplane.AgentWatcherOptions{})
@@ -400,13 +455,26 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
-	var drainErr error
 	select {
 	case sig := <-sigCh:
 		log.Info().Stringer("signal", sig).Msg("shutdown signal received")
 		// Any subprocess exit past this point is part of graceful shutdown;
 		// suppress crash reporting so it doesn't race with us.
 		subMgr.BeginShutdown()
+		// Cancel the watcher and wait for it to exit so there's no race
+		// on drainCallback — sync.Once makes the actual teardown safe
+		// either way, but we want a deterministic ordering for logs.
+		watcherCancel()
+		<-watcherDone
+		// Run the full teardown: Envoy + CoreDNS stop, eBPF flush,
+		// queue drain. Without this, a `docker stop clawker-controlplane`
+		// (i.e. `clawker controlplane down`) would leave orphan firewall
+		// containers and stale BPF map state.
+		teardownCtx, teardownCancel := context.WithTimeout(context.Background(), cpDrainTimeout)
+		if err := drainCallback(teardownCtx); err != nil {
+			log.Error().Err(err).Msg("sigterm teardown failed")
+		}
+		teardownCancel()
 	case err := <-watcherDone:
 		switch {
 		case err == nil:
@@ -415,9 +483,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 			log.Info().Err(err).Msg("agent watcher cancelled — shutting down")
 		default:
 			log.Error().Err(err).Msg("agent watcher error — shutting down")
-			// Drain failures (stack stop / ebpf flush) must propagate so the
-			// on-failure restart policy catches them.
-			drainErr = err
+			// Drain failures (stack stop / ebpf flush) already captured
+			// in drainErr via the sync.Once wrapper; the watcher just
+			// surfaced them.
 		}
 		subMgr.BeginShutdown()
 	case err := <-subMgr.CrashChan():

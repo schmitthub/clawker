@@ -13,10 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -26,8 +23,17 @@ import (
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
 
-func newFirewallHarness(t *testing.T) *harness.Harness {
+// newFirewallHarness wires the real Config/Docker/ControlPlane/AdminClient
+// stack. requiredServices names which services must have been running at
+// cleanup time; omit for the default ("firewall", "controlplane"). Tests
+// that intentionally tear the firewall down mid-test (e.g. TestFirewall_UpDown)
+// pass only "controlplane" so the cleanup invariant check doesn't fail on
+// the deliberately-absent firewall containers.
+func newFirewallHarness(t *testing.T, requiredServices ...string) *harness.Harness {
 	t.Helper()
+	if len(requiredServices) == 0 {
+		requiredServices = []string{"firewall", "controlplane"}
+	}
 	h := &harness.Harness{
 		T: t,
 		Opts: &harness.FactoryOptions{
@@ -43,32 +49,13 @@ func newFirewallHarness(t *testing.T) *harness.Harness {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	// Register the stack check BEFORE NewIsolatedFS so it runs AFTER
 	// cleanup (t.Cleanup is LIFO). Cleanup populates h.Cleanup, then
 	// this check reads it.
-	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
+	t.Cleanup(func() { h.RequireServicesWereRunning(t, requiredServices...) })
 
 	setup := h.NewIsolatedFS(nil)
 
@@ -99,6 +86,24 @@ func TestFirewall_BlockedDomain(t *testing.T) {
 	assert.NotNil(t, res.Err, "curl to blocked domain should fail")
 }
 
+func TestFirewall_UpDown(t *testing.T) {
+	// This test explicitly tears the firewall down before returning, so
+	// only the CP is expected to be running at cleanup time.
+	h := newFirewallHarness(t, "controlplane")
+
+	res := h.Run("firewall", "up")
+	// Should not return error code
+	require.NoError(t, res.Err, "firewall up failed\nstdout: %s\nstderr: %s",
+		res.Stdout, res.Stderr)
+	statusRes := h.Run("firewall", "status")
+	require.NoError(t, statusRes.Err, "firewall status failed\nstdout: %s\nstderr: %s",
+		statusRes.Stdout, statusRes.Stderr)
+	downRes := h.Run("firewall", "down")
+	require.NoError(t, downRes.Err, "firewall down failed\nstdout: %s\nstderr: %s",
+		downRes.Stdout, downRes.Stderr)
+
+}
+
 func TestFirewall_ICMPBlocked(t *testing.T) {
 	h := &harness.Harness{
 		T: t,
@@ -115,26 +120,7 @@ func TestFirewall_ICMPBlocked(t *testing.T) {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -266,6 +252,11 @@ func TestFirewall_AddRemove(t *testing.T) {
 	// Verify blocked again after remove.
 	blockedAgain := h.RunInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, blockedAgain.Err, "example.com should be blocked after remove")
+
+	// remove non-existent domain should fail with non-zero exit code.
+	removeNonExistent := h.Run("firewall", "remove", "nonexistent.com")
+	assert.NotEqual(t, 0, removeNonExistent.ExitCode,
+		"removing a non-existent domain should fail with non-zero exit code")
 }
 
 func TestFirewall_ConfigRules(t *testing.T) {
@@ -284,26 +275,7 @@ func TestFirewall_ConfigRules(t *testing.T) {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -333,10 +305,10 @@ security:
 		buildRes.Stdout, buildRes.Stderr)
 
 	// Concurrent config sync: goroutine A starts a container (full AddRules →
-	// EnsureDaemon → regenerateAndRestart path with config rules including
-	// example.com TLS + otel-collector TCP), goroutine B adds httpbin.org via
-	// CLI (AddRules → regenerateAndRestart). Both write to the store and
-	// restart Envoy/CoreDNS concurrently.
+	// FirewallInit → regenerateAndRestart path with config rules including
+	// example.com TLS), goroutine B adds httpbin.org via CLI (AddRules →
+	// regenerateAndRestart). Both write to the store and restart
+	// Envoy/CoreDNS concurrently — the ActionQueue serializes them.
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 
@@ -388,6 +360,35 @@ security:
 	statusRes := h.Run("firewall", "status", "--json")
 	require.NoError(t, statusRes.Err, "status failed after concurrent sync")
 	assert.Contains(t, statusRes.Stdout, `"running": true`)
+
+	// --- Firewall down + immediate remove: queue serializes store mutation
+	// even after Envoy/CoreDNS are torn down. CP stays alive so the
+	// AdminService still processes the RPC — the rule store is updated
+	// without a running stack.
+	downRes := h.Run("firewall", "down")
+	require.NoError(t, downRes.Err, "firewall down failed\nstdout: %s\nstderr: %s",
+		downRes.Stdout, downRes.Stderr)
+
+	removeRes := h.Run("firewall", "remove", "example.com")
+	require.NoError(t, removeRes.Err,
+		"firewall remove after down should succeed (CP still alive)\nstdout: %s\nstderr: %s",
+		removeRes.Stdout, removeRes.Stderr)
+
+	listAfterRemove := h.Run("firewall", "list")
+	require.NoError(t, listAfterRemove.Err, "list after remove failed")
+	assert.NotContains(t, listAfterRemove.Stdout, "example.com",
+		"example.com should be gone after firewall down + remove")
+	assert.Contains(t, listAfterRemove.Stdout, "httpbin.org",
+		"httpbin.org should still be present")
+
+	// --- CP down: remove should fail with non-zero exit code.
+	cpDownRes := h.Run("controlplane", "down")
+	require.NoError(t, cpDownRes.Err, "controlplane down failed\nstdout: %s\nstderr: %s",
+		cpDownRes.Stdout, cpDownRes.Stderr)
+
+	removeNoCP := h.Run("firewall", "remove", "httpbin.org")
+	assert.NotEqual(t, 0, removeNoCP.ExitCode,
+		"firewall remove should fail when CP is down")
 }
 
 func TestFirewall_Status(t *testing.T) {
@@ -477,26 +478,7 @@ func TestFirewall_HostProxyReachable(t *testing.T) {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -551,26 +533,7 @@ func TestFirewall_SSHTCPMapping(t *testing.T) {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -672,26 +635,7 @@ func TestFirewall_HTTPDomainDetection(t *testing.T) {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -775,26 +719,7 @@ func TestFirewall_FirewallDisabled(t *testing.T) {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -852,26 +777,7 @@ func TestFirewall_PathRulesDefaultDeny(t *testing.T) {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -964,26 +870,7 @@ func TestFirewall_PathRulesExplicitDeny(t *testing.T) {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -1075,26 +962,7 @@ func TestFirewall_TLSPathRulesDefaultDeny(t *testing.T) {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -1186,26 +1054,7 @@ func TestFirewall_TLSPathRulesExplicitDeny(t *testing.T) {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)
@@ -1233,11 +1082,6 @@ security:
 	regRes := h.Run("project", "register", "testproject")
 	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
 		regRes.Stdout, regRes.Stderr)
-
-	// Start firewall before build so CA cert gets baked into the image.
-	upRes := h.Run("firewall", "up")
-	require.NoError(t, upRes.Err, "firewall up failed\nstdout: %s\nstderr: %s",
-		upRes.Stdout, upRes.Stderr)
 
 	buildRes := h.Run("build")
 	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
@@ -1303,26 +1147,7 @@ func TestFirewall_WildcardAndExactCoexist(t *testing.T) {
 					func() (*logger.Logger, error) { return log, nil },
 				)
 			},
-			AdminClient: func(ctx context.Context, cfg config.Config, log *logger.Logger) (adminv1.AdminServiceClient, error) {
-				dc, err := docker.NewClient(ctx, cfg, log)
-				if err != nil {
-					return nil, fmt.Errorf("admin client: docker: %w", err)
-				}
-				if err := cpboot.EnsureRunning(ctx, cpboot.EnsureOpts{
-					Docker: dc, Config: cfg, Logger: log,
-					HostDirs: cpboot.HostDirs{
-						Config: consts.ConfigDir(),
-						Data:   consts.DataDir(),
-						State:  consts.StateDir(),
-						Cache:  consts.CacheDir(),
-					},
-				}); err != nil {
-					return nil, fmt.Errorf("admin client: ensure control plane: %w", err)
-				}
-				cp := cfg.Settings().ControlPlane
-				c, _, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-				return c, err
-			},
+			UseRealAdminClient: true,
 		},
 	}
 	setup := h.NewIsolatedFS(nil)

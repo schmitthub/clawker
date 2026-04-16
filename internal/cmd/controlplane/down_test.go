@@ -24,7 +24,7 @@ func TestDownRun_ShortCircuitsWhenCPNotRunning(t *testing.T) {
 	assert.Len(t, tb.Mock.StopCalls(), 0, "Stop must not be invoked when CP is absent")
 }
 
-func TestDownRun_StopsCPAndWarnsAboutFirewall(t *testing.T) {
+func TestDownRun_StopsCPCleanlyNoOrphanWarning(t *testing.T) {
 	tb := newTestBed(t)
 	tb.Mock.IsRunningFunc = func(_ context.Context) (bool, error) { return true, nil }
 	tb.Mock.StopFunc = func(_ context.Context) error { return nil }
@@ -32,11 +32,14 @@ func TestDownRun_StopsCPAndWarnsAboutFirewall(t *testing.T) {
 	require.NoError(t, downRun(context.Background(), downOptsFrom(tb)))
 	assert.Len(t, tb.Mock.StopCalls(), 1, "Stop must be invoked when CP is running")
 	assert.Contains(t, tb.Stdout.String(), "Control plane stopped")
-	assert.Contains(t, tb.Stderr.String(), "Envoy and CoreDNS",
-		"warning about orphan firewall containers is required")
-	// Stream contract: the warning must go to stderr, not stdout.
+	// The CP drains its own firewall stack + eBPF state on SIGTERM;
+	// callers never need to run `firewall down` first. Any residual
+	// orphan-warning text here would be a workaround for a CP shutdown
+	// bug, not a feature.
 	assert.NotContains(t, tb.Stdout.String(), "Envoy and CoreDNS",
-		"orphan-firewall warning must not appear on stdout")
+		"stdout must not mention firewall containers — CP owns that teardown")
+	assert.NotContains(t, tb.Stderr.String(), "Envoy and CoreDNS",
+		"stderr must not warn about orphan firewall containers — CP owns that teardown")
 }
 
 // Table-driven error propagation for both failure sites in downRun

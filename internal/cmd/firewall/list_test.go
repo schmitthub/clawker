@@ -25,11 +25,11 @@ func newListCmd(t *testing.T, rules []*adminv1.EgressRule, listErr error) (*cmdu
 	ios, _, stdout, _ := iostreams.Test()
 
 	mock := &cpmocks.AdminServiceClientMock{
-		FirewallListRulesFunc: func(_ context.Context, _ *adminv1.FirewallListRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallListRulesResponse, error) {
+		FirewallListRulesFunc: func(_ context.Context, _ *adminv1.FirewallListRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallListRulesResult, error) {
 			if listErr != nil {
 				return nil, listErr
 			}
-			return &adminv1.FirewallListRulesResponse{Rules: rules}, nil
+			return &adminv1.FirewallListRulesResult{Rules: rules}, nil
 		},
 	}
 

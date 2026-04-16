@@ -27,7 +27,7 @@ func AdminMethodScopes() map[string]string {
 		svc + "FirewallDisable":         consts.ScopeAdmin,
 		svc + "FirewallBypass":          consts.ScopeAdmin,
 		svc + "FirewallAddRules":        consts.ScopeAdmin,
-		svc + "FirewallRemoveRules":     consts.ScopeAdmin,
+		svc + "FirewallRemoveRule":      consts.ScopeAdmin,
 		svc + "FirewallListRules":       consts.ScopeAdmin,
 		svc + "FirewallReload":          consts.ScopeAdmin,
 		svc + "FirewallStatus":          consts.ScopeAdmin,

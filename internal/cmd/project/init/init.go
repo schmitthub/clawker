@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -237,6 +238,14 @@ Combine --yes with --preset, --vcs, --git-protocol, and --no-gpg for full contro
 
 // Run executes the project init command logic.
 func Run(ctx context.Context, opts *ProjectInitOptions) error {
+	// CLI is root of trust for its own crypto. Ensure auth material
+	// (auth CA + signing key + server cert + client cert + JWK) exists
+	// on disk at project init time — every downstream clawker operation
+	// that talks to the CP relies on it. Idempotent.
+	if err := auth.EnsureAuthMaterial(); err != nil {
+		return fmt.Errorf("ensure auth material: %w", err)
+	}
+
 	if opts.Yes || !opts.IOStreams.IsInteractive() {
 		return runNonInteractive(ctx, opts)
 	}

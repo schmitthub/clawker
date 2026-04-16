@@ -456,7 +456,7 @@ The CP container is the **single owner** of firewall state, eBPF lifetime, and E
 **Host-side bootstrap (`internal/controlplane/cpboot/bootstrap.go`):**
 
 - `EnsureRunning(ctx, dc, cfg, log)` — idempotent, mutex-guarded. Steps: ensure CP image → `ContainerCreate` (static IP via `NetworkingConfig.IPAMConfig.IPv4Address`, `on-failure` restart policy max 3) → `ContainerStart` → poll `/healthz` on `127.0.0.1:<HealthPort>`. Mount-mode reconciliation (stop+remove+recreate) if `FirewallDataSubdir` is RO or mount set diverges (INV-B2-006).
-- `Stop(ctx, dc, log)` — stops the CP container only. Envoy/CoreDNS stay up until `FirewallRemove` RPC (INV-B2-008).
+- `Stop(ctx, dc, log)` — stops the CP container; `clawker-cp`'s SIGTERM handler drains the firewall stack and flushes per-container eBPF state before exiting, so no orphans remain (INV-B2-008).
 
 Consumed via the `ensureRunning` package-level seam by `adminClientFunc`, so the first CLI `AdminClient` call transparently brings the CP up. The break-glass `clawker controlplane up/down/status` verbs expose these directly via `f.ControlPlane()`.
 

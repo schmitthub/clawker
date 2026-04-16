@@ -71,9 +71,12 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	resp, err := client.FirewallListRules(ctx, &adminv1.FirewallListRulesRequest{})
+	resp, err := callWithSpinner(ctx, ios, "Listing firewall rules...",
+		func(rpcCtx context.Context) (*adminv1.FirewallListRulesResult, error) {
+			return client.FirewallListRules(rpcCtx, &adminv1.FirewallListRulesRequest{})
+		})
 	if err != nil {
-		return fmt.Errorf("listing firewall rules: %w", err)
+		return wrapRPCError("listing firewall rules", err)
 	}
 
 	rules := resp.GetRules()

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -17,22 +18,6 @@ type EgressRulesFile struct {
 // Fields implements [storage.Schema] for EgressRulesFile.
 func (f EgressRulesFile) Fields() storage.FieldSet {
 	return storage.NormalizeFields(f)
-}
-
-// ProjectRules builds the full rule set from project config and required
-// rules. Called CLI-side before BootstrapServicesPostStart composes the
-// initial rule set that is pushed via FirewallAddRules.
-func ProjectRules(cfg config.Config) []config.EgressRule {
-	var rules []config.EgressRule
-	rules = append(rules, cfg.RequiredFirewallRules()...)
-	projectFw := cfg.Project().Security.Firewall
-	if projectFw != nil {
-		rules = append(rules, projectFw.Rules...)
-		for _, d := range projectFw.AddDomains {
-			rules = append(rules, config.EgressRule{Dst: d, Proto: "tls", Port: 443, Action: "allow"})
-		}
-	}
-	return rules
 }
 
 // NewRulesStore creates a storage.Store[EgressRulesFile] for egress-rules.yaml.
@@ -156,6 +141,71 @@ func NormalizeRule(r config.EgressRule) config.EgressRule {
 // PathRules) and must not be collapsed.
 func RuleKey(r config.EgressRule) string {
 	return fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
+}
+
+// RoutesFromRules projects a rule set into the BPF route_map entry form.
+// Destinations are normalized before hashing so the resulting DomainHash
+// matches whatever CoreDNS writes into dns_cache at resolve time (INV:
+// normalizeDomain + ebpf.DomainHash form the shared hashing contract
+// across firewall / dnsbpf / ebpf).
+//
+// TLS/HTTP rules route to the main egress listener (ports.EgressPort).
+// SSH/TCP rules route to their dedicated per-rule TCP listener port
+// (ports.TCPPortBase + index). The TCP/SSH branch drives routes directly
+// from TCPMappings so eBPF routes and Envoy listeners stay in lockstep:
+// matching allow semantics (empty Action == allow), matching IP/CIDR
+// filtering, and matching tcpDefaultPort defaulting (ssh→22, tcp→443)
+// for rules with Port==0. Any divergence here silently misroutes traffic
+// (e.g. SSH landing on the main TLS listener — tls_inspector sees raw
+// TCP, no SNI match, deny chain resets).
+func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
+	out := make([]ebpf.Route, 0, len(rules))
+
+	// TCP/SSH: TCPMappings is the source of truth for which rules
+	// produce a listener, the effective destination port, and the Envoy
+	// listener port. Mirror its output one-to-one.
+	for _, m := range TCPMappings(rules, ports) {
+		if m.Dst == "" {
+			continue
+		}
+		out = append(out, ebpf.Route{
+			DomainHash: ebpf.DomainHash(m.Dst),
+			DstPort:    uint16(m.DstPort),
+			EnvoyPort:  uint16(m.EnvoyPort),
+		})
+	}
+
+	// TLS/HTTP: second pass. Apply the same action/IP filtering as
+	// TCPMappings so the two paths agree on which rules are "allow".
+	for _, r := range rules {
+		action := strings.ToLower(r.Action)
+		if action != "allow" && action != "" {
+			continue
+		}
+		proto := strings.ToLower(r.Proto)
+		if proto == "ssh" || proto == "tcp" {
+			continue // handled above
+		}
+		if isIPOrCIDR(r.Dst) {
+			continue
+		}
+		dst := normalizeDomain(r.Dst)
+		if dst == "" {
+			continue
+		}
+		// TLS rules reach here post-NormalizeRule with Port==443 (the
+		// pre-Submit store write ensures that); an explicit zero at this
+		// point is a misconfigured rule and we drop it rather than guess.
+		if r.Port <= 0 || r.Port > 0xffff {
+			continue
+		}
+		out = append(out, ebpf.Route{
+			DomainHash: ebpf.DomainHash(dst),
+			DstPort:    uint16(r.Port),
+			EnvoyPort:  uint16(ports.EgressPort),
+		})
+	}
+	return out
 }
 
 // NormalizeAndDedup normalizes all rules and removes duplicates.
