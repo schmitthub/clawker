@@ -232,6 +232,11 @@ func (q *ActionQueue) popHead() actionItem {
 // would strand every queued item and every coalesced peer's reply
 // channel. The recovered panic becomes an ActionResult wrapping
 // ErrClosurePanic that is fanned out to every submitter.
+//
+// Enforces the ActionResult contract centrally: when the closure
+// returns a non-nil error the result carries Err only and Value is
+// zeroed, so submitters never observe a partial/meaningless Value on
+// the error path regardless of what the closure returned.
 func (q *ActionQueue) execute(item actionItem) (res ActionResult) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -245,5 +250,8 @@ func (q *ActionQueue) execute(item actionItem) (res ActionResult) {
 		}
 	}()
 	val, err := item.fn(q.ctx)
-	return ActionResult{Value: val, Err: err}
+	if err != nil {
+		return ActionResult{Err: err}
+	}
+	return ActionResult{Value: val}
 }

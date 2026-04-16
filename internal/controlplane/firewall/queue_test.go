@@ -475,3 +475,28 @@ func TestActionQueue_ClosurePanicDoesNotKillWorker(t *testing.T) {
 		t.Fatalf("post-panic submission result = %+v", res)
 	}
 }
+
+// TestActionQueue_FailedClosureZeroesValue locks in the ActionResult
+// contract: on failure Err is meaningful and Value is nil, regardless
+// of whatever the closure happened to return alongside the error.
+// Without enforcement in execute(), a closure returning (val, err)
+// would leak `val` to every coalesced submitter.
+func TestActionQueue_FailedClosureZeroesValue(t *testing.T) {
+	q := NewActionQueue(nil)
+	defer func() { _ = q.Close() }()
+
+	boom := errors.New("closure failed")
+	reply := q.Submit(ActionRead, func(ctx context.Context) (any, error) {
+		// Deliberate: return both a non-nil Value and an error. The
+		// queue must drop the Value before handing the result to the
+		// submitter.
+		return "leaked payload", boom
+	})
+	res := recvOrFail(t, reply)
+	if !errors.Is(res.Err, boom) {
+		t.Fatalf("err = %v, want %v", res.Err, boom)
+	}
+	if res.Value != nil {
+		t.Fatalf("value = %v, want nil on failure (ActionResult contract)", res.Value)
+	}
+}

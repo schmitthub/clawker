@@ -5,8 +5,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/controlplane/firewall"
+	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 )
 
 // TestValidateDst exercises the pure ValidateDst function across the full
@@ -83,6 +86,108 @@ func TestValidateDst(t *testing.T) {
 				assert.Error(t, err, "ValidateDst(%q) should fail", tt.dst)
 			} else {
 				assert.NoError(t, err, "ValidateDst(%q) should succeed", tt.dst)
+			}
+		})
+	}
+}
+
+// TestRoutesFromRules_TCPMappingsParity locks in the invariant that
+// RoutesFromRules and TCPMappings agree on (a) which rules produce
+// output, (b) the effective destination port for TCP/SSH rules, and
+// (c) the Envoy listener port assigned per rule. A mismatch silently
+// misroutes traffic — e.g. an SSH rule whose BPF route points at the
+// main TLS listener gets reset by tls_inspector's deny chain.
+func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
+	t.Parallel()
+	ports := firewall.EnvoyPorts{EgressPort: 10000, TCPPortBase: 11000}
+
+	tests := []struct {
+		name  string
+		rules []config.EgressRule
+		want  []ebpf.Route
+	}{
+		{
+			name: "tcp rule with empty action is treated as allow",
+			rules: []config.EgressRule{
+				{Dst: "github.com", Proto: "tcp", Port: 8080 /* Action: "" */},
+			},
+			want: []ebpf.Route{
+				{DomainHash: ebpf.DomainHash("github.com"), DstPort: 8080, EnvoyPort: 11000},
+			},
+		},
+		{
+			name: "ssh rule with port=0 uses default 22",
+			rules: []config.EgressRule{
+				{Dst: "git.example.com", Proto: "ssh", Action: "allow" /* Port: 0 */},
+			},
+			want: []ebpf.Route{
+				{DomainHash: ebpf.DomainHash("git.example.com"), DstPort: 22, EnvoyPort: 11000},
+			},
+		},
+		{
+			name: "tcp rule with port=0 uses default 443",
+			rules: []config.EgressRule{
+				{Dst: "a.example.com", Proto: "tcp", Action: "allow" /* Port: 0 */},
+			},
+			want: []ebpf.Route{
+				{DomainHash: ebpf.DomainHash("a.example.com"), DstPort: 443, EnvoyPort: 11000},
+			},
+		},
+		{
+			name: "multiple tcp rules assign sequential EnvoyPorts, port defaulting does not desync the index",
+			rules: []config.EgressRule{
+				{Dst: "a.example.com", Proto: "tcp", Action: "allow" /* Port: 0 */},
+				{Dst: "b.example.com", Proto: "tcp", Action: "allow", Port: 8080},
+			},
+			want: []ebpf.Route{
+				{DomainHash: ebpf.DomainHash("a.example.com"), DstPort: 443, EnvoyPort: 11000},
+				{DomainHash: ebpf.DomainHash("b.example.com"), DstPort: 8080, EnvoyPort: 11001},
+			},
+		},
+		{
+			name: "tls rule still routes to the main egress listener",
+			rules: []config.EgressRule{
+				{Dst: "api.example.com", Proto: "tls", Action: "allow", Port: 443},
+			},
+			want: []ebpf.Route{
+				{DomainHash: ebpf.DomainHash("api.example.com"), DstPort: 443, EnvoyPort: 10000},
+			},
+		},
+		{
+			name: "deny rules produce no routes",
+			rules: []config.EgressRule{
+				{Dst: "api.example.com", Proto: "tls", Action: "deny", Port: 443},
+				{Dst: "git.example.com", Proto: "ssh", Action: "deny"},
+			},
+			want: []ebpf.Route{},
+		},
+		{
+			name: "ip and cidr destinations are skipped",
+			rules: []config.EgressRule{
+				{Dst: "10.0.0.1", Proto: "tcp", Action: "allow", Port: 22},
+				{Dst: "10.0.0.0/24", Proto: "tls", Action: "allow", Port: 443},
+			},
+			want: []ebpf.Route{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := firewall.RoutesFromRules(tt.rules, ports)
+			require.Equal(t, tt.want, got)
+
+			// Parity check: every TCP/SSH mapping TCPMappings produces
+			// must appear in the route set. This is the invariant that
+			// guards against Envoy-side and eBPF-side drift.
+			for _, m := range firewall.TCPMappings(tt.rules, ports) {
+				want := ebpf.Route{
+					DomainHash: ebpf.DomainHash(m.Dst),
+					DstPort:    uint16(m.DstPort),
+					EnvoyPort:  uint16(m.EnvoyPort),
+				}
+				assert.Contains(t, got, want,
+					"TCPMappings produced a mapping with no matching BPF route — Envoy listener would be orphaned")
 			}
 		})
 	}

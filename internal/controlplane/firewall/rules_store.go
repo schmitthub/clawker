@@ -144,47 +144,65 @@ func RuleKey(r config.EgressRule) string {
 }
 
 // RoutesFromRules projects a rule set into the BPF route_map entry form.
-// Only "allow" rules produce routes — deny rules and rules with a non-
-// port fall through. Destinations are normalized before hashing so the
-// resulting DomainHash matches whatever CoreDNS writes into dns_cache at
-// resolve time (INV: normalizeDomain + ebpf.DomainHash form the shared
-// hashing contract across firewall / dnsbpf / ebpf).
+// Destinations are normalized before hashing so the resulting DomainHash
+// matches whatever CoreDNS writes into dns_cache at resolve time (INV:
+// normalizeDomain + ebpf.DomainHash form the shared hashing contract
+// across firewall / dnsbpf / ebpf).
 //
 // TLS/HTTP rules route to the main egress listener (ports.EgressPort).
 // SSH/TCP rules route to their dedicated per-rule TCP listener port
-// (ports.TCPPortBase + index) — the same mapping TCPMappings computes
-// for the Envoy config side. This symmetry is critical: if the eBPF
-// route sends SSH traffic to the main TLS listener, tls_inspector sees
-// raw TCP, no SNI match, deny chain resets the connection.
+// (ports.TCPPortBase + index). The TCP/SSH branch drives routes directly
+// from TCPMappings so eBPF routes and Envoy listeners stay in lockstep:
+// matching allow semantics (empty Action == allow), matching IP/CIDR
+// filtering, and matching tcpDefaultPort defaulting (ssh→22, tcp→443)
+// for rules with Port==0. Any divergence here silently misroutes traffic
+// (e.g. SSH landing on the main TLS listener — tls_inspector sees raw
+// TCP, no SNI match, deny chain resets).
 func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
-	tcpMappings := TCPMappings(rules, ports)
-	tcpIdx := 0
-
 	out := make([]ebpf.Route, 0, len(rules))
+
+	// TCP/SSH: TCPMappings is the source of truth for which rules
+	// produce a listener, the effective destination port, and the Envoy
+	// listener port. Mirror its output one-to-one.
+	for _, m := range TCPMappings(rules, ports) {
+		if m.Dst == "" {
+			continue
+		}
+		out = append(out, ebpf.Route{
+			DomainHash: ebpf.DomainHash(m.Dst),
+			DstPort:    uint16(m.DstPort),
+			EnvoyPort:  uint16(m.EnvoyPort),
+		})
+	}
+
+	// TLS/HTTP: second pass. Apply the same action/IP filtering as
+	// TCPMappings so the two paths agree on which rules are "allow".
 	for _, r := range rules {
-		if strings.ToLower(r.Action) != "allow" {
-			continue
-		}
-		dst := normalizeDomain(r.Dst)
-		if dst == "" || isIPOrCIDR(dst) {
-			continue
-		}
-		port := r.Port
-		if port <= 0 || port > 0xffff {
+		action := strings.ToLower(r.Action)
+		if action != "allow" && action != "" {
 			continue
 		}
 		proto := strings.ToLower(r.Proto)
-		envoyPort := uint16(ports.EgressPort)
 		if proto == "ssh" || proto == "tcp" {
-			if tcpIdx < len(tcpMappings) {
-				envoyPort = uint16(tcpMappings[tcpIdx].EnvoyPort)
-				tcpIdx++
-			}
+			continue // handled above
+		}
+		if isIPOrCIDR(r.Dst) {
+			continue
+		}
+		dst := normalizeDomain(r.Dst)
+		if dst == "" {
+			continue
+		}
+		// TLS rules reach here post-NormalizeRule with Port==443 (the
+		// pre-Submit store write ensures that); an explicit zero at this
+		// point is a misconfigured rule and we drop it rather than guess.
+		if r.Port <= 0 || r.Port > 0xffff {
+			continue
 		}
 		out = append(out, ebpf.Route{
 			DomainHash: ebpf.DomainHash(dst),
-			DstPort:    uint16(port),
-			EnvoyPort:  envoyPort,
+			DstPort:    uint16(r.Port),
+			EnvoyPort:  uint16(ports.EgressPort),
 		})
 	}
 	return out
