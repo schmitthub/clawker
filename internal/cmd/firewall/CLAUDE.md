@@ -25,7 +25,7 @@ Cobra commands for the `clawker firewall` command group. Manages the Envoy+CoreD
 
 ## Subcommand Table
 
-Every run function now speaks typed gRPC via `f.AdminClient(ctx)` — no in-process firewall manager. First call to `f.AdminClient` transparently bootstraps the CP container (`cpboot.EnsureRunning`) and dials with mTLS + OAuth2.
+Every run function now speaks typed gRPC via `f.AdminClient(ctx)` — no in-process firewall manager. `f.AdminClient` is a pure dial with mTLS + OAuth2 and does NOT bootstrap the CP; admin commands fail fast when the CP is down. `firewall up` is one of the explicit bootstrap verbs — its run function calls `f.ControlPlane().EnsureRunning(ctx)` before dialing, mirroring `controlplane up` and the `container start` pre-start phase.
 
 | Command | Constructor | Args | Flags | RPC |
 |---------|-------------|------|-------|-----|

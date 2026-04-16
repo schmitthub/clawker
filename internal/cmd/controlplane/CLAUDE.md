@@ -5,10 +5,13 @@ lifecycle control for the clawker control plane container.
 
 ## Why this exists
 
-Day-to-day, operators do not invoke these verbs. `f.AdminClient` transparently
-calls `cpboot.EnsureRunning` on first use, so the first `clawker firewall
-status` (or any admin RPC) auto-boots the CP. This package exposes that
-lifecycle explicitly for debugging, upgrades, and recovery paths.
+`f.AdminClient` is a pure dial — it does NOT bootstrap the CP, so admin
+commands fail fast when the CP is down. CP lifecycle is owned by a small
+set of explicit bootstrap verbs: `container start` (pre-start phase),
+`firewall up` (before `FirewallInit`), and the `controlplane up/down/status`
+verbs in this package. Day-to-day operators rarely invoke this package —
+it exists for debugging, upgrades, and recovery paths where the operator
+wants to control the CP lifecycle directly.
 
 ## Contents
 
@@ -60,9 +63,8 @@ through the CP.
 ## `controlplane status` tolerance model
 
 `status` short-circuits before touching `f.AdminClient` when
-`Manager.IsRunning` reports false, which keeps the absent-CP branch from
-triggering `AdminClient`'s lazy bootstrap. When the CP is present, the
-command:
+`Manager.IsRunning` reports false — no point dialing a CP that isn't
+there. When the CP is present, the command:
 
 1. Calls `Manager.ProbeHealthz` — a dedicated 2-second-budget point-in-time
    probe (separate from the `EnsureRunning` polling path). Transport errors
@@ -72,10 +74,9 @@ command:
    `row.FirewallError` — `status` is a diagnostic tool, not a gate.
 
 Residual race: if the CP dies between the `IsRunning` check and the
-`AdminClient` dial, the `AdminClient` closure may re-bootstrap it. Accept:
-the operator's explicit request was "show me status", and the best response
-to a dying CP is to reconcile it. The tolerance model keeps the command
-exit zero regardless.
+`AdminClient` dial, the dial fails fast and the transport error lands on
+`row.FirewallError`. Exit code stays zero — `status` is diagnostic, not a
+gate — but the output reflects the dying CP truthfully.
 
 ### Output shape (JSON/template)
 

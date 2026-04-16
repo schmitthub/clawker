@@ -23,8 +23,17 @@ import (
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
 
-func newFirewallHarness(t *testing.T) *harness.Harness {
+// newFirewallHarness wires the real Config/Docker/ControlPlane/AdminClient
+// stack. requiredServices names which services must have been running at
+// cleanup time; omit for the default ("firewall", "controlplane"). Tests
+// that intentionally tear the firewall down mid-test (e.g. TestFirewall_UpDown)
+// pass only "controlplane" so the cleanup invariant check doesn't fail on
+// the deliberately-absent firewall containers.
+func newFirewallHarness(t *testing.T, requiredServices ...string) *harness.Harness {
 	t.Helper()
+	if len(requiredServices) == 0 {
+		requiredServices = []string{"firewall", "controlplane"}
+	}
 	h := &harness.Harness{
 		T: t,
 		Opts: &harness.FactoryOptions{
@@ -46,7 +55,7 @@ func newFirewallHarness(t *testing.T) *harness.Harness {
 	// Register the stack check BEFORE NewIsolatedFS so it runs AFTER
 	// cleanup (t.Cleanup is LIFO). Cleanup populates h.Cleanup, then
 	// this check reads it.
-	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
+	t.Cleanup(func() { h.RequireServicesWereRunning(t, requiredServices...) })
 
 	setup := h.NewIsolatedFS(nil)
 
@@ -75,6 +84,24 @@ func TestFirewall_BlockedDomain(t *testing.T) {
 	// Blocked: example.com is NOT in the allowed rules.
 	res := h.RunInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, res.Err, "curl to blocked domain should fail")
+}
+
+func TestFirewall_UpDown(t *testing.T) {
+	// This test explicitly tears the firewall down before returning, so
+	// only the CP is expected to be running at cleanup time.
+	h := newFirewallHarness(t, "controlplane")
+
+	res := h.Run("firewall", "up")
+	// Should not return error code
+	require.NoError(t, res.Err, "firewall up failed\nstdout: %s\nstderr: %s",
+		res.Stdout, res.Stderr)
+	statusRes := h.Run("firewall", "status")
+	require.NoError(t, statusRes.Err, "firewall status failed\nstdout: %s\nstderr: %s",
+		statusRes.Stdout, statusRes.Stderr)
+	downRes := h.Run("firewall", "down")
+	require.NoError(t, downRes.Err, "firewall down failed\nstdout: %s\nstderr: %s",
+		downRes.Stdout, downRes.Stderr)
+
 }
 
 func TestFirewall_ICMPBlocked(t *testing.T) {
