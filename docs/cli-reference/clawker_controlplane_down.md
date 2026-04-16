@@ -10,11 +10,9 @@ Stop the control plane
 
 Stop and remove the clawker control plane container.
 
-This does NOT stop the Envoy or CoreDNS firewall containers — they are
-owned by the CP but live past CP shutdown. To tear the firewall down
-first, run `clawker firewall down` BEFORE `clawker controlplane down`;
-otherwise Envoy and CoreDNS will keep running as orphans on clawker-net
-until the next `clawker controlplane up` adopts them.
+Sends SIGTERM to the CP, which drains its own firewall stack (Envoy +
+CoreDNS) and flushes per-container eBPF state before exiting. No orphan
+containers, no stale map entries.
 
 ```
 clawker controlplane down [flags]
@@ -23,8 +21,7 @@ clawker controlplane down [flags]
 ### Examples
 
 ```
-  # Recommended teardown order
-  clawker firewall down
+  # Stop the control plane (and everything it owns)
   clawker controlplane down
 ```
 

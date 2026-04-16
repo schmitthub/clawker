@@ -81,6 +81,13 @@ const (
 	defaultShutdownWait = 5 * time.Second
 	healthCheckInterval = 200 * time.Millisecond
 	healthCheckTimeout  = 30 * time.Second
+	// cpDrainTimeout bounds the full teardown sequence (firewall stack
+	// stop + eBPF flush + queue drain). Must be below the Docker SIGTERM
+	// grace period (cpStopTimeout in cpboot/bootstrap.go = 30s) so we
+	// finish before SIGKILL arrives. Envoy + CoreDNS each use Docker's
+	// default 10s stop timeout, run sequentially → ~20s worst case,
+	// leaving headroom.
+	cpDrainTimeout = 25 * time.Second
 )
 
 func main() {
@@ -372,7 +379,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		return len(result.Items), nil
 	}
 
-	drainCallback := func(ctx context.Context) error {
+	drainCallbackBody := func(ctx context.Context) error {
 		// Strict ordering (INV-B2-007):
 		//  1. actionQueue.Close drains accepted submissions to completion
 		//     then returns ErrClosed for any subsequent Submit — the
@@ -404,6 +411,22 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		return errors.Join(errs...)
 	}
 
+	// drainCallback wraps the body in sync.Once so SIGTERM and
+	// drain-to-zero converge on the same teardown. Whichever trigger
+	// wins runs the full sequence exactly once; the other observes the
+	// captured error via drainErr. This is what lets `clawker
+	// controlplane down` leave no orphan Envoy/CoreDNS containers —
+	// `docker stop` sends SIGTERM to PID 1, which now runs the same
+	// teardown as drain-to-zero.
+	var (
+		drainOnce sync.Once
+		drainErr  error
+	)
+	drainCallback := func(ctx context.Context) error {
+		drainOnce.Do(func() { drainErr = drainCallbackBody(ctx) })
+		return drainErr
+	}
+
 	watcher := controlplane.NewAgentWatcher(log, listAgents, drainCallback, controlplane.AgentWatcherOptions{})
 	watcherDone := make(chan error, 1)
 	go func() {
@@ -415,13 +438,26 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
-	var drainErr error
 	select {
 	case sig := <-sigCh:
 		log.Info().Stringer("signal", sig).Msg("shutdown signal received")
 		// Any subprocess exit past this point is part of graceful shutdown;
 		// suppress crash reporting so it doesn't race with us.
 		subMgr.BeginShutdown()
+		// Cancel the watcher and wait for it to exit so there's no race
+		// on drainCallback — sync.Once makes the actual teardown safe
+		// either way, but we want a deterministic ordering for logs.
+		watcherCancel()
+		<-watcherDone
+		// Run the full teardown: Envoy + CoreDNS stop, eBPF flush,
+		// queue drain. Without this, a `docker stop clawker-controlplane`
+		// (i.e. `clawker controlplane down`) would leave orphan firewall
+		// containers and stale BPF map state.
+		teardownCtx, teardownCancel := context.WithTimeout(context.Background(), cpDrainTimeout)
+		if err := drainCallback(teardownCtx); err != nil {
+			log.Error().Err(err).Msg("sigterm teardown failed")
+		}
+		teardownCancel()
 	case err := <-watcherDone:
 		switch {
 		case err == nil:
@@ -430,9 +466,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 			log.Info().Err(err).Msg("agent watcher cancelled — shutting down")
 		default:
 			log.Error().Err(err).Msg("agent watcher error — shutting down")
-			// Drain failures (stack stop / ebpf flush) must propagate so the
-			// on-failure restart policy catches them.
-			drainErr = err
+			// Drain failures (stack stop / ebpf flush) already captured
+			// in drainErr via the sync.Once wrapper; the watcher just
+			// surfaced them.
 		}
 		subMgr.BeginShutdown()
 	case err := <-subMgr.CrashChan():

@@ -86,8 +86,11 @@ func TestControlPlaneCLI_UpStatusDown(t *testing.T) {
 	down := h.Run("controlplane", "down")
 	require.NoError(t, down.Err, "controlplane down failed: %s", down.Stderr)
 	assert.Contains(t, down.Stdout, "Control plane stopped")
-	assert.Contains(t, down.Stderr, "Envoy and CoreDNS",
-		"down must warn about orphan firewall containers (INV-B2-008)")
+	// The CP's SIGTERM handler runs the full firewall + eBPF teardown
+	// before exiting (INV-B2-008, reworked). No orphan warning: if one
+	// fires, the CP shutdown path is incomplete.
+	assert.NotContains(t, down.Stderr, "Envoy and CoreDNS",
+		"orphan-firewall warning indicates CP SIGTERM didn't run full teardown")
 
 	statusAfter := h.Run("controlplane", "status", "--json")
 	require.NoError(t, statusAfter.Err, "status after down failed: %s", statusAfter.Stderr)

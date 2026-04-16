@@ -44,21 +44,29 @@ No package-level seams. Tests inject a `*mocks.ManagerMock` by overriding
 methods it exercises, so an unexpected call to an unprogrammed method
 panics — that's the assertion for paths that should short-circuit.
 
-## `controlplane down` and firewall orphans (INV-B2-008)
+## `controlplane down` and firewall teardown (INV-B2-008, reworked)
 
-The CP owns Envoy and CoreDNS container lifecycle, but `controlplane down`
-only removes the CP container itself. Envoy and CoreDNS keep running on
-`clawker-net` until the next `controlplane up` adopts them, or until the
-operator runs `clawker firewall down` first to route `FirewallRemove`
-through the CP.
+The CP owns Envoy and CoreDNS lifecycle end-to-end. `controlplane down`
+does a single thing — `docker stop clawker-controlplane` — which sends
+SIGTERM to PID 1 inside the CP (`cmd/clawker-cp/main.go`). The CP's
+SIGTERM handler converges on the same `drainCallback` as the
+drain-to-zero path via `sync.Once`, so the teardown runs exactly once
+regardless of which trigger fires:
 
-`down` therefore:
-1. Short-circuits with an `InfoIcon` message if `Manager.IsRunning` returns
-   false — avoids spinning up a CP just to turn it back off.
-2. On successful `Manager.Stop`, writes a `WarningIcon` line to **stderr**
-   telling the operator to run `clawker firewall down` first next time.
-   The warning is routed to stderr, not stdout, so scripted callers that
-   parse `down`'s stdout see only the success confirmation.
+1. `actionQueue.Close` drains accepted submissions.
+2. `grpcServer.GracefulStop` retires in-flight RPCs.
+3. `handler.CancelAllBypassTimers` stops dead-man timers.
+4. `stack.Stop` removes the Envoy + CoreDNS containers from `clawker-net`.
+5. `ebpfMgr.FlushAll` wipes `container_map` + `bypass_map` so a
+   subsequent `controlplane up` starts with a clean per-container state.
+
+`down` itself is therefore minimal:
+1. Short-circuits with an `InfoIcon` message if `Manager.IsRunning`
+   returns false — avoids spinning a CP up just to turn it off.
+2. On successful `Manager.Stop`, writes a success line to stdout. There
+   is deliberately no orphan-firewall warning — the CP cleans up after
+   itself, and any residual warning text would be a bug indicator, not
+   a feature.
 
 ## `controlplane status` tolerance model
 

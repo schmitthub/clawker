@@ -15,10 +15,10 @@ type DownOptions struct {
 	ControlPlane func() cpboot.Manager
 }
 
-// NewCmdDown creates the controlplane down command. Removes the CP
-// container but does NOT stop Envoy or CoreDNS — callers who want the
-// firewall stack torn down should run `clawker firewall down` first
-// (INV-B2-008).
+// NewCmdDown creates the controlplane down command. Stops and removes
+// the CP container; the CP's own SIGTERM handler drains the firewall
+// stack (Envoy + CoreDNS containers and per-container eBPF state)
+// before exiting, so this verb leaves no orphans behind.
 func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) error) *cobra.Command {
 	opts := &DownOptions{
 		IOStreams:    f.IOStreams,
@@ -30,13 +30,10 @@ func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) err
 		Short: "Stop the control plane",
 		Long: `Stop and remove the clawker control plane container.
 
-This does NOT stop the Envoy or CoreDNS firewall containers — they are
-owned by the CP but live past CP shutdown. To tear the firewall down
-first, run ` + "`clawker firewall down`" + ` BEFORE ` + "`clawker controlplane down`" + `;
-otherwise Envoy and CoreDNS will keep running as orphans on clawker-net
-until the next ` + "`clawker controlplane up`" + ` adopts them.`,
-		Example: `  # Recommended teardown order
-  clawker firewall down
+Sends SIGTERM to the CP, which drains its own firewall stack (Envoy +
+CoreDNS) and flushes per-container eBPF state before exiting. No orphan
+containers, no stale map entries.`,
+		Example: `  # Stop the control plane (and everything it owns)
   clawker controlplane down`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
@@ -68,8 +65,5 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 	}
 
 	fmt.Fprintf(ios.Out, "%s Control plane stopped\n", cs.SuccessIcon())
-	fmt.Fprintf(ios.ErrOut, "%s Envoy and CoreDNS containers may still be running. "+
-		"Run `clawker firewall down` first next time to tear them down cleanly.\n",
-		cs.WarningIcon())
 	return nil
 }

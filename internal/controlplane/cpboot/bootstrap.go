@@ -167,8 +167,10 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 }
 
 // Stop removes the CP container. Used by `clawker controlplane down`.
-// Does NOT stop Envoy or CoreDNS — callers who want those torn down must
-// call the firewall handler's global-teardown RPC first (INV-B2-008).
+// Docker sends SIGTERM to PID 1 (clawker-cp), whose own shutdown path
+// drains the firewall stack (Envoy + CoreDNS) and flushes per-container
+// eBPF state before exiting — this call does not need to tear those down
+// separately (INV-B2-008).
 func Stop(ctx context.Context, dc *docker.Client) error {
 	summary, err := findCPContainer(ctx, dc)
 	if err != nil {
