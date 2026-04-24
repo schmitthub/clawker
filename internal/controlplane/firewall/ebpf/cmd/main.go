@@ -13,6 +13,12 @@
 //	ebpf-manager unbypass <cgroupPath>                   Clear bypass flag
 //	ebpf-manager dns-update <ip> <domainHash> <ttl>      Update DNS cache entry
 //	ebpf-manager gc-dns                                  Remove expired DNS cache entries
+//	ebpf-manager dump <cgroupPath>                       Inspect container_map for one cgroup
+//	ebpf-manager dump-routes [--json]                    Dump global route_map (every {domain_hash, dst_port} → envoy_port)
+//	ebpf-manager dump-containers [--json]                Dump container_map (every cgroup → BPF container_config)
+//	ebpf-manager dump-bypass [--json]                    Dump bypass_map (every cgroup → bypass flag)
+//	ebpf-manager dump-dns [--json]                       Dump dns_cache (every IP → {domain_hash, expire_ts})
+//	ebpf-manager resolve <hostname>                      Resolve hostname to IPv4 from CP netns
 package main
 
 import (
@@ -72,6 +78,14 @@ func main() {
 	case "dump":
 		requireArgs(3) // dump <cgroupPath>
 		runDump(log, os.Args[2])
+	case "dump-routes":
+		runDumpRoutes(log, hasJSONFlag(os.Args[2:]))
+	case "dump-containers":
+		runDumpContainers(log, hasJSONFlag(os.Args[2:]))
+	case "dump-bypass":
+		runDumpBypass(log, hasJSONFlag(os.Args[2:]))
+	case "dump-dns":
+		runDumpDNS(log, hasJSONFlag(os.Args[2:]))
 	case "resolve":
 		requireArgs(3) // resolve <hostname>
 		runResolve(os.Args[2])
@@ -262,6 +276,134 @@ func runDump(log *logger.Logger, cgroupPath string) {
 	}
 }
 
+// hasJSONFlag scans args for --json. Recognized at any position so the
+// CLI is forgiving for human operators in incident response.
+func hasJSONFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--json" || a == "-json" {
+			return true
+		}
+	}
+	return false
+}
+
+func openManagerOrFail(log *logger.Logger, cmd string) *clawkerebpf.Manager {
+	mgr := clawkerebpf.NewManager(log)
+	if err := mgr.OpenPinned(); err != nil {
+		fatal(cmd, err)
+	}
+	return mgr
+}
+
+func runDumpRoutes(log *logger.Logger, asJSON bool) {
+	mgr := openManagerOrFail(log, "dump-routes")
+	defer mgr.Close()
+
+	routes, err := mgr.DumpRoutes()
+	if err != nil {
+		fatal("dump-routes", err)
+	}
+	if asJSON {
+		emitJSON("dump-routes", routes)
+		return
+	}
+	if len(routes) == 0 {
+		fmt.Println("route_map: empty")
+		return
+	}
+	fmt.Printf("route_map: %d entries\n", len(routes))
+	for _, r := range routes {
+		fmt.Printf("  domain_hash=0x%08x dst_port=%d -> envoy_port=%d\n",
+			r.DomainHash, r.DstPort, r.EnvoyPort)
+	}
+}
+
+func runDumpContainers(log *logger.Logger, asJSON bool) {
+	mgr := openManagerOrFail(log, "dump-containers")
+	defer mgr.Close()
+
+	entries, err := mgr.DumpContainers()
+	if err != nil {
+		fatal("dump-containers", err)
+	}
+	if asJSON {
+		emitJSON("dump-containers", entries)
+		return
+	}
+	if len(entries) == 0 {
+		fmt.Println("container_map: empty")
+		return
+	}
+	fmt.Printf("container_map: %d entries\n", len(entries))
+	for _, e := range entries {
+		c := e.Config
+		fmt.Printf("  cgroup_id=%d\n", e.CgroupID)
+		fmt.Printf("    envoy_ip=%s coredns_ip=%s gateway_ip=%s\n",
+			clawkerebpf.Uint32ToIP(c.EnvoyIP),
+			clawkerebpf.Uint32ToIP(c.CoreDNSIP),
+			clawkerebpf.Uint32ToIP(c.GatewayIP))
+		fmt.Printf("    net_addr=%s net_mask=%s\n",
+			clawkerebpf.Uint32ToIP(c.NetAddr),
+			clawkerebpf.Uint32ToIP(c.NetMask))
+		fmt.Printf("    host_proxy_ip=%s host_proxy_port=%d egress_port=%d\n",
+			clawkerebpf.Uint32ToIP(c.HostProxyIP),
+			c.HostProxyPort, c.EgressPort)
+	}
+}
+
+func runDumpBypass(log *logger.Logger, asJSON bool) {
+	mgr := openManagerOrFail(log, "dump-bypass")
+	defer mgr.Close()
+
+	entries, err := mgr.DumpBypass()
+	if err != nil {
+		fatal("dump-bypass", err)
+	}
+	if asJSON {
+		emitJSON("dump-bypass", entries)
+		return
+	}
+	if len(entries) == 0 {
+		fmt.Println("bypass_map: empty")
+		return
+	}
+	fmt.Printf("bypass_map: %d entries\n", len(entries))
+	for _, e := range entries {
+		fmt.Printf("  cgroup_id=%d bypass=%t\n", e.CgroupID, e.Bypass)
+	}
+}
+
+func runDumpDNS(log *logger.Logger, asJSON bool) {
+	mgr := openManagerOrFail(log, "dump-dns")
+	defer mgr.Close()
+
+	entries, err := mgr.DumpDNS()
+	if err != nil {
+		fatal("dump-dns", err)
+	}
+	if asJSON {
+		emitJSON("dump-dns", entries)
+		return
+	}
+	if len(entries) == 0 {
+		fmt.Println("dns_cache: empty")
+		return
+	}
+	fmt.Printf("dns_cache: %d entries\n", len(entries))
+	for _, e := range entries {
+		fmt.Printf("  ip=%s domain_hash=0x%08x expire_ts=%d\n",
+			e.IP, e.DomainHash, e.ExpireTS)
+	}
+}
+
+func emitJSON(cmd string, v any) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		fatal(cmd, fmt.Errorf("encoding json: %w", err))
+	}
+}
+
 func runResolve(hostname string) {
 	addrs, err := net.LookupHost(hostname)
 	if err != nil {
@@ -294,7 +436,13 @@ Commands:
   bypass  <cgroupPath>                    Set bypass flag
   unbypass <cgroupPath>                   Clear bypass flag
   dns-update <ip> <domainHash> <ttl>      Update DNS cache entry
-  gc-dns                                  Remove expired DNS cache entries`)
+  gc-dns                                  Remove expired DNS cache entries
+  dump <cgroupPath>                       Inspect container_map for one cgroup
+  dump-routes [--json]                    Dump global route_map
+  dump-containers [--json]                Dump container_map
+  dump-bypass [--json]                    Dump bypass_map
+  dump-dns [--json]                       Dump dns_cache
+  resolve <hostname>                      Resolve hostname to IPv4 from CP netns`)
 }
 
 func fatal(cmd string, err error) {

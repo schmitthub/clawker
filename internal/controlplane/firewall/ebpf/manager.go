@@ -3,6 +3,7 @@ package ebpf
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -695,6 +696,124 @@ func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, erro
 	var cfg clawkerContainerConfig
 	err := m.objs.ContainerMap.Lookup(cgroupID, &cfg)
 	return cfg, err
+}
+
+// ContainerEntry pairs a cgroup ID with its container_map config.
+// Used by DumpContainers for break-glass introspection.
+type ContainerEntry struct {
+	CgroupID uint64          `json:"cgroup_id"`
+	Config   ContainerConfig `json:"config"`
+}
+
+// BypassEntry pairs a cgroup ID with its bypass_map state.
+type BypassEntry struct {
+	CgroupID uint64 `json:"cgroup_id"`
+	Bypass   bool   `json:"bypass"`
+}
+
+// DNSCacheEntry mirrors one dns_cache map entry: an IPv4 address
+// (network byte order — matches ctx->user_ip4 in the BPF connect hook
+// and the ContainerConfig IP fields), its FNV-1a domain hash, and
+// wall-clock expiration.
+type DNSCacheEntry struct {
+	IP         net.IP `json:"ip"`
+	DomainHash uint32 `json:"domain_hash"`
+	ExpireTS   uint32 `json:"expire_ts"`
+}
+
+// DumpRoutes returns every entry in the global route_map.
+// Used by the break-glass ebpf-manager dump-routes subcommand and by
+// future control-plane introspection RPCs to verify that the BPF route
+// table reflects what the rules store says.
+//
+// On iteration failure, returns (nil, err) — partial slices are never
+// returned because operators (and future RPC consumers) would
+// otherwise be unable to distinguish "the map has N entries" from
+// "iteration broke after N of M entries", and silent truncation
+// during incident response leads to the wrong conclusion.
+func (m *Manager) DumpRoutes() ([]Route, error) {
+	out := make([]Route, 0)
+	var k clawkerRouteKey
+	var v clawkerRouteVal
+	iter := m.objs.RouteMap.Iterate()
+	for iter.Next(&k, &v) {
+		out = append(out, Route{
+			DomainHash: k.DomainHash,
+			DstPort:    k.DstPort,
+			EnvoyPort:  v.EnvoyPort,
+		})
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("ebpf: iterating route_map: %w", err)
+	}
+	return out, nil
+}
+
+// DumpContainers returns every entry in container_map. Returns
+// (nil, err) on iteration failure — see DumpRoutes for rationale.
+func (m *Manager) DumpContainers() ([]ContainerEntry, error) {
+	out := make([]ContainerEntry, 0)
+	var cgroupID uint64
+	var cfg clawkerContainerConfig
+	iter := m.objs.ContainerMap.Iterate()
+	for iter.Next(&cgroupID, &cfg) {
+		out = append(out, ContainerEntry{
+			CgroupID: cgroupID,
+			Config: ContainerConfig{
+				EnvoyIP:       cfg.EnvoyIp,
+				CoreDNSIP:     cfg.CorednsIp,
+				GatewayIP:     cfg.GatewayIp,
+				NetAddr:       cfg.NetAddr,
+				NetMask:       cfg.NetMask,
+				HostProxyIP:   cfg.HostProxyIp,
+				HostProxyPort: cfg.HostProxyPort,
+				EgressPort:    cfg.EgressPort,
+			},
+		})
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("ebpf: iterating container_map: %w", err)
+	}
+	return out, nil
+}
+
+// DumpBypass returns every entry in bypass_map. Returns (nil, err) on
+// iteration failure — see DumpRoutes for rationale.
+func (m *Manager) DumpBypass() ([]BypassEntry, error) {
+	out := make([]BypassEntry, 0)
+	var cgroupID uint64
+	var flag uint8
+	iter := m.objs.BypassMap.Iterate()
+	for iter.Next(&cgroupID, &flag) {
+		out = append(out, BypassEntry{
+			CgroupID: cgroupID,
+			Bypass:   flag != 0,
+		})
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("ebpf: iterating bypass_map: %w", err)
+	}
+	return out, nil
+}
+
+// DumpDNS returns every entry in dns_cache. Returns (nil, err) on
+// iteration failure — see DumpRoutes for rationale.
+func (m *Manager) DumpDNS() ([]DNSCacheEntry, error) {
+	out := make([]DNSCacheEntry, 0)
+	var ip uint32
+	var entry clawkerDnsEntry
+	iter := m.objs.DnsCache.Iterate()
+	for iter.Next(&ip, &entry) {
+		out = append(out, DNSCacheEntry{
+			IP:         Uint32ToIP(ip),
+			DomainHash: entry.DomainHash,
+			ExpireTS:   entry.ExpireTs,
+		})
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("ebpf: iterating dns_cache: %w", err)
+	}
+	return out, nil
 }
 
 // Route describes a per-domain TCP route for a container, identified by domain hash.
