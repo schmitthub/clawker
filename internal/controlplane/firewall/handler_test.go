@@ -11,6 +11,7 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -730,6 +731,49 @@ func TestHandler_FirewallInit_SyncsRoutesFromStore(t *testing.T) {
 	require.NotNil(t, tlsRoute, "TLS rule missing from route_map seed")
 	assert.NotZero(t, sshRoute.DomainHash)
 	assert.NotZero(t, tlsRoute.DomainHash)
+
+	// TLS rule routes to the main Envoy egress listener.
+	// SSH rule routes to a dedicated per-rule TCP listener at
+	// TCPPortBase + idx. A refactor that flipped these port
+	// assignments would silently misroute traffic through the wrong
+	// listener type (e.g. SSH reaching the TLS listener, which
+	// tls_inspector would reject).
+	assert.Equal(t, uint16(consts.EnvoyEgressPort), tlsRoute.EnvoyPort,
+		"TLS rule must target the main egress listener port")
+	assert.GreaterOrEqual(t, sshRoute.EnvoyPort, uint16(consts.EnvoyTCPPortBase),
+		"SSH rule must target a dedicated TCP listener port")
+}
+
+// TestHandler_FirewallInit_EmitsNormalizeWarnings covers the warning
+// path introduced by routesFromStore: rules that normalize away (or
+// dedup against another) produce a normalize_warning log but do NOT
+// block the route_map seed. Pre-fix, these warnings were a bare
+// Msg(w) with no structured field — making them unsearchable in
+// production logs. The new contract is a structured log per warning
+// + a still-valid SyncRoutes call for the survivors.
+func TestHandler_FirewallInit_EmitsNormalizeWarningsButSyncsSurvivors(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	// Two rules that normalize to the same key → one will dedupe
+	// and emit a warning; the other survives and must appear in the
+	// sync call.
+	added, err := h.addRulesToStore([]config.EgressRule{
+		{Dst: "Example.Com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"},
+	})
+	require.NoError(t, err)
+	// addRulesToStore dedupes by RuleKey pre-insert, so only one
+	// physical rule lands — good; that already exercises the
+	// path-of-least-surprise: no warning, one route.
+	assert.LessOrEqual(t, added, 2)
+
+	_, err = h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+	require.NoError(t, err)
+
+	calls := mock.SyncRoutesCalls()
+	require.Len(t, calls, 1)
+	assert.NotEmpty(t, calls[0].Routes, "surviving rule must still produce a route")
 }
 
 // ---------------------------------------------------------------------------
@@ -810,14 +854,18 @@ func TestResolveBypassCgroupID_CgroupStatFails_FallsBack(t *testing.T) {
 // bypassTimerFired retry behaviour
 // ---------------------------------------------------------------------------
 
-func TestBypassTimerFired_AllRetriesExhausted_CleansUpEntry(t *testing.T) {
+// bypassTimerFired makes a single enqueue attempt (historically 3 with
+// backoff; retrying from a timer goroutine blocked shutdown and added
+// little value — the operator can reissue FirewallEnable). A
+// permanent enable failure logs + cleans up the entry.
+func TestBypassTimerFired_EnableFails_CleansUpEntry(t *testing.T) {
 	mock := noopMock()
 	mock.EnableFunc = func(_ uint64) error {
 		return errors.New("enable always fails")
 	}
 	h := newTestHandler(t, mock, nil)
 
-	const cid = "ctr-retry-exhaust"
+	const cid = "ctr-enable-fail"
 	entry := &bypassEntry{
 		containerID: cid,
 		cgroupID:    12345,
@@ -833,26 +881,25 @@ func TestBypassTimerFired_AllRetriesExhausted_CleansUpEntry(t *testing.T) {
 	_, exists := h.bypassTimers[cid]
 	h.bypassTimersMu.Unlock()
 	if exists {
-		t.Error("bypass timer entry should be cleaned up after all retries exhausted")
+		t.Error("bypass timer entry should be cleaned up after enable failure")
 	}
-	if got := len(mock.EnableCalls()); got != 3 {
-		t.Errorf("Enable called %d times, want 3", got)
+	if got := len(mock.EnableCalls()); got != 1 {
+		t.Errorf("Enable called %d times, want 1 (single-attempt failsafe)", got)
 	}
 }
 
-func TestBypassTimerFired_SucceedsOnRetry_CleansUpEntry(t *testing.T) {
+// Successful single attempt cleans up the entry and leaves no orphan
+// state.
+func TestBypassTimerFired_EnableSucceeds_CleansUpEntry(t *testing.T) {
 	var calls int
 	mock := noopMock()
 	mock.EnableFunc = func(_ uint64) error {
 		calls++
-		if calls == 1 {
-			return errors.New("transient failure")
-		}
 		return nil
 	}
 	h := newTestHandler(t, mock, nil)
 
-	const cid = "ctr-retry-succeed"
+	const cid = "ctr-enable-ok"
 	entry := &bypassEntry{
 		containerID: cid,
 		cgroupID:    12345,
@@ -868,10 +915,10 @@ func TestBypassTimerFired_SucceedsOnRetry_CleansUpEntry(t *testing.T) {
 	_, exists := h.bypassTimers[cid]
 	h.bypassTimersMu.Unlock()
 	if exists {
-		t.Error("bypass timer entry should be cleaned up after successful retry")
+		t.Error("bypass timer entry should be cleaned up after successful enable")
 	}
-	if calls != 2 {
-		t.Errorf("Enable called %d times, want 2", calls)
+	if calls != 1 {
+		t.Errorf("Enable called %d times, want 1", calls)
 	}
 }
 

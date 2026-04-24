@@ -28,7 +28,7 @@ var _ informer.Interface = &InterfaceMock{}
 //			IncomingFunc: func(key informer.Key, relKind string) []informer.Resource {
 //				panic("mock out the Incoming method")
 //			},
-//			LinkRelationFunc: func(ctx context.Context, rel informer.Relation, t informer.Transition) error {
+//			LinkRelationFunc: func(ctx context.Context, rel informer.Relation) error {
 //				panic("mock out the LinkRelation method")
 //			},
 //			ListFunc: func(f informer.Filter) []informer.Resource {
@@ -49,10 +49,10 @@ var _ informer.Interface = &InterfaceMock{}
 //			SubscribeFunc: func(f informer.Filter) ([]informer.Resource, <-chan informer.Delta, func()) {
 //				panic("mock out the Subscribe method")
 //			},
-//			UnlinkRelationFunc: func(ctx context.Context, from informer.Key, to informer.Key, kind string, t informer.Transition) error {
+//			UnlinkRelationFunc: func(ctx context.Context, from informer.Key, to informer.Key, kind string) error {
 //				panic("mock out the UnlinkRelation method")
 //			},
-//			UpsertFunc: func(ctx context.Context, r informer.Resource, t informer.Transition) error {
+//			UpsertFunc: func(ctx context.Context, u informer.ResourceUpdate, t informer.Transition) error {
 //				panic("mock out the Upsert method")
 //			},
 //		}
@@ -72,7 +72,7 @@ type InterfaceMock struct {
 	IncomingFunc func(key informer.Key, relKind string) []informer.Resource
 
 	// LinkRelationFunc mocks the LinkRelation method.
-	LinkRelationFunc func(ctx context.Context, rel informer.Relation, t informer.Transition) error
+	LinkRelationFunc func(ctx context.Context, rel informer.Relation) error
 
 	// ListFunc mocks the List method.
 	ListFunc func(f informer.Filter) []informer.Resource
@@ -93,10 +93,10 @@ type InterfaceMock struct {
 	SubscribeFunc func(f informer.Filter) ([]informer.Resource, <-chan informer.Delta, func())
 
 	// UnlinkRelationFunc mocks the UnlinkRelation method.
-	UnlinkRelationFunc func(ctx context.Context, from informer.Key, to informer.Key, kind string, t informer.Transition) error
+	UnlinkRelationFunc func(ctx context.Context, from informer.Key, to informer.Key, kind string) error
 
 	// UpsertFunc mocks the Upsert method.
-	UpsertFunc func(ctx context.Context, r informer.Resource, t informer.Transition) error
+	UpsertFunc func(ctx context.Context, u informer.ResourceUpdate, t informer.Transition) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -123,8 +123,6 @@ type InterfaceMock struct {
 			Ctx context.Context
 			// Rel is the rel argument value.
 			Rel informer.Relation
-			// T is the t argument value.
-			T informer.Transition
 		}
 		// List holds details about calls to the List method.
 		List []struct {
@@ -176,15 +174,13 @@ type InterfaceMock struct {
 			To informer.Key
 			// Kind is the kind argument value.
 			Kind string
-			// T is the t argument value.
-			T informer.Transition
 		}
 		// Upsert holds details about calls to the Upsert method.
 		Upsert []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
-			// R is the r argument value.
-			R informer.Resource
+			// U is the u argument value.
+			U informer.ResourceUpdate
 			// T is the t argument value.
 			T informer.Transition
 		}
@@ -304,23 +300,21 @@ func (mock *InterfaceMock) IncomingCalls() []struct {
 }
 
 // LinkRelation calls LinkRelationFunc.
-func (mock *InterfaceMock) LinkRelation(ctx context.Context, rel informer.Relation, t informer.Transition) error {
+func (mock *InterfaceMock) LinkRelation(ctx context.Context, rel informer.Relation) error {
 	if mock.LinkRelationFunc == nil {
 		panic("InterfaceMock.LinkRelationFunc: method is nil but Interface.LinkRelation was just called")
 	}
 	callInfo := struct {
 		Ctx context.Context
 		Rel informer.Relation
-		T   informer.Transition
 	}{
 		Ctx: ctx,
 		Rel: rel,
-		T:   t,
 	}
 	mock.lockLinkRelation.Lock()
 	mock.calls.LinkRelation = append(mock.calls.LinkRelation, callInfo)
 	mock.lockLinkRelation.Unlock()
-	return mock.LinkRelationFunc(ctx, rel, t)
+	return mock.LinkRelationFunc(ctx, rel)
 }
 
 // LinkRelationCalls gets all the calls that were made to LinkRelation.
@@ -330,12 +324,10 @@ func (mock *InterfaceMock) LinkRelation(ctx context.Context, rel informer.Relati
 func (mock *InterfaceMock) LinkRelationCalls() []struct {
 	Ctx context.Context
 	Rel informer.Relation
-	T   informer.Transition
 } {
 	var calls []struct {
 		Ctx context.Context
 		Rel informer.Relation
-		T   informer.Transition
 	}
 	mock.lockLinkRelation.RLock()
 	calls = mock.calls.LinkRelation
@@ -555,7 +547,7 @@ func (mock *InterfaceMock) SubscribeCalls() []struct {
 }
 
 // UnlinkRelation calls UnlinkRelationFunc.
-func (mock *InterfaceMock) UnlinkRelation(ctx context.Context, from informer.Key, to informer.Key, kind string, t informer.Transition) error {
+func (mock *InterfaceMock) UnlinkRelation(ctx context.Context, from informer.Key, to informer.Key, kind string) error {
 	if mock.UnlinkRelationFunc == nil {
 		panic("InterfaceMock.UnlinkRelationFunc: method is nil but Interface.UnlinkRelation was just called")
 	}
@@ -564,18 +556,16 @@ func (mock *InterfaceMock) UnlinkRelation(ctx context.Context, from informer.Key
 		From informer.Key
 		To   informer.Key
 		Kind string
-		T    informer.Transition
 	}{
 		Ctx:  ctx,
 		From: from,
 		To:   to,
 		Kind: kind,
-		T:    t,
 	}
 	mock.lockUnlinkRelation.Lock()
 	mock.calls.UnlinkRelation = append(mock.calls.UnlinkRelation, callInfo)
 	mock.lockUnlinkRelation.Unlock()
-	return mock.UnlinkRelationFunc(ctx, from, to, kind, t)
+	return mock.UnlinkRelationFunc(ctx, from, to, kind)
 }
 
 // UnlinkRelationCalls gets all the calls that were made to UnlinkRelation.
@@ -587,14 +577,12 @@ func (mock *InterfaceMock) UnlinkRelationCalls() []struct {
 	From informer.Key
 	To   informer.Key
 	Kind string
-	T    informer.Transition
 } {
 	var calls []struct {
 		Ctx  context.Context
 		From informer.Key
 		To   informer.Key
 		Kind string
-		T    informer.Transition
 	}
 	mock.lockUnlinkRelation.RLock()
 	calls = mock.calls.UnlinkRelation
@@ -603,23 +591,23 @@ func (mock *InterfaceMock) UnlinkRelationCalls() []struct {
 }
 
 // Upsert calls UpsertFunc.
-func (mock *InterfaceMock) Upsert(ctx context.Context, r informer.Resource, t informer.Transition) error {
+func (mock *InterfaceMock) Upsert(ctx context.Context, u informer.ResourceUpdate, t informer.Transition) error {
 	if mock.UpsertFunc == nil {
 		panic("InterfaceMock.UpsertFunc: method is nil but Interface.Upsert was just called")
 	}
 	callInfo := struct {
 		Ctx context.Context
-		R   informer.Resource
+		U   informer.ResourceUpdate
 		T   informer.Transition
 	}{
 		Ctx: ctx,
-		R:   r,
+		U:   u,
 		T:   t,
 	}
 	mock.lockUpsert.Lock()
 	mock.calls.Upsert = append(mock.calls.Upsert, callInfo)
 	mock.lockUpsert.Unlock()
-	return mock.UpsertFunc(ctx, r, t)
+	return mock.UpsertFunc(ctx, u, t)
 }
 
 // UpsertCalls gets all the calls that were made to Upsert.
@@ -628,12 +616,12 @@ func (mock *InterfaceMock) Upsert(ctx context.Context, r informer.Resource, t in
 //	len(mockedInterface.UpsertCalls())
 func (mock *InterfaceMock) UpsertCalls() []struct {
 	Ctx context.Context
-	R   informer.Resource
+	U   informer.ResourceUpdate
 	T   informer.Transition
 } {
 	var calls []struct {
 		Ctx context.Context
-		R   informer.Resource
+		U   informer.ResourceUpdate
 		T   informer.Transition
 	}
 	mock.lockUpsert.RLock()

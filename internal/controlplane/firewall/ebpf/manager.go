@@ -711,8 +711,10 @@ type BypassEntry struct {
 	Bypass   bool   `json:"bypass"`
 }
 
-// DNSCacheEntry mirrors one dns_cache map entry: an IPv4 address (host
-// byte order) with its FNV-1a domain hash and wall-clock expiration.
+// DNSCacheEntry mirrors one dns_cache map entry: an IPv4 address
+// (network byte order — matches ctx->user_ip4 in the BPF connect hook
+// and the ContainerConfig IP fields), its FNV-1a domain hash, and
+// wall-clock expiration.
 type DNSCacheEntry struct {
 	IP         net.IP `json:"ip"`
 	DomainHash uint32 `json:"domain_hash"`
@@ -723,6 +725,12 @@ type DNSCacheEntry struct {
 // Used by the break-glass ebpf-manager dump-routes subcommand and by
 // future control-plane introspection RPCs to verify that the BPF route
 // table reflects what the rules store says.
+//
+// On iteration failure, returns (nil, err) — partial slices are never
+// returned because operators (and future RPC consumers) would
+// otherwise be unable to distinguish "the map has N entries" from
+// "iteration broke after N of M entries", and silent truncation
+// during incident response leads to the wrong conclusion.
 func (m *Manager) DumpRoutes() ([]Route, error) {
 	out := make([]Route, 0)
 	var k clawkerRouteKey
@@ -736,12 +744,13 @@ func (m *Manager) DumpRoutes() ([]Route, error) {
 		})
 	}
 	if err := iter.Err(); err != nil {
-		return out, fmt.Errorf("ebpf: iterating route_map: %w", err)
+		return nil, fmt.Errorf("ebpf: iterating route_map: %w", err)
 	}
 	return out, nil
 }
 
-// DumpContainers returns every entry in container_map.
+// DumpContainers returns every entry in container_map. Returns
+// (nil, err) on iteration failure — see DumpRoutes for rationale.
 func (m *Manager) DumpContainers() ([]ContainerEntry, error) {
 	out := make([]ContainerEntry, 0)
 	var cgroupID uint64
@@ -763,12 +772,13 @@ func (m *Manager) DumpContainers() ([]ContainerEntry, error) {
 		})
 	}
 	if err := iter.Err(); err != nil {
-		return out, fmt.Errorf("ebpf: iterating container_map: %w", err)
+		return nil, fmt.Errorf("ebpf: iterating container_map: %w", err)
 	}
 	return out, nil
 }
 
-// DumpBypass returns every entry in bypass_map.
+// DumpBypass returns every entry in bypass_map. Returns (nil, err) on
+// iteration failure — see DumpRoutes for rationale.
 func (m *Manager) DumpBypass() ([]BypassEntry, error) {
 	out := make([]BypassEntry, 0)
 	var cgroupID uint64
@@ -781,12 +791,13 @@ func (m *Manager) DumpBypass() ([]BypassEntry, error) {
 		})
 	}
 	if err := iter.Err(); err != nil {
-		return out, fmt.Errorf("ebpf: iterating bypass_map: %w", err)
+		return nil, fmt.Errorf("ebpf: iterating bypass_map: %w", err)
 	}
 	return out, nil
 }
 
-// DumpDNS returns every entry in dns_cache.
+// DumpDNS returns every entry in dns_cache. Returns (nil, err) on
+// iteration failure — see DumpRoutes for rationale.
 func (m *Manager) DumpDNS() ([]DNSCacheEntry, error) {
 	out := make([]DNSCacheEntry, 0)
 	var ip uint32
@@ -800,7 +811,7 @@ func (m *Manager) DumpDNS() ([]DNSCacheEntry, error) {
 		})
 	}
 	if err := iter.Err(); err != nil {
-		return out, fmt.Errorf("ebpf: iterating dns_cache: %w", err)
+		return nil, fmt.Errorf("ebpf: iterating dns_cache: %w", err)
 	}
 	return out, nil
 }

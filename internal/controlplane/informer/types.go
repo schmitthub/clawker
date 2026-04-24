@@ -23,14 +23,18 @@ type Key struct {
 	ID   string
 }
 
-// Resource is the unit of state in the informer. Feeders construct
-// Resource values with source-specific vocabulary in Kind, Labels,
-// Attrs, and Lifecycle; the informer stores them verbatim and never
-// interprets the strings.
+// Resource is the unit of state returned by read methods. It carries
+// the composite identity, the feeder-owned payload (Labels, Attrs,
+// Lifecycle), and the store-owned audit fields (FirstSeen, LastSeen,
+// History). Values returned from read methods are deep copies —
+// callers may not retain internal references.
 //
-// Mutation happens via the Informer write API only. Values returned
-// from read methods are deep copies — callers may not retain internal
-// references.
+// Feeders never construct Resource values. They push source data as
+// ResourceUpdate; the store owns the audit fields. Splitting input
+// from output prevents a feeder from accidentally setting FirstSeen
+// in the past or overwriting History mid-write — the store defended
+// against this before the split, but the type shape invited the
+// mistake.
 type Resource struct {
 	Kind      string
 	ID        string
@@ -44,6 +48,23 @@ type Resource struct {
 
 // Key returns the composite identity of r.
 func (r Resource) Key() Key { return Key{Kind: r.Kind, ID: r.ID} }
+
+// ResourceUpdate is the input type feeders pass to Upsert. It omits
+// the store-owned audit fields (FirstSeen, LastSeen, History) so a
+// feeder cannot set them — the store assigns FirstSeen on insert,
+// refreshes LastSeen on every mutation, and owns the bounded History
+// ring. Labels, Attrs, and Lifecycle carry the feeder's opaque
+// vocabulary; the store never interprets the strings.
+type ResourceUpdate struct {
+	Kind      string
+	ID        string
+	Labels    map[string]string
+	Attrs     map[string]string
+	Lifecycle string
+}
+
+// Key returns the composite identity of u.
+func (u ResourceUpdate) Key() Key { return Key{Kind: u.Kind, ID: u.ID} }
 
 // Transition records one observation about a resource. Every write to
 // the informer carries a Transition; it is appended to the resource's
@@ -110,11 +131,15 @@ func (k DeltaKind) String() string {
 	}
 }
 
-// Delta is one notification emitted on a subscription channel. For
-// resource-scoped deltas (Added/Updated/Removed), Before and After
-// hold the pre- and post-state (Before is nil on Added); Relation is
-// zero. For relation-scoped deltas, Relation is set; Before and After
-// are nil.
+// Delta is one notification emitted on a subscription channel.
+//
+// Resource-scoped deltas (Added/Updated/Removed) populate Before and
+// After (Before is nil on Added) and a Transition. Relation-scoped
+// deltas (RelationAdded/RelationRemoved) populate the relation via
+// the Relation() accessor; Before/After are nil and Transition is
+// the zero value. The two shapes are mutually exclusive; Relation()
+// returns ok=false for resource-scoped deltas so consumers cannot
+// read a zero-value Relation as if it were real.
 //
 // Delta values are owned by the receiver and may be retained — the
 // informer does not mutate them after emission.
@@ -122,8 +147,24 @@ type Delta struct {
 	Kind       DeltaKind
 	Before     *Resource
 	After      *Resource
-	Relation   Relation
 	Transition Transition
+	// relation is unexported so consumers cannot read or construct
+	// a relation delta in a way that bypasses the Kind check. Use
+	// the Relation() accessor, which gates access on Kind.
+	relation Relation
+}
+
+// Relation returns the relation payload and true for relation-scoped
+// deltas; returns the zero value and false otherwise. Consumers
+// should switch on ok rather than reading fields blindly — a
+// DeltaAdded carries no relation and a caller that ignored ok would
+// read a zero Relation as if it were real state.
+func (d Delta) Relation() (Relation, bool) {
+	switch d.Kind {
+	case DeltaRelationAdded, DeltaRelationRemoved:
+		return d.relation, true
+	}
+	return Relation{}, false
 }
 
 // Filter matches resources for List, Subscribe, and related read

@@ -6,25 +6,25 @@ import (
 	"time"
 )
 
-// Upsert inserts or merges r. The transition t is appended to the
+// Upsert inserts or merges u. The transition t is appended to the
 // resource history and emitted as a delta (DeltaAdded for a new key,
 // DeltaUpdated for an existing one).
 //
-// Identity: (r.Kind, r.ID) must be non-empty. Identity uniqueness is
+// Identity: (u.Kind, u.ID) must be non-empty. Identity uniqueness is
 // composite — the same raw ID may legitimately appear under different
 // Kinds without collision.
 //
 // Blocks until the write is committed. Returns ErrClosed if the
 // informer is shut down or ctx.Err() if ctx cancels before or during
 // enqueue.
-func (i *Informer) Upsert(ctx context.Context, r Resource, t Transition) error {
-	if err := validateKey(r.Kind, r.ID); err != nil {
+func (i *Informer) Upsert(ctx context.Context, u ResourceUpdate, t Transition) error {
+	if err := validateKey(u.Kind, u.ID); err != nil {
 		return err
 	}
 	result := make(chan opResult, 1)
 	op := op{
 		fn: func(s *store, now time.Time) (Delta, bool) {
-			return s.upsert(r, withNow(t, now), now)
+			return s.upsert(u, withNow(t, now), now)
 		},
 		result: result,
 	}
@@ -94,7 +94,7 @@ func (i *Informer) Remove(ctx context.Context, key Key, t Transition) error {
 // not exist as resources — feeders may link ahead of discovering
 // either side. Orphan edges are valid and discoverable via
 // Stats().Relations.
-func (i *Informer) LinkRelation(ctx context.Context, rel Relation, t Transition) error {
+func (i *Informer) LinkRelation(ctx context.Context, rel Relation) error {
 	if err := validateKey(rel.From.Kind, rel.From.ID); err != nil {
 		return fmt.Errorf("informer: LinkRelation: from: %w", err)
 	}
@@ -115,15 +115,12 @@ func (i *Informer) LinkRelation(ctx context.Context, rel Relation, t Transition)
 		return err
 	}
 	_, err := waitOp(ctx, result)
-	_ = t // transitions on relations are not recorded in v1; the
-	//      write path still accepts one to keep the API symmetric
-	//      with resource writes and to reserve space for future use.
 	return err
 }
 
 // UnlinkRelation removes a directed edge. No-op if absent, with no
 // delta.
-func (i *Informer) UnlinkRelation(ctx context.Context, from, to Key, kind string, t Transition) error {
+func (i *Informer) UnlinkRelation(ctx context.Context, from, to Key, kind string) error {
 	if err := validateKey(from.Kind, from.ID); err != nil {
 		return fmt.Errorf("informer: UnlinkRelation: from: %w", err)
 	}
@@ -144,7 +141,6 @@ func (i *Informer) UnlinkRelation(ctx context.Context, from, to Key, kind string
 		return err
 	}
 	_, err := waitOp(ctx, result)
-	_ = t
 	return err
 }
 

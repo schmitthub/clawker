@@ -98,6 +98,6 @@ func (i *Informer) Stats() Stats {
 		DeltasEmittedTotal: i.deltasEmitted.Load(),
 		DeltasDroppedTotal: i.deltasDropped.Load(),
 		QueueDepth:         len(i.queue),
-		QueueCapacity:      i.queueCap,
+		QueueCapacity:      cap(i.queue),
 	}
 }

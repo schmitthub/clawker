@@ -20,10 +20,11 @@ Any PR that adds a Docker-specific method, agent-specific field, or consumer-spe
 | Type | Purpose |
 |------|---------|
 | `Key` | Composite identity `(Kind, ID)`. Same raw ID may coexist under different Kinds. |
-| `Resource` | One entity in the realm. Kind/Labels/Attrs/Lifecycle are opaque strings owned by the feeder. |
+| `ResourceUpdate` | **Input** type feeders pass to `Upsert`. Kind/ID/Labels/Attrs/Lifecycle — no audit fields. |
+| `Resource` | **Read** type returned by `Get/List/Subscribe`. Adds store-owned `FirstSeen`/`LastSeen`/`History`. |
 | `Transition` | One observation recorded on a resource's bounded history ring. |
 | `Relation` | Directed edge `From → To` of a given Kind. |
-| `Delta` | Notification emitted on a subscription channel (Added/Updated/Removed/RelationAdded/RelationRemoved). |
+| `Delta` | Notification emitted on a subscription channel. Resource-scoped fields `Before`/`After` are public; the relation payload is accessed via `Delta.Relation() (Relation, bool)` so relation deltas and resource deltas cannot be confused. |
 | `Filter` | Resource-matching predicate: Kinds, Lifecycles, LabelSelector, AttrsMatch. |
 | `LabelSelector` | `Equals` / `NotEquals` / `Exists` / `NotExists` label constraints. |
 | `Stats` | Snapshot of internal counters (resources, relations, subscribers, writes, deltas). |
@@ -36,9 +37,10 @@ Any PR that adds a Docker-specific method, agent-specific field, or consumer-spe
 | `Informer` | Concrete implementation. Satisfies `Interface`. |
 | `Options` | WriteQueueSize, SubscriberBuffer, Logger, Now (clock injection). |
 | `New(opts)` | Construct. |
-| `Start(ctx)` | Launch writer goroutine. Idempotent. |
+| `Start(ctx)` | Launch writer goroutine. Idempotent. Ctx cancel is equivalent to Close. |
 | `Close()` | Drain queue, stop writer, close subscribers. Idempotent. |
-| `ErrClosed` | Returned by writes after `Close`. |
+| `ErrClosed` | Returned by writes after `Close` or after the Start ctx cancelled. |
+| `ErrNotStarted` | Returned by writes submitted before `Start` (would otherwise hang on a writerless queue). |
 
 ### Writes (`write.go`)
 
@@ -46,11 +48,11 @@ All writes serialize through a single writer goroutine. Methods block until comm
 
 | Method | Semantics |
 |--------|-----------|
-| `Upsert(ctx, r, t)` | Create-or-merge. New key → `DeltaAdded`. Existing key → `DeltaUpdated`, Labels/Attrs merge key-by-key (set empty string to clear a value; use Patch to clear a whole map). |
+| `Upsert(ctx, u, t)` | Create-or-merge a `ResourceUpdate`. New key → `DeltaAdded`. Existing key → `DeltaUpdated`, Labels/Attrs merge key-by-key (set empty string to clear a value; use Patch to clear a whole map). The store assigns FirstSeen/LastSeen — feeders cannot supply them. |
 | `Patch(ctx, key, fn, t)` | Apply `fn` under the writer lock. Identity re-anchored — `fn` cannot change Kind/ID. No-op + no delta on unknown key. |
 | `Remove(ctx, key, t)` | Soft-delete: `Lifecycle = LifecycleGone`, resource stays in store for forensic reads. `DeltaRemoved` on first call; idempotent on repeats. |
-| `LinkRelation(ctx, rel, t)` | Insert directed edge. Idempotent refresh. Endpoints need not exist — orphan edges are valid. |
-| `UnlinkRelation(ctx, from, to, kind, t)` | Remove directed edge. No-op + no delta if absent. |
+| `LinkRelation(ctx, rel)` | Insert directed edge. Idempotent refresh. Endpoints need not exist — orphan edges are valid. |
+| `UnlinkRelation(ctx, from, to, kind)` | Remove directed edge. No-op + no delta if absent. |
 
 ### Reads (`read.go`)
 
@@ -75,6 +77,10 @@ Returns current matching resources plus a channel of subsequent deltas. Snapshot
 
 Per-subscriber buffer (default 128). Full buffer → drop-oldest, increment `DeltasDroppedTotal`. Informer never blocks on slow subscribers. `cancel()` removes the subscription and closes the channel.
 
+The caller's `Filter` is deep-copied inside `Subscribe` — mutating the local map after the call cannot alter delivery.
+
+For attribution on drop-warning log lines, feeders use `SubscribeNamed(name, filter)` to supply a human-readable identity ("docker-events-feeder", "agent-watcher") in place of the default `sub-N`.
+
 ## Design Decisions
 
 | Decision | Reason |
@@ -90,10 +96,14 @@ Per-subscriber buffer (default 128). Full buffer → drop-oldest, increment `Del
 | No wire API | In-process only. If the CP ever needs to expose realm state remotely, build a separate gRPC service over `Interface`. |
 | Filter is resource-shaped only | Relation deltas reach subscribers only when the filter is empty (no resource payload to match against). Simpler than inventing a dual-shape filter. |
 
-## Usage Pattern
+## Usage Pattern (future wiring — no consumer yet in the tree)
+
+The informer is landed as substrate; the first feeder
+(`dockerevents`) and the first CP-side wiring in `cmd/clawker-cp` are
+separate PRs. When those land, the expected shape is:
 
 ```go
-// In cmd/clawker-cp/main.go:
+// cmd/clawker-cp/main.go (not yet wired):
 inf := informer.New(informer.Options{
     Logger:           log,
     WriteQueueSize:   2048,

@@ -12,8 +12,15 @@ import (
 
 //go:generate moq -rm -pkg mocks -out mocks/informer_mock.go . Interface
 
-// ErrClosed is returned by write methods after Close has been called.
+// ErrClosed is returned by write methods after Close has been called
+// or after the Start context has cancelled. Both paths converge on the
+// same shutdown state.
 var ErrClosed = errors.New("informer closed")
+
+// ErrNotStarted is returned by write methods submitted before Start.
+// Without the guard, submit would enqueue into the queue with no
+// consumer and waitOp would block until the caller's ctx cancels.
+var ErrNotStarted = errors.New("informer not started")
 
 // Interface is the full informer surface consumers depend on. A
 // concrete Informer satisfies it; tests use the generated moq.
@@ -24,11 +31,11 @@ var ErrClosed = errors.New("informer closed")
 // *Informer, and therefore cannot accidentally shut it down.
 type Interface interface {
 	// Writes
-	Upsert(ctx context.Context, r Resource, t Transition) error
+	Upsert(ctx context.Context, u ResourceUpdate, t Transition) error
 	Patch(ctx context.Context, key Key, fn func(*Resource), t Transition) error
 	Remove(ctx context.Context, key Key, t Transition) error
-	LinkRelation(ctx context.Context, rel Relation, t Transition) error
-	UnlinkRelation(ctx context.Context, from, to Key, kind string, t Transition) error
+	LinkRelation(ctx context.Context, rel Relation) error
+	UnlinkRelation(ctx context.Context, from, to Key, kind string) error
 
 	// Reads
 	Get(key Key) (Resource, bool)
@@ -75,16 +82,25 @@ const (
 type Informer struct {
 	opts Options
 
-	mu    sync.RWMutex // guards store, subs
+	mu    sync.RWMutex // guards store mutation and subscriberSet membership; see apply() for close/offer ordering
 	store *store
 	subs  subscriberSet
 
-	queue    chan op
-	queueCap int
+	// queue is the writer input. It is NEVER closed — shutdown is
+	// signalled by closing stopCh. Closing queue from the sender side
+	// would race with concurrent submit() callers (send on closed
+	// channel panic).
+	queue chan op
+	// stopCh is closed exactly once to signal shutdown to both the
+	// writer loop and any submit() in flight. Guarded by stopOnce.
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	// done is closed by the writer goroutine when it has fully exited
+	// (including the post-stop drain). Close() blocks on it.
+	done chan struct{}
 
 	started atomic.Bool
 	closed  atomic.Bool
-	done    chan struct{}
 
 	// counters
 	writesTotal   atomic.Uint64
@@ -111,17 +127,22 @@ func New(opts Options) *Informer {
 		opts.Now = time.Now
 	}
 	return &Informer{
-		opts:     opts,
-		store:    newStore(),
-		subs:     newSubscriberSet(),
-		queue:    make(chan op, opts.WriteQueueSize),
-		queueCap: opts.WriteQueueSize,
-		done:     make(chan struct{}),
+		opts:   opts,
+		store:  newStore(),
+		subs:   newSubscriberSet(),
+		queue:  make(chan op, opts.WriteQueueSize),
+		stopCh: make(chan struct{}),
+		done:   make(chan struct{}),
 	}
 }
 
 // Start launches the writer goroutine. Safe to call once. Returns an
 // error if called after Close. Subsequent Start calls are no-ops.
+//
+// If ctx cancels, the informer transitions to the closed state
+// identically to an explicit Close call: subsequent writes see
+// ErrClosed; in-flight writes either drain (if already enqueued) or
+// return ErrClosed.
 func (i *Informer) Start(ctx context.Context) error {
 	if i.closed.Load() {
 		return ErrClosed
@@ -133,15 +154,18 @@ func (i *Informer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Close drains pending writes, stops the writer goroutine, and closes
-// every subscriber channel. Safe to call multiple times; idempotent.
-// Close blocks until the writer goroutine exits.
+// Close stops accepting writes, drains any ops already enqueued,
+// stops the writer goroutine, and closes every subscriber channel.
+// Safe to call multiple times; idempotent. Close blocks until the
+// writer goroutine exits. Close on an unstarted informer is a no-op
+// on the writer side (there is no goroutine to drain) but still
+// closes subscribers and flips the closed flag so any held
+// Interface reference returns ErrClosed on subsequent writes.
 func (i *Informer) Close() error {
-	if !i.closed.CompareAndSwap(false, true) {
-		return nil
+	i.triggerShutdown()
+	if i.started.Load() {
+		<-i.done
 	}
-	close(i.queue)
-	<-i.done
 	i.mu.Lock()
 	i.subs.closeAll()
 	i.mu.Unlock()
@@ -149,35 +173,53 @@ func (i *Informer) Close() error {
 	return nil
 }
 
+// triggerShutdown flips closed=true and closes stopCh exactly once.
+// Called by Close and by the writer loop when its Start context
+// cancels — both paths converge on the same teardown state so
+// feeders never deadlock waiting for a writer that has silently gone
+// away (see "writerLoop ctx-cancel leak" history).
+func (i *Informer) triggerShutdown() {
+	i.stopOnce.Do(func() {
+		i.closed.Store(true)
+		close(i.stopCh)
+	})
+}
+
 // writerLoop is the single serialization point for mutations. It
 // reads ops from the queue, commits them under the store write lock,
-// and fans out deltas to subscribers.
+// and fans out deltas to subscribers. Exits when stopCh closes (via
+// Close or ctx cancellation), after draining any already-enqueued ops
+// so feeders blocked on waitOp see their write committed.
 func (i *Informer) writerLoop(ctx context.Context) {
 	defer close(i.done)
 	for {
 		select {
-		case <-ctx.Done():
-			// Caller's context cancelled. Drain remaining queued ops so
-			// in-flight feeder writes complete, then exit. We do not
-			// close the queue here — that's Close's job.
-			i.drainAndExit()
+		case <-i.stopCh:
+			i.drainAfterStop()
 			return
-		case op, ok := <-i.queue:
-			if !ok {
-				return
-			}
+		case <-ctx.Done():
+			// Start context cancelled. Flip to shutdown state so any
+			// concurrent submit() observes ErrClosed via stopCh rather
+			// than blocking on a writer that is about to exit.
+			i.triggerShutdown()
+			i.drainAfterStop()
+			return
+		case op := <-i.queue:
 			i.apply(op)
 		}
 	}
 }
 
-func (i *Informer) drainAndExit() {
+// drainAfterStop applies every op already in the queue after shutdown
+// was signalled. Submitters in flight either won the race against
+// stopCh in submit() (ops are here, apply them so waitOp unblocks) or
+// lost and returned ErrClosed (nothing to drain for them). Either way,
+// no op leaks a forever-blocked waitOp. Non-blocking: we never wait on
+// the queue — stopCh means no new sends can succeed.
+func (i *Informer) drainAfterStop() {
 	for {
 		select {
-		case op, ok := <-i.queue:
-			if !ok {
-				return
-			}
+		case op := <-i.queue:
 			i.apply(op)
 		default:
 			return
@@ -192,8 +234,10 @@ func (i *Informer) drainAndExit() {
 // delta. Without this, a cancel could close a subscriber's channel
 // between offer's atomic-flag check and its send → panic.
 //
-// The op result is signalled outside the lock so a caller blocked on
-// waitOp doesn't hold the writer.
+// The op result is signalled outside the lock on a cap-1 buffered
+// channel so a caller blocked on waitOp does not hold the writer. The
+// buffered-by-1 invariant is load-bearing: a future change to an
+// unbuffered result would deadlock every waiter.
 func (i *Informer) apply(o op) {
 	now := i.opts.Now()
 
@@ -208,6 +252,10 @@ func (i *Informer) apply(o op) {
 				i.opts.Logger.Warn().
 					Str("subscriber", s.name).
 					Str("delta_kind", delta.Kind.String()).
+					Int("filter_kinds", len(s.filter.Kinds)).
+					Int("filter_labels", len(s.filter.Labels.Equals)+len(s.filter.Labels.NotEquals)+
+						len(s.filter.Labels.Exists)+len(s.filter.Labels.NotExists)).
+					Int("filter_attrs", len(s.filter.AttrsMatch)).
 					Msg("informer: subscriber dropped delta (buffer full)")
 			}
 		}
@@ -233,11 +281,20 @@ type opResult struct {
 	emitted bool
 }
 
-// submit enqueues o. Returns ErrClosed if the informer is shut down,
-// or ctx.Err() if the caller's context cancels before the op enqueues.
-// Does not wait for the op to execute — call waitOp on the returned
-// result channel for that.
+// submit enqueues o. Returns ErrNotStarted if Start has not been
+// called (submitting before Start would block forever waiting on
+// waitOp — no writer is draining). Returns ErrClosed if the informer
+// has shut down, or ctx.Err() if the caller's context cancels before
+// the op enqueues. Does not wait for the op to execute — call waitOp
+// on the returned result channel for that.
 func (i *Informer) submit(ctx context.Context, o op) error {
+	if !i.started.Load() {
+		return ErrNotStarted
+	}
+	// Fast-path closed check. The authoritative shutdown signal is
+	// stopCh in the select below — a concurrent Close() may flip
+	// closed=true after this load but before the select, and stopCh
+	// will carry us out of the send branch safely.
 	if i.closed.Load() {
 		return ErrClosed
 	}
@@ -246,6 +303,11 @@ func (i *Informer) submit(ctx context.Context, o op) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-i.stopCh:
+		// Informer shut down while we were racing the queue send.
+		// Never closed the queue — so no send-on-closed panic is
+		// possible even if stopCh and the send fire simultaneously.
+		return ErrClosed
 	}
 }
 

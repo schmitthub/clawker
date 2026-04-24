@@ -262,14 +262,17 @@ func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitReque
 		// the only path that brings up a fresh stack against an
 		// already-persisted rules store, so it owns the post-bringup
 		// route sync.
-		if h.store != nil {
-			rules, warnings := NormalizeAndDedup(h.store.Read().Rules)
-			for _, w := range warnings {
-				h.log.Warn().Msg(w)
-			}
-			if err := h.ebpf.SyncRoutes(RoutesFromRules(rules, h.envoyPorts())); err != nil {
-				return nil, fmt.Errorf("%w: %v", ErrRouteSync, err)
-			}
+		//
+		// SyncRoutes failure is logged-and-continued rather than fatal:
+		// the stack is already live and persistent, tearing it down here
+		// would produce a more broken state than a partial route_map.
+		// FirewallReload replays the full sync from the same store, so
+		// the recovery path is a single RPC away.
+		routes := h.routesFromStore()
+		if err := h.ebpf.SyncRoutes(routes); err != nil {
+			h.log.Error().Err(err).
+				Int("routes_attempted", len(routes)).
+				Msg("firewall init: route_map seed failed; stack is up but routing may be stale. Retry with FirewallReload.")
 		}
 		h.reenrollAgents(qctx)
 		return InitResult{
@@ -678,7 +681,7 @@ func (h *Handler) FirewallListRules(ctx context.Context, _ *adminv1.FirewallList
 	val, err := h.submit(ActionRead, func(_ context.Context) (any, error) {
 		rules, warnings := NormalizeAndDedup(h.store.Read().Rules)
 		for _, w := range warnings {
-			h.log.Warn().Msg(w)
+			h.log.Warn().Str("normalize_warning", w).Msg("firewall: rule normalization warning")
 		}
 		return ListRulesResult{Rules: rules}, nil
 	})
@@ -763,12 +766,7 @@ func (h *Handler) FirewallSyncRoutes(ctx context.Context, _ *adminv1.FirewallSyn
 		return nil, toStatus(err)
 	}
 	_ = val.(StackReloadResult)
-	var applied uint32
-	if h.store != nil {
-		rules, _ := NormalizeAndDedup(h.store.Read().Rules)
-		applied = uint32(len(RoutesFromRules(rules, h.envoyPorts())))
-	}
-	return &adminv1.FirewallSyncRoutesResult{Applied: applied}, nil
+	return &adminv1.FirewallSyncRoutesResult{Applied: uint32(len(h.routesFromStore()))}, nil
 }
 
 // FirewallResolveHostname performs a DNS lookup from the CP's network
@@ -830,8 +828,7 @@ func (h *Handler) reconcileStackClosure(qctx context.Context) (any, error) {
 	// omit Store skip this branch; production wiring in cmd/clawker-cp
 	// always provides one.
 	if h.store != nil {
-		rules, _ := NormalizeAndDedup(h.store.Read().Rules)
-		if err := h.ebpf.SyncRoutes(RoutesFromRules(rules, h.envoyPorts())); err != nil {
+		if err := h.ebpf.SyncRoutes(h.routesFromStore()); err != nil {
 			errs = append(errs, fmt.Errorf("%w: %v", ErrRouteSync, err))
 		}
 	}
@@ -839,6 +836,24 @@ func (h *Handler) reconcileStackClosure(qctx context.Context) (any, error) {
 		return nil, err
 	}
 	return StackReloadResult{Restarted: true}, nil
+}
+
+// routesFromStore reads the current rules store, normalizes + dedups
+// (emitting structured warnings for each dropped rule), and returns
+// the BPF Route slice to feed ebpf.SyncRoutes. Returns nil when no
+// store is wired — the caller is responsible for skipping the sync.
+// Extracted so FirewallInit's fresh-stack seed and
+// reconcileStackClosure's post-reload sync cannot diverge in how they
+// translate store rules to routes.
+func (h *Handler) routesFromStore() []ebpf.Route {
+	if h.store == nil {
+		return nil
+	}
+	rules, warnings := NormalizeAndDedup(h.store.Read().Rules)
+	for _, w := range warnings {
+		h.log.Warn().Str("normalize_warning", w).Msg("firewall: rule normalization warning")
+	}
+	return RoutesFromRules(rules, h.envoyPorts())
 }
 
 // envoyPorts returns the EnvoyPorts config for route building, falling
@@ -946,47 +961,39 @@ func (h *Handler) bypassTimerFired(cid string, entry *bypassEntry) {
 
 	enableID := resolveBypassCgroupID(entry, h.resolve, h.cgroupIDFn, h.log)
 
-	const maxRetries = 3
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		// Route through the queue so the Enable can't collide with a
-		// simultaneous stack reconcile or a mid-shutdown FlushAll. Post-
-		// Close the queue returns ErrClosed — treat that as "CP is
-		// tearing down, nothing useful an Enable can do against a
-		// flushed map" and exit cleanly.
-		res := <-h.queue.Submit(ActionEnable, func(_ context.Context) (any, error) {
-			if err := h.ebpf.Enable(enableID); err != nil {
-				return nil, fmt.Errorf("enable: %w", err)
-			}
-			return EnableResult{}, nil
-		})
-		if res.Err == nil {
-			h.log.Info().
-				Uint64("cgroup_id", enableID).
-				Str("container_id", entry.containerID).
-				Msg("bypass timer expired, enforcement restored")
-			return
+	// One attempt. Historically this retried with time.Sleep backoff,
+	// but the sleep blocked the shutdown path up to a cumulative few
+	// seconds per in-flight timer (GracefulStop drains the queue, but
+	// a goroutine sleeping between Submit calls doesn't observe that).
+	// The failsafe is best-effort by design — a transient enable
+	// failure is logged and the operator can reissue FirewallEnable.
+	// Route through the queue so the Enable can't collide with a
+	// simultaneous stack reconcile or a mid-shutdown FlushAll. Post-
+	// Close the queue returns ErrClosed — treat that as "CP is tearing
+	// down, nothing useful an Enable can do against a flushed map"
+	// and exit cleanly.
+	res := <-h.queue.Submit(ActionEnable, func(_ context.Context) (any, error) {
+		if err := h.ebpf.Enable(enableID); err != nil {
+			return nil, fmt.Errorf("enable: %w", err)
 		}
-		if errors.Is(res.Err, ErrClosed) {
-			h.log.Info().
-				Uint64("cgroup_id", enableID).
-				Str("container_id", entry.containerID).
-				Msg("bypass auto-enable skipped — queue closed (CP shutting down)")
-			return
-		}
+		return EnableResult{}, nil
+	})
+	switch {
+	case res.Err == nil:
+		h.log.Info().
+			Uint64("cgroup_id", enableID).
+			Str("container_id", entry.containerID).
+			Msg("bypass timer expired, enforcement restored")
+	case errors.Is(res.Err, ErrClosed):
+		h.log.Info().
+			Uint64("cgroup_id", enableID).
+			Str("container_id", entry.containerID).
+			Msg("bypass auto-enable skipped — queue closed (CP shutting down)")
+	default:
 		h.log.Error().Err(res.Err).
 			Uint64("cgroup_id", enableID).
 			Str("container_id", entry.containerID).
-			Int("attempt", attempt).
-			Msg("bypass auto-enable failed")
-		if attempt < maxRetries {
-			time.Sleep(time.Duration(attempt) * time.Second)
-			continue
-		}
-		h.log.Error().
-			Uint64("cgroup_id", enableID).
-			Str("container_id", entry.containerID).
-			Msg("bypass auto-enable exhausted retries — enforcement NOT restored")
-		return
+			Msg("bypass auto-enable failed — enforcement NOT restored, reissue FirewallEnable to recover")
 	}
 }
 

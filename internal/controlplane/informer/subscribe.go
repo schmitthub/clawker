@@ -2,10 +2,15 @@ package informer
 
 import (
 	"fmt"
+	"slices"
 	"sync/atomic"
 )
 
 // subscriber holds one consumer's delta channel + filter.
+// The filter is the informer's private deep copy of the caller's
+// Filter — mutating the caller's original maps after Subscribe does
+// not affect delta routing. See apply() for the close/offer ordering
+// invariant (fan-out holds i.mu so cancel can't close mid-send).
 type subscriber struct {
 	name   string
 	filter Filter
@@ -104,18 +109,38 @@ func (ss *subscriberSet) closeAll() {
 // Subscribe call is either reflected in the snapshot or the channel,
 // never both and never neither.
 //
+// The filter is copied — the caller may mutate their local Filter
+// after Subscribe without affecting delivery.
+//
 // The channel is closed on cancel() or on Close. Consumers must drain
 // or accept drop-oldest semantics.
+//
+// The subscriber is named "sub-N" for drop-attribution in logs.
+// Consumers that want a human-readable identity on drop warnings use
+// SubscribeNamed.
 func (i *Informer) Subscribe(f Filter) ([]Resource, <-chan Delta, func()) {
+	return i.SubscribeNamed("", f)
+}
+
+// SubscribeNamed is Subscribe with an explicit consumer identity. The
+// name appears on every "subscriber dropped delta" log line so
+// operators can attribute buffer pressure to a specific feeder or
+// consumer instead of an opaque "sub-42". An empty name falls back to
+// "sub-N" where N is the monotonic subscriber ID.
+func (i *Informer) SubscribeNamed(name string, f Filter) ([]Resource, <-chan Delta, func()) {
 	s := &subscriber{
-		filter: f,
+		filter: copyFilter(f),
 		ch:     make(chan Delta, i.opts.SubscriberBuffer),
 	}
 
 	i.mu.Lock()
 	snapshot := listLocked(i.store, f)
 	id := i.subs.add(s)
-	s.name = fmt.Sprintf("sub-%d", id)
+	if name != "" {
+		s.name = name
+	} else {
+		s.name = fmt.Sprintf("sub-%d", id)
+	}
 	i.mu.Unlock()
 
 	cancel := func() {
@@ -126,4 +151,22 @@ func (i *Informer) Subscribe(f Filter) ([]Resource, <-chan Delta, func()) {
 		i.mu.Unlock()
 	}
 	return snapshot, s.ch, cancel
+}
+
+// copyFilter returns a deep copy of f. Guards against a caller that
+// mutates their filter maps after Subscribe — without the copy, a
+// concurrent write to f.Labels.Equals would race with matches().
+func copyFilter(f Filter) Filter {
+	out := Filter{
+		Kinds:      slices.Clone(f.Kinds),
+		Lifecycles: slices.Clone(f.Lifecycles),
+		Labels: LabelSelector{
+			Equals:    copyStringMap(f.Labels.Equals),
+			NotEquals: copyStringMap(f.Labels.NotEquals),
+			Exists:    slices.Clone(f.Labels.Exists),
+			NotExists: slices.Clone(f.Labels.NotExists),
+		},
+		AttrsMatch: copyStringMap(f.AttrsMatch),
+	}
+	return out
 }

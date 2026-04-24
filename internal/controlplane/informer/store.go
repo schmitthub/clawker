@@ -44,21 +44,28 @@ func (s *store) get(k Key) *Resource {
 	return s.resources[k]
 }
 
-// upsert merges r into the store. If the key is new, r is inserted
-// verbatim with FirstSeen/LastSeen set to now; a DeltaAdded is
-// produced. If the key exists, non-zero fields of r overwrite the
-// stored fields (Labels and Attrs are merged key-by-key, not
-// replaced wholesale — feeders clear a key by setting it to empty
-// string explicitly, and clear the whole map via Patch).
+// upsert merges u into the store. If the key is new, a Resource is
+// constructed from u with FirstSeen/LastSeen set to now and a
+// DeltaAdded is produced. If the key exists, non-zero fields of u
+// overwrite the stored fields (Labels and Attrs are merged
+// key-by-key, not replaced wholesale — feeders clear a key by setting
+// it to empty string explicitly, and clear the whole map via Patch).
 //
 // The supplied Transition is appended to the resource history ring
 // and returned in the produced delta.
-func (s *store) upsert(r Resource, t Transition, now time.Time) (Delta, bool) {
-	key := r.Key()
+func (s *store) upsert(u ResourceUpdate, t Transition, now time.Time) (Delta, bool) {
+	key := u.Key()
 	existing, had := s.resources[key]
 	if !had {
-		r.FirstSeen = now
-		r.LastSeen = now
+		r := Resource{
+			Kind:      u.Kind,
+			ID:        u.ID,
+			Labels:    u.Labels,
+			Attrs:     u.Attrs,
+			Lifecycle: u.Lifecycle,
+			FirstSeen: now,
+			LastSeen:  now,
+		}
 		if r.Labels == nil {
 			r.Labels = make(map[string]string)
 		}
@@ -77,7 +84,7 @@ func (s *store) upsert(r Resource, t Transition, now time.Time) (Delta, bool) {
 	}
 
 	before := copyResource(existing)
-	mergeInto(existing, &r, now)
+	mergeUpdateInto(existing, u, now)
 	existing.History = appendRing(existing.History, t)
 	return Delta{
 		Kind:       DeltaUpdated,
@@ -166,7 +173,7 @@ func (s *store) linkRelation(rel Relation, now time.Time) (Delta, bool) {
 	s.edgeAdd(&stored)
 	return Delta{
 		Kind:     DeltaRelationAdded,
-		Relation: copyRelation(&stored),
+		relation: copyRelation(&stored),
 	}, true
 }
 
@@ -181,7 +188,7 @@ func (s *store) unlinkRelation(from, to Key, kind string) (Delta, bool) {
 	s.edgeRemove(existing)
 	return Delta{
 		Kind:     DeltaRelationRemoved,
-		Relation: copyRelation(existing),
+		relation: copyRelation(existing),
 	}, true
 }
 
@@ -302,25 +309,24 @@ func appendRing(ring []Transition, t Transition) []Transition {
 	return out
 }
 
-// mergeInto applies src onto dst, preserving dst's identity and
-// FirstSeen while refreshing LastSeen. Non-empty scalar fields
-// overwrite; Labels/Attrs merge key-by-key; History is owned by the
-// store and never clobbered by merge.
-func mergeInto(dst, src *Resource, now time.Time) {
-	if src.Lifecycle != "" {
-		dst.Lifecycle = src.Lifecycle
+// mergeUpdateInto applies u onto dst, preserving dst's identity,
+// FirstSeen, and History while refreshing LastSeen. Non-empty
+// scalar fields overwrite; Labels/Attrs merge key-by-key.
+func mergeUpdateInto(dst *Resource, u ResourceUpdate, now time.Time) {
+	if u.Lifecycle != "" {
+		dst.Lifecycle = u.Lifecycle
 	}
-	if src.Labels != nil {
+	if u.Labels != nil {
 		if dst.Labels == nil {
 			dst.Labels = make(map[string]string)
 		}
-		maps.Copy(dst.Labels, src.Labels)
+		maps.Copy(dst.Labels, u.Labels)
 	}
-	if src.Attrs != nil {
+	if u.Attrs != nil {
 		if dst.Attrs == nil {
 			dst.Attrs = make(map[string]string)
 		}
-		maps.Copy(dst.Attrs, src.Attrs)
+		maps.Copy(dst.Attrs, u.Attrs)
 	}
 	dst.LastSeen = now
 }
