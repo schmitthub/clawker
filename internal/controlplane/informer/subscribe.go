@@ -134,7 +134,7 @@ func (i *Informer) SubscribeNamed(name string, f Filter) ([]Resource, <-chan Del
 	}
 
 	i.mu.Lock()
-	snapshot := listLocked(i.store, f)
+	snapshot := listLocked(i.store, s.filter)
 	id := i.subs.add(s)
 	if name != "" {
 		s.name = name

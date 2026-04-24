@@ -268,11 +268,13 @@ func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitReque
 		// would produce a more broken state than a partial route_map.
 		// FirewallReload replays the full sync from the same store, so
 		// the recovery path is a single RPC away.
-		routes := h.routesFromStore()
-		if err := h.ebpf.SyncRoutes(routes); err != nil {
-			h.log.Error().Err(err).
-				Int("routes_attempted", len(routes)).
-				Msg("firewall init: route_map seed failed; stack is up but routing may be stale. Retry with FirewallReload.")
+		if h.store != nil {
+			routes := h.routesFromStore()
+			if err := h.ebpf.SyncRoutes(routes); err != nil {
+				h.log.Error().Err(err).
+					Int("routes_attempted", len(routes)).
+					Msg("firewall init: route_map seed failed; stack is up but routing may be stale. Retry with FirewallReload.")
+			}
 		}
 		h.reenrollAgents(qctx)
 		return InitResult{

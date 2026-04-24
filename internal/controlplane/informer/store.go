@@ -60,8 +60,8 @@ func (s *store) upsert(u ResourceUpdate, t Transition, now time.Time) (Delta, bo
 		r := Resource{
 			Kind:      u.Kind,
 			ID:        u.ID,
-			Labels:    u.Labels,
-			Attrs:     u.Attrs,
+			Labels:    copyStringMap(u.Labels),
+			Attrs:     copyStringMap(u.Attrs),
 			Lifecycle: u.Lifecycle,
 			FirstSeen: now,
 			LastSeen:  now,
@@ -165,6 +165,7 @@ func (s *store) linkRelation(rel Relation, now time.Time) (Delta, bool) {
 	}
 	rel.FirstSeen = now
 	rel.LastSeen = now
+	rel.Attrs = copyStringMap(rel.Attrs)
 	if rel.Attrs == nil {
 		rel.Attrs = make(map[string]string)
 	}
