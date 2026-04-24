@@ -249,6 +249,25 @@ func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitReque
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrStackProbe, err)
 		}
+		// Seed the global route_map from the persisted rules store. The
+		// stack containers (Envoy + CoreDNS) just came up with their
+		// listeners derived from the store; route_map must mirror that
+		// state or BPF connect4 lookups miss and traffic falls through to
+		// the default Envoy redirect — wrong listener for non-TLS
+		// (TCP/SSH) traffic, which then resets. Skipped silently when no
+		// store is wired (test handlers).
+		//
+		// Subsequent rule mutations go through reconcileStackClosure,
+		// which re-runs SyncRoutes after Stack.Reload. FirewallInit is
+		// the only path that brings up a fresh stack against an
+		// already-persisted rules store, so it owns the post-bringup
+		// route sync.
+		if h.store != nil {
+			rules, _ := NormalizeAndDedup(h.store.Read().Rules)
+			if err := h.ebpf.SyncRoutes(RoutesFromRules(rules, h.envoyPorts())); err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrRouteSync, err)
+			}
+		}
 		h.reenrollAgents(qctx)
 		return InitResult{
 			EnvoyIP:   st.EnvoyIP,

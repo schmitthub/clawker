@@ -674,6 +674,64 @@ func TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure(t *testing.T) {
 	assert.Equal(t, 2, installCalls, "both agents attempted; failure on one does not short-circuit")
 }
 
+// TestHandler_FirewallInit_SyncsRoutesFromStore is the regression
+// test for the "route_map empty after CP restart" bug. Sequence:
+//
+//  1. CP container restarts; egress-rules.yaml on disk persists every
+//     prior rule.
+//  2. CLI calls FirewallInit during container start.
+//  3. FirewallAddRules with the same project rules dedups everything
+//     against the persisted store and short-circuits with added=0
+//     before reconcileStackClosure runs — so SyncRoutes is skipped on
+//     that path.
+//  4. Without this fix, route_map stays empty: BPF connect4 lookups
+//     miss, traffic falls through to the default Envoy redirect,
+//     non-TLS egress (e.g. SSH:22) hits the TLS listener and resets.
+//
+// FirewallInit owns the post-bringup route sync because it is the
+// only RPC that brings up a fresh stack against an already-persisted
+// rules store.
+func TestHandler_FirewallInit_SyncsRoutesFromStore(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	// Pre-seed the store via the handler's own helper so the rules land
+	// on disk exactly as a prior CP run would have left them.
+	added, err := h.addRulesToStore([]config.EgressRule{
+		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
+		{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, added)
+	// addRulesToStore writes to disk only; no Submit, so no SyncRoutes
+	// calls have been recorded yet.
+	require.Empty(t, mock.SyncRoutesCalls(), "store seed must not invoke SyncRoutes")
+
+	_, err = h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+	require.NoError(t, err)
+
+	calls := mock.SyncRoutesCalls()
+	require.Len(t, calls, 1, "FirewallInit must SyncRoutes exactly once during bringup")
+
+	routes := calls[0].Routes
+	require.Len(t, routes, 2, "every persisted rule must appear in the route_map seed")
+
+	// Locate each rule's route by DstPort.
+	var sshRoute, tlsRoute *ebpf.Route
+	for i := range routes {
+		switch routes[i].DstPort {
+		case 22:
+			sshRoute = &routes[i]
+		case 443:
+			tlsRoute = &routes[i]
+		}
+	}
+	require.NotNil(t, sshRoute, "SSH rule missing from route_map seed")
+	require.NotNil(t, tlsRoute, "TLS rule missing from route_map seed")
+	assert.NotZero(t, sshRoute.DomainHash)
+	assert.NotZero(t, tlsRoute.DomainHash)
+}
+
 // ---------------------------------------------------------------------------
 // resolveBypassCgroupID branches (drift helper)
 // ---------------------------------------------------------------------------
