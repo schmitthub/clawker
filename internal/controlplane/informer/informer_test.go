@@ -261,6 +261,73 @@ func TestLinkUnlinkRelation_DirectedAndReversible(t *testing.T) {
 	}
 }
 
+// Subscribe/cancel must not race with the writer's fan-out — a cancel
+// that closes the delta channel while offer() is mid-send must be
+// serialized by Informer.mu. Stress test under -race; pre-fix this
+// would intermittently panic with "send on closed channel".
+func TestSubscribe_CancelDuringFanoutDoesNotRace(t *testing.T) {
+	inf, _ := newTestInformer(t)
+	ctx := context.Background()
+
+	// Hot writer: keep emitting deltas across the whole test.
+	stop := make(chan struct{})
+	var writers sync.WaitGroup
+	writers.Go(func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = inf.Upsert(ctx, res("container", "c1", map[string]string{"i": "x"}), tx("docker", "tick"))
+		}
+	})
+
+	// Churn subscribers: subscribe + cancel as fast as possible.
+	var churn sync.WaitGroup
+	for range 20 {
+		churn.Go(func() {
+			for range 50 {
+				_, _, cancel := inf.Subscribe(informer.Filter{})
+				cancel()
+			}
+		})
+	}
+
+	churn.Wait()
+	close(stop)
+	writers.Wait()
+}
+
+// Relation deltas carry nil Before/After. A non-empty resource filter
+// must not panic while gating these deltas — the empty-filter check in
+// subscriberFilterAllowsRelation is the only legitimate way through.
+func TestSubscribe_RelationDeltaWithResourceFilterDoesNotPanic(t *testing.T) {
+	inf, _ := newTestInformer(t)
+	ctx := context.Background()
+
+	_, _, cancel := inf.Subscribe(informer.Filter{Kinds: []string{"container"}})
+	defer cancel()
+
+	cKey := informer.Key{Kind: "container", ID: "c1"}
+	nKey := informer.Key{Kind: "network", ID: "n1"}
+
+	// Pre-fix this would panic the writer goroutine on Filter.matches(nil).
+	if err := inf.LinkRelation(ctx, informer.Relation{
+		From: cKey, To: nKey, Kind: "attached-to",
+	}, tx("docker", "connect")); err != nil {
+		t.Fatalf("LinkRelation: %v", err)
+	}
+	if err := inf.UnlinkRelation(ctx, cKey, nKey, "attached-to", tx("docker", "disconnect")); err != nil {
+		t.Fatalf("UnlinkRelation: %v", err)
+	}
+
+	// Writer still alive — a follow-up write must succeed.
+	if err := inf.Upsert(ctx, res("container", "c1", nil), tx("docker", "start")); err != nil {
+		t.Fatalf("Upsert after relation deltas: %v", err)
+	}
+}
+
 func TestFilter_KindsAndLabelsNarrow(t *testing.T) {
 	inf, _ := newTestInformer(t)
 	ctx := context.Background()

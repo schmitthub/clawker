@@ -185,23 +185,24 @@ func (i *Informer) drainAndExit() {
 	}
 }
 
-// apply commits one op and fans out any resulting delta. The result
-// channel on the op, if non-nil, is signalled with the outcome.
+// apply commits one op and fans out any resulting delta. Fan-out
+// happens under the write lock so cancel()/closeAll, which take the
+// same lock, serialize strictly after any in-flight offer(). offer is
+// non-blocking (drop-oldest), so the lock is held only briefly per
+// delta. Without this, a cancel could close a subscriber's channel
+// between offer's atomic-flag check and its send → panic.
+//
+// The op result is signalled outside the lock so a caller blocked on
+// waitOp doesn't hold the writer.
 func (i *Informer) apply(o op) {
 	now := i.opts.Now()
 
 	i.mu.Lock()
 	delta, emitted := o.fn(i.store, now)
-	// Snapshot subscriber list under the write lock so fan-out sees a
-	// coherent set of subs for this op. Copy is cheap (pointer slice).
-	subs := i.subs.snapshot()
-	i.mu.Unlock()
-
 	i.writesTotal.Add(1)
-
 	if emitted {
 		i.deltasEmitted.Add(1)
-		for _, s := range subs {
+		for _, s := range i.subs.byID {
 			if ok := s.offer(delta); !ok {
 				i.deltasDropped.Add(1)
 				i.opts.Logger.Warn().
@@ -211,6 +212,7 @@ func (i *Informer) apply(o op) {
 			}
 		}
 	}
+	i.mu.Unlock()
 
 	if o.result != nil {
 		o.result <- opResult{delta: delta, emitted: emitted}

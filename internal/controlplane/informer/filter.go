@@ -3,8 +3,13 @@ package informer
 import "slices"
 
 // matches reports whether r satisfies every constraint in f.
-// An empty Filter matches everything.
+// A nil resource never matches — relation deltas carry nil Before/After
+// and must be gated via subscriberFilterAllowsRelation, not here.
+// An empty Filter matches every non-nil resource.
 func (f Filter) matches(r *Resource) bool {
+	if r == nil {
+		return false
+	}
 	if len(f.Kinds) > 0 && !slices.Contains(f.Kinds, r.Kind) {
 		return false
 	}

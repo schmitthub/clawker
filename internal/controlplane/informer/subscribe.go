@@ -88,14 +88,6 @@ func (ss *subscriberSet) remove(id uint64) *subscriber {
 
 func (ss *subscriberSet) len() int { return len(ss.byID) }
 
-func (ss *subscriberSet) snapshot() []*subscriber {
-	out := make([]*subscriber, 0, len(ss.byID))
-	for _, s := range ss.byID {
-		out = append(out, s)
-	}
-	return out
-}
-
 func (ss *subscriberSet) closeAll() {
 	for _, s := range ss.byID {
 		s.close()

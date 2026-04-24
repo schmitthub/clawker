@@ -263,7 +263,10 @@ func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitReque
 		// already-persisted rules store, so it owns the post-bringup
 		// route sync.
 		if h.store != nil {
-			rules, _ := NormalizeAndDedup(h.store.Read().Rules)
+			rules, warnings := NormalizeAndDedup(h.store.Read().Rules)
+			for _, w := range warnings {
+				h.log.Warn().Msg(w)
+			}
 			if err := h.ebpf.SyncRoutes(RoutesFromRules(rules, h.envoyPorts())); err != nil {
 				return nil, fmt.Errorf("%w: %v", ErrRouteSync, err)
 			}
