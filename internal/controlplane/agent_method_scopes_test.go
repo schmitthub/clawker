@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -43,13 +44,19 @@ func TestAgentMethodScopes_CoversAllRPCs(t *testing.T) {
 		"AgentMethodScopes() count (%d) must equal proto RPC count (%d)", len(scopes), len(protoMethods))
 }
 
-// TestAgentMethodScopes_RegisterScope locks the Branch 4 contract: the
-// only agent RPC requires the agent:self:register scope. Future RPCs
-// can change this expectation, but accidentally widening Register's
-// scope (e.g. to `admin`) would silently grant agents privileged
-// surface — guard against it.
-func TestAgentMethodScopes_RegisterScope(t *testing.T) {
+// TestAgentMethodScopes_AgentSelfRegisterScope locks the contract that
+// every agent RPC currently requires the agent:self:register scope —
+// the sole scope Hydra grants to the agent OAuth2 client. Accidentally
+// widening any of these (e.g. to `admin`) would silently grant agents
+// privileged surface — guard against it. Future RPCs may legitimately
+// add a different scope; that requires updating Hydra's agent client
+// registration in lockstep.
+func TestAgentMethodScopes_AgentSelfRegisterScope(t *testing.T) {
 	const want = consts.ScopeAgentSelfRegister
-	got := AgentMethodScopes()["/"+agentv1.ServiceName+"/Register"]
-	assert.Equal(t, want, got)
+	scopes := AgentMethodScopes()
+	require.NotEmpty(t, scopes,
+		"AgentMethodScopes() must not be empty — empty map silently passes the per-entry loop")
+	for method, scope := range scopes {
+		assert.Equalf(t, want, scope, "agent RPC %s scope must be %q", method, want)
+	}
 }

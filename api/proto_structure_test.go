@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
@@ -39,7 +40,7 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 		}
 
 		// AdminService surface: 13 firewall RPCs (INV-B2-009) plus
-		// AnnounceAgent.
+		// AnnounceAgent and ListAgents.
 		expectedRPCs := []string{
 			"FirewallInit", "FirewallRemove",
 			"FirewallEnable", "FirewallDisable", "FirewallBypass",
@@ -61,14 +62,26 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 		adminv1.RegisterAdminServiceServer(srv, nil)
 	})
 
-	t.Run("AgentService has Register RPC", func(t *testing.T) {
+	t.Run("AgentService has Connect and Events streaming RPCs", func(t *testing.T) {
 		desc := agentv1.AgentService_ServiceDesc
-		methods := make(map[string]bool)
-		for _, m := range desc.Methods {
-			methods[m.MethodName] = true
+		streamsByName := make(map[string]grpc.StreamDesc)
+		for _, s := range desc.Streams {
+			streamsByName[s.StreamName] = s
 		}
-		assert.True(t, methods["Register"],
-			"AgentService must have Register RPC")
+
+		// Streaming directions are load-bearing: Connect is the CP→clawkerd
+		// command channel (server-streaming); Events is the clawkerd→CP
+		// telemetry channel (client-streaming). Flipping either would
+		// silently invert the protocol contract — pin both flags here.
+		connect, ok := streamsByName["Connect"]
+		require.True(t, ok, "AgentService must have Connect RPC")
+		assert.True(t, connect.ServerStreams, "Connect must be server-streaming")
+		assert.False(t, connect.ClientStreams, "Connect must NOT be client-streaming")
+
+		events, ok := streamsByName["Events"]
+		require.True(t, ok, "AgentService must have Events RPC")
+		assert.True(t, events.ClientStreams, "Events must be client-streaming")
+		assert.False(t, events.ServerStreams, "Events must NOT be server-streaming")
 	})
 
 	t.Run("AgentService registered on gRPC server", func(t *testing.T) {

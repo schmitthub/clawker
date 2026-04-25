@@ -202,9 +202,10 @@ const (
 const (
 	ScopeAdmin         = "admin"
 	ScopeAgentAnnounce = "agent:announce"
-	// ScopeAgentSelfRegister gates clawkerd's call to AgentService.Register.
-	// Branch 4 ships only this agent scope; finer-grained agent scopes
-	// land alongside their methods.
+	// ScopeAgentSelfRegister gates clawkerd's calls on AgentService —
+	// today, Connect (lifetime command channel) and Events (telemetry
+	// stub). Hydra grants only this scope to the agent OAuth2 client;
+	// finer-grained agent scopes land alongside future methods.
 	ScopeAgentSelfRegister = "agent:self:register"
 )
 

@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentService_Register_FullMethodName = "/clawker.agent.v1.AgentService/Register"
+	AgentService_Connect_FullMethodName = "/clawker.agent.v1.AgentService/Connect"
+	AgentService_Events_FullMethodName  = "/clawker.agent.v1.AgentService/Events"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -38,16 +39,28 @@ const (
 // agent OAuth2 client whose scopes are validated by the CP's auth
 // interceptor.
 //
-// Branch 4 ships only Register — the auth handshake IS the deliverable.
-// CP knows agent liveness via Docker events + the mTLS connection state,
-// so clawkerd has no need to ping. Future RPCs land alongside their
-// CP-side consumers.
+// Topology: clawkerd is gRPC-client only; CP serves. The Connect stream
+// IS the agent's lifetime command channel — single mTLS connection per
+// agent, all clawkerd-initiated.
 type AgentServiceClient interface {
-	// Register completes the PKCE handshake started by AdminService.AnnounceAgent.
-	// Identity binding is channel-bound: CP uses the SHA-256 thumbprint of
-	// the peer mTLS cert as the registry key, never trusting the request
-	// body for identity claims beyond the slot lookup.
-	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResult, error)
+	// Connect opens the agent's lifetime command channel. clawkerd sends
+	// a ConnectRequest at startup (agent_name + PKCE verifier); CP
+	// authenticates the channel-bound identity via slot consume plus a
+	// cross-check on the peer cert CN, peer IP, and container labels,
+	// pins the agent in the registry, then server-streams Command
+	// messages for the lifetime of the agent. First message after auth
+	// is Welcome (config delivery). Subsequent messages carry commands
+	// as they are issued (B5+ adds payload variants). Stream closes on
+	// eviction (container dies → dockerevents → cancel) or clawkerd
+	// disconnect.
+	Connect(ctx context.Context, in *ConnectRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Command], error)
+	// Events streams runtime telemetry from clawkerd to CP: log scrapes,
+	// error events, monitoring data. Client-streaming; CP returns a
+	// single EventAck on close. Identity-bound — caller must already be
+	// registered via Connect (AgentIdentityInterceptor enforces). Stub
+	// in this branch; B5 defines the Event payload shape and CP-side
+	// consumer alongside the first concrete event type.
+	Events(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[Event, EventAck], error)
 }
 
 type agentServiceClient struct {
@@ -58,15 +71,37 @@ func NewAgentServiceClient(cc grpc.ClientConnInterface) AgentServiceClient {
 	return &agentServiceClient{cc}
 }
 
-func (c *agentServiceClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResult, error) {
+func (c *agentServiceClient) Connect(ctx context.Context, in *ConnectRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Command], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(RegisterResult)
-	err := c.cc.Invoke(ctx, AgentService_Register_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[0], AgentService_Connect_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[ConnectRequest, Command]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_ConnectClient = grpc.ServerStreamingClient[Command]
+
+func (c *agentServiceClient) Events(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[Event, EventAck], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[1], AgentService_Events_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[Event, EventAck]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_EventsClient = grpc.ClientStreamingClient[Event, EventAck]
 
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
@@ -84,16 +119,28 @@ func (c *agentServiceClient) Register(ctx context.Context, in *RegisterRequest, 
 // agent OAuth2 client whose scopes are validated by the CP's auth
 // interceptor.
 //
-// Branch 4 ships only Register — the auth handshake IS the deliverable.
-// CP knows agent liveness via Docker events + the mTLS connection state,
-// so clawkerd has no need to ping. Future RPCs land alongside their
-// CP-side consumers.
+// Topology: clawkerd is gRPC-client only; CP serves. The Connect stream
+// IS the agent's lifetime command channel — single mTLS connection per
+// agent, all clawkerd-initiated.
 type AgentServiceServer interface {
-	// Register completes the PKCE handshake started by AdminService.AnnounceAgent.
-	// Identity binding is channel-bound: CP uses the SHA-256 thumbprint of
-	// the peer mTLS cert as the registry key, never trusting the request
-	// body for identity claims beyond the slot lookup.
-	Register(context.Context, *RegisterRequest) (*RegisterResult, error)
+	// Connect opens the agent's lifetime command channel. clawkerd sends
+	// a ConnectRequest at startup (agent_name + PKCE verifier); CP
+	// authenticates the channel-bound identity via slot consume plus a
+	// cross-check on the peer cert CN, peer IP, and container labels,
+	// pins the agent in the registry, then server-streams Command
+	// messages for the lifetime of the agent. First message after auth
+	// is Welcome (config delivery). Subsequent messages carry commands
+	// as they are issued (B5+ adds payload variants). Stream closes on
+	// eviction (container dies → dockerevents → cancel) or clawkerd
+	// disconnect.
+	Connect(*ConnectRequest, grpc.ServerStreamingServer[Command]) error
+	// Events streams runtime telemetry from clawkerd to CP: log scrapes,
+	// error events, monitoring data. Client-streaming; CP returns a
+	// single EventAck on close. Identity-bound — caller must already be
+	// registered via Connect (AgentIdentityInterceptor enforces). Stub
+	// in this branch; B5 defines the Event payload shape and CP-side
+	// consumer alongside the first concrete event type.
+	Events(grpc.ClientStreamingServer[Event, EventAck]) error
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -104,8 +151,11 @@ type AgentServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAgentServiceServer struct{}
 
-func (UnimplementedAgentServiceServer) Register(context.Context, *RegisterRequest) (*RegisterResult, error) {
-	return nil, status.Error(codes.Unimplemented, "method Register not implemented")
+func (UnimplementedAgentServiceServer) Connect(*ConnectRequest, grpc.ServerStreamingServer[Command]) error {
+	return status.Error(codes.Unimplemented, "method Connect not implemented")
+}
+func (UnimplementedAgentServiceServer) Events(grpc.ClientStreamingServer[Event, EventAck]) error {
+	return status.Error(codes.Unimplemented, "method Events not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -128,23 +178,23 @@ func RegisterAgentServiceServer(s grpc.ServiceRegistrar, srv AgentServiceServer)
 	s.RegisterService(&AgentService_ServiceDesc, srv)
 }
 
-func _AgentService_Register_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RegisterRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _AgentService_Connect_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ConnectRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(AgentServiceServer).Register(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AgentService_Register_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AgentServiceServer).Register(ctx, req.(*RegisterRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(AgentServiceServer).Connect(m, &grpc.GenericServerStream[ConnectRequest, Command]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_ConnectServer = grpc.ServerStreamingServer[Command]
+
+func _AgentService_Events_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AgentServiceServer).Events(&grpc.GenericServerStream[Event, EventAck]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_EventsServer = grpc.ClientStreamingServer[Event, EventAck]
 
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -152,12 +202,18 @@ func _AgentService_Register_Handler(srv interface{}, ctx context.Context, dec fu
 var AgentService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "clawker.agent.v1.AgentService",
 	HandlerType: (*AgentServiceServer)(nil),
-	Methods: []grpc.MethodDesc{
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "Register",
-			Handler:    _AgentService_Register_Handler,
+			StreamName:    "Connect",
+			Handler:       _AgentService_Connect_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "Events",
+			Handler:       _AgentService_Events_Handler,
+			ClientStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "agent/v1/agent.proto",
 }

@@ -8,7 +8,7 @@
 
 | Task | Status | Agent |
 |------|--------|-------|
-| Task 1: Proto — rename `Register` → `Connect` (server-streaming), stub `Events` RPC | `pending` | — |
+| Task 1: Proto — rename `Register` → `Connect` (server-streaming), stub `Events` RPC | `complete` | claude-opus-4-7 |
 | Task 2: `agentslots` — composite key + `EvictByContainerID` + dockerevents `Subscribe` | `pending` | — |
 | Task 3: `agent.Handler.Connect` — server-streaming + CN cross-check + composite Consume | `pending` | — |
 | Task 4: `controlplane.adminServer.AnnounceAgent` handler | `pending` | — |
@@ -20,7 +20,13 @@
 
 ## Key Learnings
 
-(Agents append here as they complete tasks)
+### Task 1
+- `make proto` is the regen target. Running it the first time installs the pinned `buf` toolchain (v1.47.2) on demand. The build files (`agent.pb.go`, `agent_grpc.pb.go`) are tracked, not gitignored.
+- `AgentService_ServiceDesc` for streaming RPCs lives under `desc.Streams`, NOT `desc.Methods`. The existing scope-walk test (`TestAgentMethodScopes_CoversAllRPCs`) already iterates both buckets — no change needed there. But any test that walks ONLY one bucket needs updating when streaming RPCs land.
+- `consts.ScopeAgentSelfRegister` doc was stale post-rename — falls into Task 1's cascade since no later task touches `internal/consts/`.
+- The agent OAuth2 client in Hydra is registered with a single scope (`agent:self:register`). Adding new agent RPCs with new scopes requires updating Hydra registration in lockstep — for now, both `Connect` and `Events` reuse the existing scope.
+- Silent-failure-hunter caught: a per-entry-loop test on a map silently passes if the map is empty. `require.NotEmpty` before the loop closes the gap. Pattern worth applying anywhere a test "asserts every entry has property X."
+- Streaming-direction (`ServerStreams` / `ClientStreams` flags on `grpc.StreamDesc`) is a load-bearing protocol invariant that NO test pins by default. The proto descriptor walks treat all streams interchangeably. Pin direction explicitly in proto_structure_test when streaming RPCs are added.
 
 ---
 

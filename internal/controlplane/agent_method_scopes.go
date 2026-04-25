@@ -12,13 +12,14 @@ import (
 // to the proto without a scope entry is rejected at runtime — and
 // `TestAgentMethodScopes_CoversAllRPCs` rejects it at build time.
 //
-// Branch 4 ships only Register; the agent assertion Hydra issues a
-// token with `agent:self:register` scope, and that's what this method
-// requires. Future agent RPCs (event reporting, command receivers) land
-// alongside their own scopes.
+// Both Connect (lifetime command channel) and Events (telemetry stream,
+// stub in this branch) require the `agent:self:register` scope — the
+// only scope Hydra grants to the agent OAuth2 client. B5 may split
+// scopes when Events grows a real payload.
 func AgentMethodScopes() map[string]string {
 	const svc = "/" + agentv1.ServiceName + "/"
 	return map[string]string{
-		svc + "Register": consts.ScopeAgentSelfRegister,
+		svc + "Connect": consts.ScopeAgentSelfRegister,
+		svc + "Events":  consts.ScopeAgentSelfRegister,
 	}
 }
