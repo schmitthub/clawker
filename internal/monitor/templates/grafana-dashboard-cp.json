@@ -17,7 +17,7 @@
     },
     {
       "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-      "description": "All clawker-cp daemon logs received via the mTLS-gated OTLP endpoint. The auth_channel=cp_mtls label is force-set by the otel-collector on receipt — agents on clawker-net cannot spoof it because they reach a separate receiver pipeline.",
+      "description": "All clawker-cp daemon logs received via the mTLS-gated OTLP endpoint. The ingest_source=cp label is force-set by the otel-collector on receipt — agents on clawker-net cannot spoof it because they reach a separate receiver pipeline.",
       "gridPos": { "h": 12, "w": 24, "x": 0, "y": 1 },
       "id": 2,
       "options": {
@@ -33,7 +33,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-          "expr": "{service_name=\"clawker-cp\"} | auth_channel=`cp_mtls`",
+          "expr": "{service_name=\"clawker-cp\"} | ingest_source=`cp`",
           "queryType": "range",
           "refId": "A"
         }
@@ -59,7 +59,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-          "expr": "{service_name=\"clawker-cp\"} | auth_channel=`cp_mtls` |~ \"dockerevents|informer\"",
+          "expr": "{service_name=\"clawker-cp\"} | ingest_source=`cp` |~ \"dockerevents|informer\"",
           "queryType": "range",
           "refId": "A"
         }
@@ -85,7 +85,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-          "expr": "{service_name=\"clawker-cp\"} | auth_channel=`cp_mtls` | severity_text=~\"warn|error\"",
+          "expr": "{service_name=\"clawker-cp\"} | ingest_source=`cp` | severity_text=~\"warn|error\"",
           "queryType": "range",
           "refId": "A"
         }

@@ -35,25 +35,29 @@ processors:
           - set(attributes["project"], resource.attributes["project"]) where resource.attributes["project"] != nil
           - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
   # Provenance stamp for agent-side telemetry. Runs AFTER the otlp
-  # receiver so a malicious agent claiming service.name=clawker-cp
-  # gets overwritten before reaching the exporter. auth_channel is the
-  # trustable label operators query against (`{auth_channel="cp_mtls"}`
-  # vs `{auth_channel="clawker_net"}`).
+  # receiver and force-sets ingest_source=agent regardless of what the
+  # client sent. service.name is NOT normalized here so per-component
+  # granularity (claude-code, envoy, coredns, ...) is preserved; the
+  # trustable provenance signal is ingest_source, which the agent
+  # cannot fake because this processor unconditionally upserts it
+  # post-receiver. A spoofed service.name=clawker-cp on the agent
+  # plaintext path still lands with ingest_source=agent.
   resource/agent:
     attributes:
-      - key: auth_channel
-        value: clawker_net
+      - key: ingest_source
+        value: agent
         action: upsert
 {{- if .OtelCPPort}}
   # Provenance stamp for clawker-cp telemetry. Reaches this processor
   # only via the mTLS-gated otlp/cp receiver (CLI-issued client cert
   # required at TLS handshake — agents on clawker-net have none and
   # are rejected before bytes flow). Both service.name and
-  # auth_channel are forced regardless of what the client sent.
+  # ingest_source are forced regardless of what the client sent so
+  # CP-shaped logs cannot be forged from the unauth'd agent receiver.
   resource/cp:
     attributes:
-      - key: auth_channel
-        value: cp_mtls
+      - key: ingest_source
+        value: cp
         action: upsert
       - key: service.name
         value: clawker-cp
@@ -82,15 +86,15 @@ service:
       exporters: [prometheus]
     # Agent-side logs pipeline: receiver-isolated from the CP pipeline.
     # An agent pushing here cannot reach the otlp/cp receiver
-    # (mTLS-gated) and cannot get its log stamped auth_channel=cp_mtls
-    # — resource/agent runs unconditionally and overwrites the field.
+    # (mTLS-gated) and cannot get its log stamped ingest_source=cp —
+    # resource/agent runs unconditionally and overwrites the field.
     logs/agents:
       receivers: [otlp]
       processors: [resource/agent, batch]
       exporters: [otlphttp/loki]
 {{- if .OtelCPPort}}
     # CP-side logs pipeline: separate receiver, separate processor
-    # chain. service.name and auth_channel are both forced post-
+    # chain. service.name and ingest_source are both forced post-
     # receiver so a malicious cert holder (none exist outside CLI
     # provisioning) still couldn't shadow agent telemetry.
     logs/cp:

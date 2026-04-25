@@ -281,7 +281,18 @@ func (i *Informer) apply(o op) {
 // log under a docker event receive line means the dispatch path
 // filtered the event before it reached an informer write.
 func (i *Informer) logPublished(d Delta) {
-	body, _ := json.Marshal(d)
+	body, err := json.Marshal(d)
+	if err != nil {
+		// Delta projects to deltaJSON of all string-typed fields, so
+		// this branch is effectively unreachable today. But never let
+		// a marshal failure silently emit `delta=null` and a misleading
+		// publish trail — surface the error and skip the line.
+		i.opts.Logger.Warn().
+			Err(err).
+			Str("delta_kind", d.Kind.String()).
+			Msg("informer: failed to marshal delta for publish log")
+		return
+	}
 	i.opts.Logger.Info().
 		RawJSON("delta", body).
 		Msgf("informer published: %s", body)
