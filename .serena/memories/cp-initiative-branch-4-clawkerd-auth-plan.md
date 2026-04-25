@@ -15,8 +15,8 @@
 | Task 2: Consts + scope wiring | `complete` | claude |
 | Task 3: CLI agent cert minting | `complete` | claude |
 | Task 4: Hydra agent client registration | `complete` | claude |
-| Task 5: Slot registry | `pending` | — |
-| Task 6: Agent registry + dockerevents subscription | `pending` | — |
+| Task 5: Slot registry | `complete` | claude |
+| Task 6: Agent registry + dockerevents subscription | `complete` | claude |
 | Task 7: CLI AnnounceAgent + tmpfs bootstrap delivery | `pending` | — |
 | Task 8: CP second gRPC listener on clawker-net | `pending` | — |
 | Task 9: AgentService handler | `pending` | — |
@@ -57,7 +57,24 @@
 - Plan suggested duplicating `RegisterCLIClient`'s 60 lines for `RegisterAgentClient`. Chose to extract a private `registerHydraClient(ctx, url, clientID, scope, jwkData, tlsCfg)` helper instead — the bodies differ in only two fields. Future Hydra clients land as one extra public function each.
 - Both clients use the SAME JWK (the CLI's signing key — the CP container's bind-mounted public half). Distinct `client_id` + scope keeps the AuthZ surface clean even though the signing material is shared. This is a deliberate property: the CLI signs both `clawker-cli` and `clawker-agent` assertions with one key, but Hydra issues separate tokens with separate scopes.
 - `cmd/clawker-cp/main.go` Step 5 now registers both clients sequentially. Both calls are idempotent on 409 so safe across CP restarts and ordering doesn't matter.
-- Tests for the agent registration only assert the agent-distinct fields (`client_id`, `scope`) plus the 409-idempotent path. The shared transport contract is already locked down by the CLI tests via the helper — duplicating those tests would be tautological coverage of the same code path.
+- Tightened the success path to 201 Created only — the previous CLI code accepted 200 OK too, which would have masked a misconfigured proxy returning 200 with an empty body as a registered-client success.
+
+### Task 6
+- The dockerevents informer publishes container deltas with `Lifecycle` strings. Initial draft hardcoded `"stopped"` in `agentregistry/subscribe.go` — refactored to expose `dockerevents.LifecycleStopped` (+ created/running/paused) so a future rename of the informer's vocabulary surfaces as a compile error in every consumer. Updated `containerLifecycleFromAction` and `containerLifecycleFromState` in dispatch.go to use the new constants.
+- Eviction triggers: `DeltaRemoved` (Docker destroy/remove) AND `DeltaUpdated` where `Lifecycle == LifecycleStopped` (Docker die / stop / kill). Pause MUST NOT evict — the kernel hasn't torn down the socket and the existing mTLS connection is still valid. Codified by `TestSubscribe_DoesNotEvictOnPaused`.
+- Subscribe uses informer's existing `Subscribe(filter)` API. No new event-bus surface — plan called this out explicitly.
+- Subscribe consumer goroutine exits on EITHER ctx.Done OR informer-channel-close (cancel triggers the latter). The returned cleanup blocks on `<-done` so callers can deterministically wait, no goroutine leak.
+- `Touch` on unknown thumbprint logs at debug rather than silently no-op'ing. The contract is that callers have already authenticated, so a miss usually means a race with eviction or a thumbprint-derivation bug — debug visibility helps catch the latter.
+- Registry is keyed by `[sha256.Size]byte` (32-byte fixed array). Map equality on the key IS the identity check; no further matching is needed. String-keying would allocate + force hex-encoding; typed wrappers would lose `==` and map-key-ability.
+
+### Task 5
+- Constant-time PKCE compare alone is not enough — the original draft hashed the verifier AFTER the slot lookup, so an attacker probing for valid agent_names could distinguish "name unknown" from "name known, wrong verifier" by SHA-256 latency. Fixed by computing `pkceChallenge(verifier)` before any branching on `r.slots[agentName]`.
+- Wrong-verifier path deliberately leaves the slot intact (TTL handles eviction). Plan calls this out — a buggy clawkerd transient failure should be able to retry; deletion-on-mismatch would let one bad call burn a legitimate registration.
+- `Reserve` validates `agent_name != ""`, `ChallengeMethod == "S256"`, and `ExpiresAt > ReservedAt` so a buggy CLI can't reserve an unenforceable slot.
+- `Stop` is `sync.Once`-guarded — drain-to-zero, test cleanup, and CP shutdown all converge here, so non-idempotent close-on-channel would panic.
+- Sweep logs at info when it evicts >0 slots so an agent that announces but never registers shows up in operator logs (firewall break / container hang). Per-slot eviction stays at debug.
+- `pkceChallenge` is package-private; reused by tests via same-package access. Earlier draft over-claimed it as "exposed at package level" — corrected.
+- Default sweep period is `consts.AgentSlotTTL/2` so a slot is at most half its TTL past expiry before eviction. Earlier hardcoded 30s; now derived.
 
 ---
 

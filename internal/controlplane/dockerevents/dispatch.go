@@ -357,13 +357,13 @@ func (f *Feeder) dispatchImage(ctx context.Context, ev events.Message) {
 func containerLifecycleFromAction(a events.Action) string {
 	switch a {
 	case events.ActionCreate:
-		return "created"
+		return LifecycleCreated
 	case events.ActionStart, events.ActionRestart, events.ActionUnPause:
-		return "running"
+		return LifecycleRunning
 	case events.ActionPause:
-		return "paused"
+		return LifecyclePaused
 	case events.ActionDie, events.ActionStop, events.ActionKill:
-		return "stopped"
+		return LifecycleStopped
 	}
 	return ""
 }
@@ -374,15 +374,15 @@ func containerLifecycleFromAction(a events.Action) string {
 func containerLifecycleFromState(s container.ContainerState) string {
 	switch s {
 	case container.StateCreated:
-		return "created"
+		return LifecycleCreated
 	case container.StateRunning:
-		return "running"
+		return LifecycleRunning
 	case container.StatePaused:
-		return "paused"
+		return LifecyclePaused
 	case container.StateRestarting:
 		return "restarting"
 	case container.StateExited, container.StateDead, container.StateRemoving:
-		return "stopped"
+		return LifecycleStopped
 	}
 	return ""
 }

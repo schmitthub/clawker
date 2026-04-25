@@ -100,6 +100,17 @@ const (
 	RelationAttachedTo = "attached-to" // container → network
 )
 
+// Lifecycle strings the feeder writes onto Resource.Lifecycle for
+// containers. Consumers (e.g. agentregistry.Subscribe) match against
+// these constants instead of stringly-typed literals so a rename surfaces
+// as a compile error.
+const (
+	LifecycleCreated = "created"
+	LifecycleRunning = "running"
+	LifecyclePaused  = "paused"
+	LifecycleStopped = "stopped"
+)
+
 // Verb prefix on every Transition.Verb so co-resident feeders cannot
 // collide in resource history rings.
 const verbPrefix = "docker."
