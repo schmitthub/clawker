@@ -12,7 +12,7 @@
 |---|------|--------|
 | 1 | CP as proper service — auth + gRPC, firewall still owns bootstrap | `complete` (merged to `main`) |
 | 2 | Ownership reversal — CP owns firewall, `internal/firewall/` deleted, 13-method scope-corrected AdminService | `complete` (awaiting host-side review on `feat/firewall-cp-migration`) |
-| 3 | Daemon consolidation — hostproxy + socketbridge under CP, Docker events replacing watcher polling | pending |
+| 3 | Daemon consolidation — hostproxy + socketbridge under CP, Docker events replacing watcher polling | `complete` |
 | 4 | clawkerd auth — PKCE registration, per-agent certs | pending |
 | 5 | Init migration + agent lifecycle — clawkerd replaces init scripts, command channel | pending |
 | 6 | Monitor + release + hardening — out of alpha | pending |

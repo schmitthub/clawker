@@ -1,6 +1,5 @@
 version: v2
 modules:
-  - path: internal/clawkerd/protocol
   - path: api
 lint:
   use:

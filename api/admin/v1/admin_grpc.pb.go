@@ -32,6 +32,7 @@ const (
 	AdminService_FirewallRotateCA_FullMethodName        = "/clawker.admin.v1.AdminService/FirewallRotateCA"
 	AdminService_FirewallSyncRoutes_FullMethodName      = "/clawker.admin.v1.AdminService/FirewallSyncRoutes"
 	AdminService_FirewallResolveHostname_FullMethodName = "/clawker.admin.v1.AdminService/FirewallResolveHostname"
+	AdminService_AnnounceAgent_FullMethodName           = "/clawker.admin.v1.AdminService/AnnounceAgent"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -105,6 +106,19 @@ type AdminServiceClient interface {
 	// network namespace — used to resolve host.docker.internal during
 	// per-container enroll.
 	FirewallResolveHostname(ctx context.Context, in *FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*FirewallResolveHostnameResult, error)
+	// AnnounceAgent reserves a registration slot for a container the CLI
+	// is about to start. The CLI passes the canonical agent_name, the
+	// Docker container_id it just received from ContainerCreate, the
+	// SHA-256 thumbprint of the mTLS cert it just minted for that agent,
+	// and a PKCE S256 challenge. The slot expires after a short TTL sized
+	// for `docker create` + `docker start` + clawkerd boot latency.
+	//
+	// Channel-bound identity defends against a compromised CLI announcing
+	// a slot for a container it doesn't own: at Register the CP cross-
+	// checks the peer's mTLS thumbprint and Docker network position
+	// against the slot's container_id. Required scope: admin (uniform per
+	// INV-B2-009).
+	AnnounceAgent(ctx context.Context, in *AnnounceAgentRequest, opts ...grpc.CallOption) (*AnnounceAgentResult, error)
 }
 
 type adminServiceClient struct {
@@ -245,6 +259,16 @@ func (c *adminServiceClient) FirewallResolveHostname(ctx context.Context, in *Fi
 	return out, nil
 }
 
+func (c *adminServiceClient) AnnounceAgent(ctx context.Context, in *AnnounceAgentRequest, opts ...grpc.CallOption) (*AnnounceAgentResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AnnounceAgentResult)
+	err := c.cc.Invoke(ctx, AdminService_AnnounceAgent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -316,6 +340,19 @@ type AdminServiceServer interface {
 	// network namespace — used to resolve host.docker.internal during
 	// per-container enroll.
 	FirewallResolveHostname(context.Context, *FirewallResolveHostnameRequest) (*FirewallResolveHostnameResult, error)
+	// AnnounceAgent reserves a registration slot for a container the CLI
+	// is about to start. The CLI passes the canonical agent_name, the
+	// Docker container_id it just received from ContainerCreate, the
+	// SHA-256 thumbprint of the mTLS cert it just minted for that agent,
+	// and a PKCE S256 challenge. The slot expires after a short TTL sized
+	// for `docker create` + `docker start` + clawkerd boot latency.
+	//
+	// Channel-bound identity defends against a compromised CLI announcing
+	// a slot for a container it doesn't own: at Register the CP cross-
+	// checks the peer's mTLS thumbprint and Docker network position
+	// against the slot's container_id. Required scope: admin (uniform per
+	// INV-B2-009).
+	AnnounceAgent(context.Context, *AnnounceAgentRequest) (*AnnounceAgentResult, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -364,6 +401,9 @@ func (UnimplementedAdminServiceServer) FirewallSyncRoutes(context.Context, *Fire
 }
 func (UnimplementedAdminServiceServer) FirewallResolveHostname(context.Context, *FirewallResolveHostnameRequest) (*FirewallResolveHostnameResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallResolveHostname not implemented")
+}
+func (UnimplementedAdminServiceServer) AnnounceAgent(context.Context, *AnnounceAgentRequest) (*AnnounceAgentResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method AnnounceAgent not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -620,6 +660,24 @@ func _AdminService_FirewallResolveHostname_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_AnnounceAgent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AnnounceAgentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).AnnounceAgent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_AnnounceAgent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).AnnounceAgent(ctx, req.(*AnnounceAgentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -678,6 +736,10 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FirewallResolveHostname",
 			Handler:    _AdminService_FirewallResolveHostname_Handler,
+		},
+		{
+			MethodName: "AnnounceAgent",
+			Handler:    _AdminService_AnnounceAgent_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

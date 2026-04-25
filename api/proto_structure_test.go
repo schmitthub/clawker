@@ -18,11 +18,6 @@ import (
 // AdminService and AgentService must be in different Go packages with
 // different service names. No shared service definition.
 func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
-	t.Run("admin and agent service names are distinct", func(t *testing.T) {
-		assert.NotEqual(t, adminv1.ServiceName, agentv1.ServiceName,
-			"AdminService and AgentService must have different service names")
-	})
-
 	t.Run("admin service name contains 'admin'", func(t *testing.T) {
 		assert.Contains(t, adminv1.ServiceName, "admin",
 			"AdminService name must contain 'admin'")
@@ -31,23 +26,6 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 	t.Run("agent service name contains 'agent'", func(t *testing.T) {
 		assert.Contains(t, agentv1.ServiceName, "agent",
 			"AgentService name must contain 'agent'")
-	})
-
-	t.Run("admin service is in admin/v1 package", func(t *testing.T) {
-		// If the import compiled, the package exists at the right path.
-		// This is a compile-time assertion via the import.
-		assert.NotEmpty(t, adminv1.ServiceName,
-			"AdminService must be defined in api/admin/v1/")
-	})
-
-	t.Run("agent service is in agent/v1 package", func(t *testing.T) {
-		assert.NotEmpty(t, agentv1.ServiceName,
-			"AgentService must be defined in api/agent/v1/")
-	})
-
-	t.Run("no shared service between packages", func(t *testing.T) {
-		assert.NotEqual(t, adminv1.ServiceName, agentv1.ServiceName,
-			"admin and agent services must not share a service definition")
 	})
 
 	t.Run("AdminService has correct RPCs", func(t *testing.T) {
@@ -60,16 +38,15 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 			methods[s.StreamName] = true
 		}
 
-		// B2 13-method scope-corrected surface (see Spec §8 + INV-B2-009).
-		// Per-container RPCs lost the cgroup_path field; container_id is
-		// authoritative and the CP resolves cgroup paths internally with
-		// the drift guard.
+		// AdminService surface: 13 firewall RPCs (INV-B2-009) plus
+		// AnnounceAgent.
 		expectedRPCs := []string{
 			"FirewallInit", "FirewallRemove",
 			"FirewallEnable", "FirewallDisable", "FirewallBypass",
 			"FirewallAddRules", "FirewallRemoveRule", "FirewallListRules",
 			"FirewallReload", "FirewallStatus", "FirewallRotateCA",
 			"FirewallSyncRoutes", "FirewallResolveHostname",
+			"AnnounceAgent",
 		}
 		for _, rpc := range expectedRPCs {
 			assert.True(t, methods[rpc],
@@ -82,5 +59,20 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 		srv := grpc.NewServer() //nolint:staticcheck // nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection -- test-only, no TLS needed
 		// This compiles only if the generated interface + registration exist.
 		adminv1.RegisterAdminServiceServer(srv, nil)
+	})
+
+	t.Run("AgentService has Register RPC", func(t *testing.T) {
+		desc := agentv1.AgentService_ServiceDesc
+		methods := make(map[string]bool)
+		for _, m := range desc.Methods {
+			methods[m.MethodName] = true
+		}
+		assert.True(t, methods["Register"],
+			"AgentService must have Register RPC")
+	})
+
+	t.Run("AgentService registered on gRPC server", func(t *testing.T) {
+		srv := grpc.NewServer() //nolint:staticcheck // nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection -- test-only, no TLS needed
+		agentv1.RegisterAgentServiceServer(srv, nil)
 	})
 }

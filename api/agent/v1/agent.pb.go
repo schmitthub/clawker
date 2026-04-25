@@ -10,6 +10,7 @@ import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
+	sync "sync"
 	unsafe "unsafe"
 )
 
@@ -20,17 +21,140 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type RegisterRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// agent_name is the canonical full name "clawker.<project>.<agent>"
+	// (or "clawker.<agent>" for empty project per existing convention).
+	// CP looks up the slot by this name. clawkerd reads it from
+	// CLAWKER_AGENT_NAME env, set by CLI at container create.
+	AgentName string `protobuf:"bytes,1,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
+	// code_verifier is the PKCE secret matching the slot's S256 challenge.
+	// CLI delivers it via tmpfs at /run/clawker/bootstrap/verifier.
+	// Per RFC 7636, length is 43-128 unreserved characters.
+	CodeVerifier  string `protobuf:"bytes,2,opt,name=code_verifier,json=codeVerifier,proto3" json:"code_verifier,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterRequest) Reset() {
+	*x = RegisterRequest{}
+	mi := &file_agent_v1_agent_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterRequest) ProtoMessage() {}
+
+func (x *RegisterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterRequest.ProtoReflect.Descriptor instead.
+func (*RegisterRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *RegisterRequest) GetAgentName() string {
+	if x != nil {
+		return x.AgentName
+	}
+	return ""
+}
+
+func (x *RegisterRequest) GetCodeVerifier() string {
+	if x != nil {
+		return x.CodeVerifier
+	}
+	return ""
+}
+
+// RegisterResult is intentionally empty. Identity material is in the
+// cert clawkerd presented during the TLS handshake; CP records its
+// SHA-256 thumbprint as the registry key. No version field — clawkerd
+// ships with the CLI binary so version is implicit.
+type RegisterResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterResult) Reset() {
+	*x = RegisterResult{}
+	mi := &file_agent_v1_agent_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterResult) ProtoMessage() {}
+
+func (x *RegisterResult) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterResult.ProtoReflect.Descriptor instead.
+func (*RegisterResult) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{1}
+}
+
 var File_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x14agent/v1/agent.proto\x12\x10clawker.agent.v12\x0e\n" +
-	"\fAgentServiceB,Z*github.com/schmitthub/clawker/api/agent/v1b\x06proto3"
+	"\x14agent/v1/agent.proto\x12\x10clawker.agent.v1\"U\n" +
+	"\x0fRegisterRequest\x12\x1d\n" +
+	"\n" +
+	"agent_name\x18\x01 \x01(\tR\tagentName\x12#\n" +
+	"\rcode_verifier\x18\x02 \x01(\tR\fcodeVerifier\"\x10\n" +
+	"\x0eRegisterResult2_\n" +
+	"\fAgentService\x12O\n" +
+	"\bRegister\x12!.clawker.agent.v1.RegisterRequest\x1a .clawker.agent.v1.RegisterResultB,Z*github.com/schmitthub/clawker/api/agent/v1b\x06proto3"
 
-var file_agent_v1_agent_proto_goTypes = []any{}
+var (
+	file_agent_v1_agent_proto_rawDescOnce sync.Once
+	file_agent_v1_agent_proto_rawDescData []byte
+)
+
+func file_agent_v1_agent_proto_rawDescGZIP() []byte {
+	file_agent_v1_agent_proto_rawDescOnce.Do(func() {
+		file_agent_v1_agent_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_agent_v1_agent_proto_rawDesc), len(file_agent_v1_agent_proto_rawDesc)))
+	})
+	return file_agent_v1_agent_proto_rawDescData
+}
+
+var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_agent_v1_agent_proto_goTypes = []any{
+	(*RegisterRequest)(nil), // 0: clawker.agent.v1.RegisterRequest
+	(*RegisterResult)(nil),  // 1: clawker.agent.v1.RegisterResult
+}
 var file_agent_v1_agent_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
+	0, // 0: clawker.agent.v1.AgentService.Register:input_type -> clawker.agent.v1.RegisterRequest
+	1, // 1: clawker.agent.v1.AgentService.Register:output_type -> clawker.agent.v1.RegisterResult
+	1, // [1:2] is the sub-list for method output_type
+	0, // [0:1] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -47,12 +171,13 @@ func file_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_agent_proto_rawDesc), len(file_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   0,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_agent_v1_agent_proto_goTypes,
 		DependencyIndexes: file_agent_v1_agent_proto_depIdxs,
+		MessageInfos:      file_agent_v1_agent_proto_msgTypes,
 	}.Build()
 	File_agent_v1_agent_proto = out.File
 	file_agent_v1_agent_proto_goTypes = nil

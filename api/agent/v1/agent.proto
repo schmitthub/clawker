@@ -4,15 +4,44 @@ package clawker.agent.v1;
 
 option go_package = "github.com/schmitthub/clawker/api/agent/v1";
 
-// AgentService is the gRPC surface that clawkerd (per-container agent
-// daemon) calls on the control plane. Defined here as a stub for Branch 4.
+// AgentService is the gRPC surface clawkerd (the per-container agent
+// daemon) calls on the control plane.
 //
-// Transport: mTLS over TCP.
-// Authorization: OAuth2 access tokens with agent-scoped permissions,
-// validated by vendored Oathkeeper gRPC middleware.
+// Transport: mTLS over TCP on the CP's clawker-net agent listener.
+// Server requires a client cert chained to the CLI CA — clawkerd
+// presents the per-agent leaf cert that the CLI minted at AnnounceAgent
+// time.
 //
-// Branch 1 defines the package and empty service. Branch 4 adds RPCs
-// for agent registration, heartbeat, and capability negotiation.
+// Authorization: bearer access token issued by Hydra to a dedicated
+// agent OAuth2 client whose scopes are validated by the CP's auth
+// interceptor.
+//
+// Branch 4 ships only Register — the auth handshake IS the deliverable.
+// CP knows agent liveness via Docker events + the mTLS connection state,
+// so clawkerd has no need to ping. Future RPCs land alongside their
+// CP-side consumers.
 service AgentService {
-  // Placeholder — Branch 4 adds RPCs here.
+  // Register completes the PKCE handshake started by AdminService.AnnounceAgent.
+  // Identity binding is channel-bound: CP uses the SHA-256 thumbprint of
+  // the peer mTLS cert as the registry key, never trusting the request
+  // body for identity claims beyond the slot lookup.
+  rpc Register(RegisterRequest) returns (RegisterResult);
 }
+
+message RegisterRequest {
+  // agent_name is the canonical full name "clawker.<project>.<agent>"
+  // (or "clawker.<agent>" for empty project per existing convention).
+  // CP looks up the slot by this name. clawkerd reads it from
+  // CLAWKER_AGENT_NAME env, set by CLI at container create.
+  string agent_name = 1;
+  // code_verifier is the PKCE secret matching the slot's S256 challenge.
+  // CLI delivers it via tmpfs at /run/clawker/bootstrap/verifier.
+  // Per RFC 7636, length is 43-128 unreserved characters.
+  string code_verifier = 2;
+}
+
+// RegisterResult is intentionally empty. Identity material is in the
+// cert clawkerd presented during the TLS handshake; CP records its
+// SHA-256 thumbprint as the registry key. No version field — clawkerd
+// ships with the CLI binary so version is implicit.
+message RegisterResult {}

@@ -140,13 +140,14 @@ CP_BINARY := internal/controlplane/cpboot/assets/clawker-cp
 PROTO_SOURCES := \
 	buf.yaml \
 	buf.gen.yaml \
-	$(wildcard internal/clawkerd/protocol/v1/*.proto)
+	$(wildcard api/admin/v1/*.proto) \
+	$(wildcard api/agent/v1/*.proto)
 
 PROTO_GENERATED := \
-	internal/clawkerd/protocol/v1/agent.pb.go \
-	internal/clawkerd/protocol/v1/agent_grpc.pb.go \
-	internal/clawkerd/protocol/v1/controlplane.pb.go \
-	internal/clawkerd/protocol/v1/controlplane_grpc.pb.go
+	api/admin/v1/admin.pb.go \
+	api/admin/v1/admin_grpc.pb.go \
+	api/agent/v1/agent.pb.go \
+	api/agent/v1/agent_grpc.pb.go
 
 # bpf2go-generated Go wrappers + compiled BPF bytecode extracted to the host
 # tree so host-side `go test` / `go vet` / `gopls` can compile
@@ -184,7 +185,7 @@ COREDNS_BINARY_DEPS := \
 
 # Source dependencies for the clawker-cp (control plane) binary. It
 # imports both internal/controlplane and internal/controlplane/firewall/ebpf, plus
-# the generated proto types in internal/clawkerd/protocol. PROTO_GENERATED
+# the generated proto types in api/admin/v1 and api/agent/v1. PROTO_GENERATED
 # is listed explicitly so that editing a `.proto` triggers the regeneration
 # rule (above) before the binary is rebuilt.
 CP_BINARY_DEPS := \
@@ -208,8 +209,8 @@ BUILDX_TARGETARCH := $(shell $(GO) env GOARCH)
 # package — manager.go references types declared in the generated wrappers.
 # proto: regenerate Go code from .proto files via buf.
 #
-# The generated files (agent.pb.go, agent_grpc.pb.go, controlplane.pb.go,
-# controlplane_grpc.pb.go) are committed to the repo — this matches the
+# The generated files (admin.pb.go, admin_grpc.pb.go, agent.pb.go,
+# agent_grpc.pb.go) are committed to the repo — this matches the
 # Kubernetes/containerd/gRPC-go convention and keeps normal `go build`
 # invocations free of codegen setup. But to make proto edits painless,
 # the generated files are declared as file targets whose source deps

@@ -29,8 +29,7 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 
 | File | Purpose |
 |------|---------|
-| `server.go` | `Server` struct, `ControlPlaneService` interface, `Registry`, `AgentReportingService` handler |
-| `registry.go` | Thread-safe agent registry keyed by container ID |
+| `server.go` | `adminServer` composition + `NewAdminServer(fw)` — embeds the firewall handler so AdminService method promotion is satisfied for `cmd/clawker-cp` to register on its gRPC server |
 | `authz.go` | `AuthInterceptor` — validates OAuth2 bearer tokens via Hydra introspection, enforces per-method scopes |
 | `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup. `AdminMethodScopes` lives in `api/admin/v1/admin.go` so a new RPC fails closed (covered by `TestAdminMethodScopes_CoversAllRPCs`). |
 | `startup.go` | `CPStartupOrchestrator` — startup sequencing + aggregate `/healthz` endpoint (probes all 7 service ports) |
@@ -38,8 +37,7 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 | `ory_configs.go` | `WriteOryConfigs(cp)` — generates Hydra/Kratos/Oathkeeper YAML config files |
 | `subprocess.go` | `SubprocessManager` — manages Ory subprocess lifecycle (start, health, crash detection, shutdown) |
 | `cpboot/` | **Host-side CP bootstrap subpackage.** Contains `embed_cp.go` / `embed_ebpf.go` (`//go:embed assets/clawker-cp` + `assets/ebpf-manager`), `bootstrap.go` (`EnsureRunning` / `Stop` / `CPRunning`), `cp_container.go` (`BuildCPContainerConfig` → `CPContainerConfig`), `manager.go` (`Manager` interface + `NewManager`). Split out so `cmd/clawker-cp` can import `internal/controlplane` for `SubprocessManager` / `AdminServer` / `AgentWatcher` without dragging in the `go:embed` directives that would otherwise require the daemon to embed itself during its own build. |
-| `mocks/mock_server.go` | `MockServer` — hand-written test double for `ControlPlaneService` |
-| `mocks/` | moq-generated mocks: `ControlPlaneServiceMock`, `IntrospectorMock`, `AdminServiceClientMock` |
+| `mocks/` | moq-generated mocks: `IntrospectorMock`, `AdminServiceClientMock` |
 | `cpboot/mocks/` | moq-generated `ManagerMock` for the host-side CP lifecycle noun |
 
 ## AdminService composition
@@ -134,7 +132,6 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 
 ## Test seam overview
 
-- `ControlPlaneService` interface — CLI consumers depend on this. `mocks.MockServer` avoids real gRPC.
 - `EBPFManager` interface — `firewall/ebpf/mocks/EBPFManagerMock` for firewall handler tests.
 - `Introspector` interface — `mocks/IntrospectorMock` for authz tests (no real Hydra).
 - `cpboot.Manager` interface — `cpboot/mocks/ManagerMock` for break-glass `controlplane up/down/status` CLI tests.
@@ -155,7 +152,7 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 
 ## Package imports
 
-**Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/controlplane/firewall`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `internal/clawkerd/protocol/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`.
+**Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/controlplane/firewall`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`.
 
 **Used by**: `cmd/clawker-cp/` (startup sequence), `internal/cmd/controlplane/` (break-glass up/down/status), `internal/cmd/factory/` (AdminClient + ControlPlane Factory closures), `internal/cmd/firewall/` (AdminService consumers via `f.AdminClient`), `internal/cmd/container/shared/` (BootstrapServicesPostStart), `internal/dnsbpf` (reuses ebpf types), `internal/auth` (cert paths).
 
