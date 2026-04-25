@@ -55,6 +55,33 @@ close(events)
 
 **Event types**: `CreateContainerEvent` with `Step` (string), `Status` (`StepRunning`/`StepComplete`/`StepCached`), `Type` (`MessageInfo`/`MessageWarning`), `Message` (string).
 
+### Agent Bootstrap Delivery (`agent_bootstrap.go`)
+
+Building blocks for the per-agent registration material the CLI hands a
+managed container at boot.
+
+```go
+type AgentBootstrap struct {
+    Verifier, Challenge, Method            string  // PKCE S256 pair + literal "S256"
+    CertPEM, KeyPEM                        []byte  // mTLS leaf + key, signed by CLI CA
+    ExpectedCertThumbprint                 string  // lowercase-hex SHA-256(cert.Raw)
+    CACertPEM                              []byte  // CP server-trust CA (CLI CA cert)
+    Assertion                              string  // Hydra client_assertion JWT
+}
+
+GenerateAgentBootstrap(caCertPath, caKeyPath, agentName, hydraTokenURL, signingKey) (*AgentBootstrap, error)
+AnnounceAgent(ctx, admin AdminServiceClient, b *AgentBootstrap, agentName, containerID) error
+WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *AgentBootstrap) error
+```
+
+`WriteAgentBootstrapToContainer` tars the five files into the container
+at `consts.BootstrapDir` (parent dir 0700, files 0400). The destination
+is currently a regular path inside the container's writable layer rather
+than a tmpfs mount — Docker's CopyToContainer cannot pre-populate tmpfs
+mounts (tmpfs shadows writes made before start), so the pragmatic B4
+placement uses the writable layer with strict permissions. The container
+layer is destroyed on `--rm` or when the container is removed.
+
 ### Container Init (`containerfs.go`)
 
 One-time Claude config initialization for new containers. Called by `CreateContainer` when the config volume was freshly created.

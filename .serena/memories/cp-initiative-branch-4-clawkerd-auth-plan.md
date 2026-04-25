@@ -17,7 +17,7 @@
 | Task 4: Hydra agent client registration | `complete` | claude |
 | Task 5: Slot registry | `complete` | claude |
 | Task 6: Agent registry + dockerevents subscription | `complete` | claude |
-| Task 7: CLI AnnounceAgent + tmpfs bootstrap delivery | `pending` | — |
+| Task 7: CLI AnnounceAgent + tmpfs bootstrap delivery | `complete` | claude |
 | Task 8: CP second gRPC listener on clawker-net | `pending` | — |
 | Task 9: AgentService handler | `pending` | — |
 | Task 9b: AdminService.ListAgents + `clawker controlplane agents` CLI | `pending` | — |
@@ -58,6 +58,12 @@
 - Both clients use the SAME JWK (the CLI's signing key — the CP container's bind-mounted public half). Distinct `client_id` + scope keeps the AuthZ surface clean even though the signing material is shared. This is a deliberate property: the CLI signs both `clawker-cli` and `clawker-agent` assertions with one key, but Hydra issues separate tokens with separate scopes.
 - `cmd/clawker-cp/main.go` Step 5 now registers both clients sequentially. Both calls are idempotent on 409 so safe across CP restarts and ordering doesn't matter.
 - Tightened the success path to 201 Created only — the previous CLI code accepted 200 OK too, which would have masked a misconfigured proxy returning 200 with an empty body as a registered-client success.
+
+### Task 7
+- Plan called for tmpfs delivery. Investigation: Docker's `CopyToContainer` cannot pre-populate tmpfs mounts because tmpfs is mounted at container start, shadowing any contents written via cp before start. Pragmatic B4 placement is a regular path inside the container's writable layer with `0700`/`0400` root-only permissions. Layer is destroyed on `--rm`; for persistent containers the material stays in the writable layer until removal but is only useful against THIS container's identity (cert thumbprint binds to the running peer). Documented in the function godoc + shared/CLAUDE.md.
+- Building blocks landed: `auth.BuildAgentAssertion` (24h TTL, ES256, iss=sub=clawker-agent), `shared.GenerateAgentBootstrap`, `shared.AnnounceAgent`, `shared.WriteAgentBootstrapToContainer`. CLI command-layer wiring (`run`/`start` calling these) deferred to land alongside Task 9 — the AnnounceAgent RPC currently returns codes.Unimplemented from `UnimplementedAdminServiceServer`, so wiring it into `run` would break container start until the handler exists.
+- Added three env vars to `docker.RuntimeEnv` (`CLAWKER_CP_HYDRA_URL`, `CLAWKER_CP_AGENT_ADDR`, `CLAWKER_AGENT_NAME`). Resisted adding `CLAWKER_CONTAINER_ID` / `CLAWKER_PROJECT` per the plan: container_id is server-derived from the slot at Register; project is encoded in the canonical agent_name.
+- The tar archive layout is exactly five files under `consts.BootstrapDir/`. Tests assert byte-exact body match per file plus mode bits — locks down the wire-with-clawkerd contract before clawkerd exists to read it.
 
 ### Task 6
 - The dockerevents informer publishes container deltas with `Lifecycle` strings. Initial draft hardcoded `"stopped"` in `agentregistry/subscribe.go` — refactored to expose `dockerevents.LifecycleStopped` (+ created/running/paused) so a future rename of the informer's vocabulary surfaces as a compile error in every consumer. Updated `containerLifecycleFromAction` and `containerLifecycleFromState` in dispatch.go to use the new constants.
