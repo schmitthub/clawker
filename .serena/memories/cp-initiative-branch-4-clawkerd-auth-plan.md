@@ -14,7 +14,7 @@
 | Task 1: Proto contracts (AgentService + AdminService.AnnounceAgent) | `complete` | claude |
 | Task 2: Consts + scope wiring | `complete` | claude |
 | Task 3: CLI agent cert minting | `complete` | claude |
-| Task 4: Hydra agent client registration | `pending` | — |
+| Task 4: Hydra agent client registration | `complete` | claude |
 | Task 5: Slot registry | `pending` | — |
 | Task 6: Agent registry + dockerevents subscription | `pending` | — |
 | Task 7: CLI AnnounceAgent + tmpfs bootstrap delivery | `pending` | — |
@@ -51,6 +51,13 @@
 - Added private `loadCAFrom(certPath, keyPath)` so MintAgentCert is testable without the consts-driven path resolution that `loadCA()` requires.
 - Thumbprint is lowercase-hex SHA-256 over `cert.Raw` (the DER bytes), exactly what `crypto/sha256.Sum256(peerCert.Raw)` will produce on the CP side at Register. Tests assert that round-trip explicitly to lock the format down before it has a server-side reader.
 - Tests reuse `EnsureAuthMaterial()` to provision the CA in an isolated `testenv.New(t)` instead of synthesizing a hand-rolled CA — cheaper and ensures MintAgentCert is exercised against the same material the CLI ships with.
+- Adopted `AgentCert{CertPEM, KeyPEM, ThumbprintHex}` struct return per type-design review. Locks the co-derivation invariant at the type level so callers can't pair a thumbprint with a different cert.
+
+### Task 4
+- Plan suggested duplicating `RegisterCLIClient`'s 60 lines for `RegisterAgentClient`. Chose to extract a private `registerHydraClient(ctx, url, clientID, scope, jwkData, tlsCfg)` helper instead — the bodies differ in only two fields. Future Hydra clients land as one extra public function each.
+- Both clients use the SAME JWK (the CLI's signing key — the CP container's bind-mounted public half). Distinct `client_id` + scope keeps the AuthZ surface clean even though the signing material is shared. This is a deliberate property: the CLI signs both `clawker-cli` and `clawker-agent` assertions with one key, but Hydra issues separate tokens with separate scopes.
+- `cmd/clawker-cp/main.go` Step 5 now registers both clients sequentially. Both calls are idempotent on 409 so safe across CP restarts and ordering doesn't matter.
+- Tests for the agent registration only assert the agent-distinct fields (`client_id`, `scope`) plus the 409-idempotent path. The shared transport contract is already locked down by the CLI tests via the helper — duplicating those tests would be tautological coverage of the same code path.
 
 ---
 

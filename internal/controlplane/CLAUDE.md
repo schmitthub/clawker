@@ -31,7 +31,7 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 |------|---------|
 | `server.go` | `adminServer` composition + `NewAdminServer(fw)` — embeds the firewall handler so AdminService method promotion is satisfied for `cmd/clawker-cp` to register on its gRPC server |
 | `authz.go` | `AuthInterceptor` — validates OAuth2 bearer tokens via Hydra introspection, enforces per-method scopes |
-| `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup. `AdminMethodScopes` lives in `api/admin/v1/admin.go` so a new RPC fails closed (covered by `TestAdminMethodScopes_CoversAllRPCs`). |
+| `hydra_client.go` | `RegisterCLIClient` + `RegisterAgentClient` — register the `clawker-cli` and `clawker-agent` OAuth2 clients with Hydra at startup via the shared `registerHydraClient` helper. Both clients use the same JWK (the CLI's signing key); only `client_id` and `scope` differ. `AdminMethodScopes` lives in `api/admin/v1/admin.go` so a new admin RPC fails closed (covered by `TestAdminMethodScopes_CoversAllRPCs`). |
 | `startup.go` | `CPStartupOrchestrator` — startup sequencing + aggregate `/healthz` endpoint (probes all 7 service ports) |
 | `watcher.go` | `AgentWatcher` — polls Docker for `purpose=agent` containers; invokes drain-to-zero callback past grace/threshold (INV-B2-007) |
 | `ory_configs.go` | `WriteOryConfigs(cp)` — generates Hydra/Kratos/Oathkeeper YAML config files |
@@ -54,7 +54,7 @@ All RPCs require the uniform `admin` scope (INV-B2-009). Per-method diversificat
 2. Start Kratos + Hydra subprocesses, wait healthy
 3. Wait for Hydra admin port healthy, configure service probes (`orchestrator.SetServiceProbes(cp, tlsCfg)`)
 4. Read CLI public JWK from bind-mount
-5. Register CLI client with Hydra (`RegisterCLIClient`)
+5. Register CLI + agent clients with Hydra (`RegisterCLIClient` + `RegisterAgentClient` — both idempotent on 409)
 6. Start Oathkeeper subprocess; build `*docker.Client`; build `firewall.Stack` (via `fwhandler.NewRulesStore`)
 7. Load eBPF programs (`ebpfMgr.Load()`); run defensive startup cleanup (`ebpfMgr.CleanupStaleBypass()` — INV-B2-013)
 8. Start gRPC AdminService with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor

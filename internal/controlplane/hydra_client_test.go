@@ -113,6 +113,39 @@ func TestRegisterCLIClient_ErrorResponse(t *testing.T) {
 	}
 }
 
+// RegisterAgentClient shares the registerHydraClient helper with
+// RegisterCLIClient. The CLI-specific tests above cover the transport
+// + idempotency contract; here we only assert what's distinctly the
+// agent's: the client_id and scope written into the registration body.
+func TestRegisterAgentClient_PayloadShape(t *testing.T) {
+	t.Parallel()
+
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if err := json.Unmarshal(body, &captured); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	jwk := `{"kty":"EC","crv":"P-256","x":"test","y":"test"}`
+	if err := RegisterAgentClient(context.Background(), srv.URL, []byte(jwk), nil); err != nil {
+		t.Fatalf("RegisterAgentClient: %v", err)
+	}
+
+	if id, _ := captured["client_id"].(string); id != consts.ClientIDAgent {
+		t.Errorf("client_id = %q, want %q", id, consts.ClientIDAgent)
+	}
+	if v, _ := captured["scope"].(string); v != consts.ScopeAgentSelfRegister {
+		t.Errorf("scope = %q, want %q", v, consts.ScopeAgentSelfRegister)
+	}
+}
+
 func TestEnsureJWKS_WrapsBareJWK(t *testing.T) {
 	t.Parallel()
 

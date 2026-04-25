@@ -209,12 +209,17 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	log.Info().Str("jwk_path", jwkPath).Msg("CLI JWK loaded")
 
-	// --- Step 5: Register CLI client with Hydra ---
+	// --- Step 5: Register CLI + agent clients with Hydra ---
+	// See controlplane.RegisterAgentClient for why both clients share
+	// one JWK with distinct client_id + scope.
 	hydraAdminURL := fmt.Sprintf("https://127.0.0.1:%d", cp.HydraAdminPort)
 	if err := controlplane.RegisterCLIClient(ctx, hydraAdminURL, jwkData, caTLS); err != nil {
 		return fmt.Errorf("step 5 (register CLI client): %w", err)
 	}
-	log.Info().Msg("CLI client registered with Hydra")
+	if err := controlplane.RegisterAgentClient(ctx, hydraAdminURL, jwkData, caTLS); err != nil {
+		return fmt.Errorf("step 5 (register agent client): %w", err)
+	}
+	log.Info().Msg("CLI + agent clients registered with Hydra")
 
 	// --- Step 6: Start Oathkeeper ---
 	// Oathkeeper runs as an HTTP reverse proxy for future webui auth.
