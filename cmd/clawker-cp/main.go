@@ -365,15 +365,45 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("step 8 (grpc listen): %w", err)
 	}
 
-	// Cap covers gRPC, healthz, and the dockerevents feeder. Buffered
-	// so any goroutine that fails before main reaches the select can
-	// deposit its error without blocking.
-	serveFailed := make(chan error, 3)
+	// Agent listener — bound to clawker-net only (NOT host-published).
+	// Same mTLS material as the admin listener: server cert + CLI CA pool
+	// for client cert verification. The AuthInterceptor here is currently
+	// a placeholder pinned to AdminMethodScopes; the agent-specific scope
+	// map (and per-listener peer-cert context propagation) lands with
+	// Task 10. The AgentService handler binding lands with Task 9 — this
+	// listener serves nothing yet, every RPC returns Unimplemented.
+	agentTLSCfg := &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    caCertPool,
+		MinVersion:   tls.VersionTLS13,
+	}
+	agentServer := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(agentTLSCfg)),
+		grpc.ChainUnaryInterceptor(authInterceptor.UnaryInterceptor()),
+		grpc.ChainStreamInterceptor(authInterceptor.StreamInterceptor()),
+	)
+	agentLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AgentPort))
+	if err != nil {
+		return fmt.Errorf("step 8 (agent grpc listen): %w", err)
+	}
+
+	// Cap covers gRPC admin, gRPC agent, healthz, and the dockerevents
+	// feeder. Buffered so any goroutine that fails before main reaches
+	// the select can deposit its error without blocking.
+	serveFailed := make(chan error, 4)
 
 	go func() {
 		log.Info().Int("port", cp.AdminPort).Msg("gRPC admin API serving")
 		if err := grpcServer.Serve(grpcLis); err != nil {
-			serveFailed <- fmt.Errorf("gRPC serve: %w", err)
+			serveFailed <- fmt.Errorf("gRPC admin serve: %w", err)
+		}
+	}()
+
+	go func() {
+		log.Info().Int("port", cp.AgentPort).Msg("gRPC agent API serving")
+		if err := agentServer.Serve(agentLis); err != nil {
+			serveFailed <- fmt.Errorf("gRPC agent serve: %w", err)
 		}
 	}()
 
@@ -611,10 +641,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// Reverse-order graceful shutdown.
 	shutdownDone := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		grpcServer.GracefulStop()
+	}()
+	go func() {
+		defer wg.Done()
+		agentServer.GracefulStop()
 	}()
 	go func() {
 		wg.Wait()
@@ -626,6 +660,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	case <-time.After(defaultShutdownWait):
 		log.Warn().Msg("gRPC graceful stop timed out, forcing")
 		grpcServer.Stop()
+		agentServer.Stop()
 	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), defaultShutdownWait)

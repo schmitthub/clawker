@@ -18,7 +18,7 @@
 | Task 5: Slot registry | `complete` | claude |
 | Task 6: Agent registry + dockerevents subscription | `complete` | claude |
 | Task 7: CLI AnnounceAgent + tmpfs bootstrap delivery | `complete` | claude |
-| Task 8: CP second gRPC listener on clawker-net | `pending` | — |
+| Task 8: CP second gRPC listener on clawker-net | `complete` | claude |
 | Task 9: AgentService handler | `pending` | — |
 | Task 9b: AdminService.ListAgents + `clawker controlplane agents` CLI | `pending` | — |
 | Task 10: Extend AuthInterceptor for agent listener (peer cert + agent scope map) | `pending` | — |
@@ -58,6 +58,12 @@
 - Both clients use the SAME JWK (the CLI's signing key — the CP container's bind-mounted public half). Distinct `client_id` + scope keeps the AuthZ surface clean even though the signing material is shared. This is a deliberate property: the CLI signs both `clawker-cli` and `clawker-agent` assertions with one key, but Hydra issues separate tokens with separate scopes.
 - `cmd/clawker-cp/main.go` Step 5 now registers both clients sequentially. Both calls are idempotent on 409 so safe across CP restarts and ordering doesn't matter.
 - Tightened the success path to 201 Created only — the previous CLI code accepted 200 OK too, which would have masked a misconfigured proxy returning 200 with an empty body as a registered-client success.
+
+### Task 8
+- Second listener uses the SAME server cert + CA pool as the admin listener — both are signed by the CLI CA, both require mTLS client certs from the same CA. The agent path's distinguishing trait is the scope map (Task 10) and what handlers are registered (Task 9), not the TLS material.
+- Listener is bound to `0.0.0.0:cp.AgentPort` inside the container. No host port binding — agents reach it through clawker-net DNS (e.g. `clawker-controlplane:7444`). The plan's "do NOT add to host port bindings" requirement is satisfied because `cp_container.go` only port-binds the four published ports (admin, hydra-public, oathkeeper, healthz).
+- AuthInterceptor on the agent listener currently uses `AdminMethodScopes()` as a placeholder. Task 10 swaps in `AgentMethodScopes` (one entry: Register → agent:self:register) plus per-listener peer-cert context propagation. Until then, every agent RPC fails closed because the placeholder map doesn't include `/clawker.agent.v1.AgentService/*`.
+- Both servers join one shared graceful-shutdown WaitGroup so SIGTERM and the drain-to-zero callback both stop both surfaces in a single pass.
 
 ### Task 7
 - Plan called for tmpfs delivery. Investigation: Docker's `CopyToContainer` cannot pre-populate tmpfs mounts because tmpfs is mounted at container start, shadowing any contents written via cp before start. Pragmatic B4 placement is a regular path inside the container's writable layer with `0700`/`0400` root-only permissions. Layer is destroyed on `--rm`; for persistent containers the material stays in the writable layer until removal but is only useful against THIS container's identity (cert thumbprint binds to the running peer). Documented in the function godoc + shared/CLAUDE.md.

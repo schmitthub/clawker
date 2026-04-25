@@ -57,7 +57,7 @@ All RPCs require the uniform `admin` scope (INV-B2-009). Per-method diversificat
 5. Register CLI + agent clients with Hydra (`RegisterCLIClient` + `RegisterAgentClient` — both idempotent on 409)
 6. Start Oathkeeper subprocess; build `*docker.Client`; build `firewall.Stack` (via `fwhandler.NewRulesStore`)
 7. Load eBPF programs (`ebpfMgr.Load()`); run defensive startup cleanup (`ebpfMgr.CleanupStaleBypass()` — INV-B2-013)
-8. Start gRPC AdminService with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor
+8. Start gRPC AdminService on `cp.AdminPort` with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor; start a second gRPC server on `cp.AgentPort` (clawker-net only, NOT host-bound) using the same TLS material — `AgentService` lands in a later task; today the listener returns `Unimplemented` for every RPC. Both servers join the graceful-shutdown WaitGroup.
 9. Mark ready (`orchestrator.SetReady()`), serve `/healthz` on HealthPort
 9b. Start `controlplane.AgentWatcher` goroutine — polls Docker for agents with `purpose=agent`; on drain-to-zero invokes callback: `actionQueue.Close()` (drain queued work, reject new Submits with `ErrClosed`) → `grpcServer.GracefulStop()` (let in-flight RPCs return — any blocked on a Submit now observes `ErrClosed`) → `handler.CancelAllBypassTimers()` → `firewall.Stack.Stop()` → `ebpfMgr.FlushAll()` (INV-B2-007). Stack stop + eBPF flush run post-Close directly from the drain callback because the queue is dead; aggregated errors propagate back to `Run` for non-zero exit. Then the outer shutdown path tears the CP container down (exit code 0 — the `on-failure` restart policy does NOT retrigger)
 
