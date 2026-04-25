@@ -1,10 +1,10 @@
 # Control Plane Initiative — Current Status
 
-## Status: Branch 4 agent work complete. Pending final host-side review + the small CLI command-layer wiring follow-up.
+## Status: Branch 4 agent work complete. Spec for end-to-end CLI integration follow-up finalized; ready for implementation.
 
-**Workflow phase**: B4 agent work done; user's host-side E2E sweep + merge next.
-**Branch**: `feat/clawkerd-init` (Branch 4 — clawkerd auth + agent registration)
-**Next branch**: Branch 5 (init migration — clawkerd replaces entrypoint init steps; AgentCommandService wakes up)
+**Workflow phase**: B4 agent work done; B4 follow-up spec written, implementation next.
+**Branch**: `feat/clawkerd-init` (Branch 4 — clawkerd auth + agent registration; follow-up continues here)
+**Next branch**: Branch 5 (init migration — clawkerd replaces entrypoint init scripts; first concrete `Command` payload variants land)
 
 ## Branch Sequence
 
@@ -13,11 +13,16 @@
 | 1 | CP as proper service — auth + gRPC, firewall still owns bootstrap | `complete` (merged to `main`) |
 | 2 | Ownership reversal — CP owns firewall, `internal/firewall/` deleted, 13-method scope-corrected AdminService | `complete` (awaiting host-side review on `feat/firewall-cp-migration`) |
 | 3 | Daemon consolidation — hostproxy + socketbridge under CP, Docker events replacing watcher polling | `complete` |
-| 4 | clawkerd auth — PKCE registration, per-agent certs | `complete` (awaiting CLI wiring follow-up + host-side review on `feat/clawkerd-init`) |
-| 5 | Init migration + agent lifecycle — clawkerd replaces init scripts, command channel | pending |
+| 4 | clawkerd auth — PKCE registration, per-agent certs | `complete` core; **follow-up specced** in `cp-initiative-branch-4-followup-spec` (end-to-end CLI integration, Connect-as-stream, identity interceptor, slot composite key, dockerevents-driven slot eviction) |
+| 5 | Init migration + agent lifecycle — clawkerd replaces init scripts, first `Command` payload variants on the open Connect stream | pending |
 | 6 | Monitor + release + hardening — out of alpha | pending |
 
-Each branch gets its own `/cspec` kickoff before implementation.
+## Active follow-ups (out-of-band of branch sequence)
+
+| Initiative | Status | Memory |
+|------------|--------|--------|
+| **Branch 4 follow-up: end-to-end CLI integration + Connect lifetime stream** | Spec finalized; ready to implement on `feat/clawkerd-init` | `cp-initiative-branch-4-followup-spec` |
+| **CP restart resilience** (registry persistence, reconnect path, clawkerd reconnect-with-backoff, `volume prune` safety, `controlplane down` safety, streaming RPC eviction broadcast) | Tracked, not scheduled. Prerequisite for production-readiness | `cp-initiative-cp-restart-resilience` |
 
 ## Branch 4 Delivery Summary (14 tasks)
 
@@ -37,9 +42,21 @@ Each branch gets its own `/cspec` kickoff before implementation.
 - **E2E tests** (Task 13): authored `clawkerd_register_test.go` (happy path) + `clawkerd_failures_test.go` (seven adversarial cases, most skipped pending an mTLS-dial helper in `test/e2e/harness/`).
 - **Documentation** (Task 14): KEY-CONCEPTS, package CLAUDE.md files for agent/agentslots/agentregistry/clawkerd, plan memory updated, this status memo updated.
 
-## Known follow-up before merge
+## Branch 4 follow-up — what's getting built
 
-- The CLI command-layer wiring that calls `shared.GenerateAgentBootstrap` / `AnnounceAgent` / `WriteAgentBootstrapToContainer` from `run`/`start` and propagates the three `CLAWKERD_*` env vars is NOT yet in `feat/clawkerd-init`. Building blocks landed in Tasks 7 + 9; call sites are mechanical but were out of B4 budget. Until then, every per-project container starts without `/run/clawker/bootstrap`, the entrypoint's gate skips clawkerd launch, and `ListAgents` reports empty. Documented in the Branch 4 plan memory (Task 12 + 13 sections).
+Full spec in `cp-initiative-branch-4-followup-spec`. Highlights of architectural decisions made during planning:
+
+- **`AgentService.Register` → `AgentService.Connect`**, server-streaming. The connection IS the agent's lifetime command channel. First message after auth is `Welcome` (carries `ClawkerdConfiguration` placeholder); subsequent messages are commands (B5+ adds payload variants). Stub `AgentService.Events` (client-streaming, clawkerd → CP) for B5 telemetry.
+- **Single-server topology** committed to. clawkerd is gRPC client only. POC's two-server pattern (clawkerd-side `AgentCommandService`, CP dials back via Docker inspect) was K8s-flavored but unnecessary for clawker — single-server with streaming RPCs covers everything.
+- **Composite slot key** (thumbprint + agent_name) replaces AgentName-only key. Solves retry-within-TTL collisions; agent_name cross-check folds into the lookup itself.
+- **`agentslots.EvictByContainerID` + dockerevents `Subscribe`** mirror the existing `agentregistry` pattern. Slot eviction is real-time on container death, not just TTL.
+- **`AgentIdentityInterceptor`** (unary + stream) on the agent listener. Resolves cert thumbprint → registry entry → ctx-attached `*agentregistry.Entry`. Fail-secure opt-out map (`Connect: opted-out`; default require-identity for everything else). Build-time test walks proto descriptor enforcing every method has a policy decision.
+- **CN cross-check** at Connect (`peerCert.Subject.CommonName == req.AgentName`, constant-time). Defense vs announce-payload tampering.
+- **Bootstrap delivery is unconditional** (not gated on `security.firewall.enable`). CP ≠ firewall.
+- **`ConnectRequest.code_verifier` semantics preserve the future reconnect path.** Empty verifier reserved for the reconnect flow (CP restart resilience initiative); today's handler still requires it on first-connect.
+
+## Other known follow-ups before merge
+
 - `test/e2e/harness/` needs an mTLS-dial helper for the adversarial Register tests to actually run. Six of seven adversarial cases skip with explicit "needs harness mTLS-dial helper" messages.
 
 ## Branch 2 Delivery Summary (all 8 tasks)
