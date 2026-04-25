@@ -28,6 +28,7 @@ Dials CP via:
 | File | Purpose |
 |------|---------|
 | `auth_material.go` | `EnsureAuthMaterial`, `RotateAuthMaterial`, `CheckAuthMaterial`, `EnsureHydraSecret`, `LoadSigningKey`, `LoadClientCert`, `ReadJWK`, `CACert`, `AuthFileStatus` |
+| `agent_cert.go` | `MintAgentCert(caCertPath, caKeyPath, agentName)` returns an `AgentCert{CertPEM, KeyPEM, ThumbprintHex}` — ephemeral 24h mTLS leaf signed by the CLI CA. The thumbprint is lowercase-hex SHA-256 over the cert DER and is announced to the CP via `AdminService.AnnounceAgent` so any peer cert that doesn't match at `AgentService.Register` is rejected (cert-swap defense). PEM material is returned for tmpfs delivery only; never persisted on the host. |
 | `assertion.go` | `BuildSignedAssertion`, `ValidateAssertionClaims`, `AssertionClaims` — ES256 JWT assertion builder for `private_key_jwt` client auth |
 | `cp_dial.go` | `DialCPAdmin(ctx, adminPort, hydraPort)` → `adminv1.AdminServiceClient` — builds two TLS configs (Hydra plain TLS + AdminService mTLS) and a gRPC client with token-refreshing unary interceptor |
 

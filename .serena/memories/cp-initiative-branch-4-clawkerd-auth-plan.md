@@ -13,7 +13,7 @@
 |------|--------|-------|
 | Task 1: Proto contracts (AgentService + AdminService.AnnounceAgent) | `complete` | claude |
 | Task 2: Consts + scope wiring | `complete` | claude |
-| Task 3: CLI agent cert minting | `pending` | — |
+| Task 3: CLI agent cert minting | `complete` | claude |
 | Task 4: Hydra agent client registration | `pending` | — |
 | Task 5: Slot registry | `pending` | — |
 | Task 6: Agent registry + dockerevents subscription | `pending` | — |
@@ -43,6 +43,14 @@
 - `internal/consts/consts.go` already had `ScopeAgentAnnounce = "agent:announce"` from earlier groundwork — left in place because it's only one unused const and removal would expand the diff. Plan uses uniform `admin` scope for AnnounceAgent (Task 1) and `agent:self:register` for clawkerd's own call (this task), so `ScopeAgentAnnounce` is effectively reserved for a future per-method scope split.
 - Bootstrap files moved from "split between consts + future home" sketch into a single block with clear comments. Used the explicit `consts.BootstrapVerifierFile` literal pattern rather than a `[]string{}` slice so each file is greppable.
 - `time` was a new import. Worth noting because `internal/consts` is otherwise stdlib-light — no other internal packages import it, so a transitive `time` cost is fine.
+- `docs/configuration.mdx` is auto-generated from struct tags via `make docs` (`go run ./cmd/gen-docs --doc-path docs --markdown --website`). Hand-editing is wrong — schema desc tags are the source of truth; regenerate then commit.
+- `docs-check` Makefile target uses `git diff --quiet` against the working tree, so for `make pre-commit` to pass after `make docs` the regenerated files must be staged before re-running pre-commit.
+
+### Task 3
+- `MintAgentCert` mirrors `auth_material.go::ensureClientCert` but with three deliberate differences: no on-disk persistence (returns PEM bytes), 24h lifetime instead of 1y (thumbprint pinning makes long-lived OK but tight ceiling caps blast radius), and CN equals the canonical agent name verbatim instead of `"clawker-cli"`.
+- Added private `loadCAFrom(certPath, keyPath)` so MintAgentCert is testable without the consts-driven path resolution that `loadCA()` requires.
+- Thumbprint is lowercase-hex SHA-256 over `cert.Raw` (the DER bytes), exactly what `crypto/sha256.Sum256(peerCert.Raw)` will produce on the CP side at Register. Tests assert that round-trip explicitly to lock the format down before it has a server-side reader.
+- Tests reuse `EnsureAuthMaterial()` to provision the CA in an isolated `testenv.New(t)` instead of synthesizing a hand-rolled CA — cheaper and ensures MintAgentCert is exercised against the same material the CLI ships with.
 
 ---
 
