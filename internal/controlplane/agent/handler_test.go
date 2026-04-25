@@ -6,9 +6,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -18,6 +18,10 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	mobyclient "github.com/moby/moby/client"
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -72,23 +76,19 @@ func newFixture(t *testing.T, opts fixtureOpts) *fixture {
 	t.Cleanup(slots.Stop)
 
 	thumb := sha256.Sum256(opts.certRaw)
-	thumbHex := hex.EncodeToString(thumb[:])
 	if opts.wrongThumb {
-		// Flip the first byte so the constant-time compare fails but
-		// the hex still parses.
-		flipped := append([]byte{}, thumb[:]...)
-		flipped[0] ^= 0xff
-		thumbHex = hex.EncodeToString(flipped)
+		// Flip the first byte so the constant-time compare fails on
+		// the slot side; the peer cert at Register still hashes to
+		// the unflipped value, so the cross-check rejects.
+		thumb[0] ^= 0xff
 	}
 
 	require.NoError(t, slots.Reserve(agentslots.Slot{
 		AgentName:              opts.agentName,
 		ContainerID:            opts.containerID,
-		ExpectedCertThumbprint: thumbHex,
+		ExpectedCertThumbprint: thumb,
 		Challenge:              pkceChallengeForTest(opts.verifier),
-		ChallengeMethod:        "S256",
-		ReservedAt:             now,
-		ExpiresAt:              now.Add(time.Hour),
+		ChallengeMethod:        consts.ChallengeMethodS256,
 	}))
 
 	reg := agentregistry.NewRegistry(nil)
@@ -103,7 +103,11 @@ func newFixture(t *testing.T, opts fixtureOpts) *fixture {
 		}, nil
 	})
 
-	h := NewHandler(slots, reg, inspector, nil)
+	// Pin the handler's clock so RegisteredAt/LastSeen are
+	// deterministic. WithClock is the production-supported seam — we
+	// use it the same way cmd/clawker-cp would (omit it) except with a
+	// fixed-time function.
+	h := NewHandler(slots, reg, inspector, nil, WithClock(func() time.Time { return now }))
 	return &fixture{handler: h, registry: reg, slots: slots, opts: opts}
 }
 
@@ -275,4 +279,123 @@ func TestRegister_DockerInspectError(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// TestRegister_MissingNetworkSettings exercises the new sentinel
+// returned by MobyInspector when a container has no NetworkSettings.
+// Wire response is the generic codes.PermissionDenied (attackers must
+// not learn which check failed) but the handler must still successfully
+// branch on the sentinel — a panic or wrapped-error swallow here would
+// regress the diagnostic.
+func TestRegister_MissingNetworkSettings(t *testing.T) {
+	certRaw := []byte("cert")
+	peerIP := net.IPv4(10, 0, 0, 5)
+	f := newFixture(t, fixtureOpts{
+		agentName: "clawker.x", verifier: "v", containerID: "c",
+		certRaw: certRaw, peerIP: peerIP,
+		inspectErr: errMissingNetworkSettings,
+	})
+
+	_, err := f.handler.Register(ctxWithPeer(certRaw, peerIP), &agentv1.RegisterRequest{
+		AgentName: "clawker.x", CodeVerifier: "v",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// --- MobyInspector tests ---
+
+// stubInspectorAPIClient is a minimal in-package fake for the moby
+// APIClient surface MobyInspector touches. We embed mobyclient.APIClient
+// to satisfy the interface (every other method panics — caller error)
+// and only override ContainerInspect. Spinning up a real Docker daemon
+// is unnecessary for these branches.
+type stubInspectorAPIClient struct {
+	mobyclient.APIClient
+	resp mobyclient.ContainerInspectResult
+	err  error
+}
+
+func (s stubInspectorAPIClient) ContainerInspect(_ context.Context, _ string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+	return s.resp, s.err
+}
+
+func TestMobyInspector_Inspect_NilNetworkSettings(t *testing.T) {
+	// Container has no NetworkSettings — clawker-net contract violation.
+	// Inspector must surface errMissingNetworkSettings so the handler
+	// can log a specific diagnostic instead of conflating with the
+	// generic peer-IP-mismatch path.
+	stub := stubInspectorAPIClient{
+		resp: mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				Config:          &container.Config{Labels: map[string]string{"x": "y"}},
+				NetworkSettings: nil,
+			},
+		},
+	}
+	insp := MobyInspector{Client: stub}
+
+	info, err := insp.Inspect(context.Background(), "ctr-id")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errMissingNetworkSettings),
+		"missing NetworkSettings must surface as the typed sentinel for handler-side branching")
+	// Labels still flow even when NetworkSettings is missing — the
+	// handler doesn't actually consume them on this branch (it
+	// short-circuits on the error) but losing them silently would
+	// regress the diagnostic surface for any future caller.
+	assert.Equal(t, "y", info.Labels["x"])
+}
+
+func TestMobyInspector_Inspect_MissingClawkerNetEndpoint(t *testing.T) {
+	// Container is on Docker but not on clawker-net. NetworkIP must
+	// stay nil so the handler's peer-IP check rejects fail-closed.
+	stub := stubInspectorAPIClient{
+		resp: mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				Config: &container.Config{Labels: map[string]string{}},
+				NetworkSettings: &container.NetworkSettings{
+					Networks: map[string]*network.EndpointSettings{
+						"some-other-net": {
+							IPAddress: netip.MustParseAddr("172.30.0.5"),
+						},
+					},
+				},
+			},
+		},
+	}
+	insp := MobyInspector{Client: stub}
+
+	info, err := insp.Inspect(context.Background(), "ctr-id")
+	require.NoError(t, err)
+	assert.Nil(t, info.NetworkIP, "container not on clawker-net must yield nil NetworkIP")
+}
+
+func TestMobyInspector_Inspect_NormalizesIPv4(t *testing.T) {
+	// Docker returns the address as a netip.Addr; MobyInspector
+	// re-parses through net.ParseIP and forces To4() so the handler's
+	// equality check against a peer IP doesn't trip on the 16-byte
+	// IPv4-mapped-IPv6 form (`::ffff:172.28.0.5`). Pin the
+	// normalization explicitly so a future refactor that drops the
+	// To4() call regresses immediately.
+	stub := stubInspectorAPIClient{
+		resp: mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				Config: &container.Config{Labels: map[string]string{}},
+				NetworkSettings: &container.NetworkSettings{
+					Networks: map[string]*network.EndpointSettings{
+						consts.Network: {
+							IPAddress: netip.MustParseAddr("172.28.0.5"),
+						},
+					},
+				},
+			},
+		},
+	}
+	insp := MobyInspector{Client: stub}
+
+	info, err := insp.Inspect(context.Background(), "ctr-id")
+	require.NoError(t, err)
+	require.NotNil(t, info.NetworkIP)
+	assert.Equal(t, 4, len(info.NetworkIP), "NetworkIP must be normalized to 4-byte IPv4 form")
+	assert.True(t, info.NetworkIP.Equal(net.IPv4(172, 28, 0, 5)))
 }

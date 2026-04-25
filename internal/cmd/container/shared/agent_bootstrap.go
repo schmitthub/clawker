@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path"
@@ -24,16 +25,37 @@ import (
 // leaf cert and key, the CA cert clawkerd uses to trust the CP server,
 // and the Hydra client_assertion JWT. Material is meant to be tarred
 // directly to the container — never persisted on the host.
+//
+// The String/GoString methods deliberately redact every field so the
+// struct (which holds the PKCE verifier, the per-agent private key,
+// and the Hydra assertion JWT) cannot leak via fmt verbs or zerolog's
+// interface logger. Callers needing the raw fields must read them
+// directly.
 type AgentBootstrap struct {
-	Verifier               string
-	Challenge              string
-	Method                 string // "S256" only
+	Verifier  string
+	Challenge string
+	// Method is the PKCE challenge method announced over the wire.
+	// Typed for safety; today only consts.ChallengeMethodS256 is
+	// accepted by the CP, and the bootstrap helpers reject anything
+	// else before it can reach the wire.
+	Method                 consts.ChallengeMethod
 	CertPEM                []byte
 	KeyPEM                 []byte
-	ExpectedCertThumbprint string // lowercase-hex SHA-256 of cert DER
+	ExpectedCertThumbprint [sha256.Size]byte // SHA-256 over cert DER
 	CACertPEM              []byte
 	Assertion              string
 }
+
+// String redacts every field so AgentBootstrap can never accidentally
+// leak the per-agent private key, the PKCE verifier (a bearer secret
+// for the CP slot), or the Hydra assertion JWT via fmt.Sprintf("%v",
+// b) or zerolog.
+func (*AgentBootstrap) String() string { return "AgentBootstrap{<redacted>}" }
+
+// GoString redacts so fmt.Sprintf("%#v", b) (and any logger that uses
+// Go-syntax representation) also does not leak Verifier / KeyPEM /
+// Assertion.
+func (*AgentBootstrap) GoString() string { return "AgentBootstrap{<redacted>}" }
 
 // GenerateAgentBootstrap mints all material the CLI needs to announce
 // + start one agent: a fresh 32-byte PKCE verifier, the matching S256
@@ -75,10 +97,10 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath, agentName, hydraTokenURL stri
 	return &AgentBootstrap{
 		Verifier:               verifier,
 		Challenge:              challenge,
-		Method:                 "S256",
+		Method:                 consts.ChallengeMethodS256,
 		CertPEM:                cert.CertPEM,
 		KeyPEM:                 cert.KeyPEM,
-		ExpectedCertThumbprint: cert.ThumbprintHex,
+		ExpectedCertThumbprint: cert.Thumbprint,
 		CACertPEM:              caPEM,
 		Assertion:              assertion,
 	}, nil
@@ -88,8 +110,18 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath, agentName, hydraTokenURL stri
 // container before docker start. CP slot stores the canonical agent
 // name, the Docker container ID CLI just received, the cert thumbprint
 // CLI minted, and the PKCE challenge. clawkerd consumes the matching
-// verifier at Register; if the slot expires (60s) clawkerd's Register
-// fails fail-closed.
+// verifier at Register; if the slot expires (consts.AgentSlotTTL
+// elapses) clawkerd's Register fails fail-closed.
+//
+// The thumbprint is sent over the wire as lowercase hex because the
+// proto field is a free-form `string` — internally we keep the
+// byte-array form to avoid carrying around a redundantly-encoded
+// representation.
+//
+// TODO(B4-followup): CP-side AdminService.AnnounceAgent handler is not
+// wired yet; calls return codes.Unimplemented until the followup
+// branch lands. See
+// .serena/memories/cp-initiative-branch-4-followup-cli-integration.md.
 func AnnounceAgent(ctx context.Context, admin adminv1.AdminServiceClient, b *AgentBootstrap, agentName, containerID string) error {
 	if err := b.validate(); err != nil {
 		return fmt.Errorf("announce agent %q: %w", agentName, err)
@@ -103,9 +135,9 @@ func AnnounceAgent(ctx context.Context, admin adminv1.AdminServiceClient, b *Age
 	if _, err := admin.AnnounceAgent(ctx, &adminv1.AnnounceAgentRequest{
 		AgentName:              agentName,
 		ContainerId:            containerID,
-		ExpectedCertThumbprint: b.ExpectedCertThumbprint,
+		ExpectedCertThumbprint: hex.EncodeToString(b.ExpectedCertThumbprint[:]),
 		CodeChallenge:          b.Challenge,
-		CodeChallengeMethod:    b.Method,
+		CodeChallengeMethod:    string(b.Method),
 	}); err != nil {
 		return fmt.Errorf("announce agent %q (container %s): %w", agentName, containerID, err)
 	}
@@ -122,13 +154,13 @@ func (b *AgentBootstrap) validate() error {
 		return fmt.Errorf("bootstrap is nil")
 	}
 	switch {
-	case b.Method != "S256":
-		return fmt.Errorf("bootstrap challenge method must be S256, got %q", b.Method)
+	case b.Method != consts.ChallengeMethodS256:
+		return fmt.Errorf("bootstrap challenge method must be %s, got %q", consts.ChallengeMethodS256, b.Method)
 	case b.Challenge == "":
 		return fmt.Errorf("bootstrap challenge is empty")
 	case b.Verifier == "":
 		return fmt.Errorf("bootstrap verifier is empty")
-	case b.ExpectedCertThumbprint == "":
+	case b.ExpectedCertThumbprint == [sha256.Size]byte{}:
 		return fmt.Errorf("bootstrap cert thumbprint is empty")
 	case len(b.CertPEM) == 0:
 		return fmt.Errorf("bootstrap cert PEM is empty")

@@ -1,11 +1,18 @@
 package auth
 
 import (
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
+	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,19 +49,11 @@ func TestMintAgentCert_HappyPath(t *testing.T) {
 	require.NotEmpty(t, got.CertPEM)
 	require.NotEmpty(t, got.KeyPEM)
 
-	// Lowercase-hex SHA-256 = 64 chars; hex.DecodeString rejects upper
-	// case + non-hex by erroring, so a successful decode + length check
-	// is the cheap way to lock down the format.
-	require.Len(t, got.ThumbprintHex, 64)
-	raw, err := hex.DecodeString(got.ThumbprintHex)
-	require.NoError(t, err)
-	require.Len(t, raw, sha256.Size)
-
 	// Thumbprint must match SHA-256 of the parsed cert's DER bytes —
 	// the same value the CP recomputes from the peer cert at Register.
 	leaf := mustParse(t, got.CertPEM)
-	sum := sha256.Sum256(leaf.Raw)
-	assert.Equal(t, hex.EncodeToString(sum[:]), got.ThumbprintHex)
+	want := sha256.Sum256(leaf.Raw)
+	assert.Equal(t, want, got.Thumbprint)
 
 	// CN preserves the canonical agent name verbatim.
 	assert.Equal(t, agentName, leaf.Subject.CommonName)
@@ -92,6 +91,8 @@ func TestMintAgentCert_DistinctSerials(t *testing.T) {
 	leaf2 := mustParse(t, second.CertPEM)
 	assert.NotEqual(t, leaf1.SerialNumber.String(), leaf2.SerialNumber.String(),
 		"two mints for the same agent name must produce distinct serials")
+	assert.NotEqual(t, first.Thumbprint, second.Thumbprint,
+		"distinct certs must produce distinct thumbprints")
 }
 
 func TestMintAgentCert_EmptyAgentName(t *testing.T) {
@@ -105,6 +106,89 @@ func TestMintAgentCert_MissingCAPaths(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope.pem")
 	_, err := MintAgentCert(missing, missing, "clawker.x.y")
 	require.Error(t, err)
+}
+
+// TestMintAgentCert_AdversarialCAInputs exercises the malformed-input
+// surface of the CA loader. Each subtest produces a CA file pair that
+// real-world misconfiguration could write (mismatched pair, garbage
+// PEM, RSA where ECDSA is required) and asserts MintAgentCert errors
+// cleanly without panicking.
+func TestMintAgentCert_AdversarialCAInputs(t *testing.T) {
+	t.Run("mismatched CA pair (cert from one CA, key from another)", func(t *testing.T) {
+		// Two independently generated CAs. Pairing CA-A's cert with
+		// CA-B's key would otherwise produce a leaf signed by key K
+		// whose issuer is a CA cert holding a different public key —
+		// silent misconfiguration that surfaces only as opaque mTLS
+		// failure later. loadCAFrom rejects the mismatch up front.
+		dir := t.TempDir()
+		certA, _ := writeCAPair(t, dir, "a")
+		_, keyB := writeCAPair(t, dir, "b")
+
+		_, err := MintAgentCert(certA, keyB, "clawker.x.y")
+		require.Error(t, err, "mismatched CA pair must fail")
+		assert.Contains(t, err.Error(), "matching pair")
+	})
+
+	t.Run("CA cert is not PEM", func(t *testing.T) {
+		// pem.Decode returns nil block for garbage; loadCAFrom must
+		// surface that as an error rather than dereferencing the nil
+		// block.
+		dir := t.TempDir()
+		certPath := filepath.Join(dir, "garbage.pem")
+		require.NoError(t, os.WriteFile(certPath, []byte("not a pem block at all"), 0o600))
+
+		_, keyPath := writeCAPair(t, dir, "valid")
+		_, err := MintAgentCert(certPath, keyPath, "clawker.x.y")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "PEM")
+	})
+
+	t.Run("CA key is not P-256 ECDSA", func(t *testing.T) {
+		// loadECDSAKey rejects non-EC keys. Use RSA to confirm the
+		// type-narrowing path returns an error without panicking on
+		// the failed type assertion.
+		dir := t.TempDir()
+		certPath, _ := writeCAPair(t, dir, "valid")
+
+		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		rsaDER, err := x509.MarshalPKCS8PrivateKey(rsaKey)
+		require.NoError(t, err)
+		rsaKeyPath := filepath.Join(dir, "rsa.key.pem")
+		require.NoError(t, os.WriteFile(rsaKeyPath,
+			pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: rsaDER}),
+			0o600))
+
+		_, err = MintAgentCert(certPath, rsaKeyPath, "clawker.x.y")
+		require.Error(t, err)
+	})
+}
+
+// TestAgentCert_RedactsViaFormatter pins the redaction contract: every
+// fmt verb that could surface struct contents must emit the literal
+// "<redacted>" sentinel, never any of the byte fields. This is the
+// guard that keeps zerolog and ad-hoc fmt.Sprintf calls from leaking
+// the per-agent private key.
+func TestAgentCert_RedactsViaFormatter(t *testing.T) {
+	cert := AgentCert{
+		CertPEM:    []byte("---PRIVATE-CERT-MATERIAL---"),
+		KeyPEM:     []byte("---PRIVATE-KEY-MATERIAL---"),
+		Thumbprint: sha256.Sum256([]byte("dummy")),
+	}
+
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		t.Run(verb, func(t *testing.T) {
+			out := fmt.Sprintf(verb, cert)
+			assert.Contains(t, out, "<redacted>", "formatter %q must include redaction marker", verb)
+			assert.NotContains(t, out, "PRIVATE-CERT", "formatter %q leaked CertPEM", verb)
+			assert.NotContains(t, out, "PRIVATE-KEY", "formatter %q leaked KeyPEM", verb)
+		})
+	}
+
+	// Pointer-form must redact too — fmt promotes through method sets.
+	out := fmt.Sprintf("%v", &cert)
+	assert.Contains(t, out, "<redacted>")
+	assert.NotContains(t, out, "PRIVATE-KEY")
 }
 
 func mustParse(t *testing.T, certPEM []byte) *x509.Certificate {
@@ -123,4 +207,40 @@ func mustCAPool(t *testing.T, caCertPath string) *x509.CertPool {
 	pool := x509.NewCertPool()
 	require.True(t, pool.AppendCertsFromPEM(data), "CA cert must parse")
 	return pool
+}
+
+// writeCAPair generates a self-signed P-256 CA in dir under tag and
+// returns the cert + key paths. Used by adversarial subtests that need
+// independently-generated CAs to forge mismatched-pair scenarios.
+func writeCAPair(t *testing.T, dir, tag string) (certPath, keyPath string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test-ca-" + tag},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	certPath = filepath.Join(dir, tag+".cert.pem")
+	keyPath = filepath.Join(dir, tag+".key.pem")
+
+	var certBuf bytes.Buffer
+	require.NoError(t, pem.Encode(&certBuf, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
+	require.NoError(t, os.WriteFile(certPath, certBuf.Bytes(), 0o600))
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	var keyBuf bytes.Buffer
+	require.NoError(t, pem.Encode(&keyBuf, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	require.NoError(t, os.WriteFile(keyPath, keyBuf.Bytes(), 0o600))
+
+	return certPath, keyPath
 }

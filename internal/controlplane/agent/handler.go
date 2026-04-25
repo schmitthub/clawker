@@ -31,7 +31,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -79,13 +79,38 @@ type Handler struct {
 	registry agentregistry.Registry
 	docker   ContainerInspector
 	log      *logger.Logger
+	// clock is the registered-at/last-seen source. Defaults to
+	// time.Now when no WithClock option is supplied; tests inject a
+	// fixed-time clock so RegisteredAt and LastSeen are deterministic.
+	// Stored on the Handler (not a package-level var) so concurrent
+	// tests cannot stomp each other's clocks via mutation of a
+	// shared global.
+	clock func() time.Time
+}
+
+// HandlerOption customizes Handler construction. Functional options
+// keep NewHandler ergonomic at production call sites that don't need
+// any customization, while letting tests inject deterministic clocks
+// without a parallel constructor.
+type HandlerOption func(*Handler)
+
+// WithClock overrides the time source used to stamp RegisteredAt /
+// LastSeen on agentregistry entries. Pass a fixed-time function in
+// tests; production wiring omits this option and falls back to
+// time.Now.
+func WithClock(now func() time.Time) HandlerOption {
+	return func(h *Handler) {
+		if now != nil {
+			h.clock = now
+		}
+	}
 }
 
 // NewHandler constructs a Handler. All dependencies are required —
 // nil slots, registry, or inspector means the package consumer made a
 // wiring mistake; panic loudly rather than swallow with a runtime nil
 // dereference at Register time.
-func NewHandler(slots agentslots.Registry, reg agentregistry.Registry, inspector ContainerInspector, log *logger.Logger) *Handler {
+func NewHandler(slots agentslots.Registry, reg agentregistry.Registry, inspector ContainerInspector, log *logger.Logger, opts ...HandlerOption) *Handler {
 	if slots == nil {
 		panic("agent: slot registry required")
 	}
@@ -98,12 +123,17 @@ func NewHandler(slots agentslots.Registry, reg agentregistry.Registry, inspector
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &Handler{
+	h := &Handler{
 		slots:    slots,
 		registry: reg,
 		docker:   inspector,
 		log:      log,
+		clock:    time.Now,
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // Register completes the PKCE handshake for one agent. Every failure
@@ -133,9 +163,10 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 
 	// (b) Cert thumbprint match — defense vs cert swap in the bootstrap
 	// tmpfs between announce and clawkerd boot. Constant-time compare
-	// so failure latency doesn't leak which byte differed.
-	expectedThumb, err := hex.DecodeString(slot.ExpectedCertThumbprint)
-	if err != nil || subtle.ConstantTimeCompare(thumbprint[:], expectedThumb) != 1 {
+	// over the raw byte arrays so failure latency doesn't leak which
+	// byte differed and so we don't pay a hex.DecodeString round-trip
+	// (and its own error path) on every Register.
+	if subtle.ConstantTimeCompare(thumbprint[:], slot.ExpectedCertThumbprint[:]) != 1 {
 		h.log.Warn().Str("agent", req.AgentName).Msg("agent register: cert thumbprint mismatch")
 		return nil, status.Error(codes.PermissionDenied, "registration rejected")
 	}
@@ -144,7 +175,20 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	// labels declare the same canonical agent name CLI announced.
 	info, err := h.docker.Inspect(ctx, slot.ContainerID)
 	if err != nil {
-		h.log.Warn().Err(err).Str("container_id", slot.ContainerID).Msg("agent register: docker inspect failed")
+		// Distinguish the two common Docker-side failures so the log
+		// guides operators to the actual root cause:
+		//   - errMissingNetworkSettings → clawker-net contract violation
+		//     (container not on the shared network at all)
+		//   - everything else → daemon unreachable / inspect API error
+		// Wire response stays the generic codes.PermissionDenied.
+		if errors.Is(err, errMissingNetworkSettings) {
+			h.log.Warn().
+				Str("agent", req.AgentName).
+				Str("container_id", slot.ContainerID).
+				Msg("agent register: container missing clawker-net network settings")
+		} else {
+			h.log.Warn().Err(err).Str("container_id", slot.ContainerID).Msg("agent register: docker inspect failed")
+		}
 		return nil, status.Error(codes.PermissionDenied, "registration rejected")
 	}
 
@@ -171,7 +215,7 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	// All checks passed. Pin to registry; subsequent per-agent RPCs
 	// resolve identity by recomputing SHA-256 over their TLS peer
 	// cert and looking up here.
-	now := nowFn()
+	now := h.clock()
 	h.registry.Add(agentregistry.Entry{
 		AgentName:    req.AgentName,
 		ContainerID:  slot.ContainerID,
@@ -229,9 +273,6 @@ func peerCertAndIP(ctx context.Context) (cert *certParseResult, ip net.IP, err e
 // handler doesn't trust any other cert field for identity.
 type certParseResult struct{ Raw []byte }
 
-// nowFn is a package-level seam so tests can pin RegisteredAt/LastSeen.
-var nowFn = func() time.Time { return time.Now() }
-
 // ipString returns the dotted form for non-nil IPs, "<nil>" otherwise.
 // Avoids the panic path in net.IP.String when expected_ip is missing
 // from a malformed Docker response.
@@ -242,6 +283,14 @@ func ipString(ip net.IP) string {
 	return ip.String()
 }
 
+// errMissingNetworkSettings is returned by MobyInspector.Inspect when
+// the inspected container has nil NetworkSettings — this is a
+// clawker-net contract violation (containers we register MUST be
+// attached to the shared network so the peer-IP cross-check can fire).
+// The handler swallows the sentinel and returns codes.PermissionDenied
+// to the wire, but logs a more specific diagnostic.
+var errMissingNetworkSettings = errors.New("agent: container has no NetworkSettings")
+
 // MobyInspector wraps a moby Docker client into the local
 // ContainerInspector interface. Used by the wiring in
 // cmd/clawker-cp/main.go so the handler has a non-leaky dependency
@@ -249,6 +298,7 @@ func ipString(ip net.IP) string {
 // ContainerInspector instead of building a fake APIClient.
 type MobyInspector struct {
 	Client mobyclient.APIClient
+	Log    *logger.Logger
 }
 
 func (m MobyInspector) Inspect(ctx context.Context, containerID string) (ContainerInfo, error) {
@@ -257,11 +307,23 @@ func (m MobyInspector) Inspect(ctx context.Context, containerID string) (Contain
 		return ContainerInfo{}, err
 	}
 	c := res.Container
-	info := ContainerInfo{
-		Labels: c.Config.Labels,
+	info := ContainerInfo{}
+	if c.Config != nil {
+		info.Labels = c.Config.Labels
 	}
 	if c.NetworkSettings == nil {
-		return info, nil
+		// clawker-net contract violation — log specifically (not a
+		// generic "peer IP does not match" once it bubbles up to the
+		// handler) and return a sentinel so callers can branch on
+		// errors.Is without parsing strings.
+		log := m.Log
+		if log == nil {
+			log = logger.Nop()
+		}
+		log.Warn().
+			Str("container_id", containerID).
+			Msg("MobyInspector: container has no NetworkSettings (clawker-net contract violation)")
+		return info, errMissingNetworkSettings
 	}
 	if endpoint, ok := c.NetworkSettings.Networks[consts.Network]; ok && endpoint.IPAddress.IsValid() {
 		info.NetworkIP = net.ParseIP(endpoint.IPAddress.String())

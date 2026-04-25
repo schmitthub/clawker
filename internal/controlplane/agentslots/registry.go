@@ -31,14 +31,22 @@ import (
 // Slot is the per-agent reservation record stored between AnnounceAgent
 // and Register. Fields are written by Reserve and read at Consume; the
 // caller treats the returned slot as immutable.
+//
+// ReservedAt and ExpiresAt are stamped INSIDE Reserve from the
+// registry's clock; callers MUST NOT set those two fields. Doing so was
+// previously possible and let a buggy caller reserve a slot that was
+// already past its expiry, or with a bogus expiry far in the future,
+// silently bypassing the TTL contract. Reserve now ignores both fields
+// on input and overwrites them.
 type Slot struct {
 	AgentName              string
 	ContainerID            string
-	ExpectedCertThumbprint string
+	ExpectedCertThumbprint [sha256.Size]byte
 	Challenge              string
-	ChallengeMethod        string
-	ReservedAt             time.Time
-	ExpiresAt              time.Time
+	ChallengeMethod        consts.ChallengeMethod
+	// ReservedAt and ExpiresAt are written by Reserve; ignored on input.
+	ReservedAt time.Time
+	ExpiresAt  time.Time
 }
 
 // ErrSlotInvalid covers every failure mode of Consume — missing slot,
@@ -58,8 +66,10 @@ var ErrSlotExists = errors.New("agentslots: slot already reserved")
 //
 //go:generate moq -rm -pkg mocks -out mocks/registry_mock.go . Registry
 type Registry interface {
-	// Reserve stores the slot keyed by AgentName. Duplicate names
-	// return ErrSlotExists.
+	// Reserve stores the slot keyed by AgentName. Reserve stamps
+	// ReservedAt + ExpiresAt from the registry's clock; any value
+	// supplied by the caller on those two fields is ignored.
+	// Duplicate names return ErrSlotExists.
 	Reserve(slot Slot) error
 	// Consume verifies S256(verifier) == slot.Challenge in constant
 	// time and atomically removes the slot on success. Mismatch /
@@ -115,15 +125,19 @@ func (r *registryImpl) Reserve(slot Slot) error {
 	if slot.AgentName == "" {
 		return errors.New("agentslots: agent name required")
 	}
-	if slot.ChallengeMethod != "S256" {
+	if slot.ChallengeMethod != consts.ChallengeMethodS256 {
 		// S256-only at the type level. The plan is explicit that no
 		// other PKCE method is supported; reject early so a buggy CLI
 		// doesn't reserve an unenforceable slot.
 		return errors.New("agentslots: challenge method must be S256")
 	}
-	if !slot.ExpiresAt.After(slot.ReservedAt) {
-		return errors.New("agentslots: slot already expired at reserve time")
-	}
+
+	// Stamp ReservedAt/ExpiresAt from the registry's clock so callers
+	// cannot supply a pre-expired or future-dated TTL. Any caller value
+	// is overwritten.
+	now := r.now()
+	slot.ReservedAt = now
+	slot.ExpiresAt = now.Add(consts.AgentSlotTTL)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()

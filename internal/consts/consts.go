@@ -240,6 +240,25 @@ const (
 	BootstrapVerifierFile  = "verifier"
 )
 
+// ChallengeMethod is the PKCE challenge method announced over the wire
+// in AnnounceAgent and stored on the slot. The proto field is a free-form
+// string for forward extensibility, but at runtime exactly one method is
+// accepted (`S256`). A typed string with a single defined constant gives
+// us a single source of truth that both the CLI bootstrap path
+// (`internal/cmd/container/shared`) and the CP slot registry
+// (`internal/controlplane/agentslots`) reference, while preserving the
+// proto's string-on-the-wire contract.
+type ChallengeMethod string
+
+// String satisfies fmt.Stringer so the typed value renders identically
+// to the wire representation.
+func (m ChallengeMethod) String() string { return string(m) }
+
+// ChallengeMethodS256 is the only PKCE challenge method accepted by the
+// CP. Reserve and the CLI bootstrap helper both reject anything else
+// before it can reach the wire.
+const ChallengeMethodS256 ChallengeMethod = "S256"
+
 // Container env vars for clawkerd bootstrap. clawkerd reads only what
 // it can authoritatively assert: container_id is server-derived from
 // the slot at Register, and the project is encoded in the canonical

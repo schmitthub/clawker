@@ -14,6 +14,20 @@ func tp(s string) [sha256.Size]byte {
 	return sha256.Sum256([]byte(s))
 }
 
+// validEntry builds the minimal Entry that satisfies Add's invariants
+// (non-zero thumbprint, non-empty agent name, non-zero RegisteredAt).
+// Used by tests that don't care about Entry contents — callers
+// override the fields they're actually exercising.
+func validEntry(name, containerID, certSeed string) Entry {
+	return Entry{
+		AgentName:    name,
+		ContainerID:  containerID,
+		Thumbprint:   tp(certSeed),
+		RegisteredAt: time.Unix(1000, 0),
+		LastSeen:     time.Unix(1000, 0),
+	}
+}
+
 func TestRegistry_AddLookupTouch(t *testing.T) {
 	r := NewRegistry(nil)
 	now := time.Unix(1000, 0)
@@ -50,8 +64,8 @@ func TestRegistry_Lookup_Unknown(t *testing.T) {
 
 func TestRegistry_EvictByContainerID(t *testing.T) {
 	r := NewRegistry(nil)
-	a := Entry{AgentName: "clawker.a", ContainerID: "ctr-1", Thumbprint: tp("cert-a")}
-	b := Entry{AgentName: "clawker.b", ContainerID: "ctr-2", Thumbprint: tp("cert-b")}
+	a := validEntry("clawker.a", "ctr-1", "cert-a")
+	b := validEntry("clawker.b", "ctr-2", "cert-b")
 	r.Add(a)
 	r.Add(b)
 
@@ -70,8 +84,8 @@ func TestRegistry_ReRegisterAfterEvict(t *testing.T) {
 	// remains briefly until the dockerevents subscription evicts it,
 	// then the new Add lands cleanly.
 	r := NewRegistry(nil)
-	first := Entry{AgentName: "clawker.x", ContainerID: "ctr", Thumbprint: tp("cert-1")}
-	second := Entry{AgentName: "clawker.x", ContainerID: "ctr", Thumbprint: tp("cert-2")}
+	first := validEntry("clawker.x", "ctr", "cert-1")
+	second := validEntry("clawker.x", "ctr", "cert-2")
 	r.Add(first)
 	r.EvictByContainerID("ctr")
 	r.Add(second)
@@ -86,9 +100,9 @@ func TestRegistry_ReRegisterAfterEvict(t *testing.T) {
 
 func TestRegistry_Snapshot_Sorted(t *testing.T) {
 	r := NewRegistry(nil)
-	r.Add(Entry{AgentName: "clawker.b", Thumbprint: tp("cert-b")})
-	r.Add(Entry{AgentName: "clawker.a", Thumbprint: tp("cert-a")})
-	r.Add(Entry{AgentName: "clawker.c", Thumbprint: tp("cert-c")})
+	r.Add(validEntry("clawker.b", "", "cert-b"))
+	r.Add(validEntry("clawker.a", "", "cert-a"))
+	r.Add(validEntry("clawker.c", "", "cert-c"))
 
 	snap := r.Snapshot()
 	require.Len(t, snap, 3)
@@ -110,10 +124,71 @@ func TestRegistry_Concurrent(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			thumb := tp("cert-" + string(rune('a'+i%26)) + string(rune('0'+i/26)))
-			r.Add(Entry{AgentName: "clawker.agent", ContainerID: "ctr-x", Thumbprint: thumb})
+			entry := Entry{
+				AgentName:    "clawker.agent",
+				ContainerID:  "ctr-x",
+				Thumbprint:   thumb,
+				RegisteredAt: time.Unix(1000, 0),
+			}
+			r.Add(entry)
 			_, _ = r.Lookup(thumb)
 			r.Touch(thumb)
 		}(i)
 	}
 	wg.Wait()
+}
+
+// TestRegistry_Add_RejectsInvariantViolations pins the contract that
+// Add panics on invalid input. The only legitimate caller of Add is
+// the in-package agent.Handler which has already verified each
+// invariant via the five identity-binding cross-checks at Register;
+// any other caller violating these is a wiring bug that must surface
+// loudly. Each subtest uses recover() to assert a panic occurred and
+// no entry made it into the registry.
+func TestRegistry_Add_RejectsInvariantViolations(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry Entry
+	}{
+		{
+			name: "zero thumbprint",
+			entry: Entry{
+				AgentName:    "clawker.x",
+				ContainerID:  "ctr",
+				RegisteredAt: time.Unix(1000, 0),
+				// Thumbprint left zero — the all-zero key would let
+				// any non-registering caller collide on identity.
+			},
+		},
+		{
+			name: "empty agent name",
+			entry: Entry{
+				ContainerID:  "ctr",
+				Thumbprint:   tp("cert"),
+				RegisteredAt: time.Unix(1000, 0),
+				// AgentName empty — breaks Snapshot ordering and
+				// confuses the audit log.
+			},
+		},
+		{
+			name: "zero RegisteredAt",
+			entry: Entry{
+				AgentName:   "clawker.x",
+				ContainerID: "ctr",
+				Thumbprint:  tp("cert"),
+				// RegisteredAt zero — breaks downstream observability.
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewRegistry(nil)
+			defer func() {
+				rec := recover()
+				assert.NotNil(t, rec, "Add must panic on %s", tc.name)
+			}()
+			r.Add(tc.entry)
+			t.Fatal("Add did not panic on invalid entry")
+		})
+	}
 }

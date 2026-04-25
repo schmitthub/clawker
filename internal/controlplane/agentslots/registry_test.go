@@ -1,12 +1,16 @@
 package agentslots
 
 import (
+	"crypto/sha256"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // fakeClock returns a controllable clock so tests don't sleep.
@@ -34,16 +38,19 @@ func newRegistry(t *testing.T, clock *fakeClock) Registry {
 	return r
 }
 
-func mkSlot(clock *fakeClock, name, verifier string, ttl time.Duration) Slot {
-	now := clock.Now()
+// mkSlot builds the input shape callers actually pass to Reserve. The
+// ReservedAt/ExpiresAt fields are intentionally omitted: Reserve stamps
+// them from its own clock and any value supplied here would be
+// overwritten.
+func mkSlot(name, verifier string) Slot {
+	var thumb [sha256.Size]byte
+	copy(thumb[:], sha256.New().Sum([]byte("thumb-"+name)))
 	return Slot{
 		AgentName:              name,
 		ContainerID:            "ctr-" + name,
-		ExpectedCertThumbprint: "thumbprint-" + name,
+		ExpectedCertThumbprint: thumb,
 		Challenge:              pkceChallenge(verifier),
-		ChallengeMethod:        "S256",
-		ReservedAt:             now,
-		ExpiresAt:              now.Add(ttl),
+		ChallengeMethod:        consts.ChallengeMethodS256,
 	}
 }
 
@@ -52,8 +59,8 @@ func TestRegistry_ReserveConsumeHappyPath(t *testing.T) {
 	r := newRegistry(t, clock)
 
 	const verifier = "verifier"
-	slot := mkSlot(clock, "clawker.x.y", verifier, time.Minute)
-	require.NoError(t, r.Reserve(slot))
+	in := mkSlot("clawker.x.y", verifier)
+	require.NoError(t, r.Reserve(in))
 	assert.Equal(t, 1, r.Len())
 
 	got, err := r.Consume("clawker.x.y", verifier)
@@ -62,11 +69,38 @@ func TestRegistry_ReserveConsumeHappyPath(t *testing.T) {
 
 	// Returned slot must carry the CLI-asserted attributes the handler
 	// will use for cert/IP/label cross-checks at Register.
-	assert.Equal(t, slot.ContainerID, got.ContainerID)
-	assert.Equal(t, slot.ExpectedCertThumbprint, got.ExpectedCertThumbprint)
+	assert.Equal(t, in.ContainerID, got.ContainerID)
+	assert.Equal(t, in.ExpectedCertThumbprint, got.ExpectedCertThumbprint)
+
+	// Reserve must stamp the clock-derived TTL fields, not the zero
+	// values that the caller passed in.
+	assert.Equal(t, clock.Now(), got.ReservedAt, "Reserve must stamp ReservedAt from its clock")
+	assert.Equal(t, clock.Now().Add(consts.AgentSlotTTL), got.ExpiresAt, "Reserve must stamp ExpiresAt = now + AgentSlotTTL")
 
 	// Slot consumed — empty registry.
 	assert.Equal(t, 0, r.Len())
+}
+
+// TestRegistry_Reserve_IgnoresCallerStamps documents the contract:
+// caller-supplied ReservedAt/ExpiresAt are silently overwritten. A
+// previous version of this code trusted caller input and would let a
+// buggy CLI reserve a slot already past expiry, or with an absurd
+// far-future expiry that bypassed the TTL janitor.
+func TestRegistry_Reserve_IgnoresCallerStamps(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(100, 0)}
+	r := newRegistry(t, clock)
+
+	const verifier = "verifier"
+	in := mkSlot("clawker.x.y", verifier)
+	in.ReservedAt = time.Unix(0, 0)    // adversarial: pre-epoch
+	in.ExpiresAt = time.Unix(1<<40, 0) // adversarial: far future
+	require.NoError(t, r.Reserve(in))
+
+	got, err := r.Consume("clawker.x.y", verifier)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, clock.Now(), got.ReservedAt, "caller's ReservedAt must be ignored")
+	assert.Equal(t, clock.Now().Add(consts.AgentSlotTTL), got.ExpiresAt, "caller's ExpiresAt must be ignored")
 }
 
 func TestRegistry_Consume_WrongVerifier_LeavesSlot(t *testing.T) {
@@ -77,7 +111,7 @@ func TestRegistry_Consume_WrongVerifier_LeavesSlot(t *testing.T) {
 	r := newRegistry(t, clock)
 
 	const verifier = "verifier"
-	require.NoError(t, r.Reserve(mkSlot(clock, "clawker.x.y", verifier, time.Minute)))
+	require.NoError(t, r.Reserve(mkSlot("clawker.x.y", verifier)))
 
 	_, err := r.Consume("clawker.x.y", "wrong-verifier")
 	assert.ErrorIs(t, err, ErrSlotInvalid)
@@ -96,7 +130,7 @@ func TestRegistry_Consume_Replay(t *testing.T) {
 	r := newRegistry(t, clock)
 
 	const verifier = "verifier"
-	require.NoError(t, r.Reserve(mkSlot(clock, "clawker.x.y", verifier, time.Minute)))
+	require.NoError(t, r.Reserve(mkSlot("clawker.x.y", verifier)))
 
 	_, err := r.Consume("clawker.x.y", verifier)
 	require.NoError(t, err)
@@ -110,9 +144,10 @@ func TestRegistry_Consume_Expired(t *testing.T) {
 	r := newRegistry(t, clock)
 
 	const verifier = "verifier"
-	require.NoError(t, r.Reserve(mkSlot(clock, "clawker.x.y", verifier, time.Minute)))
+	require.NoError(t, r.Reserve(mkSlot("clawker.x.y", verifier)))
 
-	clock.Advance(2 * time.Minute)
+	// Advance well past AgentSlotTTL so the slot is unambiguously expired.
+	clock.Advance(2 * consts.AgentSlotTTL)
 
 	_, err := r.Consume("clawker.x.y", verifier)
 	assert.ErrorIs(t, err, ErrSlotInvalid)
@@ -123,8 +158,8 @@ func TestRegistry_Reserve_Duplicate(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(100, 0)}
 	r := newRegistry(t, clock)
 
-	require.NoError(t, r.Reserve(mkSlot(clock, "clawker.x.y", "v1", time.Minute)))
-	err := r.Reserve(mkSlot(clock, "clawker.x.y", "v2", time.Minute))
+	require.NoError(t, r.Reserve(mkSlot("clawker.x.y", "v1")))
+	err := r.Reserve(mkSlot("clawker.x.y", "v2"))
 	assert.ErrorIs(t, err, ErrSlotExists)
 	assert.Equal(t, 1, r.Len())
 }
@@ -139,11 +174,11 @@ func TestRegistry_Janitor_SweepsExpired(t *testing.T) {
 	t.Cleanup(r.Stop)
 
 	for _, name := range []string{"clawker.a", "clawker.b"} {
-		require.NoError(t, r.Reserve(mkSlot(clock, name, "verifier-"+name, time.Second)))
+		require.NoError(t, r.Reserve(mkSlot(name, "verifier-"+name)))
 	}
 	require.Equal(t, 2, r.Len())
 
-	clock.Advance(2 * time.Second)
+	clock.Advance(2 * consts.AgentSlotTTL)
 
 	// Wait for at least one sweep tick + a little slack.
 	deadline := time.Now().Add(time.Second)
@@ -171,7 +206,7 @@ func TestRegistry_Concurrent_ReserveConsume(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			name := "clawker.agent." + string(rune('a'+i%26)) + string(rune('0'+i/26))
-			require.NoError(t, r.Reserve(mkSlot(clock, name, verifier, time.Minute)))
+			require.NoError(t, r.Reserve(mkSlot(name, verifier)))
 			_, err := r.Consume(name, verifier)
 			require.NoError(t, err)
 		}(i)
@@ -181,23 +216,89 @@ func TestRegistry_Concurrent_ReserveConsume(t *testing.T) {
 	assert.Equal(t, 0, r.Len())
 }
 
+// TestRegistry_Consume_RaceWrongVerifier exercises the contract under
+// adversarial concurrency: many goroutines hammering Consume with a
+// known-wrong verifier against one goroutine attempting the correct
+// verifier. Exactly one Consume must succeed (the correct one), every
+// wrong call must return ErrSlotInvalid, the slot must be removed
+// after the correct call (and only after), and the map must not be
+// corrupted (Len reads cleanly). Run under -race to catch any
+// lock-order or visibility bug in the wrong-verifier branch (which
+// previously left the slot in place but had to do so under the same
+// mutex as the correct branch's delete).
+func TestRegistry_Consume_RaceWrongVerifier(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(100, 0)}
+	r := newRegistry(t, clock)
+
+	const (
+		agentName = "clawker.race.target"
+		correct   = "correct-verifier"
+		wrong     = "wrong-verifier"
+		attackers = 64
+	)
+	require.NoError(t, r.Reserve(mkSlot(agentName, correct)))
+
+	var (
+		wg            sync.WaitGroup
+		wrongFailures atomic.Int64
+		correctWins   atomic.Int64
+		start         = make(chan struct{})
+	)
+
+	wg.Add(attackers)
+	for range attackers {
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, err := r.Consume(agentName, wrong); err == ErrSlotInvalid {
+				wrongFailures.Add(1)
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		if _, err := r.Consume(agentName, correct); err == nil {
+			correctWins.Add(1)
+		}
+	}()
+
+	close(start)
+	wg.Wait()
+
+	assert.Equal(t, int64(attackers), wrongFailures.Load(), "every wrong-verifier consume must fail")
+	assert.Equal(t, int64(1), correctWins.Load(), "exactly one correct-verifier consume must win")
+	assert.Equal(t, 0, r.Len(), "slot must be removed after the correct consume")
+
+	// Repeat the correct verifier — single-use contract still holds
+	// after the race. Catches the regression where a wrong-verifier
+	// branch accidentally leaks a delete.
+	_, err := r.Consume(agentName, correct)
+	assert.ErrorIs(t, err, ErrSlotInvalid)
+}
+
 func TestRegistry_Reserve_Validation(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(100, 0)}
 	r := newRegistry(t, clock)
 
 	t.Run("empty agent name", func(t *testing.T) {
-		s := mkSlot(clock, "", "v", time.Minute)
+		s := mkSlot("", "v")
 		require.Error(t, r.Reserve(s))
 	})
 
 	t.Run("non-S256 method", func(t *testing.T) {
-		s := mkSlot(clock, "clawker.a.b", "v", time.Minute)
+		s := mkSlot("clawker.a.b", "v")
 		s.ChallengeMethod = "plain"
 		require.Error(t, r.Reserve(s))
 	})
 
-	t.Run("expired-at-reserve", func(t *testing.T) {
-		s := mkSlot(clock, "clawker.a.c", "v", -time.Second)
+	t.Run("zero method", func(t *testing.T) {
+		// Empty/zero-value method must be rejected too — defends
+		// against a caller that builds Slot{} and forgets the field.
+		s := mkSlot("clawker.a.c", "v")
+		s.ChallengeMethod = ""
 		require.Error(t, r.Reserve(s))
 	})
 }

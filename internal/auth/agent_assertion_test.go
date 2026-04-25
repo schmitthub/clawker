@@ -59,3 +59,48 @@ func TestBuildAgentAssertion_DistinctJTI(t *testing.T) {
 
 	assert.NotEqual(t, a, b, "two assertions must have distinct JTI → distinct serialised tokens")
 }
+
+// TestBuildAgentAssertion_RejectsBadInput exercises the input
+// validation surface. Each subtest asserts the function returns an
+// error AND does not return a partially-constructed token (the empty
+// string is the contract). Catches a future regression where a check
+// is silently dropped or the function returns a token alongside the
+// error.
+func TestBuildAgentAssertion_RejectsBadInput(t *testing.T) {
+	goodKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	t.Run("empty audience", func(t *testing.T) {
+		tok, err := BuildAgentAssertion("", goodKey)
+		require.Error(t, err)
+		assert.Empty(t, tok, "no token must be produced when validation fails")
+	})
+
+	t.Run("nil signing key", func(t *testing.T) {
+		tok, err := BuildAgentAssertion("https://hydra.example/oauth2/token", nil)
+		require.Error(t, err)
+		assert.Empty(t, tok)
+	})
+
+	// Note: the *ecdsa.PrivateKey type-level constraint already forbids
+	// RSA keys at compile time. Non-P256 ECDSA curves (P-384, P-521)
+	// are reachable at runtime — the jose ES256 signer rejects them
+	// because the curve doesn't match the algorithm's required hash
+	// size. Exercise that path so a future signer-config refactor that
+	// silently widens the accepted curve set fails the test.
+	t.Run("non-P256 ECDSA signing key (P-384)", func(t *testing.T) {
+		p384Key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+		require.NoError(t, err)
+		tok, err := BuildAgentAssertion("https://hydra.example/oauth2/token", p384Key)
+		require.Error(t, err)
+		assert.Empty(t, tok)
+	})
+
+	t.Run("non-P256 ECDSA signing key (P-521)", func(t *testing.T) {
+		p521Key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+		require.NoError(t, err)
+		tok, err := BuildAgentAssertion("https://hydra.example/oauth2/token", p521Key)
+		require.Error(t, err)
+		assert.Empty(t, tok)
+	})
+}

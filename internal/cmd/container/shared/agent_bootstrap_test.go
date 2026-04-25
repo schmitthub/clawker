@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -50,7 +51,7 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	require.NotNil(t, b)
 
 	require.NotEmpty(t, b.Verifier)
-	assert.Equal(t, "S256", b.Method)
+	assert.Equal(t, consts.ChallengeMethodS256, b.Method)
 
 	// Challenge must equal base64url(sha256(verifier)) with no padding.
 	sum := sha256.Sum256([]byte(b.Verifier))
@@ -58,16 +59,13 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	assert.Equal(t, expectedChallenge, b.Challenge)
 
 	// Cert thumbprint matches sha256(certDER).
-	require.Len(t, b.ExpectedCertThumbprint, 64)
-	thumb, err := hex.DecodeString(b.ExpectedCertThumbprint)
-	require.NoError(t, err)
-	require.Len(t, thumb, sha256.Size)
+	assert.NotEqual(t, [sha256.Size]byte{}, b.ExpectedCertThumbprint, "thumbprint must not be zero-valued")
 
 	// Cert decodes; CN equals agentName; thumbprint matches.
 	leaf := mustParseCert(t, b.CertPEM)
-	assert.Equal(t, agentName, leaf.Subject.CommonName)
 	got := sha256.Sum256(leaf.Raw)
-	assert.Equal(t, hex.EncodeToString(got[:]), b.ExpectedCertThumbprint)
+	assert.Equal(t, agentName, leaf.Subject.CommonName)
+	assert.Equal(t, got, b.ExpectedCertThumbprint)
 
 	// CA PEM matches the on-disk CA.
 	assert.Contains(t, string(b.CACertPEM), "BEGIN CERTIFICATE")
@@ -98,11 +96,11 @@ func validBootstrap() *AgentBootstrap {
 	return &AgentBootstrap{
 		Verifier:               "verifier",
 		Challenge:              "challenge",
-		Method:                 "S256",
+		Method:                 consts.ChallengeMethodS256,
 		CertPEM:                []byte("cert-pem"),
 		KeyPEM:                 []byte("key-pem"),
 		CACertPEM:              []byte("ca-pem"),
-		ExpectedCertThumbprint: "thumbprint",
+		ExpectedCertThumbprint: sha256.Sum256([]byte("thumbprint-fixture")),
 		Assertion:              "assertion-jwt",
 	}
 }
@@ -123,7 +121,9 @@ func TestAnnounceAgent_FieldsPropagate(t *testing.T) {
 	require.NotNil(t, captured)
 	assert.Equal(t, "clawker.x.y", captured.AgentName)
 	assert.Equal(t, "ctr-id", captured.ContainerId)
-	assert.Equal(t, "thumbprint", captured.ExpectedCertThumbprint)
+	// Wire field is hex-encoded SHA-256 over cert DER; round-trip
+	// confirms the encoding and that the bytes match the bootstrap.
+	assert.Equal(t, hex.EncodeToString(b.ExpectedCertThumbprint[:]), captured.ExpectedCertThumbprint)
 	assert.Equal(t, "challenge", captured.CodeChallenge)
 	assert.Equal(t, "S256", captured.CodeChallengeMethod)
 }
@@ -154,6 +154,35 @@ func TestAnnounceAgent_RejectsInvalidBootstrap(t *testing.T) {
 
 	// Mock should never see a request — validation happens before RPC.
 	assert.Empty(t, mock.AnnounceAgentCalls())
+}
+
+// TestAgentBootstrap_RedactsViaFormatter pins the redaction contract:
+// none of fmt's verb permutations may surface the per-agent private
+// key, the PKCE verifier (a bearer secret to the CP slot), or the
+// Hydra assertion JWT. Catches the regression where someone adds a
+// log line `log.Debug().Interface("bootstrap", b)` and quietly leaks
+// every secret in the struct to the on-disk log.
+func TestAgentBootstrap_RedactsViaFormatter(t *testing.T) {
+	b := &AgentBootstrap{
+		Verifier:               "VERIFIER-BEARER-SECRET",
+		Challenge:              "challenge-public",
+		Method:                 consts.ChallengeMethodS256,
+		CertPEM:                []byte("PRIVATE-CERT-MATERIAL"),
+		KeyPEM:                 []byte("PRIVATE-KEY-MATERIAL"),
+		ExpectedCertThumbprint: sha256.Sum256([]byte("thumb")),
+		CACertPEM:              []byte("CA-MATERIAL"),
+		Assertion:              "ASSERTION-JWT-SECRET",
+	}
+
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		t.Run(verb, func(t *testing.T) {
+			out := fmt.Sprintf(verb, b)
+			assert.Contains(t, out, "<redacted>", "formatter %q must include redaction marker", verb)
+			assert.NotContains(t, out, "VERIFIER-BEARER-SECRET", "formatter %q leaked Verifier", verb)
+			assert.NotContains(t, out, "PRIVATE-KEY-MATERIAL", "formatter %q leaked KeyPEM", verb)
+			assert.NotContains(t, out, "ASSERTION-JWT-SECRET", "formatter %q leaked Assertion", verb)
+		})
+	}
 }
 
 func TestWriteAgentBootstrapToContainer_TarShape(t *testing.T) {

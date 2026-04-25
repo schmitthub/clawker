@@ -50,6 +50,12 @@ type Registry interface {
 	// re-registration creates a new entry; the dockerevents
 	// subscription is responsible for evicting the stale one by
 	// container ID.
+	//
+	// Add panics on invalid input (zero thumbprint, empty AgentName,
+	// or zero RegisteredAt). The only caller is the in-package
+	// agent.Handler which constructs entries from validated cross-
+	// checks at Register time — invalid input there is a programming
+	// error that must surface loudly rather than corrupt the registry.
 	Add(entry Entry)
 	// Lookup retrieves an entry by cert thumbprint. The hash equality
 	// IS the identity check; no further matching is required.
@@ -88,6 +94,24 @@ func NewRegistry(log *logger.Logger) Registry {
 }
 
 func (r *registryImpl) Add(entry Entry) {
+	// Programming-error invariants — the only caller is the in-package
+	// agent.Handler which has already verified each of these via the
+	// five identity-binding cross-checks at Register. A zero
+	// Thumbprint here would key the registry to all-zero-byte
+	// "identity" that any caller could trivially collide; an empty
+	// AgentName breaks the Snapshot ordering contract; a zero
+	// RegisteredAt breaks downstream observability. Panic loudly so
+	// the wiring bug surfaces during development rather than turning
+	// into a silent identity-binding gap.
+	if entry.Thumbprint == ([sha256.Size]byte{}) {
+		panic("agentregistry: Add called with zero thumbprint")
+	}
+	if entry.AgentName == "" {
+		panic("agentregistry: Add called with empty AgentName")
+	}
+	if entry.RegisteredAt.IsZero() {
+		panic("agentregistry: Add called with zero RegisteredAt")
+	}
 	r.mu.Lock()
 	r.entries[entry.Thumbprint] = entry
 	r.mu.Unlock()
