@@ -5,6 +5,7 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -64,6 +65,12 @@ func EnsureAuthMaterial() error {
 	if err := ensureClientCert(); err != nil {
 		return fmt.Errorf("client cert: %w", err)
 	}
+	if err := ensureOtelServerCert(); err != nil {
+		return fmt.Errorf("otel server cert: %w", err)
+	}
+	if err := ensureCPOtelClientCert(); err != nil {
+		return fmt.Errorf("cp otel client cert: %w", err)
+	}
 	return nil
 }
 
@@ -75,7 +82,6 @@ func EnsureAuthMaterial() error {
 // The signing key is regenerated only if forceSigningKey is true (it
 // requires re-registering the CLI client with Hydra on next CP start).
 func RotateAuthMaterial(forceSigningKey bool) error {
-	// Always rotate CA + server cert.
 	if err := removeIfExists(consts.AuthCACertPath); err != nil {
 		return fmt.Errorf("remove CA cert: %w", err)
 	}
@@ -93,6 +99,18 @@ func RotateAuthMaterial(forceSigningKey bool) error {
 	}
 	if err := removeIfExists(consts.AuthCLIClientKeyPath); err != nil {
 		return fmt.Errorf("remove client key: %w", err)
+	}
+	if err := removeIfExists(consts.AuthOtelServerCertPath); err != nil {
+		return fmt.Errorf("remove otel server cert: %w", err)
+	}
+	if err := removeIfExists(consts.AuthOtelServerKeyPath); err != nil {
+		return fmt.Errorf("remove otel server key: %w", err)
+	}
+	if err := removeIfExists(consts.AuthCPOtelClientCertPath); err != nil {
+		return fmt.Errorf("remove cp otel client cert: %w", err)
+	}
+	if err := removeIfExists(consts.AuthCPOtelClientKeyPath); err != nil {
+		return fmt.Errorf("remove cp otel client key: %w", err)
 	}
 
 	if forceSigningKey {
@@ -135,6 +153,10 @@ func CheckAuthMaterial() ([]AuthFileStatus, error) {
 		{"Server private key", consts.AuthServerKeyPath, false},
 		{"CLI client certificate", consts.AuthCLIClientCertPath, true},
 		{"CLI client key", consts.AuthCLIClientKeyPath, false},
+		{"OTEL server certificate", consts.AuthOtelServerCertPath, true},
+		{"OTEL server key", consts.AuthOtelServerKeyPath, false},
+		{"CP OTEL client certificate", consts.AuthCPOtelClientCertPath, true},
+		{"CP OTEL client key", consts.AuthCPOtelClientKeyPath, false},
 	}
 
 	var results []AuthFileStatus
@@ -201,6 +223,12 @@ func removeIfExists(pathFn func() (string, error)) error {
 // EnsureHydraSecret reads the persisted Hydra system secret from disk,
 // or generates a new 32-byte random hex secret and writes it with 0600
 // permissions. The secret is generated once and reused across restarts.
+//
+// Read errors are NOT collapsed into "regenerate" — a transient I/O
+// fault that recovers between read and write would silently rotate the
+// secret and invalidate every previously-issued Hydra token. Only
+// os.ErrNotExist (first run) and an empty file (corruption fallback)
+// trigger regeneration.
 func EnsureHydraSecret() (string, error) {
 	path, err := consts.HydraSystemSecretPath()
 	if err != nil {
@@ -208,14 +236,17 @@ func EnsureHydraSecret() (string, error) {
 	}
 
 	data, err := os.ReadFile(path)
-	if err == nil {
-		secret := string(data)
-		if len(secret) > 0 {
-			return secret, nil
-		}
+	switch {
+	case err == nil && len(data) > 0:
+		return string(data), nil
+	case err == nil:
+		// empty file — fall through and regenerate
+	case errors.Is(err, os.ErrNotExist):
+		// first run — fall through and regenerate
+	default:
+		return "", fmt.Errorf("read hydra secret %q: %w", path, err)
 	}
 
-	// Generate 32 random bytes, hex-encode to 64-char string.
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("generate hydra secret: %w", err)
@@ -240,10 +271,9 @@ func ensureCA() error {
 		return err
 	}
 
-	// Check if both files exist.
 	if _, err := os.Stat(certPath); err == nil {
 		if _, err := os.Stat(keyPath); err == nil {
-			return nil // both exist
+			return nil
 		}
 	}
 
@@ -348,10 +378,9 @@ func ensureSigningKey() error {
 		return err
 	}
 
-	// Check if key already exists.
 	if _, err := os.Stat(keyPath); err == nil {
 		if _, err := os.Stat(jwkPath); err == nil {
-			return nil // both exist
+			return nil
 		}
 		// Key exists but JWK missing — regenerate JWK from key.
 		key, err := loadECDSAKey(keyPath)
@@ -361,7 +390,6 @@ func ensureSigningKey() error {
 		return writeJWK(jwkPath, &key.PublicKey)
 	}
 
-	// Generate fresh key pair.
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("generate: %w", err)
@@ -397,14 +425,12 @@ func ensureServerCert() error {
 		return err
 	}
 
-	// Check if both files exist.
 	if _, err := os.Stat(certPath); err == nil {
 		if _, err := os.Stat(keyPath); err == nil {
-			return nil // both exist
+			return nil
 		}
 	}
 
-	// Load the CLI CA to sign the server cert.
 	caCert, caKey, err := loadCA()
 	if err != nil {
 		return fmt.Errorf("load CA for signing: %w", err)
@@ -436,7 +462,7 @@ func ensureServerCert() error {
 		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
 	}
 
-	// Sign with CLI CA — not self-signed.
+	// CA-signed, not self-signed.
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
 	if err != nil {
 		return fmt.Errorf("sign cert: %w", err)
@@ -463,14 +489,12 @@ func ensureClientCert() error {
 		return err
 	}
 
-	// Check if both files exist.
 	if _, err := os.Stat(certPath); err == nil {
 		if _, err := os.Stat(keyPath); err == nil {
-			return nil // both exist
+			return nil
 		}
 	}
 
-	// Load the CLI CA to sign the client cert.
 	caCert, caKey, err := loadCA()
 	if err != nil {
 		return fmt.Errorf("load CA for signing: %w", err)
@@ -499,7 +523,7 @@ func ensureClientCert() error {
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 
-	// Sign with CLI CA — not self-signed.
+	// CA-signed, not self-signed.
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
 	if err != nil {
 		return fmt.Errorf("sign cert: %w", err)
@@ -535,9 +559,15 @@ func loadECDSAKey(path string) (*ecdsa.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	block, _ := pem.Decode(data)
+	block, rest := pem.Decode(data)
 	if block == nil {
 		return nil, fmt.Errorf("decode %s: no PEM block", path)
+	}
+	// Reject trailing content after the first block: these files are
+	// single-key PEMs and a non-empty rest signals corruption / wrong
+	// file format. Whitespace is fine.
+	if len(bytes.TrimSpace(rest)) > 0 {
+		return nil, fmt.Errorf("decode %s: trailing bytes after PEM block", path)
 	}
 	return x509.ParseECPrivateKey(block.Bytes)
 }
@@ -579,4 +609,147 @@ func ReadJWK() (json.RawMessage, error) {
 		return nil, err
 	}
 	return os.ReadFile(p)
+}
+
+// --- OTEL collector mTLS pair (signed by CLI CA) ---
+//
+// Two extra certs gate the monitoring stack's CP-only OTLP receiver:
+//
+//   - otel-server.{pem,key}: presented by the otel-collector container
+//     on its CP-only receiver. SANs cover the names CP uses to dial
+//     (host.docker.internal, localhost, 127.0.0.1) so a single cert
+//     works across Linux native (where host.docker.internal resolves
+//     to the bridge gateway) and Docker Desktop.
+//
+//   - cp-client.{pem,key}: presented by clawker-cp when pushing OTLP.
+//     Subject "clawker-cp" so the receiver can audit which client is
+//     pushing in case future scoping is added.
+//
+// Agents on clawker-net cannot reach the receiver because they lack
+// any cert signed by the CLI CA — the TLS handshake fails before any
+// data is accepted. No BPF rule needed; auth is the boundary.
+
+func ensureOtelServerCert() error {
+	certPath, err := consts.AuthOtelServerCertPath()
+	if err != nil {
+		return err
+	}
+	keyPath, err := consts.AuthOtelServerKeyPath()
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(certPath); err == nil {
+		if _, err := os.Stat(keyPath); err == nil {
+			return nil
+		}
+	}
+
+	caCert, caKey, err := loadCA()
+	if err != nil {
+		return fmt.Errorf("load CA for signing: %w", err)
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generate serial: %w", err)
+	}
+
+	now := time.Now().UTC()
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   "clawker-otel-collector",
+			Organization: []string{"clawker"},
+		},
+		NotBefore:   now.Add(-5 * time.Minute),
+		NotAfter:    now.AddDate(1, 0, 0),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:    []string{"host.docker.internal", "localhost"},
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		return fmt.Errorf("sign cert: %w", err)
+	}
+
+	if err := writeCert(certPath, certDER); err != nil {
+		return fmt.Errorf("write cert: %w", err)
+	}
+	// Loosen file perms so the otel-collector container's uid (varies
+	// by image) can read after bind-mount. Defense-in-depth against
+	// other local users comes from the auth/ tree being 0o700 — see
+	// consts.EnsureAuthDirs and TestRotateAuthMaterial_Permissions.
+	if err := writeECDSAKey(keyPath, key, 0o644); err != nil {
+		return fmt.Errorf("write key: %w", err)
+	}
+	return nil
+}
+
+func ensureCPOtelClientCert() error {
+	certPath, err := consts.AuthCPOtelClientCertPath()
+	if err != nil {
+		return err
+	}
+	keyPath, err := consts.AuthCPOtelClientKeyPath()
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(certPath); err == nil {
+		if _, err := os.Stat(keyPath); err == nil {
+			return nil
+		}
+	}
+
+	caCert, caKey, err := loadCA()
+	if err != nil {
+		return fmt.Errorf("load CA for signing: %w", err)
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generate serial: %w", err)
+	}
+
+	now := time.Now().UTC()
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   consts.ContainerCP,
+			Organization: []string{"clawker"},
+		},
+		NotBefore:   now.Add(-5 * time.Minute),
+		NotAfter:    now.AddDate(1, 0, 0),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		return fmt.Errorf("sign cert: %w", err)
+	}
+
+	if err := writeCert(certPath, certDER); err != nil {
+		return fmt.Errorf("write cert: %w", err)
+	}
+	// Tight perms: the CP container runs as root (no USER directive on
+	// distroless/static, no Config.User in BuildCPContainerConfig), so
+	// a 0o600 host file is readable in-container without loosening.
+	if err := writeECDSAKey(keyPath, key, 0o600); err != nil {
+		return fmt.Errorf("write key: %w", err)
+	}
+	return nil
 }

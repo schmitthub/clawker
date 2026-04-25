@@ -48,7 +48,7 @@ See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Critical
 |------------|---------|
 | Run unit tests | `make test` |
 | Run E2E | `go test ./test/e2e/... -v -timeout 10m` |
-| Build clawker CLI | `make clawker-build` |
+| Build clawker CLI | `make clawker` |
 | Build CP + eBPF + CoreDNS binaries | `make cp-binary` / `make ebpf-binary` / `make coredns-binary` |
 | Regen protos | `make proto` |
 | Regen mocks | `cd internal/<pkg> && go generate ./...` |

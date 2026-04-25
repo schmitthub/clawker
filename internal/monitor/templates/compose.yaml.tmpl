@@ -5,9 +5,29 @@ services:
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./otel-config.yaml:/etc/otel-collector-config.yaml
+{{- if .OtelCPPort}}
+      # CLI-issued mTLS material for the CP-only receiver. Bound RO from
+      # the CLI auth dir on the host. The CA bundle gates client certs
+      # to ones the CLI signed (currently just clawker-cp).
+      - {{.OtelServerCertHostPath}}:/etc/otel/tls/server.pem:ro
+      - {{.OtelServerKeyHostPath}}:/etc/otel/tls/server.key:ro
+      - {{.OtelCAHostPath}}:/etc/otel/tls/ca.pem:ro
+{{- end}}
     ports:
-      - "{{.OtelGRPCPort}}:{{.OtelGRPCPort}}" # OTLP gRPC receiver
-      - "{{.OtelCollectorPort}}:{{.OtelCollectorPort}}" # OTLP HTTP receiver
+      # Existing receivers — published all-interfaces for parity with
+      # earlier behaviour. Agent containers push to these via clawker-net
+      # DNS (`otel-collector:<port>`); host-side debugging uses the
+      # published mapping.
+      - "{{.OtelGRPCPort}}:{{.OtelGRPCPort}}"
+      - "{{.OtelCollectorPort}}:{{.OtelCollectorPort}}"
+{{- if .OtelCPPort}}
+      # CP-only receiver — host loopback only. clawker-cp pushes via
+      # host.docker.internal:<port>. Agents trying the same address are
+      # rejected by BPF (gateway:non-hostproxy → Envoy → reset);
+      # additionally, mTLS would refuse them because they have no
+      # client cert signed by the CLI CA.
+      - "127.0.0.1:{{.OtelCPPort}}:{{.OtelCPPort}}"
+{{- end}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     labels:
@@ -20,8 +40,8 @@ services:
     container_name: jaeger
     image: {{.JaegerImage}}
     ports:
-      - "{{.JaegerPort}}:{{.JaegerPort}}" # UI
-      - "{{.OtelGRPCPort}}"        # OTLP gRPC internal
+      - "127.0.0.1:{{.JaegerPort}}:{{.JaegerPort}}" # UI (host-loopback only)
+      - "{{.OtelGRPCPort}}"        # OTLP gRPC internal (clawker-net only, no host publish)
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     labels:
@@ -37,7 +57,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--web.enable-remote-write-receiver"
     ports:
-      - "{{.PrometheusPort}}:{{.PrometheusPort}}"
+      - "127.0.0.1:{{.PrometheusPort}}:{{.PrometheusPort}}"
     volumes:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml
       - clawker-prometheus:/prometheus
@@ -51,7 +71,7 @@ services:
     container_name: loki
     image: {{.LokiImage}}
     ports:
-      - "{{.LokiPort}}:{{.LokiPort}}"
+      - "127.0.0.1:{{.LokiPort}}:{{.LokiPort}}"
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - clawker-loki:/loki
@@ -65,7 +85,7 @@ services:
     container_name: grafana
     image: {{.GrafanaImage}}
     ports:
-      - "{{.GrafanaPort}}:{{.GrafanaPort}}"
+      - "127.0.0.1:{{.GrafanaPort}}:{{.GrafanaPort}}"
     environment:
       # Enable anonymous access so users don't need to login locally
       - GF_AUTH_ANONYMOUS_ENABLED=true
@@ -77,6 +97,7 @@ services:
       - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
       - ./grafana-dashboard.json:/etc/grafana/provisioning/dashboards/claude-code.json
+      - ./grafana-dashboard-cp.json:/etc/grafana/provisioning/dashboards/clawker-cp.json
       - clawker-grafana:/var/lib/grafana
     extra_hosts:
       - "host.docker.internal:host-gateway"

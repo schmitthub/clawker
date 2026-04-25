@@ -17,6 +17,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
@@ -41,16 +42,20 @@ const (
 // catches that race and reconciles to the existing container.
 var ensureMu sync.Mutex
 
-// Test seams. These are the two side-effecting steps of EnsureRunning
-// that unit tests need to stub: building the CP image, and polling
-// /healthz. Production uses the real implementations below; tests
-// overwrite these package-level vars.
+// Test seams for the side-effecting steps of EnsureRunning. Tests
+// overwrite these to stub crypto (auth ensure), Docker image builds,
+// and /healthz polling.
 //
-// CLI auth material is NOT ensured here. It's CLI-owned crypto and
-// must exist on disk eagerly — image builds embed the firewall CA
-// into container trust stores, and those builds happen when the CP
-// is not running. `factory.New` ensures auth material at CLI startup.
+// `ensureAuthFn` is the load-bearing pre-step: bind mounts in
+// BuildCPContainerConfig point at on-disk PEM files (CA cert, server
+// cert+key, CP-side OTEL client cert+key). `auth.EnsureAuthMaterial`
+// is idempotent — safe to call on every EnsureRunning invocation.
+// Without it, a fresh install running `clawker firewall up` (or any
+// other command that triggers CP startup before `monitor init` /
+// `image build` runs) would fail at ContainerCreate with a missing
+// bind source.
 var (
+	ensureAuthFn    = auth.EnsureAuthMaterial
 	ensureCPImageFn = ensureCPImage
 	healthzFn       = waitForCPHealthz
 )
@@ -125,6 +130,10 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 
 	ensureMu.Lock()
 	defer ensureMu.Unlock()
+
+	if err := ensureAuthFn(); err != nil {
+		return fmt.Errorf("ensure auth material: %w", err)
+	}
 
 	if err := ensureCPImageFn(ctx, dc, log); err != nil {
 		return fmt.Errorf("controlplane: %w", err)
@@ -253,6 +262,7 @@ func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config
 		PortBindings:  cpCfg.PortBindings,
 		CapAdd:        cpCfg.CapAdd,
 		RestartPolicy: cpCfg.RestartPolicy,
+		ExtraHosts:    cpCfg.ExtraHosts,
 	}
 	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{

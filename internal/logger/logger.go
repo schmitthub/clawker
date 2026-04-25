@@ -2,6 +2,8 @@ package logger
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"os"
@@ -10,7 +12,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"go.opentelemetry.io/contrib/bridges/otelzerolog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -54,6 +55,21 @@ type OtelOptions struct {
 	Timeout        time.Duration // export timeout
 	MaxQueueSize   int           // batch processor queue size
 	ExportInterval time.Duration // batch export interval
+
+	// mTLS configuration. When all three paths are non-empty, the
+	// exporter presents a client certificate during the TLS handshake
+	// and pins the server's CA. This is how the clawker-cp daemon
+	// pushes to the monitoring stack's CP-only OTLP receiver — agents
+	// on clawker-net cannot present a CLI-signed cert and so the
+	// handshake fails, regardless of whether they reached the port.
+	//
+	// CACertFile is the PEM bundle the exporter trusts for the server
+	// cert. ClientCertFile + ClientKeyFile are the exporter's own
+	// keypair. If any one of the three is set, all three must be set;
+	// Insecure is ignored when these are populated.
+	CACertFile     string
+	ClientCertFile string
+	ClientKeyFile  string
 }
 
 func (o *Options) maxSizeMB() int {
@@ -127,27 +143,37 @@ func New(opts Options) (*Logger, error) {
 		Compress:   opts.Compress,
 	}
 
-	zl := zerolog.New(fw).
+	// Default writer is the lumberjack file. When OTEL is configured
+	// we tee through a custom writer that parses zerolog's JSON output
+	// and re-emits each record as an OTEL log.Record with all
+	// structured fields preserved (otelzerolog's bridge can't read
+	// fields off a zerolog.Event — see otel_writer.go).
+	var writer io.Writer = fw
+	l := &Logger{fw: fw}
+
+	if opts.Otel != nil {
+		fallbackZL := zerolog.New(fw)
+		provider, err := newOtelProvider(opts.Otel, fallbackZL)
+		if err != nil {
+			// Non-fatal: continue file-only. Surface the warning to BOTH
+			// the file logger AND stderr — if the file writer is also
+			// broken the user would otherwise have no signal that
+			// logging is degraded.
+			fallbackZL.Warn().Err(err).Msg("OTEL bridge unavailable, continuing file-only")
+			fmt.Fprintf(os.Stderr, "warning: OTEL bridge unavailable, continuing file-only: %v\n", err)
+		} else {
+			l.provider = provider
+			otelW := newOtelLogWriter(provider.Logger("clawker"))
+			writer = zerolog.MultiLevelWriter(fw, otelW)
+		}
+	}
+
+	zl := zerolog.New(writer).
 		Level(zerolog.DebugLevel).
 		With().
 		Timestamp().
 		Logger()
-
-	l := &Logger{zl: zl, fw: fw}
-
-	if opts.Otel != nil {
-		provider, err := newOtelProvider(opts.Otel, zl)
-		if err != nil {
-			// Non-fatal: log the failure and continue file-only.
-			zl.Warn().Err(err).Msg("OTEL bridge unavailable, continuing file-only")
-		} else {
-			l.provider = provider
-			hook := otelzerolog.NewHook("clawker",
-				otelzerolog.WithLoggerProvider(provider),
-			)
-			l.zl = zl.Hook(hook)
-		}
-	}
+	l.zl = zl
 
 	return l, nil
 }
@@ -246,9 +272,23 @@ func newOtelProvider(cfg *OtelOptions, fileLogger zerolog.Logger) (*sdklog.Logge
 	exporterOpts := []otlploghttp.Option{
 		otlploghttp.WithEndpoint(cfg.Endpoint),
 	}
-	if cfg.Insecure {
+
+	switch {
+	case cfg.ClientCertFile != "" || cfg.ClientKeyFile != "" || cfg.CACertFile != "":
+		// All three required when any are set — partial config is a
+		// configuration bug rather than a soft fallback.
+		if cfg.ClientCertFile == "" || cfg.ClientKeyFile == "" || cfg.CACertFile == "" {
+			return nil, fmt.Errorf("OTEL mTLS: ClientCertFile, ClientKeyFile, and CACertFile must all be set")
+		}
+		tlsCfg, err := buildOtelMTLSConfig(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("OTEL mTLS config: %w", err)
+		}
+		exporterOpts = append(exporterOpts, otlploghttp.WithTLSClientConfig(tlsCfg))
+	case cfg.Insecure:
 		exporterOpts = append(exporterOpts, otlploghttp.WithInsecure())
 	}
+
 	if cfg.Timeout > 0 {
 		exporterOpts = append(exporterOpts, otlploghttp.WithTimeout(cfg.Timeout))
 	}
@@ -268,4 +308,29 @@ func newOtelProvider(cfg *OtelOptions, fileLogger zerolog.Logger) (*sdklog.Logge
 
 	processor := sdklog.NewBatchProcessor(exporter, processorOpts...)
 	return sdklog.NewLoggerProvider(sdklog.WithProcessor(processor)), nil
+}
+
+// buildOtelMTLSConfig loads the client keypair and trust roots for the
+// OTLP exporter's mTLS handshake. The client cert is presented during
+// the handshake; the receiver gates `require_client_certificate: true`
+// on a CA bundle so only CLI-issued certs (currently the daemon's
+// cp-client cert) connect.
+func buildOtelMTLSConfig(cfg *OtelOptions) (*tls.Config, error) {
+	clientCert, err := tls.LoadX509KeyPair(cfg.ClientCertFile, cfg.ClientKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load client keypair: %w", err)
+	}
+	caBytes, err := os.ReadFile(cfg.CACertFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA bundle: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caBytes) {
+		return nil, fmt.Errorf("CA bundle %q contains no PEM blocks", cfg.CACertFile)
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{clientCert},
+		RootCAs:      pool,
+		MinVersion:   tls.VersionTLS12,
+	}, nil
 }

@@ -31,6 +31,9 @@ var GrafanaDashboardsTemplate string
 //go:embed templates/grafana-dashboard.json
 var GrafanaDashboardTemplate string
 
+//go:embed templates/grafana-dashboard-cp.json
+var GrafanaDashboardCPTemplate string
+
 //go:embed templates/promtail-config.yaml.tmpl
 var PromtailConfigTemplate string
 
@@ -42,6 +45,7 @@ const (
 	PrometheusFileName         = "prometheus.yaml"
 	GrafanaDashboardsFileName  = "grafana-dashboards.yaml"
 	GrafanaDashboardFileName   = "grafana-dashboard.json"
+	GrafanaDashboardCPFileName = "grafana-dashboard-cp.json"
 	PromtailConfigFileName     = "promtail-config.yaml"
 )
 
@@ -59,12 +63,22 @@ const (
 type MonitorTemplateData struct {
 	OtelCollectorPort     int
 	OtelGRPCPort          int // independent of HTTP port — from config.GetOtelGRPCPort()
+	OtelCPPort            int // mTLS-gated host-loopback receiver for clawker-cp push
 	LokiPort              int
 	PrometheusPort        int
 	JaegerPort            int
 	GrafanaPort           int
 	PrometheusMetricsPort int
 	OtelCollectorInternal string
+
+	// Host-side paths for CLI-issued mTLS material that gates the
+	// CP-only OTLP receiver. Populated by the monitor init command from
+	// internal/consts. Empty disables the gated receiver — the
+	// otel-config template branches on OtelCPPort to decide whether to
+	// emit the second receiver block.
+	OtelServerCertHostPath string
+	OtelServerKeyHostPath  string
+	OtelCAHostPath         string
 
 	// Container images — version + SHA256 pinned.
 	OtelCollectorImage string
@@ -80,6 +94,7 @@ func NewMonitorTemplateData(cfg *config.MonitoringConfig) MonitorTemplateData {
 	return MonitorTemplateData{
 		OtelCollectorPort:     cfg.OtelCollectorPort,
 		OtelGRPCPort:          cfg.OtelGRPCPort,
+		OtelCPPort:            cfg.OtelCPPort,
 		LokiPort:              cfg.LokiPort,
 		PrometheusPort:        cfg.PrometheusPort,
 		JaegerPort:            cfg.JaegerPort,

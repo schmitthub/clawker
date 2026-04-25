@@ -98,16 +98,76 @@ func TestRotateAuthMaterial_Permissions(t *testing.T) {
 	testenv.New(t)
 	require.NoError(t, RotateAuthMaterial(true))
 
-	for _, pathFn := range []func() (string, error){
-		consts.AuthCAKeyPath, consts.AuthCLISigningKeyPath, consts.AuthServerKeyPath,
-		consts.AuthCLIClientKeyPath,
+	assertKeyPerms(t)
+	assertAuthDirPerms(t)
+}
+
+// assertAuthDirPerms pins the auth directory tree to 0o700 — the looser
+// 0o644 OTEL keys depend on the parent dir being unreachable to other
+// local users for defense-in-depth on Linux hosts where $XDG_DATA_HOME
+// (e.g., ~/.local/share) defaults to 0o755.
+func assertAuthDirPerms(t *testing.T) {
+	t.Helper()
+	const dirMode = os.FileMode(0o700)
+	for _, c := range []struct {
+		name   string
+		pathFn func() (string, error)
+	}{
+		{"auth/ca", consts.AuthCADir},
+		{"auth/cli", consts.AuthCLIDir},
+		{"auth/tls", consts.AuthTLSDir},
+		{"auth/otel", consts.AuthOtelDir},
 	} {
-		p, err := pathFn()
+		p, err := c.pathFn()
 		require.NoError(t, err)
 		info, statErr := os.Stat(p)
-		require.NoError(t, statErr)
-		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "%s must be 0600", p)
+		require.NoError(t, statErr, "stat %s", c.name)
+		assert.Equal(t, dirMode, info.Mode().Perm(), "%s (%s) must be %o", c.name, p, dirMode)
 	}
+}
+
+// assertKeyPerms pins the perm contract for every private key auth
+// material file. Host-only keys must be 0o600; the OTEL server key is
+// 0o644 because the otel-collector container runs under a uid that
+// varies by image and needs to read it after bind-mount. The CP OTEL
+// client key stays 0o600 — the CP container runs as root and reads it
+// fine. Defense-in-depth: the auth/ tree is 0o700 (assertAuthDirPerms).
+func assertKeyPerms(t *testing.T) {
+	t.Helper()
+	const tightMode = os.FileMode(0o600)
+	const otelMode = os.FileMode(0o644)
+	for _, c := range []struct {
+		name   string
+		pathFn func() (string, error)
+		want   os.FileMode
+	}{
+		{"CA key", consts.AuthCAKeyPath, tightMode},
+		{"signing key", consts.AuthCLISigningKeyPath, tightMode},
+		{"server key", consts.AuthServerKeyPath, tightMode},
+		{"client key", consts.AuthCLIClientKeyPath, tightMode},
+		{"otel server key", consts.AuthOtelServerKeyPath, otelMode},
+		{"cp otel client key", consts.AuthCPOtelClientKeyPath, tightMode},
+	} {
+		p, err := c.pathFn()
+		require.NoError(t, err)
+		info, statErr := os.Stat(p)
+		require.NoError(t, statErr, "stat %s", c.name)
+		assert.Equal(t, c.want, info.Mode().Perm(), "%s (%s) must be %o", c.name, p, c.want)
+	}
+}
+
+// statusByName looks up an auth file status by its display name.
+// Indexed access is fragile: any new entry shifts indices and
+// silently breaks expiry assertions on unrelated files.
+func statusByName(t *testing.T, status []AuthFileStatus, name string) AuthFileStatus {
+	t.Helper()
+	for _, s := range status {
+		if s.Name == name {
+			return s
+		}
+	}
+	t.Fatalf("auth file status %q not found", name)
+	return AuthFileStatus{}
 }
 
 func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
@@ -116,27 +176,23 @@ func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 8)
+	require.Len(t, status, 12)
 
 	for _, s := range status {
 		assert.True(t, s.Exists, "%s should exist", s.Name)
 	}
 
-	// Certificates should have expiry info.
-	caCert := status[0]
-	assert.Equal(t, "CA certificate", caCert.Name)
-	assert.False(t, caCert.Expires.IsZero(), "CA cert should have expiry")
-	assert.False(t, caCert.Expired, "CA cert should not be expired")
-
-	serverCert := status[4]
-	assert.Equal(t, "Server certificate", serverCert.Name)
-	assert.False(t, serverCert.Expires.IsZero(), "server cert should have expiry")
-	assert.False(t, serverCert.Expired, "server cert should not be expired")
-
-	clientCert := status[6]
-	assert.Equal(t, "CLI client certificate", clientCert.Name)
-	assert.False(t, clientCert.Expires.IsZero(), "client cert should have expiry")
-	assert.False(t, clientCert.Expired, "client cert should not be expired")
+	for _, name := range []string{
+		"CA certificate",
+		"Server certificate",
+		"CLI client certificate",
+		"OTEL server certificate",
+		"CP OTEL client certificate",
+	} {
+		s := statusByName(t, status, name)
+		assert.False(t, s.Expires.IsZero(), "%s should have expiry", name)
+		assert.False(t, s.Expired, "%s should not be expired", name)
+	}
 }
 
 func TestCheckAuthMaterial_MissingFiles(t *testing.T) {
@@ -145,7 +201,7 @@ func TestCheckAuthMaterial_MissingFiles(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 8)
+	require.Len(t, status, 12)
 
 	for _, s := range status {
 		assert.False(t, s.Exists, "%s should not exist", s.Name)
@@ -156,16 +212,7 @@ func TestEnsureAuthMaterial_PrivateKeyPermissions(t *testing.T) {
 	testenv.New(t)
 	require.NoError(t, EnsureAuthMaterial())
 
-	for _, pathFn := range []func() (string, error){
-		consts.AuthCAKeyPath, consts.AuthCLISigningKeyPath, consts.AuthServerKeyPath,
-		consts.AuthCLIClientKeyPath,
-	} {
-		p, err := pathFn()
-		require.NoError(t, err)
-		info, statErr := os.Stat(p)
-		require.NoError(t, statErr)
-		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "%s must be 0600", p)
-	}
+	assertKeyPerms(t)
 }
 
 func TestLoadSigningKey(t *testing.T) {
@@ -210,6 +257,66 @@ func TestServerCertSignedByCA(t *testing.T) {
 	require.NoError(t, err, "server cert must be signed by CLI CA")
 	assert.Equal(t, consts.ContainerCP, serverCert.Subject.CommonName)
 	assert.Contains(t, serverCert.DNSNames, "localhost")
+}
+
+func TestOtelServerCertSignedByCA(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	caCert, err := CACert()
+	require.NoError(t, err)
+
+	certPath, err := consts.AuthOtelServerCertPath()
+	require.NoError(t, err)
+	certPEM, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	_, err = cert.Verify(x509.VerifyOptions{
+		Roots:     pool,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	})
+	require.NoError(t, err, "OTEL server cert must be signed by CLI CA")
+	assert.Equal(t, "clawker-otel-collector", cert.Subject.CommonName)
+	// SANs cover both Linux native (host.docker.internal → bridge) and
+	// Docker Desktop. Both must verify or CP→collector dial breaks on
+	// one of the platforms.
+	assert.Contains(t, cert.DNSNames, "host.docker.internal")
+	assert.Contains(t, cert.DNSNames, "localhost")
+}
+
+func TestCPOtelClientCertSignedByCA(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	caCert, err := CACert()
+	require.NoError(t, err)
+
+	certPath, err := consts.AuthCPOtelClientCertPath()
+	require.NoError(t, err)
+	certPEM, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	_, err = cert.Verify(x509.VerifyOptions{
+		Roots:     pool,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	})
+	require.NoError(t, err, "CP OTEL client cert must be signed by CLI CA")
+	assert.Equal(t, consts.ContainerCP, cert.Subject.CommonName)
+	assert.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageClientAuth)
 }
 
 func TestClientCertSignedByCA(t *testing.T) {

@@ -401,6 +401,7 @@ type MonitoringConfig struct {
 	OtelCollectorHost     string          `yaml:"otel_collector_host,omitempty" label:"OTEL Collector Host" desc:"Hostname for reaching the collector from the host" default:"localhost"`
 	OtelCollectorInternal string          `yaml:"otel_collector_internal,omitempty" label:"OTEL Collector Internal" desc:"Docker network hostname containers use to reach the collector" default:"otel-collector"`
 	OtelGRPCPort          int             `yaml:"otel_grpc_port,omitempty" label:"OTEL gRPC Port" desc:"Host port for the OTEL gRPC receiver" default:"4317"`
+	OtelCPPort            int             `yaml:"otel_cp_port,omitempty" label:"OTEL CP Port" desc:"Host-loopback port for the mTLS-gated OTLP receiver dedicated to clawker-cp push (gates with the CLI-issued OTEL keypair; agents on clawker-net cannot present a client cert and so the TLS handshake fails)" default:"4319"`
 	LokiPort              int             `yaml:"loki_port,omitempty" label:"Loki Port" desc:"Host port for Loki log ingestion" default:"3100"`
 	PrometheusPort        int             `yaml:"prometheus_port,omitempty" label:"Prometheus Port" desc:"Host port for Prometheus metrics UI" default:"9090"`
 	JaegerPort            int             `yaml:"jaeger_port,omitempty" label:"Jaeger Port" desc:"Host port for Jaeger tracing UI" default:"16686"`

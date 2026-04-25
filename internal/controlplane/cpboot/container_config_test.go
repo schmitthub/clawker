@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/testenv"
@@ -228,4 +229,89 @@ func TestINV_B1_020_ConfigDirEnvVar(t *testing.T) {
 	envVar := cfg.ConfigDirEnvVar() + "=" + consts.CPClawkerConfigDir
 	assert.Contains(t, cpConfig.Env, envVar,
 		"container env must set %s", cfg.ConfigDirEnvVar())
+}
+
+// TestCPContainer_OtelClientCertMounts — both halves of the OTEL
+// client mTLS pair are bind-mounted RO into the CP at the canonical
+// in-container paths so the daemon's OTLP push can present them.
+func TestCPContainer_OtelClientCertMounts(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+
+	wants := map[string]bool{
+		consts.CPOtelClientCertPath: false,
+		consts.CPOtelClientKeyPath:  false,
+	}
+	for _, m := range cpConfig.Mounts {
+		if _, ok := wants[m.Target]; ok {
+			wants[m.Target] = true
+			assert.True(t, m.ReadOnly, "OTEL client material at %s must be RO", m.Target)
+		}
+	}
+	for target, found := range wants {
+		assert.True(t, found, "missing CP OTEL mount: %s", target)
+	}
+}
+
+// TestCPContainer_ExtraHostsHostGateway — host.docker.internal is
+// always remapped via host-gateway. CP relies on it to reach the
+// host-loopback OTLP receiver; agent containers cannot use the same
+// route because the BPF firewall redirects gateway traffic for
+// non-hostproxy ports to Envoy (CP is exempt).
+func TestCPContainer_ExtraHostsHostGateway(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+	require.Contains(t, cpConfig.ExtraHosts, "host.docker.internal:host-gateway")
+}
+
+// TestCPContainer_OtelLogsEnv_Emitted — when monitoring.otel_cp_port
+// is non-zero (default), all six OTLP env vars land in the container
+// config, including the mTLS triple.
+func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+
+	expected := map[string]bool{
+		"OTEL_EXPORTER_OTLP_ENDPOINT":           false,
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":      false,
+		"OTEL_EXPORTER_OTLP_PROTOCOL":           false,
+		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE": false,
+		"OTEL_EXPORTER_OTLP_CLIENT_KEY":         false,
+		"OTEL_EXPORTER_OTLP_CERTIFICATE":        false,
+	}
+	for _, e := range cpConfig.Env {
+		for k := range expected {
+			if strings.HasPrefix(e, k+"=") {
+				expected[k] = true
+			}
+		}
+	}
+	for k, found := range expected {
+		assert.True(t, found, "missing OTEL env var %s in CP container env", k)
+	}
+}
+
+// TestOtelLogsEnv_NilWhenPortZero — if monitoring.otel_cp_port <= 0
+// (user hasn't run `clawker monitor init`), no OTLP env vars are
+// emitted. The daemon then runs file-only.
+func TestOtelLogsEnv_NilWhenPortZero(t *testing.T) {
+	cfg, err := config.NewFromString("", "monitoring:\n  otel_cp_port: 0\n")
+	require.NoError(t, err)
+	require.Nil(t, otelLogsEnv(cfg))
+}
+
+// TestTelemetryPath_FallbackPreference — telemetryPath uses the
+// configured value when non-empty, otherwise the fallback.
+func TestTelemetryPath_FallbackPreference(t *testing.T) {
+	require.Equal(t, "/v1/logs", telemetryPath("", "/v1/logs"))
+	require.Equal(t, "/custom", telemetryPath("/custom", "/v1/logs"))
 }

@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/monitor"
@@ -86,8 +88,32 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	log.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
 
 	// Get monitoring config for template rendering
-	monCfg := cfg.MonitoringConfig()
+	monCfg := cfg.SettingsStore().Read().Monitoring
 	tmplData := monitor.NewMonitorTemplateData(&monCfg)
+
+	// Bake the CLI-issued OTEL mTLS material on demand. EnsureAuthMaterial
+	// is idempotent — if the certs are already present from a previous
+	// CLI invocation it's a no-op. We need the host paths populated on
+	// tmplData before rendering compose.yaml so the otel-collector
+	// container's bind mounts resolve.
+	if err := auth.EnsureAuthMaterial(); err != nil {
+		return fmt.Errorf("ensure auth material for OTEL mTLS: %w", err)
+	}
+	otelServerCertPath, err := consts.AuthOtelServerCertPath()
+	if err != nil {
+		return fmt.Errorf("resolve otel server cert path: %w", err)
+	}
+	otelServerKeyPath, err := consts.AuthOtelServerKeyPath()
+	if err != nil {
+		return fmt.Errorf("resolve otel server key path: %w", err)
+	}
+	otelCAPath, err := consts.AuthCACertPath()
+	if err != nil {
+		return fmt.Errorf("resolve otel CA path: %w", err)
+	}
+	tmplData.OtelServerCertHostPath = otelServerCertPath
+	tmplData.OtelServerKeyHostPath = otelServerKeyPath
+	tmplData.OtelCAHostPath = otelCAPath
 
 	// MonitorSubdir() ensures the directory exists
 	fmt.Fprintf(ios.ErrOut, "%s Configuration directory: %s\n", cs.InfoIcon(), monitorDir)
@@ -105,6 +131,7 @@ func initRun(_ context.Context, opts *InitOptions) error {
 		{monitor.GrafanaDatasourcesFileName, monitor.GrafanaDatasourcesTemplate, true},
 		{monitor.GrafanaDashboardsFileName, monitor.GrafanaDashboardsTemplate, false},
 		{monitor.GrafanaDashboardFileName, monitor.GrafanaDashboardTemplate, false},
+		{monitor.GrafanaDashboardCPFileName, monitor.GrafanaDashboardCPTemplate, false},
 		{monitor.PromtailConfigFileName, monitor.PromtailConfigTemplate, true},
 	}
 

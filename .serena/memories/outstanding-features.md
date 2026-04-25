@@ -18,11 +18,11 @@ Top-level tracker for features and architectural improvements that are known but
 **Status:** release pipeline is currently broken on main's build system — **must land before the next tag push**
 **Scope:** medium
 
-Background: commits `a50ac9e4` + `5ce36b1c` (fix/project-egress-priority) and PR #250 (feat: clawker control plane) replaced the host-native Go build of `internal/firewall/assets/{clawker-cp,ebpf-manager,coredns-clawker}` with a pinned multi-stage `Dockerfile.controlplane` + `docker buildx build` extraction. Nothing generated is committed anymore (no `clawker_*_bpfel.{go,o}`, no firewall asset binaries). `make clawker-build` works end-to-end locally because Make's dep graph triggers the pinned Docker build, which produces all three firewall stack binaries into `internal/firewall/assets/` before the host-native `go build ./cmd/clawker` runs with them `go:embed`'d.
+Background: commits `a50ac9e4` + `5ce36b1c` (fix/project-egress-priority) and PR #250 (feat: clawker control plane) replaced the host-native Go build of `internal/firewall/assets/{clawker-cp,ebpf-manager,coredns-clawker}` with a pinned multi-stage `Dockerfile.controlplane` + `docker buildx build` extraction. Nothing generated is committed anymore (no `clawker_*_bpfel.{go,o}`, no firewall asset binaries). `make clawker` works end-to-end locally because Make's dep graph triggers the pinned Docker build, which produces all three firewall stack binaries into `internal/firewall/assets/` before the host-native `go build ./cmd/clawker` runs with them `go:embed`'d.
 
-Makefile targets: `cp-binary`, `ebpf-binary`, `coredns-binary`. All three are required on the embed path for `clawker-build`.
+Makefile targets: `cp-binary`, `ebpf-binary`, `coredns-binary`. All three are required on the embed path for `clawker`.
 
-The release pipeline does NOT go through `make clawker-build`. It will fail on the next tag push as-is — still `go generate ./...` in `.goreleaser.yaml` as of 2026-04-14.
+The release pipeline does NOT go through `make clawker`. It will fail on the next tag push as-is — still `go generate ./...` in `.goreleaser.yaml` as of 2026-04-14.
 
 ### What's broken in `.github/workflows/release.yml`
 
