@@ -517,8 +517,8 @@ control_plane:
   kratos_public_port: <integer>  # default: 4433 | required: false
   # Kratos identity admin API (HTTPS, container-internal)
   kratos_admin_port: <integer>  # default: 4434 | required: false
-  # Agent reporting API port (future: clawkerd agent checkins)
-  agent_api_port: <integer>  # default: 7444 | required: false
+  # In-container gRPC port for clawkerd agent connections (mTLS, clawker-net only)
+  agent_port: <integer>  # default: 7444 | required: false
 
 ```
 
@@ -618,7 +618,7 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | `oathkeeper_api_port` | integer | `4457` | Oathkeeper management API (HTTPS, container-internal) |
 | `kratos_public_port` | integer | `4433` | Kratos identity public API (HTTPS, container-internal) |
 | `kratos_admin_port` | integer | `4434` | Kratos identity admin API (HTTPS, container-internal) |
-| `agent_api_port` | integer | `7444` | Agent reporting API port (future: clawkerd agent checkins) |
+| `agent_port` | integer | `7444` | In-container gRPC port for clawkerd agent connections (mTLS, clawker-net only) |
 
 
 You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level project config defaults. This file is merged as the lowest-priority project config layer (just above built-in defaults), so any project-level `.clawker.yaml` overrides it.

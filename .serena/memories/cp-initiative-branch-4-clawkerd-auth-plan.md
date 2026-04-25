@@ -12,7 +12,7 @@
 | Task | Status | Agent |
 |------|--------|-------|
 | Task 1: Proto contracts (AgentService + AdminService.AnnounceAgent) | `complete` | claude |
-| Task 2: Consts + scope wiring | `pending` | — |
+| Task 2: Consts + scope wiring | `complete` | claude |
 | Task 3: CLI agent cert minting | `pending` | — |
 | Task 4: Hydra agent client registration | `pending` | — |
 | Task 5: Slot registry | `pending` | — |
@@ -37,6 +37,12 @@
 - `buf.yaml` had two modules (`internal/clawkerd/protocol`, `api`); dropped the POC entry. Single module avoids accidental dual-output surprises.
 - Reflexive `_ adminv1.AdminServiceServer = (*adminServer)(nil)` keeps `AnnounceAgent` covered for free: `*fwhandler.Handler` embeds `UnimplementedAdminServiceServer`, so the method is inherited until Task 5/7 wire the real handler.
 - `api/admin/v1/admin.go` has a `//go:generate moq` directive that emits to `internal/controlplane/mocks/admin_client_mock.go`; needed to `cd /Users/andrew/Code/clawker && go generate ./api/admin/v1/...` after editing the proto so the mock picks up the new `AnnounceAgent` method.
+
+### Task 2
+- `ControlPlaneSettings.AgentAPIPort` already existed (default `7444`) but was completely unused — no consumer, no test. Renamed to `AgentPort` (yaml `agent_port`) per plan; safe because alpha and no settings file in the wild references the old key.
+- `internal/consts/consts.go` already had `ScopeAgentAnnounce = "agent:announce"` from earlier groundwork — left in place because it's only one unused const and removal would expand the diff. Plan uses uniform `admin` scope for AnnounceAgent (Task 1) and `agent:self:register` for clawkerd's own call (this task), so `ScopeAgentAnnounce` is effectively reserved for a future per-method scope split.
+- Bootstrap files moved from "split between consts + future home" sketch into a single block with clear comments. Used the explicit `consts.BootstrapVerifierFile` literal pattern rather than a `[]string{}` slice so each file is greppable.
+- `time` was a new import. Worth noting because `internal/consts` is otherwise stdlib-light — no other internal packages import it, so a transitive `time` cost is fine.
 
 ---
 

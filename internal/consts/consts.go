@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"time"
 )
 
 // Domain and label namespace.
@@ -185,6 +186,10 @@ const (
 	DefaultHydraPublicPort = 4444
 	DefaultHydraAdminPort  = 4445
 	DefaultOathkeeperPort  = 4456
+	// DefaultCPAgentPort is the in-container gRPC port for the agent
+	// listener (mTLS, clawker-net only). Matches the
+	// ControlPlaneSettings.AgentPort struct-tag default.
+	DefaultCPAgentPort = 7444
 )
 
 // Container user identity.
@@ -197,11 +202,60 @@ const (
 const (
 	ScopeAdmin         = "admin"
 	ScopeAgentAnnounce = "agent:announce"
+	// ScopeAgentSelfRegister gates clawkerd's call to AgentService.Register.
+	// Branch 4 ships only this agent scope; finer-grained agent scopes
+	// land alongside their methods.
+	ScopeAgentSelfRegister = "agent:self:register"
 )
 
 // OIDC client IDs.
 const (
 	ClientIDCLI = "clawker-cli"
+	// ClientIDAgent is the OAuth2 client identity Hydra issues access
+	// tokens to for clawkerd. CLI signs assertions for both clients with
+	// one private key — distinct client IDs keep the scope surface clean.
+	ClientIDAgent = "clawker-agent"
+)
+
+// Agent registration handshake.
+const (
+	// AgentSlotTTL bounds how long a slot reserved by AnnounceAgent
+	// remains valid before the CLI must re-announce. Sized to cover
+	// `docker create` + `docker start` + clawkerd boot on a cold first
+	// run, including image pull, while still expiring fast enough that
+	// an abandoned slot does not block re-announce for a noticeable
+	// window.
+	AgentSlotTTL = 60 * time.Second
+
+	// BootstrapDir is the in-container tmpfs path where the CLI delivers
+	// per-agent registration material. Root-only readable; lives in
+	// tmpfs so it dies with the container.
+	BootstrapDir = "/run/clawker/bootstrap"
+
+	// Bootstrap file names under BootstrapDir.
+	BootstrapCertFile      = "cert.pem"
+	BootstrapKeyFile       = "key.pem"
+	BootstrapCAFile        = "ca.pem"
+	BootstrapAssertionFile = "assertion.jwt"
+	BootstrapVerifierFile  = "verifier"
+)
+
+// Container env vars for clawkerd bootstrap. clawkerd reads only what
+// it can authoritatively assert: container_id is server-derived from
+// the slot at Register, and the project is encoded in the canonical
+// agent_name. Adding a CLAWKER_CONTAINER_ID env would let a coerced
+// clawkerd lie to itself; resist that temptation.
+const (
+	// EnvClawkerdHydraURL points clawkerd at the CP-published Hydra
+	// public endpoint for OAuth2 token exchange.
+	EnvClawkerdHydraURL = "CLAWKER_CP_HYDRA_URL"
+	// EnvClawkerdAgentAddr is the host:port of the CP's agent gRPC
+	// listener on clawker-net.
+	EnvClawkerdAgentAddr = "CLAWKER_CP_AGENT_ADDR"
+	// EnvClawkerdAgentName carries the canonical full name
+	// "clawker.<project>.<agent>" — clawkerd uses this as the slot key
+	// at Register and as the OAuth2 subject on per-agent claims.
+	EnvClawkerdAgentName = "CLAWKER_AGENT_NAME"
 )
 
 // ---------------------------------------------------------------------------
