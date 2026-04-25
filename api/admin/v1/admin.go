@@ -35,5 +35,6 @@ func AdminMethodScopes() map[string]string {
 		svc + "FirewallSyncRoutes":      consts.ScopeAdmin,
 		svc + "FirewallResolveHostname": consts.ScopeAdmin,
 		svc + "AnnounceAgent":           consts.ScopeAdmin,
+		svc + "ListAgents":              consts.ScopeAdmin,
 	}
 }

@@ -20,7 +20,7 @@
 | Task 7: CLI AnnounceAgent + tmpfs bootstrap delivery | `complete` | claude |
 | Task 8: CP second gRPC listener on clawker-net | `complete` | claude |
 | Task 9: AgentService handler | `complete` | claude |
-| Task 9b: AdminService.ListAgents + `clawker controlplane agents` CLI | `pending` | — |
+| Task 9b: AdminService.ListAgents + `clawker controlplane agents` CLI | `complete` | claude |
 | Task 10: Extend AuthInterceptor for agent listener (peer cert + agent scope map) | `pending` | — |
 | Task 11: clawkerd binary | `pending` | — |
 | Task 12: Bundler + entrypoint integration | `pending` | — |
@@ -58,6 +58,15 @@
 - Both clients use the SAME JWK (the CLI's signing key — the CP container's bind-mounted public half). Distinct `client_id` + scope keeps the AuthZ surface clean even though the signing material is shared. This is a deliberate property: the CLI signs both `clawker-cli` and `clawker-agent` assertions with one key, but Hydra issues separate tokens with separate scopes.
 - `cmd/clawker-cp/main.go` Step 5 now registers both clients sequentially. Both calls are idempotent on 409 so safe across CP restarts and ordering doesn't matter.
 - Tightened the success path to 201 Created only — the previous CLI code accepted 200 OK too, which would have masked a misconfigured proxy returning 200 with an empty body as a registered-client success.
+
+### Task 9b
+- AdminService.ListAgents lives on `controlplane.adminServer` directly (an explicit method on the composite, not delegated through method-promotion). Embedding two handlers that both surface a method via `UnimplementedAdminServiceServer` would create method-set ambiguity at compile time, so explicit override is correct.
+- `controlplane.NewAdminServer(fw, agents agentregistry.Registry)` now takes the agent registry. Nil registry is tolerated — ListAgents returns empty — so partial-wiring CP builds (or unit tests of unrelated paths) don't break.
+- `cmd/clawker-cp/main.go` was reorganized so `agentReg` is constructed BEFORE the AdminService registration. The same registry instance flows into both the AdminService.ListAgents path AND the AgentService handler — a single source of truth, never two registries that could disagree.
+- CLI uses the existing `cmdutil.FormatFlags` plumbing (`--format`/`--json`). Default rendering uses `f.TUI.NewTable` + 12-char short-form for container IDs and thumbprints, mirroring `clawker container list`.
+- Empty registry message goes to stderr (the "info"-level no-op signal) so `--json` stdout consumers receive valid empty arrays without status text mixed in.
+- The `agentRow` JSON shape is the wire contract for `--json` consumers. Field tags (`agent_name`, `container_id`, `cert_thumbprint`, `registered_at`, `last_seen`) are stable; renames here would break downstream tooling.
+- `docs/cli-reference/clawker_controlplane_agents.md` regenerated via `make docs` so the auto-generated CLI reference is current.
 
 ### Task 9
 - Handler reads peer cert directly from `peer.FromContext(ctx)` + `credentials.TLSInfo`. No need for the separate `PeerCertFromContext` / `PeerIPFromContext` helpers the plan sketched — the listener's `tls.Config` already enforces `RequireAndVerifyClientCert`, so any context that reaches the handler already carries a verified leaf cert. Task 10 adds the agent-specific scope map; the cert-extraction path stays in this package.

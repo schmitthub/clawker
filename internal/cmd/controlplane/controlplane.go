@@ -35,6 +35,7 @@ need to observe or manipulate the CP directly.`,
 		NewCmdUp(f, nil),
 		NewCmdDown(f, nil),
 		NewCmdStatus(f, nil),
+		NewCmdAgents(f, nil),
 	)
 
 	return cmd

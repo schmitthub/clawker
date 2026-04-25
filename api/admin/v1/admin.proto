@@ -99,6 +99,11 @@ service AdminService {
   // against the slot's container_id. Required scope: admin (uniform per
   // INV-B2-009).
   rpc AnnounceAgent(AnnounceAgentRequest) returns (AnnounceAgentResult);
+
+  // ListAgents returns a snapshot of every agent currently registered
+  // with the control plane. Used by `clawker controlplane agents` and
+  // diagnostic tooling. Read-only; uniform admin scope.
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResult);
 }
 
 // Route is one entry in the global route_map.
@@ -269,4 +274,25 @@ message AnnounceAgentResult {
   // CLI-side logging only; the CP enforces TTL internally regardless of
   // what the client believes.
   int64 expires_at_unix = 1;
+}
+
+message ListAgentsRequest {}
+message ListAgentsResult {
+  repeated Agent agents = 1;
+}
+
+message Agent {
+  // agent_name is the canonical "clawker.<project>.<agent>".
+  string agent_name = 1;
+  // container_id is the long Docker container ID the agent runs in.
+  string container_id = 2;
+  // cert_thumbprint is the lowercase-hex SHA-256 over the agent's mTLS
+  // cert DER — the channel-bound identity key.
+  string cert_thumbprint = 3;
+  // registered_at_unix is the wall-clock timestamp at AgentService.Register.
+  int64 registered_at_unix = 4;
+  // last_seen_unix is updated on every successful per-agent RPC. Equal
+  // to registered_at_unix for B4 because Register is the only per-agent
+  // RPC.
+  int64 last_seen_unix = 5;
 }

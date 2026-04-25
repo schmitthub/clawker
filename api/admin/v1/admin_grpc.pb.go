@@ -33,6 +33,7 @@ const (
 	AdminService_FirewallSyncRoutes_FullMethodName      = "/clawker.admin.v1.AdminService/FirewallSyncRoutes"
 	AdminService_FirewallResolveHostname_FullMethodName = "/clawker.admin.v1.AdminService/FirewallResolveHostname"
 	AdminService_AnnounceAgent_FullMethodName           = "/clawker.admin.v1.AdminService/AnnounceAgent"
+	AdminService_ListAgents_FullMethodName              = "/clawker.admin.v1.AdminService/ListAgents"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -119,6 +120,10 @@ type AdminServiceClient interface {
 	// against the slot's container_id. Required scope: admin (uniform per
 	// INV-B2-009).
 	AnnounceAgent(ctx context.Context, in *AnnounceAgentRequest, opts ...grpc.CallOption) (*AnnounceAgentResult, error)
+	// ListAgents returns a snapshot of every agent currently registered
+	// with the control plane. Used by `clawker controlplane agents` and
+	// diagnostic tooling. Read-only; uniform admin scope.
+	ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResult, error)
 }
 
 type adminServiceClient struct {
@@ -269,6 +274,16 @@ func (c *adminServiceClient) AnnounceAgent(ctx context.Context, in *AnnounceAgen
 	return out, nil
 }
 
+func (c *adminServiceClient) ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListAgentsResult)
+	err := c.cc.Invoke(ctx, AdminService_ListAgents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -353,6 +368,10 @@ type AdminServiceServer interface {
 	// against the slot's container_id. Required scope: admin (uniform per
 	// INV-B2-009).
 	AnnounceAgent(context.Context, *AnnounceAgentRequest) (*AnnounceAgentResult, error)
+	// ListAgents returns a snapshot of every agent currently registered
+	// with the control plane. Used by `clawker controlplane agents` and
+	// diagnostic tooling. Read-only; uniform admin scope.
+	ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResult, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -404,6 +423,9 @@ func (UnimplementedAdminServiceServer) FirewallResolveHostname(context.Context, 
 }
 func (UnimplementedAdminServiceServer) AnnounceAgent(context.Context, *AnnounceAgentRequest) (*AnnounceAgentResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method AnnounceAgent not implemented")
+}
+func (UnimplementedAdminServiceServer) ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListAgents not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -678,6 +700,24 @@ func _AdminService_AnnounceAgent_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_ListAgents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListAgentsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).ListAgents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_ListAgents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).ListAgents(ctx, req.(*ListAgentsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -740,6 +780,10 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AnnounceAgent",
 			Handler:    _AdminService_AnnounceAgent_Handler,
+		},
+		{
+			MethodName: "ListAgents",
+			Handler:    _AdminService_ListAgents_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

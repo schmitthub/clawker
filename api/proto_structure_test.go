@@ -46,7 +46,7 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 			"FirewallAddRules", "FirewallRemoveRule", "FirewallListRules",
 			"FirewallReload", "FirewallStatus", "FirewallRotateCA",
 			"FirewallSyncRoutes", "FirewallResolveHostname",
-			"AnnounceAgent",
+			"AnnounceAgent", "ListAgents",
 		}
 		for _, rpc := range expectedRPCs {
 			assert.True(t, methods[rpc],

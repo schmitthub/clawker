@@ -30,6 +30,7 @@ need to observe or manipulate the CP directly.
 
 ### Subcommands
 
+* [clawker controlplane agents](clawker_controlplane_agents) - List agents currently registered with the control plane
 * [clawker controlplane down](clawker_controlplane_down) - Stop the control plane
 * [clawker controlplane status](clawker_controlplane_status) - Show control plane health
 * [clawker controlplane up](clawker_controlplane_up) - Start the control plane
