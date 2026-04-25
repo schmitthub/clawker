@@ -475,11 +475,12 @@ Watcher hardening: `ListErrCeiling` bounds Docker-wedged blindness; `started ato
 
 **Config generation:** Two pure functions translate egress rules into firewall stack configs (`internal/controlplane/firewall/envoy_config.go`, `coredns_config.go`). `GenerateEnvoyConfig(rules)` produces an Envoy bootstrap YAML with a TLS listener (`:10000`, TLS Inspector) ordered as MITM chains (path rules) → SNI passthrough chains (domain-allow) → default deny, plus sequential TCP listeners (`:10001+`) for non-HTTP protocols. `GenerateCorefile(rules)` produces a CoreDNS Corefile with per-domain forward zones (Cloudflare malware-blocking `1.1.1.2`/`1.0.0.2`), Docker internal zones forwarding to `127.0.0.11`, and a catch-all NXDOMAIN template. **Every forward zone invokes the `dnsbpf` plugin** (between `log` and `forward`) which writes `IP → {domain_hash, TTL}` entries to the pinned BPF `dns_cache` map in real time. Both generators are deterministic.
 
-**Embedded binaries:** Three binaries are cross-compiled for Linux inside the pinned multi-stage `Dockerfile.controlplane` and `go:embed`'d into the clawker CLI:
+**Embedded binaries:** Four Linux binaries are cross-compiled and `go:embed`'d into the clawker CLI. The first three need clang + libbpf for BPF byte code and are built inside the pinned multi-stage `Dockerfile.controlplane`; clawkerd is pure Go with no BPF deps and is built via a plain `CGO_ENABLED=0` cross-compile in the Makefile:
 
-- `cmd/clawker-cp` → `internal/controlplane/assets/clawker-cp` (embedded by `embed_cp.go`). Baked into `clawker-controlplane:latest` at runtime.
-- `internal/controlplane/firewall/ebpf/cmd` → `internal/controlplane/assets/ebpf-manager` (embedded by `embed_ebpf.go`). Break-glass CLI bundled alongside `clawker-cp` in the same image.
+- `cmd/clawker-cp` → `internal/controlplane/cpboot/assets/clawker-cp` (embedded by `cpboot/embed_cp.go`). Baked into `clawker-controlplane:latest` at runtime.
+- `internal/controlplane/firewall/ebpf/cmd` → `internal/controlplane/cpboot/assets/ebpf-manager` (embedded by `cpboot/embed_ebpf.go`). Break-glass CLI bundled alongside `clawker-cp` in the same image.
 - `cmd/coredns-clawker` → `internal/controlplane/firewall/assets/coredns-clawker` (embedded by `firewall/embed_coredns.go`). Baked into `clawker-coredns:latest`.
+- `cmd/clawkerd` → `internal/clawkerd/assets/clawkerd` (embedded by `internal/clawkerd/embed.go` as `clawkerd.Binary`). The bundler streams it into every per-project agent build context (`internal/bundler/dockerfile.go` Task 12 wiring), so each generated `clawker-<project>:sha-<hash>` image carries it at `/usr/local/bin/clawkerd`. The container entrypoint launches it in the background before the firewall healthz wait — see `internal/bundler/assets/entrypoint.sh`.
 
 Image builds use `drainBuildStream`/`drainPullStream` helpers that distinguish `io.EOF` from truncated streams and decode `error` / `errorDetail.message` (BuildKit emits the detailed form). See root `CLAUDE.md` "Security → Version Pinning" for the multi-arch manifest rule and reproducibility chain (`internal/controlplane/firewall/ebpf/REPRODUCIBILITY.md`).
 

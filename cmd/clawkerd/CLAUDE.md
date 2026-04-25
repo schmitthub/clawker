@@ -1,9 +1,11 @@
 # clawkerd
 
-Per-container agent daemon. Runs as PID 0 (or under tini as PID 0 / 1
-depending on entrypoint variant) inside every clawker-managed container,
-completes the announce → register handshake with the control plane, and
-idles until SIGTERM.
+Per-container agent daemon. Runs as a backgrounded child of the
+container entrypoint shell (started by `internal/bundler/assets/entrypoint.sh`
+right before the firewall healthz wait), completes the announce →
+register handshake with the control plane, and idles until SIGTERM.
+Not PID 1 — bash is. Not PID 0 either; PID 0 doesn't exist in user
+space.
 
 ## Role
 
@@ -15,13 +17,24 @@ open as a liveness signal.
 
 ## Boot sequence
 
-1. Read five bootstrap files from `/run/clawker/bootstrap` (delivered by
-   the CLI before container start; see
-   `internal/cmd/container/shared/agent_bootstrap.go`):
+1. Read five bootstrap files from `consts.BootstrapDir`
+   (`/run/clawker/bootstrap`):
    - `cert.pem`, `key.pem` — per-agent mTLS leaf signed by the CLI CA
    - `ca.pem` — CLI CA cert (clawkerd's RootCA for trusting the CP server cert)
    - `assertion.jwt` — CLI-signed `clawker-agent` Hydra assertion
    - `verifier` — PKCE secret matching the slot's S256 challenge
+
+   Files land in the container's **writable layer** (NOT a tmpfs mount,
+   NOT a bind mount). The CLI streams a tar archive into the live
+   container via Docker's `CopyToContainer` API between `docker create`
+   and `docker start`. tmpfs mounts can't be pre-populated this way
+   (tmpfs is mounted at start time and shadows whatever was written
+   before), so the pragmatic placement is the writable layer with strict
+   permissions: parent dir 0700, files 0400. See the long comment on
+   `WriteAgentBootstrapToContainer` in
+   `internal/cmd/container/shared/agent_bootstrap.go` for the full
+   tradeoff. Owner ends up being whoever the in-container tar extraction
+   runs as — root in default images.
 2. Resolve env: `CLAWKER_CP_HYDRA_URL`, `CLAWKER_CP_AGENT_ADDR`,
    `CLAWKER_AGENT_NAME`. Anything else is intentionally NOT in the
    environment — clawkerd should not be able to assert identity it

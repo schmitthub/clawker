@@ -100,9 +100,26 @@ emit_error() {
 # to /var/log/clawker/clawkerd.log; clawkerd does NOT block CMD because B4
 # does not yet require agent registration to be complete before the user
 # process runs.
-if [ -x /usr/local/bin/clawkerd ] && [ -d /run/clawker/bootstrap ]; then
-    mkdir -p /var/log/clawker
-    /usr/local/bin/clawkerd >>/var/log/clawker/clawkerd.log 2>&1 &
+# An agent container is one where the firewall is enabled — the same
+# predicate that drives the CP healthz wait below. Non-agent containers
+# (firewall disabled) are an expected non-clawkerd path: skip silently.
+# Agent containers that reach here without one of the two preconditions
+# are misconfigured (binary missing → bundler/CLI build drift; bootstrap
+# missing → CLI did not call shared.WriteAgentBootstrapToContainer
+# before docker start) — emit a stderr warning so the operator sees what
+# happened. Don't fail the container; downstream symptoms (no entry in
+# `clawker controlplane agents`) are already obvious.
+if [ "${CLAWKER_FIREWALL_ENABLED:-}" = "true" ]; then
+    if [ -x /usr/local/bin/clawkerd ] && [ -d /run/clawker/bootstrap ]; then
+        mkdir -p /var/log/clawker
+        /usr/local/bin/clawkerd >>/var/log/clawker/clawkerd.log 2>&1 &
+    elif [ ! -x /usr/local/bin/clawkerd ] && [ ! -d /run/clawker/bootstrap ]; then
+        echo "[clawker] warn clawkerd skipped: /usr/local/bin/clawkerd missing AND /run/clawker/bootstrap missing — agent will not register" >&4
+    elif [ ! -x /usr/local/bin/clawkerd ]; then
+        echo "[clawker] warn clawkerd skipped: /usr/local/bin/clawkerd missing — image was built without the embedded daemon" >&4
+    else
+        echo "[clawker] warn clawkerd skipped: /run/clawker/bootstrap missing — CLI did not deliver bootstrap material before container start" >&4
+    fi
 fi
 
 # =============================================================================

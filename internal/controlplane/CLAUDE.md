@@ -29,7 +29,7 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 
 | File | Purpose |
 |------|---------|
-| `server.go` | `adminServer` composition + `NewAdminServer(fw)` — embeds the firewall handler so AdminService method promotion is satisfied for `cmd/clawker-cp` to register on its gRPC server |
+| `server.go` | `adminServer` composition + `NewAdminServer(fw *fwhandler.Handler, agents agentregistry.Registry) adminv1.AdminServiceServer` — embeds the firewall handler so AdminService method promotion is satisfied for `cmd/clawker-cp` to register on its gRPC server. Holds `agents` for the explicit `(*adminServer).ListAgents` method (overrides the firewall handler's `Unimplemented` default). `agents` may be nil — `ListAgents` then returns an empty result. |
 | `authz.go` | `AuthInterceptor` — validates OAuth2 bearer tokens via Hydra introspection, enforces per-method scopes |
 | `hydra_client.go` | `RegisterCLIClient` + `RegisterAgentClient` — register the `clawker-cli` and `clawker-agent` OAuth2 clients with Hydra at startup via the shared `registerHydraClient` helper. Both clients use the same JWK (the CLI's signing key); only `client_id` and `scope` differ. `AdminMethodScopes` lives in `api/admin/v1/admin.go` so a new admin RPC fails closed (covered by `TestAdminMethodScopes_CoversAllRPCs`). |
 | `startup.go` | `CPStartupOrchestrator` — startup sequencing + aggregate `/healthz` endpoint (probes all 7 service ports) |
@@ -57,7 +57,7 @@ All RPCs require the uniform `admin` scope (INV-B2-009). Per-method diversificat
 5. Register CLI + agent clients with Hydra (`RegisterCLIClient` + `RegisterAgentClient` — both idempotent on 409)
 6. Start Oathkeeper subprocess; build `*docker.Client`; build `firewall.Stack` (via `fwhandler.NewRulesStore`)
 7. Load eBPF programs (`ebpfMgr.Load()`); run defensive startup cleanup (`ebpfMgr.CleanupStaleBypass()` — INV-B2-013)
-8. Start gRPC AdminService on `cp.AdminPort` with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor; start a second gRPC server on `cp.AgentPort` (clawker-net only, NOT host-bound) using the same TLS material — `AgentService` lands in a later task; today the listener returns `Unimplemented` for every RPC. Both servers join the graceful-shutdown WaitGroup.
+8. Start gRPC AdminService on `cp.AdminPort` with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor; start a second gRPC server on `cp.AgentPort` (clawker-net only, NOT host-bound) using the same TLS material with the agent-side `AuthInterceptor` (`controlplane.AgentMethodScopes()`). The agent listener serves `AgentService.Register` via `internal/controlplane/agent.Handler` (Branch 4 Task 9 — five identity-binding cross-checks; see `internal/controlplane/agent/CLAUDE.md`). Both servers join the graceful-shutdown WaitGroup. **Known follow-up**: `AdminService.AnnounceAgent` (the CP-side slot reservation triggered by the CLI before docker start) still falls through to the embedded `UnimplementedAdminServiceServer.AnnounceAgent`, and `run`/`start` do not yet call `shared.GenerateAgentBootstrap` / `shared.AnnounceAgent` / `shared.WriteAgentBootstrapToContainer`. Net effect today: every container reaches the entrypoint without `/run/clawker/bootstrap`, the entrypoint's gate skips clawkerd launch (with a warning post-Fix 1), and `clawker controlplane agents` reports empty. Tracked in the `cp-initiative-branch-4-followup-cli-integration` memory.
 9. Mark ready (`orchestrator.SetReady()`), serve `/healthz` on HealthPort
 9b. Start `controlplane.AgentWatcher` goroutine — polls Docker for agents with `purpose=agent`; on drain-to-zero invokes callback: `actionQueue.Close()` (drain queued work, reject new Submits with `ErrClosed`) → `grpcServer.GracefulStop()` (let in-flight RPCs return — any blocked on a Submit now observes `ErrClosed`) → `handler.CancelAllBypassTimers()` → `firewall.Stack.Stop()` → `ebpfMgr.FlushAll()` (INV-B2-007). Stack stop + eBPF flush run post-Close directly from the drain callback because the queue is dead; aggregated errors propagate back to `Run` for non-zero exit. Then the outer shutdown path tears the CP container down (exit code 0 — the `on-failure` restart policy does NOT retrigger)
 
@@ -137,6 +137,9 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 - `cpboot.Manager` interface — `cpboot/mocks/ManagerMock` for break-glass `controlplane up/down/status` CLI tests.
 - `adminv1.AdminServiceClient` — `mocks/AdminServiceClientMock` for CLI tests that speak to the AdminService.
 - `firewall.ContainerResolver` — handler-side injectable Docker lookup (see `firewall/CLAUDE.md`).
+- `agent.ContainerInspector` — `agent/mocks/ContainerInspectorMock` for `agent.Handler` tests (no real Docker; lets the five identity-binding cross-checks run with synthesized peer IP / label data).
+- `agentslots.Registry` — `agentslots/mocks/RegistryMock` for handler tests that need to assert Reserve/Consume call shapes without exercising the real PKCE-compare timing path.
+- `agentregistry.Registry` — `agentregistry/mocks/RegistryMock` for handler + `ListAgents` tests that need a deterministic snapshot independent of dockerevents wiring.
 
 ## Test coverage
 
@@ -160,7 +163,12 @@ No circular dependencies.
 
 ## What's deferred
 
-- **TCP listener for agents** — v1 serves gRPC on localhost only. Adding agent TCP listener is pure addition.
 - **Kratos active usage** — running as subprocess placeholder. Lights up with webui.
 - **Oathkeeper active routing** — running with empty rules. Lights up with webui HTTP auth.
-- **Per-method scopes beyond `admin`** — finer-grained scopes (`agent:register`, `webui:read`) would add entries to `AdminMethodScopes()` in `api/admin/v1/admin.go`. INV-B2-009 currently mandates a uniform `admin` scope across all firewall methods.
+- **Per-method scopes beyond `admin`** — finer-grained scopes (`agent:register`, `webui:read`) would add entries to `AdminMethodScopes()` in `api/admin/v1/admin.go`. INV-B2-009 currently mandates a uniform `admin` scope across all firewall methods. The agent listener already enforces a distinct `agent:self:register` scope on `AgentService.Register` via `AgentMethodScopes()`.
+
+## Known follow-up (Branch 4 → 5)
+
+- **`AdminService.AnnounceAgent` handler** — proto + scope map + tests landed (Task 1) but `adminServer` falls through to `UnimplementedAdminServiceServer.AnnounceAgent`. Needs to call `slotRegistry.Reserve(slot)` with the CLI-supplied agent name, container ID, expected cert thumbprint, and PKCE challenge. `slotRegistry` is already constructed in `cmd/clawker-cp/main.go` for the agent handler — just needs threading into `NewAdminServer`.
+- **CLI `run`/`start` bootstrap delivery** — `shared.GenerateAgentBootstrap` / `shared.AnnounceAgent` / `shared.WriteAgentBootstrapToContainer` exist (Task 7) but no caller in `internal/cmd/container/shared/container_start.go`. The three `EnvClawkerd*` env vars are also unpopulated.
+- See `cp-initiative-branch-4-followup-cli-integration` memory for the full surface, the four failure-mode questions, and suggested planning steps.
