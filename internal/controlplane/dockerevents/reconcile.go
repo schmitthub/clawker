@@ -54,40 +54,24 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 	now := time.Now()
 	t := informer.Transition{Source: transitionSource, Verb: verbPrefix + "reconcile", At: now}
 
+	// Resources first: containers, networks, volumes, images. Each pass
+	// upserts independently. LinkRelation is deferred to a second
+	// container pass so f.networks is fully populated — otherwise edges
+	// to networks that come later in the rebuild order are skipped.
 	for _, c := range containers.Items {
 		f.containers[c.ID] = true
-		_ = f.inf.Upsert(ctx, informer.ResourceUpdate{
+		f.publishUpsert(ctx, informer.ResourceUpdate{
 			Kind:      KindContainer,
 			ID:        c.ID,
 			Labels:    c.Labels,
 			Attrs:     containerAttrsFromSummary(c),
 			Lifecycle: containerLifecycleFromState(c.State),
 		}, t)
-
-		// Network attachments — only available via the container summary
-		// (events don't carry mount/network data). LinkRelation only if
-		// the network is also managed; orphan edges to unmanaged networks
-		// add no value.
-		if c.NetworkSettings != nil {
-			for _, ep := range c.NetworkSettings.Networks {
-				if ep == nil || ep.NetworkID == "" {
-					continue
-				}
-				if !f.networks[ep.NetworkID] {
-					continue
-				}
-				_ = f.inf.LinkRelation(ctx, informer.Relation{
-					From: informer.Key{Kind: KindContainer, ID: c.ID},
-					To:   informer.Key{Kind: KindNetwork, ID: ep.NetworkID},
-					Kind: RelationAttachedTo,
-				})
-			}
-		}
 	}
 
 	for _, n := range networks.Items {
 		f.networks[n.ID] = true
-		_ = f.inf.Upsert(ctx, informer.ResourceUpdate{
+		f.publishUpsert(ctx, informer.ResourceUpdate{
 			Kind:   KindNetwork,
 			ID:     n.ID,
 			Labels: n.Labels,
@@ -102,7 +86,7 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 
 	for _, v := range volumes.Items {
 		f.volumes[v.Name] = true
-		_ = f.inf.Upsert(ctx, informer.ResourceUpdate{
+		f.publishUpsert(ctx, informer.ResourceUpdate{
 			Kind:   KindVolume,
 			ID:     v.Name,
 			Labels: v.Labels,
@@ -116,7 +100,7 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 
 	for _, im := range images.Items {
 		f.images[im.ID] = true
-		_ = f.inf.Upsert(ctx, informer.ResourceUpdate{
+		f.publishUpsert(ctx, informer.ResourceUpdate{
 			Kind:   KindImage,
 			ID:     im.ID,
 			Labels: im.Labels,
@@ -127,14 +111,8 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 		}, t)
 	}
 
-	// Reconcile pass complete — replay container→network edges only
-	// AFTER the network set is populated so the LinkRelation guard
-	// above sees the right set membership. The first container loop
-	// above checked f.networks which was just populated; if any
-	// container appeared in containers.Items before the network it
-	// attaches to (containers come first in the rebuild order),
-	// LinkRelation was skipped. Rerun the attachment pass once
-	// networks are seeded.
+	// Container→network edges. Orphan edges to unmanaged networks add
+	// no value, so we gate on f.networks (fully populated above).
 	for _, c := range containers.Items {
 		if c.NetworkSettings == nil {
 			continue
@@ -146,7 +124,7 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 			if !f.networks[ep.NetworkID] {
 				continue
 			}
-			_ = f.inf.LinkRelation(ctx, informer.Relation{
+			f.publishLink(ctx, informer.Relation{
 				From: informer.Key{Kind: KindContainer, ID: c.ID},
 				To:   informer.Key{Kind: KindNetwork, ID: ep.NetworkID},
 				Kind: RelationAttachedTo,

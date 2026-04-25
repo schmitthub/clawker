@@ -2,6 +2,7 @@ package dockerevents
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -69,24 +70,46 @@ func (f *Feeder) logEventReceived(ev events.Message) {
 	e.Msgf("docker event received: %s/%s id=%s", ev.Type, ev.Action, short(ev.Actor.ID))
 }
 
-// publish helpers thinly proxy the informer write API. The publish
-// log itself is owned by the informer (informer.logPublished) so
-// every feeder gets it for free; these wrappers exist only to keep
-// the call sites in dispatch* terse and uniform.
-func (f *Feeder) publishUpsert(ctx context.Context, u informer.ResourceUpdate, t informer.Transition) error {
-	return f.inf.Upsert(ctx, u, t)
+// publish helpers thinly proxy the informer write API and absorb
+// expected shutdown errors so call sites stay terse. The publish log
+// itself is owned by the informer (informer.logPublished) so every
+// feeder gets it for free. Real failures (anything other than
+// ctx.Canceled / informer.ErrClosed) surface as warn-level structured
+// logs — silently dropping them would lie about the publish trail.
+func (f *Feeder) publishUpsert(ctx context.Context, u informer.ResourceUpdate, t informer.Transition) {
+	f.noteWriteErr(f.inf.Upsert(ctx, u, t), u.Kind, u.ID)
 }
 
-func (f *Feeder) publishRemove(ctx context.Context, key informer.Key, t informer.Transition) error {
-	return f.inf.Remove(ctx, key, t)
+func (f *Feeder) publishRemove(ctx context.Context, key informer.Key, t informer.Transition) {
+	f.noteWriteErr(f.inf.Remove(ctx, key, t), key.Kind, key.ID)
 }
 
-func (f *Feeder) publishLink(ctx context.Context, rel informer.Relation) error {
-	return f.inf.LinkRelation(ctx, rel)
+func (f *Feeder) publishLink(ctx context.Context, rel informer.Relation) {
+	f.noteWriteErr(f.inf.LinkRelation(ctx, rel), rel.Kind, rel.From.ID+"->"+rel.To.ID)
 }
 
-func (f *Feeder) publishUnlink(ctx context.Context, from, to informer.Key, kind string) error {
-	return f.inf.UnlinkRelation(ctx, from, to, kind)
+func (f *Feeder) publishUnlink(ctx context.Context, from, to informer.Key, kind string) {
+	f.noteWriteErr(f.inf.UnlinkRelation(ctx, from, to, kind), kind, from.ID+"->"+to.ID)
+}
+
+// noteWriteErr classifies an informer write error. Shutdown-class
+// errors (ctx.Canceled, informer.ErrClosed) are silent — the drain
+// path expects in-flight writes to land on a closing informer.
+// informer.ErrNotStarted is a wiring bug (Run started before Start)
+// and surfaces at error level. Everything else lands at warn with
+// kind+id for triage.
+func (f *Feeder) noteWriteErr(err error, kind, id string) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, informer.ErrClosed) {
+		return
+	}
+	if errors.Is(err, informer.ErrNotStarted) {
+		f.log.Error().Err(err).Str("kind", kind).Str("id", id).Msg("informer not started: feeder running before informer.Start")
+		return
+	}
+	f.log.Warn().Err(err).Str("kind", kind).Str("id", id).Msg("informer write failed")
 }
 
 // shouldHandleAction filters out diagnostic / high-volume actions that
@@ -122,12 +145,9 @@ func (f *Feeder) dispatchContainer(ctx context.Context, ev events.Message) {
 
 	managed := f.isManaged(ev.Actor.Attributes)
 	if !managed && !f.containers[id] {
-		// Unmanaged container we never saw; drop.
 		return
 	}
 
-	// Labels from the actor; strip engine-set keys so they don't pollute
-	// the resource label map.
 	labels := stripEngineKeys(ev.Actor.Attributes, "image", "name", "exitCode")
 
 	t := informer.Transition{
@@ -140,11 +160,10 @@ func (f *Feeder) dispatchContainer(ctx context.Context, ev events.Message) {
 	switch ev.Action {
 	case events.ActionDestroy, events.ActionRemove:
 		delete(f.containers, id)
-		_ = f.publishRemove(ctx, informer.Key{Kind: KindContainer, ID: id}, t)
+		f.publishRemove(ctx, informer.Key{Kind: KindContainer, ID: id}, t)
 		return
 	}
 
-	// Anything else: upsert with the latest lifecycle inferred from action.
 	lifecycle := containerLifecycleFromAction(ev.Action)
 	attrs := map[string]string{}
 	if img, ok := ev.Actor.Attributes["image"]; ok {
@@ -164,7 +183,7 @@ func (f *Feeder) dispatchContainer(ctx context.Context, ev events.Message) {
 	}
 
 	f.containers[id] = true
-	_ = f.publishUpsert(ctx, informer.ResourceUpdate{
+	f.publishUpsert(ctx, informer.ResourceUpdate{
 		Kind:      KindContainer,
 		ID:        id,
 		Labels:    labels,
@@ -202,7 +221,7 @@ func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 			return
 		}
 		f.networks[netID] = true
-		_ = f.publishUpsert(ctx, informer.ResourceUpdate{
+		f.publishUpsert(ctx, informer.ResourceUpdate{
 			Kind:   KindNetwork,
 			ID:     netID,
 			Labels: res.Network.Labels,
@@ -219,7 +238,7 @@ func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 			return
 		}
 		delete(f.networks, netID)
-		_ = f.publishRemove(ctx, informer.Key{Kind: KindNetwork, ID: netID}, t)
+		f.publishRemove(ctx, informer.Key{Kind: KindNetwork, ID: netID}, t)
 
 	case events.ActionConnect, events.ActionDisconnect:
 		if !f.networks[netID] {
@@ -230,17 +249,16 @@ func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 			return
 		}
 		if !f.containers[ctrID] {
-			// Container side not yet seen; informer accepts orphan
-			// edges but we'd rather wait until the container event
-			// arrives so the relation lifetime tracks the container's.
+			// Wait for the container event so relation lifetime tracks
+			// the container's; informer would accept the orphan edge.
 			return
 		}
 		from := informer.Key{Kind: KindContainer, ID: ctrID}
 		to := informer.Key{Kind: KindNetwork, ID: netID}
 		if ev.Action == events.ActionConnect {
-			_ = f.publishLink(ctx, informer.Relation{From: from, To: to, Kind: RelationAttachedTo})
+			f.publishLink(ctx, informer.Relation{From: from, To: to, Kind: RelationAttachedTo})
 		} else {
-			_ = f.publishUnlink(ctx, from, to, RelationAttachedTo)
+			f.publishUnlink(ctx, from, to, RelationAttachedTo)
 		}
 	}
 }
@@ -248,13 +266,16 @@ func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 // dispatchVolume handles volume events. Volume create events carry
 // labels via moby's LogVolumeEvent; destroy events do NOT reliably
 // carry user labels (especially via VolumesPrune), so destroys are
-// logged unconditionally and only flow into the informer if the
-// volume is tracked. Operator visibility into a missing-from-set
-// destroy is more valuable than store hygiene — informer.Remove is
-// a no-op on unknown keys regardless.
+// gated on the in-memory volumeSet rather than re-checking labels.
+// Mirrors the container path: untracked + unmanaged → drop silently.
 func (f *Feeder) dispatchVolume(ctx context.Context, ev events.Message) {
 	name := ev.Actor.ID
 	if name == "" {
+		return
+	}
+
+	managed := f.isManaged(ev.Actor.Attributes)
+	if !managed && !f.volumes[name] {
 		return
 	}
 
@@ -268,16 +289,10 @@ func (f *Feeder) dispatchVolume(ctx context.Context, ev events.Message) {
 	switch ev.Action {
 	case events.ActionDestroy, events.ActionRemove:
 		delete(f.volumes, name)
-		_ = f.publishRemove(ctx, informer.Key{Kind: KindVolume, ID: name}, t)
+		f.publishRemove(ctx, informer.Key{Kind: KindVolume, ID: name}, t)
 	default:
-		// Non-destroy events: only upsert when we can verify the volume
-		// is clawker-managed. Skip arbitrary host volumes silently.
-		managed := f.isManaged(ev.Actor.Attributes)
-		if !managed && !f.volumes[name] {
-			return
-		}
 		f.volumes[name] = true
-		_ = f.publishUpsert(ctx, informer.ResourceUpdate{
+		f.publishUpsert(ctx, informer.ResourceUpdate{
 			Kind:      KindVolume,
 			ID:        name,
 			Labels:    stripEngineKeys(ev.Actor.Attributes),
@@ -311,7 +326,7 @@ func (f *Feeder) dispatchImage(ctx context.Context, ev events.Message) {
 	switch ev.Action {
 	case events.ActionDelete, events.ActionRemove:
 		delete(f.images, id)
-		_ = f.publishRemove(ctx, informer.Key{Kind: KindImage, ID: id}, t)
+		f.publishRemove(ctx, informer.Key{Kind: KindImage, ID: id}, t)
 	default:
 		labels := stripEngineKeys(ev.Actor.Attributes, "name", "tag")
 		attrs := map[string]string{}
@@ -319,7 +334,7 @@ func (f *Feeder) dispatchImage(ctx context.Context, ev events.Message) {
 			attrs["name"] = name
 		}
 		f.images[id] = true
-		_ = f.publishUpsert(ctx, informer.ResourceUpdate{
+		f.publishUpsert(ctx, informer.ResourceUpdate{
 			Kind:      KindImage,
 			ID:        id,
 			Labels:    labels,
@@ -419,8 +434,8 @@ func stripEngineKeys(attrs map[string]string, keys ...string) map[string]string 
 	return out
 }
 
-// short returns the first 12 chars of id (Docker short ID convention)
-// or id itself if it's shorter. For log readability only.
+// short truncates an id to Docker's 12-char short form for log
+// readability. ID strings shorter than 12 chars pass through.
 func short(id string) string {
 	if len(id) <= 12 {
 		return id
@@ -428,8 +443,6 @@ func short(id string) string {
 	return id[:12]
 }
 
-// joinTags collapses []string image RepoTags into a comma-separated
-// string for Resource.Attrs. Empty list → empty string.
 func joinTags(tags []string) string {
 	return strings.Join(tags, ",")
 }

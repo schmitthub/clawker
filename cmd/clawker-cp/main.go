@@ -2,23 +2,15 @@
 //
 // It runs as the main process in the CP container, supervising Hydra,
 // Oathkeeper, Kratos as subprocesses. It loads eBPF programs, serves a
-// gRPC AdminService with Hydra token introspection, and reports
-// readiness on /healthz.
+// gRPC AdminService with Hydra token introspection, owns the Docker
+// events feeder + informer, and reports readiness on /healthz.
 //
 // Oathkeeper runs as a subprocess for future webui HTTP auth. gRPC auth
 // (CLI + agents) uses direct Hydra introspection — no Ory Go imports.
 //
-// Startup sequence (any failure = crash with diagnostic error):
-//  1. Start Kratos subprocess
-//  2. Start Hydra subprocess (in-memory store, admin on 127.0.0.1:4445)
-//  3. Wait for both healthy
-//  4. Read CLI JWK from bind-mounted file
-//  5. Register CLI client via Hydra admin API
-//  6. Start Oathkeeper HTTP proxy subprocess (for future webui)
-//     6b. Initialize Docker client (container state verification)
-//  7. Load eBPF programs
-//  8. Start gRPC admin API with Hydra token introspection
-//  9. Report healthy on /healthz
+// The numbered startup sequence is documented in
+// internal/controlplane/CLAUDE.md and not duplicated here so the two
+// don't drift.
 package main
 
 import (
@@ -107,7 +99,7 @@ func main() {
 	}
 }
 
-func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) error {
+func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (retErr error) {
 	loggerOpts := logger.Options{
 		LogsDir:  logDir,
 		Filename: consts.ControlPlaneLogFile,
@@ -269,9 +261,13 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	if err := ebpfMgr.Load(); err != nil {
 		return fmt.Errorf("step 7 (ebpf load): %w", err)
 	}
+	// ebpfMgr.Close failures are joined with retErr so the on-failure
+	// restart policy retriggers investigation rather than silently
+	// blessing a partial teardown.
 	defer func() {
 		if err := ebpfMgr.Close(); err != nil {
-			log.Warn().Err(err).Msg("ebpf close error")
+			log.Error().Err(err).Msg("ebpf close error")
+			retErr = errors.Join(retErr, fmt.Errorf("ebpf close: %w", err))
 		}
 	}()
 	log.Info().Msg("eBPF programs loaded")
@@ -364,7 +360,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		return fmt.Errorf("step 8 (grpc listen): %w", err)
 	}
 
-	serveFailed := make(chan error, 2)
+	// Cap covers gRPC, healthz, and the dockerevents feeder. Buffered
+	// so any goroutine that fails before main reaches the select can
+	// deposit its error without blocking.
+	serveFailed := make(chan error, 3)
 
 	go func() {
 		log.Info().Int("port", cp.AdminPort).Msg("gRPC admin API serving")
@@ -397,13 +396,18 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	// any final dispatched events have a fully-functional informer to
 	// land on. The dockerevents feeder pushes a clawker-managed mirror
 	// of Docker state into it.
+	// WriteQueueSize=2048: high enough to absorb a docker events burst
+	// (image prune + network reconnect storm) without blocking the feeder
+	// goroutine but bounded so a stuck consumer doesn't grow unbounded.
+	// SubscriberBuffer=256: per-subscriber drop-oldest threshold; sized
+	// so a slow consumer only loses ~5s of activity at the heartbeat
+	// rate before deltas start dropping.
 	inf := informer.New(informer.Options{
 		Logger:           log.With("component", "informer"),
 		WriteQueueSize:   2048,
 		SubscriberBuffer: 256,
 	})
 
-	// Step 9b: AgentWatcher self-shutdown.
 	watcherCtx, watcherCancel := context.WithCancel(context.Background())
 	defer watcherCancel()
 
@@ -429,8 +433,19 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	feederDone := make(chan struct{})
 	go func() {
 		defer close(feederDone)
-		if err := feeder.Run(feederCtx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error().Err(err).Msg("dockerevents feeder exited with error")
+		err := feeder.Run(feederCtx)
+		if err == nil || errors.Is(err, context.Canceled) {
+			return
+		}
+		// Non-cancel exit: the feeder's Run loop is supposed to retry
+		// internally on every reconcile/stream error. A real return
+		// means a wiring bug or unrecoverable contract violation —
+		// surface to serveFailed so the daemon exits non-zero and the
+		// on-failure restart policy retriggers.
+		log.Error().Err(err).Msg("dockerevents feeder exited with error")
+		select {
+		case serveFailed <- fmt.Errorf("dockerevents feeder: %w", err):
+		default:
 		}
 	}()
 
@@ -441,6 +456,13 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	statsCtx, statsCancel := context.WithCancel(watcherCtx)
 	defer statsCancel()
 	go func() {
+		// recover so a future Stats() panic doesn't silently kill the
+		// heartbeat loop and leave the operator without telemetry.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().Interface("panic", r).Msg("informer stats heartbeat panicked")
+			}
+		}()
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -623,11 +645,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 // (`host.docker.internal:4319`); the otlploghttp exporter only needs
 // host:port, so we strip scheme/path here.
 //
+// Default is TLS. Bare host:port → TLS. `https://` → TLS. Only
+// explicit `http://` opts in to plaintext, so a misconfigured prod
+// endpoint can't silently downgrade.
+//
 // mTLS material is read from `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE`,
 // `OTEL_EXPORTER_OTLP_CLIENT_KEY`, and `OTEL_EXPORTER_OTLP_CERTIFICATE`
 // (the trust bundle for the receiver). When all three are present
-// the exporter does mTLS; otherwise it falls back to plain TLS or
-// (with `http://` scheme) plaintext.
+// the exporter does mTLS.
 //
 // The bridge endpoint is set up by cpboot to point at the monitor
 // stack's CP-only receiver via host.docker.internal. CP is BPF-exempt
@@ -666,15 +691,18 @@ func otelOptionsFromEnv() *logger.OtelOptions {
 
 // parseOtlpEndpoint normalises an OTEL endpoint env value to the
 // host:port form `otlploghttp.WithEndpoint` accepts, returning whether
-// it was http (insecure) vs https.
+// it should be sent plaintext.
+//
+// Default is secure. Only an explicit `http://` scheme opts into
+// plaintext — a bare host:port or `https://` use TLS so a
+// misconfigured prod env can't silently downgrade to cleartext logs.
 func parseOtlpEndpoint(raw string) (endpoint string, insecure bool) {
-	insecure = true
 	rest := raw
 	switch {
 	case strings.HasPrefix(rest, "https://"):
-		insecure = false
 		rest = strings.TrimPrefix(rest, "https://")
 	case strings.HasPrefix(rest, "http://"):
+		insecure = true
 		rest = strings.TrimPrefix(rest, "http://")
 	}
 	if i := strings.IndexByte(rest, '/'); i >= 0 {

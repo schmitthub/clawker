@@ -38,8 +38,8 @@ package dockerevents
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/moby/moby/api/types/events"
@@ -80,6 +80,8 @@ type Options struct {
 }
 
 const (
+	// 1s floor keeps a flapping moby socket from hot-looping; 30s ceiling
+	// recovers from a normal daemon restart in <1 minute (3 doublings).
 	defaultReconnectMin = 1 * time.Second
 	defaultReconnectMax = 30 * time.Second
 )
@@ -120,7 +122,6 @@ type Feeder struct {
 	images     map[string]bool
 }
 
-// New constructs a Feeder. Run is not started until Run is called.
 func New(cli EventsClient, inf informer.Interface, opts Options) (*Feeder, error) {
 	if cli == nil {
 		return nil, errors.New("dockerevents: EventsClient is required")
@@ -156,10 +157,12 @@ func New(cli EventsClient, inf informer.Interface, opts Options) (*Feeder, error
 }
 
 // Run drives the feeder until ctx cancels. It blocks. The expected
-// caller pattern is `go feeder.Run(ctx)`. Errors from individual
-// reconcile passes or stream resets are logged and swallowed — the
-// feeder reconnects with exponential backoff and only returns when ctx
-// closes.
+// caller pattern is `go feeder.Run(ctx)`. Returns ctx.Err() on cancel.
+//
+// Backoff applies to both reconcile failures and non-EOF stream
+// errors. A clean io.EOF (moby closed the stream cleanly) resets
+// backoff to ReconnectMin — common during routine moby behaviour and
+// shouldn't compound delay for what is not a real failure.
 func (f *Feeder) Run(ctx context.Context) error {
 	backoff := f.opts.ReconnectMin
 	for {
@@ -182,20 +185,22 @@ func (f *Feeder) Run(ctx context.Context) error {
 			continue
 		}
 
-		// Reconcile ok → reset backoff for the next stream failure.
-		backoff = f.opts.ReconnectMin
-
 		err := f.runStream(ctx, t0)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil && !errors.Is(err, io.EOF) {
-			f.log.Warn().Err(err).Msg("events stream ended; reconciling and reopening")
-		} else {
-			// io.EOF or nil → moby closed the stream cleanly. Same
-			// recovery: reconcile + reopen.
-			f.log.Info().Msg("events stream closed; reconciling and reopening")
+			f.log.Warn().Err(err).Msg("events stream errored; backing off and reconnecting")
+			if !sleepCtx(ctx, backoff) {
+				return ctx.Err()
+			}
+			backoff = nextBackoff(backoff, f.opts.ReconnectMax)
+			continue
 		}
+
+		// Clean EOF (or nil): brief pause, reset backoff, reopen.
+		f.log.Info().Msg("events stream closed; reconciling and reopening")
+		backoff = f.opts.ReconnectMin
 		if !sleepCtx(ctx, f.opts.ReconnectMin) {
 			return ctx.Err()
 		}
@@ -223,7 +228,7 @@ func (f *Feeder) runStream(ctx context.Context, since time.Time) error {
 				string(events.VolumeEventType),
 				string(events.ImageEventType),
 			),
-		Since: fmt.Sprintf("%d.%09d", since.Unix(), since.Nanosecond()),
+		Since: strconv.FormatInt(since.UnixNano(), 10),
 	})
 
 	f.log.Info().Time("since", since).Msg("events stream open")
@@ -233,15 +238,7 @@ func (f *Feeder) runStream(ctx context.Context, since time.Time) error {
 			return nil
 		case ev, ok := <-res.Messages:
 			if !ok {
-				// Channel closed without explicit error — treat as EOF.
-				// Drain any pending error first so we surface the real
-				// reason if moby sent one.
-				select {
-				case err := <-res.Err:
-					return err
-				default:
-					return io.EOF
-				}
+				return drainErrAfterClose(ctx, res.Err)
 			}
 			f.dispatch(ctx, ev)
 		case err := <-res.Err:
@@ -253,7 +250,28 @@ func (f *Feeder) runStream(ctx context.Context, since time.Time) error {
 	}
 }
 
-// nextBackoff doubles cur, capped at max.
+// drainErrAfterClose surfaces a delayed res.Err that may not have
+// landed before res.Messages closed. Without the brief grace window,
+// connection-reset / TLS-expiry / permission-revoked failures look
+// identical to a clean EOF and the operator sees an INFO-level
+// reconnect loop forever.
+func drainErrAfterClose(ctx context.Context, errCh <-chan error) error {
+	const grace = 100 * time.Millisecond
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case err := <-errCh:
+		if err == nil {
+			return io.EOF
+		}
+		return err
+	case <-timer.C:
+		return io.EOF
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func nextBackoff(cur, max time.Duration) time.Duration {
 	next := cur * 2
 	if next > max {
@@ -275,8 +293,6 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// isManaged returns true if labels carry the configured managed
-// key=value pair.
 func (f *Feeder) isManaged(labels map[string]string) bool {
 	if v, ok := labels[f.opts.ManagedLabelKey]; ok {
 		return v == f.opts.ManagedLabelValue

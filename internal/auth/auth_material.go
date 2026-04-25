@@ -5,6 +5,7 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -81,7 +82,6 @@ func EnsureAuthMaterial() error {
 // The signing key is regenerated only if forceSigningKey is true (it
 // requires re-registering the CLI client with Hydra on next CP start).
 func RotateAuthMaterial(forceSigningKey bool) error {
-	// Always rotate CA + server cert.
 	if err := removeIfExists(consts.AuthCACertPath); err != nil {
 		return fmt.Errorf("remove CA cert: %w", err)
 	}
@@ -223,6 +223,12 @@ func removeIfExists(pathFn func() (string, error)) error {
 // EnsureHydraSecret reads the persisted Hydra system secret from disk,
 // or generates a new 32-byte random hex secret and writes it with 0600
 // permissions. The secret is generated once and reused across restarts.
+//
+// Read errors are NOT collapsed into "regenerate" — a transient I/O
+// fault that recovers between read and write would silently rotate the
+// secret and invalidate every previously-issued Hydra token. Only
+// os.ErrNotExist (first run) and an empty file (corruption fallback)
+// trigger regeneration.
 func EnsureHydraSecret() (string, error) {
 	path, err := consts.HydraSystemSecretPath()
 	if err != nil {
@@ -230,14 +236,17 @@ func EnsureHydraSecret() (string, error) {
 	}
 
 	data, err := os.ReadFile(path)
-	if err == nil {
-		secret := string(data)
-		if len(secret) > 0 {
-			return secret, nil
-		}
+	switch {
+	case err == nil && len(data) > 0:
+		return string(data), nil
+	case err == nil:
+		// empty file — fall through and regenerate
+	case errors.Is(err, os.ErrNotExist):
+		// first run — fall through and regenerate
+	default:
+		return "", fmt.Errorf("read hydra secret %q: %w", path, err)
 	}
 
-	// Generate 32 random bytes, hex-encode to 64-char string.
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("generate hydra secret: %w", err)
@@ -262,10 +271,9 @@ func ensureCA() error {
 		return err
 	}
 
-	// Check if both files exist.
 	if _, err := os.Stat(certPath); err == nil {
 		if _, err := os.Stat(keyPath); err == nil {
-			return nil // both exist
+			return nil
 		}
 	}
 
@@ -370,10 +378,9 @@ func ensureSigningKey() error {
 		return err
 	}
 
-	// Check if key already exists.
 	if _, err := os.Stat(keyPath); err == nil {
 		if _, err := os.Stat(jwkPath); err == nil {
-			return nil // both exist
+			return nil
 		}
 		// Key exists but JWK missing — regenerate JWK from key.
 		key, err := loadECDSAKey(keyPath)
@@ -383,7 +390,6 @@ func ensureSigningKey() error {
 		return writeJWK(jwkPath, &key.PublicKey)
 	}
 
-	// Generate fresh key pair.
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("generate: %w", err)
@@ -419,14 +425,12 @@ func ensureServerCert() error {
 		return err
 	}
 
-	// Check if both files exist.
 	if _, err := os.Stat(certPath); err == nil {
 		if _, err := os.Stat(keyPath); err == nil {
-			return nil // both exist
+			return nil
 		}
 	}
 
-	// Load the CLI CA to sign the server cert.
 	caCert, caKey, err := loadCA()
 	if err != nil {
 		return fmt.Errorf("load CA for signing: %w", err)
@@ -458,7 +462,7 @@ func ensureServerCert() error {
 		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
 	}
 
-	// Sign with CLI CA — not self-signed.
+	// CA-signed, not self-signed.
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
 	if err != nil {
 		return fmt.Errorf("sign cert: %w", err)
@@ -485,14 +489,12 @@ func ensureClientCert() error {
 		return err
 	}
 
-	// Check if both files exist.
 	if _, err := os.Stat(certPath); err == nil {
 		if _, err := os.Stat(keyPath); err == nil {
-			return nil // both exist
+			return nil
 		}
 	}
 
-	// Load the CLI CA to sign the client cert.
 	caCert, caKey, err := loadCA()
 	if err != nil {
 		return fmt.Errorf("load CA for signing: %w", err)
@@ -521,7 +523,7 @@ func ensureClientCert() error {
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 
-	// Sign with CLI CA — not self-signed.
+	// CA-signed, not self-signed.
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
 	if err != nil {
 		return fmt.Errorf("sign cert: %w", err)
@@ -557,9 +559,15 @@ func loadECDSAKey(path string) (*ecdsa.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	block, _ := pem.Decode(data)
+	block, rest := pem.Decode(data)
 	if block == nil {
 		return nil, fmt.Errorf("decode %s: no PEM block", path)
+	}
+	// Reject trailing content after the first block: these files are
+	// single-key PEMs and a non-empty rest signals corruption / wrong
+	// file format. Whitespace is fine.
+	if len(bytes.TrimSpace(rest)) > 0 {
+		return nil, fmt.Errorf("decode %s: trailing bytes after PEM block", path)
 	}
 	return x509.ParseECPrivateKey(block.Bytes)
 }

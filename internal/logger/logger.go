@@ -155,9 +155,12 @@ func New(opts Options) (*Logger, error) {
 		fallbackZL := zerolog.New(fw)
 		provider, err := newOtelProvider(opts.Otel, fallbackZL)
 		if err != nil {
-			// Non-fatal: log the failure (to file) and continue
-			// without OTEL.
+			// Non-fatal: continue file-only. Surface the warning to BOTH
+			// the file logger AND stderr — if the file writer is also
+			// broken the user would otherwise have no signal that
+			// logging is degraded.
 			fallbackZL.Warn().Err(err).Msg("OTEL bridge unavailable, continuing file-only")
+			fmt.Fprintf(os.Stderr, "warning: OTEL bridge unavailable, continuing file-only: %v\n", err)
 		} else {
 			l.provider = provider
 			otelW := newOtelLogWriter(provider.Logger("clawker"))

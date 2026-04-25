@@ -3,10 +3,12 @@ package logger
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/log"
 )
 
@@ -68,8 +70,11 @@ func (w *otelLogWriter) Write(p []byte) (int, error) {
 	}()
 
 	if err := json.Unmarshal(p, &fields); err != nil {
-		// Malformed line — drop. zerolog produced bad JSON would be
-		// the bug to chase, not a runtime concern here.
+		// Malformed line — drop and route via the OTEL SDK error
+		// handler (wired in newOtelProvider) so the failure surfaces in
+		// the file logger instead of vanishing. Return len(p), nil so
+		// zerolog never sees a partial-write situation.
+		otel.Handle(fmt.Errorf("otelLogWriter: malformed JSON record: %w", err))
 		return len(p), nil
 	}
 
@@ -172,6 +177,8 @@ func anyToOTELValue(v any) log.Value {
 		// be projected as a typed attribute.
 		if b, err := json.Marshal(tv); err == nil {
 			return log.StringValue(string(b))
+		} else {
+			otel.Handle(fmt.Errorf("otelLogWriter: cannot encode attribute (%T): %w", tv, err))
 		}
 		return log.StringValue("")
 	}
