@@ -286,6 +286,123 @@ func TestAdminMethodScopes_CoversAllRPCs(t *testing.T) {
 		"AdminMethodScopes() count (%d) must equal proto RPC count (%d)", len(scopes), len(protoMethods))
 }
 
+// --- RequireClientID (agent-listener pin) ---
+//
+// The agent gRPC listener pins its AuthInterceptor to
+// consts.ClientIDAgent so a token whose scope is correct but whose
+// client_id is not the agent's still fails closed. These tests don't
+// boot the agent service (no AgentService stub here) — they exercise
+// the interceptor against the AdminService surface with a synthetic
+// scope→client_id mismatch, which is sufficient to lock the behavior
+// at the interceptor boundary.
+
+func TestAuthInterceptor_RequireClientID_Mismatch_Denied(t *testing.T) {
+	// Token has the right scope ("admin") but a client_id the
+	// interceptor doesn't accept. Must be denied with PermissionDenied
+	// — same generic error code/message as the missing-scope path so
+	// callers can't tell which check failed.
+	introspector := &cpmocks.IntrospectorMock{
+		IntrospectFunc: func(_ context.Context, _, _ string) (*controlplane.IntrospectionResult, error) {
+			return &controlplane.IntrospectionResult{
+				Active:   true,
+				Scope:    "admin",
+				ClientID: "some-other-client",
+				Sub:      "some-other-client",
+			}, nil
+		},
+	}
+
+	log := logger.Nop()
+	interceptor := controlplane.
+		NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log).
+		RequireClientID("clawker-cli")
+
+	srv := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
+		grpc.ChainStreamInterceptor(interceptor.StreamInterceptor()),
+	)
+	queue := cpfw.NewActionQueue(log)
+	t.Cleanup(func() { _ = queue.Close() })
+	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+		EBPF:     noopEBPF(),
+		Resolver: nopContainerResolver,
+		Log:      log,
+		Queue:    queue,
+	})
+	adminv1.RegisterAdminServiceServer(srv, handler)
+
+	lis := bufconnListen(t)
+	go func() { srv.Serve(lis) }() //nolint:errcheck
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient(
+		"passthrough:///bufconn",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(bufconnDialer(lis)),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	client := adminv1.NewAdminServiceClient(conn)
+	ctx := withBearer(context.Background(), "wrong-client-token")
+	_, err = client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err),
+		"client_id mismatch must be denied even with correct scope")
+}
+
+func TestAuthInterceptor_RequireClientID_Match_Allowed(t *testing.T) {
+	// Same setup, but the token's client_id matches — request goes
+	// through. Anchors the positive path so a future regression that
+	// over-rejects (e.g. compares the wrong field) is caught.
+	introspector := &cpmocks.IntrospectorMock{
+		IntrospectFunc: func(_ context.Context, _, _ string) (*controlplane.IntrospectionResult, error) {
+			return &controlplane.IntrospectionResult{
+				Active:   true,
+				Scope:    "admin",
+				ClientID: "clawker-cli",
+				Sub:      "clawker-cli",
+			}, nil
+		},
+	}
+
+	log := logger.Nop()
+	interceptor := controlplane.
+		NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log).
+		RequireClientID("clawker-cli")
+
+	srv := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
+		grpc.ChainStreamInterceptor(interceptor.StreamInterceptor()),
+	)
+	queue := cpfw.NewActionQueue(log)
+	t.Cleanup(func() { _ = queue.Close() })
+	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+		EBPF:     noopEBPF(),
+		Resolver: nopContainerResolver,
+		Log:      log,
+		Queue:    queue,
+	})
+	adminv1.RegisterAdminServiceServer(srv, handler)
+
+	lis := bufconnListen(t)
+	go func() { srv.Serve(lis) }() //nolint:errcheck
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient(
+		"passthrough:///bufconn",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(bufconnDialer(lis)),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	client := adminv1.NewAdminServiceClient(conn)
+	ctx := withBearer(context.Background(), "right-client-token")
+	_, err = client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
+	require.NoError(t, err)
+}
+
 // --- Helpers ---
 
 func withBearer(ctx context.Context, token string) context.Context {

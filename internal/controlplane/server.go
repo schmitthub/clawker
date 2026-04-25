@@ -20,6 +20,13 @@ import (
 // UnimplementedAdminServiceServer so new RPCs default to
 // codes.Unimplemented; explicit methods on adminServer (e.g.
 // ListAgents) override that fallback.
+//
+// TODO(B4-followup): wire AdminService.AnnounceAgent here.
+// Currently falls through to UnimplementedAdminServiceServer →
+// codes.Unimplemented, so the CLI's shared.AnnounceAgent helper fails
+// at runtime until the followup branch lands. See
+// .serena/memories/cp-initiative-branch-4-followup-cli-integration.md
+// for the design (handler reserves a slot via agentslots.Registry).
 type adminServer struct {
 	// *fwhandler.Handler embeds adminv1.UnimplementedAdminServiceServer,
 	// so new proto RPCs fail open with codes.Unimplemented via promotion

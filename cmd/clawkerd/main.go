@@ -1,9 +1,10 @@
-// Command clawkerd is the per-container agent daemon. It runs as PID 0
-// in every clawker-managed container, completes the registration
-// handshake with the control plane on the agent gRPC listener, and then
-// idles until SIGTERM. Branch 4 ships only the Register call — no
-// heartbeat, no command receiver — because the CP knows liveness via
-// Docker events + mTLS connection state.
+// Command clawkerd is the per-container agent daemon. It runs as a
+// backgrounded child of the container entrypoint shell (started by
+// internal/bundler/assets/entrypoint.sh after firewall healthz passes),
+// completes the registration handshake with the control plane on the
+// agent gRPC listener, and then idles until SIGTERM. Branch 4 ships
+// only the Register call — no heartbeat, no command receiver — because
+// the CP knows liveness via Docker events + mTLS connection state.
 //
 // Boot sequence:
 //
@@ -114,7 +115,14 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("dial CP agent listener: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		// Match the rest of clawkerd's logging style — stderr only, no
+		// zerolog. Close failures are informational at exit but useful
+		// for debugging stuck FD leaks across rapid container churn.
+		if cerr := conn.Close(); cerr != nil {
+			fmt.Fprintf(os.Stderr, "clawkerd: warning: closing CP agent connection: %v\n", cerr)
+		}
+	}()
 
 	agentClient := agentv1.NewAgentServiceClient(conn)
 

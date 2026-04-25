@@ -319,7 +319,16 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	hydraIntrospectURL := fmt.Sprintf("https://127.0.0.1:%d/admin/oauth2/introspect", cp.HydraAdminPort)
 	introspector := controlplane.NewHydraIntrospector(hydraIntrospectURL, caTLS)
 	authInterceptor := controlplane.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
-	agentInterceptor := controlplane.NewAuthInterceptor(introspector, controlplane.AgentMethodScopes(), log)
+	// Pin the agent interceptor to consts.ClientIDAgent — defense in
+	// depth on top of the agent:self:register scope. Today only the
+	// clawker-agent Hydra client is registered with that scope, so the
+	// pin only fires if a future Hydra misconfiguration grants the
+	// scope to another client. The admin interceptor stays unpinned —
+	// the CLI is the only client that holds the admin scope and we
+	// don't want to accidentally lock out a future second admin client.
+	agentInterceptor := controlplane.
+		NewAuthInterceptor(introspector, controlplane.AgentMethodScopes(), log).
+		RequireClientID(consts.ClientIDAgent)
 
 	grpcServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
@@ -336,7 +345,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// drain-to-zero callback below so a single on-exit defer here is
 	// sufficient as a belt-and-braces against non-drain exit paths.
 	actionQueue := fwhandler.NewActionQueue(log)
-	defer func() { _ = actionQueue.Close() }()
+	defer func() {
+		if err := actionQueue.Close(); err != nil {
+			log.Warn().Err(err).Msg("actionQueue close failed")
+		}
+	}()
 	// listAgentIDs enumerates every running managed agent container ID.
 	// Handler's FirewallInit uses this to re-enroll per-container BPF
 	// enforcement after a CP restart — FlushAll wiped container_map on
@@ -440,7 +453,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	go func() {
 		log.Info().Int("port", cp.HealthPort).Msg("healthz serving")
-		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveFailed <- fmt.Errorf("healthz serve: %w", err)
 		}
 	}()
@@ -574,7 +587,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		// Errors are aggregated so a broken drain exits non-zero and the
 		// on-failure restart policy retriggers investigation rather than
 		// silently blessing partial teardown.
-		_ = actionQueue.Close()
+		if err := actionQueue.Close(); err != nil {
+			log.Warn().Err(err).Msg("actionQueue close failed")
+		}
 		grpcServer.GracefulStop()
 		handler.CancelAllBypassTimers()
 		var errs []error
