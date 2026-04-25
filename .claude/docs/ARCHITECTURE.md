@@ -35,6 +35,8 @@
   moby/moby (Docker SDK)
 ```
 
+> **CP ≠ firewall — common LLM confusion.** The "Security Subsystem" column above contains both `controlplane/` (CP daemon — **unconditional**: auth, AdminService, AgentService, agent slot/registry, mTLS, owns clawker-net) and `controlplane/firewall/` (**one optional subsystem CP manages**, toggled by `security.firewall.enable`). They are not the same. Disabling firewall does NOT disable CP, AdminService, AgentService, AnnounceAgent, clawkerd Register, ListAgents, or any non-firewall AdminService RPC. CP owns firewall, not vice versa. Don't gate non-firewall behavior on the firewall flag.
+
 ## Factory Dependency Injection (gh CLI Pattern)
 
 Clawker follows the GitHub CLI's three-layer Factory pattern for dependency injection:

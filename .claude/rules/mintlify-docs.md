@@ -1,6 +1,6 @@
 ---
 description: Mintlify documentation site conventions
-paths: ["docs/**"]
+paths: ["./docs/**"]
 ---
 
 # Mintlify Documentation Site (docs.clawker.dev)

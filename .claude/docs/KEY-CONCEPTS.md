@@ -2,6 +2,8 @@
 
 > Type and abstraction index for the clawker codebase. Use this when you need a one-line reminder of what a named type does and which package owns it. For the full API of any symbol, read the package-specific `internal/<pkg>/CLAUDE.md` — they're lazy-loaded on demand.
 
+> **CP ≠ firewall.** Common LLM confusion. CP is unconditional infrastructure (auth, gRPC AdminService + AgentService, agent slot/registry bookkeeping, mTLS, owns clawker-net). The firewall is one optional subsystem CP manages (Envoy + CoreDNS + eBPF egress enforcement), toggled by `security.firewall.enable`. Disabling firewall does NOT disable CP, AnnounceAgent, clawkerd Register, ListAgents, or any non-firewall AdminService RPC. Don't gate non-firewall behavior on the firewall flag.
+
 | Abstraction | Purpose |
 |-------------|---------|
 | `Factory` | Slim DI struct with eager IO/TUI/version fields and lazy noun closures (`Config`, `Logger`, `Client`, `ProjectManager`, `GitManager`, etc.); constructor in `internal/cmd/factory` |

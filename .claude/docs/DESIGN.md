@@ -8,6 +8,17 @@ Clawker is a Go CLI tool that wraps the Claude Code agent in secure, reproducibl
 - `internal/storage/CLAUDE.md` — storage package API, node tree architecture, merge/write internals.
 - `internal/config/CLAUDE.md` — config package contracts, persistence model, and test helpers.
 
+## 0. Common Confusion: CP ≠ Firewall
+
+The Control Plane (CP) and the firewall are NOT the same thing. LLM sessions repeatedly conflate them — see project-root `CLAUDE.md` for the full callout. Summary:
+
+- **CP** = unconditional auth + gRPC infrastructure (AdminService, AgentService, agent slot/registry bookkeeping, mTLS, owns clawker-net). Always running whenever any clawker container exists. Boots via `cpboot.EnsureRunning`. There is no "disable CP" flag.
+- **Firewall** = one optional subsystem CP manages (Envoy + CoreDNS + eBPF egress enforcement). Toggled by `security.firewall.enable`.
+- Disabling firewall does NOT disable CP, clawker-net, mTLS, AnnounceAgent, clawkerd Register, ListAgents, or any non-firewall AdminService RPC.
+- **CP owns firewall**, not vice versa. Older framings that put firewall above or alongside CP are stale.
+
+Do not gate non-firewall behavior on `security.firewall.enable`.
+
 ## 1. Philosophy: "The Padded Cell"
 
 ### Core Principle
