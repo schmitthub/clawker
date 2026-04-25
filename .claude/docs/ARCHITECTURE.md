@@ -515,13 +515,18 @@ CLI-side dial shape: `internal/auth/cp_dial.go` builds two TLS configs — `toke
 
 Key packages:
 
-- `internal/controlplane` — `Server`, `Registry`, `ControlPlaneService` facade, Ory auth machinery (`authz.go`, `hydra_client.go`, `startup.go`, `ory_configs.go`, `subprocess.go`), CP container config (`cp_container.go`), host-side bootstrap (`bootstrap.go` — `EnsureRunning`/`Stop`/`CPRunning`), agent watcher (`watcher.go`), Factory-facing `Manager` noun + concrete impl (`manager.go`).
+- `internal/controlplane` — `adminServer` composition (embeds `firewall.Handler` + explicit `ListAgents`), Ory auth machinery (`authz.go`, `hydra_client.go`, `startup.go`, `ory_configs.go`, `subprocess.go`), `AgentMethodScopes` for the agent listener, `AgentWatcher`. Per-listener `AuthInterceptor` instances.
 - `internal/controlplane/firewall` — firewall domain handler + Stack + rules store + Envoy/CoreDNS config + certs. See `internal/controlplane/firewall/CLAUDE.md`.
 - `internal/controlplane/firewall/ebpf` — BPF loader + manager + bpf2go bindings. See `internal/controlplane/firewall/ebpf/CLAUDE.md`.
 - `internal/controlplane/firewall/ebpf/cmd` — break-glass `ebpf-manager` CLI bundled alongside `clawker-cp` in the container image.
-- `internal/clawkerd/protocol/v1` — protobuf definitions for future clawkerd agents (`agent.proto`).
+- `internal/controlplane/agent` — `agent.Handler` (`AgentService.Register` with five identity-binding cross-checks). See `internal/controlplane/agent/CLAUDE.md`.
+- `internal/controlplane/agentslots` — short-lived registration slots reserved by `AnnounceAgent` and consumed by `Register` (constant-time PKCE, mismatch preserves slot for benign retry, sync.Once Stop).
+- `internal/controlplane/agentregistry` — registered-agent registry keyed by SHA-256 cert thumbprint with `dockerevents` subscription for eviction.
+- `internal/clawkerd` — `//go:embed assets/clawkerd` exports the per-container daemon binary; bundler drops it into every per-project image at `/usr/local/bin/clawkerd`.
+- `cmd/clawkerd` — per-container agent daemon. Boot sequence in `cmd/clawkerd/CLAUDE.md`.
 - `api/admin/v1` — AdminService proto + method-scope registration (`AdminMethodScopes`, covered by `TestAdminMethodScopes_CoversAllRPCs`).
-- `cmd/clawker-cp/main.go` — daemon entry point. Wires Stack + `firewall.Handler` + `AgentWatcher` + drain callback.
+- `api/agent/v1` — AgentService proto (`Register` only in B4); method-scope map at `internal/controlplane/agent_method_scopes.go`.
+- `cmd/clawker-cp/main.go` — daemon entry point. Wires Stack + `firewall.Handler` + `AgentWatcher` + drain callback + admin listener + agent listener + agent handler + dockerevents subscription.
 
 ## Command Dependency Injection Pattern
 

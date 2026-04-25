@@ -25,7 +25,7 @@
 | Task 11: clawkerd binary | `complete` | claude |
 | Task 12: Bundler + entrypoint integration | `complete` | claude |
 | Task 13: E2E tests | `complete` | claude |
-| Task 14: Documentation update | `pending` | — |
+| Task 14: Documentation update | `complete` | claude |
 
 ## Key Learnings
 
@@ -58,6 +58,13 @@
 - Both clients use the SAME JWK (the CLI's signing key — the CP container's bind-mounted public half). Distinct `client_id` + scope keeps the AuthZ surface clean even though the signing material is shared. This is a deliberate property: the CLI signs both `clawker-cli` and `clawker-agent` assertions with one key, but Hydra issues separate tokens with separate scopes.
 - `cmd/clawker-cp/main.go` Step 5 now registers both clients sequentially. Both calls are idempotent on 409 so safe across CP restarts and ordering doesn't matter.
 - Tightened the success path to 201 Created only — the previous CLI code accepted 200 OK too, which would have masked a misconfigured proxy returning 200 with an empty body as a registered-client success.
+
+### Task 14
+- Updated `.claude/docs/KEY-CONCEPTS.md` with one-liners for `agentslots.Registry`, `agentregistry.Registry`, `agent.Handler`, `auth.MintAgentCert`, `auth.BuildAgentAssertion`, the `shared.AgentBootstrap` family, `clawkerd.Binary`, `cmd/clawkerd`, `controlplane.AgentMethodScopes`.
+- Updated `.claude/docs/ARCHITECTURE.md` package list: dropped the deleted POC reference, added the four new B4 packages (`internal/controlplane/agent`, `agentslots`, `agentregistry`, `internal/clawkerd`, `cmd/clawkerd`, `api/agent/v1`).
+- Refreshed `.serena/memories/cp-initiative-status.md`: status moved to "Branch 4 agent work complete", Branch 4 row marked `complete (awaiting CLI wiring follow-up + host-side review on feat/clawkerd-init)`, full Branch 4 Delivery Summary with the 14 task line items, "Known follow-up before merge" section calling out the two open items (CLI command-layer wiring + harness mTLS-dial helper).
+- Per-package CLAUDE.md additions / updates: `cmd/clawkerd/CLAUDE.md`, `internal/controlplane/agent/CLAUDE.md`, `internal/controlplane/CLAUDE.md` (hydra_client.go row + Step 5 + step 8 dual-listener), `internal/auth/CLAUDE.md` (agent_cert.go + agent_assertion.go rows), `internal/cmd/container/shared/CLAUDE.md` (agent bootstrap helpers section).
+- `bash scripts/check-claude-freshness.sh`: 0 warnings across 76 docs.
 
 ### Task 13
 - Authored two E2E files: `test/e2e/clawkerd_register_test.go` (happy-path through the CLI) and `test/e2e/clawkerd_failures_test.go` (seven adversarial cases).
