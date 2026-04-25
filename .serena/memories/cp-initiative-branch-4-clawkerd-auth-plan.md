@@ -22,7 +22,7 @@
 | Task 9: AgentService handler | `complete` | claude |
 | Task 9b: AdminService.ListAgents + `clawker controlplane agents` CLI | `complete` | claude |
 | Task 10: Extend AuthInterceptor for agent listener (peer cert + agent scope map) | `complete` | claude |
-| Task 11: clawkerd binary | `pending` | — |
+| Task 11: clawkerd binary | `complete` | claude |
 | Task 12: Bundler + entrypoint integration | `pending` | — |
 | Task 13: E2E tests | `pending` | — |
 | Task 14: Documentation update | `pending` | — |
@@ -58,6 +58,14 @@
 - Both clients use the SAME JWK (the CLI's signing key — the CP container's bind-mounted public half). Distinct `client_id` + scope keeps the AuthZ surface clean even though the signing material is shared. This is a deliberate property: the CLI signs both `clawker-cli` and `clawker-agent` assertions with one key, but Hydra issues separate tokens with separate scopes.
 - `cmd/clawker-cp/main.go` Step 5 now registers both clients sequentially. Both calls are idempotent on 409 so safe across CP restarts and ordering doesn't matter.
 - Tightened the success path to 201 Created only — the previous CLI code accepted 200 OK too, which would have masked a misconfigured proxy returning 200 with an empty body as a registered-client success.
+
+### Task 11
+- clawkerd is intentionally tiny: read 5 bootstrap files → exchange CLI-signed assertion at Hydra → mTLS-dial CP → Register → idle. ~250 lines including comments. No heartbeat, no init scripts, no command receiver, no token refresh — Branch 4 ships a pure registration path; consumers add their own coverage.
+- Skipped the plan's `auth.ExchangeAssertionForToken` extraction (which the plan suggested factoring out of `internal/controlplane/adminclient/dial.go::fetchAccessToken`). clawkerd's needs are simpler than CLI's: one shot, no caching, no refresh. A 30-line inline POST is clearer than a shared helper that has to be parameterized for both call sites' divergent needs (CLI builds the assertion in-process; clawkerd reads it from disk).
+- `bearerInterceptor(token)` lives in its own tiny file so the main flow reads top-down. Long-lived process holds one token for the lifetime of the connection — Register is the only RPC, no refresh wired.
+- Verifier is deleted on Register success; cert/key/CA/assertion stay on disk so any future redial has the material. The container's writable layer dies with `--rm` or `docker rm`.
+- gocritic flagged `os.Exit(1)` in `defer stop()` blocks — restructured `main` to capture exit code, call `stop()` explicitly, then `os.Exit`. Subtle but real: `signal.NotifyContext`'s deferred stop must run before the OS exits the process to release the SIGTERM channel.
+- `make docs` + `make licenses` had to be re-run because the Hydra token URL constant added to Makefile-tracked source paths nudged the auto-generated artifacts; pre-commit's freshness checks then passed.
 
 ### Task 10
 - Existing `controlplane.AuthInterceptor` is generic over its `methodScopes` map — no struct extension needed. Created a parallel `AgentMethodScopes()` and instantiated a second `AuthInterceptor` with that map; both interceptors share one Hydra introspector instance.
