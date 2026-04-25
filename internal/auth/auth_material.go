@@ -683,10 +683,10 @@ func ensureOtelServerCert() error {
 	if err := writeCert(certPath, certDER); err != nil {
 		return fmt.Errorf("write cert: %w", err)
 	}
-	// Loosen perms on the server key so the otel-collector container's
-	// uid (varies by image) can read it. The directory still requires
-	// host-side privilege to enter; this matches how server.key under
-	// auth/tls is treated for Hydra.
+	// Loosen file perms so the otel-collector container's uid (varies
+	// by image) can read after bind-mount. Defense-in-depth against
+	// other local users comes from the auth/ tree being 0o700 — see
+	// consts.EnsureAuthDirs and TestRotateAuthMaterial_Permissions.
 	if err := writeECDSAKey(keyPath, key, 0o644); err != nil {
 		return fmt.Errorf("write key: %w", err)
 	}
@@ -745,10 +745,10 @@ func ensureCPOtelClientCert() error {
 	if err := writeCert(certPath, certDER); err != nil {
 		return fmt.Errorf("write cert: %w", err)
 	}
-	// Loosen perms on the client key so the CP container's runtime uid
-	// (claude, 1001) can read after bind-mount. Same justification as
-	// the server key above.
-	if err := writeECDSAKey(keyPath, key, 0o644); err != nil {
+	// Tight perms: the CP container runs as root (no USER directive on
+	// distroless/static, no Config.User in BuildCPContainerConfig), so
+	// a 0o600 host file is readable in-container without loosening.
+	if err := writeECDSAKey(keyPath, key, 0o600); err != nil {
 		return fmt.Errorf("write key: %w", err)
 	}
 	return nil

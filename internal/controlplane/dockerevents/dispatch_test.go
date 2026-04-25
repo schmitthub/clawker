@@ -1,7 +1,9 @@
 package dockerevents
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,9 +11,11 @@ import (
 
 	"github.com/moby/moby/api/types/events"
 	mobyclient "github.com/moby/moby/client"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/controlplane/informer"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 const (
@@ -522,4 +526,78 @@ func TestContainerLifecycleFromAction(t *testing.T) {
 			require.Equal(t, c.expect, containerLifecycleFromAction(c.in))
 		})
 	}
+}
+
+// TestLogEventReceived_ActorAttributesSchema pins the structured-log
+// contract for Actor.Attributes. The dispatch.go contract promises
+// `actor_attr.<k>` per-key fields plus an `actor_attributes` JSON
+// aggregate. Operators rely on these names — renaming breaks Loki
+// queries.
+func TestLogEventReceived_ActorAttributesSchema(t *testing.T) {
+	var buf bytes.Buffer
+	inf := informer.New(informer.Options{})
+	require.NoError(t, inf.Start(context.Background()))
+	t.Cleanup(func() { _ = inf.Close() })
+
+	f, err := New(stubClient{}, inf, Options{
+		ManagedLabelKey:   testManagedKey,
+		ManagedLabelValue: testManagedValue,
+		Logger:            logger.NewWriter(&buf),
+	})
+	require.NoError(t, err)
+
+	f.logEventReceived(events.Message{
+		Type:   events.ContainerEventType,
+		Action: events.ActionStart,
+		Actor: events.Actor{
+			ID: "abcdef0123456789",
+			Attributes: map[string]string{
+				"image": "alpine:3",
+				"name":  "demo",
+			},
+		},
+	})
+
+	var line map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &line))
+
+	assert.Equal(t, "alpine:3", line["actor_attr.image"], "per-key field must be actor_attr.<k>")
+	assert.Equal(t, "demo", line["actor_attr.name"], "per-key field must be actor_attr.<k>")
+	_, hasOldPrefix := line["attr.image"]
+	assert.False(t, hasOldPrefix, "stale attr.<k> prefix must not appear")
+
+	agg, ok := line["actor_attributes"].(map[string]any)
+	require.True(t, ok, "actor_attributes must be a JSON object: got %T", line["actor_attributes"])
+	assert.Equal(t, "alpine:3", agg["image"])
+	assert.Equal(t, "demo", agg["name"])
+}
+
+// TestLogEventReceived_NoAttributes_OmitsAggregate ensures the
+// actor_attributes JSON aggregate is only emitted when there is at
+// least one attribute, so events with empty actor maps do not produce
+// noisy `actor_attributes={}` lines.
+func TestLogEventReceived_NoAttributes_OmitsAggregate(t *testing.T) {
+	var buf bytes.Buffer
+	inf := informer.New(informer.Options{})
+	require.NoError(t, inf.Start(context.Background()))
+	t.Cleanup(func() { _ = inf.Close() })
+
+	f, err := New(stubClient{}, inf, Options{
+		ManagedLabelKey:   testManagedKey,
+		ManagedLabelValue: testManagedValue,
+		Logger:            logger.NewWriter(&buf),
+	})
+	require.NoError(t, err)
+
+	f.logEventReceived(events.Message{
+		Type:   events.ContainerEventType,
+		Action: events.ActionStart,
+		Actor:  events.Actor{ID: "abcdef0123456789"},
+	})
+
+	var line map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &line))
+
+	_, hasAgg := line["actor_attributes"]
+	assert.False(t, hasAgg, "actor_attributes must be omitted when Attributes is empty")
 }

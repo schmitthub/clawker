@@ -99,13 +99,39 @@ func TestRotateAuthMaterial_Permissions(t *testing.T) {
 	require.NoError(t, RotateAuthMaterial(true))
 
 	assertKeyPerms(t)
+	assertAuthDirPerms(t)
+}
+
+// assertAuthDirPerms pins the auth directory tree to 0o700 — the looser
+// 0o644 OTEL keys depend on the parent dir being unreachable to other
+// local users for defense-in-depth on Linux hosts where $XDG_DATA_HOME
+// (e.g., ~/.local/share) defaults to 0o755.
+func assertAuthDirPerms(t *testing.T) {
+	t.Helper()
+	const dirMode = os.FileMode(0o700)
+	for _, c := range []struct {
+		name   string
+		pathFn func() (string, error)
+	}{
+		{"auth/ca", consts.AuthCADir},
+		{"auth/cli", consts.AuthCLIDir},
+		{"auth/tls", consts.AuthTLSDir},
+		{"auth/otel", consts.AuthOtelDir},
+	} {
+		p, err := c.pathFn()
+		require.NoError(t, err)
+		info, statErr := os.Stat(p)
+		require.NoError(t, statErr, "stat %s", c.name)
+		assert.Equal(t, dirMode, info.Mode().Perm(), "%s (%s) must be %o", c.name, p, dirMode)
+	}
 }
 
 // assertKeyPerms pins the perm contract for every private key auth
-// material file. Host-only keys must be 0o600; the OTEL pair is
-// intentionally 0o644 because the otel-collector container runs under
-// a uid that varies by image and needs to read them after bind-mount.
-// The directory still requires host-side privilege to enter.
+// material file. Host-only keys must be 0o600; the OTEL server key is
+// 0o644 because the otel-collector container runs under a uid that
+// varies by image and needs to read it after bind-mount. The CP OTEL
+// client key stays 0o600 — the CP container runs as root and reads it
+// fine. Defense-in-depth: the auth/ tree is 0o700 (assertAuthDirPerms).
 func assertKeyPerms(t *testing.T) {
 	t.Helper()
 	const tightMode = os.FileMode(0o600)
@@ -120,7 +146,7 @@ func assertKeyPerms(t *testing.T) {
 		{"server key", consts.AuthServerKeyPath, tightMode},
 		{"client key", consts.AuthCLIClientKeyPath, tightMode},
 		{"otel server key", consts.AuthOtelServerKeyPath, otelMode},
-		{"cp otel client key", consts.AuthCPOtelClientKeyPath, otelMode},
+		{"cp otel client key", consts.AuthCPOtelClientKeyPath, tightMode},
 	} {
 		p, err := c.pathFn()
 		require.NoError(t, err)

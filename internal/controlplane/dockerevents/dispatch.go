@@ -2,6 +2,7 @@ package dockerevents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -52,9 +53,10 @@ func (f *Feeder) dispatch(ctx context.Context, ev events.Message) {
 }
 
 // logEventReceived dumps the full Docker event payload as structured
-// fields. Actor.Attributes is folded out as a JSON-encoded string
-// field plus an `actor_attr.<k>` field per entry so operators can
-// filter on individual attribute keys in Loki without a JSON parser.
+// fields. Actor.Attributes is folded out two ways: as an
+// `actor_attributes` JSON-encoded aggregate for full-fidelity replay,
+// plus one `actor_attr.<k>` field per entry so operators can filter on
+// individual attribute keys in Loki without a JSON parser.
 func (f *Feeder) logEventReceived(ev events.Message) {
 	e := f.log.Info().
 		Str("source", "docker").
@@ -65,7 +67,12 @@ func (f *Feeder) logEventReceived(ev events.Message) {
 		Int64("time", ev.Time).
 		Int64("time_nano", ev.TimeNano)
 	for k, v := range ev.Actor.Attributes {
-		e = e.Str("attr."+k, v)
+		e = e.Str("actor_attr."+k, v)
+	}
+	if len(ev.Actor.Attributes) > 0 {
+		if b, err := json.Marshal(ev.Actor.Attributes); err == nil {
+			e = e.RawJSON("actor_attributes", b)
+		}
 	}
 	e.Msgf("docker event received: %s/%s id=%s", ev.Type, ev.Action, short(ev.Actor.ID))
 }

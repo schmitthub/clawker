@@ -389,11 +389,19 @@ func HydraSystemSecretPath() (string, error) {
 }
 
 // EnsureAuthDirs creates the auth material directory tree. Called by
-// auth.EnsureAuthMaterial before writing files.
+// auth.EnsureAuthMaterial before writing files. Auth directories are
+// 0o700 — defense-in-depth so private keys (and the looser-perm OTEL
+// keys readable by container uids) cannot be reached by other local
+// users via permissive home/$XDG_DATA_HOME modes.
 func EnsureAuthDirs() error {
-	for _, sub := range []string{"auth/ca", "auth/cli", "auth/tls", "auth/otel"} {
-		if err := os.MkdirAll(filepath.Join(DataDir(), sub), 0o755); err != nil {
+	dirs := []string{"auth", "auth/ca", "auth/cli", "auth/tls", "auth/otel"}
+	for _, sub := range dirs {
+		path := filepath.Join(DataDir(), sub)
+		if err := os.MkdirAll(path, 0o700); err != nil {
 			return fmt.Errorf("create %s: %w", sub, err)
+		}
+		if err := os.Chmod(path, 0o700); err != nil {
+			return fmt.Errorf("tighten %s: %w", sub, err)
 		}
 	}
 	return nil
