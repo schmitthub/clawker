@@ -21,7 +21,7 @@
 | Task 8: CP second gRPC listener on clawker-net | `complete` | claude |
 | Task 9: AgentService handler | `complete` | claude |
 | Task 9b: AdminService.ListAgents + `clawker controlplane agents` CLI | `complete` | claude |
-| Task 10: Extend AuthInterceptor for agent listener (peer cert + agent scope map) | `pending` | — |
+| Task 10: Extend AuthInterceptor for agent listener (peer cert + agent scope map) | `complete` | claude |
 | Task 11: clawkerd binary | `pending` | — |
 | Task 12: Bundler + entrypoint integration | `pending` | — |
 | Task 13: E2E tests | `pending` | — |
@@ -58,6 +58,12 @@
 - Both clients use the SAME JWK (the CLI's signing key — the CP container's bind-mounted public half). Distinct `client_id` + scope keeps the AuthZ surface clean even though the signing material is shared. This is a deliberate property: the CLI signs both `clawker-cli` and `clawker-agent` assertions with one key, but Hydra issues separate tokens with separate scopes.
 - `cmd/clawker-cp/main.go` Step 5 now registers both clients sequentially. Both calls are idempotent on 409 so safe across CP restarts and ordering doesn't matter.
 - Tightened the success path to 201 Created only — the previous CLI code accepted 200 OK too, which would have masked a misconfigured proxy returning 200 with an empty body as a registered-client success.
+
+### Task 10
+- Existing `controlplane.AuthInterceptor` is generic over its `methodScopes` map — no struct extension needed. Created a parallel `AgentMethodScopes()` and instantiated a second `AuthInterceptor` with that map; both interceptors share one Hydra introspector instance.
+- Plan called for ctx-attached peer cert + IP helpers. Skipped: Task 9's handler reads peer cert / peer addr directly from `peer.FromContext(ctx)` + `credentials.TLSInfo`. Adding ctx-key wrappers would be ceremony with no consumer — every consumer is going to need the raw `peer.FromContext` shape anyway for `tls.ConnectionState` access.
+- `AgentMethodScopes` covers `/clawker.agent.v1.AgentService/Register` only. `TestAgentMethodScopes_CoversAllRPCs` walks `AgentService_ServiceDesc` so a future RPC added without a scope entry breaks the build (mirror of the admin coverage test). `TestAgentMethodScopes_RegisterScope` locks the specific scope so an accidental widen to `admin` is caught.
+- The agent listener now has its own interceptor wired into both `ChainUnaryInterceptor` and `ChainStreamInterceptor`. Cross-listener method names fail closed because each interceptor only knows its own listener's scope map.
 
 ### Task 9b
 - AdminService.ListAgents lives on `controlplane.adminServer` directly (an explicit method on the composite, not delegated through method-promotion). Embedding two handlers that both surface a method via `UnimplementedAdminServiceServer` would create method-set ambiguity at compile time, so explicit override is correct.

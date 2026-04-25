@@ -312,10 +312,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		MinVersion:   tls.VersionTLS13,
 	}
 
-	// Auth interceptor: validates bearer tokens via Hydra introspection.
+	// Auth interceptors: one per listener so each enforces its own
+	// method-scope vocabulary. Both share a single Hydra introspector —
+	// tokens are checked against the same Hydra instance regardless of
+	// which listener received them.
 	hydraIntrospectURL := fmt.Sprintf("https://127.0.0.1:%d/admin/oauth2/introspect", cp.HydraAdminPort)
 	introspector := controlplane.NewHydraIntrospector(hydraIntrospectURL, caTLS)
 	authInterceptor := controlplane.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
+	agentInterceptor := controlplane.NewAuthInterceptor(introspector, controlplane.AgentMethodScopes(), log)
 
 	grpcServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
@@ -376,12 +380,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 
 	// Agent listener — bound to clawker-net only (NOT host-published).
-	// Same mTLS material as the admin listener: server cert + CLI CA pool
-	// for client cert verification. The AuthInterceptor here is currently
-	// a placeholder pinned to AdminMethodScopes; the agent-specific scope
-	// map (and per-listener peer-cert context propagation) lands with
-	// Task 10. The AgentService handler binding lands with Task 9 — this
-	// listener serves nothing yet, every RPC returns Unimplemented.
+	// Same mTLS material as the admin listener (server cert + CLI CA
+	// pool); the per-listener AuthInterceptor enforces the agent-side
+	// method-scope vocabulary so admin and agent surfaces fail closed
+	// on cross-listener method names.
 	agentTLSCfg := &tls.Config{
 		Certificates: []tls.Certificate{serverCert},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
@@ -390,8 +392,8 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	agentServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(agentTLSCfg)),
-		grpc.ChainUnaryInterceptor(authInterceptor.UnaryInterceptor()),
-		grpc.ChainStreamInterceptor(authInterceptor.StreamInterceptor()),
+		grpc.ChainUnaryInterceptor(agentInterceptor.UnaryInterceptor()),
+		grpc.ChainStreamInterceptor(agentInterceptor.StreamInterceptor()),
 	)
 	agentLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AgentPort))
 	if err != nil {
