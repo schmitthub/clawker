@@ -492,7 +492,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// registered agents when their containers die/destroy. Subscribe
 	// runs through the informer so the same drain that closes the
 	// informer also tears this down cleanly.
-	cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, inf)
+	cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, inf, log.With("component", "agentregistry"))
 	defer cancelAgentSub()
 	feederDone := make(chan struct{})
 	go func() {

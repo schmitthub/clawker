@@ -1,7 +1,11 @@
 package agentregistry
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,6 +14,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	"github.com/schmitthub/clawker/internal/controlplane/informer"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // liveInformer constructs and starts an informer with deterministic
@@ -29,9 +34,9 @@ func liveInformer(t *testing.T) informer.Interface {
 func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
 	inf := liveInformer(t)
 	r := NewRegistry(nil)
-	r.Add(Entry{AgentName: "clawker.x", ContainerID: "ctr-evict", Thumbprint: tp("cert")})
+	r.Add(Entry{AgentName: "clawker.x", ContainerID: "ctr-evict", Thumbprint: tp("cert"), RegisteredAt: time.Now()})
 
-	cancel := Subscribe(context.Background(), r, inf)
+	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
 	t.Cleanup(cancel)
 
 	now := time.Now()
@@ -52,9 +57,9 @@ func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
 func TestSubscribe_EvictsOnContainerStopped(t *testing.T) {
 	inf := liveInformer(t)
 	r := NewRegistry(nil)
-	r.Add(Entry{AgentName: "clawker.y", ContainerID: "ctr-stopped", Thumbprint: tp("cert-y")})
+	r.Add(Entry{AgentName: "clawker.y", ContainerID: "ctr-stopped", Thumbprint: tp("cert-y"), RegisteredAt: time.Now()})
 
-	cancel := Subscribe(context.Background(), r, inf)
+	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
 	t.Cleanup(cancel)
 
 	now := time.Now()
@@ -83,9 +88,9 @@ func TestSubscribe_DoesNotEvictOnPaused(t *testing.T) {
 	// must NOT evict on paused.
 	inf := liveInformer(t)
 	r := NewRegistry(nil)
-	r.Add(Entry{AgentName: "clawker.z", ContainerID: "ctr-paused", Thumbprint: tp("cert-z")})
+	r.Add(Entry{AgentName: "clawker.z", ContainerID: "ctr-paused", Thumbprint: tp("cert-z"), RegisteredAt: time.Now()})
 
-	cancel := Subscribe(context.Background(), r, inf)
+	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
 	t.Cleanup(cancel)
 
 	now := time.Now()
@@ -112,7 +117,7 @@ func TestSubscribe_DoesNotEvictOnPaused(t *testing.T) {
 func TestSubscribe_CancelStopsConsumer(t *testing.T) {
 	inf := liveInformer(t)
 	r := NewRegistry(nil)
-	cancel := Subscribe(context.Background(), r, inf)
+	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
 
 	done := make(chan struct{})
 	go func() {
@@ -124,6 +129,107 @@ func TestSubscribe_CancelStopsConsumer(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("cancel did not return; consumer goroutine likely leaked")
 	}
+}
+
+// panicOnceRegistry is a Registry test double whose EvictByContainerID
+// panics on its first call and then delegates to a real Registry for
+// every subsequent call. It exists so TestSubscribe_RecoversFromHookPanic
+// can prove (a) a panic in EvictByContainerID does not kill the consumer
+// goroutine, (b) the recover is logged, and (c) the next delta still
+// reaches a working Registry. We cannot register a panicking variant
+// directly on registryImpl without touching registry.go (Agent A's
+// lane), so we wrap the Registry interface here.
+type panicOnceRegistry struct {
+	calls    atomic.Int32
+	panicked atomic.Bool
+	delegate Registry
+}
+
+func (p *panicOnceRegistry) Add(e Entry)                                { p.delegate.Add(e) }
+func (p *panicOnceRegistry) Lookup(t [sha256.Size]byte) (*Entry, error) { return p.delegate.Lookup(t) }
+func (p *panicOnceRegistry) Touch(t [sha256.Size]byte)                  { p.delegate.Touch(t) }
+func (p *panicOnceRegistry) Snapshot() []Entry                          { return p.delegate.Snapshot() }
+func (p *panicOnceRegistry) EvictByContainerID(id string) {
+	p.calls.Add(1)
+	if p.panicked.CompareAndSwap(false, true) {
+		panic("synthetic eviction-hook panic")
+	}
+	p.delegate.EvictByContainerID(id)
+}
+
+func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
+	// A panic in EvictByContainerID must not kill the consumer
+	// goroutine — otherwise registered agents' Thumbprint entries
+	// would keep authorizing per-agent RPCs after their containers
+	// are gone, the very leak this regression guards against.
+	inf := liveInformer(t)
+
+	var buf bytes.Buffer
+	bufLog := logger.NewWriter(&buf)
+
+	delegate := NewRegistry(nil)
+	delegate.Add(Entry{AgentName: "clawker.first", ContainerID: "ctr-first", Thumbprint: tp("cert-first"), RegisteredAt: time.Now()})
+	delegate.Add(Entry{AgentName: "clawker.second", ContainerID: "ctr-second", Thumbprint: tp("cert-second"), RegisteredAt: time.Now()})
+
+	reg := &panicOnceRegistry{delegate: delegate}
+
+	cancel := Subscribe(context.Background(), reg, inf, bufLog)
+	t.Cleanup(cancel)
+
+	now := time.Now()
+	// First delta — triggers the panic. The Entry must still be in
+	// the registry afterward (the panic prevented the eviction) and
+	// the consumer must still be alive.
+	require.NoError(t, inf.Upsert(context.Background(), informer.ResourceUpdate{
+		Kind: dockerevents.KindContainer, ID: "ctr-first",
+	}, informer.Transition{Source: "test", At: now}))
+	require.NoError(t, inf.Remove(context.Background(),
+		informer.Key{Kind: dockerevents.KindContainer, ID: "ctr-first"},
+		informer.Transition{Source: "test", At: now}))
+
+	// Wait for the panic to actually fire before sending the second
+	// delta. Otherwise we race the consumer and the second delta can
+	// arrive before EvictByContainerID has been entered the first
+	// time.
+	waitFor(t, func() bool { return reg.panicked.Load() })
+
+	// Second delta — must be processed by the resumed consumer,
+	// proving subsequent deltas still drain after a recovered panic.
+	require.NoError(t, inf.Upsert(context.Background(), informer.ResourceUpdate{
+		Kind: dockerevents.KindContainer, ID: "ctr-second",
+	}, informer.Transition{Source: "test", At: now}))
+	require.NoError(t, inf.Remove(context.Background(),
+		informer.Key{Kind: dockerevents.KindContainer, ID: "ctr-second"},
+		informer.Transition{Source: "test", At: now}))
+
+	waitFor(t, func() bool {
+		_, err := delegate.Lookup(tp("cert-second"))
+		return err == ErrUnknownAgent
+	})
+
+	// First entry was never evicted because the panic prevented it
+	// — assert it's still present so we know the test exercised the
+	// panic path rather than silently succeeding.
+	got, err := delegate.Lookup(tp("cert-first"))
+	require.NoError(t, err, "first entry must survive the panicked eviction call")
+	assert.Equal(t, "clawker.first", got.AgentName)
+
+	// Recover must have logged at error level so an operator can
+	// notice the dropped delta. Parse the JSON line(s) so we don't
+	// brittle-match on prose.
+	dec := json.NewDecoder(bytes.NewReader(buf.Bytes()))
+	var sawPanicLog bool
+	for {
+		var line map[string]any
+		if err := dec.Decode(&line); err != nil {
+			break
+		}
+		if line["level"] == "error" && line["panic"] == "synthetic eviction-hook panic" {
+			sawPanicLog = true
+			break
+		}
+	}
+	assert.True(t, sawPanicLog, "expected an error-level log entry capturing the recovered panic; got: %s", buf.String())
 }
 
 func waitFor(t *testing.T, cond func() bool) {
