@@ -13,7 +13,7 @@
 | 1 | CP as proper service — auth + gRPC, firewall still owns bootstrap | `complete` (merged to `main`) |
 | 2 | Ownership reversal — CP owns firewall, `internal/firewall/` deleted, 13-method scope-corrected AdminService | `complete` (awaiting host-side review on `feat/firewall-cp-migration`) |
 | 3 | Daemon consolidation — hostproxy + socketbridge under CP, Docker events replacing watcher polling | `complete` |
-| 4 | clawkerd auth — PKCE registration, per-agent certs | `complete` core; **follow-up specced** in `cp-initiative-branch-4-followup-spec` (end-to-end CLI integration, Connect-as-stream, identity interceptor, slot composite key, dockerevents-driven slot eviction) |
+| 4 | clawkerd auth — PKCE registration, per-agent certs | `complete` core; **follow-up specced** in `cp-initiative-clawkerd-cli-integration` (end-to-end CLI integration, Connect-as-stream, identity interceptor, slot composite key, dockerevents-driven slot eviction) |
 | 5 | Init migration + agent lifecycle — clawkerd replaces init scripts, first `Command` payload variants on the open Connect stream | pending |
 | 6 | Monitor + release + hardening — out of alpha | pending |
 
@@ -21,7 +21,7 @@
 
 | Initiative | Status | Memory |
 |------------|--------|--------|
-| **Branch 4 follow-up: end-to-end CLI integration + Connect lifetime stream** | Spec finalized; ready to implement on `feat/clawkerd-init` | `cp-initiative-branch-4-followup-spec` |
+| **Branch 4 follow-up: end-to-end CLI integration + Connect lifetime stream** | Initiative doc with 9 tasks; agent runs continuously through tasks with subagent-review + commit gates between each | `cp-initiative-clawkerd-cli-integration` |
 | **CP restart resilience** (registry persistence, reconnect path, clawkerd reconnect-with-backoff, `volume prune` safety, `controlplane down` safety, streaming RPC eviction broadcast) | Tracked, not scheduled. Prerequisite for production-readiness | `cp-initiative-cp-restart-resilience` |
 
 ## Branch 4 Delivery Summary (14 tasks)
@@ -44,7 +44,7 @@
 
 ## Branch 4 follow-up — what's getting built
 
-Full spec in `cp-initiative-branch-4-followup-spec`. Highlights of architectural decisions made during planning:
+Full spec in `cp-initiative-clawkerd-cli-integration`. Highlights of architectural decisions made during planning:
 
 - **`AgentService.Register` → `AgentService.Connect`**, server-streaming. The connection IS the agent's lifetime command channel. First message after auth is `Welcome` (carries `ClawkerdConfiguration` placeholder); subsequent messages are commands (B5+ adds payload variants). Stub `AgentService.Events` (client-streaming, clawkerd → CP) for B5 telemetry.
 - **Single-server topology** committed to. clawkerd is gRPC client only. POC's two-server pattern (clawkerd-side `AgentCommandService`, CP dials back via Docker inspect) was K8s-flavored but unnecessary for clawker — single-server with streaming RPCs covers everything.
