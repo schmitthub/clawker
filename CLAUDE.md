@@ -19,30 +19,6 @@ Finding and fixing greater issues is fun, its more important than the task at ha
 
 **Your success depends on this mantra**
 
-## Required Tooling
-
-### MUST USE
-
-1. **Serena** - Code exploration, symbol search, semantic editing:
-   * `initial_instructions` → `check_onboarding_performed` → `list_memories`
-   * `search_for_pattern`,`find_symbol`,`get_symbols_overview`,`find_referencing_symbols` for navigation
-   * `think_about_collected_information` after research
-   * `think_about_task_adherence` before changes
-   * `replace_symbol_body`, `insert_after_symbol`,`insert_before_symbol`,`rename_symbol` for edits
-   * `think_about_whether_you_are_done` after task
-   * `write_memory`, `edit_memory`, `delete_memory` to update memories with current status before completion
-
-2. **deepwiki** - Always use deepwiki MCP for documentation about GitHub repositories and open source software configurations, functionality, features, code architecture, infrastructure, and code design without the user having to ask for it. If you can't find an answer use context7. If that fails then use default tools. Use the following commands:
-   * read_wiki_structure - Get a list of documentation topics for a GitHub repository
-   * read_wiki_contents - View documentation about a GitHub repository
-   * ask_question - Ask any question about a GitHub repository and get an AI-powered, context-grounded response
-
-3. **Context7** - When I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
-   * `resolve-library-id` first, then `get-library-docs`
-   * For: Docker SDK, spf13/cobra, spf13/viper, rs/zerolog, gopkg.in/yaml.v3
-
-4. **github mcp** - Use github's mcp for repository-specific information like PR status, issues, code search, and commit history. Use the following commands:
-
 ### Workflow Requirements
 
 **Planning**: You MUST adhere to design in `.claude/docs/DESIGN.md` and architecture in `.claude/docs/ARCHITECTURE.md` when planning work. If changes are needed, update those docs accordingly.
