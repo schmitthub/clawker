@@ -5,6 +5,23 @@ receivers:
         endpoint: 0.0.0.0:{{.OtelGRPCPort}}
       http:
         endpoint: 0.0.0.0:{{.OtelCollectorPort}}
+{{- if .OtelCPPort}}
+  # mTLS-gated receiver dedicated to clawker-cp. Listens on
+  # 0.0.0.0:<port> inside the container; the published mapping in
+  # compose.yaml binds the host port to 127.0.0.1 only, so the only
+  # off-host way to reach this receiver is via clawker-net DNS — and
+  # a TLS handshake with require_client_certificate fails for any
+  # peer that wasn't issued a client cert by the CLI CA. Agents on
+  # clawker-net therefore can't push here even if they try.
+  otlp/cp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:{{.OtelCPPort}}
+        tls:
+          cert_file: /etc/otel/tls/server.pem
+          key_file: /etc/otel/tls/server.key
+          client_ca_file: /etc/otel/tls/ca.pem
+{{- end}}
 
 processors:
   batch:
@@ -17,6 +34,31 @@ processors:
         statements:
           - set(attributes["project"], resource.attributes["project"]) where resource.attributes["project"] != nil
           - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
+  # Provenance stamp for agent-side telemetry. Runs AFTER the otlp
+  # receiver so a malicious agent claiming service.name=clawker-cp
+  # gets overwritten before reaching the exporter. auth_channel is the
+  # trustable label operators query against (`{auth_channel="cp_mtls"}`
+  # vs `{auth_channel="clawker_net"}`).
+  resource/agent:
+    attributes:
+      - key: auth_channel
+        value: clawker_net
+        action: upsert
+{{- if .OtelCPPort}}
+  # Provenance stamp for clawker-cp telemetry. Reaches this processor
+  # only via the mTLS-gated otlp/cp receiver (CLI-issued client cert
+  # required at TLS handshake — agents on clawker-net have none and
+  # are rejected before bytes flow). Both service.name and
+  # auth_channel are forced regardless of what the client sent.
+  resource/cp:
+    attributes:
+      - key: auth_channel
+        value: cp_mtls
+        action: upsert
+      - key: service.name
+        value: clawker-cp
+        action: upsert
+{{- end}}
 
 exporters:
   otlp/jaeger:
@@ -38,7 +80,21 @@ service:
       receivers: [otlp]
       processors: [batch, transform/metrics]
       exporters: [prometheus]
-    logs:
+    # Agent-side logs pipeline: receiver-isolated from the CP pipeline.
+    # An agent pushing here cannot reach the otlp/cp receiver
+    # (mTLS-gated) and cannot get its log stamped auth_channel=cp_mtls
+    # — resource/agent runs unconditionally and overwrites the field.
+    logs/agents:
       receivers: [otlp]
-      processors: [batch]
+      processors: [resource/agent, batch]
       exporters: [otlphttp/loki]
+{{- if .OtelCPPort}}
+    # CP-side logs pipeline: separate receiver, separate processor
+    # chain. service.name and auth_channel are both forced post-
+    # receiver so a malicious cert holder (none exist outside CLI
+    # provisioning) still couldn't shadow agent telemetry.
+    logs/cp:
+      receivers: [otlp/cp]
+      processors: [resource/cp, batch]
+      exporters: [otlphttp/loki]
+{{- end}}

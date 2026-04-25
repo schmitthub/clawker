@@ -61,7 +61,7 @@ Every field access in `clawker.c` targets stable kernel UAPI
 
 ```
 make clawker
-  └── make clawker-build
+  └── (depends on)
         ├── bpf-bindings  → docker buildx build -f Dockerfile.controlplane
         │                     --target=bpf-bindings-extract
         │                     --output=type=local,dest=internal/controlplane/firewall/ebpf/.bpf-bindings-extract

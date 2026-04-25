@@ -54,7 +54,6 @@ github.com/prometheus/procfs                                                   A
 github.com/shibumi/go-pathspec                                                 Apache-2.0
 github.com/spf13/cobra                                                         Apache-2.0
 go.opentelemetry.io/auto/sdk                                                   Apache-2.0
-go.opentelemetry.io/contrib/bridges/otelzerolog                                Apache-2.0
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc    Apache-2.0
 go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace   Apache-2.0
 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp                  Apache-2.0

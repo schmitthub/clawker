@@ -391,12 +391,20 @@ func HydraSystemSecretPath() (string, error) {
 // EnsureAuthDirs creates the auth material directory tree. Called by
 // auth.EnsureAuthMaterial before writing files.
 func EnsureAuthDirs() error {
-	for _, sub := range []string{"auth/ca", "auth/cli", "auth/tls"} {
+	for _, sub := range []string{"auth/ca", "auth/cli", "auth/tls", "auth/otel"} {
 		if err := os.MkdirAll(filepath.Join(DataDir(), sub), 0o755); err != nil {
 			return fmt.Errorf("create %s: %w", sub, err)
 		}
 	}
 	return nil
+}
+
+// AuthOtelDir ensures and returns the auth/otel directory under
+// DataDir. Holds the mTLS pair gating the CP-only OTLP receiver on the
+// monitoring stack: a server cert mounted into the otel-collector
+// container and a client cert mounted into clawker-cp.
+func AuthOtelDir() (string, error) {
+	return subdirPathUnder(filepath.Join(authDir, "otel"), DataDir())
 }
 
 func AuthCACertPath() (string, error) {
@@ -461,6 +469,49 @@ func AuthServerKeyPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "server.key"), nil
+}
+
+// AuthOtelServerCertPath returns the path to the otel-collector's
+// receiver server certificate. Bind-mounted RO into the collector
+// container at OtelCollectorServerCertContainerPath.
+func AuthOtelServerCertPath() (string, error) {
+	dir, err := AuthOtelDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "server.pem"), nil
+}
+
+// AuthOtelServerKeyPath returns the path to the otel-collector's
+// receiver server private key.
+func AuthOtelServerKeyPath() (string, error) {
+	dir, err := AuthOtelDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "server.key"), nil
+}
+
+// AuthCPOtelClientCertPath returns the path to the clawker-cp daemon's
+// mTLS client certificate for OTLP push to the monitoring stack.
+// Bind-mounted RO into the CP container at
+// CPClawkerOtelClientCertPath.
+func AuthCPOtelClientCertPath() (string, error) {
+	dir, err := AuthOtelDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "cp-client.pem"), nil
+}
+
+// AuthCPOtelClientKeyPath returns the path to the clawker-cp daemon's
+// mTLS client private key for OTLP push.
+func AuthCPOtelClientKeyPath() (string, error) {
+	dir, err := AuthOtelDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "cp-client.key"), nil
 }
 
 // --- State dir paths (under StateDir) ---

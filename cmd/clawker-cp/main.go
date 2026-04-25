@@ -34,6 +34,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -45,8 +46,10 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
+	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/internal/controlplane/informer"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
@@ -105,10 +108,12 @@ func main() {
 }
 
 func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) error {
-	log, err := logger.New(logger.Options{
+	loggerOpts := logger.Options{
 		LogsDir:  logDir,
 		Filename: consts.ControlPlaneLogFile,
-	})
+		Otel:     otelOptionsFromEnv(),
+	}
+	log, err := logger.New(loggerOpts)
 	if err != nil {
 		// Fall back to stderr-only if log dir isn't writable.
 		log = logger.NewWriter(os.Stderr)
@@ -384,9 +389,79 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		}
 	}()
 
+	// Step 9a: Informer + dockerevents feeder.
+	//
+	// The informer is the in-process realm model. It outlives every
+	// individual feeder/consumer for the daemon's lifetime; we close it
+	// explicitly during the drain sequence below (after ebpf flush) so
+	// any final dispatched events have a fully-functional informer to
+	// land on. The dockerevents feeder pushes a clawker-managed mirror
+	// of Docker state into it.
+	inf := informer.New(informer.Options{
+		Logger:           log.With("component", "informer"),
+		WriteQueueSize:   2048,
+		SubscriberBuffer: 256,
+	})
+
 	// Step 9b: AgentWatcher self-shutdown.
 	watcherCtx, watcherCancel := context.WithCancel(context.Background())
 	defer watcherCancel()
+
+	if err := inf.Start(watcherCtx); err != nil {
+		return fmt.Errorf("step 9a (informer start): %w", err)
+	}
+
+	feeder, err := dockerevents.New(dockerCli.APIClient, inf, dockerevents.Options{
+		ManagedLabelKey:   cfg.LabelManaged(),
+		ManagedLabelValue: cfg.ManagedLabelValue(),
+		Logger:            log,
+	})
+	if err != nil {
+		return fmt.Errorf("step 9a (dockerevents feeder): %w", err)
+	}
+	// feederCtx is a child of watcherCtx so SIGTERM/drain-to-zero both
+	// reach it; feederCancel exists separately so drainCallbackBody can
+	// stop the feeder BEFORE closing the informer (avoids ErrClosed
+	// noise on in-flight Upsert calls when AgentWatcher fires the drain
+	// while watcherCtx is still alive).
+	feederCtx, feederCancel := context.WithCancel(watcherCtx)
+	defer feederCancel()
+	feederDone := make(chan struct{})
+	go func() {
+		defer close(feederDone)
+		if err := feeder.Run(feederCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error().Err(err).Msg("dockerevents feeder exited with error")
+		}
+	}()
+
+	// Periodic informer stats heartbeat — gives an operator tailing the
+	// CP log (or querying Loki) a coarse health signal without needing
+	// a dedicated metrics surface. 30s cadence is below the OTEL
+	// resilience window and trivial overhead.
+	statsCtx, statsCancel := context.WithCancel(watcherCtx)
+	defer statsCancel()
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-statsCtx.Done():
+				return
+			case <-ticker.C:
+				st := inf.Stats()
+				log.Info().
+					Int("resources", st.Resources).
+					Int("relations", st.Relations).
+					Int("subscribers", st.Subscribers).
+					Uint64("writes_total", st.WritesTotal).
+					Uint64("deltas_emitted_total", st.DeltasEmittedTotal).
+					Uint64("deltas_dropped_total", st.DeltasDroppedTotal).
+					Int("queue_depth", st.QueueDepth).
+					Int("queue_capacity", st.QueueCapacity).
+					Msg("informer stats heartbeat")
+			}
+		}
+	}()
 
 	listAgents := func(ctx context.Context) (int, error) {
 		ids, err := listAgentIDs(ctx)
@@ -424,6 +499,15 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 		if err := ebpfMgr.FlushAll(); err != nil {
 			log.Error().Err(err).Msg("drain: ebpf flush failed")
 			errs = append(errs, fmt.Errorf("ebpf flush: %w", err))
+		}
+		// Stop the feeder before closing the informer so any in-flight
+		// Upsert lands cleanly. feederCancel is idempotent; feederDone
+		// closes once the goroutine returns.
+		feederCancel()
+		<-feederDone
+		if err := inf.Close(); err != nil {
+			log.Error().Err(err).Msg("drain: informer close failed")
+			errs = append(errs, fmt.Errorf("informer close: %w", err))
 		}
 		return errors.Join(errs...)
 	}
@@ -526,4 +610,75 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) erro
 	subMgr.Shutdown(defaultShutdownWait)
 	log.Info().Msg("clawker-cp stopped")
 	return drainErr
+}
+
+// otelOptionsFromEnv builds logger.OtelOptions from the standard OTLP
+// environment variables. Returns nil when no endpoint is configured —
+// the logger then runs file-only and the CP daemon needs no OTEL
+// dependency at runtime.
+//
+// Per-signal `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` takes precedence over
+// the generic `OTEL_EXPORTER_OTLP_ENDPOINT`. Either may be a full URL
+// (`https://host.docker.internal:4319/v1/logs`) or a bare authority
+// (`host.docker.internal:4319`); the otlploghttp exporter only needs
+// host:port, so we strip scheme/path here.
+//
+// mTLS material is read from `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE`,
+// `OTEL_EXPORTER_OTLP_CLIENT_KEY`, and `OTEL_EXPORTER_OTLP_CERTIFICATE`
+// (the trust bundle for the receiver). When all three are present
+// the exporter does mTLS; otherwise it falls back to plain TLS or
+// (with `http://` scheme) plaintext.
+//
+// The bridge endpoint is set up by cpboot to point at the monitor
+// stack's CP-only receiver via host.docker.internal. CP is BPF-exempt
+// (not enrolled in container_map) and ExtraHosts maps the gateway
+// alias, so the dial reaches the host loopback published port. Agents
+// on clawker-net cannot reach this endpoint AND cannot present a
+// CLI-signed client cert — two layers of isolation.
+func otelOptionsFromEnv() *logger.OtelOptions {
+	raw := os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
+	if raw == "" {
+		raw = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	}
+	if raw == "" {
+		return nil
+	}
+
+	endpoint, insecure := parseOtlpEndpoint(raw)
+	if endpoint == "" {
+		return nil
+	}
+	opts := &logger.OtelOptions{
+		Endpoint: endpoint,
+		Insecure: insecure,
+	}
+	if cert := os.Getenv("OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE"); cert != "" {
+		opts.ClientCertFile = cert
+		opts.ClientKeyFile = os.Getenv("OTEL_EXPORTER_OTLP_CLIENT_KEY")
+		opts.CACertFile = os.Getenv("OTEL_EXPORTER_OTLP_CERTIFICATE")
+		// mTLS implies TLS; insecure must be false even if the env URL
+		// was http:// (which would be a misconfiguration but we
+		// override defensively).
+		opts.Insecure = false
+	}
+	return opts
+}
+
+// parseOtlpEndpoint normalises an OTEL endpoint env value to the
+// host:port form `otlploghttp.WithEndpoint` accepts, returning whether
+// it was http (insecure) vs https.
+func parseOtlpEndpoint(raw string) (endpoint string, insecure bool) {
+	insecure = true
+	rest := raw
+	switch {
+	case strings.HasPrefix(rest, "https://"):
+		insecure = false
+		rest = strings.TrimPrefix(rest, "https://")
+	case strings.HasPrefix(rest, "http://"):
+		rest = strings.TrimPrefix(rest, "http://")
+	}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest, insecure
 }

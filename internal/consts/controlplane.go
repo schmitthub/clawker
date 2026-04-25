@@ -71,6 +71,12 @@ const (
 	// CPCLIPubKeyPath is the container-side path for the CLI's public signing key (JWK).
 	CPCLIPubKeyPath = CPClawkerDir + "/auth/cli/signing-jwk.json"
 
+	// CPOtelClientCertPath / CPOtelClientKeyPath are the container-side
+	// paths for the daemon's mTLS client certificate used to push OTLP
+	// to the monitoring stack's CP-only receiver.
+	CPOtelClientCertPath = CPClawkerDir + "/auth/otel/cp-client.pem"
+	CPOtelClientKeyPath  = CPClawkerDir + "/auth/otel/cp-client.key"
+
 	// CPFirewallDataDir is the container-side directory for CP-managed firewall state.
 	CPFirewallDataDir = CPClawkerDataDir + "/firewall"
 

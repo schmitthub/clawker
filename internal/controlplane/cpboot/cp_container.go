@@ -72,6 +72,14 @@ type CPContainerConfig struct {
 	NetworkName string
 	// RestartPolicy is the Docker restart policy for the container.
 	RestartPolicy container.RestartPolicy
+	// ExtraHosts adds /etc/hosts entries inside the CP container.
+	// Used to map host.docker.internal → host-gateway so the daemon
+	// can reach host-loopback-bound services (currently the OTEL
+	// collector OTLP HTTP receiver). Agent containers cannot reach the
+	// same address because the BPF firewall redirects gateway traffic
+	// for non-hostproxy ports to Envoy; the CP is exempt because it
+	// owns container_map and is never enrolled.
+	ExtraHosts []string
 }
 
 // localhost is the 127.0.0.1 address used for all published port bindings.
@@ -135,6 +143,14 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 	if err != nil {
 		return nil, fmt.Errorf("resolve server key path: %w", err)
 	}
+	cpOtelClientCertPath, err := consts.AuthCPOtelClientCertPath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve cp otel client cert path: %w", err)
+	}
+	cpOtelClientKeyPath, err := consts.AuthCPOtelClientKeyPath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve cp otel client key path: %w", err)
+	}
 
 	// Config dir — CP loads config.NewConfig() from this mount.
 	configDir := config.ConfigDir()
@@ -182,6 +198,24 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			Type:     mount.TypeBind,
 			Source:   serverKeyPath,
 			Target:   consts.CPTLSKeyPath,
+			ReadOnly: true,
+		},
+		// CP-side mTLS client cert + key for OTLP push to the
+		// monitoring stack's CP-only receiver. Issued + signed by the
+		// CLI CA at `clawker monitor init` (or any earlier CLI command
+		// that calls auth.EnsureAuthMaterial). The receiver gates
+		// `require_client_certificate: true` so this is the only way
+		// for the daemon to push there.
+		{
+			Type:     mount.TypeBind,
+			Source:   cpOtelClientCertPath,
+			Target:   consts.CPOtelClientCertPath,
+			ReadOnly: true,
+		},
+		{
+			Type:     mount.TypeBind,
+			Source:   cpOtelClientKeyPath,
+			Target:   consts.CPOtelClientKeyPath,
 			ReadOnly: true,
 		},
 		// CP logs — persisted to host for auditing.
@@ -232,14 +266,15 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		Mounts:       mounts,
 		PortBindings: portBindings,
 		CapAdd:       []string{"BPF", "SYS_ADMIN"},
-		Env: []string{
+		Env: append([]string{
 			consts.EnvConfigDir + "=" + consts.CPClawkerConfigDir,
 			consts.EnvDataDir + "=" + consts.CPClawkerDataDir,
 			consts.EnvHostConfigDir + "=" + opts.HostDirs.Config,
 			consts.EnvHostDataDir + "=" + opts.HostDirs.Data,
 			consts.EnvHostStateDir + "=" + opts.HostDirs.State,
 			consts.EnvHostCacheDir + "=" + opts.HostDirs.Cache,
-		},
+		}, otelLogsEnv(cfg)...),
+		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
 		Cmd:         []string{"/usr/local/bin/clawker-cp"},
 		NetworkName: consts.Network,
 		// on-failure (not unless-stopped/always) so the CP's graceful
@@ -250,4 +285,51 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			MaximumRetryCount: consts.CPMaxRestartRetries,
 		},
 	}, nil
+}
+
+// otelLogsEnv injects the OTLP env vars the CP daemon reads to enable
+// the OTEL bridge against the CP-only mTLS-gated receiver on the
+// monitoring stack.
+//
+// Endpoint: https://host.docker.internal:<OtelCPPort>. CP is exempt
+// from the BPF firewall (not enrolled in container_map) and has
+// host.docker.internal mapped via ExtraHosts, so the dial reaches the
+// host-loopback-bound docker port forwarder. Agents on clawker-net
+// cannot present a CLI-signed client cert and so the receiver rejects
+// their TLS handshake — the gate is crypto, not network.
+//
+// When OtelCPPort is zero (user hasn't run `clawker monitor init`)
+// no env vars are emitted and the CP logger falls back to file-only.
+// Logger construction also treats OTEL provider failure as non-fatal
+// so the daemon survives a collector that's down at startup.
+func otelLogsEnv(cfg config.Config) []string {
+	mon := cfg.SettingsStore().Read().Monitoring
+	if mon.OtelCPPort <= 0 {
+		return nil
+	}
+	endpoint := fmt.Sprintf("https://host.docker.internal:%d", mon.OtelCPPort)
+	logsEndpoint := fmt.Sprintf("%s%s", endpoint, telemetryPath(mon.Telemetry.LogsPath, "/v1/logs"))
+	return []string{
+		"OTEL_EXPORTER_OTLP_ENDPOINT=" + endpoint,
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=" + logsEndpoint,
+		"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+		// Client cert + key (mounted RO into the container). CA bundle
+		// is the same trust root used for the AdminService server cert
+		// — already mounted at consts.CPCACertPath.
+		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE=" + consts.CPOtelClientCertPath,
+		"OTEL_EXPORTER_OTLP_CLIENT_KEY=" + consts.CPOtelClientKeyPath,
+		"OTEL_EXPORTER_OTLP_CERTIFICATE=" + consts.CPCACertPath,
+		// service.name will be force-set on the receiver pipeline by a
+		// resource processor (see otel-config.yaml.tmpl) — this value
+		// is advisory and would be overwritten anyway. Setting it for
+		// debug parity with file logs.
+		"OTEL_RESOURCE_ATTRIBUTES=service.name=clawker-cp,component=clawker-cp",
+	}
+}
+
+func telemetryPath(configured, fallback string) string {
+	if configured != "" {
+		return configured
+	}
+	return fallback
 }

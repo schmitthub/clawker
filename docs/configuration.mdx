@@ -455,6 +455,8 @@ monitoring:
   otel_collector_internal: <string>  # default: otel-collector | required: false
   # Host port for the OTEL gRPC receiver
   otel_grpc_port: <integer>  # default: 4317 | required: false
+  # Host-loopback port for the mTLS-gated OTLP receiver dedicated to clawker-cp push (gates with the CLI-issued OTEL keypair; agents on clawker-net cannot present a client cert and so the TLS handshake fails)
+  otel_cp_port: <integer>  # default: 4319 | required: false
   # Host port for Loki log ingestion
   loki_port: <integer>  # default: 3100 | required: false
   # Host port for Prometheus metrics UI
@@ -554,6 +556,7 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | `otel_collector_host` | string | `localhost` | Hostname for reaching the collector from the host |
 | `otel_collector_internal` | string | `otel-collector` | Docker network hostname containers use to reach the collector |
 | `otel_grpc_port` | integer | `4317` | Host port for the OTEL gRPC receiver |
+| `otel_cp_port` | integer | `4319` | Host-loopback port for the mTLS-gated OTLP receiver dedicated to clawker-cp push (gates with the CLI-issued OTEL keypair; agents on clawker-net cannot present a client cert and so the TLS handshake fails) |
 | `loki_port` | integer | `3100` | Host port for Loki log ingestion |
 | `prometheus_port` | integer | `9090` | Host port for Prometheus metrics UI |
 | `jaeger_port` | integer | `16686` | Host port for Jaeger tracing UI |

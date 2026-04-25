@@ -64,6 +64,12 @@ func EnsureAuthMaterial() error {
 	if err := ensureClientCert(); err != nil {
 		return fmt.Errorf("client cert: %w", err)
 	}
+	if err := ensureOtelServerCert(); err != nil {
+		return fmt.Errorf("otel server cert: %w", err)
+	}
+	if err := ensureCPOtelClientCert(); err != nil {
+		return fmt.Errorf("cp otel client cert: %w", err)
+	}
 	return nil
 }
 
@@ -93,6 +99,18 @@ func RotateAuthMaterial(forceSigningKey bool) error {
 	}
 	if err := removeIfExists(consts.AuthCLIClientKeyPath); err != nil {
 		return fmt.Errorf("remove client key: %w", err)
+	}
+	if err := removeIfExists(consts.AuthOtelServerCertPath); err != nil {
+		return fmt.Errorf("remove otel server cert: %w", err)
+	}
+	if err := removeIfExists(consts.AuthOtelServerKeyPath); err != nil {
+		return fmt.Errorf("remove otel server key: %w", err)
+	}
+	if err := removeIfExists(consts.AuthCPOtelClientCertPath); err != nil {
+		return fmt.Errorf("remove cp otel client cert: %w", err)
+	}
+	if err := removeIfExists(consts.AuthCPOtelClientKeyPath); err != nil {
+		return fmt.Errorf("remove cp otel client key: %w", err)
 	}
 
 	if forceSigningKey {
@@ -135,6 +153,10 @@ func CheckAuthMaterial() ([]AuthFileStatus, error) {
 		{"Server private key", consts.AuthServerKeyPath, false},
 		{"CLI client certificate", consts.AuthCLIClientCertPath, true},
 		{"CLI client key", consts.AuthCLIClientKeyPath, false},
+		{"OTEL server certificate", consts.AuthOtelServerCertPath, true},
+		{"OTEL server key", consts.AuthOtelServerKeyPath, false},
+		{"CP OTEL client certificate", consts.AuthCPOtelClientCertPath, true},
+		{"CP OTEL client key", consts.AuthCPOtelClientKeyPath, false},
 	}
 
 	var results []AuthFileStatus
@@ -579,4 +601,147 @@ func ReadJWK() (json.RawMessage, error) {
 		return nil, err
 	}
 	return os.ReadFile(p)
+}
+
+// --- OTEL collector mTLS pair (signed by CLI CA) ---
+//
+// Two extra certs gate the monitoring stack's CP-only OTLP receiver:
+//
+//   - otel-server.{pem,key}: presented by the otel-collector container
+//     on its CP-only receiver. SANs cover the names CP uses to dial
+//     (host.docker.internal, localhost, 127.0.0.1) so a single cert
+//     works across Linux native (where host.docker.internal resolves
+//     to the bridge gateway) and Docker Desktop.
+//
+//   - cp-client.{pem,key}: presented by clawker-cp when pushing OTLP.
+//     Subject "clawker-cp" so the receiver can audit which client is
+//     pushing in case future scoping is added.
+//
+// Agents on clawker-net cannot reach the receiver because they lack
+// any cert signed by the CLI CA — the TLS handshake fails before any
+// data is accepted. No BPF rule needed; auth is the boundary.
+
+func ensureOtelServerCert() error {
+	certPath, err := consts.AuthOtelServerCertPath()
+	if err != nil {
+		return err
+	}
+	keyPath, err := consts.AuthOtelServerKeyPath()
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(certPath); err == nil {
+		if _, err := os.Stat(keyPath); err == nil {
+			return nil
+		}
+	}
+
+	caCert, caKey, err := loadCA()
+	if err != nil {
+		return fmt.Errorf("load CA for signing: %w", err)
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generate serial: %w", err)
+	}
+
+	now := time.Now().UTC()
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   "clawker-otel-collector",
+			Organization: []string{"clawker"},
+		},
+		NotBefore:   now.Add(-5 * time.Minute),
+		NotAfter:    now.AddDate(1, 0, 0),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:    []string{"host.docker.internal", "localhost"},
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		return fmt.Errorf("sign cert: %w", err)
+	}
+
+	if err := writeCert(certPath, certDER); err != nil {
+		return fmt.Errorf("write cert: %w", err)
+	}
+	// Loosen perms on the server key so the otel-collector container's
+	// uid (varies by image) can read it. The directory still requires
+	// host-side privilege to enter; this matches how server.key under
+	// auth/tls is treated for Hydra.
+	if err := writeECDSAKey(keyPath, key, 0o644); err != nil {
+		return fmt.Errorf("write key: %w", err)
+	}
+	return nil
+}
+
+func ensureCPOtelClientCert() error {
+	certPath, err := consts.AuthCPOtelClientCertPath()
+	if err != nil {
+		return err
+	}
+	keyPath, err := consts.AuthCPOtelClientKeyPath()
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(certPath); err == nil {
+		if _, err := os.Stat(keyPath); err == nil {
+			return nil
+		}
+	}
+
+	caCert, caKey, err := loadCA()
+	if err != nil {
+		return fmt.Errorf("load CA for signing: %w", err)
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generate serial: %w", err)
+	}
+
+	now := time.Now().UTC()
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   consts.ContainerCP,
+			Organization: []string{"clawker"},
+		},
+		NotBefore:   now.Add(-5 * time.Minute),
+		NotAfter:    now.AddDate(1, 0, 0),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		return fmt.Errorf("sign cert: %w", err)
+	}
+
+	if err := writeCert(certPath, certDER); err != nil {
+		return fmt.Errorf("write cert: %w", err)
+	}
+	// Loosen perms on the client key so the CP container's runtime uid
+	// (claude, 1001) can read after bind-mount. Same justification as
+	// the server key above.
+	if err := writeECDSAKey(keyPath, key, 0o644); err != nil {
+		return fmt.Errorf("write key: %w", err)
+	}
+	return nil
 }

@@ -2,6 +2,7 @@ package informer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -262,10 +263,28 @@ func (i *Informer) apply(o op) {
 	}
 	i.mu.Unlock()
 
+	if emitted {
+		i.logPublished(delta)
+	}
+
 	if o.result != nil {
 		o.result <- opResult{delta: delta, emitted: emitted}
 		close(o.result)
 	}
+}
+
+// logPublished emits one structured info-level log line per committed
+// Delta. The body is the Delta's canonical JSON form (see
+// Delta.MarshalJSON in types.go) — no projection or transformation
+// in this function. Centralised here so every feeder gets the
+// publish trail without per-feeder duplication; a missing publish
+// log under a docker event receive line means the dispatch path
+// filtered the event before it reached an informer write.
+func (i *Informer) logPublished(d Delta) {
+	body, _ := json.Marshal(d)
+	i.opts.Logger.Info().
+		RawJSON("delta", body).
+		Msgf("informer published: %s", body)
 }
 
 // op is one queued mutation. fn runs under the write lock and returns

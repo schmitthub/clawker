@@ -116,7 +116,7 @@ func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 8)
+	require.Len(t, status, 12)
 
 	for _, s := range status {
 		assert.True(t, s.Exists, "%s should exist", s.Name)
@@ -145,7 +145,7 @@ func TestCheckAuthMaterial_MissingFiles(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 8)
+	require.Len(t, status, 12)
 
 	for _, s := range status {
 		assert.False(t, s.Exists, "%s should not exist", s.Name)

@@ -13,7 +13,10 @@
 // third-party clients (moby, grpc, prom). It is a leaf component.
 package informer
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Key identifies a resource across the realm. Kind + ID together are
 // globally unique; the same raw ID (e.g. a short hash) may legitimately
@@ -165,6 +168,39 @@ func (d Delta) Relation() (Relation, bool) {
 		return d.relation, true
 	}
 	return Relation{}, false
+}
+
+// MarshalJSON serialises a Delta as the canonical wire shape
+// consumers see: kind as the string form (`added`/`updated`/...),
+// before/after omitted when nil, and the unexported relation payload
+// promoted to a public `relation` field for relation-scoped deltas.
+//
+// This is the source of truth for the publish log format the
+// informer emits — no caller should hand-roll a projection of Delta
+// for logging or RPC purposes; serialise this type directly.
+func (d Delta) MarshalJSON() ([]byte, error) {
+	out := deltaJSON{
+		Kind:       d.Kind.String(),
+		Before:     d.Before,
+		After:      d.After,
+		Transition: d.Transition,
+	}
+	if rel, ok := d.Relation(); ok {
+		out.Relation = &rel
+	}
+	return json.Marshal(out)
+}
+
+// deltaJSON is the on-the-wire shape of a Delta. Kept private so the
+// only public way to serialise a Delta is via Delta.MarshalJSON,
+// which keeps the projection in one place. Field tags here ARE the
+// public schema name.
+type deltaJSON struct {
+	Kind       string     `json:"kind"`
+	Before     *Resource  `json:"before,omitempty"`
+	After      *Resource  `json:"after,omitempty"`
+	Relation   *Relation  `json:"relation,omitempty"`
+	Transition Transition `json:"transition"`
 }
 
 // Filter matches resources for List, Subscribe, and related read
