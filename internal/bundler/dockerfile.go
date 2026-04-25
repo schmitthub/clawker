@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
+	"github.com/schmitthub/clawker/internal/clawkerd"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
@@ -242,6 +243,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},
 		{"clawker-socket-server.go", SocketForwarderSource, 0644},
+		{"clawkerd", string(clawkerd.Binary), 0755},
 	}
 
 	for _, script := range scripts {
@@ -456,6 +458,13 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
+	// Add the clawkerd binary itself — it's pre-compiled in the
+	// clawker CLI release and dropped into every per-project image
+	// at /usr/local/bin/clawkerd by the Dockerfile.
+	if err := addFileToTar(tw, "clawkerd", clawkerd.Binary); err != nil {
+		return nil, err
+	}
+
 	if err := tw.Close(); err != nil {
 		return nil, err
 	}
@@ -488,6 +497,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},
 		{"clawker-socket-server.go", SocketForwarderSource, 0644},
+		{"clawkerd", string(clawkerd.Binary), 0755},
 	}
 
 	for _, s := range scripts {

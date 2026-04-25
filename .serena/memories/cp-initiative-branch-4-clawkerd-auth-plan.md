@@ -23,7 +23,7 @@
 | Task 9b: AdminService.ListAgents + `clawker controlplane agents` CLI | `complete` | claude |
 | Task 10: Extend AuthInterceptor for agent listener (peer cert + agent scope map) | `complete` | claude |
 | Task 11: clawkerd binary | `complete` | claude |
-| Task 12: Bundler + entrypoint integration | `pending` | — |
+| Task 12: Bundler + entrypoint integration | `complete` | claude |
 | Task 13: E2E tests | `pending` | — |
 | Task 14: Documentation update | `pending` | — |
 
@@ -58,6 +58,13 @@
 - Both clients use the SAME JWK (the CLI's signing key — the CP container's bind-mounted public half). Distinct `client_id` + scope keeps the AuthZ surface clean even though the signing material is shared. This is a deliberate property: the CLI signs both `clawker-cli` and `clawker-agent` assertions with one key, but Hydra issues separate tokens with separate scopes.
 - `cmd/clawker-cp/main.go` Step 5 now registers both clients sequentially. Both calls are idempotent on 409 so safe across CP restarts and ordering doesn't matter.
 - Tightened the success path to 201 Created only — the previous CLI code accepted 200 OK too, which would have masked a misconfigured proxy returning 200 with an empty body as a registered-client success.
+
+### Task 12
+- clawkerd is pure Go (no BPF deps) so the build is a plain `CGO_ENABLED=0 go build ./cmd/clawkerd` cross-compiled to linux/$(BUILDX_TARGETARCH). Skipped the multi-stage Dockerfile.controlplane recipe used for clawker-cp / ebpf-manager / coredns-clawker — those need clang + libbpf for BPF byte code, clawkerd needs neither.
+- `internal/clawkerd/embed.go` exports `Binary []byte` via `//go:embed assets/clawkerd`. Bundler reads the byte slice and writes it to every per-project build context (via `addFileToTar` + the script slice in `WriteBuildContextToDir` / `GenerateDockerfiles`).
+- `Dockerfile.tmpl` gained `COPY --chown=root:root --chmod=755 clawkerd /usr/local/bin/clawkerd`. `claude-plugin/.../reference/Dockerfile.tmpl` synced to match (pre-commit's plugin-drift hook enforces parity).
+- `entrypoint.sh` launches clawkerd in the background as root before the firewall healthz wait. Gated on `[ -x /usr/local/bin/clawkerd ] && [ -d /run/clawker/bootstrap ]` so containers without bootstrap material (existing user images, tests) skip cleanly without blocking startup.
+- **Known gap:** the CLI command-layer wiring that actually generates the bootstrap material, calls AnnounceAgent, writes the tar to the container, and sets the three CLAWKERD_* env vars is NOT wired in this branch. Tasks 7 + 9 produced the building blocks (`shared.GenerateAgentBootstrap`, `shared.AnnounceAgent`, `shared.WriteAgentBootstrapToContainer`, `docker.RuntimeEnvOpts.ClawkerdHydraURL/AgentAddr/AgentName`). Until they're called, every per-project container starts without `/run/clawker/bootstrap`, the entrypoint's gate skips clawkerd launch, the agent never registers, and ListAgents reports empty. Document explicitly in the wrap-up.
 
 ### Task 11
 - clawkerd is intentionally tiny: read 5 bootstrap files → exchange CLI-signed assertion at Hydra → mTLS-dial CP → Register → idle. ~250 lines including comments. No heartbeat, no init scripts, no command receiver, no token refresh — Branch 4 ships a pure registration path; consumers add their own coverage.

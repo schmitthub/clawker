@@ -87,6 +87,25 @@ emit_error() {
 }
 
 # =============================================================================
+# Launch clawkerd — per-container agent daemon
+# =============================================================================
+# clawkerd reads its bootstrap material from /run/clawker/bootstrap (delivered
+# by the CLI before container start), exchanges the CLI-signed assertion at
+# Hydra for an access token, mTLS-dials the CP's agent listener, and calls
+# AgentService.Register. Then it idles on the connection until SIGTERM.
+#
+# Run in the background as root, before the firewall healthz poll, so that
+# Register has the maximum window inside the slot's TTL even if the rest of
+# the entrypoint stalls (image pull, slow exec, etc.). Failures are logged
+# to /var/log/clawker/clawkerd.log; clawkerd does NOT block CMD because B4
+# does not yet require agent registration to be complete before the user
+# process runs.
+if [ -x /usr/local/bin/clawkerd ] && [ -d /run/clawker/bootstrap ]; then
+    mkdir -p /var/log/clawker
+    /usr/local/bin/clawkerd >>/var/log/clawker/clawkerd.log 2>&1 &
+fi
+
+# =============================================================================
 # Firewall readiness — poll CP /healthz before CMD
 # =============================================================================
 # CP's /healthz endpoint returns 200 only when Envoy+CoreDNS+Ory+gRPC admin
