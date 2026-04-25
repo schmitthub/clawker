@@ -19,7 +19,7 @@
 | Task 6: Agent registry + dockerevents subscription | `complete` | claude |
 | Task 7: CLI AnnounceAgent + tmpfs bootstrap delivery | `complete` | claude |
 | Task 8: CP second gRPC listener on clawker-net | `complete` | claude |
-| Task 9: AgentService handler | `pending` | — |
+| Task 9: AgentService handler | `complete` | claude |
 | Task 9b: AdminService.ListAgents + `clawker controlplane agents` CLI | `pending` | — |
 | Task 10: Extend AuthInterceptor for agent listener (peer cert + agent scope map) | `pending` | — |
 | Task 11: clawkerd binary | `pending` | — |
@@ -58,6 +58,15 @@
 - Both clients use the SAME JWK (the CLI's signing key — the CP container's bind-mounted public half). Distinct `client_id` + scope keeps the AuthZ surface clean even though the signing material is shared. This is a deliberate property: the CLI signs both `clawker-cli` and `clawker-agent` assertions with one key, but Hydra issues separate tokens with separate scopes.
 - `cmd/clawker-cp/main.go` Step 5 now registers both clients sequentially. Both calls are idempotent on 409 so safe across CP restarts and ordering doesn't matter.
 - Tightened the success path to 201 Created only — the previous CLI code accepted 200 OK too, which would have masked a misconfigured proxy returning 200 with an empty body as a registered-client success.
+
+### Task 9
+- Handler reads peer cert directly from `peer.FromContext(ctx)` + `credentials.TLSInfo`. No need for the separate `PeerCertFromContext` / `PeerIPFromContext` helpers the plan sketched — the listener's `tls.Config` already enforces `RequireAndVerifyClientCert`, so any context that reaches the handler already carries a verified leaf cert. Task 10 adds the agent-specific scope map; the cert-extraction path stays in this package.
+- Defined a narrow `ContainerInspector` interface (single `Inspect` method) instead of taking `*docker.Client` directly. Keeps the handler testable with a closure-backed fake and avoids dragging the whail middleware surface into a security-critical handler.
+- Provided `agent.MobyInspector` as the production adapter — it pulls the clawker-net IP + container labels from a `mobyclient.APIClient` ContainerInspect call. That's the only Docker call Register makes; everything else flows through the slot registry and the agent registry.
+- `agent/mocks/` (moq-generated) exists for external consumers; handler_test.go uses a tiny in-package `inspectorFn` closure to avoid the test-import cycle that would arise from `agent` importing `agent/mocks` which imports `agent`.
+- Found a real test gotcha: `agentslots.NewRegistry(time.Now, ...)` evaluates expiry against `time.Now()`. Slot timestamps in tests using `time.Unix(100, 0)` would be reported "expired" immediately. Pinned both clocks to the same fake-time function in newFixture.
+- Wired into `cmd/clawker-cp/main.go`: slot registry + agent registry constructed at step 8 alongside the listener, handler registered on `agentServer`, and `agentregistry.Subscribe(watcherCtx, agentReg, inf)` set up at step 9a after the informer is alive so eviction follows container die/destroy.
+- Every failure path returns a single `codes.PermissionDenied` with the generic "registration rejected" message. Per-failure logs are at `Warn` so an operator tailing the CP can distinguish PKCE/cert/IP/label mismatches without leaking the discriminator over the wire.
 
 ### Task 8
 - Second listener uses the SAME server cert + CA pool as the admin listener — both are signed by the CLI CA, both require mTLS client certs from the same CA. The agent path's distinguishing trait is the scope map (Task 10) and what handlers are registered (Task 9), not the TLS material.

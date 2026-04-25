@@ -34,10 +34,14 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	mobyclient "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
+	"github.com/schmitthub/clawker/internal/controlplane/agent"
+	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
@@ -388,6 +392,17 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("step 8 (agent grpc listen): %w", err)
 	}
 
+	// AgentService wiring: slot registry (announce-time reservations) +
+	// agent registry (post-Register identities) + handler. The
+	// agent registry's dockerevents subscription is set up further down,
+	// once the informer is alive.
+	slotRegistry := agentslots.NewRegistry(time.Now, 0, log.With("component", "agentslots"))
+	defer slotRegistry.Stop()
+	agentReg := agentregistry.NewRegistry(log.With("component", "agentregistry"))
+	agentInspector := agent.MobyInspector{Client: dockerCli.APIClient}
+	agentHandler := agent.NewHandler(slotRegistry, agentReg, agentInspector, log.With("component", "agent-handler"))
+	agentv1.RegisterAgentServiceServer(agentServer, agentHandler)
+
 	// Cap covers gRPC admin, gRPC agent, healthz, and the dockerevents
 	// feeder. Buffered so any goroutine that fails before main reaches
 	// the select can deposit its error without blocking.
@@ -465,6 +480,13 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// while watcherCtx is still alive).
 	feederCtx, feederCancel := context.WithCancel(watcherCtx)
 	defer feederCancel()
+
+	// Hook agent registry to dockerevents container deltas — evicts
+	// registered agents when their containers die/destroy. Subscribe
+	// runs through the informer so the same drain that closes the
+	// informer also tears this down cleanly.
+	cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, inf)
+	defer cancelAgentSub()
 	feederDone := make(chan struct{})
 	go func() {
 		defer close(feederDone)
