@@ -1,21 +1,20 @@
 package e2e
 
-// E2E coverage for the clawkerd registration handshake. Authored
-// alongside Branch 4 and deferred to the host-side review pass per
-// initiative E2E policy — agents do not run E2E tests.
+// E2E coverage for the clawkerd registration handshake. Per initiative
+// E2E policy, agents do not run these tests — operator runs them on
+// the host (`go test ./test/e2e/...` or `make test-e2e`).
 //
-// IMPORTANT: these tests assume the CLI's container-start path is wired
-// to:
+// The CLI's container-start path drives the full registration flow:
 //   1. Generate a fresh per-agent bootstrap (cert + key + CA + assertion + verifier).
 //   2. Call AdminService.AnnounceAgent before docker start.
-//   3. docker cp the bootstrap material to the container's /run/clawker/bootstrap.
+//   3. CopyToContainer the bootstrap material to /run/clawker/bootstrap.
 //   4. Set CLAWKER_CP_HYDRA_URL / CLAWKER_CP_AGENT_ADDR / CLAWKER_AGENT env.
 //
-// Until those wires land in run/start (currently a known gap — see the
-// Branch 4 plan memory), `clawker container run` produces a container
-// without /run/clawker/bootstrap, the entrypoint's gate skips clawkerd
-// launch, and these tests time out at the ListAgents poll. The user is
-// expected to run them on the host after Task 7's CLI wiring lands.
+// All four steps are wired in `internal/cmd/container/shared` (run/start
+// invoke `GenerateAgentBootstrap` + `AnnounceAgent` + `WriteAgentBootstrapToContainer`
+// before the docker start; entrypoint backgrounds clawkerd whenever
+// /run/clawker/bootstrap exists). The tests below assert the full
+// announce → Connect → idle → stop → evict lifecycle end to end.
 
 import (
 	"context"
