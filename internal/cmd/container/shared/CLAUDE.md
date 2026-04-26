@@ -144,9 +144,12 @@ Three-phase orchestration for container start: pre-start bootstrap, Docker start
 | `Config` | `func() (config.Config, error)` | Config provider (required) |
 | `ProjectManager` | `func() (project.ProjectManager, error)` | Project manager provider |
 | `HostProxy` | `func() hostproxy.HostProxyService` | Host proxy provider |
-| `Firewall` | `func(ctx) (firewall.FirewallManager, error)` | Firewall manager provider |
+| `ControlPlane` | `func() cpboot.Manager` | Host-side CP container lifecycle noun (`EnsureRunning` / `Stop` / `IsRunning`) |
+| `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC AdminService client (mTLS + OAuth2) — drives firewall sync/enable/disable RPCs and `AnnounceAgent` |
 | `SocketBridge` | `func() socketbridge.SocketBridgeManager` | Socket bridge provider |
 | `Logger` | `func() (*logger.Logger, error)` | Logger provider |
+| `AgentName` | `string` | User-typed short agent name (set on new-container starts; empty on restart paths) |
+| `Project` | `string` | Project slug paired with `AgentName` to form the composite (project, agent) identity |
 
 Nil providers are safely skipped (debug logged). `Config` is the only required provider.
 
@@ -166,7 +169,7 @@ Returns `mobyClient.ContainerStartResult` from the Docker start call. Errors at 
 | Type | Purpose |
 |------|---------|
 | `ContainerOptions` | All container CLI flags — basic, env, volumes, networking, resources, security, health, runtime, devices |
-| `CommandOpts` | DI container with lazy function closures: Client, Config, ProjectManager, HostProxy, Firewall, SocketBridge, Logger |
+| `CommandOpts` | DI container with lazy function closures (Client, Config, ProjectManager, HostProxy, ControlPlane, AdminClient, SocketBridge, Logger) plus per-call AgentName + Project for the announce/bootstrap path |
 | `CreateContainerConfig` | All inputs: Client, Config, Options, Flags, ProjectManager, HostProxy, Logger, Version, color flags |
 | `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
 | `CreateContainerEvent` | Channel event: Step, Status, Type, Message |

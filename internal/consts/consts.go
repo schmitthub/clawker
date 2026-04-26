@@ -234,9 +234,13 @@ const (
 	// window.
 	AgentSlotTTL = 60 * time.Second
 
-	// BootstrapDir is the in-container tmpfs path where the CLI delivers
-	// per-agent registration material. Root-only readable; lives in
-	// tmpfs so it dies with the container.
+	// BootstrapDir is the in-container path where the CLI delivers
+	// per-agent registration material via Docker's CopyToContainer API
+	// between `docker create` and `docker start`. Files are 0400
+	// root:root, directory is 0700 root:root. Lives in the container's
+	// writable layer (NOT a tmpfs mount — Docker has no API to
+	// pre-populate tmpfs, and a tmpfs mount at this path would shadow
+	// the pre-start writes). Reclaimed on `docker rm`.
 	BootstrapDir = "/run/clawker/bootstrap"
 
 	// Bootstrap file names under BootstrapDir.

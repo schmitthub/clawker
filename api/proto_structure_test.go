@@ -55,13 +55,6 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 		}
 	})
 
-	t.Run("AdminService registered on gRPC server", func(t *testing.T) {
-		// Verify the generated registration function exists.
-		srv := grpc.NewServer() //nolint:staticcheck // nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection -- test-only, no TLS needed
-		// This compiles only if the generated interface + registration exist.
-		adminv1.RegisterAdminServiceServer(srv, nil)
-	})
-
 	t.Run("AgentService has Connect and Events streaming RPCs", func(t *testing.T) {
 		desc := agentv1.AgentService_ServiceDesc
 		streamsByName := make(map[string]grpc.StreamDesc)
@@ -82,10 +75,5 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 		require.True(t, ok, "AgentService must have Events RPC")
 		assert.True(t, events.ClientStreams, "Events must be client-streaming")
 		assert.False(t, events.ServerStreams, "Events must NOT be server-streaming")
-	})
-
-	t.Run("AgentService registered on gRPC server", func(t *testing.T) {
-		srv := grpc.NewServer() //nolint:staticcheck // nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection -- test-only, no TLS needed
-		agentv1.RegisterAgentServiceServer(srv, nil)
 	})
 }

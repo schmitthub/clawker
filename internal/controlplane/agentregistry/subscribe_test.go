@@ -105,13 +105,23 @@ func TestSubscribe_DoesNotEvictOnPaused(t *testing.T) {
 		Lifecycle: "paused",
 	}, informer.Transition{Source: "test", At: now}))
 
-	// Give the consumer goroutine time to process the delta — if it
-	// was going to evict, it would have by now.
-	time.Sleep(50 * time.Millisecond)
-
-	got, err := r.Lookup(tp("cert-z"), canonical("", "z"))
-	require.NoError(t, err)
-	assert.Equal(t, "z", got.AgentName)
+	// Poll for a stable window — proof of absence by repeated
+	// observation is more deterministic than a single time.Sleep:
+	// a sleep too short on a loaded CI runner can pass for the wrong
+	// reason (the consumer simply hasn't drained the paused delta
+	// yet). We poll every 5ms for 100ms; if the entry ever disappears
+	// the eviction happened (test fails). If it survives every
+	// observation, the consumer saw the paused delta and correctly
+	// skipped eviction.
+	const window = 100 * time.Millisecond
+	const interval = 5 * time.Millisecond
+	deadline := time.Now().Add(window)
+	for time.Now().Before(deadline) {
+		got, err := r.Lookup(tp("cert-z"), canonical("", "z"))
+		require.NoError(t, err, "paused must not evict registered entry")
+		assert.Equal(t, "z", got.AgentName)
+		time.Sleep(interval)
+	}
 }
 
 func TestSubscribe_CancelStopsConsumer(t *testing.T) {
@@ -149,8 +159,7 @@ func (p *panicOnceRegistry) Add(e Entry) { p.delegate.Add(e) }
 func (p *panicOnceRegistry) Lookup(t [sha256.Size]byte, cn string) (*Entry, error) {
 	return p.delegate.Lookup(t, cn)
 }
-func (p *panicOnceRegistry) Touch(t [sha256.Size]byte) { p.delegate.Touch(t) }
-func (p *panicOnceRegistry) Snapshot() []Entry         { return p.delegate.Snapshot() }
+func (p *panicOnceRegistry) Snapshot() []Entry { return p.delegate.Snapshot() }
 func (p *panicOnceRegistry) EvictByContainerID(id string) {
 	p.calls.Add(1)
 	if p.panicked.CompareAndSwap(false, true) {

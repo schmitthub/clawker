@@ -45,7 +45,7 @@ import (
 )
 
 // Slot is the per-agent reservation record stored between AnnounceAgent
-// and Register. Fields are written by Reserve and read at Consume; the
+// and Connect. Fields are written by Reserve and read at Consume; the
 // caller treats the returned slot as immutable.
 //
 // ReservedAt and ExpiresAt are stamped INSIDE Reserve from the

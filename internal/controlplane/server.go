@@ -18,11 +18,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -93,8 +93,22 @@ func (s *adminServer) AnnounceAgent(_ context.Context, req *adminv1.AnnounceAgen
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request required")
 	}
-	if req.AgentName == "" {
-		return nil, status.Error(codes.InvalidArgument, "agent_name required")
+	// Validate agent_name and project at the wire boundary using the
+	// SAME typed constructors AgentService.Connect uses (see
+	// internal/controlplane/agent/handler.go). Without this Announce
+	// would accept names that Connect later rejects — the slot is
+	// reserved successfully but cannot be consumed, so a malformed name
+	// burns a slot for the full TTL. agent_name is identity-bearing so
+	// dot-containing or canonical-prefix forms must be rejected here
+	// (otherwise an attacker gets a memory churn primitive bounded only
+	// by the rate limiter we don't yet have). Project is allowed to be
+	// empty (matches docker.ContainerName's 2-segment naming) — that's
+	// expressed by NewProjectSlug accepting "".
+	if _, err := auth.NewAgentName(req.AgentName); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "agent_name: %v", err)
+	}
+	if _, err := auth.NewProjectSlug(req.Project); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "project: %v", err)
 	}
 	if req.ContainerId == "" {
 		return nil, status.Error(codes.InvalidArgument, "container_id required")
@@ -104,16 +118,6 @@ func (s *adminServer) AnnounceAgent(_ context.Context, req *adminv1.AnnounceAgen
 	}
 	if req.CodeChallengeMethod != string(consts.ChallengeMethodS256) {
 		return nil, status.Error(codes.InvalidArgument, "code_challenge_method must be S256")
-	}
-	// Project is allowed to be empty (matches docker.ContainerName's
-	// 2-segment naming) but a non-empty value must conform to the same
-	// charset/length rules ContainerName enforces — otherwise a buggy
-	// or malicious CLI can announce with garbage / path-traversal /
-	// kilobyte-sized strings that burn a slot until TTL.
-	if req.Project != "" {
-		if err := docker.ValidateResourceName(req.Project); err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "project: %v", err)
-		}
 	}
 
 	// hex.DecodeString is case-insensitive but the proto contract is

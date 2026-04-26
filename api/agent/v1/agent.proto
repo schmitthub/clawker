@@ -44,12 +44,15 @@ service AgentService {
 message ConnectRequest {
   // agent_name is the short agent name as the user types it on the CLI
   // (e.g. "dev", "test"). NOT the canonical "clawker.project.agent". CP
-  // assembles the canonical CN from (NamePrefix, project, agent_name) and
+  // assembles the canonical CN as `clawker.<project>.<agent>` (or
+  // `clawker.<agent>` for empty project) via auth.CanonicalAgentCN and
   // cross-checks against the peer cert's CN before consuming the slot.
   string agent_name = 1;
 
   // code_verifier is the PKCE secret matching the slot's S256 challenge.
-  // CLI delivers it via tmpfs at /run/clawker/bootstrap/verifier.
+  // CLI delivers it to /run/clawker/bootstrap/verifier via Docker's
+  // CopyToContainer API between docker create and docker start
+  // (writable layer; see cmd/clawkerd/CLAUDE.md).
   // Per RFC 7636, length is 43-128 unreserved characters.
   //
   // RECONNECT PATH (future, see cp-initiative-cp-restart-resilience):

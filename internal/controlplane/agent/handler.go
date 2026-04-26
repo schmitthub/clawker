@@ -225,11 +225,17 @@ func (h *Handler) Connect(req *agentv1.ConnectRequest, stream agentv1.AgentServi
 	// a standalone thumbprint compare is no longer necessary. Mismatch
 	// / missing / expired all surface as ErrSlotInvalid; PKCE compare
 	// is constant-time inside agentslots.
-	slot, err := h.slots.Consume(thumbprint, req.AgentName, req.Project, req.CodeVerifier)
+	//
+	// Pass the validated typed values (.String()) instead of raw req.*
+	// strings so a future refactor can't accidentally route an
+	// unvalidated wire string into the slot lookup. The slot registry
+	// keys on these strings — passing a malformed identity here would
+	// make the slot unfindable and burn it for the full TTL.
+	slot, err := h.slots.Consume(thumbprint, agentName.String(), project.String(), req.CodeVerifier)
 	if err != nil {
 		h.log.Warn().Err(err).
-			Str("agent", req.AgentName).
-			Str("project", req.Project).
+			Str("agent", agentName.String()).
+			Str("project", project.String()).
 			Msg("agent connect: slot consume rejected")
 		return status.Error(codes.PermissionDenied, "registration rejected")
 	}

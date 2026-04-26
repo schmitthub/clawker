@@ -65,7 +65,7 @@ func Nop() *Logger                        // Discards all output (tests, disable
 
 `NewWriter` is the constructor for **containerized daemons that want their structured JSON surfaced via `docker logs <container>`** (e.g. `clawker-cp`). No file rotation, no OTEL — the container runtime owns log lifecycle. Debug level by default.
 
-**Note**: `clawkerd` deliberately uses `New(...)` writing to `/var/log/clawkerd.log` inside the container instead of `NewWriter`. The reasoning is operational: per-agent containers can be many and may run with `--rm` so `docker logs` is short-lived; an on-disk rotated file (50MB / 7d / 3 backups) gives an operator a stable place to triage individual-agent issues across container churn. Material is bounded by the container's writable layer — `--rm` or `docker rm` reclaims it. See `cmd/clawkerd/CLAUDE.md` for the full level taxonomy.
+**Note**: `clawkerd` deliberately uses `New(...)` writing to `/var/log/clawker/clawkerd.log` inside the container instead of `NewWriter`. The reasoning is operational: per-agent containers can be many and may run with `--rm` so `docker logs` is short-lived; an on-disk rotated file (50MB / 7d / 3 backups) gives an operator a stable place to triage individual-agent issues across container churn. Material is bounded by the container's writable layer — `--rm` or `docker rm` reclaims it. See `cmd/clawkerd/CLAUDE.md` for the full level taxonomy.
 
 `Nop` returns a logger backed by `zerolog.Nop()` — zero allocation, no file I/O.
 

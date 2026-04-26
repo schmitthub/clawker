@@ -35,7 +35,7 @@
   moby/moby (Docker SDK)
 ```
 
-> **CP ≠ firewall — common LLM confusion.** The "Security Subsystem" column above contains both `controlplane/` (CP daemon — **unconditional**: auth, AdminService, AgentService, agent slot/registry, mTLS, owns clawker-net) and `controlplane/firewall/` (**one optional subsystem CP manages**, toggled by `firewall.enable` in `settings.yaml`; the project schema's `security.firewall` holds per-project rules only, NOT the master switch). They are not the same. Disabling firewall does NOT disable CP, AdminService, AgentService, AnnounceAgent, clawkerd Register, ListAgents, or any non-firewall AdminService RPC. CP owns firewall, not vice versa. Don't gate non-firewall behavior on the firewall flag.
+> **CP ≠ firewall — common LLM confusion.** The "Security Subsystem" column above contains both `controlplane/` (CP daemon — **unconditional**: auth, AdminService, AgentService, agent slot/registry, mTLS, owns clawker-net) and `controlplane/firewall/` (**one optional subsystem CP manages**, toggled by `firewall.enable` in `settings.yaml`; the project schema's `security.firewall` holds per-project rules only, NOT the master switch). They are not the same. Disabling firewall does NOT disable CP, AdminService, AgentService, AnnounceAgent, clawkerd Connect, ListAgents, or any non-firewall AdminService RPC. CP owns firewall, not vice versa. Don't gate non-firewall behavior on the firewall flag.
 
 ## Factory Dependency Injection (gh CLI Pattern)
 
@@ -528,7 +528,7 @@ Key packages:
 - `internal/clawkerd` — `//go:embed assets/clawkerd` exports the per-container daemon binary; bundler drops it into every per-project image at `/usr/local/bin/clawkerd`.
 - `cmd/clawkerd` — per-container agent daemon. Boot sequence in `cmd/clawkerd/CLAUDE.md`.
 - `api/admin/v1` — AdminService proto + method-scope registration (`AdminMethodScopes`, covered by `TestAdminMethodScopes_CoversAllRPCs`).
-- `api/agent/v1` — AgentService proto (`Register` only in B4); method-scope map at `internal/controlplane/agent_method_scopes.go`.
+- `api/agent/v1` — AgentService proto (`Connect` server-streaming + `Events` stub in B4); method-scope map at `internal/controlplane/agent_method_scopes.go`.
 - `cmd/clawker-cp/main.go` — daemon entry point. Wires Stack + `firewall.Handler` + `AgentWatcher` + drain callback + admin listener + agent listener + agent handler + dockerevents subscription.
 
 ## Command Dependency Injection Pattern

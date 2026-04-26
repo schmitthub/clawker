@@ -9,7 +9,7 @@ package e2e
 //   1. Generate a fresh per-agent bootstrap (cert + key + CA + assertion + verifier).
 //   2. Call AdminService.AnnounceAgent before docker start.
 //   3. docker cp the bootstrap material to the container's /run/clawker/bootstrap.
-//   4. Set CLAWKER_CP_HYDRA_URL / CLAWKER_CP_AGENT_ADDR / CLAWKER_AGENT_NAME env.
+//   4. Set CLAWKER_CP_HYDRA_URL / CLAWKER_CP_AGENT_ADDR / CLAWKER_AGENT env.
 //
 // Until those wires land in run/start (currently a known gap — see the
 // Branch 4 plan memory), `clawker container run` produces a container

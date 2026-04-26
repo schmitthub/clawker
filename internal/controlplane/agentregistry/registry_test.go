@@ -40,7 +40,7 @@ func validEntry(project, agent, containerID, certSeed string) Entry {
 	}
 }
 
-func TestRegistry_AddLookupTouch(t *testing.T) {
+func TestRegistry_AddLookup(t *testing.T) {
 	r := NewRegistry(nil)
 	now := time.Unix(1000, 0)
 	entry := Entry{
@@ -60,14 +60,6 @@ func TestRegistry_AddLookupTouch(t *testing.T) {
 	assert.Equal(t, entry.Project, got.Project)
 	assert.Equal(t, entry.ContainerID, got.ContainerID)
 	assert.Equal(t, entry.Thumbprint, got.Thumbprint)
-
-	// Touch must monotonically advance LastSeen.
-	preTouch := got.LastSeen
-	time.Sleep(time.Millisecond)
-	r.Touch(entry.Thumbprint)
-	got2, err := r.Lookup(entry.Thumbprint, canonical("x", "y"))
-	require.NoError(t, err)
-	assert.True(t, got2.LastSeen.After(preTouch), "Touch must advance LastSeen")
 }
 
 func TestRegistry_Lookup_Unknown(t *testing.T) {
@@ -189,7 +181,6 @@ func TestRegistry_Concurrent(t *testing.T) {
 			}
 			r.Add(entry)
 			_, _ = r.Lookup(thumb, canonical("p", "agent"))
-			r.Touch(thumb)
 		}(i)
 	}
 	wg.Wait()

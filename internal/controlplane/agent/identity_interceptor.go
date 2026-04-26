@@ -187,6 +187,14 @@ func IdentityInterceptor(reg agentregistry.Registry, optedOut map[string]bool, l
 // ServerStream — otherwise the embedded type's Context() wins and the
 // handler reads the original ctx without the entry attached, silently
 // breaking identity binding for every streaming RPC.
+//
+// Note on the `ctx` field: project CLAUDE.md says "NEVER store
+// context.Context in struct fields." This is the rare legitimate
+// exception — gRPC's `ServerStream` interface mandates a `Context()`
+// method, and wrapping the stream with a derived context is the
+// only way to inject WithEntry-augmented values into streaming RPC
+// handlers. Don't "fix" this field; the rule is for I/O structs
+// where ctx should flow as a method parameter.
 type identityServerStream struct {
 	grpc.ServerStream
 	ctx context.Context

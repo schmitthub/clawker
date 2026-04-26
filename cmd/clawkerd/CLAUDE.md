@@ -90,8 +90,11 @@ are commands as B5+ adds payload variants.
 ## Logging
 
 Structured zerolog via `internal/logger.New()` writing to
-`/var/log/clawkerd.log` (50MB rotation, 7d retain, 3 backups, gzip
-compression — same defaults as the host-side `clawker.log`). Every
+`/var/log/clawker/clawkerd.log` (50MB rotation, 7d retain, 3 backups,
+gzip compression — same defaults as the host-side `clawker.log`). The
+entrypoint redirects clawkerd's stdout/stderr to the same path so
+early-boot stderr (logger-init failure) and any panic stack trace
+land alongside the structured log. Every
 log line carries `agent=<name>` and `project=<slug>` structured
 fields so a multi-agent log (when shared via volume mount) is
 trivially filterable by container.

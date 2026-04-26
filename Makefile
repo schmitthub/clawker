@@ -507,6 +507,24 @@ ifndef GOTESTSUM
 endif
 	$(TEST_CMD_VERBOSE) -timeout 5m ./test/whail/...
 
+# Targeted suite: clawkerd daemon + Connect handshake + identity
+# binding. Fast feedback loop while iterating on Branch 4 work
+# (clawkerd, agent handler, identity interceptor, agentslots,
+# agentregistry, auth/agent_*, container start agent-bootstrap).
+# Excludes test/e2e and test/whail so this stays safe to run inside
+# a clawker container (e2e tears down the host CP).
+test-clawkerd: $(PROTO_GENERATED)
+	@echo "Running clawkerd-focused unit tests..."
+	$(TEST_CMD) \
+		./cmd/clawkerd/... \
+		./internal/auth/... \
+		./internal/clawkerd/... \
+		./internal/cmd/container/shared/... \
+		./internal/cmd/controlplane/... \
+		./internal/controlplane/agent/... \
+		./internal/controlplane/agentregistry/... \
+		./internal/controlplane/agentslots/...
+
 # All test suites
 test-all: test test-e2e test-whail
 

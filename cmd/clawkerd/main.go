@@ -50,6 +50,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -73,11 +74,14 @@ const hydraTokenTimeout = 10 * time.Second
 // lifetime — no further timeout applies.
 const welcomeTimeout = 30 * time.Second
 
-// logsDir is where clawkerd writes its rotated log file. /var/log is
-// owned by root inside the container and clawkerd itself runs as root
-// (the entrypoint backgrounds it before privilege drop), so 0o755 is
-// fine. Mirrors the host-side `cfg.LogsSubdir()/clawker.log` shape.
-const logsDir = "/var/log"
+// logsDir is where clawkerd writes its rotated log file. Co-located
+// with the entrypoint's stdout/stderr capture target (/var/log/clawker/)
+// so an operator triaging issues finds bootstrap-time stderr writes
+// AND structured log events under one directory. The directory is
+// created by the entrypoint before clawkerd launches; clawkerd itself
+// runs as root inside the container (the entrypoint backgrounds it
+// before privilege drop), so 0o755 is fine.
+const logsDir = "/var/log/clawker"
 
 // logFilename is the rotated log file's basename — distinct from
 // clawker.log on the host so an operator triaging issues can tell at a
@@ -228,11 +232,29 @@ func run(ctx context.Context, log *logger.Logger) error {
 	}
 
 	// Welcome watchdog: cancel streamCtx after welcomeTimeout if the
-	// first Recv hasn't returned. .Stop() disarms the watchdog as soon
-	// as Welcome lands so the rest of the stream's lifetime is governed
+	// first Recv hasn't returned. The watchdog and the post-Recv
+	// disarm are serialized through watchdogMu so a sub-millisecond
+	// race between Welcome arrival and the timer firing can't cancel
+	// streamCtx after auth succeeded — without this gate, the
+	// post-Welcome Recv loop would observe streamCtx.Err() and exit
+	// non-zero even though the handshake actually succeeded. Once
+	// Welcome lands, the rest of the stream's lifetime is governed
 	// only by the parent ctx (SIGTERM teardown).
-	welcomeWatchdog := time.AfterFunc(welcomeTimeout, streamCancel)
+	var (
+		watchdogMu    sync.Mutex
+		watchdogArmed = true
+	)
+	welcomeWatchdog := time.AfterFunc(welcomeTimeout, func() {
+		watchdogMu.Lock()
+		defer watchdogMu.Unlock()
+		if watchdogArmed {
+			streamCancel()
+		}
+	})
 	first, err := stream.Recv()
+	watchdogMu.Lock()
+	watchdogArmed = false
+	watchdogMu.Unlock()
 	welcomeWatchdog.Stop()
 	if err != nil {
 		// SIGTERM during the handshake is a clean teardown, not a

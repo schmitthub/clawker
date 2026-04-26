@@ -114,8 +114,27 @@ emit_error() {
 # can diagnose, but don't fail the container.
 if [ -d /run/clawker/bootstrap ]; then
     if [ -x /usr/local/bin/clawkerd ]; then
+        # Co-locate stdout/stderr capture with the daemon's rotated
+        # zerolog file (cmd/clawkerd/main.go logsDir). The redirect
+        # only catches what bypasses the logger — early-boot stderr
+        # (logger init failure) and any panic stack trace. Once the
+        # logger is up, clawkerd writes structured events to the
+        # same file and an operator triaging "did clawkerd start?"
+        # finds everything in one place.
         mkdir -p /var/log/clawker
         /usr/local/bin/clawkerd >>/var/log/clawker/clawkerd.log 2>&1 &
+        clawkerd_pid=$!
+        # Sub-second sanity check: bash's `&` detaches from `set -e`
+        # so an immediate exit (missing bootstrap files, malformed
+        # cert, etc.) leaves no breadcrumb. Confirm the PID is still
+        # alive after a 1s grace; otherwise emit a warning to fd 4 so
+        # the operator gets a non-log-file signal that registration
+        # was attempted but failed at startup. This is best-effort:
+        # a slow Hydra dial that takes >1s to fail still slips through.
+        sleep 1
+        if ! kill -0 "$clawkerd_pid" 2>/dev/null; then
+            echo "[clawker] warn clawkerd exited at startup; see /var/log/clawker/clawkerd.log for details" >&4
+        fi
     else
         echo "[clawker] warn clawkerd skipped: /usr/local/bin/clawkerd missing — image was built without the embedded daemon" >&4
     fi

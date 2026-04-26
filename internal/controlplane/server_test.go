@@ -151,7 +151,16 @@ func TestAdminServer_AnnounceAgent_Validation(t *testing.T) {
 		wantMsg string
 	}{
 		{"nil request", nil, "request required"},
-		{"empty agent_name", func(r *adminv1.AnnounceAgentRequest) { r.AgentName = "" }, "agent_name required"},
+		{"empty agent_name", func(r *adminv1.AnnounceAgentRequest) { r.AgentName = "" }, "agent_name"},
+		// Symmetric with AgentService.Connect's typed validation:
+		// announce-side AND connect-side share auth.NewAgentName /
+		// NewProjectSlug so a malformed name can never burn a slot for
+		// the full TTL by being announced and then rejected at Connect.
+		{"agent_name with dot", func(r *adminv1.AnnounceAgentRequest) { r.AgentName = "dev.bot" }, "agent_name"},
+		{"agent_name with canonical prefix", func(r *adminv1.AnnounceAgentRequest) { r.AgentName = "clawker.dev" }, "agent_name"},
+		{"agent_name oversized", func(r *adminv1.AnnounceAgentRequest) { r.AgentName = strings.Repeat("a", 1024) }, "agent_name"},
+		{"project with dot", func(r *adminv1.AnnounceAgentRequest) { r.Project = "my.app" }, "project"},
+		{"project with canonical prefix", func(r *adminv1.AnnounceAgentRequest) { r.Project = "clawker.app" }, "project"},
 		{"empty container_id", func(r *adminv1.AnnounceAgentRequest) { r.ContainerId = "" }, "container_id required"},
 		{"empty code_challenge", func(r *adminv1.AnnounceAgentRequest) { r.CodeChallenge = "" }, "code_challenge required"},
 		{"non-S256 method", func(r *adminv1.AnnounceAgentRequest) { r.CodeChallengeMethod = "plain" }, "code_challenge_method must be S256"},

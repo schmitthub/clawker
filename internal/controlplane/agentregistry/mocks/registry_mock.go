@@ -30,9 +30,6 @@ var _ agentregistry.Registry = &RegistryMock{}
 //			SnapshotFunc: func() []agentregistry.Entry {
 //				panic("mock out the Snapshot method")
 //			},
-//			TouchFunc: func(thumbprint [32]byte)  {
-//				panic("mock out the Touch method")
-//			},
 //		}
 //
 //		// use mockedRegistry in code that requires agentregistry.Registry
@@ -51,9 +48,6 @@ type RegistryMock struct {
 
 	// SnapshotFunc mocks the Snapshot method.
 	SnapshotFunc func() []agentregistry.Entry
-
-	// TouchFunc mocks the Touch method.
-	TouchFunc func(thumbprint [32]byte)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -77,17 +71,11 @@ type RegistryMock struct {
 		// Snapshot holds details about calls to the Snapshot method.
 		Snapshot []struct {
 		}
-		// Touch holds details about calls to the Touch method.
-		Touch []struct {
-			// Thumbprint is the thumbprint argument value.
-			Thumbprint [32]byte
-		}
 	}
 	lockAdd                sync.RWMutex
 	lockEvictByContainerID sync.RWMutex
 	lockLookup             sync.RWMutex
 	lockSnapshot           sync.RWMutex
-	lockTouch              sync.RWMutex
 }
 
 // Add calls AddFunc.
@@ -214,37 +202,5 @@ func (mock *RegistryMock) SnapshotCalls() []struct {
 	mock.lockSnapshot.RLock()
 	calls = mock.calls.Snapshot
 	mock.lockSnapshot.RUnlock()
-	return calls
-}
-
-// Touch calls TouchFunc.
-func (mock *RegistryMock) Touch(thumbprint [32]byte) {
-	if mock.TouchFunc == nil {
-		panic("RegistryMock.TouchFunc: method is nil but Registry.Touch was just called")
-	}
-	callInfo := struct {
-		Thumbprint [32]byte
-	}{
-		Thumbprint: thumbprint,
-	}
-	mock.lockTouch.Lock()
-	mock.calls.Touch = append(mock.calls.Touch, callInfo)
-	mock.lockTouch.Unlock()
-	mock.TouchFunc(thumbprint)
-}
-
-// TouchCalls gets all the calls that were made to Touch.
-// Check the length with:
-//
-//	len(mockedRegistry.TouchCalls())
-func (mock *RegistryMock) TouchCalls() []struct {
-	Thumbprint [32]byte
-} {
-	var calls []struct {
-		Thumbprint [32]byte
-	}
-	mock.lockTouch.RLock()
-	calls = mock.calls.Touch
-	mock.lockTouch.RUnlock()
 	return calls
 }

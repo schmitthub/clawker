@@ -85,25 +85,19 @@ func TestNewProjectSlug_Validation(t *testing.T) {
 	}
 }
 
-// TestMustAgentName_PanicsOnInvariantViolation locks the loud-failure
-// posture: a caller that asserts a string is valid via MustAgentName
-// must surface a typo or unvalidated input as a panic at the call
-// site, not as silently-malformed identity.
-func TestMustAgentName_PanicsOnInvariantViolation(t *testing.T) {
-	assert.Panics(t, func() { MustAgentName("") })
+// TestMust_PanicWrapsValidation pins the contract that Must*
+// constructors are pure panic-wrappers around their New* counterparts:
+// any input that errors in New* must panic in Must*. The validation
+// tables above cover the input space — this only proves the wrapping
+// shape (one canonical invalid + one canonical valid per type) so a
+// regression that silently swallows the error in Must* fails fast.
+func TestMust_PanicWrapsValidation(t *testing.T) {
 	assert.Panics(t, func() { MustAgentName("dot.in.name") })
-	assert.Panics(t, func() { MustAgentName("clawker.dev") })
 	assert.NotPanics(t, func() { _ = MustAgentName("dev") })
-}
-
-// TestMustProjectSlug_PanicsOnInvariantViolation. Empty input is
-// valid for ProjectSlug (unscoped case) so MustProjectSlug must NOT
-// panic on "" — symmetric with NewProjectSlug.
-func TestMustProjectSlug_PanicsOnInvariantViolation(t *testing.T) {
+	// Empty is valid for ProjectSlug (unscoped 2-segment case) so
+	// MustProjectSlug must not panic on "".
 	assert.NotPanics(t, func() { _ = MustProjectSlug("") })
-	assert.NotPanics(t, func() { _ = MustProjectSlug("myapp") })
 	assert.Panics(t, func() { MustProjectSlug("dot.app") })
-	assert.Panics(t, func() { MustProjectSlug("clawker.app") })
 }
 
 // TestCanonicalAgentCN_TwoVsThreeSegment confirms the rule lives in

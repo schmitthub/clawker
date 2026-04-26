@@ -15,7 +15,6 @@ package agentregistry
 import (
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"errors"
 	"sort"
 	"sync"
@@ -27,10 +26,10 @@ import (
 
 // Entry is one registered agent. Created by the Connect handler with
 // data taken from the slot (ContainerID, AgentName, Project) plus the
-// SHA-256 over the peer cert DER (Thumbprint). LastSeen is updated on
-// every successful per-agent RPC via Touch; registration is currently
-// the only writer because Connect is the only per-agent RPC that
-// has shipped.
+// SHA-256 over the peer cert DER (Thumbprint). LastSeen currently
+// equals RegisteredAt because Connect is the only per-agent RPC that
+// has shipped; future per-agent RPCs will refresh LastSeen at their
+// own boundary (tracked in cp-restart-resilience).
 type Entry struct {
 	// AgentName is the user-typed short name (e.g. "dev"); composed with
 	// Project at Lookup time to verify against the peer cert's CN.
@@ -81,10 +80,6 @@ type Registry interface {
 	// handler to thread the cert subject through the call). Mismatch on
 	// thumbprint OR CN returns ErrUnknownAgent.
 	Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)
-	// Touch refreshes LastSeen on a thumbprint. No-op for unknown
-	// thumbprints — the caller has already verified identity if it
-	// reaches this point.
-	Touch(thumbprint [sha256.Size]byte)
 	// EvictByContainerID removes any entry whose ContainerID matches.
 	// Linear in the number of registered agents; that's fine for
 	// realistic clawker host scales (single-digit agents).
@@ -167,28 +162,6 @@ func (r *registryImpl) Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, 
 		return nil, ErrUnknownAgent
 	}
 	return &entry, nil
-}
-
-func (r *registryImpl) Touch(thumbprint [sha256.Size]byte) {
-	r.mu.Lock()
-	entry, ok := r.entries[thumbprint]
-	if ok {
-		entry.LastSeen = time.Now()
-		r.entries[thumbprint] = entry
-	}
-	r.mu.Unlock()
-	if !ok {
-		// A Touch miss after a successful Lookup is an invariant
-		// violation (the interceptor calls Touch only after Lookup hit),
-		// so this is more interesting than a debug-tier event. Surface
-		// at Warn with the thumbprint hex prefix for correlation —
-		// either dockerevents evicted between Lookup and Touch (benign
-		// race; expected during teardown) or the thumbprint derivation
-		// disagrees between callers (a real bug).
-		r.log.Warn().
-			Str("thumbprint_prefix", hex.EncodeToString(thumbprint[:8])).
-			Msg("agentregistry: touch on unknown thumbprint (raced eviction or derivation drift)")
-	}
 }
 
 func (r *registryImpl) EvictByContainerID(containerID string) {

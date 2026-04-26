@@ -65,7 +65,8 @@ func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 
 // MintAgentCert generates a per-agent mTLS leaf signed by the CLI CA at
 // caCertPath/caKeyPath. The returned material is meant to be delivered
-// to the agent container via tmpfs and never persisted on the host.
+// to the agent container's writable layer via Docker's CopyToContainer
+// API (see consts.BootstrapDir) and never persisted on the host.
 //
 // CN is composed inside the function from (project, agent) via
 // CanonicalAgentCN — callers MUST pass the user-typed short names and let

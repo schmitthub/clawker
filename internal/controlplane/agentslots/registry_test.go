@@ -388,6 +388,57 @@ func TestRegistry_Reserve_Validation(t *testing.T) {
 	})
 }
 
+// TestRegistry_Reserve_RejectsInvariantViolations pins the panic
+// contract that mirrors agentregistry.Add: the only legitimate caller
+// is AdminService.AnnounceAgent, which derives the load-bearing fields
+// from the CLI's signed claim. Zero ExpectedCertThumbprint or empty
+// Challenge is a wiring bug that must surface loudly — silently
+// keying a slot under all-zero bytes would break the "fresh cert per
+// retry" composite-collision argument; an empty Challenge would let
+// subtle.ConstantTimeCompare("", "") trivially pass against an empty
+// verifier. Without these tests a future refactor that drops a
+// guard would silently regress identity binding.
+func TestRegistry_Reserve_RejectsInvariantViolations(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*Slot)
+		wantSub string
+	}{
+		{
+			name: "zero thumbprint",
+			mutate: func(s *Slot) {
+				s.ExpectedCertThumbprint = [sha256.Size]byte{}
+			},
+			wantSub: "zero ExpectedCertThumbprint",
+		},
+		{
+			name: "empty challenge",
+			mutate: func(s *Slot) {
+				s.Challenge = ""
+			},
+			wantSub: "empty Challenge",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := &fakeClock{now: time.Unix(100, 0)}
+			r := newRegistry(t, clock)
+			s := mkSlot("p", "a", "verifier")
+			tc.mutate(&s)
+
+			defer func() {
+				rec := recover()
+				require.NotNil(t, rec, "Reserve must panic on %s", tc.name)
+				msg, _ := rec.(string)
+				assert.Contains(t, msg, tc.wantSub,
+					"panic message must identify the violated invariant")
+			}()
+			_ = r.Reserve(s)
+			t.Fatal("Reserve did not panic on invalid slot")
+		})
+	}
+}
+
 func TestRegistry_Stop_Idempotent(t *testing.T) {
 	// Stop is called from multiple shutdown paths (drain-to-zero, test
 	// cleanup, /controlplane down) — must not panic on a second call.
