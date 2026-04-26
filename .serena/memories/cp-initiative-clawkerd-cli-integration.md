@@ -14,7 +14,7 @@
 | Task 4: `controlplane.adminServer.AnnounceAgent` handler | `complete` | claude-opus-4-7 |
 | Task 5: `AgentIdentityInterceptor` (unary + stream) with fail-secure opt-out map | `complete` | claude-opus-4-7 |
 | Task 6: `cmd/clawker-cp/main.go` wiring (slot registry hoist, identity interceptor chain, dockerevents subscriptions) | `complete` | claude-opus-4-7 |
-| Task 7: `cmd/clawkerd/main.go` — consume `Connect` server-stream | `pending` | — |
+| Task 7: `cmd/clawkerd/main.go` — consume `Connect` server-stream | `complete` | claude-opus-4-7 |
 | Task 8: CLI `run`/`start` wiring — `RuntimeEnvOpts` Clawkerd* fields + `prepareAgentBootstrap` helper | `pending` | — |
 | Task 9: Documentation pass — package CLAUDE.md files + KEY-CONCEPTS + status memo | `pending` | — |
 
@@ -63,6 +63,13 @@
 - `agentslots.Subscribe` runs through the same `watcherCtx` as `agentregistry.Subscribe` so drain-to-zero tears both down identically. Defer order: subscriber cancel funcs run before `slotRegistry.Stop()` (LIFO unwind), so eviction goroutines drain before the TTL janitor closes its stop channel.
 - The slot subscribe rationale: TTL janitor is the floor, but immediate dockerevents-driven eviction prevents `ErrSlotExists` collisions on quick re-announce after a failed ContainerStart.
 - T7 still needs to land before tree-wide `go build ./...` is clean — `cmd/clawkerd/main.go` calls `agentClient.Register` which the T1 proto rename broke. T6's acceptance only requires `./cmd/clawker-cp/...` and `./internal/controlplane/...` to be clean.
+
+### Task 7
+- gRPC unary client interceptors do NOT cover streaming RPCs. `bearerInterceptor` (the previous unary interceptor) silently skipped Connect (server-streaming) and would have caused codes.Unauthenticated rejection at the CP's AuthInterceptor before clawkerd ever saw Welcome. Switched to `credentials.PerRPCCredentials` via `WithPerRPCCredentials` — single hook covers both unary AND streaming, future-proofs Events.
+- Welcome-before-delete-verifier is the load-bearing ordering: Recv first, type-assert Command_Welcome, only then `os.Remove(verifier)`. A regression where delete moves before Recv would burn the verifier on every transient connection failure.
+- `welcomeTimeout` (30s) bounds ONLY the wait for the first Recv, not the stream's lifetime. After Welcome the loop drains on the parent ctx so SIGTERM tears down cleanly. `recvWithCtx` helper races welcomeCtx against gRPC's separate per-RPC ctx.
+- Goroutine in `recvWithCtx` is single-shot-on-error-path: it parks in `stream.Recv()` after ctx.Cancel until the deferred `conn.Close()` errors the stream out. Buffered channel (cap 1) lets the goroutine send-and-exit cleanly even if the caller already returned. Not reusable safely without conn cleanup.
+- SIGTERM-during-handshake exits zero (clean teardown), not 1 (crash). Mirrors the post-Welcome loop's `errors.Is(ctx.Err(), context.Canceled)` discipline so a `restart: on-failure` policy doesn't retrigger on shutdown.
 
 ---
 

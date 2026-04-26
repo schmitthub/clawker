@@ -43,6 +43,7 @@ dist/
 /callback-forwarder
 /clawker-socket-server
 /clawker-generate
+/clawkerd
 /gen-docs
 
 # Binaries for programs and plugins

@@ -2,8 +2,9 @@
 
 Per-container agent daemon. Runs as a backgrounded child of the
 container entrypoint shell (started by `internal/bundler/assets/entrypoint.sh`
-right before the firewall healthz wait), completes the announce →
-register handshake with the control plane, and idles until SIGTERM.
+right before the firewall healthz wait), opens the lifetime command
+channel with the control plane via `AgentService.Connect` (server-
+streaming), and drains commands until SIGTERM or the stream closes.
 Not PID 1 — bash is. Not PID 0 either; PID 0 doesn't exist in user
 space.
 
@@ -11,9 +12,10 @@ space.
 
 The CP is the daemon for the host. clawkerd is the daemon for one
 container. They speak only over the agent gRPC listener on
-clawker-net, and only the bootstrap phase actually crosses the wire in
-Branch 4 — after Register the connection idles, holding a TCP socket
-open as a liveness signal.
+clawker-net. The Connect stream IS the agent's lifetime command
+channel — single TCP connection per agent, all clawkerd-initiated;
+the first message after auth is `Welcome`, then subsequent messages
+are commands as B5+ adds payload variants.
 
 ## Boot sequence
 
@@ -42,11 +44,19 @@ open as a liveness signal.
 3. POST `assertion.jwt` to Hydra → access token bound to the
    `clawker-agent` client + `agent:self:register` scope.
 4. mTLS-dial the CP agent listener at `CLAWKER_CP_AGENT_ADDR` with the
-   per-agent cert. Bearer token attached on every RPC.
-5. `Register({agent_name, code_verifier})`. Delete the verifier on
-   success — single-use; PKCE consumption is the replay defense.
-6. Idle on `<-ctx.Done()`. CP detects clawkerd death via gRPC
-   connection drop; dockerevents handles the container-die path.
+   per-agent cert. Bearer token attached via `PerRPCCredentials` so
+   it covers BOTH unary and streaming RPCs (a unary-only interceptor
+   would silently skip Connect).
+5. `Connect({agent_name, code_verifier})` opens the server-streaming
+   command channel. The first message MUST be `Welcome`; receipt
+   implies server-side auth fully succeeded (slot consume + cross-
+   checks). Only then is the single-use verifier safe to delete —
+   PKCE consumption is the replay defense.
+6. Drain `stream.Recv()` for the agent's lifetime. `io.EOF` =
+   graceful CP shutdown. SIGTERM cancels ctx → gRPC tears the stream
+   down → exit zero. Other errors surface to stderr and exit 1.
+   B5+ adds command-payload variants to the oneof; today the loop
+   acknowledges `Welcome` and forward-compat-ignores unknown payloads.
 
 ## What it does NOT do (B4)
 
@@ -54,31 +64,36 @@ open as a liveness signal.
 - No init-script execution. The existing `entrypoint.sh` flow is
   unchanged — clawkerd runs alongside it. Migration of init steps
   lands in a later branch.
-- No command receiver. There's no incoming RPC surface yet.
-- No token refresh. Only one RPC fires (Register) and the mTLS
-  connection is single-use; if it ever drops the daemon exits and
-  the container is expected to follow.
+- No command-payload handling beyond Welcome acknowledgment. The
+  Connect stream IS the command-receiver surface; B5+ defines the
+  payload variants and dispatches them.
+- No token refresh + no reconnect-with-backoff. The bearer is consumed
+  via PerRPCCredentials at dial time and lasts for the stream's
+  lifetime; if Connect breaks, clawkerd exits and the container's
+  restart policy (or the user) re-runs. Reconnect lands with the
+  cp-restart-resilience initiative.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `main.go` | `run(ctx)` orchestrator: read bootstrap, exchange assertion, dial CP, Register, idle |
-| `interceptor.go` | `bearerInterceptor(token)` — attaches `authorization: Bearer <token>` on every outgoing RPC |
+| `main.go` | `run(ctx)` orchestrator: read bootstrap, exchange assertion, dial CP, Connect (server-streaming), receive Welcome, delete verifier, drain stream |
+| `interceptor.go` | `bearerCreds` (`credentials.PerRPCCredentials`) — attaches `authorization: Bearer <token>` on every outgoing RPC, unary AND streaming |
 | `bootstrap_test.go` | `readBootstrap` happy path, per-file missing variants, empty-file rejection, dial TLS rejects malformed key material |
 
 ## Failure model
 
-Every error before `<-ctx.Done()` is fatal — clawkerd writes to stderr
-and exits 1. The container's restart policy (or in `--rm` mode, the
-user's next `clawker run`) decides whether to retry. Partial-success
-states are deliberately unreachable; either Register completes and the
-agent is registered, or clawkerd dies and the slot expires after the
-60s TTL.
+Every error before Welcome is fatal — clawkerd writes to stderr and
+exits 1. After Welcome, SIGTERM-driven teardown exits zero (clean) and
+any other Recv error exits 1 (broken stream). The container's restart
+policy (or in `--rm` mode, the user's next `clawker run`) decides
+whether to retry. Partial-success states are deliberately unreachable:
+either Welcome arrives and the agent is registered, or clawkerd dies
+and the slot expires after the 60s TTL.
 
 ## Lifetime
 
-Bootstrap material is read once at boot. After Register success
+Bootstrap material is read once at boot. After Welcome receipt
 clawkerd:
 
 - Deletes `verifier` (single-use, replay defense).
