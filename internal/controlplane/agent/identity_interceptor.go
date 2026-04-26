@@ -114,7 +114,13 @@ func IdentityInterceptor(reg agentregistry.Registry, optedOut map[string]bool, l
 			return nil, status.Error(codes.PermissionDenied, "registration rejected")
 		}
 		thumbprint := sha256.Sum256(pid.Raw)
-		entry, err := reg.Lookup(thumbprint)
+		// Pass the peer cert CN through so the registry can verify it
+		// against the entry's stored canonical (Project, AgentName).
+		// Without this cross-check a future regression that re-keys the
+		// registry by thumbprint alone would silently authorize any peer
+		// presenting a registered thumbprint regardless of the cert
+		// subject — defense-in-depth against thumbprint reuse.
+		entry, err := reg.Lookup(thumbprint, pid.CommonName)
 		if err != nil {
 			// Differentiate the unknown-thumbprint case (operator-
 			// expected: agent never registered or already evicted) from

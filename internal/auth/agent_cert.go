@@ -12,7 +12,26 @@ import (
 	"math/big"
 	"os"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
+
+// CanonicalAgentCN composes the canonical agent identity used as the
+// cert's CN and the registry/slot composite key. Three-segment for a
+// scoped project ("clawker.<project>.<agent>"), two-segment for the
+// unscoped/empty-project case ("clawker.<agent>") to match
+// docker.ContainerName naming.
+//
+// Lives in this package because it is purely a function of consts.NamePrefix
+// and the (project, agent) tuple — every layer that needs to compose or
+// verify the canonical (cert minting, agent handler CN cross-check, registry
+// lookup) reaches for this so the rule has a single home.
+func CanonicalAgentCN(project, agent string) string {
+	if project == "" {
+		return consts.NamePrefix + "." + agent
+	}
+	return consts.NamePrefix + "." + project + "." + agent
+}
 
 // AgentCert is the co-derived material produced by MintAgentCert: the
 // PEM-encoded cert, its matching key, and the SHA-256 thumbprint over
@@ -42,14 +61,20 @@ func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 // caCertPath/caKeyPath. The returned material is meant to be delivered
 // to the agent container via tmpfs and never persisted on the host.
 //
-// CN is set to agentName verbatim (caller has already canonicalized it).
+// CN is composed inside the function from (project, agent) via
+// CanonicalAgentCN — callers MUST pass the user-typed short names and let
+// the helper apply the consts.NamePrefix prefix and the 2-vs-3-segment
+// rule. This keeps every cert minted by the CLI in a single canonical
+// shape so the agent handler's CN cross-check has a single equality to
+// enforce.
+//
 // The 24h lifetime is intentional — thumbprint pinning at Register makes
 // longer-lived certs safe, but a tight ceiling caps the blast radius if
 // a leaf leaks. Thumbprint is what the CLI announces to the CP via
 // AnnounceAgent so the CP can reject any peer cert whose
 // SHA-256(cert.Raw) doesn't match.
-func MintAgentCert(caCertPath, caKeyPath, agentName string) (AgentCert, error) {
-	if agentName == "" {
+func MintAgentCert(caCertPath, caKeyPath, project, agent string) (AgentCert, error) {
+	if agent == "" {
 		return AgentCert{}, fmt.Errorf("agent name required")
 	}
 
@@ -72,7 +97,7 @@ func MintAgentCert(caCertPath, caKeyPath, agentName string) (AgentCert, error) {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   agentName,
+			CommonName:   CanonicalAgentCN(project, agent),
 			Organization: []string{"clawker"},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),

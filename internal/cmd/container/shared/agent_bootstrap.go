@@ -66,8 +66,14 @@ func (*AgentBootstrap) GoString() string { return "AgentBootstrap{<redacted>}" }
 // `consts.AuthCAKeyPath()`); hydraTokenURL is the audience of the
 // assertion (the CP's Hydra `/oauth2/token` endpoint as clawkerd will
 // see it from inside the container).
-func GenerateAgentBootstrap(caCertPath, caKeyPath, agentName, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error) {
-	if agentName == "" {
+//
+// project + agent are the user-typed short identifiers (e.g. "myapp",
+// "dev") — never the canonical "clawker.project.agent" form. The cert's
+// CN is composed inside MintAgentCert via auth.CanonicalAgentCN so every
+// CLI caller produces the same canonical shape and the agent handler's
+// peer-cert CN cross-check has a single equality to enforce.
+func GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error) {
+	if agent == "" {
 		return nil, fmt.Errorf("agent name required")
 	}
 	if signingKey == nil {
@@ -79,7 +85,7 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath, agentName, hydraTokenURL stri
 		return nil, fmt.Errorf("pkce: %w", err)
 	}
 
-	cert, err := auth.MintAgentCert(caCertPath, caKeyPath, agentName)
+	cert, err := auth.MintAgentCert(caCertPath, caKeyPath, project, agent)
 	if err != nil {
 		return nil, fmt.Errorf("mint agent cert: %w", err)
 	}
@@ -107,39 +113,37 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath, agentName, hydraTokenURL stri
 }
 
 // AnnounceAgent reserves a registration slot on the CP for the given
-// container before docker start. CP slot stores the canonical agent
-// name, the Docker container ID CLI just received, the cert thumbprint
-// CLI minted, and the PKCE challenge. clawkerd consumes the matching
-// verifier at Register; if the slot expires (consts.AgentSlotTTL
-// elapses) clawkerd's Register fails fail-closed.
+// container before docker start. CP slot stores the (project, agent)
+// composite identity, the Docker container ID CLI just received, the
+// cert thumbprint CLI minted, and the PKCE challenge. clawkerd consumes
+// the matching verifier at Register; if the slot expires
+// (consts.AgentSlotTTL elapses) clawkerd's Register fails fail-closed.
 //
-// The thumbprint is sent over the wire as lowercase hex because the
-// proto field is a free-form `string` — internally we keep the
-// byte-array form to avoid carrying around a redundantly-encoded
-// representation.
-//
-// TODO(B4-followup): CP-side AdminService.AnnounceAgent handler is not
-// wired yet; calls return codes.Unimplemented until the followup
-// branch lands. See
-// .serena/memories/cp-initiative-branch-4-followup-cli-integration.md.
-func AnnounceAgent(ctx context.Context, admin adminv1.AdminServiceClient, b *AgentBootstrap, agentName, containerID string) error {
+// project + agent travel as separate wire fields (not assembled into a
+// canonical name) so the CP composite slot key can include both without
+// re-parsing on the server side. The thumbprint is sent over the wire as
+// lowercase hex because the proto field is a free-form `string` —
+// internally we keep the byte-array form to avoid carrying around a
+// redundantly-encoded representation.
+func AnnounceAgent(ctx context.Context, admin adminv1.AdminServiceClient, b *AgentBootstrap, project, agent, containerID string) error {
 	if err := b.validate(); err != nil {
-		return fmt.Errorf("announce agent %q: %w", agentName, err)
+		return fmt.Errorf("announce agent %q: %w", agent, err)
 	}
-	if agentName == "" {
+	if agent == "" {
 		return fmt.Errorf("announce agent: agent name required")
 	}
 	if containerID == "" {
-		return fmt.Errorf("announce agent %q: container id required", agentName)
+		return fmt.Errorf("announce agent %q: container id required", agent)
 	}
 	if _, err := admin.AnnounceAgent(ctx, &adminv1.AnnounceAgentRequest{
-		AgentName:              agentName,
+		AgentName:              agent,
+		Project:                project,
 		ContainerId:            containerID,
 		ExpectedCertThumbprint: hex.EncodeToString(b.ExpectedCertThumbprint[:]),
 		CodeChallenge:          b.Challenge,
 		CodeChallengeMethod:    string(b.Method),
 	}); err != nil {
-		return fmt.Errorf("announce agent %q (container %s): %w", agentName, containerID, err)
+		return fmt.Errorf("announce agent %q (container %s): %w", agent, containerID, err)
 	}
 	return nil
 }

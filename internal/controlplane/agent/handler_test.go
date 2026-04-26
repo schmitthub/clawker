@@ -27,6 +27,7 @@ import (
 	mobyclient "github.com/moby/moby/client"
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
@@ -111,16 +112,26 @@ func (s *connectStreamFake) awaitWelcome(t *testing.T) {
 // clawker-net IP + labels declaring agentName, and a peer cert whose
 // CN matches agentName (the new B-step cross-check).
 type fixtureOpts struct {
-	agentName   string
-	verifier    string
-	containerID string
-	certRaw     []byte
-	certCN      string // override; defaults to agentName
-	peerIP      net.IP
-	dockerIP    net.IP
-	labelAgent  string
-	inspectErr  error
-	wrongThumb  bool
+	// agentName is the short agent name (the user-typed identifier,
+	// e.g. "dev"). The handler composes the canonical
+	// "clawker.<project>.<agent>" CN from (project, agentName) via
+	// auth.CanonicalAgentCN; tests pass the short form too unless
+	// they're specifically forging an adversarial mismatch.
+	agentName string
+	// project is the project slug paired with agentName for the
+	// composite identity. Empty string is the unscoped/2-segment
+	// naming case.
+	project      string
+	verifier     string
+	containerID  string
+	certRaw      []byte
+	certCN       string // override; defaults to canonical(project, agent)
+	peerIP       net.IP
+	dockerIP     net.IP
+	labelAgent   string // override; defaults to agentName
+	labelProject string // override; defaults to project
+	inspectErr   error
+	wrongThumb   bool
 }
 
 type fixture struct {
@@ -138,8 +149,11 @@ func newFixture(t *testing.T, opts fixtureOpts) *fixture {
 	if opts.labelAgent == "" {
 		opts.labelAgent = opts.agentName
 	}
+	if opts.labelProject == "" {
+		opts.labelProject = opts.project
+	}
 	if opts.certCN == "" {
-		opts.certCN = opts.agentName
+		opts.certCN = auth.CanonicalAgentCN(opts.project, opts.agentName)
 	}
 
 	now := time.Unix(100, 0)
@@ -158,6 +172,7 @@ func newFixture(t *testing.T, opts fixtureOpts) *fixture {
 
 	require.NoError(t, slots.Reserve(agentslots.Slot{
 		AgentName:              opts.agentName,
+		Project:                opts.project,
 		ContainerID:            opts.containerID,
 		ExpectedCertThumbprint: thumb,
 		Challenge:              pkceChallengeForTest(opts.verifier),
@@ -172,7 +187,10 @@ func newFixture(t *testing.T, opts fixtureOpts) *fixture {
 		}
 		return ContainerInfo{
 			NetworkIP: opts.dockerIP,
-			Labels:    map[string]string{consts.LabelAgent: opts.labelAgent},
+			Labels: map[string]string{
+				consts.LabelAgent:   opts.labelAgent,
+				consts.LabelProject: opts.labelProject,
+			},
 		}, nil
 	})
 
@@ -190,8 +208,9 @@ func pkceChallengeForTest(verifier string) string {
 }
 
 // ctxWithPeer builds a ctx the handler will see when called via gRPC
-// over mTLS. The leaf cert carries Subject.CommonName so the handler's
-// new CN cross-check has a value to compare against.
+// over mTLS. The leaf cert carries Subject.CommonName as the canonical
+// "clawker.<project>.<agent>" so the handler's CN cross-check has a
+// value to compare against.
 func ctxWithPeer(certRaw []byte, cn string, peerIP net.IP) context.Context {
 	leaf := &x509.Certificate{
 		Raw:     certRaw,
@@ -228,13 +247,59 @@ func runConnect(t *testing.T, h *Handler, ctx context.Context, req *agentv1.Conn
 	return stream, wait
 }
 
+// TestConnect_EmptyProject_HappyPath pins the 2-segment naming case:
+// empty project is a legitimate value (matches docker.ContainerName
+// behavior). The canonical CN is "clawker.<agent>", the dev.clawker.project
+// label is missing on the container (Docker never sets a label that's
+// not in ContainerLabels), and the slot Reserve / Connect / registry
+// Add must all accept the empty-string project consistently. Without
+// this test, a future regression that adds `if slot.Project == "" {
+// reject }` would silently break the unscoped-naming branch.
+func TestConnect_EmptyProject_HappyPath(t *testing.T) {
+	const verifier = "verifier"
+	certRaw := []byte("cert-empty-project")
+	const agentName = "solo"
+	peerIP := net.IPv4(172, 28, 0, 7)
+
+	f := newFixture(t, fixtureOpts{
+		project:     "", // unscoped
+		agentName:   agentName,
+		verifier:    verifier,
+		containerID: "ctr-empty",
+		certRaw:     certRaw,
+		peerIP:      peerIP,
+		// labelProject left empty too — matches an unscoped container
+		// where dev.clawker.project never gets set.
+	})
+
+	ctx, cancel := context.WithCancel(ctxWithPeer(certRaw, auth.CanonicalAgentCN("", agentName), peerIP))
+	stream, wait := runConnect(t, f.handler, ctx,
+		&agentv1.ConnectRequest{AgentName: agentName, Project: "", CodeVerifier: verifier})
+
+	stream.awaitWelcome(t)
+	require.Equal(t, 1, stream.sentCount())
+	assert.Equal(t, 0, f.slots.Len(), "slot must consume on empty-project happy path")
+
+	// Registry lookup uses canonical 2-segment CN. A regression that
+	// composes the canonical wrong for empty project would fail here.
+	thumb := sha256.Sum256(certRaw)
+	got, err := f.registry.Lookup(thumb, "clawker.solo")
+	require.NoError(t, err)
+	assert.Equal(t, agentName, got.AgentName)
+	assert.Equal(t, "", got.Project)
+
+	cancel()
+	require.NoError(t, wait())
+}
+
 func TestConnect_HappyPath(t *testing.T) {
 	const verifier = "verifier-bytes"
 	certRaw := []byte("cert-der-payload")
-	const agentName = "clawker.alpha.bravo"
+	const project, agentName = "alpha", "bravo"
 	peerIP := net.IPv4(172, 28, 0, 5)
 
 	f := newFixture(t, fixtureOpts{
+		project:     project,
 		agentName:   agentName,
 		verifier:    verifier,
 		containerID: "ctr-12345",
@@ -242,9 +307,9 @@ func TestConnect_HappyPath(t *testing.T) {
 		peerIP:      peerIP,
 	})
 
-	ctx, cancel := context.WithCancel(ctxWithPeer(certRaw, agentName, peerIP))
+	ctx, cancel := context.WithCancel(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
 	stream, wait := runConnect(t, f.handler, ctx,
-		&agentv1.ConnectRequest{AgentName: agentName, CodeVerifier: verifier})
+		&agentv1.ConnectRequest{AgentName: agentName, Project: project, CodeVerifier: verifier})
 
 	// Welcome arrives before the handler idles on ctx.Done.
 	stream.awaitWelcome(t)
@@ -260,11 +325,13 @@ func TestConnect_HappyPath(t *testing.T) {
 	// Slot was consumed.
 	assert.Equal(t, 0, f.slots.Len())
 
-	// Registry has the new entry.
+	// Registry has the new entry — Lookup uses thumbprint + canonical
+	// CN, exactly the pair downstream RPCs will present.
 	thumb := sha256.Sum256(certRaw)
-	got, err := f.registry.Lookup(thumb)
+	got, err := f.registry.Lookup(thumb, auth.CanonicalAgentCN(project, agentName))
 	require.NoError(t, err)
 	assert.Equal(t, agentName, got.AgentName)
+	assert.Equal(t, project, got.Project)
 	assert.Equal(t, "ctr-12345", got.ContainerID)
 
 	// Cancel ctx — handler must idle on stream.Context().Done() and
@@ -277,17 +344,17 @@ func TestConnect_HappyPath(t *testing.T) {
 
 func TestConnect_RejectsMissingFields(t *testing.T) {
 	f := newFixture(t, fixtureOpts{
-		agentName: "clawker.x", verifier: "v", containerID: "c",
+		project: "p", agentName: "x", verifier: "v", containerID: "c",
 		certRaw: []byte("c"), peerIP: net.IPv4(1, 2, 3, 4),
 	})
 
 	cases := []*agentv1.ConnectRequest{
 		nil,
-		{AgentName: "", CodeVerifier: "v"},
-		{AgentName: "clawker.x", CodeVerifier: ""},
+		{AgentName: "", Project: "p", CodeVerifier: "v"},
+		{AgentName: "x", Project: "p", CodeVerifier: ""},
 	}
 	for _, req := range cases {
-		stream := newConnectStream(ctxWithPeer([]byte("c"), "clawker.x", net.IPv4(1, 2, 3, 4)))
+		stream := newConnectStream(ctxWithPeer([]byte("c"), auth.CanonicalAgentCN("p", "x"), net.IPv4(1, 2, 3, 4)))
 		err := f.handler.Connect(req, stream)
 		require.Error(t, err)
 		assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -297,13 +364,13 @@ func TestConnect_RejectsMissingFields(t *testing.T) {
 
 func TestConnect_NoPeerCert(t *testing.T) {
 	f := newFixture(t, fixtureOpts{
-		agentName: "clawker.x", verifier: "v", containerID: "c",
+		project: "p", agentName: "x", verifier: "v", containerID: "c",
 		certRaw: []byte("c"), peerIP: net.IPv4(1, 2, 3, 4),
 	})
 	// Bare context — no peer info.
 	stream := newConnectStream(context.Background())
 	err := f.handler.Connect(&agentv1.ConnectRequest{
-		AgentName: "clawker.x", CodeVerifier: "v",
+		AgentName: "x", Project: "p", CodeVerifier: "v",
 	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -311,22 +378,25 @@ func TestConnect_NoPeerCert(t *testing.T) {
 
 // TestConnect_CNMismatch is the new check Connect introduces over
 // Register: if the peer cert's Subject.CommonName disagrees with the
-// request's agent_name, reject before slot consume — defense vs an
-// attacker who somehow constructed a valid-looking ConnectRequest body
-// but presents a cert minted for a different agent.
+// canonical composed from the request's (project, agent_name), reject
+// before slot consume — defense vs an attacker who somehow constructed
+// a valid-looking ConnectRequest body but presents a cert minted for a
+// different agent.
 func TestConnect_CNMismatch(t *testing.T) {
 	const verifier = "v"
 	certRaw := []byte("cert")
 	peerIP := net.IPv4(10, 0, 0, 5)
 	f := newFixture(t, fixtureOpts{
-		agentName: "clawker.x", verifier: verifier, containerID: "c",
+		project: "p", agentName: "x", verifier: verifier, containerID: "c",
 		certRaw: certRaw, peerIP: peerIP,
 	})
 
-	// Cert CN says "clawker.evil"; request body says "clawker.x".
-	stream := newConnectStream(ctxWithPeer(certRaw, "clawker.evil", peerIP))
+	// Cert CN claims a different project (impostor); request body says
+	// (p, x). Wire-body composes to "clawker.p.x"; cert claims
+	// "clawker.evil.x" — mismatch, reject before Consume.
+	stream := newConnectStream(ctxWithPeer(certRaw, "clawker.evil.x", peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
-		AgentName: "clawker.x", CodeVerifier: verifier,
+		AgentName: "x", Project: "p", CodeVerifier: verifier,
 	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -335,19 +405,43 @@ func TestConnect_CNMismatch(t *testing.T) {
 	assert.Equal(t, 1, f.slots.Len())
 }
 
-func TestConnect_WrongVerifier(t *testing.T) {
+// TestConnect_ProjectTamper covers the wire-body project mismatch:
+// cert was minted for (p, x) but ConnectRequest body claims project
+// "evil". Canonical from req is "clawker.evil.x"; cert has
+// "clawker.p.x" — CN equality fails. This is the headline reason the
+// CN cross-check now reads BOTH project and agent from the request.
+func TestConnect_ProjectTamper(t *testing.T) {
 	const verifier = "v"
 	certRaw := []byte("cert")
-	const agentName = "clawker.x"
 	peerIP := net.IPv4(10, 0, 0, 5)
 	f := newFixture(t, fixtureOpts{
-		agentName: agentName, verifier: verifier, containerID: "c",
+		project: "p", agentName: "x", verifier: verifier, containerID: "c",
 		certRaw: certRaw, peerIP: peerIP,
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN("p", "x"), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
-		AgentName: agentName, CodeVerifier: "wrong",
+		AgentName: "x", Project: "evil", CodeVerifier: verifier,
+	}, stream)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	// Slot must remain — CN mismatch rejects before Consume.
+	assert.Equal(t, 1, f.slots.Len())
+}
+
+func TestConnect_WrongVerifier(t *testing.T) {
+	const verifier = "v"
+	certRaw := []byte("cert")
+	const project, agentName = "p", "x"
+	peerIP := net.IPv4(10, 0, 0, 5)
+	f := newFixture(t, fixtureOpts{
+		project: project, agentName: agentName, verifier: verifier, containerID: "c",
+		certRaw: certRaw, peerIP: peerIP,
+	})
+
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
+	err := f.handler.Connect(&agentv1.ConnectRequest{
+		AgentName: agentName, Project: project, CodeVerifier: "wrong",
 	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -359,22 +453,22 @@ func TestConnect_WrongVerifier(t *testing.T) {
 
 // TestConnect_CertSwap exercises the composite-key path: a peer cert
 // whose thumbprint disagrees with the slot's stored thumbprint causes
-// the (thumbprint, agent_name) lookup to miss entirely. Before the
-// composite refactor this was a separate post-Consume compare; now
+// the (thumbprint, agent_name, project) lookup to miss entirely. Before
+// the composite refactor this was a separate post-Consume compare; now
 // it's implicit in the slot lookup itself.
 func TestConnect_CertSwap(t *testing.T) {
 	const verifier = "v"
 	certRaw := []byte("cert-a")
-	const agentName = "clawker.x"
+	const project, agentName = "p", "x"
 	peerIP := net.IPv4(10, 0, 0, 5)
 	f := newFixture(t, fixtureOpts{
-		agentName: agentName, verifier: verifier, containerID: "c",
+		project: project, agentName: agentName, verifier: verifier, containerID: "c",
 		certRaw: certRaw, peerIP: peerIP, wrongThumb: true,
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
-		AgentName: agentName, CodeVerifier: verifier,
+		AgentName: agentName, Project: project, CodeVerifier: verifier,
 	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -383,17 +477,17 @@ func TestConnect_CertSwap(t *testing.T) {
 func TestConnect_PeerIPMismatch(t *testing.T) {
 	const verifier = "v"
 	certRaw := []byte("cert")
-	const agentName = "clawker.x"
+	const project, agentName = "p", "x"
 	f := newFixture(t, fixtureOpts{
-		agentName: agentName, verifier: verifier, containerID: "c",
+		project: project, agentName: agentName, verifier: verifier, containerID: "c",
 		certRaw:  certRaw,
 		peerIP:   net.IPv4(10, 0, 0, 5),
 		dockerIP: net.IPv4(10, 0, 0, 99),
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, agentName, net.IPv4(10, 0, 0, 5)))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), net.IPv4(10, 0, 0, 5)))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
-		AgentName: agentName, CodeVerifier: verifier,
+		AgentName: agentName, Project: project, CodeVerifier: verifier,
 	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -402,20 +496,50 @@ func TestConnect_PeerIPMismatch(t *testing.T) {
 func TestConnect_LabelMismatch(t *testing.T) {
 	const verifier = "v"
 	certRaw := []byte("cert")
-	const agentName = "clawker.x"
+	const project, agentName = "p", "x"
 	peerIP := net.IPv4(10, 0, 0, 5)
 	f := newFixture(t, fixtureOpts{
+		project:     project,
 		agentName:   agentName,
 		verifier:    verifier,
 		containerID: "c",
 		certRaw:     certRaw,
 		peerIP:      peerIP,
-		labelAgent:  "clawker.y", // tampered after announce
+		labelAgent:  "y", // tampered after announce
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
-		AgentName: agentName, CodeVerifier: verifier,
+		AgentName: agentName, Project: project, CodeVerifier: verifier,
+	}, stream)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// TestConnect_ProjectLabelMismatch covers the new label cross-check on
+// LabelProject. Same agent label as the slot but a tampered project
+// label — the handler must catch this independently of the agent label.
+// Without the project-label check, an attacker who relabeled the
+// project (e.g. cross-project label spoof) could ride a slot for the
+// wrong project, breaking the project-as-isolation-boundary invariant.
+func TestConnect_ProjectLabelMismatch(t *testing.T) {
+	const verifier = "v"
+	certRaw := []byte("cert")
+	const project, agentName = "alpha", "x"
+	peerIP := net.IPv4(10, 0, 0, 5)
+	f := newFixture(t, fixtureOpts{
+		project:      project,
+		agentName:    agentName,
+		verifier:     verifier,
+		containerID:  "c",
+		certRaw:      certRaw,
+		peerIP:       peerIP,
+		labelProject: "beta", // tampered project label
+	})
+
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
+	err := f.handler.Connect(&agentv1.ConnectRequest{
+		AgentName: agentName, Project: project, CodeVerifier: verifier,
 	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -423,17 +547,17 @@ func TestConnect_LabelMismatch(t *testing.T) {
 
 func TestConnect_DockerInspectError(t *testing.T) {
 	certRaw := []byte("cert")
-	const agentName = "clawker.x"
+	const project, agentName = "p", "x"
 	peerIP := net.IPv4(10, 0, 0, 5)
 	f := newFixture(t, fixtureOpts{
-		agentName: agentName, verifier: "v", containerID: "c",
+		project: project, agentName: agentName, verifier: "v", containerID: "c",
 		certRaw: certRaw, peerIP: peerIP,
 		inspectErr: errors.New("docker daemon unreachable"),
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
-		AgentName: agentName, CodeVerifier: "v",
+		AgentName: agentName, Project: project, CodeVerifier: "v",
 	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -449,18 +573,18 @@ func TestConnect_DockerInspectError(t *testing.T) {
 func TestConnect_SendWelcomeFails(t *testing.T) {
 	const verifier = "v"
 	certRaw := []byte("cert")
-	const agentName = "clawker.x"
+	const project, agentName = "p", "x"
 	peerIP := net.IPv4(10, 0, 0, 5)
 	f := newFixture(t, fixtureOpts{
-		agentName: agentName, verifier: verifier, containerID: "c",
+		project: project, agentName: agentName, verifier: verifier, containerID: "c",
 		certRaw: certRaw, peerIP: peerIP,
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
 	stream.sendErr = errors.New("client gone")
 
 	err := f.handler.Connect(&agentv1.ConnectRequest{
-		AgentName: agentName, CodeVerifier: verifier,
+		AgentName: agentName, Project: project, CodeVerifier: verifier,
 	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err),
@@ -469,7 +593,7 @@ func TestConnect_SendWelcomeFails(t *testing.T) {
 	// Registry must NOT have an entry — Send happens before Add, so a
 	// failed Send leaves no orphan to evict.
 	thumb := sha256.Sum256(certRaw)
-	_, lookupErr := f.registry.Lookup(thumb)
+	_, lookupErr := f.registry.Lookup(thumb, auth.CanonicalAgentCN(project, agentName))
 	assert.ErrorIs(t, lookupErr, agentregistry.ErrUnknownAgent,
 		"failed Send must not leave an orphan registry entry")
 
@@ -485,17 +609,17 @@ func TestConnect_SendWelcomeFails(t *testing.T) {
 // would regress the diagnostic.
 func TestConnect_MissingNetworkSettings(t *testing.T) {
 	certRaw := []byte("cert")
-	const agentName = "clawker.x"
+	const project, agentName = "p", "x"
 	peerIP := net.IPv4(10, 0, 0, 5)
 	f := newFixture(t, fixtureOpts{
-		agentName: agentName, verifier: "v", containerID: "c",
+		project: project, agentName: agentName, verifier: "v", containerID: "c",
 		certRaw: certRaw, peerIP: peerIP,
 		inspectErr: errMissingNetworkSettings,
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
-		AgentName: agentName, CodeVerifier: "v",
+		AgentName: agentName, Project: project, CodeVerifier: "v",
 	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))

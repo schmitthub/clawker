@@ -113,7 +113,12 @@ func (s *adminServer) AnnounceAgent(_ context.Context, req *adminv1.AnnounceAgen
 
 	now := s.clock()
 	slot := agentslots.Slot{
-		AgentName:              req.AgentName,
+		AgentName: req.AgentName,
+		// Project completes the composite slot identity so two agents
+		// with the same short name in different projects don't collide.
+		// Empty req.Project is intentional (matches docker.ContainerName
+		// 2-segment naming) and accepted by agentslots.Reserve.
+		Project:                req.Project,
 		ContainerID:            req.ContainerId,
 		ExpectedCertThumbprint: thumbprint,
 		Challenge:              req.CodeChallenge,
@@ -154,6 +159,7 @@ func (s *adminServer) ListAgents(_ context.Context, _ *adminv1.ListAgentsRequest
 	for i, e := range snap {
 		out[i] = &adminv1.Agent{
 			AgentName:        e.AgentName,
+			Project:          e.Project,
 			ContainerId:      e.ContainerID,
 			CertThumbprint:   hex.EncodeToString(e.Thumbprint[:]),
 			RegisteredAtUnix: e.RegisteredAt.Unix(),

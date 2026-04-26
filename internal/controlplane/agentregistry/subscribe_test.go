@@ -34,7 +34,7 @@ func liveInformer(t *testing.T) informer.Interface {
 func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
 	inf := liveInformer(t)
 	r := NewRegistry(nil)
-	r.Add(Entry{AgentName: "clawker.x", ContainerID: "ctr-evict", Thumbprint: tp("cert"), RegisteredAt: time.Now()})
+	r.Add(Entry{AgentName: "x", ContainerID: "ctr-evict", Thumbprint: tp("cert"), RegisteredAt: time.Now()})
 
 	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
 	t.Cleanup(cancel)
@@ -49,7 +49,7 @@ func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
 		informer.Transition{Source: "test", At: now}))
 
 	waitFor(t, func() bool {
-		_, err := r.Lookup(tp("cert"))
+		_, err := r.Lookup(tp("cert"), canonical("", "x"))
 		return err == ErrUnknownAgent
 	})
 }
@@ -57,7 +57,7 @@ func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
 func TestSubscribe_EvictsOnContainerStopped(t *testing.T) {
 	inf := liveInformer(t)
 	r := NewRegistry(nil)
-	r.Add(Entry{AgentName: "clawker.y", ContainerID: "ctr-stopped", Thumbprint: tp("cert-y"), RegisteredAt: time.Now()})
+	r.Add(Entry{AgentName: "y", ContainerID: "ctr-stopped", Thumbprint: tp("cert-y"), RegisteredAt: time.Now()})
 
 	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
 	t.Cleanup(cancel)
@@ -77,7 +77,7 @@ func TestSubscribe_EvictsOnContainerStopped(t *testing.T) {
 	}, informer.Transition{Source: "test", At: now}))
 
 	waitFor(t, func() bool {
-		_, err := r.Lookup(tp("cert-y"))
+		_, err := r.Lookup(tp("cert-y"), canonical("", "y"))
 		return err == ErrUnknownAgent
 	})
 }
@@ -88,7 +88,7 @@ func TestSubscribe_DoesNotEvictOnPaused(t *testing.T) {
 	// must NOT evict on paused.
 	inf := liveInformer(t)
 	r := NewRegistry(nil)
-	r.Add(Entry{AgentName: "clawker.z", ContainerID: "ctr-paused", Thumbprint: tp("cert-z"), RegisteredAt: time.Now()})
+	r.Add(Entry{AgentName: "z", ContainerID: "ctr-paused", Thumbprint: tp("cert-z"), RegisteredAt: time.Now()})
 
 	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
 	t.Cleanup(cancel)
@@ -109,9 +109,9 @@ func TestSubscribe_DoesNotEvictOnPaused(t *testing.T) {
 	// was going to evict, it would have by now.
 	time.Sleep(50 * time.Millisecond)
 
-	got, err := r.Lookup(tp("cert-z"))
+	got, err := r.Lookup(tp("cert-z"), canonical("", "z"))
 	require.NoError(t, err)
-	assert.Equal(t, "clawker.z", got.AgentName)
+	assert.Equal(t, "z", got.AgentName)
 }
 
 func TestSubscribe_CancelStopsConsumer(t *testing.T) {
@@ -145,10 +145,12 @@ type panicOnceRegistry struct {
 	delegate Registry
 }
 
-func (p *panicOnceRegistry) Add(e Entry)                                { p.delegate.Add(e) }
-func (p *panicOnceRegistry) Lookup(t [sha256.Size]byte) (*Entry, error) { return p.delegate.Lookup(t) }
-func (p *panicOnceRegistry) Touch(t [sha256.Size]byte)                  { p.delegate.Touch(t) }
-func (p *panicOnceRegistry) Snapshot() []Entry                          { return p.delegate.Snapshot() }
+func (p *panicOnceRegistry) Add(e Entry) { p.delegate.Add(e) }
+func (p *panicOnceRegistry) Lookup(t [sha256.Size]byte, cn string) (*Entry, error) {
+	return p.delegate.Lookup(t, cn)
+}
+func (p *panicOnceRegistry) Touch(t [sha256.Size]byte) { p.delegate.Touch(t) }
+func (p *panicOnceRegistry) Snapshot() []Entry         { return p.delegate.Snapshot() }
 func (p *panicOnceRegistry) EvictByContainerID(id string) {
 	p.calls.Add(1)
 	if p.panicked.CompareAndSwap(false, true) {
@@ -168,8 +170,8 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 	bufLog := logger.NewWriter(&buf)
 
 	delegate := NewRegistry(nil)
-	delegate.Add(Entry{AgentName: "clawker.first", ContainerID: "ctr-first", Thumbprint: tp("cert-first"), RegisteredAt: time.Now()})
-	delegate.Add(Entry{AgentName: "clawker.second", ContainerID: "ctr-second", Thumbprint: tp("cert-second"), RegisteredAt: time.Now()})
+	delegate.Add(Entry{AgentName: "first", ContainerID: "ctr-first", Thumbprint: tp("cert-first"), RegisteredAt: time.Now()})
+	delegate.Add(Entry{AgentName: "second", ContainerID: "ctr-second", Thumbprint: tp("cert-second"), RegisteredAt: time.Now()})
 
 	reg := &panicOnceRegistry{delegate: delegate}
 
@@ -203,16 +205,16 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 		informer.Transition{Source: "test", At: now}))
 
 	waitFor(t, func() bool {
-		_, err := delegate.Lookup(tp("cert-second"))
+		_, err := delegate.Lookup(tp("cert-second"), canonical("", "second"))
 		return err == ErrUnknownAgent
 	})
 
 	// First entry was never evicted because the panic prevented it
 	// — assert it's still present so we know the test exercised the
 	// panic path rather than silently succeeding.
-	got, err := delegate.Lookup(tp("cert-first"))
+	got, err := delegate.Lookup(tp("cert-first"), canonical("", "first"))
 	require.NoError(t, err, "first entry must survive the panicked eviction call")
-	assert.Equal(t, "clawker.first", got.AgentName)
+	assert.Equal(t, "first", got.AgentName)
 
 	// Recover must have logged at error level so an operator can
 	// notice the dropped delta. Parse the JSON line(s) so we don't

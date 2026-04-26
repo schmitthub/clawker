@@ -38,12 +38,13 @@ func newRegistry(t *testing.T, clock *fakeClock) Registry {
 	return r
 }
 
-// mkThumb derives a deterministic SHA-256 thumbprint for a given agent
-// name. Used by both mkSlot and the Consume call sites so a test can
-// pass the same thumbprint Reserve stored without reconstructing it.
-func mkThumb(name string) [sha256.Size]byte {
+// mkThumb derives a deterministic SHA-256 thumbprint for a given
+// (project, agent) tuple. Used by both mkSlot and the Consume call
+// sites so a test can pass the same thumbprint Reserve stored without
+// reconstructing it.
+func mkThumb(project, agent string) [sha256.Size]byte {
 	var thumb [sha256.Size]byte
-	copy(thumb[:], sha256.New().Sum([]byte("thumb-"+name)))
+	copy(thumb[:], sha256.New().Sum([]byte("thumb-"+project+":"+agent)))
 	return thumb
 }
 
@@ -51,11 +52,12 @@ func mkThumb(name string) [sha256.Size]byte {
 // ReservedAt/ExpiresAt fields are intentionally omitted: Reserve stamps
 // them from its own clock and any value supplied here would be
 // overwritten.
-func mkSlot(name, verifier string) Slot {
+func mkSlot(project, agent, verifier string) Slot {
 	return Slot{
-		AgentName:              name,
-		ContainerID:            "ctr-" + name,
-		ExpectedCertThumbprint: mkThumb(name),
+		AgentName:              agent,
+		Project:                project,
+		ContainerID:            "ctr-" + project + "-" + agent,
+		ExpectedCertThumbprint: mkThumb(project, agent),
 		Challenge:              pkceChallenge(verifier),
 		ChallengeMethod:        consts.ChallengeMethodS256,
 	}
@@ -66,11 +68,11 @@ func TestRegistry_ReserveConsumeHappyPath(t *testing.T) {
 	r := newRegistry(t, clock)
 
 	const verifier = "verifier"
-	in := mkSlot("clawker.x.y", verifier)
+	in := mkSlot("x", "y", verifier)
 	require.NoError(t, r.Reserve(in))
 	assert.Equal(t, 1, r.Len())
 
-	got, err := r.Consume(mkThumb("clawker.x.y"), "clawker.x.y", verifier)
+	got, err := r.Consume(mkThumb("x", "y"), "y", "x", verifier)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 
@@ -78,6 +80,8 @@ func TestRegistry_ReserveConsumeHappyPath(t *testing.T) {
 	// will use for cert/IP/label cross-checks at Register.
 	assert.Equal(t, in.ContainerID, got.ContainerID)
 	assert.Equal(t, in.ExpectedCertThumbprint, got.ExpectedCertThumbprint)
+	assert.Equal(t, "x", got.Project)
+	assert.Equal(t, "y", got.AgentName)
 
 	// Reserve must stamp the clock-derived TTL fields, not the zero
 	// values that the caller passed in.
@@ -98,12 +102,12 @@ func TestRegistry_Reserve_IgnoresCallerStamps(t *testing.T) {
 	r := newRegistry(t, clock)
 
 	const verifier = "verifier"
-	in := mkSlot("clawker.x.y", verifier)
+	in := mkSlot("x", "y", verifier)
 	in.ReservedAt = time.Unix(0, 0)    // adversarial: pre-epoch
 	in.ExpiresAt = time.Unix(1<<40, 0) // adversarial: far future
 	require.NoError(t, r.Reserve(in))
 
-	got, err := r.Consume(mkThumb("clawker.x.y"), "clawker.x.y", verifier)
+	got, err := r.Consume(mkThumb("x", "y"), "y", "x", verifier)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, clock.Now(), got.ReservedAt, "caller's ReservedAt must be ignored")
@@ -118,13 +122,13 @@ func TestRegistry_Consume_WrongVerifier_LeavesSlot(t *testing.T) {
 	r := newRegistry(t, clock)
 
 	const verifier = "verifier"
-	require.NoError(t, r.Reserve(mkSlot("clawker.x.y", verifier)))
+	require.NoError(t, r.Reserve(mkSlot("x", "y", verifier)))
 
-	_, err := r.Consume(mkThumb("clawker.x.y"), "clawker.x.y", "wrong-verifier")
+	_, err := r.Consume(mkThumb("x", "y"), "y", "x", "wrong-verifier")
 	assert.ErrorIs(t, err, ErrSlotInvalid)
 	assert.Equal(t, 1, r.Len(), "wrong verifier must leave the slot intact")
 
-	got, err := r.Consume(mkThumb("clawker.x.y"), "clawker.x.y", verifier)
+	got, err := r.Consume(mkThumb("x", "y"), "y", "x", verifier)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 }
@@ -137,12 +141,12 @@ func TestRegistry_Consume_Replay(t *testing.T) {
 	r := newRegistry(t, clock)
 
 	const verifier = "verifier"
-	require.NoError(t, r.Reserve(mkSlot("clawker.x.y", verifier)))
+	require.NoError(t, r.Reserve(mkSlot("x", "y", verifier)))
 
-	_, err := r.Consume(mkThumb("clawker.x.y"), "clawker.x.y", verifier)
+	_, err := r.Consume(mkThumb("x", "y"), "y", "x", verifier)
 	require.NoError(t, err)
 
-	_, err = r.Consume(mkThumb("clawker.x.y"), "clawker.x.y", verifier)
+	_, err = r.Consume(mkThumb("x", "y"), "y", "x", verifier)
 	assert.ErrorIs(t, err, ErrSlotInvalid)
 }
 
@@ -151,12 +155,12 @@ func TestRegistry_Consume_Expired(t *testing.T) {
 	r := newRegistry(t, clock)
 
 	const verifier = "verifier"
-	require.NoError(t, r.Reserve(mkSlot("clawker.x.y", verifier)))
+	require.NoError(t, r.Reserve(mkSlot("x", "y", verifier)))
 
 	// Advance well past AgentSlotTTL so the slot is unambiguously expired.
 	clock.Advance(2 * consts.AgentSlotTTL)
 
-	_, err := r.Consume(mkThumb("clawker.x.y"), "clawker.x.y", verifier)
+	_, err := r.Consume(mkThumb("x", "y"), "y", "x", verifier)
 	assert.ErrorIs(t, err, ErrSlotInvalid)
 	assert.Equal(t, 0, r.Len(), "expired slot must be deleted at consume time")
 }
@@ -165,10 +169,36 @@ func TestRegistry_Reserve_Duplicate(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(100, 0)}
 	r := newRegistry(t, clock)
 
-	require.NoError(t, r.Reserve(mkSlot("clawker.x.y", "v1")))
-	err := r.Reserve(mkSlot("clawker.x.y", "v2"))
+	require.NoError(t, r.Reserve(mkSlot("x", "y", "v1")))
+	err := r.Reserve(mkSlot("x", "y", "v2"))
 	assert.ErrorIs(t, err, ErrSlotExists)
 	assert.Equal(t, 1, r.Len())
+}
+
+// TestRegistry_Reserve_SameAgentDifferentProjects pins the project-as-
+// part-of-the-key invariant: the same short agent name (the user's
+// favorite "dev") in two different projects keys two disjoint slots.
+// Reserve does not collide; both Consumes succeed independently. This
+// is the headline reason Project entered the slot key — without it,
+// running two clawker projects with the same agent name would force
+// users to rename or clobber the second slot.
+func TestRegistry_Reserve_SameAgentDifferentProjects(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(100, 0)}
+	r := newRegistry(t, clock)
+
+	const verifier = "verifier"
+	require.NoError(t, r.Reserve(mkSlot("alpha", "dev", verifier)))
+	require.NoError(t, r.Reserve(mkSlot("beta", "dev", verifier)),
+		"same agent name in a different project must NOT collide")
+	assert.Equal(t, 2, r.Len())
+
+	gotA, err := r.Consume(mkThumb("alpha", "dev"), "dev", "alpha", verifier)
+	require.NoError(t, err)
+	assert.Equal(t, "alpha", gotA.Project)
+
+	gotB, err := r.Consume(mkThumb("beta", "dev"), "dev", "beta", verifier)
+	require.NoError(t, err)
+	assert.Equal(t, "beta", gotB.Project)
 }
 
 // TestRegistry_EvictByContainerID exercises the dockerevents-driven
@@ -180,9 +210,9 @@ func TestRegistry_EvictByContainerID(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(100, 0)}
 	r := newRegistry(t, clock)
 
-	a := mkSlot("clawker.a", "verifier-a")
+	a := mkSlot("", "a", "verifier-a")
 	a.ContainerID = "ctr-a"
-	b := mkSlot("clawker.b", "verifier-b")
+	b := mkSlot("", "b", "verifier-b")
 	b.ContainerID = "ctr-b"
 	require.NoError(t, r.Reserve(a))
 	require.NoError(t, r.Reserve(b))
@@ -192,10 +222,10 @@ func TestRegistry_EvictByContainerID(t *testing.T) {
 	assert.Equal(t, 1, r.Len(), "only ctr-a's slot must be evicted")
 
 	// Surviving slot is consumable; evicted slot is not.
-	_, err := r.Consume(mkThumb("clawker.a"), "clawker.a", "verifier-a")
+	_, err := r.Consume(mkThumb("", "a"), "a", "", "verifier-a")
 	assert.ErrorIs(t, err, ErrSlotInvalid, "evicted slot must be unreachable")
 
-	got, err := r.Consume(mkThumb("clawker.b"), "clawker.b", "verifier-b")
+	got, err := r.Consume(mkThumb("", "b"), "b", "", "verifier-b")
 	require.NoError(t, err)
 	assert.Equal(t, "ctr-b", got.ContainerID)
 }
@@ -207,7 +237,7 @@ func TestRegistry_EvictByContainerID_Unknown(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(100, 0)}
 	r := newRegistry(t, clock)
 
-	require.NoError(t, r.Reserve(mkSlot("clawker.x", "verifier-x")))
+	require.NoError(t, r.Reserve(mkSlot("", "x", "verifier-x")))
 	r.EvictByContainerID("ctr-does-not-exist")
 	assert.Equal(t, 1, r.Len())
 }
@@ -221,8 +251,8 @@ func TestRegistry_Janitor_SweepsExpired(t *testing.T) {
 	r := NewRegistry(clock.Now, 5*time.Millisecond, nil)
 	t.Cleanup(r.Stop)
 
-	for _, name := range []string{"clawker.a", "clawker.b"} {
-		require.NoError(t, r.Reserve(mkSlot(name, "verifier-"+name)))
+	for _, name := range []string{"a", "b"} {
+		require.NoError(t, r.Reserve(mkSlot("", name, "verifier-"+name)))
 	}
 	require.Equal(t, 2, r.Len())
 
@@ -253,9 +283,9 @@ func TestRegistry_Concurrent_ReserveConsume(t *testing.T) {
 	for i := range goroutines {
 		go func(i int) {
 			defer wg.Done()
-			name := "clawker.agent." + string(rune('a'+i%26)) + string(rune('0'+i/26))
-			require.NoError(t, r.Reserve(mkSlot(name, verifier)))
-			_, err := r.Consume(mkThumb(name), name, verifier)
+			name := "agent-" + string(rune('a'+i%26)) + string(rune('0'+i/26))
+			require.NoError(t, r.Reserve(mkSlot("", name, verifier)))
+			_, err := r.Consume(mkThumb("", name), name, "", verifier)
 			require.NoError(t, err)
 		}(i)
 	}
@@ -279,12 +309,13 @@ func TestRegistry_Consume_RaceWrongVerifier(t *testing.T) {
 	r := newRegistry(t, clock)
 
 	const (
-		agentName = "clawker.race.target"
+		project   = "race"
+		agentName = "target"
 		correct   = "correct-verifier"
 		wrong     = "wrong-verifier"
 		attackers = 64
 	)
-	require.NoError(t, r.Reserve(mkSlot(agentName, correct)))
+	require.NoError(t, r.Reserve(mkSlot(project, agentName, correct)))
 
 	var (
 		wg            sync.WaitGroup
@@ -298,7 +329,7 @@ func TestRegistry_Consume_RaceWrongVerifier(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			if _, err := r.Consume(mkThumb(agentName), agentName, wrong); err == ErrSlotInvalid {
+			if _, err := r.Consume(mkThumb(project, agentName), agentName, project, wrong); err == ErrSlotInvalid {
 				wrongFailures.Add(1)
 			}
 		}()
@@ -308,7 +339,7 @@ func TestRegistry_Consume_RaceWrongVerifier(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		<-start
-		if _, err := r.Consume(mkThumb(agentName), agentName, correct); err == nil {
+		if _, err := r.Consume(mkThumb(project, agentName), agentName, project, correct); err == nil {
 			correctWins.Add(1)
 		}
 	}()
@@ -323,7 +354,7 @@ func TestRegistry_Consume_RaceWrongVerifier(t *testing.T) {
 	// Repeat the correct verifier — single-use contract still holds
 	// after the race. Catches the regression where a wrong-verifier
 	// branch accidentally leaks a delete.
-	_, err := r.Consume(mkThumb(agentName), agentName, correct)
+	_, err := r.Consume(mkThumb(project, agentName), agentName, project, correct)
 	assert.ErrorIs(t, err, ErrSlotInvalid)
 }
 
@@ -332,12 +363,12 @@ func TestRegistry_Reserve_Validation(t *testing.T) {
 	r := newRegistry(t, clock)
 
 	t.Run("empty agent name", func(t *testing.T) {
-		s := mkSlot("", "v")
+		s := mkSlot("p", "", "v")
 		require.Error(t, r.Reserve(s))
 	})
 
 	t.Run("non-S256 method", func(t *testing.T) {
-		s := mkSlot("clawker.a.b", "v")
+		s := mkSlot("a", "b", "v")
 		s.ChallengeMethod = "plain"
 		require.Error(t, r.Reserve(s))
 	})
@@ -345,7 +376,7 @@ func TestRegistry_Reserve_Validation(t *testing.T) {
 	t.Run("zero method", func(t *testing.T) {
 		// Empty/zero-value method must be rejected too — defends
 		// against a caller that builds Slot{} and forgets the field.
-		s := mkSlot("clawker.a.c", "v")
+		s := mkSlot("a", "c", "v")
 		s.ChallengeMethod = ""
 		require.Error(t, r.Reserve(s))
 	})

@@ -23,9 +23,10 @@ const (
 
 type ConnectRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// agent_name is the canonical full name "clawker.<project>.<agent>"
-	// (or "clawker.<agent>" for empty project per existing convention).
-	// CP looks up the slot by (cert_thumbprint, agent_name).
+	// agent_name is the short agent name as the user types it on the CLI
+	// (e.g. "dev", "test"). NOT the canonical "clawker.project.agent". CP
+	// assembles the canonical CN from (NamePrefix, project, agent_name) and
+	// cross-checks against the peer cert's CN before consuming the slot.
 	AgentName string `protobuf:"bytes,1,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
 	// code_verifier is the PKCE secret matching the slot's S256 challenge.
 	// CLI delivers it via tmpfs at /run/clawker/bootstrap/verifier.
@@ -37,7 +38,12 @@ type ConnectRequest struct {
 	// (single-use); a reconnect attempt has no verifier to send. Today's
 	// handler requires verifier; the future patch will branch on
 	// registry-already-has-thumbprint to skip slot consume.
-	CodeVerifier  string `protobuf:"bytes,2,opt,name=code_verifier,json=codeVerifier,proto3" json:"code_verifier,omitempty"`
+	CodeVerifier string `protobuf:"bytes,2,opt,name=code_verifier,json=codeVerifier,proto3" json:"code_verifier,omitempty"`
+	// project is the clawker project slug the agent runs under (empty for
+	// 2-segment naming). Together with agent_name forms the composite slot
+	// identity — read by clawkerd from CLAWKER_PROJECT and forwarded as a
+	// separate wire field so the CP never has to parse a canonical form.
+	Project       string `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -82,6 +88,13 @@ func (x *ConnectRequest) GetAgentName() string {
 func (x *ConnectRequest) GetCodeVerifier() string {
 	if x != nil {
 		return x.CodeVerifier
+	}
+	return ""
+}
+
+func (x *ConnectRequest) GetProject() string {
+	if x != nil {
+		return x.Project
 	}
 	return ""
 }
@@ -325,11 +338,12 @@ var File_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x14agent/v1/agent.proto\x12\x10clawker.agent.v1\"T\n" +
+	"\x14agent/v1/agent.proto\x12\x10clawker.agent.v1\"n\n" +
 	"\x0eConnectRequest\x12\x1d\n" +
 	"\n" +
 	"agent_name\x18\x01 \x01(\tR\tagentName\x12#\n" +
-	"\rcode_verifier\x18\x02 \x01(\tR\fcodeVerifier\"K\n" +
+	"\rcode_verifier\x18\x02 \x01(\tR\fcodeVerifier\x12\x18\n" +
+	"\aproject\x18\x03 \x01(\tR\aproject\"K\n" +
 	"\aCommand\x125\n" +
 	"\awelcome\x18\x01 \x01(\v2\x19.clawker.agent.v1.WelcomeH\x00R\awelcomeB\t\n" +
 	"\apayload\"J\n" +

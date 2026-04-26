@@ -23,10 +23,10 @@ disconnect closes the stream.
 
 1. AuthInterceptor verifies the bearer token + `agent:self:register` scope. mTLS itself is enforced by the listener; the handler reads the peer cert from `peer.FromContext`.
 2. `req` is validated for non-empty `agent_name` + `code_verifier`. Empty fields return `codes.InvalidArgument` so a confused client gets a clear failure mode rather than the generic registration-rejected envelope.
-3. **Cert CN cross-check** — `subtle.ConstantTimeCompare(peerCert.Subject.CommonName, req.AgentName)`. Defends announce-payload tampering between cert mint and the ConnectRequest body. Runs BEFORE slot consume so a CN mismatch can't burn a legitimate slot.
-4. **Composite slot consume** — `slots.Consume(thumbprint, agent_name, verifier)`. The (thumbprint, agent_name) lookup folds the cert-thumbprint cross-check into the map key, eliminating the separate post-Consume thumbprint compare. PKCE compare is constant-time inside `agentslots`. Mismatch leaves the slot for benign retry (TTL evicts).
+3. **Cert CN cross-check** — `subtle.ConstantTimeCompare(peerCert.Subject.CommonName, auth.CanonicalAgentCN(req.Project, req.AgentName))`. Defends announce-payload tampering between cert mint and the ConnectRequest body — a tampered project OR agent on the wire produces a different canonical and fails this check. Runs BEFORE slot consume so a CN mismatch can't burn a legitimate slot.
+4. **Composite slot consume** — `slots.Consume(thumbprint, agent_name, project, verifier)`. The (thumbprint, agent_name, project) lookup folds the cert-thumbprint cross-check into the map key, eliminating the separate post-Consume thumbprint compare. PKCE compare is constant-time inside `agentslots`. Mismatch leaves the slot for benign retry (TTL evicts).
 5. **Docker inspect** — peer IP must match `clawker-net` IP for `slot.container_id`. Defends cert+verifier theft replayed from a different container.
-6. **Label cross-check** — `dev.clawker.agent` must equal the canonical agent name. Defends label tampering after announce.
+6. **Label cross-check** — BOTH `dev.clawker.agent` AND `dev.clawker.project` must equal the slot's `AgentName` and `Project`. Defends label tampering after announce; checking only the agent half would let an attacker who relabeled the project (but kept the agent name) ride a slot for the wrong project.
 7. **Send Welcome** — first message after auth. Receipt by clawkerd implies server-side auth fully succeeded and authorizes deletion of the single-use PKCE verifier. **Send fires BEFORE** `registry.Add` so a transport failure leaves no orphan registry entry.
 8. **Pin to registry** — keyed by SHA-256 over `peer_cert.Raw`. Per-agent RPCs in later branches resolve identity by recomputing the thumbprint.
 9. **Idle on `<-ctx.Done()`** — the connection is the agent's lifetime command channel. B5+ replaces this with a select on a per-agent command queue.
@@ -99,6 +99,6 @@ instantly.
 
 ## Imports
 
-**Uses**: `api/agent/v1`, `internal/consts`, `internal/controlplane/agentregistry`, `internal/controlplane/agentslots`, `internal/logger`, `google.golang.org/grpc/{codes,credentials,peer,status}`, `crypto/{sha256,subtle}`.
+**Uses**: `api/agent/v1`, `internal/auth` (CanonicalAgentCN), `internal/consts`, `internal/controlplane/agentregistry`, `internal/controlplane/agentslots`, `internal/logger`, `google.golang.org/grpc/{codes,credentials,peer,status}`, `crypto/{sha256,subtle}`.
 
 **Used by**: `cmd/clawker-cp` (handler registration + identity interceptor chain on the agent gRPC listener).

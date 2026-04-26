@@ -5,6 +5,8 @@ import (
 	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- non-security random for Docker-style name generation
 	"regexp"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // validResourceNameRegex matches Docker's container/volume name rules:
@@ -30,8 +32,10 @@ func ValidateResourceName(name string) error {
 	return nil
 }
 
-// NamePrefix is used for all clawker resource names.
-const NamePrefix = "clawker"
+// NamePrefix re-exports consts.NamePrefix as a docker-package alias so legacy
+// callers in this package keep compiling. New code should reach for
+// consts.NamePrefix directly.
+const NamePrefix = consts.NamePrefix
 
 // Adjectives for random name generation (Docker-style).
 var adjectives = []string{

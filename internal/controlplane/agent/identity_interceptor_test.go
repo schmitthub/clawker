@@ -40,7 +40,7 @@ func TestIdentityInterceptor_Unary_OptedOut_SkipsLookup(t *testing.T) {
 	// the registry. Confirm by configuring a Lookup that fatally
 	// fails the test if called.
 	reg := &regmocks.RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte) (*agentregistry.Entry, error) {
+		LookupFunc: func(_ [sha256.Size]byte, _ string) (*agentregistry.Entry, error) {
 			t.Fatal("Lookup must NOT be called for opted-out methods")
 			return nil, nil
 		},
@@ -69,16 +69,21 @@ func TestIdentityInterceptor_Unary_RegistryHit_AttachesEntry(t *testing.T) {
 	certRaw := []byte("cert-der")
 	wantThumb := sha256.Sum256(certRaw)
 	wantEntry := &agentregistry.Entry{
-		AgentName:    "clawker.alpha",
+		AgentName:    "alpha",
+		Project:      "p",
 		ContainerID:  "ctr-xyz",
 		Thumbprint:   wantThumb,
 		RegisteredAt: time.Unix(100, 0),
 	}
 
-	var lookupArg [sha256.Size]byte
+	var (
+		lookupArg [sha256.Size]byte
+		gotCN     string
+	)
 	reg := &regmocks.RegistryMock{
-		LookupFunc: func(thumbprint [sha256.Size]byte) (*agentregistry.Entry, error) {
+		LookupFunc: func(thumbprint [sha256.Size]byte, cn string) (*agentregistry.Entry, error) {
 			lookupArg = thumbprint
+			gotCN = cn
 			return wantEntry, nil
 		},
 	}
@@ -96,13 +101,14 @@ func TestIdentityInterceptor_Unary_RegistryHit_AttachesEntry(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, wantThumb, lookupArg, "interceptor must hash peer cert and pass to Lookup")
+	assert.Equal(t, "test-cn", gotCN, "interceptor must forward peer cert CN to Lookup for the cross-check")
 	require.NotNil(t, gotEntry)
 	assert.Equal(t, wantEntry.AgentName, gotEntry.AgentName)
 }
 
 func TestIdentityInterceptor_Unary_LookupMiss_PermissionDenied(t *testing.T) {
 	reg := &regmocks.RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte) (*agentregistry.Entry, error) {
+		LookupFunc: func(_ [sha256.Size]byte, _ string) (*agentregistry.Entry, error) {
 			return nil, agentregistry.ErrUnknownAgent
 		},
 	}
@@ -125,7 +131,7 @@ func TestIdentityInterceptor_Unary_NoPeerCert_PermissionDenied(t *testing.T) {
 	// Bare context — peerIdentityAndIP fails. Reject without touching
 	// the registry.
 	reg := &regmocks.RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte) (*agentregistry.Entry, error) {
+		LookupFunc: func(_ [sha256.Size]byte, _ string) (*agentregistry.Entry, error) {
 			t.Fatal("Lookup must NOT be called when peer info is missing")
 			return nil, nil
 		},
@@ -160,7 +166,7 @@ func (s *streamFake) Context() context.Context { return s.ctx }
 
 func TestIdentityInterceptor_Stream_OptedOut_SkipsLookup(t *testing.T) {
 	reg := &regmocks.RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte) (*agentregistry.Entry, error) {
+		LookupFunc: func(_ [sha256.Size]byte, _ string) (*agentregistry.Entry, error) {
 			t.Fatal("Lookup must NOT be called for opted-out methods")
 			return nil, nil
 		},
@@ -195,13 +201,14 @@ func TestIdentityInterceptor_Stream_RegistryHit_WrappedContextCarriesEntry(t *te
 	certRaw := []byte("cert-der-stream")
 	wantThumb := sha256.Sum256(certRaw)
 	wantEntry := &agentregistry.Entry{
-		AgentName:    "clawker.beta",
+		AgentName:    "beta",
+		Project:      "p",
 		ContainerID:  "ctr-stream",
 		Thumbprint:   wantThumb,
 		RegisteredAt: time.Unix(200, 0),
 	}
 	reg := &regmocks.RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte) (*agentregistry.Entry, error) {
+		LookupFunc: func(_ [sha256.Size]byte, _ string) (*agentregistry.Entry, error) {
 			return wantEntry, nil
 		},
 	}
@@ -229,7 +236,7 @@ func TestIdentityInterceptor_Stream_NoPeerCert_PermissionDenied(t *testing.T) {
 	// registry lookup before the peer-info check would burn introspector
 	// traffic and could leak whether a thumbprint is registered.
 	reg := &regmocks.RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte) (*agentregistry.Entry, error) {
+		LookupFunc: func(_ [sha256.Size]byte, _ string) (*agentregistry.Entry, error) {
 			t.Fatal("Lookup must NOT be called when peer info is missing")
 			return nil, nil
 		},
@@ -252,7 +259,7 @@ func TestIdentityInterceptor_Stream_NoPeerCert_PermissionDenied(t *testing.T) {
 
 func TestIdentityInterceptor_Stream_LookupMiss_PermissionDenied(t *testing.T) {
 	reg := &regmocks.RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte) (*agentregistry.Entry, error) {
+		LookupFunc: func(_ [sha256.Size]byte, _ string) (*agentregistry.Entry, error) {
 			return nil, agentregistry.ErrUnknownAgent
 		},
 	}

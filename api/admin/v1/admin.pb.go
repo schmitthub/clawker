@@ -1404,9 +1404,12 @@ func (x *FirewallResolveHostnameResult) GetAddresses() []string {
 
 type AnnounceAgentRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// agent_name is the canonical full name "clawker.<project>.<agent>"
-	// (or "clawker.<agent>" for empty project). Slot key. Unique by
-	// construction of clawker container naming.
+	// agent_name is the short agent name as the user types it on the CLI
+	// (e.g. "dev", "test"). NOT the canonical "clawker.project.agent" form.
+	// The CP composes canonical names internally from (NamePrefix, project,
+	// agent_name) — keeping the wire fields decomposed avoids re-parsing on
+	// the server side and makes (project, agent_name) collisions across
+	// different projects impossible to confuse.
 	AgentName string `protobuf:"bytes,1,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
 	// container_id is the Docker container ID CLI got back from
 	// ContainerCreate. Stored in the slot, never trusted from clawkerd —
@@ -1426,8 +1429,14 @@ type AnnounceAgentRequest struct {
 	// only "S256" — the field exists for forward extensibility and to
 	// make rejected methods explicit on the wire instead of inferred.
 	CodeChallengeMethod string `protobuf:"bytes,5,opt,name=code_challenge_method,json=codeChallengeMethod,proto3" json:"code_challenge_method,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// project is the clawker project slug the agent runs under (cfg.Project()
+	// on the CLI side). Empty string for the unscoped/2-segment naming case.
+	// Together with agent_name forms the composite slot identity — the same
+	// user agent name (e.g. "dev") can announce in two different projects
+	// without colliding.
+	Project       string `protobuf:"bytes,6,opt,name=project,proto3" json:"project,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AnnounceAgentRequest) Reset() {
@@ -1491,6 +1500,13 @@ func (x *AnnounceAgentRequest) GetCodeChallenge() string {
 func (x *AnnounceAgentRequest) GetCodeChallengeMethod() string {
 	if x != nil {
 		return x.CodeChallengeMethod
+	}
+	return ""
+}
+
+func (x *AnnounceAgentRequest) GetProject() string {
+	if x != nil {
+		return x.Project
 	}
 	return ""
 }
@@ -1624,7 +1640,10 @@ func (x *ListAgentsResult) GetAgents() []*Agent {
 
 type Agent struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// agent_name is the canonical "clawker.<project>.<agent>".
+	// agent_name is the short agent name as the user types it on the CLI
+	// (e.g. "dev"). The canonical "clawker.project.agent" form is composed
+	// CP-side from (NamePrefix, project, agent_name) — kept off the wire to
+	// avoid duplication and parsing.
 	AgentName string `protobuf:"bytes,1,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
 	// container_id is the long Docker container ID the agent runs in.
 	ContainerId string `protobuf:"bytes,2,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
@@ -1636,7 +1655,11 @@ type Agent struct {
 	// last_seen_unix is updated on every successful per-agent RPC. Equal
 	// to registered_at_unix for B4 because Register is the only per-agent
 	// RPC.
-	LastSeenUnix  int64 `protobuf:"varint,5,opt,name=last_seen_unix,json=lastSeenUnix,proto3" json:"last_seen_unix,omitempty"`
+	LastSeenUnix int64 `protobuf:"varint,5,opt,name=last_seen_unix,json=lastSeenUnix,proto3" json:"last_seen_unix,omitempty"`
+	// project is the clawker project slug the agent registered under (empty
+	// for 2-segment naming). Composite with agent_name when callers need a
+	// unique key across projects.
+	Project       string `protobuf:"bytes,6,opt,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1704,6 +1727,13 @@ func (x *Agent) GetLastSeenUnix() int64 {
 		return x.LastSeenUnix
 	}
 	return 0
+}
+
+func (x *Agent) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
 }
 
 var File_admin_v1_admin_proto protoreflect.FileDescriptor
@@ -1789,26 +1819,28 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x1eFirewallResolveHostnameRequest\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\"=\n" +
 	"\x1dFirewallResolveHostnameResult\x12\x1c\n" +
-	"\taddresses\x18\x01 \x03(\tR\taddresses\"\xed\x01\n" +
+	"\taddresses\x18\x01 \x03(\tR\taddresses\"\x87\x02\n" +
 	"\x14AnnounceAgentRequest\x12\x1d\n" +
 	"\n" +
 	"agent_name\x18\x01 \x01(\tR\tagentName\x12!\n" +
 	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x128\n" +
 	"\x18expected_cert_thumbprint\x18\x03 \x01(\tR\x16expectedCertThumbprint\x12%\n" +
 	"\x0ecode_challenge\x18\x04 \x01(\tR\rcodeChallenge\x122\n" +
-	"\x15code_challenge_method\x18\x05 \x01(\tR\x13codeChallengeMethod\"=\n" +
+	"\x15code_challenge_method\x18\x05 \x01(\tR\x13codeChallengeMethod\x12\x18\n" +
+	"\aproject\x18\x06 \x01(\tR\aproject\"=\n" +
 	"\x13AnnounceAgentResult\x12&\n" +
 	"\x0fexpires_at_unix\x18\x01 \x01(\x03R\rexpiresAtUnix\"\x13\n" +
 	"\x11ListAgentsRequest\"C\n" +
 	"\x10ListAgentsResult\x12/\n" +
-	"\x06agents\x18\x01 \x03(\v2\x17.clawker.admin.v1.AgentR\x06agents\"\xc6\x01\n" +
+	"\x06agents\x18\x01 \x03(\v2\x17.clawker.admin.v1.AgentR\x06agents\"\xe0\x01\n" +
 	"\x05Agent\x12\x1d\n" +
 	"\n" +
 	"agent_name\x18\x01 \x01(\tR\tagentName\x12!\n" +
 	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x12'\n" +
 	"\x0fcert_thumbprint\x18\x03 \x01(\tR\x0ecertThumbprint\x12,\n" +
 	"\x12registered_at_unix\x18\x04 \x01(\x03R\x10registeredAtUnix\x12$\n" +
-	"\x0elast_seen_unix\x18\x05 \x01(\x03R\flastSeenUnix2\x91\f\n" +
+	"\x0elast_seen_unix\x18\x05 \x01(\x03R\flastSeenUnix\x12\x18\n" +
+	"\aproject\x18\x06 \x01(\tR\aproject2\x91\f\n" +
 	"\fAdminService\x12[\n" +
 	"\fFirewallInit\x12%.clawker.admin.v1.FirewallInitRequest\x1a$.clawker.admin.v1.FirewallInitResult\x12a\n" +
 	"\x0eFirewallRemove\x12'.clawker.admin.v1.FirewallRemoveRequest\x1a&.clawker.admin.v1.FirewallRemoveResult\x12a\n" +

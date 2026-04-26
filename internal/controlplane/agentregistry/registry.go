@@ -14,21 +14,30 @@ package agentregistry
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // Entry is one registered agent. Created by the Register handler with
-// data taken from the slot (ContainerID, AgentName) plus the SHA-256
-// over the peer cert DER (Thumbprint). LastSeen is updated on every
-// successful per-agent RPC via Touch; registration is currently the
-// only writer because Register is the only per-agent RPC that exists.
+// data taken from the slot (ContainerID, AgentName, Project) plus the
+// SHA-256 over the peer cert DER (Thumbprint). LastSeen is updated on
+// every successful per-agent RPC via Touch; registration is currently
+// the only writer because Register is the only per-agent RPC that
+// exists.
 type Entry struct {
-	AgentName    string
+	// AgentName is the user-typed short name (e.g. "dev"); composed with
+	// Project at Lookup time to verify against the peer cert's CN.
+	AgentName string
+	// Project is the clawker project slug under which the agent
+	// registered. Empty string is allowed and matches the unscoped
+	// 2-segment naming case (docker.ContainerName).
+	Project      string
 	ContainerID  string
 	Thumbprint   [sha256.Size]byte
 	RegisteredAt time.Time
@@ -36,9 +45,14 @@ type Entry struct {
 }
 
 // ErrUnknownAgent is returned by Lookup when no entry matches the
-// thumbprint. Distinguishable from "agent disconnected" because the
-// thumbprint is channel-bound: the only way to fail a Lookup is for
-// the cert to have never registered, or to have been evicted.
+// thumbprint+CN pair. Distinguishable from "agent disconnected" because
+// the thumbprint is channel-bound: the only way to fail a Lookup is for
+// the cert to have never registered, to have been evicted, or for the
+// peer cert's CN not to match the entry's stored (Project, AgentName).
+// All three failure modes collapse into one sentinel — the handler maps
+// it to a generic codes.PermissionDenied (matching every other Connect
+// rejection) so callers can't probe which half of the composite identity
+// failed.
 var ErrUnknownAgent = errors.New("agentregistry: unknown agent")
 
 // Registry is the consumer-facing contract.
@@ -57,9 +71,15 @@ type Registry interface {
 	// checks at Register time — invalid input there is a programming
 	// error that must surface loudly rather than corrupt the registry.
 	Add(entry Entry)
-	// Lookup retrieves an entry by cert thumbprint. The hash equality
-	// IS the identity check; no further matching is required.
-	Lookup(thumbprint [sha256.Size]byte) (*Entry, error)
+	// Lookup retrieves an entry by cert thumbprint and verifies that the
+	// supplied peer cert CN matches the entry's stored canonical
+	// (Project, AgentName). The thumbprint resolves to at most one
+	// entry; the CN cross-check defends against the case where a
+	// thumbprint is somehow shared (impossible under SHA-256 collision
+	// resistance, but the cross-check costs nothing and forces the
+	// handler to thread the cert subject through the call). Mismatch on
+	// thumbprint OR CN returns ErrUnknownAgent.
+	Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)
 	// Touch refreshes LastSeen on a thumbprint. No-op for unknown
 	// thumbprints — the caller has already verified identity if it
 	// reaches this point.
@@ -121,11 +141,23 @@ func (r *registryImpl) Add(entry Entry) {
 		Msg("agentregistry: agent registered")
 }
 
-func (r *registryImpl) Lookup(thumbprint [sha256.Size]byte) (*Entry, error) {
+func (r *registryImpl) Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error) {
 	r.mu.RLock()
 	entry, ok := r.entries[thumbprint]
 	r.mu.RUnlock()
 	if !ok {
+		return nil, ErrUnknownAgent
+	}
+	// Cross-check the supplied peer cert CN against the entry's stored
+	// canonical (Project, AgentName). Composed via auth.CanonicalAgentCN
+	// so the rule lives in exactly one place — same source of truth the
+	// CLI used at MintAgentCert time. ConstantTimeCompare matches the
+	// timing-discipline of the Connect handler's own CN check (peer cert
+	// CN vs req-derived canonical) so a future regression that caches a
+	// thumbprint without invalidating it on rename can't be probed via
+	// per-byte CN compare latency.
+	want := auth.CanonicalAgentCN(entry.Project, entry.AgentName)
+	if subtle.ConstantTimeCompare([]byte(cn), []byte(want)) != 1 {
 		return nil, ErrUnknownAgent
 	}
 	return &entry, nil

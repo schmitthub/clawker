@@ -47,7 +47,7 @@ func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(100, 0)}
 	r := newRegistry(t, clock)
 
-	slot := mkSlot("clawker.x", "verifier-x")
+	slot := mkSlot("", "x", "verifier-x")
 	slot.ContainerID = "ctr-evict"
 	require.NoError(t, r.Reserve(slot))
 
@@ -71,7 +71,7 @@ func TestSubscribe_EvictsOnContainerStopped(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(100, 0)}
 	r := newRegistry(t, clock)
 
-	slot := mkSlot("clawker.y", "verifier-y")
+	slot := mkSlot("", "y", "verifier-y")
 	slot.ContainerID = "ctr-stopped"
 	require.NoError(t, r.Reserve(slot))
 
@@ -100,7 +100,7 @@ func TestSubscribe_DoesNotEvictOnPaused(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(100, 0)}
 	r := newRegistry(t, clock)
 
-	slot := mkSlot("clawker.z", "verifier-z")
+	slot := mkSlot("", "z", "verifier-z")
 	slot.ContainerID = "ctr-paused"
 	require.NoError(t, r.Reserve(slot))
 
@@ -156,8 +156,8 @@ type panicOnceRegistry struct {
 }
 
 func (p *panicOnceRegistry) Reserve(s Slot) error { return p.delegate.Reserve(s) }
-func (p *panicOnceRegistry) Consume(thumbprint [32]byte, agentName, verifier string) (*Slot, error) {
-	return p.delegate.Consume(thumbprint, agentName, verifier)
+func (p *panicOnceRegistry) Consume(thumbprint [32]byte, agentName, project, verifier string) (*Slot, error) {
+	return p.delegate.Consume(thumbprint, agentName, project, verifier)
 }
 func (p *panicOnceRegistry) Len() int { return p.delegate.Len() }
 func (p *panicOnceRegistry) Stop()    { p.delegate.Stop() }
@@ -178,10 +178,10 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(100, 0)}
 	delegate := newRegistry(t, clock)
 
-	first := mkSlot("clawker.first", "verifier-first")
+	first := mkSlot("", "first", "verifier-first")
 	first.ContainerID = "ctr-first"
 	require.NoError(t, delegate.Reserve(first))
-	second := mkSlot("clawker.second", "verifier-second")
+	second := mkSlot("", "second", "verifier-second")
 	second.ContainerID = "ctr-second"
 	require.NoError(t, delegate.Reserve(second))
 

@@ -18,7 +18,7 @@ var _ agentslots.Registry = &RegistryMock{}
 //
 //		// make and configure a mocked agentslots.Registry
 //		mockedRegistry := &RegistryMock{
-//			ConsumeFunc: func(thumbprint [32]byte, agentName string, verifier string) (*agentslots.Slot, error) {
+//			ConsumeFunc: func(thumbprint [32]byte, agentName string, project string, verifier string) (*agentslots.Slot, error) {
 //				panic("mock out the Consume method")
 //			},
 //			EvictByContainerIDFunc: func(containerID string)  {
@@ -41,7 +41,7 @@ var _ agentslots.Registry = &RegistryMock{}
 //	}
 type RegistryMock struct {
 	// ConsumeFunc mocks the Consume method.
-	ConsumeFunc func(thumbprint [32]byte, agentName string, verifier string) (*agentslots.Slot, error)
+	ConsumeFunc func(thumbprint [32]byte, agentName string, project string, verifier string) (*agentslots.Slot, error)
 
 	// EvictByContainerIDFunc mocks the EvictByContainerID method.
 	EvictByContainerIDFunc func(containerID string)
@@ -63,6 +63,8 @@ type RegistryMock struct {
 			Thumbprint [32]byte
 			// AgentName is the agentName argument value.
 			AgentName string
+			// Project is the project argument value.
+			Project string
 			// Verifier is the verifier argument value.
 			Verifier string
 		}
@@ -91,23 +93,25 @@ type RegistryMock struct {
 }
 
 // Consume calls ConsumeFunc.
-func (mock *RegistryMock) Consume(thumbprint [32]byte, agentName string, verifier string) (*agentslots.Slot, error) {
+func (mock *RegistryMock) Consume(thumbprint [32]byte, agentName string, project string, verifier string) (*agentslots.Slot, error) {
 	if mock.ConsumeFunc == nil {
 		panic("RegistryMock.ConsumeFunc: method is nil but Registry.Consume was just called")
 	}
 	callInfo := struct {
 		Thumbprint [32]byte
 		AgentName  string
+		Project    string
 		Verifier   string
 	}{
 		Thumbprint: thumbprint,
 		AgentName:  agentName,
+		Project:    project,
 		Verifier:   verifier,
 	}
 	mock.lockConsume.Lock()
 	mock.calls.Consume = append(mock.calls.Consume, callInfo)
 	mock.lockConsume.Unlock()
-	return mock.ConsumeFunc(thumbprint, agentName, verifier)
+	return mock.ConsumeFunc(thumbprint, agentName, project, verifier)
 }
 
 // ConsumeCalls gets all the calls that were made to Consume.
@@ -117,11 +121,13 @@ func (mock *RegistryMock) Consume(thumbprint [32]byte, agentName string, verifie
 func (mock *RegistryMock) ConsumeCalls() []struct {
 	Thumbprint [32]byte
 	AgentName  string
+	Project    string
 	Verifier   string
 } {
 	var calls []struct {
 		Thumbprint [32]byte
 		AgentName  string
+		Project    string
 		Verifier   string
 	}
 	mock.lockConsume.RLock()

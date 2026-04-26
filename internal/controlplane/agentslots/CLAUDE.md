@@ -17,19 +17,24 @@ clawkerd's Connect-time presentation of the per-agent mTLS cert.
 
 ## Composite slot key
 
-Slots are keyed by the `slotKey{Thumbprint [32]byte; AgentName string}`
+Slots are keyed by the
+`slotKey{Thumbprint [32]byte; AgentName string; Project string}`
 composite. For an honest CLI each AnnounceAgent retry mints a fresh
 leaf cert, producing a fresh thumbprint and a fresh slot key — so
-concurrent pending slots for the same agent_name never collide. A
-duplicate composite key indicates caller misuse (re-Reserve under the
-same cert) and surfaces as `codes.AlreadyExists` at the AdminService
-boundary.
+concurrent pending slots for the same (project, agent) tuple never
+collide. A duplicate composite key indicates caller misuse (re-Reserve
+under the same cert) and surfaces as `codes.AlreadyExists` at the
+AdminService boundary.
 
-The composite key folds the agent_name cross-check INTO the slot
-lookup itself: `Consume` requires both the peer cert thumbprint AND
-the agent_name to find a slot, so an attacker cannot reuse a slot
-reserved for a different agent_name even if they somehow obtained
-the verifier.
+The composite key folds the (project, agent) cross-check INTO the
+slot lookup itself: `Consume` requires the peer cert thumbprint AND
+agent_name AND project to find a slot, so an attacker cannot reuse a
+slot reserved for a different (project, agent) tuple even if they
+obtained the verifier. Project participates in the key (rather than
+being a side attribute) so the same short agent name (e.g. "dev") in
+two different projects keys two disjoint slots — a hard isolation
+boundary at the registry level. Empty `Project` is allowed (matches
+docker.ContainerName 2-segment naming).
 
 ## Programming-error invariants
 
@@ -50,7 +55,7 @@ plausibly trip via misconfiguration.
 ## Consume contract
 
 ```go
-func (r *registryImpl) Consume(thumbprint [sha256.Size]byte, agentName, verifier string) (*Slot, error)
+func (r *registryImpl) Consume(thumbprint [sha256.Size]byte, agentName, project, verifier string) (*Slot, error)
 ```
 
 - Hashes `verifier` BEFORE branching on slot presence so SHA-256 wall-clock latency can't distinguish "key unknown" from "key known, wrong verifier".

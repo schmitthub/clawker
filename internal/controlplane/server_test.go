@@ -38,14 +38,16 @@ func TestAdminServer_ListAgents_Snapshot(t *testing.T) {
 	thumbB := sha256.Sum256([]byte("cert-b"))
 
 	reg.Add(agentregistry.Entry{
-		AgentName:    "clawker.b",
+		AgentName:    "b",
+		Project:      "p",
 		ContainerID:  "ctr-b",
 		Thumbprint:   thumbB,
 		RegisteredAt: now,
 		LastSeen:     now,
 	})
 	reg.Add(agentregistry.Entry{
-		AgentName:    "clawker.a",
+		AgentName:    "a",
+		Project:      "p",
 		ContainerID:  "ctr-a",
 		Thumbprint:   thumbA,
 		RegisteredAt: now.Add(time.Second),
@@ -58,8 +60,12 @@ func TestAdminServer_ListAgents_Snapshot(t *testing.T) {
 	require.Len(t, resp.Agents, 2)
 
 	// Sorted by AgentName.
-	assert.Equal(t, "clawker.a", resp.Agents[0].AgentName)
-	assert.Equal(t, "clawker.b", resp.Agents[1].AgentName)
+	assert.Equal(t, "a", resp.Agents[0].AgentName)
+	assert.Equal(t, "b", resp.Agents[1].AgentName)
+	// Project field round-trips through the Agent message so callers
+	// can disambiguate same-agent-name across projects.
+	assert.Equal(t, "p", resp.Agents[0].Project)
+	assert.Equal(t, "p", resp.Agents[1].Project)
 
 	// Thumbprint hex matches the stored thumbprint exactly.
 	assert.Equal(t, hex.EncodeToString(thumbA[:]), resp.Agents[0].CertThumbprint)
@@ -81,7 +87,8 @@ func TestAdminServer_ListAgents_Snapshot(t *testing.T) {
 func validAnnounceReq() *adminv1.AnnounceAgentRequest {
 	thumb := sha256.Sum256([]byte("agent-cert"))
 	return &adminv1.AnnounceAgentRequest{
-		AgentName:              "clawker.alpha.bravo",
+		AgentName:              "bravo",
+		Project:                "alpha",
 		ContainerId:            "ctr-12345",
 		ExpectedCertThumbprint: hex.EncodeToString(thumb[:]),
 		CodeChallenge:          "challenge-base64url-content",
@@ -116,6 +123,7 @@ func TestAdminServer_AnnounceAgent_Reserves(t *testing.T) {
 	require.Len(t, reserved, 1)
 	got := reserved[0]
 	assert.Equal(t, req.AgentName, got.AgentName)
+	assert.Equal(t, req.Project, got.Project, "Reserve must carry req.Project onto the slot")
 	assert.Equal(t, req.ContainerId, got.ContainerID)
 	assert.Equal(t, req.CodeChallenge, got.Challenge)
 	assert.Equal(t, consts.ChallengeMethodS256, got.ChallengeMethod)

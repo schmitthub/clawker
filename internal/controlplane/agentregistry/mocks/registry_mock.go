@@ -24,7 +24,7 @@ var _ agentregistry.Registry = &RegistryMock{}
 //			EvictByContainerIDFunc: func(containerID string)  {
 //				panic("mock out the EvictByContainerID method")
 //			},
-//			LookupFunc: func(thumbprint [32]byte) (*agentregistry.Entry, error) {
+//			LookupFunc: func(thumbprint [32]byte, cn string) (*agentregistry.Entry, error) {
 //				panic("mock out the Lookup method")
 //			},
 //			SnapshotFunc: func() []agentregistry.Entry {
@@ -47,7 +47,7 @@ type RegistryMock struct {
 	EvictByContainerIDFunc func(containerID string)
 
 	// LookupFunc mocks the Lookup method.
-	LookupFunc func(thumbprint [32]byte) (*agentregistry.Entry, error)
+	LookupFunc func(thumbprint [32]byte, cn string) (*agentregistry.Entry, error)
 
 	// SnapshotFunc mocks the Snapshot method.
 	SnapshotFunc func() []agentregistry.Entry
@@ -71,6 +71,8 @@ type RegistryMock struct {
 		Lookup []struct {
 			// Thumbprint is the thumbprint argument value.
 			Thumbprint [32]byte
+			// Cn is the cn argument value.
+			Cn string
 		}
 		// Snapshot holds details about calls to the Snapshot method.
 		Snapshot []struct {
@@ -153,19 +155,21 @@ func (mock *RegistryMock) EvictByContainerIDCalls() []struct {
 }
 
 // Lookup calls LookupFunc.
-func (mock *RegistryMock) Lookup(thumbprint [32]byte) (*agentregistry.Entry, error) {
+func (mock *RegistryMock) Lookup(thumbprint [32]byte, cn string) (*agentregistry.Entry, error) {
 	if mock.LookupFunc == nil {
 		panic("RegistryMock.LookupFunc: method is nil but Registry.Lookup was just called")
 	}
 	callInfo := struct {
 		Thumbprint [32]byte
+		Cn         string
 	}{
 		Thumbprint: thumbprint,
+		Cn:         cn,
 	}
 	mock.lockLookup.Lock()
 	mock.calls.Lookup = append(mock.calls.Lookup, callInfo)
 	mock.lockLookup.Unlock()
-	return mock.LookupFunc(thumbprint)
+	return mock.LookupFunc(thumbprint, cn)
 }
 
 // LookupCalls gets all the calls that were made to Lookup.
@@ -174,9 +178,11 @@ func (mock *RegistryMock) Lookup(thumbprint [32]byte) (*agentregistry.Entry, err
 //	len(mockedRegistry.LookupCalls())
 func (mock *RegistryMock) LookupCalls() []struct {
 	Thumbprint [32]byte
+	Cn         string
 } {
 	var calls []struct {
 		Thumbprint [32]byte
+		Cn         string
 	}
 	mock.lockLookup.RLock()
 	calls = mock.calls.Lookup

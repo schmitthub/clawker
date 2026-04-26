@@ -246,9 +246,12 @@ message FirewallResolveHostnameResult {
 }
 
 message AnnounceAgentRequest {
-  // agent_name is the canonical full name "clawker.<project>.<agent>"
-  // (or "clawker.<agent>" for empty project). Slot key. Unique by
-  // construction of clawker container naming.
+  // agent_name is the short agent name as the user types it on the CLI
+  // (e.g. "dev", "test"). NOT the canonical "clawker.project.agent" form.
+  // The CP composes canonical names internally from (NamePrefix, project,
+  // agent_name) — keeping the wire fields decomposed avoids re-parsing on
+  // the server side and makes (project, agent_name) collisions across
+  // different projects impossible to confuse.
   string agent_name = 1;
   // container_id is the Docker container ID CLI got back from
   // ContainerCreate. Stored in the slot, never trusted from clawkerd —
@@ -268,6 +271,12 @@ message AnnounceAgentRequest {
   // only "S256" — the field exists for forward extensibility and to
   // make rejected methods explicit on the wire instead of inferred.
   string code_challenge_method = 5;
+  // project is the clawker project slug the agent runs under (cfg.Project()
+  // on the CLI side). Empty string for the unscoped/2-segment naming case.
+  // Together with agent_name forms the composite slot identity — the same
+  // user agent name (e.g. "dev") can announce in two different projects
+  // without colliding.
+  string project = 6;
 }
 message AnnounceAgentResult {
   // expires_at_unix is the slot deadline as Unix seconds (UTC). For
@@ -282,7 +291,10 @@ message ListAgentsResult {
 }
 
 message Agent {
-  // agent_name is the canonical "clawker.<project>.<agent>".
+  // agent_name is the short agent name as the user types it on the CLI
+  // (e.g. "dev"). The canonical "clawker.project.agent" form is composed
+  // CP-side from (NamePrefix, project, agent_name) — kept off the wire to
+  // avoid duplication and parsing.
   string agent_name = 1;
   // container_id is the long Docker container ID the agent runs in.
   string container_id = 2;
@@ -295,4 +307,8 @@ message Agent {
   // to registered_at_unix for B4 because Register is the only per-agent
   // RPC.
   int64 last_seen_unix = 5;
+  // project is the clawker project slug the agent registered under (empty
+  // for 2-segment naming). Composite with agent_name when callers need a
+  // unique key across projects.
+  string project = 6;
 }

@@ -45,8 +45,8 @@ func setupAuthEnv(t *testing.T) (caCert, caKey string, signing *ecdsa.PrivateKey
 func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	caCert, caKey, signing := setupAuthEnv(t)
 
-	const agentName = "clawker.alpha.bravo"
-	b, err := GenerateAgentBootstrap(caCert, caKey, agentName, "https://hydra.example/oauth2/token", signing)
+	const project, agent = "alpha", "bravo"
+	b, err := GenerateAgentBootstrap(caCert, caKey, project, agent, "https://hydra.example/oauth2/token", signing)
 	require.NoError(t, err)
 	require.NotNil(t, b)
 
@@ -61,10 +61,12 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	// Cert thumbprint matches sha256(certDER).
 	assert.NotEqual(t, [sha256.Size]byte{}, b.ExpectedCertThumbprint, "thumbprint must not be zero-valued")
 
-	// Cert decodes; CN equals agentName; thumbprint matches.
+	// Cert decodes; CN must be canonical "clawker.<project>.<agent>" —
+	// composed inside MintAgentCert so the agent handler's CN cross-check
+	// has a single equality to enforce.
 	leaf := mustParseCert(t, b.CertPEM)
 	got := sha256.Sum256(leaf.Raw)
-	assert.Equal(t, agentName, leaf.Subject.CommonName)
+	assert.Equal(t, "clawker.alpha.bravo", leaf.Subject.CommonName)
 	assert.Equal(t, got, b.ExpectedCertThumbprint)
 
 	// CA PEM matches the on-disk CA.
@@ -74,19 +76,29 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	assert.NotEmpty(t, b.Assertion)
 }
 
+func TestGenerateAgentBootstrap_EmptyProjectStillWorks(t *testing.T) {
+	// 2-segment naming case: empty project, short agent. Canonical CN is
+	// "clawker.<agent>" — same convention as docker.ContainerName.
+	caCert, caKey, signing := setupAuthEnv(t)
+	b, err := GenerateAgentBootstrap(caCert, caKey, "", "solo", "https://h.example/o/t", signing)
+	require.NoError(t, err)
+	leaf := mustParseCert(t, b.CertPEM)
+	assert.Equal(t, "clawker.solo", leaf.Subject.CommonName)
+}
+
 func TestGenerateAgentBootstrap_Validation(t *testing.T) {
 	caCert, caKey, signing := setupAuthEnv(t)
 	tests := []struct {
-		name      string
-		agentName string
-		signing   *ecdsa.PrivateKey
+		name    string
+		agent   string
+		signing *ecdsa.PrivateKey
 	}{
-		{name: "empty agent name", agentName: "", signing: signing},
-		{name: "nil signing key", agentName: "clawker.x", signing: nil},
+		{name: "empty agent name", agent: "", signing: signing},
+		{name: "nil signing key", agent: "x", signing: nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := GenerateAgentBootstrap(caCert, caKey, tc.agentName, "https://h", tc.signing)
+			_, err := GenerateAgentBootstrap(caCert, caKey, "proj", tc.agent, "https://h", tc.signing)
 			require.Error(t, err)
 		})
 	}
@@ -117,9 +129,12 @@ func TestAnnounceAgent_FieldsPropagate(t *testing.T) {
 	}
 
 	b := validBootstrap()
-	require.NoError(t, AnnounceAgent(context.Background(), mock, b, "clawker.x.y", "ctr-id"))
+	require.NoError(t, AnnounceAgent(context.Background(), mock, b, "alpha", "bravo", "ctr-id"))
 	require.NotNil(t, captured)
-	assert.Equal(t, "clawker.x.y", captured.AgentName)
+	// Wire fields are short (project, agent) — NOT canonical. CP composes
+	// the canonical name from these on its side.
+	assert.Equal(t, "bravo", captured.AgentName)
+	assert.Equal(t, "alpha", captured.Project)
 	assert.Equal(t, "ctr-id", captured.ContainerId)
 	// Wire field is hex-encoded SHA-256 over cert DER; round-trip
 	// confirms the encoding and that the bytes match the bootstrap.
@@ -135,7 +150,7 @@ func TestAnnounceAgent_PropagatesError(t *testing.T) {
 			return nil, want
 		},
 	}
-	err := AnnounceAgent(context.Background(), mock, validBootstrap(), "n", "id")
+	err := AnnounceAgent(context.Background(), mock, validBootstrap(), "p", "n", "id")
 	assert.ErrorIs(t, err, want)
 }
 
@@ -144,13 +159,14 @@ func TestAnnounceAgent_RejectsInvalidBootstrap(t *testing.T) {
 	// Empty challenge would let the slot reserve with no PKCE binding.
 	b := validBootstrap()
 	b.Challenge = ""
-	require.Error(t, AnnounceAgent(context.Background(), mock, b, "n", "id"))
+	require.Error(t, AnnounceAgent(context.Background(), mock, b, "p", "n", "id"))
 
-	// Empty agent name would key the slot to "" — every announce would collide.
-	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), "", "id"))
+	// Empty agent name would key the slot to (p, "") — every announce in
+	// project p would collide on the same composite key.
+	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), "p", "", "id"))
 
 	// Empty container ID would skip the IP cross-check at Register.
-	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), "n", ""))
+	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), "p", "n", ""))
 
 	// Mock should never see a request — validation happens before RPC.
 	assert.Empty(t, mock.AnnounceAgentCalls())

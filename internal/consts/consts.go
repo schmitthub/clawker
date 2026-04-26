@@ -34,6 +34,12 @@ import (
 
 // Domain and label namespace.
 const (
+	// NamePrefix is the leading segment of every clawker resource name
+	// (containers, volumes, images, canonical agent identities). Two-segment
+	// names are NamePrefix.agent (empty project), three-segment names are
+	// NamePrefix.project.agent.
+	NamePrefix = "clawker"
+
 	// Domain is the public-facing domain used in help text, URLs, and output.
 	Domain = "clawker.dev"
 

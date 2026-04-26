@@ -28,14 +28,26 @@ type CommandOpts struct {
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Logger         func() (*logger.Logger, error)
 
-	// AgentName is the canonical "clawker.<project>.<agent>" name.
-	// New-container start paths MUST set it; without it ContainerStart
-	// skips the announce + bootstrap-delivery and the entrypoint
-	// silently skips clawkerd launch. Existing-container start/restart
-	// paths leave it empty by design — those containers' slots either
-	// already exist (and clawkerd is reconnecting, future B5 work) or
-	// were intentionally never registered.
+	// AgentName is the user-typed short agent name (e.g. "dev", "test").
+	// NOT the canonical "clawker.project.agent" form — the canonical name
+	// is composed downstream (in MintAgentCert / on the CP side) from
+	// (Project, AgentName) so it has a single home. New-container start
+	// paths MUST set this; without it ContainerStart skips the announce
+	// + bootstrap-delivery and the entrypoint silently skips clawkerd
+	// launch. Existing-container start/restart paths leave it empty by
+	// design — those containers' slots either already exist (and clawkerd
+	// is reconnecting, future B5 work) or were intentionally never
+	// registered.
 	AgentName string
+
+	// Project is the clawker project slug the agent runs under, paired
+	// with AgentName to form the composite (project, agent) identity the
+	// CP keys slots and registry entries by. Empty string for the
+	// 2-segment unscoped naming case — same convention as
+	// docker.ContainerName. Must be set whenever AgentName is set on a
+	// new-container start path so AnnounceAgent + MintAgentCert agree on
+	// the canonical CN.
+	Project string
 }
 
 // NeedsSocketBridge returns true if the project config enables GPG or SSH
@@ -330,7 +342,7 @@ func prepareAgentBootstrap(ctx context.Context, cmdOpts CommandOpts, containerID
 	hydraTokenAudience := fmt.Sprintf("https://127.0.0.1:%d/oauth2/token",
 		cfg.Settings().ControlPlane.HydraPublicPort)
 
-	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, cmdOpts.AgentName, hydraTokenAudience, signingKey)
+	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, cmdOpts.Project, cmdOpts.AgentName, hydraTokenAudience, signingKey)
 	if err != nil {
 		return fmt.Errorf("generate: %w", err)
 	}
@@ -339,7 +351,7 @@ func prepareAgentBootstrap(ctx context.Context, cmdOpts CommandOpts, containerID
 	if err != nil {
 		return fmt.Errorf("dial control plane: %w", err)
 	}
-	if err := AnnounceAgent(ctx, admin, bootstrap, cmdOpts.AgentName, containerID); err != nil {
+	if err := AnnounceAgent(ctx, admin, bootstrap, cmdOpts.Project, cmdOpts.AgentName, containerID); err != nil {
 		return fmt.Errorf("announce: %w", err)
 	}
 	if err := WriteAgentBootstrapToContainer(ctx, containerID, copyFn, bootstrap); err != nil {

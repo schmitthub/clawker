@@ -189,15 +189,18 @@ func TestPrepareAgentBootstrap_HappyPath(t *testing.T) {
 	cmdOpts := CommandOpts{
 		Config:      testRuntimeConfig("", ""),
 		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) { return admin, nil },
-		AgentName:   "clawker.alpha.bravo",
+		AgentName:   "bravo",
+		Project:     "alpha",
 	}
 	err := prepareAgentBootstrap(context.Background(), cmdOpts, "ctr-id-123", copyFn)
 	require.NoError(t, err)
 
-	// AnnounceAgent saw the right request shape — agent name + container
-	// ID round-trip through the wire.
+	// AnnounceAgent saw the right request shape — short (project, agent)
+	// pair (NOT the canonical form), container ID round-trip through the
+	// wire. Composing the canonical CN is the CP's job.
 	require.NotNil(t, announced)
-	assert.Equal(t, "clawker.alpha.bravo", announced.AgentName)
+	assert.Equal(t, "bravo", announced.AgentName)
+	assert.Equal(t, "alpha", announced.Project)
 	assert.Equal(t, "ctr-id-123", announced.ContainerId)
 	assert.Equal(t, "S256", announced.CodeChallengeMethod)
 	assert.NotEmpty(t, announced.CodeChallenge)
@@ -231,7 +234,8 @@ func TestPrepareAgentBootstrap_AnnounceErrorBlocksWrite(t *testing.T) {
 	cmdOpts := CommandOpts{
 		Config:      testRuntimeConfig("", ""),
 		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) { return admin, nil },
-		AgentName:   "clawker.x",
+		AgentName:   "x",
+		Project:     "p",
 	}
 	err := prepareAgentBootstrap(context.Background(), cmdOpts, "ctr", copyFn)
 	require.Error(t, err)
@@ -254,7 +258,8 @@ func TestPrepareAgentBootstrap_WriteErrorPropagates(t *testing.T) {
 	cmdOpts := CommandOpts{
 		Config:      testRuntimeConfig("", ""),
 		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) { return admin, nil },
-		AgentName:   "clawker.x",
+		AgentName:   "x",
+		Project:     "p",
 	}
 	err := prepareAgentBootstrap(context.Background(), cmdOpts, "ctr", copyFn)
 	require.Error(t, err)
@@ -265,7 +270,8 @@ func TestPrepareAgentBootstrap_NilAdminClientFails(t *testing.T) {
 	setupAuthEnv(t)
 	cmdOpts := CommandOpts{
 		Config:    testRuntimeConfig("", ""),
-		AgentName: "clawker.x",
+		AgentName: "x",
+		Project:   "p",
 		// AdminClient intentionally nil.
 	}
 	err := prepareAgentBootstrap(context.Background(), cmdOpts, "ctr", func(_ context.Context, _, _ string, _ io.Reader) error {

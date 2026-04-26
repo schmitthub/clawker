@@ -329,6 +329,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 		SocketBridge:   cfg.SocketBridge,
 		Logger:         func() (*logger.Logger, error) { return cfg.Log, nil },
 		AgentName:      agentName,
+		Project:        cfg.ProjectName,
 	}, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 		ios.StopSpinner()
 		cleanup()

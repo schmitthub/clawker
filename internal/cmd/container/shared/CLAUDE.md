@@ -69,10 +69,23 @@ type AgentBootstrap struct {
     Assertion                              string  // Hydra client_assertion JWT
 }
 
-GenerateAgentBootstrap(caCertPath, caKeyPath, agentName, hydraTokenURL, signingKey) (*AgentBootstrap, error)
-AnnounceAgent(ctx, admin AdminServiceClient, b *AgentBootstrap, agentName, containerID) error
+// project + agent are the user-typed short identifiers (e.g. "myapp",
+// "dev"). MintAgentCert composes the canonical "clawker.<project>.<agent>"
+// CN inside via auth.CanonicalAgentCN; the agent handler's CN cross-check
+// has a single equality to enforce.
+GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error)
+
+// project + agent travel as separate wire fields (no canonical-on-wire);
+// the CP composes the canonical name on its side.
+AnnounceAgent(ctx context.Context, admin AdminServiceClient, b *AgentBootstrap, project, agent, containerID string) error
+
 WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *AgentBootstrap) error
 ```
+
+`CommandOpts.AgentName` (the short user-typed name) and `CommandOpts.Project`
+(the project slug, empty allowed) feed `prepareAgentBootstrap` — both must
+be set on new-container start paths so AnnounceAgent + MintAgentCert agree
+on the canonical CN.
 
 `WriteAgentBootstrapToContainer` tars the five files into the container
 at `consts.BootstrapDir` (parent dir 0700, files 0400). The destination

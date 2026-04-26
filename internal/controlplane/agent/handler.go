@@ -56,6 +56,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
@@ -169,30 +170,38 @@ func (h *Handler) Connect(req *agentv1.ConnectRequest, stream agentv1.AgentServi
 	thumbprint := sha256.Sum256(peer.Raw)
 
 	// (a) Cert CN cross-check — defense vs announce-payload tampering
-	// between cert mint and AnnounceAgent. auth.MintAgentCert sets the
-	// leaf CN to the agent_name; if the request body's agent_name
-	// disagrees, reject before we touch the slot registry.
-	// Constant-time compare so failure latency doesn't leak which
-	// byte differed.
+	// between cert mint and the ConnectRequest body. auth.MintAgentCert
+	// composes the CN as auth.CanonicalAgentCN(project, agent); we
+	// compose the same canonical here from (req.Project, req.AgentName)
+	// and equate against the peer cert. Both halves of the wire identity
+	// must match what the CLI baked into the cert, otherwise reject
+	// before we touch the slot registry. Constant-time compare so
+	// failure latency doesn't leak which byte differed.
+	wantCN := auth.CanonicalAgentCN(req.Project, req.AgentName)
 	if subtle.ConstantTimeCompare(
 		[]byte(peer.CommonName),
-		[]byte(req.AgentName),
+		[]byte(wantCN),
 	) != 1 {
 		h.log.Warn().
 			Str("agent", req.AgentName).
+			Str("project", req.Project).
 			Str("cn", peer.CommonName).
-			Msg("agent connect: cert CN does not match request agent_name")
+			Str("expected_cn", wantCN).
+			Msg("agent connect: cert CN does not match request (project, agent)")
 		return status.Error(codes.PermissionDenied, "registration rejected")
 	}
 
-	// (b) Composite slot consume — the (thumbprint, agent_name) lookup
-	// folds the cert-thumbprint cross-check INTO the map key, so a
-	// standalone thumbprint compare is no longer necessary. Mismatch /
-	// missing / expired all surface as ErrSlotInvalid; PKCE compare is
-	// constant-time inside agentslots.
-	slot, err := h.slots.Consume(thumbprint, req.AgentName, req.CodeVerifier)
+	// (b) Composite slot consume — the (thumbprint, agent_name, project)
+	// lookup folds the cert-thumbprint cross-check INTO the map key, so
+	// a standalone thumbprint compare is no longer necessary. Mismatch
+	// / missing / expired all surface as ErrSlotInvalid; PKCE compare
+	// is constant-time inside agentslots.
+	slot, err := h.slots.Consume(thumbprint, req.AgentName, req.Project, req.CodeVerifier)
 	if err != nil {
-		h.log.Warn().Err(err).Str("agent", req.AgentName).Msg("agent connect: slot consume rejected")
+		h.log.Warn().Err(err).
+			Str("agent", req.AgentName).
+			Str("project", req.Project).
+			Msg("agent connect: slot consume rejected")
 		return status.Error(codes.PermissionDenied, "registration rejected")
 	}
 
@@ -238,11 +247,26 @@ func (h *Handler) Connect(req *agentv1.ConnectRequest, stream agentv1.AgentServi
 	}
 
 	// (e) Label cross-check — defense vs label tampering after announce.
-	if got := info.Labels[consts.LabelAgent]; !strings.EqualFold(got, req.AgentName) {
+	// Both LabelAgent AND LabelProject must agree with the slot:
+	// inspecting only one half would let an attacker who relabeled the
+	// project (but kept the agent name) ride a slot for the wrong
+	// project. EqualFold matches Docker's case-insensitive label
+	// matching elsewhere in the codebase; project labels are absent for
+	// the unscoped/2-segment naming case (slot.Project == "") so accept
+	// an empty label string in that branch.
+	if got := info.Labels[consts.LabelAgent]; !strings.EqualFold(got, slot.AgentName) {
 		h.log.Warn().
 			Str("agent", req.AgentName).
-			Str("label", got).
-			Msg("agent connect: label mismatch")
+			Str("label_agent", got).
+			Msg("agent connect: agent label mismatch")
+		return status.Error(codes.PermissionDenied, "registration rejected")
+	}
+	if got := info.Labels[consts.LabelProject]; !strings.EqualFold(got, slot.Project) {
+		h.log.Warn().
+			Str("agent", req.AgentName).
+			Str("project", req.Project).
+			Str("label_project", got).
+			Msg("agent connect: project label mismatch")
 		return status.Error(codes.PermissionDenied, "registration rejected")
 	}
 
@@ -272,10 +296,12 @@ func (h *Handler) Connect(req *agentv1.ConnectRequest, stream agentv1.AgentServi
 	}
 
 	// Pin to registry; subsequent per-agent RPCs resolve identity by
-	// recomputing SHA-256 over their TLS peer cert and looking up here.
+	// recomputing SHA-256 over their TLS peer cert and looking up here
+	// with the cert CN as the second cross-check parameter.
 	now := h.clock()
 	h.registry.Add(agentregistry.Entry{
-		AgentName:    req.AgentName,
+		AgentName:    slot.AgentName,
+		Project:      slot.Project,
 		ContainerID:  slot.ContainerID,
 		Thumbprint:   thumbprint,
 		RegisteredAt: now,
@@ -284,6 +310,7 @@ func (h *Handler) Connect(req *agentv1.ConnectRequest, stream agentv1.AgentServi
 
 	h.log.Info().
 		Str("agent", req.AgentName).
+		Str("project", req.Project).
 		Str("container_id", slot.ContainerID).
 		Msg("agent connect: registered")
 

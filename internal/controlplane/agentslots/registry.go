@@ -10,20 +10,23 @@
 // verifier cannot burn a slot reserved for a legitimate caller — the
 // legitimate retry can still consume it within TTL.
 //
-// Slots are keyed by the composite (cert_thumbprint, agent_name). For
-// an honest CLI each AnnounceAgent retry mints a fresh leaf cert,
+// Slots are keyed by the composite (cert_thumbprint, project, agent_name).
+// For an honest CLI each AnnounceAgent retry mints a fresh leaf cert,
 // producing a fresh thumbprint and a fresh slot key — so concurrent
-// pending slots for the same agent_name never collide. A duplicate
-// composite key indicates caller misuse (re-Reserve under the same
-// cert) rather than a benign overlap; surface as codes.AlreadyExists.
-// The composite key also folds the agent_name cross-check into the
-// slot lookup itself: Consume must receive both the peer cert
-// thumbprint AND the agent_name to find a slot, so an attacker cannot
-// reuse a slot reserved for a different agent_name even if they
-// somehow obtained the verifier.
+// pending slots for the same (project, agent) tuple never collide. A
+// duplicate composite key indicates caller misuse (re-Reserve under the
+// same cert) rather than a benign overlap; surface as codes.AlreadyExists.
+// The composite key folds the (project, agent) cross-check into the slot
+// lookup itself: Consume must receive thumbprint AND project AND agent
+// to find a slot, so an attacker cannot reuse a slot reserved for a
+// different agent even if they somehow obtained the verifier — and the
+// same short agent name (e.g. "dev") in two different projects keys two
+// disjoint slots. Project enters the key (rather than being a side
+// attribute) so this collision-impossibility argument generalizes from
+// agent_name alone to the full project-scoped identity.
 //
 // Identity binding at this layer ends with "the verifier hashes to the
-// stored challenge under the matching (thumbprint, agent_name) key".
+// stored challenge under the matching (thumbprint, project, agent) key".
 // Peer IP check, cert CN check, and container label cross-check live
 // in the AgentService.Connect handler and consume the Slot returned
 // by Consume.
@@ -52,7 +55,16 @@ import (
 // silently bypassing the TTL contract. Reserve now ignores both fields
 // on input and overwrites them.
 type Slot struct {
-	AgentName              string
+	// AgentName is the user-typed short name (e.g. "dev"). Paired with
+	// Project to form the composite identity key — the canonical
+	// "clawker.project.agent" form is composed downstream by the agent
+	// handler when it cross-checks the peer cert CN.
+	AgentName string
+	// Project is the clawker project slug. Empty string is allowed and
+	// matches the unscoped/2-segment naming case (docker.ContainerName
+	// behavior). Two announces for the same agent name across different
+	// projects key into disjoint slots so they never collide on Reserve.
+	Project                string
 	ContainerID            string
 	ExpectedCertThumbprint [sha256.Size]byte
 	Challenge              string
@@ -83,16 +95,18 @@ var ErrSlotExists = errors.New("agentslots: slot already reserved")
 //go:generate moq -rm -pkg mocks -out mocks/registry_mock.go . Registry
 type Registry interface {
 	// Reserve stores the slot keyed by (ExpectedCertThumbprint,
-	// AgentName). Reserve stamps ReservedAt + ExpiresAt from the
+	// AgentName, Project). Reserve stamps ReservedAt + ExpiresAt from the
 	// registry's clock; any value supplied by the caller on those two
 	// fields is ignored. Duplicate composite keys return ErrSlotExists.
+	// Empty Project is allowed (matches docker.ContainerName 2-segment
+	// naming); empty AgentName is rejected.
 	Reserve(slot Slot) error
-	// Consume locates the slot keyed by (thumbprint, agentName) and
-	// verifies S256(verifier) == slot.Challenge in constant time,
+	// Consume locates the slot keyed by (thumbprint, agentName, project)
+	// and verifies S256(verifier) == slot.Challenge in constant time,
 	// atomically removing the slot on success. Mismatch / missing /
 	// expired all map to ErrSlotInvalid; verifier mismatch leaves the
 	// slot in place so a benign retry can succeed (TTL handles eviction).
-	Consume(thumbprint [sha256.Size]byte, agentName, verifier string) (*Slot, error)
+	Consume(thumbprint [sha256.Size]byte, agentName, project, verifier string) (*Slot, error)
 	// EvictByContainerID removes any pending slot whose ContainerID
 	// matches. Linear scan over slots; fine for realistic clawker host
 	// scales (single-digit pending registrations). Mirrors
@@ -107,14 +121,18 @@ type Registry interface {
 }
 
 // slotKey is the composite map key for pending slots: cert thumbprint
-// plus agent_name. Both halves come from the CLI's AnnounceAgent
-// payload; clawkerd later proves them with the mTLS cert (thumbprint)
-// and the ConnectRequest body (agent_name). For an honest CLI each
-// retry mints a fresh cert, so concurrent slot keys for the same
-// agent_name never collide.
+// plus (project, agent) tuple. Every component comes from the CLI's
+// AnnounceAgent payload; clawkerd later proves them with the mTLS cert
+// (thumbprint) and the ConnectRequest body (agent_name + project). For
+// an honest CLI each retry mints a fresh cert, so concurrent slot keys
+// for the same (project, agent) tuple never collide. Project is part of
+// the key (not just a side attribute) so the same short agent name in
+// two different projects keys two disjoint slots — a hard isolation
+// boundary at the registry level.
 type slotKey struct {
 	Thumbprint [sha256.Size]byte
 	AgentName  string
+	Project    string
 }
 
 type registryImpl struct {
@@ -188,7 +206,7 @@ func (r *registryImpl) Reserve(slot Slot) error {
 	slot.ReservedAt = now
 	slot.ExpiresAt = now.Add(consts.AgentSlotTTL)
 
-	key := slotKey{Thumbprint: slot.ExpectedCertThumbprint, AgentName: slot.AgentName}
+	key := slotKey{Thumbprint: slot.ExpectedCertThumbprint, AgentName: slot.AgentName, Project: slot.Project}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.slots[key]; exists {
@@ -198,14 +216,14 @@ func (r *registryImpl) Reserve(slot Slot) error {
 	return nil
 }
 
-func (r *registryImpl) Consume(thumbprint [sha256.Size]byte, agentName, verifier string) (*Slot, error) {
+func (r *registryImpl) Consume(thumbprint [sha256.Size]byte, agentName, project, verifier string) (*Slot, error) {
 	// Hash the verifier unconditionally before any branching on slot
-	// presence so an attacker probing for valid (thumbprint, agent_name)
-	// pairs can't use SHA-256 wall-clock latency to distinguish
+	// presence so an attacker probing for valid (thumbprint, project,
+	// agent) tuples can't use SHA-256 wall-clock latency to distinguish
 	// "key unknown" from "key known, wrong verifier".
 	expected := pkceChallenge(verifier)
 
-	key := slotKey{Thumbprint: thumbprint, AgentName: agentName}
+	key := slotKey{Thumbprint: thumbprint, AgentName: agentName, Project: project}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
