@@ -12,7 +12,7 @@
 | Task 2: `agentslots` — composite key + `EvictByContainerID` + dockerevents `Subscribe` | `complete` | claude-opus-4-7 |
 | Task 3: `agent.Handler.Connect` — server-streaming + CN cross-check + composite Consume | `complete` | claude-opus-4-7 |
 | Task 4: `controlplane.adminServer.AnnounceAgent` handler | `complete` | claude-opus-4-7 |
-| Task 5: `AgentIdentityInterceptor` (unary + stream) with fail-secure opt-out map | `pending` | — |
+| Task 5: `AgentIdentityInterceptor` (unary + stream) with fail-secure opt-out map | `complete` | claude-opus-4-7 |
 | Task 6: `cmd/clawker-cp/main.go` wiring (slot registry hoist, identity interceptor chain, dockerevents subscriptions) | `pending` | — |
 | Task 7: `cmd/clawkerd/main.go` — consume `Connect` server-stream | `pending` | — |
 | Task 8: CLI `run`/`start` wiring — `RuntimeEnvOpts` Clawkerd* fields + `prepareAgentBootstrap` helper | `pending` | — |
@@ -49,6 +49,14 @@
 - AdminService.AnnounceAgent's wire-error mapping: InvalidArgument (validation), AlreadyExists (`ErrSlotExists`), Internal (other Reserve failures). Caller-supplied `ReservedAt`/`ExpiresAt` on the Slot are silently overwritten by `agentslots.Reserve` from its own clock — handler doesn't pre-stamp them.
 - The handler's `clock` produces `ExpiresAtUnix` for the response (CLI uses for logging only); `agentslots.Reserve` uses its own clock for the slot's actual `ExpiresAt`. In production both are `time.Now`; in tests the two clocks diverge by design (handler test verifies wire response, agentslots test verifies slot stamping).
 - Slot registry hoist in `cmd/clawker-cp/main.go`: hoisted above `NewAdminServer` to share across both AdminService and AgentService listeners. T6 adds the dockerevents subscription.
+
+### Task 5
+- Stream wrapper pitfall: `identityServerStream.Context()` MUST be defined on the wrapper, NOT promoted from the embedded `grpc.ServerStream`. Promotion lets the embedded type's Context() win — handler reads original ctx without entry, silently breaking identity binding for every streaming RPC. Test reads `wrapped.Context()` (not resolve-time newCtx) so the regression manifests as a test failure, not silent.
+- `WithEntry(nil)` is a real silent-identity-vacuum path: typed-nil pointer survives `(*Entry)(nil)` type assertion as `(nil, true)`. Mirror agentregistry.Add's panic-on-misuse + defend EntryFromContext with `ok && entry != nil`.
+- `TestIdentityInterceptor_AllMethodsHavePolicy` was tautological w.r.t. its docstring claim — the implicit identity-required default routes new RPCs through registry-lookup automatically; the test cannot fail when a new RPC is added. Renamed to `TestIdentityOptedOut_NoStaleEntriesAndConnectLocked` and tightened docstring to reflect what the test actually enforces (stale-entry detection + Connect lock-in). Code-review conversation is the real forcing function for new opt-outs, not this test.
+- `optedOut nil` defaults to empty map → identity-required for ALL methods. Worst-case wiring regression is fail-secure (every RPC requires identity), not fail-open.
+- Lookup-error log differentiation: `errors.Is(err, ErrUnknownAgent)` logs at Warn; other errors log at Error (with the wrapped error). Wire response stays generic PermissionDenied — attackers learn nothing — but operator log fidelity is preserved for future Lookup contracts that may grow I/O paths.
+- Local var `peer` in resolve closure renamed to `pid` to avoid confusion with the imported `peer` package (which the same file uses for `peer.FromContext` via `peerIdentityAndIP`).
 
 ---
 
