@@ -18,7 +18,6 @@ package e2e
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -68,8 +67,14 @@ build:
 agent:
   claude_code:
     use_host_auth: false
-security:
-  firewall:
+`)
+	// Master firewall switch lives in settings.yaml, NOT
+	// clawker.yaml's `security.firewall` (which only holds per-project
+	// add_domains/rules; FirewallConfig vs FirewallSettings split). The
+	// project's `security.firewall.enable` field is silently dropped at
+	// load time. Mirrors the canonical pattern in firewall_test.go.
+	setup.WriteYAML(t, testenv.Settings, setup.Dirs.Config, `
+firewall:
     enable: false
 `)
 
@@ -83,48 +88,67 @@ security:
 }
 
 // waitForAgent polls AdminService.ListAgents until an agent matching
-// name appears (or the deadline elapses). Returns the matching Agent
-// or fails the test.
-func waitForAgent(t *testing.T, h *harness.Harness, name string, deadline time.Duration) *adminv1.Agent {
+// the composite (project, name) identity appears (or the deadline
+// elapses). Match is on the SHORT form — registry.Entry.AgentName is
+// stored as the user-typed short name (e.g. "happy"), and the
+// canonical form clawker.<project>.<agent> is composed only on the
+// peer cert CN at mint time and never appears on the wire. Project
+// pairs with name to form the composite identity the CP keys agents
+// by, so two projects with the same short agent name register
+// disjoint entries.
+func waitForAgent(t *testing.T, h *harness.Harness, name, project string, deadline time.Duration) *adminv1.Agent {
 	t.Helper()
 	stop := time.Now().Add(deadline)
 	for time.Now().Before(stop) {
 		res := h.Run("controlplane", "agents", "--json")
-		if res.Err == nil && strings.Contains(res.Stdout, name) {
-			// Round-trip via ListAgents through the AdminClient so the
-			// returned Agent struct matches what production tooling
-			// would observe.
+		if res.Err == nil {
 			f := res.Factory
 			adminClient, err := f.AdminClient(context.Background())
 			require.NoError(t, err)
 			lr, err := adminClient.ListAgents(context.Background(), &adminv1.ListAgentsRequest{})
 			require.NoError(t, err)
 			for _, a := range lr.Agents {
-				if a.AgentName == name {
+				if a.AgentName == name && a.Project == project {
 					return a
 				}
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("agent %q never appeared in ListAgents within %s", name, deadline)
+	t.Fatalf("agent %q (project %q) never appeared in ListAgents within %s", name, project, deadline)
 	return nil
 }
 
-// waitForEviction is the inverse: polls until the named agent is
-// absent. Used after container stop to assert dockerevents drove the
-// agentregistry.EvictByContainerID path.
-func waitForEviction(t *testing.T, h *harness.Harness, name string, deadline time.Duration) {
+// waitForEviction is the inverse: polls until the composite (project,
+// name) entry is absent from ListAgents. Used after container stop to
+// assert dockerevents drove the agentregistry.EvictByContainerID path.
+func waitForEviction(t *testing.T, h *harness.Harness, name, project string, deadline time.Duration) {
 	t.Helper()
 	stop := time.Now().Add(deadline)
 	for time.Now().Before(stop) {
 		res := h.Run("controlplane", "agents", "--json")
-		if res.Err == nil && !strings.Contains(res.Stdout, name) {
+		if res.Err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		f := res.Factory
+		adminClient, err := f.AdminClient(context.Background())
+		require.NoError(t, err)
+		lr, err := adminClient.ListAgents(context.Background(), &adminv1.ListAgentsRequest{})
+		require.NoError(t, err)
+		found := false
+		for _, a := range lr.Agents {
+			if a.AgentName == name && a.Project == project {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("agent %q never evicted within %s", name, deadline)
+	t.Fatalf("agent %q (project %q) never evicted within %s", name, project, deadline)
 }
 
 // TestClawkerdRegister_HappyPath drives the announce → register →
@@ -139,14 +163,19 @@ func TestClawkerdRegister_HappyPath(t *testing.T) {
 	}
 	h := newAgentRegistrationHarness(t)
 
-	const agentName = "clawker.testproject.happy"
+	// agentName is the SHORT form the CLI passes via --agent and the
+	// CP stores in registry.Entry.AgentName. The canonical form
+	// "clawker.testproject.happy" is bound to the per-agent cert CN
+	// at mint time and never appears on the wire.
+	const agentName = "happy"
+	const projectName = "testproject"
 
 	// Start the agent container detached so the test can poll registry
 	// state while the daemon idles inside.
-	runRes := h.Run("container", "run", "--detach", "--agent", "happy", "@", "sleep", "60")
+	runRes := h.Run("container", "run", "--detach", "--agent", agentName, "@", "sleep", "60")
 	require.NoError(t, runRes.Err, "container run failed: %s", runRes.Stderr)
 
-	agent := waitForAgent(t, h, agentName, 30*time.Second)
+	agent := waitForAgent(t, h, agentName, projectName, 30*time.Second)
 
 	// Sanity-check the registry entry's shape: thumbprint must be 64
 	// lowercase-hex chars (SHA-256 over the agent's mTLS leaf), and
@@ -159,13 +188,13 @@ func TestClawkerdRegister_HappyPath(t *testing.T) {
 	}
 	require.True(t, agent.RegisteredAtUnix > 0)
 
-	stopRes := h.Run("container", "stop", "--agent", "happy")
+	stopRes := h.Run("container", "stop", "--agent", agentName)
 	require.NoError(t, stopRes.Err, "container stop failed: %s", stopRes.Stderr)
 
-	waitForEviction(t, h, agentName, 30*time.Second)
+	waitForEviction(t, h, agentName, projectName, 30*time.Second)
 
 	// Container removal cleans up labels — final ListAgents should be
 	// empty for this name.
-	rmRes := h.Run("container", "remove", "--agent", "happy")
+	rmRes := h.Run("container", "remove", "--agent", agentName)
 	assert.NoError(t, rmRes.Err)
 }

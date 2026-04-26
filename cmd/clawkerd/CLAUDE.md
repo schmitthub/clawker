@@ -92,9 +92,13 @@ are commands as B5+ adds payload variants.
 Structured zerolog via `internal/logger.New()` writing to
 `/var/log/clawker/clawkerd.log` (50MB rotation, 7d retain, 3 backups,
 gzip compression — same defaults as the host-side `clawker.log`). The
-entrypoint redirects clawkerd's stdout/stderr to the same path so
-early-boot stderr (logger-init failure) and any panic stack trace
-land alongside the structured log. Every
+entrypoint redirects clawkerd's stdout/stderr to a SIBLING file
+`/var/log/clawker/clawkerd.stderr.log` so early-boot stderr (the
+single logger-init failure write in `main.go`) and any Go runtime
+panic stack trace land in the same directory but NOT the rotated log
+(lumberjack is documented unsafe for multi-writer access; the shell's
+append fd would keep appending to the renamed inode post-rotation).
+Every
 log line carries `agent=<name>` and `project=<slug>` structured
 fields so a multi-agent log (when shared via volume mount) is
 trivially filterable by container.

@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
 	cpfw "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
@@ -73,8 +74,8 @@ func allowAllIntrospector() *cpmocks.IntrospectorMock {
 			return &controlplane.IntrospectionResult{
 				Active:   true,
 				Scope:    "admin",
-				ClientID: "clawker-cli",
-				Sub:      "clawker-cli",
+				ClientID: consts.ClientIDCLI,
+				Sub:      consts.ClientIDCLI,
 			}, nil
 		},
 	}
@@ -137,8 +138,8 @@ func TestAuthInterceptor_ValidToken_WrongScope_Denied(t *testing.T) {
 			return &controlplane.IntrospectionResult{
 				Active:   requiredScope == granted,
 				Scope:    granted,
-				ClientID: "clawker-agent",
-				Sub:      "clawker-agent",
+				ClientID: consts.ClientIDAgent,
+				Sub:      consts.ClientIDAgent,
 			}, nil
 		},
 	}
@@ -315,7 +316,7 @@ func TestAuthInterceptor_RequireClientID_Mismatch_Denied(t *testing.T) {
 	log := logger.Nop()
 	interceptor := controlplane.
 		NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log).
-		RequireClientID("clawker-cli")
+		RequireClientID(consts.ClientIDCLI)
 
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
@@ -360,8 +361,8 @@ func TestAuthInterceptor_RequireClientID_Match_Allowed(t *testing.T) {
 			return &controlplane.IntrospectionResult{
 				Active:   true,
 				Scope:    "admin",
-				ClientID: "clawker-cli",
-				Sub:      "clawker-cli",
+				ClientID: consts.ClientIDCLI,
+				Sub:      consts.ClientIDCLI,
 			}, nil
 		},
 	}
@@ -369,7 +370,7 @@ func TestAuthInterceptor_RequireClientID_Match_Allowed(t *testing.T) {
 	log := logger.Nop()
 	interceptor := controlplane.
 		NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log).
-		RequireClientID("clawker-cli")
+		RequireClientID(consts.ClientIDCLI)
 
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
