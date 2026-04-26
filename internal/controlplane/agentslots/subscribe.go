@@ -2,10 +2,21 @@ package agentslots
 
 import (
 	"context"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	"github.com/schmitthub/clawker/internal/controlplane/informer"
 	"github.com/schmitthub/clawker/internal/logger"
+)
+
+// Subscribe panic-loop guardrails — see agentregistry/subscribe.go for
+// the same constants and rationale; kept in lock-step so both consumers
+// behave identically under a deterministic panic source.
+const (
+	subscribePanicBackoffMin    = 100 * time.Millisecond
+	subscribePanicBackoffMax    = 30 * time.Second
+	subscribePanicWindow        = 5 * time.Minute
+	subscribePanicWindowMaxHits = 100
 )
 
 // Subscribe wires the slot registry to container deltas published by the
@@ -45,9 +56,47 @@ func Subscribe(ctx context.Context, reg Registry, inf informer.Interface, log *l
 		// pending slots lingering until expiry instead of being evicted
 		// promptly on container exit. The loop reruns drainOnce so the
 		// dropped delta is lost but subsequent deltas still drain.
+		//
+		// Backoff + circuit-breaker on consecutive panics so a
+		// deterministic panic source can't hot-loop the recovery path
+		// and bury real signal in the log (kept in sync with
+		// agentregistry/subscribe.go).
+		var panicTimes []time.Time
+		var lastPanic time.Time
+		backoff := subscribePanicBackoffMin
 		for {
 			if drainOnce(ctx, ch, reg, log) {
 				return
+			}
+			now := time.Now()
+			if !lastPanic.IsZero() && now.Sub(lastPanic) > 30*time.Second {
+				backoff = subscribePanicBackoffMin
+			}
+			lastPanic = now
+			panicTimes = append(panicTimes, now)
+			cutoff := now.Add(-subscribePanicWindow)
+			i := 0
+			for i < len(panicTimes) && panicTimes[i].Before(cutoff) {
+				i++
+			}
+			panicTimes = panicTimes[i:]
+			if len(panicTimes) >= subscribePanicWindowMaxHits {
+				log.Error().
+					Int("panic_count", len(panicTimes)).
+					Dur("window", subscribePanicWindow).
+					Msg("agentslots subscribe consumer: panic rate exceeded ceiling; terminating consumer")
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			if backoff < subscribePanicBackoffMax {
+				backoff *= 2
+				if backoff > subscribePanicBackoffMax {
+					backoff = subscribePanicBackoffMax
+				}
 			}
 		}
 	}()

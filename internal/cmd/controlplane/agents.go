@@ -23,8 +23,13 @@ type AgentsOptions struct {
 // agentRow is the JSON/template-friendly representation of one agent.
 // Field tags are the wire contract for `--json` consumers — a rename
 // here breaks downstream tooling.
+//
+// Project + agent_name together form the composite identity the CP keys
+// agents by; emitting both is required so `--json` consumers can
+// distinguish two agents that share a short name across projects.
 type agentRow struct {
 	AgentName      string `json:"agent_name"`
+	Project        string `json:"project"`
 	ContainerID    string `json:"container_id"`
 	CertThumbprint string `json:"cert_thumbprint"`
 	RegisteredAt   string `json:"registered_at"`
@@ -42,11 +47,13 @@ func NewCmdAgents(f *cmdutil.Factory, runF func(context.Context, *AgentsOptions)
 	cmd := &cobra.Command{
 		Use:   "agents",
 		Short: "List agents currently registered with the control plane",
-		Long: `Snapshot every agent that has completed AgentService.Register.
+		Long: `Snapshot every agent that has completed the AgentService.Connect handshake.
 
 Identity is channel-bound: the certificate thumbprint shown here is the
 SHA-256 over the agent's mTLS leaf cert and is what the control plane
-uses as the registry key.`,
+uses as the registry key. Agents are uniquely identified by the
+composite (project, agent_name) — agents with the same short name in
+different projects appear as separate rows.`,
 		Example: `  # Show all registered agents
   clawker controlplane agents
 
@@ -78,6 +85,7 @@ func agentsRun(ctx context.Context, opts *AgentsOptions) error {
 	for i, a := range resp.Agents {
 		rows[i] = agentRow{
 			AgentName:      a.AgentName,
+			Project:        a.Project,
 			ContainerID:    a.ContainerId,
 			CertThumbprint: a.CertThumbprint,
 			RegisteredAt:   formatUnix(a.RegisteredAtUnix),
@@ -104,10 +112,11 @@ func renderAgents(opts *AgentsOptions, rows []agentRow) error {
 		return nil
 	}
 
-	table := opts.TUI.NewTable("AGENT", "CONTAINER", "THUMBPRINT", "REGISTERED", "LAST SEEN")
+	table := opts.TUI.NewTable("AGENT", "PROJECT", "CONTAINER", "THUMBPRINT", "REGISTERED", "LAST SEEN")
 	for _, r := range rows {
 		table.AddRow(
 			r.AgentName,
+			r.Project,
 			short(r.ContainerID, 12),
 			short(r.CertThumbprint, 12),
 			r.RegisteredAt,

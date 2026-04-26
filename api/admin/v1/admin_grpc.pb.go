@@ -115,7 +115,7 @@ type AdminServiceClient interface {
 	// for `docker create` + `docker start` + clawkerd boot latency.
 	//
 	// Channel-bound identity defends against a compromised CLI announcing
-	// a slot for a container it doesn't own: at Register the CP cross-
+	// a slot for a container it doesn't own: at Connect the CP cross-
 	// checks the peer's mTLS thumbprint and Docker network position
 	// against the slot's container_id. Required scope: admin (uniform per
 	// INV-B2-009).
@@ -363,7 +363,7 @@ type AdminServiceServer interface {
 	// for `docker create` + `docker start` + clawkerd boot latency.
 	//
 	// Channel-bound identity defends against a compromised CLI announcing
-	// a slot for a container it doesn't own: at Register the CP cross-
+	// a slot for a container it doesn't own: at Connect the CP cross-
 	// checks the peer's mTLS thumbprint and Docker network position
 	// against the slot's container_id. Required scope: admin (uniform per
 	// INV-B2-009).

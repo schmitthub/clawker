@@ -77,7 +77,7 @@ func TestRegistry_ReserveConsumeHappyPath(t *testing.T) {
 	require.NotNil(t, got)
 
 	// Returned slot must carry the CLI-asserted attributes the handler
-	// will use for cert/IP/label cross-checks at Register.
+	// will use for cert/IP/label cross-checks at Connect.
 	assert.Equal(t, in.ContainerID, got.ContainerID)
 	assert.Equal(t, in.ExpectedCertThumbprint, got.ExpectedCertThumbprint)
 	assert.Equal(t, "x", got.Project)
@@ -245,10 +245,13 @@ func TestRegistry_EvictByContainerID_Unknown(t *testing.T) {
 func TestRegistry_Janitor_SweepsExpired(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(100, 0)}
 
-	// Short sweep period for fast deterministic test. Janitor uses real
-	// time for the ticker but the clock-injected `now()` decides
-	// expiry, so we advance the fake clock past TTL and wait one tick.
-	r := NewRegistry(clock.Now, 5*time.Millisecond, nil)
+	// Pulse channel makes the janitor deterministic — the test fires
+	// one sweep on demand instead of wall-clock polling for the
+	// 5ms-ticker test to land. Eliminates the race-detector flake
+	// surface where a loaded CI runner misses the ticker by enough
+	// jitter to bust the 1-second deadline.
+	pulse := make(chan time.Time, 1)
+	r := NewRegistryWithPulseChan(clock.Now, nil, pulse)
 	t.Cleanup(r.Stop)
 
 	for _, name := range []string{"a", "b"} {
@@ -258,13 +261,16 @@ func TestRegistry_Janitor_SweepsExpired(t *testing.T) {
 
 	clock.Advance(2 * consts.AgentSlotTTL)
 
-	// Wait for at least one sweep tick + a little slack.
+	// Fire one pulse and wait for the sweep to drain. Len() reaching 0
+	// proves the janitor read the pulse, called sweep, and saw both
+	// expired slots in a single pass.
+	pulse <- time.Now()
 	deadline := time.Now().Add(time.Second)
 	for r.Len() != 0 {
 		if time.Now().After(deadline) {
-			t.Fatalf("janitor never swept expired slots: Len()=%d", r.Len())
+			t.Fatalf("janitor never swept expired slots after pulse: Len()=%d", r.Len())
 		}
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(time.Millisecond)
 	}
 }
 

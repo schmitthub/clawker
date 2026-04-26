@@ -3,9 +3,9 @@
 // Identity binding chain at Connect (load-bearing):
 //
 //  1. The CLI announced the agent via AdminService.AnnounceAgent. The
-//     CP stored a slot keyed by the composite (cert_thumbprint,
-//     agent_name) with the CLI-asserted container_id and PKCE S256
-//     challenge.
+//     CP stored a slot keyed by the composite
+//     (cert_thumbprint, agent_name, project) with the CLI-asserted
+//     container_id and PKCE S256 challenge.
 //  2. clawkerd boots inside the container, reads the bootstrap material
 //     from a strict-perm path, exchanges its CLI-signed assertion for
 //     a Hydra access token, and dials the CP's agent-listener with
@@ -15,16 +15,28 @@
 //     tls.Config; the handler reads the peer cert from gRPC's
 //     peer.FromContext.
 //  4. Connect (this package) cross-checks, in order:
-//     (a) Cert CN equals req.AgentName (defense vs announce-payload
-//     tampering between mint and announce).
+//     (a) Cert CN equals auth.CanonicalAgentCN(req.Project,
+//     req.AgentName) — constant-time compare. Defends announce-
+//     payload tampering between cert mint and the ConnectRequest
+//     body; a tampered project OR agent on the wire produces a
+//     different canonical and fails this check. Runs BEFORE slot
+//     consume so a CN mismatch can't burn a legitimate slot.
 //     (b) Composite slot consume on (peer_cert_thumbprint,
-//     agent_name, code_verifier) — the lookup itself folds the
-//     agent_name and thumbprint cross-checks into the map key.
+//     agent_name, project, code_verifier) — the (thumbprint,
+//     agent_name, project) lookup folds both the thumbprint and
+//     project cross-checks into the map key, eliminating any
+//     separate post-Consume compare. PKCE compare is constant-time
+//     inside agentslots.
 //     (c) Peer IP equals Docker's clawker-net IP for
 //     slot.container_id (defense vs cert+verifier replay from a
 //     different container).
 //     (d) Container label dev.clawker.agent equals agent_name
 //     (defense vs label tampering after announce).
+//     (e) Container label dev.clawker.project equals slot.Project
+//     (defends label tampering on the project half — checking only
+//     the agent half would let an attacker who relabeled the
+//     project but kept the agent name ride a slot for the wrong
+//     project).
 //     Every mismatch returns codes.PermissionDenied with no detail —
 //     attackers must not learn which check failed.
 //  5. On success the registry is keyed by the cert thumbprint, the
@@ -161,6 +173,23 @@ func (h *Handler) Connect(req *agentv1.ConnectRequest, stream agentv1.AgentServi
 		return status.Error(codes.InvalidArgument, "agent_name and code_verifier required")
 	}
 
+	// Validate (project, agent) at the wire boundary. A buggy/malicious
+	// CLI that sends a canonical-form name, a dot-containing name, or
+	// arbitrary characters is rejected here — downstream code (canonical
+	// CN compose, slot lookup, registry insert) trusts typed values. The
+	// AnnounceAgent handler already validates Project the same way; this
+	// closes the symmetric loop on the Connect side.
+	project, err := auth.NewProjectSlug(req.Project)
+	if err != nil {
+		h.log.Warn().Err(err).Str("agent", req.AgentName).Msg("agent connect: invalid project")
+		return status.Error(codes.InvalidArgument, "invalid project")
+	}
+	agentName, err := auth.NewAgentName(req.AgentName)
+	if err != nil {
+		h.log.Warn().Err(err).Str("agent", req.AgentName).Msg("agent connect: invalid agent name")
+		return status.Error(codes.InvalidArgument, "invalid agent name")
+	}
+
 	ctx := stream.Context()
 	peer, peerIP, err := peerIdentityAndIP(ctx)
 	if err != nil {
@@ -172,12 +201,12 @@ func (h *Handler) Connect(req *agentv1.ConnectRequest, stream agentv1.AgentServi
 	// (a) Cert CN cross-check — defense vs announce-payload tampering
 	// between cert mint and the ConnectRequest body. auth.MintAgentCert
 	// composes the CN as auth.CanonicalAgentCN(project, agent); we
-	// compose the same canonical here from (req.Project, req.AgentName)
+	// compose the same canonical here from the validated typed values
 	// and equate against the peer cert. Both halves of the wire identity
 	// must match what the CLI baked into the cert, otherwise reject
 	// before we touch the slot registry. Constant-time compare so
 	// failure latency doesn't leak which byte differed.
-	wantCN := auth.CanonicalAgentCN(req.Project, req.AgentName)
+	wantCN := auth.CanonicalAgentCN(project, agentName)
 	if subtle.ConstantTimeCompare(
 		[]byte(peer.CommonName),
 		[]byte(wantCN),
@@ -325,7 +354,9 @@ func (h *Handler) Connect(req *agentv1.ConnectRequest, stream agentv1.AgentServi
 // handler MUST source identity decisions only from these fields:
 //   - Raw: hashed to produce the agent thumbprint (the canonical
 //     identity key in agentregistry).
-//   - CommonName: cross-checked against req.AgentName at Connect.
+//   - CommonName: cross-checked against
+//     auth.CanonicalAgentCN(req.Project, req.AgentName) at Connect via
+//     subtle.ConstantTimeCompare. Composite — both halves must match.
 //
 // Adding any future identity-bearing field here requires a corresponding
 // review of the trust model; everything else on *x509.Certificate is

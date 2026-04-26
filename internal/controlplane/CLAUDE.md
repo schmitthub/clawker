@@ -165,7 +165,7 @@ No circular dependencies.
 
 - **Kratos active usage** — running as subprocess placeholder. Lights up with webui.
 - **Oathkeeper active routing** — running with empty rules. Lights up with webui HTTP auth.
-- **Per-method scopes beyond `admin`** — finer-grained scopes (`agent:register`, `webui:read`) would add entries to `AdminMethodScopes()` in `api/admin/v1/admin.go`. INV-B2-009 currently mandates a uniform `admin` scope across all firewall methods. The agent listener already enforces a distinct `agent:self:register` scope on `AgentService.Register` via `AgentMethodScopes()`.
+- **Per-method scopes beyond `admin`** — finer-grained scopes (`agent:register`, `webui:read`) would add entries to `AdminMethodScopes()` in `api/admin/v1/admin.go`. INV-B2-009 currently mandates a uniform `admin` scope across all firewall methods. The agent listener already enforces a distinct `agent:self:register` scope on `AgentService.Connect` (and the stub `Events`) via `AgentMethodScopes()`.
 
 ## Known limitations (deferred to cp-restart-resilience)
 

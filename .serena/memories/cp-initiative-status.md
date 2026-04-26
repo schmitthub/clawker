@@ -28,7 +28,7 @@
 
 ## Branch 4 Delivery Summary (14 tasks)
 
-- **Proto contracts** (Task 1): `AgentService.Register` on `api/agent/v1`, `AdminService.AnnounceAgent` on `api/admin/v1`, POC `internal/clawkerd/protocol/v1` deleted.
+- **Proto contracts** (Task 1, renamed to Connect in B4 follow-up — see below): `AgentService.Register` (now `AgentService.Connect`, server-streaming) on `api/agent/v1`, `AdminService.AnnounceAgent` on `api/admin/v1`, POC `internal/clawkerd/protocol/v1` deleted.
 - **Consts + scope wiring** (Task 2): `ClientIDAgent`, `ScopeAgentSelfRegister`, `AgentSlotTTL`, `BootstrapDir` + 5 file names, 3 `EnvClawkerd*` env names. `ControlPlaneSettings.AgentAPIPort` → `AgentPort`.
 - **CLI agent cert minting** (Task 3): `auth.MintAgentCert` → `AgentCert{CertPEM, KeyPEM, ThumbprintHex}` signed by CLI CA, 24h lifetime.
 - **Hydra agent client registration** (Task 4): `RegisterAgentClient` (idempotent on 409); CLI + agent clients share the JWK with distinct client_id + scope. `cmd/clawker-cp` Step 5 registers both.

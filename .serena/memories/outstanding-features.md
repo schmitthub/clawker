@@ -18,7 +18,7 @@ Top-level tracker for features and architectural improvements that are known but
 **Status:** release pipeline is currently broken on main's build system — **must land before the next tag push**
 **Scope:** medium
 
-Background: commits `a50ac9e4` + `5ce36b1c` (fix/project-egress-priority) and PR #250 (feat: clawker control plane) replaced the host-native Go build of `internal/firewall/assets/{clawker-cp,ebpf-manager,coredns-clawker}` with a pinned multi-stage `Dockerfile.controlplane` + `docker buildx build` extraction. Nothing generated is committed anymore (no `clawker_*_bpfel.{go,o}`, no firewall asset binaries). `make clawker` works end-to-end locally because Make's dep graph triggers the pinned Docker build, which produces all three firewall stack binaries into `internal/firewall/assets/` before the host-native `go build ./cmd/clawker` runs with them `go:embed`'d.
+Background: commits `a50ac9e4` + `5ce36b1c` (fix/project-egress-priority) and PR #250 (feat: clawker control plane) replaced the host-native Go build of `internal/controlplane/cpboot/assets/{clawker-cp,ebpf-manager}` + `internal/controlplane/firewall/assets/coredns-clawker` with a pinned multi-stage `Dockerfile.controlplane` + `docker buildx build` extraction. Nothing generated is committed anymore (no `clawker_*_bpfel.{go,o}`, no firewall asset binaries). `make clawker` works end-to-end locally because Make's dep graph triggers the pinned Docker build, which produces all three firewall stack binaries into `internal/controlplane/{cpboot,firewall}/assets/` before the host-native `go build ./cmd/clawker` runs with them `go:embed`'d.
 
 Makefile targets: `cp-binary`, `ebpf-binary`, `coredns-binary`. All three are required on the embed path for `clawker`.
 
@@ -28,7 +28,7 @@ The release pipeline does NOT go through `make clawker`. It will fail on the nex
 
 | Step | Breakage |
 |---|---|
-| `Verify build` → `go build ./cmd/clawker` | `internal/firewall/assets/{clawker-cp,ebpf-manager,coredns-clawker}` don't exist on the runner; `go:embed` fails at compile time |
+| `Verify build` → `go build ./cmd/clawker` | `internal/controlplane/cpboot/assets/{clawker-cp,ebpf-manager}` + `internal/controlplane/firewall/assets/coredns-clawker` don't exist on the runner; `go:embed` fails at compile time |
 | GoReleaser step (invokes goreleaser which runs `go generate ./...` + `go build`) | `go generate` needs pinned `clang` + `llvm` + `libbpf-dev` + `linux-libc-dev`; `go build` needs the embedded assets |
 
 Everything downstream of the Go build is fine:
@@ -168,11 +168,11 @@ Already fixed in commit `6a00a212` ("fix: firewall bypass/enable/disable name→
 **Complexity:** Touches almost every part of the firewall stack. Probably a multi-task initiative.
 
 **Files to start:**
-- `internal/controlplane/ebpf/bpf/common.h` — map definitions, container_config struct
-- `internal/controlplane/ebpf/bpf/clawker.c` — connect6/sendmsg6/recvmsg6
-- `internal/controlplane/ebpf/types.go` + manager.go — IPv6 helpers + sync
-- `internal/firewall/manager.go` — network setup, container config
-- `internal/firewall/envoy.go` — IPv6 listener + cluster config
+- `internal/controlplane/firewall/ebpf/bpf/common.h` — map definitions, container_config struct
+- `internal/controlplane/firewall/ebpf/bpf/clawker.c` — connect6/sendmsg6/recvmsg6
+- `internal/controlplane/firewall/ebpf/types.go` + manager.go — IPv6 helpers + sync
+- `internal/controlplane/firewall/manager.go` — network setup, container config
+- `internal/controlplane/firewall/envoy.go` — IPv6 listener + cluster config
 - `internal/dnsbpf/dnsbpf.go` — AAAA record handling
 
 ---
@@ -220,10 +220,10 @@ The control plane's auth shape (mTLS + OIDC + JWT with per-method scope enforcem
 - Log transport: BPF ring buffer (`BPF_MAP_TYPE_RINGBUF`) for event stream, or just poll the metrics_map and synthesize events from deltas?
 
 **Files to touch:**
-- `internal/controlplane/ebpf/bpf/common.h` — maybe add a ring buffer for structured events
-- `internal/controlplane/ebpf/bpf/clawker.c` — optionally emit ring buffer events on key actions
-- `internal/controlplane/ebpf/manager.go` — new `ScrapeMetrics()` method reading `metrics_map`
-- `internal/controlplane/ebpf/cmd/main.go` — new `metrics` subcommand (or part of the `serve` daemon from #3)
+- `internal/controlplane/firewall/ebpf/bpf/common.h` — maybe add a ring buffer for structured events
+- `internal/controlplane/firewall/ebpf/bpf/clawker.c` — optionally emit ring buffer events on key actions
+- `internal/controlplane/firewall/ebpf/manager.go` — new `ScrapeMetrics()` method reading `metrics_map`
+- `internal/controlplane/firewall/ebpf/cmd/main.go` — new `metrics` subcommand (or part of the `serve` daemon from #3)
 - `internal/monitor/` — dashboard updates
 - Tie into the #3 long-running daemon naturally — scraping loop lives there
 

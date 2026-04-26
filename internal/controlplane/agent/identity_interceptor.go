@@ -103,6 +103,29 @@ func IdentityInterceptor(reg agentregistry.Registry, optedOut map[string]bool, l
 	if optedOut == nil {
 		optedOut = map[string]bool{}
 	}
+	// Validate every key against the AgentService proto descriptor so a
+	// typo (e.g. "Connect" lowercased to "connect" or a method renamed
+	// in proto without a matching update here) panics at startup
+	// instead of silently breaking. A stale key is dangerous in two
+	// ways: a typo that no longer matches any real method falls through
+	// to the registry-lookup path for the (still real) method name —
+	// fail-secure but locks legit callers out. The build-time test
+	// TestIdentityOptedOut_NoStaleEntriesAndConnectLocked catches this
+	// for IdentityOptedOutMethods() callers, but does not cover an
+	// externally-constructed map; this runtime validation closes that
+	// gap.
+	validMethods := make(map[string]struct{}, len(agentv1.AgentService_ServiceDesc.Methods)+len(agentv1.AgentService_ServiceDesc.Streams))
+	for _, m := range agentv1.AgentService_ServiceDesc.Methods {
+		validMethods["/"+agentv1.ServiceName+"/"+m.MethodName] = struct{}{}
+	}
+	for _, s := range agentv1.AgentService_ServiceDesc.Streams {
+		validMethods["/"+agentv1.ServiceName+"/"+s.StreamName] = struct{}{}
+	}
+	for k := range optedOut {
+		if _, ok := validMethods[k]; !ok {
+			panic("agent: identity interceptor opt-out has stale key: " + k)
+		}
+	}
 
 	resolve := func(ctx context.Context, method string) (context.Context, error) {
 		if optedOut[method] {

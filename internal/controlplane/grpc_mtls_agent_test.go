@@ -244,7 +244,13 @@ func TestMTLSAgent_ValidCLIClientCert_HandshakeSucceeds(t *testing.T) {
 	client := agentv1.NewAgentServiceClient(conn)
 	ctx := withBearer(context.Background(), "agent-token")
 	err = connectAndDrain(ctx, client, &agentv1.ConnectRequest{
-		AgentName:    "clawker.unregistered-agent",
+		// Valid-shape but unregistered name. Sending a canonical-form
+		// name here would now trip the handler's wire-side
+		// NewAgentName validation and surface as InvalidArgument
+		// before the cert-vs-CN cross-check runs; this test asserts
+		// the post-handshake handler rejection path, so the input
+		// must be syntactically valid.
+		AgentName:    "unregistered-agent",
 		CodeVerifier: "00000000000000000000000000000000000000000000",
 	})
 	require.Error(t, err, "Connect must fail post-handshake (CN mismatch)")

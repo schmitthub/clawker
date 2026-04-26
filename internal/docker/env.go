@@ -35,8 +35,8 @@ type RuntimeEnvOpts struct {
 
 	// clawkerd bootstrap targets. clawkerd reads these to find the CP's
 	// Hydra public endpoint (token exchange) and the CP's agent gRPC
-	// listener on clawker-net (Register dial), and to know which slot
-	// to consume at Register time. Empty string omits the env var.
+	// listener on clawker-net (Connect dial), and to know which slot
+	// to consume at Connect time. Empty string omits the env var.
 	ClawkerdHydraURL  string // CLAWKER_CP_HYDRA_URL
 	ClawkerdAgentAddr string // CLAWKER_CP_AGENT_ADDR
 
@@ -112,8 +112,9 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	}
 
 	// clawkerd bootstrap env vars — only what the daemon can authoritatively
-	// assert. Container ID is server-derived from the slot at Register;
-	// project name is encoded in the canonical agent name.
+	// assert. Container ID is server-derived from the slot at Connect;
+	// project + agent travel as separate wire fields and the CP composes
+	// the canonical name on its side via auth.CanonicalAgentCN.
 	if opts.ClawkerdHydraURL != "" {
 		m[consts.EnvClawkerdHydraURL] = opts.ClawkerdHydraURL
 	}

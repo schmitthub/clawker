@@ -1,5 +1,5 @@
 // Package agentregistry tracks live agents that have completed the
-// AgentService.Register handshake. It is populated by the Register
+// AgentService.Connect handshake. It is populated by the Connect
 // handler and evicted by an informer subscription that watches
 // container die/destroy events.
 //
@@ -15,6 +15,7 @@ package agentregistry
 import (
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"sort"
 	"sync"
@@ -24,12 +25,12 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// Entry is one registered agent. Created by the Register handler with
+// Entry is one registered agent. Created by the Connect handler with
 // data taken from the slot (ContainerID, AgentName, Project) plus the
 // SHA-256 over the peer cert DER (Thumbprint). LastSeen is updated on
 // every successful per-agent RPC via Touch; registration is currently
-// the only writer because Register is the only per-agent RPC that
-// exists.
+// the only writer because Connect is the only per-agent RPC that
+// has shipped.
 type Entry struct {
 	// AgentName is the user-typed short name (e.g. "dev"); composed with
 	// Project at Lookup time to verify against the peer cert's CN.
@@ -68,7 +69,7 @@ type Registry interface {
 	// Add panics on invalid input (zero thumbprint, empty AgentName,
 	// or zero RegisteredAt). The only caller is the in-package
 	// agent.Handler which constructs entries from validated cross-
-	// checks at Register time — invalid input there is a programming
+	// checks at Connect time — invalid input there is a programming
 	// error that must surface loudly rather than corrupt the registry.
 	Add(entry Entry)
 	// Lookup retrieves an entry by cert thumbprint and verifies that the
@@ -116,7 +117,7 @@ func NewRegistry(log *logger.Logger) Registry {
 func (r *registryImpl) Add(entry Entry) {
 	// Programming-error invariants — the only caller is the in-package
 	// agent.Handler which has already verified each of these via the
-	// five identity-binding cross-checks at Register. A zero
+	// five identity-binding cross-checks at Connect. A zero
 	// Thumbprint here would key the registry to all-zero-byte
 	// "identity" that any caller could trivially collide; an empty
 	// AgentName breaks the Snapshot ordering contract; a zero
@@ -156,7 +157,12 @@ func (r *registryImpl) Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, 
 	// CN vs req-derived canonical) so a future regression that caches a
 	// thumbprint without invalidating it on rename can't be probed via
 	// per-byte CN compare latency.
-	want := auth.CanonicalAgentCN(entry.Project, entry.AgentName)
+	// entry.Project / entry.AgentName were validated by the Connect
+	// handler before reaching Add() — wrap via MustProjectSlug /
+	// MustAgentName so a future regression that bypasses the wire-side
+	// validation surfaces as a startup-or-first-call panic instead of
+	// silent identity drift.
+	want := auth.CanonicalAgentCN(auth.MustProjectSlug(entry.Project), auth.MustAgentName(entry.AgentName))
 	if subtle.ConstantTimeCompare([]byte(cn), []byte(want)) != 1 {
 		return nil, ErrUnknownAgent
 	}
@@ -172,10 +178,16 @@ func (r *registryImpl) Touch(thumbprint [sha256.Size]byte) {
 	}
 	r.mu.Unlock()
 	if !ok {
-		// Surface unexpected misses at debug — the contract is that
-		// callers have already authenticated, so a miss usually means
-		// a race with eviction or a thumbprint-derivation bug.
-		r.log.Debug().Msg("agentregistry: touch on unknown thumbprint")
+		// A Touch miss after a successful Lookup is an invariant
+		// violation (the interceptor calls Touch only after Lookup hit),
+		// so this is more interesting than a debug-tier event. Surface
+		// at Warn with the thumbprint hex prefix for correlation —
+		// either dockerevents evicted between Lookup and Touch (benign
+		// race; expected during teardown) or the thumbprint derivation
+		// disagrees between callers (a real bug).
+		r.log.Warn().
+			Str("thumbprint_prefix", hex.EncodeToString(thumbprint[:8])).
+			Msg("agentregistry: touch on unknown thumbprint (raced eviction or derivation drift)")
 	}
 }
 

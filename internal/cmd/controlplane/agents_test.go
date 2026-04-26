@@ -73,7 +73,8 @@ func TestAgentsRun_RendersTable(t *testing.T) {
 		return &adminv1.ListAgentsResult{
 			Agents: []*adminv1.Agent{
 				{
-					AgentName:        "clawker.alpha",
+					AgentName:        "alpha",
+					Project:          "myapp",
 					ContainerId:      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 					CertThumbprint:   "deadbeef0123456789abcdef0123456789abcdef0123456789abcdef0123beef",
 					RegisteredAtUnix: 1717000000,
@@ -85,7 +86,8 @@ func TestAgentsRun_RendersTable(t *testing.T) {
 
 	require.NoError(t, agentsRun(context.Background(), h.opts))
 	out := h.Stdout.String()
-	assert.Contains(t, out, "clawker.alpha")
+	assert.Contains(t, out, "alpha")
+	assert.Contains(t, out, "myapp")        // project column populated
 	assert.Contains(t, out, "0123456789ab") // 12-char short container id
 	assert.Contains(t, out, "deadbeef0123") // 12-char short thumbprint
 }
@@ -95,7 +97,7 @@ func TestAgentsRun_JSONOutput(t *testing.T) {
 	h.AdminMock.ListAgentsFunc = func(_ context.Context, _ *adminv1.ListAgentsRequest, _ ...grpc.CallOption) (*adminv1.ListAgentsResult, error) {
 		return &adminv1.ListAgentsResult{
 			Agents: []*adminv1.Agent{
-				{AgentName: "clawker.x", ContainerId: "ctr", CertThumbprint: "tp", RegisteredAtUnix: 1, LastSeenUnix: 2},
+				{AgentName: "x", Project: "p", ContainerId: "ctr", CertThumbprint: "tp", RegisteredAtUnix: 1, LastSeenUnix: 2},
 			},
 		}, nil
 	}
@@ -110,7 +112,8 @@ func TestAgentsRun_JSONOutput(t *testing.T) {
 	var rows []agentRow
 	require.NoError(t, json.Unmarshal(h.Stdout.Bytes(), &rows))
 	require.Len(t, rows, 1)
-	assert.Equal(t, "clawker.x", rows[0].AgentName)
+	assert.Equal(t, "x", rows[0].AgentName)
+	assert.Equal(t, "p", rows[0].Project)
 }
 
 func TestAgentsRun_PropagatesAdminClientError(t *testing.T) {

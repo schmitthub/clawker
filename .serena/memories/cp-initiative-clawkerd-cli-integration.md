@@ -109,7 +109,7 @@ When all 9 tasks are complete, run the final integration check (`make test`, `go
 
 ### Background
 
-Branch 4 (clawkerd auth) landed the auth foundation: `AdminService.AnnounceAgent` proto, `AgentService.Register` proto + handler with five identity-binding cross-checks, `agentslots` registry, `agentregistry` keyed by cert thumbprint with dockerevents-driven eviction, CLI bootstrap helpers (`shared.GenerateAgentBootstrap` / `AnnounceAgent` / `WriteAgentBootstrapToContainer`), CP agent listener with mTLS + per-listener `AuthInterceptor`, `cmd/clawkerd` daemon binary, embed-and-launch via the bundler.
+Branch 4 (clawkerd auth) landed the auth foundation: `AdminService.AnnounceAgent` proto, `AgentService.Connect` (server-streaming) proto + handler with five identity-binding cross-checks (cert CN composite, slot consume, peer IP, agent label, project label), `agentslots` registry, `agentregistry` keyed by cert thumbprint with dockerevents-driven eviction, CLI bootstrap helpers (`shared.GenerateAgentBootstrap` / `AnnounceAgent` / `WriteAgentBootstrapToContainer`), CP agent listener with mTLS + per-listener `AuthInterceptor`, `cmd/clawkerd` daemon binary, embed-and-launch via the bundler.
 
 **What's broken end-to-end today:**
 

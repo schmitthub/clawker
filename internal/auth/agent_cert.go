@@ -22,22 +22,28 @@ import (
 // unscoped/empty-project case ("clawker.<agent>") to match
 // docker.ContainerName naming.
 //
-// Lives in this package because it is purely a function of consts.NamePrefix
-// and the (project, agent) tuple — every layer that needs to compose or
-// verify the canonical (cert minting, agent handler CN cross-check, registry
-// lookup) reaches for this so the rule has a single home.
-func CanonicalAgentCN(project, agent string) string {
-	if project == "" {
-		return consts.NamePrefix + "." + agent
+// Takes typed AgentName + ProjectSlug values so the caller can't pass
+// a canonical form, a dot-containing name, or arbitrary characters
+// here — the constructors (NewAgentName / NewProjectSlug) enforce that
+// contract once and the function trusts the values from there on.
+//
+// Lives in this package because it is purely a function of
+// consts.NamePrefix and the (project, agent) tuple — every layer that
+// needs to compose or verify the canonical (cert minting, agent handler
+// CN cross-check, registry lookup) reaches for this so the rule has a
+// single home.
+func CanonicalAgentCN(project ProjectSlug, agent AgentName) string {
+	if project.IsEmpty() {
+		return consts.NamePrefix + "." + agent.String()
 	}
-	return consts.NamePrefix + "." + project + "." + agent
+	return consts.NamePrefix + "." + project.String() + "." + agent.String()
 }
 
 // AgentCert is the co-derived material produced by MintAgentCert: the
 // PEM-encoded cert, its matching key, and the SHA-256 thumbprint over
 // the cert DER. The three pieces are only meaningful as a unit — pairing
 // a thumbprint with a different cert breaks the cert-swap defense at
-// AgentService.Register.
+// AgentService.Connect.
 //
 // The String/GoString methods deliberately redact the contents so the
 // struct (which carries the per-agent private key) can never leak via
@@ -68,29 +74,37 @@ func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 // shape so the agent handler's CN cross-check has a single equality to
 // enforce.
 //
-// The 24h lifetime is intentional — thumbprint pinning at Register makes
+// The 24h lifetime is intentional — thumbprint pinning at Connect makes
 // longer-lived certs safe, but a tight ceiling caps the blast radius if
 // a leaf leaks. Thumbprint is what the CLI announces to the CP via
 // AnnounceAgent so the CP can reject any peer cert whose
 // SHA-256(cert.Raw) doesn't match.
-func MintAgentCert(caCertPath, caKeyPath, project, agent string) (AgentCert, error) {
-	if agent == "" {
-		return AgentCert{}, fmt.Errorf("agent name required")
+// Returns *AgentCert (nil on error) so a caller that ignores the error
+// cannot accidentally log the redacted zero-value as a successful cert.
+//
+// project + agent are typed (auth.ProjectSlug, auth.AgentName) so the
+// caller has gone through NewProjectSlug / NewAgentName and the
+// canonical-form / dot-in-name / charset checks have already run. A
+// raw-string caller now produces a compile error instead of a silently-
+// malformed cert subject downstream.
+func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName) (*AgentCert, error) {
+	if agent.IsZero() {
+		return nil, fmt.Errorf("agent name required")
 	}
 
 	caCert, caKey, err := loadCAFrom(caCertPath, caKeyPath)
 	if err != nil {
-		return AgentCert{}, fmt.Errorf("load CA: %w", err)
+		return nil, fmt.Errorf("load CA: %w", err)
 	}
 
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return AgentCert{}, fmt.Errorf("generate leaf key: %w", err)
+		return nil, fmt.Errorf("generate leaf key: %w", err)
 	}
 
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return AgentCert{}, fmt.Errorf("generate serial: %w", err)
+		return nil, fmt.Errorf("generate serial: %w", err)
 	}
 
 	now := time.Now().UTC()
@@ -108,15 +122,15 @@ func MintAgentCert(caCertPath, caKeyPath, project, agent string) (AgentCert, err
 
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &leafKey.PublicKey, caKey)
 	if err != nil {
-		return AgentCert{}, fmt.Errorf("sign cert: %w", err)
+		return nil, fmt.Errorf("sign cert: %w", err)
 	}
 
 	keyDER, err := x509.MarshalECPrivateKey(leafKey)
 	if err != nil {
-		return AgentCert{}, fmt.Errorf("marshal leaf key: %w", err)
+		return nil, fmt.Errorf("marshal leaf key: %w", err)
 	}
 
-	return AgentCert{
+	return &AgentCert{
 		CertPEM:    pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}),
 		KeyPEM:     pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
 		Thumbprint: sha256.Sum256(certDER),

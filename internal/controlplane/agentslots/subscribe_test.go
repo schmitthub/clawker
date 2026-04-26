@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -119,10 +120,91 @@ func TestSubscribe_DoesNotEvictOnPaused(t *testing.T) {
 		Lifecycle: "paused",
 	}, informer.Transition{Source: "test", At: now}))
 
-	// Give the consumer goroutine time to process the delta — if it
-	// was going to evict, it would have by now.
-	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, 1, r.Len(), "paused must not evict pending slot")
+	// Poll Len() for a stable window — proof of absence by repeated
+	// observation is more deterministic than a single time.Sleep:
+	// 50ms is too short on a loaded CI runner to guarantee the
+	// consumer drained the paused delta before we assert. We poll
+	// every 5ms for 100ms; if Len ever drops below 1 in that window
+	// the eviction happened (test fails). If it stays at 1 across
+	// every observation, the consumer saw the paused delta and
+	// correctly skipped eviction.
+	const window = 100 * time.Millisecond
+	const interval = 5 * time.Millisecond
+	deadline := time.Now().Add(window)
+	for time.Now().Before(deadline) {
+		assert.Equal(t, 1, r.Len(), "paused must not evict pending slot")
+		time.Sleep(interval)
+	}
+}
+
+// TestSubscribe_RaceWithConcurrentReserve exercises the dockerevents
+// die/remove ↔ AnnounceAgent + Connect race: while the dockerevents
+// consumer is processing eviction deltas for one set of containers,
+// another goroutine concurrently reserves new slots and consumes them
+// via the legitimate PKCE path. The race detector + correctness
+// invariant (only the matching ContainerID is evicted) must both hold.
+func TestSubscribe_RaceWithConcurrentReserve(t *testing.T) {
+	inf := liveInformer(t)
+	clock := &fakeClock{now: time.Unix(100, 0)}
+	r := newRegistry(t, clock)
+
+	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
+	t.Cleanup(cancel)
+
+	const iterations = 64
+	now := time.Now()
+
+	var resWG, evictWG sync.WaitGroup
+	start := make(chan struct{})
+
+	resWG.Add(iterations)
+	for i := range iterations {
+		go func(i int) {
+			defer resWG.Done()
+			<-start
+			name := "race-agent-" + string(rune('a'+i%26)) + string(rune('0'+i/26))
+			verifier := "v-" + name
+			slot := mkSlot("", name, verifier)
+			slot.ContainerID = "race-keep-" + name
+			if err := r.Reserve(slot); err != nil {
+				t.Errorf("Reserve %q: %v", name, err)
+				return
+			}
+			// Legitimate consume — agent registered fine.
+			if _, err := r.Consume(mkThumb("", name), name, "", verifier); err != nil {
+				t.Errorf("Consume %q: %v", name, err)
+			}
+		}(i)
+	}
+
+	// Concurrently feed dockerevents die/remove for an unrelated set of
+	// container IDs. EvictByContainerID is a linear scan; the test
+	// asserts the eviction loop tolerates Reserve/Consume churn on the
+	// same map without breaking either side.
+	evictWG.Add(iterations)
+	for i := range iterations {
+		go func(i int) {
+			defer evictWG.Done()
+			<-start
+			ctrID := "race-evict-" + string(rune('a'+i%26)) + string(rune('0'+i/26))
+			_ = inf.Upsert(context.Background(), informer.ResourceUpdate{
+				Kind: dockerevents.KindContainer, ID: ctrID,
+			}, informer.Transition{Source: "test", At: now})
+			_ = inf.Remove(context.Background(),
+				informer.Key{Kind: dockerevents.KindContainer, ID: ctrID},
+				informer.Transition{Source: "test", At: now})
+		}(i)
+	}
+
+	close(start)
+	resWG.Wait()
+	evictWG.Wait()
+
+	// All Reserve/Consume goroutines completed — every legit slot was
+	// consumed via PKCE. Any eviction-side race that wrongly burned
+	// one of those slots before Consume would have surfaced as
+	// ErrSlotInvalid on Consume above. Final Len is 0.
+	assert.Equal(t, 0, r.Len())
 }
 
 func TestSubscribe_CancelStopsConsumer(t *testing.T) {

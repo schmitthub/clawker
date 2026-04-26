@@ -1413,13 +1413,13 @@ type AnnounceAgentRequest struct {
 	AgentName string `protobuf:"bytes,1,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
 	// container_id is the Docker container ID CLI got back from
 	// ContainerCreate. Stored in the slot, never trusted from clawkerd —
-	// CP IP-checks it at Register against the peer's network position.
+	// CP IP-checks it at Connect against the peer's network position.
 	ContainerId string `protobuf:"bytes,2,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
 	// expected_cert_thumbprint is the lowercase-hex SHA-256 of the
 	// DER-encoded mTLS cert CLI just minted for this agent (64 chars). CP
-	// compares the agent's actual peer cert thumbprint at Register
-	// (defense vs cert swap in the bootstrap tmpfs between announce and
-	// clawkerd boot).
+	// compares the agent's actual peer cert thumbprint at Connect
+	// (defense vs cert swap in the bootstrap material between announce
+	// and clawkerd boot).
 	ExpectedCertThumbprint string `protobuf:"bytes,3,opt,name=expected_cert_thumbprint,json=expectedCertThumbprint,proto3" json:"expected_cert_thumbprint,omitempty"`
 	// code_challenge is the PKCE S256 challenge:
 	// base64url(sha256(verifier)), no padding. CP stores it in the slot;
@@ -1650,10 +1650,10 @@ type Agent struct {
 	// cert_thumbprint is the lowercase-hex SHA-256 over the agent's mTLS
 	// cert DER — the channel-bound identity key.
 	CertThumbprint string `protobuf:"bytes,3,opt,name=cert_thumbprint,json=certThumbprint,proto3" json:"cert_thumbprint,omitempty"`
-	// registered_at_unix is the wall-clock timestamp at AgentService.Register.
+	// registered_at_unix is the wall-clock timestamp at AgentService.Connect.
 	RegisteredAtUnix int64 `protobuf:"varint,4,opt,name=registered_at_unix,json=registeredAtUnix,proto3" json:"registered_at_unix,omitempty"`
 	// last_seen_unix is updated on every successful per-agent RPC. Equal
-	// to registered_at_unix for B4 because Register is the only per-agent
+	// to registered_at_unix for B4 because Connect is the only per-agent
 	// RPC.
 	LastSeenUnix int64 `protobuf:"varint,5,opt,name=last_seen_unix,json=lastSeenUnix,proto3" json:"last_seen_unix,omitempty"`
 	// project is the clawker project slug the agent registered under (empty

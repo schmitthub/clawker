@@ -216,6 +216,6 @@ func TestNewAdminServer_NilSlotsPanics(t *testing.T) {
 	assert.PanicsWithValue(t,
 		"controlplane: NewAdminServer requires non-nil slots registry",
 		func() {
-			NewAdminServer(nil, nil, nil, nil)
+			NewAdminServer(nil, nil, nil, nil, nil)
 		})
 }

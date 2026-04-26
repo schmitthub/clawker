@@ -393,7 +393,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	slotRegistry := agentslots.NewRegistry(time.Now, 0, log.With("component", "agentslots"))
 	defer slotRegistry.Stop()
 
-	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, slotRegistry, time.Now))
+	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, slotRegistry, time.Now, log))
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
 	if err != nil {

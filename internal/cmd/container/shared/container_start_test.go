@@ -1,7 +1,11 @@
 package shared
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"path"
@@ -22,6 +26,36 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// extractTarMember reads a tar stream and returns the contents of the
+// first entry whose name matches `name` (last path component). Used by
+// audience-claim test to fish out assertion.jwt from the bootstrap tar.
+func extractTarMember(r io.Reader, name string) ([]byte, error) {
+	// CopyToContainer requires a Reader, but our tar may have been
+	// produced into a bytes.Buffer; either way Reader is fine.
+	tr := tar.NewReader(r)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if path.Base(hdr.Name) == name {
+			// Bound the read so a malformed/oversized tar entry (e.g. a
+			// zip-bomb-style member) can't blow up the test process.
+			// 1 MiB is generous — bootstrap files (PEM + JWT + verifier)
+			// are all sub-kB.
+			var buf bytes.Buffer
+			if _, err := io.CopyN(&buf, tr, 1<<20); err != nil && err != io.EOF {
+				return nil, err
+			}
+			return buf.Bytes(), nil
+		}
+	}
+	return nil, errors.New("tar member not found: " + name)
+}
 
 // noopCPManager returns a CP manager mock whose EnsureRunning is a no-op.
 // Bootstrap tests need it because CP is unconditionally brought up in
@@ -280,4 +314,76 @@ func TestPrepareAgentBootstrap_NilAdminClientFails(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "admin client provider is nil")
+}
+
+// TestHydraTokenAudienceFromPort_PinnedTo127001 locks the canonical
+// `aud` claim format. Hot-fix fd475fb1 pinned this format after a
+// regression where the audience matched the docker-DNS hostname
+// (`https://clawker-controlplane:<port>/...`) and Hydra rejected the
+// assertion at token exchange time. A regression that re-derives the
+// audience from the network endpoint clawkerd dials would compile and
+// pass every other unit test until manual UAT, so the test exists.
+func TestHydraTokenAudienceFromPort_PinnedTo127001(t *testing.T) {
+	assert.Equal(t, "https://127.0.0.1:4444/oauth2/token", hydraTokenAudienceFromPort(4444))
+	// Different ports thread through unchanged — the constant is the
+	// 127.0.0.1 host + /oauth2/token path, not the port itself.
+	assert.Equal(t, "https://127.0.0.1:7777/oauth2/token", hydraTokenAudienceFromPort(7777))
+}
+
+// TestPrepareAgentBootstrap_AssertionAudienceUsesCanonicalFormat
+// decodes the assertion JWT generated for the agent and asserts the
+// `aud` claim matches Hydra's canonical 127.0.0.1 form. Guards against
+// a refactor that bypasses hydraTokenAudienceFromPort and signs with
+// the docker-DNS hostname instead.
+func TestPrepareAgentBootstrap_AssertionAudienceUsesCanonicalFormat(t *testing.T) {
+	setupAuthEnv(t)
+
+	var capturedAssertion string
+	admin := &controlplanemocks.AdminServiceClientMock{
+		AnnounceAgentFunc: func(_ context.Context, in *adminv1.AnnounceAgentRequest, _ ...grpc.CallOption) (*adminv1.AnnounceAgentResult, error) {
+			// The assertion isn't on AnnounceAgentRequest — the CLI
+			// signs a fresh one each time inside GenerateAgentBootstrap.
+			// To get at it we tap the bootstrap via the copyFn below.
+			_ = in
+			return &adminv1.AnnounceAgentResult{}, nil
+		},
+	}
+	copyFn := func(_ context.Context, _, _ string, payload io.Reader) error {
+		// Walk the tar payload and find assertion.jwt.
+		assertion, err := extractTarMember(payload, "assertion.jwt")
+		if err != nil {
+			return err
+		}
+		capturedAssertion = string(assertion)
+		return nil
+	}
+
+	cmdOpts := CommandOpts{
+		Config:      testRuntimeConfig("", "control_plane: { hydra_public_port: 4444 }"),
+		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) { return admin, nil },
+		AgentName:   "alpha",
+		Project:     "myapp",
+	}
+	require.NoError(t, prepareAgentBootstrap(context.Background(), cmdOpts, "ctr", copyFn))
+	require.NotEmpty(t, capturedAssertion)
+
+	// Decode the JWT body and assert aud claim shape.
+	parts := strings.Split(capturedAssertion, ".")
+	require.Len(t, parts, 3, "assertion must be a 3-segment JWS")
+	bodyJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+	var claims struct {
+		Aud any `json:"aud"`
+	}
+	require.NoError(t, json.Unmarshal(bodyJSON, &claims))
+	// `aud` may be a string or []string per RFC 7519; accept either.
+	switch a := claims.Aud.(type) {
+	case string:
+		assert.Equal(t, "https://127.0.0.1:4444/oauth2/token", a)
+	case []any:
+		require.Len(t, a, 1)
+		assert.Equal(t, "https://127.0.0.1:4444/oauth2/token", a[0])
+	default:
+		t.Fatalf("unexpected aud type %T", claims.Aud)
+	}
 }

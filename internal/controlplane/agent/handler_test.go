@@ -153,7 +153,7 @@ func newFixture(t *testing.T, opts fixtureOpts) *fixture {
 		opts.labelProject = opts.project
 	}
 	if opts.certCN == "" {
-		opts.certCN = auth.CanonicalAgentCN(opts.project, opts.agentName)
+		opts.certCN = auth.CanonicalAgentCN(auth.MustProjectSlug(opts.project), auth.MustAgentName(opts.agentName))
 	}
 
 	now := time.Unix(100, 0)
@@ -272,7 +272,7 @@ func TestConnect_EmptyProject_HappyPath(t *testing.T) {
 		// where dev.clawker.project never gets set.
 	})
 
-	ctx, cancel := context.WithCancel(ctxWithPeer(certRaw, auth.CanonicalAgentCN("", agentName), peerIP))
+	ctx, cancel := context.WithCancel(ctxWithPeer(certRaw, auth.CanonicalAgentCN(auth.ProjectSlug{}, auth.MustAgentName(agentName)), peerIP))
 	stream, wait := runConnect(t, f.handler, ctx,
 		&agentv1.ConnectRequest{AgentName: agentName, Project: "", CodeVerifier: verifier})
 
@@ -307,7 +307,7 @@ func TestConnect_HappyPath(t *testing.T) {
 		peerIP:      peerIP,
 	})
 
-	ctx, cancel := context.WithCancel(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
+	ctx, cancel := context.WithCancel(ctxWithPeer(certRaw, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), peerIP))
 	stream, wait := runConnect(t, f.handler, ctx,
 		&agentv1.ConnectRequest{AgentName: agentName, Project: project, CodeVerifier: verifier})
 
@@ -328,7 +328,7 @@ func TestConnect_HappyPath(t *testing.T) {
 	// Registry has the new entry — Lookup uses thumbprint + canonical
 	// CN, exactly the pair downstream RPCs will present.
 	thumb := sha256.Sum256(certRaw)
-	got, err := f.registry.Lookup(thumb, auth.CanonicalAgentCN(project, agentName))
+	got, err := f.registry.Lookup(thumb, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)))
 	require.NoError(t, err)
 	assert.Equal(t, agentName, got.AgentName)
 	assert.Equal(t, project, got.Project)
@@ -354,7 +354,7 @@ func TestConnect_RejectsMissingFields(t *testing.T) {
 		{AgentName: "x", Project: "p", CodeVerifier: ""},
 	}
 	for _, req := range cases {
-		stream := newConnectStream(ctxWithPeer([]byte("c"), auth.CanonicalAgentCN("p", "x"), net.IPv4(1, 2, 3, 4)))
+		stream := newConnectStream(ctxWithPeer([]byte("c"), auth.CanonicalAgentCN(auth.MustProjectSlug("p"), auth.MustAgentName("x")), net.IPv4(1, 2, 3, 4)))
 		err := f.handler.Connect(req, stream)
 		require.Error(t, err)
 		assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -419,7 +419,7 @@ func TestConnect_ProjectTamper(t *testing.T) {
 		certRaw: certRaw, peerIP: peerIP,
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN("p", "x"), peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(auth.MustProjectSlug("p"), auth.MustAgentName("x")), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
 		AgentName: "x", Project: "evil", CodeVerifier: verifier,
 	}, stream)
@@ -439,7 +439,7 @@ func TestConnect_WrongVerifier(t *testing.T) {
 		certRaw: certRaw, peerIP: peerIP,
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
 		AgentName: agentName, Project: project, CodeVerifier: "wrong",
 	}, stream)
@@ -466,7 +466,7 @@ func TestConnect_CertSwap(t *testing.T) {
 		certRaw: certRaw, peerIP: peerIP, wrongThumb: true,
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
 		AgentName: agentName, Project: project, CodeVerifier: verifier,
 	}, stream)
@@ -485,7 +485,7 @@ func TestConnect_PeerIPMismatch(t *testing.T) {
 		dockerIP: net.IPv4(10, 0, 0, 99),
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), net.IPv4(10, 0, 0, 5)))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), net.IPv4(10, 0, 0, 5)))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
 		AgentName: agentName, Project: project, CodeVerifier: verifier,
 	}, stream)
@@ -508,7 +508,7 @@ func TestConnect_LabelMismatch(t *testing.T) {
 		labelAgent:  "y", // tampered after announce
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
 		AgentName: agentName, Project: project, CodeVerifier: verifier,
 	}, stream)
@@ -537,7 +537,7 @@ func TestConnect_ProjectLabelMismatch(t *testing.T) {
 		labelProject: "beta", // tampered project label
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
 		AgentName: agentName, Project: project, CodeVerifier: verifier,
 	}, stream)
@@ -555,7 +555,7 @@ func TestConnect_DockerInspectError(t *testing.T) {
 		inspectErr: errors.New("docker daemon unreachable"),
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
 		AgentName: agentName, Project: project, CodeVerifier: "v",
 	}, stream)
@@ -580,7 +580,7 @@ func TestConnect_SendWelcomeFails(t *testing.T) {
 		certRaw: certRaw, peerIP: peerIP,
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), peerIP))
 	stream.sendErr = errors.New("client gone")
 
 	err := f.handler.Connect(&agentv1.ConnectRequest{
@@ -593,7 +593,7 @@ func TestConnect_SendWelcomeFails(t *testing.T) {
 	// Registry must NOT have an entry — Send happens before Add, so a
 	// failed Send leaves no orphan to evict.
 	thumb := sha256.Sum256(certRaw)
-	_, lookupErr := f.registry.Lookup(thumb, auth.CanonicalAgentCN(project, agentName))
+	_, lookupErr := f.registry.Lookup(thumb, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)))
 	assert.ErrorIs(t, lookupErr, agentregistry.ErrUnknownAgent,
 		"failed Send must not leave an orphan registry entry")
 
@@ -617,7 +617,7 @@ func TestConnect_MissingNetworkSettings(t *testing.T) {
 		inspectErr: errMissingNetworkSettings,
 	})
 
-	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(project, agentName), peerIP))
+	stream := newConnectStream(ctxWithPeer(certRaw, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), peerIP))
 	err := f.handler.Connect(&agentv1.ConnectRequest{
 		AgentName: agentName, Project: project, CodeVerifier: "v",
 	}, stream)

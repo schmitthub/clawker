@@ -46,15 +46,19 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	caCert, caKey, signing := setupAuthEnv(t)
 
 	const project, agent = "alpha", "bravo"
-	b, err := GenerateAgentBootstrap(caCert, caKey, project, agent, "https://hydra.example/oauth2/token", signing)
+	b, err := GenerateAgentBootstrap(caCert, caKey, auth.MustProjectSlug(project), auth.MustAgentName(agent), "https://hydra.example/oauth2/token", signing)
 	require.NoError(t, err)
 	require.NotNil(t, b)
 
-	require.NotEmpty(t, b.Verifier)
+	require.True(t, b.HasVerifier())
 	assert.Equal(t, consts.ChallengeMethodS256, b.Method)
 
 	// Challenge must equal base64url(sha256(verifier)) with no padding.
-	sum := sha256.Sum256([]byte(b.Verifier))
+	// HasVerifier confirmed presence; reading the bytes through the
+	// unexported field is OK in same-package tests but consume-once
+	// semantics still apply if we use ConsumeVerifier — use direct
+	// field access here so the assertion doesn't burn the secret.
+	sum := sha256.Sum256([]byte(b.verifier))
 	expectedChallenge := base64.RawURLEncoding.EncodeToString(sum[:])
 	assert.Equal(t, expectedChallenge, b.Challenge)
 
@@ -80,7 +84,7 @@ func TestGenerateAgentBootstrap_EmptyProjectStillWorks(t *testing.T) {
 	// 2-segment naming case: empty project, short agent. Canonical CN is
 	// "clawker.<agent>" — same convention as docker.ContainerName.
 	caCert, caKey, signing := setupAuthEnv(t)
-	b, err := GenerateAgentBootstrap(caCert, caKey, "", "solo", "https://h.example/o/t", signing)
+	b, err := GenerateAgentBootstrap(caCert, caKey, auth.ProjectSlug{}, auth.MustAgentName("solo"), "https://h.example/o/t", signing)
 	require.NoError(t, err)
 	leaf := mustParseCert(t, b.CertPEM)
 	assert.Equal(t, "clawker.solo", leaf.Subject.CommonName)
@@ -90,15 +94,18 @@ func TestGenerateAgentBootstrap_Validation(t *testing.T) {
 	caCert, caKey, signing := setupAuthEnv(t)
 	tests := []struct {
 		name    string
-		agent   string
+		agent   auth.AgentName
 		signing *ecdsa.PrivateKey
 	}{
-		{name: "empty agent name", agent: "", signing: signing},
-		{name: "nil signing key", agent: "x", signing: nil},
+		// Zero-value AgentName mirrors the empty-input case at the
+		// post-NewAgentName boundary — production callers can't
+		// construct that value but tests can to exercise the guard.
+		{name: "zero agent name", agent: auth.AgentName{}, signing: signing},
+		{name: "nil signing key", agent: auth.MustAgentName("x"), signing: nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := GenerateAgentBootstrap(caCert, caKey, "proj", tc.agent, "https://h", tc.signing)
+			_, err := GenerateAgentBootstrap(caCert, caKey, auth.MustProjectSlug("proj"), tc.agent, "https://h", tc.signing)
 			require.Error(t, err)
 		})
 	}
@@ -106,7 +113,7 @@ func TestGenerateAgentBootstrap_Validation(t *testing.T) {
 
 func validBootstrap() *AgentBootstrap {
 	return &AgentBootstrap{
-		Verifier:               "verifier",
+		verifier:               "verifier",
 		Challenge:              "challenge",
 		Method:                 consts.ChallengeMethodS256,
 		CertPEM:                []byte("cert-pem"),
@@ -129,7 +136,7 @@ func TestAnnounceAgent_FieldsPropagate(t *testing.T) {
 	}
 
 	b := validBootstrap()
-	require.NoError(t, AnnounceAgent(context.Background(), mock, b, "alpha", "bravo", "ctr-id"))
+	require.NoError(t, AnnounceAgent(context.Background(), mock, b, auth.MustProjectSlug("alpha"), auth.MustAgentName("bravo"), "ctr-id"))
 	require.NotNil(t, captured)
 	// Wire fields are short (project, agent) — NOT canonical. CP composes
 	// the canonical name from these on its side.
@@ -150,7 +157,7 @@ func TestAnnounceAgent_PropagatesError(t *testing.T) {
 			return nil, want
 		},
 	}
-	err := AnnounceAgent(context.Background(), mock, validBootstrap(), "p", "n", "id")
+	err := AnnounceAgent(context.Background(), mock, validBootstrap(), auth.MustProjectSlug("p"), auth.MustAgentName("n"), "id")
 	assert.ErrorIs(t, err, want)
 }
 
@@ -159,14 +166,16 @@ func TestAnnounceAgent_RejectsInvalidBootstrap(t *testing.T) {
 	// Empty challenge would let the slot reserve with no PKCE binding.
 	b := validBootstrap()
 	b.Challenge = ""
-	require.Error(t, AnnounceAgent(context.Background(), mock, b, "p", "n", "id"))
+	require.Error(t, AnnounceAgent(context.Background(), mock, b, auth.MustProjectSlug("p"), auth.MustAgentName("n"), "id"))
 
 	// Empty agent name would key the slot to (p, "") — every announce in
-	// project p would collide on the same composite key.
-	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), "p", "", "id"))
+	// project p would collide on the same composite key. Zero-value
+	// auth.AgentName{} mirrors that case (constructors reject empty
+	// input, but the zero value is reachable for tests).
+	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), auth.MustProjectSlug("p"), auth.AgentName{}, "id"))
 
-	// Empty container ID would skip the IP cross-check at Register.
-	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), "p", "n", ""))
+	// Empty container ID would skip the IP cross-check at Connect.
+	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), auth.MustProjectSlug("p"), auth.MustAgentName("n"), ""))
 
 	// Mock should never see a request — validation happens before RPC.
 	assert.Empty(t, mock.AnnounceAgentCalls())
@@ -180,7 +189,7 @@ func TestAnnounceAgent_RejectsInvalidBootstrap(t *testing.T) {
 // every secret in the struct to the on-disk log.
 func TestAgentBootstrap_RedactsViaFormatter(t *testing.T) {
 	b := &AgentBootstrap{
-		Verifier:               "VERIFIER-BEARER-SECRET",
+		verifier:               "VERIFIER-BEARER-SECRET",
 		Challenge:              "challenge-public",
 		Method:                 consts.ChallengeMethodS256,
 		CertPEM:                []byte("PRIVATE-CERT-MATERIAL"),
@@ -203,7 +212,8 @@ func TestAgentBootstrap_RedactsViaFormatter(t *testing.T) {
 
 func TestWriteAgentBootstrapToContainer_TarShape(t *testing.T) {
 	b := validBootstrap()
-	b.Verifier = "verifier-bytes"
+	const wantVerifier = "verifier-bytes"
+	b.verifier = wantVerifier
 
 	var (
 		gotDest   string
@@ -228,7 +238,11 @@ func TestWriteAgentBootstrapToContainer_TarShape(t *testing.T) {
 	expectFile(t, files, leaf+"/"+consts.BootstrapKeyFile, 0o400, b.KeyPEM)
 	expectFile(t, files, leaf+"/"+consts.BootstrapCAFile, 0o400, b.CACertPEM)
 	expectFile(t, files, leaf+"/"+consts.BootstrapAssertionFile, 0o400, []byte(b.Assertion))
-	expectFile(t, files, leaf+"/"+consts.BootstrapVerifierFile, 0o400, []byte(b.Verifier))
+	// Verifier was consumed by the tar build — read the snapshot we
+	// captured before WriteAgentBootstrapToContainer ran. b.HasVerifier()
+	// must now be false (consume-once contract).
+	expectFile(t, files, leaf+"/"+consts.BootstrapVerifierFile, 0o400, []byte(wantVerifier))
+	assert.False(t, b.HasVerifier(), "ConsumeVerifier must zero the in-memory copy after tar build")
 }
 
 func TestWriteAgentBootstrapToContainer_Validation(t *testing.T) {

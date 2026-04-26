@@ -2,10 +2,26 @@ package agentregistry
 
 import (
 	"context"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	"github.com/schmitthub/clawker/internal/controlplane/informer"
 	"github.com/schmitthub/clawker/internal/logger"
+)
+
+// Subscribe panic-loop guardrails. A deterministic panic source (bad
+// delta shape, latent bug) without backoff would spin recover →
+// drainOnce → recover at line speed, filling the rotated log files
+// (50MB × 3) in seconds and burying the actual root-cause line. Sleep
+// between recoveries with exponential backoff capped at the ceiling,
+// and after enough panics in a sliding window escalate to Error and
+// terminate the consumer so the wrapping process surfaces the
+// runaway loudly instead of silently spinning.
+const (
+	subscribePanicBackoffMin    = 100 * time.Millisecond
+	subscribePanicBackoffMax    = 30 * time.Second
+	subscribePanicWindow        = 5 * time.Minute
+	subscribePanicWindowMaxHits = 100
 )
 
 // Subscribe wires the registry to container deltas published by the
@@ -46,9 +62,51 @@ func Subscribe(ctx context.Context, reg Registry, inf informer.Interface, log *l
 		// heartbeat goroutine, but loops back into the consumer so
 		// subsequent deltas are still processed — the dropped delta
 		// that triggered the panic is lost, but the next one is not.
+		//
+		// Backoff + circuit-breaker on consecutive panics so a
+		// deterministic panic source can't hot-loop the recovery
+		// path and bury real signal in the log.
+		var panicTimes []time.Time
+		var lastPanic time.Time
+		backoff := subscribePanicBackoffMin
 		for {
 			if drainOnce(ctx, ch, reg, log) {
 				return
+			}
+			now := time.Now()
+			// Reset backoff if the previous panic was a long time ago —
+			// rapid consecutive failures grow backoff; isolated ones don't.
+			if !lastPanic.IsZero() && now.Sub(lastPanic) > 30*time.Second {
+				backoff = subscribePanicBackoffMin
+			}
+			lastPanic = now
+			panicTimes = append(panicTimes, now)
+			// Slide the window so the count reflects only recent panics.
+			cutoff := now.Add(-subscribePanicWindow)
+			i := 0
+			for i < len(panicTimes) && panicTimes[i].Before(cutoff) {
+				i++
+			}
+			panicTimes = panicTimes[i:]
+			if len(panicTimes) >= subscribePanicWindowMaxHits {
+				log.Error().
+					Int("panic_count", len(panicTimes)).
+					Dur("window", subscribePanicWindow).
+					Msg("agentregistry subscribe consumer: panic rate exceeded ceiling; terminating consumer")
+				return
+			}
+			// Sleep with ctx-cancel awareness so a drain doesn't have
+			// to wait out the backoff.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			if backoff < subscribePanicBackoffMax {
+				backoff *= 2
+				if backoff > subscribePanicBackoffMax {
+					backoff = subscribePanicBackoffMax
+				}
 			}
 		}
 	}()

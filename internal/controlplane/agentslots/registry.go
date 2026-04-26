@@ -144,6 +144,11 @@ type registryImpl struct {
 	wg       sync.WaitGroup
 	log      *logger.Logger
 	period   time.Duration
+	// tickC drives janitor sweeps. Default is a real time.Ticker; tests
+	// inject a channel they can drive deterministically via
+	// NewRegistryForTesting so a sweep test doesn't have to wall-clock-
+	// poll the result.
+	tickC <-chan time.Time
 }
 
 // NewRegistry creates a Registry and starts the background janitor.
@@ -152,6 +157,19 @@ type registryImpl struct {
 // pass 0 to default to half of consts.AgentSlotTTL so a slot is at most
 // half its TTL past expiry before eviction.
 func NewRegistry(now func() time.Time, sweepPeriod time.Duration, log *logger.Logger) Registry {
+	return constructRegistry(now, sweepPeriod, log, nil)
+}
+
+// NewRegistryWithPulseChan is a test-only constructor that lets the
+// caller drive janitor sweeps deterministically via a channel of
+// time.Time pulses. Production code MUST use NewRegistry — this
+// constructor exists so the janitor sweep test doesn't have to wall-
+// clock-poll for eviction completion.
+func NewRegistryWithPulseChan(now func() time.Time, log *logger.Logger, pulse <-chan time.Time) Registry {
+	return constructRegistry(now, time.Hour, log, pulse)
+}
+
+func constructRegistry(now func() time.Time, sweepPeriod time.Duration, log *logger.Logger, pulse <-chan time.Time) Registry {
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -167,6 +185,7 @@ func NewRegistry(now func() time.Time, sweepPeriod time.Duration, log *logger.Lo
 		stop:   make(chan struct{}),
 		log:    log,
 		period: sweepPeriod,
+		tickC:  pulse,
 	}
 	r.wg.Add(1)
 	go r.janitor()
@@ -274,13 +293,21 @@ func (r *registryImpl) Stop() {
 
 func (r *registryImpl) janitor() {
 	defer r.wg.Done()
-	ticker := time.NewTicker(r.period)
-	defer ticker.Stop()
+	tickC := r.tickC
+	if tickC == nil {
+		ticker := time.NewTicker(r.period)
+		defer ticker.Stop()
+		tickC = ticker.C
+	}
 	for {
 		select {
 		case <-r.stop:
 			return
-		case <-ticker.C:
+		case _, ok := <-tickC:
+			if !ok {
+				// Test-side pulse channel was closed — exit cleanly.
+				return
+			}
 			r.sweep()
 		}
 	}

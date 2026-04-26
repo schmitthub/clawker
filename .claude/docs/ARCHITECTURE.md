@@ -522,8 +522,8 @@ Key packages:
 - `internal/controlplane/firewall` — firewall domain handler + Stack + rules store + Envoy/CoreDNS config + certs. See `internal/controlplane/firewall/CLAUDE.md`.
 - `internal/controlplane/firewall/ebpf` — BPF loader + manager + bpf2go bindings. See `internal/controlplane/firewall/ebpf/CLAUDE.md`.
 - `internal/controlplane/firewall/ebpf/cmd` — break-glass `ebpf-manager` CLI bundled alongside `clawker-cp` in the container image.
-- `internal/controlplane/agent` — `agent.Handler` (`AgentService.Register` with five identity-binding cross-checks). See `internal/controlplane/agent/CLAUDE.md`.
-- `internal/controlplane/agentslots` — short-lived registration slots reserved by `AnnounceAgent` and consumed by `Register` (constant-time PKCE, mismatch preserves slot for benign retry, sync.Once Stop).
+- `internal/controlplane/agent` — `agent.Handler` (`AgentService.Connect` server-streaming, with five identity-binding cross-checks) plus `IdentityInterceptor` (cert-thumbprint binding, fail-secure opt-out map). See `internal/controlplane/agent/CLAUDE.md`.
+- `internal/controlplane/agentslots` — short-lived registration slots reserved by `AnnounceAgent` and consumed by `Connect` (constant-time PKCE compare, mismatch preserves slot for benign retry, sync.Once Stop).
 - `internal/controlplane/agentregistry` — registered-agent registry keyed by SHA-256 cert thumbprint with `dockerevents` subscription for eviction.
 - `internal/clawkerd` — `//go:embed assets/clawkerd` exports the per-container daemon binary; bundler drops it into every per-project image at `/usr/local/bin/clawkerd`.
 - `cmd/clawkerd` — per-container agent daemon. Boot sequence in `cmd/clawkerd/CLAUDE.md`.

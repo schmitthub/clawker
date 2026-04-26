@@ -268,9 +268,10 @@ const ChallengeMethodS256 ChallengeMethod = "S256"
 
 // Container env vars for clawkerd bootstrap. clawkerd reads only what
 // it can authoritatively assert: container_id is server-derived from
-// the slot at Register, and the project is encoded in the canonical
-// agent_name. Adding a CLAWKER_CONTAINER_ID env would let a coerced
-// clawkerd lie to itself; resist that temptation.
+// the slot at Connect, and project + agent_name travel as separate
+// wire fields (the CP composes the canonical name on its side).
+// Adding a CLAWKER_CONTAINER_ID env would let a coerced clawkerd lie
+// to itself; resist that temptation.
 const (
 	// EnvAgent is the agent name (e.g. "dev"). Container-wide env;
 	// readable by every process in the container including the

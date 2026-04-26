@@ -22,6 +22,8 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // adminServer composes the domain-specific handlers into the single
@@ -38,6 +40,7 @@ type adminServer struct {
 	agents agentregistry.Registry
 	slots  agentslots.Registry
 	clock  func() time.Time
+	log    *logger.Logger
 }
 
 // compile-time: any future additions to AdminServiceServer must be
@@ -57,14 +60,20 @@ var _ adminv1.AdminServiceServer = (*adminServer)(nil)
 //     on a CP build that hasn't wired the agent registry yet.
 //   - clock defaults to time.Now when nil. Tests inject a fixed-time
 //     function so AnnounceAgent's ExpiresAt is deterministic.
-func NewAdminServer(fw *fwhandler.Handler, agents agentregistry.Registry, slots agentslots.Registry, clock func() time.Time) adminv1.AdminServiceServer {
+//   - log defaults to logger.Nop() when nil. Production wiring passes
+//     the CP's structured logger so AnnounceAgent failures surface in
+//     the operator log; tests pass nil.
+func NewAdminServer(fw *fwhandler.Handler, agents agentregistry.Registry, slots agentslots.Registry, clock func() time.Time, log *logger.Logger) adminv1.AdminServiceServer {
 	if slots == nil {
 		panic("controlplane: NewAdminServer requires non-nil slots registry")
 	}
 	if clock == nil {
 		clock = time.Now
 	}
-	return &adminServer{Handler: fw, agents: agents, slots: slots, clock: clock}
+	if log == nil {
+		log = logger.Nop()
+	}
+	return &adminServer{Handler: fw, agents: agents, slots: slots, clock: clock, log: log}
 }
 
 // AnnounceAgent reserves a slot for an in-flight container startup. The
@@ -77,8 +86,9 @@ func NewAdminServer(fw *fwhandler.Handler, agents agentregistry.Registry, slots 
 //
 // Wire-level error mapping:
 //   - missing/malformed fields → codes.InvalidArgument
-//   - duplicate composite (cert_thumbprint, agent_name) → codes.AlreadyExists
-//   - any other Reserve failure → codes.Internal
+//   - duplicate composite (cert_thumbprint, agent_name, project) → codes.AlreadyExists
+//   - any other Reserve failure → codes.Internal (logged at Warn so
+//     operators have a triage trail; the wire response stays generic)
 func (s *adminServer) AnnounceAgent(_ context.Context, req *adminv1.AnnounceAgentRequest) (*adminv1.AnnounceAgentResult, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request required")
@@ -94,6 +104,16 @@ func (s *adminServer) AnnounceAgent(_ context.Context, req *adminv1.AnnounceAgen
 	}
 	if req.CodeChallengeMethod != string(consts.ChallengeMethodS256) {
 		return nil, status.Error(codes.InvalidArgument, "code_challenge_method must be S256")
+	}
+	// Project is allowed to be empty (matches docker.ContainerName's
+	// 2-segment naming) but a non-empty value must conform to the same
+	// charset/length rules ContainerName enforces — otherwise a buggy
+	// or malicious CLI can announce with garbage / path-traversal /
+	// kilobyte-sized strings that burn a slot until TTL.
+	if req.Project != "" {
+		if err := docker.ValidateResourceName(req.Project); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "project: %v", err)
+		}
 	}
 
 	// hex.DecodeString is case-insensitive but the proto contract is
@@ -130,6 +150,23 @@ func (s *adminServer) AnnounceAgent(_ context.Context, req *adminv1.AnnounceAgen
 		if errors.Is(err, agentslots.ErrSlotExists) {
 			return nil, status.Error(codes.AlreadyExists, "agent already announced")
 		}
+		// Any other Reserve failure indicates a CLI/CP wiring bug
+		// (validation only catches user-facing input; Reserve's own
+		// invariants — non-S256 method, empty agent — should be caught
+		// above, so reaching this branch is a real signal). Log loudly
+		// so an operator sees the underlying error; wire response stays
+		// generic to avoid leaking internals. Tolerate a nil log here
+		// for tests that build adminServer via struct literal — the
+		// production path always sets log via NewAdminServer.
+		log := s.log
+		if log == nil {
+			log = logger.Nop()
+		}
+		log.Warn().
+			Err(err).
+			Str("agent", req.AgentName).
+			Str("project", req.Project).
+			Msg("admin: slot reservation failed")
 		return nil, status.Error(codes.Internal, "slot reservation failed")
 	}
 

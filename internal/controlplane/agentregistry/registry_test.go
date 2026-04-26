@@ -22,7 +22,7 @@ func tp(s string) [sha256.Size]byte {
 // assertions don't drift from the production composer in
 // auth.CanonicalAgentCN.
 func canonical(project, agent string) string {
-	return auth.CanonicalAgentCN(project, agent)
+	return auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agent))
 }
 
 // validEntry builds the minimal Entry that satisfies Add's invariants
@@ -198,7 +198,7 @@ func TestRegistry_Concurrent(t *testing.T) {
 // TestRegistry_Add_RejectsInvariantViolations pins the contract that
 // Add panics on invalid input. The only legitimate caller of Add is
 // the in-package agent.Handler which has already verified each
-// invariant via the five identity-binding cross-checks at Register;
+// invariant via the five identity-binding cross-checks at Connect;
 // any other caller violating these is a wiring bug that must surface
 // loudly. Each subtest uses recover() to assert a panic occurred and
 // no entry made it into the registry.

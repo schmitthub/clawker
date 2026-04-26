@@ -94,7 +94,7 @@ service AdminService {
   // for `docker create` + `docker start` + clawkerd boot latency.
   //
   // Channel-bound identity defends against a compromised CLI announcing
-  // a slot for a container it doesn't own: at Register the CP cross-
+  // a slot for a container it doesn't own: at Connect the CP cross-
   // checks the peer's mTLS thumbprint and Docker network position
   // against the slot's container_id. Required scope: admin (uniform per
   // INV-B2-009).
@@ -255,13 +255,13 @@ message AnnounceAgentRequest {
   string agent_name = 1;
   // container_id is the Docker container ID CLI got back from
   // ContainerCreate. Stored in the slot, never trusted from clawkerd —
-  // CP IP-checks it at Register against the peer's network position.
+  // CP IP-checks it at Connect against the peer's network position.
   string container_id = 2;
   // expected_cert_thumbprint is the lowercase-hex SHA-256 of the
   // DER-encoded mTLS cert CLI just minted for this agent (64 chars). CP
-  // compares the agent's actual peer cert thumbprint at Register
-  // (defense vs cert swap in the bootstrap tmpfs between announce and
-  // clawkerd boot).
+  // compares the agent's actual peer cert thumbprint at Connect
+  // (defense vs cert swap in the bootstrap material between announce
+  // and clawkerd boot).
   string expected_cert_thumbprint = 3;
   // code_challenge is the PKCE S256 challenge:
   // base64url(sha256(verifier)), no padding. CP stores it in the slot;
@@ -301,10 +301,10 @@ message Agent {
   // cert_thumbprint is the lowercase-hex SHA-256 over the agent's mTLS
   // cert DER — the channel-bound identity key.
   string cert_thumbprint = 3;
-  // registered_at_unix is the wall-clock timestamp at AgentService.Register.
+  // registered_at_unix is the wall-clock timestamp at AgentService.Connect.
   int64 registered_at_unix = 4;
   // last_seen_unix is updated on every successful per-agent RPC. Equal
-  // to registered_at_unix for B4 because Register is the only per-agent
+  // to registered_at_unix for B4 because Connect is the only per-agent
   // RPC.
   int64 last_seen_unix = 5;
   // project is the clawker project slug the agent registered under (empty

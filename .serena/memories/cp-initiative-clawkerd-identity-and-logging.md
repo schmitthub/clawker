@@ -1,7 +1,7 @@
 # Initiative: clawkerd Identity Composite + File Logging
 
 > **Branch:** `feat/clawkerd-init`
-> **Status:** ALL TASKS COMPLETE — UAT pending. Changes are uncommitted on the working tree; awaiting user verification before commit + push.
+> **Status:** Committed on `feat/clawkerd-init` (commits 1b51a2fc + af14d949 + 43b76c97 already on origin). UAT outcome pending. Delete this memory once UAT confirms.
 
 ---
 

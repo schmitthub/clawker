@@ -8,11 +8,13 @@ List agents currently registered with the control plane
 
 ### Synopsis
 
-Snapshot every agent that has completed AgentService.Register.
+Snapshot every agent that has completed the AgentService.Connect handshake.
 
 Identity is channel-bound: the certificate thumbprint shown here is the
 SHA-256 over the agent's mTLS leaf cert and is what the control plane
-uses as the registry key.
+uses as the registry key. Agents are uniquely identified by the
+composite (project, agent_name) — agents with the same short name in
+different projects appear as separate rows.
 
 ```
 clawker controlplane agents [flags]

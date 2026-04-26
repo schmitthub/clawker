@@ -44,13 +44,13 @@ func TestMintAgentCert_HappyPath(t *testing.T) {
 	caCertPath, caKeyPath := caPaths(t)
 
 	const project, agent = "alpha", "bravo"
-	got, err := MintAgentCert(caCertPath, caKeyPath, project, agent)
+	got, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug(project), MustAgentName(agent))
 	require.NoError(t, err)
 	require.NotEmpty(t, got.CertPEM)
 	require.NotEmpty(t, got.KeyPEM)
 
 	// Thumbprint must match SHA-256 of the parsed cert's DER bytes —
-	// the same value the CP recomputes from the peer cert at Register.
+	// the same value the CP recomputes from the peer cert at Connect.
 	leaf := mustParse(t, got.CertPEM)
 	want := sha256.Sum256(leaf.Raw)
 	assert.Equal(t, want, got.Thumbprint)
@@ -85,9 +85,9 @@ func TestMintAgentCert_HappyPath(t *testing.T) {
 func TestMintAgentCert_DistinctSerials(t *testing.T) {
 	caCertPath, caKeyPath := caPaths(t)
 
-	first, err := MintAgentCert(caCertPath, caKeyPath, "x", "y")
+	first, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug("x"), MustAgentName("y"))
 	require.NoError(t, err)
-	second, err := MintAgentCert(caCertPath, caKeyPath, "x", "y")
+	second, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug("x"), MustAgentName("y"))
 	require.NoError(t, err)
 
 	leaf1 := mustParse(t, first.CertPEM)
@@ -100,7 +100,7 @@ func TestMintAgentCert_DistinctSerials(t *testing.T) {
 
 func TestMintAgentCert_EmptyAgentName(t *testing.T) {
 	caCertPath, caKeyPath := caPaths(t)
-	_, err := MintAgentCert(caCertPath, caKeyPath, "proj", "")
+	_, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug("proj"), AgentName{})
 	require.Error(t, err)
 }
 
@@ -108,7 +108,7 @@ func TestMintAgentCert_EmptyProjectStillMints(t *testing.T) {
 	// 2-segment naming case (empty project) is legitimate — match
 	// docker.ContainerName behavior. CN must be "clawker.<agent>".
 	caCertPath, caKeyPath := caPaths(t)
-	got, err := MintAgentCert(caCertPath, caKeyPath, "", "solo")
+	got, err := MintAgentCert(caCertPath, caKeyPath, ProjectSlug{}, MustAgentName("solo"))
 	require.NoError(t, err)
 	leaf := mustParse(t, got.CertPEM)
 	assert.Equal(t, "clawker.solo", leaf.Subject.CommonName)
@@ -117,7 +117,7 @@ func TestMintAgentCert_EmptyProjectStillMints(t *testing.T) {
 func TestMintAgentCert_MissingCAPaths(t *testing.T) {
 	testenv.New(t)
 	missing := filepath.Join(t.TempDir(), "nope.pem")
-	_, err := MintAgentCert(missing, missing, "x", "y")
+	_, err := MintAgentCert(missing, missing, MustProjectSlug("x"), MustAgentName("y"))
 	require.Error(t, err)
 }
 
@@ -137,7 +137,7 @@ func TestMintAgentCert_AdversarialCAInputs(t *testing.T) {
 		certA, _ := writeCAPair(t, dir, "a")
 		_, keyB := writeCAPair(t, dir, "b")
 
-		_, err := MintAgentCert(certA, keyB, "x", "y")
+		_, err := MintAgentCert(certA, keyB, MustProjectSlug("x"), MustAgentName("y"))
 		require.Error(t, err, "mismatched CA pair must fail")
 		assert.Contains(t, err.Error(), "matching pair")
 	})
@@ -151,7 +151,7 @@ func TestMintAgentCert_AdversarialCAInputs(t *testing.T) {
 		require.NoError(t, os.WriteFile(certPath, []byte("not a pem block at all"), 0o600))
 
 		_, keyPath := writeCAPair(t, dir, "valid")
-		_, err := MintAgentCert(certPath, keyPath, "x", "y")
+		_, err := MintAgentCert(certPath, keyPath, MustProjectSlug("x"), MustAgentName("y"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "PEM")
 	})
@@ -172,7 +172,7 @@ func TestMintAgentCert_AdversarialCAInputs(t *testing.T) {
 			pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: rsaDER}),
 			0o600))
 
-		_, err = MintAgentCert(certPath, rsaKeyPath, "x", "y")
+		_, err = MintAgentCert(certPath, rsaKeyPath, MustProjectSlug("x"), MustAgentName("y"))
 		require.Error(t, err)
 	})
 }

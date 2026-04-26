@@ -16,6 +16,7 @@ import (
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	regmocks "github.com/schmitthub/clawker/internal/controlplane/agentregistry/mocks"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // agentMethodPath is the full gRPC method path the interceptor matches
@@ -329,5 +330,23 @@ func TestWithEntry_NilPanics(t *testing.T) {
 		"agent: WithEntry called with nil entry",
 		func() {
 			WithEntry(context.Background(), nil)
+		})
+}
+
+// TestIdentityInterceptor_StaleOptedOutKey_Panics locks the runtime
+// validation contract: a key in the opt-out map that doesn't match any
+// real AgentService RPC must panic at construction so a typo or stale
+// rename surfaces during startup instead of silently locking a real
+// method out (typo'd "Connect" → real Connect falls into the
+// registry-lookup path with no entry yet, opaque PermissionDenied).
+func TestIdentityInterceptor_StaleOptedOutKey_Panics(t *testing.T) {
+	reg := agentregistry.NewRegistry(logger.Nop())
+	stale := map[string]bool{
+		"/clawker.agent.v1.AgentService/NotARealMethod": true,
+	}
+	assert.PanicsWithValue(t,
+		"agent: identity interceptor opt-out has stale key: /clawker.agent.v1.AgentService/NotARealMethod",
+		func() {
+			IdentityInterceptor(reg, stale, logger.Nop())
 		})
 }

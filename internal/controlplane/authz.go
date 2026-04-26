@@ -90,9 +90,14 @@ func (h *HydraIntrospector) Introspect(ctx context.Context, token, requiredScope
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		hint, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		if err != nil {
-			return nil, fmt.Errorf("introspection returned %d (body read failed: %w)", resp.StatusCode, err)
+		// On a non-200 the Hydra status code is the load-bearing signal
+		// for the operator (502/503 = Hydra/upstream issue, 401/403 = auth
+		// problem). Surface it in the message regardless of whether the
+		// body is readable; if the read fails too, wrap the read error
+		// while keeping the status code visible in the static message.
+		hint, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if readErr != nil {
+			return nil, fmt.Errorf("introspection returned %d (body read also failed): %w", resp.StatusCode, readErr)
 		}
 		return nil, fmt.Errorf("introspection returned %d: %s", resp.StatusCode, hint)
 	}

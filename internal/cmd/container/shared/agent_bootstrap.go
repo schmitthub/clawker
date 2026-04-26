@@ -31,8 +31,20 @@ import (
 // and the Hydra assertion JWT) cannot leak via fmt verbs or zerolog's
 // interface logger. Callers needing the raw fields must read them
 // directly.
+//
+// The PKCE verifier is held in an unexported field and exposed only
+// via ConsumeVerifier, which returns it AND zeros the in-memory copy.
+// The verifier is a single-use bearer secret for the CP slot — once
+// it has been written into the container's bootstrap tar, the host
+// process has no legitimate reason to read it again. The consume-once
+// gate makes accidental misuse a compile error: external callers
+// cannot read the field directly, and even in-package callers go
+// through a method whose return-value-and-zero semantics surface in
+// the call site instead of being implicit on a public string field.
 type AgentBootstrap struct {
-	Verifier  string
+	// verifier is the PKCE secret. Access only via ConsumeVerifier or
+	// the in-package internal helpers below. NEVER make this exported.
+	verifier  string
 	Challenge string
 	// Method is the PKCE challenge method announced over the wire.
 	// Typed for safety; today only consts.ChallengeMethodS256 is
@@ -44,6 +56,27 @@ type AgentBootstrap struct {
 	ExpectedCertThumbprint [sha256.Size]byte // SHA-256 over cert DER
 	CACertPEM              []byte
 	Assertion              string
+}
+
+// ConsumeVerifier returns the PKCE verifier ONCE and zeros the
+// in-memory copy. Subsequent calls return the empty string. Callers
+// that need to inspect verifier state (e.g. validate non-empty before
+// committing to a Hydra-published slot) must use HasVerifier — reading
+// the secret implies consuming it.
+func (b *AgentBootstrap) ConsumeVerifier() string {
+	if b == nil {
+		return ""
+	}
+	v := b.verifier
+	b.verifier = ""
+	return v
+}
+
+// HasVerifier reports whether the verifier is still populated. Used by
+// validate() so the caller can confirm the bootstrap is complete
+// without burning the single-use secret.
+func (b *AgentBootstrap) HasVerifier() bool {
+	return b != nil && b.verifier != ""
 }
 
 // String redacts every field so AgentBootstrap can never accidentally
@@ -72,8 +105,12 @@ func (*AgentBootstrap) GoString() string { return "AgentBootstrap{<redacted>}" }
 // CN is composed inside MintAgentCert via auth.CanonicalAgentCN so every
 // CLI caller produces the same canonical shape and the agent handler's
 // peer-cert CN cross-check has a single equality to enforce.
-func GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error) {
-	if agent == "" {
+//
+// The signature uses the typed auth.ProjectSlug / auth.AgentName so
+// the caller has gone through NewProjectSlug / NewAgentName at the CLI
+// flag boundary — a raw `string` cannot reach this function.
+func GenerateAgentBootstrap(caCertPath, caKeyPath string, project auth.ProjectSlug, agent auth.AgentName, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error) {
+	if agent.IsZero() {
 		return nil, fmt.Errorf("agent name required")
 	}
 	if signingKey == nil {
@@ -101,7 +138,7 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, hydraTokenURL
 	}
 
 	return &AgentBootstrap{
-		Verifier:               verifier,
+		verifier:               verifier,
 		Challenge:              challenge,
 		Method:                 consts.ChallengeMethodS256,
 		CertPEM:                cert.CertPEM,
@@ -116,8 +153,8 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, hydraTokenURL
 // container before docker start. CP slot stores the (project, agent)
 // composite identity, the Docker container ID CLI just received, the
 // cert thumbprint CLI minted, and the PKCE challenge. clawkerd consumes
-// the matching verifier at Register; if the slot expires
-// (consts.AgentSlotTTL elapses) clawkerd's Register fails fail-closed.
+// the matching verifier at Connect; if the slot expires
+// (consts.AgentSlotTTL elapses) clawkerd's Connect fails fail-closed.
 //
 // project + agent travel as separate wire fields (not assembled into a
 // canonical name) so the CP composite slot key can include both without
@@ -125,19 +162,23 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, hydraTokenURL
 // lowercase hex because the proto field is a free-form `string` —
 // internally we keep the byte-array form to avoid carrying around a
 // redundantly-encoded representation.
-func AnnounceAgent(ctx context.Context, admin adminv1.AdminServiceClient, b *AgentBootstrap, project, agent, containerID string) error {
+//
+// Typed (auth.ProjectSlug, auth.AgentName) inputs — the constructors
+// already validated charset/length/no-canonical-prefix at the CLI flag
+// boundary, so this function trusts the values it receives.
+func AnnounceAgent(ctx context.Context, admin adminv1.AdminServiceClient, b *AgentBootstrap, project auth.ProjectSlug, agent auth.AgentName, containerID string) error {
 	if err := b.validate(); err != nil {
 		return fmt.Errorf("announce agent %q: %w", agent, err)
 	}
-	if agent == "" {
+	if agent.IsZero() {
 		return fmt.Errorf("announce agent: agent name required")
 	}
 	if containerID == "" {
 		return fmt.Errorf("announce agent %q: container id required", agent)
 	}
 	if _, err := admin.AnnounceAgent(ctx, &adminv1.AnnounceAgentRequest{
-		AgentName:              agent,
-		Project:                project,
+		AgentName:              agent.String(),
+		Project:                project.String(),
 		ContainerId:            containerID,
 		ExpectedCertThumbprint: hex.EncodeToString(b.ExpectedCertThumbprint[:]),
 		CodeChallenge:          b.Challenge,
@@ -162,8 +203,8 @@ func (b *AgentBootstrap) validate() error {
 		return fmt.Errorf("bootstrap challenge method must be %s, got %q", consts.ChallengeMethodS256, b.Method)
 	case b.Challenge == "":
 		return fmt.Errorf("bootstrap challenge is empty")
-	case b.Verifier == "":
-		return fmt.Errorf("bootstrap verifier is empty")
+	case !b.HasVerifier():
+		return fmt.Errorf("bootstrap verifier is empty (or already consumed)")
 	case b.ExpectedCertThumbprint == [sha256.Size]byte{}:
 		return fmt.Errorf("bootstrap cert thumbprint is empty")
 	case len(b.CertPEM) == 0:
@@ -246,6 +287,12 @@ func bootstrapTar(b *AgentBootstrap) (*bytes.Buffer, error) {
 		return nil, err
 	}
 
+	// ConsumeVerifier zeros the in-memory copy after returning. This is
+	// the ONE legitimate read of the verifier in the host process —
+	// after the tar lands inside the container, clawkerd consumes the
+	// verifier from disk at Connect and the host has no further need
+	// for it. Future code that tries to read the secret again gets the
+	// empty string (and validate() catches it).
 	files := []struct {
 		name string
 		body []byte
@@ -254,7 +301,7 @@ func bootstrapTar(b *AgentBootstrap) (*bytes.Buffer, error) {
 		{consts.BootstrapKeyFile, b.KeyPEM},
 		{consts.BootstrapCAFile, b.CACertPEM},
 		{consts.BootstrapAssertionFile, []byte(b.Assertion)},
-		{consts.BootstrapVerifierFile, []byte(b.Verifier)},
+		{consts.BootstrapVerifierFile, []byte(b.ConsumeVerifier())},
 	}
 	for _, f := range files {
 		hdr := &tar.Header{

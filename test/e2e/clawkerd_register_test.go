@@ -132,7 +132,7 @@ func waitForEviction(t *testing.T, h *harness.Harness, name string, deadline tim
 // idle → stop → evict lifecycle through the CLI. Exercises every layer
 // the build wires together: bundler-emitted clawkerd in the image,
 // CLI-side bootstrap material delivery, AnnounceAgent slot reservation,
-// AgentService.Register cross-checks, agentregistry insertion,
+// AgentService.Connect cross-checks, agentregistry insertion,
 // dockerevents-driven eviction.
 func TestClawkerdRegister_HappyPath(t *testing.T) {
 	if testing.Short() {

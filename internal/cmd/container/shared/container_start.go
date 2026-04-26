@@ -84,9 +84,11 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	} else {
 		log = logger.Nop()
 	}
-	if log != nil {
-		defer log.Close()
-	}
+	// NOTE: do NOT defer log.Close() here. cmdOpts.Logger is a Factory
+	// noun (sync.Once-cached singleton) — closing it tears down the
+	// underlying lumberjack writer for every other caller in this
+	// process and silently kills the audit trail. Lifecycle is owned by
+	// Factory; per-command paths must not Close.
 
 	if projectCfg != nil && projectCfg.Security.HostProxyEnabled() {
 		if cmdOpts.HostProxy == nil {
@@ -186,9 +188,7 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 	} else {
 		log = logger.Nop()
 	}
-	if log != nil {
-		defer log.Close()
-	}
+	// NOTE: do NOT defer log.Close() here — see PreStart.
 
 	// Enroll this container's cgroup into BPF container_map. Cgroup only
 	// exists after docker start creates the container's init process, so
@@ -280,6 +280,23 @@ func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.C
 	return result, nil
 }
 
+// hydraTokenAudienceFromPort returns the canonical `aud` claim value
+// for the agent assertion. Pinned to 127.0.0.1 (NOT the CP container's
+// docker-network hostname) because Hydra checks `aud` against its own
+// `urls.self.issuer` config, regardless of which network path the
+// request arrived on. Inside a container clawkerd POSTs to
+// `clawker-controlplane:<port>` (Docker DNS — see EnvClawkerdHydraURL
+// set by buildCreateTimeEnv) but signs the assertion with the
+// 127.0.0.1 audience so Hydra accepts it.
+//
+// Hot-fix history: commit fd475fb1 pinned this format after a regression
+// where the audience matched the docker-DNS host. The dedicated unit
+// test TestHydraTokenAudienceFromPort_Pinned guards the format so a
+// future refactor of `prepareAgentBootstrap` can't silently revert.
+func hydraTokenAudienceFromPort(port int) string {
+	return fmt.Sprintf("https://127.0.0.1:%d/oauth2/token", port)
+}
+
 // prepareAgentBootstrap mints fresh PKCE + per-agent mTLS material,
 // announces the slot to the CP via AdminService.AnnounceAgent, then
 // tars the bootstrap directory into the container at consts.BootstrapDir
@@ -329,20 +346,21 @@ func prepareAgentBootstrap(ctx context.Context, cmdOpts CommandOpts, containerID
 		return fmt.Errorf("load signing key: %w", err)
 	}
 
-	// The assertion's audience claim must match Hydra's
-	// `urls.self.issuer` config (`https://127.0.0.1:<port>/`) — NOT
-	// the URL clawkerd POSTs to. Hydra checks `aud` against its own
-	// self-identity, regardless of which network path the request
-	// arrived on. The CLI side gets away with one URL because the CLI
-	// runs on the host and 127.0.0.1:<port> IS Hydra. Inside a
-	// container clawkerd POSTs to `clawker-controlplane:<port>` (Docker
-	// DNS — see EnvClawkerdHydraURL set by buildCreateTimeEnv) but
-	// signs the assertion with the 127.0.0.1 audience so Hydra
-	// accepts it.
-	hydraTokenAudience := fmt.Sprintf("https://127.0.0.1:%d/oauth2/token",
-		cfg.Settings().ControlPlane.HydraPublicPort)
+	hydraTokenAudience := hydraTokenAudienceFromPort(cfg.Settings().ControlPlane.HydraPublicPort)
 
-	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, cmdOpts.Project, cmdOpts.AgentName, hydraTokenAudience, signingKey)
+	// Validate (project, agent) at the CLI flag → bootstrap boundary.
+	// Downstream helpers take the typed values so a future refactor
+	// can't accidentally pass a canonical-form or dot-containing name.
+	project, err := auth.NewProjectSlug(cmdOpts.Project)
+	if err != nil {
+		return fmt.Errorf("invalid project: %w", err)
+	}
+	agentName, err := auth.NewAgentName(cmdOpts.AgentName)
+	if err != nil {
+		return fmt.Errorf("invalid agent name: %w", err)
+	}
+
+	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, project, agentName, hydraTokenAudience, signingKey)
 	if err != nil {
 		return fmt.Errorf("generate: %w", err)
 	}
@@ -351,7 +369,7 @@ func prepareAgentBootstrap(ctx context.Context, cmdOpts CommandOpts, containerID
 	if err != nil {
 		return fmt.Errorf("dial control plane: %w", err)
 	}
-	if err := AnnounceAgent(ctx, admin, bootstrap, cmdOpts.Project, cmdOpts.AgentName, containerID); err != nil {
+	if err := AnnounceAgent(ctx, admin, bootstrap, project, agentName, containerID); err != nil {
 		return fmt.Errorf("announce: %w", err)
 	}
 	if err := WriteAgentBootstrapToContainer(ctx, containerID, copyFn, bootstrap); err != nil {

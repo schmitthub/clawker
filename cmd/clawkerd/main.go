@@ -1,9 +1,10 @@
 // Command clawkerd is the per-container agent daemon. It runs as a
 // backgrounded child of the container entrypoint shell (started by
-// internal/bundler/assets/entrypoint.sh after firewall healthz passes),
-// opens the lifetime command channel with the control plane on the
-// agent gRPC listener, and then drains commands until SIGTERM or the
-// stream closes.
+// internal/bundler/assets/entrypoint.sh right before the firewall
+// healthz poll, so registration starts inside the slot's TTL window
+// and is independent of the firewall subsystem), opens the lifetime
+// command channel with the control plane on the agent gRPC listener,
+// and then drains commands until SIGTERM or the stream closes.
 //
 // Boot sequence:
 //
@@ -20,11 +21,13 @@
 //  3. POST the CLI-signed client_assertion to Hydra → access token
 //     bound to the clawker-agent client + agent:self:register scope.
 //  4. mTLS-dial the CP agent listener with the per-agent leaf cert.
-//     Bearer token attached on every RPC.
+//     Bearer token attached on every RPC via PerRPCCredentials so
+//     it covers both unary and streaming RPCs.
 //  5. Connect({agent_name, project, code_verifier}) opens the server-
 //     streaming command channel. The first message is Welcome — receipt
-//     implies server-side auth fully succeeded, so the single-use
-//     verifier is safe to delete only after Welcome lands.
+//     implies server-side auth fully succeeded (slot consumed +
+//     identity cross-checks passed), so the single-use verifier is
+//     safe to delete only after Welcome lands.
 //  6. Drain the stream until ctx is cancelled (SIGTERM) or the stream
 //     closes (EOF on graceful CP shutdown, error on transport break).
 //     CP detects clawkerd death via gRPC connection drop + dockerevents.
@@ -200,9 +203,21 @@ func run(ctx context.Context, log *logger.Logger) error {
 	// Connect opens the lifetime command channel. The Connect call
 	// itself returns immediately with a stream wrapper; the auth
 	// handshake (slot consume + cross-checks) materializes when we
-	// Recv the first message. Use ctx (not a per-call timeout) so
-	// SIGTERM tears the stream down cleanly via stream.Context().
-	stream, err := agentClient.Connect(ctx, &agentv1.ConnectRequest{
+	// Recv the first message.
+	//
+	// streamCtx derives from the agent's lifetime ctx. We pass streamCtx
+	// (not ctx) into Connect so we can apply a tighter Welcome-only
+	// timeout via a watchdog: if the watchdog fires before Welcome
+	// arrives, streamCancel tears the stream down (this is fatal — the
+	// caller will exit) without disturbing the parent ctx. This replaces
+	// an earlier helper that spawned a goroutine to read with a separate
+	// timeout context, which had the documented hazard of leaking the
+	// reader goroutine if the caller didn't tear down the conn after
+	// ctx cancel.
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	defer streamCancel()
+
+	stream, err := agentClient.Connect(streamCtx, &agentv1.ConnectRequest{
 		AgentName:    agentName,
 		Project:      project,
 		CodeVerifier: boot.Verifier,
@@ -212,17 +227,19 @@ func run(ctx context.Context, log *logger.Logger) error {
 		return fmt.Errorf("connect to CP: %w", err)
 	}
 
-	// Bound the wait for Welcome separately from the stream's lifetime.
-	// A welcomeCtx that hits its deadline cancels the underlying stream
-	// via gRPC's per-RPC ctx; we don't propagate that into the lifetime
-	// loop below.
-	welcomeCtx, welcomeCancel := context.WithTimeout(ctx, welcomeTimeout)
-	defer welcomeCancel()
-	first, err := recvWithCtx(welcomeCtx, stream)
+	// Welcome watchdog: cancel streamCtx after welcomeTimeout if the
+	// first Recv hasn't returned. .Stop() disarms the watchdog as soon
+	// as Welcome lands so the rest of the stream's lifetime is governed
+	// only by the parent ctx (SIGTERM teardown).
+	welcomeWatchdog := time.AfterFunc(welcomeTimeout, streamCancel)
+	first, err := stream.Recv()
+	welcomeWatchdog.Stop()
 	if err != nil {
 		// SIGTERM during the handshake is a clean teardown, not a
 		// crash — exit zero so a restart-on-failure policy doesn't
 		// retrigger. Mirrors the post-Welcome loop's discipline.
+		// streamCtx.Err() is non-nil for both the SIGTERM cancel and
+		// the Welcome-watchdog cancel; check ctx.Err() to disambiguate.
 		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 			log.Info().Str("event", "shutdown_during_handshake").Msg("SIGTERM during Welcome wait")
 			return nil
@@ -303,37 +320,6 @@ func run(ctx context.Context, log *logger.Logger) error {
 				Str("type", fmt.Sprintf("%T", cmd.Payload)).
 				Msg("ignoring unknown command payload")
 		}
-	}
-}
-
-// recvWithCtx wraps stream.Recv() so a tighter inner deadline can fire
-// independently of the outer RPC ctx. stream.Recv() honors only the
-// ctx passed to Connect (the agent's lifetime ctx); we want a shorter
-// welcomeTimeout for the FIRST receive without truncating the rest of
-// the stream's lifetime.
-//
-// Goroutine lifecycle: on ctx cancel, this returns ctx.Err() while the
-// spawned goroutine remains blocked on stream.Recv(). The buffered
-// channel (capacity 1) lets the goroutine send-and-exit cleanly when
-// the stream eventually errors out — which it will when run() returns
-// and the deferred conn.Close() fires. Single-shot-on-error-path:
-// callers that don't tear down the conn after a ctx-cancel return
-// would leak the goroutine.
-func recvWithCtx(ctx context.Context, stream agentv1.AgentService_ConnectClient) (*agentv1.Command, error) {
-	type result struct {
-		cmd *agentv1.Command
-		err error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		cmd, err := stream.Recv()
-		ch <- result{cmd, err}
-	}()
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case r := <-ch:
-		return r.cmd, r.err
 	}
 }
 
@@ -467,6 +453,15 @@ func exchangeAssertion(ctx context.Context, tokenURL, assertion string, tlsCfg *
 	}
 	if out.AccessToken == "" {
 		return "", fmt.Errorf("hydra returned empty access_token")
+	}
+	// Hydra always returns "Bearer" today, but defend against a future
+	// Hydra upgrade or misconfig that returns "DPoP" or some other
+	// type — clawkerd would happily attach the token as
+	// `authorization: Bearer <token>` and CP would reject mid-stream
+	// with an opaque codes.Unauthenticated. Fail early with a clear
+	// error so the operator sees the actual problem.
+	if out.TokenType != "" && !strings.EqualFold(out.TokenType, "Bearer") {
+		return "", fmt.Errorf("hydra returned unexpected token_type %q (expected Bearer)", out.TokenType)
 	}
 	return out.AccessToken, nil
 }
