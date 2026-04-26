@@ -84,10 +84,10 @@ func main() {
 func run(ctx context.Context) error {
 	hydraURL := os.Getenv(consts.EnvClawkerdHydraURL)
 	agentAddr := os.Getenv(consts.EnvClawkerdAgentAddr)
-	agentName := os.Getenv(consts.EnvClawkerdAgentName)
+	agentName := os.Getenv(consts.EnvAgent)
 	if hydraURL == "" || agentAddr == "" || agentName == "" {
 		return fmt.Errorf("required env not set: %s, %s, %s",
-			consts.EnvClawkerdHydraURL, consts.EnvClawkerdAgentAddr, consts.EnvClawkerdAgentName)
+			consts.EnvClawkerdHydraURL, consts.EnvClawkerdAgentAddr, consts.EnvAgent)
 	}
 
 	boot, err := readBootstrap(consts.BootstrapDir)

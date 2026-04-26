@@ -39,7 +39,6 @@ type RuntimeEnvOpts struct {
 	// to consume at Register time. Empty string omits the env var.
 	ClawkerdHydraURL  string // CLAWKER_CP_HYDRA_URL
 	ClawkerdAgentAddr string // CLAWKER_CP_AGENT_ADDR
-	ClawkerdAgentName string // CLAWKER_AGENT_NAME (canonical "clawker.<project>.<agent>")
 
 	// Monitoring stack
 	MonitoringActive bool // Whether the monitoring stack (otel-collector) is running
@@ -63,12 +62,13 @@ type RuntimeEnvOpts struct {
 func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	m := make(map[string]string)
 
-	// Clawker identity (consumed by statusline)
+	// Clawker identity (consumed by the statusline AND by clawkerd
+	// as `req.AgentName` at Connect — same value, single source).
 	if opts.Project != "" {
-		m["CLAWKER_PROJECT"] = opts.Project
+		m[consts.EnvProject] = opts.Project
 	}
 	if opts.Agent != "" {
-		m["CLAWKER_AGENT"] = opts.Agent
+		m[consts.EnvAgent] = opts.Agent
 	}
 	if opts.WorkspaceMode != "" {
 		m["CLAWKER_WORKSPACE_MODE"] = opts.WorkspaceMode
@@ -119,9 +119,6 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	}
 	if opts.ClawkerdAgentAddr != "" {
 		m[consts.EnvClawkerdAgentAddr] = opts.ClawkerdAgentAddr
-	}
-	if opts.ClawkerdAgentName != "" {
-		m[consts.EnvClawkerdAgentName] = opts.ClawkerdAgentName
 	}
 
 	// Telemetry resource attributes for per-project/agent metric segmentation.

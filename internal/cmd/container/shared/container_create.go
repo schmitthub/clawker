@@ -1840,7 +1840,6 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		TrueColor:         opts.IsTrueColor,
 		AgentEnv:          agentEnv,
 		MonitoringActive:  monitoringActive,
-		ClawkerdAgentName: agentName,
 		ClawkerdAgentAddr: net.JoinHostPort(consts.ContainerCP, strconv.Itoa(cpSettings.AgentPort)),
 		ClawkerdHydraURL: "https://" + net.JoinHostPort(
 			consts.ContainerCP, strconv.Itoa(cpSettings.HydraPublicPort),

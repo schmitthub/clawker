@@ -266,16 +266,21 @@ const ChallengeMethodS256 ChallengeMethod = "S256"
 // agent_name. Adding a CLAWKER_CONTAINER_ID env would let a coerced
 // clawkerd lie to itself; resist that temptation.
 const (
+	// EnvAgent is the agent name (e.g. "dev"). Container-wide env;
+	// readable by every process in the container including the
+	// unprivileged user's shell. Set by the CLI at container create
+	// from `--agent` (or generated). Used by the statusline and
+	// consumed by clawkerd as `req.AgentName` at Connect.
+	EnvAgent = "CLAWKER_AGENT"
+	// EnvProject is the project name (e.g. "clawker"). Same scope +
+	// caveats as EnvAgent.
+	EnvProject = "CLAWKER_PROJECT"
 	// EnvClawkerdHydraURL points clawkerd at the CP-published Hydra
 	// public endpoint for OAuth2 token exchange.
 	EnvClawkerdHydraURL = "CLAWKER_CP_HYDRA_URL"
 	// EnvClawkerdAgentAddr is the host:port of the CP's agent gRPC
 	// listener on clawker-net.
 	EnvClawkerdAgentAddr = "CLAWKER_CP_AGENT_ADDR"
-	// EnvClawkerdAgentName carries the canonical full name
-	// "clawker.<project>.<agent>" — clawkerd uses this as the slot key
-	// at Register and as the OAuth2 subject on per-agent claims.
-	EnvClawkerdAgentName = "CLAWKER_AGENT_NAME"
 )
 
 // ---------------------------------------------------------------------------
