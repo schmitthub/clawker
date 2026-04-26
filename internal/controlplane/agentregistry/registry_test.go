@@ -159,6 +159,36 @@ func TestRegistry_Snapshot_Sorted(t *testing.T) {
 	}
 }
 
+// TestRegistry_Snapshot_SortedAcrossProjects pins the (Project,
+// AgentName) ordering contract. Same short AgentName ("dev") can be
+// registered under different projects — the composite identity is
+// (project, agent). Without a Project tie-breaker, Go map iteration
+// would leave the inter-project order undefined and ListAgents /
+// `clawker controlplane agents` output would jitter between calls.
+func TestRegistry_Snapshot_SortedAcrossProjects(t *testing.T) {
+	r := NewRegistry(nil)
+	// Insert in scrambled order to defeat any incidental sort that
+	// happens to match insertion order.
+	r.Add(validEntry("zproj", "dev", "ctr-zproj-dev", "cert-zproj-dev"))
+	r.Add(validEntry("aproj", "dev", "ctr-aproj-dev", "cert-aproj-dev"))
+	r.Add(validEntry("aproj", "bot", "ctr-aproj-bot", "cert-aproj-bot"))
+	r.Add(validEntry("mproj", "dev", "ctr-mproj-dev", "cert-mproj-dev"))
+
+	snap := r.Snapshot()
+	require.Len(t, snap, 4)
+	got := make([][2]string, len(snap))
+	for i, e := range snap {
+		got[i] = [2]string{e.Project, e.AgentName}
+	}
+	want := [][2]string{
+		{"aproj", "bot"},
+		{"aproj", "dev"},
+		{"mproj", "dev"},
+		{"zproj", "dev"},
+	}
+	assert.Equal(t, want, got, "snapshot must be sorted by (Project, AgentName)")
+}
+
 func TestRegistry_Concurrent(t *testing.T) {
 	// Race-detector contract: many goroutines adding/looking up/evicting
 	// without lock-order bugs. Each goroutine works on its own

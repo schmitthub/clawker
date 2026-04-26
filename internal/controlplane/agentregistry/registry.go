@@ -85,8 +85,12 @@ type Registry interface {
 	// realistic clawker host scales (single-digit agents).
 	EvictByContainerID(containerID string)
 	// Snapshot returns a copy of every live entry, sorted by
-	// AgentName for deterministic output (used by AdminService.ListAgents
-	// and the `clawker controlplane agents` CLI).
+	// (Project, AgentName) for deterministic output. Project is the
+	// primary key because the same short AgentName can be reused across
+	// different projects (the composite identity is (project, agent) —
+	// see internal/controlplane/agentslots/CLAUDE.md). Used by
+	// AdminService.ListAgents and the `clawker controlplane agents`
+	// CLI; both rely on stable ordering for diffability.
 	Snapshot() []Entry
 }
 
@@ -189,6 +193,15 @@ func (r *registryImpl) Snapshot() []Entry {
 		out = append(out, entry)
 	}
 	r.mu.RUnlock()
-	sort.Slice(out, func(i, j int) bool { return out[i].AgentName < out[j].AgentName })
+	// Sort by (Project, AgentName) — the composite identity. Two
+	// projects can register the same short AgentName, so AgentName
+	// alone is not a unique key and sorting by it leaves the
+	// inter-project order undefined (Go map iteration order).
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Project != out[j].Project {
+			return out[i].Project < out[j].Project
+		}
+		return out[i].AgentName < out[j].AgentName
+	})
 	return out
 }
