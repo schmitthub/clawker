@@ -1,9 +1,9 @@
 # Control Plane Initiative — Current Status
 
-## Status: Branch 4 agent work complete. Spec for end-to-end CLI integration follow-up finalized; ready for implementation.
+## Status: Branch 4 + end-to-end CLI integration follow-up COMPLETE. Ready for review.
 
-**Workflow phase**: B4 agent work done; B4 follow-up spec written, implementation next.
-**Branch**: `feat/clawkerd-init` (Branch 4 — clawkerd auth + agent registration; follow-up continues here)
+**Workflow phase**: B4 agent work + B4 follow-up implementation both done. Tree-wide build/vet/`make test` green; pre-commit clean.
+**Branch**: `feat/clawkerd-init` (Branch 4 — clawkerd auth + agent registration; B4 follow-up integrated)
 **Next branch**: Branch 5 (init migration — clawkerd replaces entrypoint init scripts; first concrete `Command` payload variants land)
 
 ## Branch Sequence
@@ -13,7 +13,7 @@
 | 1 | CP as proper service — auth + gRPC, firewall still owns bootstrap | `complete` (merged to `main`) |
 | 2 | Ownership reversal — CP owns firewall, `internal/firewall/` deleted, 13-method scope-corrected AdminService | `complete` (awaiting host-side review on `feat/firewall-cp-migration`) |
 | 3 | Daemon consolidation — hostproxy + socketbridge under CP, Docker events replacing watcher polling | `complete` |
-| 4 | clawkerd auth — PKCE registration, per-agent certs | `complete` core; **follow-up specced** in `cp-initiative-clawkerd-cli-integration` (end-to-end CLI integration, Connect-as-stream, identity interceptor, slot composite key, dockerevents-driven slot eviction) |
+| 4 | clawkerd auth — PKCE registration, per-agent certs | `complete` (core + end-to-end CLI integration follow-up: Connect-as-stream, identity interceptor, slot composite key, dockerevents-driven slot eviction, AnnounceAgent handler, run/start bootstrap delivery) |
 | 5 | Init migration + agent lifecycle — clawkerd replaces init scripts, first `Command` payload variants on the open Connect stream | pending |
 | 6 | Monitor + release + hardening — out of alpha | pending |
 
@@ -21,8 +21,7 @@
 
 | Initiative | Status | Memory |
 |------------|--------|--------|
-| **Branch 4 follow-up: end-to-end CLI integration + Connect lifetime stream** | Initiative doc with 9 tasks; agent runs continuously through tasks with subagent-review + commit gates between each | `cp-initiative-clawkerd-cli-integration` |
-| **CP restart resilience** (registry persistence, reconnect path, clawkerd reconnect-with-backoff, `volume prune` safety, `controlplane down` safety, streaming RPC eviction broadcast) | Tracked, not scheduled. Prerequisite for production-readiness | `cp-initiative-cp-restart-resilience` |
+| **CP restart resilience** (registry persistence, reconnect path, clawkerd reconnect-with-backoff, `volume prune` safety, `controlplane down` safety, streaming RPC eviction broadcast) | Tracked, not scheduled. Prerequisite for production-readiness. Now the only known gap on the agent registration story | `cp-initiative-cp-restart-resilience` |
 
 ## Branch 4 Delivery Summary (14 tasks)
 
@@ -42,22 +41,25 @@
 - **E2E tests** (Task 13): authored `clawkerd_register_test.go` (happy path) + `clawkerd_failures_test.go` (seven adversarial cases, most skipped pending an mTLS-dial helper in `test/e2e/harness/`).
 - **Documentation** (Task 14): KEY-CONCEPTS, package CLAUDE.md files for agent/agentslots/agentregistry/clawkerd, plan memory updated, this status memo updated.
 
-## Branch 4 follow-up — what's getting built
+## Branch 4 follow-up — DELIVERED
 
-Full spec in `cp-initiative-clawkerd-cli-integration`. Highlights of architectural decisions made during planning:
+Implementation lived in `cp-initiative-clawkerd-cli-integration` (9 tasks). All complete; full key-learnings list in that memory. Highlights:
 
-- **`AgentService.Register` → `AgentService.Connect`**, server-streaming. The connection IS the agent's lifetime command channel. First message after auth is `Welcome` (carries `ClawkerdConfiguration` placeholder); subsequent messages are commands (B5+ adds payload variants). Stub `AgentService.Events` (client-streaming, clawkerd → CP) for B5 telemetry.
-- **Single-server topology** committed to. clawkerd is gRPC client only. POC's two-server pattern (clawkerd-side `AgentCommandService`, CP dials back via Docker inspect) was K8s-flavored but unnecessary for clawker — single-server with streaming RPCs covers everything.
-- **Composite slot key** (thumbprint + agent_name) replaces AgentName-only key. Solves retry-within-TTL collisions; agent_name cross-check folds into the lookup itself.
-- **`agentslots.EvictByContainerID` + dockerevents `Subscribe`** mirror the existing `agentregistry` pattern. Slot eviction is real-time on container death, not just TTL.
-- **`AgentIdentityInterceptor`** (unary + stream) on the agent listener. Resolves cert thumbprint → registry entry → ctx-attached `*agentregistry.Entry`. Fail-secure opt-out map (`Connect: opted-out`; default require-identity for everything else). Build-time test walks proto descriptor enforcing every method has a policy decision.
-- **CN cross-check** at Connect (`peerCert.Subject.CommonName == req.AgentName`, constant-time). Defense vs announce-payload tampering.
-- **Bootstrap delivery is unconditional** (not gated on `security.firewall.enable`). CP ≠ firewall.
-- **`ConnectRequest.code_verifier` semantics preserve the future reconnect path.** Empty verifier reserved for the reconnect flow (CP restart resilience initiative); today's handler still requires it on first-connect.
+- **`AgentService.Register` → `AgentService.Connect`** (server-streaming). The connection IS the agent's lifetime command channel. First message after auth is `Welcome` (carries `ClawkerdConfiguration` placeholder, B5 fills in). Stub `AgentService.Events` (client-streaming) for B5 telemetry.
+- **Single-server topology**: clawkerd is gRPC client only. Bearer attached via `PerRPCCredentials` (covers both unary AND streaming RPCs — a unary-only interceptor would silently skip Connect).
+- **Composite slot key** (thumbprint + agent_name) folds the agent_name cross-check into slot lookup. Solves retry-within-TTL collisions.
+- **`agentslots.EvictByContainerID` + `Subscribe`** mirror the existing `agentregistry` pattern. Slot eviction is real-time on container death, not just TTL.
+- **`AgentIdentityInterceptor`** (unary + stream) chained AFTER `AuthInterceptor` on the agent listener. Resolves cert thumbprint → registry entry → ctx-attached `*agentregistry.Entry`. Connect is opted out (authenticates itself). The stream wrapper's `Context()` MUST be on the wrapper not promoted from embedded `grpc.ServerStream` — promotion silently breaks identity binding for streaming RPCs.
+- **CN cross-check** at Connect (`peerCert.Subject.CommonName == req.AgentName`, constant-time, BEFORE slot consume so a CN mismatch can't burn a slot).
+- **Welcome BEFORE registry.Add** — receipt of Welcome by clawkerd is the auth-success signal that authorizes verifier deletion. Send-failure leaves no orphan registry entry; failure path is `codes.Unavailable`, not bare `fmt.Errorf` (would surface as `codes.Unknown`).
+- **Bootstrap delivery is UNCONDITIONAL** (NOT gated on `security.firewall.enable`). CP ≠ firewall. Loop containers are also new-container paths and got the AgentName plumbing.
+- **`ConnectRequest.code_verifier`** preserves the empty-verifier seam for the future reconnect flow; today's handler still requires it on first-connect.
+- **`narrow peerIdentity{Raw, CommonName}`** projection (instead of returning `*x509.Certificate`) encodes the trust policy at compile time — the handler MUST source identity decisions only from these two fields.
+- **`Reserve` panics on zero thumbprint / empty Challenge** — programming-error invariants surface at first-call instead of as silent identity-binding gaps.
 
 ## Other known follow-ups before merge
 
-- `test/e2e/harness/` needs an mTLS-dial helper for the adversarial Register tests to actually run. Six of seven adversarial cases skip with explicit "needs harness mTLS-dial helper" messages.
+- `test/e2e/harness/` needs an mTLS-dial helper for the adversarial Register tests to actually run. Six of seven adversarial cases skip with explicit "needs harness mTLS-dial helper" messages. Now ALSO needs adapting from Register (unary) to Connect (server-streaming) once the helper lands.
 
 ## Branch 2 Delivery Summary (all 8 tasks)
 

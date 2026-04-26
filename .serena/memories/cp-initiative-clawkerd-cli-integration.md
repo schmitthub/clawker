@@ -16,7 +16,7 @@
 | Task 6: `cmd/clawker-cp/main.go` wiring (slot registry hoist, identity interceptor chain, dockerevents subscriptions) | `complete` | claude-opus-4-7 |
 | Task 7: `cmd/clawkerd/main.go` — consume `Connect` server-stream | `complete` | claude-opus-4-7 |
 | Task 8: CLI `run`/`start` wiring — `RuntimeEnvOpts` Clawkerd* fields + `prepareAgentBootstrap` helper | `complete` | claude-opus-4-7 |
-| Task 9: Documentation pass — package CLAUDE.md files + KEY-CONCEPTS + status memo | `pending` | — |
+| Task 9: Documentation pass — package CLAUDE.md files + KEY-CONCEPTS + status memo | `complete` | claude-opus-4-7 |
 
 ## Key Learnings
 
