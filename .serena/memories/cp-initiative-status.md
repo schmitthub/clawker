@@ -22,7 +22,9 @@
 | Initiative | Status | Memory |
 |------------|--------|--------|
 | **CP restart resilience** (registry persistence, reconnect path, clawkerd reconnect-with-backoff, `volume prune` safety, `controlplane down` safety, streaming RPC eviction broadcast) | Tracked, not scheduled. Prerequisite for production-readiness | `cp-initiative-cp-restart-resilience` |
-| **E2E adversarial harness** (mTLS-dial + Hydra-token + label-patch + cross-container fixture so the seven authored adversarial Connect tests can actually run) | Tracked, not scheduled. Sized as ~150-300 LOC harness plumbing + 7 test bodies retargeted to streaming Connect | `cp-initiative-e2e-adversarial-harness` |
+| **E2E adversarial harness** (mTLS-dial + Hydra-token + label-patch + cross-container fixture so the seven authored adversarial Connect tests can actually run, plus three new composite-identity cases) | Tracked, not scheduled. Sized as ~150-300 LOC harness plumbing + 7 test bodies retargeted to streaming Connect + composite-identity refactor + 3 new cases | `cp-initiative-e2e-adversarial-harness` |
+| **clawkerd → container death linkage** (clawkerd as PID 1 or bash-level supervisor so a dead clawkerd tears the container down) | Tracked, not scheduled. Surfaced during `cp-initiative-clawkerd-identity-and-logging` UAT | `outstanding-features` §5 |
+| **CP endpoint env-var disclosure** (move `CLAWKER_CP_*` from process env to root-readable files in `/run/clawker/bootstrap`) | Tracked, not scheduled. Defense-in-depth — bootstrap material itself is already root-only | `outstanding-features` §6 |
 
 ## Branch 4 Delivery Summary (14 tasks)
 
