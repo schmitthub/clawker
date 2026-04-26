@@ -21,7 +21,8 @@
 
 | Initiative | Status | Memory |
 |------------|--------|--------|
-| **CP restart resilience** (registry persistence, reconnect path, clawkerd reconnect-with-backoff, `volume prune` safety, `controlplane down` safety, streaming RPC eviction broadcast) | Tracked, not scheduled. Prerequisite for production-readiness. Now the only known gap on the agent registration story | `cp-initiative-cp-restart-resilience` |
+| **CP restart resilience** (registry persistence, reconnect path, clawkerd reconnect-with-backoff, `volume prune` safety, `controlplane down` safety, streaming RPC eviction broadcast) | Tracked, not scheduled. Prerequisite for production-readiness | `cp-initiative-cp-restart-resilience` |
+| **E2E adversarial harness** (mTLS-dial + Hydra-token + label-patch + cross-container fixture so the seven authored adversarial Connect tests can actually run) | Tracked, not scheduled. Sized as ~150-300 LOC harness plumbing + 7 test bodies retargeted to streaming Connect | `cp-initiative-e2e-adversarial-harness` |
 
 ## Branch 4 Delivery Summary (14 tasks)
 
@@ -59,7 +60,7 @@ Implementation lived in `cp-initiative-clawkerd-cli-integration` (9 tasks). All 
 
 ## Other known follow-ups before merge
 
-- `test/e2e/harness/` needs an mTLS-dial helper for the adversarial Register tests to actually run. Six of seven adversarial cases skip with explicit "needs harness mTLS-dial helper" messages. Now ALSO needs adapting from Register (unary) to Connect (server-streaming) once the helper lands.
+- E2E adversarial suite (`test/e2e/clawkerd_failures_test.go`) — six of seven cases skip pending an mTLS-dial helper in `test/e2e/harness/`. Tests also need retargeting from unary Register to streaming Connect now that T1 landed. Full plan in `cp-initiative-e2e-adversarial-harness`.
 
 ## Branch 2 Delivery Summary (all 8 tasks)
 
