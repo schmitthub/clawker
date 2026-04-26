@@ -11,7 +11,7 @@
 | Task 1: Proto — rename `Register` → `Connect` (server-streaming), stub `Events` RPC | `complete` | claude-opus-4-7 |
 | Task 2: `agentslots` — composite key + `EvictByContainerID` + dockerevents `Subscribe` | `complete` | claude-opus-4-7 |
 | Task 3: `agent.Handler.Connect` — server-streaming + CN cross-check + composite Consume | `complete` | claude-opus-4-7 |
-| Task 4: `controlplane.adminServer.AnnounceAgent` handler | `pending` | — |
+| Task 4: `controlplane.adminServer.AnnounceAgent` handler | `complete` | claude-opus-4-7 |
 | Task 5: `AgentIdentityInterceptor` (unary + stream) with fail-secure opt-out map | `pending` | — |
 | Task 6: `cmd/clawker-cp/main.go` wiring (slot registry hoist, identity interceptor chain, dockerevents subscriptions) | `pending` | — |
 | Task 7: `cmd/clawkerd/main.go` — consume `Connect` server-stream | `pending` | — |
@@ -42,6 +42,13 @@
 - Streaming-handler test pattern: `connectStreamFake` embeds `grpc.ServerStream` (nil interface) so any drift beyond Context+Send panics loudly. Optional `sendErr` for the failure path; `welcomed chan struct{}` closed on first Send eliminates busy-wait sync. `runConnect` goroutine wrapper has a 2s deadline guard so a regression in the idle-on-ctx.Done path fails fast instead of hanging.
 - `context.Canceled` / `DeadlineExceeded` from Docker Inspect during Connect is "client disconnect mid-handshake" not a Docker fault — log at Debug to avoid log noise that misleads operators chasing phantom Docker outages.
 - mTLS test (`TestMTLSAgent_ValidCLIClientCert_HandshakeSucceeds`) now relies on the new CN-mismatch check to produce post-handshake PermissionDenied (CLI cert CN is "clawker-cli", request body says "clawker.unregistered-agent"). The Unavailable-vs-PermissionDenied discrimination is the load-bearing assertion.
+
+### Task 4
+- `hex.DecodeString` is case-insensitive but the proto contract for `expected_cert_thumbprint` is lowercase. Enforce explicitly with `strings.ToLower(s) != s` so two equally-valid CLI builds can't disagree on case and so a future strict comparator elsewhere doesn't silently break the tolerant branch.
+- `slots` is a required dependency at `NewAdminServer` (panic on nil). Mirrors `agent.NewHandler`'s panic-on-nil-deps discipline. The runtime `codes.Internal` fallback was unreachable in production (cmd/clawker-cp always constructs slotRegistry) and obscured wiring regressions as opaque per-request errors instead of startup panics. `agents` stays nil-tolerant for `ListAgents` because the partial-build use case is real for that path.
+- AdminService.AnnounceAgent's wire-error mapping: InvalidArgument (validation), AlreadyExists (`ErrSlotExists`), Internal (other Reserve failures). Caller-supplied `ReservedAt`/`ExpiresAt` on the Slot are silently overwritten by `agentslots.Reserve` from its own clock — handler doesn't pre-stamp them.
+- The handler's `clock` produces `ExpiresAtUnix` for the response (CLI uses for logging only); `agentslots.Reserve` uses its own clock for the slot's actual `ExpiresAt`. In production both are `time.Now`; in tests the two clocks diverge by design (handler test verifies wire response, agentslots test verifies slot stamping).
+- Slot registry hoist in `cmd/clawker-cp/main.go`: hoisted above `NewAdminServer` to share across both AdminService and AgentService listeners. T6 adds the dockerevents subscription.
 
 ---
 

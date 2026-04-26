@@ -385,7 +385,15 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// admin listener — construct it here so a single instance is shared.
 	agentReg := agentregistry.NewRegistry(log.With("component", "agentregistry"))
 
-	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg))
+	// Slot registry is needed by AdminService.AnnounceAgent (here) AND
+	// by the AgentService.Connect handler (further down). Hoisted above
+	// NewAdminServer so a single instance is shared; T6 wires the
+	// dockerevents subscription that drains stale slots on container
+	// exit alongside the agentregistry one.
+	slotRegistry := agentslots.NewRegistry(time.Now, 0, log.With("component", "agentslots"))
+	defer slotRegistry.Stop()
+
+	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, slotRegistry, time.Now))
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
 	if err != nil {
@@ -413,12 +421,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("step 8 (agent grpc listen): %w", err)
 	}
 
-	// AgentService wiring: slot registry (announce-time reservations) +
-	// the shared agent registry + handler. The agent registry's
-	// dockerevents subscription is set up further down, once the
-	// informer is alive.
-	slotRegistry := agentslots.NewRegistry(time.Now, 0, log.With("component", "agentslots"))
-	defer slotRegistry.Stop()
+	// AgentService wiring: shared slot registry (announce-time
+	// reservations, hoisted above NewAdminServer) + the shared agent
+	// registry + handler. The agent registry's dockerevents
+	// subscription is set up further down, once the informer is alive.
 	agentInspector := agent.MobyInspector{Client: dockerCli.APIClient}
 	agentHandler := agent.NewHandler(slotRegistry, agentReg, agentInspector, log.With("component", "agent-handler"))
 	agentv1.RegisterAgentServiceServer(agentServer, agentHandler)

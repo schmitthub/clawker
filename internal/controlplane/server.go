@@ -7,11 +7,20 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"sort"
+	"strings"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 )
 
@@ -19,14 +28,7 @@ import (
 // AdminServiceServer surface. The firewall handler embeds
 // UnimplementedAdminServiceServer so new RPCs default to
 // codes.Unimplemented; explicit methods on adminServer (e.g.
-// ListAgents) override that fallback.
-//
-// TODO(B4-followup): wire AdminService.AnnounceAgent here.
-// Currently falls through to UnimplementedAdminServiceServer →
-// codes.Unimplemented, so the CLI's shared.AnnounceAgent helper fails
-// at runtime until the followup branch lands. See
-// .serena/memories/cp-initiative-branch-4-followup-cli-integration.md
-// for the design (handler reserves a slot via agentslots.Registry).
+// ListAgents, AnnounceAgent) override that fallback.
 type adminServer struct {
 	// *fwhandler.Handler embeds adminv1.UnimplementedAdminServiceServer,
 	// so new proto RPCs fail open with codes.Unimplemented via promotion
@@ -34,6 +36,8 @@ type adminServer struct {
 	*fwhandler.Handler
 
 	agents agentregistry.Registry
+	slots  agentslots.Registry
+	clock  func() time.Time
 }
 
 // compile-time: any future additions to AdminServiceServer must be
@@ -41,12 +45,92 @@ type adminServer struct {
 var _ adminv1.AdminServiceServer = (*adminServer)(nil)
 
 // NewAdminServer returns the composite AdminServiceServer wired from
-// the supplied domain handlers. agents may be nil — when nil, ListAgents
-// returns an empty result so the CLI's `controlplane agents` command
-// renders cleanly even on a CP build that hasn't wired the agent
-// registry yet.
-func NewAdminServer(fw *fwhandler.Handler, agents agentregistry.Registry) adminv1.AdminServiceServer {
-	return &adminServer{Handler: fw, agents: agents}
+// the supplied domain handlers.
+//
+//   - slots is required: AnnounceAgent has no fallback path when the
+//     slot registry is missing. Panic at construction so a wiring
+//     regression surfaces during startup, not as opaque codes.Internal
+//     responses on every announce. Mirrors agent.NewHandler's posture
+//     for its required dependencies.
+//   - agents may be nil — when nil, ListAgents returns an empty result
+//     so the CLI's `controlplane agents` command renders cleanly even
+//     on a CP build that hasn't wired the agent registry yet.
+//   - clock defaults to time.Now when nil. Tests inject a fixed-time
+//     function so AnnounceAgent's ExpiresAt is deterministic.
+func NewAdminServer(fw *fwhandler.Handler, agents agentregistry.Registry, slots agentslots.Registry, clock func() time.Time) adminv1.AdminServiceServer {
+	if slots == nil {
+		panic("controlplane: NewAdminServer requires non-nil slots registry")
+	}
+	if clock == nil {
+		clock = time.Now
+	}
+	return &adminServer{Handler: fw, agents: agents, slots: slots, clock: clock}
+}
+
+// AnnounceAgent reserves a slot for an in-flight container startup. The
+// CLI calls this before issuing client.ContainerStart so the slot is
+// already in place when clawkerd boots and dials Connect. Validation is
+// strict — every required field is non-empty and the cert thumbprint
+// is exactly 64 lowercase-hex characters — because the slot record is
+// the load-bearing identity binding for the subsequent Connect
+// handshake.
+//
+// Wire-level error mapping:
+//   - missing/malformed fields → codes.InvalidArgument
+//   - duplicate composite (cert_thumbprint, agent_name) → codes.AlreadyExists
+//   - any other Reserve failure → codes.Internal
+func (s *adminServer) AnnounceAgent(_ context.Context, req *adminv1.AnnounceAgentRequest) (*adminv1.AnnounceAgentResult, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request required")
+	}
+	if req.AgentName == "" {
+		return nil, status.Error(codes.InvalidArgument, "agent_name required")
+	}
+	if req.ContainerId == "" {
+		return nil, status.Error(codes.InvalidArgument, "container_id required")
+	}
+	if req.CodeChallenge == "" {
+		return nil, status.Error(codes.InvalidArgument, "code_challenge required")
+	}
+	if req.CodeChallengeMethod != string(consts.ChallengeMethodS256) {
+		return nil, status.Error(codes.InvalidArgument, "code_challenge_method must be S256")
+	}
+
+	// hex.DecodeString is case-insensitive but the proto contract is
+	// lowercase. Enforce explicitly so two equally-valid CLI builds
+	// can't disagree on case and so a future strict comparator
+	// elsewhere in the codebase doesn't silently break the tolerant
+	// branch.
+	if strings.ToLower(req.ExpectedCertThumbprint) != req.ExpectedCertThumbprint {
+		return nil, status.Error(codes.InvalidArgument, "expected_cert_thumbprint must be 64 lowercase hex characters")
+	}
+	raw, err := hex.DecodeString(req.ExpectedCertThumbprint)
+	if err != nil || len(raw) != sha256.Size {
+		return nil, status.Error(codes.InvalidArgument, "expected_cert_thumbprint must be 64 lowercase hex characters")
+	}
+	var thumbprint [sha256.Size]byte
+	copy(thumbprint[:], raw)
+
+	now := s.clock()
+	slot := agentslots.Slot{
+		AgentName:              req.AgentName,
+		ContainerID:            req.ContainerId,
+		ExpectedCertThumbprint: thumbprint,
+		Challenge:              req.CodeChallenge,
+		ChallengeMethod:        consts.ChallengeMethod(req.CodeChallengeMethod),
+		// ReservedAt / ExpiresAt are stamped inside Reserve from the
+		// registry's clock; the values set here are overwritten.
+	}
+	if err := s.slots.Reserve(slot); err != nil {
+		if errors.Is(err, agentslots.ErrSlotExists) {
+			return nil, status.Error(codes.AlreadyExists, "agent already announced")
+		}
+		return nil, status.Error(codes.Internal, "slot reservation failed")
+	}
+
+	return &adminv1.AnnounceAgentResult{
+		ExpiresAtUnix: now.Add(consts.AgentSlotTTL).Unix(),
+	}, nil
 }
 
 // ListAgents returns a deterministic snapshot of every agent currently
