@@ -40,6 +40,12 @@ import (
 // for client verification) plus the agent-scope AuthInterceptor. The
 // inspector is wired with a closure-backed stub so we can exercise the
 // TLS layer without needing a real Docker daemon.
+//
+// Connect is server-streaming, so transport-level rejections surface
+// either on the Connect call itself or on the first stream.Recv()
+// depending on gRPC-go internals — callers run both and inspect the
+// final error code. The handler-level rejection (post-handshake
+// PermissionDenied) always surfaces on stream.Recv().
 func startMTLSAgentServer(t *testing.T, introspector *cpmocks.IntrospectorMock) (string, *x509.CertPool) {
 	t.Helper()
 
@@ -73,9 +79,11 @@ func startMTLSAgentServer(t *testing.T, introspector *cpmocks.IntrospectorMock) 
 		grpc.ChainStreamInterceptor(interceptor.StreamInterceptor()),
 	)
 
-	// Real handler so a successful TLS+token client is allowed to invoke
-	// Register and observe a post-handshake (PermissionDenied) failure
-	// from the slot lookup — the point being that the channel is open.
+	// Real handler so a successful TLS+token client is allowed to
+	// invoke Connect and observe a post-handshake (PermissionDenied)
+	// failure (today: cert CN cross-check, since the CLI's "clawker-
+	// cli" CN does not match an agent-name request body) — the point
+	// being that the channel is open.
 	slots := agentslots.NewRegistry(time.Now, time.Hour, log)
 	t.Cleanup(slots.Stop)
 	reg := agentregistry.NewRegistry(log)
@@ -126,9 +134,24 @@ func allowAllAgentIntrospector() *cpmocks.IntrospectorMock {
 
 // --- mTLS connection tests for the agent listener ---
 
+// connectAndDrain calls Connect and reads from the resulting stream
+// until it errors. Returns the first non-nil error encountered. For
+// transport-level rejections (TLS handshake failures) the error may
+// surface on the Connect call itself; for handler-level rejections
+// (PermissionDenied) it always surfaces on the first Recv. Hiding the
+// distinction here keeps each test focused on the resulting code.
+func connectAndDrain(ctx context.Context, c agentv1.AgentServiceClient, req *agentv1.ConnectRequest) error {
+	stream, err := c.Connect(ctx, req)
+	if err != nil {
+		return err
+	}
+	_, err = stream.Recv()
+	return err
+}
+
 // Tests that a client presenting no client cert is rejected by the
 // agent listener. Catches a regression to RequestClientCert that would
-// silently let unauthenticated peers reach AgentService.Register.
+// silently let unauthenticated peers reach AgentService.Connect.
 func TestMTLSAgent_NoClientCert_Rejected(t *testing.T) {
 	testenv.New(t)
 	addr, caCertPool := startMTLSAgentServer(t, allowAllAgentIntrospector())
@@ -148,7 +171,7 @@ func TestMTLSAgent_NoClientCert_Rejected(t *testing.T) {
 
 	client := agentv1.NewAgentServiceClient(conn)
 	ctx := withBearer(context.Background(), "agent-token")
-	_, err = client.Register(ctx, &agentv1.RegisterRequest{
+	err = connectAndDrain(ctx, client, &agentv1.ConnectRequest{
 		AgentName:    "clawker.example",
 		CodeVerifier: "verifier-not-used-handshake-fails-first",
 	})
@@ -182,7 +205,7 @@ func TestMTLSAgent_UntrustedCAClientCert_Rejected(t *testing.T) {
 
 	client := agentv1.NewAgentServiceClient(conn)
 	ctx := withBearer(context.Background(), "agent-token")
-	_, err = client.Register(ctx, &agentv1.RegisterRequest{
+	err = connectAndDrain(ctx, client, &agentv1.ConnectRequest{
 		AgentName:    "clawker.example",
 		CodeVerifier: "verifier-not-used-handshake-fails-first",
 	})
@@ -191,11 +214,12 @@ func TestMTLSAgent_UntrustedCAClientCert_Rejected(t *testing.T) {
 }
 
 // Tests that a client presenting a CLI-CA-signed client cert clears
-// the TLS handshake. Register itself returns PermissionDenied because
-// no slot is registered — that's the agent handler's fail-closed
-// contract for any unknown agent and it confirms the request reached
-// the handler (i.e. the channel was authenticated, the auth token
-// passed scope check, and the call was dispatched).
+// the TLS handshake. Connect returns PermissionDenied post-handshake
+// because the CLI's leaf cert CN ("clawker-cli") does not match the
+// request's agent_name — that's the new B-step CN cross-check
+// rejecting before the slot lookup ever runs, and it confirms the
+// request reached the handler (i.e. the channel was authenticated,
+// the auth token passed scope check, and the call was dispatched).
 func TestMTLSAgent_ValidCLIClientCert_HandshakeSucceeds(t *testing.T) {
 	testenv.New(t)
 	addr, caCertPool := startMTLSAgentServer(t, allowAllAgentIntrospector())
@@ -219,11 +243,11 @@ func TestMTLSAgent_ValidCLIClientCert_HandshakeSucceeds(t *testing.T) {
 
 	client := agentv1.NewAgentServiceClient(conn)
 	ctx := withBearer(context.Background(), "agent-token")
-	_, err = client.Register(ctx, &agentv1.RegisterRequest{
+	err = connectAndDrain(ctx, client, &agentv1.ConnectRequest{
 		AgentName:    "clawker.unregistered-agent",
 		CodeVerifier: "00000000000000000000000000000000000000000000",
 	})
-	require.Error(t, err, "Register must fail post-handshake (unknown slot)")
+	require.Error(t, err, "Connect must fail post-handshake (CN mismatch)")
 	assert.Equal(t, codes.PermissionDenied, status.Code(err),
 		"failure must be PermissionDenied (handler-level), not Unavailable (TLS-level): got %v", err)
 }
@@ -244,7 +268,7 @@ func TestMTLSAgent_NoTLS_Rejected(t *testing.T) {
 
 	client := agentv1.NewAgentServiceClient(conn)
 	ctx := withBearer(context.Background(), "agent-token")
-	_, err = client.Register(ctx, &agentv1.RegisterRequest{
+	err = connectAndDrain(ctx, client, &agentv1.ConnectRequest{
 		AgentName:    "clawker.example",
 		CodeVerifier: "verifier-not-used-handshake-fails-first",
 	})

@@ -10,7 +10,7 @@
 |------|--------|-------|
 | Task 1: Proto — rename `Register` → `Connect` (server-streaming), stub `Events` RPC | `complete` | claude-opus-4-7 |
 | Task 2: `agentslots` — composite key + `EvictByContainerID` + dockerevents `Subscribe` | `complete` | claude-opus-4-7 |
-| Task 3: `agent.Handler.Connect` — server-streaming + CN cross-check + composite Consume | `pending` | — |
+| Task 3: `agent.Handler.Connect` — server-streaming + CN cross-check + composite Consume | `complete` | claude-opus-4-7 |
 | Task 4: `controlplane.adminServer.AnnounceAgent` handler | `pending` | — |
 | Task 5: `AgentIdentityInterceptor` (unary + stream) with fail-secure opt-out map | `pending` | — |
 | Task 6: `cmd/clawker-cp/main.go` wiring (slot registry hoist, identity interceptor chain, dockerevents subscriptions) | `pending` | — |
@@ -35,6 +35,13 @@
 - Subscribe panic-recovery rationale here is weaker than agentregistry's — `agentslots` has a TTL janitor that bounds the leak floor. The integration is still load-bearing because dockerevents-driven eviction is what makes both registries identically driven by the same deltas.
 - subscribe.go is a deliberate mirror of agentregistry/subscribe.go — both packages have package-local `drainOnce`, `handleDelta`, `panicOnceRegistry` helpers. This is intentional duplication; do NOT collapse into a shared helper without sharper interface analysis.
 - moq regen is straight `go generate ./...` from the package directory; it picks up Consume signature changes and new EvictByContainerID method automatically.
+
+### Task 3
+- Send Welcome BEFORE registry.Add — eliminates the "registry has orphan entry but agent never received Welcome" partial-failure window. The original initiative ordering had Add before Send; T3 reordered after silent-failure-hunter caught the gap. Send-failure path also wraps in `status.Error(codes.Unavailable, ...)` so the wire code matches the rest of the handler's discipline (no leaked fmt-string -> codes.Unknown).
+- `peerCertAndIP` was renamed to `peerIdentityAndIP` and returns `*peerIdentity{Raw, CommonName}` — a narrow projection of the trusted cert fields. Returning `*x509.Certificate` would expose ~24 fields and weaken the "we trust only Raw and CN" invariant from a compile-time guarantee to a doc-comment claim. The narrow type also forces deliberate review when a future RPC needs a third trusted field.
+- Streaming-handler test pattern: `connectStreamFake` embeds `grpc.ServerStream` (nil interface) so any drift beyond Context+Send panics loudly. Optional `sendErr` for the failure path; `welcomed chan struct{}` closed on first Send eliminates busy-wait sync. `runConnect` goroutine wrapper has a 2s deadline guard so a regression in the idle-on-ctx.Done path fails fast instead of hanging.
+- `context.Canceled` / `DeadlineExceeded` from Docker Inspect during Connect is "client disconnect mid-handshake" not a Docker fault — log at Debug to avoid log noise that misleads operators chasing phantom Docker outages.
+- mTLS test (`TestMTLSAgent_ValidCLIClientCert_HandshakeSucceeds`) now relies on the new CN-mismatch check to produce post-handshake PermissionDenied (CLI cert CN is "clawker-cli", request body says "clawker.unregistered-agent"). The Unavailable-vs-PermissionDenied discrimination is the load-bearing assertion.
 
 ---
 

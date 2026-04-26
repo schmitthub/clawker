@@ -5,15 +5,18 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"errors"
 	"net"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
@@ -39,15 +42,80 @@ func (f inspectorFn) Inspect(ctx context.Context, id string) (ContainerInfo, err
 	return f(ctx, id)
 }
 
-// fixtureRegister builds the world Register expects: a slot with the
-// given verifier hashed into its challenge, a thumbprint matching the
-// supplied "cert" bytes, and an inspector that returns clawker-net IP +
-// labels declaring agentName.
+// connectStreamFake satisfies agentv1.AgentService_ConnectServer with
+// the minimum surface the handler touches: Context() and Send(). The
+// embedded grpc.ServerStream is intentionally nil — every other
+// ServerStream method (SetHeader, SendHeader, SetTrailer, SendMsg,
+// RecvMsg) panics if called, surfacing any test that drifts beyond
+// what the production handler does.
+//
+// `sendErr` is an injectable failure for the Send-Welcome path; tests
+// that exercise transport failures set it to a non-nil error and
+// observe the handler's response. `welcomed` is closed on the first
+// successful Send so tests can synchronize on "handler is past auth
+// and idling" without polling.
+type connectStreamFake struct {
+	grpc.ServerStream
+	ctx     context.Context
+	sendErr error
+
+	mu       sync.Mutex
+	sent     []*agentv1.Command
+	welcomed chan struct{}
+}
+
+func newConnectStream(ctx context.Context) *connectStreamFake {
+	return &connectStreamFake{ctx: ctx, welcomed: make(chan struct{})}
+}
+
+func (s *connectStreamFake) Context() context.Context { return s.ctx }
+func (s *connectStreamFake) Send(c *agentv1.Command) error {
+	if s.sendErr != nil {
+		return s.sendErr
+	}
+	s.mu.Lock()
+	s.sent = append(s.sent, c)
+	first := len(s.sent) == 1
+	s.mu.Unlock()
+	if first {
+		close(s.welcomed)
+	}
+	return nil
+}
+func (s *connectStreamFake) sentCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sent)
+}
+func (s *connectStreamFake) sentAt(i int) *agentv1.Command {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sent[i]
+}
+
+// awaitWelcome blocks until the handler's first Send returns, or the
+// 1s deadline elapses (in which case the test fails). Replaces the
+// busy-wait poll loop tests previously used to detect "handler past
+// auth and idling".
+func (s *connectStreamFake) awaitWelcome(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.welcomed:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not Send Welcome within 1s")
+	}
+}
+
+// fixtureRegister builds the world Connect expects: a slot keyed by
+// the (thumbprint, agent_name) composite, an inspector that returns
+// clawker-net IP + labels declaring agentName, and a peer cert whose
+// CN matches agentName (the new B-step cross-check).
 type fixtureOpts struct {
 	agentName   string
 	verifier    string
 	containerID string
 	certRaw     []byte
+	certCN      string // override; defaults to agentName
 	peerIP      net.IP
 	dockerIP    net.IP
 	labelAgent  string
@@ -70,6 +138,9 @@ func newFixture(t *testing.T, opts fixtureOpts) *fixture {
 	if opts.labelAgent == "" {
 		opts.labelAgent = opts.agentName
 	}
+	if opts.certCN == "" {
+		opts.certCN = opts.agentName
+	}
 
 	now := time.Unix(100, 0)
 	slots := agentslots.NewRegistry(func() time.Time { return now }, time.Hour, nil)
@@ -77,9 +148,11 @@ func newFixture(t *testing.T, opts fixtureOpts) *fixture {
 
 	thumb := sha256.Sum256(opts.certRaw)
 	if opts.wrongThumb {
-		// Flip the first byte so the constant-time compare fails on
-		// the slot side; the peer cert at Register still hashes to
-		// the unflipped value, so the cross-check rejects.
+		// Flip the first byte so the slot's stored thumbprint differs
+		// from the one Connect computes from the peer cert. With the
+		// composite key, this also flips the slot's lookup key — so
+		// Consume returns ErrSlotInvalid with no need for a separate
+		// thumbprint compare in the handler.
 		thumb[0] ^= 0xff
 	}
 
@@ -103,10 +176,7 @@ func newFixture(t *testing.T, opts fixtureOpts) *fixture {
 		}, nil
 	})
 
-	// Pin the handler's clock so RegisteredAt/LastSeen are
-	// deterministic. WithClock is the production-supported seam — we
-	// use it the same way cmd/clawker-cp would (omit it) except with a
-	// fixed-time function.
+	// Pin the handler's clock so RegisteredAt/LastSeen are deterministic.
 	h := NewHandler(slots, reg, inspector, nil, WithClock(func() time.Time { return now }))
 	return &fixture{handler: h, registry: reg, slots: slots, opts: opts}
 }
@@ -119,80 +189,132 @@ func pkceChallengeForTest(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// ctxWithPeer returns a ctx the handler will see when called via gRPC
-// over mTLS. Builds a real TLS connection state with the cert so
-// peer.FromContext + credentials.TLSInfo round-trip cleanly.
-func ctxWithPeer(certRaw []byte, peerIP net.IP) context.Context {
-	leaf := &x509.Certificate{Raw: certRaw}
+// ctxWithPeer builds a ctx the handler will see when called via gRPC
+// over mTLS. The leaf cert carries Subject.CommonName so the handler's
+// new CN cross-check has a value to compare against.
+func ctxWithPeer(certRaw []byte, cn string, peerIP net.IP) context.Context {
+	leaf := &x509.Certificate{
+		Raw:     certRaw,
+		Subject: pkix.Name{CommonName: cn},
+	}
 	state := tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}
 	authInfo := credentials.TLSInfo{State: state}
 	addr := &net.TCPAddr{IP: peerIP, Port: 4242}
 	return peer.NewContext(context.Background(), &peer.Peer{Addr: addr, AuthInfo: authInfo})
 }
 
-func TestRegister_HappyPath(t *testing.T) {
+// runConnect drives the streaming handler in a goroutine. Returns the
+// fake stream so callers can inspect Sent commands, plus a wait-for-
+// completion func that asserts the handler returned the expected
+// error (or nil for the happy path) before the deadline. Goroutine
+// is needed because Connect blocks on stream.Context().Done() after
+// auth succeeds.
+func runConnect(t *testing.T, h *Handler, ctx context.Context, req *agentv1.ConnectRequest) (*connectStreamFake, func() error) {
+	t.Helper()
+	stream := newConnectStream(ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- h.Connect(req, stream)
+	}()
+	wait := func() error {
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(2 * time.Second):
+			t.Fatal("Connect did not return within 2s")
+			return nil
+		}
+	}
+	return stream, wait
+}
+
+func TestConnect_HappyPath(t *testing.T) {
 	const verifier = "verifier-bytes"
 	certRaw := []byte("cert-der-payload")
+	const agentName = "clawker.alpha.bravo"
 	peerIP := net.IPv4(172, 28, 0, 5)
 
 	f := newFixture(t, fixtureOpts{
-		agentName:   "clawker.alpha.bravo",
+		agentName:   agentName,
 		verifier:    verifier,
 		containerID: "ctr-12345",
 		certRaw:     certRaw,
 		peerIP:      peerIP,
 	})
 
-	resp, err := f.handler.Register(
-		ctxWithPeer(certRaw, peerIP),
-		&agentv1.RegisterRequest{AgentName: f.opts.agentName, CodeVerifier: verifier},
-	)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
+	ctx, cancel := context.WithCancel(ctxWithPeer(certRaw, agentName, peerIP))
+	stream, wait := runConnect(t, f.handler, ctx,
+		&agentv1.ConnectRequest{AgentName: agentName, CodeVerifier: verifier})
+
+	// Welcome arrives before the handler idles on ctx.Done.
+	stream.awaitWelcome(t)
+
+	// First message MUST be Welcome (clawkerd uses this as the
+	// auth-success signal that allows verifier deletion).
+	require.Equal(t, 1, stream.sentCount())
+	cmd := stream.sentAt(0)
+	welcome, ok := cmd.Payload.(*agentv1.Command_Welcome)
+	require.True(t, ok, "first Command payload must be Welcome, got %T", cmd.Payload)
+	require.NotNil(t, welcome.Welcome.Config)
 
 	// Slot was consumed.
 	assert.Equal(t, 0, f.slots.Len())
 
-	// Registry has the new entry, keyed by the thumbprint Register computed.
+	// Registry has the new entry.
 	thumb := sha256.Sum256(certRaw)
 	got, err := f.registry.Lookup(thumb)
 	require.NoError(t, err)
-	assert.Equal(t, f.opts.agentName, got.AgentName)
+	assert.Equal(t, agentName, got.AgentName)
 	assert.Equal(t, "ctr-12345", got.ContainerID)
+
+	// Cancel ctx — handler must idle on stream.Context().Done() and
+	// return cleanly (the eviction-driven shutdown path); a regression
+	// that returned from Connect immediately after Send would tear the
+	// channel down here.
+	cancel()
+	require.NoError(t, wait())
 }
 
-func TestRegister_RejectsMissingFields(t *testing.T) {
+func TestConnect_RejectsMissingFields(t *testing.T) {
 	f := newFixture(t, fixtureOpts{
 		agentName: "clawker.x", verifier: "v", containerID: "c",
 		certRaw: []byte("c"), peerIP: net.IPv4(1, 2, 3, 4),
 	})
 
-	cases := []*agentv1.RegisterRequest{
+	cases := []*agentv1.ConnectRequest{
 		nil,
 		{AgentName: "", CodeVerifier: "v"},
 		{AgentName: "clawker.x", CodeVerifier: ""},
 	}
 	for _, req := range cases {
-		_, err := f.handler.Register(ctxWithPeer([]byte("c"), net.IPv4(1, 2, 3, 4)), req)
+		stream := newConnectStream(ctxWithPeer([]byte("c"), "clawker.x", net.IPv4(1, 2, 3, 4)))
+		err := f.handler.Connect(req, stream)
 		require.Error(t, err)
 		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		assert.Equal(t, 0, stream.sentCount(), "rejected requests must not Send anything")
 	}
 }
 
-func TestRegister_NoPeerCert(t *testing.T) {
+func TestConnect_NoPeerCert(t *testing.T) {
 	f := newFixture(t, fixtureOpts{
 		agentName: "clawker.x", verifier: "v", containerID: "c",
 		certRaw: []byte("c"), peerIP: net.IPv4(1, 2, 3, 4),
 	})
 	// Bare context — no peer info.
-	_, err := f.handler.Register(context.Background(), &agentv1.RegisterRequest{
+	stream := newConnectStream(context.Background())
+	err := f.handler.Connect(&agentv1.ConnectRequest{
 		AgentName: "clawker.x", CodeVerifier: "v",
-	})
+	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
-func TestRegister_WrongVerifier(t *testing.T) {
+// TestConnect_CNMismatch is the new check Connect introduces over
+// Register: if the peer cert's Subject.CommonName disagrees with the
+// request's agent_name, reject before slot consume — defense vs an
+// attacker who somehow constructed a valid-looking ConnectRequest body
+// but presents a cert minted for a different agent.
+func TestConnect_CNMismatch(t *testing.T) {
 	const verifier = "v"
 	certRaw := []byte("cert")
 	peerIP := net.IPv4(10, 0, 0, 5)
@@ -201,9 +323,32 @@ func TestRegister_WrongVerifier(t *testing.T) {
 		certRaw: certRaw, peerIP: peerIP,
 	})
 
-	_, err := f.handler.Register(ctxWithPeer(certRaw, peerIP), &agentv1.RegisterRequest{
-		AgentName: "clawker.x", CodeVerifier: "wrong",
+	// Cert CN says "clawker.evil"; request body says "clawker.x".
+	stream := newConnectStream(ctxWithPeer(certRaw, "clawker.evil", peerIP))
+	err := f.handler.Connect(&agentv1.ConnectRequest{
+		AgentName: "clawker.x", CodeVerifier: verifier,
+	}, stream)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.Equal(t, 0, stream.sentCount())
+	// Slot must remain — CN mismatch rejects before Consume.
+	assert.Equal(t, 1, f.slots.Len())
+}
+
+func TestConnect_WrongVerifier(t *testing.T) {
+	const verifier = "v"
+	certRaw := []byte("cert")
+	const agentName = "clawker.x"
+	peerIP := net.IPv4(10, 0, 0, 5)
+	f := newFixture(t, fixtureOpts{
+		agentName: agentName, verifier: verifier, containerID: "c",
+		certRaw: certRaw, peerIP: peerIP,
 	})
+
+	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	err := f.handler.Connect(&agentv1.ConnectRequest{
+		AgentName: agentName, CodeVerifier: "wrong",
+	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 	// Wrong verifier MUST leave the slot for benign retry — agentslots
@@ -212,45 +357,55 @@ func TestRegister_WrongVerifier(t *testing.T) {
 	assert.Equal(t, 1, f.slots.Len())
 }
 
-func TestRegister_CertSwap(t *testing.T) {
+// TestConnect_CertSwap exercises the composite-key path: a peer cert
+// whose thumbprint disagrees with the slot's stored thumbprint causes
+// the (thumbprint, agent_name) lookup to miss entirely. Before the
+// composite refactor this was a separate post-Consume compare; now
+// it's implicit in the slot lookup itself.
+func TestConnect_CertSwap(t *testing.T) {
 	const verifier = "v"
 	certRaw := []byte("cert-a")
+	const agentName = "clawker.x"
 	peerIP := net.IPv4(10, 0, 0, 5)
 	f := newFixture(t, fixtureOpts{
-		agentName: "clawker.x", verifier: verifier, containerID: "c",
+		agentName: agentName, verifier: verifier, containerID: "c",
 		certRaw: certRaw, peerIP: peerIP, wrongThumb: true,
 	})
 
-	_, err := f.handler.Register(ctxWithPeer(certRaw, peerIP), &agentv1.RegisterRequest{
-		AgentName: "clawker.x", CodeVerifier: verifier,
-	})
+	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	err := f.handler.Connect(&agentv1.ConnectRequest{
+		AgentName: agentName, CodeVerifier: verifier,
+	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
-func TestRegister_PeerIPMismatch(t *testing.T) {
+func TestConnect_PeerIPMismatch(t *testing.T) {
 	const verifier = "v"
 	certRaw := []byte("cert")
+	const agentName = "clawker.x"
 	f := newFixture(t, fixtureOpts{
-		agentName: "clawker.x", verifier: verifier, containerID: "c",
+		agentName: agentName, verifier: verifier, containerID: "c",
 		certRaw:  certRaw,
 		peerIP:   net.IPv4(10, 0, 0, 5),
 		dockerIP: net.IPv4(10, 0, 0, 99),
 	})
 
-	_, err := f.handler.Register(ctxWithPeer(certRaw, net.IPv4(10, 0, 0, 5)), &agentv1.RegisterRequest{
-		AgentName: "clawker.x", CodeVerifier: verifier,
-	})
+	stream := newConnectStream(ctxWithPeer(certRaw, agentName, net.IPv4(10, 0, 0, 5)))
+	err := f.handler.Connect(&agentv1.ConnectRequest{
+		AgentName: agentName, CodeVerifier: verifier,
+	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
-func TestRegister_LabelMismatch(t *testing.T) {
+func TestConnect_LabelMismatch(t *testing.T) {
 	const verifier = "v"
 	certRaw := []byte("cert")
+	const agentName = "clawker.x"
 	peerIP := net.IPv4(10, 0, 0, 5)
 	f := newFixture(t, fixtureOpts{
-		agentName:   "clawker.x",
+		agentName:   agentName,
 		verifier:    verifier,
 		containerID: "c",
 		certRaw:     certRaw,
@@ -258,47 +413,90 @@ func TestRegister_LabelMismatch(t *testing.T) {
 		labelAgent:  "clawker.y", // tampered after announce
 	})
 
-	_, err := f.handler.Register(ctxWithPeer(certRaw, peerIP), &agentv1.RegisterRequest{
-		AgentName: "clawker.x", CodeVerifier: verifier,
-	})
+	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	err := f.handler.Connect(&agentv1.ConnectRequest{
+		AgentName: agentName, CodeVerifier: verifier,
+	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
-func TestRegister_DockerInspectError(t *testing.T) {
+func TestConnect_DockerInspectError(t *testing.T) {
 	certRaw := []byte("cert")
+	const agentName = "clawker.x"
 	peerIP := net.IPv4(10, 0, 0, 5)
 	f := newFixture(t, fixtureOpts{
-		agentName: "clawker.x", verifier: "v", containerID: "c",
+		agentName: agentName, verifier: "v", containerID: "c",
 		certRaw: certRaw, peerIP: peerIP,
 		inspectErr: errors.New("docker daemon unreachable"),
 	})
 
-	_, err := f.handler.Register(ctxWithPeer(certRaw, peerIP), &agentv1.RegisterRequest{
-		AgentName: "clawker.x", CodeVerifier: "v",
-	})
+	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	err := f.handler.Connect(&agentv1.ConnectRequest{
+		AgentName: agentName, CodeVerifier: "v",
+	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
-// TestRegister_MissingNetworkSettings exercises the new sentinel
-// returned by MobyInspector when a container has no NetworkSettings.
-// Wire response is the generic codes.PermissionDenied (attackers must
-// not learn which check failed) but the handler must still successfully
-// branch on the sentinel — a panic or wrapped-error swallow here would
-// regress the diagnostic.
-func TestRegister_MissingNetworkSettings(t *testing.T) {
+// TestConnect_SendWelcomeFails exercises the post-auth Send-failure
+// path: if stream.Send returns an error (most often: client already
+// disconnected by the time auth completes), the handler must surface
+// codes.Unavailable on the wire (NOT bare fmt.Errorf which would land
+// as codes.Unknown) and must NOT pin an orphan registry entry. The
+// slot is consumed regardless — Consume's single-use semantic owns
+// that contract.
+func TestConnect_SendWelcomeFails(t *testing.T) {
+	const verifier = "v"
 	certRaw := []byte("cert")
+	const agentName = "clawker.x"
 	peerIP := net.IPv4(10, 0, 0, 5)
 	f := newFixture(t, fixtureOpts{
-		agentName: "clawker.x", verifier: "v", containerID: "c",
+		agentName: agentName, verifier: verifier, containerID: "c",
+		certRaw: certRaw, peerIP: peerIP,
+	})
+
+	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	stream.sendErr = errors.New("client gone")
+
+	err := f.handler.Connect(&agentv1.ConnectRequest{
+		AgentName: agentName, CodeVerifier: verifier,
+	}, stream)
+	require.Error(t, err)
+	assert.Equal(t, codes.Unavailable, status.Code(err),
+		"Send failure must surface as codes.Unavailable, not bare fmt.Errorf -> codes.Unknown")
+
+	// Registry must NOT have an entry — Send happens before Add, so a
+	// failed Send leaves no orphan to evict.
+	thumb := sha256.Sum256(certRaw)
+	_, lookupErr := f.registry.Lookup(thumb)
+	assert.ErrorIs(t, lookupErr, agentregistry.ErrUnknownAgent,
+		"failed Send must not leave an orphan registry entry")
+
+	// Slot was still consumed (single-use; agentslots owns the contract).
+	assert.Equal(t, 0, f.slots.Len())
+}
+
+// TestConnect_MissingNetworkSettings exercises the sentinel returned
+// by MobyInspector when a container has no NetworkSettings. Wire
+// response is the generic codes.PermissionDenied (attackers must not
+// learn which check failed) but the handler must still successfully
+// branch on the sentinel — a panic or wrapped-error swallow here
+// would regress the diagnostic.
+func TestConnect_MissingNetworkSettings(t *testing.T) {
+	certRaw := []byte("cert")
+	const agentName = "clawker.x"
+	peerIP := net.IPv4(10, 0, 0, 5)
+	f := newFixture(t, fixtureOpts{
+		agentName: agentName, verifier: "v", containerID: "c",
 		certRaw: certRaw, peerIP: peerIP,
 		inspectErr: errMissingNetworkSettings,
 	})
 
-	_, err := f.handler.Register(ctxWithPeer(certRaw, peerIP), &agentv1.RegisterRequest{
-		AgentName: "clawker.x", CodeVerifier: "v",
-	})
+	stream := newConnectStream(ctxWithPeer(certRaw, agentName, peerIP))
+	err := f.handler.Connect(&agentv1.ConnectRequest{
+		AgentName: agentName, CodeVerifier: "v",
+	}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
