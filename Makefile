@@ -308,8 +308,15 @@ $(COREDNS_BINARY): $(COREDNS_BINARY_DEPS) $(BPF_BINDINGS)
 # and baked into the clawker-cp image at runtime by
 # internal/controlplane/cpboot/bootstrap.go (cpImageDockerfile) alongside
 # ebpf-manager (break-glass).
+#
+# cp-binary depends on $(CLAWKERD_BINARY) because cmd/clawker-cp transitively
+# imports internal/clawkerd via internal/docker → internal/bundler. The
+# inner Dockerfile.controlplane Go build refuses to compile internal/clawkerd
+# until its `//go:embed assets/clawkerd` target exists on disk. Make builds
+# prereqs in declared order, but adding this as an explicit prerequisite of
+# the file target also makes parallel `make -j` correct.
 cp-binary: $(CP_BINARY)
-$(CP_BINARY): $(CP_BINARY_DEPS) $(BPF_BINDINGS)
+$(CP_BINARY): $(CP_BINARY_DEPS) $(BPF_BINDINGS) $(CLAWKERD_BINARY)
 	@echo "Building clawker-cp for linux/$(BUILDX_TARGETARCH) via pinned Dockerfile.controlplane..."
 	@mkdir -p $(@D)
 	@rm -rf $(@D)/.cp-extract
