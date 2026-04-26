@@ -9,7 +9,7 @@
 | Task | Status | Agent |
 |------|--------|-------|
 | Task 1: Proto — rename `Register` → `Connect` (server-streaming), stub `Events` RPC | `complete` | claude-opus-4-7 |
-| Task 2: `agentslots` — composite key + `EvictByContainerID` + dockerevents `Subscribe` | `pending` | — |
+| Task 2: `agentslots` — composite key + `EvictByContainerID` + dockerevents `Subscribe` | `complete` | claude-opus-4-7 |
 | Task 3: `agent.Handler.Connect` — server-streaming + CN cross-check + composite Consume | `pending` | — |
 | Task 4: `controlplane.adminServer.AnnounceAgent` handler | `pending` | — |
 | Task 5: `AgentIdentityInterceptor` (unary + stream) with fail-secure opt-out map | `pending` | — |
@@ -27,6 +27,14 @@
 - The agent OAuth2 client in Hydra is registered with a single scope (`agent:self:register`). Adding new agent RPCs with new scopes requires updating Hydra registration in lockstep — for now, both `Connect` and `Events` reuse the existing scope.
 - Silent-failure-hunter caught: a per-entry-loop test on a map silently passes if the map is empty. `require.NotEmpty` before the loop closes the gap. Pattern worth applying anywhere a test "asserts every entry has property X."
 - Streaming-direction (`ServerStreams` / `ClientStreams` flags on `grpc.StreamDesc`) is a load-bearing protocol invariant that NO test pins by default. The proto descriptor walks treat all streams interchangeably. Pin direction explicitly in proto_structure_test when streaming RPCs are added.
+
+### Task 2
+- `Reserve` must panic on zero `ExpectedCertThumbprint` (and empty `Challenge`) — mirrors `agentregistry.Add`'s programming-error-loud posture. Without this guard, a buggy AnnounceAgent caller files all slots under the all-zero key, silently breaking the "fresh cert per retry → no collision" invariant. `subtle.ConstantTimeCompare("", "")` would also trivially pass on an empty challenge.
+- ErrSlotExists framing: avoid "SHA-256 collision" language. For an honest CLI, the bootstrap mints fresh cert per AnnounceAgent — duplicates indicate caller misuse, not a cryptographic event. Surface as `codes.AlreadyExists` and DO NOT retry under a fresh challenge (the existing slot is still consumable).
+- Composite slot key folds the agent_name cross-check into the lookup. Caller cannot reuse a slot reserved for a different agent_name even with a stolen verifier.
+- Subscribe panic-recovery rationale here is weaker than agentregistry's — `agentslots` has a TTL janitor that bounds the leak floor. The integration is still load-bearing because dockerevents-driven eviction is what makes both registries identically driven by the same deltas.
+- subscribe.go is a deliberate mirror of agentregistry/subscribe.go — both packages have package-local `drainOnce`, `handleDelta`, `panicOnceRegistry` helpers. This is intentional duplication; do NOT collapse into a shared helper without sharper interface analysis.
+- moq regen is straight `go generate ./...` from the package directory; it picks up Consume signature changes and new EvictByContainerID method automatically.
 
 ---
 

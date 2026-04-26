@@ -18,8 +18,11 @@ var _ agentslots.Registry = &RegistryMock{}
 //
 //		// make and configure a mocked agentslots.Registry
 //		mockedRegistry := &RegistryMock{
-//			ConsumeFunc: func(agentName string, verifier string) (*agentslots.Slot, error) {
+//			ConsumeFunc: func(thumbprint [32]byte, agentName string, verifier string) (*agentslots.Slot, error) {
 //				panic("mock out the Consume method")
+//			},
+//			EvictByContainerIDFunc: func(containerID string)  {
+//				panic("mock out the EvictByContainerID method")
 //			},
 //			LenFunc: func() int {
 //				panic("mock out the Len method")
@@ -38,7 +41,10 @@ var _ agentslots.Registry = &RegistryMock{}
 //	}
 type RegistryMock struct {
 	// ConsumeFunc mocks the Consume method.
-	ConsumeFunc func(agentName string, verifier string) (*agentslots.Slot, error)
+	ConsumeFunc func(thumbprint [32]byte, agentName string, verifier string) (*agentslots.Slot, error)
+
+	// EvictByContainerIDFunc mocks the EvictByContainerID method.
+	EvictByContainerIDFunc func(containerID string)
 
 	// LenFunc mocks the Len method.
 	LenFunc func() int
@@ -53,10 +59,17 @@ type RegistryMock struct {
 	calls struct {
 		// Consume holds details about calls to the Consume method.
 		Consume []struct {
+			// Thumbprint is the thumbprint argument value.
+			Thumbprint [32]byte
 			// AgentName is the agentName argument value.
 			AgentName string
 			// Verifier is the verifier argument value.
 			Verifier string
+		}
+		// EvictByContainerID holds details about calls to the EvictByContainerID method.
+		EvictByContainerID []struct {
+			// ContainerID is the containerID argument value.
+			ContainerID string
 		}
 		// Len holds details about calls to the Len method.
 		Len []struct {
@@ -70,28 +83,31 @@ type RegistryMock struct {
 		Stop []struct {
 		}
 	}
-	lockConsume sync.RWMutex
-	lockLen     sync.RWMutex
-	lockReserve sync.RWMutex
-	lockStop    sync.RWMutex
+	lockConsume            sync.RWMutex
+	lockEvictByContainerID sync.RWMutex
+	lockLen                sync.RWMutex
+	lockReserve            sync.RWMutex
+	lockStop               sync.RWMutex
 }
 
 // Consume calls ConsumeFunc.
-func (mock *RegistryMock) Consume(agentName string, verifier string) (*agentslots.Slot, error) {
+func (mock *RegistryMock) Consume(thumbprint [32]byte, agentName string, verifier string) (*agentslots.Slot, error) {
 	if mock.ConsumeFunc == nil {
 		panic("RegistryMock.ConsumeFunc: method is nil but Registry.Consume was just called")
 	}
 	callInfo := struct {
-		AgentName string
-		Verifier  string
+		Thumbprint [32]byte
+		AgentName  string
+		Verifier   string
 	}{
-		AgentName: agentName,
-		Verifier:  verifier,
+		Thumbprint: thumbprint,
+		AgentName:  agentName,
+		Verifier:   verifier,
 	}
 	mock.lockConsume.Lock()
 	mock.calls.Consume = append(mock.calls.Consume, callInfo)
 	mock.lockConsume.Unlock()
-	return mock.ConsumeFunc(agentName, verifier)
+	return mock.ConsumeFunc(thumbprint, agentName, verifier)
 }
 
 // ConsumeCalls gets all the calls that were made to Consume.
@@ -99,16 +115,50 @@ func (mock *RegistryMock) Consume(agentName string, verifier string) (*agentslot
 //
 //	len(mockedRegistry.ConsumeCalls())
 func (mock *RegistryMock) ConsumeCalls() []struct {
-	AgentName string
-	Verifier  string
+	Thumbprint [32]byte
+	AgentName  string
+	Verifier   string
 } {
 	var calls []struct {
-		AgentName string
-		Verifier  string
+		Thumbprint [32]byte
+		AgentName  string
+		Verifier   string
 	}
 	mock.lockConsume.RLock()
 	calls = mock.calls.Consume
 	mock.lockConsume.RUnlock()
+	return calls
+}
+
+// EvictByContainerID calls EvictByContainerIDFunc.
+func (mock *RegistryMock) EvictByContainerID(containerID string) {
+	if mock.EvictByContainerIDFunc == nil {
+		panic("RegistryMock.EvictByContainerIDFunc: method is nil but Registry.EvictByContainerID was just called")
+	}
+	callInfo := struct {
+		ContainerID string
+	}{
+		ContainerID: containerID,
+	}
+	mock.lockEvictByContainerID.Lock()
+	mock.calls.EvictByContainerID = append(mock.calls.EvictByContainerID, callInfo)
+	mock.lockEvictByContainerID.Unlock()
+	mock.EvictByContainerIDFunc(containerID)
+}
+
+// EvictByContainerIDCalls gets all the calls that were made to EvictByContainerID.
+// Check the length with:
+//
+//	len(mockedRegistry.EvictByContainerIDCalls())
+func (mock *RegistryMock) EvictByContainerIDCalls() []struct {
+	ContainerID string
+} {
+	var calls []struct {
+		ContainerID string
+	}
+	mock.lockEvictByContainerID.RLock()
+	calls = mock.calls.EvictByContainerID
+	mock.lockEvictByContainerID.RUnlock()
 	return calls
 }
 
