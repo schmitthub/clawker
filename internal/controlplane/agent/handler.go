@@ -16,15 +16,15 @@
 //     peer.FromContext.
 //  4. Connect (this package) cross-checks, in order:
 //     (a) Cert CN equals req.AgentName (defense vs announce-payload
-//         tampering between mint and announce).
+//     tampering between mint and announce).
 //     (b) Composite slot consume on (peer_cert_thumbprint,
-//         agent_name, code_verifier) — the lookup itself folds the
-//         agent_name and thumbprint cross-checks into the map key.
+//     agent_name, code_verifier) — the lookup itself folds the
+//     agent_name and thumbprint cross-checks into the map key.
 //     (c) Peer IP equals Docker's clawker-net IP for
-//         slot.container_id (defense vs cert+verifier replay from a
-//         different container).
+//     slot.container_id (defense vs cert+verifier replay from a
+//     different container).
 //     (d) Container label dev.clawker.agent equals agent_name
-//         (defense vs label tampering after announce).
+//     (defense vs label tampering after announce).
 //     Every mismatch returns codes.PermissionDenied with no detail —
 //     attackers must not learn which check failed.
 //  5. On success the registry is keyed by the cert thumbprint, the

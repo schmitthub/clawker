@@ -268,6 +268,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			AdminClient:    opts.AdminClient,
 			SocketBridge:   opts.SocketBridge,
 			Logger:         opts.Logger,
+			AgentName:      opts.AgentName,
 		}, docker.ContainerStartOptions{ContainerID: o.result.ContainerID}); err != nil {
 			return fmt.Errorf("starting container: %w", err)
 		}
@@ -362,6 +363,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 			AdminClient:    opts.AdminClient,
 			SocketBridge:   opts.SocketBridge,
 			Logger:         opts.Logger,
+			AgentName:      opts.AgentName,
 		},
 		docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 		log.Debug().Err(err).Msg("container start failed")

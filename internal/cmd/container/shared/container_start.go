@@ -3,10 +3,14 @@ package shared
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 
 	mobyClient "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -25,6 +29,15 @@ type CommandOpts struct {
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Logger         func() (*logger.Logger, error)
+
+	// AgentName is the canonical "clawker.<project>.<agent>" name.
+	// New-container start paths MUST set it; without it ContainerStart
+	// skips the announce + bootstrap-delivery and the entrypoint
+	// silently skips clawkerd launch. Existing-container start/restart
+	// paths leave it empty by design — those containers' slots either
+	// already exist (and clawkerd is reconnecting, future B5 work) or
+	// were intentionally never registered.
+	AgentName string
 }
 
 // NeedsSocketBridge returns true if the project config enables GPG or SSH
@@ -233,6 +246,18 @@ func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.C
 		return mobyClient.ContainerStartResult{}, fmt.Errorf("starting container: docker client is nil")
 	}
 
+	// Announce the agent slot + write the bootstrap material into the
+	// container BEFORE docker start. Hard-fail policy: any error
+	// returns from ContainerStart before client.ContainerStart fires —
+	// the container is created but not started, and the caller's
+	// existing cleanup handles teardown. Empty AgentName skips the
+	// bootstrap (existing-container start/restart paths).
+	if cmdOpts.AgentName != "" {
+		if err := prepareAgentBootstrap(ctx, cmdOpts, startOpts.ContainerID, NewCopyToContainerFn(client)); err != nil {
+			return mobyClient.ContainerStartResult{}, fmt.Errorf("agent bootstrap: %w", err)
+		}
+	}
+
 	result, err := client.ContainerStart(ctx, startOpts)
 	if err != nil {
 		return result, err
@@ -243,4 +268,80 @@ func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.C
 	}
 
 	return result, nil
+}
+
+// prepareAgentBootstrap mints fresh PKCE + per-agent mTLS material,
+// announces the slot to the CP via AdminService.AnnounceAgent, then
+// tars the bootstrap directory into the container at consts.BootstrapDir
+// (parent dir 0700, files 0400). Caller invokes this BEFORE
+// client.ContainerStart so:
+//
+//   - The slot is reserved in the CP before clawkerd boots and dials
+//     Connect (otherwise clawkerd's first Recv hits an unknown-slot
+//     rejection).
+//   - The bootstrap files are present in the writable layer when the
+//     container's entrypoint reads them (Docker's CopyToContainer can't
+//     pre-populate a tmpfs, so the writable layer is the only viable
+//     pre-start landing zone).
+//
+// Hard-fails the whole start path on any error — partial bootstrap
+// states are unreachable. Caller's deferred cleanup (or the user's
+// next `clawker run`) decides whether to retry.
+//
+// copyFn is injected (rather than derived from a *docker.Client inside
+// the helper) so unit tests can capture the tar payload landing in
+// the container without standing up a Docker daemon.
+func prepareAgentBootstrap(ctx context.Context, cmdOpts CommandOpts, containerID string, copyFn CopyToContainerFn) error {
+	if cmdOpts.Config == nil {
+		return fmt.Errorf("config provider is nil")
+	}
+	cfg, err := cmdOpts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	if cmdOpts.AdminClient == nil {
+		return fmt.Errorf("admin client provider is nil")
+	}
+
+	caCertPath, err := consts.AuthCACertPath()
+	if err != nil {
+		return fmt.Errorf("ca cert path: %w", err)
+	}
+	caKeyPath, err := consts.AuthCAKeyPath()
+	if err != nil {
+		return fmt.Errorf("ca key path: %w", err)
+	}
+	signingKey, err := auth.LoadSigningKey()
+	if err != nil {
+		return fmt.Errorf("load signing key: %w", err)
+	}
+
+	// hydraTokenURL is what clawkerd will see from inside the container,
+	// so it uses the in-network DNS name and the published Hydra port.
+	// The assertion's audience field MUST match what Hydra checks at
+	// /oauth2/token; both sides resolve to the same URL.
+	hydraTokenURL := "https://" + net.JoinHostPort(
+		consts.ContainerCP,
+		strconv.Itoa(cfg.Settings().ControlPlane.HydraPublicPort),
+	) + "/oauth2/token"
+
+	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, cmdOpts.AgentName, hydraTokenURL, signingKey)
+	if err != nil {
+		return fmt.Errorf("generate: %w", err)
+	}
+
+	admin, err := cmdOpts.AdminClient(ctx)
+	if err != nil {
+		return fmt.Errorf("dial control plane: %w", err)
+	}
+	if err := AnnounceAgent(ctx, admin, bootstrap, cmdOpts.AgentName, containerID); err != nil {
+		return fmt.Errorf("announce: %w", err)
+	}
+	if err := WriteAgentBootstrapToContainer(ctx, containerID, copyFn, bootstrap); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	return nil
 }

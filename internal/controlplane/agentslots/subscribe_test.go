@@ -159,8 +159,8 @@ func (p *panicOnceRegistry) Reserve(s Slot) error { return p.delegate.Reserve(s)
 func (p *panicOnceRegistry) Consume(thumbprint [32]byte, agentName, verifier string) (*Slot, error) {
 	return p.delegate.Consume(thumbprint, agentName, verifier)
 }
-func (p *panicOnceRegistry) Len() int  { return p.delegate.Len() }
-func (p *panicOnceRegistry) Stop()     { p.delegate.Stop() }
+func (p *panicOnceRegistry) Len() int { return p.delegate.Len() }
+func (p *panicOnceRegistry) Stop()    { p.delegate.Stop() }
 func (p *panicOnceRegistry) EvictByContainerID(id string) {
 	p.calls.Add(1)
 	if p.panicked.CompareAndSwap(false, true) {

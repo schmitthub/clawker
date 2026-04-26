@@ -15,7 +15,7 @@
 | Task 5: `AgentIdentityInterceptor` (unary + stream) with fail-secure opt-out map | `complete` | claude-opus-4-7 |
 | Task 6: `cmd/clawker-cp/main.go` wiring (slot registry hoist, identity interceptor chain, dockerevents subscriptions) | `complete` | claude-opus-4-7 |
 | Task 7: `cmd/clawkerd/main.go` — consume `Connect` server-stream | `complete` | claude-opus-4-7 |
-| Task 8: CLI `run`/`start` wiring — `RuntimeEnvOpts` Clawkerd* fields + `prepareAgentBootstrap` helper | `pending` | — |
+| Task 8: CLI `run`/`start` wiring — `RuntimeEnvOpts` Clawkerd* fields + `prepareAgentBootstrap` helper | `complete` | claude-opus-4-7 |
 | Task 9: Documentation pass — package CLAUDE.md files + KEY-CONCEPTS + status memo | `pending` | — |
 
 ## Key Learnings
@@ -70,6 +70,14 @@
 - `welcomeTimeout` (30s) bounds ONLY the wait for the first Recv, not the stream's lifetime. After Welcome the loop drains on the parent ctx so SIGTERM tears down cleanly. `recvWithCtx` helper races welcomeCtx against gRPC's separate per-RPC ctx.
 - Goroutine in `recvWithCtx` is single-shot-on-error-path: it parks in `stream.Recv()` after ctx.Cancel until the deferred `conn.Close()` errors the stream out. Buffered channel (cap 1) lets the goroutine send-and-exit cleanly even if the caller already returned. Not reusable safely without conn cleanup.
 - SIGTERM-during-handshake exits zero (clean teardown), not 1 (crash). Mirrors the post-Welcome loop's `errors.Is(ctx.Err(), context.Canceled)` discipline so a `restart: on-failure` policy doesn't retrigger on shutdown.
+
+### Task 8
+- `ClawkerdAgentName` / `ClawkerdAgentAddr` / `ClawkerdHydraURL` env vars MUST be populated UNCONDITIONALLY in `buildCreateTimeEnv` (not gated on `security.firewall.enable`). CP, clawker-net, and Hydra are core infrastructure that always run when an agent container is starting; firewall is one optional CP-hosted feature. Comment cites the "CP ≠ firewall" callout in project-root CLAUDE.md.
+- `prepareAgentBootstrap` runs BEFORE `client.ContainerStart`. Order is load-bearing: (a) the slot must be reserved in the CP before clawkerd boots and dials Connect (otherwise clawkerd's first Recv hits an unknown-slot rejection); (b) the bootstrap files must exist in the writable layer before the entrypoint reads them (Docker's CopyToContainer can't pre-populate a tmpfs). Hard-fail: any error returns from ContainerStart before docker start fires.
+- `CommandOpts.AgentName` is the trigger for `prepareAgentBootstrap`. Empty AgentName → skip. New-container paths (run, loop iterate/tasks) MUST set it; existing-container start/restart paths leave it empty. Loop containers were a near-miss — their lifecycle.go callsite needed the AgentName plumbing too (caught in T8 review).
+- Helper takes `CopyToContainerFn` directly (not `*docker.Client`) for testability. Tests stub copyFn with a closure that records the destination + tar payload, no Docker daemon needed.
+- Hydra token URL uses the in-container DNS (`consts.ContainerCP`) and the published port (`cfg.Settings().ControlPlane.HydraPublicPort`). Both `buildCreateTimeEnv` and `prepareAgentBootstrap` construct the URL identically; future cleanup could centralize the helper.
+- Test isolation: `testenv.New(t)` + `auth.EnsureAuthMaterial()` set up an isolated CA + signing key tree under t.TempDir, so the helper resolves real paths without polluting the host machine config.
 
 ---
 
