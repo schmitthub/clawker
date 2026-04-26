@@ -13,7 +13,7 @@
 | Task 3: `agent.Handler.Connect` — server-streaming + CN cross-check + composite Consume | `complete` | claude-opus-4-7 |
 | Task 4: `controlplane.adminServer.AnnounceAgent` handler | `complete` | claude-opus-4-7 |
 | Task 5: `AgentIdentityInterceptor` (unary + stream) with fail-secure opt-out map | `complete` | claude-opus-4-7 |
-| Task 6: `cmd/clawker-cp/main.go` wiring (slot registry hoist, identity interceptor chain, dockerevents subscriptions) | `pending` | — |
+| Task 6: `cmd/clawker-cp/main.go` wiring (slot registry hoist, identity interceptor chain, dockerevents subscriptions) | `complete` | claude-opus-4-7 |
 | Task 7: `cmd/clawkerd/main.go` — consume `Connect` server-stream | `pending` | — |
 | Task 8: CLI `run`/`start` wiring — `RuntimeEnvOpts` Clawkerd* fields + `prepareAgentBootstrap` helper | `pending` | — |
 | Task 9: Documentation pass — package CLAUDE.md files + KEY-CONCEPTS + status memo | `pending` | — |
@@ -57,6 +57,12 @@
 - `optedOut nil` defaults to empty map → identity-required for ALL methods. Worst-case wiring regression is fail-secure (every RPC requires identity), not fail-open.
 - Lookup-error log differentiation: `errors.Is(err, ErrUnknownAgent)` logs at Warn; other errors log at Error (with the wrapped error). Wire response stays generic PermissionDenied — attackers learn nothing — but operator log fidelity is preserved for future Lookup contracts that may grow I/O paths.
 - Local var `peer` in resolve closure renamed to `pid` to avoid confusion with the imported `peer` package (which the same file uses for `peer.FromContext` via `peerIdentityAndIP`).
+
+### Task 6
+- gRPC's `ChainUnaryInterceptor(a, b)` runs interceptors in declaration order: a is outer (runs first), b is inner. So `(agentInterceptor.UnaryInterceptor(), identityUnary)` correctly puts auth first → identity second. Identity sees only requests that already passed token + scope.
+- `agentslots.Subscribe` runs through the same `watcherCtx` as `agentregistry.Subscribe` so drain-to-zero tears both down identically. Defer order: subscriber cancel funcs run before `slotRegistry.Stop()` (LIFO unwind), so eviction goroutines drain before the TTL janitor closes its stop channel.
+- The slot subscribe rationale: TTL janitor is the floor, but immediate dockerevents-driven eviction prevents `ErrSlotExists` collisions on quick re-announce after a failed ContainerStart.
+- T7 still needs to land before tree-wide `go build ./...` is clean — `cmd/clawkerd/main.go` calls `agentClient.Register` which the T1 proto rename broke. T6's acceptance only requires `./cmd/clawker-cp/...` and `./internal/controlplane/...` to be clean.
 
 ---
 

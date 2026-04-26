@@ -411,10 +411,20 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		ClientCAs:    caCertPool,
 		MinVersion:   tls.VersionTLS13,
 	}
+	// IdentityInterceptor runs AFTER AuthInterceptor: token + scope
+	// pass first, then identity resolves the peer cert thumbprint to
+	// a registered agent (or rejects). Connect is on the opt-out list
+	// (it authenticates itself); every other agent RPC must be
+	// registry-bound by the time the handler sees it.
+	identityUnary, identityStream := agent.IdentityInterceptor(
+		agentReg,
+		agent.IdentityOptedOutMethods(),
+		log.With("component", "agent-identity"),
+	)
 	agentServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(agentTLSCfg)),
-		grpc.ChainUnaryInterceptor(agentInterceptor.UnaryInterceptor()),
-		grpc.ChainStreamInterceptor(agentInterceptor.StreamInterceptor()),
+		grpc.ChainUnaryInterceptor(agentInterceptor.UnaryInterceptor(), identityUnary),
+		grpc.ChainStreamInterceptor(agentInterceptor.StreamInterceptor(), identityStream),
 	)
 	agentLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AgentPort))
 	if err != nil {
@@ -513,6 +523,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// informer also tears this down cleanly.
 	cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, inf, log.With("component", "agentregistry"))
 	defer cancelAgentSub()
+
+	// Same wiring for the slot registry: a pending slot whose
+	// container died (e.g. ContainerStart failed mid-bootstrap) is
+	// dead-on-arrival; the TTL janitor would eventually sweep, but
+	// the dockerevents-driven path evicts immediately so a quick retry
+	// can re-announce without an ErrSlotExists collision.
+	cancelSlotSub := agentslots.Subscribe(watcherCtx, slotRegistry, inf, log.With("component", "agentslots"))
+	defer cancelSlotSub()
 	feederDone := make(chan struct{})
 	go func() {
 		defer close(feederDone)
