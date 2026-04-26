@@ -35,7 +35,7 @@
   moby/moby (Docker SDK)
 ```
 
-> **CP ≠ firewall — common LLM confusion.** The "Security Subsystem" column above contains both `controlplane/` (CP daemon — **unconditional**: auth, AdminService, AgentService, agent slot/registry, mTLS, owns clawker-net) and `controlplane/firewall/` (**one optional subsystem CP manages**, toggled by `security.firewall.enable`). They are not the same. Disabling firewall does NOT disable CP, AdminService, AgentService, AnnounceAgent, clawkerd Register, ListAgents, or any non-firewall AdminService RPC. CP owns firewall, not vice versa. Don't gate non-firewall behavior on the firewall flag.
+> **CP ≠ firewall — common LLM confusion.** The "Security Subsystem" column above contains both `controlplane/` (CP daemon — **unconditional**: auth, AdminService, AgentService, agent slot/registry, mTLS, owns clawker-net) and `controlplane/firewall/` (**one optional subsystem CP manages**, toggled by `firewall.enable` in `settings.yaml`; the project schema's `security.firewall` holds per-project rules only, NOT the master switch). They are not the same. Disabling firewall does NOT disable CP, AdminService, AgentService, AnnounceAgent, clawkerd Register, ListAgents, or any non-firewall AdminService RPC. CP owns firewall, not vice versa. Don't gate non-firewall behavior on the firewall flag.
 
 ## Factory Dependency Injection (gh CLI Pattern)
 
@@ -431,7 +431,7 @@ Runs Claude Code in per-iteration Docker containers with stream-json parsing and
 
 ### Firewall Subsystem (CP-owned)
 
-Envoy + custom CoreDNS + **clawker-cp (control plane)** trio providing DNS-level egress blocking, TLS inspection, and per-container cgroup BPF enforcement. Enabled by default (`security.firewall.enable: true`).
+Envoy + custom CoreDNS + **clawker-cp (control plane)** trio providing DNS-level egress blocking, TLS inspection, and per-container cgroup BPF enforcement. Enabled by default (`firewall.enable: true` in `settings.yaml`).
 
 The CP container is the **single owner** of firewall state, eBPF lifetime, and Envoy/CoreDNS lifecycle. There is no host-side firewall daemon and no `internal/firewall/` package. CLI commands speak the 13-method `AdminService` gRPC over mTLS + OAuth2 JWT via `f.AdminClient(ctx)`. See `internal/controlplane/CLAUDE.md` and `internal/controlplane/firewall/CLAUDE.md` for package references.
 

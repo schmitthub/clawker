@@ -111,9 +111,9 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	}
 
 	// Firewall is one feature hosted by the CP. Bring the stack up and
-	// sync project rules only when security.firewall is enabled.
-	// Per-container FirewallEnable runs post-start because the cgroup
-	// only exists after docker start creates the init process.
+	// sync project rules only when firewall.enable (settings.yaml) is
+	// true. Per-container FirewallEnable runs post-start because the
+	// cgroup only exists after docker start creates the init process.
 	if settings != nil && settings.Firewall.FirewallEnabled() {
 		if cmdOpts.AdminClient == nil {
 			return fmt.Errorf("bootstrapping services: firewall is enabled but no admin client provided")

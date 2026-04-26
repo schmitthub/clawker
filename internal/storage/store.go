@@ -194,7 +194,7 @@ func (s *Store[T]) Layers() []LayerInfo {
 }
 
 // Provenance returns the layer that provided the winning value for the given
-// dotted field path (e.g. "build.image", "security.firewall.enable").
+// dotted field path (e.g. "build.image", "security.docker_socket").
 // Returns the LayerInfo and true if provenance is known, or zero value and
 // false for fields that came from defaults or have no provenance record.
 //

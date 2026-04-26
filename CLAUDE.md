@@ -36,11 +36,11 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 LLM sessions repeatedly conflate the Control Plane (CP) with the firewall. They are NOT the same thing.
 
 - **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent slot/registry bookkeeping, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `cpboot.EnsureRunning`. There is no "disable CP" flag. CP owns clawker-net.
-- **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `security.firewall.enable`. When disabled, those components don't run — but CP, clawker-net, mTLS, AnnounceAgent, clawkerd Register, ListAgents, and every non-firewall AdminService RPC continue to operate.
+- **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml` — the project schema's `security.firewall` field is `FirewallConfig`, holding per-project `add_domains`/`rules` only; the master switch is global). When disabled, those components don't run — but CP, clawker-net, mTLS, AnnounceAgent, clawkerd Register, ListAgents, and every non-firewall AdminService RPC continue to operate.
 
 **CP owns firewall, not the other way around.** Older framings that put firewall above or alongside CP are stale — disregard them.
 
-Do **NOT** gate non-firewall behavior on `security.firewall.enable`. The flag scopes the egress enforcement layer only.
+Do **NOT** gate non-firewall behavior on `firewall.enable` (settings.yaml). The flag scopes the egress enforcement layer only.
 
 </critical_clarification>
 
@@ -205,7 +205,7 @@ build:
   inject: { after_from: [], after_packages: [] }
 agent: { env_file: [], from_env: [], env: {}, post_init: "" }
 workspace: { default_mode: "bind" }
-security: { firewall: { enable: true }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
+security: { firewall: { add_domains: [], rules: [] }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
 loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false, hooks_file: "", append_system_prompt: "" }
 ```
 

@@ -72,7 +72,7 @@
 - SIGTERM-during-handshake exits zero (clean teardown), not 1 (crash). Mirrors the post-Welcome loop's `errors.Is(ctx.Err(), context.Canceled)` discipline so a `restart: on-failure` policy doesn't retrigger on shutdown.
 
 ### Task 8
-- `ClawkerdAgentName` / `ClawkerdAgentAddr` / `ClawkerdHydraURL` env vars MUST be populated UNCONDITIONALLY in `buildCreateTimeEnv` (not gated on `security.firewall.enable`). CP, clawker-net, and Hydra are core infrastructure that always run when an agent container is starting; firewall is one optional CP-hosted feature. Comment cites the "CP ≠ firewall" callout in project-root CLAUDE.md.
+- `ClawkerdAgentName` / `ClawkerdAgentAddr` / `ClawkerdHydraURL` env vars MUST be populated UNCONDITIONALLY in `buildCreateTimeEnv` (not gated on `firewall.enable` from settings.yaml). CP, clawker-net, and Hydra are core infrastructure that always run when an agent container is starting; firewall is one optional CP-hosted feature. Comment cites the "CP ≠ firewall" callout in project-root CLAUDE.md.
 - `prepareAgentBootstrap` runs BEFORE `client.ContainerStart`. Order is load-bearing: (a) the slot must be reserved in the CP before clawkerd boots and dials Connect (otherwise clawkerd's first Recv hits an unknown-slot rejection); (b) the bootstrap files must exist in the writable layer before the entrypoint reads them (Docker's CopyToContainer can't pre-populate a tmpfs). Hard-fail: any error returns from ContainerStart before docker start fires.
 - `CommandOpts.AgentName` is the trigger for `prepareAgentBootstrap`. Empty AgentName → skip. New-container paths (run, loop iterate/tasks) MUST set it; existing-container start/restart paths leave it empty. Loop containers were a near-miss — their lifecycle.go callsite needed the AgentName plumbing too (caught in T8 review).
 - Helper takes `CopyToContainerFn` directly (not `*docker.Client`) for testability. Tests stub copyFn with a closure that records the destination + tar payload, no Docker daemon needed.
@@ -135,7 +135,7 @@ A working end-to-end happy path PLUS architectural decisions that grow into the 
 
 6. **Identity resolution via interceptor (fail-secure opt-out).** `AgentIdentityInterceptor` (unary + stream forms) runs after `AuthInterceptor` on the agent listener. Resolves cert thumbprint → registry entry → ctx-attached `*agentregistry.Entry`. Default REQUIRES identity; explicit opt-out only for bootstrap RPCs that authenticate themselves (`Connect` via slot consume). Build-time test walks proto descriptor.
 
-7. **CP ≠ firewall.** Bootstrap delivery is unconditional. NOT gated on `security.firewall.enable`. CP is unconditional infrastructure; firewall is one optional subsystem CP manages. (See project-root `CLAUDE.md` "CP ≠ firewall" callout.)
+7. **CP ≠ firewall.** Bootstrap delivery is unconditional. NOT gated on `firewall.enable` (settings.yaml). CP is unconditional infrastructure; firewall is one optional subsystem CP manages. (See project-root `CLAUDE.md` "CP ≠ firewall" callout. The dotted path `security.firewall.enable` does NOT exist in either schema — `clawker.yaml`'s `security.firewall` is `FirewallConfig` for per-project rules; `settings.yaml`'s `firewall.enable` is the master switch.)
 
 8. **`ConnectRequest.code_verifier` semantics preserve future reconnect path.** Empty verifier reserved for the future reconnect flow (CP restart resilience initiative — see `cp-initiative-cp-restart-resilience` memo). Today's handler still requires verifier on first-connect; future patch will branch on registry-already-has-thumbprint.
 
@@ -802,7 +802,7 @@ go test ./cmd/clawkerd/... -count=1
    }
    ```
 
-   Verify the values render correctly when `firewall.enable: false` — the CP, clawker-net, and Hydra are still up regardless. (See "CP ≠ firewall" callout in project-root `CLAUDE.md`.)
+   Verify the values render correctly when `firewall.enable: false` (settings.yaml) — the CP, clawker-net, and Hydra are still up regardless. (See "CP ≠ firewall" callout in project-root `CLAUDE.md`.)
 
 2. **Extend `CommandOpts` (`container_start.go`)** with `AgentName string`. Populate at run/start callsites from `CreateContainerResult.AgentName`.
 
