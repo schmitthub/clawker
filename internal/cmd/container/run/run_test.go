@@ -12,13 +12,17 @@ import (
 	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
+	"google.golang.org/grpc"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
+	controlplanemocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -26,6 +30,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/internal/tui"
 
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -782,8 +787,16 @@ func TestImageArg(t *testing.T) {
 
 // testFactory constructs a minimal *cmdutil.Factory for command-level testing.
 // The returned Factory wires fake Docker client, test config, and test IOStreams.
+//
+// Sets up isolated auth material via testenv + EnsureAuthMaterial so the
+// shared.prepareAgentBootstrap path (which mints per-agent certs from the
+// CLI CA + signs Hydra assertions) succeeds without a real machine config.
+// AdminClient is wired with a no-op AnnounceAgent — tests that care about
+// the wire request body can override the mock.
 func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
+	testenv.New(t)
+	require.NoError(t, auth.EnsureAuthMaterial())
 	// Ensure CWD is inside $HOME so IsOutsideHome returns false (matters in containers).
 	cwd, _ := os.Getwd()
 	t.Setenv("HOME", filepath.Dir(cwd))
@@ -816,6 +829,13 @@ security: { enable_host_proxy: false }
 			return &cpbootmocks.ManagerMock{
 				EnsureRunningFunc: func(context.Context) error { return nil },
 			}
+		},
+		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
+			return &controlplanemocks.AdminServiceClientMock{
+				AnnounceAgentFunc: func(_ context.Context, _ *adminv1.AnnounceAgentRequest, _ ...grpc.CallOption) (*adminv1.AnnounceAgentResult, error) {
+					return &adminv1.AnnounceAgentResult{}, nil
+				},
+			}, nil
 		},
 		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 	}, in, out, errOut

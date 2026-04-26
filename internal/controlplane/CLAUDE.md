@@ -29,17 +29,15 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 
 | File | Purpose |
 |------|---------|
-| `server.go` | `Server` struct, `ControlPlaneService` interface, `Registry`, `AgentReportingService` handler |
-| `registry.go` | Thread-safe agent registry keyed by container ID |
+| `server.go` | `adminServer` composition + `NewAdminServer(fw, agents, slots, clock) adminv1.AdminServiceServer` — embeds the firewall handler so AdminService method promotion is satisfied for `cmd/clawker-cp` to register on its gRPC server. Holds `agents` for `ListAgents` (nil-tolerant; empty result), `slots` for `AnnounceAgent` (REQUIRED — panics at construction on nil to surface wiring regressions at startup), and `clock` (defaults to `time.Now`). |
 | `authz.go` | `AuthInterceptor` — validates OAuth2 bearer tokens via Hydra introspection, enforces per-method scopes |
-| `hydra_client.go` | `RegisterCLIClient` — registers clawker-cli OAuth2 client with Hydra at startup. `AdminMethodScopes` lives in `api/admin/v1/admin.go` so a new RPC fails closed (covered by `TestAdminMethodScopes_CoversAllRPCs`). |
+| `hydra_client.go` | `RegisterCLIClient` + `RegisterAgentClient` — register the `clawker-cli` and `clawker-agent` OAuth2 clients with Hydra at startup via the shared `registerHydraClient` helper. Both clients use the same JWK (the CLI's signing key); only `client_id` and `scope` differ. `AdminMethodScopes` lives in `api/admin/v1/admin.go` so a new admin RPC fails closed (covered by `TestAdminMethodScopes_CoversAllRPCs`). |
 | `startup.go` | `CPStartupOrchestrator` — startup sequencing + aggregate `/healthz` endpoint (probes all 7 service ports) |
 | `watcher.go` | `AgentWatcher` — polls Docker for `purpose=agent` containers; invokes drain-to-zero callback past grace/threshold (INV-B2-007) |
 | `ory_configs.go` | `WriteOryConfigs(cp)` — generates Hydra/Kratos/Oathkeeper YAML config files |
 | `subprocess.go` | `SubprocessManager` — manages Ory subprocess lifecycle (start, health, crash detection, shutdown) |
 | `cpboot/` | **Host-side CP bootstrap subpackage.** Contains `embed_cp.go` / `embed_ebpf.go` (`//go:embed assets/clawker-cp` + `assets/ebpf-manager`), `bootstrap.go` (`EnsureRunning` / `Stop` / `CPRunning`), `cp_container.go` (`BuildCPContainerConfig` → `CPContainerConfig`), `manager.go` (`Manager` interface + `NewManager`). Split out so `cmd/clawker-cp` can import `internal/controlplane` for `SubprocessManager` / `AdminServer` / `AgentWatcher` without dragging in the `go:embed` directives that would otherwise require the daemon to embed itself during its own build. |
-| `mocks/mock_server.go` | `MockServer` — hand-written test double for `ControlPlaneService` |
-| `mocks/` | moq-generated mocks: `ControlPlaneServiceMock`, `IntrospectorMock`, `AdminServiceClientMock` |
+| `mocks/` | moq-generated mocks: `IntrospectorMock`, `AdminServiceClientMock` |
 | `cpboot/mocks/` | moq-generated `ManagerMock` for the host-side CP lifecycle noun |
 
 ## AdminService composition
@@ -56,10 +54,10 @@ All RPCs require the uniform `admin` scope (INV-B2-009). Per-method diversificat
 2. Start Kratos + Hydra subprocesses, wait healthy
 3. Wait for Hydra admin port healthy, configure service probes (`orchestrator.SetServiceProbes(cp, tlsCfg)`)
 4. Read CLI public JWK from bind-mount
-5. Register CLI client with Hydra (`RegisterCLIClient`)
+5. Register CLI + agent clients with Hydra (`RegisterCLIClient` + `RegisterAgentClient` — both idempotent on 409)
 6. Start Oathkeeper subprocess; build `*docker.Client`; build `firewall.Stack` (via `fwhandler.NewRulesStore`)
 7. Load eBPF programs (`ebpfMgr.Load()`); run defensive startup cleanup (`ebpfMgr.CleanupStaleBypass()` — INV-B2-013)
-8. Start gRPC AdminService with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor
+8. Start gRPC AdminService on `cp.AdminPort` with mTLS (`RequireAndVerifyClientCert` + CA pool) + AuthInterceptor (CLI-scope vocabulary). The same gRPC server hosts the firewall RPCs + `AnnounceAgent` (slot reservation triggered by the CLI before docker start) + `ListAgents`. Start a second gRPC server on `cp.AgentPort` (clawker-net only, NOT host-bound) using the same TLS material with two chained interceptors: `AuthInterceptor` (agent-scope vocabulary, `controlplane.AgentMethodScopes()`) runs first, then `agent.IdentityInterceptor` resolves the peer cert thumbprint to a registered agent for every non-opted-out RPC. Connect is on the opt-out list (it authenticates itself via slot consume + cross-checks). The agent listener serves `AgentService.Connect` (server-streaming lifetime command channel) and `AgentService.Events` (client-streaming telemetry, stub for B5) via `internal/controlplane/agent.Handler` — see `internal/controlplane/agent/CLAUDE.md`. Both servers join the graceful-shutdown WaitGroup.
 9. Mark ready (`orchestrator.SetReady()`), serve `/healthz` on HealthPort
 9b. Start `controlplane.AgentWatcher` goroutine — polls Docker for agents with `purpose=agent`; on drain-to-zero invokes callback: `actionQueue.Close()` (drain queued work, reject new Submits with `ErrClosed`) → `grpcServer.GracefulStop()` (let in-flight RPCs return — any blocked on a Submit now observes `ErrClosed`) → `handler.CancelAllBypassTimers()` → `firewall.Stack.Stop()` → `ebpfMgr.FlushAll()` (INV-B2-007). Stack stop + eBPF flush run post-Close directly from the drain callback because the queue is dead; aggregated errors propagate back to `Run` for non-zero exit. Then the outer shutdown path tears the CP container down (exit code 0 — the `on-failure` restart policy does NOT retrigger)
 
@@ -134,12 +132,14 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 
 ## Test seam overview
 
-- `ControlPlaneService` interface — CLI consumers depend on this. `mocks.MockServer` avoids real gRPC.
 - `EBPFManager` interface — `firewall/ebpf/mocks/EBPFManagerMock` for firewall handler tests.
 - `Introspector` interface — `mocks/IntrospectorMock` for authz tests (no real Hydra).
 - `cpboot.Manager` interface — `cpboot/mocks/ManagerMock` for break-glass `controlplane up/down/status` CLI tests.
 - `adminv1.AdminServiceClient` — `mocks/AdminServiceClientMock` for CLI tests that speak to the AdminService.
 - `firewall.ContainerResolver` — handler-side injectable Docker lookup (see `firewall/CLAUDE.md`).
+- `agent.ContainerInspector` — `agent/mocks/ContainerInspectorMock` for `agent.Handler` tests (no real Docker; lets the five identity-binding cross-checks run with synthesized peer IP / label data).
+- `agentslots.Registry` — `agentslots/mocks/RegistryMock` for handler tests that need to assert Reserve/Consume call shapes without exercising the real PKCE-compare timing path.
+- `agentregistry.Registry` — `agentregistry/mocks/RegistryMock` for handler + `ListAgents` tests that need a deterministic snapshot independent of dockerevents wiring.
 
 ## Test coverage
 
@@ -155,7 +155,7 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 
 ## Package imports
 
-**Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/controlplane/firewall`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `internal/clawkerd/protocol/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`.
+**Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/controlplane/firewall`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`.
 
 **Used by**: `cmd/clawker-cp/` (startup sequence), `internal/cmd/controlplane/` (break-glass up/down/status), `internal/cmd/factory/` (AdminClient + ControlPlane Factory closures), `internal/cmd/firewall/` (AdminService consumers via `f.AdminClient`), `internal/cmd/container/shared/` (BootstrapServicesPostStart), `internal/dnsbpf` (reuses ebpf types), `internal/auth` (cert paths).
 
@@ -163,7 +163,12 @@ No circular dependencies.
 
 ## What's deferred
 
-- **TCP listener for agents** — v1 serves gRPC on localhost only. Adding agent TCP listener is pure addition.
 - **Kratos active usage** — running as subprocess placeholder. Lights up with webui.
 - **Oathkeeper active routing** — running with empty rules. Lights up with webui HTTP auth.
-- **Per-method scopes beyond `admin`** — finer-grained scopes (`agent:register`, `webui:read`) would add entries to `AdminMethodScopes()` in `api/admin/v1/admin.go`. INV-B2-009 currently mandates a uniform `admin` scope across all firewall methods.
+- **Per-method scopes beyond `admin`** — finer-grained scopes (`agent:register`, `webui:read`) would add entries to `AdminMethodScopes()` in `api/admin/v1/admin.go`. INV-B2-009 currently mandates a uniform `admin` scope across all firewall methods. The agent listener already enforces a distinct `agent:self:register` scope on `AgentService.Connect` (and the stub `Events`) via `AgentMethodScopes()`.
+
+## Known limitations (deferred to cp-restart-resilience)
+
+- **Streaming RPC eviction broadcast.** Eviction at the registry level (dockerevents → `EvictByContainerID`) does not yet cancel per-agent Connect streams; clawkerd holds the stream open until the underlying mTLS TCP socket dies on container exit. Closing this requires a per-agent cancel-func registry or eviction channel.
+- **CP restart resilience.** When the CP restarts, the in-memory `agentregistry` and `agentslots` are lost and clawkerd's open Connect stream tears down on the wire. Reconnect requires registry persistence + a Connect handler reconnect branch (registry-already-has-thumbprint → skip slot consume) + clawkerd reconnect-with-backoff + token refresh.
+- The proto comment on `ConnectRequest.code_verifier` preserves the empty-verifier seam; full design in `cp-initiative-cp-restart-resilience`.

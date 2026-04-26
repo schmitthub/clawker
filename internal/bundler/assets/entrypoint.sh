@@ -87,6 +87,64 @@ emit_error() {
 }
 
 # =============================================================================
+# Launch clawkerd — per-container agent daemon
+# =============================================================================
+# clawkerd reads its bootstrap material from /run/clawker/bootstrap (delivered
+# by the CLI between docker create and docker start via CopyToContainer),
+# exchanges the CLI-signed assertion at Hydra for an access token, mTLS-dials
+# the CP's agent listener, and opens AgentService.Connect (server-streaming).
+# Then it idles on the connection until SIGTERM.
+#
+# Run in the background as root, before the firewall healthz poll, so that
+# Connect has the maximum window inside the slot's TTL even if the rest of
+# the entrypoint stalls (image pull, slow exec, etc.). Failures are logged
+# to /var/log/clawker/clawkerd.log; clawkerd does NOT block CMD because B4
+# does not yet require agent registration to be complete before the user
+# process runs.
+#
+# Agent-container predicate is the presence of /run/clawker/bootstrap —
+# the CLI only writes that directory when AgentName != "". This is
+# DELIBERATELY independent of CLAWKER_FIREWALL_ENABLED: CP, mTLS, slot
+# bookkeeping, and clawkerd Connect are unconditional infrastructure;
+# the firewall is one optional CP-managed subsystem. A user who runs with
+# firewall.enable: false still expects an agent entry in
+# `clawker controlplane agents`. Non-agent containers (no bootstrap dir)
+# are the silent-skip path. Bootstrap dir present + binary missing is
+# CLI/bundler build drift — surface as a stderr warning so the operator
+# can diagnose, but don't fail the container.
+if [ -d /run/clawker/bootstrap ]; then
+    if [ -x /usr/local/bin/clawkerd ]; then
+        # Capture stdout/stderr that BYPASSES clawkerd's structured
+        # logger — the single os.Stderr write on logger-init failure
+        # (cmd/clawkerd/main.go) and any Go runtime panic stack
+        # trace. Routed to a SIBLING file (clawkerd.stderr.log), NOT
+        # clawkerd.log, because clawkerd.log is owned by lumberjack:
+        # lumberjack documents itself as unsafe for multiple writers
+        # to the same path, and the shell's append fd held by bash
+        # would keep appending to the renamed inode after rotation,
+        # splitting output across files. Sibling file co-locates
+        # triage material in /var/log/clawker/ without violating
+        # lumberjack's single-writer contract.
+        mkdir -p /var/log/clawker
+        /usr/local/bin/clawkerd >>/var/log/clawker/clawkerd.stderr.log 2>&1 &
+        clawkerd_pid=$!
+        # Sub-second sanity check: bash's `&` detaches from `set -e`
+        # so an immediate exit (missing bootstrap files, malformed
+        # cert, etc.) leaves no breadcrumb. Confirm the PID is still
+        # alive after a 1s grace; otherwise emit a warning to fd 4 so
+        # the operator gets a non-log-file signal that registration
+        # was attempted but failed at startup. This is best-effort:
+        # a slow Hydra dial that takes >1s to fail still slips through.
+        sleep 1
+        if ! kill -0 "$clawkerd_pid" 2>/dev/null; then
+            echo "[clawker] warn clawkerd exited at startup; see /var/log/clawker/clawkerd.stderr.log (early boot) and /var/log/clawker/clawkerd.log (structured) for details" >&4
+        fi
+    else
+        echo "[clawker] warn clawkerd skipped: /usr/local/bin/clawkerd missing — image was built without the embedded daemon" >&4
+    fi
+fi
+
+# =============================================================================
 # Firewall readiness — poll CP /healthz before CMD
 # =============================================================================
 # CP's /healthz endpoint returns 200 only when Envoy+CoreDNS+Ory+gRPC admin

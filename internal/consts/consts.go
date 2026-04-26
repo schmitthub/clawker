@@ -29,10 +29,17 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"time"
 )
 
 // Domain and label namespace.
 const (
+	// NamePrefix is the leading segment of every clawker resource name
+	// (containers, volumes, images, canonical agent identities). Two-segment
+	// names are NamePrefix.agent (empty project), three-segment names are
+	// NamePrefix.project.agent.
+	NamePrefix = "clawker"
+
 	// Domain is the public-facing domain used in help text, URLs, and output.
 	Domain = "clawker.dev"
 
@@ -185,6 +192,10 @@ const (
 	DefaultHydraPublicPort = 4444
 	DefaultHydraAdminPort  = 4445
 	DefaultOathkeeperPort  = 4456
+	// DefaultCPAgentPort is the in-container gRPC port for the agent
+	// listener (mTLS, clawker-net only). Matches the
+	// ControlPlaneSettings.AgentPort struct-tag default.
+	DefaultCPAgentPort = 7444
 )
 
 // Container user identity.
@@ -197,11 +208,90 @@ const (
 const (
 	ScopeAdmin         = "admin"
 	ScopeAgentAnnounce = "agent:announce"
+	// ScopeAgentSelfRegister gates clawkerd's calls on AgentService —
+	// today, Connect (lifetime command channel) and Events (telemetry
+	// stub). Hydra grants only this scope to the agent OAuth2 client;
+	// finer-grained agent scopes land alongside future methods.
+	ScopeAgentSelfRegister = "agent:self:register"
 )
 
 // OIDC client IDs.
 const (
 	ClientIDCLI = "clawker-cli"
+	// ClientIDAgent is the OAuth2 client identity Hydra issues access
+	// tokens to for clawkerd. CLI signs assertions for both clients with
+	// one private key — distinct client IDs keep the scope surface clean.
+	ClientIDAgent = "clawker-agent"
+)
+
+// Agent registration handshake.
+const (
+	// AgentSlotTTL bounds how long a slot reserved by AnnounceAgent
+	// remains valid before the CLI must re-announce. Sized to cover
+	// `docker create` + `docker start` + clawkerd boot on a cold first
+	// run, including image pull, while still expiring fast enough that
+	// an abandoned slot does not block re-announce for a noticeable
+	// window.
+	AgentSlotTTL = 60 * time.Second
+
+	// BootstrapDir is the in-container path where the CLI delivers
+	// per-agent registration material via Docker's CopyToContainer API
+	// between `docker create` and `docker start`. Files are 0400
+	// root:root, directory is 0700 root:root. Lives in the container's
+	// writable layer (NOT a tmpfs mount — Docker has no API to
+	// pre-populate tmpfs, and a tmpfs mount at this path would shadow
+	// the pre-start writes). Reclaimed on `docker rm`.
+	BootstrapDir = "/run/clawker/bootstrap"
+
+	// Bootstrap file names under BootstrapDir.
+	BootstrapCertFile      = "cert.pem"
+	BootstrapKeyFile       = "key.pem"
+	BootstrapCAFile        = "ca.pem"
+	BootstrapAssertionFile = "assertion.jwt"
+	BootstrapVerifierFile  = "verifier"
+)
+
+// ChallengeMethod is the PKCE challenge method announced over the wire
+// in AnnounceAgent and stored on the slot. The proto field is a free-form
+// string for forward extensibility, but at runtime exactly one method is
+// accepted (`S256`). A typed string with a single defined constant gives
+// us a single source of truth that both the CLI bootstrap path
+// (`internal/cmd/container/shared`) and the CP slot registry
+// (`internal/controlplane/agentslots`) reference, while preserving the
+// proto's string-on-the-wire contract.
+type ChallengeMethod string
+
+// String satisfies fmt.Stringer so the typed value renders identically
+// to the wire representation.
+func (m ChallengeMethod) String() string { return string(m) }
+
+// ChallengeMethodS256 is the only PKCE challenge method accepted by the
+// CP. Reserve and the CLI bootstrap helper both reject anything else
+// before it can reach the wire.
+const ChallengeMethodS256 ChallengeMethod = "S256"
+
+// Container env vars for clawkerd bootstrap. clawkerd reads only what
+// it can authoritatively assert: container_id is server-derived from
+// the slot at Connect, and project + agent_name travel as separate
+// wire fields (the CP composes the canonical name on its side).
+// Adding a CLAWKER_CONTAINER_ID env would let a coerced clawkerd lie
+// to itself; resist that temptation.
+const (
+	// EnvAgent is the agent name (e.g. "dev"). Container-wide env;
+	// readable by every process in the container including the
+	// unprivileged user's shell. Set by the CLI at container create
+	// from `--agent` (or generated). Used by the statusline and
+	// consumed by clawkerd as `req.AgentName` at Connect.
+	EnvAgent = "CLAWKER_AGENT"
+	// EnvProject is the project name (e.g. "clawker"). Same scope +
+	// caveats as EnvAgent.
+	EnvProject = "CLAWKER_PROJECT"
+	// EnvClawkerdHydraURL points clawkerd at the CP-published Hydra
+	// public endpoint for OAuth2 token exchange.
+	EnvClawkerdHydraURL = "CLAWKER_CP_HYDRA_URL"
+	// EnvClawkerdAgentAddr is the host:port of the CP's agent gRPC
+	// listener on clawker-net.
+	EnvClawkerdAgentAddr = "CLAWKER_CP_AGENT_ADDR"
 )
 
 // ---------------------------------------------------------------------------

@@ -334,7 +334,7 @@ type ControlPlaneSettings struct {
 	OathkeeperAPIPort int `yaml:"oathkeeper_api_port,omitempty" label:"Oathkeeper API Port" desc:"Oathkeeper management API (HTTPS, container-internal)" default:"4457"`
 	KratosPublicPort  int `yaml:"kratos_public_port,omitempty" label:"Kratos Public Port" desc:"Kratos identity public API (HTTPS, container-internal)" default:"4433"`
 	KratosAdminPort   int `yaml:"kratos_admin_port,omitempty" label:"Kratos Admin Port" desc:"Kratos identity admin API (HTTPS, container-internal)" default:"4434"`
-	AgentAPIPort      int `yaml:"agent_api_port,omitempty" label:"Agent API Port" desc:"Agent reporting API port (future: clawkerd agent checkins)" default:"7444"`
+	AgentPort         int `yaml:"agent_port,omitempty" label:"Agent Port" desc:"In-container gRPC port for clawkerd agent connections (mTLS, clawker-net only)" default:"7444"`
 }
 
 // Fields implements [storage.Schema] for Settings.

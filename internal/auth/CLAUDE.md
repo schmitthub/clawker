@@ -28,7 +28,9 @@ Dials CP via:
 | File | Purpose |
 |------|---------|
 | `auth_material.go` | `EnsureAuthMaterial`, `RotateAuthMaterial`, `CheckAuthMaterial`, `EnsureHydraSecret`, `LoadSigningKey`, `LoadClientCert`, `ReadJWK`, `CACert`, `AuthFileStatus` |
+| `agent_cert.go` | `MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName)` returns an `AgentCert{CertPEM, KeyPEM, Thumbprint [32]byte}` — ephemeral 24h mTLS leaf signed by the CLI CA. Typed `ProjectSlug` / `AgentName` (built via `NewProjectSlug` / `NewAgentName` at the wire boundary) push validation upstream so the helper itself trusts its inputs. The thumbprint is SHA-256 over the cert DER and is announced to the CP via `AdminService.AnnounceAgent` so any peer cert that doesn't match at `AgentService.Connect` is rejected (cert-swap defense). The CN is composed via `CanonicalAgentCN(project, agent)` so cert + ConnectRequest + slot key all line up on the composite identity. PEM material is returned for in-memory bootstrap delivery only; never persisted on the host. |
 | `assertion.go` | `BuildSignedAssertion`, `ValidateAssertionClaims`, `AssertionClaims` — ES256 JWT assertion builder for `private_key_jwt` client auth |
+| `agent_assertion.go` | `BuildAgentAssertion(audience, signingKey)` + `AgentAssertionTTL` — ES256 client_assertion identifying clawkerd as the `clawker-agent` OAuth2 client. Same signing key as the CLI assertion; only iss/sub differ. 24h TTL covers typical container session length. |
 | `cp_dial.go` | `DialCPAdmin(ctx, adminPort, hydraPort)` → `adminv1.AdminServiceClient` — builds two TLS configs (Hydra plain TLS + AdminService mTLS) and a gRPC client with token-refreshing unary interceptor |
 
 ## Auth material layout
@@ -84,7 +86,8 @@ The CP container must be restarted after rotation to re-read bind-mounted materi
 
 ## Used by
 
-- `internal/firewall` — `DialCPAdmin` for gRPC client; `EnsureAuthMaterial` at `Manager.EnsureRunning()`
+- `internal/cmd/factory` — `adminClientFunc` calls `DialCPAdmin` to mint the gRPC `AdminServiceClient` (cached + re-dialed on transient gRPC failures)
+- `internal/controlplane/cpboot` — `EnsureRunning` calls `EnsureAuthMaterial` so the CP container boots with a populated config dir
 - `internal/cmd/auth` — `rotate` subcommand calls `RotateAuthMaterial`
 - `cmd/clawker-cp` (via bind-mounts, not imports) — reads CA, server cert, JWK, Hydra secret at container startup
 

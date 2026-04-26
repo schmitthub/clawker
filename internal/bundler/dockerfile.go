@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
+	"github.com/schmitthub/clawker/internal/clawkerd"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
@@ -226,27 +227,30 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		return fmt.Errorf("failed to parse Dockerfile template: %w", err)
 	}
 
-	// Write all required scripts to the dockerfiles directory (only once)
+	// Write all required scripts to the dockerfiles directory (only once).
+	// content is []byte so the multi-MB clawkerd.Binary passes through
+	// without a string<->[]byte round-trip copy at WriteFile.
 	scripts := []struct {
 		name    string
-		content string
+		content []byte
 		mode    os.FileMode
 	}{
-		{"entrypoint.sh", EntrypointScript, 0755},
+		{"entrypoint.sh", []byte(EntrypointScript), 0755},
 
-		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
-		{"statusline.sh", StatuslineScript, 0755},
-		{"claude-settings.json", SettingsFile, 0644},
-		{"claude-config.json", ConfigFile, 0644},
-		{"host-open.sh", HostOpenScript, 0755},
-		{"callback-forwarder.go", CallbackForwarderSource, 0644},
-		{"git-credential-clawker.sh", GitCredentialScript, 0755},
-		{"clawker-socket-server.go", SocketForwarderSource, 0644},
+		{"clawker-agent-prompt.md", []byte(AgentPromptFile), 0644},
+		{"statusline.sh", []byte(StatuslineScript), 0755},
+		{"claude-settings.json", []byte(SettingsFile), 0644},
+		{"claude-config.json", []byte(ConfigFile), 0644},
+		{"host-open.sh", []byte(HostOpenScript), 0755},
+		{"callback-forwarder.go", []byte(CallbackForwarderSource), 0644},
+		{"git-credential-clawker.sh", []byte(GitCredentialScript), 0755},
+		{"clawker-socket-server.go", []byte(SocketForwarderSource), 0644},
+		{"clawkerd", clawkerd.Binary, 0755},
 	}
 
 	for _, script := range scripts {
 		scriptPath := filepath.Join(dockerfilesDir, script.name)
-		if err := os.WriteFile(scriptPath, []byte(script.content), script.mode); err != nil {
+		if err := os.WriteFile(scriptPath, script.content, script.mode); err != nil {
 			return fmt.Errorf("failed to write %s: %w", script.name, err)
 		}
 	}
@@ -456,6 +460,13 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
+	// Add the clawkerd binary itself — it's pre-compiled in the
+	// clawker CLI release and dropped into every per-project image
+	// at /usr/local/bin/clawkerd by the Dockerfile.
+	if err := addFileToTar(tw, "clawkerd", clawkerd.Binary); err != nil {
+		return nil, err
+	}
+
 	if err := tw.Close(); err != nil {
 		return nil, err
 	}
@@ -472,26 +483,29 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		return fmt.Errorf("failed to write Dockerfile: %w", err)
 	}
 
-	// Write all supporting scripts (mirrors GenerateBuildContextFromDockerfile)
+	// Write all supporting scripts (mirrors GenerateBuildContextFromDockerfile).
+	// content is []byte so the multi-MB clawkerd.Binary passes through
+	// without a string<->[]byte round-trip copy at WriteFile.
 	scripts := []struct {
 		name    string
-		content string
+		content []byte
 		mode    os.FileMode
 	}{
-		{"entrypoint.sh", EntrypointScript, 0755},
+		{"entrypoint.sh", []byte(EntrypointScript), 0755},
 
-		{"clawker-agent-prompt.md", AgentPromptFile, 0644},
-		{"statusline.sh", StatuslineScript, 0755},
-		{"claude-settings.json", SettingsFile, 0644},
-		{"claude-config.json", ConfigFile, 0644},
-		{"host-open.sh", HostOpenScript, 0755},
-		{"callback-forwarder.go", CallbackForwarderSource, 0644},
-		{"git-credential-clawker.sh", GitCredentialScript, 0755},
-		{"clawker-socket-server.go", SocketForwarderSource, 0644},
+		{"clawker-agent-prompt.md", []byte(AgentPromptFile), 0644},
+		{"statusline.sh", []byte(StatuslineScript), 0755},
+		{"claude-settings.json", []byte(SettingsFile), 0644},
+		{"claude-config.json", []byte(ConfigFile), 0644},
+		{"host-open.sh", []byte(HostOpenScript), 0755},
+		{"callback-forwarder.go", []byte(CallbackForwarderSource), 0644},
+		{"git-credential-clawker.sh", []byte(GitCredentialScript), 0755},
+		{"clawker-socket-server.go", []byte(SocketForwarderSource), 0644},
+		{"clawkerd", clawkerd.Binary, 0755},
 	}
 
 	for _, s := range scripts {
-		if err := os.WriteFile(filepath.Join(dir, s.name), []byte(s.content), s.mode); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, s.name), s.content, s.mode); err != nil {
 			return fmt.Errorf("failed to write %s: %w", s.name, err)
 		}
 	}

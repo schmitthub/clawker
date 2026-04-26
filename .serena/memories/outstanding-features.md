@@ -18,7 +18,7 @@ Top-level tracker for features and architectural improvements that are known but
 **Status:** release pipeline is currently broken on main's build system — **must land before the next tag push**
 **Scope:** medium
 
-Background: commits `a50ac9e4` + `5ce36b1c` (fix/project-egress-priority) and PR #250 (feat: clawker control plane) replaced the host-native Go build of `internal/firewall/assets/{clawker-cp,ebpf-manager,coredns-clawker}` with a pinned multi-stage `Dockerfile.controlplane` + `docker buildx build` extraction. Nothing generated is committed anymore (no `clawker_*_bpfel.{go,o}`, no firewall asset binaries). `make clawker` works end-to-end locally because Make's dep graph triggers the pinned Docker build, which produces all three firewall stack binaries into `internal/firewall/assets/` before the host-native `go build ./cmd/clawker` runs with them `go:embed`'d.
+Background: commits `a50ac9e4` + `5ce36b1c` (fix/project-egress-priority) and PR #250 (feat: clawker control plane) replaced the host-native Go build of `internal/controlplane/cpboot/assets/{clawker-cp,ebpf-manager}` + `internal/controlplane/firewall/assets/coredns-clawker` with a pinned multi-stage `Dockerfile.controlplane` + `docker buildx build` extraction. Nothing generated is committed anymore (no `clawker_*_bpfel.{go,o}`, no firewall asset binaries). `make clawker` works end-to-end locally because Make's dep graph triggers the pinned Docker build, which produces all three firewall stack binaries into `internal/controlplane/{cpboot,firewall}/assets/` before the host-native `go build ./cmd/clawker` runs with them `go:embed`'d.
 
 Makefile targets: `cp-binary`, `ebpf-binary`, `coredns-binary`. All three are required on the embed path for `clawker`.
 
@@ -28,7 +28,7 @@ The release pipeline does NOT go through `make clawker`. It will fail on the nex
 
 | Step | Breakage |
 |---|---|
-| `Verify build` → `go build ./cmd/clawker` | `internal/firewall/assets/{clawker-cp,ebpf-manager,coredns-clawker}` don't exist on the runner; `go:embed` fails at compile time |
+| `Verify build` → `go build ./cmd/clawker` | `internal/controlplane/cpboot/assets/{clawker-cp,ebpf-manager}` + `internal/controlplane/firewall/assets/coredns-clawker` don't exist on the runner; `go:embed` fails at compile time |
 | GoReleaser step (invokes goreleaser which runs `go generate ./...` + `go build`) | `go generate` needs pinned `clang` + `llvm` + `libbpf-dev` + `linux-libc-dev`; `go build` needs the embedded assets |
 
 Everything downstream of the Go build is fine:
@@ -168,11 +168,11 @@ Already fixed in commit `6a00a212` ("fix: firewall bypass/enable/disable name→
 **Complexity:** Touches almost every part of the firewall stack. Probably a multi-task initiative.
 
 **Files to start:**
-- `internal/controlplane/ebpf/bpf/common.h` — map definitions, container_config struct
-- `internal/controlplane/ebpf/bpf/clawker.c` — connect6/sendmsg6/recvmsg6
-- `internal/controlplane/ebpf/types.go` + manager.go — IPv6 helpers + sync
-- `internal/firewall/manager.go` — network setup, container config
-- `internal/firewall/envoy.go` — IPv6 listener + cluster config
+- `internal/controlplane/firewall/ebpf/bpf/common.h` — map definitions, container_config struct
+- `internal/controlplane/firewall/ebpf/bpf/clawker.c` — connect6/sendmsg6/recvmsg6
+- `internal/controlplane/firewall/ebpf/types.go` + manager.go — IPv6 helpers + sync
+- `internal/controlplane/firewall/manager.go` — network setup, container config
+- `internal/controlplane/firewall/envoy.go` — IPv6 listener + cluster config
 - `internal/dnsbpf/dnsbpf.go` — AAAA record handling
 
 ---
@@ -220,12 +220,66 @@ The control plane's auth shape (mTLS + OIDC + JWT with per-method scope enforcem
 - Log transport: BPF ring buffer (`BPF_MAP_TYPE_RINGBUF`) for event stream, or just poll the metrics_map and synthesize events from deltas?
 
 **Files to touch:**
-- `internal/controlplane/ebpf/bpf/common.h` — maybe add a ring buffer for structured events
-- `internal/controlplane/ebpf/bpf/clawker.c` — optionally emit ring buffer events on key actions
-- `internal/controlplane/ebpf/manager.go` — new `ScrapeMetrics()` method reading `metrics_map`
-- `internal/controlplane/ebpf/cmd/main.go` — new `metrics` subcommand (or part of the `serve` daemon from #3)
+- `internal/controlplane/firewall/ebpf/bpf/common.h` — maybe add a ring buffer for structured events
+- `internal/controlplane/firewall/ebpf/bpf/clawker.c` — optionally emit ring buffer events on key actions
+- `internal/controlplane/firewall/ebpf/manager.go` — new `ScrapeMetrics()` method reading `metrics_map`
+- `internal/controlplane/firewall/ebpf/cmd/main.go` — new `metrics` subcommand (or part of the `serve` daemon from #3)
 - `internal/monitor/` — dashboard updates
 - Tie into the #3 long-running daemon naturally — scraping loop lives there
+
+---
+
+## 5. clawkerd → container death linkage (clawkerd as PID 1 / killable parent)
+
+**Status:** not started
+**Scope:** small-to-medium
+**Surfaced in:** UAT of `cp-initiative-clawkerd-identity-and-logging`, 2026-04-26. User said "clawkerd owns the fucking container. its root. if it errors or fails the container should die. but we can deal with that later."
+
+**Current behavior (the gap):** `internal/bundler/assets/entrypoint.sh` launches clawkerd as a backgrounded child of the bash entrypoint, gated on `[ -d /run/clawker/bootstrap ]`. The shell continues into the existing init flow (firewall healthz wait, post-init script, then `exec` into the user's command). If clawkerd dies — token exchange rejected, mTLS refused, slot expired, Welcome timeout, stream broken without reconnect — the shell doesn't notice. The container keeps running, the agent has no live channel to the CP, and the user's interactive session looks fine while every CP-side per-agent capability is silently dead.
+
+**What "linked" means:** clawkerd's death = container exit. Pick one of:
+- **Option A — clawkerd is the container's PID 1.** Entrypoint becomes `clawkerd` directly; clawkerd handles signal forwarding, fans out a child process for the user's interactive shell, and exits when either the user's shell exits or its own Connect stream dies. Closest to the "clawkerd owns the container" spirit. Most invasive: clawkerd has to grow signal forwarding + child-process management + tty wiring (today bash does all of this).
+- **Option B — bash-level supervisor.** Entrypoint stays bash. Add a tiny supervisor block that backgrounds clawkerd, captures its PID, and on any non-zero exit `kill 1` (or `exit 1` from the entrypoint) so Docker tears the container down. Simpler; bash retains tty/signal duties. Trade-off: a clawkerd crash + restart loop is harder to express (the supervisor would have to debounce vs hard-kill).
+- **Option C — health-check based.** clawkerd writes `/run/clawker/clawkerd.live` (touch on each successful Recv); a Docker `HEALTHCHECK` watches it. Container goes unhealthy when clawkerd dies; an external watcher (CP-side `AgentWatcher`?) reaps unhealthy agent containers. Decoupled but introduces a polling lag and makes the death linkage CP-side rather than container-side.
+
+**Recommendation:** Option B as a first step (cheap, reversible, surfaces the pattern), promote to Option A if the supervisor logic creeps. Option C is a fallback if neither works.
+
+**Related deferred work:** `cp-initiative-cp-restart-resilience` will add reconnect-with-backoff to clawkerd, at which point "clawkerd died" gets a smaller blast radius (transient stream breaks no longer kill the container). The PID 1 / supervisor work should land in coordination — too aggressive without reconnect would make every CP restart kill every agent container.
+
+**Files to touch:**
+- `internal/bundler/assets/entrypoint.sh` — supervisor wiring (Option B) or `exec` swap (Option A).
+- `cmd/clawkerd/main.go` — if Option A, a child-process wrapper around the user's shell + signal forwarding (substantial new surface; consider whether to fork the entrypoint instead of inlining).
+- `internal/clawkerd/embed.go` + bundler tests — entrypoint generation now has to thread through the supervision mode.
+- `cmd/clawkerd/CLAUDE.md` — document the new lifecycle contract.
+
+---
+
+## 6. CP endpoint env-var disclosure to unprivileged user inside the container
+
+**Status:** not started
+**Scope:** small
+**Surfaced in:** UAT of `cp-initiative-clawkerd-identity-and-logging`, 2026-04-26. User flagged: "claude user sees CLAWKER_CP_AGENT_ADDR etc. via env. kinda of risk imo".
+
+**Current behavior:** `internal/docker/env.go` sets `CLAWKER_CP_HYDRA_URL` + `CLAWKER_CP_AGENT_ADDR` (and friends) in the container's process environment so clawkerd can resolve them. They're inherited by every child process — including the user's interactive shell as the unprivileged `claude` user. `env | grep CLAWKER_CP` discloses the CP's clawker-net topology to anything that runs in the container.
+
+**Threat model:** Bootstrap material (cert, key, assertion, verifier) is root-only at `/run/clawker/bootstrap` (0700 dir, 0400 files), so a non-root attacker can't authenticate. But the addresses leak — any process the user's shell spawns, any tool they install, any prompt-injected `env` dump, learns the CP's network position. Not catastrophic on its own (no auth material leaks), but it's defense-in-depth: the unprivileged user should not need to know the CP exists.
+
+**Fix options:**
+- **Option A — move to bootstrap-dir files.** Drop the env vars; have clawkerd read `/run/clawker/bootstrap/cp_addr` + `/run/clawker/bootstrap/hydra_url` (root:0400 like the rest of bootstrap). Existing tar-based bootstrap delivery already lands there; just add two more files. Symmetric with the cert/key/CA placement, leverages the same RBAC.
+- **Option B — write to env, then `unset` in the entrypoint after clawkerd reads them.** Clawkerd captures the env at startup, writes the captured value to its own state, then the supervisor unsets the env before `exec`'ing the user's shell. Cheaper than Option A but relies on entrypoint discipline; a refactor that drops the unset reintroduces the leak silently.
+- **Option C — restrict via PAM `pam_env` / capabilities.** Heavier; not justified for the threat surface.
+
+**Recommendation:** Option A. Clawkerd already reads bootstrap material from disk; adding two more files is incremental and the security boundary (root-readable) is already established.
+
+**Files to touch:**
+- `internal/docker/env.go` — drop the `CLAWKER_CP_*` env entries.
+- `internal/cmd/container/shared/agent_bootstrap.go` — `WriteAgentBootstrapToContainer` adds two more files (`cp_addr`, `hydra_url`) to the tar.
+- `cmd/clawkerd/main.go` — read those two values from the bootstrap dir instead of `os.Getenv`.
+- `internal/consts/consts.go` — drop `EnvClawkerdHydraURL` + `EnvClawkerdAgentAddr` once consumers migrate (or repurpose them as bootstrap file names).
+- `cmd/clawkerd/CLAUDE.md` + `internal/cmd/container/shared/CLAUDE.md` — document the new placement.
+- Tests: `agent_bootstrap_test.go` and `bootstrap_test.go` need the two new files asserted.
+
+**Coordination:** Should land alongside or before #5 — if clawkerd becomes PID 1, it inherits the same env vars at exec time and the leak path persists until this fix lands.
 
 ---
 

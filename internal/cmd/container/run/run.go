@@ -49,6 +49,7 @@ type RunOptions struct {
 
 	// Computed fields (set during execution)
 	AgentName string
+	Project   string
 
 	// Internal (set by RunE before calling runRun)
 	flags *pflag.FlagSet
@@ -159,11 +160,25 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
-	// Resolve project name from ProjectManager (empty if no project registered)
+	// Resolve project name from ProjectManager (empty if no project registered).
+	// Errors are non-fatal because an empty projectName IS the unscoped/2-segment
+	// naming case — but we log at debug so operators can tell "no project" from
+	// "lookup failed" when the composite-identity announce silently produces an
+	// unscoped slot in a project that was supposed to be registered.
 	var projectName string
 	if opts.ProjectManager != nil {
-		if pm, pmErr := opts.ProjectManager(); pmErr == nil {
-			if p, pErr := pm.CurrentProject(ctx); pErr == nil {
+		log, _ := opts.Logger()
+		if log == nil {
+			log = logger.Nop()
+		}
+		pm, pmErr := opts.ProjectManager()
+		if pmErr != nil {
+			log.Debug().Err(pmErr).Msg("project manager unavailable; announcing as unscoped")
+		} else {
+			p, pErr := pm.CurrentProject(ctx)
+			if pErr != nil {
+				log.Debug().Err(pErr).Msg("CurrentProject lookup failed; announcing as unscoped")
+			} else {
 				projectName = p.Name()
 			}
 		}
@@ -249,6 +264,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}
 
 	opts.AgentName = o.result.AgentName
+	opts.Project = projectName
 
 	// --- Phase C: Post-progress ---
 
@@ -268,6 +284,8 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			AdminClient:    opts.AdminClient,
 			SocketBridge:   opts.SocketBridge,
 			Logger:         opts.Logger,
+			AgentName:      opts.AgentName,
+			Project:        opts.Project,
 		}, docker.ContainerStartOptions{ContainerID: o.result.ContainerID}); err != nil {
 			return fmt.Errorf("starting container: %w", err)
 		}
@@ -362,6 +380,8 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 			AdminClient:    opts.AdminClient,
 			SocketBridge:   opts.SocketBridge,
 			Logger:         opts.Logger,
+			AgentName:      opts.AgentName,
+			Project:        opts.Project,
 		},
 		docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 		log.Debug().Err(err).Msg("container start failed")

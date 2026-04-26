@@ -1,18 +1,31 @@
 name: Build embedded control plane binaries
 description: >
-  Builds the `clawker-cp`, `ebpf-manager`, and `coredns-clawker` Linux
-  binaries via the pinned `Dockerfile.controlplane` multi-stage build, and
-  materializes the bpf2go-generated Go wrappers at
+  Builds the `clawkerd`, `clawker-cp`, `ebpf-manager`, and `coredns-clawker`
+  Linux binaries — `clawkerd` via plain CGO_ENABLED=0 cross-compile and the
+  three CP-side binaries via the pinned `Dockerfile.controlplane` multi-stage
+  build. Also materializes the bpf2go-generated Go wrappers at
   `internal/controlplane/firewall/ebpf/clawker_*_bpfel.{go,o}`.
 
   This is the one-stop prerequisite for any CI job that needs to compile,
-  lint, vet, or otherwise analyze the full Go module tree —
-  `internal/controlplane/cpboot` `go:embed`'s `clawker-cp` + `ebpf-manager`,
-  `internal/controlplane/firewall` `go:embed`'s `coredns-clawker`, and
-  `internal/controlplane/firewall/ebpf/manager.go` references types declared
-  in the bpf2go wrappers. Jobs that touch the whole module and skip this
-  step will fail with `undefined: clawkerRouteKey` or missing `go:embed`
-  targets.
+  lint, vet, or otherwise analyze the full Go module tree. Embed targets
+  hit on a Go build of the whole module:
+
+  - `internal/clawkerd` `go:embed`'s `clawkerd` (per-container daemon)
+  - `internal/controlplane/cpboot` `go:embed`'s `clawker-cp` + `ebpf-manager`
+  - `internal/controlplane/firewall` `go:embed`'s `coredns-clawker`
+  - `internal/controlplane/firewall/ebpf/manager.go` references types
+    declared in the bpf2go wrappers
+
+  Build order: `clawkerd-binary` MUST come before `cp-binary` because
+  `cmd/clawker-cp` transitively imports `internal/clawkerd` via
+  `internal/docker` → `internal/bundler`, so the inner
+  `Dockerfile.controlplane` Go build refuses to compile until the
+  `//go:embed assets/clawkerd` target exists on disk. The Makefile encodes
+  this dependency explicitly on `$(CP_BINARY)`, but listing the targets
+  in dependency order here keeps the intent visible to a future maintainer.
+
+  Jobs that touch the whole module and skip this step will fail with
+  `undefined: clawkerRouteKey` or missing `go:embed` targets.
 
   Ordering rule: call this AFTER `actions/checkout`, and BEFORE any tool
   that does its own working-tree checkout (e.g. `golang/govulncheck-action`
@@ -35,4 +48,4 @@ runs:
 
     - name: Build embedded control plane binaries
       shell: bash
-      run: make ebpf-binary coredns-binary cp-binary
+      run: make ebpf-binary coredns-binary clawkerd-binary cp-binary

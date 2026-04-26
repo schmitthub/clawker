@@ -1,389 +1,211 @@
 // Package controlplane implements the clawker control plane — a privileged
 // long-lived gRPC service that owns authoritative state for managed
-// containers. Responsibilities currently include ebpf firewall management
-// (ControlPlaneService, called by the host CLI) and agent registration
-// (AgentReportingService, called by container-side clawkerd instances).
-//
-// The Server struct is transport-agnostic: it can be served on any
-// net.Listener (UDS, TCP, in-memory). cmd/clawker-cp wires it up inside
-// the clawker-cp container; tests use mocks.MockServer.
+// containers. Serves the AdminService surface (CLI ↔ CP) and supplies
+// the auth + lifecycle plumbing shared with the agent listener
+// (clawkerd ↔ CP, registered separately by cmd/clawker-cp).
 package controlplane
 
 import (
 	"context"
-	"fmt"
-	"io"
-	"net"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"sort"
+	"strings"
 	"time"
 
-	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	v1 "github.com/schmitthub/clawker/internal/clawkerd/protocol/v1"
-	"github.com/schmitthub/clawker/internal/config"
-	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
-	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/logger"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/auth"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
+	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // adminServer composes the domain-specific handlers into the single
-// AdminServiceServer surface. Today only the firewall handler is
-// embedded; future domains (monitor, hostproxy, clawkerd) plug in by
-// embedding additional handlers whose Go method sets collectively satisfy
-// AdminServiceServer via method promotion. Method-name collisions are
-// prevented at the proto layer by the `<Domain><Action>[<Object>]`
-// naming convention.
+// AdminServiceServer surface. The firewall handler embeds
+// UnimplementedAdminServiceServer so new RPCs default to
+// codes.Unimplemented; explicit methods on adminServer (e.g.
+// ListAgents, AnnounceAgent) override that fallback.
 type adminServer struct {
 	// *fwhandler.Handler embeds adminv1.UnimplementedAdminServiceServer,
 	// so new proto RPCs fail open with codes.Unimplemented via promotion
 	// rather than blocking the whole CP on a partial domain rewrite.
 	*fwhandler.Handler
+
+	agents agentregistry.Registry
+	slots  agentslots.Registry
+	clock  func() time.Time
+	log    *logger.Logger
 }
 
 // compile-time: any future additions to AdminServiceServer must be
 // covered by one of the embedded domain handlers or this assertion fails.
 var _ adminv1.AdminServiceServer = (*adminServer)(nil)
 
-// NewAdminServer returns the composite AdminServiceServer wired from the
-// supplied domain handlers.
-func NewAdminServer(fw *fwhandler.Handler) adminv1.AdminServiceServer {
-	return &adminServer{Handler: fw}
-}
-
-// ControlPlaneService is the consumer-facing contract for the control plane.
-// CLI commands and other packages depend on this interface; tests use
-// mocks.MockServer.
+// NewAdminServer returns the composite AdminServiceServer wired from
+// the supplied domain handlers.
 //
-//go:generate moq -rm -pkg mocks -out mocks/controlplane_mock.go . ControlPlaneService
-type ControlPlaneService interface {
-	// Serve starts serving gRPC on the given listener. Blocks until Stop.
-	Serve(lis net.Listener) error
-	// Stop gracefully stops the control plane.
-	Stop()
-	// IsRegistered returns true if an agent with the given container ID has registered.
-	IsRegistered(containerID string) bool
-	// GetAgent returns agent connection info, or nil if not registered.
-	GetAgent(containerID string) *AgentConnection
-}
-
-// Config holds control plane server configuration.
-type Config struct {
-	// Secret is the shared secret agents must present to register.
-	Secret string
-	// InitSpec is the init specification to send to agents after registration.
-	InitSpec *v1.RunInitRequest
-	// DockerClient is used to inspect containers for IP resolution.
-	DockerClient *docker.Client
-	// Cfg provides access to the config store for settings resolution.
-	// Used to populate ClawkerdConfiguration in RegisterResponse.
-	Cfg config.Config
-	// Project is the project name for clawkerd logger context.
-	Project string
-	// Agent is the agent name for clawkerd logger context.
-	Agent string
-	// Log is the logger used for server-side structured logging.
-	// Required — callers must pass a non-nil logger (use logger.Nop() in tests).
-	Log *logger.Logger
-	// ServerOptions are additional grpc.ServerOption values appended to the
-	// base options (e.g. TLS credentials, interceptors). Used by cmd/clawker-cp
-	// to wire mTLS transport credentials and the authz interceptor.
-	ServerOptions []grpc.ServerOption
-}
-
-// Server is the control plane gRPC server.
-// It implements AgentReportingService (agents register here) and on
-// successful registration, connects back to the agent's AgentCommandService
-// to call RunInit. Additional services (e.g. ControlPlaneService) are
-// registered by their owning packages via Server.Register() or by passing
-// grpc.ServerOption values on the Config.
-type Server struct {
-	v1.UnimplementedAgentReportingServiceServer
-
-	config   Config
-	registry *Registry
-	grpc     *grpc.Server
-	log      *logger.Logger
-}
-
-// NewServer creates a new control plane server. The returned Server has
-// AgentReportingService registered on its underlying grpc.Server. Callers
-// can obtain the grpc.Server via GRPCServer() to register additional
-// services (e.g. ControlPlaneService) before calling Serve.
-func NewServer(cfg Config) (*Server, error) {
-	if cfg.Secret == "" {
-		return nil, fmt.Errorf("controlplane: Secret is required")
+//   - slots is required: AnnounceAgent has no fallback path when the
+//     slot registry is missing. Panic at construction so a wiring
+//     regression surfaces during startup, not as opaque codes.Internal
+//     responses on every announce. Mirrors agent.NewHandler's posture
+//     for its required dependencies.
+//   - agents may be nil — when nil, ListAgents returns an empty result
+//     so the CLI's `controlplane agents` command renders cleanly even
+//     on a CP build that hasn't wired the agent registry yet.
+//   - clock defaults to time.Now when nil. Tests inject a fixed-time
+//     function so AnnounceAgent's ExpiresAt is deterministic.
+//   - log defaults to logger.Nop() when nil. Production wiring passes
+//     the CP's structured logger so AnnounceAgent failures surface in
+//     the operator log; tests pass nil.
+func NewAdminServer(fw *fwhandler.Handler, agents agentregistry.Registry, slots agentslots.Registry, clock func() time.Time, log *logger.Logger) adminv1.AdminServiceServer {
+	if slots == nil {
+		panic("controlplane: NewAdminServer requires non-nil slots registry")
 	}
-	if cfg.DockerClient == nil {
-		return nil, fmt.Errorf("controlplane: DockerClient is required")
+	if clock == nil {
+		clock = time.Now
 	}
-	if cfg.Cfg == nil {
-		return nil, fmt.Errorf("controlplane: Cfg is required")
-	}
-	log := cfg.Log
 	if log == nil {
 		log = logger.Nop()
 	}
-	s := &Server{
-		config:   cfg,
-		registry: NewRegistry(log),
-		grpc:     grpc.NewServer(cfg.ServerOptions...),
-		log:      log,
+	return &adminServer{Handler: fw, agents: agents, slots: slots, clock: clock, log: log}
+}
+
+// AnnounceAgent reserves a slot for an in-flight container startup. The
+// CLI calls this before issuing client.ContainerStart so the slot is
+// already in place when clawkerd boots and dials Connect. Validation is
+// strict — every required field is non-empty and the cert thumbprint
+// is exactly 64 lowercase-hex characters — because the slot record is
+// the load-bearing identity binding for the subsequent Connect
+// handshake.
+//
+// Wire-level error mapping:
+//   - missing/malformed fields → codes.InvalidArgument
+//   - duplicate composite (cert_thumbprint, agent_name, project) → codes.AlreadyExists
+//   - any other Reserve failure → codes.Internal (logged at Warn so
+//     operators have a triage trail; the wire response stays generic)
+func (s *adminServer) AnnounceAgent(_ context.Context, req *adminv1.AnnounceAgentRequest) (*adminv1.AnnounceAgentResult, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request required")
 	}
-	v1.RegisterAgentReportingServiceServer(s.grpc, s)
-	return s, nil
-}
-
-// GRPCServer returns the underlying grpc.Server. Callers use this to register
-// additional gRPC services on the same transport before calling Serve.
-func (s *Server) GRPCServer() *grpc.Server {
-	return s.grpc
-}
-
-// Serve starts serving gRPC on the given listener.
-// Blocks until Stop is called or the listener is closed.
-func (s *Server) Serve(lis net.Listener) error {
-	s.log.Info().Str("component", "controlplane").Str("addr", lis.Addr().String()).Msg("control plane serving")
-	return s.grpc.Serve(lis)
-}
-
-// Stop gracefully stops the gRPC server and closes agent connections.
-func (s *Server) Stop() {
-	s.grpc.GracefulStop()
-	s.registry.Close()
-}
-
-// IsRegistered returns true if an agent with the given container ID has registered.
-func (s *Server) IsRegistered(containerID string) bool {
-	return s.registry.IsRegistered(containerID)
-}
-
-// GetAgent returns agent connection info, or nil if not registered.
-func (s *Server) GetAgent(containerID string) *AgentConnection {
-	return s.registry.Get(containerID)
-}
-
-// Registry returns the agent registry for direct inspection.
-func (s *Server) Registry() *Registry {
-	return s.registry
-}
-
-// Register implements AgentReportingService.Register.
-// Validates the secret, registers the agent, resolves the container's IP
-// via Docker inspect, then connects back to the agent's AgentCommandService
-// to call RunInit asynchronously.
-func (s *Server) Register(ctx context.Context, req *v1.RegisterRequest) (*v1.RegisterResponse, error) {
-	s.log.Info().
-		Str("component", "controlplane").
-		Str("container_id", req.ContainerId).
-		Uint32("listen_port", req.ListenPort).
-		Str("version", req.Version).
-		Msg("agent registering")
-
-	// Validate secret.
-	if req.Secret != s.config.Secret {
-		s.log.Warn().
-			Str("component", "controlplane").
-			Str("container_id", req.ContainerId).
-			Msg("agent registration rejected: invalid secret")
-		return nil, status.Error(codes.Unauthenticated, "invalid secret")
+	// Validate agent_name and project at the wire boundary using the
+	// SAME typed constructors AgentService.Connect uses (see
+	// internal/controlplane/agent/handler.go). Without this Announce
+	// would accept names that Connect later rejects — the slot is
+	// reserved successfully but cannot be consumed, so a malformed name
+	// burns a slot for the full TTL. agent_name is identity-bearing so
+	// dot-containing or canonical-prefix forms must be rejected here
+	// (otherwise an attacker gets a memory churn primitive bounded only
+	// by the rate limiter we don't yet have). Project is allowed to be
+	// empty (matches docker.ContainerName's 2-segment naming) — that's
+	// expressed by NewProjectSlug accepting "".
+	if _, err := auth.NewAgentName(req.AgentName); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "agent_name: %v", err)
+	}
+	if _, err := auth.NewProjectSlug(req.Project); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "project: %v", err)
+	}
+	if req.ContainerId == "" {
+		return nil, status.Error(codes.InvalidArgument, "container_id required")
+	}
+	if req.CodeChallenge == "" {
+		return nil, status.Error(codes.InvalidArgument, "code_challenge required")
+	}
+	if req.CodeChallengeMethod != string(consts.ChallengeMethodS256) {
+		return nil, status.Error(codes.InvalidArgument, "code_challenge_method must be S256")
 	}
 
-	// Register the agent.
-	s.registry.Register(req.ContainerId, req.ListenPort, req.Version)
+	// hex.DecodeString is case-insensitive but the proto contract is
+	// lowercase. Enforce explicitly so two equally-valid CLI builds
+	// can't disagree on case and so a future strict comparator
+	// elsewhere in the codebase doesn't silently break the tolerant
+	// branch.
+	if strings.ToLower(req.ExpectedCertThumbprint) != req.ExpectedCertThumbprint {
+		return nil, status.Error(codes.InvalidArgument, "expected_cert_thumbprint must be 64 lowercase hex characters")
+	}
+	raw, err := hex.DecodeString(req.ExpectedCertThumbprint)
+	if err != nil || len(raw) != sha256.Size {
+		return nil, status.Error(codes.InvalidArgument, "expected_cert_thumbprint must be 64 lowercase hex characters")
+	}
+	var thumbprint [sha256.Size]byte
+	copy(thumbprint[:], raw)
 
-	// Resolve container IP via Docker inspect.
-	agentAddr, err := s.resolveAgentAddress(ctx, req.ContainerId, req.ListenPort)
-	if err != nil {
-		s.log.Error().Err(err).
-			Str("component", "controlplane").
-			Str("container_id", req.ContainerId).
-			Msg("failed to resolve container IP")
-		return nil, status.Errorf(codes.Internal, "resolve container IP: %v", err)
+	now := s.clock()
+	slot := agentslots.Slot{
+		AgentName: req.AgentName,
+		// Project completes the composite slot identity so two agents
+		// with the same short name in different projects don't collide.
+		// Empty req.Project is intentional (matches docker.ContainerName
+		// 2-segment naming) and accepted by agentslots.Reserve.
+		Project:                req.Project,
+		ContainerID:            req.ContainerId,
+		ExpectedCertThumbprint: thumbprint,
+		Challenge:              req.CodeChallenge,
+		ChallengeMethod:        consts.ChallengeMethod(req.CodeChallengeMethod),
+		// ReservedAt / ExpiresAt are stamped inside Reserve from the
+		// registry's clock; the values set here are overwritten.
+	}
+	if err := s.slots.Reserve(slot); err != nil {
+		if errors.Is(err, agentslots.ErrSlotExists) {
+			return nil, status.Error(codes.AlreadyExists, "agent already announced")
+		}
+		// Any other Reserve failure indicates a CLI/CP wiring bug
+		// (validation only catches user-facing input; Reserve's own
+		// invariants — non-S256 method, empty agent — should be caught
+		// above, so reaching this branch is a real signal). Log loudly
+		// so an operator sees the underlying error; wire response stays
+		// generic to avoid leaking internals. Tolerate a nil log here
+		// for tests that build adminServer via struct literal — the
+		// production path always sets log via NewAdminServer.
+		log := s.log
+		if log == nil {
+			log = logger.Nop()
+		}
+		log.Warn().
+			Err(err).
+			Str("agent", req.AgentName).
+			Str("project", req.Project).
+			Msg("admin: slot reservation failed")
+		return nil, status.Error(codes.Internal, "slot reservation failed")
 	}
 
-	s.log.Info().
-		Str("component", "controlplane").
-		Str("container_id", req.ContainerId).
-		Str("agent_addr", agentAddr).
-		Msg("agent registered, connecting back for RunInit")
-
-	// Connect back to the agent's gRPC server and call RunInit asynchronously.
-	go s.runInitOnAgent(req.ContainerId, agentAddr)
-
-	return &v1.RegisterResponse{
-		Accepted: true,
-		Config:   s.buildClawkerdConfig(),
+	return &adminv1.AnnounceAgentResult{
+		ExpiresAtUnix: now.Add(consts.AgentSlotTTL).Unix(),
 	}, nil
 }
 
-// buildClawkerdConfig constructs the ClawkerdConfiguration proto from resolved settings.
-// Returns nil if settings are not available (graceful degradation — clawkerd falls back to defaults).
-func (s *Server) buildClawkerdConfig() *v1.ClawkerdConfiguration {
-	cfg := &v1.ClawkerdConfiguration{
-		Project: s.config.Project,
-		Agent:   s.config.Agent,
+// ListAgents returns a deterministic snapshot of every agent currently
+// registered with the control plane. The thumbprint is exported as
+// lowercase hex so a debugger can match `dev.clawker.cert-thumbprint`
+// labels (or the bootstrap material on disk) against the entry the CP
+// holds. RegisteredAt and LastSeen are emitted as Unix seconds (UTC) to
+// avoid pulling google.protobuf.Timestamp into the AdminService surface
+// for one read-only RPC.
+func (s *adminServer) ListAgents(_ context.Context, _ *adminv1.ListAgentsRequest) (*adminv1.ListAgentsResult, error) {
+	if s.agents == nil {
+		return &adminv1.ListAgentsResult{}, nil
 	}
+	snap := s.agents.Snapshot()
+	// Snapshot is already sorted by AgentName but a defensive sort here
+	// keeps the wire output deterministic even if the registry's sort
+	// invariant ever weakens.
+	sort.Slice(snap, func(i, j int) bool { return snap[i].AgentName < snap[j].AgentName })
 
-	settings := s.config.Cfg.SettingsStore().Read()
-
-	// OTEL config — uses InternalEndpoint (host:port, no scheme) for container-side collector.
-	if settings.Logging.Otel.Enabled != nil && *settings.Logging.Otel.Enabled {
-		cfg.Otel = &v1.OtelLogConfig{
-			Endpoint:              fmt.Sprintf("%s:%d", settings.Monitoring.OtelCollectorInternal, settings.Monitoring.OtelGRPCPort),
-			Insecure:              true,
-			TimeoutSeconds:        int32(settings.Logging.Otel.TimeoutSeconds),
-			MaxQueueSize:          int32(settings.Logging.Otel.MaxQueueSize),
-			ExportIntervalSeconds: int32(settings.Logging.Otel.ExportIntervalSeconds),
+	out := make([]*adminv1.Agent, len(snap))
+	for i, e := range snap {
+		out[i] = &adminv1.Agent{
+			AgentName:        e.AgentName,
+			Project:          e.Project,
+			ContainerId:      e.ContainerID,
+			CertThumbprint:   hex.EncodeToString(e.Thumbprint[:]),
+			RegisteredAtUnix: e.RegisteredAt.Unix(),
+			LastSeenUnix:     e.LastSeen.Unix(),
 		}
 	}
-
-	// File logging config.
-	cfg.FileLogging = &v1.FileLogConfig{
-		Enabled:    settings.Logging.FileEnabled != nil && *settings.Logging.FileEnabled,
-		MaxSizeMb:  int32(settings.Logging.MaxSizeMB),
-		MaxAgeDays: int32(settings.Logging.MaxAgeDays),
-		MaxBackups: int32(settings.Logging.MaxBackups),
-		Compress:   settings.Logging.Compress != nil && *settings.Logging.Compress,
-	}
-
-	return cfg
-}
-
-// resolveAgentAddress inspects the container to determine how to reach the
-// agent's gRPC server. It first checks for a host port mapping (required on
-// macOS/Docker Desktop where container IPs aren't routable from the host),
-// then falls back to the container's network IP.
-func (s *Server) resolveAgentAddress(ctx context.Context, containerID string, port uint32) (string, error) {
-	result, err := s.config.DockerClient.ContainerInspect(ctx, containerID, docker.ContainerInspectOptions{})
-	if err != nil {
-		return "", fmt.Errorf("inspect container %s: %w", containerID, err)
-	}
-
-	if result.Container.NetworkSettings == nil {
-		return "", fmt.Errorf("container %s has no network settings", containerID)
-	}
-
-	// Check for host port mapping first (works on all platforms).
-	portKey := fmt.Sprintf("%d/tcp", port)
-	for p, bindings := range result.Container.NetworkSettings.Ports {
-		if p.String() == portKey && len(bindings) > 0 {
-			hostPort := bindings[0].HostPort
-			if hostPort != "" {
-				addr := fmt.Sprintf("127.0.0.1:%s", hostPort)
-				s.log.Debug().
-					Str("component", "controlplane").
-					Str("container_id", containerID).
-					Str("addr", addr).
-					Msg("resolved agent via port mapping")
-				return addr, nil
-			}
-		}
-	}
-
-	// Fallback: use container IP directly (works on Linux where host can reach container IPs).
-	for networkName, endpoint := range result.Container.NetworkSettings.Networks {
-		if endpoint.IPAddress.IsValid() {
-			ip := endpoint.IPAddress.String()
-			s.log.Debug().
-				Str("component", "controlplane").
-				Str("container_id", containerID).
-				Str("network", networkName).
-				Str("ip", ip).
-				Msg("resolved container IP (direct)")
-			return fmt.Sprintf("%s:%d", ip, port), nil
-		}
-	}
-
-	return "", fmt.Errorf("no valid address found for container %s", containerID)
-}
-
-// runInitOnAgent connects to the agent's gRPC server and calls RunInit.
-func (s *Server) runInitOnAgent(containerID, agentAddr string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	// Connect to the agent's gRPC server.
-	conn, err := grpc.NewClient(
-		agentAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		s.log.Error().Err(err).
-			Str("component", "controlplane").
-			Str("container_id", containerID).
-			Str("agent_addr", agentAddr).
-			Msg("failed to connect to agent")
-		s.registry.SetInitFailed(containerID)
-		return
-	}
-	s.registry.SetClientConn(containerID, conn)
-
-	client := v1.NewAgentCommandServiceClient(conn)
-
-	// Send the init spec.
-	initSpec := s.config.InitSpec
-	if initSpec == nil {
-		initSpec = &v1.RunInitRequest{}
-	}
-
-	stream, err := client.RunInit(ctx, initSpec)
-	if err != nil {
-		s.log.Error().Err(err).
-			Str("component", "controlplane").
-			Str("container_id", containerID).
-			Msg("RunInit RPC failed")
-		s.registry.SetInitFailed(containerID)
-		return
-	}
-
-	// Consume the progress stream.
-	for {
-		event, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			s.log.Error().Err(err).
-				Str("component", "controlplane").
-				Str("container_id", containerID).
-				Msg("RunInit stream error")
-			s.registry.SetInitFailed(containerID)
-			return
-		}
-
-		s.log.Info().
-			Str("component", "controlplane").
-			Str("container_id", containerID).
-			Str("step", event.StepName).
-			Str("status", event.Status.String()).
-			Str("output", event.Output).
-			Msg("init event")
-
-		s.registry.AppendInitEvent(containerID, event)
-
-		if event.Status == v1.InitEventStatus_INIT_EVENT_STATUS_READY {
-			s.registry.SetInitCompleted(containerID)
-			s.log.Info().
-				Str("component", "controlplane").
-				Str("container_id", containerID).
-				Msg("agent init completed")
-			return
-		}
-
-		if event.Status == v1.InitEventStatus_INIT_EVENT_STATUS_FAILED {
-			s.registry.SetInitFailed(containerID)
-			s.log.Error().
-				Str("component", "controlplane").
-				Str("container_id", containerID).
-				Str("step", event.StepName).
-				Str("error", event.Error).
-				Msg("agent init step failed")
-			return
-		}
-	}
-
-	// Stream ended without READY event — mark as completed if we got here cleanly.
-	s.registry.SetInitCompleted(containerID)
+	return &adminv1.ListAgentsResult{Agents: out}, nil
 }

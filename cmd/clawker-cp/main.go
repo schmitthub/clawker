@@ -34,10 +34,14 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	mobyclient "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
+	"github.com/schmitthub/clawker/internal/controlplane/agent"
+	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
@@ -209,12 +213,17 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	log.Info().Str("jwk_path", jwkPath).Msg("CLI JWK loaded")
 
-	// --- Step 5: Register CLI client with Hydra ---
+	// --- Step 5: Register CLI + agent clients with Hydra ---
+	// See controlplane.RegisterAgentClient for why both clients share
+	// one JWK with distinct client_id + scope.
 	hydraAdminURL := fmt.Sprintf("https://127.0.0.1:%d", cp.HydraAdminPort)
 	if err := controlplane.RegisterCLIClient(ctx, hydraAdminURL, jwkData, caTLS); err != nil {
 		return fmt.Errorf("step 5 (register CLI client): %w", err)
 	}
-	log.Info().Msg("CLI client registered with Hydra")
+	if err := controlplane.RegisterAgentClient(ctx, hydraAdminURL, jwkData, caTLS); err != nil {
+		return fmt.Errorf("step 5 (register agent client): %w", err)
+	}
+	log.Info().Msg("CLI + agent clients registered with Hydra")
 
 	// --- Step 6: Start Oathkeeper ---
 	// Oathkeeper runs as an HTTP reverse proxy for future webui auth.
@@ -303,10 +312,23 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		MinVersion:   tls.VersionTLS13,
 	}
 
-	// Auth interceptor: validates bearer tokens via Hydra introspection.
+	// Auth interceptors: one per listener so each enforces its own
+	// method-scope vocabulary. Both share a single Hydra introspector —
+	// tokens are checked against the same Hydra instance regardless of
+	// which listener received them.
 	hydraIntrospectURL := fmt.Sprintf("https://127.0.0.1:%d/admin/oauth2/introspect", cp.HydraAdminPort)
 	introspector := controlplane.NewHydraIntrospector(hydraIntrospectURL, caTLS)
 	authInterceptor := controlplane.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
+	// Pin the agent interceptor to consts.ClientIDAgent — defense in
+	// depth on top of the agent:self:register scope. Today only the
+	// clawker-agent Hydra client is registered with that scope, so the
+	// pin only fires if a future Hydra misconfiguration grants the
+	// scope to another client. The admin interceptor stays unpinned —
+	// the CLI is the only client that holds the admin scope and we
+	// don't want to accidentally lock out a future second admin client.
+	agentInterceptor := controlplane.
+		NewAuthInterceptor(introspector, controlplane.AgentMethodScopes(), log).
+		RequireClientID(consts.ClientIDAgent)
 
 	grpcServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
@@ -323,7 +345,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// drain-to-zero callback below so a single on-exit defer here is
 	// sufficient as a belt-and-braces against non-drain exit paths.
 	actionQueue := fwhandler.NewActionQueue(log)
-	defer func() { _ = actionQueue.Close() }()
+	defer func() {
+		if err := actionQueue.Close(); err != nil {
+			log.Warn().Err(err).Msg("actionQueue close failed")
+		}
+	}()
 	// listAgentIDs enumerates every running managed agent container ID.
 	// Handler's FirewallInit uses this to re-enroll per-container BPF
 	// enforcement after a CP restart — FlushAll wiped container_map on
@@ -353,22 +379,82 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		Queue:      actionQueue,
 		ListAgents: listAgentIDs,
 	})
-	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler))
+
+	// Agent registry is needed BOTH by the AgentService handler (added
+	// below on the agent listener) and by AdminService.ListAgents on the
+	// admin listener — construct it here so a single instance is shared.
+	agentReg := agentregistry.NewRegistry(log.With("component", "agentregistry"))
+
+	// Slot registry is needed by AdminService.AnnounceAgent (here) AND
+	// by the AgentService.Connect handler (further down). Hoisted above
+	// NewAdminServer so a single instance is shared; T6 wires the
+	// dockerevents subscription that drains stale slots on container
+	// exit alongside the agentregistry one.
+	slotRegistry := agentslots.NewRegistry(time.Now, 0, log.With("component", "agentslots"))
+	defer slotRegistry.Stop()
+
+	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, slotRegistry, time.Now, log))
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
 	if err != nil {
 		return fmt.Errorf("step 8 (grpc listen): %w", err)
 	}
 
-	// Cap covers gRPC, healthz, and the dockerevents feeder. Buffered
-	// so any goroutine that fails before main reaches the select can
-	// deposit its error without blocking.
-	serveFailed := make(chan error, 3)
+	// Agent listener — bound to clawker-net only (NOT host-published).
+	// Same mTLS material as the admin listener (server cert + CLI CA
+	// pool); the per-listener AuthInterceptor enforces the agent-side
+	// method-scope vocabulary so admin and agent surfaces fail closed
+	// on cross-listener method names.
+	agentTLSCfg := &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    caCertPool,
+		MinVersion:   tls.VersionTLS13,
+	}
+	// IdentityInterceptor runs AFTER AuthInterceptor: token + scope
+	// pass first, then identity resolves the peer cert thumbprint to
+	// a registered agent (or rejects). Connect is on the opt-out list
+	// (it authenticates itself); every other agent RPC must be
+	// registry-bound by the time the handler sees it.
+	identityUnary, identityStream := agent.IdentityInterceptor(
+		agentReg,
+		agent.IdentityOptedOutMethods(),
+		log.With("component", "agent-identity"),
+	)
+	agentServer := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(agentTLSCfg)),
+		grpc.ChainUnaryInterceptor(agentInterceptor.UnaryInterceptor(), identityUnary),
+		grpc.ChainStreamInterceptor(agentInterceptor.StreamInterceptor(), identityStream),
+	)
+	agentLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AgentPort))
+	if err != nil {
+		return fmt.Errorf("step 8 (agent grpc listen): %w", err)
+	}
+
+	// AgentService wiring: shared slot registry (announce-time
+	// reservations, hoisted above NewAdminServer) + the shared agent
+	// registry + handler. The agent registry's dockerevents
+	// subscription is set up further down, once the informer is alive.
+	agentInspector := agent.MobyInspector{Client: dockerCli.APIClient}
+	agentHandler := agent.NewHandler(slotRegistry, agentReg, agentInspector, log.With("component", "agent-handler"))
+	agentv1.RegisterAgentServiceServer(agentServer, agentHandler)
+
+	// Cap covers gRPC admin, gRPC agent, healthz, and the dockerevents
+	// feeder. Buffered so any goroutine that fails before main reaches
+	// the select can deposit its error without blocking.
+	serveFailed := make(chan error, 4)
 
 	go func() {
 		log.Info().Int("port", cp.AdminPort).Msg("gRPC admin API serving")
 		if err := grpcServer.Serve(grpcLis); err != nil {
-			serveFailed <- fmt.Errorf("gRPC serve: %w", err)
+			serveFailed <- fmt.Errorf("gRPC admin serve: %w", err)
+		}
+	}()
+
+	go func() {
+		log.Info().Int("port", cp.AgentPort).Msg("gRPC agent API serving")
+		if err := agentServer.Serve(agentLis); err != nil {
+			serveFailed <- fmt.Errorf("gRPC agent serve: %w", err)
 		}
 	}()
 
@@ -383,7 +469,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	go func() {
 		log.Info().Int("port", cp.HealthPort).Msg("healthz serving")
-		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveFailed <- fmt.Errorf("healthz serve: %w", err)
 		}
 	}()
@@ -430,6 +516,21 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// while watcherCtx is still alive).
 	feederCtx, feederCancel := context.WithCancel(watcherCtx)
 	defer feederCancel()
+
+	// Hook agent registry to dockerevents container deltas — evicts
+	// registered agents when their containers die/destroy. Subscribe
+	// runs through the informer so the same drain that closes the
+	// informer also tears this down cleanly.
+	cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, inf, log.With("component", "agentregistry"))
+	defer cancelAgentSub()
+
+	// Same wiring for the slot registry: a pending slot whose
+	// container died (e.g. ContainerStart failed mid-bootstrap) is
+	// dead-on-arrival; the TTL janitor would eventually sweep, but
+	// the dockerevents-driven path evicts immediately so a quick retry
+	// can re-announce without an ErrSlotExists collision.
+	cancelSlotSub := agentslots.Subscribe(watcherCtx, slotRegistry, inf, log.With("component", "agentslots"))
+	defer cancelSlotSub()
 	feederDone := make(chan struct{})
 	go func() {
 		defer close(feederDone)
@@ -510,7 +611,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		// Errors are aggregated so a broken drain exits non-zero and the
 		// on-failure restart policy retriggers investigation rather than
 		// silently blessing partial teardown.
-		_ = actionQueue.Close()
+		if err := actionQueue.Close(); err != nil {
+			log.Warn().Err(err).Msg("actionQueue close failed")
+		}
 		grpcServer.GracefulStop()
 		handler.CancelAllBypassTimers()
 		var errs []error
@@ -606,10 +709,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// Reverse-order graceful shutdown.
 	shutdownDone := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		grpcServer.GracefulStop()
+	}()
+	go func() {
+		defer wg.Done()
+		agentServer.GracefulStop()
 	}()
 	go func() {
 		wg.Wait()
@@ -621,6 +728,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	case <-time.After(defaultShutdownWait):
 		log.Warn().Msg("gRPC graceful stop timed out, forcing")
 		grpcServer.Stop()
+		agentServer.Stop()
 	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), defaultShutdownWait)

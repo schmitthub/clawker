@@ -6,6 +6,8 @@ import (
 	"maps"
 	"sort"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // RuntimeEnvOpts describes the environment variables RuntimeEnv can produce.
@@ -31,6 +33,13 @@ type RuntimeEnvOpts struct {
 	CPHealthzURL string
 	LokiPort     int // Configured Loki port for container-side telemetry (0 = default 3100)
 
+	// clawkerd bootstrap targets. clawkerd reads these to find the CP's
+	// Hydra public endpoint (token exchange) and the CP's agent gRPC
+	// listener on clawker-net (Connect dial), and to know which slot
+	// to consume at Connect time. Empty string omits the env var.
+	ClawkerdHydraURL  string // CLAWKER_CP_HYDRA_URL
+	ClawkerdAgentAddr string // CLAWKER_CP_AGENT_ADDR
+
 	// Monitoring stack
 	MonitoringActive bool // Whether the monitoring stack (otel-collector) is running
 
@@ -53,12 +62,13 @@ type RuntimeEnvOpts struct {
 func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	m := make(map[string]string)
 
-	// Clawker identity (consumed by statusline)
+	// Clawker identity (consumed by the statusline AND by clawkerd
+	// as `req.AgentName` at Connect — same value, single source).
 	if opts.Project != "" {
-		m["CLAWKER_PROJECT"] = opts.Project
+		m[consts.EnvProject] = opts.Project
 	}
 	if opts.Agent != "" {
-		m["CLAWKER_AGENT"] = opts.Agent
+		m[consts.EnvAgent] = opts.Agent
 	}
 	if opts.WorkspaceMode != "" {
 		m["CLAWKER_WORKSPACE_MODE"] = opts.WorkspaceMode
@@ -99,6 +109,17 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	}
 	if opts.LokiPort != 0 && opts.LokiPort != 3100 {
 		m["CLAWKER_LOKI_PORT"] = fmt.Sprintf("%d", opts.LokiPort)
+	}
+
+	// clawkerd bootstrap env vars — only what the daemon can authoritatively
+	// assert. Container ID is server-derived from the slot at Connect;
+	// project + agent travel as separate wire fields and the CP composes
+	// the canonical name on its side via auth.CanonicalAgentCN.
+	if opts.ClawkerdHydraURL != "" {
+		m[consts.EnvClawkerdHydraURL] = opts.ClawkerdHydraURL
+	}
+	if opts.ClawkerdAgentAddr != "" {
+		m[consts.EnvClawkerdAgentAddr] = opts.ClawkerdAgentAddr
 	}
 
 	// Telemetry resource attributes for per-project/agent metric segmentation.

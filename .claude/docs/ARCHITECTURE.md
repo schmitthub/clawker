@@ -35,6 +35,8 @@
   moby/moby (Docker SDK)
 ```
 
+> **CP ≠ firewall — common LLM confusion.** The "Security Subsystem" column above contains both `controlplane/` (CP daemon — **unconditional**: auth, AdminService, AgentService, agent slot/registry, mTLS, owns clawker-net) and `controlplane/firewall/` (**one optional subsystem CP manages**, toggled by `firewall.enable` in `settings.yaml`; the project schema's `security.firewall` holds per-project rules only, NOT the master switch). They are not the same. Disabling firewall does NOT disable CP, AdminService, AgentService, AnnounceAgent, clawkerd Connect, ListAgents, or any non-firewall AdminService RPC. CP owns firewall, not vice versa. Don't gate non-firewall behavior on the firewall flag.
+
 ## Factory Dependency Injection (gh CLI Pattern)
 
 Clawker follows the GitHub CLI's three-layer Factory pattern for dependency injection:
@@ -429,7 +431,7 @@ Runs Claude Code in per-iteration Docker containers with stream-json parsing and
 
 ### Firewall Subsystem (CP-owned)
 
-Envoy + custom CoreDNS + **clawker-cp (control plane)** trio providing DNS-level egress blocking, TLS inspection, and per-container cgroup BPF enforcement. Enabled by default (`security.firewall.enable: true`).
+Envoy + custom CoreDNS + **clawker-cp (control plane)** trio providing DNS-level egress blocking, TLS inspection, and per-container cgroup BPF enforcement. Enabled by default (`firewall.enable: true` in `settings.yaml`).
 
 The CP container is the **single owner** of firewall state, eBPF lifetime, and Envoy/CoreDNS lifecycle. There is no host-side firewall daemon and no `internal/firewall/` package. CLI commands speak the 13-method `AdminService` gRPC over mTLS + OAuth2 JWT via `f.AdminClient(ctx)`. See `internal/controlplane/CLAUDE.md` and `internal/controlplane/firewall/CLAUDE.md` for package references.
 
@@ -475,11 +477,12 @@ Watcher hardening: `ListErrCeiling` bounds Docker-wedged blindness; `started ato
 
 **Config generation:** Two pure functions translate egress rules into firewall stack configs (`internal/controlplane/firewall/envoy_config.go`, `coredns_config.go`). `GenerateEnvoyConfig(rules)` produces an Envoy bootstrap YAML with a TLS listener (`:10000`, TLS Inspector) ordered as MITM chains (path rules) → SNI passthrough chains (domain-allow) → default deny, plus sequential TCP listeners (`:10001+`) for non-HTTP protocols. `GenerateCorefile(rules)` produces a CoreDNS Corefile with per-domain forward zones (Cloudflare malware-blocking `1.1.1.2`/`1.0.0.2`), Docker internal zones forwarding to `127.0.0.11`, and a catch-all NXDOMAIN template. **Every forward zone invokes the `dnsbpf` plugin** (between `log` and `forward`) which writes `IP → {domain_hash, TTL}` entries to the pinned BPF `dns_cache` map in real time. Both generators are deterministic.
 
-**Embedded binaries:** Three binaries are cross-compiled for Linux inside the pinned multi-stage `Dockerfile.controlplane` and `go:embed`'d into the clawker CLI:
+**Embedded binaries:** Four Linux binaries are cross-compiled and `go:embed`'d into the clawker CLI. The first three need clang + libbpf for BPF byte code and are built inside the pinned multi-stage `Dockerfile.controlplane`; clawkerd is pure Go with no BPF deps and is built via a plain `CGO_ENABLED=0` cross-compile in the Makefile:
 
-- `cmd/clawker-cp` → `internal/controlplane/assets/clawker-cp` (embedded by `embed_cp.go`). Baked into `clawker-controlplane:latest` at runtime.
-- `internal/controlplane/firewall/ebpf/cmd` → `internal/controlplane/assets/ebpf-manager` (embedded by `embed_ebpf.go`). Break-glass CLI bundled alongside `clawker-cp` in the same image.
+- `cmd/clawker-cp` → `internal/controlplane/cpboot/assets/clawker-cp` (embedded by `cpboot/embed_cp.go`). Baked into `clawker-controlplane:latest` at runtime.
+- `internal/controlplane/firewall/ebpf/cmd` → `internal/controlplane/cpboot/assets/ebpf-manager` (embedded by `cpboot/embed_ebpf.go`). Break-glass CLI bundled alongside `clawker-cp` in the same image.
 - `cmd/coredns-clawker` → `internal/controlplane/firewall/assets/coredns-clawker` (embedded by `firewall/embed_coredns.go`). Baked into `clawker-coredns:latest`.
+- `cmd/clawkerd` → `internal/clawkerd/assets/clawkerd` (embedded by `internal/clawkerd/embed.go` as `clawkerd.Binary`). The bundler streams it into every per-project agent build context (`internal/bundler/dockerfile.go` Task 12 wiring), so each generated `clawker-<project>:sha-<hash>` image carries it at `/usr/local/bin/clawkerd`. The container entrypoint launches it in the background before the firewall healthz wait — see `internal/bundler/assets/entrypoint.sh`.
 
 Image builds use `drainBuildStream`/`drainPullStream` helpers that distinguish `io.EOF` from truncated streams and decode `error` / `errorDetail.message` (BuildKit emits the detailed form). See root `CLAUDE.md` "Security → Version Pinning" for the multi-arch manifest rule and reproducibility chain (`internal/controlplane/firewall/ebpf/REPRODUCIBILITY.md`).
 
@@ -515,13 +518,18 @@ CLI-side dial shape: `internal/auth/cp_dial.go` builds two TLS configs — `toke
 
 Key packages:
 
-- `internal/controlplane` — `Server`, `Registry`, `ControlPlaneService` facade, Ory auth machinery (`authz.go`, `hydra_client.go`, `startup.go`, `ory_configs.go`, `subprocess.go`), CP container config (`cp_container.go`), host-side bootstrap (`bootstrap.go` — `EnsureRunning`/`Stop`/`CPRunning`), agent watcher (`watcher.go`), Factory-facing `Manager` noun + concrete impl (`manager.go`).
+- `internal/controlplane` — `adminServer` composition (embeds `firewall.Handler` + explicit `ListAgents`), Ory auth machinery (`authz.go`, `hydra_client.go`, `startup.go`, `ory_configs.go`, `subprocess.go`), `AgentMethodScopes` for the agent listener, `AgentWatcher`. Per-listener `AuthInterceptor` instances.
 - `internal/controlplane/firewall` — firewall domain handler + Stack + rules store + Envoy/CoreDNS config + certs. See `internal/controlplane/firewall/CLAUDE.md`.
 - `internal/controlplane/firewall/ebpf` — BPF loader + manager + bpf2go bindings. See `internal/controlplane/firewall/ebpf/CLAUDE.md`.
 - `internal/controlplane/firewall/ebpf/cmd` — break-glass `ebpf-manager` CLI bundled alongside `clawker-cp` in the container image.
-- `internal/clawkerd/protocol/v1` — protobuf definitions for future clawkerd agents (`agent.proto`).
+- `internal/controlplane/agent` — `agent.Handler` (`AgentService.Connect` server-streaming, with five identity-binding cross-checks) plus `IdentityInterceptor` (cert-thumbprint binding, fail-secure opt-out map). See `internal/controlplane/agent/CLAUDE.md`.
+- `internal/controlplane/agentslots` — short-lived registration slots reserved by `AnnounceAgent` and consumed by `Connect` (constant-time PKCE compare, mismatch preserves slot for benign retry, sync.Once Stop).
+- `internal/controlplane/agentregistry` — registered-agent registry keyed by SHA-256 cert thumbprint with `dockerevents` subscription for eviction.
+- `internal/clawkerd` — `//go:embed assets/clawkerd` exports the per-container daemon binary; bundler drops it into every per-project image at `/usr/local/bin/clawkerd`.
+- `cmd/clawkerd` — per-container agent daemon. Boot sequence in `cmd/clawkerd/CLAUDE.md`.
 - `api/admin/v1` — AdminService proto + method-scope registration (`AdminMethodScopes`, covered by `TestAdminMethodScopes_CoversAllRPCs`).
-- `cmd/clawker-cp/main.go` — daemon entry point. Wires Stack + `firewall.Handler` + `AgentWatcher` + drain callback.
+- `api/agent/v1` — AgentService proto (`Connect` server-streaming + `Events` stub in B4); method-scope map at `internal/controlplane/agent_method_scopes.go`.
+- `cmd/clawker-cp/main.go` — daemon entry point. Wires Stack + `firewall.Handler` + `AgentWatcher` + drain callback + admin listener + agent listener + agent handler + dockerevents subscription.
 
 ## Command Dependency Injection Pattern
 

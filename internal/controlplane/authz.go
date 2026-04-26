@@ -90,9 +90,14 @@ func (h *HydraIntrospector) Introspect(ctx context.Context, token, requiredScope
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		hint, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		if err != nil {
-			return nil, fmt.Errorf("introspection returned %d (body read failed: %w)", resp.StatusCode, err)
+		// On a non-200 the Hydra status code is the load-bearing signal
+		// for the operator (502/503 = Hydra/upstream issue, 401/403 = auth
+		// problem). Surface it in the message regardless of whether the
+		// body is readable; if the read fails too, wrap the read error
+		// while keeping the status code visible in the static message.
+		hint, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if readErr != nil {
+			return nil, fmt.Errorf("introspection returned %d (body read also failed): %w", resp.StatusCode, readErr)
 		}
 		return nil, fmt.Errorf("introspection returned %d: %s", resp.StatusCode, hint)
 	}
@@ -114,11 +119,13 @@ func (h *HydraIntrospector) Introspect(ctx context.Context, token, requiredScope
 // enforces per-method scope requirements.
 //
 // Flow: extract bearer token from gRPC metadata → introspect →
-// check active + scope → allow or deny. Fail-closed on any error.
+// check active + scope → optional client_id pin → allow or deny.
+// Fail-closed on any error.
 type AuthInterceptor struct {
-	introspector Introspector
-	methodScopes map[string]string // gRPC full method → required scope
-	log          *logger.Logger
+	introspector     Introspector
+	methodScopes     map[string]string // gRPC full method → required scope
+	requiredClientID string            // optional: when non-empty, token's client_id must match
+	log              *logger.Logger
 }
 
 // NewAuthInterceptor creates an interceptor that validates tokens via
@@ -134,6 +141,21 @@ func NewAuthInterceptor(introspector Introspector, methodScopes map[string]strin
 		methodScopes: methodScopes,
 		log:          log,
 	}
+}
+
+// RequireClientID pins the interceptor to a specific OAuth2 client_id.
+// Defense-in-depth on top of scope: when set, any token whose
+// introspection result reports a different client_id is rejected with
+// codes.PermissionDenied even if the scope check passed. Used on the
+// agent listener (clientID = consts.ClientIDAgent) so a future Hydra
+// misconfiguration that grants agent:self:register to a non-agent
+// client doesn't silently let the wrong client through. The admin
+// listener leaves this empty — admin scope is uniformly required and
+// the CLI client_id is the only one Hydra is currently configured to
+// grant it to. Returns the receiver for fluent chaining at construction.
+func (a *AuthInterceptor) RequireClientID(clientID string) *AuthInterceptor {
+	a.requiredClientID = clientID
+	return a
 }
 
 // UnaryInterceptor returns a gRPC unary server interceptor.
@@ -199,6 +221,23 @@ func (a *AuthInterceptor) authorize(ctx context.Context, fullMethod string) erro
 			Str("required_scope", requiredScope).
 			Str("token_scope", result.Scope).
 			Msg("authz: token missing required scope")
+		return status.Errorf(codes.PermissionDenied, "token missing required scope %q", requiredScope)
+	}
+
+	// Defense-in-depth: when this interceptor is pinned to a specific
+	// client_id (agent listener — see RequireClientID), reject tokens
+	// from any other Hydra client even though they passed scope. Today
+	// only the clawker-agent client is registered with the agent scope,
+	// so a mismatch here means either a Hydra misconfiguration or an
+	// unexpected new client wiring — both deserve a generic
+	// PermissionDenied (don't leak which check failed) plus a warn-level
+	// log carrying the actual client_id seen.
+	if a.requiredClientID != "" && result.ClientID != a.requiredClientID {
+		a.log.Warn().
+			Str("method", fullMethod).
+			Str("required_client_id", a.requiredClientID).
+			Str("token_client_id", result.ClientID).
+			Msg("authz: token client_id does not match required client_id")
 		return status.Errorf(codes.PermissionDenied, "token missing required scope %q", requiredScope)
 	}
 

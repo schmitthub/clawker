@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
@@ -18,11 +19,6 @@ import (
 // AdminService and AgentService must be in different Go packages with
 // different service names. No shared service definition.
 func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
-	t.Run("admin and agent service names are distinct", func(t *testing.T) {
-		assert.NotEqual(t, adminv1.ServiceName, agentv1.ServiceName,
-			"AdminService and AgentService must have different service names")
-	})
-
 	t.Run("admin service name contains 'admin'", func(t *testing.T) {
 		assert.Contains(t, adminv1.ServiceName, "admin",
 			"AdminService name must contain 'admin'")
@@ -31,23 +27,6 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 	t.Run("agent service name contains 'agent'", func(t *testing.T) {
 		assert.Contains(t, agentv1.ServiceName, "agent",
 			"AgentService name must contain 'agent'")
-	})
-
-	t.Run("admin service is in admin/v1 package", func(t *testing.T) {
-		// If the import compiled, the package exists at the right path.
-		// This is a compile-time assertion via the import.
-		assert.NotEmpty(t, adminv1.ServiceName,
-			"AdminService must be defined in api/admin/v1/")
-	})
-
-	t.Run("agent service is in agent/v1 package", func(t *testing.T) {
-		assert.NotEmpty(t, agentv1.ServiceName,
-			"AgentService must be defined in api/agent/v1/")
-	})
-
-	t.Run("no shared service between packages", func(t *testing.T) {
-		assert.NotEqual(t, adminv1.ServiceName, agentv1.ServiceName,
-			"admin and agent services must not share a service definition")
 	})
 
 	t.Run("AdminService has correct RPCs", func(t *testing.T) {
@@ -60,16 +39,15 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 			methods[s.StreamName] = true
 		}
 
-		// B2 13-method scope-corrected surface (see Spec §8 + INV-B2-009).
-		// Per-container RPCs lost the cgroup_path field; container_id is
-		// authoritative and the CP resolves cgroup paths internally with
-		// the drift guard.
+		// AdminService surface: 13 firewall RPCs (INV-B2-009) plus
+		// AnnounceAgent and ListAgents.
 		expectedRPCs := []string{
 			"FirewallInit", "FirewallRemove",
 			"FirewallEnable", "FirewallDisable", "FirewallBypass",
 			"FirewallAddRules", "FirewallRemoveRule", "FirewallListRules",
 			"FirewallReload", "FirewallStatus", "FirewallRotateCA",
 			"FirewallSyncRoutes", "FirewallResolveHostname",
+			"AnnounceAgent", "ListAgents",
 		}
 		for _, rpc := range expectedRPCs {
 			assert.True(t, methods[rpc],
@@ -77,10 +55,25 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 		}
 	})
 
-	t.Run("AdminService registered on gRPC server", func(t *testing.T) {
-		// Verify the generated registration function exists.
-		srv := grpc.NewServer() //nolint:staticcheck // nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection -- test-only, no TLS needed
-		// This compiles only if the generated interface + registration exist.
-		adminv1.RegisterAdminServiceServer(srv, nil)
+	t.Run("AgentService has Connect and Events streaming RPCs", func(t *testing.T) {
+		desc := agentv1.AgentService_ServiceDesc
+		streamsByName := make(map[string]grpc.StreamDesc)
+		for _, s := range desc.Streams {
+			streamsByName[s.StreamName] = s
+		}
+
+		// Streaming directions are load-bearing: Connect is the CP→clawkerd
+		// command channel (server-streaming); Events is the clawkerd→CP
+		// telemetry channel (client-streaming). Flipping either would
+		// silently invert the protocol contract — pin both flags here.
+		connect, ok := streamsByName["Connect"]
+		require.True(t, ok, "AgentService must have Connect RPC")
+		assert.True(t, connect.ServerStreams, "Connect must be server-streaming")
+		assert.False(t, connect.ClientStreams, "Connect must NOT be client-streaming")
+
+		events, ok := streamsByName["Events"]
+		require.True(t, ok, "AgentService must have Events RPC")
+		assert.True(t, events.ClientStreams, "Events must be client-streaming")
+		assert.False(t, events.ServerStreams, "Events must NOT be server-streaming")
 	})
 }

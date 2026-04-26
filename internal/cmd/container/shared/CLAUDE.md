@@ -55,6 +55,46 @@ close(events)
 
 **Event types**: `CreateContainerEvent` with `Step` (string), `Status` (`StepRunning`/`StepComplete`/`StepCached`), `Type` (`MessageInfo`/`MessageWarning`), `Message` (string).
 
+### Agent Bootstrap Delivery (`agent_bootstrap.go`)
+
+Building blocks for the per-agent registration material the CLI hands a
+managed container at boot.
+
+```go
+type AgentBootstrap struct {
+    Verifier, Challenge, Method            string  // PKCE S256 pair + literal "S256"
+    CertPEM, KeyPEM                        []byte  // mTLS leaf + key, signed by CLI CA
+    ExpectedCertThumbprint                 string  // lowercase-hex SHA-256(cert.Raw)
+    CACertPEM                              []byte  // CP server-trust CA (CLI CA cert)
+    Assertion                              string  // Hydra client_assertion JWT
+}
+
+// project + agent are the user-typed short identifiers (e.g. "myapp",
+// "dev"). MintAgentCert composes the canonical "clawker.<project>.<agent>"
+// CN inside via auth.CanonicalAgentCN; the agent handler's CN cross-check
+// has a single equality to enforce.
+GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error)
+
+// project + agent travel as separate wire fields (no canonical-on-wire);
+// the CP composes the canonical name on its side.
+AnnounceAgent(ctx context.Context, admin AdminServiceClient, b *AgentBootstrap, project, agent, containerID string) error
+
+WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *AgentBootstrap) error
+```
+
+`CommandOpts.AgentName` (the short user-typed name) and `CommandOpts.Project`
+(the project slug, empty allowed) feed `prepareAgentBootstrap` — both must
+be set on new-container start paths so AnnounceAgent + MintAgentCert agree
+on the canonical CN.
+
+`WriteAgentBootstrapToContainer` tars the five files into the container
+at `consts.BootstrapDir` (parent dir 0700, files 0400). The destination
+is currently a regular path inside the container's writable layer rather
+than a tmpfs mount — Docker's CopyToContainer cannot pre-populate tmpfs
+mounts (tmpfs shadows writes made before start), so the pragmatic B4
+placement uses the writable layer with strict permissions. The container
+layer is destroyed on `--rm` or when the container is removed.
+
 ### Container Init (`containerfs.go`)
 
 One-time Claude config initialization for new containers. Called by `CreateContainer` when the config volume was freshly created.
@@ -104,9 +144,12 @@ Three-phase orchestration for container start: pre-start bootstrap, Docker start
 | `Config` | `func() (config.Config, error)` | Config provider (required) |
 | `ProjectManager` | `func() (project.ProjectManager, error)` | Project manager provider |
 | `HostProxy` | `func() hostproxy.HostProxyService` | Host proxy provider |
-| `Firewall` | `func(ctx) (firewall.FirewallManager, error)` | Firewall manager provider |
+| `ControlPlane` | `func() cpboot.Manager` | Host-side CP container lifecycle noun (`EnsureRunning` / `Stop` / `IsRunning`) |
+| `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC AdminService client (mTLS + OAuth2) — drives firewall sync/enable/disable RPCs and `AnnounceAgent` |
 | `SocketBridge` | `func() socketbridge.SocketBridgeManager` | Socket bridge provider |
 | `Logger` | `func() (*logger.Logger, error)` | Logger provider |
+| `AgentName` | `string` | User-typed short agent name (set on new-container starts; empty on restart paths) |
+| `Project` | `string` | Project slug paired with `AgentName` to form the composite (project, agent) identity |
 
 Nil providers are safely skipped (debug logged). `Config` is the only required provider.
 
@@ -126,7 +169,7 @@ Returns `mobyClient.ContainerStartResult` from the Docker start call. Errors at 
 | Type | Purpose |
 |------|---------|
 | `ContainerOptions` | All container CLI flags — basic, env, volumes, networking, resources, security, health, runtime, devices |
-| `CommandOpts` | DI container with lazy function closures: Client, Config, ProjectManager, HostProxy, Firewall, SocketBridge, Logger |
+| `CommandOpts` | DI container with lazy function closures (Client, Config, ProjectManager, HostProxy, ControlPlane, AdminClient, SocketBridge, Logger) plus per-call AgentName + Project for the announce/bootstrap path |
 | `CreateContainerConfig` | All inputs: Client, Config, Options, Flags, ProjectManager, HostProxy, Logger, Version, color flags |
 | `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
 | `CreateContainerEvent` | Channel event: Step, Status, Type, Message |

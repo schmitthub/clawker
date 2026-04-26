@@ -1822,18 +1822,28 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 	monitoringActive := opts.Client.IsMonitoringActive(ctx)
 	log.Debug().Bool("monitoring_active", monitoringActive).Msg("telemetry state")
 
+	cpSettings := opts.Config.Settings().ControlPlane
+	// Clawkerd agent endpoints — populated UNCONDITIONALLY (NOT gated on
+	// firewall). CP, clawker-net, and Hydra are core infrastructure and
+	// always run when an agent container is starting; the firewall is one
+	// optional CP-hosted feature. See the "CP ≠ firewall" callout in
+	// project-root CLAUDE.md.
 	envOpts := docker.RuntimeEnvOpts{
-		Version:          opts.Version,
-		Project:          opts.ProjectName,
-		Agent:            agentName,
-		WorkspaceMode:    workspaceMode,
-		WorkspaceSource:  wd,
-		Editor:           projectCfg.Agent.Editor,
-		Visual:           projectCfg.Agent.Visual,
-		Is256Color:       opts.Is256Color,
-		TrueColor:        opts.IsTrueColor,
-		AgentEnv:         agentEnv,
-		MonitoringActive: monitoringActive,
+		Version:           opts.Version,
+		Project:           opts.ProjectName,
+		Agent:             agentName,
+		WorkspaceMode:     workspaceMode,
+		WorkspaceSource:   wd,
+		Editor:            projectCfg.Agent.Editor,
+		Visual:            projectCfg.Agent.Visual,
+		Is256Color:        opts.Is256Color,
+		TrueColor:         opts.IsTrueColor,
+		AgentEnv:          agentEnv,
+		MonitoringActive:  monitoringActive,
+		ClawkerdAgentAddr: net.JoinHostPort(consts.ContainerCP, strconv.Itoa(cpSettings.AgentPort)),
+		ClawkerdHydraURL: "https://" + net.JoinHostPort(
+			consts.ContainerCP, strconv.Itoa(cpSettings.HydraPublicPort),
+		),
 	}
 	// Firewall: set the enabled flag (eBPF programs attached post-start via BootstrapServicesPostStart)
 	// + the CP /healthz URL the entrypoint polls before running CMD. Both

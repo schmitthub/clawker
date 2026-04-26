@@ -100,6 +100,17 @@ const (
 	RelationAttachedTo = "attached-to" // container → network
 )
 
+// Lifecycle strings the feeder writes onto Resource.Lifecycle for
+// containers. Consumers (e.g. agentregistry.Subscribe) match against
+// these constants instead of stringly-typed literals so a rename surfaces
+// as a compile error.
+const (
+	LifecycleCreated = "created"
+	LifecycleRunning = "running"
+	LifecyclePaused  = "paused"
+	LifecycleStopped = "stopped"
+)
+
 // Verb prefix on every Transition.Verb so co-resident feeders cannot
 // collide in resource history rings.
 const verbPrefix = "docker."
@@ -120,6 +131,13 @@ type Feeder struct {
 	networks   map[string]bool
 	volumes    map[string]bool
 	images     map[string]bool
+
+	// networksNeedRecheck tracks network IDs whose initial Create-time
+	// NetworkInspect failed (transient daemon hiccup, race with
+	// concurrent removal, etc). The next event for the same ID retries
+	// inspection so a network doesn't go permanently unmanaged just
+	// because the very first inspect lost a race.
+	networksNeedRecheck map[string]bool
 }
 
 func New(cli EventsClient, inf informer.Interface, opts Options) (*Feeder, error) {
@@ -145,14 +163,15 @@ func New(cli EventsClient, inf informer.Interface, opts Options) (*Feeder, error
 		opts.ReconnectMax = defaultReconnectMax
 	}
 	return &Feeder{
-		cli:        cli,
-		inf:        inf,
-		log:        opts.Logger.With("component", "dockerevents"),
-		opts:       opts,
-		containers: make(map[string]bool),
-		networks:   make(map[string]bool),
-		volumes:    make(map[string]bool),
-		images:     make(map[string]bool),
+		cli:                 cli,
+		inf:                 inf,
+		log:                 opts.Logger.With("component", "dockerevents"),
+		opts:                opts,
+		containers:          make(map[string]bool),
+		networks:            make(map[string]bool),
+		volumes:             make(map[string]bool),
+		images:              make(map[string]bool),
+		networksNeedRecheck: make(map[string]bool),
 	}, nil
 }
 

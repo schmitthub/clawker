@@ -20,6 +20,9 @@ var _ v1.AdminServiceClient = &AdminServiceClientMock{}
 //
 //		// make and configure a mocked v1.AdminServiceClient
 //		mockedAdminServiceClient := &AdminServiceClientMock{
+//			AnnounceAgentFunc: func(ctx context.Context, in *v1.AnnounceAgentRequest, opts ...grpc.CallOption) (*v1.AnnounceAgentResult, error) {
+//				panic("mock out the AnnounceAgent method")
+//			},
 //			FirewallAddRulesFunc: func(ctx context.Context, in *v1.FirewallAddRulesRequest, opts ...grpc.CallOption) (*v1.FirewallAddRulesResult, error) {
 //				panic("mock out the FirewallAddRules method")
 //			},
@@ -59,6 +62,9 @@ var _ v1.AdminServiceClient = &AdminServiceClientMock{}
 //			FirewallSyncRoutesFunc: func(ctx context.Context, in *v1.FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*v1.FirewallSyncRoutesResult, error) {
 //				panic("mock out the FirewallSyncRoutes method")
 //			},
+//			ListAgentsFunc: func(ctx context.Context, in *v1.ListAgentsRequest, opts ...grpc.CallOption) (*v1.ListAgentsResult, error) {
+//				panic("mock out the ListAgents method")
+//			},
 //		}
 //
 //		// use mockedAdminServiceClient in code that requires v1.AdminServiceClient
@@ -66,6 +72,9 @@ var _ v1.AdminServiceClient = &AdminServiceClientMock{}
 //
 //	}
 type AdminServiceClientMock struct {
+	// AnnounceAgentFunc mocks the AnnounceAgent method.
+	AnnounceAgentFunc func(ctx context.Context, in *v1.AnnounceAgentRequest, opts ...grpc.CallOption) (*v1.AnnounceAgentResult, error)
+
 	// FirewallAddRulesFunc mocks the FirewallAddRules method.
 	FirewallAddRulesFunc func(ctx context.Context, in *v1.FirewallAddRulesRequest, opts ...grpc.CallOption) (*v1.FirewallAddRulesResult, error)
 
@@ -105,8 +114,20 @@ type AdminServiceClientMock struct {
 	// FirewallSyncRoutesFunc mocks the FirewallSyncRoutes method.
 	FirewallSyncRoutesFunc func(ctx context.Context, in *v1.FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*v1.FirewallSyncRoutesResult, error)
 
+	// ListAgentsFunc mocks the ListAgents method.
+	ListAgentsFunc func(ctx context.Context, in *v1.ListAgentsRequest, opts ...grpc.CallOption) (*v1.ListAgentsResult, error)
+
 	// calls tracks calls to the methods.
 	calls struct {
+		// AnnounceAgent holds details about calls to the AnnounceAgent method.
+		AnnounceAgent []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// In is the in argument value.
+			In *v1.AnnounceAgentRequest
+			// Opts is the opts argument value.
+			Opts []grpc.CallOption
+		}
 		// FirewallAddRules holds details about calls to the FirewallAddRules method.
 		FirewallAddRules []struct {
 			// Ctx is the ctx argument value.
@@ -224,7 +245,17 @@ type AdminServiceClientMock struct {
 			// Opts is the opts argument value.
 			Opts []grpc.CallOption
 		}
+		// ListAgents holds details about calls to the ListAgents method.
+		ListAgents []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// In is the in argument value.
+			In *v1.ListAgentsRequest
+			// Opts is the opts argument value.
+			Opts []grpc.CallOption
+		}
 	}
+	lockAnnounceAgent           sync.RWMutex
 	lockFirewallAddRules        sync.RWMutex
 	lockFirewallBypass          sync.RWMutex
 	lockFirewallDisable         sync.RWMutex
@@ -238,6 +269,47 @@ type AdminServiceClientMock struct {
 	lockFirewallRotateCA        sync.RWMutex
 	lockFirewallStatus          sync.RWMutex
 	lockFirewallSyncRoutes      sync.RWMutex
+	lockListAgents              sync.RWMutex
+}
+
+// AnnounceAgent calls AnnounceAgentFunc.
+func (mock *AdminServiceClientMock) AnnounceAgent(ctx context.Context, in *v1.AnnounceAgentRequest, opts ...grpc.CallOption) (*v1.AnnounceAgentResult, error) {
+	if mock.AnnounceAgentFunc == nil {
+		panic("AdminServiceClientMock.AnnounceAgentFunc: method is nil but AdminServiceClient.AnnounceAgent was just called")
+	}
+	callInfo := struct {
+		Ctx  context.Context
+		In   *v1.AnnounceAgentRequest
+		Opts []grpc.CallOption
+	}{
+		Ctx:  ctx,
+		In:   in,
+		Opts: opts,
+	}
+	mock.lockAnnounceAgent.Lock()
+	mock.calls.AnnounceAgent = append(mock.calls.AnnounceAgent, callInfo)
+	mock.lockAnnounceAgent.Unlock()
+	return mock.AnnounceAgentFunc(ctx, in, opts...)
+}
+
+// AnnounceAgentCalls gets all the calls that were made to AnnounceAgent.
+// Check the length with:
+//
+//	len(mockedAdminServiceClient.AnnounceAgentCalls())
+func (mock *AdminServiceClientMock) AnnounceAgentCalls() []struct {
+	Ctx  context.Context
+	In   *v1.AnnounceAgentRequest
+	Opts []grpc.CallOption
+} {
+	var calls []struct {
+		Ctx  context.Context
+		In   *v1.AnnounceAgentRequest
+		Opts []grpc.CallOption
+	}
+	mock.lockAnnounceAgent.RLock()
+	calls = mock.calls.AnnounceAgent
+	mock.lockAnnounceAgent.RUnlock()
+	return calls
 }
 
 // FirewallAddRules calls FirewallAddRulesFunc.
@@ -757,5 +829,45 @@ func (mock *AdminServiceClientMock) FirewallSyncRoutesCalls() []struct {
 	mock.lockFirewallSyncRoutes.RLock()
 	calls = mock.calls.FirewallSyncRoutes
 	mock.lockFirewallSyncRoutes.RUnlock()
+	return calls
+}
+
+// ListAgents calls ListAgentsFunc.
+func (mock *AdminServiceClientMock) ListAgents(ctx context.Context, in *v1.ListAgentsRequest, opts ...grpc.CallOption) (*v1.ListAgentsResult, error) {
+	if mock.ListAgentsFunc == nil {
+		panic("AdminServiceClientMock.ListAgentsFunc: method is nil but AdminServiceClient.ListAgents was just called")
+	}
+	callInfo := struct {
+		Ctx  context.Context
+		In   *v1.ListAgentsRequest
+		Opts []grpc.CallOption
+	}{
+		Ctx:  ctx,
+		In:   in,
+		Opts: opts,
+	}
+	mock.lockListAgents.Lock()
+	mock.calls.ListAgents = append(mock.calls.ListAgents, callInfo)
+	mock.lockListAgents.Unlock()
+	return mock.ListAgentsFunc(ctx, in, opts...)
+}
+
+// ListAgentsCalls gets all the calls that were made to ListAgents.
+// Check the length with:
+//
+//	len(mockedAdminServiceClient.ListAgentsCalls())
+func (mock *AdminServiceClientMock) ListAgentsCalls() []struct {
+	Ctx  context.Context
+	In   *v1.ListAgentsRequest
+	Opts []grpc.CallOption
+} {
+	var calls []struct {
+		Ctx  context.Context
+		In   *v1.ListAgentsRequest
+		Opts []grpc.CallOption
+	}
+	mock.lockListAgents.RLock()
+	calls = mock.calls.ListAgents
+	mock.lockListAgents.RUnlock()
 	return calls
 }

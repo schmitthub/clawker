@@ -361,7 +361,7 @@ Properties:
   Register eliminates replay. No separate nonce field needed — the slot
   record's existence and single-use consumption is the replay defense.
 - **Long-lived credential never on disk**. The per-agent cert lives only
-  in clawkerd's process memory after Register. Only the short-lived
+  in clawkerd's process memory after Connect. Only the short-lived
   verifier ever touches the filesystem, and clawkerd deletes it
   immediately after reading.
 - **S256-only**. No algorithm negotiation, no `plain` method, no

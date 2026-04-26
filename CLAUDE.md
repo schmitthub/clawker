@@ -29,16 +29,32 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 
 </critical_instructions>
 
+<critical_clarification>
+
+## CP ≠ firewall (common LLM confusion)
+
+LLM sessions repeatedly conflate the Control Plane (CP) with the firewall. They are NOT the same thing.
+
+- **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent slot/registry bookkeeping, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `cpboot.EnsureRunning`. There is no "disable CP" flag. CP owns clawker-net.
+- **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml` — the project schema's `security.firewall` field is `FirewallConfig`, holding per-project `add_domains`/`rules` only; the master switch is global). When disabled, those components don't run — but CP, clawker-net, mTLS, AnnounceAgent, clawkerd Connect, ListAgents, and every non-firewall AdminService RPC continue to operate.
+
+**CP owns firewall, not the other way around.** Older framings that put firewall above or alongside CP are stale — disregard them.
+
+Do **NOT** gate non-firewall behavior on `firewall.enable` (settings.yaml). The flag scopes the egress enforcement layer only.
+
+</critical_clarification>
+
 ## Repository Structure
 
 ```
 ├── api/
 │   ├── admin/v1/              # AdminService protobuf (CLI → CP gRPC, mTLS on AdminPort)
-│   └── agent/v1/              # AgentService protobuf (future clawkerd agent surface)
+│   └── agent/v1/              # AgentService protobuf — `Connect` (server-streaming) + `Events` consumed by the per-container `clawkerd` daemon
 ├── cmd/
 │   ├── clawker/               # Main CLI binary
-│   ├── clawker-generate/      # Code generation helper
 │   ├── clawker-cp/            # Control plane daemon binary — `clawker-cp` runs as PID 1 in the CP container, owns firewall/eBPF state, serves AdminService gRPC
+│   ├── clawker-generate/      # Code generation helper
+│   ├── clawkerd/              # Per-container agent daemon (Linux); started from the bundled image entrypoint, exchanges a JWT assertion for a Hydra access token, mTLS-dials CP and opens AgentService.Connect (server-streaming) for the container lifetime
 │   ├── coredns-clawker/       # Custom CoreDNS build embedding the dnsbpf plugin (Linux; embedded via go:embed into internal/controlplane/firewall)
 │   └── gen-docs/              # CLI doc generator (man/markdown/rst/yaml)
 ├── internal/
@@ -46,7 +62,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── build/                 # Build-time metadata (version, date) — leaf, stdlib only
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
 │   ├── clawker/               # Main application lifecycle
-│   ├── clawkerd/protocol/v1/  # Generated protobuf for agent + controlplane wire protocol
+│   ├── clawkerd/              # Embedded clawkerd binary (assets/ + embed.go) — built by `make clawkerd-binary`, embedded into the clawker CLI for delivery into agent images by `internal/bundler`
 │   ├── cmd/                   # Cobra commands (auth/, container/, volume/, network/, image/, version/, loop/, worktree/, firewall/, controlplane/, root/)
 │   │   ├── factory/           # Factory constructor — wires real dependencies
 │   │   ├── settings/          # Settings parent command + edit subcommand
@@ -58,6 +74,9 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── consts/                # Cross-package constants (CP container name, network labels, scopes)
 │   ├── containerfs/           # Host Claude config preparation for container init
 │   ├── controlplane/          # Control plane daemon: Ory auth stack, AdminService composition, startup orchestrator, agent watcher
+│   │   ├── agent/             # AgentService.Connect handler (composite-identity cross-checks, PKCE consume, server-stream Welcome) + identity interceptor (cert-thumbprint binding, fail-secure opt-out map)
+│   │   ├── agentregistry/     # Live-agent registry — populated post-Connect (cert thumbprint + canonical CN), evicted via dockerevents container die/remove
+│   │   ├── agentslots/        # Pre-Connect slot reservations: composite key (thumbprint, agent_name, project) + PKCE challenge, TTL janitor, dockerevents EvictByContainerID
 │   │   ├── cpboot/            # Host-side CP lifecycle: `EnsureRunning`/`Stop`/`CPRunning`, `BuildCPContainerConfig`, `Manager` interface + `NewManager`, embedded clawker-cp + ebpf-manager binaries (split out so `cmd/clawker-cp` doesn't drag in its own `go:embed`)
 │   │   │   └── assets/        # Embedded CP + break-glass ebpf-manager Linux binaries (gitignored; built by make cp-binary / make ebpf-binary)
 │   │   ├── firewall/          # Firewall domain: `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS lifecycle), Envoy+CoreDNS config generators, certs, rules store, network discovery, cgroup helpers, embedded coredns-clawker binary
@@ -190,7 +209,7 @@ build:
   inject: { after_from: [], after_packages: [] }
 agent: { env_file: [], from_env: [], env: {}, post_init: "" }
 workspace: { default_mode: "bind" }
-security: { firewall: { enable: true }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
+security: { firewall: { add_domains: [], rules: [] }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
 loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false, hooks_file: "", append_system_prompt: "" }
 ```
 
@@ -279,6 +298,8 @@ docker buildx imagetools inspect <image>@sha256:<digest>
 ## Testing Requirements
 
 **All tests must pass before any change is complete.** Run `make test` (unit) or `make test-all` (all suites). See Build Commands above for individual test suites. See `.claude/rules/testing.md` for conventions.
+
+> **CRITICAL — IF YOU ARE RUNNING IN A CLAWKER CONTAINER (`$CLAWKER_AGENT` set): DO NOT RUN `go test ./...` (or any unscoped suite that pulls in `test/e2e`).** The e2e suite tears down the host CP container and firewall — you will lose your own network egress and block the user. Tests must be **targeted** (e.g. `go test ./internal/controlplane/agent/...`) or use **`make test`** (which excludes `test/e2e` and `test/whail`). The `test/e2e` and `test/whail` directories require an explicit invocation by the user on the host.
 
 ## Documentation
 

@@ -18,30 +18,42 @@ import (
 // JWKS (bind-mounted from the host). Idempotent: returns nil if the
 // client already exists (409 Conflict).
 func RegisterCLIClient(ctx context.Context, hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config) error {
-	// Parse the JWK data to embed as the jwks field.
+	return registerHydraClient(ctx, hydraAdminURL, consts.ClientIDCLI, consts.ScopeAdmin, jwkData, tlsCfg)
+}
+
+// RegisterAgentClient registers the clawker-agent OAuth2 client with
+// Hydra via the admin API. Both clawker-cli and clawker-agent use the
+// same public JWK (the CLI's signing key) — distinct client IDs keep
+// the scope surface clean even though the signing key is shared.
+// Idempotent: returns nil on 409 Conflict.
+func RegisterAgentClient(ctx context.Context, hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config) error {
+	return registerHydraClient(ctx, hydraAdminURL, consts.ClientIDAgent, consts.ScopeAgentSelfRegister, jwkData, tlsCfg)
+}
+
+// registerHydraClient is the shared implementation; public callers
+// differ only in client_id and scope.
+func registerHydraClient(ctx context.Context, hydraAdminURL, clientID, scope string, jwkData []byte, tlsCfg *tls.Config) error {
 	var jwks json.RawMessage
 	if err := json.Unmarshal(jwkData, &jwks); err != nil {
-		return fmt.Errorf("parse CLI JWK data: %w", err)
+		return fmt.Errorf("parse %s JWK data: %w", clientID, err)
 	}
-
-	// Wrap single JWK in a JWKS if needed.
 	jwks, err := ensureJWKS(jwks)
 	if err != nil {
-		return fmt.Errorf("normalize CLI JWK: %w", err)
+		return fmt.Errorf("normalize %s JWK: %w", clientID, err)
 	}
 
 	body := map[string]any{
-		"client_id":                       consts.ClientIDCLI,
+		"client_id":                       clientID,
 		"grant_types":                     []string{"client_credentials"},
 		"token_endpoint_auth_method":      "private_key_jwt",
 		"token_endpoint_auth_signing_alg": "ES256",
-		"scope":                           consts.ScopeAdmin,
+		"scope":                           scope,
 		"jwks":                            jwks,
 	}
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("marshal client registration: %w", err)
+		return fmt.Errorf("marshal %s registration: %w", clientID, err)
 	}
 
 	client := &http.Client{
@@ -55,29 +67,32 @@ func RegisterCLIClient(ctx context.Context, hydraAdminURL string, jwkData []byte
 	url := hydraAdminURL + "/admin/clients"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("build registration request: %w", err)
+		return fmt.Errorf("build %s registration request: %w", clientID, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("hydra admin POST /admin/clients: %w", err)
+		return fmt.Errorf("hydra admin POST /admin/clients (%s): %w", clientID, err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read hydra response: %w", err)
+		return fmt.Errorf("read hydra response (%s): %w", clientID, err)
 	}
 
 	switch resp.StatusCode {
-	case http.StatusCreated, http.StatusOK:
+	case http.StatusCreated:
+		// Hydra v2 documents 201 only. 200 is intentionally not accepted
+		// — a misconfigured proxy or future Hydra change returning 200
+		// with an empty body would otherwise mark registration successful
+		// while the client never lands.
 		return nil
 	case http.StatusConflict:
-		// Client already exists — idempotent success.
 		return nil
 	default:
-		return fmt.Errorf("hydra admin returned %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("hydra admin returned %d for %s: %s", resp.StatusCode, clientID, string(respBody))
 	}
 }
 

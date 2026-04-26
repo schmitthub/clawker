@@ -219,28 +219,12 @@ func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 	switch ev.Action {
 	case events.ActionCreate:
 		// Inspect to learn whether this network is managed.
-		res, err := f.cli.NetworkInspect(ctx, netID, client.NetworkInspectOptions{})
-		if err != nil {
-			f.log.Warn().Err(err).Str("network_id", short(netID)).Msg("network inspect failed; skipping create")
-			return
-		}
-		if !f.isManaged(res.Network.Labels) {
-			return
-		}
-		f.networks[netID] = true
-		f.publishUpsert(ctx, informer.ResourceUpdate{
-			Kind:   KindNetwork,
-			ID:     netID,
-			Labels: res.Network.Labels,
-			Attrs: map[string]string{
-				"name":   res.Network.Name,
-				"driver": res.Network.Driver,
-				"scope":  res.Network.Scope,
-			},
-			Lifecycle: informer.LifecycleLive,
-		}, t)
+		f.tryNetworkInspect(ctx, netID, t)
 
 	case events.ActionDestroy, events.ActionRemove:
+		// Drop any pending recheck flag — a destroyed network can never
+		// become managed retroactively.
+		delete(f.networksNeedRecheck, netID)
 		if !f.networks[netID] {
 			return
 		}
@@ -248,6 +232,12 @@ func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 		f.publishRemove(ctx, informer.Key{Kind: KindNetwork, ID: netID}, t)
 
 	case events.ActionConnect, events.ActionDisconnect:
+		// If the initial Create-time inspect failed for this network,
+		// retry now — the connect/disconnect event proves the network
+		// is alive in Docker, so the inspect is more likely to succeed.
+		if f.networksNeedRecheck[netID] {
+			f.tryNetworkInspect(ctx, netID, t)
+		}
 		if !f.networks[netID] {
 			return
 		}
@@ -268,6 +258,50 @@ func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 			f.publishUnlink(ctx, from, to, RelationAttachedTo)
 		}
 	}
+}
+
+// tryNetworkInspect runs NetworkInspect for a previously-unseen
+// network ID. Records the inspection state into the managed-set
+// (success → tracked-or-unmanaged-and-forgotten) or the recheck
+// queue (failure → retry on the next event for this ID). A network
+// whose first inspect fails is otherwise permanently invisible
+// because subsequent connect/destroy events skip the lookup.
+func (f *Feeder) tryNetworkInspect(ctx context.Context, netID string, t informer.Transition) {
+	res, err := f.cli.NetworkInspect(ctx, netID, client.NetworkInspectOptions{})
+	if err != nil {
+		// Don't escalate ctx.Canceled (drain path); transient inspect
+		// failures during shutdown are expected.
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		f.networksNeedRecheck[netID] = true
+		f.log.Warn().
+			Err(err).
+			Str("network_id", short(netID)).
+			Msg("network inspect failed; will retry on next event for this id")
+		return
+	}
+	delete(f.networksNeedRecheck, netID)
+	if !f.isManaged(res.Network.Labels) {
+		// Definitive: this network exists and is not managed. No retry.
+		return
+	}
+	if f.networks[netID] {
+		// Already tracked from an earlier event — nothing to publish.
+		return
+	}
+	f.networks[netID] = true
+	f.publishUpsert(ctx, informer.ResourceUpdate{
+		Kind:   KindNetwork,
+		ID:     netID,
+		Labels: res.Network.Labels,
+		Attrs: map[string]string{
+			"name":   res.Network.Name,
+			"driver": res.Network.Driver,
+			"scope":  res.Network.Scope,
+		},
+		Lifecycle: informer.LifecycleLive,
+	}, t)
 }
 
 // dispatchVolume handles volume events. Volume create events carry
@@ -357,13 +391,13 @@ func (f *Feeder) dispatchImage(ctx context.Context, ev events.Message) {
 func containerLifecycleFromAction(a events.Action) string {
 	switch a {
 	case events.ActionCreate:
-		return "created"
+		return LifecycleCreated
 	case events.ActionStart, events.ActionRestart, events.ActionUnPause:
-		return "running"
+		return LifecycleRunning
 	case events.ActionPause:
-		return "paused"
+		return LifecyclePaused
 	case events.ActionDie, events.ActionStop, events.ActionKill:
-		return "stopped"
+		return LifecycleStopped
 	}
 	return ""
 }
@@ -374,15 +408,15 @@ func containerLifecycleFromAction(a events.Action) string {
 func containerLifecycleFromState(s container.ContainerState) string {
 	switch s {
 	case container.StateCreated:
-		return "created"
+		return LifecycleCreated
 	case container.StateRunning:
-		return "running"
+		return LifecycleRunning
 	case container.StatePaused:
-		return "paused"
+		return LifecyclePaused
 	case container.StateRestarting:
 		return "restarting"
 	case container.StateExited, container.StateDead, container.StateRemoving:
-		return "stopped"
+		return LifecycleStopped
 	}
 	return ""
 }
