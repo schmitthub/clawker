@@ -3,8 +3,6 @@ package shared
 import (
 	"context"
 	"fmt"
-	"net"
-	"strconv"
 
 	mobyClient "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
@@ -319,16 +317,20 @@ func prepareAgentBootstrap(ctx context.Context, cmdOpts CommandOpts, containerID
 		return fmt.Errorf("load signing key: %w", err)
 	}
 
-	// hydraTokenURL is what clawkerd will see from inside the container,
-	// so it uses the in-network DNS name and the published Hydra port.
-	// The assertion's audience field MUST match what Hydra checks at
-	// /oauth2/token; both sides resolve to the same URL.
-	hydraTokenURL := "https://" + net.JoinHostPort(
-		consts.ContainerCP,
-		strconv.Itoa(cfg.Settings().ControlPlane.HydraPublicPort),
-	) + "/oauth2/token"
+	// The assertion's audience claim must match Hydra's
+	// `urls.self.issuer` config (`https://127.0.0.1:<port>/`) — NOT
+	// the URL clawkerd POSTs to. Hydra checks `aud` against its own
+	// self-identity, regardless of which network path the request
+	// arrived on. The CLI side gets away with one URL because the CLI
+	// runs on the host and 127.0.0.1:<port> IS Hydra. Inside a
+	// container clawkerd POSTs to `clawker-controlplane:<port>` (Docker
+	// DNS — see EnvClawkerdHydraURL set by buildCreateTimeEnv) but
+	// signs the assertion with the 127.0.0.1 audience so Hydra
+	// accepts it.
+	hydraTokenAudience := fmt.Sprintf("https://127.0.0.1:%d/oauth2/token",
+		cfg.Settings().ControlPlane.HydraPublicPort)
 
-	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, cmdOpts.AgentName, hydraTokenURL, signingKey)
+	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, cmdOpts.AgentName, hydraTokenAudience, signingKey)
 	if err != nil {
 		return fmt.Errorf("generate: %w", err)
 	}
