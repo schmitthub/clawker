@@ -38,7 +38,10 @@ are commands as B5+ adds payload variants.
    tradeoff. Owner ends up being whoever the in-container tar extraction
    runs as — root in default images.
 2. Resolve env: `CLAWKER_CP_HYDRA_URL`, `CLAWKER_CP_AGENT_ADDR`,
-   `CLAWKER_AGENT_NAME`. Anything else is intentionally NOT in the
+   `CLAWKER_AGENT`, `CLAWKER_PROJECT`. The (project, agent) pair
+   forms the composite identity the CP keys slots/registry by;
+   `CLAWKER_PROJECT` is allowed to be empty (matches the unscoped
+   2-segment naming case). Anything else is intentionally NOT in the
    environment — clawkerd should not be able to assert identity it
    didn't receive on a defended channel.
 3. POST `assertion.jwt` to Hydra → access token bound to the
@@ -47,11 +50,14 @@ are commands as B5+ adds payload variants.
    per-agent cert. Bearer token attached via `PerRPCCredentials` so
    it covers BOTH unary and streaming RPCs (a unary-only interceptor
    would silently skip Connect).
-5. `Connect({agent_name, code_verifier})` opens the server-streaming
-   command channel. The first message MUST be `Welcome`; receipt
-   implies server-side auth fully succeeded (slot consume + cross-
-   checks). Only then is the single-use verifier safe to delete —
-   PKCE consumption is the replay defense.
+5. `Connect({agent_name, project, code_verifier})` opens the server-
+   streaming command channel. clawkerd sends short `agent_name` +
+   `project` as separate wire fields — the CP composes the canonical
+   `clawker.<project>.<agent>` server-side and cross-checks against
+   the peer cert CN. The first message MUST be `Welcome`; receipt
+   implies server-side auth fully succeeded (slot consume +
+   cross-checks). Only then is the single-use verifier safe to delete
+   — PKCE consumption is the replay defense.
 6. Drain `stream.Recv()` for the agent's lifetime. `io.EOF` =
    graceful CP shutdown. SIGTERM cancels ctx → gRPC tears the stream
    down → exit zero. Other errors surface to stderr and exit 1.
@@ -77,9 +83,37 @@ are commands as B5+ adds payload variants.
 
 | File | Purpose |
 |------|---------|
-| `main.go` | `run(ctx)` orchestrator: read bootstrap, exchange assertion, dial CP, Connect (server-streaming), receive Welcome, delete verifier, drain stream |
+| `main.go` | `run(ctx, log)` orchestrator: read bootstrap, exchange assertion, dial CP, Connect (server-streaming), receive Welcome, delete verifier, drain stream. Logger initialized in `main` BEFORE `run` so every event flows through `internal/logger` |
 | `interceptor.go` | `bearerCreds` (`credentials.PerRPCCredentials`) — attaches `authorization: Bearer <token>` on every outgoing RPC, unary AND streaming |
 | `bootstrap_test.go` | `readBootstrap` happy path, per-file missing variants, empty-file rejection, dial TLS rejects malformed key material |
+
+## Logging
+
+Structured zerolog via `internal/logger.New()` writing to
+`/var/log/clawkerd.log` (50MB rotation, 7d retain, 3 backups, gzip
+compression — same defaults as the host-side `clawker.log`). Every
+log line carries `agent=<name>` and `project=<slug>` structured
+fields so a multi-agent log (when shared via volume mount) is
+trivially filterable by container.
+
+Levels:
+
+- **ERROR** — any failure: token exchange rejected, dial refused,
+  Welcome timeout, stream Recv error (non-EOF), bootstrap-file read
+  failure, verifier delete failure, connection close failure,
+  duplicate-Welcome (CP bug).
+- **INFO** — state transitions: `boot`, `token_exchange_attempt`,
+  `token_acquired`, `connect_dial`, `welcome_received`,
+  `verifier_deleted` (once-per-lifetime security transition),
+  `stream_idle`, `stream_closed_eof`, `stream_closed_sigterm`,
+  `shutdown`.
+- **DEBUG** — per-tick / per-shutdown noise: `connection_closed`,
+  `unknown_command_payload` (forward-compat ignore for B5+ payloads).
+
+There is **no WARN tier** — errors are errors regardless of retry
+policy. The single allowed `os.Stderr` write is the logger init
+failure path in `main` (no other channel can surface a busted file
+writer).
 
 ## Failure model
 

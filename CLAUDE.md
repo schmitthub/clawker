@@ -295,6 +295,8 @@ docker buildx imagetools inspect <image>@sha256:<digest>
 
 **All tests must pass before any change is complete.** Run `make test` (unit) or `make test-all` (all suites). See Build Commands above for individual test suites. See `.claude/rules/testing.md` for conventions.
 
+> **CRITICAL — IF YOU ARE RUNNING IN A CLAWKER CONTAINER (`$CLAWKER_AGENT` set): DO NOT RUN `go test ./...` (or any unscoped suite that pulls in `test/e2e`).** The e2e suite tears down the host CP container and firewall — you will lose your own network egress and block the user. Tests must be **targeted** (e.g. `go test ./internal/controlplane/agent/...`) or use **`make test`** (which excludes `test/e2e` and `test/whail`). The `test/e2e` and `test/whail` directories require an explicit invocation by the user on the host.
+
 ## Documentation
 
 * `.claude/rules/` — Auto-loaded guidelines (code style, testing, path-scoped package rules)
