@@ -168,21 +168,7 @@ Per-branch complexity is captured during each branch's `/cspec` kickoff.
 
 ### Branch 5: Init Migration + Agent Lifecycle
 
-**Goal**: clawkerd takes over init from bash scripts. CP tracks agent lifecycle. Command channel established.
-
-**What lands**:
-- clawkerd's `RunInit` handler replaces `agent.post_init` bash scripts
-- CP sends init spec to clawkerd after registration; clawkerd executes steps, streams progress
-- Entrypoint simplified: start clawkerd → wait for ready → drop to unprivileged user via gosu
-- Agent lifecycle tracking in CP (registered agents, heartbeats, reconciliation with Docker events)
-- Command channel: `RunCommand`, `ReloadConfig`, `RestartProcess`, `TerminateGracefully`
-- CLI gains `clawker agent list`, `clawker agent exec` (if warranted)
-
-**What stays the same (highway construction)**:
-- Old images without clawkerd still use bash entrypoint. Not broken, just legacy.
-- Monitor stack — still separate (fold-in is Branch 6)
-
-**Stability**: `clawker run @` with newly-built images uses clawkerd for init. Old images still work. All firewall, hostproxy, socketbridge functionality unchanged.
+**Goal**: clawkerd takes over init from bash scripts. CP tracks agent lifecycle. 
 
 ### Branch 6: Monitor Fold-in, Release Pipeline, Hardening
 
