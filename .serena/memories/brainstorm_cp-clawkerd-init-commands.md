@@ -3,33 +3,54 @@
 > **Status:** design pinned, ready for implementation plan
 > **Last updated:** 2026-04-27
 > **Parent:** Branch 5 of CP feature launch
-> **Scope:** foundation for clawkerd ↔ CP integration; restore container init feature parity through CP infra
-> **Out of scope:** agent-to-agent collaboration, full Sentry component (this PR builds the substrate Sentry will consume)
+> **Scope:** lay the CP ↔ clawkerd comms substrate; replace the entrypoint init script as the first feature on top of it
+> **Out of scope:** agent-to-agent collaboration; orchestration features beyond init substrate
 
 ---
 
 ## 1. Vision and constraints
 
-Clawker is a swarm-of-agents system. CP is the brain. All comms route through CP. Top priorities: **security and isolation**.
+Clawker is an agent orchestration platform. The control plane (CP) is the orchestrator — a privileged container that owns the firewall, the agent registry, the auth stack (Hydra/Kratos/Oathkeeper), and gRPC surfaces (`AdminService` for the host CLI, `AgentService` for in-container agents). Each managed agent runs as an unprivileged user inside its own container; **clawkerd** is the per-container daemon that pairs with CP for control-plane operations.
 
-This design replaces bash-entrypoint scripting from the last release with structured CP-driven init via the new control plane infra.
+This PR has two coupled goals:
 
-Build the foundation. Sentry comes later. This PR's job: restore container-init feature parity using CP gRPC instead of entrypoint shell.
+1. **Lay the CP ↔ clawkerd comms substrate.** RPCs flow in both directions at the system level (no individual RPC uses gRPC bidi streaming):
+   - clawkerd → CP: unary `AgentService.Register` — the registration handshake that lands an attestation record (replaces the streaming `AgentService.Connect` from B4)
+   - CP → clawkerd: server-streaming `ClawkerdService.Session` for command dispatch + liveness; unary `ClawkerdService.PresentAttestation` called on every Session establishment as the primary attestation-state discriminator (registered vs. onboarding) and cross-confirmation against CP's registry
+   - CLI → CP: server-streaming `AdminService.AnnounceAgent` to coordinate registration with container start
+   
+   Plus composite identity binding, attestation, and recovery from CP state loss. Top priorities: **security and isolation**.
+2. **Use the substrate to replace the entrypoint init script** as the first feature on top of it.
+
+**Why replace the entrypoint:** the current entrypoint (`internal/bundler/assets/entrypoint.sh`) runs init steps as root before dropping to the user CMD. To signal init completion and stream init progress back to the CLI, the script hijacks the container's stdout/stderr — every bash command's output is redirected to stderr, and stdout is repurposed as an event channel carrying tagged messages (ready signal, status updates) consumed by the CLI. That violates the Linux stdout/stderr contract: the user CMD can't use stdout for data and stderr for diagnostics in the natural way, because the entrypoint has already laid claim. Tooling that pipes container stdout into JSON consumers, log aggregators, or downstream commands sees mangled output.
+
+Restoring the contract requires:
+- Moving the event channel (init progress, ready signal) off stdout entirely → into the CP gRPC stream (via `AdminService.AnnounceAgent` server-stream events)
+- Removing the fd-redirection apparatus + tagged-message scheme from the entrypoint
+- Letting init commands run with their natural stdout/stderr restored, captured by CP via `Session`/`ShellCommand` RPCs
+
+Init replacement is the proving ground for the substrate: it exercises the registration handshake, command dispatch, event streaming, and idempotent re-entry on restart. Future features (lifecycle, health, exec, log streaming) consume the same substrate without redesign.
 
 ---
 
-## 2. Core invariant: composite trust anchor
+## 2. Core invariant: composite attested identity
 
-Trust is anchored on the **(cert_thumbprint, container_id) pair**, never on thumbprint alone.
+The unit of attested agent identity is the **(cert_thumbprint, container_id) pair**, never thumbprint alone. This pair is what agentslots reserves at announce time, what agentregistry records on Register success, and what the attestation JWT binds in its claims. **It is an attestation/provenance unit, not an auth unit.** Auth is mTLS (per §3.2 listener pinning); attested identity is what CP records *about* a container that completed the Register pipeline.
 
-**Why:** an attacker who steals an agent's cert material from a volume can present that cert from a different container. Thumbprint alone matches; nothing else does. Binding to container_id (assigned by Docker, unforgeable without daemon control) defeats the replay because the attacker's container has a different ID. CP observes both at every Session establishment (thumbprint via TLS; container_id via peer-IP→docker inspect), and verifies both match the registered binding.
+**Why both observables, not just thumbprint:** an attacker who steals an agent's cert material from a volume can present that cert from a different container. mTLS would still validate the cert chain — but the container_id presenting it would differ from the one CP previously attested. Binding container_id (assigned by Docker, unforgeable without daemon control) means the attestation record points at a specific physical container; stolen-cert-in-different-container fails the cross-check at the *attestation* layer (PresentAttestation, registry lookup), not the auth layer.
 
-This binding lives in three places:
-- agentslots `slotKey` (registration-time lookup)
-- agentregistry composite key (post-registration trust state)
-- Attestation JWT claims (`sub=thumbprint, container_id=C`)
+CP observes both observables (thumbprint via TLS handshake; container_id via peer-IP → Docker inspect) at two points:
+- **Registration** — Register handler verification chain binds the (T, C) pair into agentslots + agentregistry; the attestation JWT issued in the Welcome response embeds both as claims.
+- **Re-evaluation on a live Session** — CP re-observes (T, C) and consults agentregistry / PresentAttestation to refresh its understanding of which container this is and what's been attested about it. The result is data CP reads to decide what to do (§12), not an auth gate.
 
-Every entry point cross-checks both observables against the bound pair.
+**Session establishment is independent of attestation.** CP dials every `purpose=agent` container on clawker-net. mTLS handshake (cert chain valid; clawkerd's CN-pin to CP) is the entire auth check. Whether registry has a row, whether attestation verifies, whether it's a brand-new onboarding container — none of that affects Session connectivity. Those signals shape CP's response, not its reachability.
+
+The (T, C) binding lives in three places:
+- agentslots `slotKey` (announce-time placeholder, consumed at Register)
+- agentregistry composite key (persisted record after Register success)
+- Attestation JWT claims (`sub=thumbprint`, `container_id=C`)
+
+Every place that records or proves attested identity cross-checks both observables against the binding.
 
 ---
 
@@ -47,21 +68,27 @@ The system has three orthogonal layers. Each has its own state machine, lifetime
 
 ### 3.2 Auth layer (per-RPC)
 
-- mTLS handshake (cert chain validates against trusted CA)
-- Hydra OAuth2 JWT bearer + introspection
-- Per-method scopes (CLI vocabulary, agent vocabulary)
-- Gates RPC dispatch in both directions
-- Independent of registry contents
+mTLS + Hydra OAuth2 JWT + per-method scopes. Two listeners are in scope for this PR — both pinned, neither accepts arbitrary CA-signed certs:
+
+- **CP AgentPort (clawkerd → CP)** — `ClientCAs` = clawker CA, plus two-layer per-RPC pinning:
+  - `Register` (the only RPC opt-out from `agent.IdentityInterceptor`): self-authenticates via agentslots Consume. The slot's composite key includes the thumbprint reserved at AnnounceAgent time, so only an agent presenting a cert whose thumbprint CP previously stored can complete Register. Plus the §6 cross-checks (CN canonical, peer-IP → container_id, container labels).
+  - All other AgentPort RPCs: `agent.IdentityInterceptor` resolves the peer cert thumbprint to an agentregistry row before the handler runs. Unregistered thumbprint → reject. Registered → identity injected into request context.
+- **clawkerd listener (`:7700` ClawkerdService) — CP only** — `ClientCAs` = clawker CA **AND** `VerifyPeerCertificate` pins peer CN to `consts.ContainerCP`. Sole legitimate client: CP. **Without CN pinning, any other agent's CA-signed cert could connect to a clawkerd listener and dispatch root-level ShellCommand RPCs** — direct agent-to-agent privilege escalation. CN pin is the transport-level boundary that makes the substrate safe.
+
+JWT bearer scopes layer on top of the mTLS pin per listener. AdminPort (CLI ↔ CP) is shipped infrastructure and out of scope here.
 
 ### 3.3 Registry layer (provenance / attestation state)
 
 - "Did this container come through the proper CLI pipeline (Announce + slot consume + cross-checks)?"
 - Persisted in sqlite at `<dataDir>/controlplane/controlplane.db`
-- Records the (thumbprint, container_id) trust binding + descriptive metadata + signed attestation
-- **Read by future Sentry for policy decisions** (kill, lockdown, reconcile)
-- **NOT consulted on dispatch path.** Auth gates dispatch; Registry informs decisions.
+- Records the (thumbprint, container_id) attestation pair + descriptive metadata + signed attestation JWT
+- **Concrete consumers in B5:**
+  - `agent.IdentityInterceptor` — resolves AgentPort caller thumbprint → identity for every non-Register RPC. Registry IS the identity backing store auth uses on AgentPort.
+  - Register handler — idempotent short-circuit (thumbprint already in registry → return ok+attestation, no slot consume, no re-init).
+  - Session-establish re-evaluation — cert-theft detection (registry row's container_id vs observed peer container_id mismatch).
+  - Diagnostic queries — `clawker agent list` and similar.
 
-**Critical clarification:** registry presence ≠ "trusted to receive commands". Auth is what gates dispatch. Registry is the provenance/attestation record — a foundational data point that future Sentry will read to make policy decisions on. Don't gate command dispatch on registry presence.
+**Critical clarification:** Registry is a state store backing the auth identity layer; it isn't a *separate* authz policy engine on top of auth. Auth on AgentPort = mTLS chain + (slot consume for Register | IdentityInterceptor lookup for everything else) + JWT scope (agent vocabulary). The interceptor pulls identity from registry — so an unregistered thumbprint can't make non-Register AgentPort calls. CP→clawkerd dispatch uses mTLS chain + CN pin only (no JWT bearer layer). clawkerd has no registry of its own. Don't conflate "registry membership" with a separate cross-cutting permission system; it's the identity layer of auth on the AgentPort side, nothing more.
 
 ---
 
@@ -69,7 +96,7 @@ The system has three orthogonal layers. Each has its own state machine, lifetime
 
 Registration (clawkerd → CP) and Connection (CP → clawkerd) are independent flows. They share Registry as the source of truth but don't sequence each other.
 
-### 4.1 Flow A — Registration (trust establishment, clawkerd outbound)
+### 4.1 Flow A — Registration (clawkerd outbound)
 
 ```
 1. CLI: clawker run --agent foo --project bar
@@ -92,7 +119,13 @@ Registration (clawkerd → CP) and Connection (CP → clawkerd) are independent 
 
 4. clawkerd boot (universal entrypoint flow):
      read bootstrap material from volume (cert, key, JWK, attestation if present, verifier if present)
-     start gRPC mTLS listener on :7700 (ClawkerdService)   <-- listener BEFORE Register
+     start gRPC mTLS listener on :7700 (ClawkerdService) with:
+       - ServerCert    = own leaf cert (cert.pem, key.pem)
+       - ClientCAs     = clawker CA bundle (volume-mounted)
+       - ClientAuth    = RequireAndVerifyClientCert
+       - VerifyPeerCertificate hook → pin connecting peer's CN to consts.ContainerCP
+                                       (rejects any other CA-signed cert, e.g. another agent's)
+       (listener BEFORE Register — CP may dial concurrently with the Register call)
      call AdminClient.Register over CP AgentPort:
        body: { agent_name, project, code_verifier (only if verifier file present) }
 
@@ -121,18 +154,21 @@ Registration (clawkerd → CP) and Connection (CP → clawkerd) are independent 
 3. On Session establish (mTLS handshake completes):
      extract peer cert → thumbprint T
      resolve peer IP → container_id C (peer must be on clawker-net)
-     row := registry.LookupByThumbprint(T)
-     case row exists AND row.container_id == C:
-       trust, hold Session, await/dispatch ShellCommand
-     case row exists AND row.container_id != C:
-       REJECT — cert theft alarm. Log loud. Evict row. Close stream.
-     case no row (CP-state-loss recovery path):
-       call ClawkerdService.PresentAttestation over Session
+     call ClawkerdService.PresentAttestation over Session  [ALWAYS — primary attestation-state discriminator]
        clawkerd returns persisted attestation.jwt artifact (or empty)
-       verify CP signature + claim.sub==T + claim.container_id==C
-         valid    → registry.Add (reconciled=true), trust, hold Session
-         invalid  → orphan. Hold Session passively (no dispatch).
-                    Sentry-future will decide policy (kill / isolate / log).
+
+     CP cross-references the artifact against agentregistry + agentslots and takes
+     whatever action the case calls for (see §12 matrix for the full table). Examples:
+     verified artifact + matching registry row → log/no-op; verified artifact + empty
+     registry → registry.Add (state-loss reconciliation); container_id mismatch → alert
+     + evict + close stream; empty artifact + pending slot → no action (the parallel
+     Register flow will land registry.Add when it completes).
+
+     The Session itself remains a transport pipe. **No attestation state is bound to the Session.**
+     When CP later needs to decide whether to dispatch something to this container, it
+     queries registry / agentslots fresh, or reacts to registry events (e.g. `registry.Add`
+     triggers init recipe dispatch per §13). Event-driven + on-demand lookups, not
+     Session-cached state.
 
 4. On dockerevents container die / stop:
      cancel Session goroutine
@@ -153,7 +189,7 @@ Registration (clawkerd → CP) and Connection (CP → clawkerd) are independent 
 
 ### 5.1 sqlite at `<dataDir>/controlplane/controlplane.db`
 
-Single .db file with multiple tables. Future Sentry tables alongside.
+Single .db file. Schema may grow additional tables as the substrate's surface expands.
 
 ```sql
 CREATE TABLE agents (
@@ -176,7 +212,7 @@ Lookup paths, all exact-key:
 - CLI AnnounceAgent → `WHERE container_id = ?` (UNIQUE index hit)
 - CP Session establish → `WHERE thumbprint_hex = ?` (UNIQUE index hit)
 - dockerevents container die → `WHERE container_id = ?` (UNIQUE index hit)
-- `clawker agent list` / Sentry queries → `WHERE project=? AND agent_name=?` (non-unique index)
+- `clawker agent list` / diagnostic queries → `WHERE project=? AND agent_name=?` (non-unique index)
 
 ### 5.2 Volume layout — agent side
 
@@ -185,7 +221,7 @@ Lookup paths, all exact-key:
   cert.pem            (durable — ongoing mTLS server cert)
   key.pem             (durable — ongoing mTLS server key)
   jwk.json            (durable — JWT signing for Register call)
-  attestation.jwt     (written post-Register success, used for PresentAttestation recovery)
+  attestation.jwt     (written post-Register success; returned by PresentAttestation on every Session establishment)
   verifier            (one-shot — wiped immediately on Register success)
 
 /var/run/clawker/init-done   (init recipe completion marker)
@@ -294,7 +330,7 @@ Mirrors zero-thumbprint and empty-Challenge panics in current code. Empty contai
 
 ## 8. agentregistry changes
 
-### 8.1 Composite trust unit
+### 8.1 Composite attestation pair
 
 Schema in §5.1. Both `thumbprint_hex` and `container_id` UNIQUE; composite PK on `(thumbprint_hex, container_id)` makes binding intent explicit.
 
@@ -338,7 +374,7 @@ iss:           cp_instance_id (or constant "clawker-cp")
 
 ### 9.3 PresentAttestation RPC
 
-New method on `ClawkerdService`. CP calls it when Session establishes but registry has no row for the observed thumbprint:
+New unary method on `ClawkerdService`. **CP calls it on every Session establishment, regardless of registry state.** It is the attestation-state discriminator that tells CP what mode the container is in.
 
 ```proto
 rpc PresentAttestation(google.protobuf.Empty) returns (AttestationArtifact);
@@ -348,12 +384,19 @@ message AttestationArtifact {
 }
 ```
 
+Roles served (all happen via the same call):
+
+1. **Discriminator** — empty artifact = onboarding (CP checks agentslots, awaits Register, holds Session passively); valid artifact = already registered (CP proceeds to dispatch / init-marker check).
+2. **Re-confirmation against registry** — when CP registry already has an entry for the observed thumbprint, the artifact is cryptographic agent-side proof of the prior attestation event. Disagreement (verified artifact contradicts registry) is an alarm.
+3. **CP state-loss reconciliation** — when CP registry is empty but agent returns a valid artifact (sqlite loss, fresh CP install, volume restore), CP rebuilds the registry row from the artifact's claims.
+4. **Cert theft / corruption detection** — invalid signature or (T, C) mismatch in claims surfaces as REJECT + alert.
+
 CP-side verification:
-- signature valid against current or previous-rotation key
+- Signature valid against current or previous-rotation key
 - `claim.sub == observed peer thumbprint T`
 - `claim.container_id == observed resolved container_id C`
 
-Pass → `registry.Add(reconciled=true)`. Fail → orphan, hold Session passively.
+See §4.2 step 3 for the full case table on every Session establishment.
 
 ### 9.4 Threat properties
 
@@ -403,7 +446,7 @@ Race resolution:
 | Scenario | Resolution |
 |---|---|
 | Register before Announce | Slot miss → `ErrSlotInvalid` → clawkerd retry → succeeds when slot reserved |
-| CP dial before Register | Session up but no registry row → PresentAttestation flow (returns empty on first boot, becomes registered after Register completes — CP observes via thumbprint-based Lookup race or operates as orphan briefly until Register lands) |
+| CP dial before Register | Session establishes; PresentAttestation returns empty; CP checks agentslots, finds slot pending, holds Session passively until clawkerd Register completes |
 | Dual Register (retry storm, restart) | Registry hit short-circuits at step 10a, returns ok+attestation, no slot consume |
 | Container dies mid-flow | dockerevents → registry evict + slot evict + Session goroutine cancel → in-flight RPCs error → cleanup |
 | CP restart with running agents | Reload registry from sqlite; dial reconciler enumerates running purpose=agent containers, dials all; PresentAttestation reconciles entries lost between persist and shutdown |
@@ -411,20 +454,26 @@ Race resolution:
 
 ---
 
-## 12. CP-state-loss recovery
+## 12. Attestation-state evaluation matrix
 
-Three nested fallback paths:
+At Session establishment, CP runs PresentAttestation (§9.3) and observes the result against agentregistry + agentslots. The matrix below lists the cases and the typical CP response. **No state is bound to the Session — these are decisions CP makes at the moment of evaluation.** Subsequent decisions re-query.
 
-| State of CP | State of clawkerd | Recovery path |
-|-------------|-------------------|---------------|
-| Registry has row | Up | Direct trust on Session establish (no extra RPC) |
-| Registry empty | Up, has attestation | PresentAttestation → verify → reconcile registry |
-| Registry empty | Up, no attestation | Orphan; await clawkerd Register or Sentry policy |
-| Registry has row, container_id mismatch | Up | Cert theft signal — reject, evict, alert |
+| Registry row | Agent attestation | CP infers | Typical action |
+|---|---|---|---|
+| present, (T,C) match | present, verifies | properly registered, no theft | log; init recipe per §13 (skipped if marker present on volume) |
+| present, (T,C) match | absent | anomaly — registered but no proof | log + alert; per CP policy |
+| present, T match, C mismatch | present, verifies | cert theft (verified attestation contradicts registry) | alert, evict registry row, close stream |
+| present, T match, C mismatch | absent or invalid | cert theft | alert, evict registry row, close stream |
+| absent | present, verifies | CP state-loss case | `registry.Add(reconciled=true)` |
+| absent | present, invalid sig or (T,C) mismatch | theft / corruption | alert, close stream |
+| absent | absent, slot pending in agentslots | onboarding in flight (parallel Register flow live) | no action — `registry.Add` event from Register success will trigger init dispatch per §13 |
+| absent | absent, no pending slot | unattested (no announcement, no proof) | no action; 60s slot TTL bounds the window for any subsequent Register |
 
-PresentAttestation is the recovery primitive that lets CP rebuild the registry from agent-side material after sqlite loss / fresh CP install / volume restore from backup.
+The "Typical action" column describes CP-side responses. None of these are registry-enforced gates — the Session stays open in every case. Policy changes (e.g. "log instead of close on cert theft") wouldn't touch the registry contract; they only change what CP does in response to the data registry surfaces.
 
-Symmetric persistence break (CP loses sqlite AND agent loses attestation) is unrecoverable without operator intervention — by design. That's a hard trust break, not a transient failure.
+State-loss recovery (the row "registry absent + agent has valid attestation") is one emergent role of PresentAttestation, not a special-case RPC.
+
+Symmetric persistence break (CP loses sqlite AND agent loses attestation) is unrecoverable without operator intervention — by design. The provenance chain has lost both endpoints; mTLS auth still works, but there's no way to reconstruct the attestation record. Operator must either re-Register or remove the container.
 
 ---
 
@@ -453,8 +502,7 @@ Recipes must be idempotent or check-then-do; if dispatch is interrupted, next di
 | RPC | Before (B4) | After (B5) |
 |-----|-------------|------------|
 | `AdminService.AnnounceAgent` | unary, returns slot ack | **server-streaming**, returns `AnnounceState{ALREADY_REGISTERED|SLOT_RESERVED}` then runtime events |
-| `AdminService.Register` (new home) | — | unary, idempotent, called by clawkerd at every boot. Returns Welcome{attestation}. (Was `AgentService.Connect` — moves to AdminService since it's a pure trust-handshake call now, not a streaming command channel) |
-| `AgentService.Connect` | server-streaming, Welcome-then-idle | **dropped** — replaced by `AdminService.Register` + dial-driven Session |
+| `AgentService.Register` | (named `Connect` in B4, server-streaming) | **unary**, idempotent, called by clawkerd at every boot. Returns `Welcome{attestation}`. Stays on `AgentService` (clawkerd → CP, agent vocabulary) — only the shape changes. |
 | `AgentService.Events` | client-streaming stub | **dropped** — eBPF + dockerevents cover CP visibility; no per-agent telemetry channel needed |
 | `ClawkerdService` (new) | — | server: clawkerd; methods: `Session` (server-streaming, CP→clawkerd command channel + liveness), `ShellCommand` (streaming, exec on agent), `PresentAttestation` (unary) |
 
@@ -490,7 +538,7 @@ clawker run --agent foo --project bar:
 
 1. agentregistry sqlite persistence (migrate from in-memory)
 2. agentslots `slotKey` adds ContainerID; Verify+Delete split; callers updated
-3. Proto changes (AnnounceAgent server-stream, drop Connect/Events, add Register on AdminService, add ClawkerdService)
+3. Proto changes (AnnounceAgent server-stream, replace `AgentService.Connect` with unary `AgentService.Register`, drop `AgentService.Events`, add `ClawkerdService`)
 4. clawkerd listener (gRPC mTLS :7700, ClawkerdService impl, listener-before-Register ordering)
 5. CP dial reconciler (boot poll + dockerevents subscriber + Session goroutine + backoff)
 6. CP Register handler rewrite (idempotent, registry-hit short-circuit, attestation mint, persist-before-delete)
@@ -525,7 +573,7 @@ clawker run --agent foo --project bar:
 ## 18. What this design preserves from B4
 
 - agentslots composite key + PKCE consume + verification cross-checks (now folded into key + 4 distinct semantic checks)
-- agentregistry as the trust state ledger
+- agentregistry as the attestation/provenance record
 - mTLS + Hydra OAuth2 + per-method scopes (CLI vocabulary, agent vocabulary)
 - AdminService gRPC surface on AdminPort; agent-scope listener on AgentPort
 - dockerevents → informer → registry/slot eviction pipeline (PRs #261, #262)
@@ -534,11 +582,11 @@ clawker run --agent foo --project bar:
 ## 19. What this design changes from B4
 
 - `Connect` (server-streaming) → `Register` (unary, idempotent, universal)
-- agentslots `slotKey` + agentregistry trust unit fold ContainerID into composite key
+- agentslots `slotKey` + agentregistry attestation pair fold ContainerID into composite key
 - `Consume` → `Verify`+`Delete` split (atomicity with registry persist)
-- agentregistry persistence: in-memory → sqlite (controlplane.db with future Sentry tables alongside)
+- agentregistry persistence: in-memory → sqlite (controlplane.db)
 - CP dial direction added: CP → clawkerd Session for command dispatch
-- CP-state-loss recovery via attestation artifact + PresentAttestation
+- Attestation artifact + `PresentAttestation` as the per-Session attestation-state discriminator (state-loss recovery is one of its four roles)
 - AnnounceAgent: unary → server-streaming with branch-on-registry (ALREADY_REGISTERED / SLOT_RESERVED)
 - Init recipe: bash entrypoint → CP-driven via ShellCommand RPCs
 - clawkerd listener: new gRPC server on :7700 (`ClawkerdService`)
@@ -547,11 +595,12 @@ clawker run --agent foo --project bar:
 
 ## 20. Critical clarifications (LLM session amnesia repellent)
 
-- **Registry is provenance, not authz.** Auth (mTLS + JWT scopes) gates dispatch. Registry tells Sentry-future "did this container come through the proper pipeline?". Don't gate command dispatch on registry presence.
-- **CP dials every purpose=agent container, registered or not.** Session existence is decoupled from registry state. Unregistered containers get an idle Session; Sentry-future decides their fate.
-- **Trust anchor is (thumbprint, container_id) pair**, not thumbprint alone. Cert theft + replay from another container is defeated by container_id binding.
+- **Registry is a provenance / attestation data store, not an auth component.** It records whether a container came through the proper CLI pipeline (Announce + slot consume + cross-checks). CP reads it to inform decisions — what command to send next, whether to run init, whether to flag cert theft, whether to reconcile after state loss. It does NOT gate dispatch on either direction. CP→clawkerd dispatch uses mTLS + CN pin only. AgentPort dispatch uses mTLS + JWT scope; the existing `agent.IdentityInterceptor` happens to read registry for caller identity resolution, but registry isn't conceptually an authz layer.
+- **CP dials every purpose=agent container, registered or not, and uses the resulting Session.** Both Session existence AND command dispatch are decoupled from registry presence — registry doesn't gate either. Registry is a data point CP reads to decide WHAT to do (run init recipe, skip re-init, flag cert theft, reconcile state-loss), not WHETHER to engage at all. CP can send commands to an unregistered clawkerd; whether that's appropriate is a CP-side policy decision driven by the data, not a constraint enforced by the registry.
+- **Attested identity is the (thumbprint, container_id) pair**, not thumbprint alone. This is what registry records and what attestation JWTs bind. It is NOT auth — auth is mTLS per §3.2. The pair exists so that cert theft + replay from another container fails the cross-check at the *attestation* layer (PresentAttestation, registry lookup), not the auth layer.
 - **Register is universal and idempotent.** Every clawkerd boot calls Register. Already-registered → return ok+attestation, no slot consume, no re-init. First-time → full slot consume + cross-checks + init dispatch.
 - **60s slot TTL is the registration deadline.** Failure → clawkerd exits non-zero → container dies → dockerevents cleans up. No long-lived orphan registration state.
 - **CLI calls the Docker SDK (via jailed `pkg/whail`), not `docker run`.** ContainerCreate happens in Phase B before AnnounceAgent; CLI has container_id at announce time.
 - **Verifier is the only one-shot secret on the agent volume.** Cert/key/JWK/attestation are durable; verifier is wiped on Register success.
-- **Attestation is for CP-state-loss recovery, not authz.** When CP boots fresh and dials a container, it asks "show me your proof". Attestation rebuilds registry from the agent side. Auth still happens independently per-RPC.
+- **Attestation is the per-Session attestation-state discriminator, not authz.** CP calls `PresentAttestation` on every Session establishment. Empty artifact = onboarding (await Register). Valid artifact = registered. Mismatched / corrupt = alert + close per CP policy. State-loss recovery (CP registry empty + agent has valid artifact) is one of four roles; the others are discriminator, registry re-confirmation, and theft/corruption detection. Auth happens independently per-RPC.
+- **clawkerd's mTLS listener pins CP's CN, not just CA trust.** Without CN pinning, any other agent's CA-signed cert could connect to a clawkerd listener and dispatch root-level ShellCommands — agent-to-agent privilege escalation. The CP→clawkerd direction uses mTLS + CN pin only (no JWT bearer); clawkerd accepts ONLY peers whose CN matches `consts.ContainerCP`.
