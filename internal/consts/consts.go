@@ -196,6 +196,40 @@ const (
 	// listener (mTLS, clawker-net only). Matches the
 	// ControlPlaneSettings.AgentPort struct-tag default.
 	DefaultCPAgentPort = 7444
+	// DefaultClawkerdPort is the in-container gRPC port for the
+	// clawkerd listener (mTLS, clawker-net only). CP dials this
+	// port to dispatch commands; the listener pins peer CN to
+	// ContainerCP.
+	DefaultClawkerdPort = 7700
+)
+
+// gRPC keepalive parameters for the CP↔clawkerd Session channel.
+// Shared by clawkerd (server) and CP (client) so the two sides
+// can't drift apart and start tearing down healthy connections.
+//
+// Constraint the gRPC library enforces: a client's ping interval
+// must be >= the server's EnforcementPolicy MinTime, otherwise
+// the server tears the connection with ENHANCE_YOUR_CALM. Setting
+// ClawkerdKeepaliveClientPingInterval == ClawkerdKeepaliveMinClientPing
+// keeps both sides aligned at the floor.
+const (
+	// ClawkerdKeepaliveServerPingInterval is how often the server
+	// (clawkerd) pings an otherwise-idle client (CP). Drives the
+	// server's keepalive.ServerParameters.Time.
+	ClawkerdKeepaliveServerPingInterval = 30 * time.Second
+	// ClawkerdKeepaliveClientPingInterval is how often the client
+	// (CP) pings an otherwise-idle server (clawkerd). Drives the
+	// client's keepalive.ClientParameters.Time.
+	ClawkerdKeepaliveClientPingInterval = 30 * time.Second
+	// ClawkerdKeepalivePingTimeout is how long either side waits
+	// for a keepalive ping response before declaring the connection
+	// dead. Drives keepalive.{Server,Client}Parameters.Timeout.
+	ClawkerdKeepalivePingTimeout = 10 * time.Second
+	// ClawkerdKeepaliveMinClientPing caps how often a client may
+	// ping the server (server-side abuse defense). MUST be <=
+	// ClawkerdKeepaliveClientPingInterval. Drives the server's
+	// keepalive.EnforcementPolicy.MinTime.
+	ClawkerdKeepaliveMinClientPing = 10 * time.Second
 )
 
 // Container user identity.

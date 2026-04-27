@@ -153,6 +153,22 @@ func run(ctx context.Context, log *logger.Logger) error {
 		return fmt.Errorf("read bootstrap: %w", err)
 	}
 
+	// Start the ClawkerdService listener BEFORE registering with CP.
+	// CP may dial concurrently with the registration call, so the
+	// listener must be ready first. Listener uses the same per-agent
+	// leaf cert as the outbound dial; the security boundary is the
+	// CN-pin on incoming peer certs (only consts.ContainerCP allowed).
+	clawkerdSrv, err := startClawkerdListener(boot, log)
+	if err != nil {
+		log.Error().Err(err).Str("event", "clawkerd_listener_start_failed").Msg("start clawkerd listener")
+		return fmt.Errorf("start clawkerd listener: %w", err)
+	}
+	defer func() {
+		log.Info().Str("event", "clawkerd_listener_stopping").Msg("graceful stop")
+		clawkerdSrv.GracefulStop()
+		log.Info().Str("event", "clawkerd_listener_stopped").Msg("listener torn down")
+	}()
+
 	tokenURL := strings.TrimRight(hydraURL, "/") + "/oauth2/token"
 	tokenTLS, err := buildTokenTLSConfig(boot.CACertPEM)
 	if err != nil {

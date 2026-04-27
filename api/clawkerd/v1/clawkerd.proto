@@ -1,0 +1,162 @@
+syntax = "proto3";
+
+package clawker.clawkerd.v1;
+
+option go_package = "github.com/schmitthub/clawker/api/clawkerd/v1";
+
+// ClawkerdService is the gRPC surface CP calls on clawkerd (the per-
+// container agent daemon).
+//
+// Transport: mTLS over TCP on clawkerd's listener inside the agent
+// container (port consts.DefaultClawkerdPort), reachable from CP via
+// clawker-net. The listener
+// requires a peer cert chained to the clawker CA AND pins the peer's
+// CN to consts.ContainerCP — the sole legitimate caller is CP. Any
+// other clawker-CA-signed cert (e.g. another agent's) is rejected at
+// the TLS layer. Without CN pinning, agent-to-agent privilege
+// escalation would be possible.
+//
+// No JWT/bearer layer on this listener — mTLS + CN pin is the entire
+// auth check.
+//
+// Topology: CP is gRPC-client, clawkerd is server. Session is bidi:
+// CP streams Commands; clawkerd streams Responses. command_id
+// correlates each Response back to the Command that produced it,
+// allowing concurrent commands per Session.
+service ClawkerdService {
+  // Session is the lifetime command channel from CP to clawkerd.
+  // CP opens the stream, sends Hello as the first Command, then
+  // dispatches ShellCommand / Stdin / CloseStdin / Signal as
+  // needed. clawkerd streams Responses correlated by command_id.
+  rpc Session(stream Command) returns (stream Response);
+}
+
+// Command is one CP→clawkerd request. command_id is a CP-generated
+// opaque correlation token; clawkerd echoes it on every Response.
+// Concurrent commands are permitted on a single Session — clawkerd
+// distinguishes them by command_id.
+message Command {
+  string command_id = 1;
+  oneof payload {
+    Hello hello = 2;
+    ShellCommand shell = 3;
+    Stdin stdin = 4;
+    CloseStdin close_stdin = 5;
+    Signal signal = 6;
+  }
+}
+
+// Hello is the first Command CP sends after the Session stream
+// opens. clawkerd replies with HelloAck. Liveness is otherwise
+// maintained via gRPC keepalive.
+message Hello {}
+
+// ShellCommand starts a shell pipeline. stages.len == 1 runs a
+// single command; stages.len > 1 chains stage[i].stdout into
+// stage[i+1].stdin (a | b | c). stage[0].stdin is fed by
+// initial_stdin then by subsequent Stdin frames matching this
+// command_id.
+message ShellCommand {
+  repeated PipeStage stages = 1;
+  // 0 = no timeout. Timeout fires SIGKILL on every stage and
+  // terminates the command with ERROR_CODE_TIMEOUT.
+  uint32 timeout_seconds = 2;
+  bytes initial_stdin = 3;
+}
+
+// PipeStage is one process in the pipeline. uid/gid drop privileges
+// per stage (e.g. install as root, post-install hook as user).
+message PipeStage {
+  repeated string argv = 1;
+  uint32 uid = 2;
+  uint32 gid = 3;
+  string cwd = 4;
+  map<string, string> env = 5;
+}
+
+// Stdin writes bytes to a running command's stage[0] stdin. Refers
+// to the in-flight ShellCommand by command_id on the parent Command.
+message Stdin {
+  bytes data = 1;
+}
+
+// CloseStdin signals EOF on the running command's stage[0] stdin.
+message CloseStdin {}
+
+// Signal sends a POSIX signal to every stage in the pipeline (or to
+// the single command for stages.len == 1). signo is the numeric
+// signal value (e.g. 9 SIGKILL, 15 SIGTERM, 2 SIGINT).
+message Signal {
+  int32 signo = 1;
+}
+
+// Response is one clawkerd→CP message correlated by command_id.
+// Every ShellCommand command_id terminates with exactly one of Done
+// OR Error. HelloAck is the sole terminal Response for a Hello.
+// Stdin / CloseStdin / Signal produce a Started-or-Error Response
+// only on failure (UNKNOWN_COMMAND_ID / INVALID_REQUEST); successful
+// Stdin/CloseStdin/Signal are silent.
+message Response {
+  string command_id = 1;
+  oneof payload {
+    HelloAck hello_ack = 2;
+    Started started = 3;
+    StdoutChunk stdout = 4;
+    StderrChunk stderr = 5;
+    StageExit stage_exit = 6;
+    Done done = 7;
+    Error error = 8;
+  }
+}
+
+message HelloAck {}
+
+// Started signals that ShellCommand has spawned all stages.
+message Started {}
+
+// StdoutChunk carries bytes from the final stage's stdout.
+message StdoutChunk {
+  bytes data = 1;
+}
+
+// StderrChunk carries bytes from a specific stage's stderr.
+message StderrChunk {
+  uint32 stage_index = 1;
+  bytes data = 2;
+}
+
+// StageExit is emitted as each pipeline stage exits. exit_code is
+// the process exit code; signo is the POSIX signal that killed it
+// (non-zero only for signaled exits, in which case exit_code is -1).
+message StageExit {
+  uint32 stage_index = 1;
+  int32 exit_code = 2;
+  int32 signo = 3;
+}
+
+// Done is the terminal Response for a successful ShellCommand.
+// final_exit_code = last stage's exit_code.
+message Done {
+  int32 final_exit_code = 1;
+}
+
+// Error is the terminal Response for a failed Command.
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  // Stdin / CloseStdin / Signal referencing a command_id that
+  // is not currently running (never started, or already terminal).
+  ERROR_CODE_UNKNOWN_COMMAND_ID = 1;
+  // Empty argv, contradictory fields, etc.
+  ERROR_CODE_INVALID_REQUEST = 2;
+  // execve failed (ENOENT, EPERM, EACCES, ...).
+  ERROR_CODE_SPAWN_FAILED = 3;
+  // Killed because timeout_seconds elapsed.
+  ERROR_CODE_TIMEOUT = 4;
+  // Pipe between stages broke unexpectedly mid-execution.
+  ERROR_CODE_IO_ERROR = 5;
+}
