@@ -242,8 +242,8 @@ func TestCPContainer_OtelClientCertMounts(t *testing.T) {
 	require.NoError(t, err)
 
 	wants := map[string]bool{
-		consts.CPOtelClientCertPath: false,
-		consts.CPOtelClientKeyPath:  false,
+		consts.CPClientCertPath: false,
+		consts.CPClientKeyPath:  false,
 	}
 	for _, m := range cpConfig.Mounts {
 		if _, ok := wants[m.Target]; ok {

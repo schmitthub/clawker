@@ -322,37 +322,55 @@ func run(ctx context.Context, log *logger.Logger) error {
 
 	log.Info().Str("event", "stream_idle").Msg("entering command-receive loop")
 
-	// Drain the stream for the agent's lifetime. EOF means CP closed
-	// cleanly (graceful shutdown / drain-to-zero); a non-EOF error
-	// means transport broke or the CP rejected mid-stream — either
-	// way clawkerd exits and the container's restart policy decides
-	// whether to retry.
+	// clawkerd is a DAEMON. Its lifetime is the container's lifetime,
+	// bounded only by SIGTERM (ctx cancel). The two responsibilities
+	// it serves while alive are:
+	//   1. The :7700 ClawkerdService listener (started above) where
+	//      CP dials in to dispatch commands.
+	//   2. (transitional) The post-Welcome AgentService.Connect server-
+	//      stream, drained in a background goroutine so we observe CP
+	//      pushes (B4 sends only Welcome today; B5 replaces Connect
+	//      with unary Register and the drain disappears entirely).
+	//
+	// Stream break != daemon death. Once the daemon registered with
+	// CP via Welcome, the registration fact is durable; whether the
+	// open stream holds is incidental. clawkerd-as-supervisor stays
+	// up for the container regardless.
+	go drainConnectStream(ctx, stream, log)
+
+	<-ctx.Done()
+	log.Info().Str("event", "shutdown_signal_received").Msg("SIGTERM received; tearing down clawkerd")
+	return nil
+}
+
+// drainConnectStream runs the post-Welcome Connect stream consumer
+// until the stream closes or ctx cancels. It does NOT control
+// daemon lifetime — it only observes and logs. CP sends Welcome
+// once; B4-era B5+ extensions to the Command oneof land here and
+// we forward-compat ignore unknown payloads.
+func drainConnectStream(ctx context.Context, stream agentv1.AgentService_ConnectClient, log *logger.Logger) {
 	for {
 		cmd, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
-			log.Info().Str("event", "stream_closed_eof").Msg("CP closed stream gracefully")
-			return nil
+			log.Info().Str("event", "stream_closed_eof").Msg("CP closed Connect stream; daemon continues")
+			return
 		}
 		if err != nil {
-			if errors.Is(ctx.Err(), context.Canceled) {
-				log.Info().Str("event", "stream_closed_sigterm").Msg("SIGTERM-initiated teardown")
-				return nil // SIGTERM-initiated teardown is not an error
+			if ctx.Err() != nil {
+				return
 			}
-			log.Error().Err(err).Str("event", "stream_broken").Msg("stream Recv failed")
-			return fmt.Errorf("connect stream: %w", err)
+			log.Error().Err(err).Str("event", "stream_broken").Msg("Connect stream Recv failed; daemon continues")
+			return
 		}
 		switch cmd.Payload.(type) {
 		case *agentv1.Command_Welcome:
 			// Unexpected second Welcome is a CP bug — log so an
 			// operator can see it, but don't treat it as fatal: the
-			// agent is already authenticated and the stream is still
-			// the lifetime channel.
+			// daemon is already registered.
 			log.Error().Str("event", "duplicate_welcome").Msg("received unexpected second Welcome")
 		default:
-			// Forward-compat: B5+ adds payload variants. Unknown types
-			// log at debug so an operator can correlate; ignoring them
-			// is safe because the proto oneof reserves tag space and
-			// the daemon's behavior is not gated on command receipt.
+			// Forward-compat: future Command variants land here.
+			// Daemon behavior is not gated on what arrives.
 			log.Debug().
 				Str("event", "unknown_command_payload").
 				Str("type", fmt.Sprintf("%T", cmd.Payload)).

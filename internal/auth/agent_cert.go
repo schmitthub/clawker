@@ -115,10 +115,17 @@ func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent Agen
 			CommonName:   CanonicalAgentCN(project, agent),
 			Organization: []string{"clawker"},
 		},
-		NotBefore:   now.Add(-5 * time.Minute),
-		NotAfter:    now.Add(24 * time.Hour),
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		NotBefore: now.Add(-5 * time.Minute),
+		NotAfter:  now.Add(24 * time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		// Dual-purpose cert: ClientAuth so clawkerd can present it
+		// when dialing CP's AgentService (mTLS to AgentPort), and
+		// ServerAuth so clawkerd can present the SAME cert as its
+		// server cert on the :7700 ClawkerdService listener that CP
+		// dials. CP-side chain verify defaults to checking
+		// ExtKeyUsageServerAuth — without ServerAuth here, every
+		// CP→clawkerd dial fails with "incompatible key usage".
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &leafKey.PublicKey, caKey)

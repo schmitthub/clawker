@@ -40,6 +40,7 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
 	"github.com/schmitthub/clawker/internal/controlplane/agent"
+	"github.com/schmitthub/clawker/internal/controlplane/agentdial"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
@@ -658,6 +659,53 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	go func() {
 		watcherDone <- watcher.Run(watcherCtx)
 	}()
+
+	// CP→clawkerd dial reconciler. Initial poll: open a Session to
+	// every running purpose=agent container so command dispatch is
+	// ready by the time anything wants to dispatch. The same DialAgent
+	// is the call target for the dockerevents container-start path
+	// added next; one dial code path, two callers.
+	//
+	// CP-readiness must NOT block on this. Failures (cert load, list
+	// containers, individual dial) are logged and the rest of CP
+	// proceeds — a misconfigured agent or a flapping clawkerd cannot
+	// hold the control plane down.
+	dialer, err := agentdial.New(
+		log.With("component", "agentdial"),
+		dockerCli.APIClient,
+		inf,
+		consts.CPClientCertPath,
+		consts.CPClientKeyPath,
+		caCertPool,
+	)
+	if err != nil {
+		log.Error().Err(err).Str("event", "agentdial_init_failed").Msg("agentdial unavailable; CP→clawkerd dispatch disabled")
+		dialer = nil
+	}
+	if dialer != nil {
+		// Runtime path: dockerevents → informer → agentdial.Subscribe
+		// reacts to "container started" deltas for purpose=agent
+		// containers and dials. Same DialAgent function the initial
+		// poll calls; dedup map on Dialer prevents the two paths
+		// from double-dialing the same containerID.
+		cancelDialSub := agentdial.Subscribe(watcherCtx, dialer, inf, log.With("component", "agentdial"))
+		defer cancelDialSub()
+
+		// Initial path: dial every already-running agent container at
+		// CP boot. Runs in its own goroutine — must NOT block CP
+		// readiness, must NOT fail CP if listAgentIDs errors.
+		go func() {
+			initialAgents, listErr := listAgentIDs(watcherCtx)
+			if listErr != nil {
+				log.Error().Err(listErr).Str("event", "agentdial_initial_list_failed").Msg("list agent containers")
+				return
+			}
+			for _, id := range initialAgents {
+				dialer.DialAgent(watcherCtx, id)
+			}
+			log.Info().Int("count", len(initialAgents)).Str("event", "agentdial_initial_poll_dispatched").Msg("dispatched initial CP→clawkerd dials")
+		}()
+	}
 
 	log.Info().Msg("clawker-cp ready")
 

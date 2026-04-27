@@ -624,26 +624,35 @@ func AuthOtelServerKeyPath() (string, error) {
 	return filepath.Join(dir, "server.key"), nil
 }
 
-// AuthCPOtelClientCertPath returns the path to the clawker-cp daemon's
-// mTLS client certificate for OTLP push to the monitoring stack.
-// Bind-mounted RO into the CP container at
-// CPClawkerOtelClientCertPath.
-func AuthCPOtelClientCertPath() (string, error) {
-	dir, err := AuthOtelDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "cp-client.pem"), nil
+// AuthCPDir ensures and returns the auth/cp directory under the
+// XDG data dir. Holds the CP's outbound mTLS identity (CN equals
+// ContainerCP, ClientAuth EKU) used by every CP-as-client dial:
+// OTLP push to the monitoring stack, the CP→clawkerd Session
+// channel, and any future outbound mTLS where the peer needs to
+// authenticate that the caller is the control plane.
+func AuthCPDir() (string, error) {
+	return subdirPathUnder(filepath.Join(authDir, "cp"), DataDir())
 }
 
-// AuthCPOtelClientKeyPath returns the path to the clawker-cp daemon's
-// mTLS client private key for OTLP push.
-func AuthCPOtelClientKeyPath() (string, error) {
-	dir, err := AuthOtelDir()
+// AuthCPClientCertPath returns the path to the CP's outbound mTLS
+// client certificate. Bind-mounted RO into the CP container at
+// CPClientCertPath.
+func AuthCPClientCertPath() (string, error) {
+	dir, err := AuthCPDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "cp-client.key"), nil
+	return filepath.Join(dir, "client.pem"), nil
+}
+
+// AuthCPClientKeyPath returns the path to the CP's outbound mTLS
+// client private key.
+func AuthCPClientKeyPath() (string, error) {
+	dir, err := AuthCPDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "client.key"), nil
 }
 
 // --- State dir paths (under StateDir) ---
