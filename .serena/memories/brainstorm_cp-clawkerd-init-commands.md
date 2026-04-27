@@ -1,325 +1,557 @@
-# Brainstorm: B5 — CP-driven Init Substrate
+# B5: CP ↔ clawkerd Init Substrate (Pinned Design)
 
-> **Status:** Pinned design. Replaces prior streaming-Connect direction shipped in B4 follow-up.
+> **Status:** design pinned, ready for implementation plan
 > **Last updated:** 2026-04-27
 > **Parent:** Branch 5 of CP feature launch
-> **Scope:** Container init via CP-composed commands, replacing the entrypoint bash apparatus. Establishes the substrate future Sentry will build on.
-> **In-scope addition pulled forward from cp-restart-resilience:** agentregistry persistence (load-bearing for the laptop-sleep case, can't ship the rest without it).
+> **Scope:** foundation for clawkerd ↔ CP integration; restore container init feature parity through CP infra
+> **Out of scope:** agent-to-agent collaboration, full Sentry component (this PR builds the substrate Sentry will consume)
 
-## Goal
+---
 
-Replace the root-only init bash in `internal/bundler/assets/entrypoint.sh` with CP-driven shell commands. Restore Docker stdout/stderr to the user CMD by deleting the fd-redirection apparatus + tagged-message scheme.
+## 1. Vision and constraints
 
-clawkerd is CP's hand inside the container — runs as root, executes commands CP composes, lives the entire container lifetime as a passive listener.
+Clawker is a swarm-of-agents system. CP is the brain. All comms route through CP. Top priorities: **security and isolation**.
 
-## Architecture: two independent flows, registry as shared truth
+This design replaces bash-entrypoint scripting from the last release with structured CP-driven init via the new control plane infra.
 
-Two state machines run in parallel. Neither waits on the other. The persisted agentregistry is the only shared state.
+Build the foundation. Sentry comes later. This PR's job: restore container-init feature parity using CP gRPC instead of entrypoint shell.
 
-```
-Flow 1 — Registration (clawkerd → CP)
-  trigger: clawkerd boot (entrypoint launches binary)
-  rpc:     AgentService.Register (UNARY, one-shot)
-  handler logic:
-      if registry.Has(thumbprint):
-          emit Ready event on the open AnnounceAgent stream
-          return ok                       # restart of known agent
-      else:
-          PKCE consume + 5 cross-checks
-          registry.Add(thumbprint, ...)   # persist
-          dispatch init recipe            # ShellCommand sequence over Connection
-          return ok
+---
 
-Flow 2 — Connection (CP → clawkerd)
-  trigger: CP boot poll + dockerevents container-start (purpose=agent)
-  action:  dial clawkerd:7700 with backoff (1s → 2s → 5s → max 30s)
-           mTLS handshake (CP cert, clawkerd verifies CN-pin to consts.ContainerCP)
-           on success: open Session, hold open until socket dies
-           on death:   re-enqueue, dial again
-  applies to ALL purpose=agent containers, registered or not
-```
+## 2. Core invariant: composite trust anchor
 
-Common interleavings handled by independence:
+Trust is anchored on the **(cert_thumbprint, container_id) pair**, never on thumbprint alone.
 
-- **Session opens before Register** — CP dialed early; thumbprint not yet in registry. Moments later Register lands, registry mutates. Next time CP needs to act on this thumbprint, lookup reflects truth.
-- **Register completes before Session opens** — CP's dockerevents-driven dial backing off, but registry already populated. Next dial succeeds.
-- **Container in registry but Session dead** (laptop sleep) — CP's redial loop reconnects when network returns.
-- **Session alive but registry just evicted** (dockerevents container-die race) — TCP socket dies; registry eviction is independent. Convergence happens naturally.
+**Why:** an attacker who steals an agent's cert material from a volume can present that cert from a different container. Thumbprint alone matches; nothing else does. Binding to container_id (assigned by Docker, unforgeable without daemon control) defeats the replay because the attacker's container has a different ID. CP observes both at every Session establishment (thumbprint via TLS; container_id via peer-IP→docker inspect), and verifies both match the registered binding.
 
-**No classification step.** Registry is the source of truth, queried per-action. "Untrusted observed" isn't a CP-internal state — it's just absence of a registry entry for a thumbprint CP happens to be talking to.
+This binding lives in three places:
+- agentslots `slotKey` (registration-time lookup)
+- agentregistry composite key (post-registration trust state)
+- Attestation JWT claims (`sub=thumbprint, container_id=C`)
 
-## Why CP-as-dialer (the load-bearing reason)
+Every entry point cross-checks both observables against the bound pair.
 
-Laptop sleep, network blip, and CP restart all reduce to "the next CP→clawkerd dial works because surviving certs + persisted registry are sufficient." clawkerd never has to redo PKCE without a verifier — and it doesn't have one, since the verifier is single-use and deleted at first Register success.
+---
 
-The B4 follow-up's streaming-Connect direction (clawkerd dials, holds stream, reconnect-with-backoff) fights this case: stream death requires reconnect, reconnect needs verifier, verifier is gone, container is permanently orphaned. B5 reverts that direction.
+## 3. Three-layer decomposition
 
-## Why persistent Session (not dial-per-call)
+The system has three orthogonal layers. Each has its own state machine, lifetime, and failure model. They never gate each other's existence.
 
-CP holds an open Session per agent for two reasons:
+### 3.1 Session layer (transport pipe)
 
-1. **Liveness signal for clawkerd.** Inbound stream death = clawkerd's local signal that CP is unreachable. This is the foundation Sentry will use for fail-secure (clawkerd self-restricts when its inbound from CP dies). Without persistent Session, clawkerd would need outbound probe traffic to detect CP-down, and it has no outbound runtime path after Register.
-2. **gRPC connection reuse.** ShellCommand RPCs multiplex over the same HTTP/2 connection the Session holds open. No mTLS handshake per command.
+- CP dials every container with `purpose=agent` label on clawker-net
+- Driven by: boot poll (CP startup) + dockerevents subscriber (runtime)
+- **Registry NOT consulted to dial.** Even unregistered containers get a Session.
+- Lifecycle: container alive ↔ Session goroutine running
+- One Session = one mTLS gRPC stream from CP → clawkerd:7700 (`ClawkerdService.Session`)
 
-CP holding N Sessions for single-host workloads (1–20 typical) is cheap — idle bidi streams cost a few KB of state and HTTP/2 keepalives.
+### 3.2 Auth layer (per-RPC)
 
-## Architectural invariants this preserves
+- mTLS handshake (cert chain validates against trusted CA)
+- Hydra OAuth2 JWT bearer + introspection
+- Per-method scopes (CLI vocabulary, agent vocabulary)
+- Gates RPC dispatch in both directions
+- Independent of registry contents
 
-| # | Invariant | How |
-|---|-----------|-----|
-| R1 | Only CLI-authorized containers enter the swarm | PKCE consume + 5 cross-checks at first Register; only then thumbprint enters persisted registry |
-| R5 | Single substrate (no docker exec for runtime ops) | All CP→container ops are ClawkerdService RPCs over mTLS |
-| R6 | Transient unavailability transparent | CP-as-dialer + persisted registry: surviving certs + registry handle laptop sleep / CP restart / network blip with no agent-side retry logic |
-| R7 | Bootstrap without trusting transport | Existing PKCE + slot + CLI assertion + cert thumbprint binding (unchanged from B4) |
-| I1 | CP authority does not depend on clawkerd outbound | clawkerd has no runtime outbound after Register; CP's authority is pure CP→clawkerd dial |
+### 3.3 Registry layer (provenance / attestation state)
 
-## Auth model
+- "Did this container come through the proper CLI pipeline (Announce + slot consume + cross-checks)?"
+- Persisted in sqlite at `<dataDir>/controlplane/controlplane.db`
+- Records the (thumbprint, container_id) trust binding + descriptive metadata + signed attestation
+- **Read by future Sentry for policy decisions** (kill, lockdown, reconcile)
+- **NOT consulted on dispatch path.** Auth gates dispatch; Registry informs decisions.
 
-| Direction | Channel | Auth |
-|-----------|---------|------|
-| clawkerd → CP (Register only, one-shot) | clawkerd dials CP `AgentPort`, mTLS + Hydra bearer + scope `agent` | existing B4 chain — assertion-for-token at Hydra, then unary Register |
-| CP → clawkerd (Session + commands, persistent) | CP dials clawkerd `:7700`, mTLS only | clawkerd verifies CP cert via CN pin to `consts.ContainerCP`; CP verifies clawkerd cert thumbprint matches persisted registry entry per call |
+**Critical clarification:** registry presence ≠ "trusted to receive commands". Auth is what gates dispatch. Registry is the provenance/attestation record — a foundational data point that future Sentry will read to make policy decisions on. Don't gate command dispatch on registry presence.
 
-CN survives cert rotation; thumbprint pinning per-call is CP's defense against cert-swap attack between Register and dial. Compromised agents have CN `clawker.<project>.<agent>` and fail CP's CN check on a CP→clawkerd dial — no lateral movement via cert reuse. clawkerd has no Hydra access for runtime calls — there's nothing for clawkerd to call CP for after Register.
+---
 
-## Init runs once per container
+## 4. Two independent state machines
 
-Container fs persists across `docker restart`. The init artifacts (`~/.claude/`, `~/.gitconfig`, `~/.ssh/known_hosts`, etc.) are durable. Re-running init on every boot would be redundant and could clobber user state (e.g. post-init script).
+Registration (clawkerd → CP) and Connection (CP → clawkerd) are independent flows. They share Registry as the source of truth but don't sequence each other.
 
-**On first Register**, CP composes the init recipe and dispatches the ShellCommand sequence. Final ShellCommand writes the success/failure tuple to the entrypoint's fifo. **On re-Register** (Docker restart of an already-known container), CP just emits Ready on the AnnounceAgent stream and returns. Init does not re-run.
-
-The entrypoint detects restart via a marker file:
-
-```sh
-#!/usr/bin/env bash
-set -e
-
-/usr/local/bin/clawkerd >>/var/log/clawker/clawkerd.stderr.log 2>&1 &
-
-if [ ! -f /var/run/clawker/init-done ]; then
-    mkfifo /var/run/clawker/init.fifo
-    IFS=$'\t' read -r code msg < /var/run/clawker/init.fifo
-    if [ "${code:-1}" != "0" ]; then
-        echo "${msg:-clawkerd init failed}" >&2
-        exit "${code:-1}"
-    fi
-    touch /var/run/clawker/init-done
-fi
-
-if [ "${1#-}" != "${1}" ] || [ -z "$(command -v "${1}" 2>/dev/null)" ]; then
-    set -- claude "$@"
-fi
-exec gosu "${CLAWKER_USER:-claude}" "$@"
-```
-
-clawkerd starts in both paths. Marker decides whether to wait on the fifo.
-
-## B5 init choreography (new container)
+### 4.1 Flow A — Registration (trust establishment, clawkerd outbound)
 
 ```
-CLI                          CP                        clawkerd
- │                            │                         │
- │─AnnounceAgent (stream open)│                         │
- │                            │ slot reserved            │
- │ docker ContainerStart ─────│                         │
- │                            │ dockerevents start       │
- │                            │ enqueue dial             │
- │                            │                          │ boots, listener up
- │                            │── Session dial ─────────▶│ accept, mTLS handshake
- │                            │◀──Register (unary)──────│ PKCE + cross-checks
- │                            │ persist registry         │
- │                            │ Register response ──────▶│ verifier deleted
- │                            │ dispatch init recipe     │
- │                            │──ShellCommand───────────▶│ exec, return result
- │ ◀── InitPhase event ───────│                          │
- │                            │──ShellCommand───────────▶│
- │ ◀── InitPhase event ───────│                          │
- │                            │ ... N steps              │
- │                            │ final: write fifo        │
- │ ◀── Ready (terminal) ──────│                          │ entrypoint reads
- │ attach                     │                          │ touches init-done
- │                            │                          │ exec gosu user CMD
+1. CLI: clawker run --agent foo --project bar
+     ContainerCreate → fresh container_id C
+     AdminClient.AnnounceAgent(project=bar, agent_name=foo, container_id=C)  [server-streaming]
+
+2. CP AnnounceAgent handler:
+     row := registry.LookupByContainerID(C)
+     if row exists:
+       send AnnounceState{ALREADY_REGISTERED, thumbprint=row.thumbprint, container_id=C}
+       (stream stays open for runtime events; CLI proceeds to ContainerStart, NO bootstrap material generation)
+     else:
+       generate PKCE challenge
+       slots.Reserve(Slot{thumbprint=T_expected, container_id=C, agent_name=foo, project=bar, challenge})
+       send AnnounceState{SLOT_RESERVED, pkce_challenge}
+       (stream stays open; CLI generates ES256 key, leaf cert, JWK with thumbprint==T_expected, tars into volume)
+
+3. CLI: client.ContainerStart(C)
+     (CLI consumes runtime events from AnnounceAgent stream during init recipe execution)
+
+4. clawkerd boot (universal entrypoint flow):
+     read bootstrap material from volume (cert, key, JWK, attestation if present, verifier if present)
+     start gRPC mTLS listener on :7700 (ClawkerdService)   <-- listener BEFORE Register
+     call AdminClient.Register over CP AgentPort:
+       body: { agent_name, project, code_verifier (only if verifier file present) }
+
+5. CP Register handler — verification chain (see §6 for full ordered list)
+     If passes: mint attestation JWT, persist registry (sqlite TX), delete slot, send Welcome{attestation}
+
+6. clawkerd post-Register success:
+     persist attestation.jwt to volume
+     wipe verifier file (one-shot secret, no longer needed)
+     hold listener; Session may already be open from CP's parallel dial
 ```
 
-**Restart path:** entrypoint sees marker, skips fifo dance, exec gosu user CMD immediately. clawkerd in background calls Register; CP responds with Ready event on AnnounceAgent → CLI attaches.
+### 4.2 Flow B — Connection (dispatch pipe, CP outbound)
 
-**Failure:** any non-zero ShellCommandResult → CP halts sequencer → final ShellCommand writes `<code>\t<msg>\n` to fifo → entrypoint exits non-zero → CP emits Failed{phase, reason} on AnnounceAgent → stream ends → CLI stops container.
+```
+1. CP startup:
+     reload agentregistry from sqlite
+     poll docker for purpose=agent containers on clawker-net
+     subscribe to dockerevents (container start/die)
+     spawn dial reconciler
 
-**Cancellation:** Ctrl+C cancels CLI's AnnounceAgent stream → CP observes cancellation → cancels in-flight ShellCommand context → clawkerd handler exits via ctx.Done → CLI stops container.
+2. Dial reconciler — per container observed (boot poll OR dockerevents start):
+     spawn Session goroutine if not already running
+     goroutine: dial container_ip:7700 with mTLS, exp-backoff on failure (cap 30s)
 
-## Proto changes
+3. On Session establish (mTLS handshake completes):
+     extract peer cert → thumbprint T
+     resolve peer IP → container_id C (peer must be on clawker-net)
+     row := registry.LookupByThumbprint(T)
+     case row exists AND row.container_id == C:
+       trust, hold Session, await/dispatch ShellCommand
+     case row exists AND row.container_id != C:
+       REJECT — cert theft alarm. Log loud. Evict row. Close stream.
+     case no row (CP-state-loss recovery path):
+       call ClawkerdService.PresentAttestation over Session
+       clawkerd returns persisted attestation.jwt artifact (or empty)
+       verify CP signature + claim.sub==T + claim.container_id==C
+         valid    → registry.Add (reconciled=true), trust, hold Session
+         invalid  → orphan. Hold Session passively (no dispatch).
+                    Sentry-future will decide policy (kill / isolate / log).
 
-**`api/agent/v1/AgentService` (clawkerd → CP):**
+4. On dockerevents container die / stop:
+     cancel Session goroutine
+     evict registry row by container_id
+     evict any pending slot by container_id (mirror)
 
-- `Connect` (server-streaming) → `Register` (unary). Returns `RegisterResponse` after auth + 5 cross-checks. Welcome-then-idle pattern deleted.
-- `Events` (client-streaming stub) → drop. Doesn't fit passive-listener model.
+5. Init recipe dispatch:
+     triggered by Register success path (NOT by Session-up, NOT by registry-presence)
+     CP queries clawkerd for /var/run/clawker/init-done marker via Session RPC
+       marker present → no-op (idempotent retry case)
+       marker absent  → dispatch init recipe via ShellCommand RPCs over Session
+                         on final step success → CP issues marker-create command
+```
 
-**New `api/clawkerd/v1/ClawkerdService` (CP → clawkerd):**
+---
+
+## 5. Storage
+
+### 5.1 sqlite at `<dataDir>/controlplane/controlplane.db`
+
+Single .db file with multiple tables. Future Sentry tables alongside.
+
+```sql
+CREATE TABLE agents (
+  thumbprint_hex TEXT NOT NULL,
+  container_id   TEXT NOT NULL,
+  agent_name     TEXT NOT NULL,
+  project        TEXT NOT NULL,
+  attestation    TEXT NOT NULL,           -- signed JWT artifact (CP signing key)
+  registered_at  INTEGER NOT NULL,
+  PRIMARY KEY (thumbprint_hex, container_id),
+  UNIQUE (thumbprint_hex),
+  UNIQUE (container_id)
+);
+CREATE INDEX idx_name_project ON agents(project, agent_name);
+```
+
+Both `thumbprint_hex` and `container_id` individually UNIQUE (same cert can't bind to two containers; same container can't have two registrations). Composite PK makes the binding intent explicit at the schema level. `(project, agent_name)` is a non-unique index for queries (no uniqueness enforcement — Docker container name uniqueness handles the real conflict upstream; brief stale entries during eviction races are tolerated).
+
+Lookup paths, all exact-key:
+- CLI AnnounceAgent → `WHERE container_id = ?` (UNIQUE index hit)
+- CP Session establish → `WHERE thumbprint_hex = ?` (UNIQUE index hit)
+- dockerevents container die → `WHERE container_id = ?` (UNIQUE index hit)
+- `clawker agent list` / Sentry queries → `WHERE project=? AND agent_name=?` (non-unique index)
+
+### 5.2 Volume layout — agent side
+
+```
+<bootstrap dir on volume>/
+  cert.pem            (durable — ongoing mTLS server cert)
+  key.pem             (durable — ongoing mTLS server key)
+  jwk.json            (durable — JWT signing for Register call)
+  attestation.jwt     (written post-Register success, used for PresentAttestation recovery)
+  verifier            (one-shot — wiped immediately on Register success)
+
+/var/run/clawker/init-done   (init recipe completion marker)
+```
+
+File hygiene: 0700 dir, 0400 verifier file. Owned by clawkerd uid. Unlink on wipe (ephemeral volume; overwrite-then-unlink is overkill).
+
+---
+
+## 6. Verification chain at Register
+
+Layered top-down. First failure short-circuits with `codes.PermissionDenied` (uniform — no distinguisher leak) or `codes.Unauthenticated` (auth-layer).
+
+```
+Transport layer (before reaching handler):
+  1. mTLS chain valid (peer cert signed by trusted CLI CA)        [TLS layer]
+  2. JWT introspect valid (sig + exp + scope=agent:self:register) [AuthInterceptor]
+
+Pre-Consume gates (handler):
+  3. Extract peer cert → thumbprint T
+  4. Resolve peer IP → container C + labels L (must be on clawker-net, purpose=agent)
+  5. Parse cert CN → canonical form clawker.{P}.{N} (or 2-segment for empty project)
+  6. RegisterRequest body well-formed → N (agent_name), P (project), V (code_verifier)
+  7. CN canonical == clawker.{P}.{N}                          (cert vs request)
+  8. L[agent_name]==N AND L[project]==P                       (label vs request)
+  9. Canonical(L) == CN canonical                             (label vs cert, defense-in-depth)
+
+Idempotent short-circuit:
+  10a. row := registry.LookupByThumbprint(T)
+       case row exists AND row.container_id == C
+            → return Welcome{attestation=row.attestation}      (no slot consume, no re-init)
+       case row exists AND row.container_id != C
+            → REJECT, evict, alert (cert theft alarm)
+       case no row → proceed to slot Verify
+
+Slot Verify (no delete yet — see §7.2 atomicity):
+  10b. agentslots.Verify(T, C, N, P, V):
+       lookup composite key (T, C, N, P)
+       check non-expired
+       constant-time compare S256(V) == slot.Challenge
+       return slot data WITHOUT delete
+
+Persist + commit (atomicity — see §7.2):
+  11. mint attestation JWT (claims: sub=T, container_id=C, agent_name=N, project=P, iat, iss)
+  12. registry.Add (sqlite TX) — MUST succeed before next step
+  13. agentslots.Delete(T, C, N, P) — only after registry persist durable
+
+Respond:
+  14. send Welcome{attestation} to clawkerd
+```
+
+**Why each post-Consume cross-check matters:**
+
+- **#7 (cert vs request)** — attacker presenting valid cert for `project=bar, agent=foo` cannot register as `project=bar, agent=baz`
+- **#8 (label vs request)** — request body must match what the container actually claims to be via Docker labels (set at create time by clawker CLI)
+- **#9 (label vs cert)** — defense-in-depth catches stolen-cert scenarios where attacker forges request body to match labels but cert was issued for different identity. Both label-derived canonical AND cert CN canonical must agree.
+
+The composite key in slot lookup (step 10b) folds **thumbprint, container_id, agent_name, project** binding INTO the lookup itself. Wrong any-of returns `ErrSlotInvalid` indistinguishable from "missing slot" — uniform failure mode, no enumeration leak.
+
+---
+
+## 7. agentslots changes
+
+### 7.1 `slotKey` adds ContainerID
+
+```go
+type slotKey struct {
+    Thumbprint  [sha256.Size]byte
+    ContainerID string
+    AgentName   string
+    Project     string
+}
+```
+
+Folds container_id binding into the lookup. The cross-check that was previously a post-Consume comparison (slot.ContainerID side field vs peer-IP→container_id resolution) becomes inherent to the key match. Failure mode is uniform `ErrSlotInvalid` — no distinguisher.
+
+Existing doc-comments at the top of `registry.go` (composite-key collision-impossibility argument) need updating to extend the argument to the container_id dimension.
+
+### 7.2 Verify + Delete split (atomicity with registry persist)
+
+```go
+// Replaces single Consume with:
+Verify(thumbprint, containerID, agentName, project, verifier) (*Slot, error)  // returns slot, no delete
+Delete(thumbprint, containerID, agentName, project)                            // removes after registry persist
+```
+
+Handler ordering: `Verify → registry.Add (sqlite TX) → Delete`. If registry persist fails post-Verify, slot stays available for retry within TTL — clawkerd retry hits Verify again, persist may succeed this time.
+
+Wrong-verifier still leaves slot intact for benign retry (TTL handles eviction). Same timing-safe semantics as current `Consume` (hash verifier unconditionally before branching on slot presence).
+
+### 7.3 Programming-error invariants
+
+```go
+if slot.ContainerID == "" {
+    panic("agentslots: Reserve called with empty ContainerID")
+}
+```
+
+Mirrors zero-thumbprint and empty-Challenge panics in current code. Empty container_id in key would silently break the binding. Upstream AdminService.AnnounceAgent handler validates BEFORE calling Reserve so wire input never reaches the panic.
+
+### 7.4 TTL
+
+`consts.AgentSlotTTL = 60s`. clawkerd retries Register within this window or exits non-zero — container dies, dockerevents cleans up the slot (and registry, if anything got persisted). **No long-lived "registration in flight" orphan state.**
+
+---
+
+## 8. agentregistry changes
+
+### 8.1 Composite trust unit
+
+Schema in §5.1. Both `thumbprint_hex` and `container_id` UNIQUE; composite PK on `(thumbprint_hex, container_id)` makes binding intent explicit.
+
+### 8.2 sqlite persistence
+
+Migrate from in-memory map to sqlite-backed store. Reload on CP boot. Serialized writes (single sqlite TX per mutation).
+
+### 8.3 Eviction
+
+- dockerevents container die → `EvictByContainerID(C)` → `DELETE WHERE container_id = ?`
+- Cert theft detection (Session establish, thumbprint hits but container_id mismatch) → manual eviction by old container_id + alert log
+
+### 8.4 Mock surface
+
+moq-generated mocks under `internal/controlplane/agentregistry/mocks/` continue to work; persistence backend swapped behind the existing interface.
+
+---
+
+## 9. Attestation artifact
+
+JWT signed by CP attestation key (persisted on CP volume alongside Hydra/Kratos material).
+
+### 9.1 Claims
+
+```
+sub:           thumbprint_hex
+container_id:  docker container id
+agent_name:    N
+project:       P
+iat:           registered_at
+iss:           cp_instance_id (or constant "clawker-cp")
+```
+
+**No `exp`** — unbounded lifetime. Rotation is via signing key roll, not claim expiry. Keep current + previous N keys for verify; old attestations remain valid through the rotation window. New attestations issued under fresh key.
+
+### 9.2 Issue + persist
+
+- Issued exclusively on successful Register path (post §6 step 12)
+- Returned in Welcome message
+- clawkerd persists `attestation.jwt` to volume immediately
+
+### 9.3 PresentAttestation RPC
+
+New method on `ClawkerdService`. CP calls it when Session establishes but registry has no row for the observed thumbprint:
 
 ```proto
-service ClawkerdService {
-  rpc Session(stream SessionMessage) returns (stream SessionMessage);  // liveness, held open
-  rpc ShellCommand(ShellCommandRequest) returns (ShellCommandResult);
-  // Multi-RPC shape — future typed RPCs (e.g. RotateCert, ConfigUpdate)
-  // land here without proto rewrite. Reserved for Sentry.
-}
+rpc PresentAttestation(google.protobuf.Empty) returns (AttestationArtifact);
 
-message ShellCommandRequest {
-  string id = 1;
-  string bash = 2;
-  map<string,string> env = 3;
-  string cwd = 4;
-  optional uint32 uid = 5;  // proto3 optional → presence-tracked
-  optional uint32 gid = 6;
-}
-
-message ShellCommandResult {
-  string command_id = 1;
-  int32 exit_code = 2;
-  bytes stdout = 3;
-  bytes stderr = 4;
-  uint64 duration_ms = 5;
+message AttestationArtifact {
+  string jwt = 1;  // empty if clawkerd has none on volume
 }
 ```
 
-**`api/admin/v1/AdminService.AnnounceAgent` (CLI → CP):**
+CP-side verification:
+- signature valid against current or previous-rotation key
+- `claim.sub == observed peer thumbprint T`
+- `claim.container_id == observed resolved container_id C`
 
-- Unary slot reservation → server-streaming. Stream stays open across `client.ContainerStart` and post-start init.
-- Event variants: `AgentRegistered`, `InitPhase{name, status}`, `Ready`, `Failed{phase, reason}`.
-- Stream terminates at `Ready` or `Failed`. CLI uses terminal event to decide attach vs stop.
-- CLI announces on every run-cycle (new container OR restart) for uniform UX.
+Pass → `registry.Add(reconciled=true)`. Fail → orphan, hold Session passively.
 
-## agentregistry persistence (load-bearing, in scope)
+### 9.4 Threat properties
 
-Without persistence, every laptop sleep or CP restart wipes registry → all containers become unrecoverable without container restart. The cp-restart-resilience initiative's persistence component lands here; reconnect-with-backoff and the empty-verifier seam are dropped because the new architecture doesn't need them.
+- Subject-bound to thumbprint → can't replay across containers (new cert, new thumbprint)
+- Container-bound → can't replay across containers (new container_id)
+- Bound to project + agent_name → can't reuse across slots
+- CP signature → tampering detected
 
-- **Storage:** single SQLite database file at `<dataDir>/controlplane/controlplane.db` inside the CP volume. Mode 0600. Holds all CP-owned state across tables — agentregistry today, future Sentry/audit/metadata tables alongside without file proliferation. Hydra and Kratos keep their own separate DSNs (different services, different schemas); CP's own state is unified in one db.
-- **Schema (B5 introduces `agents` table):**
-  ```sql
-  CREATE TABLE agents (
-    thumbprint_hex TEXT PRIMARY KEY,
-    agent_name     TEXT NOT NULL,
-    project        TEXT NOT NULL,
-    container_id   TEXT NOT NULL,
-    registered_at  INTEGER NOT NULL  -- unix nanos
-  );
-  CREATE INDEX idx_agents_container_id ON agents(container_id);
-  ```
-- **Mutations:** `INSERT` on registry add (first Register), `DELETE` on dockerevents-driven eviction. ACID — no atomic-rename dance, no debounce flush, no mid-write corruption window.
-- **Reconcile-on-boot:**
-  1. Open db. `SELECT * FROM agents`. Empty → start fresh.
-  2. For each row: `dockerCli.ContainerInspect(container_id)`. Alive + labels match → rehydrate in-memory cache. Dead/missing/inspect-error → `DELETE` row (defensive).
-  3. Mark CP ready, start agent listener AND the connection-side dial loop.
+Attacker stealing volume gets artifact + cert material together = same threshold as already-bootstrapped container compromise. No new attack surface.
 
-dockerevents → informer → registry eviction (existing B4 wiring) drives the runtime `DELETE`s after boot.
+---
 
-**Why SQLite over a YAML snapshot:** the CP volume already hosts Hydra and Kratos sqlite DBs — CP's own state uses the same persistence model rather than introducing a second one. ACID transactions, indexed lookup, multi-table transactions, and standard tooling (`sqlite3 controlplane.db` for debug) all come for free. Future Sentry state (untrusted-observed events, behavioral signals, per-agent metadata) extends as additional tables in the same db without re-architecting. Schema migrations apply atomically across all CP-owned tables.
+## 10. Verifier lifecycle (clawkerd side)
 
-## Component changes
+```
+container start → read verifier file from volume (if present)
+Register call:
+  Welcome received          → wipe verifier file, persist attestation, hold listener
+  transient error           → exp-backoff retry, retain verifier
+  PermissionDenied          → bounded retries (could be benign race), retain verifier
+  TTL exhausted (60s)       → exit non-zero → container dies
+                            → dockerevents → fresh AnnounceAgent on next clawker run
+```
 
-**clawkerd (`cmd/clawkerd`):**
+Cert + key + JWK + attestation persist on volume across container lifecycle. **Verifier is the only one-shot secret in the bootstrap set, wiped first thing on success.**
 
-- gRPC listener on `:7700` — mTLS using existing bootstrap material; CN-pin to `consts.ContainerCP` for inbound.
-- ShellCommand handler with `syscall.Credential` uid/gid drop. uid=0 common; non-root drops for ops touching user-owned files.
-- Session handler — holds stream open for connection's life; doesn't push messages itself in B5 (Sentry future may push state events).
-- Listener up **before** Register returns success — eliminates race against CP's immediate dial.
-- Strip: outbound stream lifecycle, Welcome-receive expectation, Events stub, reconnect-with-backoff plans.
-- Existing persistent keypair on container fs unchanged for bearer self-mint.
+Pairing with CP-side Verify+Delete split means transient persist failures don't burn the verifier — clawkerd retries with the same verifier until either Welcome or TTL exhaustion.
 
-**CP (`internal/controlplane/`):**
+---
 
-- Outbound dialer to clawkerd (registry → docker inspect → IP:7700, mTLS handshake, thumbprint check per ShellCommand).
-- Connection manager — holds N Sessions, dial-with-backoff per agent, dockerevents subscriber for new containers, boot-poll for pre-existing.
-- Init recipe composer — Go code, parameterized by image conventions, settings.yaml RO mount, per-agent context from AnnounceAgent.
-- ShellCommand sequencer with fail-fast.
-- AnnounceAgent server-stream handler — translates ShellCommandResult → InitPhase event, emits terminal Ready/Failed.
-- agentregistry persistence layer.
-- Register handler: dirt-simple if-else on thumbprint.
+## 11. Concurrency model
 
-**CLI (`internal/cmd/loop/shared/lifecycle.go` + container start path):**
+Three independent threads coordinate through two shared stores. **No RPC ordering required.** Stores are the sync primitive.
 
-- AnnounceAgent stream consumer drives spinner via existing iostreams/TUI.
-- Remove `[clawker] ready` log-tail.
-- Restart paths announce on every run-cycle.
+| Thread | Owner | Sync primitives |
+|--------|-------|-----------------|
+| AnnounceAgent stream (CLI→CP) | CLI client + CP handler | `agentslots.Reserve` / `registry.LookupByContainerID` |
+| Register call (clawkerd→CP) | clawkerd boot + CP handler | `agentslots.Verify+Delete` / `registry.Add` (sqlite TX) |
+| Session/ShellCommand (CP→clawkerd) | CP dial reconciler + clawkerd listener | per-container goroutine; container existence drives lifecycle |
 
-**Entrypoint (`internal/bundler/assets/entrypoint.sh`):**
+Stores:
+- **agentslots** — in-memory, mutex-locked, TTL-evicted, single-use Verify+Delete
+- **agentregistry** — sqlite-persisted, serialized writes, reload-on-boot
 
-- Rewrite to marker-based (above). clawkerd in bg in both paths. Fifo only on first boot.
-- Delete: fd 3/4 redirection, spinner machinery, emit_step/ready/error, every if-branch in init logic, firewall healthz wait.
+Race resolution:
 
-## Init recipe phases (composed by CP)
+| Scenario | Resolution |
+|---|---|
+| Register before Announce | Slot miss → `ErrSlotInvalid` → clawkerd retry → succeeds when slot reserved |
+| CP dial before Register | Session up but no registry row → PresentAttestation flow (returns empty on first boot, becomes registered after Register completes — CP observes via thumbprint-based Lookup race or operates as orphan briefly until Register lands) |
+| Dual Register (retry storm, restart) | Registry hit short-circuits at step 10a, returns ok+attestation, no slot consume |
+| Container dies mid-flow | dockerevents → registry evict + slot evict + Session goroutine cancel → in-flight RPCs error → cleanup |
+| CP restart with running agents | Reload registry from sqlite; dial reconciler enumerates running purpose=agent containers, dials all; PresentAttestation reconciles entries lost between persist and shutdown |
+| Cert theft from another container | Session establishes with stolen thumbprint, resolved container_id mismatches stored row → reject + alert + evict |
 
-Same operations the current entrypoint bash performs, mapped 1:1 to ShellCommand RPCs. Phase name surfaces as the `InitPhase{name}` event on the AnnounceAgent stream.
+---
 
-1. chgrp docker socket (when forwarded)
-2. seed `~/.claude/{statusline.sh,.config.json,settings.json}` from `~/.claude-init`
-3. copy/filter `/tmp/host-gitconfig` → `~/.gitconfig`
-4. git credentials helper config (when host proxy + git_https)
-5. write `~/.ssh/known_hosts` (baked-in content)
-6. post-init script (user-provided, `user=claude`, `POST_INIT_DONE` marker preserved)
-7. firewall enforcement-layer readiness wait (when `firewall.enable=true`)
-8. final fifo write — `<exit_code>\t<message>\n` to `/var/run/clawker/init.fifo`. `0\tready` on full success; `<code>\t<msg>` on any prior failure.
+## 12. CP-state-loss recovery
 
-## Reused foundation (don't rebuild)
+Three nested fallback paths:
 
-- `agentslots` composite key `(thumbprint, agent_name, project)`, PKCE constant-time compare, dockerevents-driven eviction
-- `agentregistry` in-memory shape + 5 identity cross-checks (call site moves from stream handler to unary handler)
-- `IdentityInterceptor` (Register stays on opt-out list)
-- dockerevents → informer → eviction Subscribe pipe (PRs #261, #262)
-- AnnounceAgent slot reservation logic (upgraded unary → server-streaming)
-- `prepareAgentBootstrap` + writable-layer tar delivery
-- mTLS material chain (CLI CA, agent cert mint, Hydra client registration)
+| State of CP | State of clawkerd | Recovery path |
+|-------------|-------------------|---------------|
+| Registry has row | Up | Direct trust on Session establish (no extra RPC) |
+| Registry empty | Up, has attestation | PresentAttestation → verify → reconcile registry |
+| Registry empty | Up, no attestation | Orphan; await clawkerd Register or Sentry policy |
+| Registry has row, container_id mismatch | Up | Cert theft signal — reject, evict, alert |
 
-## Out of scope (future Sentry)
+PresentAttestation is the recovery primitive that lets CP rebuild the registry from agent-side material after sqlite loss / fresh CP install / volume restore from backup.
 
-- Lockdown enforcement / fail-secure detection / iptables management inside clawkerd
-- clawkerd → CP telemetry channel (eBPF will own visibility from outside the container)
-- Action on unregistered observed containers — foundation observes; Sentry decides evict/lockdown/alert
-- Cert rotation automation
-- Persistence-loss recovery (operator restart territory)
-- Multi-CP / HA
-- Inter-agent comms
+Symmetric persistence break (CP loses sqlite AND agent loses attestation) is unrecoverable without operator intervention — by design. That's a hard trust break, not a transient failure.
 
-## Foundation primitives Sentry depends on
+---
 
-| Primitive | Sentry use |
-|-----------|-----------|
-| ClawkerdService is multi-RPC | Sentry adds typed RPCs without proto break |
-| clawkerd retains `CAP_NET_ADMIN` | Sentry can install eBPF / iptables enforcement without container rebuild |
-| agentregistry has persistence layer | Sentry's untrusted-observed detection has stable comparison set |
-| Persistent Session per agent | clawkerd's CP-down signal is "inbound stream died" — Sentry's fail-secure trigger |
-| Connection Flow dials all purpose=agent containers | Sentry has a channel to send commands (lockdown, kill clawkerd) to unregistered containers |
-| Bearer self-renewable from clawkerd's keypair | Sentry doesn't need a separate refresh path |
+## 13. Init recipe dispatch
 
-## Implementation order
+Triggered by **Register success path** (success branch of CP Register handler), not by Session establishment or registry presence.
 
-1. **agentregistry persistence** — snapshot-on-write, reconcile-on-boot. Land before anything else.
-2. **Proto changes** — `Connect → Register` unary, drop `Events`, add `ClawkerdService` (Session + ShellCommand), AnnounceAgent server-streaming.
-3. **clawkerd listener** — gRPC server on `:7700`, mTLS+CN-pin, ShellCommand handler with uid/gid drop, listener-before-Register ordering, Session handler.
-4. **CP connection manager** — boot poll + dockerevents subscriber + dial-with-backoff per agent + Session lifecycle.
-5. **CP Register handler rewrite** — dirt-simple if-else: registered → emit Ready, return ok; not registered → PKCE consume + add to registry + dispatch init recipe.
-6. **CP init recipe composer + sequencer** — Go code, parameterized, fail-fast, AnnounceAgent event emission.
-7. **CLI AnnounceAgent stream consumer** — spinner via existing iostreams/TUI, attach vs stop on terminal event, restart-paths announce.
-8. **Entrypoint rewrite** — marker-based, fifo only on first boot.
-9. **E2E** — happy path; restart with marker present; failure paths; Ctrl+C; CP-restart with running agents; laptop-sleep simulation; lateral-movement attack rejected; init.fifo terminal-signal contract; AnnounceAgent stream cancellation propagation; CP boot-poll catches pre-existing containers.
+```
+Register success in CP handler:
+  → query clawkerd for /var/run/clawker/init-done marker via Session RPC
+    marker present → idempotent ack, no recipe dispatch (covers re-Register on restart)
+    marker absent  → dispatch init recipe via ShellCommand RPCs over Session
+                     on final step success → CP issues marker-create ShellCommand
+```
 
-## Open design questions
+CP holds the recipe definition (templated bundle of post-init commands; project-specific `clawker.yaml` `agent.post_init` feeds in).
 
-- **Session message shape:** bidi stream with empty messages (just keepalives), or richer SessionMessage type with future Sentry payloads? Probably empty for B5; leave the proto room for variants.
-- **Connection pooling on CP→clawkerd:** Session holds the connection; ShellCommand multiplexes. No separate pool needed.
-- **InitPhase naming:** human-readable strings on the wire vs typed enum? Strings for now; enum if programmatic dispatch becomes useful.
-- **clawkerd listener port:** `:7700` placeholder; pick canonical and add to `internal/consts`.
-- **Registry persistence file location:** `<dataDir>/controlplane/controlplane.db` tentative; confirm against existing Hydra/Kratos DSN paths so all CP-owned sqlite files live in one consistent subdir.
-- **SQLite driver choice:** `modernc.org/sqlite` (pure Go, no cgo) vs `mattn/go-sqlite3` (cgo). Confirm whether Hydra/Kratos already pull one of these transitively before picking — match what's already in the binary.
-- **dial-loop backoff cap:** 30s placeholder; revisit if too slow for laptop-wake recovery.
+Marker survives container restart (volume durable), so `clawker container stop && start` doesn't re-init. `clawker container rm && run` wipes the volume → fresh marker absence → re-init.
 
-## What this commits to that the prior brainstorm didn't
+Recipes must be idempotent or check-then-do; if dispatch is interrupted, next dial → re-Register short-circuit (registry hit) → marker check → may re-attempt.
 
-- **Two independent flows, registry as shared truth.** Registration and Connection don't sequence through each other.
-- **CP holds persistent Session per agent** (not dial-on-demand). Foundation for clawkerd's fail-secure detection.
-- **CP dials all purpose=agent containers**, not just registered. Boot poll + dockerevents triggers.
-- **Init runs once per container, not once per boot.** Marker-based entrypoint detects restart.
-- **Register handler is dirt-simple if-else.** Re-register = emit Ready + return ok.
-- **Persistence is in this PR**, not a follow-up. Without it, the architecture's transparent-recovery claim is false.
-- **AnnounceAgent is the CLI orchestration spine** for both new and restart paths.
-- **No "classification" step.** Registry is queried per-action; "untrusted observed" isn't internal state.
+---
+
+## 14. Proto changes
+
+| RPC | Before (B4) | After (B5) |
+|-----|-------------|------------|
+| `AdminService.AnnounceAgent` | unary, returns slot ack | **server-streaming**, returns `AnnounceState{ALREADY_REGISTERED|SLOT_RESERVED}` then runtime events |
+| `AdminService.Register` (new home) | — | unary, idempotent, called by clawkerd at every boot. Returns Welcome{attestation}. (Was `AgentService.Connect` — moves to AdminService since it's a pure trust-handshake call now, not a streaming command channel) |
+| `AgentService.Connect` | server-streaming, Welcome-then-idle | **dropped** — replaced by `AdminService.Register` + dial-driven Session |
+| `AgentService.Events` | client-streaming stub | **dropped** — eBPF + dockerevents cover CP visibility; no per-agent telemetry channel needed |
+| `ClawkerdService` (new) | — | server: clawkerd; methods: `Session` (server-streaming, CP→clawkerd command channel + liveness), `ShellCommand` (streaming, exec on agent), `PresentAttestation` (unary) |
+
+ClawkerdService runs on clawkerd's `:7700` mTLS gRPC listener inside the container. CP dials via the resolved peer container's IP on clawker-net.
+
+---
+
+## 15. CLI flow consolidated
+
+```
+clawker run --agent foo --project bar:
+
+  Phase A (pre-progress):
+    ContainerCreate → C
+    AdminClient.AnnounceAgent(project=bar, agent_name=foo, container_id=C) → server stream
+    consume first AnnounceState message:
+      ALREADY_REGISTERED → skip bootstrap material generation
+      SLOT_RESERVED      → generate cert/key/JWK/verifier, tar into volume
+
+  Phase B (progress):
+    client.ContainerStart(C)
+    consume runtime events from AnnounceAgent stream (init progress, forwarded from CP)
+    display TUI progress until Welcome event observed (registration complete + init done)
+
+  Phase C (post-progress):
+    print warnings + next steps
+    CLI exits; container continues running; CP holds Session for ongoing dispatch
+```
+
+---
+
+## 16. Implementation order (sketch — full plan TBD)
+
+1. agentregistry sqlite persistence (migrate from in-memory)
+2. agentslots `slotKey` adds ContainerID; Verify+Delete split; callers updated
+3. Proto changes (AnnounceAgent server-stream, drop Connect/Events, add Register on AdminService, add ClawkerdService)
+4. clawkerd listener (gRPC mTLS :7700, ClawkerdService impl, listener-before-Register ordering)
+5. CP dial reconciler (boot poll + dockerevents subscriber + Session goroutine + backoff)
+6. CP Register handler rewrite (idempotent, registry-hit short-circuit, attestation mint, persist-before-delete)
+7. Attestation: signing key management + JWT issue/verify + PresentAttestation RPC
+8. CLI AnnounceAgent stream consumer (handles ALREADY_REGISTERED vs SLOT_RESERVED branches)
+9. Entrypoint rewrite (universal flow, marker at /var/run/clawker/init-done)
+10. CP init recipe composer + sequencer
+11. clawkerd verifier lifecycle (retain until Welcome, wipe on success)
+12. E2E tests:
+    - fresh `clawker run` end-to-end
+    - `stop` + `start` (idempotent Register)
+    - `rm` + `run` (fresh container_id, fresh material)
+    - CP restart with running agent (sqlite reload + PresentAttestation reconcile)
+    - Cert theft simulation (mismatched container_id rejection + alarm)
+    - Slot TTL exhaustion (clawkerd exit non-zero → container dies)
+
+---
+
+## 17. Open design questions (defer past pin)
+
+- Session message shape: bidi empty (just liveness) vs richer (CP-side cancellations, mid-flight reconfig). Default empty for B5.
+- CP attestation signing key rotation cadence + key count to retain.
+- clawkerd listener port: standard `:7700` constant in `internal/consts` or settings-overridable? Default const for now.
+- sqlite driver: `modernc.org/sqlite` (pure Go, no cgo) vs `mattn/go-sqlite3` (cgo, faster). Default modernc for portability with CP build.
+- dial-loop backoff curve (start 1s, double, max 30s reasonable).
+- ShellCommand RPC shape: single-shot vs streaming for long-running install commands. Likely streaming.
+- AnnounceAgent stream event richness: init progress only, or also lifecycle (started/healthy/etc.)?
+- InitPhase enum naming for ShellCommand recipe steps.
+
+---
+
+## 18. What this design preserves from B4
+
+- agentslots composite key + PKCE consume + verification cross-checks (now folded into key + 4 distinct semantic checks)
+- agentregistry as the trust state ledger
+- mTLS + Hydra OAuth2 + per-method scopes (CLI vocabulary, agent vocabulary)
+- AdminService gRPC surface on AdminPort; agent-scope listener on AgentPort
+- dockerevents → informer → registry/slot eviction pipeline (PRs #261, #262)
+- 5-checks identity binding philosophy (now 9-step verification chain at Register)
+
+## 19. What this design changes from B4
+
+- `Connect` (server-streaming) → `Register` (unary, idempotent, universal)
+- agentslots `slotKey` + agentregistry trust unit fold ContainerID into composite key
+- `Consume` → `Verify`+`Delete` split (atomicity with registry persist)
+- agentregistry persistence: in-memory → sqlite (controlplane.db with future Sentry tables alongside)
+- CP dial direction added: CP → clawkerd Session for command dispatch
+- CP-state-loss recovery via attestation artifact + PresentAttestation
+- AnnounceAgent: unary → server-streaming with branch-on-registry (ALREADY_REGISTERED / SLOT_RESERVED)
+- Init recipe: bash entrypoint → CP-driven via ShellCommand RPCs
+- clawkerd listener: new gRPC server on :7700 (`ClawkerdService`)
+- Verifier lifecycle: retained on volume until Welcome (was: read-once)
+- Universal Register at every clawkerd boot (idempotent, replaces special-cased restart paths)
+
+## 20. Critical clarifications (LLM session amnesia repellent)
+
+- **Registry is provenance, not authz.** Auth (mTLS + JWT scopes) gates dispatch. Registry tells Sentry-future "did this container come through the proper pipeline?". Don't gate command dispatch on registry presence.
+- **CP dials every purpose=agent container, registered or not.** Session existence is decoupled from registry state. Unregistered containers get an idle Session; Sentry-future decides their fate.
+- **Trust anchor is (thumbprint, container_id) pair**, not thumbprint alone. Cert theft + replay from another container is defeated by container_id binding.
+- **Register is universal and idempotent.** Every clawkerd boot calls Register. Already-registered → return ok+attestation, no slot consume, no re-init. First-time → full slot consume + cross-checks + init dispatch.
+- **60s slot TTL is the registration deadline.** Failure → clawkerd exits non-zero → container dies → dockerevents cleans up. No long-lived orphan registration state.
+- **CLI calls the Docker SDK (via jailed `pkg/whail`), not `docker run`.** ContainerCreate happens in Phase B before AnnounceAgent; CLI has container_id at announce time.
+- **Verifier is the only one-shot secret on the agent volume.** Cert/key/JWK/attestation are durable; verifier is wiped on Register success.
+- **Attestation is for CP-state-loss recovery, not authz.** When CP boots fresh and dials a container, it asks "show me your proof". Attestation rebuilds registry from the agent side. Auth still happens independently per-RPC.
