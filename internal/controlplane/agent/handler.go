@@ -1,54 +1,65 @@
 // Package agent serves the clawker.agent.v1.AgentService gRPC surface.
 //
-// Identity binding chain at Connect (load-bearing):
+// Identity binding chain at Register (load-bearing):
 //
 //  1. The CLI announced the agent via AdminService.AnnounceAgent. The
 //     CP stored a slot keyed by the composite
 //     (cert_thumbprint, agent_name, project) with the CLI-asserted
-//     container_id and PKCE S256 challenge.
-//  2. clawkerd boots inside the container, reads the bootstrap material
-//     from a strict-perm path, exchanges its CLI-signed assertion for
-//     a Hydra access token, and dials the CP's agent-listener with
-//     mTLS using the per-agent leaf cert. Bearer token attached.
+//     container_id and PKCE S256 challenge. AnnounceAgent fires on
+//     every container start (run + start) — fresh cert each time, so
+//     stale registry rows for the same container_id are evicted in
+//     the same handler before the new slot is reserved.
+//  2. clawkerd boots inside the container, starts its mTLS listener
+//     first (so CP can dial it for Session even if Register fails),
+//     then reads the bootstrap material the CLI just delivered to
+//     BootstrapDir, exchanges its CLI-signed assertion for a Hydra
+//     access token, and unary-dials Register on the CP's agent
+//     listener with mTLS using the per-agent leaf cert.
 //  3. AuthInterceptor verifies the bearer token + per-method scope
 //     (agent:self:register). mTLS itself is enforced by the listener's
 //     tls.Config; the handler reads the peer cert from gRPC's
 //     peer.FromContext.
-//  4. Connect (this package) cross-checks, in order:
+//  4. Register (this package) cross-checks, in order:
 //     (a) Cert CN equals auth.CanonicalAgentCN(req.Project,
 //     req.AgentName) — constant-time compare. Defends announce-
-//     payload tampering between cert mint and the ConnectRequest
+//     payload tampering between cert mint and the RegisterRequest
 //     body; a tampered project OR agent on the wire produces a
 //     different canonical and fails this check. Runs BEFORE slot
 //     consume so a CN mismatch can't burn a legitimate slot.
-//     (b) Composite slot consume on (peer_cert_thumbprint,
+//     (b) Existing-thumbprint REJECT — a thumbprint that's already
+//     in the registry indicates a stale verifier replay or a
+//     bootstrap-delivery race. Register is NEW-only by contract;
+//     legitimate restart paths regenerate the cert at AnnounceAgent
+//     and produce a fresh thumbprint that misses this check.
+//     (c) Composite slot consume on (peer_cert_thumbprint,
 //     agent_name, project, code_verifier) — the (thumbprint,
 //     agent_name, project) lookup folds both the thumbprint and
 //     project cross-checks into the map key, eliminating any
 //     separate post-Consume compare. PKCE compare is constant-time
 //     inside agentslots.
-//     (c) Peer IP equals Docker's clawker-net IP for
+//     (d) Peer IP equals Docker's clawker-net IP for
 //     slot.container_id (defense vs cert+verifier replay from a
 //     different container).
-//     (d) Container label dev.clawker.agent equals agent_name
+//     (e) Container label dev.clawker.agent equals agent_name
 //     (defense vs label tampering after announce).
-//     (e) Container label dev.clawker.project equals slot.Project
+//     (f) Container label dev.clawker.project equals slot.Project
 //     (defends label tampering on the project half — checking only
 //     the agent half would let an attacker who relabeled the
 //     project but kept the agent name ride a slot for the wrong
 //     project).
 //     Every mismatch returns codes.PermissionDenied with no detail —
 //     attackers must not learn which check failed.
-//  5. On success the registry is keyed by the cert thumbprint, the
-//     handler sends a Welcome on the server stream (signaling auth
-//     success — clawkerd deletes the single-use verifier on receipt),
-//     then idles on stream.Context().Done() so the connection is the
-//     agent's lifetime command channel. Eviction (container exit ->
-//     dockerevents -> registry/slot subscribe) cancels the stream
-//     context; clawkerd disconnect closes it from the other side.
-//     Per-agent RPCs in later branches resolve identity by hashing
-//     the peer cert and looking up — there is no path for an agent
-//     to claim an identity other than what its TLS cert proves.
+//  5. On success the registry row is persisted (sqlite TX) keyed by
+//     (thumbprint, container_id); Welcome is returned to clawkerd,
+//     which wipes its single-use PKCE verifier on receipt. The
+//     mTLS listener clawkerd already started (step 2) accepts the
+//     CP's Session dial whenever it arrives — Register is unary and
+//     does NOT carry the lifetime channel.
+//
+// Identity binding for non-Register AgentPort RPCs is handled by
+// agent.IdentityInterceptor: peer cert thumbprint resolves to a
+// registry row before the handler runs. Register is the sole opt-out
+// because it bootstraps the row.
 package agent
 
 import (
@@ -161,199 +172,149 @@ func NewHandler(slots agentslots.Registry, reg agentregistry.Registry, inspector
 	return h
 }
 
-// Connect opens the agent's lifetime command channel. After all five
-// identity-binding cross-checks pass, the handler sends a single
-// Welcome message (signaling auth success — clawkerd deletes its
-// single-use PKCE verifier on receipt) and then idles on the stream
-// context until eviction or client disconnect closes it. Every
-// failure path returns a single codes.PermissionDenied with no detail
-// — attackers must not learn which check rejected them.
-func (h *Handler) Connect(req *agentv1.ConnectRequest, stream agentv1.AgentService_ConnectServer) error {
+// Register is the unary registration handshake clawkerd performs once
+// per container lifetime. Returns Welcome on success; every failure
+// path returns codes.PermissionDenied with no detail — attackers must
+// not learn which check rejected them. Existing-thumbprint REJECT is
+// the load-bearing NEW-only invariant: legitimate restart flows
+// regenerate the cert at AnnounceAgent (CLI side) so they always
+// arrive here with a fresh thumbprint.
+func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*agentv1.Welcome, error) {
 	if req == nil || req.AgentName == "" || req.CodeVerifier == "" {
-		return status.Error(codes.InvalidArgument, "agent_name and code_verifier required")
+		return nil, status.Error(codes.InvalidArgument, "agent_name and code_verifier required")
 	}
 
-	// Validate (project, agent) at the wire boundary. A buggy/malicious
-	// CLI that sends a canonical-form name, a dot-containing name, or
-	// arbitrary characters is rejected here — downstream code (canonical
-	// CN compose, slot lookup, registry insert) trusts typed values. The
-	// AnnounceAgent handler already validates Project the same way; this
-	// closes the symmetric loop on the Connect side.
 	project, err := auth.NewProjectSlug(req.Project)
 	if err != nil {
-		h.log.Warn().Err(err).Str("agent", req.AgentName).Msg("agent connect: invalid project")
-		return status.Error(codes.InvalidArgument, "invalid project")
+		h.log.Warn().Err(err).Str("agent", req.AgentName).Msg("agent register: invalid project")
+		return nil, status.Error(codes.InvalidArgument, "invalid project")
 	}
 	agentName, err := auth.NewAgentName(req.AgentName)
 	if err != nil {
-		h.log.Warn().Err(err).Str("agent", req.AgentName).Msg("agent connect: invalid agent name")
-		return status.Error(codes.InvalidArgument, "invalid agent name")
+		h.log.Warn().Err(err).Str("agent", req.AgentName).Msg("agent register: invalid agent name")
+		return nil, status.Error(codes.InvalidArgument, "invalid agent name")
 	}
 
-	ctx := stream.Context()
 	peer, peerIP, err := peerIdentityAndIP(ctx)
 	if err != nil {
-		h.log.Warn().Err(err).Str("agent", req.AgentName).Msg("agent connect: missing peer auth info")
-		return status.Error(codes.PermissionDenied, "registration rejected")
+		h.log.Warn().Err(err).Str("agent", req.AgentName).Msg("agent register: missing peer auth info")
+		return nil, status.Error(codes.PermissionDenied, "registration rejected")
 	}
 	thumbprint := sha256.Sum256(peer.Raw)
 
 	// (a) Cert CN cross-check — defense vs announce-payload tampering
-	// between cert mint and the ConnectRequest body. auth.MintAgentCert
-	// composes the CN as auth.CanonicalAgentCN(project, agent); we
-	// compose the same canonical here from the validated typed values
-	// and equate against the peer cert. Both halves of the wire identity
-	// must match what the CLI baked into the cert, otherwise reject
-	// before we touch the slot registry. Constant-time compare so
-	// failure latency doesn't leak which byte differed.
+	// between cert mint and the RegisterRequest body. Constant-time
+	// compare so failure latency doesn't leak which byte differed.
 	wantCN := auth.CanonicalAgentCN(project, agentName)
-	if subtle.ConstantTimeCompare(
-		[]byte(peer.CommonName),
-		[]byte(wantCN),
-	) != 1 {
+	if subtle.ConstantTimeCompare([]byte(peer.CommonName), []byte(wantCN)) != 1 {
 		h.log.Warn().
 			Str("agent", req.AgentName).
 			Str("project", req.Project).
 			Str("cn", peer.CommonName).
 			Str("expected_cn", wantCN).
-			Msg("agent connect: cert CN does not match request (project, agent)")
-		return status.Error(codes.PermissionDenied, "registration rejected")
+			Msg("agent register: cert CN does not match request (project, agent)")
+		return nil, status.Error(codes.PermissionDenied, "registration rejected")
 	}
 
-	// (b) Composite slot consume — the (thumbprint, agent_name, project)
-	// lookup folds the cert-thumbprint cross-check INTO the map key, so
-	// a standalone thumbprint compare is no longer necessary. Mismatch
-	// / missing / expired all surface as ErrSlotInvalid; PKCE compare
-	// is constant-time inside agentslots.
-	//
-	// Pass the validated typed values (.String()) instead of raw req.*
-	// strings so a future refactor can't accidentally route an
-	// unvalidated wire string into the slot lookup. The slot registry
-	// keys on these strings — passing a malformed identity here would
-	// make the slot unfindable and burn it for the full TTL.
+	// (b) Existing-thumbprint REJECT. A thumbprint already in the
+	// registry means clawkerd either replayed a stale verifier or
+	// raced with a parallel Register — either way Register is NEW-only
+	// by contract. Legit restart flows regenerate the cert at
+	// AnnounceAgent so the new thumbprint misses this check.
+	if existing, err := h.registry.LookupByThumbprint(thumbprint); err == nil && existing != nil {
+		h.log.Warn().
+			Str("agent", req.AgentName).
+			Str("container_id", existing.ContainerID).
+			Msg("agent register: thumbprint already in registry, rejecting")
+		return nil, status.Error(codes.PermissionDenied, "registration rejected")
+	}
+
+	// (c) Composite slot consume.
 	slot, err := h.slots.Consume(thumbprint, agentName.String(), project.String(), req.CodeVerifier)
 	if err != nil {
 		h.log.Warn().Err(err).
 			Str("agent", agentName.String()).
 			Str("project", project.String()).
-			Msg("agent connect: slot consume rejected")
-		return status.Error(codes.PermissionDenied, "registration rejected")
+			Msg("agent register: slot consume rejected")
+		return nil, status.Error(codes.PermissionDenied, "registration rejected")
 	}
 
-	// (c) Docker cross-check: container exists, has clawker-net IP, and
+	// (d) Docker cross-check: container exists, has clawker-net IP, and
 	// labels declare the same canonical agent name CLI announced.
 	info, err := h.docker.Inspect(ctx, slot.ContainerID)
 	if err != nil {
-		// Distinguish the common Docker-side failures so the log guides
-		// operators to the actual root cause:
-		//   - errMissingNetworkSettings → clawker-net contract violation
-		//     (container not on the shared network at all)
-		//   - context.Canceled / DeadlineExceeded → client disconnect
-		//     mid-handshake (stream context was canceled while inspect
-		//     was in flight); not a Docker fault, log at debug
-		//   - everything else → daemon unreachable / inspect API error
-		// Wire response stays the generic codes.PermissionDenied.
 		switch {
 		case errors.Is(err, errMissingNetworkSettings):
 			h.log.Warn().
 				Str("agent", req.AgentName).
 				Str("container_id", slot.ContainerID).
-				Msg("agent connect: container missing clawker-net network settings")
+				Msg("agent register: container missing clawker-net network settings")
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			h.log.Debug().
 				Str("agent", req.AgentName).
 				Str("container_id", slot.ContainerID).
-				Msg("agent connect: docker inspect canceled (client disconnect)")
+				Msg("agent register: docker inspect canceled (client disconnect)")
 		default:
-			h.log.Warn().Err(err).Str("container_id", slot.ContainerID).Msg("agent connect: docker inspect failed")
+			h.log.Warn().Err(err).Str("container_id", slot.ContainerID).Msg("agent register: docker inspect failed")
 		}
-		return status.Error(codes.PermissionDenied, "registration rejected")
+		return nil, status.Error(codes.PermissionDenied, "registration rejected")
 	}
 
-	// (d) Peer IP must match the container's clawker-net IP — defense
-	// vs cert+verifier theft replayed from a different container.
+	// (e) Peer IP must match the container's clawker-net IP.
 	if info.NetworkIP == nil || !info.NetworkIP.Equal(peerIP) {
 		h.log.Warn().
 			Str("agent", req.AgentName).
 			Str("expected_ip", ipString(info.NetworkIP)).
 			Str("peer_ip", peerIP.String()).
-			Msg("agent connect: peer IP does not match container")
-		return status.Error(codes.PermissionDenied, "registration rejected")
+			Msg("agent register: peer IP does not match container")
+		return nil, status.Error(codes.PermissionDenied, "registration rejected")
 	}
 
-	// (e) Label cross-check — defense vs label tampering after announce.
-	// Both LabelAgent AND LabelProject must agree with the slot:
-	// inspecting only one half would let an attacker who relabeled the
-	// project (but kept the agent name) ride a slot for the wrong
-	// project. EqualFold matches Docker's case-insensitive label
-	// matching elsewhere in the codebase; project labels are absent for
-	// the unscoped/2-segment naming case (slot.Project == "") so accept
-	// an empty label string in that branch.
+	// (f) Label cross-check.
 	if got := info.Labels[consts.LabelAgent]; !strings.EqualFold(got, slot.AgentName) {
 		h.log.Warn().
 			Str("agent", req.AgentName).
 			Str("label_agent", got).
-			Msg("agent connect: agent label mismatch")
-		return status.Error(codes.PermissionDenied, "registration rejected")
+			Msg("agent register: agent label mismatch")
+		return nil, status.Error(codes.PermissionDenied, "registration rejected")
 	}
 	if got := info.Labels[consts.LabelProject]; !strings.EqualFold(got, slot.Project) {
 		h.log.Warn().
 			Str("agent", req.AgentName).
 			Str("project", req.Project).
 			Str("label_project", got).
-			Msg("agent connect: project label mismatch")
-		return status.Error(codes.PermissionDenied, "registration rejected")
+			Msg("agent register: project label mismatch")
+		return nil, status.Error(codes.PermissionDenied, "registration rejected")
 	}
 
-	// All checks passed. Send Welcome BEFORE pinning the agent in the
-	// registry: receipt of Welcome by clawkerd implies server-side
-	// auth fully succeeded and authorizes deletion of the single-use
-	// PKCE verifier. If Send fails (client disconnect, transport
-	// reset), the registry has no orphan entry and clawkerd's retry
-	// path sees clean state. B5 fills in the ClawkerdConfiguration
-	// payload alongside its consumer.
-	if err := stream.Send(&agentv1.Command{
-		Payload: &agentv1.Command_Welcome{
-			Welcome: &agentv1.Welcome{Config: &agentv1.ClawkerdConfiguration{}},
-		},
-	}); err != nil {
-		// Send failure here is overwhelmingly "client already gone"
-		// (TCP reset, container OOM-killed mid-handshake). Wrap in a
-		// status.Error so the wire code matches every other error
-		// path's discipline (no leaked fmt-string + no codes.Unknown).
-		// Unavailable, not PermissionDenied — auth succeeded, the
-		// channel was the problem.
-		h.log.Warn().Err(err).
-			Str("agent", req.AgentName).
-			Str("container_id", slot.ContainerID).
-			Msg("agent connect: send welcome failed (client likely disconnected)")
-		return status.Error(codes.Unavailable, "send welcome failed")
-	}
-
-	// Pin to registry; subsequent per-agent RPCs resolve identity by
-	// recomputing SHA-256 over their TLS peer cert and looking up here
-	// with the cert CN as the second cross-check parameter.
+	// Persist registry FIRST (sqlite TX). If the write fails the slot
+	// stays out of the registry — clawkerd will exit non-zero, the
+	// container dies, dockerevents evicts the slot, and the next
+	// `clawker run/start` re-announces a fresh slot. No orphan-row
+	// recovery needed.
 	now := h.clock()
-	h.registry.Add(agentregistry.Entry{
+	if err := h.registry.Add(agentregistry.Entry{
 		AgentName:    slot.AgentName,
 		Project:      slot.Project,
 		ContainerID:  slot.ContainerID,
 		Thumbprint:   thumbprint,
 		RegisteredAt: now,
 		LastSeen:     now,
-	})
+	}); err != nil {
+		h.log.Error().Err(err).
+			Str("agent", req.AgentName).
+			Str("container_id", slot.ContainerID).
+			Msg("agent register: registry persist failed")
+		return nil, status.Error(codes.Internal, "registration rejected")
+	}
 
 	h.log.Info().
 		Str("agent", req.AgentName).
 		Str("project", req.Project).
 		Str("container_id", slot.ContainerID).
-		Msg("agent connect: registered")
+		Msg("agent register: registered")
 
-	// Idle on the stream context — wait for eviction (dockerevents
-	// cancels) or client disconnect (clawkerd closes). B5+ replaces
-	// this block with a select on a per-agent command queue.
-	<-ctx.Done()
-	return nil
+	return &agentv1.Welcome{Config: &agentv1.ClawkerdConfiguration{}}, nil
 }
 
 // peerIdentity is the trusted projection of the mTLS peer cert. The

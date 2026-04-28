@@ -101,6 +101,10 @@ const (
 	EgressRulesFile     = "egress-rules.yaml"
 	EnvoyConfigFile     = "envoy.yaml"
 	Corefile            = "Corefile"
+	// ControlPlaneDBFile is the sqlite database the CP daemon owns under
+	// ControlPlaneSubdir. agentregistry holds the `agents` table; future
+	// CP-owned tables share the same file.
+	ControlPlaneDBFile = "controlplane.db"
 )
 
 // Subdirectory names within XDG base dirs.
@@ -117,6 +121,7 @@ const (
 	shareDir        = ".clawker-share"
 	socketsDir      = "sockets"
 	auditDir        = "audit"
+	controlPlaneDir = "controlplane"
 )
 
 // PID and log file names.
@@ -470,6 +475,21 @@ func FirewallCertSubdir() (string, error) {
 
 // MonitorSubdir ensures and returns the monitor subdirectory path under DataDir.
 func MonitorSubdir() (string, error) { return subdirPath(monitorDir, DataDir) }
+
+// ControlPlaneSubdir ensures and returns the control-plane subdirectory path
+// under DataDir. Bind-mounted RW into the CP container at CPControlPlaneDir;
+// holds the sqlite database the CP daemon owns.
+func ControlPlaneSubdir() (string, error) { return subdirPath(controlPlaneDir, DataDir) }
+
+// ControlPlaneDBPath ensures the control-plane subdirectory and returns the
+// host-side path of the CP sqlite database.
+func ControlPlaneDBPath() (string, error) {
+	dir, err := ControlPlaneSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ControlPlaneDBFile), nil
+}
 
 // BuildSubdir ensures and returns the build subdirectory path under DataDir.
 func BuildSubdir() (string, error) { return subdirPath(buildDir, DataDir) }

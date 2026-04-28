@@ -25,10 +25,21 @@ func canonical(project, agent string) string {
 	return auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agent))
 }
 
+// mustAdd inserts an entry and t.Fatals on persistence error. The
+// in-memory Registry never returns an error from Add today; the helper
+// keeps test sites symmetric with the sqlite-backed Registry where Add
+// can fail under UNIQUE collisions.
+func mustAdd(t *testing.T, r Registry, e Entry) {
+	t.Helper()
+	if err := r.Add(e); err != nil {
+		t.Fatalf("Add(%q): %v", e.AgentName, err)
+	}
+}
+
 // validEntry builds the minimal Entry that satisfies Add's invariants
-// (non-zero thumbprint, non-empty agent name, non-zero RegisteredAt).
-// Used by tests that don't care about Entry contents — callers
-// override the fields they're actually exercising.
+// (non-zero thumbprint, non-empty agent name, non-empty container_id,
+// non-zero RegisteredAt). Used by tests that don't care about Entry
+// contents — callers override the fields they're actually exercising.
 func validEntry(project, agent, containerID, certSeed string) Entry {
 	return Entry{
 		AgentName:    agent,
@@ -51,7 +62,7 @@ func TestRegistry_AddLookup(t *testing.T) {
 		RegisteredAt: now,
 		LastSeen:     now,
 	}
-	r.Add(entry)
+	mustAdd(t, r, entry)
 
 	got, err := r.Lookup(entry.Thumbprint, canonical("x", "y"))
 	require.NoError(t, err)
@@ -76,7 +87,7 @@ func TestRegistry_Lookup_Unknown(t *testing.T) {
 // failed.
 func TestRegistry_Lookup_CNMismatch(t *testing.T) {
 	r := NewRegistry(nil)
-	r.Add(validEntry("alpha", "dev", "ctr", "cert"))
+	mustAdd(t, r, validEntry("alpha", "dev", "ctr", "cert"))
 
 	// Right thumbprint, wrong CN (different project) — must fail.
 	_, err := r.Lookup(tp("cert"), canonical("beta", "dev"))
@@ -98,7 +109,7 @@ func TestRegistry_Lookup_CNMismatch(t *testing.T) {
 // and the canonical CN drops the project segment.
 func TestRegistry_Lookup_EmptyProject(t *testing.T) {
 	r := NewRegistry(nil)
-	r.Add(validEntry("", "solo", "ctr", "cert"))
+	mustAdd(t, r, validEntry("", "solo", "ctr", "cert"))
 
 	got, err := r.Lookup(tp("cert"), "clawker.solo")
 	require.NoError(t, err)
@@ -114,8 +125,8 @@ func TestRegistry_EvictByContainerID(t *testing.T) {
 	r := NewRegistry(nil)
 	a := validEntry("", "a", "ctr-1", "cert-a")
 	b := validEntry("", "b", "ctr-2", "cert-b")
-	r.Add(a)
-	r.Add(b)
+	mustAdd(t, r, a)
+	mustAdd(t, r, b)
 
 	r.EvictByContainerID("ctr-1")
 
@@ -134,9 +145,9 @@ func TestRegistry_ReRegisterAfterEvict(t *testing.T) {
 	r := NewRegistry(nil)
 	first := validEntry("", "x", "ctr", "cert-1")
 	second := validEntry("", "x", "ctr", "cert-2")
-	r.Add(first)
+	mustAdd(t, r, first)
 	r.EvictByContainerID("ctr")
-	r.Add(second)
+	mustAdd(t, r, second)
 
 	_, err := r.Lookup(first.Thumbprint, canonical("", "x"))
 	assert.ErrorIs(t, err, ErrUnknownAgent)
@@ -148,9 +159,9 @@ func TestRegistry_ReRegisterAfterEvict(t *testing.T) {
 
 func TestRegistry_Snapshot_Sorted(t *testing.T) {
 	r := NewRegistry(nil)
-	r.Add(validEntry("", "b", "", "cert-b"))
-	r.Add(validEntry("", "a", "", "cert-a"))
-	r.Add(validEntry("", "c", "", "cert-c"))
+	mustAdd(t, r, validEntry("", "b", "ctr-b", "cert-b"))
+	mustAdd(t, r, validEntry("", "a", "ctr-a", "cert-a"))
+	mustAdd(t, r, validEntry("", "c", "ctr-c", "cert-c"))
 
 	snap := r.Snapshot()
 	require.Len(t, snap, 3)
@@ -169,10 +180,10 @@ func TestRegistry_Snapshot_SortedAcrossProjects(t *testing.T) {
 	r := NewRegistry(nil)
 	// Insert in scrambled order to defeat any incidental sort that
 	// happens to match insertion order.
-	r.Add(validEntry("zproj", "dev", "ctr-zproj-dev", "cert-zproj-dev"))
-	r.Add(validEntry("aproj", "dev", "ctr-aproj-dev", "cert-aproj-dev"))
-	r.Add(validEntry("aproj", "bot", "ctr-aproj-bot", "cert-aproj-bot"))
-	r.Add(validEntry("mproj", "dev", "ctr-mproj-dev", "cert-mproj-dev"))
+	mustAdd(t, r, validEntry("zproj", "dev", "ctr-zproj-dev", "cert-zproj-dev"))
+	mustAdd(t, r, validEntry("aproj", "dev", "ctr-aproj-dev", "cert-aproj-dev"))
+	mustAdd(t, r, validEntry("aproj", "bot", "ctr-aproj-bot", "cert-aproj-bot"))
+	mustAdd(t, r, validEntry("mproj", "dev", "ctr-mproj-dev", "cert-mproj-dev"))
 
 	snap := r.Snapshot()
 	require.Len(t, snap, 4)
@@ -192,7 +203,10 @@ func TestRegistry_Snapshot_SortedAcrossProjects(t *testing.T) {
 func TestRegistry_Concurrent(t *testing.T) {
 	// Race-detector contract: many goroutines adding/looking up/evicting
 	// without lock-order bugs. Each goroutine works on its own
-	// thumbprint so eviction outcomes are deterministic.
+	// thumbprint AND its own container_id so eviction outcomes are
+	// deterministic and the registry's UNIQUE-on-container_id contract
+	// is honored (the in-memory impl tolerates collisions today, but
+	// the sqlite-backed impl rejects them).
 	r := NewRegistry(nil)
 	const n = 64
 
@@ -201,15 +215,16 @@ func TestRegistry_Concurrent(t *testing.T) {
 	for i := range n {
 		go func(i int) {
 			defer wg.Done()
-			thumb := tp("cert-" + string(rune('a'+i%26)) + string(rune('0'+i/26)))
+			suffix := string(rune('a'+i%26)) + string(rune('0'+i/26))
+			thumb := tp("cert-" + suffix)
 			entry := Entry{
 				AgentName:    "agent",
 				Project:      "p",
-				ContainerID:  "ctr-x",
+				ContainerID:  "ctr-" + suffix,
 				Thumbprint:   thumb,
 				RegisteredAt: time.Unix(1000, 0),
 			}
-			r.Add(entry)
+			_ = r.Add(entry)
 			_, _ = r.Lookup(thumb, canonical("p", "agent"))
 		}(i)
 	}
@@ -249,6 +264,17 @@ func TestRegistry_Add_RejectsInvariantViolations(t *testing.T) {
 			},
 		},
 		{
+			name: "empty container_id",
+			entry: Entry{
+				AgentName:    "x",
+				Thumbprint:   tp("cert"),
+				RegisteredAt: time.Unix(1000, 0),
+				// ContainerID empty — breaks the (thumbprint,
+				// container_id) composite key invariant; sqlite would
+				// reject the row at insert.
+			},
+		},
+		{
 			name: "zero RegisteredAt",
 			entry: Entry{
 				AgentName:   "x",
@@ -265,7 +291,7 @@ func TestRegistry_Add_RejectsInvariantViolations(t *testing.T) {
 				rec := recover()
 				assert.NotNil(t, rec, "Add must panic on %s", tc.name)
 			}()
-			r.Add(tc.entry)
+			_ = r.Add(tc.entry)
 			t.Fatal("Add did not panic on invalid entry")
 		})
 	}

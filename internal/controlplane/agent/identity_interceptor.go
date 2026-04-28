@@ -16,9 +16,9 @@ import (
 
 // IdentityOptedOutMethods returns the data-driven policy map of agent
 // RPC methods that are EXEMPT from the identity-required default. Only
-// bootstrap RPCs that authenticate themselves belong here — Connect
-// runs the slot consume + five cross-checks itself, so it MUST be
-// reached without a registry lookup.
+// bootstrap RPCs that authenticate themselves belong here — Register
+// runs the slot consume + cross-checks itself, so it MUST be reached
+// without a registry lookup.
 //
 // The shape mirrors AgentMethodScopes(): a build-time test walks the
 // AgentService_ServiceDesc and asserts every method has either an
@@ -26,14 +26,10 @@ import (
 // path. Adding an RPC without a deliberate policy decision fails the
 // test, not the runtime — exactly the fail-secure posture the package
 // aims for.
-//
-// Events is identity-required because clawkerd has already completed
-// Connect by the time it dials Events; the registry MUST resolve the
-// peer cert thumbprint to a known agent or the call is rejected.
 func IdentityOptedOutMethods() map[string]bool {
 	const svc = "/" + agentv1.ServiceName + "/"
 	return map[string]bool{
-		svc + "Connect": true,
+		svc + "Register": true,
 	}
 }
 

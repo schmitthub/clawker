@@ -36,6 +36,11 @@ var (
 	HostFirewallCertSubdir = filepath.Join(HostFirewallDataSubdir, firewallCertDir)
 	HostEnvoyConfigPath    = filepath.Join(HostFirewallDataSubdir, EnvoyConfigFile)
 	HostCorefilePath       = filepath.Join(HostFirewallDataSubdir, Corefile)
+	// HostControlPlaneSubdir is the host-FS path of the CP-owned data
+	// subdirectory. Bind source for the RW mount that backs the sqlite
+	// DB at HostControlPlaneDBPath.
+	HostControlPlaneSubdir = filepath.Join(HostDataDir, controlPlaneDir)
+	HostControlPlaneDBPath = filepath.Join(HostControlPlaneSubdir, ControlPlaneDBFile)
 )
 
 const (
@@ -83,6 +88,16 @@ const (
 
 	// CPFirewallDataDir is the container-side directory for CP-managed firewall state.
 	CPFirewallDataDir = CPClawkerDataDir + "/firewall"
+
+	// CPControlPlaneDir is the container-side directory holding the
+	// CP daemon's own state (sqlite DB, future CP-owned files).
+	// Bind-mounted RW from HostControlPlaneSubdir.
+	CPControlPlaneDir = CPClawkerDataDir + "/controlplane"
+
+	// CPControlPlaneDBPath is the container-side path to the sqlite
+	// database the CP daemon owns. agentregistry holds the `agents`
+	// table; future CP-owned tables share the same file.
+	CPControlPlaneDBPath = CPControlPlaneDir + "/controlplane.db"
 
 	CPKratosConfigFilename = "kratos.yaml"
 

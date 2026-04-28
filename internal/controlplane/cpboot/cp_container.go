@@ -162,6 +162,14 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		return nil, fmt.Errorf("resolve firewall data dir: %w", err)
 	}
 
+	// Control-plane data dir — the CP daemon is the sole writer of
+	// the sqlite DB that lives under this dir (agentregistry today;
+	// future CP-owned tables alongside).
+	cpDataDir, err := consts.ControlPlaneSubdir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve controlplane data dir: %w", err)
+	}
+
 	mounts := []mount.Mount{
 		// Clawker config directory — the CP reads settings (ports, etc.)
 		// from the same config the host CLI uses.
@@ -250,6 +258,15 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			Type:     mount.TypeBind,
 			Source:   firewallDataDir,
 			Target:   consts.CPFirewallDataDir,
+			ReadOnly: false,
+		},
+		// Control-plane data dir — CP daemon owns the sqlite DB for
+		// agentregistry and any future CP-only persistence. Bind-mount
+		// makes it survive CP container recreation.
+		{
+			Type:     mount.TypeBind,
+			Source:   cpDataDir,
+			Target:   consts.CPControlPlaneDir,
 			ReadOnly: false,
 		},
 	}

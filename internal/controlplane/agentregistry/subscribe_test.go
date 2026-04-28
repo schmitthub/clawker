@@ -155,9 +155,15 @@ type panicOnceRegistry struct {
 	delegate Registry
 }
 
-func (p *panicOnceRegistry) Add(e Entry) { p.delegate.Add(e) }
+func (p *panicOnceRegistry) Add(e Entry) error { return p.delegate.Add(e) }
 func (p *panicOnceRegistry) Lookup(t [sha256.Size]byte, cn string) (*Entry, error) {
 	return p.delegate.Lookup(t, cn)
+}
+func (p *panicOnceRegistry) LookupByContainerID(id string) (*Entry, error) {
+	return p.delegate.LookupByContainerID(id)
+}
+func (p *panicOnceRegistry) LookupByThumbprint(t [sha256.Size]byte) (*Entry, error) {
+	return p.delegate.LookupByThumbprint(t)
 }
 func (p *panicOnceRegistry) Snapshot() []Entry { return p.delegate.Snapshot() }
 func (p *panicOnceRegistry) EvictByContainerID(id string) {

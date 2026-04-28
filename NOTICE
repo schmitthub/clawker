@@ -104,6 +104,7 @@ github.com/munnerz/goautoneg                                                   B
 github.com/planetscale/vtprotobuf                                              BSD-3-Clause
 github.com/pmezard/go-difflib/difflib                                          BSD-3-Clause
 github.com/prometheus/client_golang/internal/github.com/golang/gddo/httputil   BSD-3-Clause
+github.com/remyoudompheng/bigfft                                               BSD-3-Clause
 github.com/spf13/pflag                                                         BSD-3-Clause
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc    BSD-3-Clause
 go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace   BSD-3-Clause
@@ -123,6 +124,10 @@ golang.org/x/sys                                                               B
 golang.org/x/term                                                              BSD-3-Clause
 golang.org/x/text                                                              BSD-3-Clause
 google.golang.org/protobuf                                                     BSD-3-Clause
+modernc.org/libc                                                               BSD-3-Clause
+modernc.org/mathutil                                                           BSD-3-Clause
+modernc.org/memory                                                             BSD-3-Clause
+modernc.org/sqlite                                                             BSD-3-Clause
 
 ================================================================================
 ISC
@@ -151,6 +156,7 @@ github.com/cilium/ebpf                                                         M
 github.com/clipperhouse/displaywidth                                           MIT
 github.com/clipperhouse/uax29/v2/graphemes                                     MIT
 github.com/cpuguy83/go-md2man/v2/md2man                                        MIT
+github.com/dustin/go-humanize                                                  MIT
 github.com/felixge/httpsnoop                                                   MIT
 github.com/kevinburke/ssh_config                                               MIT
 github.com/klauspost/compress                                                  MIT
@@ -163,6 +169,7 @@ github.com/mattn/go-runewidth                                                  M
 github.com/muesli/ansi                                                         MIT
 github.com/muesli/cancelreader                                                 MIT
 github.com/muesli/termenv                                                      MIT
+github.com/ncruces/go-strftime                                                 MIT
 github.com/quic-go/qpack                                                       MIT
 github.com/quic-go/quic-go                                                     MIT
 github.com/rivo/uniseg                                                         MIT

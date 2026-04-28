@@ -16,32 +16,33 @@ option go_package = "github.com/schmitthub/clawker/api/agent/v1";
 // agent OAuth2 client whose scopes are validated by the CP's auth
 // interceptor.
 //
-// Topology: clawkerd is gRPC-client only; CP serves. The Connect stream
-// IS the agent's lifetime command channel — single mTLS connection per
-// agent, all clawkerd-initiated.
+// Topology: clawkerd is gRPC-client only on this surface. The control
+// channel (CP → clawkerd) lives on the separate ClawkerdService
+// listener inside the container; AgentService is purely a one-shot
+// registration handshake.
 service AgentService {
-  // Connect opens the agent's lifetime command channel. clawkerd sends
-  // a ConnectRequest at startup (agent_name + PKCE verifier); CP
-  // authenticates the channel-bound identity via slot consume plus a
-  // cross-check on the peer cert CN, peer IP, and container labels,
-  // pins the agent in the registry, then server-streams Command
-  // messages for the lifetime of the agent. First message after auth
-  // is Welcome (config delivery). Subsequent messages carry commands
-  // as they are issued (B5+ adds payload variants). Stream closes on
-  // eviction (container dies → dockerevents → cancel) or clawkerd
-  // disconnect.
-  rpc Connect(ConnectRequest) returns (stream Command);
-
-  // Events streams runtime telemetry from clawkerd to CP: log scrapes,
-  // error events, monitoring data. Client-streaming; CP returns a
-  // single EventAck on close. Identity-bound — caller must already be
-  // registered via Connect (AgentIdentityInterceptor enforces). Stub
-  // in this branch; B5 defines the Event payload shape and CP-side
-  // consumer alongside the first concrete event type.
-  rpc Events(stream Event) returns (EventAck);
+  // Register is the one-shot registration handshake clawkerd performs
+  // on first boot when the CLI-delivered PKCE verifier is present in
+  // BootstrapDir. The verifier is wiped on success, so subsequent
+  // boots of the same container skip Register entirely — CP reaches
+  // those agents by dialing their ClawkerdService listener and
+  // resolving identity off the persisted registry.
+  //
+  // CP-side cross-checks (peer cert CN, peer IP → container_id, slot
+  // composite key, container labels) all happen in-handler. On success
+  // the registry row lands in sqlite and CP returns Welcome; on any
+  // cross-check failure the response is uniform PermissionDenied with
+  // no distinguisher leak.
+  //
+  // Existing-thumbprint Register attempts are REJECTED — clawkerd
+  // should never call Register if its verifier was wiped. The registry
+  // row + verifier-absent state are the ground-truth of "already
+  // registered"; defending the stale-verifier replay case at the
+  // handler keeps the contract honest.
+  rpc Register(RegisterRequest) returns (Welcome);
 }
 
-message ConnectRequest {
+message RegisterRequest {
   // agent_name is the short agent name as the user types it on the CLI
   // (e.g. "dev", "test"). NOT the canonical "clawker.project.agent". CP
   // assembles the canonical CN as `clawker.<project>.<agent>` (or
@@ -54,13 +55,6 @@ message ConnectRequest {
   // CopyToContainer API between docker create and docker start
   // (writable layer; see cmd/clawkerd/CLAUDE.md).
   // Per RFC 7636, length is 43-128 unreserved characters.
-  //
-  // RECONNECT PATH (future, see cp-initiative-cp-restart-resilience):
-  // Empty verifier is reserved for the future reconnect flow after CP
-  // restart. clawkerd deletes the verifier on first-connect success
-  // (single-use); a reconnect attempt has no verifier to send. Today's
-  // handler requires verifier; the future patch will branch on
-  // registry-already-has-thumbprint to skip slot consume.
   string code_verifier = 2;
 
   // project is the clawker project slug the agent runs under (empty for
@@ -70,35 +64,15 @@ message ConnectRequest {
   string project = 3;
 }
 
-// Command is the server-streamed envelope sent over the Connect stream.
-// First message after auth is always Welcome. B5+ adds payload variants
-// (e.g. ShellCommand, Stop, ReloadConfig) by extending the oneof — no
-// proto migration required, just new tags.
-message Command {
-  oneof payload {
-    Welcome welcome = 1;
-  }
-}
-
-// Welcome carries the post-auth ClawkerdConfiguration payload. The
-// configuration is empty in this branch (B5 fills in OTEL endpoint, file
-// logging context, identity context). Receipt of Welcome by clawkerd
-// implies server-side auth succeeded — only then is the single-use
-// PKCE verifier safe to delete.
+// Welcome is the unary response to a successful Register. Carries the
+// post-auth ClawkerdConfiguration payload. Receipt by clawkerd implies
+// server-side auth succeeded — only then is the single-use PKCE
+// verifier safe to delete from BootstrapDir.
 message Welcome {
   ClawkerdConfiguration config = 1;
 }
 
 // ClawkerdConfiguration is the post-auth runtime configuration delivered
 // to clawkerd inside Welcome. Empty in this branch — placeholder for
-// B5's OTEL/logging/identity-context fields.
+// future OTEL/logging/identity-context fields.
 message ClawkerdConfiguration {}
-
-// Event is the client-streamed telemetry payload sent over the Events
-// stream. Empty in this branch — B5 defines event types alongside the
-// CP-side consumer.
-message Event {}
-
-// EventAck is the server's response when clawkerd closes the Events
-// stream. Empty in this branch.
-message EventAck {}

@@ -134,18 +134,11 @@ func allowAllAgentIntrospector() *cpmocks.IntrospectorMock {
 
 // --- mTLS connection tests for the agent listener ---
 
-// connectAndDrain calls Connect and reads from the resulting stream
-// until it errors. Returns the first non-nil error encountered. For
-// transport-level rejections (TLS handshake failures) the error may
-// surface on the Connect call itself; for handler-level rejections
-// (PermissionDenied) it always surfaces on the first Recv. Hiding the
-// distinction here keeps each test focused on the resulting code.
-func connectAndDrain(ctx context.Context, c agentv1.AgentServiceClient, req *agentv1.ConnectRequest) error {
-	stream, err := c.Connect(ctx, req)
-	if err != nil {
-		return err
-	}
-	_, err = stream.Recv()
+// callRegister calls AgentService.Register and returns any error.
+// Transport-level rejections (TLS handshake failures) and handler-level
+// rejections (PermissionDenied) both surface on the unary call itself.
+func callRegister(ctx context.Context, c agentv1.AgentServiceClient, req *agentv1.RegisterRequest) error {
+	_, err := c.Register(ctx, req)
 	return err
 }
 
@@ -171,7 +164,7 @@ func TestMTLSAgent_NoClientCert_Rejected(t *testing.T) {
 
 	client := agentv1.NewAgentServiceClient(conn)
 	ctx := withBearer(context.Background(), "agent-token")
-	err = connectAndDrain(ctx, client, &agentv1.ConnectRequest{
+	err = callRegister(ctx, client, &agentv1.RegisterRequest{
 		AgentName:    "clawker.example",
 		CodeVerifier: "verifier-not-used-handshake-fails-first",
 	})
@@ -205,7 +198,7 @@ func TestMTLSAgent_UntrustedCAClientCert_Rejected(t *testing.T) {
 
 	client := agentv1.NewAgentServiceClient(conn)
 	ctx := withBearer(context.Background(), "agent-token")
-	err = connectAndDrain(ctx, client, &agentv1.ConnectRequest{
+	err = callRegister(ctx, client, &agentv1.RegisterRequest{
 		AgentName:    "clawker.example",
 		CodeVerifier: "verifier-not-used-handshake-fails-first",
 	})
@@ -243,7 +236,7 @@ func TestMTLSAgent_ValidCLIClientCert_HandshakeSucceeds(t *testing.T) {
 
 	client := agentv1.NewAgentServiceClient(conn)
 	ctx := withBearer(context.Background(), "agent-token")
-	err = connectAndDrain(ctx, client, &agentv1.ConnectRequest{
+	err = callRegister(ctx, client, &agentv1.RegisterRequest{
 		// Valid-shape but unregistered name. Sending a canonical-form
 		// name here would now trip the handler's wire-side
 		// NewAgentName validation and surface as InvalidArgument
@@ -274,7 +267,7 @@ func TestMTLSAgent_NoTLS_Rejected(t *testing.T) {
 
 	client := agentv1.NewAgentServiceClient(conn)
 	ctx := withBearer(context.Background(), "agent-token")
-	err = connectAndDrain(ctx, client, &agentv1.ConnectRequest{
+	err = callRegister(ctx, client, &agentv1.RegisterRequest{
 		AgentName:    "clawker.example",
 		CodeVerifier: "verifier-not-used-handshake-fails-first",
 	})

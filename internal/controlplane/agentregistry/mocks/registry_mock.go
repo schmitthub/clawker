@@ -18,7 +18,7 @@ var _ agentregistry.Registry = &RegistryMock{}
 //
 //		// make and configure a mocked agentregistry.Registry
 //		mockedRegistry := &RegistryMock{
-//			AddFunc: func(entry agentregistry.Entry)  {
+//			AddFunc: func(entry agentregistry.Entry) error {
 //				panic("mock out the Add method")
 //			},
 //			EvictByContainerIDFunc: func(containerID string)  {
@@ -26,6 +26,12 @@ var _ agentregistry.Registry = &RegistryMock{}
 //			},
 //			LookupFunc: func(thumbprint [32]byte, cn string) (*agentregistry.Entry, error) {
 //				panic("mock out the Lookup method")
+//			},
+//			LookupByContainerIDFunc: func(containerID string) (*agentregistry.Entry, error) {
+//				panic("mock out the LookupByContainerID method")
+//			},
+//			LookupByThumbprintFunc: func(thumbprint [32]byte) (*agentregistry.Entry, error) {
+//				panic("mock out the LookupByThumbprint method")
 //			},
 //			SnapshotFunc: func() []agentregistry.Entry {
 //				panic("mock out the Snapshot method")
@@ -38,13 +44,19 @@ var _ agentregistry.Registry = &RegistryMock{}
 //	}
 type RegistryMock struct {
 	// AddFunc mocks the Add method.
-	AddFunc func(entry agentregistry.Entry)
+	AddFunc func(entry agentregistry.Entry) error
 
 	// EvictByContainerIDFunc mocks the EvictByContainerID method.
 	EvictByContainerIDFunc func(containerID string)
 
 	// LookupFunc mocks the Lookup method.
 	LookupFunc func(thumbprint [32]byte, cn string) (*agentregistry.Entry, error)
+
+	// LookupByContainerIDFunc mocks the LookupByContainerID method.
+	LookupByContainerIDFunc func(containerID string) (*agentregistry.Entry, error)
+
+	// LookupByThumbprintFunc mocks the LookupByThumbprint method.
+	LookupByThumbprintFunc func(thumbprint [32]byte) (*agentregistry.Entry, error)
 
 	// SnapshotFunc mocks the Snapshot method.
 	SnapshotFunc func() []agentregistry.Entry
@@ -68,18 +80,30 @@ type RegistryMock struct {
 			// Cn is the cn argument value.
 			Cn string
 		}
+		// LookupByContainerID holds details about calls to the LookupByContainerID method.
+		LookupByContainerID []struct {
+			// ContainerID is the containerID argument value.
+			ContainerID string
+		}
+		// LookupByThumbprint holds details about calls to the LookupByThumbprint method.
+		LookupByThumbprint []struct {
+			// Thumbprint is the thumbprint argument value.
+			Thumbprint [32]byte
+		}
 		// Snapshot holds details about calls to the Snapshot method.
 		Snapshot []struct {
 		}
 	}
-	lockAdd                sync.RWMutex
-	lockEvictByContainerID sync.RWMutex
-	lockLookup             sync.RWMutex
-	lockSnapshot           sync.RWMutex
+	lockAdd                 sync.RWMutex
+	lockEvictByContainerID  sync.RWMutex
+	lockLookup              sync.RWMutex
+	lockLookupByContainerID sync.RWMutex
+	lockLookupByThumbprint  sync.RWMutex
+	lockSnapshot            sync.RWMutex
 }
 
 // Add calls AddFunc.
-func (mock *RegistryMock) Add(entry agentregistry.Entry) {
+func (mock *RegistryMock) Add(entry agentregistry.Entry) error {
 	if mock.AddFunc == nil {
 		panic("RegistryMock.AddFunc: method is nil but Registry.Add was just called")
 	}
@@ -91,7 +115,7 @@ func (mock *RegistryMock) Add(entry agentregistry.Entry) {
 	mock.lockAdd.Lock()
 	mock.calls.Add = append(mock.calls.Add, callInfo)
 	mock.lockAdd.Unlock()
-	mock.AddFunc(entry)
+	return mock.AddFunc(entry)
 }
 
 // AddCalls gets all the calls that were made to Add.
@@ -175,6 +199,70 @@ func (mock *RegistryMock) LookupCalls() []struct {
 	mock.lockLookup.RLock()
 	calls = mock.calls.Lookup
 	mock.lockLookup.RUnlock()
+	return calls
+}
+
+// LookupByContainerID calls LookupByContainerIDFunc.
+func (mock *RegistryMock) LookupByContainerID(containerID string) (*agentregistry.Entry, error) {
+	if mock.LookupByContainerIDFunc == nil {
+		panic("RegistryMock.LookupByContainerIDFunc: method is nil but Registry.LookupByContainerID was just called")
+	}
+	callInfo := struct {
+		ContainerID string
+	}{
+		ContainerID: containerID,
+	}
+	mock.lockLookupByContainerID.Lock()
+	mock.calls.LookupByContainerID = append(mock.calls.LookupByContainerID, callInfo)
+	mock.lockLookupByContainerID.Unlock()
+	return mock.LookupByContainerIDFunc(containerID)
+}
+
+// LookupByContainerIDCalls gets all the calls that were made to LookupByContainerID.
+// Check the length with:
+//
+//	len(mockedRegistry.LookupByContainerIDCalls())
+func (mock *RegistryMock) LookupByContainerIDCalls() []struct {
+	ContainerID string
+} {
+	var calls []struct {
+		ContainerID string
+	}
+	mock.lockLookupByContainerID.RLock()
+	calls = mock.calls.LookupByContainerID
+	mock.lockLookupByContainerID.RUnlock()
+	return calls
+}
+
+// LookupByThumbprint calls LookupByThumbprintFunc.
+func (mock *RegistryMock) LookupByThumbprint(thumbprint [32]byte) (*agentregistry.Entry, error) {
+	if mock.LookupByThumbprintFunc == nil {
+		panic("RegistryMock.LookupByThumbprintFunc: method is nil but Registry.LookupByThumbprint was just called")
+	}
+	callInfo := struct {
+		Thumbprint [32]byte
+	}{
+		Thumbprint: thumbprint,
+	}
+	mock.lockLookupByThumbprint.Lock()
+	mock.calls.LookupByThumbprint = append(mock.calls.LookupByThumbprint, callInfo)
+	mock.lockLookupByThumbprint.Unlock()
+	return mock.LookupByThumbprintFunc(thumbprint)
+}
+
+// LookupByThumbprintCalls gets all the calls that were made to LookupByThumbprint.
+// Check the length with:
+//
+//	len(mockedRegistry.LookupByThumbprintCalls())
+func (mock *RegistryMock) LookupByThumbprintCalls() []struct {
+	Thumbprint [32]byte
+} {
+	var calls []struct {
+		Thumbprint [32]byte
+	}
+	mock.lockLookupByThumbprint.RLock()
+	calls = mock.calls.LookupByThumbprint
+	mock.lockLookupByThumbprint.RUnlock()
 	return calls
 }
 

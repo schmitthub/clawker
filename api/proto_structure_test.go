@@ -5,7 +5,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
@@ -55,25 +54,20 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 		}
 	})
 
-	t.Run("AgentService has Connect and Events streaming RPCs", func(t *testing.T) {
+	t.Run("AgentService is unary Register only", func(t *testing.T) {
 		desc := agentv1.AgentService_ServiceDesc
-		streamsByName := make(map[string]grpc.StreamDesc)
-		for _, s := range desc.Streams {
-			streamsByName[s.StreamName] = s
+
+		// AgentService is the one-shot registration surface clawkerd
+		// calls on first boot. Register is unary — flipping it to
+		// streaming would silently invert the protocol contract.
+		// Pin: zero streaming methods, one unary method named Register.
+		assert.Empty(t, desc.Streams, "AgentService must have no streaming RPCs")
+
+		methods := make(map[string]bool)
+		for _, m := range desc.Methods {
+			methods[m.MethodName] = true
 		}
-
-		// Streaming directions are load-bearing: Connect is the CP→clawkerd
-		// command channel (server-streaming); Events is the clawkerd→CP
-		// telemetry channel (client-streaming). Flipping either would
-		// silently invert the protocol contract — pin both flags here.
-		connect, ok := streamsByName["Connect"]
-		require.True(t, ok, "AgentService must have Connect RPC")
-		assert.True(t, connect.ServerStreams, "Connect must be server-streaming")
-		assert.False(t, connect.ClientStreams, "Connect must NOT be client-streaming")
-
-		events, ok := streamsByName["Events"]
-		require.True(t, ok, "AgentService must have Events RPC")
-		assert.True(t, events.ClientStreams, "Events must be client-streaming")
-		assert.False(t, events.ServerStreams, "Events must NOT be server-streaming")
+		require.True(t, methods["Register"], "AgentService must have Register RPC")
+		assert.Len(t, desc.Methods, 1, "AgentService surface must be Register only — adding RPCs requires a deliberate review of the agent-side trust model")
 	})
 }

@@ -24,12 +24,12 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// Entry is one registered agent. Created by the Connect handler with
+// Entry is one registered agent. Created by the Register handler with
 // data taken from the slot (ContainerID, AgentName, Project) plus the
 // SHA-256 over the peer cert DER (Thumbprint). LastSeen currently
-// equals RegisteredAt because Connect is the only per-agent RPC that
-// has shipped; future per-agent RPCs will refresh LastSeen at their
-// own boundary (tracked in cp-restart-resilience).
+// equals RegisteredAt because the per-agent RPCs that bump it have not
+// shipped yet; future per-agent RPCs will refresh LastSeen at their
+// own boundary.
 type Entry struct {
 	// AgentName is the user-typed short name (e.g. "dev"); composed with
 	// Project at Lookup time to verify against the peer cert's CN.
@@ -59,18 +59,24 @@ var ErrUnknownAgent = errors.New("agentregistry: unknown agent")
 //
 //go:generate moq -rm -pkg mocks -out mocks/registry_mock.go . Registry
 type Registry interface {
-	// Add inserts (or replaces) an entry keyed by Entry.Thumbprint.
+	// Add inserts an entry keyed by (Entry.Thumbprint, Entry.ContainerID).
 	// Container restart produces a new cert and a new thumbprint, so
-	// re-registration creates a new entry; the dockerevents
-	// subscription is responsible for evicting the stale one by
-	// container ID.
+	// re-registration creates a new entry; the dockerevents subscription
+	// is responsible for evicting the stale one by container ID.
+	//
+	// Returns an error when the persistence layer (sqlite) rejects the
+	// write — disk full, schema corruption, UNIQUE collision against a
+	// stale row that hasn't been evicted yet. Callers translate the
+	// error into the appropriate gRPC status; nothing reaches the
+	// in-memory cache when persistence rejects the write so the on-disk
+	// state and the cache stay in sync.
 	//
 	// Add panics on invalid input (zero thumbprint, empty AgentName,
-	// or zero RegisteredAt). The only caller is the in-package
-	// agent.Handler which constructs entries from validated cross-
-	// checks at Connect time — invalid input there is a programming
+	// empty Attestation, or zero RegisteredAt). The only callers are
+	// in-package handlers that construct entries from validated cross-
+	// checks at Register time — invalid input there is a programming
 	// error that must surface loudly rather than corrupt the registry.
-	Add(entry Entry)
+	Add(entry Entry) error
 	// Lookup retrieves an entry by cert thumbprint and verifies that the
 	// supplied peer cert CN matches the entry's stored canonical
 	// (Project, AgentName). The thumbprint resolves to at most one
@@ -80,6 +86,27 @@ type Registry interface {
 	// handler to thread the cert subject through the call). Mismatch on
 	// thumbprint OR CN returns ErrUnknownAgent.
 	Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)
+	// LookupByThumbprint returns the entry whose Thumbprint matches,
+	// without any CN cross-check. Used by the Register handler to
+	// REJECT clawkerd that calls Register while it already has a row —
+	// the verifier-wipe contract means a Register call against a known
+	// thumbprint indicates a stale or replayed bootstrap, not a legit
+	// flow. Distinct from Lookup (CN-gated identity resolution used by
+	// AgentPort RPCs) so a future regression that swaps the two stays
+	// loud at the call site.
+	//
+	// Returns (nil, ErrUnknownAgent) when no entry matches.
+	LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error)
+	// LookupByContainerID returns the entry whose ContainerID matches,
+	// without any CN cross-check. Used by AdminService.AnnounceAgent to
+	// short-circuit when the CLI announces a container that already has
+	// a registry row (clawkerd skips Register on the next boot, CP skips
+	// slot reservation + verifier delivery). The peer authentication for
+	// AnnounceAgent itself is mTLS + JWT scope on the AdminPort, so no
+	// additional cross-check is needed at this read.
+	//
+	// Returns (nil, ErrUnknownAgent) when no entry matches.
+	LookupByContainerID(containerID string) (*Entry, error)
 	// EvictByContainerID removes any entry whose ContainerID matches.
 	// Linear in the number of registered agents; that's fine for
 	// realistic clawker host scales (single-digit agents).
@@ -113,25 +140,8 @@ func NewRegistry(log *logger.Logger) Registry {
 	}
 }
 
-func (r *registryImpl) Add(entry Entry) {
-	// Programming-error invariants — the only caller is the in-package
-	// agent.Handler which has already verified each of these via the
-	// five identity-binding cross-checks at Connect. A zero
-	// Thumbprint here would key the registry to all-zero-byte
-	// "identity" that any caller could trivially collide; an empty
-	// AgentName breaks the Snapshot ordering contract; a zero
-	// RegisteredAt breaks downstream observability. Panic loudly so
-	// the wiring bug surfaces during development rather than turning
-	// into a silent identity-binding gap.
-	if entry.Thumbprint == ([sha256.Size]byte{}) {
-		panic("agentregistry: Add called with zero thumbprint")
-	}
-	if entry.AgentName == "" {
-		panic("agentregistry: Add called with empty AgentName")
-	}
-	if entry.RegisteredAt.IsZero() {
-		panic("agentregistry: Add called with zero RegisteredAt")
-	}
+func (r *registryImpl) Add(entry Entry) error {
+	validateEntry(entry)
 	r.mu.Lock()
 	r.entries[entry.Thumbprint] = entry
 	r.mu.Unlock()
@@ -139,6 +149,52 @@ func (r *registryImpl) Add(entry Entry) {
 		Str("agent", entry.AgentName).
 		Str("container_id", entry.ContainerID).
 		Msg("agentregistry: agent registered")
+	return nil
+}
+
+// validateEntry runs the programming-error invariants shared by every
+// Registry.Add path. Failure is a wiring bug — panic so it surfaces
+// during development rather than corrupting the registry. Centralised
+// so the in-memory and sqlite impls stay in lockstep.
+func validateEntry(entry Entry) {
+	if entry.Thumbprint == ([sha256.Size]byte{}) {
+		panic("agentregistry: Add called with zero thumbprint")
+	}
+	if entry.AgentName == "" {
+		panic("agentregistry: Add called with empty AgentName")
+	}
+	if entry.ContainerID == "" {
+		panic("agentregistry: Add called with empty ContainerID")
+	}
+	if entry.RegisteredAt.IsZero() {
+		panic("agentregistry: Add called with zero RegisteredAt")
+	}
+}
+
+func (r *registryImpl) LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.entries[thumbprint]
+	if !ok {
+		return nil, ErrUnknownAgent
+	}
+	e := entry
+	return &e, nil
+}
+
+func (r *registryImpl) LookupByContainerID(containerID string) (*Entry, error) {
+	if containerID == "" {
+		return nil, ErrUnknownAgent
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, entry := range r.entries {
+		if entry.ContainerID == containerID {
+			e := entry
+			return &e, nil
+		}
+	}
+	return nil, ErrUnknownAgent
 }
 
 func (r *registryImpl) Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error) {

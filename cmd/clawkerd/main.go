@@ -1,39 +1,38 @@
 // Command clawkerd is the per-container agent daemon. It runs as a
-// backgrounded child of the container entrypoint shell (started by
-// internal/bundler/assets/entrypoint.sh right before the firewall
-// healthz poll, so registration starts inside the slot's TTL window
-// and is independent of the firewall subsystem), opens the lifetime
-// command channel with the control plane on the agent gRPC listener,
-// and then drains commands until SIGTERM or the stream closes.
+// backgrounded child of the container entrypoint shell, owns the
+// per-container ClawkerdService listener that the CP dials for command
+// dispatch, and performs the one-shot Register handshake that lands
+// the (thumbprint, container_id) row in the CP's persisted agent
+// registry.
 //
 // Boot sequence:
 //
 //  1. Read bootstrap material delivered by the CLI to consts.BootstrapDir.
 //     The five files (cert.pem, key.pem, ca.pem, assertion.jwt, verifier)
-//     were tarred into the container's writable layer at announce time
-//     and are root-only readable.
-//  2. Resolve four env vars: Hydra public URL, CP agent listener
-//     address on clawker-net, agent name, project slug. The pair
-//     (project, agent_name) forms the composite identity the CP keys
-//     slots/registry by; everything else is deliberately not in the env
-//     — the daemon should not be able to assert identity it didn't
-//     receive on a defended channel.
+//     were tarred into the container's writable layer between Container-
+//     Create and ContainerStart, and are root-only readable.
+//  2. Start the ClawkerdService mTLS listener on consts.DefaultClawkerdPort.
+//     ALWAYS FIRST — CP may dial concurrently with our outbound Register
+//     call, and the daemon's role for the rest of its lifetime is
+//     accepting CP-driven Session RPCs. The listener pins peer CN to
+//     consts.ContainerCP so no other agent's CA-signed cert can connect.
 //  3. POST the CLI-signed client_assertion to Hydra → access token
 //     bound to the clawker-agent client + agent:self:register scope.
-//  4. mTLS-dial the CP agent listener with the per-agent leaf cert.
-//     Bearer token attached on every RPC via PerRPCCredentials so
-//     it covers both unary and streaming RPCs.
-//  5. Connect({agent_name, project, code_verifier}) opens the server-
-//     streaming command channel. The first message is Welcome — receipt
-//     implies server-side auth fully succeeded (slot consumed +
-//     identity cross-checks passed), so the single-use verifier is
-//     safe to delete only after Welcome lands.
-//  6. Drain the stream until ctx is cancelled (SIGTERM) or the stream
-//     closes (EOF on graceful CP shutdown, error on transport break).
-//     CP detects clawkerd death via gRPC connection drop + dockerevents.
-//     B5+ adds command-payload variants (ShellCommand, Stop, ReloadConfig)
-//     to the oneof; today the loop only acknowledges Welcome and ignores
-//     unknown variants forward-compatibly.
+//  4. mTLS-dial the CP agent listener and call AgentService.Register
+//     (UNARY). Welcome response means the registry row landed; on any
+//     error clawkerd EXITS NON-ZERO so the entrypoint dies and the
+//     container's restart policy (or the user) re-runs `clawker start`,
+//     which re-announces and re-delivers fresh bootstrap material.
+//  5. Wipe the verifier file (single-use replay defense).
+//  6. Idle on ctx.Done — daemon lifetime is bound to container lifetime,
+//     NOT to any single CP connection. The :7700 listener stays up for
+//     CP to dial Session repeatedly; CP→clawkerd connection breaks are
+//     logged but do not kill the daemon.
+//
+// Register failure model: every error in steps 1–5 is fatal at boot.
+// Once the Welcome has been received and the verifier wiped, clawkerd
+// is a daemon — it stays alive as long as the container does, regardless
+// of any subsequent CP connectivity issues.
 package main
 
 import (
@@ -50,7 +49,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -67,12 +65,11 @@ import (
 // letting a wedged Hydra block the entrypoint indefinitely.
 const hydraTokenTimeout = 10 * time.Second
 
-// welcomeTimeout bounds how long Connect waits for the first Welcome
-// message after the stream opens. Should be well under the slot TTL so
-// a wedged handshake surfaces as a clear failure rather than an opaque
-// slot expiry. Once Welcome arrives, the stream lifetime is the agent's
-// lifetime — no further timeout applies.
-const welcomeTimeout = 30 * time.Second
+// registerTimeout bounds the unary Register RPC. Should be well under
+// the slot TTL so a wedged CP surfaces as a clear failure rather than
+// an opaque slot expiry. Boot is synchronous on this call; clawkerd
+// will exit non-zero if it doesn't return.
+const registerTimeout = 30 * time.Second
 
 // logsDir is where clawkerd writes its rotated log file. Co-located
 // with the entrypoint's stdout/stderr capture target (/var/log/clawker/)
@@ -220,163 +217,62 @@ func run(ctx context.Context, log *logger.Logger) error {
 
 	agentClient := agentv1.NewAgentServiceClient(conn)
 
-	// Connect opens the lifetime command channel. The Connect call
-	// itself returns immediately with a stream wrapper; the auth
-	// handshake (slot consume + cross-checks) materializes when we
-	// Recv the first message.
-	//
-	// streamCtx derives from the agent's lifetime ctx. We pass streamCtx
-	// (not ctx) into Connect so we can apply a tighter Welcome-only
-	// timeout via a watchdog: if the watchdog fires before Welcome
-	// arrives, streamCancel tears the stream down (this is fatal — the
-	// caller will exit) without disturbing the parent ctx. This replaces
-	// an earlier helper that spawned a goroutine to read with a separate
-	// timeout context, which had the documented hazard of leaking the
-	// reader goroutine if the caller didn't tear down the conn after
-	// ctx cancel.
-	streamCtx, streamCancel := context.WithCancel(ctx)
-	defer streamCancel()
+	// Register is unary — auth + cross-checks run server-side; success
+	// returns Welcome. registerCtx scopes the call to registerTimeout
+	// so a wedged CP surfaces clearly instead of blocking past the
+	// slot TTL.
+	registerCtx, registerCancel := context.WithTimeout(ctx, registerTimeout)
+	defer registerCancel()
 
-	stream, err := agentClient.Connect(streamCtx, &agentv1.ConnectRequest{
+	log.Info().Str("event", "register_attempt").Msg("calling AgentService.Register")
+	welcome, err := agentClient.Register(registerCtx, &agentv1.RegisterRequest{
 		AgentName:    agentName,
 		Project:      project,
 		CodeVerifier: boot.Verifier,
 	})
 	if err != nil {
-		log.Error().Err(err).Str("event", "connect_open_failed").Msg("Connect RPC")
-		return fmt.Errorf("connect to CP: %w", err)
-	}
-
-	// Welcome watchdog: cancel streamCtx after welcomeTimeout if the
-	// first Recv hasn't returned. The watchdog and the post-Recv
-	// disarm are serialized through watchdogMu so a sub-millisecond
-	// race between Welcome arrival and the timer firing can't cancel
-	// streamCtx after auth succeeded — without this gate, the
-	// post-Welcome Recv loop would observe streamCtx.Err() and exit
-	// non-zero even though the handshake actually succeeded. Once
-	// Welcome lands, the rest of the stream's lifetime is governed
-	// only by the parent ctx (SIGTERM teardown).
-	var (
-		watchdogMu    sync.Mutex
-		watchdogArmed = true
-	)
-	welcomeWatchdog := time.AfterFunc(welcomeTimeout, func() {
-		watchdogMu.Lock()
-		defer watchdogMu.Unlock()
-		if watchdogArmed {
-			streamCancel()
-		}
-	})
-	first, err := stream.Recv()
-	watchdogMu.Lock()
-	watchdogArmed = false
-	watchdogMu.Unlock()
-	welcomeWatchdog.Stop()
-	if err != nil {
-		// SIGTERM during the handshake is a clean teardown, not a
-		// crash — exit zero so a restart-on-failure policy doesn't
-		// retrigger. Mirrors the post-Welcome loop's discipline.
-		// streamCtx.Err() is non-nil for both the SIGTERM cancel and
-		// the Welcome-watchdog cancel; check ctx.Err() to disambiguate.
+		// SIGTERM during Register is a clean teardown — exit zero so a
+		// restart policy doesn't retrigger. Any other error is fatal:
+		// caller (main) maps non-nil to exit 1 → entrypoint dies →
+		// container restart policy (or user) re-runs `clawker start`,
+		// which re-announces and re-delivers fresh bootstrap material.
 		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			log.Info().Str("event", "shutdown_during_handshake").Msg("SIGTERM during Welcome wait")
+			log.Info().Str("event", "shutdown_during_register").Msg("SIGTERM during Register call")
 			return nil
 		}
-		log.Error().Err(err).Str("event", "welcome_timeout_or_error").Msg("recv welcome")
-		return fmt.Errorf("connect: recv welcome: %w", err)
+		log.Error().Err(err).Str("event", "register_failed").Msg("Register RPC")
+		return fmt.Errorf("register: %w", err)
 	}
-	if _, ok := first.Payload.(*agentv1.Command_Welcome); !ok {
-		log.Error().
-			Str("event", "first_message_not_welcome").
-			Str("got", fmt.Sprintf("%T", first.Payload)).
-			Msg("expected Welcome as first message")
-		return fmt.Errorf("connect: expected Welcome as first message, got %T", first.Payload)
-	}
-	log.Info().Str("event", "welcome_received").Msg("CP completed identity handshake")
+	log.Info().Str("event", "register_succeeded").Msg("CP returned Welcome; agent registered")
+	_ = welcome // ClawkerdConfiguration placeholder; future fields drive logger/OTEL init
 
-	// Welcome received → server-side auth fully succeeded → safe to
-	// delete the single-use verifier. A stolen filesystem snapshot of
-	// the running container now cannot replay registration against
-	// another agent. Assertion + cert + key + CA stay until the
-	// container dies (needed for any future redial in the CP-restart-
-	// resilience initiative — see cp-initiative-cp-restart-resilience).
+	// Welcome received → registry row persisted on CP → safe to delete
+	// the single-use verifier. CLI re-delivers a fresh verifier on every
+	// `clawker start`, so a stolen filesystem snapshot of the running
+	// container cannot replay registration: the live verifier is gone,
+	// and any subsequent Register attempt with the same thumbprint
+	// would hit the existing-thumbprint REJECT branch on CP.
 	verifierPath := filepath.Join(consts.BootstrapDir, consts.BootstrapVerifierFile)
 	switch rmErr := os.Remove(verifierPath); {
 	case rmErr == nil:
-		// INFO (not DEBUG): once-per-lifetime security state transition.
-		// An operator triaging "did the verifier ever get cleaned up?" or
-		// "why is this slot still reserved?" should see this at the
-		// default log level, not have to flip to debug.
 		log.Info().Str("event", "verifier_deleted").Str("path", verifierPath).Msg("single-use verifier removed")
 	case errors.Is(rmErr, os.ErrNotExist):
-		// File never landed (or a previous boot already removed it). Not
-		// a failure path — Welcome receipt is the security gate, not file
-		// presence — but distinct from a successful delete so an operator
-		// can tell which actually happened.
 		log.Info().Str("event", "verifier_already_absent").Str("path", verifierPath).Msg("verifier was not on disk")
 	default:
 		log.Error().Err(rmErr).Str("event", "verifier_delete_failed").Str("path", verifierPath).Msg("removing single-use verifier")
 	}
-	// (B5+ uses first.GetWelcome().GetConfig() to init logger/OTEL/etc.
-	// from the CP-delivered ClawkerdConfiguration. Empty placeholder today.)
 
-	log.Info().Str("event", "stream_idle").Msg("entering command-receive loop")
+	log.Info().Str("event", "daemon_idle").Msg("entering daemon idle loop; CP may dial Session at any time")
 
 	// clawkerd is a DAEMON. Its lifetime is the container's lifetime,
-	// bounded only by SIGTERM (ctx cancel). The two responsibilities
-	// it serves while alive are:
-	//   1. The :7700 ClawkerdService listener (started above) where
-	//      CP dials in to dispatch commands.
-	//   2. (transitional) The post-Welcome AgentService.Connect server-
-	//      stream, drained in a background goroutine so we observe CP
-	//      pushes (B4 sends only Welcome today; B5 replaces Connect
-	//      with unary Register and the drain disappears entirely).
-	//
-	// Stream break != daemon death. Once the daemon registered with
-	// CP via Welcome, the registration fact is durable; whether the
-	// open stream holds is incidental. clawkerd-as-supervisor stays
-	// up for the container regardless.
-	go drainConnectStream(ctx, stream, log)
-
+	// bounded only by SIGTERM (ctx cancel). After Register succeeds
+	// the only outstanding responsibility is the :7700 ClawkerdService
+	// listener (already serving) where CP dials in to dispatch
+	// commands. CP→clawkerd connection breaks are logged from the
+	// listener side but do not kill the daemon.
 	<-ctx.Done()
 	log.Info().Str("event", "shutdown_signal_received").Msg("SIGTERM received; tearing down clawkerd")
 	return nil
-}
-
-// drainConnectStream runs the post-Welcome Connect stream consumer
-// until the stream closes or ctx cancels. It does NOT control
-// daemon lifetime — it only observes and logs. CP sends Welcome
-// once; B4-era B5+ extensions to the Command oneof land here and
-// we forward-compat ignore unknown payloads.
-func drainConnectStream(ctx context.Context, stream agentv1.AgentService_ConnectClient, log *logger.Logger) {
-	for {
-		cmd, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			log.Info().Str("event", "stream_closed_eof").Msg("CP closed Connect stream; daemon continues")
-			return
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			log.Error().Err(err).Str("event", "stream_broken").Msg("Connect stream Recv failed; daemon continues")
-			return
-		}
-		switch cmd.Payload.(type) {
-		case *agentv1.Command_Welcome:
-			// Unexpected second Welcome is a CP bug — log so an
-			// operator can see it, but don't treat it as fatal: the
-			// daemon is already registered.
-			log.Error().Str("event", "duplicate_welcome").Msg("received unexpected second Welcome")
-		default:
-			// Forward-compat: future Command variants land here.
-			// Daemon behavior is not gated on what arrives.
-			log.Debug().
-				Str("event", "unknown_command_payload").
-				Str("type", fmt.Sprintf("%T", cmd.Payload)).
-				Msg("ignoring unknown command payload")
-		}
-	}
 }
 
 // bootstrap mirrors the CLI's per-agent registration material on disk.

@@ -384,7 +384,13 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// Agent registry is needed BOTH by the AgentService handler (added
 	// below on the agent listener) and by AdminService.ListAgents on the
 	// admin listener — construct it here so a single instance is shared.
-	agentReg := agentregistry.NewRegistry(log.With("component", "agentregistry"))
+	// Backed by sqlite at consts.CPControlPlaneDBPath; the parent dir is
+	// bind-mounted RW from the host, so the DB survives CP container
+	// recreation and reloads on next boot.
+	agentReg, err := agentregistry.NewSQLite(consts.CPControlPlaneDBPath, log.With("component", "agentregistry"))
+	if err != nil {
+		return fmt.Errorf("step 8 (agentregistry sqlite): %w", err)
+	}
 
 	// Slot registry is needed by AdminService.AnnounceAgent (here) AND
 	// by the AgentService.Connect handler (further down). Hoisted above

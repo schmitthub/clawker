@@ -135,6 +135,33 @@ func (s *adminServer) AnnounceAgent(_ context.Context, req *adminv1.AnnounceAgen
 	var thumbprint [sha256.Size]byte
 	copy(thumbprint[:], raw)
 
+	// AnnounceAgent fires on every container start (run + start + restart).
+	// CLI mints a fresh cert each time, so a prior registry row keyed by
+	// this container's container_id holds a stale thumbprint that no
+	// longer corresponds to anything alive. Evict it now: the on-disk row
+	// dies before the new slot is reserved, the sqlite UNIQUE(container_id)
+	// constraint stays satisfied, and the dockerevents subscription's
+	// eventual evict on container die becomes a no-op rather than a
+	// race window. Eviction is best-effort (log on backend failure);
+	// agentregistry's contract returns ErrUnknownAgent on miss so the
+	// no-prior-row case is silent. agents may be nil on a CP build that
+	// hasn't wired the registry — skip the evict cleanly in that case
+	// (mirrors the nil-tolerance in ListAgents below).
+	if s.agents != nil {
+		if existing, err := s.agents.LookupByContainerID(req.ContainerId); err == nil && existing != nil {
+			log := s.log
+			if log == nil {
+				log = logger.Nop()
+			}
+			log.Info().
+				Str("agent", req.AgentName).
+				Str("project", req.Project).
+				Str("container_id", req.ContainerId).
+				Msg("admin: announce sees prior registry row for container_id; evicting before reserve")
+			s.agents.EvictByContainerID(req.ContainerId)
+		}
+	}
+
 	now := s.clock()
 	slot := agentslots.Slot{
 		AgentName: req.AgentName,

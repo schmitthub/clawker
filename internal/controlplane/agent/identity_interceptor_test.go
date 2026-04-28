@@ -26,6 +26,17 @@ func agentMethodPath(method string) string {
 	return "/" + agentv1.ServiceName + "/" + method
 }
 
+// hypotheticalIdentityRequiredMethod is a stand-in path used by tests
+// that exercise the identity-required (registry-lookup) branch of the
+// interceptor. AgentService currently has only Register and it's
+// opted out, so there is no real identity-required RPC today; the
+// interceptor accepts any FullMethod string and routes anything not
+// in the opt-out map through the lookup path. When a future
+// identity-required RPC lands, point this at the real method name.
+func hypotheticalIdentityRequiredMethod() string {
+	return agentMethodPath("FutureIdentityRequiredRPC")
+}
+
 // fixturePeerCtx returns a ctx that looks like a real mTLS-authenticated
 // gRPC call: peer cert with the supplied raw bytes, peer IP set so
 // peerIdentityAndIP succeeds. Reuses the package-local ctxWithPeer
@@ -52,7 +63,7 @@ func TestIdentityInterceptor_Unary_OptedOut_SkipsLookup(t *testing.T) {
 	resp, err := unary(
 		context.Background(),
 		"req",
-		&grpc.UnaryServerInfo{FullMethod: agentMethodPath("Connect")},
+		&grpc.UnaryServerInfo{FullMethod: agentMethodPath("Register")},
 		func(ctx context.Context, req any) (any, error) {
 			called = true
 			// No entry attached on the opt-out path.
@@ -94,7 +105,7 @@ func TestIdentityInterceptor_Unary_RegistryHit_AttachesEntry(t *testing.T) {
 	_, err := unary(
 		fixturePeerCtx(certRaw),
 		"req",
-		&grpc.UnaryServerInfo{FullMethod: agentMethodPath("Events")},
+		&grpc.UnaryServerInfo{FullMethod: hypotheticalIdentityRequiredMethod()},
 		func(ctx context.Context, _ any) (any, error) {
 			gotEntry, _ = EntryFromContext(ctx)
 			return nil, nil
@@ -118,7 +129,7 @@ func TestIdentityInterceptor_Unary_LookupMiss_PermissionDenied(t *testing.T) {
 	_, err := unary(
 		fixturePeerCtx([]byte("cert")),
 		"req",
-		&grpc.UnaryServerInfo{FullMethod: agentMethodPath("Events")},
+		&grpc.UnaryServerInfo{FullMethod: hypotheticalIdentityRequiredMethod()},
 		func(_ context.Context, _ any) (any, error) {
 			t.Fatal("handler must NOT run on lookup miss")
 			return nil, nil
@@ -142,7 +153,7 @@ func TestIdentityInterceptor_Unary_NoPeerCert_PermissionDenied(t *testing.T) {
 	_, err := unary(
 		context.Background(),
 		"req",
-		&grpc.UnaryServerInfo{FullMethod: agentMethodPath("Events")},
+		&grpc.UnaryServerInfo{FullMethod: hypotheticalIdentityRequiredMethod()},
 		func(_ context.Context, _ any) (any, error) {
 			t.Fatal("handler must NOT run when peer info is missing")
 			return nil, nil
@@ -179,7 +190,7 @@ func TestIdentityInterceptor_Stream_OptedOut_SkipsLookup(t *testing.T) {
 	err := stream(
 		nil,
 		ss,
-		&grpc.StreamServerInfo{FullMethod: agentMethodPath("Connect")},
+		&grpc.StreamServerInfo{FullMethod: agentMethodPath("Register")},
 		func(_ any, ss grpc.ServerStream) error {
 			called = true
 			_, ok := EntryFromContext(ss.Context())
@@ -220,7 +231,7 @@ func TestIdentityInterceptor_Stream_RegistryHit_WrappedContextCarriesEntry(t *te
 	err := stream(
 		nil,
 		ss,
-		&grpc.StreamServerInfo{FullMethod: agentMethodPath("Events")},
+		&grpc.StreamServerInfo{FullMethod: hypotheticalIdentityRequiredMethod()},
 		func(_ any, wrapped grpc.ServerStream) error {
 			gotEntry, _ = EntryFromContext(wrapped.Context())
 			return nil
@@ -248,7 +259,7 @@ func TestIdentityInterceptor_Stream_NoPeerCert_PermissionDenied(t *testing.T) {
 	err := stream(
 		nil,
 		ss,
-		&grpc.StreamServerInfo{FullMethod: agentMethodPath("Events")},
+		&grpc.StreamServerInfo{FullMethod: hypotheticalIdentityRequiredMethod()},
 		func(_ any, _ grpc.ServerStream) error {
 			t.Fatal("handler must NOT run when peer info is missing")
 			return nil
@@ -270,7 +281,7 @@ func TestIdentityInterceptor_Stream_LookupMiss_PermissionDenied(t *testing.T) {
 	err := stream(
 		nil,
 		ss,
-		&grpc.StreamServerInfo{FullMethod: agentMethodPath("Events")},
+		&grpc.StreamServerInfo{FullMethod: hypotheticalIdentityRequiredMethod()},
 		func(_ any, _ grpc.ServerStream) error {
 			t.Fatal("handler must NOT run on lookup miss")
 			return nil
@@ -280,7 +291,7 @@ func TestIdentityInterceptor_Stream_LookupMiss_PermissionDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
-// TestIdentityOptedOut_NoStaleEntriesAndConnectLocked enforces two
+// TestIdentityOptedOut_NoStaleEntriesAndRegisterLocked enforces two
 // narrow but real invariants on IdentityOptedOutMethods():
 //
 //  1. Every key corresponds to a real RPC in AgentService_ServiceDesc
@@ -298,7 +309,7 @@ func TestIdentityInterceptor_Stream_LookupMiss_PermissionDenied(t *testing.T) {
 // If a future RPC legitimately needs to opt out, the maintainer must
 // add it to IdentityOptedOutMethods() and a code-review conversation
 // is the forcing function — not this test.
-func TestIdentityOptedOut_NoStaleEntriesAndConnectLocked(t *testing.T) {
+func TestIdentityOptedOut_NoStaleEntriesAndRegisterLocked(t *testing.T) {
 	optedOut := IdentityOptedOutMethods()
 	desc := agentv1.AgentService_ServiceDesc
 	const svc = "/" + agentv1.ServiceName + "/"
@@ -316,8 +327,8 @@ func TestIdentityOptedOut_NoStaleEntriesAndConnectLocked(t *testing.T) {
 			"IdentityOptedOutMethods() contains %s which is not in AgentService_ServiceDesc — remove stale entry", method)
 	}
 
-	assert.True(t, optedOut[svc+"Connect"],
-		"AgentService.Connect MUST be opted out — it authenticates itself via slot consume")
+	assert.True(t, optedOut[svc+"Register"],
+		"AgentService.Register MUST be opted out — it authenticates itself via slot consume")
 }
 
 // TestWithEntry_NilPanics locks the fail-fast contract: attempting to
