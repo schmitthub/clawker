@@ -1,6 +1,6 @@
 # agentregistry Package
 
-Persisted record of which (cert thumbprint, container_id) pairs have completed `AgentService.Register`. Source of truth for "is this agent registered" — consumed by `agent.IdentityInterceptor` (every non-Register AgentPort RPC), `AdminService.AnnounceAgent` (evict-stale-row pre-flight), `AdminService.ListAgents`, and the dockerevents subscription that evicts on container die.
+Persisted record of (cert thumbprint, container_id, project, agent_name) for every clawker-managed container. Rows are written by the CLI at container create time alongside auth material delivery. Consumed by `agent.IdentityInterceptor` (every non-Connect AgentPort RPC), `AdminService.ListAgents`, and the local-read `clawker controlplane agents` CLI. Eviction is owned by the CP: startup `Reap` against live docker state, plus dockerevents `DeltaRemoved` (destroy) in steady state.
 
 ## Backing store: sqlite
 
@@ -33,11 +33,18 @@ CREATE INDEX IF NOT EXISTS idx_name_project ON agents(project, agent_name);
 
 `last_seen` mirrors `registered_at` today; future per-agent RPCs will refresh it at their own boundary.
 
-## Registry row ↔ running container invariant
+## Registry row ↔ extant container invariant
 
-A row exists ⇔ the named container is currently registered. Every container start (run + start) regenerates the cert at AnnounceAgent, so `AdminService.AnnounceAgent` evicts any prior row for the same container_id BEFORE reserving a new slot. The dockerevents subscription evicts on container die. Net effect: registry rows track running, healthy registrations only.
+A row exists ⇔ the named container exists in docker (running OR stopped). Eviction triggers narrowed to:
 
-The CP-restart edge case (container restarted while CP was down → orphan row) is accepted; container restart heals it via the announce-time evict.
+- **`docker rm` (DeltaRemoved)** — steady-state, driven by the dockerevents subscription. Container is gone for good, row is orphaned.
+- **CP startup reap** — `agentregistry.Reap(ctx, reg, lister, log)` lists every `purpose=agent` container with `All: true` (running + stopped + exited) and evicts every row whose container_id is missing. Heals the registry against `docker rm` events that landed while the CP was down.
+
+Stop/die/kill do NOT evict — a stopped container can be `docker start`-ed back into life and the row should pick up where it left off.
+
+## Writers
+
+The CLI is the row creator (one `Add` per `clawker run`/`start`). The CP is the row evictor (Reap on startup, dockerevents on destroy). Both open the sqlite DB via `NewSQLiteWriter`; sqlite serializes the two writers via its file lock and `busy_timeout(5000)` absorbs transient contention. `NewSQLiteReader` (mode=ro+query_only) remains for read-only consumers like the `clawker controlplane agents` CLI.
 
 ## API
 
@@ -70,7 +77,11 @@ func NewSQLite(dbPath string, log *logger.Logger) (Registry, error)  // Producti
 
 ## Subscriber
 
-`Subscribe(ctx, registry, informer, log)` subscribes the registry to the shared dockerevents informer; container die/destroy events drive `EvictByContainerID`. Reused by both in-memory and sqlite-backed registries — the subscription only sees the Registry interface.
+`Subscribe(ctx, registry, informer, log)` subscribes the registry to the shared dockerevents informer; **destroy only** (DeltaRemoved) drives `EvictByContainerID`. Stop/die/kill are deliberately ignored — see "Registry row ↔ extant container invariant" above. Reused by both in-memory and sqlite-backed registries — the subscription only sees the Registry interface.
+
+## Reaper
+
+`Reap(ctx, registry, lister, log)` runs once at CP startup. The lister enumerates every `purpose=agent` container with `All: true` (running + stopped + exited) so a stopped container with a live row survives the sweep. Returns the count of evicted rows for the caller's startup log. A failed list is a transient docker daemon issue — caller logs the warning and proceeds; the dockerevents subscription catches up on the next destroy event.
 
 ## Mock
 

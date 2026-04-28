@@ -351,16 +351,25 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			log.Warn().Err(err).Msg("actionQueue close failed")
 		}
 	}()
-	// listAgentIDs enumerates every running managed agent container ID.
-	// Handler's FirewallInit uses this to re-enroll per-container BPF
-	// enforcement after a CP restart — FlushAll wiped container_map on
-	// the previous CP's shutdown, so a fresh FirewallInit rebuilds from
-	// live Docker state instead of a silent fail-open.
-	listAgentIDs := func(ctx context.Context) ([]string, error) {
+	// listAgentIDs enumerates managed agent container IDs. Two callers
+	// at two scopes:
+	//   - Firewall handler + AgentWatcher pass {} → running only. They
+	//     drive per-container BPF enforcement and drain-to-zero, both
+	//     of which only care about live containers.
+	//   - Reaper passes {All: true} → running + stopped + exited. A
+	//     stopped container can be `docker start`-ed back into life so
+	//     its registry row must survive; only `docker rm` orphans it.
+	// The label filter is non-overridable so a caller can't accidentally
+	// widen scope past purpose=agent.
+	type listAgentsOpts struct{ All bool }
+	listAgentIDs := func(ctx context.Context, opts listAgentsOpts) ([]string, error) {
 		filter := mobyclient.Filters{}.
 			Add("label", cfg.LabelManaged()+"="+cfg.ManagedLabelValue()).
 			Add("label", cfg.LabelPurpose()+"="+cfg.PurposeAgent())
-		result, err := dockerCli.APIClient.ContainerList(ctx, mobyclient.ContainerListOptions{Filters: filter})
+		result, err := dockerCli.APIClient.ContainerList(ctx, mobyclient.ContainerListOptions{
+			All:     opts.All,
+			Filters: filter,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -378,7 +387,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		Resolver:   containerResolver,
 		Log:        log,
 		Queue:      actionQueue,
-		ListAgents: listAgentIDs,
+		ListAgents: func(ctx context.Context) ([]string, error) { return listAgentIDs(ctx, listAgentsOpts{}) },
 	})
 
 	// Agent registry is needed BOTH by the AgentService handler (added
@@ -387,15 +396,32 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// Backed by sqlite at consts.CPControlPlaneDBPath; the parent dir is
 	// bind-mounted RW from the host, so the DB survives CP container
 	// recreation and reloads on next boot.
-	// CP opens the registry in read-only mode. The CLI is the sole
-	// authoritative writer; CP consumes rows for dispatch decisions but
-	// never mutates the row set. mode=ro+query_only=ON is the
-	// belt-and-suspenders guarantee — the bind mount is RW at the OS
-	// layer so sqlite can read the WAL/SHM siblings, but writes are
-	// blocked at the connection.
-	agentReg, err := agentregistry.NewSQLiteReader(consts.CPControlPlaneDBPath, log.With("component", "agentregistry"))
+	// CP opens the registry in writer mode. The CLI is the authoritative
+	// creator of rows (one per `clawker run`/`clawker start`), but the
+	// CP owns eviction: it reaps orphan rows on startup against live
+	// docker state and evicts on container destroy via dockerevents.
+	// sqlite serializes the two writers via its file lock; busy_timeout
+	// absorbs transient contention.
+	agentReg, err := agentregistry.NewSQLiteWriter(consts.CPControlPlaneDBPath, log.With("component", "agentregistry"))
 	if err != nil {
 		return fmt.Errorf("step 8 (agentregistry sqlite): %w", err)
+	}
+
+	// Startup reap: the CP was down while containers may have been
+	// `docker rm`'d. Sweep the registry against the current set of
+	// purpose=agent containers (running + stopped + exited) and evict
+	// any row whose container is gone. A failed list is a transient
+	// docker daemon issue — log and proceed; the dockerevents
+	// subscription will catch up on the next destroy event.
+	if _, err := agentregistry.Reap(
+		ctx,
+		agentReg,
+		func(ctx context.Context) ([]string, error) {
+			return listAgentIDs(ctx, listAgentsOpts{All: true})
+		},
+		log.With("component", "agentregistry"),
+	); err != nil {
+		log.Warn().Err(err).Msg("agentregistry: startup reap failed; continuing")
 	}
 
 	// announceSlots holds the short-lived CLI-attestation tokens that
@@ -607,7 +633,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}()
 
 	listAgents := func(ctx context.Context) (int, error) {
-		ids, err := listAgentIDs(ctx)
+		ids, err := listAgentIDs(ctx, listAgentsOpts{})
 		if err != nil {
 			return 0, err
 		}
@@ -716,7 +742,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		// CP boot. Runs in its own goroutine — must NOT block CP
 		// readiness, must NOT fail CP if listAgentIDs errors.
 		go func() {
-			initialAgents, listErr := listAgentIDs(watcherCtx)
+			initialAgents, listErr := listAgentIDs(watcherCtx, listAgentsOpts{})
 			if listErr != nil {
 				log.Error().Err(listErr).Str("event", "agentdial_initial_list_failed").Msg("list agent containers")
 				return

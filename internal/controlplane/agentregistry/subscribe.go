@@ -29,14 +29,16 @@ const (
 // deferred by the caller; it cancels the informer subscription and
 // waits for the consumer goroutine to drain.
 //
-// Eviction triggers:
-//   - DeltaRemoved (Docker destroy/remove) — container is gone.
-//   - DeltaUpdated where Lifecycle becomes "stopped" (Docker die / stop /
-//     kill) — the container is no longer running. clawkerd's mTLS
-//     connection has dropped; the registry entry must follow.
+// Eviction trigger:
+//   - DeltaRemoved (Docker destroy/remove, i.e. `docker rm`) — the
+//     container is gone for good and the row is orphaned.
 //
-// Pause/unpause are not eviction triggers: the agent process is alive,
-// just frozen, and the existing mTLS connection remains valid.
+// Stop/die/kill do NOT evict: the container still exists and may be
+// `docker start`-ed back into life. The registry row survives so a
+// subsequent restart finds its existing identity.
+//
+// Pause/unpause likewise are not eviction triggers: the agent process
+// is alive, just frozen, and the existing mTLS connection remains valid.
 //
 // log is required (pass logger.Nop() in tests that don't care about the
 // audit trail). A nil logger is replaced with logger.Nop() so callers
@@ -118,22 +120,18 @@ func Subscribe(ctx context.Context, reg Registry, inf informer.Interface, log *l
 }
 
 func handleDelta(d informer.Delta, reg Registry) {
-	switch d.Kind {
-	case informer.DeltaRemoved:
-		// DeltaRemoved soft-deletes: After carries the resource with
-		// Lifecycle=LifecycleGone. Before is set to the prior state if
-		// the resource was previously visible. Either side gives us the
-		// container ID we need.
-		switch {
-		case d.After != nil:
-			reg.EvictByContainerID(d.After.ID)
-		case d.Before != nil:
-			reg.EvictByContainerID(d.Before.ID)
-		}
-	case informer.DeltaUpdated:
-		if d.After != nil && d.After.Lifecycle == dockerevents.LifecycleStopped {
-			reg.EvictByContainerID(d.After.ID)
-		}
+	if d.Kind != informer.DeltaRemoved {
+		return
+	}
+	// DeltaRemoved soft-deletes: After carries the resource with
+	// Lifecycle=LifecycleGone. Before is set to the prior state if
+	// the resource was previously visible. Either side gives us the
+	// container ID we need.
+	switch {
+	case d.After != nil:
+		reg.EvictByContainerID(d.After.ID)
+	case d.Before != nil:
+		reg.EvictByContainerID(d.Before.ID)
 	}
 }
 

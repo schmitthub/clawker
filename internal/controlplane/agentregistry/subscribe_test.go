@@ -54,7 +54,13 @@ func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
 	})
 }
 
-func TestSubscribe_EvictsOnContainerStopped(t *testing.T) {
+// TestSubscribe_DoesNotEvictOnStopped — a stopped container can be
+// `docker start`-ed back into life and the same registry row should
+// pick up where it left off. Only `docker rm` (DeltaRemoved) is the
+// eviction trigger; lifecycle=stopped (die / stop / kill) must not
+// touch the row. The CP startup reaper handles the case where a
+// stopped container is removed while CP is down.
+func TestSubscribe_DoesNotEvictOnStopped(t *testing.T) {
 	inf := liveInformer(t)
 	r := NewRegistry(nil)
 	r.Add(Entry{AgentName: "y", ContainerID: "ctr-stopped", Thumbprint: tp("cert-y"), RegisteredAt: time.Now()})
@@ -68,18 +74,24 @@ func TestSubscribe_EvictsOnContainerStopped(t *testing.T) {
 		ID:        "ctr-stopped",
 		Lifecycle: "running",
 	}, informer.Transition{Source: "test", At: now}))
-	// First update + first delta is DeltaAdded (the container appears).
-	// Second is DeltaUpdated to "stopped" — the eviction trigger.
 	require.NoError(t, inf.Upsert(context.Background(), informer.ResourceUpdate{
 		Kind:      dockerevents.KindContainer,
 		ID:        "ctr-stopped",
 		Lifecycle: "stopped",
 	}, informer.Transition{Source: "test", At: now}))
 
-	waitFor(t, func() bool {
-		_, err := r.Lookup(tp("cert-y"), canonical("", "y"))
-		return err == ErrUnknownAgent
-	})
+	// Proof-by-absence: poll for a stable window. Mirrors paused test —
+	// a sleep too short on a loaded runner could pass for the wrong
+	// reason (consumer hasn't drained the delta yet).
+	const window = 100 * time.Millisecond
+	const interval = 5 * time.Millisecond
+	deadline := time.Now().Add(window)
+	for time.Now().Before(deadline) {
+		got, err := r.Lookup(tp("cert-y"), canonical("", "y"))
+		require.NoError(t, err, "stopped must not evict registered entry")
+		assert.Equal(t, "y", got.AgentName)
+		time.Sleep(interval)
+	}
 }
 
 func TestSubscribe_DoesNotEvictOnPaused(t *testing.T) {

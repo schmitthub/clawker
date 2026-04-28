@@ -8,13 +8,17 @@ List agents currently registered with the control plane
 
 ### Synopsis
 
-Snapshot every agent that has completed the AgentService.Connect handshake.
+Snapshot every agent the CLI has registered with the control plane.
+
+The CLI is the sole writer of the agent registry — entries are written
+at container creation time alongside auth material delivery. This
+command reads the registry sqlite database directly off the host
+filesystem and works whether or not the control plane is running.
 
 Identity is channel-bound: the certificate thumbprint shown here is the
-SHA-256 over the agent's mTLS leaf cert and is what the control plane
-uses as the registry key. Agents are uniquely identified by the
-composite (project, agent_name) — agents with the same short name in
-different projects appear as separate rows.
+SHA-256 over the agent's mTLS leaf cert. Agents are uniquely identified
+by the composite (project, agent_name) — agents with the same short
+name in different projects appear as separate rows.
 
 ```
 clawker controlplane agents [flags]

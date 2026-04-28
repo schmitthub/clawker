@@ -2,31 +2,41 @@ package controlplane
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
+// AgentsOptions wires the command's run function. The agents read path
+// is local-only — the CLI is the sole writer of the agentregistry
+// sqlite DB and reads it directly off the host filesystem rather than
+// going through CP gRPC. This keeps `clawker controlplane agents`
+// working when the CP is down (the data point is still there) and
+// avoids paying a dial+RPC cost to read what we just wrote.
 type AgentsOptions struct {
-	IOStreams   *iostreams.IOStreams
-	TUI         *tui.TUI
-	AdminClient func(context.Context) (adminv1.AdminServiceClient, error)
-	Format      *cmdutil.FormatFlags
+	IOStreams *iostreams.IOStreams
+	TUI       *tui.TUI
+	Logger    func() (*logger.Logger, error)
+	// DBPath returns the host-side agentregistry sqlite DB path.
+	// Defaults to consts.ControlPlaneDBPath; tests inject a temp path.
+	DBPath func() (string, error)
+	Format *cmdutil.FormatFlags
 }
 
 // agentRow is the JSON/template-friendly representation of one agent.
 // Field tags are the wire contract for `--json` consumers — a rename
 // here breaks downstream tooling.
-//
-// Project + agent_name together form the composite identity the CP keys
-// agents by; emitting both is required so `--json` consumers can
-// distinguish two agents that share a short name across projects.
 type agentRow struct {
 	AgentName      string `json:"agent_name"`
 	Project        string `json:"project"`
@@ -39,21 +49,26 @@ type agentRow struct {
 // NewCmdAgents creates the `clawker controlplane agents` command.
 func NewCmdAgents(f *cmdutil.Factory, runF func(context.Context, *AgentsOptions) error) *cobra.Command {
 	opts := &AgentsOptions{
-		IOStreams:   f.IOStreams,
-		TUI:         f.TUI,
-		AdminClient: f.AdminClient,
+		IOStreams: f.IOStreams,
+		TUI:       f.TUI,
+		Logger:    f.Logger,
+		DBPath:    consts.ControlPlaneDBPath,
 	}
 
 	cmd := &cobra.Command{
 		Use:   "agents",
 		Short: "List agents currently registered with the control plane",
-		Long: `Snapshot every agent that has completed the AgentService.Connect handshake.
+		Long: `Snapshot every agent the CLI has registered with the control plane.
+
+The CLI is the sole writer of the agent registry — entries are written
+at container creation time alongside auth material delivery. This
+command reads the registry sqlite database directly off the host
+filesystem and works whether or not the control plane is running.
 
 Identity is channel-bound: the certificate thumbprint shown here is the
-SHA-256 over the agent's mTLS leaf cert and is what the control plane
-uses as the registry key. Agents are uniquely identified by the
-composite (project, agent_name) — agents with the same short name in
-different projects appear as separate rows.`,
+SHA-256 over the agent's mTLS leaf cert. Agents are uniquely identified
+by the composite (project, agent_name) — agents with the same short
+name in different projects appear as separate rows.`,
 		Example: `  # Show all registered agents
   clawker controlplane agents
 
@@ -71,29 +86,56 @@ different projects appear as separate rows.`,
 	return cmd
 }
 
-func agentsRun(ctx context.Context, opts *AgentsOptions) error {
-	client, err := opts.AdminClient(ctx)
+func agentsRun(_ context.Context, opts *AgentsOptions) error {
+	log, err := opts.Logger()
 	if err != nil {
-		return fmt.Errorf("connecting to control plane: %w", err)
-	}
-	resp, err := client.ListAgents(ctx, &adminv1.ListAgentsRequest{})
-	if err != nil {
-		return fmt.Errorf("listing agents: %w", err)
+		return fmt.Errorf("initializing logger: %w", err)
 	}
 
-	rows := make([]agentRow, len(resp.Agents))
-	for i, a := range resp.Agents {
+	dbPath, err := opts.DBPath()
+	if err != nil {
+		return fmt.Errorf("resolving registry db path: %w", err)
+	}
+
+	rows, err := loadAgentRows(dbPath, log)
+	if err != nil {
+		return err
+	}
+	return renderAgents(opts, rows)
+}
+
+// loadAgentRows opens the registry in read-only mode, snapshots every
+// entry, and converts to the wire row shape. A missing DB file means
+// no `clawker run` has ever created a container on this host — return
+// an empty list rather than an error so the empty-state branch in the
+// caller renders normally.
+func loadAgentRows(dbPath string, log *logger.Logger) ([]agentRow, error) {
+	reg, err := agentregistry.NewSQLiteReader(dbPath, log)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("opening registry: %w", err)
+	}
+	defer func() {
+		if closer, ok := reg.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}()
+
+	snap := reg.Snapshot()
+	rows := make([]agentRow, len(snap))
+	for i, e := range snap {
 		rows[i] = agentRow{
-			AgentName:      a.AgentName,
-			Project:        a.Project,
-			ContainerID:    a.ContainerId,
-			CertThumbprint: a.CertThumbprint,
-			RegisteredAt:   formatUnix(a.RegisteredAtUnix),
-			LastSeen:       formatUnix(a.LastSeenUnix),
+			AgentName:      e.AgentName,
+			Project:        e.Project,
+			ContainerID:    e.ContainerID,
+			CertThumbprint: hex.EncodeToString(e.Thumbprint[:]),
+			RegisteredAt:   formatUnix(e.RegisteredAt.Unix()),
+			LastSeen:       formatUnix(e.LastSeen.Unix()),
 		}
 	}
-
-	return renderAgents(opts, rows)
+	return rows, nil
 }
 
 func renderAgents(opts *AgentsOptions, rows []agentRow) error {
