@@ -387,20 +387,33 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// Backed by sqlite at consts.CPControlPlaneDBPath; the parent dir is
 	// bind-mounted RW from the host, so the DB survives CP container
 	// recreation and reloads on next boot.
-	agentReg, err := agentregistry.NewSQLite(consts.CPControlPlaneDBPath, log.With("component", "agentregistry"))
+	// CP opens the registry in read-only mode. The CLI is the sole
+	// authoritative writer; CP consumes rows for dispatch decisions but
+	// never mutates the row set. mode=ro+query_only=ON is the
+	// belt-and-suspenders guarantee — the bind mount is RW at the OS
+	// layer so sqlite can read the WAL/SHM siblings, but writes are
+	// blocked at the connection.
+	agentReg, err := agentregistry.NewSQLiteReader(consts.CPControlPlaneDBPath, log.With("component", "agentregistry"))
 	if err != nil {
 		return fmt.Errorf("step 8 (agentregistry sqlite): %w", err)
 	}
 
-	// Slot registry is needed by AdminService.AnnounceAgent (here) AND
-	// by the AgentService.Connect handler (further down). Hoisted above
-	// NewAdminServer so a single instance is shared; T6 wires the
-	// dockerevents subscription that drains stale slots on container
-	// exit alongside the agentregistry one.
+	// announceSlots holds the short-lived CLI-attestation tokens that
+	// AdminService.AnnounceAgent reserves (per-start, container_id
+	// keyed). Consumed by agentdial when CP dials the running
+	// clawkerd; absence is the "unattested start" signal for
+	// downstream decision-making, not an error.
+	announceSlotRegistry := agentslots.NewRegistry(time.Now, 0, log.With("component", "announceslots"))
+	defer announceSlotRegistry.Stop()
+
+	// agentslots is the legacy PKCE+thumbprint slot store backing the
+	// dead AgentService.Register handler. Kept wired so the handler
+	// surface compiles and stays in place for future agent→CP RPCs;
+	// nothing in this branch calls Register.
 	slotRegistry := agentslots.NewRegistry(time.Now, 0, log.With("component", "agentslots"))
 	defer slotRegistry.Stop()
 
-	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, slotRegistry, time.Now, log))
+	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, announceSlotRegistry, time.Now, log))
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
 	if err != nil {
@@ -680,6 +693,8 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		log.With("component", "agentdial"),
 		dockerCli.APIClient,
 		inf,
+		agentReg,
+		announceSlotRegistry,
 		consts.CPClientCertPath,
 		consts.CPClientKeyPath,
 		caCertPool,

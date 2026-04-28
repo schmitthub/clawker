@@ -1,38 +1,37 @@
 // Command clawkerd is the per-container agent daemon. It runs as a
 // backgrounded child of the container entrypoint shell, owns the
 // per-container ClawkerdService listener that the CP dials for command
-// dispatch, and performs the one-shot Register handshake that lands
-// the (thumbprint, container_id) row in the CP's persisted agent
-// registry.
+// dispatch, and idles for the container's lifetime.
 //
 // Boot sequence:
 //
-//  1. Read bootstrap material delivered by the CLI to consts.BootstrapDir.
-//     The five files (cert.pem, key.pem, ca.pem, assertion.jwt, verifier)
-//     were tarred into the container's writable layer between Container-
-//     Create and ContainerStart, and are root-only readable.
-//  2. Start the ClawkerdService mTLS listener on consts.DefaultClawkerdPort.
-//     ALWAYS FIRST — CP may dial concurrently with our outbound Register
-//     call, and the daemon's role for the rest of its lifetime is
-//     accepting CP-driven Session RPCs. The listener pins peer CN to
-//     consts.ContainerCP so no other agent's CA-signed cert can connect.
+//  1. Read bootstrap material delivered by the CLI to
+//     consts.BootstrapDir (cert.pem, key.pem, ca.pem, assertion.jwt,
+//     verifier). All five files are written by the CLI between
+//     ContainerCreate and ContainerStart; the assertion + verifier are
+//     unused by clawkerd today (CLI is the registry writer) but stay
+//     on disk for the agent→CP RPCs landing in upcoming branches.
+//  2. Start the ClawkerdService mTLS listener on
+//     consts.DefaultClawkerdPort. The listener pins peer CN to
+//     consts.ContainerCP so no other agent's CA-signed cert can
+//     connect.
 //  3. POST the CLI-signed client_assertion to Hydra → access token
-//     bound to the clawker-agent client + agent:self:register scope.
-//  4. mTLS-dial the CP agent listener and call AgentService.Register
-//     (UNARY). Welcome response means the registry row landed; on any
-//     error clawkerd EXITS NON-ZERO so the entrypoint dies and the
-//     container's restart policy (or the user) re-runs `clawker start`,
-//     which re-announces and re-delivers fresh bootstrap material.
-//  5. Wipe the verifier file (single-use replay defense).
-//  6. Idle on ctx.Done — daemon lifetime is bound to container lifetime,
-//     NOT to any single CP connection. The :7700 listener stays up for
-//     CP to dial Session repeatedly; CP→clawkerd connection breaks are
-//     logged but do not kill the daemon.
+//     bound to the clawker-agent client. Wired so future agent→CP
+//     calls have the auth chain ready; clawkerd does not call any
+//     AgentService RPC in this branch.
+//  4. mTLS-dial the CP agent listener with the per-agent leaf cert.
+//     Same rationale as step 3 — agentClient is constructed and held
+//     for future RPCs.
+//  5. Idle on ctx.Done — daemon lifetime is bound to container
+//     lifetime, NOT to any single CP connection. The :7700 listener
+//     stays up for CP to dial Session repeatedly; CP→clawkerd
+//     connection breaks are logged but do not kill the daemon.
 //
-// Register failure model: every error in steps 1–5 is fatal at boot.
-// Once the Welcome has been received and the verifier wiped, clawkerd
-// is a daemon — it stays alive as long as the container does, regardless
-// of any subsequent CP connectivity issues.
+// Identity / registration: the CLI writes the agentregistry row at
+// container CREATE time (via host-side sqlite). CP reads the registry
+// when it dials clawkerd's listener and verifies the peer cert
+// thumbprint against the registered row — provenance attestation flows
+// entirely through that path, no clawkerd outbound RPC required.
 package main
 
 import (
@@ -40,7 +39,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,12 +62,6 @@ import (
 // covers a slow first-boot DNS resolution + TLS handshake without
 // letting a wedged Hydra block the entrypoint indefinitely.
 const hydraTokenTimeout = 10 * time.Second
-
-// registerTimeout bounds the unary Register RPC. Should be well under
-// the slot TTL so a wedged CP surfaces as a clear failure rather than
-// an opaque slot expiry. Boot is synchronous on this call; clawkerd
-// will exit non-zero if it doesn't return.
-const registerTimeout = 30 * time.Second
 
 // logsDir is where clawkerd writes its rotated log file. Co-located
 // with the entrypoint's stdout/stderr capture target (/var/log/clawker/)
@@ -215,52 +207,14 @@ func run(ctx context.Context, log *logger.Logger) error {
 		}
 	}()
 
+	// Construct the AgentService client even though clawkerd no longer
+	// calls Register at boot in this branch — agentClient and the dial
+	// machinery above (Hydra token exchange, mTLS conn, bearer creds)
+	// are the foundation for the agent→CP RPCs that land in upcoming
+	// branches. Keeping the wiring live means the next RPC just needs
+	// its own call site, not a re-derivation of the auth chain.
 	agentClient := agentv1.NewAgentServiceClient(conn)
-
-	// Register is unary — auth + cross-checks run server-side; success
-	// returns Welcome. registerCtx scopes the call to registerTimeout
-	// so a wedged CP surfaces clearly instead of blocking past the
-	// slot TTL.
-	registerCtx, registerCancel := context.WithTimeout(ctx, registerTimeout)
-	defer registerCancel()
-
-	log.Info().Str("event", "register_attempt").Msg("calling AgentService.Register")
-	welcome, err := agentClient.Register(registerCtx, &agentv1.RegisterRequest{
-		AgentName:    agentName,
-		Project:      project,
-		CodeVerifier: boot.Verifier,
-	})
-	if err != nil {
-		// SIGTERM during Register is a clean teardown — exit zero so a
-		// restart policy doesn't retrigger. Any other error is fatal:
-		// caller (main) maps non-nil to exit 1 → entrypoint dies →
-		// container restart policy (or user) re-runs `clawker start`,
-		// which re-announces and re-delivers fresh bootstrap material.
-		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			log.Info().Str("event", "shutdown_during_register").Msg("SIGTERM during Register call")
-			return nil
-		}
-		log.Error().Err(err).Str("event", "register_failed").Msg("Register RPC")
-		return fmt.Errorf("register: %w", err)
-	}
-	log.Info().Str("event", "register_succeeded").Msg("CP returned Welcome; agent registered")
-	_ = welcome // ClawkerdConfiguration placeholder; future fields drive logger/OTEL init
-
-	// Welcome received → registry row persisted on CP → safe to delete
-	// the single-use verifier. CLI re-delivers a fresh verifier on every
-	// `clawker start`, so a stolen filesystem snapshot of the running
-	// container cannot replay registration: the live verifier is gone,
-	// and any subsequent Register attempt with the same thumbprint
-	// would hit the existing-thumbprint REJECT branch on CP.
-	verifierPath := filepath.Join(consts.BootstrapDir, consts.BootstrapVerifierFile)
-	switch rmErr := os.Remove(verifierPath); {
-	case rmErr == nil:
-		log.Info().Str("event", "verifier_deleted").Str("path", verifierPath).Msg("single-use verifier removed")
-	case errors.Is(rmErr, os.ErrNotExist):
-		log.Info().Str("event", "verifier_already_absent").Str("path", verifierPath).Msg("verifier was not on disk")
-	default:
-		log.Error().Err(rmErr).Str("event", "verifier_delete_failed").Str("path", verifierPath).Msg("removing single-use verifier")
-	}
+	_ = agentClient
 
 	log.Info().Str("event", "daemon_idle").Msg("entering daemon idle loop; CP may dial Session at any time")
 

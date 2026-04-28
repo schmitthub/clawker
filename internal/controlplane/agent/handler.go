@@ -172,14 +172,24 @@ func NewHandler(slots agentslots.Registry, reg agentregistry.Registry, inspector
 	return h
 }
 
-// Register is the unary registration handshake clawkerd performs once
-// per container lifetime. Returns Welcome on success; every failure
-// path returns codes.PermissionDenied with no detail — attackers must
-// not learn which check rejected them. Existing-thumbprint REJECT is
-// the load-bearing NEW-only invariant: legitimate restart flows
-// regenerate the cert at AnnounceAgent (CLI side) so they always
-// arrive here with a fresh thumbprint.
+// Register is the unary AgentService registration handshake. In this
+// branch clawkerd does NOT call Register — provenance flows entirely
+// through the CLI-written agentregistry consulted at CP→clawkerd dial
+// time. The handler is preserved on the wire for future agent→CP RPCs
+// that need a per-cert PKCE-bound binding; today it short-circuits
+// with codes.PermissionDenied so any caller that reaches it gets a
+// clean rejection rather than a partially-wired flow.
+//
+// The cert/CN/peer-IP/label cross-checks below run AFTER the early
+// reject for compile-time preservation only; they are unreachable.
 func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*agentv1.Welcome, error) {
+	h.log.Warn().Msg("agent register: AgentService.Register is disabled in this branch; CLI writes the registry directly")
+	return nil, status.Error(codes.PermissionDenied, "registration rejected")
+
+	// Below: dead code preserved for future revival. The Consume call
+	// site uses the current container_id-keyed slot signature so the
+	// package compiles; runtime behavior is unreachable.
+	//nolint:govet,unreachable // intentionally preserved as future-rebind scaffolding
 	if req == nil || req.AgentName == "" || req.CodeVerifier == "" {
 		return nil, status.Error(codes.InvalidArgument, "agent_name and code_verifier required")
 	}
@@ -202,9 +212,6 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	}
 	thumbprint := sha256.Sum256(peer.Raw)
 
-	// (a) Cert CN cross-check — defense vs announce-payload tampering
-	// between cert mint and the RegisterRequest body. Constant-time
-	// compare so failure latency doesn't leak which byte differed.
 	wantCN := auth.CanonicalAgentCN(project, agentName)
 	if subtle.ConstantTimeCompare([]byte(peer.CommonName), []byte(wantCN)) != 1 {
 		h.log.Warn().
@@ -216,11 +223,6 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 		return nil, status.Error(codes.PermissionDenied, "registration rejected")
 	}
 
-	// (b) Existing-thumbprint REJECT. A thumbprint already in the
-	// registry means clawkerd either replayed a stale verifier or
-	// raced with a parallel Register — either way Register is NEW-only
-	// by contract. Legit restart flows regenerate the cert at
-	// AnnounceAgent so the new thumbprint misses this check.
 	if existing, err := h.registry.LookupByThumbprint(thumbprint); err == nil && existing != nil {
 		h.log.Warn().
 			Str("agent", req.AgentName).
@@ -229,8 +231,14 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 		return nil, status.Error(codes.PermissionDenied, "registration rejected")
 	}
 
-	// (c) Composite slot consume.
-	slot, err := h.slots.Consume(thumbprint, agentName.String(), project.String(), req.CodeVerifier)
+	// Slot consume — container_id-keyed in this branch. Future revival
+	// of Register may either rebind to a per-cert key (re-add a parallel
+	// slot path) or accept the container_id-only contract by sourcing
+	// container_id from a peer-IP→docker inspect helper before this
+	// call. Today the call is unreachable.
+	_ = thumbprint
+	_ = peerIP
+	slot, err := h.slots.Consume("")
 	if err != nil {
 		h.log.Warn().Err(err).
 			Str("agent", agentName.String()).

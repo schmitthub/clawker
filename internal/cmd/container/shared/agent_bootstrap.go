@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path"
@@ -18,6 +17,8 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // AgentBootstrap is the per-agent registration package the CLI delivers
@@ -166,26 +167,123 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath string, project auth.ProjectSl
 // Typed (auth.ProjectSlug, auth.AgentName) inputs — the constructors
 // already validated charset/length/no-canonical-prefix at the CLI flag
 // boundary, so this function trusts the values it receives.
-func AnnounceAgent(ctx context.Context, admin adminv1.AdminServiceClient, b *AgentBootstrap, project auth.ProjectSlug, agent auth.AgentName, containerID string) error {
-	if err := b.validate(); err != nil {
-		return fmt.Errorf("announce agent %q: %w", agent, err)
-	}
-	if agent.IsZero() {
-		return fmt.Errorf("announce agent: agent name required")
-	}
+// AnnounceAgent reserves a CLI-attestation slot on the CP for the
+// given container_id. Called by every container start path
+// (run/create/start/restart/loop) via BootstrapServicesPreStart, so
+// the slot's existence on the CP side is the data point that says
+// "this start was initiated by the clawker CLI, not raw `docker
+// start`". Identity verification (thumbprint, CN) flows separately
+// through agentregistry when CP dials the running clawkerd.
+func AnnounceAgent(ctx context.Context, admin adminv1.AdminServiceClient, containerID string) error {
 	if containerID == "" {
-		return fmt.Errorf("announce agent %q: container id required", agent)
+		return fmt.Errorf("announce agent: container id required")
 	}
 	if _, err := admin.AnnounceAgent(ctx, &adminv1.AnnounceAgentRequest{
-		AgentName:              agent.String(),
-		Project:                project.String(),
-		ContainerId:            containerID,
-		ExpectedCertThumbprint: hex.EncodeToString(b.ExpectedCertThumbprint[:]),
-		CodeChallenge:          b.Challenge,
-		CodeChallengeMethod:    string(b.Method),
+		ContainerId: containerID,
 	}); err != nil {
-		return fmt.Errorf("announce agent %q (container %s): %w", agent, containerID, err)
+		return fmt.Errorf("announce agent (container %s): %w", containerID, err)
 	}
+	return nil
+}
+
+// InstallAgentBootstrapOptions bundles the inputs InstallAgentBootstrap
+// needs at container CREATE time — fresh cert+key minted per container,
+// CopyToContainered into the writable layer, and the registry row
+// landed on the host-side sqlite DB.
+type InstallAgentBootstrapOptions struct {
+	// Project + Agent are the typed (project, agent_name) identity
+	// validated upstream at the CLI flag boundary. Used to compose the
+	// canonical CN in the leaf cert and the registry row's identity
+	// fields.
+	Project auth.ProjectSlug
+	Agent   auth.AgentName
+	// ContainerID is the ID returned by client.ContainerCreate.
+	ContainerID string
+	// HydraTokenAudience is the `aud` claim in the Hydra
+	// client_assertion. Resolved by callers via
+	// hydraTokenAudienceFromPort(cfg.Settings().ControlPlane.HydraPublicPort).
+	HydraTokenAudience string
+	// CopyToContainer streams the bootstrap tar into ContainerID's
+	// writable layer at consts.BootstrapDir.
+	CopyToContainer CopyToContainerFn
+	// RegistryDBPath is the host-fs path to the agentregistry sqlite
+	// DB. The CLI is the sole authoritative writer; the row is
+	// inserted before this function returns so AnnounceAgent / agentdial
+	// can read it on the next start.
+	RegistryDBPath string
+	// Logger receives a single info line on success and any audit
+	// breadcrumbs from agentregistry. Required.
+	Logger *logger.Logger
+}
+
+// InstallAgentBootstrap is the create-time agent material installer.
+// Called once per container creation from shared.CreateContainer; not
+// invoked again on subsequent starts (the writable layer holds the
+// cert/key for the container's lifetime). Steps in order:
+//
+//  1. Mint a fresh PKCE pair, leaf cert + key, CA cert, and Hydra
+//     client_assertion (GenerateAgentBootstrap).
+//  2. Tar them into the container's writable layer at
+//     consts.BootstrapDir (WriteAgentBootstrapToContainer).
+//  3. Insert the (thumbprint, container_id, agent_name, project) row
+//     into the host-side agentregistry sqlite DB.
+//
+// Any failure past the registry write leaves the registry row in
+// place; the caller's deferred container-cleanup is expected to remove
+// the container and the row gets pruned on its next dockerevents
+// die / the next CLI cleanup pass.
+func InstallAgentBootstrap(ctx context.Context, caCertPath, caKeyPath string, signingKey *ecdsa.PrivateKey, opts InstallAgentBootstrapOptions) error {
+	if opts.ContainerID == "" {
+		return fmt.Errorf("install agent bootstrap: container id required")
+	}
+	if opts.RegistryDBPath == "" {
+		return fmt.Errorf("install agent bootstrap: registry db path required")
+	}
+	if opts.CopyToContainer == nil {
+		return fmt.Errorf("install agent bootstrap: copy-to-container fn required")
+	}
+	log := opts.Logger
+	if log == nil {
+		log = logger.Nop()
+	}
+
+	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, opts.Project, opts.Agent, opts.HydraTokenAudience, signingKey)
+	if err != nil {
+		return fmt.Errorf("install agent bootstrap: generate: %w", err)
+	}
+
+	if err := WriteAgentBootstrapToContainer(ctx, opts.ContainerID, opts.CopyToContainer, bootstrap); err != nil {
+		return fmt.Errorf("install agent bootstrap: write: %w", err)
+	}
+
+	reg, err := agentregistry.NewSQLiteWriter(opts.RegistryDBPath, log)
+	if err != nil {
+		return fmt.Errorf("install agent bootstrap: open registry: %w", err)
+	}
+	closer, _ := reg.(interface{ Close() error })
+	defer func() {
+		if closer != nil {
+			_ = closer.Close()
+		}
+	}()
+
+	now := time.Now()
+	if err := reg.Add(agentregistry.Entry{
+		AgentName:    opts.Agent.String(),
+		Project:      opts.Project.String(),
+		ContainerID:  opts.ContainerID,
+		Thumbprint:   bootstrap.ExpectedCertThumbprint,
+		RegisteredAt: now,
+		LastSeen:     now,
+	}); err != nil {
+		return fmt.Errorf("install agent bootstrap: registry write: %w", err)
+	}
+
+	log.Info().
+		Str("container_id", opts.ContainerID).
+		Str("agent", opts.Agent.String()).
+		Str("project", opts.Project.String()).
+		Msg("agent bootstrap installed and registry row written")
 	return nil
 }
 

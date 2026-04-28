@@ -12,6 +12,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -23,6 +24,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/require"
 )
@@ -419,6 +421,14 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // testFactory builds a *cmdutil.Factory backed by a FakeClient for Tier 2 create tests.
 func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
+	// Isolate XDG dirs + mint per-test auth material. shared.CreateContainer
+	// reads the CA cert + signing key + agentregistry DB path through
+	// internal/consts; without testenv + EnsureAuthMaterial, the new
+	// InstallAgentBootstrap call inside CreateContainer fails with a
+	// missing-CA error before reaching any of the assertions in these
+	// Tier 2 tests.
+	testenv.New(t)
+	require.NoError(t, auth.EnsureAuthMaterial())
 	// Ensure CWD is inside $HOME so IsOutsideHome returns false (matters in containers).
 	cwd, _ := os.Getwd()
 	t.Setenv("HOME", filepath.Dir(cwd))
@@ -536,8 +546,14 @@ func TestCreateRun(t *testing.T) {
 	// (entrypoint seeds ~/.claude/.config.json from ~/.claude-init/.config.json).
 	// CopyToContainer is no longer called for onboarding injection.
 
-	t.Run("no CopyToContainer when use_host_auth disabled and no post_init", func(t *testing.T) {
-		// Explicitly disable use_host_auth, no post_init → no CopyToContainer calls
+	t.Run("only one CopyToContainer when use_host_auth disabled and no post_init", func(t *testing.T) {
+		// use_host_auth disabled + no post_init: post-init injection
+		// must NOT fire, but the bootstrap material copy from
+		// InstallAgentBootstrap always does → exactly one
+		// CopyToContainer call.
+		testenv.New(t)
+		require.NoError(t, auth.EnsureAuthMaterial())
+
 		useHostAuthCfg := configmocks.NewFromString(`
 version: "1"
 workspace: { default_mode: "bind" }
@@ -552,7 +568,7 @@ agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 		}
 		fake := mocks.NewFakeClient(useHostAuthCfg)
 		fake.SetupContainerCreate()
-		// No CopyToContainer setup — if called, it would panic
+		fake.SetupCopyToContainer()
 
 		// Ensure CWD is inside $HOME so IsOutsideHome returns false (matters in containers).
 		cwd, _ := os.Getwd()
@@ -584,10 +600,11 @@ agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 		err := cmd.Execute()
 		require.NoError(t, err)
 
-		// Container created successfully without CopyToContainer being called
+		// Container created. Bootstrap material was copied (1 call);
+		// post-init injection did NOT run.
 		outStr := out.String()
 		require.Len(t, strings.TrimSpace(outStr), 12)
 		fake.AssertCalled(t, "ContainerCreate")
-		fake.AssertNotCalled(t, "CopyToContainer")
+		fake.AssertCalledN(t, "CopyToContainer", 1)
 	})
 }

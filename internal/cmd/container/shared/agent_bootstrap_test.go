@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -124,9 +123,12 @@ func validBootstrap() *AgentBootstrap {
 	}
 }
 
-func TestAnnounceAgent_FieldsPropagate(t *testing.T) {
-	// Captures the full wire contract — a future field rename in the
-	// proto can't silently drop a security-relevant attribute.
+func TestAnnounceAgent_SendsContainerID(t *testing.T) {
+	// AnnounceAgent's wire contract is now minimal: just container_id.
+	// Identity (thumbprint, agent_name, project) is recorded once at
+	// CreateContainer time in the CLI-written agentregistry — the slot
+	// reserved here is purely a CLI-attestation token consumed by
+	// agentdial when CP next dials the running clawkerd.
 	var captured *adminv1.AnnounceAgentRequest
 	mock := &mocks.AdminServiceClientMock{
 		AnnounceAgentFunc: func(_ context.Context, in *adminv1.AnnounceAgentRequest, _ ...grpc.CallOption) (*adminv1.AnnounceAgentResult, error) {
@@ -135,19 +137,9 @@ func TestAnnounceAgent_FieldsPropagate(t *testing.T) {
 		},
 	}
 
-	b := validBootstrap()
-	require.NoError(t, AnnounceAgent(context.Background(), mock, b, auth.MustProjectSlug("alpha"), auth.MustAgentName("bravo"), "ctr-id"))
+	require.NoError(t, AnnounceAgent(context.Background(), mock, "ctr-id"))
 	require.NotNil(t, captured)
-	// Wire fields are short (project, agent) — NOT canonical. CP composes
-	// the canonical name from these on its side.
-	assert.Equal(t, "bravo", captured.AgentName)
-	assert.Equal(t, "alpha", captured.Project)
 	assert.Equal(t, "ctr-id", captured.ContainerId)
-	// Wire field is hex-encoded SHA-256 over cert DER; round-trip
-	// confirms the encoding and that the bytes match the bootstrap.
-	assert.Equal(t, hex.EncodeToString(b.ExpectedCertThumbprint[:]), captured.ExpectedCertThumbprint)
-	assert.Equal(t, "challenge", captured.CodeChallenge)
-	assert.Equal(t, "S256", captured.CodeChallengeMethod)
 }
 
 func TestAnnounceAgent_PropagatesError(t *testing.T) {
@@ -157,26 +149,13 @@ func TestAnnounceAgent_PropagatesError(t *testing.T) {
 			return nil, want
 		},
 	}
-	err := AnnounceAgent(context.Background(), mock, validBootstrap(), auth.MustProjectSlug("p"), auth.MustAgentName("n"), "id")
+	err := AnnounceAgent(context.Background(), mock, "id")
 	assert.ErrorIs(t, err, want)
 }
 
-func TestAnnounceAgent_RejectsInvalidBootstrap(t *testing.T) {
+func TestAnnounceAgent_RejectsEmptyContainerID(t *testing.T) {
 	mock := &mocks.AdminServiceClientMock{}
-	// Empty challenge would let the slot reserve with no PKCE binding.
-	b := validBootstrap()
-	b.Challenge = ""
-	require.Error(t, AnnounceAgent(context.Background(), mock, b, auth.MustProjectSlug("p"), auth.MustAgentName("n"), "id"))
-
-	// Empty agent name would key the slot to (p, "") — every announce in
-	// project p would collide on the same composite key. Zero-value
-	// auth.AgentName{} mirrors that case (constructors reject empty
-	// input, but the zero value is reachable for tests).
-	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), auth.MustProjectSlug("p"), auth.AgentName{}, "id"))
-
-	// Empty container ID would skip the IP cross-check at Connect.
-	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), auth.MustProjectSlug("p"), auth.MustAgentName("n"), ""))
-
+	require.Error(t, AnnounceAgent(context.Background(), mock, ""))
 	// Mock should never see a request — validation happens before RPC.
 	assert.Empty(t, mock.AnnounceAgentCalls())
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -1653,6 +1654,56 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	// Container created — volumes are now associated with it.
 	// Clear cleanup list so deferred cleanup won't remove them.
 	createdVolumes = nil
+
+	// Mint per-agent mTLS material + Hydra assertion + PKCE pair, tar
+	// into the container's BootstrapDir (writable layer survives stop/
+	// start/restart for the container's lifetime), and write the
+	// agentregistry row keyed by (thumbprint, container_id). The
+	// registry row gives CP the data point it needs to verify the
+	// thumbprint of the running clawkerd at dial time. AnnounceAgent
+	// is NOT called from here — that's a per-start signal handled in
+	// BootstrapServicesPreStart so every start path (run/start/restart/
+	// loop) emits it via a single chokepoint.
+	caCertPath, err := consts.AuthCACertPath()
+	if err != nil {
+		return nil, fmt.Errorf("agent bootstrap: ca cert path: %w", err)
+	}
+	caKeyPath, err := consts.AuthCAKeyPath()
+	if err != nil {
+		return nil, fmt.Errorf("agent bootstrap: ca key path: %w", err)
+	}
+	signingKey, err := auth.LoadSigningKey()
+	if err != nil {
+		return nil, fmt.Errorf("agent bootstrap: load signing key: %w", err)
+	}
+	registryDBPath, err := consts.ControlPlaneDBPath()
+	if err != nil {
+		return nil, fmt.Errorf("agent bootstrap: registry db path: %w", err)
+	}
+	projectSlug, err := auth.NewProjectSlug(opts.ProjectName)
+	if err != nil {
+		return nil, fmt.Errorf("agent bootstrap: invalid project: %w", err)
+	}
+	agentTyped, err := auth.NewAgentName(agentName)
+	if err != nil {
+		return nil, fmt.Errorf("agent bootstrap: invalid agent name: %w", err)
+	}
+	if err := InstallAgentBootstrap(ctx, caCertPath, caKeyPath, signingKey, InstallAgentBootstrapOptions{
+		Project:            projectSlug,
+		Agent:              agentTyped,
+		ContainerID:        resp.ID,
+		HydraTokenAudience: hydraTokenAudienceFromPort(opts.Config.Settings().ControlPlane.HydraPublicPort),
+		CopyToContainer:    NewCopyToContainerFn(client),
+		RegistryDBPath:     registryDBPath,
+		Logger:             log,
+	}); err != nil {
+		cleanupCtx := context.Background()
+		if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
+			log.Warn().Str("containerID", resp.ID).Err(rmErr).
+				Msg("failed to clean up container after agent bootstrap failure")
+		}
+		return nil, fmt.Errorf("agent bootstrap: %w", err)
+	}
 
 	// Inject post-init script if configured.
 	if projectCfg.Agent.PostInit != "" {

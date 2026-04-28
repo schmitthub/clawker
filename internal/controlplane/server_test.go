@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -85,23 +84,17 @@ func TestAdminServer_ListAgents_Snapshot(t *testing.T) {
 // validation failures derive from this and clobber the field under
 // test, so a future schema change forces every case to be revisited.
 func validAnnounceReq() *adminv1.AnnounceAgentRequest {
-	thumb := sha256.Sum256([]byte("agent-cert"))
 	return &adminv1.AnnounceAgentRequest{
-		AgentName:              "bravo",
-		Project:                "alpha",
-		ContainerId:            "ctr-12345",
-		ExpectedCertThumbprint: hex.EncodeToString(thumb[:]),
-		CodeChallenge:          "challenge-base64url-content",
-		CodeChallengeMethod:    string(consts.ChallengeMethodS256),
+		ContainerId: "ctr-12345",
 	}
 }
 
 func TestAdminServer_AnnounceAgent_Reserves(t *testing.T) {
 	now := time.Unix(2000, 0)
-	var reserved []agentslots.Slot
+	var reserved []string
 	mock := &slotmocks.RegistryMock{
 		ReserveFunc: func(slot agentslots.Slot) error {
-			reserved = append(reserved, slot)
+			reserved = append(reserved, slot.ContainerID)
 			return nil
 		},
 	}
@@ -116,24 +109,10 @@ func TestAdminServer_AnnounceAgent_Reserves(t *testing.T) {
 	// this for logging only; the CP enforces TTL internally.
 	assert.Equal(t, now.Add(consts.AgentSlotTTL).Unix(), resp.ExpiresAtUnix)
 
-	// Reserve was called with a Slot whose CLI-asserted fields match
-	// the request body. ReservedAt/ExpiresAt are stamped INSIDE
-	// agentslots.Reserve from the registry's own clock — we don't
-	// assert them here, the agentslots package has its own tests.
-	require.Len(t, reserved, 1)
-	got := reserved[0]
-	assert.Equal(t, req.AgentName, got.AgentName)
-	assert.Equal(t, req.Project, got.Project, "Reserve must carry req.Project onto the slot")
-	assert.Equal(t, req.ContainerId, got.ContainerID)
-	assert.Equal(t, req.CodeChallenge, got.Challenge)
-	assert.Equal(t, consts.ChallengeMethodS256, got.ChallengeMethod)
-
-	// Thumbprint round-trips through hex.
-	rawThumb, err := hex.DecodeString(req.ExpectedCertThumbprint)
-	require.NoError(t, err)
-	var want [sha256.Size]byte
-	copy(want[:], rawThumb)
-	assert.Equal(t, want, got.ExpectedCertThumbprint)
+	// Reserve was called with the request's container_id. The slot
+	// carries no other fields — identity flows through the CLI-written
+	// agentregistry consulted at CP→clawkerd dial time.
+	require.Equal(t, []string{req.ContainerId}, reserved)
 }
 
 func TestAdminServer_AnnounceAgent_Validation(t *testing.T) {
@@ -147,41 +126,16 @@ func TestAdminServer_AnnounceAgent_Validation(t *testing.T) {
 
 	cases := []struct {
 		name    string
-		mutate  func(*adminv1.AnnounceAgentRequest)
+		req     *adminv1.AnnounceAgentRequest
 		wantMsg string
 	}{
 		{"nil request", nil, "request required"},
-		{"empty agent_name", func(r *adminv1.AnnounceAgentRequest) { r.AgentName = "" }, "agent_name"},
-		// Symmetric with AgentService.Connect's typed validation:
-		// announce-side AND connect-side share auth.NewAgentName /
-		// NewProjectSlug so a malformed name can never burn a slot for
-		// the full TTL by being announced and then rejected at Connect.
-		{"agent_name with dot", func(r *adminv1.AnnounceAgentRequest) { r.AgentName = "dev.bot" }, "agent_name"},
-		{"agent_name with canonical prefix", func(r *adminv1.AnnounceAgentRequest) { r.AgentName = "clawker.dev" }, "agent_name"},
-		{"agent_name oversized", func(r *adminv1.AnnounceAgentRequest) { r.AgentName = strings.Repeat("a", 1024) }, "agent_name"},
-		{"project with dot", func(r *adminv1.AnnounceAgentRequest) { r.Project = "my.app" }, "project"},
-		{"project with canonical prefix", func(r *adminv1.AnnounceAgentRequest) { r.Project = "clawker.app" }, "project"},
-		{"empty container_id", func(r *adminv1.AnnounceAgentRequest) { r.ContainerId = "" }, "container_id required"},
-		{"empty code_challenge", func(r *adminv1.AnnounceAgentRequest) { r.CodeChallenge = "" }, "code_challenge required"},
-		{"non-S256 method", func(r *adminv1.AnnounceAgentRequest) { r.CodeChallengeMethod = "plain" }, "code_challenge_method must be S256"},
-		{"thumbprint not hex", func(r *adminv1.AnnounceAgentRequest) { r.ExpectedCertThumbprint = "not-hex-zzz" }, "expected_cert_thumbprint must be 64 lowercase hex characters"},
-		{"thumbprint wrong length", func(r *adminv1.AnnounceAgentRequest) { r.ExpectedCertThumbprint = "deadbeef" }, "expected_cert_thumbprint must be 64 lowercase hex characters"},
-		{"thumbprint uppercase hex", func(r *adminv1.AnnounceAgentRequest) {
-			thumb := sha256.Sum256([]byte("agent-cert"))
-			// hex.EncodeToString returns lowercase; force uppercase to
-			// exercise the case-strictness branch.
-			r.ExpectedCertThumbprint = strings.ToUpper(hex.EncodeToString(thumb[:]))
-		}, "expected_cert_thumbprint must be 64 lowercase hex characters"},
+		{"empty container_id", &adminv1.AnnounceAgentRequest{}, "container_id required"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var req *adminv1.AnnounceAgentRequest
-			if tc.mutate != nil {
-				req = validAnnounceReq()
-				tc.mutate(req)
-			}
-			_, err := srv.AnnounceAgent(context.Background(), req)
+			_, err := srv.AnnounceAgent(context.Background(), tc.req)
 			require.Error(t, err)
 			assert.Equal(t, codes.InvalidArgument, status.Code(err))
 			assert.Contains(t, status.Convert(err).Message(), tc.wantMsg)
@@ -190,10 +144,10 @@ func TestAdminServer_AnnounceAgent_Validation(t *testing.T) {
 }
 
 // TestAdminServer_AnnounceAgent_SlotExists exercises the duplicate-key
-// branch. agentslots returns ErrSlotExists when the same composite
-// (cert_thumbprint, agent_name) is already pending; AdminService maps
-// that to codes.AlreadyExists so the CLI can surface "agent already
-// announced" rather than a generic Internal failure.
+// branch. announceslots returns ErrSlotExists when a slot is already
+// reserved for the container_id; AdminService maps that to
+// codes.AlreadyExists so a buggy CLI that double-announces gets a
+// clear failure mode rather than a silent slot overwrite.
 func TestAdminServer_AnnounceAgent_SlotExists(t *testing.T) {
 	mock := &slotmocks.RegistryMock{
 		ReserveFunc: func(_ agentslots.Slot) error { return agentslots.ErrSlotExists },

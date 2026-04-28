@@ -24,8 +24,10 @@ package agentdial
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -43,6 +45,8 @@ import (
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
 	"github.com/schmitthub/clawker/internal/controlplane/informer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -105,6 +109,21 @@ type Dialer struct {
 	log    *logger.Logger
 	docker mobyclient.APIClient
 	inf    informer.Interface
+	// agents is the CLI-written agentregistry (RO from CP's POV). The
+	// dialer reads it post-handshake to record a provenance data
+	// point: peer thumbprint vs registry-row thumbprint vs no-row.
+	// Outcome flows into informer publishes + logs only — connection
+	// stays open in all cases. Downstream decision-making (which
+	// commands to dispatch) consumes the data point in a future PR.
+	// May be nil; nil short-circuits the lookup.
+	agents agentregistry.Registry
+	// slots is the per-start CLI-attestation token store. AnnounceAgent
+	// reserves; the dialer consumes when it successfully dials the
+	// container's clawkerd listener. A consumed slot means "this start
+	// was clawker-CLI-initiated"; absence means raw `docker start` or a
+	// CP that came up after the slot TTL elapsed. Data point only —
+	// connection stays open either way. May be nil.
+	slots agentslots.Registry
 
 	cpClientCert tls.Certificate
 	caPool       *x509.CertPool
@@ -122,7 +141,7 @@ type Dialer struct {
 // components can subscribe to connection events without coupling to
 // agentdial directly. Pass a real informer in production; tests can
 // pass an informer.Interface mock.
-func New(log *logger.Logger, docker mobyclient.APIClient, inf informer.Interface, certPath, keyPath string, caPool *x509.CertPool) (*Dialer, error) {
+func New(log *logger.Logger, docker mobyclient.APIClient, inf informer.Interface, agents agentregistry.Registry, slots agentslots.Registry, certPath, keyPath string, caPool *x509.CertPool) (*Dialer, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -140,6 +159,8 @@ func New(log *logger.Logger, docker mobyclient.APIClient, inf informer.Interface
 		log:          log,
 		docker:       docker,
 		inf:          inf,
+		agents:       agents,
+		slots:        slots,
 		cpClientCert: cert,
 		caPool:       caPool,
 		dialing:      make(map[string]struct{}),
@@ -307,8 +328,12 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 			publishedConnecting = true
 		}
 
-		conn, stream, dialErr := d.tryEstablish(ctx, addr, attemptLog)
+		var peerThumbprint [sha256.Size]byte
+		var peerCN string
+		conn, stream, dialErr := d.tryEstablish(ctx, addr, attemptLog, &peerThumbprint, &peerCN)
 		if dialErr == nil {
+			d.recordRegistryProvenance(containerID, peerThumbprint, peerCN, attemptLog)
+			d.consumeAnnounceSlot(containerID, attemptLog)
 			return conn, stream, attempt, agent, project, addr, false, true
 		}
 
@@ -348,9 +373,11 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 // tryEstablish runs one connection attempt: dial → open stream →
 // Hello handshake. Returns the open conn + stream on success, or an
 // error describing which step failed (caller decides retry vs.
-// give-up).
-func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logger) (*grpc.ClientConn, clawkerdv1.ClawkerdService_SessionClient, error) {
-	conn, err := d.dial(ctx, addr)
+// give-up). On success, thumbprintOut + cnOut are populated with the
+// peer's leaf cert SHA-256 + CN — used by the caller to record a
+// provenance data point against agentregistry.
+func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logger, thumbprintOut *[sha256.Size]byte, cnOut *string) (*grpc.ClientConn, clawkerdv1.ClawkerdService_SessionClient, error) {
+	conn, err := d.dial(ctx, addr, thumbprintOut, cnOut)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
@@ -419,6 +446,84 @@ func clawkerNetAddr(c mobycontainer.InspectResponse) (string, error) {
 	return net.JoinHostPort(ip.String(), strconv.Itoa(consts.DefaultClawkerdPort)), nil
 }
 
+// recordRegistryProvenance compares the peer cert thumbprint + CN
+// observed at the TLS handshake against the agentregistry row keyed
+// by container_id and emits a single log line capturing the outcome:
+//
+//   - registry_match — row exists and thumbprint+CN agree (provenance
+//     confirmed: this clawkerd was created by the CLI we trust)
+//   - registry_thumbprint_mismatch — row exists but thumbprint differs
+//     (cert in writable layer was swapped, or container ID was reused
+//     by an externally-created container)
+//   - registry_cn_mismatch — row exists, thumbprint matches, CN does
+//     not (defense-in-depth — should never happen since cert pins
+//     thumbprint to CN at mint time)
+//   - registry_miss — no row for this container_id (raw `docker run`
+//     of an agent image without going through the clawker CLI, or DB
+//     was wiped)
+//
+// This is a data point only. The connection stays open in every case.
+// Downstream consumers (future command-dispatch logic) read the
+// outcome via the informer to decide what's appropriate to send.
+func (d *Dialer) recordRegistryProvenance(containerID string, peerThumbprint [sha256.Size]byte, peerCN string, log *logger.Logger) {
+	if d.agents == nil {
+		return
+	}
+	entry, err := d.agents.LookupByContainerID(containerID)
+	switch {
+	case err != nil || entry == nil:
+		log.Warn().
+			Str("container_id", containerID).
+			Str("peer_thumbprint", hex.EncodeToString(peerThumbprint[:])).
+			Str("peer_cn", peerCN).
+			Str("provenance", "registry_miss").
+			Msg("agentdial: dialed clawkerd has no registry row (untracked container)")
+	case entry.Thumbprint != peerThumbprint:
+		log.Warn().
+			Str("container_id", containerID).
+			Str("peer_thumbprint", hex.EncodeToString(peerThumbprint[:])).
+			Str("registry_thumbprint", hex.EncodeToString(entry.Thumbprint[:])).
+			Str("peer_cn", peerCN).
+			Str("provenance", "registry_thumbprint_mismatch").
+			Msg("agentdial: peer cert thumbprint disagrees with registry row")
+	default:
+		log.Info().
+			Str("container_id", containerID).
+			Str("peer_cn", peerCN).
+			Str("agent", entry.AgentName).
+			Str("project", entry.Project).
+			Str("provenance", "registry_match").
+			Msg("agentdial: registry row confirms peer cert provenance")
+	}
+}
+
+// consumeAnnounceSlot retires the per-start AnnounceAgent slot for
+// the container. The slot's existence at consume time is the data
+// point that says "this start was initiated by the clawker CLI".
+// Missing slot is the legitimate raw-`docker start` case (or a CP
+// that came up after the slot TTL elapsed); record + carry on.
+func (d *Dialer) consumeAnnounceSlot(containerID string, log *logger.Logger) {
+	if d.slots == nil {
+		return
+	}
+	if slot, err := d.slots.Consume(containerID); err == nil {
+		log.Info().
+			Str("container_id", containerID).
+			Time("reserved_at", slot.ReservedAt).
+			Str("provenance", "announce_slot_consumed").
+			Msg("agentdial: dial confirms CLI-attested start")
+	} else if !errors.Is(err, agentslots.ErrSlotInvalid) {
+		log.Warn().Err(err).
+			Str("container_id", containerID).
+			Msg("agentdial: announce slot consume failed")
+	} else {
+		log.Info().
+			Str("container_id", containerID).
+			Str("provenance", "announce_slot_missing").
+			Msg("agentdial: dial sees no announce slot (start was not CLI-attested)")
+	}
+}
+
 // agentLabels reads the (agent, project) labels from an inspect
 // response. Either may be empty if the container was created
 // without the standard clawker labels — callers must tolerate.
@@ -433,13 +538,34 @@ func agentLabels(c mobycontainer.InspectResponse) (agent, project string) {
 // (no hostname pin) against the clawker CA. Keepalive parameters
 // are sourced from internal/consts so server (clawkerd) and client
 // (CP) cannot drift.
-func (d *Dialer) dial(_ context.Context, addr string) (*grpc.ClientConn, error) {
+//
+// thumbprintOut is filled with SHA-256 over the leaf cert DER on a
+// successful TLS handshake. Used by the caller to record a
+// provenance data point against agentregistry.
+func (d *Dialer) dial(_ context.Context, addr string, thumbprintOut *[sha256.Size]byte, cnOut *string) (*grpc.ClientConn, error) {
+	verify := func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		if err := d.verifyChainOnly(rawCerts, verifiedChains); err != nil {
+			return err
+		}
+		// Capture the leaf thumbprint + CN for the post-handshake
+		// registry data-point recording. verifyChainOnly already
+		// validated len(rawCerts) > 0 + parseable.
+		if thumbprintOut != nil && len(rawCerts) > 0 {
+			*thumbprintOut = sha256.Sum256(rawCerts[0])
+		}
+		if cnOut != nil && len(rawCerts) > 0 {
+			if leaf, err := x509.ParseCertificate(rawCerts[0]); err == nil {
+				*cnOut = leaf.Subject.CommonName
+			}
+		}
+		return nil
+	}
 	tlsCfg := &tls.Config{
 		Certificates:          []tls.Certificate{d.cpClientCert},
 		RootCAs:               d.caPool,
 		MinVersion:            tls.VersionTLS13,
 		InsecureSkipVerify:    true, // hostname pin disabled — see package doc
-		VerifyPeerCertificate: d.verifyChainOnly,
+		VerifyPeerCertificate: verify,
 	}
 	return grpc.NewClient(
 		addr,

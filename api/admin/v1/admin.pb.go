@@ -1404,37 +1404,16 @@ func (x *FirewallResolveHostnameResult) GetAddresses() []string {
 
 type AnnounceAgentRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// agent_name is the short agent name as the user types it on the CLI
-	// (e.g. "dev", "test"). NOT the canonical "clawker.project.agent" form.
-	// The CP composes canonical names internally from (NamePrefix, project,
-	// agent_name) — keeping the wire fields decomposed avoids re-parsing on
-	// the server side and makes (project, agent_name) collisions across
-	// different projects impossible to confuse.
-	AgentName string `protobuf:"bytes,1,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
-	// container_id is the Docker container ID CLI got back from
-	// ContainerCreate. Stored in the slot, never trusted from clawkerd —
-	// CP IP-checks it at Connect against the peer's network position.
-	ContainerId string `protobuf:"bytes,2,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
-	// expected_cert_thumbprint is the lowercase-hex SHA-256 of the
-	// DER-encoded mTLS cert CLI just minted for this agent (64 chars). CP
-	// compares the agent's actual peer cert thumbprint at Connect
-	// (defense vs cert swap in the bootstrap material between announce
-	// and clawkerd boot).
-	ExpectedCertThumbprint string `protobuf:"bytes,3,opt,name=expected_cert_thumbprint,json=expectedCertThumbprint,proto3" json:"expected_cert_thumbprint,omitempty"`
-	// code_challenge is the PKCE S256 challenge:
-	// base64url(sha256(verifier)), no padding. CP stores it in the slot;
-	// verifier is delivered to clawkerd out-of-band via tmpfs.
-	CodeChallenge string `protobuf:"bytes,4,opt,name=code_challenge,json=codeChallenge,proto3" json:"code_challenge,omitempty"`
-	// code_challenge_method is the PKCE method. The CP currently accepts
-	// only "S256" — the field exists for forward extensibility and to
-	// make rejected methods explicit on the wire instead of inferred.
-	CodeChallengeMethod string `protobuf:"bytes,5,opt,name=code_challenge_method,json=codeChallengeMethod,proto3" json:"code_challenge_method,omitempty"`
-	// project is the clawker project slug the agent runs under (cfg.Project()
-	// on the CLI side). Empty string for the unscoped/2-segment naming case.
-	// Together with agent_name forms the composite slot identity — the same
-	// user agent name (e.g. "dev") can announce in two different projects
-	// without colliding.
-	Project       string `protobuf:"bytes,6,opt,name=project,proto3" json:"project,omitempty"`
+	// container_id is the Docker container ID for the about-to-start
+	// managed container. AnnounceAgent is the CLI's signal to CP that a
+	// container start is being initiated by the clawker CLI specifically
+	// (raw `docker start` / `docker run` paths bypass this and produce
+	// no slot). Provenance flows entirely from the CLI-written
+	// agentregistry row and the per-start slot reserved here; agent
+	// identity (thumbprint, project, agent_name) is recorded once at
+	// CreateContainer time in the registry and re-resolved server-side
+	// when CP dials the running clawkerd.
+	ContainerId   string `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1469,44 +1448,9 @@ func (*AnnounceAgentRequest) Descriptor() ([]byte, []int) {
 	return file_admin_v1_admin_proto_rawDescGZIP(), []int{29}
 }
 
-func (x *AnnounceAgentRequest) GetAgentName() string {
-	if x != nil {
-		return x.AgentName
-	}
-	return ""
-}
-
 func (x *AnnounceAgentRequest) GetContainerId() string {
 	if x != nil {
 		return x.ContainerId
-	}
-	return ""
-}
-
-func (x *AnnounceAgentRequest) GetExpectedCertThumbprint() string {
-	if x != nil {
-		return x.ExpectedCertThumbprint
-	}
-	return ""
-}
-
-func (x *AnnounceAgentRequest) GetCodeChallenge() string {
-	if x != nil {
-		return x.CodeChallenge
-	}
-	return ""
-}
-
-func (x *AnnounceAgentRequest) GetCodeChallengeMethod() string {
-	if x != nil {
-		return x.CodeChallengeMethod
-	}
-	return ""
-}
-
-func (x *AnnounceAgentRequest) GetProject() string {
-	if x != nil {
-		return x.Project
 	}
 	return ""
 }
@@ -1819,15 +1763,9 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x1eFirewallResolveHostnameRequest\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\"=\n" +
 	"\x1dFirewallResolveHostnameResult\x12\x1c\n" +
-	"\taddresses\x18\x01 \x03(\tR\taddresses\"\x87\x02\n" +
-	"\x14AnnounceAgentRequest\x12\x1d\n" +
-	"\n" +
-	"agent_name\x18\x01 \x01(\tR\tagentName\x12!\n" +
-	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x128\n" +
-	"\x18expected_cert_thumbprint\x18\x03 \x01(\tR\x16expectedCertThumbprint\x12%\n" +
-	"\x0ecode_challenge\x18\x04 \x01(\tR\rcodeChallenge\x122\n" +
-	"\x15code_challenge_method\x18\x05 \x01(\tR\x13codeChallengeMethod\x12\x18\n" +
-	"\aproject\x18\x06 \x01(\tR\aproject\"=\n" +
+	"\taddresses\x18\x01 \x03(\tR\taddresses\"9\n" +
+	"\x14AnnounceAgentRequest\x12!\n" +
+	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\"=\n" +
 	"\x13AnnounceAgentResult\x12&\n" +
 	"\x0fexpires_at_unix\x18\x01 \x01(\x03R\rexpiresAtUnix\"\x13\n" +
 	"\x11ListAgentsRequest\"C\n" +

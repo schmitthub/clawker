@@ -34,8 +34,6 @@ package agentslots
 
 import (
 	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/base64"
 	"errors"
 	"sync"
 	"time"
@@ -94,50 +92,43 @@ var ErrSlotExists = errors.New("agentslots: slot already reserved")
 //
 //go:generate moq -rm -pkg mocks -out mocks/registry_mock.go . Registry
 type Registry interface {
-	// Reserve stores the slot keyed by (ExpectedCertThumbprint,
-	// AgentName, Project). Reserve stamps ReservedAt + ExpiresAt from the
-	// registry's clock; any value supplied by the caller on those two
-	// fields is ignored. Duplicate composite keys return ErrSlotExists.
-	// Empty Project is allowed (matches docker.ContainerName 2-segment
-	// naming); empty AgentName is rejected.
+	// Reserve stores a slot keyed by slot.ContainerID. AdminService.
+	// AnnounceAgent calls this on every container start; the slot is
+	// the CP's record that the clawker CLI specifically initiated
+	// this start (raw `docker start` paths produce no slot). The slot
+	// carries no auth-bearing material — agent identity verification
+	// flows through agentregistry when CP dials the running clawkerd.
+	// Duplicate container_id returns ErrSlotExists. Reserve stamps
+	// ReservedAt + ExpiresAt from the registry's clock.
+	//
+	// The Slot type retains optional PKCE/thumbprint fields preserved
+	// for future agent→CP RPCs that may rebind to a per-cert flow;
+	// callers that don't need them leave them zero-valued.
 	Reserve(slot Slot) error
-	// Consume locates the slot keyed by (thumbprint, agentName, project)
-	// and verifies S256(verifier) == slot.Challenge in constant time,
-	// atomically removing the slot on success. Mismatch / missing /
-	// expired all map to ErrSlotInvalid; verifier mismatch leaves the
-	// slot in place so a benign retry can succeed (TTL handles eviction).
-	Consume(thumbprint [sha256.Size]byte, agentName, project, verifier string) (*Slot, error)
-	// EvictByContainerID removes any pending slot whose ContainerID
-	// matches. Linear scan over slots; fine for realistic clawker host
-	// scales (single-digit pending registrations). Mirrors
-	// agentregistry's eviction shape so dockerevents can drive both
-	// registries identically.
+	// Consume removes and returns the slot for container_id. Returns
+	// ErrSlotInvalid on no slot or expired slot. Single-use — a second
+	// Consume of the same container_id returns ErrSlotInvalid even if
+	// the first was within TTL.
+	Consume(containerID string) (*Slot, error)
+	// EvictByContainerID removes any slot whose ContainerID matches.
+	// Mirrors agentregistry's eviction shape so dockerevents can drive
+	// both registries identically.
 	EvictByContainerID(containerID string)
-	// Len reports the number of live slots — used for the CP /healthz
-	// snapshot and for tests.
+	// Len reports the number of live slots — used for the CP
+	// /healthz snapshot and for tests.
 	Len() int
 	// Stop terminates the background TTL janitor cleanly.
 	Stop()
 }
 
-// slotKey is the composite map key for pending slots: cert thumbprint
-// plus (project, agent) tuple. Every component comes from the CLI's
-// AnnounceAgent payload; clawkerd later proves them with the mTLS cert
-// (thumbprint) and the ConnectRequest body (agent_name + project). For
-// an honest CLI each retry mints a fresh cert, so concurrent slot keys
-// for the same (project, agent) tuple never collide. Project is part of
-// the key (not just a side attribute) so the same short agent name in
-// two different projects keys two disjoint slots — a hard isolation
-// boundary at the registry level.
-type slotKey struct {
-	Thumbprint [sha256.Size]byte
-	AgentName  string
-	Project    string
-}
-
 type registryImpl struct {
-	mu       sync.Mutex
-	slots    map[slotKey]Slot
+	mu sync.Mutex
+	// slots is keyed solely by container_id. AdminService.AnnounceAgent
+	// reserves on every container start; agentdial consumes when CP
+	// successfully dials the container's clawkerd listener. The slot
+	// carries no auth-bearing material — its presence is the data
+	// point that says "this start was clawker-CLI-initiated".
+	slots    map[string]Slot
 	now      func() time.Time
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -146,8 +137,8 @@ type registryImpl struct {
 	period   time.Duration
 	// tickC drives janitor sweeps. Default is a real time.Ticker; tests
 	// inject a channel they can drive deterministically via
-	// NewRegistryForTesting so a sweep test doesn't have to wall-clock-
-	// poll the result.
+	// NewRegistryWithPulseChan so a sweep test doesn't have to
+	// wall-clock-poll the result.
 	tickC <-chan time.Time
 }
 
@@ -180,7 +171,7 @@ func constructRegistry(now func() time.Time, sweepPeriod time.Duration, log *log
 		sweepPeriod = consts.AgentSlotTTL / 2
 	}
 	r := &registryImpl{
-		slots:  make(map[slotKey]Slot),
+		slots:  make(map[string]Slot),
 		now:    now,
 		stop:   make(chan struct{}),
 		log:    log,
@@ -193,89 +184,58 @@ func constructRegistry(now func() time.Time, sweepPeriod time.Duration, log *log
 }
 
 func (r *registryImpl) Reserve(slot Slot) error {
-	if slot.AgentName == "" {
-		return errors.New("agentslots: agent name required")
+	if slot.ContainerID == "" {
+		// Programming-error invariant: the only caller is the
+		// AdminService.AnnounceAgent handler, which validates a
+		// non-empty container_id at the wire boundary. Panic loudly
+		// so the wiring bug surfaces during development rather than
+		// turning into a silent identity-binding gap.
+		panic("agentslots: Reserve called with empty ContainerID")
 	}
-	if slot.ChallengeMethod != consts.ChallengeMethodS256 {
-		// S256-only at the type level. The plan is explicit that no
-		// other PKCE method is supported; reject early so a buggy CLI
-		// doesn't reserve an unenforceable slot.
-		return errors.New("agentslots: challenge method must be S256")
-	}
-	// Programming-error invariants — the only caller is the
-	// AdminService.AnnounceAgent handler, which derives both fields
-	// from the CLI's signed claim. A zero thumbprint here would key
-	// the slot under all-zeros, breaking the "fresh cert per retry"
-	// composite-collision argument; an empty Challenge would let
-	// subtle.ConstantTimeCompare("", "") trivially pass against an
-	// empty verifier. Panic loudly so the wiring bug surfaces during
-	// development rather than turning into a silent identity-binding
-	// gap. Mirrors the same posture in agentregistry.Add.
-	if slot.ExpectedCertThumbprint == ([sha256.Size]byte{}) {
-		panic("agentslots: Reserve called with zero ExpectedCertThumbprint")
-	}
-	if slot.Challenge == "" {
-		panic("agentslots: Reserve called with empty Challenge")
-	}
-
-	// Stamp ReservedAt/ExpiresAt from the registry's clock so callers
-	// cannot supply a pre-expired or future-dated TTL. Any caller value
-	// is overwritten.
 	now := r.now()
 	slot.ReservedAt = now
 	slot.ExpiresAt = now.Add(consts.AgentSlotTTL)
 
-	key := slotKey{Thumbprint: slot.ExpectedCertThumbprint, AgentName: slot.AgentName, Project: slot.Project}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.slots[key]; exists {
+	if _, exists := r.slots[slot.ContainerID]; exists {
 		return ErrSlotExists
 	}
-	r.slots[key] = slot
+	r.slots[slot.ContainerID] = slot
 	return nil
 }
 
-func (r *registryImpl) Consume(thumbprint [sha256.Size]byte, agentName, project, verifier string) (*Slot, error) {
-	// Hash the verifier unconditionally before any branching on slot
-	// presence so an attacker probing for valid (thumbprint, project,
-	// agent) tuples can't use SHA-256 wall-clock latency to distinguish
-	// "key unknown" from "key known, wrong verifier".
-	expected := pkceChallenge(verifier)
-
-	key := slotKey{Thumbprint: thumbprint, AgentName: agentName, Project: project}
+func (r *registryImpl) Consume(containerID string) (*Slot, error) {
+	if containerID == "" {
+		return nil, ErrSlotInvalid
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	slot, ok := r.slots[key]
+	slot, ok := r.slots[containerID]
 	if !ok {
 		return nil, ErrSlotInvalid
 	}
 	if !r.now().Before(slot.ExpiresAt) {
-		delete(r.slots, key)
+		delete(r.slots, containerID)
 		return nil, ErrSlotInvalid
 	}
-	if subtle.ConstantTimeCompare([]byte(expected), []byte(slot.Challenge)) != 1 {
-		// Mismatch leaves the slot for a benign retry; TTL handles eviction.
-		return nil, ErrSlotInvalid
-	}
-	delete(r.slots, key)
+	delete(r.slots, containerID)
 	return &slot, nil
 }
 
 func (r *registryImpl) EvictByContainerID(containerID string) {
+	if containerID == "" {
+		return
+	}
 	r.mu.Lock()
-	var evicted []Slot
-	for k, slot := range r.slots {
-		if slot.ContainerID == containerID {
-			delete(r.slots, k)
-			evicted = append(evicted, slot)
-		}
+	_, ok := r.slots[containerID]
+	if ok {
+		delete(r.slots, containerID)
 	}
 	r.mu.Unlock()
-	for _, slot := range evicted {
+	if ok {
 		r.log.Info().
-			Str("agent", slot.AgentName).
-			Str("container_id", slot.ContainerID).
+			Str("container_id", containerID).
 			Msg("agentslots: pending slot evicted on container exit")
 	}
 }
@@ -318,24 +278,17 @@ func (r *registryImpl) sweep() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	swept := 0
-	for key, slot := range r.slots {
+	for containerID, slot := range r.slots {
 		if !now.Before(slot.ExpiresAt) {
-			delete(r.slots, key)
-			r.log.Debug().Str("agent", key.AgentName).Msg("agentslots: swept expired slot")
+			delete(r.slots, containerID)
+			r.log.Debug().Str("container_id", containerID).Msg("agentslots: swept expired slot")
+			_ = slot
 			swept++
 		}
 	}
 	if swept > 0 {
-		// Surface non-zero sweeps at info — an agent that announces but
-		// never registers (firewall break, container hang) shows up here.
+		// Surface non-zero sweeps at info — a container that announced
+		// but never had its clawkerd dialed shows up here.
 		r.log.Info().Int("swept", swept).Msg("agentslots: evicted expired slots")
 	}
-}
-
-// pkceChallenge mirrors the CLI's S256 derivation:
-// base64url(sha256(verifier)) with no padding. Used by both Consume
-// and the package's own tests to produce challenges from verifiers.
-func pkceChallenge(verifier string) string {
-	sum := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
 }

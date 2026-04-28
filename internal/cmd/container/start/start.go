@@ -12,7 +12,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -233,12 +232,6 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.L
 		}
 	}
 
-	// Pull (project, agent) off the container labels so this start path
-	// runs the same announce + fresh-bootstrap flow as `run`. Empty on a
-	// non-clawker-managed container, which makes shared.ContainerStart
-	// skip the announce branch (existing AgentName == "" gate).
-	agentName, projectName := resolveAgentIdentityFromLabels(ctx, client, containerID)
-
 	// Now start the container — I/O streaming goroutines are already running
 	log.Debug().Msg("starting container")
 	_, err = shared.ContainerStart(ctx,
@@ -251,8 +244,6 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.L
 			AdminClient:    opts.AdminClient,
 			SocketBridge:   opts.SocketBridge,
 			Logger:         opts.Logger,
-			AgentName:      agentName,
-			Project:        projectName,
 		},
 		docker.ContainerStartOptions{
 			ContainerID: containerID,
@@ -347,21 +338,6 @@ type waitResult struct {
 	err      error // non-nil if the wait itself failed (distinct from non-zero exit code)
 }
 
-// resolveAgentIdentityFromLabels reads (project, agent) off the
-// container's clawker labels. Both fields default to empty so a non-
-// clawker-managed container (or a pre-label-era one) skips the
-// AnnounceAgent + bootstrap flow inside shared.ContainerStart cleanly.
-// Inspect failure is non-fatal here — the caller proceeds with an
-// empty identity, and the start path errors out later if it actually
-// needs the inspect data.
-func resolveAgentIdentityFromLabels(ctx context.Context, client *docker.Client, nameOrID string) (agent, project string) {
-	res, err := client.ContainerInspect(ctx, nameOrID, docker.ContainerInspectOptions{})
-	if err != nil || res.Container.Config == nil {
-		return "", ""
-	}
-	return res.Container.Config.Labels[consts.LabelAgent], res.Container.Config.Labels[consts.LabelProject]
-}
-
 // waitForContainerExit wraps ContainerWait into a single result channel.
 // Always uses WaitConditionNextExit (start hasn't happened yet, and start
 // command never has autoRemove).
@@ -392,11 +368,6 @@ func waitForContainerExit(ctx context.Context, client *docker.Client, containerI
 func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams, log *logger.Logger, client *docker.Client, containers []string, cfg config.Config, opts *StartOptions) error {
 	var errs []error
 	for _, name := range containers {
-		// Pull (project, agent) off the container labels so this start
-		// path runs the same announce + fresh-bootstrap flow as `run`.
-		// Empty on a non-clawker-managed container.
-		agentName, projectName := resolveAgentIdentityFromLabels(ctx, client, name)
-
 		_, err := shared.ContainerStart(ctx,
 			shared.CommandOpts{
 				Client:         opts.Client,
@@ -407,8 +378,6 @@ func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams,
 				AdminClient:    opts.AdminClient,
 				SocketBridge:   opts.SocketBridge,
 				Logger:         opts.Logger,
-				AgentName:      agentName,
-				Project:        projectName,
 			},
 			docker.ContainerStartOptions{
 				ContainerID: name,
