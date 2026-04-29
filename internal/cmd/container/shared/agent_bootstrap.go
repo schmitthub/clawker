@@ -216,49 +216,61 @@ type InstallAgentBootstrapOptions struct {
 	Logger *logger.Logger
 }
 
-// InstallAgentBootstrap is the create-time agent material installer.
-// Called once per container creation from shared.CreateContainer; not
-// invoked again on subsequent starts (the writable layer holds the
-// cert/key for the container's lifetime). Steps in order:
+// InstallAgentBootstrapMaterial is step 1+2 of the create-time agent
+// install: mint PKCE/cert/key/CA/assertion (GenerateAgentBootstrap) and
+// tar them into the container's writable layer at consts.BootstrapDir
+// (WriteAgentBootstrapToContainer). Returns the bootstrap struct so the
+// caller can hand it to RegisterAgentInRegistry once the container is
+// fully ready (i.e. after any post-init injection has succeeded).
 //
-//  1. Mint a fresh PKCE pair, leaf cert + key, CA cert, and Hydra
-//     client_assertion (GenerateAgentBootstrap).
-//  2. Tar them into the container's writable layer at
-//     consts.BootstrapDir (WriteAgentBootstrapToContainer).
-//  3. Insert the (thumbprint, container_id, agent_name, project) row
-//     into the host-side agentregistry sqlite DB.
-//
-// Any failure past the registry write leaves the registry row in
-// place; the caller's deferred container-cleanup is expected to remove
-// the container and the row gets pruned on its next dockerevents
-// die / the next CLI cleanup pass.
-func InstallAgentBootstrap(ctx context.Context, caCertPath, caKeyPath string, signingKey *ecdsa.PrivateKey, opts InstallAgentBootstrapOptions) error {
+// No DB I/O. The registry row is intentionally NOT written here so the
+// caller can sequence "deliver material → run post-init → write registry
+// row" with the row signifying "container fully ready" instead of merely
+// "bootstrapped, may not be ready". Any failure here is recovered by the
+// caller's ContainerRemove without orphaning a registry row.
+func InstallAgentBootstrapMaterial(ctx context.Context, caCertPath, caKeyPath string, signingKey *ecdsa.PrivateKey, opts InstallAgentBootstrapOptions) (*AgentBootstrap, error) {
 	if opts.ContainerID == "" {
-		return fmt.Errorf("install agent bootstrap: container id required")
-	}
-	if opts.RegistryDBPath == "" {
-		return fmt.Errorf("install agent bootstrap: registry db path required")
+		return nil, fmt.Errorf("install agent bootstrap material: container id required")
 	}
 	if opts.CopyToContainer == nil {
-		return fmt.Errorf("install agent bootstrap: copy-to-container fn required")
+		return nil, fmt.Errorf("install agent bootstrap material: copy-to-container fn required")
+	}
+
+	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, opts.Project, opts.Agent, opts.HydraTokenAudience, signingKey)
+	if err != nil {
+		return nil, fmt.Errorf("install agent bootstrap material: generate: %w", err)
+	}
+
+	if err := WriteAgentBootstrapToContainer(ctx, opts.ContainerID, opts.CopyToContainer, bootstrap); err != nil {
+		return nil, fmt.Errorf("install agent bootstrap material: write: %w", err)
+	}
+	return bootstrap, nil
+}
+
+// RegisterAgentInRegistry is step 3 of the create-time agent install:
+// open the host-side agentregistry sqlite DB and INSERT the (thumbprint,
+// container_id, agent_name, project, canonical_cn) row. This is the
+// LAST step of container creation so the registry row signifies "container
+// fully ready". The caller is responsible for ContainerRemove on failure;
+// the dockerevents reaper would otherwise resurface the orphaned container.
+func RegisterAgentInRegistry(ctx context.Context, opts InstallAgentBootstrapOptions, bootstrap *AgentBootstrap) error {
+	if bootstrap == nil {
+		return fmt.Errorf("register agent in registry: bootstrap is nil")
+	}
+	if opts.ContainerID == "" {
+		return fmt.Errorf("register agent in registry: container id required")
+	}
+	if opts.RegistryDBPath == "" {
+		return fmt.Errorf("register agent in registry: registry db path required")
 	}
 	log := opts.Logger
 	if log == nil {
 		log = logger.Nop()
 	}
 
-	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, opts.Project, opts.Agent, opts.HydraTokenAudience, signingKey)
-	if err != nil {
-		return fmt.Errorf("install agent bootstrap: generate: %w", err)
-	}
-
-	if err := WriteAgentBootstrapToContainer(ctx, opts.ContainerID, opts.CopyToContainer, bootstrap); err != nil {
-		return fmt.Errorf("install agent bootstrap: write: %w", err)
-	}
-
 	reg, err := agentregistry.NewSQLiteWriter(opts.RegistryDBPath, log)
 	if err != nil {
-		return fmt.Errorf("install agent bootstrap: open registry: %w", err)
+		return fmt.Errorf("register agent in registry: open registry: %w", err)
 	}
 	closer, _ := reg.(interface{ Close() error })
 	defer func() {
@@ -276,14 +288,14 @@ func InstallAgentBootstrap(ctx context.Context, caCertPath, caKeyPath string, si
 		RegisteredAt: now,
 		LastSeen:     now,
 	}); err != nil {
-		return fmt.Errorf("install agent bootstrap: registry write: %w", err)
+		return fmt.Errorf("register agent in registry: %w", err)
 	}
 
 	log.Info().
 		Str("container_id", opts.ContainerID).
 		Str("agent", opts.Agent.String()).
 		Str("project", opts.Project.String()).
-		Msg("agent bootstrap installed and registry row written")
+		Msg("agent registry row written")
 	return nil
 }
 

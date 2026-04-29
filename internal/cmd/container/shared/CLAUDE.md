@@ -80,6 +80,15 @@ GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, hydraTokenURL stri
 AnnounceAgent(ctx context.Context, admin AdminServiceClient, b *AgentBootstrap, project, agent, containerID string) error
 
 WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *AgentBootstrap) error
+
+// Create-time install is split into two halves so the agentregistry row
+// is the LAST step of container creation. Material delivery runs first
+// (mint + tar into container), then post-init injection (if configured)
+// runs against the bootstrapped container, and only on success does the
+// caller write the registry row. A failure in any earlier step removes
+// the container with no orphan registry row.
+InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, opts InstallAgentBootstrapOptions) (*AgentBootstrap, error)
+RegisterAgentInRegistry(ctx, opts InstallAgentBootstrapOptions, bootstrap *AgentBootstrap) error
 ```
 
 `CommandOpts.AgentName` (the short user-typed name) and `CommandOpts.Project`

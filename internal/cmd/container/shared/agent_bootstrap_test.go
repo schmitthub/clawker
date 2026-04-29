@@ -23,6 +23,7 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	mocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
@@ -281,6 +282,98 @@ func expectFile(t *testing.T, files map[string]tarEntry, name string, mode os.Fi
 	assert.False(t, entry.dir, "expected file (not dir) for %q", name)
 	assert.Equal(t, mode, entry.mode, "mode for %q", name)
 	assert.Equal(t, body, entry.body, "body for %q", name)
+}
+
+// TestInstallAgentBootstrapMaterial_DoesNotTouchRegistry verifies the
+// material-delivery half of the create-time install does not open or
+// write to the registry DB. The split is the C7 fix: registry row must
+// be the LAST step so a post-init failure cannot orphan a row.
+func TestInstallAgentBootstrapMaterial_DoesNotTouchRegistry(t *testing.T) {
+	caCert, caKey, signing := setupAuthEnv(t)
+
+	var copied bool
+	copyFn := func(_ context.Context, _ string, _ string, _ io.Reader) error {
+		copied = true
+		return nil
+	}
+
+	// Pass a registry DB path that would FAIL to open if touched (file
+	// path under a non-existent directory). Material delivery must not
+	// open the registry, so this path must never be dereferenced.
+	bogusDB := path.Join(t.TempDir(), "does-not-exist-dir", "agents.db")
+
+	bootstrap, err := InstallAgentBootstrapMaterial(context.Background(), caCert, caKey, signing, InstallAgentBootstrapOptions{
+		Project:            auth.MustProjectSlug("alpha"),
+		Agent:              auth.MustAgentName("bravo"),
+		ContainerID:        "ctr-id",
+		HydraTokenAudience: "https://hydra.example/oauth2/token",
+		CopyToContainer:    copyFn,
+		RegistryDBPath:     bogusDB,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, bootstrap)
+	assert.True(t, copied, "WriteAgentBootstrapToContainer must run")
+
+	// Bogus DB path must not have been opened — no parent dir was created.
+	_, statErr := os.Stat(path.Dir(bogusDB))
+	assert.True(t, os.IsNotExist(statErr), "registry DB parent dir must not be created during material delivery")
+}
+
+// TestRegisterAgentInRegistry_AddSucceeds_NoErr exercises the happy path:
+// a real sqlite DB, a synthetic bootstrap, and verification that the row
+// reads back via LookupByContainerID.
+func TestRegisterAgentInRegistry_AddSucceeds_NoErr(t *testing.T) {
+	dbPath := path.Join(t.TempDir(), "agents.db")
+	bootstrap := validBootstrap()
+	opts := InstallAgentBootstrapOptions{
+		Project:        auth.MustProjectSlug("alpha"),
+		Agent:          auth.MustAgentName("bravo"),
+		ContainerID:    "ctr-register-ok",
+		RegistryDBPath: dbPath,
+	}
+
+	require.NoError(t, RegisterAgentInRegistry(context.Background(), opts, bootstrap))
+
+	// Verify row landed by reopening the DB.
+	r, err := agentregistry.NewSQLiteWriter(dbPath, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if c, ok := r.(interface{ Close() error }); ok {
+			_ = c.Close()
+		}
+	})
+	entry, err := r.LookupByContainerID("ctr-register-ok")
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.Equal(t, "bravo", entry.AgentName)
+	assert.Equal(t, "alpha", entry.Project)
+	assert.Equal(t, bootstrap.ExpectedCertThumbprint, entry.Thumbprint)
+}
+
+// TestRegisterAgentInRegistry_DBFailure_ReturnsErr verifies that a failed
+// sqlite open surfaces as a returned error rather than a panic. Path
+// points inside a non-existent parent directory so the driver cannot
+// create the file.
+func TestRegisterAgentInRegistry_DBFailure_ReturnsErr(t *testing.T) {
+	bogusDB := path.Join(t.TempDir(), "does-not-exist-dir", "agents.db")
+	err := RegisterAgentInRegistry(context.Background(), InstallAgentBootstrapOptions{
+		Project:        auth.MustProjectSlug("alpha"),
+		Agent:          auth.MustAgentName("bravo"),
+		ContainerID:    "ctr",
+		RegistryDBPath: bogusDB,
+	}, validBootstrap())
+	require.Error(t, err)
+}
+
+// TestRegisterAgentInRegistry_RejectsNilBootstrap guards the explicit
+// nil-check at the top of RegisterAgentInRegistry — a bug in the caller
+// that forgets to thread the bootstrap through must not segfault.
+func TestRegisterAgentInRegistry_RejectsNilBootstrap(t *testing.T) {
+	err := RegisterAgentInRegistry(context.Background(), InstallAgentBootstrapOptions{
+		ContainerID:    "ctr",
+		RegistryDBPath: path.Join(t.TempDir(), "agents.db"),
+	}, nil)
+	require.Error(t, err)
 }
 
 func mustParseCert(t *testing.T, pemBytes []byte) *x509.Certificate {

@@ -34,7 +34,7 @@ Three load-bearing concepts shape every fix:
 | # | Task | Status | Claimed by | Blocked by | Parallel-safe |
 |---|------|--------|-----------|-----------|:-------------:|
 | 01 | [agentregistry foundation refactor](01-agentregistry-foundation.md) | complete | claude-opus-4.7 | — | no |
-| 02 | [container_create: move reg.Add to last step](02-bootstrap-order.md) | pending | — | 01 | no |
+| 02 | [container_create: move reg.Add to last step](02-bootstrap-order.md) | complete | claude-opus-4.7 | 01 | no |
 | 03 | [cmd/controlplane/agents: remove DBPath field](03-agents-cmd-dbpath.md) | pending | — | 01 | no |
 | 04 | [informer: split per-kind event queues](04-informer-per-kind-split.md) | pending | — | — | no |
 | 05 | [agentdial refactor + tests](05-agentdial-refactor.md) | pending | — | 01, 04 | no |
@@ -42,7 +42,7 @@ Three load-bearing concepts shape every fix:
 | 07 | [cmd/clawkerd/session: audit + race + atomic + tests](07-clawkerd-session-fixes.md) | pending | — | — | yes |
 | 08 | [cmd/clawkerd/listener: EKU + audit + tests](08-clawkerd-listener-fixes.md) | pending | — | — | yes |
 | 09 | [agentslots: sweep log + janitor race test](09-agentslots-sweep-tests.md) | pending | — | 04 | yes |
-| 10 | [server_test: nil-agents → empty ListAgents](10-server-test-nil-agents.md) | pending | — | — | yes |
+| 10 | [server_test: nil-agents → empty ListAgents](10-server-test-nil-agents.md) | pending | - | — | yes |
 | 11 | [misc close-error swallows](11-misc-close-swallows.md) | pending | — | 03 | yes |
 | 12 | [docs: rewrite agentslots/CLAUDE.md](12-doc-agentslots-rewrite.md) | pending | — | — | yes |
 

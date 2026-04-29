@@ -1,7 +1,7 @@
 # Task 02 — container_create: move reg.Add to last step
 
-**Status**: pending
-**Claimed by**: —
+**Status**: complete
+**Claimed by**: claude-opus-4.7
 **Blocks**: —
 **Blocked by**: 01
 
@@ -87,7 +87,9 @@ make test
 
 ## Resolution
 
-(Filled in on completion.)
-
-- Commit SHA:
+- Commit SHA: (filled by commit)
 - Notes:
+  - Split `InstallAgentBootstrap` into `InstallAgentBootstrapMaterial` (mint + tar to container) and `RegisterAgentInRegistry` (sqlite write). No DB I/O in the material half.
+  - Reordered `container_create.go` call site: material delivery → post-init injection → registry row write. Registry row now signifies "container fully ready"; failure of any earlier step triggers `ContainerRemove` with no orphan row possible. Failure of the registry write itself also triggers `ContainerRemove` to keep the registry as the source of truth.
+  - Updated package doc to describe the new ordering. Old "any failure past the registry write" caveat is gone — there is nothing past it.
+  - Tests: `TestInstallAgentBootstrapMaterial_DoesNotTouchRegistry` (bogus DB path never opened during material delivery), `TestRegisterAgentInRegistry_AddSucceeds_NoErr`, `TestRegisterAgentInRegistry_DBFailure_ReturnsErr`, `TestRegisterAgentInRegistry_RejectsNilBootstrap`. Unit suite green (`make test` passes).

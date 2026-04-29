@@ -1688,7 +1688,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	if err != nil {
 		return nil, fmt.Errorf("agent bootstrap: invalid agent name: %w", err)
 	}
-	if err := InstallAgentBootstrap(ctx, caCertPath, caKeyPath, signingKey, InstallAgentBootstrapOptions{
+	bootstrapOpts := InstallAgentBootstrapOptions{
 		Project:            projectSlug,
 		Agent:              agentTyped,
 		ContainerID:        resp.ID,
@@ -1696,7 +1696,9 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		CopyToContainer:    NewCopyToContainerFn(client),
 		RegistryDBPath:     registryDBPath,
 		Logger:             log,
-	}); err != nil {
+	}
+	bootstrap, err := InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, bootstrapOpts)
+	if err != nil {
 		cleanupCtx := context.Background()
 		if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
 			log.Warn().Str("containerID", resp.ID).Err(rmErr).
@@ -1723,6 +1725,20 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 			}
 			return nil, fmt.Errorf("inject post-init script: %w", err)
 		}
+	}
+
+	// Register agent in registry as the LAST creation step. Registry row
+	// signifies "container fully ready"; if material delivery or post-init
+	// failed above, no orphan row exists. If the row write itself fails on
+	// an otherwise fully-built container, ContainerRemove cleans up so the
+	// container does not outlive its registry entry.
+	if err := RegisterAgentInRegistry(ctx, bootstrapOpts, bootstrap); err != nil {
+		cleanupCtx := context.Background()
+		if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
+			log.Warn().Str("containerID", resp.ID).Err(rmErr).
+				Msg("failed to clean up container after registry write failure")
+		}
+		return nil, fmt.Errorf("register agent in registry: %w", err)
 	}
 
 	sendComplete(ctx, events, "container", "Container created")

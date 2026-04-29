@@ -141,7 +141,7 @@ None. This is the foundation task.
 
 ## Resolution
 
-- Commit SHA: (filled by commit)
+- Commit SHA: cb4b5d01
 - Notes:
   - Dropped in-memory cache from `sqliteRegistry`; `Lookup`/`Snapshot`/`LookupByThumbprint`/`LookupByContainerID` now query sqlite directly (S4, S5, S7, S17 collapse by construction).
   - Added `canonical_cn TEXT NOT NULL` column to the `agents` table; `Add` composes it via `auth.NewProjectSlug` + `auth.NewAgentName` (err-returning typed constructors). `Lookup` compares against this column with `subtle.ConstantTimeCompare`. Removes the C2 / Y1 / Y2 panic vector at the call site.
