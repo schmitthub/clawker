@@ -43,7 +43,7 @@ Three load-bearing concepts shape every fix:
 | 08 | [cmd/clawkerd/listener: EKU + audit + tests](08-clawkerd-listener-fixes.md) | pending | — | — | yes |
 | 09 | [agentslots: sweep log + janitor race test](09-agentslots-sweep-tests.md) | pending | — | 04 | yes |
 | 10 | [server_test: nil-agents → empty ListAgents](10-server-test-nil-agents.md) | pending | - | — | yes |
-| 11 | [misc close-error swallows](11-misc-close-swallows.md) | pending | — | 03 | yes |
+| 11 | [misc close-error swallows](11-misc-close-swallows.md) | complete | claude-opus-4.7 | 03 | yes |
 | 12 | [docs: rewrite agentslots/CLAUDE.md](12-doc-agentslots-rewrite.md) | pending | — | — | yes |
 
 `parallel-safe = yes` means the task touches files that no in-progress task is mutating. Always re-check at claim time.

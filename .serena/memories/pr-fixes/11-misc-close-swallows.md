@@ -1,7 +1,7 @@
 # Task 11 — misc close-error swallows: agents.go + clawkerd main.go
 
-**Status**: pending
-**Claimed by**: —
+**Status**: complete
+**Claimed by**: claude-opus-4.7
 **Blocks**: —
 **Blocked by**: 03 (agents.go gets restructured first)
 **Parallel-safe**: yes
@@ -78,7 +78,8 @@ make test
 
 ## Resolution
 
-(Filled in on completion.)
-
-- Commit SHA:
+- Commit SHA: (filled by commit)
 - Notes:
+  - `agents.go`: deferred sqlite reader close now logs `Debug` via the already-resolved `log` rather than dropping the error.
+  - `clawkerd/main.go`: `log.Close()` failure now writes to `os.Stderr` since the logger itself is what's closing.
+  - No new tests — both are tiny defensive logging changes.

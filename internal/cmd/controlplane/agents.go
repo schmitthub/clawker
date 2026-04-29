@@ -121,8 +121,16 @@ func loadAgentRows(dbPath string, log *logger.Logger) ([]agentRow, error) {
 		return nil, fmt.Errorf("opening registry: %w", err)
 	}
 	defer func() {
-		if closer, ok := reg.(interface{ Close() error }); ok {
-			_ = closer.Close()
+		closer, ok := reg.(interface{ Close() error })
+		if !ok {
+			return
+		}
+		if err := closer.Close(); err != nil {
+			// Best-effort: log the error if we can. CLI exit-time
+			// path; logger is still alive. If logger init itself
+			// fails (extremely unlikely here — same logger was just
+			// resolved successfully a few lines up) silently drop.
+			log.Debug().Err(err).Msg("agents: sqlite reader close failed")
 		}
 	}()
 

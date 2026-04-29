@@ -85,7 +85,7 @@ make test
 
 ## Resolution
 
-- Commit SHA: (filled by commit)
+- Commit SHA: 67e4b4fe
 - Notes:
   - Removed `DBPath` field from `AgentsOptions` and the wiring in `NewCmdAgents`. `agentsRun` now calls `consts.ControlPlaneDBPath()` directly.
   - Tests use `testenv.New(t)` which sets `CLAWKER_DATA_DIR` via `t.Setenv`; `consts.ControlPlaneDBPath()` resolves to the testenv's data subdir without an injection seam.
