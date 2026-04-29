@@ -87,7 +87,7 @@ None for the rewrite itself. **Coordinate with Task #9** which touches `agentslo
 
 ## Resolution
 
-- Commit SHA: (filled by commit)
+- Commit SHA: 7a6a62fd
 - Notes:
   - Full rewrite of `internal/controlplane/agentslots/CLAUDE.md` to describe the actual container_id-keyed model.
   - Removed the stale composite-key narrative entirely (no archaeology — git log has it).
