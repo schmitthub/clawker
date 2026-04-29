@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
@@ -148,42 +147,6 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath string, project auth.ProjectSl
 		CACertPEM:              caPEM,
 		Assertion:              assertion,
 	}, nil
-}
-
-// AnnounceAgent reserves a registration slot on the CP for the given
-// container before docker start. CP slot stores the (project, agent)
-// composite identity, the Docker container ID CLI just received, the
-// cert thumbprint CLI minted, and the PKCE challenge. clawkerd consumes
-// the matching verifier at Connect; if the slot expires
-// (consts.AgentSlotTTL elapses) clawkerd's Connect fails fail-closed.
-//
-// project + agent travel as separate wire fields (not assembled into a
-// canonical name) so the CP composite slot key can include both without
-// re-parsing on the server side. The thumbprint is sent over the wire as
-// lowercase hex because the proto field is a free-form `string` —
-// internally we keep the byte-array form to avoid carrying around a
-// redundantly-encoded representation.
-//
-// Typed (auth.ProjectSlug, auth.AgentName) inputs — the constructors
-// already validated charset/length/no-canonical-prefix at the CLI flag
-// boundary, so this function trusts the values it receives.
-// AnnounceAgent reserves a CLI-attestation slot on the CP for the
-// given container_id. Called by every container start path
-// (run/create/start/restart/loop) via BootstrapServicesPreStart, so
-// the slot's existence on the CP side is the data point that says
-// "this start was initiated by the clawker CLI, not raw `docker
-// start`". Identity verification (thumbprint, CN) flows separately
-// through agentregistry when CP dials the running clawkerd.
-func AnnounceAgent(ctx context.Context, admin adminv1.AdminServiceClient, containerID string) error {
-	if containerID == "" {
-		return fmt.Errorf("announce agent: container id required")
-	}
-	if _, err := admin.AnnounceAgent(ctx, &adminv1.AnnounceAgentRequest{
-		ContainerId: containerID,
-	}); err != nil {
-		return fmt.Errorf("announce agent (container %s): %w", containerID, err)
-	}
-	return nil
 }
 
 // InstallAgentBootstrapOptions bundles the inputs InstallAgentBootstrap

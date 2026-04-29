@@ -42,7 +42,6 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/agent"
 	"github.com/schmitthub/clawker/internal/controlplane/agentdial"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
-	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
@@ -424,22 +423,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		log.Warn().Err(err).Msg("agentregistry: startup reap failed; continuing")
 	}
 
-	// announceSlots holds the short-lived CLI-attestation tokens that
-	// AdminService.AnnounceAgent reserves (per-start, container_id
-	// keyed). Consumed by agentdial when CP dials the running
-	// clawkerd; absence is the "unattested start" signal for
-	// downstream decision-making, not an error.
-	announceSlotRegistry := agentslots.NewRegistry(time.Now, 0, log.With("component", "announceslots"))
-	defer announceSlotRegistry.Stop()
-
-	// agentslots is the legacy PKCE+thumbprint slot store backing the
-	// dead AgentService.Register handler. Kept wired so the handler
-	// surface compiles and stays in place for future agent→CP RPCs;
-	// nothing in this branch calls Register.
-	slotRegistry := agentslots.NewRegistry(time.Now, 0, log.With("component", "agentslots"))
-	defer slotRegistry.Stop()
-
-	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, announceSlotRegistry, time.Now, log))
+	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, log))
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
 	if err != nil {
@@ -459,9 +443,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	// IdentityInterceptor runs AFTER AuthInterceptor: token + scope
 	// pass first, then identity resolves the peer cert thumbprint to
-	// a registered agent (or rejects). Connect is on the opt-out list
-	// (it authenticates itself); every other agent RPC must be
-	// registry-bound by the time the handler sees it.
+	// a registered agent (or rejects). AgentService is empty in this
+	// branch (Register was retired); the interceptor is wired so the
+	// listener stays correctly configured for any future inbound
+	// agent RPC.
 	identityUnary, identityStream := agent.IdentityInterceptor(
 		agentReg,
 		agent.IdentityOptedOutMethods(),
@@ -477,14 +462,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("step 8 (agent grpc listen): %w", err)
 	}
 
-	// AgentService wiring: shared slot registry (announce-time
-	// reservations, hoisted above NewAdminServer) + the shared agent
-	// registry + handler. The agent registry's typed-event
-	// subscription is set up further down, once the Overseer bus is
-	// alive.
-	agentInspector := agent.MobyInspector{Client: dockerCli.APIClient}
-	agentHandler := agent.NewHandler(slotRegistry, agentReg, agentInspector, log.With("component", "agent-handler"))
-	agentv1.RegisterAgentServiceServer(agentServer, agentHandler)
+	// AgentService is empty (Register retired alongside agentslots/
+	// AnnounceAgent). The listener stays bound to clawker-net so a
+	// future inbound agent RPC can land without re-wiring the listener
+	// or its interceptor chain.
+	agentv1.RegisterAgentServiceServer(agentServer, &agentv1.UnimplementedAgentServiceServer{})
 
 	// Cap covers gRPC admin, gRPC agent, healthz, and the dockerevents
 	// feeder. Buffered so any goroutine that fails before main reaches
@@ -537,10 +519,16 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// grow unbounded. SubscriberBuffer=256: per-subscriber drop-oldest
 	// threshold; sized so a slow consumer only loses ~5s of activity
 	// at the heartbeat rate before events start dropping.
+	busLog := log.With("component", "overseer")
 	bus := overseer.New(overseer.Options{
-		Logger:            log.With("component", "overseer"),
+		Logger:            busLog,
 		PublishBufferSize: 2048,
 		SubscriberBuffer:  256,
+		// PublishHook emits one structured Info line per published
+		// event from the bus loop. Producers (dockerevents, agentdial)
+		// no longer pair manual log calls with each Publish — the
+		// hook is the single canonical source of bus-event log lines.
+		PublishHook: overseer.NewLoggerHook(busLog),
 	})
 
 	watcherCtx, watcherCancel := context.WithCancel(context.Background())
@@ -568,9 +556,6 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 
 	// Hook agent registry to typed ContainerRemoved events — evicts
 	// registered agents when their containers are destroyed.
-	// agentslots is intentionally NOT a subscriber: its TTL janitor
-	// is the sole correctness floor (slots terminal-state via Consume
-	// or TTL expire; container lifecycle is irrelevant).
 	cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, bus, log.With("component", "agentregistry"))
 	defer cancelAgentSub()
 
@@ -716,7 +701,6 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		dockerCli.APIClient,
 		bus,
 		agentReg,
-		announceSlotRegistry,
 		consts.CPClientCertPath,
 		consts.CPClientKeyPath,
 		caCertPool,

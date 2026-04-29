@@ -36,11 +36,28 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 LLM sessions repeatedly conflate the Control Plane (CP) with the firewall. They are NOT the same thing.
 
 - **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent slot/registry bookkeeping, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `cpboot.EnsureRunning`. There is no "disable CP" flag. CP owns clawker-net.
-- **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml` — the project schema's `security.firewall` field is `FirewallConfig`, holding per-project `add_domains`/`rules` only; the master switch is global). When disabled, those components don't run — but CP, clawker-net, mTLS, AnnounceAgent, clawkerd Connect, ListAgents, and every non-firewall AdminService RPC continue to operate.
+- **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml` — the project schema's `security.firewall` field is `FirewallConfig`, holding per-project `add_domains`/`rules` only; the master switch is global). When disabled, those components don't run — but CP, clawker-net, mTLS, agentregistry, agentdial→clawkerd Session, ListAgents, and every non-firewall AdminService RPC continue to operate.
 
 **CP owns firewall, not the other way around.** Older framings that put firewall above or alongside CP are stale — disregard them.
 
 Do **NOT** gate non-firewall behavior on `firewall.enable` (settings.yaml). The flag scopes the egress enforcement layer only.
+
+</critical_clarification>
+
+<critical_clarification>
+
+## Asymmetric trust: dialer permissive, listener strict
+
+CP↔clawkerd is asymmetric on purpose:
+
+- **clawkerd-side listener (server):** STRICT. `cmd/clawkerd/listener.go` enforces CP CN pin + Client-Auth EKU + CA chain at the TLS layer; any peer that isn't CP is rejected before reaching the handler.
+- **CP-side dialer (client):** PERMISSIVE. `internal/controlplane/agentdial.Dialer` NEVER aborts on cert / identity grounds. Cert chain verify, peer CN match, registry cross-check (thumbprint, canonical_cn) — every outcome is a typed boolean field on the `SessionConnected.Provenance` overseer event payload. The dial only fails on connectivity (TCP timeout, container gone, retry exhausted, ctx cancelled).
+
+**Why permissive on the dialer:** CP must always be able to reach clawkerd to issue containment commands (iptables lock, network detach, container kill, future BPF action). A compromised clawkerd presenting a bad cert is exactly when CP needs the channel up to issue lockdown commands. Aborting on cert grounds would strand CP at the moment governance is most needed.
+
+Subscribers to `SessionConnected` consume the `Provenance` fields to enact policy; the dialer holds no policy itself. Future "things" (containment actions, alerting, eviction) plug in by subscribing to overseer events — they never modify the dialer.
+
+**Trust attestation today:** CLI mints the agent cert + writes a sqlite registry row keyed by container_id at create time. The dialer cross-checks the peer cert thumbprint against the row and emits the result on the bus. There is no separate AnnounceAgent / slot reservation — those were retired alongside the in-memory `agentslots` package because the registry+cert binding subsumes their attestation value.
 
 </critical_clarification>
 
@@ -49,12 +66,12 @@ Do **NOT** gate non-firewall behavior on `firewall.enable` (settings.yaml). The 
 ```
 ├── api/
 │   ├── admin/v1/              # AdminService protobuf (CLI → CP gRPC, mTLS on AdminPort)
-│   └── agent/v1/              # AgentService protobuf — `Connect` (server-streaming) + `Events` consumed by the per-container `clawkerd` daemon
+│   └── agent/v1/              # AgentService protobuf — currently empty (Register retired); reserved for future inbound clawkerd→CP RPCs
 ├── cmd/
 │   ├── clawker/               # Main CLI binary
-│   ├── clawker-cp/            # Control plane daemon binary — `clawker-cp` runs as PID 1 in the CP container, owns firewall/eBPF state, serves AdminService gRPC
+│   ├── clawker-cp/            # Control plane daemon binary — `clawker-cp` runs as PID 1 in the CP container, owns firewall/eBPF state, serves AdminService gRPC, dials each clawkerd's `ClawkerdService.Session` for command dispatch
 │   ├── clawker-generate/      # Code generation helper
-│   ├── clawkerd/              # Per-container agent daemon (Linux); started from the bundled image entrypoint, exchanges a JWT assertion for a Hydra access token, mTLS-dials CP and opens AgentService.Connect (server-streaming) for the container lifetime
+│   ├── clawkerd/              # Per-container agent daemon (Linux); started from the bundled image entrypoint, exchanges a JWT assertion for a Hydra access token, serves `ClawkerdService.Session` (CP-dialed, bidi-stream) for the container lifetime
 │   ├── coredns-clawker/       # Custom CoreDNS build embedding the dnsbpf plugin (Linux; embedded via go:embed into internal/controlplane/firewall)
 │   └── gen-docs/              # CLI doc generator (man/markdown/rst/yaml)
 ├── internal/
@@ -74,13 +91,15 @@ Do **NOT** gate non-firewall behavior on `firewall.enable` (settings.yaml). The 
 │   ├── consts/                # Cross-package constants (CP container name, network labels, scopes)
 │   ├── containerfs/           # Host Claude config preparation for container init
 │   ├── controlplane/          # Control plane daemon: Ory auth stack, AdminService composition, startup orchestrator, agent watcher
-│   │   ├── agent/             # AgentService.Connect handler (composite-identity cross-checks, PKCE consume, server-stream Welcome) + identity interceptor (cert-thumbprint binding, fail-secure opt-out map)
-│   │   ├── agentregistry/     # Live-agent registry — populated post-Connect (cert thumbprint + canonical CN), evicted via dockerevents container die/remove
-│   │   ├── agentslots/        # Pre-Connect slot reservations: composite key (thumbprint, agent_name, project) + PKCE challenge, TTL janitor, dockerevents EvictByContainerID
+│   │   ├── agent/             # AgentService listener identity interceptor (cert-thumbprint → registry entry, fail-secure opt-out map). AgentService is empty in this branch.
+│   │   ├── agentdial/         # CP-side outbound dialer for `ClawkerdService.Session`. Permissive trust (always connects); cert/CN/registry outcomes emitted as typed `Provenance` fields on `SessionConnected` overseer events
+│   │   ├── agentregistry/     # SQLite-persisted identity store — CLI writes `(thumbprint, container_id, canonical_cn)` rows at container create time; CP-side reaper + dockerevents `ContainerRemoved` evict
 │   │   ├── cpboot/            # Host-side CP lifecycle: `EnsureRunning`/`Stop`/`CPRunning`, `BuildCPContainerConfig`, `Manager` interface + `NewManager`, embedded clawker-cp + ebpf-manager binaries (split out so `cmd/clawker-cp` doesn't drag in its own `go:embed`)
 │   │   │   └── assets/        # Embedded CP + break-glass ebpf-manager Linux binaries (gitignored; built by make cp-binary / make ebpf-binary)
 │   │   ├── firewall/          # Firewall domain: `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS lifecycle), Envoy+CoreDNS config generators, certs, rules store, network discovery, cgroup helpers, embedded coredns-clawker binary
 │   │   │   └── ebpf/          # eBPF loader + `Manager` (cgroup programs, pinned maps); `cmd/` break-glass ebpf-manager CLI
+│   │   ├── overseer/          # Typed event bus + in-memory worldview state. Producers publish typed events; subscribers receive typed channels. Optional PublishHook middleware for cross-cutting concerns (default-logger hook lives here)
+│   │   ├── dockerevents/      # Docker events feeder + reconcile + typed event publishers (`ContainerStarted`, `ContainerStopped`, `ContainerRemoved`, `NetworkAttached`, `NetworkDetached`)
 │   │   └── mocks/             # ControlPlaneServiceMock, IntrospectorMock, AdminServiceClientMock (ManagerMock lives in cpboot/mocks/)
 │   ├── dnsbpf/                # CoreDNS plugin: writes DNS A-record resolutions (IPv4) to the BPF dns_cache map in real time (used by cmd/coredns-clawker)
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)

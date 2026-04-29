@@ -39,12 +39,11 @@ type CommandOpts struct {
 	AgentName string
 
 	// Project is the clawker project slug the agent runs under, paired
-	// with AgentName to form the composite (project, agent) identity the
-	// CP keys slots and registry entries by. Empty string for the
-	// 2-segment unscoped naming case — same convention as
-	// docker.ContainerName. Must be set whenever AgentName is set on a
-	// new-container start path so AnnounceAgent + MintAgentCert agree on
-	// the canonical CN.
+	// with AgentName to form the (project, agent) identity the CP keys
+	// agentregistry entries by. Empty string for the 2-segment unscoped
+	// naming case — same convention as docker.ContainerName. Must be set
+	// whenever AgentName is set on a new-container start path so
+	// MintAgentCert composes the right canonical CN.
 	Project string
 }
 
@@ -155,24 +154,6 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 			Rules: fwcp.ConfigRulesToProto(proj.EgressRules()),
 		}); err != nil {
 			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
-		}
-	}
-
-	// AnnounceAgent: signal CP that the clawker CLI is initiating a
-	// start for this container. Slot reservation is the data point CP
-	// uses (alongside the registry row written at create time) to know
-	// the start was CLI-attested. Skipped when container is empty
-	// (legacy callers that haven't routed through ContainerStart's
-	// post-create flow) and gracefully tolerates missing AdminClient
-	// (test paths that don't wire the CP). Errors don't abort the
-	// start — the container is functional without CP attestation, and
-	// agentdial will still verify the registry row when it dials.
-	if container != "" && cmdOpts.AdminClient != nil {
-		adminClient, err := cmdOpts.AdminClient(ctx)
-		if err != nil {
-			log.Warn().Err(err).Str("container_id", container).Msg("announce agent: admin dial failed; proceeding without slot")
-		} else if err := AnnounceAgent(ctx, adminClient, container); err != nil {
-			log.Warn().Err(err).Str("container_id", container).Msg("announce agent failed; proceeding without slot")
 		}
 	}
 

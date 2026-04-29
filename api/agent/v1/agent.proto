@@ -4,75 +4,19 @@ package clawker.agent.v1;
 
 option go_package = "github.com/schmitthub/clawker/api/agent/v1";
 
-// AgentService is the gRPC surface clawkerd (the per-container agent
-// daemon) calls on the control plane.
+// AgentService is the (currently empty) gRPC surface for per-agent
+// inbound RPCs to the control plane. The Register handshake was
+// retired alongside agentslots/AnnounceAgent — agent identity is now
+// CLI-written into agentregistry at container-create time and
+// re-resolved server-side when CP dials the running clawkerd's
+// ClawkerdService listener.
 //
-// Transport: mTLS over TCP on the CP's clawker-net agent listener.
-// Server requires a client cert chained to the CLI CA — clawkerd
-// presents the per-agent leaf cert that the CLI minted at AnnounceAgent
-// time.
+// AgentService is preserved as the future-extension scaffold for any
+// inbound clawkerd-→-CP RPC that the asymmetric-trust model still
+// permits (e.g. agent-emitted telemetry).
 //
-// Authorization: bearer access token issued by Hydra to a dedicated
-// agent OAuth2 client whose scopes are validated by the CP's auth
-// interceptor.
-//
-// Topology: clawkerd is gRPC-client only on this surface. The control
-// channel (CP → clawkerd) lives on the separate ClawkerdService
-// listener inside the container; AgentService is purely a one-shot
-// registration handshake.
-service AgentService {
-  // Register is the one-shot registration handshake clawkerd performs
-  // on first boot when the CLI-delivered PKCE verifier is present in
-  // BootstrapDir. The verifier is wiped on success, so subsequent
-  // boots of the same container skip Register entirely — CP reaches
-  // those agents by dialing their ClawkerdService listener and
-  // resolving identity off the persisted registry.
-  //
-  // CP-side cross-checks (peer cert CN, peer IP → container_id, slot
-  // composite key, container labels) all happen in-handler. On success
-  // the registry row lands in sqlite and CP returns Welcome; on any
-  // cross-check failure the response is uniform PermissionDenied with
-  // no distinguisher leak.
-  //
-  // Existing-thumbprint Register attempts are REJECTED — clawkerd
-  // should never call Register if its verifier was wiped. The registry
-  // row + verifier-absent state are the ground-truth of "already
-  // registered"; defending the stale-verifier replay case at the
-  // handler keeps the contract honest.
-  rpc Register(RegisterRequest) returns (Welcome);
-}
-
-message RegisterRequest {
-  // agent_name is the short agent name as the user types it on the CLI
-  // (e.g. "dev", "test"). NOT the canonical "clawker.project.agent". CP
-  // assembles the canonical CN as `clawker.<project>.<agent>` (or
-  // `clawker.<agent>` for empty project) via auth.CanonicalAgentCN and
-  // cross-checks against the peer cert's CN before consuming the slot.
-  string agent_name = 1;
-
-  // code_verifier is the PKCE secret matching the slot's S256 challenge.
-  // CLI delivers it to /run/clawker/bootstrap/verifier via Docker's
-  // CopyToContainer API between docker create and docker start
-  // (writable layer; see cmd/clawkerd/CLAUDE.md).
-  // Per RFC 7636, length is 43-128 unreserved characters.
-  string code_verifier = 2;
-
-  // project is the clawker project slug the agent runs under (empty for
-  // 2-segment naming). Together with agent_name forms the composite slot
-  // identity — read by clawkerd from CLAWKER_PROJECT and forwarded as a
-  // separate wire field so the CP never has to parse a canonical form.
-  string project = 3;
-}
-
-// Welcome is the unary response to a successful Register. Carries the
-// post-auth ClawkerdConfiguration payload. Receipt by clawkerd implies
-// server-side auth succeeded — only then is the single-use PKCE
-// verifier safe to delete from BootstrapDir.
-message Welcome {
-  ClawkerdConfiguration config = 1;
-}
-
-// ClawkerdConfiguration is the post-auth runtime configuration delivered
-// to clawkerd inside Welcome. Empty in this branch — placeholder for
-// future OTEL/logging/identity-context fields.
-message ClawkerdConfiguration {}
+// Transport (when populated): mTLS over TCP on the CP's clawker-net
+// agent listener. Server requires a client cert chained to the CLI CA;
+// authorization via Hydra-issued bearer tokens scoped to the
+// `clawker-agent` OAuth2 client.
+service AgentService {}

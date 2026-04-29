@@ -8,21 +8,17 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"math/big"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	regmocks "github.com/schmitthub/clawker/internal/controlplane/agentregistry/mocks"
-	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
-	slotmocks "github.com/schmitthub/clawker/internal/controlplane/agentslots/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -71,62 +67,98 @@ func signLeaf(t *testing.T, cn string, notAfter time.Time, parent *x509.Certific
 	return der, cert
 }
 
-func TestVerifyChainOnly_AcceptsValidChain(t *testing.T) {
+// --- capturePeerProvenance: cert chain + CN + thumbprint capture ----
+// Permissive — every path returns without aborting. Failure outcomes
+// surface as Reason text + ChainVerified=false; populated fields
+// (PeerCN, PeerThumbprint) appear on the event payload.
+
+func TestCapturePeerProvenance_ValidChain(t *testing.T) {
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
-	leafDER, _ := signLeaf(t, "clawker.proj.dev", time.Now().Add(time.Hour), caCert, caKey)
+	leafDER, leaf := signLeaf(t, "clawker.proj.dev", time.Now().Add(time.Hour), caCert, caKey)
 
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
 	d := &Dialer{caPool: pool}
 
-	require.NoError(t, d.verifyChainOnly([][]byte{leafDER}, nil))
+	var prov Provenance
+	d.capturePeerProvenance([][]byte{leafDER}, &prov)
+
+	assert.True(t, prov.ChainVerified, "trusted-CA chain must verify")
+	assert.Equal(t, leaf.Subject.CommonName, prov.PeerCN)
+	want := sha256.Sum256(leafDER)
+	assert.Equal(t, want[:], prov.PeerThumbprint)
+	assert.Empty(t, prov.Reason)
 }
 
-func TestVerifyChainOnly_RejectsUntrustedRoot(t *testing.T) {
-	// Leaf signed by an unrelated CA; verifier's pool contains a
-	// different CA — chain build must fail.
+func TestCapturePeerProvenance_UntrustedRoot_DoesNotAbort(t *testing.T) {
 	wrongCA, wrongKey := genCA(t, "wrong-ca", 24*time.Hour)
-	leafDER, _ := signLeaf(t, "clawker.proj.dev", time.Now().Add(time.Hour), wrongCA, wrongKey)
+	leafDER, leaf := signLeaf(t, "clawker.proj.dev", time.Now().Add(time.Hour), wrongCA, wrongKey)
 
 	trustedCA, _ := genCA(t, "trusted-ca", 24*time.Hour)
 	pool := x509.NewCertPool()
 	pool.AddCert(trustedCA)
 	d := &Dialer{caPool: pool}
 
-	err := d.verifyChainOnly([][]byte{leafDER}, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "chain verify")
+	var prov Provenance
+	d.capturePeerProvenance([][]byte{leafDER}, &prov)
+
+	assert.False(t, prov.ChainVerified, "untrusted root must yield ChainVerified=false")
+	// Cert-level fields still populated — subscribers need them
+	// regardless of chain trust.
+	assert.Equal(t, leaf.Subject.CommonName, prov.PeerCN)
+	want := sha256.Sum256(leafDER)
+	assert.Equal(t, want[:], prov.PeerThumbprint)
+	assert.Contains(t, prov.Reason, "chain verify")
 }
 
-func TestVerifyChainOnly_RejectsExpiredLeaf(t *testing.T) {
+func TestCapturePeerProvenance_ExpiredLeaf_DoesNotAbort(t *testing.T) {
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
-	// Leaf NotAfter already in the past.
 	leafDER, _ := signLeaf(t, "clawker.proj.dev", time.Now().Add(-time.Minute), caCert, caKey)
 
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
 	d := &Dialer{caPool: pool}
 
-	err := d.verifyChainOnly([][]byte{leafDER}, nil)
-	require.Error(t, err)
-	// x509 surfaces an "expired" string — exact phrasing is
-	// stdlib-version-sensitive, so just confirm verification ran and
-	// rejected the leaf.
-	assert.Contains(t, err.Error(), "agentdial: chain verify")
+	var prov Provenance
+	d.capturePeerProvenance([][]byte{leafDER}, &prov)
+
+	assert.False(t, prov.ChainVerified, "expired leaf must yield ChainVerified=false")
+	assert.Equal(t, "clawker.proj.dev", prov.PeerCN)
+	assert.NotEmpty(t, prov.PeerThumbprint)
+	assert.Contains(t, prov.Reason, "chain verify")
 }
 
-func TestVerifyChainOnly_RejectsEmptyCerts(t *testing.T) {
+func TestCapturePeerProvenance_NoCerts_SetsReason(t *testing.T) {
 	d := &Dialer{caPool: x509.NewCertPool()}
-	err := d.verifyChainOnly(nil, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no certs")
+
+	var prov Provenance
+	d.capturePeerProvenance(nil, &prov)
+
+	assert.False(t, prov.ChainVerified)
+	assert.Empty(t, prov.PeerCN)
+	assert.Empty(t, prov.PeerThumbprint)
+	assert.Equal(t, "peer presented no certs", prov.Reason)
 }
 
-// TestRecordRegistryProvenance_HappyPath: registry row exists and
-// thumbprint+CN match. Expected log: provenance=registry_match at
-// info level.
-func TestRecordRegistryProvenance_HappyPath(t *testing.T) {
+func TestCapturePeerProvenance_BadCertBytes_SetsReason(t *testing.T) {
+	d := &Dialer{caPool: x509.NewCertPool()}
+
+	var prov Provenance
+	d.capturePeerProvenance([][]byte{[]byte("not a cert")}, &prov)
+
+	assert.False(t, prov.ChainVerified)
+	assert.Empty(t, prov.PeerCN)
+	assert.Empty(t, prov.PeerThumbprint)
+	assert.Contains(t, prov.Reason, "leaf parse failed")
+}
+
+// --- fillRegistryProvenance: registry-row cross-check ---------------
+// Populates RegistryMatch / Miss / ThumbprintMismatch / CNMismatch
+// based on agentregistry.LookupByContainerID.
+
+func TestFillRegistryProvenance_RegistryMatch(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer-cert-bytes"))
+	expectedCN := auth.CanonicalAgentCN(auth.MustProjectSlug("myproj"), auth.MustAgentName("dev"))
 	reg := &regmocks.RegistryMock{
 		LookupByContainerIDFunc: func(id string) (*agentregistry.Entry, error) {
 			return &agentregistry.Entry{
@@ -137,22 +169,41 @@ func TestRecordRegistryProvenance_HappyPath(t *testing.T) {
 			}, nil
 		},
 	}
-	var buf bytes.Buffer
 	d := &Dialer{agents: reg}
-	d.recordRegistryProvenance("ctr-1", thumb, "clawker.myproj.dev", logger.NewWriter(&buf))
 
-	require.Len(t, reg.LookupByContainerIDCalls(), 1)
-	got := decodeOnly(t, buf.Bytes())
-	assert.Equal(t, "info", got["level"])
-	assert.Equal(t, "registry_match", got["provenance"])
-	assert.Equal(t, "clawker.myproj.dev", got["peer_cn"])
+	prov := Provenance{
+		PeerCN:         expectedCN,
+		PeerThumbprint: thumb[:],
+	}
+	d.fillRegistryProvenance(&prov, "ctr-1", "myproj", "dev")
+
+	assert.True(t, prov.RegistryMatch)
+	assert.False(t, prov.RegistryMiss)
+	assert.False(t, prov.ThumbprintMismatch)
+	assert.False(t, prov.CNMismatch)
+	assert.True(t, prov.CNPinMatch)
 }
 
-// TestRecordRegistryProvenance_ThumbprintMismatch: registry row
-// exists but the stored thumbprint diverges from the peer's. Cert
-// substitution / container-id reuse path. Expected: warn level,
-// provenance=registry_thumbprint_mismatch.
-func TestRecordRegistryProvenance_ThumbprintMismatch(t *testing.T) {
+func TestFillRegistryProvenance_RegistryMiss(t *testing.T) {
+	reg := &regmocks.RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*agentregistry.Entry, error) {
+			return nil, agentregistry.ErrUnknownAgent
+		},
+	}
+	d := &Dialer{agents: reg}
+
+	thumb := sha256.Sum256([]byte("peer"))
+	prov := Provenance{
+		PeerCN:         "clawker.x.y",
+		PeerThumbprint: thumb[:],
+	}
+	d.fillRegistryProvenance(&prov, "ctr-2", "x", "y")
+
+	assert.True(t, prov.RegistryMiss)
+	assert.False(t, prov.RegistryMatch)
+}
+
+func TestFillRegistryProvenance_ThumbprintMismatch(t *testing.T) {
 	peerThumb := sha256.Sum256([]byte("peer"))
 	rowThumb := sha256.Sum256([]byte("registry"))
 	reg := &regmocks.RegistryMock{
@@ -165,110 +216,110 @@ func TestRecordRegistryProvenance_ThumbprintMismatch(t *testing.T) {
 			}, nil
 		},
 	}
-	var buf bytes.Buffer
 	d := &Dialer{agents: reg}
-	d.recordRegistryProvenance("ctr-2", peerThumb, "clawker.myproj.dev", logger.NewWriter(&buf))
 
-	got := decodeOnly(t, buf.Bytes())
-	assert.Equal(t, "warn", got["level"])
-	assert.Equal(t, "registry_thumbprint_mismatch", got["provenance"])
-	assert.Equal(t, hex.EncodeToString(peerThumb[:]), got["peer_thumbprint"])
-	assert.Equal(t, hex.EncodeToString(rowThumb[:]), got["registry_thumbprint"])
+	prov := Provenance{
+		PeerCN:         "clawker.myproj.dev",
+		PeerThumbprint: peerThumb[:],
+	}
+	d.fillRegistryProvenance(&prov, "ctr-3", "myproj", "dev")
+
+	assert.True(t, prov.ThumbprintMismatch)
+	assert.False(t, prov.RegistryMatch)
+	assert.False(t, prov.RegistryMiss)
+	assert.False(t, prov.CNMismatch)
 }
 
-// TestRecordRegistryProvenance_RegistryMiss: no row for this
-// containerID. Untracked container path. Expected: warn level,
-// provenance=registry_miss.
-func TestRecordRegistryProvenance_RegistryMiss(t *testing.T) {
+func TestFillRegistryProvenance_CNMismatch(t *testing.T) {
+	thumb := sha256.Sum256([]byte("peer"))
 	reg := &regmocks.RegistryMock{
 		LookupByContainerIDFunc: func(id string) (*agentregistry.Entry, error) {
-			return nil, agentregistry.ErrUnknownAgent
+			return &agentregistry.Entry{
+				AgentName:   "dev",
+				Project:     "actual",
+				ContainerID: id,
+				Thumbprint:  thumb,
+			}, nil
 		},
 	}
-	var buf bytes.Buffer
 	d := &Dialer{agents: reg}
-	d.recordRegistryProvenance("ctr-3", sha256.Sum256([]byte("peer")), "clawker.x.y", logger.NewWriter(&buf))
 
-	got := decodeOnly(t, buf.Bytes())
-	assert.Equal(t, "warn", got["level"])
-	assert.Equal(t, "registry_miss", got["provenance"])
+	prov := Provenance{
+		PeerCN:         "clawker.different.dev", // does not match clawker.actual.dev
+		PeerThumbprint: thumb[:],
+	}
+	d.fillRegistryProvenance(&prov, "ctr-4", "actual", "dev")
+
+	assert.True(t, prov.CNMismatch)
+	assert.False(t, prov.RegistryMatch)
+	assert.False(t, prov.ThumbprintMismatch)
 }
 
-// TestRecordRegistryProvenance_NilRegistry: no Registry wired (the
-// dialer was constructed without one). Must short-circuit silently —
-// log is empty, no panic.
-func TestRecordRegistryProvenance_NilRegistry(t *testing.T) {
-	var buf bytes.Buffer
+func TestFillRegistryProvenance_LookupErrorSetsReason(t *testing.T) {
+	reg := &regmocks.RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*agentregistry.Entry, error) {
+			return nil, errors.New("disk i/o failed")
+		},
+	}
+	d := &Dialer{agents: reg}
+
+	thumb := sha256.Sum256([]byte("peer"))
+	prov := Provenance{
+		PeerCN:         "clawker.x.y",
+		PeerThumbprint: thumb[:],
+	}
+	d.fillRegistryProvenance(&prov, "ctr-5", "x", "y")
+
+	assert.False(t, prov.RegistryMatch)
+	assert.False(t, prov.RegistryMiss)
+	assert.Contains(t, prov.Reason, "registry lookup error")
+}
+
+func TestFillRegistryProvenance_NilRegistrySetsReason(t *testing.T) {
 	d := &Dialer{agents: nil}
-	d.recordRegistryProvenance("ctr-4", sha256.Sum256([]byte("peer")), "cn", logger.NewWriter(&buf))
-	assert.Equal(t, 0, buf.Len(), "nil registry must produce no log output")
-}
 
-// TestConsumeAnnounceSlot_Consumed: slot existed; Consume returned it.
-// CLI-attested-start path. Expected: info, provenance=announce_slot_consumed.
-func TestConsumeAnnounceSlot_Consumed(t *testing.T) {
-	reservedAt := time.Now().Add(-30 * time.Second).UTC().Truncate(time.Second)
-	slots := &slotmocks.RegistryMock{
-		ConsumeFunc: func(id string) (*agentslots.Slot, error) {
-			return &agentslots.Slot{ReservedAt: reservedAt}, nil
-		},
+	thumb := sha256.Sum256([]byte("peer"))
+	prov := Provenance{
+		PeerCN:         "clawker.x.y",
+		PeerThumbprint: thumb[:],
 	}
-	var buf bytes.Buffer
-	d := &Dialer{slots: slots}
-	d.consumeAnnounceSlot("ctr-1", logger.NewWriter(&buf))
+	d.fillRegistryProvenance(&prov, "ctr-6", "x", "y")
 
-	got := decodeOnly(t, buf.Bytes())
-	assert.Equal(t, "info", got["level"])
-	assert.Equal(t, "announce_slot_consumed", got["provenance"])
+	assert.Equal(t, "registry not wired", prov.Reason)
+	assert.False(t, prov.RegistryMatch)
 }
 
-// TestConsumeAnnounceSlot_Missing: ErrSlotInvalid is the documented
-// "no slot or expired" path. Raw `docker start` case. Expected:
-// info, provenance=announce_slot_missing — NOT an error.
-func TestConsumeAnnounceSlot_Missing(t *testing.T) {
-	slots := &slotmocks.RegistryMock{
-		ConsumeFunc: func(id string) (*agentslots.Slot, error) {
-			return nil, agentslots.ErrSlotInvalid
-		},
-	}
-	var buf bytes.Buffer
-	d := &Dialer{slots: slots}
-	d.consumeAnnounceSlot("ctr-2", logger.NewWriter(&buf))
+// --- computeCNPinMatch: cert-vs-labels CN derivation ----------------
 
-	got := decodeOnly(t, buf.Bytes())
-	assert.Equal(t, "info", got["level"])
-	assert.Equal(t, "announce_slot_missing", got["provenance"])
+func TestComputeCNPinMatch_Match(t *testing.T) {
+	expected := auth.CanonicalAgentCN(auth.MustProjectSlug("foo"), auth.MustAgentName("bar"))
+	assert.True(t, computeCNPinMatch(expected, "foo", "bar"))
 }
 
-// TestConsumeAnnounceSlot_RegistryRegression: any non-ErrSlotInvalid
-// err is a Registry contract regression. Per S15 the level is
-// promoted from Warn to Error so the bug surfaces in rotated logs
-// instead of being filed under "noisy debug-output".
-func TestConsumeAnnounceSlot_RegistryRegression(t *testing.T) {
-	slots := &slotmocks.RegistryMock{
-		ConsumeFunc: func(id string) (*agentslots.Slot, error) {
-			return nil, errors.New("disk full: db closed")
-		},
-	}
-	var buf bytes.Buffer
-	d := &Dialer{slots: slots}
-	d.consumeAnnounceSlot("ctr-3", logger.NewWriter(&buf))
-
-	got := decodeOnly(t, buf.Bytes())
-	assert.Equal(t, "error", got["level"], "non-ErrSlotInvalid must be Error level (S15)")
-	assert.Contains(t, got["message"], "Registry contract regression")
+func TestComputeCNPinMatch_EmptyProjectIsValid(t *testing.T) {
+	expected := auth.CanonicalAgentCN(auth.MustProjectSlug(""), auth.MustAgentName("solo"))
+	assert.True(t, computeCNPinMatch(expected, "", "solo"))
 }
 
-func TestConsumeAnnounceSlot_NilRegistry(t *testing.T) {
-	var buf bytes.Buffer
-	d := &Dialer{slots: nil}
-	d.consumeAnnounceSlot("ctr-4", logger.NewWriter(&buf))
-	assert.Equal(t, 0, buf.Len(), "nil slot registry must produce no log output")
+func TestComputeCNPinMatch_PeerCNDiffers(t *testing.T) {
+	assert.False(t, computeCNPinMatch("clawker.other.bar", "foo", "bar"))
 }
 
-// fakeCloser drives closeAndCheckLeak through a controlled error
-// sequence. Returned errs are walked in order; once exhausted Close
-// returns nil. Records the call count for assertions.
+func TestComputeCNPinMatch_EmptyPeerCN(t *testing.T) {
+	assert.False(t, computeCNPinMatch("", "foo", "bar"))
+}
+
+func TestComputeCNPinMatch_EmptyAgentName(t *testing.T) {
+	assert.False(t, computeCNPinMatch("clawker.foo.bar", "foo", ""))
+}
+
+func TestComputeCNPinMatch_MalformedAgent(t *testing.T) {
+	// dot in agent name fails NewAgentName validation.
+	assert.False(t, computeCNPinMatch("clawker.foo.bad.name", "foo", "bad.name"))
+}
+
+// --- closeAndCheckLeak: FD-leak guard kept from prior test set -----
+
 type fakeCloser struct {
 	errs  []error
 	calls int
@@ -282,9 +333,6 @@ func (f *fakeCloser) Close() error {
 	return nil
 }
 
-// TestCloseAndCheckLeak_BailsAfterCeiling: closeErrCeiling consecutive
-// failures must bail. The function reports bail=true on the
-// ceilingth failure and the counter equals the ceiling.
 func TestCloseAndCheckLeak_BailsAfterCeiling(t *testing.T) {
 	errs := make([]error, closeErrCeiling)
 	for i := range errs {
@@ -306,9 +354,6 @@ func TestCloseAndCheckLeak_BailsAfterCeiling(t *testing.T) {
 	assert.Equal(t, closeErrCeiling, c.calls)
 }
 
-// TestCloseAndCheckLeak_SuccessResetsCounter: a successful Close
-// resets the counter so a transient hiccup does not poison the
-// ledger across the lifetime of the cycle.
 func TestCloseAndCheckLeak_SuccessResetsCounter(t *testing.T) {
 	c := &fakeCloser{errs: []error{
 		errors.New("hiccup"),
@@ -331,10 +376,6 @@ func TestCloseAndCheckLeak_SuccessResetsCounter(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
-// TestCloseAndCheckLeak_LogsCloseFailure: each failed Close emits
-// an Error-level log line tagged with the close-error count and the
-// ceiling so an operator can correlate against the fd-leak-ceiling
-// SessionFailed event.
 func TestCloseAndCheckLeak_LogsCloseFailure(t *testing.T) {
 	c := &fakeCloser{errs: []error{errors.New("transport already shut down")}}
 	count := 0
@@ -343,43 +384,7 @@ func TestCloseAndCheckLeak_LogsCloseFailure(t *testing.T) {
 
 	d.closeAndCheckLeak(c, &count, logger.NewWriter(&buf))
 
-	got := decodeOnly(t, buf.Bytes())
-	assert.Equal(t, "error", got["level"])
-	assert.Equal(t, "agentdial_conn_close_failed", got["event"])
-	// counts are encoded as JSON numbers (float64 after decode).
-	assert.Equal(t, float64(1), got["close_err_count"])
-	assert.Equal(t, float64(closeErrCeiling), got["close_err_ceiling"])
-}
-
-// decodeOnly returns the FIRST decoded log line. The functions under
-// test in this file emit exactly one line per call — anything else
-// is a regression worth surfacing.
-func decodeOnly(t *testing.T, raw []byte) map[string]any {
-	t.Helper()
-	require.NotEmpty(t, bytes.TrimSpace(raw), "expected at least one log line")
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	var line map[string]any
-	require.NoError(t, dec.Decode(&line))
-	// Drain the decoder once more to confirm there's no second line —
-	// the production code is documented to emit exactly one.
-	if dec.More() {
-		var extra map[string]any
-		_ = dec.Decode(&extra)
-		t.Fatalf("expected exactly one log line, got at least 2; second: %v", extra)
-	}
-	return line
-}
-
-// Sanity guard: the message-level fields the assertions rely on are
-// stable across zerolog versions (level, message, event). If zerolog
-// renames any of them this test fails first instead of the assertions
-// scattered through the file.
-func TestZerologFieldKeysStable(t *testing.T) {
-	var buf bytes.Buffer
-	logger.NewWriter(&buf).Info().Str("event", "probe").Msg("hi")
-	got := decodeOnly(t, buf.Bytes())
-	for _, k := range []string{"level", "message", "event"} {
-		_, ok := got[k]
-		require.Truef(t, ok, "zerolog field %q missing — assertions assume it; raw=%s", k, strings.TrimSpace(buf.String()))
-	}
+	got := buf.String()
+	assert.Contains(t, got, "agentdial_conn_close_failed")
+	assert.Contains(t, got, `"close_err_count":1`)
 }

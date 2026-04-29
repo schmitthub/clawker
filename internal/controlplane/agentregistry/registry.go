@@ -1,15 +1,30 @@
-// Package agentregistry tracks live agents that have completed the
-// AgentService.Connect handshake. It is populated by the Connect
-// handler and evicted by an Overseer subscription that watches
-// dockerevents.ContainerRemoved events.
+// Package agentregistry is the persisted identity store for clawker-
+// managed containers. Rows record the mTLS cert thumbprint, container
+// ID, project, agent name, and pre-computed canonical CN that the CLI
+// minted for each container at create time. Reads are issued by:
 //
-// Identity is channel-bound: the registry key is the SHA-256 thumbprint
-// of the mTLS peer cert from the TLS handshake. Lookup is the only path
-// for per-agent gRPC handlers to resolve the caller — there is no path
-// where an agent claims an identity other than what its TLS cert proves.
-// Container restart yields a new cert and a new thumbprint; the old
-// entry remains briefly until the dockerevents subscription evicts it
-// by container ID.
+//   - agent.IdentityInterceptor on every per-agent gRPC RPC
+//     (cert thumbprint → registry entry; CN cross-check inside Lookup)
+//   - agentdial.Dialer at handshake time (peer cert vs registry row →
+//     typed Provenance fields on SessionConnected event)
+//   - AdminService.ListAgents and the local-read `clawker controlplane
+//     agents` CLI
+//
+// Writes are issued by the CLI (one Add per `clawker run`/`start` at
+// container-create time, alongside auth-material delivery into the
+// container's BootstrapDir). Eviction is owned by the CP: startup
+// `Reap` against live docker state, plus the dockerevents-driven
+// Subscribe consumer evicting on `ContainerRemoved` (destroy only —
+// stop/die/kill do NOT evict because a stopped container can be
+// `docker start`-ed back into life).
+//
+// Identity is channel-bound: the registry key is `(thumbprint,
+// container_id)` (both UNIQUE in sqlite). The canonical CN composed
+// from `(project, agent_name)` is stored as a column at Add time and
+// compared via `subtle.ConstantTimeCompare` inside Lookup — no
+// reconstruction at read time. Container restart yields a new cert
+// and a new thumbprint; the old row is evicted by the dockerevents
+// subscription on `ContainerRemoved` (i.e. `docker rm`, not stop).
 package agentregistry
 
 import (
@@ -101,12 +116,14 @@ type Registry interface {
 	// Returns (nil, ErrUnknownAgent) when no entry matches.
 	LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error)
 	// LookupByContainerID returns the entry whose ContainerID matches,
-	// without any CN cross-check. Used by AdminService.AnnounceAgent to
-	// short-circuit when the CLI announces a container that already has
-	// a registry row (clawkerd skips Register on the next boot, CP skips
-	// slot reservation + verifier delivery). The peer authentication for
-	// AnnounceAgent itself is mTLS + JWT scope on the AdminPort, so no
-	// additional cross-check is needed at this read.
+	// without any CN cross-check. Used by agentdial post-handshake to
+	// look up the registry row keyed by container_id and emit
+	// Provenance fields (RegistryMatch / Miss / ThumbprintMismatch /
+	// CNMismatch) on the SessionConnected event payload. The dialer
+	// performs the thumbprint + CN comparisons against the returned
+	// entry itself; this read intentionally does not gate on either
+	// so a mismatch surfaces as a typed event field rather than as
+	// ErrUnknownAgent.
 	//
 	// Returns (nil, ErrUnknownAgent) when no entry matches.
 	LookupByContainerID(containerID string) (*Entry, error)

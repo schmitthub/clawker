@@ -75,7 +75,7 @@ type Registry interface {
     Add(entry Entry) error                                            // Validates + persists; returns err on malformed identity OR sqlite write failure.
     Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)   // CN-gated identity resolution (IdentityInterceptor).
     LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error)  // No CN check; used by Register handler's existing-thumbprint REJECT.
-    LookupByContainerID(containerID string) (*Entry, error)           // Used by AnnounceAgent's pre-reserve evict.
+    LookupByContainerID(containerID string) (*Entry, error)           // Used by agentdial post-handshake provenance lookup.
     EvictByContainerID(containerID string) error                      // Returns underlying DELETE error so callers log-and-proceed.
     Snapshot() []Entry
 }
@@ -111,4 +111,4 @@ moq-generated `RegistryMock` under `mocks/`. Regenerate via `cd internal/control
 
 **Uses**: `internal/auth` (`CanonicalAgentCN`, `NewAgentName`, `NewProjectSlug`), `internal/logger`, `modernc.org/sqlite`, stdlib `crypto/sha256`, `crypto/subtle`, `database/sql`, `encoding/hex`.
 
-**Used by**: `cmd/clawker-cp/main.go` (NewSQLiteWriter construction + Reap + Subscribe wiring), `internal/controlplane/server.go` (AnnounceAgent + ListAgents), `internal/controlplane/agent` (Register handler + IdentityInterceptor), `internal/cmd/container/shared/agent_bootstrap.go` (CLI write path), `internal/cmd/container/remove/remove.go` (CLI evict path), `internal/cmd/controlplane/agents.go` (NewSQLiteReader for local-read CLI), `internal/controlplane/cpboot/bootstrap.go` (EnsureSchema before CP container start).
+**Used by**: `cmd/clawker-cp/main.go` (NewSQLiteWriter construction + Reap + Subscribe wiring + Dialer construction), `internal/controlplane/server.go` (ListAgents), `internal/controlplane/agent` (IdentityInterceptor), `internal/controlplane/agentdial` (post-handshake Provenance lookup), `internal/cmd/container/shared/agent_bootstrap.go` (CLI write path), `internal/cmd/container/remove/remove.go` (CLI evict path), `internal/cmd/controlplane/agents.go` (NewSQLiteReader for local-read CLI), `internal/controlplane/cpboot/bootstrap.go` (EnsureSchema before CP container start).

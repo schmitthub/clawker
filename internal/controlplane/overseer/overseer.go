@@ -257,6 +257,7 @@ func (o *Overseer) run(ctx context.Context) {
 func (o *Overseer) applyAndDispatch(state *State, subscribers map[reflect.Type]map[uint64]*subscriber, ev Event) {
 	o.publishedTotal.Add(1)
 	o.safeApply(state, ev)
+	o.safeHook(ev)
 	group := subscribers[reflect.TypeOf(ev)]
 	for _, sub := range group {
 		if sub.filter != nil && !o.safeFilter(sub, ev) {
@@ -306,6 +307,45 @@ func (o *Overseer) safeFilter(sub *subscriber, ev Event) (matched bool) {
 		}
 	}()
 	return sub.filter(ev)
+}
+
+// safeHook invokes Options.PublishHook (if set) under a recover so a
+// panicking hook is contained to the event that triggered it.
+// Subsequent events are still processed.
+func (o *Overseer) safeHook(ev Event) {
+	if o.opts.PublishHook == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			o.opts.Logger.Error().
+				Interface("panic", r).
+				Str("event", ev.EventName()).
+				Msg("overseer: PublishHook panicked; subsequent events unaffected")
+		}
+	}()
+	o.opts.PublishHook(ev)
+}
+
+// NewLoggerHook returns a PublishHook that emits one structured Info
+// line per event with the canonical fields (event, occurred_at). Use
+// this as the default PublishHook so producers do not manually pair
+// log calls with Publish.
+//
+// The hook intentionally stays minimal — type-specific payload (e.g.
+// container ID, session container_id, registry provenance fields) is
+// not reflected in. A consumer needing richer logs should subscribe to
+// the typed channel and emit per-type lines.
+func NewLoggerHook(log *logger.Logger) func(Event) {
+	if log == nil {
+		log = logger.Nop()
+	}
+	return func(ev Event) {
+		log.Info().
+			Str("event", ev.EventName()).
+			Time("occurred_at", ev.OccurredAt()).
+			Msg("overseer: event published")
+	}
 }
 
 // closeAllSubscribers closes every typed channel and clears the map.

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
@@ -39,35 +38,32 @@ func TestINV_B1_016_SeparateProtoPackages(t *testing.T) {
 		}
 
 		// AdminService surface: 13 firewall RPCs (INV-B2-009) plus
-		// AnnounceAgent and ListAgents.
+		// ListAgents. AnnounceAgent was retired alongside agentslots.
 		expectedRPCs := []string{
 			"FirewallInit", "FirewallRemove",
 			"FirewallEnable", "FirewallDisable", "FirewallBypass",
 			"FirewallAddRules", "FirewallRemoveRule", "FirewallListRules",
 			"FirewallReload", "FirewallStatus", "FirewallRotateCA",
 			"FirewallSyncRoutes", "FirewallResolveHostname",
-			"AnnounceAgent", "ListAgents",
+			"ListAgents",
 		}
 		for _, rpc := range expectedRPCs {
 			assert.True(t, methods[rpc],
 				"AdminService must have %s RPC", rpc)
 		}
+		assert.Len(t, methods, len(expectedRPCs),
+			"AdminService surface drift — methods=%v, expected=%v", methods, expectedRPCs)
 	})
 
-	t.Run("AgentService is unary Register only", func(t *testing.T) {
+	t.Run("AgentService is empty in this branch", func(t *testing.T) {
 		desc := agentv1.AgentService_ServiceDesc
 
-		// AgentService is the one-shot registration surface clawkerd
-		// calls on first boot. Register is unary — flipping it to
-		// streaming would silently invert the protocol contract.
-		// Pin: zero streaming methods, one unary method named Register.
-		assert.Empty(t, desc.Streams, "AgentService must have no streaming RPCs")
-
-		methods := make(map[string]bool)
-		for _, m := range desc.Methods {
-			methods[m.MethodName] = true
-		}
-		require.True(t, methods["Register"], "AgentService must have Register RPC")
-		assert.Len(t, desc.Methods, 1, "AgentService surface must be Register only — adding RPCs requires a deliberate review of the agent-side trust model")
+		// AgentService is empty after the agentslots/Register retirement.
+		// CP→clawkerd command dispatch lives on `ClawkerdService.Session`
+		// (CP dials, clawkerd serves) — see api/clawkerd/v1. AgentService
+		// stays as the future-extension scaffold for any inbound
+		// clawkerd→CP RPC the asymmetric-trust model still permits.
+		assert.Empty(t, desc.Methods, "AgentService must have no unary RPCs in this branch (Register retired)")
+		assert.Empty(t, desc.Streams, "AgentService must have no streaming RPCs in this branch")
 	})
 }

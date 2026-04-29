@@ -1660,10 +1660,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	// start/restart for the container's lifetime), and write the
 	// agentregistry row keyed by (thumbprint, container_id). The
 	// registry row gives CP the data point it needs to verify the
-	// thumbprint of the running clawkerd at dial time. AnnounceAgent
-	// is NOT called from here — that's a per-start signal handled in
-	// BootstrapServicesPreStart so every start path (run/start/restart/
-	// loop) emits it via a single chokepoint.
+	// thumbprint of the running clawkerd at dial time.
 	caCertPath, err := consts.AuthCACertPath()
 	if err != nil {
 		return nil, fmt.Errorf("agent bootstrap: ca cert path: %w", err)

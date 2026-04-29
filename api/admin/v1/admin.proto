@@ -86,20 +86,6 @@ service AdminService {
   // per-container enroll.
   rpc FirewallResolveHostname(FirewallResolveHostnameRequest) returns (FirewallResolveHostnameResult);
 
-  // AnnounceAgent reserves a registration slot for a container the CLI
-  // is about to start. The CLI passes the canonical agent_name, the
-  // Docker container_id it just received from ContainerCreate, the
-  // SHA-256 thumbprint of the mTLS cert it just minted for that agent,
-  // and a PKCE S256 challenge. The slot expires after a short TTL sized
-  // for `docker create` + `docker start` + clawkerd boot latency.
-  //
-  // Channel-bound identity defends against a compromised CLI announcing
-  // a slot for a container it doesn't own: at Connect the CP cross-
-  // checks the peer's mTLS thumbprint and Docker network position
-  // against the slot's container_id. Required scope: admin (uniform per
-  // INV-B2-009).
-  rpc AnnounceAgent(AnnounceAgentRequest) returns (AnnounceAgentResult);
-
   // ListAgents returns a snapshot of every agent currently registered
   // with the control plane. Used by `clawker controlplane agents` and
   // diagnostic tooling. Read-only; uniform admin scope.
@@ -243,25 +229,6 @@ message FirewallResolveHostnameRequest {
 }
 message FirewallResolveHostnameResult {
   repeated string addresses = 1;
-}
-
-message AnnounceAgentRequest {
-  // container_id is the Docker container ID for the about-to-start
-  // managed container. AnnounceAgent is the CLI's signal to CP that a
-  // container start is being initiated by the clawker CLI specifically
-  // (raw `docker start` / `docker run` paths bypass this and produce
-  // no slot). Provenance flows entirely from the CLI-written
-  // agentregistry row and the per-start slot reserved here; agent
-  // identity (thumbprint, project, agent_name) is recorded once at
-  // CreateContainer time in the registry and re-resolved server-side
-  // when CP dials the running clawkerd.
-  string container_id = 1;
-}
-message AnnounceAgentResult {
-  // expires_at_unix is the slot deadline as Unix seconds (UTC). For
-  // CLI-side logging only; the CP enforces TTL internally regardless of
-  // what the client believes.
-  int64 expires_at_unix = 1;
 }
 
 message ListAgentsRequest {}

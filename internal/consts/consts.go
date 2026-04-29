@@ -263,16 +263,8 @@ const (
 	ClientIDAgent = "clawker-agent"
 )
 
-// Agent registration handshake.
+// Agent bootstrap material (per-container auth artifacts).
 const (
-	// AgentSlotTTL bounds how long a slot reserved by AnnounceAgent
-	// remains valid before the CLI must re-announce. Sized to cover
-	// `docker create` + `docker start` + clawkerd boot on a cold first
-	// run, including image pull, while still expiring fast enough that
-	// an abandoned slot does not block re-announce for a noticeable
-	// window.
-	AgentSlotTTL = 60 * time.Second
-
 	// BootstrapDir is the in-container path where the CLI delivers
 	// per-agent registration material via Docker's CopyToContainer API
 	// between `docker create` and `docker start`. Files are 0400
@@ -290,14 +282,10 @@ const (
 	BootstrapVerifierFile  = "verifier"
 )
 
-// ChallengeMethod is the PKCE challenge method announced over the wire
-// in AnnounceAgent and stored on the slot. The proto field is a free-form
-// string for forward extensibility, but at runtime exactly one method is
-// accepted (`S256`). A typed string with a single defined constant gives
-// us a single source of truth that both the CLI bootstrap path
-// (`internal/cmd/container/shared`) and the CP slot registry
-// (`internal/controlplane/agentslots`) reference, while preserving the
-// proto's string-on-the-wire contract.
+// ChallengeMethod is the PKCE challenge method recorded in the agent
+// bootstrap material. At runtime exactly one method is accepted
+// (`S256`); typing it gives a single source of truth across the CLI
+// bootstrap and clawkerd consumers.
 type ChallengeMethod string
 
 // String satisfies fmt.Stringer so the typed value renders identically

@@ -16,9 +16,12 @@ import (
 
 // IdentityOptedOutMethods returns the data-driven policy map of agent
 // RPC methods that are EXEMPT from the identity-required default. Only
-// bootstrap RPCs that authenticate themselves belong here — Register
-// runs the slot consume + cross-checks itself, so it MUST be reached
-// without a registry lookup.
+// bootstrap RPCs that authenticate themselves belong here.
+//
+// The map is currently empty — AgentService has no inbound RPCs in
+// this branch (Register was retired). Future inbound RPCs that
+// authenticate themselves (rather than relying on the registry-lookup
+// default) add their full method path here.
 //
 // The shape mirrors AgentMethodScopes(): a build-time test walks the
 // AgentService_ServiceDesc and asserts every method has either an
@@ -27,10 +30,7 @@ import (
 // test, not the runtime — exactly the fail-secure posture the package
 // aims for.
 func IdentityOptedOutMethods() map[string]bool {
-	const svc = "/" + agentv1.ServiceName + "/"
-	return map[string]bool{
-		svc + "Register": true,
-	}
+	return map[string]bool{}
 }
 
 // entryCtxKey is the unexported key under which IdentityInterceptor
@@ -127,7 +127,7 @@ func IdentityInterceptor(reg agentregistry.Registry, optedOut map[string]bool, l
 		if optedOut[method] {
 			return ctx, nil
 		}
-		pid, _, err := peerIdentityAndIP(ctx)
+		pid, err := peerIdentityFromContext(ctx)
 		if err != nil {
 			log.Warn().Err(err).Str("method", method).Msg("agent identity: missing peer auth info")
 			return nil, status.Error(codes.PermissionDenied, "registration rejected")

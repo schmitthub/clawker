@@ -9,7 +9,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,13 +17,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 
-	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
-	mocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
 
@@ -122,43 +118,6 @@ func validBootstrap() *AgentBootstrap {
 		ExpectedCertThumbprint: sha256.Sum256([]byte("thumbprint-fixture")),
 		Assertion:              "assertion-jwt",
 	}
-}
-
-func TestAnnounceAgent_SendsContainerID(t *testing.T) {
-	// AnnounceAgent's wire contract is now minimal: just container_id.
-	// Identity (thumbprint, agent_name, project) is recorded once at
-	// CreateContainer time in the CLI-written agentregistry — the slot
-	// reserved here is purely a CLI-attestation token consumed by
-	// agentdial when CP next dials the running clawkerd.
-	var captured *adminv1.AnnounceAgentRequest
-	mock := &mocks.AdminServiceClientMock{
-		AnnounceAgentFunc: func(_ context.Context, in *adminv1.AnnounceAgentRequest, _ ...grpc.CallOption) (*adminv1.AnnounceAgentResult, error) {
-			captured = in
-			return &adminv1.AnnounceAgentResult{ExpiresAtUnix: 12345}, nil
-		},
-	}
-
-	require.NoError(t, AnnounceAgent(context.Background(), mock, "ctr-id"))
-	require.NotNil(t, captured)
-	assert.Equal(t, "ctr-id", captured.ContainerId)
-}
-
-func TestAnnounceAgent_PropagatesError(t *testing.T) {
-	want := errors.New("rejected")
-	mock := &mocks.AdminServiceClientMock{
-		AnnounceAgentFunc: func(_ context.Context, _ *adminv1.AnnounceAgentRequest, _ ...grpc.CallOption) (*adminv1.AnnounceAgentResult, error) {
-			return nil, want
-		},
-	}
-	err := AnnounceAgent(context.Background(), mock, "id")
-	assert.ErrorIs(t, err, want)
-}
-
-func TestAnnounceAgent_RejectsEmptyContainerID(t *testing.T) {
-	mock := &mocks.AdminServiceClientMock{}
-	require.Error(t, AnnounceAgent(context.Background(), mock, ""))
-	// Mock should never see a request — validation happens before RPC.
-	assert.Empty(t, mock.AnnounceAgentCalls())
 }
 
 // TestAgentBootstrap_RedactsViaFormatter pins the redaction contract:

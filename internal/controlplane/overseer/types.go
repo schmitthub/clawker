@@ -46,6 +46,15 @@ type Options struct {
 	// Logger receives audit lines (every dropped delivery, every close).
 	// Nil defaults to logger.Nop().
 	Logger *logger.Logger
+	// PublishHook runs synchronously on the bus loop after every
+	// successfully-applied event, before subscriber fan-out. Intended for
+	// unconditional cross-cutting concerns — primarily structured
+	// logging, where a single hook spares each producer from manually
+	// pairing log lines with Publish calls. Panics are recovered to
+	// Logger; a panicking hook does NOT block subsequent events. Nil =
+	// no-op. Use NewLoggerHook for the canonical "log every event"
+	// implementation.
+	PublishHook func(Event)
 	// Now is an injectable clock for deterministic tests. Defaults to
 	// time.Now. Used to stamp LastUpdatedAt when no event-supplied time
 	// is more recent.

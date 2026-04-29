@@ -1,7 +1,9 @@
 package overseer_test
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -453,4 +455,129 @@ func TestConcurrent_PublishAndSubscribe_NoRace(t *testing.T) {
 	if received.Load() == 0 {
 		t.Fatal("no events received across all consumers")
 	}
+}
+
+func TestPublishHook_FiresOncePerEvent(t *testing.T) {
+	var hookCount atomic.Int64
+	var seen []string
+	var mu sync.Mutex
+	o := overseer.New(overseer.Options{
+		Logger:            logger.Nop(),
+		PublishBufferSize: 16,
+		SubscriberBuffer:  4,
+		PublishHook: func(ev overseer.Event) {
+			hookCount.Add(1)
+			mu.Lock()
+			seen = append(seen, ev.EventName())
+			mu.Unlock()
+		},
+	})
+	if err := o.Start(context.Background()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { _ = o.Close() })
+
+	overseer.Publish(o, evContainerStarted{ID: "a", At: time.Now()})
+	overseer.Publish(o, evContainerStarted{ID: "b", At: time.Now()})
+	overseer.Publish(o, evContainerRemoved{ID: "a", At: time.Now()})
+	overseer.Publish(o, evNoApply{Note: "ping", At: time.Now()})
+	overseer.Publish(o, evContainerStarted{ID: "c", At: time.Now()})
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && hookCount.Load() < 5 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := hookCount.Load(); got != 5 {
+		t.Fatalf("hook called %d times, want 5", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"test.container.started", "test.container.started", "test.container.removed", "test.no_apply", "test.container.started"}
+	if len(seen) != len(want) {
+		t.Fatalf("seen %v, want %v", seen, want)
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Fatalf("event %d = %q, want %q (full: %v)", i, seen[i], want[i], seen)
+		}
+	}
+}
+
+func TestPublishHook_PanicRecovered(t *testing.T) {
+	var afterPanic atomic.Int64
+	o := overseer.New(overseer.Options{
+		Logger:            logger.Nop(),
+		PublishBufferSize: 16,
+		SubscriberBuffer:  4,
+		PublishHook: func(ev overseer.Event) {
+			if e, ok := ev.(evContainerStarted); ok && e.ID == "boom" {
+				panic("hook boom")
+			}
+			afterPanic.Add(1)
+		},
+	})
+	if err := o.Start(context.Background()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { _ = o.Close() })
+
+	// Subscribe to confirm the bus loop is still alive after the panic.
+	sub, ok := overseer.Subscribe[evContainerStarted](o, "after-boom")
+	if !ok {
+		t.Fatal("subscribe failed")
+	}
+	defer sub.Unsubscribe()
+
+	overseer.Publish(o, evContainerStarted{ID: "boom", At: time.Now()})
+	overseer.Publish(o, evContainerStarted{ID: "ok", At: time.Now()})
+
+	if ev, ok := recvWithin(t, sub.C, time.Second); !ok || ev.ID != "boom" {
+		t.Fatalf("expected first delivery to be boom (panic must NOT block dispatch), got %q ok=%v", ev.ID, ok)
+	}
+	if ev, ok := recvWithin(t, sub.C, time.Second); !ok || ev.ID != "ok" {
+		t.Fatalf("subsequent event lost after hook panic: got %q ok=%v", ev.ID, ok)
+	}
+	if got := afterPanic.Load(); got != 1 {
+		t.Fatalf("hook ran %d times after the panicking call, want 1", got)
+	}
+}
+
+func TestPublishHook_NilIsNoOp(t *testing.T) {
+	// Default Options has PublishHook == nil. Confirm publishing works
+	// and the bus is not perturbed by the absence of a hook.
+	o := newTestOverseer(t)
+
+	sub, _ := overseer.Subscribe[evContainerStarted](o, "no-hook")
+	defer sub.Unsubscribe()
+
+	overseer.Publish(o, evContainerStarted{ID: "x", At: time.Now()})
+	if ev, ok := recvWithin(t, sub.C, time.Second); !ok || ev.ID != "x" {
+		t.Fatalf("got %q ok=%v, want x", ev.ID, ok)
+	}
+}
+
+func TestNewLoggerHook_EmitsStructuredLine(t *testing.T) {
+	var buf bytes.Buffer
+	log := logger.NewWriter(&buf)
+	hook := overseer.NewLoggerHook(log)
+
+	occur := time.Date(2026, 4, 29, 10, 30, 0, 0, time.UTC)
+	hook(evContainerStarted{ID: "abc", At: occur})
+
+	out := buf.String()
+	if !strings.Contains(out, `"event":"test.container.started"`) {
+		t.Fatalf("missing event field, got: %s", out)
+	}
+	if !strings.Contains(out, "occurred_at") {
+		t.Fatalf("missing occurred_at field, got: %s", out)
+	}
+	if !strings.Contains(out, "overseer: event published") {
+		t.Fatalf("missing canonical message, got: %s", out)
+	}
+}
+
+func TestNewLoggerHook_NilLoggerIsSafe(t *testing.T) {
+	hook := overseer.NewLoggerHook(nil)
+	// Should not panic even with nil logger.
+	hook(evContainerStarted{ID: "x", At: time.Now()})
 }
