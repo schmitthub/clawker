@@ -1,7 +1,7 @@
 # Task 04 — informer: split per-kind event queues
 
-**Status**: pending
-**Claimed by**: —
+**Status**: complete
+**Claimed by**: claude-opus-4.7 (2026-04-29 redesign)
 **Blocks**: 05, 06, 09
 **Blocked by**: none
 
@@ -9,15 +9,67 @@
 
 - **Y5** — `informer.ResourceUpdate.Lifecycle` is one shared field across `KindContainer` (dockerevents-owned) and `KindAgentSession` (agentdial-owned). Different vocabularies for the same field, discriminated only by `Kind` at runtime. User: "you never comingle events from different producers that is absurd and lazy."
 
-## Decision
+## Decision (REVISED 2026-04-29 after second review)
 
-The informer is supposed to be a multi-event dispatch with **separate event queues per kind**, each carrying a kind-specific event type. The current shared `ResourceUpdate` was a shortcut — agents stuffed both vocabularies into one field. Real fix:
+Y5 is a symptom of a deeper design problem: the informer's `Resource`+`Lifecycle` model is too opinionated. Anything stuffed into the substrate has to fit a "long-lived named thing with a lifecycle string" mold, and that string field is the single namespace where producer vocabularies collide. Cross-producer comingling is structurally inevitable.
 
-- One informer instance (the multi-event dispatch infrastructure stays).
-- Per-kind subscriber registration with kind-specific event types.
-- `KindContainer` events carry a `ContainerEvent` (with its own native `ContainerLifecycle` field).
-- `KindAgentSession` events carry a `SessionEvent` (with its own native `SessionLifecycle` field).
-- No shared `ResourceUpdate.Lifecycle` field with overloaded vocabulary.
+**Real fix: rewrite the substrate as a typed event bus where the event type IS the topic.**
+
+```go
+// internal/controlplane/informer (or rename to /bus) — substrate
+type Bus struct{...}
+type Middleware func(next func(ctx, any)) func(ctx, any)
+
+func New(opts Options) *Bus
+func (b *Bus) Use(mw Middleware)                                   // chain interceptors (logging/metrics)
+func (b *Bus) Publish(ctx context.Context, event any) error         // non-blocking; drop-oldest per sub
+func (b *Bus) Subscribe(handler any, opts ...SubOpt) CancelFunc     // handler: func(ctx, EventType); reflect-validated
+func (b *Bus) SubscribeOnce(handler any) CancelFunc
+func (b *Bus) Close() error                                         // drain + cancel all subs
+
+// SubOpts: WithBuffer(n), WithBatch(n, flush), WithSync, WithErrorHandler(fn)
+```
+
+Per-subscriber bounded queue + drainer goroutine. Publish does N non-blocking sends. Slow handler fills its own queue → drop-oldest with metric. No goroutine explosion, no publisher backpressure on slow consumers.
+
+**Event types live in producer packages, fully typed:**
+
+```go
+// dockerevents
+type ContainerStarted struct { ID string; Labels, Attrs map[string]string }
+type ContainerExited  struct { ID string; ExitCode int; OOM bool; ... }
+type ContainerRemoved struct { ID string }
+type NetworkCreated   struct { ID, Name string; Labels map[string]string }
+// etc.
+
+// agentdial
+type SessionConnecting struct { ContainerID, AgentName, Project, Addr string }
+type SessionConnected  struct { ContainerID, AgentName, Project, Addr string; Attempts int }
+type SessionFailed     struct { ContainerID, AgentName, Project, Addr, Reason string; Attempts int }
+type SessionBroken     struct { ContainerID, Reason string }
+```
+
+Y5 dies structurally: each event class is its own Go type in its own package. No shared field can carry overloaded vocabulary.
+
+**Subscribe:**
+```go
+bus.Subscribe(func(ctx context.Context, ev dockerevents.ContainerStarted) {
+    if isAgentContainer(ev.Labels) {
+        dialer.DialAgent(ctx, ev.ID)
+    }
+})
+```
+
+State machines are NOT a substrate concern. State enums (Running/Exited, Connecting/Connected) decompose into separate event types — each lifecycle transition is its own typed event, not a value of a shared enum field.
+
+**Drop entirely from substrate:**
+- `Resource`, `ResourceUpdate`, `Lifecycle` (concept), `Relation`, `Delta`, `Filter`
+- `LinkRelation`/`UnlinkRelation` (zero production consumers — graph store unused)
+- `Get`/`List`/`History`/`Patch`/`Remove`/`Neighbors`/`Incoming` (zero production consumers)
+- 800-line graph-shaped `informer_test.go` → ~400-line bus test suite
+- `KindContainer`/`KindAgentSession`/`LifecycleRunning`/`LifecycleGone`/etc string constants — replaced by typed event structs
+
+**Cross-cutting consumers** (audit/metrics/future webui) subscribe to interface-typed handlers (`func(ctx, ev DockerEvent)` where `DockerEvent` is an interface implemented by all dockerevents event types). Reflection routes via `eventType.AssignableTo(handlerParamType)` — single small extension to type-routing.
 
 ## Affected files
 
@@ -151,7 +203,50 @@ None. **Blocks Tasks #5, #6, #9.** Should be completed before any task that subs
 
 ## Resolution
 
-(Filled in on completion.)
+**Status**: complete. Commit `1ad06b4d` (`refactor(controlplane): replace informer with typed Overseer event bus`).
 
-- Commit SHA:
-- Notes:
+**What landed**
+
+The substrate was rewritten end-to-end. The package was renamed `internal/controlplane/informer` → `internal/controlplane/overseer` (pantheon framing — CP is Sauron, holds the worldview). Result: net **−2586 LOC** (4886 deleted, 2300 added).
+
+- `overseer.Overseer` — single goroutine event loop owning subscriber registry + State projection. 14 race-clean tests covering pub/sub, type-keyed routing, filtered subscriptions, snapshot deep-copy, ApplyTo hook integration, drop-oldest, panic isolation, concurrent producers/consumers.
+- Producer events live in their own packages: `dockerevents.{ContainerStarted, ContainerStopped, ContainerRemoved, NetworkAttached, NetworkDetached}`, `agentdial.{SessionConnecting, SessionConnected, SessionFailed, SessionBroken}`. Each event implements `EventName()` + `OccurredAt()`; lifecycle-bearing events also implement an unexported `applier` interface (`ApplyTo(*State)`) so the bus mutates worldview state under loop ownership.
+- Consumers: `agentregistry.Subscribe` now consumes typed `dockerevents.ContainerRemoved`. `agentdial.Subscribe` consumes typed `dockerevents.ContainerStarted` filtered by `consts.LabelPurpose == consts.PurposeAgent`.
+- Bare-string `SessionLifecycle*` + `Verb*` constants in `agentdial/dialer.go:64-79` deleted (Step 8).
+- Y5 dies structurally: every event class is its own Go type in its own package; no shared `Lifecycle` field exists for vocabularies to collide on.
+
+**Deviations from the spec**
+
+1. **Generic typed Subscribe (PRD Option B), not kind-specific methods (PRD Option A).** The spec preferred Option A ("kind-specific Subscribe methods") for grep-friendliness. After discussion with the user, picked the generic `Subscribe[T Event]` / `Publish[T Event]` API instead. Reasons: scales without method-pair growth as new producers land (eBPF, CLI command events); reflect.TypeOf-keyed dispatch is a single small implementation; type-safe at every call site; no runtime kind dispatch. Generics + moq don't compose, but consumer tests use a real in-memory `*Overseer` instead of a mock — cheap and accurate.
+2. **Volume / Image events dropped entirely.** The spec hedged ("Network/Volume/Image have no production consumers — folding them under typed Container kind or keeping a generic state-only path remains an open design decision"). Decision: drop both. dockerevents stops listing, stops emitting; revive when an actual consumer arrives.
+3. **State projection added to the bus.** The spec was pure-bus; the user clarified during planning that Overseer should hold ephemeral worldview state (active container set + active session set) populated from events. State lives in the run loop alongside the subscriber registry; `Snapshot(ctx)` returns a deep-copied projection. **Distinct from durable subscriber-owned stores** — agentregistry's SQLite identity rows and agentslots' TTL slot map are separate concerns with their own persistence semantics. Overseer's State is the **observed** axis (events flowing in real time); agentregistry is the **attested** axis (durable identity). Both are first-class; neither subsumes the other.
+4. **agentslots/subscribe.go deleted entirely (not migrated).** The spec assumed agentslots would migrate to typed events. User pushed back during planning: "agentslots is tied to the CLI announcing, and the container starting. why is container stopped being considered here? agentslots is not an in memory registry." After analysis: an agentslot has exactly two terminal states — Consumed (CP→clawkerd dial succeeded) or Expired (TTL janitor swept it after 60s). Every failure path between Reserve and Consume collapses to "no Consume happens" and is handled by TTL. Container IDs are unique per `docker create`, so a retry never collides with a stale slot. The dockerevents subscription was a non-load-bearing optimization. Dropped.
+5. **Snapshot replaces graph reads.** All graph features (`Resource`, `Relation`, `LinkRelation`, `UnlinkRelation`, `Get`, `List`, `History`, `Patch`, `Neighbors`, `Incoming`, `Filter`) deleted along with the informer package. `Snapshot(ctx) (State, bool)` covers any future read need; the 800-line graph-shaped test suite vanished with the API nobody called.
+
+**Downstream task impact**
+
+- **Task 05 (agentdial refactor + tests)**: partially addressed. Bare-string constants gone (Step 8 of this task); typed event publishing landed. **NOT addressed**: Y3 (Result struct + outcome enum for establishWithRetry), S3 (FD leak ceiling on dial close errors), S9 (ctx-aware skip helper for shutdown publishes — currently relies on `Publish` returning false on closed bus), S10 (ring buffer for panicTimes), S15 (Consume err level promotion), T2 (full agentdial test coverage). Task 05 should narrow scope to those remaining items.
+- **Task 06 (agentregistry/subscribe ring buffer)**: NOT addressed. The migrated `agentregistry/subscribe.go` still uses an unbounded `[]time.Time` slice with cutoff-based pruning (the same pattern as before, just against typed events). Ring buffer migration is independent of the informer refactor.
+- **Task 09 (agentslots sweep log + janitor race test)**: untouched by this refactor. The sweep-log fields and janitor race test concern the TTL janitor in `agentslots/registry.go`, which was not modified. The deletion of `agentslots/subscribe.go` removes the dockerevents-driven eviction path — janitor is now the sole eviction floor — but the sweep log itself was always janitor-emitted, so the task remains valid.
+
+All three downstream tasks are now unblocked.
+
+**Test results**
+
+```
+4950 tests, 7 skipped — make test (no e2e)
+go test -race ./internal/controlplane/overseer/...     PASS (14 tests)
+go test -race ./internal/controlplane/dockerevents/... PASS
+go test -race ./internal/controlplane/agentregistry/... PASS
+go test -race ./internal/controlplane/agentslots/...   PASS
+go test -race ./cmd/clawker-cp/...                     PASS
+```
+
+`grep -rn 'informer\.' --include='*.go' internal cmd` returns zero.
+
+- Commit SHA: `1ad06b4d`
+- Notes: see `informer-refactor-prd.md` (user-authored seed) and the resolved decisions block at the bottom of that PRD.
+
+## Claim attempts
+
+- 2026-04-29 — claude-opus-4.7 claimed and released after scope assessment. Surface: 69 informer refs across 11 files; 7 internal informer files would be restructured; 800-line `informer_test.go` rewrite + mock regen + 3 consumer rewrites + dockerevents + agentdial. Per-kind typed events would need 5 kinds (Container/Network/Volume/Image/AgentSession) since Step 7 mandates deleting the generic public API entirely. Network/Volume/Image have no production consumers (`grep` confirms only `cmd/clawker-cp/main.go:620` uses `inf.Stats()` outside of informer pkg itself); folding them under typed Container kind or keeping a generic state-only path remains an open design decision. Recommend either (a) splitting the task into 04a/04b/04c (typed events; container queue; drop generic) or (b) confirming Network/Volume/Image either typed-or-deleted before claiming. Released so a fresh agent doesn't half-land it; downstream 05/06/09 depend on this.

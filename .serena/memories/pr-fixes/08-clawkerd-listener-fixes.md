@@ -164,7 +164,7 @@ None. Independent. Parallel-safe with Task #7 (different file in same dir).
 
 ## Resolution
 
-- Commit SHA: (pending)
+- Commit SHA: `208534ac`
 - Notes:
   - C5 (EKU + cross-ref): added cross-reference comment to dual-EKU rationale on `buildListenerTLSConfig`; added `slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageClientAuth)` assertion in `pinPeerCNToCP`. Also expanded the CN-pin function godoc to explain the defense-in-depth nature of the EKU re-check.
   - S12 (Session entry/exit audit): added `peerSummary` helper in `session.go` (extracts CN + SHA-256 thumbprint via `peer.FromContext` + `credentials.TLSInfo`) and emits `event=session_started` Info at runSession entry + deferred `event=session_ended` Info with `duration` on exit.
