@@ -1,7 +1,7 @@
 # Task 07 — cmd/clawkerd/session: audit log, race fix, signal filter, atomic, validate + tests
 
-**Status**: pending
-**Claimed by**: —
+**Status**: complete
+**Claimed by**: claude-opus-4.7
 **Blocks**: —
 **Blocked by**: none
 **Parallel-safe**: yes (no other task touches `cmd/clawkerd/session.go`)
@@ -215,7 +215,16 @@ None. Independent task, parallel-safe.
 
 ## Resolution
 
-(Filled in on completion.)
-
-- Commit SHA:
+- Commit SHA: (set after commit)
 - Notes:
+  - **C3 audit log**: per-stage `shell_command_started` Info events with full argv + cwd + uid/gid + timeout_seconds; defer-driven `shell_command_done` Info with duration + final_exit_code + timed_out + outcome enum (`completed`/`spawn_failed`/`timeout`/`incomplete`).
+  - **C4 stageErrs race**: replaced shared slice with buffered (cap 1) channel for final-stage err; per-goroutine local for non-final stages (untouched: earlier-stage Wait errs were already discarded by design).
+  - **S2 runReceiver**: split err branch — ctx-cancel teardown logs at Info with `event=session_recv_teardown`; otherwise Error as before. Both surface the err so gRPC closes with context.Canceled rather than success.
+  - **S13 closePipeOnce**: new method on session, dedup-via-bool-pointer per goroutine. Treats io.ErrClosedPipe as success (peer already closed). Replaced 4 setup-failure `_ = stdinW.Close()` swallows.
+  - **S14 routeSignal**: filter expanded to `errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone)`. Reaper-race signals now log at Debug with `event=session_signal_after_exit` instead of flooding Error.
+  - **Y4 command_id**: validation moved to `dispatch` — empty rejected with INVALID_REQUEST for Shell/Stdin/CloseStdin/Signal payloads. Hello unchanged (no dup tracking, allow empty).
+  - **atomicBool**: replaced with `sync/atomic.Bool` (Store/Load); custom type + methods deleted.
+  - **Tests**: new `session_test.go`. dispatch contract (5 tests covering empty-id rejection per non-Hello payload + Hello allowance), dup-ID rejection, audit-log happy path (real `/bin/true` via `runUntilDone` helper that routes CloseStdin to unblock exec stdin-copier), audit-log spawn-failure outcome, concurrent pipeline run under -race, closePipeOnce dedup + ErrClosedPipe silence, routeSignal reaper-race filter (real exec.Cmd post-Wait), routeSignal zero-signo + unknown-id rejections, shutdownRunning ctx cancellation. Drove `go test -race -count=3` clean.
+  - **Bonus correctness fix**: in start-failure path (`c.Start() != nil`), swapped order to send error response BEFORE rc.cancel — `s.send`'s select-against-ctx.Done was racing with the just-cancelled rc.ctx, causing SPAWN_FAILED responses to drop ~50% of the time.
+  - **Doc**: `cmd/clawkerd/CLAUDE.md` gained `### ShellCommand threat surface` (root-execution scope, CN-pin trust boundary, v2 argv allow-list deferred) + `### ShellCommand audit log (load-bearing)` (event semantics, volume estimate, retention guidance) + Files-table entries for listener.go, session.go, listener_test.go, session_test.go.
+  - **Verified**: `go build ./...`, `go vet ./cmd/clawkerd/...`, `make test` (4990 passed), `go test ./cmd/clawkerd/... -race -count=3 -timeout 120s`.

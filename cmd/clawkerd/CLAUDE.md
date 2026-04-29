@@ -105,6 +105,41 @@ clawkerd's logs to durable storage if compliance retention is
 required — there is no other surface for "the CP opened a command
 channel against this container".
 
+### ShellCommand threat surface
+
+`ShellCommand` dispatches arbitrary argv with arbitrary uid/gid
+inside the container, and clawkerd runs as **root**. The CN-pinned
+mTLS listener (CP is the sole authorized caller) is the entire trust
+boundary today — there is no per-command argv allow-list, no policy
+gate, no syscall sandbox. Any compromise that lets a non-CP peer
+mint a `ContainerCP`-CN cert chained to the clawker CA grants
+root-equivalent code execution inside the agent.
+
+Per-command argv allow-listing + policy gates are a v2 concern. Until
+then, the audit log below is the load-bearing observability surface
+for who-ran-what.
+
+### ShellCommand audit log (load-bearing)
+
+Every `ShellCommand` dispatch emits two structured Info events:
+
+- `event=shell_command_started` (one per pipeline stage) — full
+  `argv`, `cwd`, `uid`, `gid`, `timeout_seconds`, plus the
+  `command_id` and `stage_index`.
+- `event=shell_command_done` (one per command) — `duration`,
+  `final_exit_code`, `timed_out`, and an `outcome` enum
+  (`completed` / `spawn_failed` / `timeout` / `incomplete`).
+
+Volume: every command emits N+1 lines for an N-stage pipeline. For
+typical CP traffic (1-2 stage pipelines) this is two-to-three lines
+per command — small relative to the `Stdout`/`Stderr` chunk traffic
+already on the wire. Operators MUST forward these events to durable
+storage if compliance retention is required.
+
+The `outcome` enum is the canonical terminal state. `incomplete`
+means runShellCommand returned via an unexpected path — treat as a
+clawkerd bug.
+
 ## What it does NOT do (B4)
 
 - No heartbeat. CP knows liveness via Docker events + the mTLS connection.
@@ -125,8 +160,12 @@ channel against this container".
 | File | Purpose |
 |------|---------|
 | `main.go` | `run(ctx, log)` orchestrator: read bootstrap, exchange assertion, dial CP, Connect (server-streaming), receive Welcome, delete verifier, drain stream. Logger initialized in `main` BEFORE `run` so every event flows through `internal/logger` |
+| `listener.go` | CP→clawkerd inbound mTLS listener on `:7700`. `buildListenerTLSConfig` enforces RequireAndVerifyClientCert + dual-EKU server cert + chain validation; `pinPeerCNToCP` runs after Go's chain check and asserts the peer is `ContainerCP` with `ClientAuth` EKU |
+| `session.go` | `runSession` — per-stream owner: receive loop, sender goroutine, dispatch, ShellCommand pipeline (multi-stage exec, stdin/stdout/stderr fanout, signal forwarding, timeout watchdog, audit log) |
 | `interceptor.go` | `bearerCreds` (`credentials.PerRPCCredentials`) — attaches `authorization: Bearer <token>` on every outgoing RPC, unary AND streaming |
 | `bootstrap_test.go` | `readBootstrap` happy path, per-file missing variants, empty-file rejection, dial TLS rejects malformed key material |
+| `listener_test.go` | `pinPeerCNToCP` unit tests + `runSession` audit-log integration test (bufconn TLS) + bad-CN listener rejection |
+| `session_test.go` | dispatch/command_id contract, dup-ID rejection, ShellCommand audit log, spawn-failure outcome, concurrent-pipeline race-detector run, `closePipeOnce` dedup, `routeSignal` reaper-race filter |
 
 ## Logging
 

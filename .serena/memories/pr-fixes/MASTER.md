@@ -39,7 +39,7 @@ Three load-bearing concepts shape every fix:
 | 04 | [informer: split per-kind event queues](04-informer-per-kind-split.md) | pending | — | — | no |
 | 05 | [agentdial refactor + tests](05-agentdial-refactor.md) | pending | — | 01, 04 | no |
 | 06 | [agentregistry/subscribe: ring buffer](06-subscribe-ringbuffer.md) | pending | — | 04 | yes |
-| 07 | [cmd/clawkerd/session: audit + race + atomic + tests](07-clawkerd-session-fixes.md) | pending | — | — | yes |
+| 07 | [cmd/clawkerd/session: audit + race + atomic + tests](07-clawkerd-session-fixes.md) | complete | claude-opus-4.7 | — | yes |
 | 08 | [cmd/clawkerd/listener: EKU + audit + tests](08-clawkerd-listener-fixes.md) | complete | claude-opus-4.7 | — | yes |
 | 09 | [agentslots: sweep log + janitor race test](09-agentslots-sweep-tests.md) | pending | — | 04 | yes |
 | 10 | [server_test: nil-agents → empty ListAgents](10-server-test-nil-agents.md) | complete | claude-opus-4.7 | — | yes |

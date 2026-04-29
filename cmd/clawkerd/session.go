@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -169,20 +170,28 @@ func (s *session) runReceiver(ctx context.Context) error {
 			return nil
 		}
 		if err != nil {
-			// ctx-canceled is our own teardown (Session ending) —
-			// don't log as an error, but still surface the error so
-			// gRPC closes the call cleanly with context.Canceled
-			// rather than success.
-			if ctx.Err() == nil {
-				s.log.Error().Err(err).Str("event", "session_recv_failed").Msg("stream.Recv failed")
+			// ctx-canceled is our own teardown (Session ending). Log
+			// the cause at Info — operators get an audit trail without
+			// elevating teardown noise to Error. Surface the error so
+			// gRPC closes the call cleanly with context.Canceled rather
+			// than success.
+			if ctx.Err() != nil {
+				s.log.Info().Err(err).Str("event", "session_recv_teardown").Msg("stream.Recv ended during ctx-cancel teardown")
+				return err
 			}
+			s.log.Error().Err(err).Str("event", "session_recv_failed").Msg("stream.Recv failed")
 			return err
 		}
 		s.dispatch(ctx, cmd)
 	}
 }
 
-// dispatch routes one Command to the right handler.
+// dispatch routes one Command to the right handler. command_id is
+// the dup-detection / routing key for everything except Hello, so
+// reject empty up front for those payload types — the wire-level
+// proto3 string field has no non-empty invariant of its own. Hello
+// is a stateless echo with no dup tracking; allow empty there to
+// preserve compatibility.
 func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 	switch p := cmd.Payload.(type) {
 	case *clawkerdv1.Command_Hello:
@@ -191,12 +200,36 @@ func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 			Payload:   &clawkerdv1.Response_HelloAck{HelloAck: &clawkerdv1.HelloAck{}},
 		})
 	case *clawkerdv1.Command_Shell:
+		if cmd.CommandId == "" {
+			s.send(ctx, errResponse("",
+				clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+				"command_id required"))
+			return
+		}
 		s.startShellCommand(ctx, cmd.CommandId, p.Shell)
 	case *clawkerdv1.Command_Stdin:
+		if cmd.CommandId == "" {
+			s.send(ctx, errResponse("",
+				clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+				"command_id required"))
+			return
+		}
 		s.routeStdin(ctx, cmd.CommandId, p.Stdin)
 	case *clawkerdv1.Command_CloseStdin:
+		if cmd.CommandId == "" {
+			s.send(ctx, errResponse("",
+				clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+				"command_id required"))
+			return
+		}
 		s.routeCloseStdin(ctx, cmd.CommandId)
 	case *clawkerdv1.Command_Signal:
+		if cmd.CommandId == "" {
+			s.send(ctx, errResponse("",
+				clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+				"command_id required"))
+			return
+		}
 		s.routeSignal(ctx, cmd.CommandId, p.Signal)
 	default:
 		s.send(ctx, errResponse(cmd.CommandId,
@@ -206,14 +239,9 @@ func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 }
 
 // startShellCommand validates the request, spawns the pipeline, and
-// registers the runningCommand for routing follow-up frames.
+// registers the runningCommand for routing follow-up frames. Caller
+// (dispatch) guarantees id is non-empty.
 func (s *session) startShellCommand(ctx context.Context, id string, sc *clawkerdv1.ShellCommand) {
-	if id == "" {
-		s.send(ctx, errResponse("",
-			clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
-			"command_id required"))
-		return
-	}
 	if len(sc.Stages) == 0 {
 		s.send(ctx, errResponse(id,
 			clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
@@ -256,12 +284,48 @@ func (s *session) startShellCommand(ctx context.Context, id string, sc *clawkerd
 // runShellCommand is the per-command worker. Lifetime: spawn → reap.
 // Sends Started/Stdout/Stderr/StageExit/Done/Error responses through
 // s.sendCh. Removes itself from s.cmds on exit.
+//
+// Audit logging: clawkerd runs as root inside the container and
+// ShellCommand can dispatch arbitrary argv with arbitrary uid/gid. The
+// CN-pinned mTLS listener is the only trust boundary today (CP is the
+// sole authorized caller); per-command argv allow-listing is a v2
+// concern. Until then, every command emits a structured
+// `shell_command_started` event per stage at Info with full argv +
+// cwd + uid/gid, and a `shell_command_done` event with duration +
+// outcome at Info on terminal exit. Operators forwarding clawkerd's
+// log to durable storage get a complete audit trail.
 func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellCommand) {
+	startedAt := time.Now()
+	var (
+		auditFinalExit int32 = -1
+		auditTimedOut  bool
+		auditOutcome   string = "incomplete"
+	)
+	for i, st := range sc.Stages {
+		s.log.Info().
+			Str("event", "shell_command_started").
+			Str("command_id", rc.id).
+			Int("stage_index", i).
+			Strs("argv", st.Argv).
+			Str("cwd", st.Cwd).
+			Uint32("uid", st.Uid).
+			Uint32("gid", st.Gid).
+			Uint32("timeout_seconds", sc.TimeoutSeconds).
+			Msg("clawkerd: shell command stage started")
+	}
 	defer func() {
 		rc.cancel()
 		s.mu.Lock()
 		delete(s.cmds, rc.id)
 		s.mu.Unlock()
+		s.log.Info().
+			Str("event", "shell_command_done").
+			Str("command_id", rc.id).
+			Dur("duration", time.Since(startedAt)).
+			Int32("final_exit_code", auditFinalExit).
+			Bool("timed_out", auditTimedOut).
+			Str("outcome", auditOutcome).
+			Msg("clawkerd: shell command done")
 	}()
 
 	// Build each stage's *exec.Cmd. Use CommandContext so a ctx
@@ -291,6 +355,10 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	rc.stdin = stdinW
 	rc.stdinMu.Unlock()
 
+	// closeLogged dedupes Warn lines for setup-failure stdin closes.
+	// Per-goroutine flag — every site in this function shares it.
+	var closeLogged bool
+
 	// Chain stage[i].stdout → stage[i+1].stdin via os pipes. Capture
 	// the final stage's stdout for streaming.
 	stagePipes := make([]io.ReadCloser, len(cmds)-1)
@@ -300,7 +368,8 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 			s.send(rc.ctx, errResponse(rc.id,
 				clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED,
 				fmt.Sprintf("stage[%d] StdoutPipe: %v", i, err)))
-			_ = stdinW.Close()
+			s.closePipeOnce(rc.id, "stdin", stdinW, &closeLogged)
+			auditOutcome = "spawn_failed"
 			return
 		}
 		stagePipes[i] = out
@@ -312,7 +381,8 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 		s.send(rc.ctx, errResponse(rc.id,
 			clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED,
 			fmt.Sprintf("final stage StdoutPipe: %v", err)))
-		_ = stdinW.Close()
+		s.closePipeOnce(rc.id, "stdin", stdinW, &closeLogged)
+		auditOutcome = "spawn_failed"
 		return
 	}
 
@@ -324,7 +394,8 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 			s.send(rc.ctx, errResponse(rc.id,
 				clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED,
 				fmt.Sprintf("stage[%d] StderrPipe: %v", i, perr)))
-			_ = stdinW.Close()
+			s.closePipeOnce(rc.id, "stdin", stdinW, &closeLogged)
+			auditOutcome = "spawn_failed"
 			return
 		}
 		stderrPipes[i] = errPipe
@@ -334,11 +405,16 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	// stages by ctx cancel.
 	for i, c := range cmds {
 		if startErr := c.Start(); startErr != nil {
-			rc.cancel() // kills any started stages via CommandContext
-			_ = stdinW.Close()
+			// Send the error response BEFORE cancelling rc.ctx —
+			// s.send select-races against ctx.Done, and a cancelled
+			// rc.ctx means the SPAWN_FAILED response can drop in
+			// favor of the ctx.Done branch.
 			s.send(rc.ctx, errResponse(rc.id,
 				clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED,
 				fmt.Sprintf("stage[%d] start: %v", i, startErr)))
+			rc.cancel() // kills any started stages via CommandContext
+			s.closePipeOnce(rc.id, "stdin", stdinW, &closeLogged)
+			auditOutcome = "spawn_failed"
 			return
 		}
 	}
@@ -351,10 +427,10 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 
 	// Optional timeout watchdog. On fire: SIGKILL via ctx cancel
 	// then surface ERROR_CODE_TIMEOUT after reaping.
-	timedOut := &atomicBool{}
+	var timedOut atomic.Bool
 	if sc.TimeoutSeconds > 0 {
 		t := time.AfterFunc(time.Duration(sc.TimeoutSeconds)*time.Second, func() {
-			timedOut.set()
+			timedOut.Store(true)
 			rc.cancel()
 		})
 		defer t.Stop()
@@ -406,16 +482,28 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	// Stage reapers — emit StageExit for each as it finishes. Using
 	// a separate goroutine per stage means CP sees each StageExit
 	// promptly (no head-of-line blocking on a slow earlier stage).
-	stageErrs := make([]error, len(cmds))
+	//
+	// The final-stage Wait error feeds Done.final_exit_code via
+	// exitCodeOf. Earlier-stage errors are not propagated (the
+	// pipeline's final exit code is the only thing CP cares about).
+	// A buffered channel (cap 1) carries the final-stage err out of
+	// its reaper goroutine without a shared slice — `go test -race`
+	// flags the previous shared-slice write/read pattern even though
+	// reapWG.Wait happens-before the read.
+	finalStageErrCh := make(chan error, 1)
+	finalIdx := len(cmds) - 1
 	var reapWG sync.WaitGroup
 	for i, c := range cmds {
+		isFinal := i == finalIdx
 		reapWG.Add(1)
 		wg.Add(1)
 		go func() {
 			defer reapWG.Done()
 			defer wg.Done()
 			waitErr := c.Wait()
-			stageErrs[i] = waitErr
+			if isFinal {
+				finalStageErrCh <- waitErr
+			}
 			s.send(rc.ctx, stageExitResponse(rc.id, uint32(i), c, waitErr))
 		}()
 	}
@@ -438,19 +526,23 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	// arrive after Done.
 	wg.Wait()
 
-	if timedOut.get() {
+	if timedOut.Load() {
 		s.send(rc.ctx, errResponse(rc.id,
 			clawkerdv1.ErrorCode_ERROR_CODE_TIMEOUT,
 			fmt.Sprintf("pipeline killed after %ds timeout", sc.TimeoutSeconds)))
+		auditTimedOut = true
+		auditOutcome = "timeout"
 		return
 	}
-	finalExit := exitCodeOf(cmds[len(cmds)-1], stageErrs[len(cmds)-1])
+	finalExit := exitCodeOf(cmds[finalIdx], <-finalStageErrCh)
 	s.send(rc.ctx, &clawkerdv1.Response{
 		CommandId: rc.id,
 		Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{
 			FinalExitCode: finalExit,
 		}},
 	})
+	auditFinalExit = finalExit
+	auditOutcome = "completed"
 }
 
 // drainStdout reads chunks from the final stage's stdout pipe and
@@ -580,14 +672,31 @@ func (s *session) routeSignal(ctx context.Context, id string, sig *clawkerdv1.Si
 		if c == nil || c.Process == nil {
 			continue
 		}
-		if err := c.Process.Signal(syscall.Signal(sig.Signo)); err != nil && !errors.Is(err, syscall.ESRCH) {
-			s.log.Error().Err(err).
-				Str("event", "session_signal_forward_failed").
+		err := c.Process.Signal(syscall.Signal(sig.Signo))
+		if err == nil {
+			continue
+		}
+		// ESRCH and os.ErrProcessDone are race-with-reaper artifacts:
+		// the stage exited between rc.processes capture and our
+		// Signal call. Log at Debug, never elevate to Error — modern
+		// Go (1.17+) returns os.ErrProcessDone on the Signal-after-
+		// reap race, and missing this filter floods Error logs every
+		// time SIGTERM hits a near-exited stage.
+		if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
+			s.log.Debug().
+				Str("event", "session_signal_after_exit").
 				Str("command_id", id).
 				Int("stage_index", i).
 				Int32("signo", sig.Signo).
-				Msg("forward signal to stage")
+				Msg("signal forwarded to already-exited stage")
+			continue
 		}
+		s.log.Error().Err(err).
+			Str("event", "session_signal_forward_failed").
+			Str("command_id", id).
+			Int("stage_index", i).
+			Int32("signo", sig.Signo).
+			Msg("forward signal to stage")
 	}
 }
 
@@ -690,6 +799,32 @@ func exitCodeOf(c *exec.Cmd, waitErr error) int32 {
 	return int32(c.ProcessState.ExitCode())
 }
 
+// closePipeOnce closes w, logging at Warn on real errors. The
+// `logged` pointer dedupes per-goroutine: a runShellCommand goroutine
+// passes the same *bool to each call site so a torrent of failed
+// closes during pipeline teardown produces exactly one Warn line.
+// Repeated SPAWN_FAILED would otherwise mask FD leaks behind silent
+// `_ = w.Close()` swallows. io.ErrClosedPipe is treated as success
+// since it just means a peer already closed.
+func (s *session) closePipeOnce(cmdID, name string, w io.Closer, logged *bool) {
+	if w == nil {
+		return
+	}
+	err := w.Close()
+	if err == nil || errors.Is(err, io.ErrClosedPipe) {
+		return
+	}
+	if *logged {
+		return
+	}
+	s.log.Warn().Err(err).
+		Str("event", "session_pipe_close_failed").
+		Str("command_id", cmdID).
+		Str("pipe", name).
+		Msg("clawkerd: pipe close failed during pipeline teardown")
+	*logged = true
+}
+
 // errResponse is a small helper for the Error variant.
 func errResponse(id string, code clawkerdv1.ErrorCode, msg string) *clawkerdv1.Response {
 	return &clawkerdv1.Response{
@@ -700,17 +835,6 @@ func errResponse(id string, code clawkerdv1.ErrorCode, msg string) *clawkerdv1.R
 		}},
 	}
 }
-
-// atomicBool is a tiny mutex-guarded bool used for the timeout-fired
-// flag. sync/atomic.Bool would also work but the cost of mu is
-// negligible for the once-per-pipeline read/write pattern here.
-type atomicBool struct {
-	mu  sync.Mutex
-	val bool
-}
-
-func (a *atomicBool) set()      { a.mu.Lock(); a.val = true; a.mu.Unlock() }
-func (a *atomicBool) get() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.val }
 
 // peerSummary returns the peer's leaf-cert CN and SHA-256 thumbprint
 // (hex) extracted from the gRPC stream context. Returns empty strings
