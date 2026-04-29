@@ -87,7 +87,7 @@ make test
 
 ## Resolution
 
-- Commit SHA: (filled by commit)
+- Commit SHA: 508c4c4b
 - Notes:
   - Split `InstallAgentBootstrap` into `InstallAgentBootstrapMaterial` (mint + tar to container) and `RegisterAgentInRegistry` (sqlite write). No DB I/O in the material half.
   - Reordered `container_create.go` call site: material delivery → post-init injection → registry row write. Registry row now signifies "container fully ready"; failure of any earlier step triggers `ContainerRemove` with no orphan row possible. Failure of the registry write itself also triggers `ContainerRemove` to keep the registry as the source of truth.

@@ -35,7 +35,7 @@ Three load-bearing concepts shape every fix:
 |---|------|--------|-----------|-----------|:-------------:|
 | 01 | [agentregistry foundation refactor](01-agentregistry-foundation.md) | complete | claude-opus-4.7 | — | no |
 | 02 | [container_create: move reg.Add to last step](02-bootstrap-order.md) | complete | claude-opus-4.7 | 01 | no |
-| 03 | [cmd/controlplane/agents: remove DBPath field](03-agents-cmd-dbpath.md) | pending | — | 01 | no |
+| 03 | [cmd/controlplane/agents: remove DBPath field](03-agents-cmd-dbpath.md) | complete | claude-opus-4.7 | 01 | no |
 | 04 | [informer: split per-kind event queues](04-informer-per-kind-split.md) | pending | — | — | no |
 | 05 | [agentdial refactor + tests](05-agentdial-refactor.md) | pending | — | 01, 04 | no |
 | 06 | [agentregistry/subscribe: ring buffer](06-subscribe-ringbuffer.md) | pending | — | 04 | yes |

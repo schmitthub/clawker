@@ -1,7 +1,7 @@
 # Task 03 — cmd/controlplane/agents: remove DBPath field
 
-**Status**: pending
-**Claimed by**: —
+**Status**: complete
+**Claimed by**: claude-opus-4.7
 **Blocks**: 11
 **Blocked by**: 01
 
@@ -85,7 +85,9 @@ make test
 
 ## Resolution
 
-(Filled in on completion.)
-
-- Commit SHA:
+- Commit SHA: (filled by commit)
 - Notes:
+  - Removed `DBPath` field from `AgentsOptions` and the wiring in `NewCmdAgents`. `agentsRun` now calls `consts.ControlPlaneDBPath()` directly.
+  - Tests use `testenv.New(t)` which sets `CLAWKER_DATA_DIR` via `t.Setenv`; `consts.ControlPlaneDBPath()` resolves to the testenv's data subdir without an injection seam.
+  - Dropped `TestAgentsRun_PropagatesDBPathError` — the only remaining failure mode is the consts accessor itself, which is governed by env vars and not test-injectable.
+  - Unit suite green (`go test ./internal/cmd/controlplane/... -race`).

@@ -24,14 +24,18 @@ import (
 // going through CP gRPC. This keeps `clawker controlplane agents`
 // working when the CP is down (the data point is still there) and
 // avoids paying a dial+RPC cost to read what we just wrote.
+//
+// The registry path is intentionally NOT a field here. It comes from
+// `consts.ControlPlaneDBPath()`, which reads `CLAWKER_DATA_DIR` at call
+// time; tests rely on `testenv.New(t)` to set that env var to an
+// isolated temp dir, so the accessor resolves correctly without the
+// command needing a Factory noun for what is really just a consts
+// lookup.
 type AgentsOptions struct {
 	IOStreams *iostreams.IOStreams
 	TUI       *tui.TUI
 	Logger    func() (*logger.Logger, error)
-	// DBPath returns the host-side agentregistry sqlite DB path.
-	// Defaults to consts.ControlPlaneDBPath; tests inject a temp path.
-	DBPath func() (string, error)
-	Format *cmdutil.FormatFlags
+	Format    *cmdutil.FormatFlags
 }
 
 // agentRow is the JSON/template-friendly representation of one agent.
@@ -52,7 +56,6 @@ func NewCmdAgents(f *cmdutil.Factory, runF func(context.Context, *AgentsOptions)
 		IOStreams: f.IOStreams,
 		TUI:       f.TUI,
 		Logger:    f.Logger,
-		DBPath:    consts.ControlPlaneDBPath,
 	}
 
 	cmd := &cobra.Command{
@@ -92,7 +95,7 @@ func agentsRun(_ context.Context, opts *AgentsOptions) error {
 		return fmt.Errorf("initializing logger: %w", err)
 	}
 
-	dbPath, err := opts.DBPath()
+	dbPath, err := consts.ControlPlaneDBPath()
 	if err != nil {
 		return fmt.Errorf("resolving registry db path: %w", err)
 	}

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,17 +12,25 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
 // agentsHarness drives the agents verb against a real sqlite registry
-// in a temp dir. Using the real registry keeps the test honest about
-// the local-read contract — a regression that points the verb back at
-// the AdminService gRPC path would compile but the assertions on
-// stdout/stderr would fail because no AdminClient was wired.
+// rooted in a testenv-managed temp dir. Using the real registry keeps
+// the test honest about the local-read contract — a regression that
+// points the verb back at the AdminService gRPC path would compile but
+// the assertions on stdout/stderr would fail because no AdminClient was
+// wired.
+//
+// The DB path is resolved through `consts.ControlPlaneDBPath()`, which
+// reads `CLAWKER_DATA_DIR` at call time. `testenv.New(t)` sets that env
+// var to an isolated temp dir per test, so production code and tests
+// agree on a single accessor — no opts.DBPath injection seam.
 type agentsHarness struct {
 	IOStreams *iostreams.IOStreams
 	TUI       *tui.TUI
@@ -33,9 +40,12 @@ type agentsHarness struct {
 
 func newAgentsHarness(t *testing.T) *agentsHarness {
 	t.Helper()
+	testenv.New(t)
+	dbPath, err := consts.ControlPlaneDBPath()
+	require.NoError(t, err)
+
 	ios, _, _, _ := iostreams.Test()
 	tuiInst := tui.NewTUI(ios)
-	dbPath := filepath.Join(t.TempDir(), "controlplane.db")
 	h := &agentsHarness{
 		IOStreams: ios,
 		TUI:       tuiInst,
@@ -45,7 +55,6 @@ func newAgentsHarness(t *testing.T) *agentsHarness {
 		IOStreams: ios,
 		TUI:       tuiInst,
 		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
-		DBPath:    func() (string, error) { return dbPath, nil },
 		Format:    &cmdutil.FormatFlags{},
 	}
 	return h
@@ -167,12 +176,4 @@ func TestAgentsRun_PropagatesLoggerError(t *testing.T) {
 	err := agentsRun(context.Background(), h.opts)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "logger boom")
-}
-
-func TestAgentsRun_PropagatesDBPathError(t *testing.T) {
-	h := newAgentsHarness(t)
-	h.opts.DBPath = func() (string, error) { return "", errors.New("path boom") }
-	err := agentsRun(context.Background(), h.opts)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "path boom")
 }
