@@ -1,7 +1,7 @@
 # Task 08 — cmd/clawkerd/listener: EKU assertion, Session entry audit + tests
 
-**Status**: pending
-**Claimed by**: —
+**Status**: complete
+**Claimed by**: claude-opus-4.7
 **Blocks**: —
 **Blocked by**: none
 **Parallel-safe**: yes (no other task touches `cmd/clawkerd/listener.go`)
@@ -164,7 +164,10 @@ None. Independent. Parallel-safe with Task #7 (different file in same dir).
 
 ## Resolution
 
-(Filled in on completion.)
-
-- Commit SHA:
+- Commit SHA: (pending)
 - Notes:
+  - C5 (EKU + cross-ref): added cross-reference comment to dual-EKU rationale on `buildListenerTLSConfig`; added `slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageClientAuth)` assertion in `pinPeerCNToCP`. Also expanded the CN-pin function godoc to explain the defense-in-depth nature of the EKU re-check.
+  - S12 (Session entry/exit audit): added `peerSummary` helper in `session.go` (extracts CN + SHA-256 thumbprint via `peer.FromContext` + `credentials.TLSInfo`) and emits `event=session_started` Info at runSession entry + deferred `event=session_ended` Info with `duration` on exit.
+  - T4 (tests): new `cmd/clawkerd/listener_test.go` covers four pinPeerCNToCP unit branches (valid, bad CN, missing ClientAuth EKU, empty chain), full bufconn integration for runSession audit log (`TestRunSession_LogsAuditOnEntryAndExit` — drives a real mTLS handshake with a self-contained CA so the audit log paths execute end-to-end), and the bad-CN TLS-handshake-passes-app-layer-rejects path (`TestListener_RejectsBadCN`). EKU rejection cannot be tested through TLS layer (Go rejects at handshake before pinPeerCNToCP runs), so the unit test on pinPeerCNToCP carries the assertion.
+  - CLAUDE.md updated with a "ClawkerdService listener" section documenting the three guards (mTLS, CN pin, ClientAuth EKU assertion) and a "Session-entry audit log" subsection covering the two structured events.
+  - Verification: `go test ./cmd/clawkerd/... -race` clean; `make test` clean (4975 tests, 7 pre-existing skips).

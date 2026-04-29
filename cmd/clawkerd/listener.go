@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -70,10 +71,20 @@ func startClawkerdListener(boot *bootstrap, log *logger.Logger) (*grpc.Server, e
 }
 
 // buildListenerTLSConfig returns the *tls.Config for the clawkerd
-// gRPC listener. ServerCert is the per-agent leaf the CLI minted.
+// gRPC listener. ServerCert is the per-agent leaf the CLI minted —
+// the leaf carries BOTH ClientAuth (used by clawkerd's outbound dial
+// to CP's AgentService) and ServerAuth (used here, so CP-side chain
+// verify accepts the cert as a server cert). See
+// internal/auth/agent_cert.go for the dual-EKU rationale; without
+// ServerAuth here every CP→clawkerd dial fails with "incompatible
+// key usage".
+//
 // ClientCAs is the clawker CA bundle (so the CP's client cert chains
 // validate). ClientAuth requires a verified peer cert.
-// VerifyPeerCertificate then pins the peer CN to consts.ContainerCP.
+// VerifyPeerCertificate then pins the peer CN to consts.ContainerCP
+// AND asserts ClientAuth EKU on the peer cert (defense in depth — Go's
+// TLS layer already enforces ClientAuth on client certs, but the
+// app-layer assertion documents the dependency at the call site).
 func buildListenerTLSConfig(certPEM, keyPEM, caPEM []byte) (*tls.Config, error) {
 	leaf, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
@@ -93,15 +104,27 @@ func buildListenerTLSConfig(certPEM, keyPEM, caPEM []byte) (*tls.Config, error) 
 }
 
 // pinPeerCNToCP rejects any verified peer whose cert CN does not
-// equal consts.ContainerCP. Runs after the standard chain validation
+// equal consts.ContainerCP, and additionally asserts the peer cert
+// carries the ClientAuth EKU. Runs after the standard chain validation
 // so verifiedChains is populated by the TLS stack.
+//
+// The ClientAuth EKU assertion is defense in depth: tls.Config with
+// ClientAuth=RequireAndVerifyClientCert already enforces ClientAuth
+// at the TLS layer (Go's default chain verify for client certs uses
+// KeyUsages=[ClientAuth]). Re-asserting here documents the dependency
+// at the call site so a future refactor that loosens TLS verification
+// (e.g. to support a test that disables verify, or a switch to
+// VerifyClientCertIfGiven) still fails closed at the application layer.
 func pinPeerCNToCP(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
 	if len(verifiedChains) == 0 || len(verifiedChains[0]) == 0 {
 		return errors.New("clawkerd listener: no verified peer chain")
 	}
-	peerCN := verifiedChains[0][0].Subject.CommonName
-	if subtle.ConstantTimeCompare([]byte(peerCN), []byte(consts.ContainerCP)) != 1 {
+	leaf := verifiedChains[0][0]
+	if subtle.ConstantTimeCompare([]byte(leaf.Subject.CommonName), []byte(consts.ContainerCP)) != 1 {
 		return errors.New("clawkerd listener: peer CN not authorized")
+	}
+	if !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageClientAuth) {
+		return errors.New("clawkerd listener: peer cert missing ClientAuth EKU")
 	}
 	return nil
 }

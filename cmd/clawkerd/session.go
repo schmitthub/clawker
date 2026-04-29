@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +12,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -36,6 +41,27 @@ const sendQueueDepth = 64
 func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger) error {
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
+
+	// Audit log: every Session entry from the listener emits an Info
+	// event with peer CN + cert thumbprint. Sessions are long-lived
+	// (server-streaming, agent's lifetime), so two log lines per
+	// Session are negligible. The ContainerCP CN-pin and ClientAuth
+	// EKU assertion run upstream in pinPeerCNToCP — by the time
+	// runSession executes, the peer is the trusted CP.
+	startedAt := time.Now()
+	peerCN, peerThumbprint := peerSummary(stream.Context())
+	log.Info().
+		Str("event", "session_started").
+		Str("peer_cn", peerCN).
+		Str("peer_thumbprint", peerThumbprint).
+		Msg("clawkerd: Session started")
+	defer func() {
+		log.Info().
+			Str("event", "session_ended").
+			Str("peer_cn", peerCN).
+			Dur("duration", time.Since(startedAt)).
+			Msg("clawkerd: Session ended")
+	}()
 
 	s := &session{
 		log:    log,
@@ -685,3 +711,23 @@ type atomicBool struct {
 
 func (a *atomicBool) set()      { a.mu.Lock(); a.val = true; a.mu.Unlock() }
 func (a *atomicBool) get() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.val }
+
+// peerSummary returns the peer's leaf-cert CN and SHA-256 thumbprint
+// (hex) extracted from the gRPC stream context. Returns empty strings
+// if peer info or TLS info is unavailable. The clawkerd listener
+// requires mTLS, so production always has both fields populated; tests
+// that drive runSession without TLS fall through to empty values
+// rather than panicking the audit log.
+func peerSummary(ctx context.Context) (cn, thumbprintHex string) {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p == nil {
+		return "", ""
+	}
+	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok || len(tlsInfo.State.PeerCertificates) == 0 {
+		return "", ""
+	}
+	leaf := tlsInfo.State.PeerCertificates[0]
+	sum := sha256.Sum256(leaf.Raw)
+	return leaf.Subject.CommonName, hex.EncodeToString(sum[:])
+}

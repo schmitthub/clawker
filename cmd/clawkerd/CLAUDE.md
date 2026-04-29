@@ -64,6 +64,47 @@ are commands as B5+ adds payload variants.
    B5+ adds command-payload variants to the oneof; today the loop
    acknowledges `Welcome` and forward-compat-ignores unknown payloads.
 
+## ClawkerdService listener (CP→clawkerd)
+
+The :7700 inbound listener (`listener.go`) is the surface CP dials when
+issuing commands. Three guards run before any handler executes:
+
+1. **mTLS, RequireAndVerifyClientCert.** `ClientCAs` is the clawker CA
+   bundle so the CP's client cert chain validates. Server cert is the
+   per-agent leaf the CLI minted — the leaf carries BOTH `ClientAuth`
+   (used by clawkerd's outbound dial to CP) AND `ServerAuth` (used by
+   this inbound listener so CP-side chain verify accepts it as a
+   server cert). See `internal/auth/agent_cert.go` for the dual-EKU
+   rationale; without `ServerAuth` here every CP→clawkerd dial fails
+   with "incompatible key usage".
+2. **CN pin.** `pinPeerCNToCP` (constant-time compare) rejects any
+   verified peer whose CN is not `consts.ContainerCP`. Without this
+   pin, any other clawker-CA-signed cert (e.g. another agent's) would
+   be accepted and could dispatch root-level ShellCommands —
+   agent-to-agent privilege escalation.
+3. **ClientAuth EKU assertion.** `pinPeerCNToCP` also asserts the peer
+   cert carries `ClientAuth`. Defense in depth: Go's TLS chain verify
+   already enforces this for client certs, but the app-layer
+   assertion documents the dependency at the call site so a refactor
+   that loosens TLS config (e.g. `VerifyClientCertIfGiven`) still
+   fails closed.
+
+### Session-entry audit log (load-bearing)
+
+`runSession` emits two structured Info events per Session:
+
+- `event=session_started` with `peer_cn` + `peer_thumbprint` — fired
+  on every authenticated stream open.
+- `event=session_ended` with `peer_cn` + `duration` — fired via defer
+  when the receiver loop returns (graceful EOF or stream error).
+
+These events are the audit trail for CP-driven command dispatch.
+Sessions are long-lived (server-streaming, agent's lifetime), so two
+log lines per Session are negligible. Operators MUST forward
+clawkerd's logs to durable storage if compliance retention is
+required — there is no other surface for "the CP opened a command
+channel against this container".
+
 ## What it does NOT do (B4)
 
 - No heartbeat. CP knows liveness via Docker events + the mTLS connection.
