@@ -215,7 +215,7 @@ None. Independent task, parallel-safe.
 
 ## Resolution
 
-- Commit SHA: (set after commit)
+- Commit SHA: `82d3f7bc`
 - Notes:
   - **C3 audit log**: per-stage `shell_command_started` Info events with full argv + cwd + uid/gid + timeout_seconds; defer-driven `shell_command_done` Info with duration + final_exit_code + timed_out + outcome enum (`completed`/`spawn_failed`/`timeout`/`incomplete`).
   - **C4 stageErrs race**: replaced shared slice with buffered (cap 1) channel for final-stage err; per-goroutine local for non-final stages (untouched: earlier-stage Wait errs were already discarded by design).
