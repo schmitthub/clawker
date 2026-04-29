@@ -1,8 +1,8 @@
 # agentregistry Package
 
-Persisted record of (cert thumbprint, container_id, project, agent_name) for every clawker-managed container. Rows are written by the CLI at container create time alongside auth material delivery. Consumed by `agent.IdentityInterceptor` (every non-Connect AgentPort RPC), `AdminService.ListAgents`, and the local-read `clawker controlplane agents` CLI. Eviction is owned by the CP: startup `Reap` against live docker state, plus dockerevents `DeltaRemoved` (destroy) in steady state.
+Persisted record of (cert thumbprint, container_id, project, agent_name, canonical_cn) for every clawker-managed container. Rows are written by the CLI at container create time alongside auth material delivery. Consumed by `agent.IdentityInterceptor` (every non-Connect AgentPort RPC), `AdminService.ListAgents`, and the local-read `clawker controlplane agents` CLI. Eviction is owned by the CP: startup `Reap` against live docker state, plus dockerevents `DeltaRemoved` (destroy) in steady state.
 
-## Backing store: sqlite
+## Backing store: sqlite (cache-less)
 
 The registry persists to a sqlite database under the CP-owned data subdirectory:
 
@@ -10,7 +10,7 @@ The registry persists to a sqlite database under the CP-owned data subdirectory:
 - Container: `consts.CPControlPlaneDBPath` (bind-mounted RW into `consts.CPControlPlaneDir`)
 - Driver: `modernc.org/sqlite` (pure Go — no cgo toolchain in the CP build pipeline)
 
-The DB survives CP container recreation. Rows reload into the in-memory cache on `NewSQLite`. Lookup/Snapshot serve from the cache (hot path on every AgentPort RPC); Add and EvictByContainerID are write-through (disk first, then cache, so a process crash mid-write never produces a row in memory that does not survive restart).
+There is **no in-memory cache**. Every `Lookup` / `Snapshot` / `LookupByThumbprint` / `LookupByContainerID` issues a fresh sqlite query. This was a deliberate decision in the Task #1 PR fix: the previous mirror-with-disk-as-source-of-truth design accumulated a class of drift bugs (orphan rows when DELETE failed but memory eviction proceeded; malformed rows resurrected on reload; partial-evict invariant violations) that all collapse to zero by construction once the cache is gone. modernc/sqlite + WAL on local fs makes per-RPC reads sub-millisecond, and the AgentPort RPC count is bounded by the per-host agent count (single digits). The DB survives CP container recreation.
 
 ## Schema
 
@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS agents (
   container_id   TEXT NOT NULL,
   agent_name     TEXT NOT NULL,
   project        TEXT NOT NULL,
+  canonical_cn   TEXT NOT NULL,
   registered_at  INTEGER NOT NULL,
   last_seen      INTEGER NOT NULL,
   PRIMARY KEY (thumbprint_hex, container_id),
@@ -31,7 +32,19 @@ CREATE INDEX IF NOT EXISTS idx_name_project ON agents(project, agent_name);
 
 `thumbprint_hex` and `container_id` are individually UNIQUE: a given cert can bind to exactly one container and a given container can host exactly one registration. The composite PK encodes the binding intent. `(project, agent_name)` is non-unique — Docker container name uniqueness handles the real conflict upstream; brief stale rows during eviction races are tolerated.
 
+`canonical_cn` is the pre-computed `clawker[.<project>].<agent>` string composed by `auth.CanonicalAgentCN` from typed inputs at `Add` time. Storing it as a column eliminates the historical Lookup-time panic vector where `auth.MustProjectSlug` / `auth.MustAgentName` reconstructed the CN from on-disk strings on every read — a single malformed row used to crash the entire CP. `Lookup` now compares the supplied peer-cert CN against this column with `subtle.ConstantTimeCompare`; no reconstruction, no Must*.
+
 `last_seen` mirrors `registered_at` today; future per-agent RPCs will refresh it at their own boundary.
+
+### Schema apply is transactional
+
+The `CREATE TABLE` + `CREATE INDEX` block runs inside an explicit `BEGIN/COMMIT` so an interrupted apply (process crash mid-DDL) leaves the DB in a coherent state. A pre-Task-01 `agents` table that lacks the `canonical_cn` column is detected via `PRAGMA table_info(agents)` and dropped+recreated on the next writer open. This is alpha-policy: the registry is regenerable on the next clawker run/start, and a forced re-Register beats a partial migration. The drop is logged at Warn so operators see it.
+
+## Identity contract
+
+Identity in agentregistry is `(thumbprint, container_id)` — both UNIQUE in sqlite. `agent_name` and `project` are CROSS-CHECK fields stored alongside, NOT identity. The canonical CN derived from `(project, agent_name)` is what `Lookup` compares against the peer cert; storing it pre-computed is what defangs the Must* panic vector.
+
+Add takes string `Project` + `AgentName` on `Entry` and validates them via `auth.NewProjectSlug` / `auth.NewAgentName` (the err-returning typed constructors). Malformed inputs surface as a returned error from `Add`, NOT as a panic. The remaining programming-error invariants (zero thumbprint, empty `ContainerID`, zero `RegisteredAt`) still panic at the call site because they cannot originate from user input — they would mean a wiring bug in the in-package `agent.Handler`.
 
 ## Registry row ↔ extant container invariant
 
@@ -59,36 +72,43 @@ type Entry struct {
 }
 
 type Registry interface {
-    Add(entry Entry) error                                       // Persist + cache. Returns sqlite write errors.
-    Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)  // CN-gated identity resolution (IdentityInterceptor).
-    LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error) // No CN check; used by Register handler's existing-thumbprint REJECT.
-    LookupByContainerID(containerID string) (*Entry, error)          // Used by AnnounceAgent's pre-reserve evict.
-    EvictByContainerID(containerID string)
+    Add(entry Entry) error                                            // Validates + persists; returns err on malformed identity OR sqlite write failure.
+    Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)   // CN-gated identity resolution (IdentityInterceptor).
+    LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error)  // No CN check; used by Register handler's existing-thumbprint REJECT.
+    LookupByContainerID(containerID string) (*Entry, error)           // Used by AnnounceAgent's pre-reserve evict.
+    EvictByContainerID(containerID string) error                      // Returns underlying DELETE error so callers log-and-proceed.
     Snapshot() []Entry
 }
 
 func NewRegistry(log *logger.Logger) Registry              // In-memory only — used by tests.
-func NewSQLite(dbPath string, log *logger.Logger) (Registry, error)  // Production: sqlite-backed.
+func NewSQLiteWriter(dbPath string, log *logger.Logger) (Registry, error)
+func NewSQLiteReader(dbPath string, log *logger.Logger) (Registry, error)
+func EnsureSchema(dbPath string, log *logger.Logger) error // Idempotent: opens writer, applies schema, closes.
 ```
 
-`Add` panics on invalid input (zero thumbprint, empty AgentName, empty ContainerID, zero RegisteredAt) — these are programming errors at the call site, not user input.
+`Add` returns an error when:
+- `auth.NewProjectSlug` rejects `Project` (malformed slug).
+- `auth.NewAgentName` rejects `AgentName` (empty or invalid characters).
+- The sqlite INSERT fails (UNIQUE collision against a stale row, disk full, schema corruption).
 
-`Add` returns an error when the sqlite write fails (UNIQUE collision against a stale row that wasn't evicted in time, disk full, schema corruption). The Register handler maps this to `codes.Internal`, clawkerd exits non-zero, the container's restart policy or the user re-runs `clawker start`, AnnounceAgent re-evicts and re-reserves.
+`Add` panics on programming-error invariants the call site MUST have checked: zero thumbprint, empty `ContainerID`, zero `RegisteredAt`.
+
+`EvictByContainerID` returns the underlying DELETE error so the caller can log it. The dockerevents-driven and reaper-driven callers log-and-proceed (they cannot retry from a delta consumer; the next reap pass heals); the CLI-side `clawker container remove` logs at debug since registry hiccups must not surface as remove failures.
 
 ## Subscriber
 
-`Subscribe(ctx, registry, informer, log)` subscribes the registry to the shared dockerevents informer; **destroy only** (DeltaRemoved) drives `EvictByContainerID`. Stop/die/kill are deliberately ignored — see "Registry row ↔ extant container invariant" above. Reused by both in-memory and sqlite-backed registries — the subscription only sees the Registry interface.
+`Subscribe(ctx, registry, informer, log)` subscribes the registry to the shared dockerevents informer; **destroy only** (DeltaRemoved) drives `EvictByContainerID`. Stop/die/kill are deliberately ignored — see "Registry row ↔ extant container invariant" above. The handler logs Evict errors at Warn and proceeds — it cannot retry from a delta consumer because the next delta is already queued. Reused by both in-memory and sqlite-backed registries; the subscription only sees the Registry interface.
 
 ## Reaper
 
-`Reap(ctx, registry, lister, log)` runs once at CP startup. The lister enumerates every `purpose=agent` container with `All: true` (running + stopped + exited) so a stopped container with a live row survives the sweep. Returns the count of evicted rows for the caller's startup log. A failed list is a transient docker daemon issue — caller logs the warning and proceeds; the dockerevents subscription catches up on the next destroy event.
+`Reap(ctx, registry, lister, log)` runs once at CP startup. The lister enumerates every `purpose=agent` container with `All: true` (running + stopped + exited) so a stopped container with a live row survives the sweep. The lister is retried with bounded exponential backoff (3 attempts: 100ms → 200ms → 400ms) before giving up — a transient docker-daemon hiccup at CP boot must not skip the first sweep entirely (the dockerevents subscription only catches NEW destroys from that point forward). Per-row eviction errors are aggregated into the returned error via `errors.Join` so the caller can surface them; the count reflects only successful evictions.
 
 ## Mock
 
-moq-generated `RegistryMock` under `mocks/`. Regenerate via `go generate ./...`.
+moq-generated `RegistryMock` under `mocks/`. Regenerate via `cd internal/controlplane/agentregistry && go generate ./...`.
 
 ## Imports
 
-**Uses**: `internal/auth` (CanonicalAgentCN, MustProjectSlug, MustAgentName), `internal/logger`, `modernc.org/sqlite`, stdlib `crypto/sha256`, `database/sql`, `encoding/hex`.
+**Uses**: `internal/auth` (`CanonicalAgentCN`, `NewAgentName`, `NewProjectSlug`), `internal/logger`, `modernc.org/sqlite`, stdlib `crypto/sha256`, `crypto/subtle`, `database/sql`, `encoding/hex`.
 
-**Used by**: `cmd/clawker-cp/main.go` (NewSQLite construction), `internal/controlplane/server.go` (AnnounceAgent + ListAgents), `internal/controlplane/agent` (Register handler + IdentityInterceptor).
+**Used by**: `cmd/clawker-cp/main.go` (NewSQLiteWriter construction + Reap + Subscribe wiring), `internal/controlplane/server.go` (AnnounceAgent + ListAgents), `internal/controlplane/agent` (Register handler + IdentityInterceptor), `internal/cmd/container/shared/agent_bootstrap.go` (CLI write path), `internal/cmd/container/remove/remove.go` (CLI evict path), `internal/cmd/controlplane/agents.go` (NewSQLiteReader for local-read CLI), `internal/controlplane/cpboot/bootstrap.go` (EnsureSchema before CP container start).

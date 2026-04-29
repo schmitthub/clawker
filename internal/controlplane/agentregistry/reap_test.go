@@ -3,6 +3,7 @@ package agentregistry
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,6 +92,52 @@ func TestReap_ListerError_PropagatesAndReapsNothing(t *testing.T) {
 	assert.Equal(t, 0, evicted)
 
 	// Row must still be present.
+	_, err = r.Lookup(tp("cert-a"), canonical("", "a"))
+	assert.NoError(t, err)
+}
+
+func TestReap_RetriesOnTransientListerError(t *testing.T) {
+	// First two lister calls fail with a transient error; third
+	// succeeds. Reap must complete and evict the orphan row from the
+	// successful attempt — a single transient docker-daemon hiccup at
+	// CP startup must not skip the first sweep entirely.
+	r := NewRegistry(nil)
+	mustAdd(t, r, validEntry("", "a", "ctr-keep", "cert-a"))
+	mustAdd(t, r, validEntry("", "b", "ctr-orphan", "cert-b"))
+
+	var attempts atomic.Int32
+	lister := func(_ context.Context) ([]string, error) {
+		n := attempts.Add(1)
+		if n < 3 {
+			return nil, errors.New("daemon temporarily unavailable")
+		}
+		return []string{"ctr-keep"}, nil
+	}
+
+	evicted, err := Reap(context.Background(), r, lister, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, evicted)
+	assert.EqualValues(t, 3, attempts.Load(), "lister must be retried up to maxAttempts")
+}
+
+func TestReap_GivesUpAfterMaxRetries(t *testing.T) {
+	// Lister fails on every attempt. Reap must return the last error
+	// and evict nothing.
+	r := NewRegistry(nil)
+	mustAdd(t, r, validEntry("", "a", "ctr-1", "cert-a"))
+
+	var attempts atomic.Int32
+	lister := func(_ context.Context) ([]string, error) {
+		attempts.Add(1)
+		return nil, errors.New("daemon down")
+	}
+
+	evicted, err := Reap(context.Background(), r, lister, nil)
+	require.Error(t, err)
+	assert.Equal(t, 0, evicted)
+	assert.EqualValues(t, 3, attempts.Load(), "lister retried up to the bounded ceiling")
+
+	// Row preserved.
 	_, err = r.Lookup(tp("cert-a"), canonical("", "a"))
 	assert.NoError(t, err)
 }

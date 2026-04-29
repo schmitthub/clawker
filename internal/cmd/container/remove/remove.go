@@ -206,6 +206,12 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 			_ = closer.Close()
 		}
 	}()
-	reg.EvictByContainerID(container.ID)
+	if err := reg.EvictByContainerID(container.ID); err != nil {
+		// Best-effort: container removal already succeeded above so a
+		// registry hiccup must not surface as a remove failure. Log at
+		// debug; the dockerevents subscription / startup reap heals
+		// the orphan row later.
+		log.Debug().Err(err).Str("container_id", container.ID).Msg("agentregistry: evict on remove failed")
+	}
 	return nil
 }

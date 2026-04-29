@@ -178,12 +178,12 @@ func (p *panicOnceRegistry) LookupByThumbprint(t [sha256.Size]byte) (*Entry, err
 	return p.delegate.LookupByThumbprint(t)
 }
 func (p *panicOnceRegistry) Snapshot() []Entry { return p.delegate.Snapshot() }
-func (p *panicOnceRegistry) EvictByContainerID(id string) {
+func (p *panicOnceRegistry) EvictByContainerID(id string) error {
 	p.calls.Add(1)
 	if p.panicked.CompareAndSwap(false, true) {
 		panic("synthetic eviction-hook panic")
 	}
-	p.delegate.EvictByContainerID(id)
+	return p.delegate.EvictByContainerID(id)
 }
 
 func TestSubscribe_RecoversFromHookPanic(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -32,7 +33,8 @@ import (
 // own boundary.
 type Entry struct {
 	// AgentName is the user-typed short name (e.g. "dev"); composed with
-	// Project at Lookup time to verify against the peer cert's CN.
+	// Project at Add time into the canonical CN that Lookup compares
+	// against the peer cert's Subject.CommonName.
 	AgentName string
 	// Project is the clawker project slug under which the agent
 	// registered. Empty string is allowed and matches the unscoped
@@ -48,7 +50,7 @@ type Entry struct {
 // thumbprint+CN pair. Distinguishable from "agent disconnected" because
 // the thumbprint is channel-bound: the only way to fail a Lookup is for
 // the cert to have never registered, to have been evicted, or for the
-// peer cert's CN not to match the entry's stored (Project, AgentName).
+// peer cert's CN not to match the entry's stored canonical CN.
 // All three failure modes collapse into one sentinel — the handler maps
 // it to a generic codes.PermissionDenied (matching every other Connect
 // rejection) so callers can't probe which half of the composite identity
@@ -64,27 +66,28 @@ type Registry interface {
 	// re-registration creates a new entry; the dockerevents subscription
 	// is responsible for evicting the stale one by container ID.
 	//
-	// Returns an error when the persistence layer (sqlite) rejects the
-	// write — disk full, schema corruption, UNIQUE collision against a
-	// stale row that hasn't been evicted yet. Callers translate the
-	// error into the appropriate gRPC status; nothing reaches the
-	// in-memory cache when persistence rejects the write so the on-disk
-	// state and the cache stay in sync.
+	// Add computes the canonical agent CN from Entry.Project +
+	// Entry.AgentName via auth.NewProjectSlug / auth.NewAgentName (the
+	// err-returning typed constructors). Malformed identity strings
+	// surface as a returned error, NOT as a panic — historical
+	// MustProjectSlug / MustAgentName at Lookup time was a CP-wide
+	// crash vector. Callers must validate at the wire boundary.
 	//
-	// Add panics on invalid input (zero thumbprint, empty AgentName,
-	// empty Attestation, or zero RegisteredAt). The only callers are
-	// in-package handlers that construct entries from validated cross-
-	// checks at Register time — invalid input there is a programming
-	// error that must surface loudly rather than corrupt the registry.
+	// Returns an error when the canonical-CN composition rejects the
+	// inputs OR when the persistence layer (sqlite) rejects the write —
+	// disk full, schema corruption, UNIQUE collision against a stale
+	// row that hasn't been evicted yet. Callers translate the error
+	// into the appropriate gRPC status.
+	//
+	// Add panics on programming-error invariants (zero thumbprint,
+	// empty ContainerID, zero RegisteredAt). Empty AgentName is treated
+	// as user-input violation and surfaces as an error from
+	// auth.NewAgentName.
 	Add(entry Entry) error
 	// Lookup retrieves an entry by cert thumbprint and verifies that the
-	// supplied peer cert CN matches the entry's stored canonical
-	// (Project, AgentName). The thumbprint resolves to at most one
-	// entry; the CN cross-check defends against the case where a
-	// thumbprint is somehow shared (impossible under SHA-256 collision
-	// resistance, but the cross-check costs nothing and forces the
-	// handler to thread the cert subject through the call). Mismatch on
-	// thumbprint OR CN returns ErrUnknownAgent.
+	// supplied peer cert CN matches the entry's pre-computed canonical
+	// CN with subtle.ConstantTimeCompare. Mismatch on thumbprint OR CN
+	// returns ErrUnknownAgent.
 	Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)
 	// LookupByThumbprint returns the entry whose Thumbprint matches,
 	// without any CN cross-check. Used by the Register handler to
@@ -108,9 +111,14 @@ type Registry interface {
 	// Returns (nil, ErrUnknownAgent) when no entry matches.
 	LookupByContainerID(containerID string) (*Entry, error)
 	// EvictByContainerID removes any entry whose ContainerID matches.
-	// Linear in the number of registered agents; that's fine for
-	// realistic clawker host scales (single-digit agents).
-	EvictByContainerID(containerID string)
+	// Returns the underlying persistence error so callers can decide
+	// whether to retry, log, or abort. The dockerevents-driven and
+	// reaper-driven callers log-and-proceed because a transient sqlite
+	// failure must not stall the eviction pipeline; CLI-side `clawker
+	// container remove` similarly logs at debug since registry hiccups
+	// must not surface as remove failures (the row gets pruned later
+	// by the dockerevents subscription).
+	EvictByContainerID(containerID string) error
 	// Snapshot returns a copy of every live entry, sorted by
 	// (Project, AgentName) for deterministic output. Project is the
 	// primary key because the same short AgentName can be reused across
@@ -121,32 +129,66 @@ type Registry interface {
 	Snapshot() []Entry
 }
 
+// canonicalCNFromEntry composes the canonical agent CN from the string
+// fields on Entry. Returns an error rather than panicking when Project
+// or AgentName is malformed — historical Must* paths crashed CP on a
+// single bad row. Callers Add returns this error directly so the wire
+// boundary surfaces it as codes.Internal / codes.InvalidArgument.
+func canonicalCNFromEntry(e Entry) (string, error) {
+	proj, err := auth.NewProjectSlug(e.Project)
+	if err != nil {
+		return "", fmt.Errorf("agentregistry: invalid project: %w", err)
+	}
+	agent, err := auth.NewAgentName(e.AgentName)
+	if err != nil {
+		return "", fmt.Errorf("agentregistry: invalid agent name: %w", err)
+	}
+	return auth.CanonicalAgentCN(proj, agent), nil
+}
+
+// memEntry pairs an Entry with its pre-computed canonical CN so Lookup
+// can compare against the peer cert CN without recomposing on the hot
+// path. Pre-compute also means a single bad row in the in-memory impl
+// fails at Add (typed-constructor error) rather than at every Lookup.
+type memEntry struct {
+	e  Entry
+	cn string
+}
+
 type registryImpl struct {
 	mu      sync.RWMutex
-	entries map[[sha256.Size]byte]Entry
+	entries map[[sha256.Size]byte]memEntry
 	log     *logger.Logger
 }
 
-// NewRegistry constructs an empty registry. Logger is required (use
-// logger.Nop() in tests) so audit-trail messages on Add and Evict are
-// captured even when production logging is otherwise disabled.
+// NewRegistry constructs an empty in-memory registry. Logger is required
+// (use logger.Nop() in tests) so audit-trail messages on Add and Evict
+// are captured even when production logging is otherwise disabled.
 func NewRegistry(log *logger.Logger) Registry {
 	if log == nil {
 		log = logger.Nop()
 	}
 	return &registryImpl{
-		entries: make(map[[sha256.Size]byte]Entry),
+		entries: make(map[[sha256.Size]byte]memEntry),
 		log:     log,
 	}
 }
 
 func (r *registryImpl) Add(entry Entry) error {
 	validateEntry(entry)
+	cn, err := canonicalCNFromEntry(entry)
+	if err != nil {
+		return err
+	}
+	if entry.LastSeen.IsZero() {
+		entry.LastSeen = entry.RegisteredAt
+	}
 	r.mu.Lock()
-	r.entries[entry.Thumbprint] = entry
+	r.entries[entry.Thumbprint] = memEntry{e: entry, cn: cn}
 	r.mu.Unlock()
 	r.log.Info().
 		Str("agent", entry.AgentName).
+		Str("project", entry.Project).
 		Str("container_id", entry.ContainerID).
 		Msg("agentregistry: agent registered")
 	return nil
@@ -154,14 +196,12 @@ func (r *registryImpl) Add(entry Entry) error {
 
 // validateEntry runs the programming-error invariants shared by every
 // Registry.Add path. Failure is a wiring bug — panic so it surfaces
-// during development rather than corrupting the registry. Centralised
-// so the in-memory and sqlite impls stay in lockstep.
+// during development rather than corrupting the registry. AgentName
+// and Project string-validity are NOT checked here; they flow through
+// canonicalCNFromEntry which returns errors on malformed input.
 func validateEntry(entry Entry) {
 	if entry.Thumbprint == ([sha256.Size]byte{}) {
 		panic("agentregistry: Add called with zero thumbprint")
-	}
-	if entry.AgentName == "" {
-		panic("agentregistry: Add called with empty AgentName")
 	}
 	if entry.ContainerID == "" {
 		panic("agentregistry: Add called with empty ContainerID")
@@ -174,11 +214,11 @@ func validateEntry(entry Entry) {
 func (r *registryImpl) LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	entry, ok := r.entries[thumbprint]
+	me, ok := r.entries[thumbprint]
 	if !ok {
 		return nil, ErrUnknownAgent
 	}
-	e := entry
+	e := me.e
 	return &e, nil
 }
 
@@ -188,9 +228,9 @@ func (r *registryImpl) LookupByContainerID(containerID string) (*Entry, error) {
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	for _, entry := range r.entries {
-		if entry.ContainerID == containerID {
-			e := entry
+	for _, me := range r.entries {
+		if me.e.ContainerID == containerID {
+			e := me.e
 			return &e, nil
 		}
 	}
@@ -199,38 +239,30 @@ func (r *registryImpl) LookupByContainerID(containerID string) (*Entry, error) {
 
 func (r *registryImpl) Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error) {
 	r.mu.RLock()
-	entry, ok := r.entries[thumbprint]
+	me, ok := r.entries[thumbprint]
 	r.mu.RUnlock()
 	if !ok {
 		return nil, ErrUnknownAgent
 	}
-	// Cross-check the supplied peer cert CN against the entry's stored
-	// canonical (Project, AgentName). Composed via auth.CanonicalAgentCN
-	// so the rule lives in exactly one place — same source of truth the
-	// CLI used at MintAgentCert time. ConstantTimeCompare matches the
+	// Pre-computed canonical CN; ConstantTimeCompare matches the
 	// timing-discipline of the Connect handler's own CN check (peer cert
 	// CN vs req-derived canonical) so a future regression that caches a
 	// thumbprint without invalidating it on rename can't be probed via
 	// per-byte CN compare latency.
-	// entry.Project / entry.AgentName were validated by the Connect
-	// handler before reaching Add() — wrap via MustProjectSlug /
-	// MustAgentName so a future regression that bypasses the wire-side
-	// validation surfaces as a startup-or-first-call panic instead of
-	// silent identity drift.
-	want := auth.CanonicalAgentCN(auth.MustProjectSlug(entry.Project), auth.MustAgentName(entry.AgentName))
-	if subtle.ConstantTimeCompare([]byte(cn), []byte(want)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(cn), []byte(me.cn)) != 1 {
 		return nil, ErrUnknownAgent
 	}
-	return &entry, nil
+	e := me.e
+	return &e, nil
 }
 
-func (r *registryImpl) EvictByContainerID(containerID string) {
+func (r *registryImpl) EvictByContainerID(containerID string) error {
 	r.mu.Lock()
 	var evicted []Entry
-	for tp, entry := range r.entries {
-		if entry.ContainerID == containerID {
+	for tp, me := range r.entries {
+		if me.e.ContainerID == containerID {
 			delete(r.entries, tp)
-			evicted = append(evicted, entry)
+			evicted = append(evicted, me.e)
 		}
 	}
 	r.mu.Unlock()
@@ -240,13 +272,14 @@ func (r *registryImpl) EvictByContainerID(containerID string) {
 			Str("container_id", entry.ContainerID).
 			Msg("agentregistry: agent evicted")
 	}
+	return nil
 }
 
 func (r *registryImpl) Snapshot() []Entry {
 	r.mu.RLock()
 	out := make([]Entry, 0, len(r.entries))
-	for _, entry := range r.entries {
-		out = append(out, entry)
+	for _, me := range r.entries {
+		out = append(out, me.e)
 	}
 	r.mu.RUnlock()
 	// Sort by (Project, AgentName) — the composite identity. Two

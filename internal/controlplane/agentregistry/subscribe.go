@@ -119,7 +119,7 @@ func Subscribe(ctx context.Context, reg Registry, inf informer.Interface, log *l
 	}
 }
 
-func handleDelta(d informer.Delta, reg Registry) {
+func handleDelta(d informer.Delta, reg Registry, log *logger.Logger) {
 	if d.Kind != informer.DeltaRemoved {
 		return
 	}
@@ -127,11 +127,24 @@ func handleDelta(d informer.Delta, reg Registry) {
 	// Lifecycle=LifecycleGone. Before is set to the prior state if
 	// the resource was previously visible. Either side gives us the
 	// container ID we need.
+	var id string
 	switch {
 	case d.After != nil:
-		reg.EvictByContainerID(d.After.ID)
+		id = d.After.ID
 	case d.Before != nil:
-		reg.EvictByContainerID(d.Before.ID)
+		id = d.Before.ID
+	default:
+		return
+	}
+	// Eviction is best-effort here: we cannot retry from a delta
+	// consumer (the next delta is already queued), so log the error
+	// and proceed. The startup Reap heals stale rows that survived a
+	// transient sqlite failure.
+	if err := reg.EvictByContainerID(id); err != nil {
+		log.Warn().
+			Err(err).
+			Str("container_id", id).
+			Msg("agentregistry: evict-on-delete failed; row may persist until next reap")
 	}
 }
 
@@ -157,7 +170,7 @@ func drainOnce(ctx context.Context, ch <-chan informer.Delta, reg Registry, log 
 			if !ok {
 				return true
 			}
-			handleDelta(d, reg)
+			handleDelta(d, reg, log)
 		}
 	}
 }

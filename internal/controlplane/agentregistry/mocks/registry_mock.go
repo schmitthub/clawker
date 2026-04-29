@@ -21,7 +21,7 @@ var _ agentregistry.Registry = &RegistryMock{}
 //			AddFunc: func(entry agentregistry.Entry) error {
 //				panic("mock out the Add method")
 //			},
-//			EvictByContainerIDFunc: func(containerID string)  {
+//			EvictByContainerIDFunc: func(containerID string) error {
 //				panic("mock out the EvictByContainerID method")
 //			},
 //			LookupFunc: func(thumbprint [32]byte, cn string) (*agentregistry.Entry, error) {
@@ -47,7 +47,7 @@ type RegistryMock struct {
 	AddFunc func(entry agentregistry.Entry) error
 
 	// EvictByContainerIDFunc mocks the EvictByContainerID method.
-	EvictByContainerIDFunc func(containerID string)
+	EvictByContainerIDFunc func(containerID string) error
 
 	// LookupFunc mocks the Lookup method.
 	LookupFunc func(thumbprint [32]byte, cn string) (*agentregistry.Entry, error)
@@ -135,7 +135,7 @@ func (mock *RegistryMock) AddCalls() []struct {
 }
 
 // EvictByContainerID calls EvictByContainerIDFunc.
-func (mock *RegistryMock) EvictByContainerID(containerID string) {
+func (mock *RegistryMock) EvictByContainerID(containerID string) error {
 	if mock.EvictByContainerIDFunc == nil {
 		panic("RegistryMock.EvictByContainerIDFunc: method is nil but Registry.EvictByContainerID was just called")
 	}
@@ -147,7 +147,7 @@ func (mock *RegistryMock) EvictByContainerID(containerID string) {
 	mock.lockEvictByContainerID.Lock()
 	mock.calls.EvictByContainerID = append(mock.calls.EvictByContainerID, callInfo)
 	mock.lockEvictByContainerID.Unlock()
-	mock.EvictByContainerIDFunc(containerID)
+	return mock.EvictByContainerIDFunc(containerID)
 }
 
 // EvictByContainerIDCalls gets all the calls that were made to EvictByContainerID.

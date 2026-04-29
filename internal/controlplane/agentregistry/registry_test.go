@@ -232,8 +232,9 @@ func TestRegistry_Concurrent(t *testing.T) {
 }
 
 // TestRegistry_Add_RejectsInvariantViolations pins the contract that
-// Add panics on invalid input. The only legitimate caller of Add is
-// the in-package agent.Handler which has already verified each
+// Add panics on programming-error invariants — zero thumbprint, empty
+// container_id, zero RegisteredAt. The only legitimate caller of Add
+// is the in-package agent.Handler which has already verified each
 // invariant via the five identity-binding cross-checks at Connect;
 // any other caller violating these is a wiring bug that must surface
 // loudly. Each subtest uses recover() to assert a panic occurred and
@@ -251,16 +252,6 @@ func TestRegistry_Add_RejectsInvariantViolations(t *testing.T) {
 				RegisteredAt: time.Unix(1000, 0),
 				// Thumbprint left zero — the all-zero key would let
 				// any non-registering caller collide on identity.
-			},
-		},
-		{
-			name: "empty agent name",
-			entry: Entry{
-				ContainerID:  "ctr",
-				Thumbprint:   tp("cert"),
-				RegisteredAt: time.Unix(1000, 0),
-				// AgentName empty — breaks Snapshot ordering and
-				// confuses the audit log.
 			},
 		},
 		{
@@ -293,6 +284,55 @@ func TestRegistry_Add_RejectsInvariantViolations(t *testing.T) {
 			}()
 			_ = r.Add(tc.entry)
 			t.Fatal("Add did not panic on invalid entry")
+		})
+	}
+}
+
+// TestRegistry_Add_RejectsMalformedIdentity pins the err-returning
+// path for malformed AgentName / Project — these flow through
+// auth.NewAgentName / auth.NewProjectSlug which return errors
+// (replacing the historical Must* panic vector that crashed CP on a
+// single bad row). Add MUST return the parse error and leave the
+// registry empty.
+func TestRegistry_Add_RejectsMalformedIdentity(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry Entry
+	}{
+		{
+			name: "empty agent name",
+			entry: Entry{
+				ContainerID:  "ctr",
+				Thumbprint:   tp("cert"),
+				RegisteredAt: time.Unix(1000, 0),
+			},
+		},
+		{
+			name: "agent name with invalid chars",
+			entry: Entry{
+				AgentName:    "BAD NAME!",
+				ContainerID:  "ctr",
+				Thumbprint:   tp("cert"),
+				RegisteredAt: time.Unix(1000, 0),
+			},
+		},
+		{
+			name: "project with invalid chars",
+			entry: Entry{
+				AgentName:    "ok",
+				Project:      "Bad Slug!",
+				ContainerID:  "ctr",
+				Thumbprint:   tp("cert"),
+				RegisteredAt: time.Unix(1000, 0),
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewRegistry(nil)
+			err := r.Add(tc.entry)
+			require.Error(t, err)
+			assert.Empty(t, r.Snapshot(), "no entry must be persisted on rejection")
 		})
 	}
 }
