@@ -78,7 +78,7 @@ make test
 
 ## Resolution
 
-- Commit SHA: (filled by commit)
+- Commit SHA: 3d26f9fe
 - Notes:
   - `agents.go`: deferred sqlite reader close now logs `Debug` via the already-resolved `log` rather than dropping the error.
   - `clawkerd/main.go`: `log.Close()` failure now writes to `os.Stderr` since the logger itself is what's closing.

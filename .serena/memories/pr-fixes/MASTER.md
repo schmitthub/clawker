@@ -42,7 +42,7 @@ Three load-bearing concepts shape every fix:
 | 07 | [cmd/clawkerd/session: audit + race + atomic + tests](07-clawkerd-session-fixes.md) | pending | — | — | yes |
 | 08 | [cmd/clawkerd/listener: EKU + audit + tests](08-clawkerd-listener-fixes.md) | pending | — | — | yes |
 | 09 | [agentslots: sweep log + janitor race test](09-agentslots-sweep-tests.md) | pending | — | 04 | yes |
-| 10 | [server_test: nil-agents → empty ListAgents](10-server-test-nil-agents.md) | pending | - | — | yes |
+| 10 | [server_test: nil-agents → empty ListAgents](10-server-test-nil-agents.md) | complete | claude-opus-4.7 | — | yes |
 | 11 | [misc close-error swallows](11-misc-close-swallows.md) | complete | claude-opus-4.7 | 03 | yes |
 | 12 | [docs: rewrite agentslots/CLAUDE.md](12-doc-agentslots-rewrite.md) | pending | — | — | yes |
 

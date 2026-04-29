@@ -1,7 +1,7 @@
 # Task 10 — controlplane/server_test: nil-agents → empty ListAgents
 
-**Status**: pending
-**Claimed by**: —
+**Status**: complete
+**Claimed by**: claude-opus-4.7
 **Blocks**: —
 **Blocked by**: none
 **Parallel-safe**: yes
@@ -65,7 +65,7 @@ None.
 
 ## Resolution
 
-(Filled in on completion.)
-
-- Commit SHA:
+- Commit SHA: (filled by commit)
 - Notes:
+  - The runtime nil-agents test (`TestAdminServer_ListAgents_NilRegistry`) already existed via `&adminServer{}` zero-value. Added the symmetric constructor-level test `TestNewAdminServer_NilAgentsConstructorAcceptedListAgentsEmpty` that goes through `NewAdminServer(nil_fw, nil_agents, slots_mock, time.Now, nil_log)` and asserts no panic + empty `ListAgents` result, mirroring `TestNewAdminServer_NilSlotsPanics`.
+  - Locks the documented nil-tolerant contract on the public API boundary, not just the internal struct.

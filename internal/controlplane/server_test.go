@@ -182,3 +182,19 @@ func TestNewAdminServer_NilSlotsPanics(t *testing.T) {
 			NewAdminServer(nil, nil, nil, nil, nil)
 		})
 }
+
+// TestNewAdminServer_NilAgentsConstructorAcceptedListAgentsEmpty pins the
+// documented nil-tolerant contract for the agents registry. `NewAdminServer`
+// must accept nil agents (used in test wiring + partial-build paths) and
+// the constructed server's ListAgents must return an empty result rather
+// than panic. Symmetric to the slots fail-fast test above so a future
+// regression in either direction is caught at the constructor boundary.
+func TestNewAdminServer_NilAgentsConstructorAcceptedListAgentsEmpty(t *testing.T) {
+	slots := &slotmocks.RegistryMock{}
+	srv := NewAdminServer(nil, nil, slots, time.Now, nil)
+	require.NotNil(t, srv)
+
+	resp, err := srv.ListAgents(context.Background(), &adminv1.ListAgentsRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, resp.Agents)
+}
