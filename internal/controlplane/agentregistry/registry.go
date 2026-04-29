@@ -1,7 +1,7 @@
 // Package agentregistry tracks live agents that have completed the
 // AgentService.Connect handshake. It is populated by the Connect
-// handler and evicted by an informer subscription that watches
-// container die/destroy events.
+// handler and evicted by an Overseer subscription that watches
+// dockerevents.ContainerRemoved events.
 //
 // Identity is channel-bound: the registry key is the SHA-256 thumbprint
 // of the mTLS peer cert from the TLS handshake. Lookup is the only path

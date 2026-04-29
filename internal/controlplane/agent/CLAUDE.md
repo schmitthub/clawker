@@ -64,14 +64,14 @@ agentHandler := agent.NewHandler(slotRegistry, agentReg, agentInspector, log)
 agentv1.RegisterAgentServiceServer(agentServer, agentHandler)
 ```
 
-The dockerevents subscriptions live below in step 9a — both `agentregistry` and `agentslots` subscribe to the shared informer:
+The agent registry subscribes to typed `dockerevents.ContainerRemoved` events on the Overseer bus (step 9a):
 
 ```go
-cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, inf, log)
+cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, bus, log)
 defer cancelAgentSub()
-cancelSlotSub := agentslots.Subscribe(watcherCtx, slotRegistry, inf, log)
-defer cancelSlotSub()
 ```
+
+`agentslots` is intentionally **not** an Overseer subscriber — its TTL janitor is the sole correctness floor for stuck pre-Connect slots; container lifecycle is irrelevant to slot eviction.
 
 ## Test pattern
 

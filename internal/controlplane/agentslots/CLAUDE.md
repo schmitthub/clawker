@@ -45,9 +45,7 @@ the canonical CN in the peer cert.
 | File | Purpose |
 |------|---------|
 | `registry.go` | `Registry` interface (`Reserve` / `Consume` / `EvictByContainerID` / `Len` / `Stop`); `registryImpl` with TTL janitor; `Slot` value type; `ErrSlotExists` / `ErrSlotInvalid` sentinels |
-| `subscribe.go` | `Subscribe(ctx, reg, inf, log)` wires the registry to dockerevents container deltas via the informer; mirrors `agentregistry.Subscribe` |
 | `registry_test.go` | Reserve/Consume happy path, duplicate-container_id collision, TTL janitor, race tests, EvictByContainerID, panic-on-empty-container_id |
-| `subscribe_test.go` | Live informer (no mocks) exercises the dockerevents → eviction integration; panic-recovery test |
 | `mocks/` | moq-generated `RegistryMock` for handler/admin tests |
 
 ## `Slot` shape
@@ -106,31 +104,23 @@ func (r *registryImpl) Consume(containerID string) (*Slot, error)
   binding. Identity binding is enforced by the post-Connect
   agentregistry's cert-thumbprint + canonical-CN comparison.
 
-## `EvictByContainerID` + `Subscribe`
+## `EvictByContainerID`
 
 ```go
 func (r *registryImpl) EvictByContainerID(containerID string)
 ```
 
 Removes the slot for `containerID` if present. No error return — the
-caller has nothing to retry. Mirrors `agentregistry`'s eviction shape
-so dockerevents can drive both registries identically.
-
-`Subscribe(ctx, reg, inf, log)` runs through the shared informer:
-
-- `DeltaRemoved` (Docker destroy/remove): evict by `After.ID || Before.ID`.
-- `DeltaUpdated` with `Lifecycle == LifecycleStopped` (Docker die/stop/kill):
-  evict by `After.ID`.
-- `paused`/`unpaused`: NOT eviction triggers. The container exists;
-  clawkerd may yet be reachable.
-
-The TTL janitor remains the floor — a stuck consumer would let
-dead-container slots survive until expiry — but the dockerevents-driven
-path evicts immediately so a quick retry can re-announce without an
-`ErrSlotExists` collision. `Subscribe` recovers from per-delta panics
-and resumes so a buggy hook doesn't kill the consumer goroutine; on
-runaway panic rate it terminates with a logged ceiling breach (in
-lock-step with `agentregistry/subscribe.go`).
+caller has nothing to retry. Available for callers (e.g. CLI side
+holding a slot reservation that decided to abort) but agentslots
+itself is **not a dockerevents subscriber**. The TTL janitor is the
+sole correctness floor for stuck pre-Connect slots: every failure
+path between Reserve and Consume — container fails to start,
+clawkerd crashes, dial times out, container removed mid-flight —
+collapses to "no Consume happens" and is handled by `AgentSlotTTL`
+expiry (default 60s). Container ID uniqueness across `docker create`
+calls means a retry never collides with a stale slot, so eviction
+latency is invisible.
 
 ## Wiring
 
@@ -143,8 +133,6 @@ slotRegistry := agentslots.NewRegistry(time.Now, 0, log)
 defer slotRegistry.Stop()
 adminv1.RegisterAdminServiceServer(grpcServer,
     controlplane.NewAdminServer(handler, agentReg, slotRegistry, time.Now, log))
-cancelSlotSub := agentslots.Subscribe(watcherCtx, slotRegistry, inf, log)
-defer cancelSlotSub()
 ```
 
 `NewRegistryWithPulseChan(now, log, pulse <-chan time.Time)` is a
@@ -154,7 +142,6 @@ via the supplied channel; production code MUST use `NewRegistry`.
 ## Imports
 
 **Uses**: `internal/consts` (`AgentSlotTTL`, `ChallengeMethod`),
-`internal/controlplane/dockerevents` + `informer` (subscribe),
 `internal/logger`, `crypto/sha256`.
 
 **Used by**: `internal/controlplane` (admin server's `AnnounceAgent`

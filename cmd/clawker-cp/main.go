@@ -3,7 +3,7 @@
 // It runs as the main process in the CP container, supervising Hydra,
 // Oathkeeper, Kratos as subprocesses. It loads eBPF programs, serves a
 // gRPC AdminService with Hydra token introspection, owns the Docker
-// events feeder + informer, and reports readiness on /healthz.
+// events feeder + Overseer bus, and reports readiness on /healthz.
 //
 // Oathkeeper runs as a subprocess for future webui HTTP auth. gRPC auth
 // (CLI + agents) uses direct Hydra introspection — no Ory Go imports.
@@ -46,7 +46,7 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
-	"github.com/schmitthub/clawker/internal/controlplane/informer"
+	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
@@ -479,8 +479,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 
 	// AgentService wiring: shared slot registry (announce-time
 	// reservations, hoisted above NewAdminServer) + the shared agent
-	// registry + handler. The agent registry's dockerevents
-	// subscription is set up further down, once the informer is alive.
+	// registry + handler. The agent registry's typed-event
+	// subscription is set up further down, once the Overseer bus is
+	// alive.
 	agentInspector := agent.MobyInspector{Client: dockerCli.APIClient}
 	agentHandler := agent.NewHandler(slotRegistry, agentReg, agentInspector, log.With("component", "agent-handler"))
 	agentv1.RegisterAgentServiceServer(agentServer, agentHandler)
@@ -520,34 +521,36 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
-	// Step 9a: Informer + dockerevents feeder.
+	// Step 9a: Overseer + dockerevents feeder.
 	//
-	// The informer is the in-process realm model. It outlives every
-	// individual feeder/consumer for the daemon's lifetime; we close it
-	// explicitly during the drain sequence below (after ebpf flush) so
-	// any final dispatched events have a fully-functional informer to
-	// land on. The dockerevents feeder pushes a clawker-managed mirror
-	// of Docker state into it.
-	// WriteQueueSize=2048: high enough to absorb a docker events burst
-	// (image prune + network reconnect storm) without blocking the feeder
-	// goroutine but bounded so a stuck consumer doesn't grow unbounded.
-	// SubscriberBuffer=256: per-subscriber drop-oldest threshold; sized
-	// so a slow consumer only loses ~5s of activity at the heartbeat
-	// rate before deltas start dropping.
-	inf := informer.New(informer.Options{
-		Logger:           log.With("component", "informer"),
-		WriteQueueSize:   2048,
-		SubscriberBuffer: 256,
+	// The Overseer is the in-process worldview + typed event bus. It
+	// outlives every individual feeder/consumer for the daemon's
+	// lifetime; we close it explicitly during the drain sequence below
+	// (after ebpf flush) so any final dispatched events have a fully-
+	// functional bus to land on. The dockerevents feeder publishes
+	// typed ContainerStarted/Stopped/Removed (and NetworkAttached/
+	// Detached) events for clawker-managed containers.
+	//
+	// PublishBufferSize=2048: high enough to absorb a docker events
+	// burst (image prune + network reconnect storm) without blocking
+	// the feeder goroutine but bounded so a stuck consumer doesn't
+	// grow unbounded. SubscriberBuffer=256: per-subscriber drop-oldest
+	// threshold; sized so a slow consumer only loses ~5s of activity
+	// at the heartbeat rate before events start dropping.
+	bus := overseer.New(overseer.Options{
+		Logger:            log.With("component", "overseer"),
+		PublishBufferSize: 2048,
+		SubscriberBuffer:  256,
 	})
 
 	watcherCtx, watcherCancel := context.WithCancel(context.Background())
 	defer watcherCancel()
 
-	if err := inf.Start(watcherCtx); err != nil {
-		return fmt.Errorf("step 9a (informer start): %w", err)
+	if err := bus.Start(watcherCtx); err != nil {
+		return fmt.Errorf("step 9a (overseer start): %w", err)
 	}
 
-	feeder, err := dockerevents.New(dockerCli.APIClient, inf, dockerevents.Options{
+	feeder, err := dockerevents.New(dockerCli.APIClient, bus, dockerevents.Options{
 		ManagedLabelKey:   cfg.LabelManaged(),
 		ManagedLabelValue: cfg.ManagedLabelValue(),
 		Logger:            log,
@@ -557,26 +560,20 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	// feederCtx is a child of watcherCtx so SIGTERM/drain-to-zero both
 	// reach it; feederCancel exists separately so drainCallbackBody can
-	// stop the feeder BEFORE closing the informer (avoids ErrClosed
-	// noise on in-flight Upsert calls when AgentWatcher fires the drain
+	// stop the feeder BEFORE closing the bus (avoids dropped-publish
+	// noise on in-flight events when AgentWatcher fires the drain
 	// while watcherCtx is still alive).
 	feederCtx, feederCancel := context.WithCancel(watcherCtx)
 	defer feederCancel()
 
-	// Hook agent registry to dockerevents container deltas — evicts
-	// registered agents when their containers die/destroy. Subscribe
-	// runs through the informer so the same drain that closes the
-	// informer also tears this down cleanly.
-	cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, inf, log.With("component", "agentregistry"))
+	// Hook agent registry to typed ContainerRemoved events — evicts
+	// registered agents when their containers are destroyed.
+	// agentslots is intentionally NOT a subscriber: its TTL janitor
+	// is the sole correctness floor (slots terminal-state via Consume
+	// or TTL expire; container lifecycle is irrelevant).
+	cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, bus, log.With("component", "agentregistry"))
 	defer cancelAgentSub()
 
-	// Same wiring for the slot registry: a pending slot whose
-	// container died (e.g. ContainerStart failed mid-bootstrap) is
-	// dead-on-arrival; the TTL janitor would eventually sweep, but
-	// the dockerevents-driven path evicts immediately so a quick retry
-	// can re-announce without an ErrSlotExists collision.
-	cancelSlotSub := agentslots.Subscribe(watcherCtx, slotRegistry, inf, log.With("component", "agentslots"))
-	defer cancelSlotSub()
 	feederDone := make(chan struct{})
 	go func() {
 		defer close(feederDone)
@@ -596,10 +593,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
-	// Periodic informer stats heartbeat — gives an operator tailing the
-	// CP log (or querying Loki) a coarse health signal without needing
-	// a dedicated metrics surface. 30s cadence is below the OTEL
-	// resilience window and trivial overhead.
+	// Periodic Overseer stats heartbeat — gives an operator tailing
+	// the CP log (or querying Loki) a coarse health signal without
+	// needing a dedicated metrics surface. 30s cadence is below the
+	// OTEL resilience window and trivial overhead.
 	statsCtx, statsCancel := context.WithCancel(watcherCtx)
 	defer statsCancel()
 	go func() {
@@ -607,7 +604,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		// heartbeat loop and leave the operator without telemetry.
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error().Interface("panic", r).Msg("informer stats heartbeat panicked")
+				log.Error().Interface("panic", r).Msg("overseer stats heartbeat panicked")
 			}
 		}()
 		ticker := time.NewTicker(30 * time.Second)
@@ -617,17 +614,16 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			case <-statsCtx.Done():
 				return
 			case <-ticker.C:
-				st := inf.Stats()
+				st := bus.Stats()
 				log.Info().
-					Int("resources", st.Resources).
-					Int("relations", st.Relations).
 					Int("subscribers", st.Subscribers).
-					Uint64("writes_total", st.WritesTotal).
-					Uint64("deltas_emitted_total", st.DeltasEmittedTotal).
-					Uint64("deltas_dropped_total", st.DeltasDroppedTotal).
+					Uint64("published_total", st.PublishedTotal).
+					Uint64("dropped_total", st.DroppedTotal).
 					Int("queue_depth", st.QueueDepth).
 					Int("queue_capacity", st.QueueCapacity).
-					Msg("informer stats heartbeat")
+					Int("containers_known", st.ContainersKnown).
+					Int("sessions_known", st.SessionsKnown).
+					Msg("overseer stats heartbeat")
 			}
 		}
 	}()
@@ -671,14 +667,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			log.Error().Err(err).Msg("drain: ebpf flush failed")
 			errs = append(errs, fmt.Errorf("ebpf flush: %w", err))
 		}
-		// Stop the feeder before closing the informer so any in-flight
-		// Upsert lands cleanly. feederCancel is idempotent; feederDone
+		// Stop the feeder before closing the bus so any in-flight
+		// Publish lands cleanly. feederCancel is idempotent; feederDone
 		// closes once the goroutine returns.
 		feederCancel()
 		<-feederDone
-		if err := inf.Close(); err != nil {
-			log.Error().Err(err).Msg("drain: informer close failed")
-			errs = append(errs, fmt.Errorf("informer close: %w", err))
+		if err := bus.Close(); err != nil {
+			log.Error().Err(err).Msg("drain: overseer close failed")
+			errs = append(errs, fmt.Errorf("overseer close: %w", err))
 		}
 		return errors.Join(errs...)
 	}
@@ -718,7 +714,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	dialer, err := agentdial.New(
 		log.With("component", "agentdial"),
 		dockerCli.APIClient,
-		inf,
+		bus,
 		agentReg,
 		announceSlotRegistry,
 		consts.CPClientCertPath,
@@ -730,12 +726,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		dialer = nil
 	}
 	if dialer != nil {
-		// Runtime path: dockerevents → informer → agentdial.Subscribe
-		// reacts to "container started" deltas for purpose=agent
-		// containers and dials. Same DialAgent function the initial
-		// poll calls; dedup map on Dialer prevents the two paths
-		// from double-dialing the same containerID.
-		cancelDialSub := agentdial.Subscribe(watcherCtx, dialer, inf, log.With("component", "agentdial"))
+		// Runtime path: dockerevents publishes typed ContainerStarted
+		// events on the bus; agentdial.Subscribe filters to
+		// purpose=agent and dials. Same DialAgent function the initial
+		// poll calls; dedup map on Dialer prevents the two paths from
+		// double-dialing the same containerID.
+		cancelDialSub := agentdial.Subscribe(watcherCtx, dialer, bus, log.With("component", "agentdial"))
 		defer cancelDialSub()
 
 		// Initial path: dial every already-running agent container at

@@ -13,40 +13,32 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
-	"github.com/schmitthub/clawker/internal/controlplane/informer"
+	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// liveInformer constructs and starts an informer with deterministic
-// options, returning a started instance plus a cleanup. Reuses the
-// production informer rather than mocking it because the eviction
-// contract is "what the informer publishes drives EvictByContainerID"
-// — replacing the informer with a mock would replace the very
-// integration this test exists to assert.
-func liveInformer(t *testing.T) informer.Interface {
+// liveBus constructs and starts an Overseer with deterministic options,
+// returning a started instance plus cleanup. Reuses the production bus
+// rather than mocking — the eviction contract is "what the bus
+// publishes drives EvictByContainerID", and replacing the bus with a
+// mock would replace the very integration this test exists to assert.
+func liveBus(t *testing.T) *overseer.Overseer {
 	t.Helper()
-	inf := informer.New(informer.Options{})
-	require.NoError(t, inf.Start(context.Background()))
-	t.Cleanup(func() { _ = inf.Close() })
-	return inf
+	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
+	require.NoError(t, bus.Start(context.Background()))
+	t.Cleanup(func() { _ = bus.Close() })
+	return bus
 }
 
 func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
-	inf := liveInformer(t)
+	bus := liveBus(t)
 	r := NewRegistry(nil)
 	r.Add(Entry{AgentName: "x", ContainerID: "ctr-evict", Thumbprint: tp("cert"), RegisteredAt: time.Now()})
 
-	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
+	cancel := Subscribe(context.Background(), r, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	now := time.Now()
-	require.NoError(t, inf.Upsert(context.Background(), informer.ResourceUpdate{
-		Kind: dockerevents.KindContainer,
-		ID:   "ctr-evict",
-	}, informer.Transition{Source: "test", At: now}))
-	require.NoError(t, inf.Remove(context.Background(),
-		informer.Key{Kind: dockerevents.KindContainer, ID: "ctr-evict"},
-		informer.Transition{Source: "test", At: now}))
+	overseer.Publish(bus, dockerevents.ContainerRemoved{ID: "ctr-evict", At: time.Now()})
 
 	waitFor(t, func() bool {
 		_, err := r.Lookup(tp("cert"), canonical("", "x"))
@@ -56,33 +48,24 @@ func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
 
 // TestSubscribe_DoesNotEvictOnStopped — a stopped container can be
 // `docker start`-ed back into life and the same registry row should
-// pick up where it left off. Only `docker rm` (DeltaRemoved) is the
-// eviction trigger; lifecycle=stopped (die / stop / kill) must not
-// touch the row. The CP startup reaper handles the case where a
-// stopped container is removed while CP is down.
+// pick up where it left off. Only ContainerRemoved is the eviction
+// trigger; ContainerStopped (die / stop / kill) must not touch the
+// row. The CP startup reaper handles the case where a stopped
+// container is removed while CP is down.
 func TestSubscribe_DoesNotEvictOnStopped(t *testing.T) {
-	inf := liveInformer(t)
+	bus := liveBus(t)
 	r := NewRegistry(nil)
 	r.Add(Entry{AgentName: "y", ContainerID: "ctr-stopped", Thumbprint: tp("cert-y"), RegisteredAt: time.Now()})
 
-	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
+	cancel := Subscribe(context.Background(), r, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	now := time.Now()
-	require.NoError(t, inf.Upsert(context.Background(), informer.ResourceUpdate{
-		Kind:      dockerevents.KindContainer,
-		ID:        "ctr-stopped",
-		Lifecycle: "running",
-	}, informer.Transition{Source: "test", At: now}))
-	require.NoError(t, inf.Upsert(context.Background(), informer.ResourceUpdate{
-		Kind:      dockerevents.KindContainer,
-		ID:        "ctr-stopped",
-		Lifecycle: "stopped",
-	}, informer.Transition{Source: "test", At: now}))
+	overseer.Publish(bus, dockerevents.ContainerStarted{ID: "ctr-stopped", At: time.Now()})
+	overseer.Publish(bus, dockerevents.ContainerStopped{ID: "ctr-stopped", At: time.Now()})
 
-	// Proof-by-absence: poll for a stable window. Mirrors paused test —
-	// a sleep too short on a loaded runner could pass for the wrong
-	// reason (consumer hasn't drained the delta yet).
+	// Proof-by-absence: poll for a stable window. A sleep too short on
+	// a loaded runner could pass for the wrong reason (consumer hasn't
+	// drained the event yet).
 	const window = 100 * time.Millisecond
 	const interval = 5 * time.Millisecond
 	deadline := time.Now().Add(window)
@@ -94,52 +77,10 @@ func TestSubscribe_DoesNotEvictOnStopped(t *testing.T) {
 	}
 }
 
-func TestSubscribe_DoesNotEvictOnPaused(t *testing.T) {
-	// Paused agent's mTLS connection is intact — the kernel hasn't
-	// torn down the socket, the process is just frozen. The registry
-	// must NOT evict on paused.
-	inf := liveInformer(t)
-	r := NewRegistry(nil)
-	r.Add(Entry{AgentName: "z", ContainerID: "ctr-paused", Thumbprint: tp("cert-z"), RegisteredAt: time.Now()})
-
-	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
-	t.Cleanup(cancel)
-
-	now := time.Now()
-	require.NoError(t, inf.Upsert(context.Background(), informer.ResourceUpdate{
-		Kind:      dockerevents.KindContainer,
-		ID:        "ctr-paused",
-		Lifecycle: "running",
-	}, informer.Transition{Source: "test", At: now}))
-	require.NoError(t, inf.Upsert(context.Background(), informer.ResourceUpdate{
-		Kind:      dockerevents.KindContainer,
-		ID:        "ctr-paused",
-		Lifecycle: "paused",
-	}, informer.Transition{Source: "test", At: now}))
-
-	// Poll for a stable window — proof of absence by repeated
-	// observation is more deterministic than a single time.Sleep:
-	// a sleep too short on a loaded CI runner can pass for the wrong
-	// reason (the consumer simply hasn't drained the paused delta
-	// yet). We poll every 5ms for 100ms; if the entry ever disappears
-	// the eviction happened (test fails). If it survives every
-	// observation, the consumer saw the paused delta and correctly
-	// skipped eviction.
-	const window = 100 * time.Millisecond
-	const interval = 5 * time.Millisecond
-	deadline := time.Now().Add(window)
-	for time.Now().Before(deadline) {
-		got, err := r.Lookup(tp("cert-z"), canonical("", "z"))
-		require.NoError(t, err, "paused must not evict registered entry")
-		assert.Equal(t, "z", got.AgentName)
-		time.Sleep(interval)
-	}
-}
-
 func TestSubscribe_CancelStopsConsumer(t *testing.T) {
-	inf := liveInformer(t)
+	bus := liveBus(t)
 	r := NewRegistry(nil)
-	cancel := Subscribe(context.Background(), r, inf, logger.Nop())
+	cancel := Subscribe(context.Background(), r, bus, logger.Nop())
 
 	done := make(chan struct{})
 	go func() {
@@ -155,12 +96,7 @@ func TestSubscribe_CancelStopsConsumer(t *testing.T) {
 
 // panicOnceRegistry is a Registry test double whose EvictByContainerID
 // panics on its first call and then delegates to a real Registry for
-// every subsequent call. It exists so TestSubscribe_RecoversFromHookPanic
-// can prove (a) a panic in EvictByContainerID does not kill the consumer
-// goroutine, (b) the recover is logged, and (c) the next delta still
-// reaches a working Registry. We cannot register a panicking variant
-// directly on registryImpl without touching registry.go (Agent A's
-// lane), so we wrap the Registry interface here.
+// every subsequent call.
 type panicOnceRegistry struct {
 	calls    atomic.Int32
 	panicked atomic.Bool
@@ -190,8 +126,8 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 	// A panic in EvictByContainerID must not kill the consumer
 	// goroutine — otherwise registered agents' Thumbprint entries
 	// would keep authorizing per-agent RPCs after their containers
-	// are gone, the very leak this regression guards against.
-	inf := liveInformer(t)
+	// are gone.
+	bus := liveBus(t)
 
 	var buf bytes.Buffer
 	bufLog := logger.NewWriter(&buf)
@@ -202,50 +138,35 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 
 	reg := &panicOnceRegistry{delegate: delegate}
 
-	cancel := Subscribe(context.Background(), reg, inf, bufLog)
+	cancel := Subscribe(context.Background(), reg, bus, bufLog)
 	t.Cleanup(cancel)
 
-	now := time.Now()
-	// First delta — triggers the panic. The Entry must still be in
-	// the registry afterward (the panic prevented the eviction) and
-	// the consumer must still be alive.
-	require.NoError(t, inf.Upsert(context.Background(), informer.ResourceUpdate{
-		Kind: dockerevents.KindContainer, ID: "ctr-first",
-	}, informer.Transition{Source: "test", At: now}))
-	require.NoError(t, inf.Remove(context.Background(),
-		informer.Key{Kind: dockerevents.KindContainer, ID: "ctr-first"},
-		informer.Transition{Source: "test", At: now}))
+	// First event — triggers the panic. The entry must still be in the
+	// registry afterward (the panic prevented the eviction) and the
+	// consumer must still be alive.
+	overseer.Publish(bus, dockerevents.ContainerRemoved{ID: "ctr-first", At: time.Now()})
 
 	// Wait for the panic to actually fire before sending the second
-	// delta. Otherwise we race the consumer and the second delta can
-	// arrive before EvictByContainerID has been entered the first
-	// time.
+	// event. Otherwise we race the consumer and the second event can
+	// arrive before EvictByContainerID has been entered the first time.
 	waitFor(t, func() bool { return reg.panicked.Load() })
 
-	// Second delta — must be processed by the resumed consumer,
-	// proving subsequent deltas still drain after a recovered panic.
-	require.NoError(t, inf.Upsert(context.Background(), informer.ResourceUpdate{
-		Kind: dockerevents.KindContainer, ID: "ctr-second",
-	}, informer.Transition{Source: "test", At: now}))
-	require.NoError(t, inf.Remove(context.Background(),
-		informer.Key{Kind: dockerevents.KindContainer, ID: "ctr-second"},
-		informer.Transition{Source: "test", At: now}))
+	// Second event — must be processed by the resumed consumer,
+	// proving subsequent events still drain after a recovered panic.
+	overseer.Publish(bus, dockerevents.ContainerRemoved{ID: "ctr-second", At: time.Now()})
 
 	waitFor(t, func() bool {
 		_, err := delegate.Lookup(tp("cert-second"), canonical("", "second"))
 		return err == ErrUnknownAgent
 	})
 
-	// First entry was never evicted because the panic prevented it
-	// — assert it's still present so we know the test exercised the
-	// panic path rather than silently succeeding.
+	// First entry was never evicted because the panic prevented it.
 	got, err := delegate.Lookup(tp("cert-first"), canonical("", "first"))
 	require.NoError(t, err, "first entry must survive the panicked eviction call")
 	assert.Equal(t, "first", got.AgentName)
 
 	// Recover must have logged at error level so an operator can
-	// notice the dropped delta. Parse the JSON line(s) so we don't
-	// brittle-match on prose.
+	// notice the dropped event.
 	dec := json.NewDecoder(bytes.NewReader(buf.Bytes()))
 	var sawPanicLog bool
 	for {

@@ -97,7 +97,7 @@ func EnsureSchema(dbPath string, log *logger.Logger) error // Idempotent: opens 
 
 ## Subscriber
 
-`Subscribe(ctx, registry, informer, log)` subscribes the registry to the shared dockerevents informer; **destroy only** (DeltaRemoved) drives `EvictByContainerID`. Stop/die/kill are deliberately ignored — see "Registry row ↔ extant container invariant" above. The handler logs Evict errors at Warn and proceeds — it cannot retry from a delta consumer because the next delta is already queued. Reused by both in-memory and sqlite-backed registries; the subscription only sees the Registry interface.
+`Subscribe(ctx, registry, bus, log)` subscribes the registry to typed `dockerevents.ContainerRemoved` events on the Overseer bus; **destroy only** drives `EvictByContainerID`. Stop/die/kill are deliberately ignored — see "Registry row ↔ extant container invariant" above. The handler logs Evict errors at Warn and proceeds — it cannot retry from a bus consumer because the next event is already queued. Reused by both in-memory and sqlite-backed registries; the subscription only sees the Registry interface.
 
 ## Reaper
 

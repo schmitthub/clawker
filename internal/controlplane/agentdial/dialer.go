@@ -3,8 +3,9 @@
 //
 // Single entry point: Dialer.DialAgent(ctx, containerID). The same
 // function is invoked at CP boot (over the result of listAgentIDs)
-// and from the dockerevents subscriber when an agent container
-// starts at runtime — so two callers, one dial path.
+// and from the typed-event subscriber on dockerevents.ContainerStarted
+// when an agent container starts at runtime — so two callers, one
+// dial path.
 //
 // DialAgent is fire-and-forget: it spawns a goroutine that owns the
 // dial, the Session stream, and the lifetime drain loop. All failures
@@ -47,39 +48,9 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
-	"github.com/schmitthub/clawker/internal/controlplane/informer"
+	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
-
-// Informer Kind for the agentdial-owned per-container Session
-// state. Distinct from the dockerevents-owned KindContainer; one
-// container has both a "container" record (owned by dockerevents)
-// and an "agent_session" record (owned by this package).
-const KindAgentSession = "agent_session"
-
-// Lifecycle values for agent_session resources. The transitions are
-// the events CP-internal consumers care about: a registration UI
-// would surface "connected"/"failed"; an init dispatcher would
-// trigger on the connecting → connected edge.
-const (
-	SessionLifecycleConnecting = "connecting"
-	SessionLifecycleConnected  = "connected"
-	SessionLifecycleFailed     = "failed"
-	SessionLifecycleBroken     = "broken"
-)
-
-// Transition verbs published on each Lifecycle change. Verb strings
-// are part of the cross-package contract — consumers may filter on
-// them via History queries.
-const (
-	VerbDialStarted        = "dial_started"
-	VerbSessionEstablished = "session_established"
-	VerbConnectTimeout     = "connect_timeout"
-	VerbStreamClosed       = "stream_closed"
-)
-
-// Source identifier on every Transition this package publishes.
-const transitionSource = "agentdial"
 
 // Connect retry parameters. Exponential backoff with full jitter
 // bounds the per-attempt sleep; connectTotalTimeout bounds the whole
@@ -108,11 +79,11 @@ const (
 type Dialer struct {
 	log    *logger.Logger
 	docker mobyclient.APIClient
-	inf    informer.Interface
+	bus    *overseer.Overseer
 	// agents is the CLI-written agentregistry (RO from CP's POV). The
 	// dialer reads it post-handshake to record a provenance data
 	// point: peer thumbprint vs registry-row thumbprint vs no-row.
-	// Outcome flows into informer publishes + logs only — connection
+	// Outcome flows into Overseer publishes + logs only — connection
 	// stays open in all cases. Downstream decision-making (which
 	// commands to dispatch) consumes the data point in a future PR.
 	// May be nil; nil short-circuits the lookup.
@@ -136,17 +107,17 @@ type Dialer struct {
 // key cannot be loaded — better to fail at CP startup than to defer
 // the failure to the first dial.
 //
-// inf is required: the dialer publishes per-container Session-state
-// resources to the informer (Kind=KindAgentSession) so other CP
-// components can subscribe to connection events without coupling to
-// agentdial directly. Pass a real informer in production; tests can
-// pass an informer.Interface mock.
-func New(log *logger.Logger, docker mobyclient.APIClient, inf informer.Interface, agents agentregistry.Registry, slots agentslots.Registry, certPath, keyPath string, caPool *x509.CertPool) (*Dialer, error) {
+// bus is required: the dialer publishes typed Session* events
+// (SessionConnecting / Connected / Failed / Broken) so other CP
+// components can subscribe to connection lifecycle without coupling
+// to agentdial directly. Pass a real *overseer.Overseer; tests can
+// use an in-memory bus (it's cheap).
+func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer, agents agentregistry.Registry, slots agentslots.Registry, certPath, keyPath string, caPool *x509.CertPool) (*Dialer, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
-	if inf == nil {
-		return nil, errors.New("agentdial.New: informer is required")
+	if bus == nil {
+		return nil, errors.New("agentdial.New: overseer is required")
 	}
 	if caPool == nil {
 		return nil, errors.New("agentdial.New: caPool is required")
@@ -158,7 +129,7 @@ func New(log *logger.Logger, docker mobyclient.APIClient, inf informer.Interface
 	return &Dialer{
 		log:          log,
 		docker:       docker,
-		inf:          inf,
+		bus:          bus,
 		agents:       agents,
 		slots:        slots,
 		cpClientCert: cert,
@@ -239,11 +210,10 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 		// is cancelled (CP shutdown) or the drain reported the same.
 		// Anything else (peer EOF, transport break from laptop sleep,
 		// stream error) drops back into the loop to re-establish.
-		// Skip publishBroken on intentional teardown: the informer is
-		// already closing during CP shutdown so the Upsert would
-		// race with informer.Close and surface as a noisy
-		// "informer closed" Error log line. Subscribers don't need
-		// to know about CP-side shutdown either.
+		// Skip publishBroken on intentional teardown: the Overseer
+		// is already closing during CP shutdown so the Publish would
+		// no-op (returns false). Subscribers don't need to know
+		// about CP-side shutdown either.
 		if ctx.Err() != nil || drainErr == "ctx_done" {
 			return
 		}
@@ -464,7 +434,7 @@ func clawkerNetAddr(c mobycontainer.InspectResponse) (string, error) {
 //
 // This is a data point only. The connection stays open in every case.
 // Downstream consumers (future command-dispatch logic) read the
-// outcome via the informer to decide what's appropriate to send.
+// outcome via the Overseer to decide what's appropriate to send.
 func (d *Dialer) recordRegistryProvenance(containerID string, peerThumbprint [sha256.Size]byte, peerCN string, log *logger.Logger) {
 	if d.agents == nil {
 		return
@@ -656,13 +626,12 @@ func (d *Dialer) drainStream(ctx context.Context, stream clawkerdv1.ClawkerdServ
 	}
 }
 
-// publishConnecting records the start of a dial attempt. Lifecycle
-// is "connecting" until the dial succeeds (→ connected) or the
-// retry budget exhausts (→ failed). agent + project may be empty
-// if the container is missing labels (still publish — gives
-// consumers a way to surface "we're dialing something we can't
-// identify").
-func (d *Dialer) publishConnecting(ctx context.Context, containerID, agent, project, addr string) {
+// publishConnecting records the start of a dial attempt. Status is
+// "connecting" until the dial succeeds (→ connected) or the retry
+// budget exhausts (→ failed). agent + project may be empty if the
+// container is missing labels (still publish — gives consumers a way
+// to surface "we're dialing something we can't identify").
+func (d *Dialer) publishConnecting(_ context.Context, containerID, agent, project, addr string) {
 	d.log.Info().
 		Str("event", "agentdial_session_connecting").
 		Str("container_id", containerID).
@@ -670,20 +639,18 @@ func (d *Dialer) publishConnecting(ctx context.Context, containerID, agent, proj
 		Str("project", project).
 		Str("addr", addr).
 		Msg("CP→clawkerd dial starting")
-	d.publish(ctx, containerID, SessionLifecycleConnecting,
-		sessionLabels(agent, project),
-		sessionAttrs(containerID, addr, nil),
-		informer.Transition{
-			Source: transitionSource,
-			Verb:   VerbDialStarted,
-			At:     time.Now(),
-			Attrs:  map[string]string{"addr": addr},
-		})
+	overseer.Publish(d.bus, SessionConnecting{
+		ContainerID: containerID,
+		AgentName:   agent,
+		Project:     project,
+		Address:     addr,
+		At:          time.Now(),
+	})
 }
 
 // publishConnected records that the Session handshake succeeded
 // (mTLS + Hello + HelloAck) on the given attempt.
-func (d *Dialer) publishConnected(ctx context.Context, containerID, agent, project, addr string, attempt int) {
+func (d *Dialer) publishConnected(_ context.Context, containerID, agent, project, addr string, attempt int) {
 	d.log.Info().
 		Str("event", "agentdial_session_connected").
 		Str("container_id", containerID).
@@ -692,31 +659,21 @@ func (d *Dialer) publishConnected(ctx context.Context, containerID, agent, proje
 		Str("addr", addr).
 		Int("attempts", attempt).
 		Msg("CP→clawkerd Session connected")
-	d.publish(ctx, containerID, SessionLifecycleConnected,
-		sessionLabels(agent, project),
-		sessionAttrs(containerID, addr, map[string]string{
-			"established_attempts": strconv.Itoa(attempt),
-		}),
-		informer.Transition{
-			Source: transitionSource,
-			Verb:   VerbSessionEstablished,
-			At:     time.Now(),
-			Attrs: map[string]string{
-				"attempts": strconv.Itoa(attempt),
-				"addr":     addr,
-			},
-		})
+	overseer.Publish(d.bus, SessionConnected{
+		ContainerID: containerID,
+		AgentName:   agent,
+		Project:     project,
+		Address:     addr,
+		Attempts:    attempt,
+		At:          time.Now(),
+	})
 }
 
 // publishFailed records that the retry budget exhausted before any
 // attempt established a Session. reason carries the last error
 // message; attempts is the count when we gave up (0 if we never
 // even reached a dial because resolveAgent failed).
-func (d *Dialer) publishFailed(ctx context.Context, containerID, agent, project, addr, reason string, attempts int) {
-	extra := map[string]string{"last_error": reason}
-	if attempts > 0 {
-		extra["attempts"] = strconv.Itoa(attempts)
-	}
+func (d *Dialer) publishFailed(_ context.Context, containerID, agent, project, addr, reason string, attempts int) {
 	d.log.Error().
 		Str("event", "agentdial_session_failed").
 		Str("container_id", containerID).
@@ -726,24 +683,21 @@ func (d *Dialer) publishFailed(ctx context.Context, containerID, agent, project,
 		Int("attempts", attempts).
 		Str("reason", reason).
 		Msg("CP→clawkerd dial gave up")
-	d.publish(ctx, containerID, SessionLifecycleFailed,
-		sessionLabels(agent, project),
-		sessionAttrs(containerID, addr, extra),
-		informer.Transition{
-			Source: transitionSource,
-			Verb:   VerbConnectTimeout,
-			At:     time.Now(),
-			Attrs: map[string]string{
-				"reason":   reason,
-				"attempts": strconv.Itoa(attempts),
-			},
-		})
+	overseer.Publish(d.bus, SessionFailed{
+		ContainerID: containerID,
+		AgentName:   agent,
+		Project:     project,
+		Address:     addr,
+		Reason:      reason,
+		Attempts:    attempts,
+		At:          time.Now(),
+	})
 }
 
 // publishBroken records that an established Session terminated.
 // reason classifies the cause: "eof" (clawkerd graceful close),
 // "ctx_done" (CP teardown), or the underlying Recv error message.
-func (d *Dialer) publishBroken(ctx context.Context, containerID, agent, project, addr, reason string) {
+func (d *Dialer) publishBroken(_ context.Context, containerID, agent, project, addr, reason string) {
 	d.log.Info().
 		Str("event", "agentdial_session_broken").
 		Str("container_id", containerID).
@@ -752,58 +706,12 @@ func (d *Dialer) publishBroken(ctx context.Context, containerID, agent, project,
 		Str("addr", addr).
 		Str("reason", reason).
 		Msg("CP→clawkerd Session terminated")
-	d.publish(ctx, containerID, SessionLifecycleBroken,
-		sessionLabels(agent, project),
-		sessionAttrs(containerID, addr, map[string]string{"last_error": reason}),
-		informer.Transition{
-			Source: transitionSource,
-			Verb:   VerbStreamClosed,
-			At:     time.Now(),
-			Attrs:  map[string]string{"reason": reason},
-		})
-}
-
-// publish is the single Upsert path so the (Kind, ID) shape and
-// audit logging are consistent across all Lifecycle transitions.
-// Errors are logged but not surfaced — the dial path must not be
-// gated on informer health.
-func (d *Dialer) publish(ctx context.Context, containerID, lifecycle string, labels, attrs map[string]string, t informer.Transition) {
-	if err := d.inf.Upsert(ctx, informer.ResourceUpdate{
-		Kind:      KindAgentSession,
-		ID:        containerID,
-		Labels:    labels,
-		Attrs:     attrs,
-		Lifecycle: lifecycle,
-	}, t); err != nil {
-		d.log.Error().Err(err).
-			Str("container_id", containerID).
-			Str("lifecycle", lifecycle).
-			Str("event", "agentdial_publish_failed").
-			Msg("informer Upsert failed")
-	}
-}
-
-// sessionLabels builds the label map every publish shares.
-// agent + project may be empty (un-labeled container) — still
-// publish; consumers tolerate empties.
-func sessionLabels(agent, project string) map[string]string {
-	return map[string]string{
-		consts.LabelAgent:   agent,
-		consts.LabelProject: project,
-	}
-}
-
-// sessionAttrs builds the attrs map every publish shares, merging
-// caller-specific extras (attempts, last_error) on top.
-func sessionAttrs(containerID, addr string, extra map[string]string) map[string]string {
-	out := map[string]string{
-		"container_id": containerID,
-	}
-	if addr != "" {
-		out["addr"] = addr
-	}
-	for k, v := range extra {
-		out[k] = v
-	}
-	return out
+	overseer.Publish(d.bus, SessionBroken{
+		ContainerID: containerID,
+		AgentName:   agent,
+		Project:     project,
+		Address:     addr,
+		Reason:      reason,
+		At:          time.Now(),
+	})
 }

@@ -11,28 +11,34 @@ import (
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
 
-	"github.com/schmitthub/clawker/internal/controlplane/informer"
+	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 )
 
-// dispatch routes a single Docker event into informer calls. dispatch
-// runs on Run's single goroutine; managed-set mutations are
-// goroutine-local and need no lock.
+// Resource Kind strings owned by this feeder. Other feeders use their
+// own vocabulary; the bus dispatches by Go type, not by string.
+// KindContainer is retained as a re-export shim for callers that still
+// need a string label (e.g. Docker filters), but is no longer used to
+// route bus messages.
+const (
+	KindContainer = "container"
+	KindNetwork   = "network"
+)
+
+// dispatch routes a single Docker event into typed Publish calls on
+// the bus. dispatch runs on Run's single goroutine; managed-set
+// mutations are goroutine-local and need no lock.
 //
 // Logging contract:
 //   - `docker event received` — fires for every actionable message
 //     read off the events stream, with the full event schema attached
 //     as structured fields. Operator UAT view: "what did Docker tell
 //     us right now."
-//   - `informer published` — fires AFTER each informer write
-//     (Upsert/Patch/Remove/Link/Unlink), describing exactly what
-//     reached the realm model. Owned by the informer package, not
-//     this one. Operator UAT view: "what did we record."
 //
 // The receive log lives upstream of the action allowlist so noisy
 // non-state events (exec_*, healthcheck probes, etc) don't dominate
-// Loki. A missing publish log under a receive line means the dispatch
-// path filtered it; a missing receive line means Docker never sent it
-// (or our type-filter rejected it on the wire).
+// Loki. A missing publish on the bus under a receive line means the
+// dispatch path filtered it; a missing receive line means Docker
+// never sent it (or our type-filter rejected it on the wire).
 func (f *Feeder) dispatch(ctx context.Context, ev events.Message) {
 	if !shouldHandleAction(ev) {
 		return
@@ -42,13 +48,9 @@ func (f *Feeder) dispatch(ctx context.Context, ev events.Message) {
 
 	switch ev.Type {
 	case events.ContainerEventType:
-		f.dispatchContainer(ctx, ev)
+		f.dispatchContainer(ev)
 	case events.NetworkEventType:
 		f.dispatchNetwork(ctx, ev)
-	case events.VolumeEventType:
-		f.dispatchVolume(ctx, ev)
-	case events.ImageEventType:
-		f.dispatchImage(ctx, ev)
 	}
 }
 
@@ -77,55 +79,12 @@ func (f *Feeder) logEventReceived(ev events.Message) {
 	e.Msgf("docker event received: %s/%s id=%s", ev.Type, ev.Action, short(ev.Actor.ID))
 }
 
-// publish helpers thinly proxy the informer write API and absorb
-// expected shutdown errors so call sites stay terse. The publish log
-// itself is owned by the informer (informer.logPublished) so every
-// feeder gets it for free. Real failures (anything other than
-// ctx.Canceled / informer.ErrClosed) surface as warn-level structured
-// logs — silently dropping them would lie about the publish trail.
-func (f *Feeder) publishUpsert(ctx context.Context, u informer.ResourceUpdate, t informer.Transition) {
-	f.noteWriteErr(f.inf.Upsert(ctx, u, t), u.Kind, u.ID)
-}
-
-func (f *Feeder) publishRemove(ctx context.Context, key informer.Key, t informer.Transition) {
-	f.noteWriteErr(f.inf.Remove(ctx, key, t), key.Kind, key.ID)
-}
-
-func (f *Feeder) publishLink(ctx context.Context, rel informer.Relation) {
-	f.noteWriteErr(f.inf.LinkRelation(ctx, rel), rel.Kind, rel.From.ID+"->"+rel.To.ID)
-}
-
-func (f *Feeder) publishUnlink(ctx context.Context, from, to informer.Key, kind string) {
-	f.noteWriteErr(f.inf.UnlinkRelation(ctx, from, to, kind), kind, from.ID+"->"+to.ID)
-}
-
-// noteWriteErr classifies an informer write error. Shutdown-class
-// errors (ctx.Canceled, informer.ErrClosed) are silent — the drain
-// path expects in-flight writes to land on a closing informer.
-// informer.ErrNotStarted is a wiring bug (Run started before Start)
-// and surfaces at error level. Everything else lands at warn with
-// kind+id for triage.
-func (f *Feeder) noteWriteErr(err error, kind, id string) {
-	if err == nil {
-		return
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, informer.ErrClosed) {
-		return
-	}
-	if errors.Is(err, informer.ErrNotStarted) {
-		f.log.Error().Err(err).Str("kind", kind).Str("id", id).Msg("informer not started: feeder running before informer.Start")
-		return
-	}
-	f.log.Warn().Err(err).Str("kind", kind).Str("id", id).Msg("informer write failed")
-}
-
 // shouldHandleAction filters out diagnostic / high-volume actions that
 // have no realm-state value. Returns true if the event should reach
 // the per-type dispatcher.
 func shouldHandleAction(ev events.Message) bool {
 	a := string(ev.Action)
-	switch {
-	case strings.HasPrefix(a, "exec_"):
+	if strings.HasPrefix(a, "exec_") {
 		return false
 	}
 	switch ev.Action {
@@ -144,7 +103,19 @@ func shouldHandleAction(ev events.Message) bool {
 // carry the container's labels verbatim plus engine-set keys (image,
 // name, exitCode on die — verified vs moby daemon/events.go
 // LogContainerEventWithAttributes).
-func (f *Feeder) dispatchContainer(ctx context.Context, ev events.Message) {
+//
+// Mapping from Docker action → typed event:
+//   - destroy / remove → ContainerRemoved
+//   - die / stop / kill → ContainerStopped
+//   - create / start / restart / unpause → ContainerStarted
+//   - pause → no event published in v1 (no consumer; agent can survive
+//     a paused container window — see agentslots which does NOT evict
+//     on pause)
+//
+// Other actions (rename, oom-without-die, health_status without state
+// change) are not republished; the feeder is interested in lifecycle
+// transitions, not diagnostic chatter.
+func (f *Feeder) dispatchContainer(ev events.Message) {
 	id := ev.Actor.ID
 	if id == "" {
 		return
@@ -155,88 +126,86 @@ func (f *Feeder) dispatchContainer(ctx context.Context, ev events.Message) {
 		return
 	}
 
-	labels := stripEngineKeys(ev.Actor.Attributes, "image", "name", "exitCode")
-
-	t := informer.Transition{
-		Source: transitionSource,
-		Verb:   verbPrefix + "container." + string(ev.Action),
-		At:     time.Unix(0, ev.TimeNano),
-		Attrs:  map[string]string{"id": id},
-	}
+	at := time.Unix(0, ev.TimeNano)
 
 	switch ev.Action {
 	case events.ActionDestroy, events.ActionRemove:
 		delete(f.containers, id)
-		f.publishRemove(ctx, informer.Key{Kind: KindContainer, ID: id}, t)
+		overseer.Publish(f.bus, ContainerRemoved{ID: id, At: at})
+		return
+
+	case events.ActionDie, events.ActionStop, events.ActionKill:
+		f.containers[id] = true
+		overseer.Publish(f.bus, ContainerStopped{
+			ID:       id,
+			ExitCode: ev.Actor.Attributes["exitCode"],
+			OOM:      false,
+			At:       at,
+		})
+		return
+
+	case events.ActionOOM:
+		// OOM may fire alongside or instead of die — record it as a
+		// stop with OOM=true so consumers get the signal even if Docker
+		// elides the die event.
+		f.containers[id] = true
+		overseer.Publish(f.bus, ContainerStopped{
+			ID:       id,
+			ExitCode: ev.Actor.Attributes["exitCode"],
+			OOM:      true,
+			At:       at,
+		})
+		return
+
+	case events.ActionCreate, events.ActionStart, events.ActionRestart, events.ActionUnPause:
+		f.containers[id] = true
+		labels := stripEngineKeys(ev.Actor.Attributes, "image", "name", "exitCode")
+		overseer.Publish(f.bus, ContainerStarted{
+			ID:     id,
+			Name:   ev.Actor.Attributes["name"],
+			Image:  ev.Actor.Attributes["image"],
+			Labels: labels,
+			At:     at,
+		})
 		return
 	}
 
-	lifecycle := containerLifecycleFromAction(ev.Action)
-	attrs := map[string]string{}
-	if img, ok := ev.Actor.Attributes["image"]; ok {
-		attrs["image"] = img
-	}
-	if name, ok := ev.Actor.Attributes["name"]; ok {
-		attrs["name"] = name
-	}
-	if code, ok := ev.Actor.Attributes["exitCode"]; ok {
-		attrs["exit_code"] = code
-	}
-	if ev.Action == events.ActionOOM {
-		attrs["oom"] = "true"
-	}
-	if hs, ok := healthStatusFrom(ev.Action); ok {
-		attrs["health"] = hs
-	}
-
+	// Action not in the lifecycle vocabulary (rename, pause, health
+	// status without a transition). Track managed-set membership so
+	// downstream events don't drop, but don't publish.
 	f.containers[id] = true
-	f.publishUpsert(ctx, informer.ResourceUpdate{
-		Kind:      KindContainer,
-		ID:        id,
-		Labels:    labels,
-		Attrs:     attrs,
-		Lifecycle: lifecycle,
-	}, t)
 }
 
 // dispatchNetwork handles network events. Network actor Attributes do
 // NOT carry network labels (verified vs moby
 // daemon/events.go::LogNetworkEventWithAttributes), so first-sight
 // network events trigger NetworkInspect to read labels.
+//
+// In the typed-event world, this dispatcher only publishes
+// NetworkAttached / NetworkDetached. Network create/destroy update
+// internal bookkeeping but produce no bus event (no subscriber).
 func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 	netID := ev.Actor.ID
 	if netID == "" {
 		return
 	}
 
-	t := informer.Transition{
-		Source: transitionSource,
-		Verb:   verbPrefix + "network." + string(ev.Action),
-		At:     time.Unix(0, ev.TimeNano),
-		Attrs:  map[string]string{"network_id": netID},
-	}
-
 	switch ev.Action {
 	case events.ActionCreate:
-		// Inspect to learn whether this network is managed.
-		f.tryNetworkInspect(ctx, netID, t)
+		f.tryNetworkInspect(ctx, netID)
 
 	case events.ActionDestroy, events.ActionRemove:
 		// Drop any pending recheck flag — a destroyed network can never
 		// become managed retroactively.
 		delete(f.networksNeedRecheck, netID)
-		if !f.networks[netID] {
-			return
-		}
 		delete(f.networks, netID)
-		f.publishRemove(ctx, informer.Key{Kind: KindNetwork, ID: netID}, t)
 
 	case events.ActionConnect, events.ActionDisconnect:
 		// If the initial Create-time inspect failed for this network,
 		// retry now — the connect/disconnect event proves the network
 		// is alive in Docker, so the inspect is more likely to succeed.
 		if f.networksNeedRecheck[netID] {
-			f.tryNetworkInspect(ctx, netID, t)
+			f.tryNetworkInspect(ctx, netID)
 		}
 		if !f.networks[netID] {
 			return
@@ -246,16 +215,25 @@ func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 			return
 		}
 		if !f.containers[ctrID] {
-			// Wait for the container event so relation lifetime tracks
-			// the container's; informer would accept the orphan edge.
+			// Wait for the container event — without a managed
+			// container we have no producer of ContainerStarted to
+			// anchor the edge against. The next reconcile pass would
+			// republish if the container is in fact managed.
 			return
 		}
-		from := informer.Key{Kind: KindContainer, ID: ctrID}
-		to := informer.Key{Kind: KindNetwork, ID: netID}
+		at := time.Unix(0, ev.TimeNano)
 		if ev.Action == events.ActionConnect {
-			f.publishLink(ctx, informer.Relation{From: from, To: to, Kind: RelationAttachedTo})
+			overseer.Publish(f.bus, NetworkAttached{
+				ContainerID: ctrID,
+				NetworkID:   netID,
+				At:          at,
+			})
 		} else {
-			f.publishUnlink(ctx, from, to, RelationAttachedTo)
+			overseer.Publish(f.bus, NetworkDetached{
+				ContainerID: ctrID,
+				NetworkID:   netID,
+				At:          at,
+			})
 		}
 	}
 }
@@ -266,7 +244,7 @@ func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 // queue (failure → retry on the next event for this ID). A network
 // whose first inspect fails is otherwise permanently invisible
 // because subsequent connect/destroy events skip the lookup.
-func (f *Feeder) tryNetworkInspect(ctx context.Context, netID string, t informer.Transition) {
+func (f *Feeder) tryNetworkInspect(ctx context.Context, netID string) {
 	res, err := f.cli.NetworkInspect(ctx, netID, client.NetworkInspectOptions{})
 	if err != nil {
 		// Don't escalate ctx.Canceled (drain path); transient inspect
@@ -286,174 +264,49 @@ func (f *Feeder) tryNetworkInspect(ctx context.Context, netID string, t informer
 		// Definitive: this network exists and is not managed. No retry.
 		return
 	}
-	if f.networks[netID] {
-		// Already tracked from an earlier event — nothing to publish.
-		return
-	}
 	f.networks[netID] = true
-	f.publishUpsert(ctx, informer.ResourceUpdate{
-		Kind:   KindNetwork,
-		ID:     netID,
-		Labels: res.Network.Labels,
-		Attrs: map[string]string{
-			"name":   res.Network.Name,
-			"driver": res.Network.Driver,
-			"scope":  res.Network.Scope,
-		},
-		Lifecycle: informer.LifecycleLive,
-	}, t)
 }
 
-// dispatchVolume handles volume events. Volume create events carry
-// labels via moby's LogVolumeEvent; destroy events do NOT reliably
-// carry user labels (especially via VolumesPrune), so destroys are
-// gated on the in-memory volumeSet rather than re-checking labels.
-// Mirrors the container path: untracked + unmanaged → drop silently.
-func (f *Feeder) dispatchVolume(ctx context.Context, ev events.Message) {
-	name := ev.Actor.ID
-	if name == "" {
-		return
-	}
-
-	managed := f.isManaged(ev.Actor.Attributes)
-	if !managed && !f.volumes[name] {
-		return
-	}
-
-	t := informer.Transition{
-		Source: transitionSource,
-		Verb:   verbPrefix + "volume." + string(ev.Action),
-		At:     time.Unix(0, ev.TimeNano),
-		Attrs:  map[string]string{"volume": name},
-	}
-
-	switch ev.Action {
-	case events.ActionDestroy, events.ActionRemove:
-		delete(f.volumes, name)
-		f.publishRemove(ctx, informer.Key{Kind: KindVolume, ID: name}, t)
-	default:
-		f.volumes[name] = true
-		f.publishUpsert(ctx, informer.ResourceUpdate{
-			Kind:      KindVolume,
-			ID:        name,
-			Labels:    stripEngineKeys(ev.Actor.Attributes),
-			Lifecycle: informer.LifecycleLive,
-		}, t)
-	}
-}
-
-// dispatchImage handles image events. Image actor Attributes carry
-// image labels via LogImageEvent (moby
-// daemon/images/image_events.go); engine-set keys are "name" and
-// sometimes "tag".
-func (f *Feeder) dispatchImage(ctx context.Context, ev events.Message) {
-	id := ev.Actor.ID
-	if id == "" {
-		return
-	}
-
-	managed := f.isManaged(ev.Actor.Attributes)
-	if !managed && !f.images[id] {
-		return
-	}
-
-	t := informer.Transition{
-		Source: transitionSource,
-		Verb:   verbPrefix + "image." + string(ev.Action),
-		At:     time.Unix(0, ev.TimeNano),
-		Attrs:  map[string]string{"image": id},
-	}
-
-	switch ev.Action {
-	case events.ActionDelete, events.ActionRemove:
-		delete(f.images, id)
-		f.publishRemove(ctx, informer.Key{Kind: KindImage, ID: id}, t)
-	default:
-		labels := stripEngineKeys(ev.Actor.Attributes, "name", "tag")
-		attrs := map[string]string{}
-		if name, ok := ev.Actor.Attributes["name"]; ok {
-			attrs["name"] = name
-		}
-		f.images[id] = true
-		f.publishUpsert(ctx, informer.ResourceUpdate{
-			Kind:      KindImage,
-			ID:        id,
-			Labels:    labels,
-			Attrs:     attrs,
-			Lifecycle: informer.LifecycleLive,
-		}, t)
-	}
-}
-
-// containerLifecycleFromAction maps Docker actions to clawker
-// lifecycle markers. Verbs not listed leave lifecycle unchanged
-// (returns "").
-func containerLifecycleFromAction(a events.Action) string {
-	switch a {
-	case events.ActionCreate:
-		return LifecycleCreated
-	case events.ActionStart, events.ActionRestart, events.ActionUnPause:
-		return LifecycleRunning
-	case events.ActionPause:
-		return LifecyclePaused
-	case events.ActionDie, events.ActionStop, events.ActionKill:
-		return LifecycleStopped
-	}
-	return ""
-}
-
-// containerLifecycleFromState maps a moby ContainerState to clawker
-// lifecycle. Used by reconcile, where we read state from
-// ContainerList summaries.
-func containerLifecycleFromState(s container.ContainerState) string {
+// containerStatusFromState maps a moby ContainerState to the bus
+// event we publish for that state during reconcile. Returns the event
+// or nil for transient states we don't model (restarting).
+func containerEventFromState(s container.ContainerState, id string, c container.Summary, at time.Time) overseer.Event {
 	switch s {
-	case container.StateCreated:
-		return LifecycleCreated
-	case container.StateRunning:
-		return LifecycleRunning
+	case container.StateCreated, container.StateRunning:
+		var name string
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		return ContainerStarted{
+			ID:     id,
+			Name:   name,
+			Image:  c.Image,
+			Labels: c.Labels,
+			At:     at,
+		}
 	case container.StatePaused:
-		return LifecyclePaused
-	case container.StateRestarting:
-		return "restarting"
+		// Treat paused as still-running for worldview purposes — the
+		// container exists, just frozen.
+		var name string
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		return ContainerStarted{
+			ID:     id,
+			Name:   name,
+			Image:  c.Image,
+			Labels: c.Labels,
+			At:     at,
+		}
 	case container.StateExited, container.StateDead, container.StateRemoving:
-		return LifecycleStopped
+		return ContainerStopped{ID: id, At: at}
 	}
-	return ""
-}
-
-// containerAttrsFromSummary mirrors the engine-set keys we record on
-// container resources so reconcile and event dispatch produce
-// equivalent attribute maps.
-func containerAttrsFromSummary(c container.Summary) map[string]string {
-	attrs := map[string]string{
-		"image":    c.Image,
-		"image_id": c.ImageID,
-	}
-	if len(c.Names) > 0 {
-		// Docker prefixes names with '/'; strip for ergonomics.
-		attrs["name"] = strings.TrimPrefix(c.Names[0], "/")
-	}
-	return attrs
-}
-
-// healthStatusFrom maps an event action that carries a colon-prefixed
-// health verdict ("health_status: healthy") to the trailing token.
-// Returns ("", false) for non-health actions.
-func healthStatusFrom(a events.Action) (string, bool) {
-	s := string(a)
-	if rest, ok := strings.CutPrefix(s, "health_status: "); ok {
-		return rest, true
-	}
-	if s == string(events.ActionHealthStatus) {
-		return "unknown", true
-	}
-	return "", false
+	return nil
 }
 
 // stripEngineKeys returns a copy of attrs with the listed engine-set
 // keys removed. Engine-set keys live alongside user labels in
-// Actor.Attributes; clawker's Resource.Labels should hold only true
-// labels.
+// Actor.Attributes; a Resource's Labels should hold only true labels.
 func stripEngineKeys(attrs map[string]string, keys ...string) map[string]string {
 	if len(attrs) == 0 {
 		return nil
@@ -482,8 +335,4 @@ func short(id string) string {
 		return id
 	}
 	return id[:12]
-}
-
-func joinTags(tags []string) string {
-	return strings.Join(tags, ",")
 }
