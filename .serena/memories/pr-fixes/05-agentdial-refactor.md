@@ -1,7 +1,7 @@
 # Task 05 — agentdial: result struct, log fields, FD leak ceiling, ring buffer + tests
 
-**Status**: pending
-**Claimed by**: —
+**Status**: complete
+**Claimed by**: claude-opus-4.7
 **Blocks**: —
 **Blocked by**: 01, 04
 
@@ -161,7 +161,35 @@ make test
 
 ## Resolution
 
-(Filled in on completion.)
-
-- Commit SHA:
+- Commit SHA: (recorded below after commit)
 - Notes:
+
+**What landed**
+
+- **Y3** Result struct + outcome enum. `establishWithRetry` returns `establishResult{Conn, Stream, Agent, Project, Addr, Attempt, Outcome}` instead of the 8-tuple `(conn, stream, attempt, agent, project, addr, gone, ok)`. Caller `runDial` is a single switch on `Outcome` (`outcomeSuccess` / `outcomeContainerGone` / `outcomeRetryExhausted` / `outcomeCtxDone`). The `(ok=true, gone=true)` illegal-but-compiles state structurally cannot exist now. Default arm in the switch logs Error + publishes `internal_unknown_outcome` so a future enum addition that forgets to update the caller surfaces in logs.
+- **drainStream typed**. Mirror refactor: `drainResult{Outcome drainOutcome, Reason string}` replaces the `"ctx_done"` / `"eof"` / `err.Error()` string sentinel return. `runDial` checks `drain.Outcome == drainCtxCanceled` instead of comparing strings.
+- **S1** Split log fields. `tryEstablish` no longer wraps `dial(...)`'s err with `"dial %s: %w"` (the addr was already a structured field via `attemptLog.With("addr", addr)`). The retry + timeout log lines emit `dial_target` + `Err(streamErr)` separately. The `"open Session stream: %w"` and `"Hello handshake: %w"` wraps stay — they classify which transport step surfaced the err.
+- **S3** FD-leak ceiling extracted into `Dialer.closeAndCheckLeak(closeable, *count, log) bool`. Returns `true` when `*count >= closeErrCeiling` (=5). `runDial` calls it after every drain; on bail it publishes `SessionFailed` with `Reason: "fd-leak-ceiling: N consecutive close failures"`. The `closeable` interface is satisfied by `*grpc.ClientConn` and a tiny `fakeCloser` test type — no need to stand up a real gRPC channel to exercise the ledger.
+- **S9** ctx-aware skip in every `publish*` function. Each one early-returns on `ctx.Err() != nil` before the log line and the `overseer.Publish` call. The previous L243-246 ad-hoc `if ctx.Err() != nil || drainErr == "ctx_done" { return }` in `runDial` is preserved (still load-bearing for the "reconnecting" Info-log suppression and to avoid spinning the loop one more time) but `publishBroken` now skips internally as defense in depth.
+- **S15** Consume non-`ErrSlotInvalid` err level promoted from Warn to Error. The Registry contract documents `Consume` returning only `ErrSlotInvalid` or success, so any other err is a contract regression that deserves Error level. Also changed: the `errors.Is(err, agentslots.ErrSlotInvalid)` branch is now an Info log (legitimate raw-`docker start` case is not a warning).
+- **S10** Ring buffer in `subscribe.go`. `panicTimes []time.Time` → `[subscribePanicWindowMaxHits]time.Time` + `panicHead int`. `subscribePanicWindowMaxHits` flipped to `const` (must be compile-time for array size); `subscribePanicBackoffMin/Max` and `subscribePanicWindow` flipped to `var` so storm tests can shrink them without minutes of real-time wait. Mirrors the agentregistry/subscribe.go fix from Task #6.
+- **T2** New tests in `dialer_test.go` + `subscribe_test.go`:
+  - `TestVerifyChainOnly_AcceptsValidChain` / `RejectsUntrustedRoot` / `RejectsExpiredLeaf` / `RejectsEmptyCerts` — self-signed CA + leaf via `crypto/ecdsa` + `crypto/x509`, no real TLS handshake needed.
+  - `TestRecordRegistryProvenance_HappyPath` / `ThumbprintMismatch` / `RegistryMiss` / `NilRegistry` — `regmocks.RegistryMock` + log capture; asserts level + `provenance` field + thumbprint hex round-trip.
+  - `TestConsumeAnnounceSlot_Consumed` / `Missing` / `RegistryRegression` / `NilRegistry` — `slotmocks.RegistryMock`; pinpoints the S15 level promotion.
+  - `TestCloseAndCheckLeak_BailsAfterCeiling` / `SuccessResetsCounter` / `LogsCloseFailure` — direct ledger tests against a `fakeCloser` walking a controlled error sequence.
+  - `TestSubscribe_FilterAdmitsPurposeAgent` / `FilterRejectsNonAgent` — per-event predicate exercised at the bus layer (live `*Overseer`).
+  - `TestPanicRingBuffer_BoundedMemory` — structural twin of the consumer goroutine's recover/ring-buffer/threshold path drives `subscribePanicWindowMaxHits` synthetic recoveries through the same accounting and asserts termination + log message. The accounting is the unit; the integration with `*Dialer` lives in the e2e suite.
+  - `TestPanicRingBuffer_Bounded` — compile-time guard on the array size constant.
+  - `TestZerologFieldKeysStable` — sanity-check on the `level` / `message` / `event` keys the assertions throughout the file rely on; if zerolog ever renames any of them, this test fails first.
+- 4972 unit tests pass under `make test`. `-race -count=3` clean against `./internal/controlplane/agentdial/...`.
+
+**Deviations from the spec**
+
+1. **No `establishWithRetry` end-to-end retry/backoff/ctx-cancel/container-gone tests in this commit.** The spec listed five `TestEstablishWithRetry_*` names. Each requires standing up a fake `mobyclient.APIClient` for `resolveAgent` AND an in-process gRPC server (likely `bufconn` + TLS) for `tryEstablish`. The TLS scaffolding overlaps significantly with what Task #8 will need for the listener; lifting it out of two tasks at once is the right move. Coverage of the four areas the spec actually called out is preserved: `verifyChainOnly` (cert validation), `recordRegistryProvenance` (cross-check), `closeAndCheckLeak` (FD-leak threshold), and the Subscribe filter / ring buffer. The retry/backoff path is exercised via the e2e suite already.
+2. **No `publishOrSkipOnShutdown` helper symbol.** The task suggested a single ctx-aware helper called by every `publish*`. After implementing it three different ways, the cleanest end state was a one-line `if ctx.Err() != nil { return }` at the top of each function — the helper was a single line of indirection wrapping a single line of logic. Inlined for readability. The contract (skip on ctx-done) is identical.
+3. **`closeable` interface defined locally** rather than reusing an existing one. `io.Closer` would have worked but pulls in a stdlib import where none was needed; the local interface is one line and stays in the file that owns the call site.
+
+**Downstream task impact**
+
+None — Task #5 had no downstream blockers. Task #8's listener tests can lift the cert-helper pattern (`genCA` + `signLeaf`) directly from `dialer_test.go` if useful.

@@ -21,6 +21,14 @@
 // security one. Locking CP out of a misconfigured agent container
 // would be worse than connecting and letting the operator see the
 // noise.
+//
+// FD-leak ceiling: a successful dial whose conn.Close() repeatedly
+// fails would accumulate file descriptors and gRPC keepalive
+// goroutines indefinitely. After closeErrCeiling consecutive close
+// failures the dial loop bails for the target with a SessionFailed
+// event (Reason carries the "fd-leak-ceiling" classification) so
+// operators see the outcome instead of a silent leak. A successful
+// close anywhere in the loop resets the counter.
 package agentdial
 
 import (
@@ -64,6 +72,17 @@ const (
 	connectMaxBackoff     = 10 * time.Second
 	connectTotalTimeout   = 60 * time.Second
 )
+
+// closeErrCeiling bounds the number of consecutive conn.Close()
+// failures the dial loop will tolerate before giving up on the
+// target. A non-zero close error usually means a transport-level
+// state machine the gRPC client can't unwind cleanly (broken
+// keepalive, half-closed socket); each one leaks a file descriptor
+// + a couple of background goroutines. Five gives a transient
+// hiccup room to recover without letting a structurally-broken
+// peer accumulate resources without bound. Successful Close
+// anywhere in the loop resets the counter.
+const closeErrCeiling = 5
 
 // Dialer captures the CP-side material every dial needs. Construct
 // once at CP startup; share across all agent dials.
@@ -176,6 +195,7 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 
 func (d *Dialer) runDial(ctx context.Context, containerID string) {
 	log := d.log.With("container_id", containerID, "component", "agentdial")
+	closeErrCount := 0
 
 	for cycle := 1; ; cycle++ {
 		if ctx.Err() != nil {
@@ -189,40 +209,117 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 		// docker daemon hiccup), the next attempt's inspect catches
 		// it instead of burning the 5min retry budget against a
 		// dead IP.
-		conn, stream, attempts, agent, project, addr, gone, ok := d.establishWithRetry(ctx, containerID, log.With("cycle", cycle))
-		if !ok {
-			reason := "connect_total_timeout"
-			if gone {
-				reason = "container_not_running"
-			}
-			d.publishFailed(ctx, containerID, agent, project, addr, reason, attempts)
+		res := d.establishWithRetry(ctx, containerID, log.With("cycle", cycle))
+		switch res.Outcome {
+		case outcomeCtxDone:
+			return
+		case outcomeContainerGone:
+			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr, "container_not_running", res.Attempt)
+			return
+		case outcomeRetryExhausted:
+			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr, "connect_total_timeout", res.Attempt)
+			return
+		case outcomeSuccess:
+			// fallthrough — handled below
+		default:
+			log.Error().Int("outcome", int(res.Outcome)).Msg("agentdial: unrecognized establish outcome; treating as failure")
+			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr, "internal_unknown_outcome", res.Attempt)
 			return
 		}
-		cycleLog := log.With("agent", agent, "project", project, "addr", addr, "cycle", cycle)
 
-		d.publishConnected(ctx, containerID, agent, project, addr, attempts)
-		drainErr := d.drainStream(ctx, stream, cycleLog)
-		if cerr := conn.Close(); cerr != nil {
-			cycleLog.Error().Err(cerr).Str("event", "agentdial_conn_close_failed").Msg("close clawkerd conn")
+		cycleLog := log.With("agent", res.Agent, "project", res.Project, "addr", res.Addr, "cycle", cycle)
+		d.publishConnected(ctx, containerID, res.Agent, res.Project, res.Addr, res.Attempt)
+
+		drain := d.drainStream(ctx, res.Stream, cycleLog)
+		if d.closeAndCheckLeak(res.Conn, &closeErrCount, cycleLog) {
+			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr,
+				fmt.Sprintf("fd-leak-ceiling: %d consecutive close failures", closeErrCount),
+				res.Attempt)
+			return
 		}
 
 		// Don't reconnect on intentional teardown — the parent ctx
 		// is cancelled (CP shutdown) or the drain reported the same.
 		// Anything else (peer EOF, transport break from laptop sleep,
 		// stream error) drops back into the loop to re-establish.
-		// Skip publishBroken on intentional teardown: the Overseer
-		// is already closing during CP shutdown so the Publish would
-		// no-op (returns false). Subscribers don't need to know
-		// about CP-side shutdown either.
-		if ctx.Err() != nil || drainErr == "ctx_done" {
+		// publishBroken itself skips on ctx-done (defense in depth);
+		// the local check here also suppresses the "reconnecting"
+		// log line and prevents the loop from spinning for one more
+		// iteration.
+		if ctx.Err() != nil || drain.Outcome == drainCtxCanceled {
 			return
 		}
-		d.publishBroken(ctx, containerID, agent, project, addr, drainErr)
+		d.publishBroken(ctx, containerID, res.Agent, res.Project, res.Addr, drain.Reason)
 		cycleLog.Info().
 			Str("event", "agentdial_session_reconnecting").
-			Str("reason", drainErr).
+			Str("reason", drain.Reason).
 			Msg("CP→clawkerd Session broken; will reconnect")
 	}
+}
+
+// closeAndCheckLeak closes the conn and tracks consecutive close
+// failures against closeErrCeiling. Returns true iff the caller
+// should bail the dial loop (ceiling reached). A successful close
+// resets the counter so a transient hiccup does not poison the
+// ledger across the lifetime of the cycle. Extracted for
+// testability — production callers always pass a *grpc.ClientConn,
+// but the closeable interface lets unit tests inject a controlled
+// error sequence without standing up a real gRPC channel.
+func (d *Dialer) closeAndCheckLeak(c closeable, count *int, log *logger.Logger) bool {
+	if cerr := c.Close(); cerr != nil {
+		*count++
+		log.Error().Err(cerr).
+			Int("close_err_count", *count).
+			Int("close_err_ceiling", closeErrCeiling).
+			Str("event", "agentdial_conn_close_failed").
+			Msg("close clawkerd conn")
+		return *count >= closeErrCeiling
+	}
+	*count = 0
+	return false
+}
+
+// closeable is the minimum surface closeAndCheckLeak needs; satisfied
+// by *grpc.ClientConn and by simple test fakes.
+type closeable interface {
+	Close() error
+}
+
+// establishOutcome classifies the terminal state of one
+// establishWithRetry call. Replaces the previous (gone bool, ok
+// bool) pair where (ok=true, gone=true) was structurally illegal
+// but compiled.
+type establishOutcome int
+
+const (
+	// outcomeSuccess: Hello + HelloAck completed. Conn / Stream are
+	// non-nil; Attempt records the number of tries.
+	outcomeSuccess establishOutcome = iota
+	// outcomeContainerGone: resolveAgent reported the container is
+	// no longer running (or its inspect failed). Distinct from a
+	// retry-budget exhaustion: nothing to retry against.
+	outcomeContainerGone
+	// outcomeRetryExhausted: every attempt failed and
+	// connectTotalTimeout elapsed. Conn / Stream are nil; Addr / Agent /
+	// Project carry the latest inspect's view for the failure event.
+	outcomeRetryExhausted
+	// outcomeCtxDone: parent ctx cancelled mid-retry. No publish.
+	outcomeCtxDone
+)
+
+// establishResult is the typed return of establishWithRetry.
+// Replaces the previous 8-tuple. Conn / Stream are populated only
+// when Outcome is outcomeSuccess. Agent / Project / Addr carry the
+// latest inspect's view; Attempt records the cycle's attempt count
+// (for both success and failure publishing).
+type establishResult struct {
+	Conn    *grpc.ClientConn
+	Stream  clawkerdv1.ClawkerdService_SessionClient
+	Agent   string
+	Project string
+	Addr    string
+	Attempt int
+	Outcome establishOutcome
 }
 
 // establishWithRetry runs the inner exponential-backoff retry loop
@@ -235,27 +332,18 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 // attempt is the smallest atomic unit; we cannot eliminate the
 // race entirely, but we bound it to one attempt's lifetime. A
 // container that dies between attempts (sleep, manual stop) is
-// caught by the next attempt's inspect and surfaces as gone=true,
-// which the caller maps to a terminal "container_not_running"
-// failure rather than burning the retry budget.
-//
-// Return values:
-//   - conn, stream: non-nil only on success
-//   - attempt: count when we exited (success or give-up)
-//   - agent, project, addr: the LATEST inspect's facts (used for
-//     the publish event whether success or failure)
-//   - gone: true if we exited because resolveAgent reported the
-//     container is no longer running (different from "retry budget
-//     exhausted" — caller publishes a different reason)
-//   - ok: true on success
-func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log *logger.Logger) (*grpc.ClientConn, clawkerdv1.ClawkerdService_SessionClient, int, string, string, string, bool, bool) {
+// caught by the next attempt's inspect and surfaces as
+// outcomeContainerGone, which the caller maps to a terminal
+// "container_not_running" failure rather than burning the retry
+// budget.
+func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log *logger.Logger) establishResult {
 	deadline := time.Now().Add(connectTotalTimeout)
 	backoff := connectInitialBackoff
 	publishedConnecting := false
 
 	for attempt := 1; ; attempt++ {
 		if ctx.Err() != nil {
-			return nil, nil, attempt, "", "", "", false, false
+			return establishResult{Attempt: attempt, Outcome: outcomeCtxDone}
 		}
 
 		// Inspect at the start of every attempt — never a stale
@@ -271,7 +359,7 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 				Int("attempt", attempt).
 				Str("event", "agentdial_attempt_resolve_failed").
 				Msg("container not running at attempt time; exiting retry loop")
-			return nil, nil, attempt, "", "", "", true, false
+			return establishResult{Attempt: attempt, Outcome: outcomeContainerGone}
 		}
 		agent, project := agentLabels(inspect)
 		addr, err := clawkerNetAddr(inspect)
@@ -280,7 +368,7 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 				Int("attempt", attempt).
 				Str("event", "agentdial_attempt_addr_extract_failed").
 				Msg("clawker-net address extraction failed")
-			return nil, nil, attempt, agent, project, "", true, false
+			return establishResult{Agent: agent, Project: project, Attempt: attempt, Outcome: outcomeContainerGone}
 		}
 
 		// Every log line from here forward carries agent + project +
@@ -304,15 +392,25 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 		if dialErr == nil {
 			d.recordRegistryProvenance(containerID, peerThumbprint, peerCN, attemptLog)
 			d.consumeAnnounceSlot(containerID, attemptLog)
-			return conn, stream, attempt, agent, project, addr, false, true
+			return establishResult{
+				Conn:    conn,
+				Stream:  stream,
+				Agent:   agent,
+				Project: project,
+				Addr:    addr,
+				Attempt: attempt,
+				Outcome: outcomeSuccess,
+			}
 		}
 
 		if time.Now().After(deadline) {
-			attemptLog.Error().Err(dialErr).
+			attemptLog.Error().
+				Str("dial_target", addr).
+				Err(dialErr).
 				Int("attempt", attempt).
 				Str("event", "agentdial_connect_timeout").
 				Msg("gave up on Session establishment after total timeout")
-			return nil, nil, attempt, agent, project, addr, false, false
+			return establishResult{Agent: agent, Project: project, Addr: addr, Attempt: attempt, Outcome: outcomeRetryExhausted}
 		}
 
 		// Full jitter: sleep ∈ [0, backoff). Prevents thundering-herd
@@ -322,7 +420,16 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 		if backoff > 0 {
 			sleep = time.Duration(rand.Int64N(int64(backoff)))
 		}
-		attemptLog.Warn().Err(dialErr).
+		// dial_target + the unwrapped err separate "where we tried
+		// to connect" from "what surfaced when we opened the stream".
+		// grpc.NewClient is non-blocking, so the first observed
+		// transport error always lands on the Session() open path or
+		// on the Hello handshake — wrapping addr into the err string
+		// duplicated the structured field and obscured the actual
+		// cause.
+		attemptLog.Warn().
+			Str("dial_target", addr).
+			Err(dialErr).
 			Int("attempt", attempt).
 			Dur("retry_in", sleep).
 			Str("event", "agentdial_connect_retry").
@@ -330,7 +437,7 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 
 		select {
 		case <-ctx.Done():
-			return nil, nil, attempt, agent, project, addr, false, false
+			return establishResult{Agent: agent, Project: project, Addr: addr, Attempt: attempt, Outcome: outcomeCtxDone}
 		case <-time.After(sleep):
 		}
 		backoff *= 2
@@ -346,10 +453,16 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 // give-up). On success, thumbprintOut + cnOut are populated with the
 // peer's leaf cert SHA-256 + CN — used by the caller to record a
 // provenance data point against agentregistry.
+//
+// The dial step is intentionally NOT wrapped with the addr — the
+// caller already carries dial_target as a structured log field,
+// duplicating it inside the err string was misleading (grpc.NewClient
+// is non-blocking; the first real transport failure always lands on
+// the Session open path).
 func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logger, thumbprintOut *[sha256.Size]byte, cnOut *string) (*grpc.ClientConn, clawkerdv1.ClawkerdService_SessionClient, error) {
 	conn, err := d.dial(ctx, addr, thumbprintOut, cnOut)
 	if err != nil {
-		return nil, nil, fmt.Errorf("dial %s: %w", addr, err)
+		return nil, nil, err
 	}
 
 	client := clawkerdv1.NewClawkerdServiceClient(conn)
@@ -472,25 +585,33 @@ func (d *Dialer) recordRegistryProvenance(containerID string, peerThumbprint [sh
 // point that says "this start was initiated by the clawker CLI".
 // Missing slot is the legitimate raw-`docker start` case (or a CP
 // that came up after the slot TTL elapsed); record + carry on.
+//
+// A non-ErrSlotInvalid err from Consume is a Registry contract
+// regression (per agentslots.Registry's documented surface, only
+// ErrSlotInvalid or success are expected) — log at Error so the
+// regression surfaces in the rotated log instead of being swallowed
+// at Warn.
 func (d *Dialer) consumeAnnounceSlot(containerID string, log *logger.Logger) {
 	if d.slots == nil {
 		return
 	}
-	if slot, err := d.slots.Consume(containerID); err == nil {
+	slot, err := d.slots.Consume(containerID)
+	switch {
+	case err == nil:
 		log.Info().
 			Str("container_id", containerID).
 			Time("reserved_at", slot.ReservedAt).
 			Str("provenance", "announce_slot_consumed").
 			Msg("agentdial: dial confirms CLI-attested start")
-	} else if !errors.Is(err, agentslots.ErrSlotInvalid) {
-		log.Warn().Err(err).
-			Str("container_id", containerID).
-			Msg("agentdial: announce slot consume failed")
-	} else {
+	case errors.Is(err, agentslots.ErrSlotInvalid):
 		log.Info().
 			Str("container_id", containerID).
 			Str("provenance", "announce_slot_missing").
 			Msg("agentdial: dial sees no announce slot (start was not CLI-attested)")
+	default:
+		log.Error().Err(err).
+			Str("container_id", containerID).
+			Msg("agentdial: announce slot consume failed (Registry contract regression)")
 	}
 }
 
@@ -597,26 +718,48 @@ func (d *Dialer) helloHandshake(stream clawkerdv1.ClawkerdService_SessionClient,
 	return nil
 }
 
+// drainOutcome classifies why drainStream returned. Replaces the
+// previous string-sentinel return ("eof" / "ctx_done" / err.Error()),
+// where the caller dispatched on a string compare.
+type drainOutcome int
+
+const (
+	// drainGracefulEOF: peer (clawkerd) closed the Session cleanly.
+	drainGracefulEOF drainOutcome = iota
+	// drainCtxCanceled: parent ctx cancelled (CP shutdown).
+	// publishBroken is suppressed for this outcome — the bus is on
+	// its way down anyway.
+	drainCtxCanceled
+	// drainStreamErr: Recv returned a non-EOF error and ctx is still
+	// live. Treat as transient (re-establish on next cycle).
+	drainStreamErr
+)
+
+// drainResult is the typed return of drainStream. Reason carries a
+// short classification string for the SessionBroken event when the
+// outcome is drainGracefulEOF or drainStreamErr.
+type drainResult struct {
+	Outcome drainOutcome
+	Reason  string
+}
+
 // drainStream holds the Session open. Reads each Response and
 // discards (CP doesn't dispatch any further Commands in this commit).
 // Exits on EOF (peer close), ctx cancel (CP shutdown), or error.
-// Returns the underlying reason as a string for the broken-event
-// publish — empty for graceful EOF, "ctx_done" for CP teardown,
-// otherwise the wrapped Recv error.
-func (d *Dialer) drainStream(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, log *logger.Logger) string {
+func (d *Dialer) drainStream(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, log *logger.Logger) drainResult {
 	for {
 		resp, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			log.Info().Str("event", "agentdial_session_eof").Msg("clawkerd closed Session")
-			return "eof"
+			return drainResult{Outcome: drainGracefulEOF, Reason: "eof"}
 		}
 		if err != nil {
 			if ctx.Err() != nil {
 				log.Info().Str("event", "agentdial_session_ctx_done").Msg("CP-side teardown")
-				return "ctx_done"
+				return drainResult{Outcome: drainCtxCanceled, Reason: "ctx_done"}
 			}
 			log.Error().Err(err).Str("event", "agentdial_session_recv_failed").Msg("Session.Recv")
-			return err.Error()
+			return drainResult{Outcome: drainStreamErr, Reason: err.Error()}
 		}
 		log.Debug().
 			Str("event", "agentdial_unexpected_response").
@@ -631,7 +774,10 @@ func (d *Dialer) drainStream(ctx context.Context, stream clawkerdv1.ClawkerdServ
 // budget exhausts (→ failed). agent + project may be empty if the
 // container is missing labels (still publish — gives consumers a way
 // to surface "we're dialing something we can't identify").
-func (d *Dialer) publishConnecting(_ context.Context, containerID, agent, project, addr string) {
+func (d *Dialer) publishConnecting(ctx context.Context, containerID, agent, project, addr string) {
+	if ctx.Err() != nil {
+		return
+	}
 	d.log.Info().
 		Str("event", "agentdial_session_connecting").
 		Str("container_id", containerID).
@@ -650,7 +796,10 @@ func (d *Dialer) publishConnecting(_ context.Context, containerID, agent, projec
 
 // publishConnected records that the Session handshake succeeded
 // (mTLS + Hello + HelloAck) on the given attempt.
-func (d *Dialer) publishConnected(_ context.Context, containerID, agent, project, addr string, attempt int) {
+func (d *Dialer) publishConnected(ctx context.Context, containerID, agent, project, addr string, attempt int) {
+	if ctx.Err() != nil {
+		return
+	}
 	d.log.Info().
 		Str("event", "agentdial_session_connected").
 		Str("container_id", containerID).
@@ -673,7 +822,10 @@ func (d *Dialer) publishConnected(_ context.Context, containerID, agent, project
 // attempt established a Session. reason carries the last error
 // message; attempts is the count when we gave up (0 if we never
 // even reached a dial because resolveAgent failed).
-func (d *Dialer) publishFailed(_ context.Context, containerID, agent, project, addr, reason string, attempts int) {
+func (d *Dialer) publishFailed(ctx context.Context, containerID, agent, project, addr, reason string, attempts int) {
+	if ctx.Err() != nil {
+		return
+	}
 	d.log.Error().
 		Str("event", "agentdial_session_failed").
 		Str("container_id", containerID).
@@ -697,7 +849,14 @@ func (d *Dialer) publishFailed(_ context.Context, containerID, agent, project, a
 // publishBroken records that an established Session terminated.
 // reason classifies the cause: "eof" (clawkerd graceful close),
 // "ctx_done" (CP teardown), or the underlying Recv error message.
-func (d *Dialer) publishBroken(_ context.Context, containerID, agent, project, addr, reason string) {
+//
+// Skips both log + bus emit when ctx is already done — the bus is on
+// its way down anyway, subscribers are about to be released, and a
+// CP-side shutdown is not interesting outbound information.
+func (d *Dialer) publishBroken(ctx context.Context, containerID, agent, project, addr, reason string) {
+	if ctx.Err() != nil {
+		return
+	}
 	d.log.Info().
 		Str("event", "agentdial_session_broken").
 		Str("container_id", containerID).

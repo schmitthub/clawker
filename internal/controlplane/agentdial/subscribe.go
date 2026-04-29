@@ -13,11 +13,18 @@ import (
 // Subscribe panic-loop guardrails. Mirrors agentregistry.Subscribe —
 // see that package for the full rationale on rate-limiting recoveries
 // so a deterministic panic source can't fill the log buffer.
-const (
-	subscribePanicBackoffMin    = 100 * time.Millisecond
-	subscribePanicBackoffMax    = 30 * time.Second
-	subscribePanicWindow        = 5 * time.Minute
-	subscribePanicWindowMaxHits = 100
+//
+// subscribePanicWindowMaxHits is const because it sizes the
+// fixed-capacity panic-time ring buffer (Go array length must be a
+// compile-time constant). The other three are var-typed so panic-storm
+// tests can shrink them without flooding real time; production callers
+// must not mutate them.
+const subscribePanicWindowMaxHits = 100
+
+var (
+	subscribePanicBackoffMin = 100 * time.Millisecond
+	subscribePanicBackoffMax = 30 * time.Second
+	subscribePanicWindow     = 5 * time.Minute
 )
 
 // Subscribe wires the Dialer to dockerevents.ContainerStarted events
@@ -55,7 +62,14 @@ func Subscribe(ctx context.Context, dialer *Dialer, bus *overseer.Overseer, log 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		var panicTimes []time.Time
+		// Fixed-capacity ring buffer caps memory at
+		// len(panicTimes)*sizeof(time.Time) regardless of panic rate.
+		// The previous slice grew without bound under sustained
+		// near-threshold rates because new entries arrived faster than
+		// aged ones were trimmed. Mirrors agentregistry.Subscribe's
+		// fix in PR-fix Task #6.
+		var panicTimes [subscribePanicWindowMaxHits]time.Time
+		var panicHead int
 		var lastPanic time.Time
 		backoff := subscribePanicBackoffMin
 		for {
@@ -67,16 +81,18 @@ func Subscribe(ctx context.Context, dialer *Dialer, bus *overseer.Overseer, log 
 				backoff = subscribePanicBackoffMin
 			}
 			lastPanic = now
-			panicTimes = append(panicTimes, now)
+			panicTimes[panicHead] = now
+			panicHead = (panicHead + 1) % len(panicTimes)
 			cutoff := now.Add(-subscribePanicWindow)
-			i := 0
-			for i < len(panicTimes) && panicTimes[i].Before(cutoff) {
-				i++
+			recent := 0
+			for _, t := range panicTimes {
+				if !t.IsZero() && t.After(cutoff) {
+					recent++
+				}
 			}
-			panicTimes = panicTimes[i:]
-			if len(panicTimes) >= subscribePanicWindowMaxHits {
+			if recent >= subscribePanicWindowMaxHits {
 				log.Error().
-					Int("panic_count", len(panicTimes)).
+					Int("panic_count", recent).
 					Dur("window", subscribePanicWindow).
 					Msg("agentdial subscribe consumer: panic rate exceeded ceiling; terminating consumer")
 				return

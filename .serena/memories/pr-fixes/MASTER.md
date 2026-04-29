@@ -37,7 +37,7 @@ Three load-bearing concepts shape every fix:
 | 02 | [container_create: move reg.Add to last step](02-bootstrap-order.md) | complete | claude-opus-4.7 | 01 | no |
 | 03 | [cmd/controlplane/agents: remove DBPath field](03-agents-cmd-dbpath.md) | complete | claude-opus-4.7 | 01 | no |
 | 04 | [informer→Overseer: typed event bus refactor](04-informer-per-kind-split.md) | complete | claude-opus-4.7 | — | no |
-| 05 | [agentdial refactor + tests](05-agentdial-refactor.md) | pending | — | 01, 04 | no |
+| 05 | [agentdial refactor + tests](05-agentdial-refactor.md) | complete | claude-opus-4.7 | 01, 04 | no |
 | 06 | [agentregistry/subscribe: ring buffer](06-subscribe-ringbuffer.md) | complete | claude-opus-4.7 | 04 | yes |
 | 07 | [cmd/clawkerd/session: audit + race + atomic + tests](07-clawkerd-session-fixes.md) | complete | claude-opus-4.7 | — | yes |
 | 08 | [cmd/clawkerd/listener: EKU + audit + tests](08-clawkerd-listener-fixes.md) | complete | claude-opus-4.7 | — | yes |
