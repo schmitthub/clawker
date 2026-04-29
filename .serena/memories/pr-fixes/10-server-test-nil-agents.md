@@ -65,7 +65,7 @@ None.
 
 ## Resolution
 
-- Commit SHA: (filled by commit)
+- Commit SHA: d3485e7e
 - Notes:
   - The runtime nil-agents test (`TestAdminServer_ListAgents_NilRegistry`) already existed via `&adminServer{}` zero-value. Added the symmetric constructor-level test `TestNewAdminServer_NilAgentsConstructorAcceptedListAgentsEmpty` that goes through `NewAdminServer(nil_fw, nil_agents, slots_mock, time.Now, nil_log)` and asserts no panic + empty `ListAgents` result, mirroring `TestNewAdminServer_NilSlotsPanics`.
   - Locks the documented nil-tolerant contract on the public API boundary, not just the internal struct.

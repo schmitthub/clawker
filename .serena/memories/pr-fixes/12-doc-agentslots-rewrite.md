@@ -1,7 +1,7 @@
 # Task 12 — docs: rewrite agentslots/CLAUDE.md for container_id-keyed model
 
-**Status**: pending
-**Claimed by**: —
+**Status**: complete
+**Claimed by**: claude-opus-4.7
 **Blocks**: —
 **Blocked by**: none
 **Parallel-safe**: yes (docs-only)
@@ -87,7 +87,10 @@ None for the rewrite itself. **Coordinate with Task #9** which touches `agentslo
 
 ## Resolution
 
-(Filled in on completion.)
-
-- Commit SHA:
+- Commit SHA: (filled by commit)
 - Notes:
+  - Full rewrite of `internal/controlplane/agentslots/CLAUDE.md` to describe the actual container_id-keyed model.
+  - Removed the stale composite-key narrative entirely (no archaeology — git log has it).
+  - Documented why container_id won (lifetime, dockerevents fit, pre-Connect availability) and why (project, agent_name) and thumbprint each lost.
+  - Aligned `Reserve`/`Consume`/`EvictByContainerID` API descriptions with the current code: empty-container_id panic on Reserve; container_id-only Consume returning `ErrSlotInvalid` collapsed sentinel; Slot's optional PKCE/thumbprint fields documented as future-use, not part of today's consume contract.
+  - Added explicit "agentslots is pre-Connect; agentregistry is post-Connect" framing with cross-link, so future readers don't conflate identity (registry) with attestation (slots).
