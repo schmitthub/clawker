@@ -161,7 +161,7 @@ make test
 
 ## Resolution
 
-- Commit SHA: (recorded below after commit)
+- Commit SHA: `d73ff9b5`
 - Notes:
 
 **What landed**
