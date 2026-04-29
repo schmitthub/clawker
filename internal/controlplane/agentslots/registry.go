@@ -140,6 +140,13 @@ type registryImpl struct {
 	// NewRegistryWithPulseChan so a sweep test doesn't have to
 	// wall-clock-poll the result.
 	tickC <-chan time.Time
+	// testHookConsumeMidpoint, when non-nil, fires inside Consume
+	// after the slot lookup but before any delete. The hook runs while
+	// the registry mutex is still held, so it MUST NOT call back into
+	// the registry (would deadlock); it may spawn a goroutine that
+	// does. Used by the janitor-races-Consume test to assert mutex
+	// serialization is correct under -race. nil in production.
+	testHookConsumeMidpoint func()
 }
 
 // NewRegistry creates a Registry and starts the background janitor.
@@ -215,6 +222,9 @@ func (r *registryImpl) Consume(containerID string) (*Slot, error) {
 	if !ok {
 		return nil, ErrSlotInvalid
 	}
+	if r.testHookConsumeMidpoint != nil {
+		r.testHookConsumeMidpoint()
+	}
 	if !r.now().Before(slot.ExpiresAt) {
 		delete(r.slots, containerID)
 		return nil, ErrSlotInvalid
@@ -281,8 +291,11 @@ func (r *registryImpl) sweep() {
 	for containerID, slot := range r.slots {
 		if !now.Before(slot.ExpiresAt) {
 			delete(r.slots, containerID)
-			r.log.Debug().Str("container_id", containerID).Msg("agentslots: swept expired slot")
-			_ = slot
+			r.log.Debug().
+				Str("container_id", containerID).
+				Str("agent", slot.AgentName).
+				Str("project", slot.Project).
+				Msg("agentslots: swept expired slot")
 			swept++
 		}
 	}

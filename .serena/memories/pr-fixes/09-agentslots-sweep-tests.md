@@ -1,7 +1,7 @@
 # Task 09 — agentslots: sweep log fields + janitor race test
 
-**Status**: pending
-**Claimed by**: —
+**Status**: complete
+**Claimed by**: claude-opus-4.7
 **Blocks**: —
 **Blocked by**: 04
 **Parallel-safe**: yes (only blocked by Task #4 informer migration)
@@ -118,7 +118,5 @@ make test
 
 ## Resolution
 
-(Filled in on completion.)
-
-- Commit SHA:
-- Notes:
+- Commit SHA: (to be filled by commit step)
+- Notes: (S11) Added `agent` + `project` Str fields to the sweep Debug log in `registryImpl.sweep` — operators triaging "why did this announce never get consumed" now get full slot identity. (T6) Added unexported `testHookConsumeMidpoint func()` field on `registryImpl` (zero-valued in production); fires inside Consume after the slot lookup but before any delete, while the registry mutex is still held. The new `TestRegistry_Janitor_RacesConsume` uses the hook to spawn a goroutine that calls `impl.sweep()` — that goroutine queues for the same mutex, so the test exercises serialization rather than expecting nondeterministic interleaving. Asserts: Consume wins (returns the slot), no panic, no double-delete crash, slot map settles at len 0. Race-clean across 3× `-race` runs. The Task #4 informer-migration step from the original plan is **obsolete**: per `internal/controlplane/agent/CLAUDE.md` L74, agentslots is intentionally not an Overseer subscriber (TTL janitor is the sole correctness floor). No subscribe.go file exists, so no migration needed. agentslots/CLAUDE.md (Task #12) was already updated to the container_id-keyed model — left untouched per "do not accidentally fix the doc as a side effect" gotcha.
