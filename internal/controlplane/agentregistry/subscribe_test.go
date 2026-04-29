@@ -182,6 +182,102 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 	assert.True(t, sawPanicLog, "expected an error-level log entry capturing the recovered panic; got: %s", buf.String())
 }
 
+// alwaysPanicRegistry is a Registry test double whose
+// EvictByContainerID always panics. Used by the panic-storm test to
+// drive the consumer into its termination path.
+type alwaysPanicRegistry struct {
+	calls    atomic.Int32
+	delegate Registry
+}
+
+func (p *alwaysPanicRegistry) Add(e Entry) error { return p.delegate.Add(e) }
+func (p *alwaysPanicRegistry) Lookup(t [sha256.Size]byte, cn string) (*Entry, error) {
+	return p.delegate.Lookup(t, cn)
+}
+func (p *alwaysPanicRegistry) LookupByContainerID(id string) (*Entry, error) {
+	return p.delegate.LookupByContainerID(id)
+}
+func (p *alwaysPanicRegistry) LookupByThumbprint(t [sha256.Size]byte) (*Entry, error) {
+	return p.delegate.LookupByThumbprint(t)
+}
+func (p *alwaysPanicRegistry) Snapshot() []Entry { return p.delegate.Snapshot() }
+func (p *alwaysPanicRegistry) EvictByContainerID(id string) error {
+	p.calls.Add(1)
+	panic("synthetic storm panic")
+}
+
+// TestSubscribe_PanicStormTerminatesAtThreshold proves the panic-time
+// ring buffer drives termination after subscribePanicWindowMaxHits
+// recoveries within subscribePanicWindow. Pacing knobs are shrunk so
+// the test runs in test-time; the array size is const and unaffected.
+func TestSubscribe_PanicStormTerminatesAtThreshold(t *testing.T) {
+	oldMin, oldMax, oldWindow := subscribePanicBackoffMin, subscribePanicBackoffMax, subscribePanicWindow
+	subscribePanicBackoffMin = time.Microsecond
+	subscribePanicBackoffMax = time.Microsecond
+	subscribePanicWindow = time.Hour
+	t.Cleanup(func() {
+		subscribePanicBackoffMin = oldMin
+		subscribePanicBackoffMax = oldMax
+		subscribePanicWindow = oldWindow
+	})
+
+	bus := liveBus(t)
+	var buf bytes.Buffer
+	bufLog := logger.NewWriter(&buf)
+	reg := &alwaysPanicRegistry{delegate: NewRegistry(nil)}
+
+	cancel := Subscribe(context.Background(), reg, bus, bufLog)
+	t.Cleanup(cancel)
+
+	// Publish exactly subscribePanicWindowMaxHits events — each one
+	// triggers a panic. The window-check on the final panic fires
+	// the termination log.
+	for range subscribePanicWindowMaxHits {
+		for !overseer.Publish(bus, dockerevents.ContainerRemoved{ID: "ctr-storm", At: time.Now()}) {
+			time.Sleep(time.Microsecond)
+		}
+	}
+
+	// First wait for the consumer to process the full storm (calls
+	// is incremented before each panic). Without this, cancel may
+	// arrive while events are still buffered in the subscriber
+	// channel, dropping them and never reaching the threshold.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && reg.calls.Load() < int32(subscribePanicWindowMaxHits) {
+		time.Sleep(time.Millisecond)
+	}
+	require.GreaterOrEqual(t, int(reg.calls.Load()), subscribePanicWindowMaxHits, "consumer did not process every storm event before deadline")
+
+	// Now wait for the consumer goroutine to actually exit. cancel()
+	// blocks on the consumer's done channel; after it returns the
+	// goroutine is gone and buf is owned by the test. Reading buf
+	// concurrently with active zerolog writes would race the
+	// detector regardless of content stability.
+	canceled := make(chan struct{})
+	go func() { cancel(); close(canceled) }()
+	select {
+	case <-canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("consumer did not terminate within deadline after panic storm")
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(buf.Bytes()))
+	const wantMsg = "agentregistry subscribe consumer: panic rate exceeded ceiling; terminating consumer"
+	var sawTerminate bool
+	for {
+		var line map[string]any
+		if err := dec.Decode(&line); err != nil {
+			break
+		}
+		if line["level"] == "error" && line["message"] == wantMsg {
+			sawTerminate = true
+			break
+		}
+	}
+	require.True(t, sawTerminate, "expected termination log; got: %s", buf.String())
+	assert.GreaterOrEqual(t, int(reg.calls.Load()), subscribePanicWindowMaxHits, "consumer must have processed at least the threshold panics")
+}
+
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)

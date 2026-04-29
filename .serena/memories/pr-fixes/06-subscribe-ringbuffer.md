@@ -1,7 +1,7 @@
 # Task 06 — agentregistry/subscribe: ring buffer for panicTimes
 
-**Status**: pending
-**Claimed by**: —
+**Status**: complete
+**Claimed by**: claude-opus-4.7
 **Blocks**: —
 **Blocked by**: 04
 **Parallel-safe**: yes
@@ -104,7 +104,5 @@ make test
 
 ## Resolution
 
-(Filled in on completion.)
-
-- Commit SHA:
-- Notes:
+- Commit SHA: (to be filled by commit step)
+- Notes: Replaced unbounded `panicTimes []time.Time` slice with fixed-capacity `[subscribePanicWindowMaxHits]time.Time` ring buffer + head index in `agentregistry/subscribe.go`. Window-check now scans the ring counting non-zero entries past `cutoff`. Slice trim logic dropped. `subscribePanicWindowMaxHits` stays `const` (compile-time array size); the three pacing knobs (`subscribePanicBackoffMin/Max`, `subscribePanicWindow`) flipped from `const` to `var` so the new storm test can shrink them without minutes of real-time wait. Added `TestSubscribe_PanicStormTerminatesAtThreshold` + `alwaysPanicRegistry` helper — proves consumer terminates with `"panic rate exceeded ceiling"` Error log after exactly `subscribePanicWindowMaxHits` panics within the override window. Test waits for `reg.calls == threshold` before canceling so cancel doesn't drop buffered events; race-clean across 3× `-race` runs and 5× plain runs. `TestSubscribe_PanicRecoveryResumesProcessing` is already covered by existing `TestSubscribe_RecoversFromHookPanic`. Bounded-memory is structural (fixed-size array) — no separate test needed beyond the storm test.
