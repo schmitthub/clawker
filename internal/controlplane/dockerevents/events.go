@@ -216,27 +216,20 @@ func (e ContainerOOM) ApplyTo(s *overseer.State) {
 	s.Containers[e.Actor.ID] = view
 }
 
-// ContainerDestroyed fires when moby reports action=destroy. The
-// container has been removed from the daemon — its ID is no longer
-// resolvable. Subscribers (agentregistry) treat this as the eviction
-// signal.
+// ContainerDestroyed fires when moby reports action=destroy — the
+// canonical "container is gone from the daemon" event for `docker
+// rm`. Subscribers (agentregistry) treat this as the eviction
+// signal. moby's `events.ActionRemove` constant exists in the
+// shared Action vocabulary but is fired for IMAGES (`docker rmi`),
+// not containers, so there is intentionally no ContainerRemoved
+// type — verified against live moby (Loki history shows zero
+// `container/remove` actions; every container destroy fires
+// `container/destroy`).
 type ContainerDestroyed struct{ ContainerEvent }
 
 func (e ContainerDestroyed) EventName() string { return "docker.container.destroyed" }
 
 func (e ContainerDestroyed) ApplyTo(s *overseer.State) {
-	delete(s.Containers, e.Actor.ID)
-}
-
-// ContainerRemoved fires when moby reports action=remove — the
-// daemon's removal step (file system + state cleanup). Distinct from
-// destroy in moby's event stream; in practice both fire for a
-// removal so consumers may pick either.
-type ContainerRemoved struct{ ContainerEvent }
-
-func (e ContainerRemoved) EventName() string { return "docker.container.removed" }
-
-func (e ContainerRemoved) ApplyTo(s *overseer.State) {
 	delete(s.Containers, e.Actor.ID)
 }
 

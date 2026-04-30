@@ -218,10 +218,6 @@ func (f *Feeder) dispatchContainer(ev events.Message) {
 		delete(f.containers, id)
 		f.publishContainerEvent(ContainerDestroyed{envelope}, id)
 
-	case events.ActionRemove:
-		delete(f.containers, id)
-		f.publishContainerEvent(ContainerRemoved{envelope}, id)
-
 	case events.ActionRename:
 		f.containers[id] = true
 		f.publishContainerEvent(ContainerRenamed{envelope}, id)

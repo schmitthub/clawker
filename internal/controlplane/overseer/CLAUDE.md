@@ -55,7 +55,7 @@ A producer event type may also implement an unexported `applier` interface (`App
 
 - `dockerevents.Container{Started,Restarted,Unpaused}` — set `State.Containers[ID].Status = ContainerStatusRunning`
 - `dockerevents.Container{Died,Stopped,OOM}` — set `Status = ContainerStatusStopped`
-- `dockerevents.Container{Destroyed,Removed}` — delete `State.Containers[ID]`
+- `dockerevents.ContainerDestroyed` — delete `State.Containers[ID]` (moby fires `destroy` for `docker rm`; `ActionRemove` is image-only)
 - `dockerevents.ContainerRenamed` — updates `Name` field in place
 - `dockerevents.Container{Created,Paused,Killed}` — pure pub/sub, no state projection (Created has no running transition; Paused / Killed are intermediate states the worldview doesn't model in v1)
 - `agentdial.SessionConnecting/Connected/Failed/Broken` — populate `State.AgentSessions[ContainerID]`

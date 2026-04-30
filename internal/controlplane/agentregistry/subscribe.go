@@ -42,17 +42,19 @@ var (
 // Reset on the first successful evict.
 var subscribeEvictEscalationThreshold = 5
 
-// Subscribe wires the registry to the union of moby destroy actions
-// published on the Overseer bus — ContainerDestroyed and
-// ContainerRemoved. moby fires both for `docker rm`; Subscribe
-// listens to both so eviction is robust to whichever lands first.
-// EvictByContainerID is idempotent so a duplicate event no-ops.
+// Subscribe wires the registry to dockerevents.ContainerDestroyed
+// events published on the Overseer bus. moby fires `destroy` for
+// every `docker rm` on a container; `remove` is an image-event
+// action and never fires for containers (verified vs live moby
+// event stream — zero `container/remove` actions in observed
+// history). The returned cleanup must be deferred by the caller; it
+// cancels the bus subscription and waits for the consumer goroutine
+// to drain.
 //
 // Eviction trigger:
 //   - dockerevents.ContainerDestroyed (moby action=destroy) — the
-//     container is gone from the daemon's record.
-//   - dockerevents.ContainerRemoved (moby action=remove) — the
-//     daemon's removal step (file system + state cleanup).
+//     container is gone from the daemon for good and the row is
+//     orphaned.
 //
 // Stop/die/kill/oom do NOT evict: the container still exists in the
 // daemon and may be `docker start`-ed back into life. The registry
@@ -66,43 +68,26 @@ func Subscribe(ctx context.Context, reg Registry, bus *overseer.Overseer, log *l
 	if log == nil {
 		log = logger.Nop()
 	}
-	destroyedSub, ok := overseer.Subscribe[dockerevents.ContainerDestroyed](bus, "agentregistry.destroyed")
+	sub, ok := overseer.Subscribe[dockerevents.ContainerDestroyed](bus, "agentregistry")
 	if !ok {
-		log.Warn().Msg("agentregistry: bus closed before destroy subscribe; consumer not started")
-		return func() {}
-	}
-	removedSub, ok := overseer.Subscribe[dockerevents.ContainerRemoved](bus, "agentregistry.removed")
-	if !ok {
-		destroyedSub.Unsubscribe()
-		log.Warn().Msg("agentregistry: bus closed before remove subscribe; consumer not started")
+		log.Warn().Msg("agentregistry: bus closed before subscribe; consumer not started")
 		return func() {}
 	}
 
-	doneDestroyed := runConsumer(ctx, destroyedSub.C, reg, log.With("trigger", "destroyed"))
-	doneRemoved := runConsumer(ctx, removedSub.C, reg, log.With("trigger", "removed"))
+	done := runConsumer(ctx, sub.C, reg, log)
 
 	return func() {
-		destroyedSub.Unsubscribe()
-		removedSub.Unsubscribe()
-		<-doneDestroyed
-		<-doneRemoved
+		sub.Unsubscribe()
+		<-done
 	}
 }
 
-// destroyEvent is the constraint for events that signal "container
-// is gone from the daemon". Each carries Actor.ID through the
-// embedded ContainerEvent / events.Message.
-type destroyEvent interface {
-	dockerevents.ContainerDestroyed | dockerevents.ContainerRemoved
-}
-
-// runConsumer drives one typed channel until ctx cancels or the
-// channel closes, calling EvictByContainerID with the container_id
-// from each event. Panic-loop guardrails: fixed-capacity ring buffer
-// caps memory regardless of panic rate; exceeding the ceiling
-// terminates this consumer (the sibling destroy/remove consumer
-// continues independently).
-func runConsumer[T destroyEvent](ctx context.Context, ch <-chan T, reg Registry, log *logger.Logger) <-chan struct{} {
+// runConsumer drives the destroyed-event channel until ctx cancels
+// or the channel closes, calling EvictByContainerID with each
+// event's container_id. Panic-loop guardrails: fixed-capacity ring
+// buffer caps memory regardless of panic rate; exceeding the
+// ceiling terminates the consumer.
+func runConsumer(ctx context.Context, ch <-chan dockerevents.ContainerDestroyed, reg Registry, log *logger.Logger) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -151,26 +136,12 @@ func runConsumer[T destroyEvent](ctx context.Context, ch <-chan T, reg Registry,
 	return done
 }
 
-// containerID extracts Actor.ID from any destroy event. The
-// ContainerEvent base embeds events.Message; Actor.ID is the
-// canonical container identifier in moby's vocabulary.
-func containerID[T destroyEvent](ev T) string {
-	switch e := any(ev).(type) {
-	case dockerevents.ContainerDestroyed:
-		return e.Actor.ID
-	case dockerevents.ContainerRemoved:
-		return e.Actor.ID
-	default:
-		return ""
-	}
-}
-
 // handleEvent evicts the row keyed by the event's container_id. Best-
 // effort: we cannot retry from a bus consumer (the next event is
 // already queued), so log the error and proceed. The startup Reap
 // heals stale rows that survived a transient sqlite failure.
-func handleEvent[T destroyEvent](ev T, reg Registry, log *logger.Logger) error {
-	cid := containerID(ev)
+func handleEvent(ev dockerevents.ContainerDestroyed, reg Registry, log *logger.Logger) error {
+	cid := ev.Actor.ID
 	if cid == "" {
 		return nil
 	}
@@ -196,7 +167,7 @@ func handleEvent[T destroyEvent](ev T, reg Registry, log *logger.Logger) error {
 // is hit the consumer emits a single Error line and continues. The
 // counter resets on the first successful evict so a transient blip
 // recovers cleanly.
-func drainOnce[T destroyEvent](ctx context.Context, ch <-chan T, reg Registry, log *logger.Logger) (terminate bool) {
+func drainOnce(ctx context.Context, ch <-chan dockerevents.ContainerDestroyed, reg Registry, log *logger.Logger) (terminate bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error().Interface("panic", r).Msg("agentregistry subscribe consumer panicked; resuming")

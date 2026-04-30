@@ -31,10 +31,6 @@ func mkContainerEvent(action events.Action, id string) dockerevents.ContainerEve
 	}}
 }
 
-func mkRemoved(id string) dockerevents.ContainerRemoved {
-	return dockerevents.ContainerRemoved{ContainerEvent: mkContainerEvent(events.ActionRemove, id)}
-}
-
 func mkDestroyed(id string) dockerevents.ContainerDestroyed {
 	return dockerevents.ContainerDestroyed{ContainerEvent: mkContainerEvent(events.ActionDestroy, id)}
 }
@@ -60,7 +56,7 @@ func liveBus(t *testing.T) *overseer.Overseer {
 	return bus
 }
 
-func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
+func TestSubscribe_EvictsOnContainerDestroyed(t *testing.T) {
 	bus := liveBus(t)
 	r := NewRegistry(nil)
 	r.Add(Entry{AgentName: "x", ContainerID: "ctr-evict", Thumbprint: tp("cert"), RegisteredAt: time.Now()})
@@ -68,7 +64,7 @@ func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
 	cancel := Subscribe(context.Background(), r, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	overseer.Publish(bus, mkRemoved("ctr-evict"))
+	overseer.Publish(bus, mkDestroyed("ctr-evict"))
 
 	waitFor(t, func() bool {
 		_, err := r.Lookup(tp("cert"), canonical("", "x"))
@@ -76,28 +72,9 @@ func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
 	})
 }
 
-// TestSubscribe_EvictsOnContainerDestroyed — moby fires destroy as
-// well as remove for `docker rm`; either action evicts. Ensures the
-// subscription set covers both.
-func TestSubscribe_EvictsOnContainerDestroyed(t *testing.T) {
-	bus := liveBus(t)
-	r := NewRegistry(nil)
-	r.Add(Entry{AgentName: "x", ContainerID: "ctr-destroy", Thumbprint: tp("cert-d"), RegisteredAt: time.Now()})
-
-	cancel := Subscribe(context.Background(), r, bus, logger.Nop())
-	t.Cleanup(cancel)
-
-	overseer.Publish(bus, mkDestroyed("ctr-destroy"))
-
-	waitFor(t, func() bool {
-		_, err := r.Lookup(tp("cert-d"), canonical("", "x"))
-		return err == ErrUnknownAgent
-	})
-}
-
 // TestSubscribe_DoesNotEvictOnStopped — a stopped container can be
 // `docker start`-ed back into life and the same registry row should
-// pick up where it left off. Only ContainerRemoved is the eviction
+// pick up where it left off. Only ContainerDestroyed is the eviction
 // trigger; ContainerStopped (die / stop / kill) must not touch the
 // row. The CP startup reaper handles the case where a stopped
 // container is removed while CP is down.
@@ -117,7 +94,7 @@ func TestSubscribe_DoesNotEvictOnStopped(t *testing.T) {
 	// non-eviction events ahead of it. Then assert the registered
 	// entry survived. No multi-iter poll needed; the FIFO guarantee
 	// is the synchronization point.
-	overseer.Publish(bus, mkRemoved("ctr-sentinel"))
+	overseer.Publish(bus, mkDestroyed("ctr-sentinel"))
 	waitFor(t, func() bool {
 		got, err := r.Lookup(tp("cert-y"), canonical("", "y"))
 		return err == nil && got != nil && got.AgentName == "y"
@@ -191,7 +168,7 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 	// First event — triggers the panic. The entry must still be in the
 	// registry afterward (the panic prevented the eviction) and the
 	// consumer must still be alive.
-	overseer.Publish(bus, mkRemoved("ctr-first"))
+	overseer.Publish(bus, mkDestroyed("ctr-first"))
 
 	// Wait for the panic to actually fire before sending the second
 	// event. Otherwise we race the consumer and the second event can
@@ -200,7 +177,7 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 
 	// Second event — must be processed by the resumed consumer,
 	// proving subsequent events still drain after a recovered panic.
-	overseer.Publish(bus, mkRemoved("ctr-second"))
+	overseer.Publish(bus, mkDestroyed("ctr-second"))
 
 	waitFor(t, func() bool {
 		_, err := delegate.Lookup(tp("cert-second"), canonical("", "second"))
@@ -277,7 +254,7 @@ func TestSubscribe_PanicStormTerminatesAtThreshold(t *testing.T) {
 	// triggers a panic. The window-check on the final panic fires
 	// the termination log.
 	for range subscribePanicWindowMaxHits {
-		for !overseer.Publish(bus, mkRemoved("ctr-storm")) {
+		for !overseer.Publish(bus, mkDestroyed("ctr-storm")) {
 			time.Sleep(time.Microsecond)
 		}
 	}
