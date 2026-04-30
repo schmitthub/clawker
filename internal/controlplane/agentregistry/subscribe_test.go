@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -16,6 +17,35 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// mkContainerEvent builds a wire-equivalent ContainerEvent envelope
+// for tests. Mirrors the moby Message a real docker daemon would
+// send, so subscribers see the same shape they'd receive in
+// production.
+func mkContainerEvent(action events.Action, id string) dockerevents.ContainerEvent {
+	return dockerevents.ContainerEvent{Message: events.Message{
+		Type:     events.ContainerEventType,
+		Action:   action,
+		Actor:    events.Actor{ID: id, Attributes: map[string]string{"name": id, "image": "alpine"}},
+		TimeNano: time.Now().UnixNano(),
+	}}
+}
+
+func mkRemoved(id string) dockerevents.ContainerRemoved {
+	return dockerevents.ContainerRemoved{ContainerEvent: mkContainerEvent(events.ActionRemove, id)}
+}
+
+func mkDestroyed(id string) dockerevents.ContainerDestroyed {
+	return dockerevents.ContainerDestroyed{ContainerEvent: mkContainerEvent(events.ActionDestroy, id)}
+}
+
+func mkStarted(id string) dockerevents.ContainerStarted {
+	return dockerevents.ContainerStarted{ContainerEvent: mkContainerEvent(events.ActionStart, id)}
+}
+
+func mkDied(id string) dockerevents.ContainerDied {
+	return dockerevents.ContainerDied{ContainerEvent: mkContainerEvent(events.ActionDie, id)}
+}
 
 // liveBus constructs and starts an Overseer with deterministic options,
 // returning a started instance plus cleanup. Reuses the production bus
@@ -38,10 +68,29 @@ func TestSubscribe_EvictsOnContainerRemoved(t *testing.T) {
 	cancel := Subscribe(context.Background(), r, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	overseer.Publish(bus, dockerevents.ContainerRemoved{ID: "ctr-evict", At: time.Now()})
+	overseer.Publish(bus, mkRemoved("ctr-evict"))
 
 	waitFor(t, func() bool {
 		_, err := r.Lookup(tp("cert"), canonical("", "x"))
+		return err == ErrUnknownAgent
+	})
+}
+
+// TestSubscribe_EvictsOnContainerDestroyed — moby fires destroy as
+// well as remove for `docker rm`; either action evicts. Ensures the
+// subscription set covers both.
+func TestSubscribe_EvictsOnContainerDestroyed(t *testing.T) {
+	bus := liveBus(t)
+	r := NewRegistry(nil)
+	r.Add(Entry{AgentName: "x", ContainerID: "ctr-destroy", Thumbprint: tp("cert-d"), RegisteredAt: time.Now()})
+
+	cancel := Subscribe(context.Background(), r, bus, logger.Nop())
+	t.Cleanup(cancel)
+
+	overseer.Publish(bus, mkDestroyed("ctr-destroy"))
+
+	waitFor(t, func() bool {
+		_, err := r.Lookup(tp("cert-d"), canonical("", "x"))
 		return err == ErrUnknownAgent
 	})
 }
@@ -60,15 +109,15 @@ func TestSubscribe_DoesNotEvictOnStopped(t *testing.T) {
 	cancel := Subscribe(context.Background(), r, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	overseer.Publish(bus, dockerevents.ContainerStarted{ID: "ctr-stopped", At: time.Now()})
-	overseer.Publish(bus, dockerevents.ContainerStopped{ID: "ctr-stopped", At: time.Now()})
+	overseer.Publish(bus, mkStarted("ctr-stopped"))
+	overseer.Publish(bus, mkDied("ctr-stopped"))
 
 	// Bus dispatch is FIFO — a follow-up Publish that we observe land
 	// on a sentinel container_id proves the consumer drained both
 	// non-eviction events ahead of it. Then assert the registered
 	// entry survived. No multi-iter poll needed; the FIFO guarantee
 	// is the synchronization point.
-	overseer.Publish(bus, dockerevents.ContainerRemoved{ID: "ctr-sentinel", At: time.Now()})
+	overseer.Publish(bus, mkRemoved("ctr-sentinel"))
 	waitFor(t, func() bool {
 		got, err := r.Lookup(tp("cert-y"), canonical("", "y"))
 		return err == nil && got != nil && got.AgentName == "y"
@@ -142,7 +191,7 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 	// First event — triggers the panic. The entry must still be in the
 	// registry afterward (the panic prevented the eviction) and the
 	// consumer must still be alive.
-	overseer.Publish(bus, dockerevents.ContainerRemoved{ID: "ctr-first", At: time.Now()})
+	overseer.Publish(bus, mkRemoved("ctr-first"))
 
 	// Wait for the panic to actually fire before sending the second
 	// event. Otherwise we race the consumer and the second event can
@@ -151,7 +200,7 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 
 	// Second event — must be processed by the resumed consumer,
 	// proving subsequent events still drain after a recovered panic.
-	overseer.Publish(bus, dockerevents.ContainerRemoved{ID: "ctr-second", At: time.Now()})
+	overseer.Publish(bus, mkRemoved("ctr-second"))
 
 	waitFor(t, func() bool {
 		_, err := delegate.Lookup(tp("cert-second"), canonical("", "second"))
@@ -228,7 +277,7 @@ func TestSubscribe_PanicStormTerminatesAtThreshold(t *testing.T) {
 	// triggers a panic. The window-check on the final panic fires
 	// the termination log.
 	for range subscribePanicWindowMaxHits {
-		for !overseer.Publish(bus, dockerevents.ContainerRemoved{ID: "ctr-storm", At: time.Now()}) {
+		for !overseer.Publish(bus, mkRemoved("ctr-storm")) {
 			time.Sleep(time.Microsecond)
 		}
 	}

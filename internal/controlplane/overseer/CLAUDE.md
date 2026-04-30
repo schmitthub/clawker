@@ -53,11 +53,13 @@ producer-specific hook wiring.
 
 A producer event type may also implement an unexported `applier` interface (`ApplyTo(s *State)`) to mutate worldview state when published. Producers in the tree:
 
-- `dockerevents.ContainerStarted` — sets `State.Containers[ID].Status = ContainerStatusRunning`
-- `dockerevents.ContainerStopped` — sets `Status = ContainerStatusStopped`
-- `dockerevents.ContainerRemoved` — deletes `State.Containers[ID]`
+- `dockerevents.Container{Started,Restarted,Unpaused}` — set `State.Containers[ID].Status = ContainerStatusRunning`
+- `dockerevents.Container{Died,Stopped,OOM}` — set `Status = ContainerStatusStopped`
+- `dockerevents.Container{Destroyed,Removed}` — delete `State.Containers[ID]`
+- `dockerevents.ContainerRenamed` — updates `Name` field in place
+- `dockerevents.Container{Created,Paused,Killed}` — pure pub/sub, no state projection (Created has no running transition; Paused / Killed are intermediate states the worldview doesn't model in v1)
 - `agentdial.SessionConnecting/Connected/Failed/Broken` — populate `State.AgentSessions[ContainerID]`
-- `dockerevents.NetworkAttached/Detached` — pure pub/sub, no state side effect
+- `dockerevents.Network{Created,Connected,Disconnected,Destroyed}` — pure pub/sub, no state side effect (Overseer doesn't project network edges into State)
 
 Events that don't implement applier are routed to subscribers without touching State.
 

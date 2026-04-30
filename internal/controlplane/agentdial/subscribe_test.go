@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -15,6 +16,36 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// mkContainerEvent builds a wire-equivalent ContainerEvent envelope
+// for tests. Mirrors the moby Message a real docker daemon would
+// send; subscribers see the same shape they'd receive in production.
+func mkContainerEvent(action events.Action, id string, labels map[string]string) dockerevents.ContainerEvent {
+	attrs := make(map[string]string, len(labels)+2)
+	attrs["name"] = id
+	attrs["image"] = "alpine"
+	for k, v := range labels {
+		attrs[k] = v
+	}
+	return dockerevents.ContainerEvent{Message: events.Message{
+		Type:     events.ContainerEventType,
+		Action:   action,
+		Actor:    events.Actor{ID: id, Attributes: attrs},
+		TimeNano: time.Now().UnixNano(),
+	}}
+}
+
+func mkStarted(id string, labels map[string]string) dockerevents.ContainerStarted {
+	return dockerevents.ContainerStarted{ContainerEvent: mkContainerEvent(events.ActionStart, id, labels)}
+}
+
+func mkRestarted(id string, labels map[string]string) dockerevents.ContainerRestarted {
+	return dockerevents.ContainerRestarted{ContainerEvent: mkContainerEvent(events.ActionRestart, id, labels)}
+}
+
+func mkUnpaused(id string, labels map[string]string) dockerevents.ContainerUnpaused {
+	return dockerevents.ContainerUnpaused{ContainerEvent: mkContainerEvent(events.ActionUnPause, id, labels)}
+}
 
 // liveBus mirrors the agentregistry test helper: real Overseer, Started,
 // auto-closed via t.Cleanup. Subscribe is integration-shaped — replacing
@@ -58,11 +89,7 @@ func TestSubscribe_DialsOnPurposeAgentContainerStarted(t *testing.T) {
 	cancel := Subscribe(context.Background(), d, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	overseer.Publish(bus, dockerevents.ContainerStarted{
-		ID:     "ctr-agent",
-		Labels: map[string]string{consts.LabelPurpose: consts.PurposeAgent},
-		At:     time.Now(),
-	})
+	overseer.Publish(bus, mkStarted("ctr-agent", map[string]string{consts.LabelPurpose: consts.PurposeAgent}))
 
 	select {
 	case ev := <-sub.C:
@@ -70,6 +97,53 @@ func TestSubscribe_DialsOnPurposeAgentContainerStarted(t *testing.T) {
 		assert.Equal(t, "container_not_running", ev.Reason)
 	case <-time.After(2 * time.Second):
 		t.Fatal("agent ContainerStarted did not trigger DialAgent within deadline")
+	}
+}
+
+// TestSubscribe_DialsOnPurposeAgentContainerRestarted — moby's
+// `restart` action publishes ContainerRestarted; Subscribe matches
+// the running-transition union so a restart of an agent container
+// drives a fresh dial cycle.
+func TestSubscribe_DialsOnPurposeAgentContainerRestarted(t *testing.T) {
+	bus := liveBus(t)
+	d := dialerForSubscribe(t, bus)
+
+	sub, ok := overseer.Subscribe[SessionFailed](bus, "test")
+	require.True(t, ok)
+
+	cancel := Subscribe(context.Background(), d, bus, logger.Nop())
+	t.Cleanup(cancel)
+
+	overseer.Publish(bus, mkRestarted("ctr-agent-r", map[string]string{consts.LabelPurpose: consts.PurposeAgent}))
+
+	select {
+	case ev := <-sub.C:
+		assert.Equal(t, "ctr-agent-r", ev.ContainerID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("agent ContainerRestarted did not trigger DialAgent within deadline")
+	}
+}
+
+// TestSubscribe_DialsOnPurposeAgentContainerUnpaused — same union as
+// Restarted; unpause re-establishes a session against a previously
+// paused agent container.
+func TestSubscribe_DialsOnPurposeAgentContainerUnpaused(t *testing.T) {
+	bus := liveBus(t)
+	d := dialerForSubscribe(t, bus)
+
+	sub, ok := overseer.Subscribe[SessionFailed](bus, "test")
+	require.True(t, ok)
+
+	cancel := Subscribe(context.Background(), d, bus, logger.Nop())
+	t.Cleanup(cancel)
+
+	overseer.Publish(bus, mkUnpaused("ctr-agent-u", map[string]string{consts.LabelPurpose: consts.PurposeAgent}))
+
+	select {
+	case ev := <-sub.C:
+		assert.Equal(t, "ctr-agent-u", ev.ContainerID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("agent ContainerUnpaused did not trigger DialAgent within deadline")
 	}
 }
 
@@ -87,16 +161,8 @@ func TestSubscribe_IgnoresNonAgentContainerStarted(t *testing.T) {
 	cancel := Subscribe(context.Background(), d, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	overseer.Publish(bus, dockerevents.ContainerStarted{
-		ID:     "ctr-non-agent",
-		Labels: map[string]string{consts.LabelPurpose: "host-proxy"},
-		At:     time.Now(),
-	})
-	overseer.Publish(bus, dockerevents.ContainerStarted{
-		ID:     "ctr-no-label",
-		Labels: nil,
-		At:     time.Now(),
-	})
+	overseer.Publish(bus, mkStarted("ctr-non-agent", map[string]string{consts.LabelPurpose: "host-proxy"}))
+	overseer.Publish(bus, mkStarted("ctr-no-label", nil))
 
 	select {
 	case ev := <-sub.C:

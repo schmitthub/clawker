@@ -15,28 +15,20 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 )
 
-// Resource Kind strings owned by this feeder. Other feeders use their
-// own vocabulary; the bus dispatches by Go type, not by string.
-// KindContainer is retained as a re-export shim for callers that still
-// need a string label (e.g. Docker filters), but is no longer used to
-// route bus messages.
+// Resource Kind strings owned by this feeder. The bus dispatches by
+// Go type, not by string — these constants exist for Docker filter
+// vocabulary only.
 const (
 	KindContainer = "container"
 	KindNetwork   = "network"
 )
 
-// publishContainerEvent fans an event onto the bus and logs a Warn
-// line carrying container_id when Publish drops it. The bus's own
-// drop-log fires inside subscribe.go but only carries event name +
-// queue capacity — without container_id at the producer site,
-// operators investigating "why didn't agentdial dial container X"
-// have no thread to follow back through the timeline.
 // parseExitCode coerces moby's stringly-typed exitCode attribute to
-// int32 once at the dispatch boundary so consumers receive a typed
-// value. Empty input is the common case (not every action carries an
-// exitCode) and yields 0 silently. Truly malformed input (non-numeric,
-// out of range) logs at Debug with the raw string so a moby contract
-// change surfaces in logs without breaking dispatch.
+// int32 once at the dispatch boundary, with a Debug audit on
+// malformed input so a moby contract change surfaces in logs without
+// breaking dispatch. Used for the receive-side audit log; consumer-
+// facing accessors (ContainerDied.ExitCode, ContainerStopped.ExitCode)
+// re-parse at the consumer layer.
 func (f *Feeder) parseExitCode(raw, containerID string) int32 {
 	if raw == "" {
 		return 0
@@ -54,6 +46,12 @@ func (f *Feeder) parseExitCode(raw, containerID string) int32 {
 	return int32(n)
 }
 
+// publishContainerEvent fans a typed event onto the bus and logs a
+// Warn line carrying container_id when Publish drops it. The bus's
+// own drop-log in subscribe.go only carries event name + queue
+// capacity — pairing with container_id at the producer site lets
+// operators investigating "why didn't agentdial dial container X"
+// trace a thread back through the timeline.
 func (f *Feeder) publishContainerEvent(ev overseer.Event, containerID string) {
 	if overseer.Publish(f.bus, ev) {
 		return
@@ -64,9 +62,9 @@ func (f *Feeder) publishContainerEvent(ev overseer.Event, containerID string) {
 		Msg("dockerevents: publish dropped — bus full or closed")
 }
 
-// publishNetworkEvent is the network-edge counterpart — drops carry
-// both container_id and network_id so the dropped edge can be
-// reconstructed.
+// publishNetworkEvent is the network counterpart — drops carry both
+// container_id (when present, e.g. connect/disconnect) and
+// network_id so the dropped event can be reconstructed.
 func (f *Feeder) publishNetworkEvent(ev overseer.Event, containerID, networkID string) {
 	if overseer.Publish(f.bus, ev) {
 		return
@@ -153,22 +151,16 @@ func shouldHandleAction(ev events.Message) bool {
 	return true
 }
 
-// dispatchContainer handles container events. The actor's Attributes
-// carry the container's labels verbatim plus engine-set keys (image,
-// name, exitCode on die — verified vs moby daemon/events.go
-// LogContainerEventWithAttributes).
+// dispatchContainer translates moby's container action into the
+// matching typed bus event. 1:1 mapping — no buckets. The event
+// envelope (ContainerEvent) embeds the full moby Message so
+// consumers reach through to Action / Actor.Attributes / TimeNano
+// without a parallel field schema.
 //
-// Mapping from Docker action → typed event:
-//   - destroy / remove → ContainerRemoved
-//   - die / stop / kill → ContainerStopped
-//   - create / start / restart / unpause → ContainerStarted
-//   - pause → no event published in v1 (no consumer; the agent's
-//     registry row + the dialer's runDial reconnect loop both
-//     intentionally survive a paused-container window)
-//
-// Other actions (rename, oom-without-die, health_status without state
-// change) are not republished; the feeder is interested in lifecycle
-// transitions, not diagnostic chatter.
+// The exitCode parse log (parseExitCode at Debug) is run for actions
+// that carry an exit code so a moby contract change surfaces in the
+// receive-side audit; the published event's accessor re-parses for
+// consumers (zero-cost on the dispatch path that already audits).
 func (f *Feeder) dispatchContainer(ev events.Message) {
 	id := ev.Actor.ID
 	if id == "" {
@@ -180,54 +172,66 @@ func (f *Feeder) dispatchContainer(ev events.Message) {
 		return
 	}
 
-	at := time.Unix(0, ev.TimeNano)
+	envelope := ContainerEvent{Message: ev}
 
 	switch ev.Action {
-	case events.ActionDestroy, events.ActionRemove:
-		delete(f.containers, id)
-		f.publishContainerEvent(ContainerRemoved{ID: id, At: at}, id)
-		return
-
-	case events.ActionDie, events.ActionStop, events.ActionKill:
+	case events.ActionCreate:
 		f.containers[id] = true
-		f.publishContainerEvent(ContainerStopped{
-			ID:       id,
-			ExitCode: f.parseExitCode(ev.Actor.Attributes["exitCode"], id),
-			OOM:      false,
-			At:       at,
-		}, id)
-		return
+		f.publishContainerEvent(ContainerCreated{envelope}, id)
+
+	case events.ActionStart:
+		f.containers[id] = true
+		f.publishContainerEvent(ContainerStarted{envelope}, id)
+
+	case events.ActionRestart:
+		f.containers[id] = true
+		f.publishContainerEvent(ContainerRestarted{envelope}, id)
+
+	case events.ActionPause:
+		f.containers[id] = true
+		f.publishContainerEvent(ContainerPaused{envelope}, id)
+
+	case events.ActionUnPause:
+		f.containers[id] = true
+		f.publishContainerEvent(ContainerUnpaused{envelope}, id)
+
+	case events.ActionDie:
+		f.containers[id] = true
+		// Audit-side parse so a moby contract change surfaces in logs.
+		_ = f.parseExitCode(ev.Actor.Attributes["exitCode"], id)
+		f.publishContainerEvent(ContainerDied{envelope}, id)
+
+	case events.ActionStop:
+		f.containers[id] = true
+		_ = f.parseExitCode(ev.Actor.Attributes["exitCode"], id)
+		f.publishContainerEvent(ContainerStopped{envelope}, id)
+
+	case events.ActionKill:
+		f.containers[id] = true
+		f.publishContainerEvent(ContainerKilled{envelope}, id)
 
 	case events.ActionOOM:
-		// OOM may fire alongside or instead of die — record it as a
-		// stop with OOM=true so consumers get the signal even if Docker
-		// elides the die event.
 		f.containers[id] = true
-		f.publishContainerEvent(ContainerStopped{
-			ID:       id,
-			ExitCode: f.parseExitCode(ev.Actor.Attributes["exitCode"], id),
-			OOM:      true,
-			At:       at,
-		}, id)
-		return
+		f.publishContainerEvent(ContainerOOM{envelope}, id)
 
-	case events.ActionCreate, events.ActionStart, events.ActionRestart, events.ActionUnPause:
+	case events.ActionDestroy:
+		delete(f.containers, id)
+		f.publishContainerEvent(ContainerDestroyed{envelope}, id)
+
+	case events.ActionRemove:
+		delete(f.containers, id)
+		f.publishContainerEvent(ContainerRemoved{envelope}, id)
+
+	case events.ActionRename:
 		f.containers[id] = true
-		labels := stripEngineKeys(ev.Actor.Attributes, "image", "name", "exitCode")
-		f.publishContainerEvent(ContainerStarted{
-			ID:     id,
-			Name:   ev.Actor.Attributes["name"],
-			Image:  ev.Actor.Attributes["image"],
-			Labels: labels,
-			At:     at,
-		}, id)
-		return
+		f.publishContainerEvent(ContainerRenamed{envelope}, id)
+
+	default:
+		// Action not in the lifecycle vocabulary (health_status without
+		// state change, etc.). Track managed-set membership so downstream
+		// events don't drop, but don't publish.
+		f.containers[id] = true
 	}
-
-	// Action not in the lifecycle vocabulary (rename, pause, health
-	// status without a transition). Track managed-set membership so
-	// downstream events don't drop, but don't publish.
-	f.containers[id] = true
 }
 
 // dispatchNetwork handles network events. Network actor Attributes do
@@ -235,24 +239,34 @@ func (f *Feeder) dispatchContainer(ev events.Message) {
 // daemon/events.go::LogNetworkEventWithAttributes), so first-sight
 // network events trigger NetworkInspect to read labels.
 //
-// In the typed-event world, this dispatcher only publishes
-// NetworkAttached / NetworkDetached. Network create/destroy update
-// internal bookkeeping but produce no bus event (no subscriber).
+// Publishes 1:1 with moby's network actions for managed networks:
+// NetworkCreated / NetworkDestroyed / NetworkConnected /
+// NetworkDisconnected. Unmanaged networks drop after the inspect.
 func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 	netID := ev.Actor.ID
 	if netID == "" {
 		return
 	}
 
+	envelope := NetworkEvent{Message: ev}
+
 	switch ev.Action {
 	case events.ActionCreate:
 		f.tryNetworkInspect(ctx, netID)
+		if !f.networks[netID] {
+			return
+		}
+		f.publishNetworkEvent(NetworkCreated{envelope}, "", netID)
 
 	case events.ActionDestroy, events.ActionRemove:
 		// Drop any pending recheck flag — a destroyed network can never
 		// become managed retroactively.
+		wasManaged := f.networks[netID]
 		delete(f.networksNeedRecheck, netID)
 		delete(f.networks, netID)
+		if wasManaged {
+			f.publishNetworkEvent(NetworkDestroyed{envelope}, "", netID)
+		}
 
 	case events.ActionConnect, events.ActionDisconnect:
 		// If the initial Create-time inspect failed for this network,
@@ -270,24 +284,15 @@ func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 		}
 		if !f.containers[ctrID] {
 			// Wait for the container event — without a managed
-			// container we have no producer of ContainerStarted to
-			// anchor the edge against. The next reconcile pass would
-			// republish if the container is in fact managed.
+			// container we have no anchor for the edge. The next
+			// reconcile pass would republish if the container is in
+			// fact managed.
 			return
 		}
-		at := time.Unix(0, ev.TimeNano)
 		if ev.Action == events.ActionConnect {
-			f.publishNetworkEvent(NetworkAttached{
-				ContainerID: ctrID,
-				NetworkID:   netID,
-				At:          at,
-			}, ctrID, netID)
+			f.publishNetworkEvent(NetworkConnected{envelope}, ctrID, netID)
 		} else {
-			f.publishNetworkEvent(NetworkDetached{
-				ContainerID: ctrID,
-				NetworkID:   netID,
-				At:          at,
-			}, ctrID, netID)
+			f.publishNetworkEvent(NetworkDisconnected{envelope}, ctrID, netID)
 		}
 	}
 }
@@ -321,65 +326,79 @@ func (f *Feeder) tryNetworkInspect(ctx context.Context, netID string) {
 	f.networks[netID] = true
 }
 
-// containerStatusFromState maps a moby ContainerState to the bus
-// event we publish for that state during reconcile. Returns the event
-// or nil for transient states we don't model (restarting).
+// containerEventFromState maps a moby ContainerState observed during
+// reconcile to the typed bus event we publish for that state. Returns
+// the event or nil for transient states we don't model.
+//
+// Reconcile is observation, not action: we synthesize an
+// events.Message-shaped envelope (Action is the moby action that
+// would have caused the observed state) so the published wrapper is
+// indistinguishable from a stream-delivered event. ContainerCreated
+// is NEVER fabricated for reconcile — a created-but-not-running
+// container produces no published event (consistent with the wire-
+// side decision: ActionCreate publishes ContainerCreated, NOT
+// ContainerStarted).
 func containerEventFromState(s container.ContainerState, id string, c container.Summary, at time.Time) overseer.Event {
+	envelope := ContainerEvent{Message: events.Message{
+		Type:   events.ContainerEventType,
+		Action: containerActionFromState(s),
+		Actor: events.Actor{
+			ID:         id,
+			Attributes: containerAttributesFromSummary(c),
+		},
+		Scope:    "local",
+		Time:     at.Unix(),
+		TimeNano: at.UnixNano(),
+	}}
+
 	switch s {
-	case container.StateCreated, container.StateRunning:
-		var name string
-		if len(c.Names) > 0 {
-			name = strings.TrimPrefix(c.Names[0], "/")
-		}
-		return ContainerStarted{
-			ID:     id,
-			Name:   name,
-			Image:  c.Image,
-			Labels: c.Labels,
-			At:     at,
-		}
+	case container.StateRunning:
+		return ContainerStarted{envelope}
 	case container.StatePaused:
-		// Treat paused as still-running for worldview purposes — the
-		// container exists, just frozen.
-		var name string
-		if len(c.Names) > 0 {
-			name = strings.TrimPrefix(c.Names[0], "/")
-		}
-		return ContainerStarted{
-			ID:     id,
-			Name:   name,
-			Image:  c.Image,
-			Labels: c.Labels,
-			At:     at,
-		}
-	case container.StateExited, container.StateDead, container.StateRemoving:
-		return ContainerStopped{ID: id, At: at}
+		return ContainerPaused{envelope}
+	case container.StateExited, container.StateDead:
+		return ContainerDied{envelope}
+	case container.StateRemoving:
+		return ContainerDestroyed{envelope}
 	}
+	// StateCreated, StateRestarting → no synthetic event; the next
+	// real moby action will redrive when the container transitions.
 	return nil
 }
 
-// stripEngineKeys returns a copy of attrs with the listed engine-set
-// keys removed. Engine-set keys live alongside user labels in
-// Actor.Attributes; a Resource's Labels should hold only true labels.
-func stripEngineKeys(attrs map[string]string, keys ...string) map[string]string {
-	if len(attrs) == 0 {
-		return nil
+// containerActionFromState picks the moby action that would have
+// caused the observed state. Used only for synthetic reconcile
+// events; matches what the live event stream would have published.
+func containerActionFromState(s container.ContainerState) events.Action {
+	switch s {
+	case container.StateRunning:
+		return events.ActionStart
+	case container.StatePaused:
+		return events.ActionPause
+	case container.StateExited, container.StateDead:
+		return events.ActionDie
+	case container.StateRemoving:
+		return events.ActionDestroy
 	}
-	skip := make(map[string]struct{}, len(keys))
-	for _, k := range keys {
-		skip[k] = struct{}{}
+	return ""
+}
+
+// containerAttributesFromSummary builds an Actor.Attributes map from
+// a container.Summary — name + image as engine-set keys plus the
+// container's Labels. Keeps the synthetic reconcile envelope
+// indistinguishable from a wire-delivered event.
+func containerAttributesFromSummary(c container.Summary) map[string]string {
+	attrs := make(map[string]string, len(c.Labels)+2)
+	if len(c.Names) > 0 {
+		attrs["name"] = strings.TrimPrefix(c.Names[0], "/")
 	}
-	out := make(map[string]string, len(attrs))
-	for k, v := range attrs {
-		if _, drop := skip[k]; drop {
-			continue
-		}
-		out[k] = v
+	if c.Image != "" {
+		attrs["image"] = c.Image
 	}
-	if len(out) == 0 {
-		return nil
+	for k, v := range c.Labels {
+		attrs[k] = v
 	}
-	return out
+	return attrs
 }
 
 // short truncates an id to Docker's 12-char short form for log

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
 )
 
@@ -68,6 +69,9 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 
 	// Container→network edges. Orphan edges to unmanaged networks add
 	// no value, so we gate on f.networks (fully populated above).
+	// Reconcile synthesizes a NetworkConnected event with a wire-
+	// equivalent envelope so subscribers can't tell stream-delivered
+	// from observed events apart.
 	for _, c := range containers.Items {
 		if c.NetworkSettings == nil {
 			continue
@@ -79,11 +83,20 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 			if !f.networks[ep.NetworkID] {
 				continue
 			}
-			f.publishNetworkEvent(NetworkAttached{
-				ContainerID: c.ID,
-				NetworkID:   ep.NetworkID,
-				At:          now,
-			}, c.ID, ep.NetworkID)
+			envelope := NetworkEvent{Message: events.Message{
+				Type:   events.NetworkEventType,
+				Action: events.ActionConnect,
+				Actor: events.Actor{
+					ID: ep.NetworkID,
+					Attributes: map[string]string{
+						"container": c.ID,
+					},
+				},
+				Scope:    "local",
+				Time:     now.Unix(),
+				TimeNano: now.UnixNano(),
+			}}
+			f.publishNetworkEvent(NetworkConnected{envelope}, c.ID, ep.NetworkID)
 		}
 	}
 

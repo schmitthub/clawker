@@ -524,7 +524,7 @@ Key packages:
 - `internal/controlplane/firewall/ebpf/cmd` — break-glass `ebpf-manager` CLI bundled alongside `clawker-cp` in the container image.
 - `internal/controlplane/agent` — `IdentityInterceptor` (cert-thumbprint → registry lookup, fail-secure opt-out map) for the AgentService listener. AgentService proto is empty in this branch; the interceptor stays wired for any future inbound clawkerd→CP RPC. See `internal/controlplane/agent/CLAUDE.md`.
 - `internal/controlplane/agentdial` — CP-side outbound dialer for `ClawkerdService.Session`. Permissive trust (always connects); cert/CN/registry outcomes surface as typed `Provenance` fields on `SessionConnected` overseer events. See `internal/controlplane/agentdial/CLAUDE.md`.
-- `internal/controlplane/agentregistry` — sqlite-persisted registry keyed by SHA-256 cert thumbprint + container_id. CLI writes rows at container CREATE time; `Reap` (startup) + dockerevents `ContainerRemoved` (steady state) evict.
+- `internal/controlplane/agentregistry` — sqlite-persisted registry keyed by SHA-256 cert thumbprint + container_id. CLI writes rows at container CREATE time; `Reap` (startup) + dockerevents `ContainerDestroyed`/`ContainerRemoved` (steady state) evict.
 - `internal/clawkerd` — `//go:embed assets/clawkerd` exports the per-container daemon binary; bundler drops it into every per-project image at `/usr/local/bin/clawkerd`.
 - `cmd/clawkerd` — per-container agent daemon. Boot sequence in `cmd/clawkerd/CLAUDE.md`.
 - `api/admin/v1` — AdminService proto + method-scope registration (`AdminMethodScopes`, covered by `TestAdminMethodScopes_CoversAllRPCs`).

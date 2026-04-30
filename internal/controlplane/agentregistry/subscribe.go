@@ -42,19 +42,21 @@ var (
 // Reset on the first successful evict.
 var subscribeEvictEscalationThreshold = 5
 
-// Subscribe wires the registry to dockerevents.ContainerRemoved
-// events published on the Overseer bus. The returned cleanup must be
-// deferred by the caller; it cancels the bus subscription and waits
-// for the consumer goroutine to drain.
+// Subscribe wires the registry to the union of moby destroy actions
+// published on the Overseer bus — ContainerDestroyed and
+// ContainerRemoved. moby fires both for `docker rm`; Subscribe
+// listens to both so eviction is robust to whichever lands first.
+// EvictByContainerID is idempotent so a duplicate event no-ops.
 //
 // Eviction trigger:
-//   - dockerevents.ContainerRemoved (Docker destroy/remove, i.e.
-//     `docker rm`) — the container is gone for good and the row is
-//     orphaned.
+//   - dockerevents.ContainerDestroyed (moby action=destroy) — the
+//     container is gone from the daemon's record.
+//   - dockerevents.ContainerRemoved (moby action=remove) — the
+//     daemon's removal step (file system + state cleanup).
 //
-// Stop/die/kill do NOT evict: the container still exists and may be
-// `docker start`-ed back into life. The registry row survives so a
-// subsequent restart finds its existing identity.
+// Stop/die/kill/oom do NOT evict: the container still exists in the
+// daemon and may be `docker start`-ed back into life. The registry
+// row survives so a subsequent restart finds its existing identity.
 //
 // log is required (pass logger.Nop() in tests that don't care about
 // the audit trail). A nil logger is replaced with logger.Nop() so
@@ -64,36 +66,52 @@ func Subscribe(ctx context.Context, reg Registry, bus *overseer.Overseer, log *l
 	if log == nil {
 		log = logger.Nop()
 	}
-	sub, ok := overseer.Subscribe[dockerevents.ContainerRemoved](bus, "agentregistry")
+	destroyedSub, ok := overseer.Subscribe[dockerevents.ContainerDestroyed](bus, "agentregistry.destroyed")
 	if !ok {
-		log.Warn().Msg("agentregistry: bus closed before subscribe; consumer not started")
+		log.Warn().Msg("agentregistry: bus closed before destroy subscribe; consumer not started")
+		return func() {}
+	}
+	removedSub, ok := overseer.Subscribe[dockerevents.ContainerRemoved](bus, "agentregistry.removed")
+	if !ok {
+		destroyedSub.Unsubscribe()
+		log.Warn().Msg("agentregistry: bus closed before remove subscribe; consumer not started")
 		return func() {}
 	}
 
+	doneDestroyed := runConsumer(ctx, destroyedSub.C, reg, log.With("trigger", "destroyed"))
+	doneRemoved := runConsumer(ctx, removedSub.C, reg, log.With("trigger", "removed"))
+
+	return func() {
+		destroyedSub.Unsubscribe()
+		removedSub.Unsubscribe()
+		<-doneDestroyed
+		<-doneRemoved
+	}
+}
+
+// destroyEvent is the constraint for events that signal "container
+// is gone from the daemon". Each carries Actor.ID through the
+// embedded ContainerEvent / events.Message.
+type destroyEvent interface {
+	dockerevents.ContainerDestroyed | dockerevents.ContainerRemoved
+}
+
+// runConsumer drives one typed channel until ctx cancels or the
+// channel closes, calling EvictByContainerID with the container_id
+// from each event. Panic-loop guardrails: fixed-capacity ring buffer
+// caps memory regardless of panic rate; exceeding the ceiling
+// terminates this consumer (the sibling destroy/remove consumer
+// continues independently).
+func runConsumer[T destroyEvent](ctx context.Context, ch <-chan T, reg Registry, log *logger.Logger) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// Recover-and-resume so a panic in EvictByContainerID (or any
-		// future per-event hook) doesn't silently kill the consumer.
-		// A dead consumer would leave registered agents alive in the
-		// registry after their containers exit, and stale Thumbprint
-		// entries would keep authorizing per-agent RPCs against a
-		// container that is gone.
-		//
-		// Backoff + circuit-breaker on consecutive panics so a
-		// deterministic panic source can't hot-loop the recovery
-		// path and bury real signal in the log. panicTimes is a
-		// fixed-capacity ring buffer: under sustained near-threshold
-		// panic rate the previous slice grew without bound, since
-		// new entries arrived faster than aged ones were trimmed.
-		// The ring caps memory at len(panicTimes)*sizeof(time.Time)
-		// regardless of panic rate.
 		var panicTimes [subscribePanicWindowMaxHits]time.Time
 		var panicHead int
 		var lastPanic time.Time
 		backoff := subscribePanicBackoffMin
 		for {
-			if drainOnce(ctx, sub.C, reg, log) {
+			if drainOnce(ctx, ch, reg, log) {
 				return
 			}
 			now := time.Now()
@@ -130,25 +148,36 @@ func Subscribe(ctx context.Context, reg Registry, bus *overseer.Overseer, log *l
 			}
 		}
 	}()
+	return done
+}
 
-	return func() {
-		sub.Unsubscribe()
-		<-done
+// containerID extracts Actor.ID from any destroy event. The
+// ContainerEvent base embeds events.Message; Actor.ID is the
+// canonical container identifier in moby's vocabulary.
+func containerID[T destroyEvent](ev T) string {
+	switch e := any(ev).(type) {
+	case dockerevents.ContainerDestroyed:
+		return e.Actor.ID
+	case dockerevents.ContainerRemoved:
+		return e.Actor.ID
+	default:
+		return ""
 	}
 }
 
-func handleEvent(ev dockerevents.ContainerRemoved, reg Registry, log *logger.Logger) error {
-	if ev.ID == "" {
+// handleEvent evicts the row keyed by the event's container_id. Best-
+// effort: we cannot retry from a bus consumer (the next event is
+// already queued), so log the error and proceed. The startup Reap
+// heals stale rows that survived a transient sqlite failure.
+func handleEvent[T destroyEvent](ev T, reg Registry, log *logger.Logger) error {
+	cid := containerID(ev)
+	if cid == "" {
 		return nil
 	}
-	// Eviction is best-effort here: we cannot retry from a bus
-	// consumer (the next event is already queued), so log the error
-	// and proceed. The startup Reap heals stale rows that survived a
-	// transient sqlite failure.
-	if err := reg.EvictByContainerID(ev.ID); err != nil {
+	if err := reg.EvictByContainerID(cid); err != nil {
 		log.Warn().
 			Err(err).
-			Str("container_id", ev.ID).
+			Str("container_id", cid).
 			Msg("agentregistry: evict-on-delete failed; row may persist until next reap")
 		return err
 	}
@@ -159,15 +188,15 @@ func handleEvent(ev dockerevents.ContainerRemoved, reg Registry, log *logger.Log
 // channel is closed, or a panic in handleEvent unwinds. Returns true
 // when the consumer is finished for good (ctx canceled or channel
 // closed) and false when it should be restarted (panic recovered).
-// Split out from Subscribe so the deferred recover has its own stack
-// frame.
+// Split out from runConsumer so the deferred recover has its own
+// stack frame.
 //
 // Tracks consecutive evict failures so a sustained sqlite write
 // failure doesn't decay into a silent row leak: once the threshold
 // is hit the consumer emits a single Error line and continues. The
 // counter resets on the first successful evict so a transient blip
 // recovers cleanly.
-func drainOnce(ctx context.Context, ch <-chan dockerevents.ContainerRemoved, reg Registry, log *logger.Logger) (terminate bool) {
+func drainOnce[T destroyEvent](ctx context.Context, ch <-chan T, reg Registry, log *logger.Logger) (terminate bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error().Interface("panic", r).Msg("agentregistry subscribe consumer panicked; resuming")

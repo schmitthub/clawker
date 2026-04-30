@@ -298,9 +298,13 @@ func TestReconcile_PopulatesContainersInWorldview(t *testing.T) {
 	t.Fatal("reconcile did not populate worldview within 500ms")
 }
 
-// TestReconcile_PublishesNetworkAttached — a container with a network
-// attachment produces a NetworkAttached event after reconcile.
-func TestReconcile_PublishesNetworkAttached(t *testing.T) {
+// TestReconcile_PublishesNetworkConnected — a container with a
+// network attachment produces a NetworkConnected event after
+// reconcile. The synthetic envelope carries the container_id in
+// Actor.Attributes["container"] and the network_id in Actor.ID,
+// matching the wire-delivered shape so subscribers can't tell
+// reconcile-observed events from stream-delivered ones apart.
+func TestReconcile_PublishesNetworkConnected(t *testing.T) {
 	cli := &fakeEventsClient{
 		containerListResult: mobyclient.ContainerListResult{Items: []mobycontainer.Summary{
 			{
@@ -321,7 +325,7 @@ func TestReconcile_PublishesNetworkAttached(t *testing.T) {
 	}
 	f, bus := newFakeFeeder(t, cli, 5*time.Millisecond)
 
-	sub, ok := overseer.Subscribe[NetworkAttached](bus, "test")
+	sub, ok := overseer.Subscribe[NetworkConnected](bus, "test")
 	require.True(t, ok)
 	defer sub.Unsubscribe()
 
@@ -329,10 +333,10 @@ func TestReconcile_PublishesNetworkAttached(t *testing.T) {
 
 	select {
 	case ev := <-sub.C:
-		require.Equal(t, "ctr1", ev.ContainerID)
-		require.Equal(t, "net1", ev.NetworkID)
+		require.Equal(t, "ctr1", ev.Actor.Attributes["container"])
+		require.Equal(t, "net1", ev.Actor.ID)
 	case <-time.After(time.Second):
-		t.Fatal("did not receive NetworkAttached after reconcile")
+		t.Fatal("did not receive NetworkConnected after reconcile")
 	}
 }
 
@@ -349,16 +353,20 @@ func TestReconcile_PartialListErrorReturned(t *testing.T) {
 	require.Contains(t, err.Error(), "network endpoint borked")
 }
 
-// TestContainerEventFromState — reconcile uses State, not Action.
-// Created/Running/Paused → ContainerStarted; Exited/Dead/Removing → Stopped.
+// TestContainerEventFromState — reconcile observation maps moby
+// state to the typed wrapper that matches what the live event stream
+// would have published for that state. StateCreated and
+// StateRestarting return nil — created-but-not-started has no
+// running transition to fabricate, restarting is transient and the
+// next real event will redrive.
 func TestContainerEventFromState(t *testing.T) {
 	now := time.Now()
 	require.IsType(t, ContainerStarted{}, containerEventFromState(mobycontainer.StateRunning, "id", mobycontainer.Summary{}, now))
-	require.IsType(t, ContainerStarted{}, containerEventFromState(mobycontainer.StateCreated, "id", mobycontainer.Summary{}, now))
-	require.IsType(t, ContainerStarted{}, containerEventFromState(mobycontainer.StatePaused, "id", mobycontainer.Summary{}, now))
-	require.IsType(t, ContainerStopped{}, containerEventFromState(mobycontainer.StateExited, "id", mobycontainer.Summary{}, now))
-	require.IsType(t, ContainerStopped{}, containerEventFromState(mobycontainer.StateDead, "id", mobycontainer.Summary{}, now))
-	require.IsType(t, ContainerStopped{}, containerEventFromState(mobycontainer.StateRemoving, "id", mobycontainer.Summary{}, now))
+	require.IsType(t, ContainerPaused{}, containerEventFromState(mobycontainer.StatePaused, "id", mobycontainer.Summary{}, now))
+	require.IsType(t, ContainerDied{}, containerEventFromState(mobycontainer.StateExited, "id", mobycontainer.Summary{}, now))
+	require.IsType(t, ContainerDied{}, containerEventFromState(mobycontainer.StateDead, "id", mobycontainer.Summary{}, now))
+	require.IsType(t, ContainerDestroyed{}, containerEventFromState(mobycontainer.StateRemoving, "id", mobycontainer.Summary{}, now))
+	require.Nil(t, containerEventFromState(mobycontainer.StateCreated, "id", mobycontainer.Summary{}, now))
 	require.Nil(t, containerEventFromState(mobycontainer.StateRestarting, "id", mobycontainer.Summary{}, now))
 	require.Nil(t, containerEventFromState(mobycontainer.ContainerState("nonsense"), "id", mobycontainer.Summary{}, now))
 }
