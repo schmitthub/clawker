@@ -1637,30 +1637,11 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 
 	extraLabels := client.ContainerLabels(opts.ProjectName, agentName, opts.Version, containerOpts.Image, wd)
 
-	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
-		Config:           containerConfig,
-		HostConfig:       hostConfig,
-		NetworkingConfig: networkConfig,
-		Name:             containerName,
-		ExtraLabels:      docker.Labels{extraLabels},
-		EnsureNetwork: &docker.EnsureNetworkOptions{
-			Name: opts.Config.ClawkerNetwork(),
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("creating container: %w", err)
-	}
-
-	// Container created — volumes are now associated with it.
-	// Clear cleanup list so deferred cleanup won't remove them.
-	createdVolumes = nil
-
-	// Mint per-agent mTLS material + Hydra assertion + PKCE pair, tar
-	// into the container's BootstrapDir (writable layer survives stop/
-	// start/restart for the container's lifetime), and write the
-	// agentregistry row keyed by (thumbprint, container_id). The
-	// registry row gives CP the data point it needs to verify the
-	// thumbprint of the running clawkerd at dial time.
+	// Resolve agent bootstrap material BEFORE ContainerCreate so any failure
+	// here (path resolution, key load, user-input validation via NewProjectSlug
+	// / NewAgentName) leaves no orphan container + volumes behind. None of
+	// these calls depend on resp.ID; only bootstrapOpts (built post-create)
+	// does.
 	caCertPath, err := consts.AuthCACertPath()
 	if err != nil {
 		return nil, fmt.Errorf("agent bootstrap: ca cert path: %w", err)
@@ -1685,6 +1666,31 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	if err != nil {
 		return nil, fmt.Errorf("agent bootstrap: invalid agent name: %w", err)
 	}
+
+	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
+		Config:           containerConfig,
+		HostConfig:       hostConfig,
+		NetworkingConfig: networkConfig,
+		Name:             containerName,
+		ExtraLabels:      docker.Labels{extraLabels},
+		EnsureNetwork: &docker.EnsureNetworkOptions{
+			Name: opts.Config.ClawkerNetwork(),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("creating container: %w", err)
+	}
+
+	// Container created — volumes are now associated with it.
+	// Clear cleanup list so deferred cleanup won't remove them.
+	createdVolumes = nil
+
+	// Mint per-agent mTLS material + Hydra assertion + PKCE pair, tar
+	// into the container's BootstrapDir (writable layer survives stop/
+	// start/restart for the container's lifetime), and write the
+	// agentregistry row keyed by (thumbprint, container_id). The
+	// registry row gives CP the data point it needs to verify the
+	// thumbprint of the running clawkerd at dial time.
 	bootstrapOpts := InstallAgentBootstrapOptions{
 		Project:            projectSlug,
 		Agent:              agentTyped,

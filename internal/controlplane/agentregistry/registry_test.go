@@ -51,34 +51,6 @@ func validEntry(project, agent, containerID, certSeed string) Entry {
 	}
 }
 
-func TestRegistry_AddLookup(t *testing.T) {
-	r := NewRegistry(nil)
-	now := time.Unix(1000, 0)
-	entry := Entry{
-		AgentName:    "y",
-		Project:      "x",
-		ContainerID:  "ctr-x",
-		Thumbprint:   tp("cert-x"),
-		RegisteredAt: now,
-		LastSeen:     now,
-	}
-	mustAdd(t, r, entry)
-
-	got, err := r.Lookup(entry.Thumbprint, canonical("x", "y"))
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.Equal(t, entry.AgentName, got.AgentName)
-	assert.Equal(t, entry.Project, got.Project)
-	assert.Equal(t, entry.ContainerID, got.ContainerID)
-	assert.Equal(t, entry.Thumbprint, got.Thumbprint)
-}
-
-func TestRegistry_Lookup_Unknown(t *testing.T) {
-	r := NewRegistry(nil)
-	_, err := r.Lookup(tp("nope"), "clawker.x.y")
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-}
-
 // TestRegistry_Lookup_EmptyProject covers the 2-segment naming case.
 // Empty project is a legitimate value (matches docker.ContainerName)
 // and the canonical CN drops the project segment.

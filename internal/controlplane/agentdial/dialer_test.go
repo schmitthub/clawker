@@ -110,7 +110,7 @@ func TestCapturePeerProvenance_ValidChain(t *testing.T) {
 	assert.True(t, prov.ChainVerified, "trusted-CA chain must verify")
 	assert.Equal(t, leaf.Subject.CommonName, prov.PeerCN)
 	want := sha256.Sum256(leafDER)
-	assert.Equal(t, want[:], prov.PeerThumbprint)
+	assert.Equal(t, want, prov.PeerThumbprint)
 	assert.Empty(t, prov.Reason)
 }
 
@@ -131,7 +131,7 @@ func TestCapturePeerProvenance_UntrustedRoot_DoesNotAbort(t *testing.T) {
 	// regardless of chain trust.
 	assert.Equal(t, leaf.Subject.CommonName, prov.PeerCN)
 	want := sha256.Sum256(leafDER)
-	assert.Equal(t, want[:], prov.PeerThumbprint)
+	assert.Equal(t, want, prov.PeerThumbprint)
 	assert.Contains(t, prov.Reason, "chain verify")
 }
 
@@ -148,7 +148,7 @@ func TestCapturePeerProvenance_ExpiredLeaf_DoesNotAbort(t *testing.T) {
 
 	assert.False(t, prov.ChainVerified, "expired leaf must yield ChainVerified=false")
 	assert.Equal(t, "clawker.proj.dev", prov.PeerCN)
-	assert.NotEmpty(t, prov.PeerThumbprint)
+	assert.NotEqual(t, [sha256.Size]byte{}, prov.PeerThumbprint)
 	assert.Contains(t, prov.Reason, "chain verify")
 }
 
@@ -160,7 +160,7 @@ func TestCapturePeerProvenance_NoCerts_SetsReason(t *testing.T) {
 
 	assert.False(t, prov.ChainVerified)
 	assert.Empty(t, prov.PeerCN)
-	assert.Empty(t, prov.PeerThumbprint)
+	assert.Equal(t, [sha256.Size]byte{}, prov.PeerThumbprint)
 	assert.Equal(t, "peer presented no certs", prov.Reason)
 }
 
@@ -172,7 +172,7 @@ func TestCapturePeerProvenance_BadCertBytes_SetsReason(t *testing.T) {
 
 	assert.False(t, prov.ChainVerified)
 	assert.Empty(t, prov.PeerCN)
-	assert.Empty(t, prov.PeerThumbprint)
+	assert.Equal(t, [sha256.Size]byte{}, prov.PeerThumbprint)
 	assert.Contains(t, prov.Reason, "leaf parse failed")
 }
 
@@ -196,7 +196,7 @@ func TestFillRegistryProvenance_RegistryMatch(t *testing.T) {
 
 	prov := Provenance{
 		PeerCN:         expectedCN,
-		PeerThumbprint: thumb[:],
+		PeerThumbprint: thumb,
 	}
 	d.fillRegistryProvenance(&prov, "ctr-1", "myproj", "dev")
 
@@ -215,7 +215,7 @@ func TestFillRegistryProvenance_RegistryMiss(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
 	prov := Provenance{
 		PeerCN:         "clawker.x.y",
-		PeerThumbprint: thumb[:],
+		PeerThumbprint: thumb,
 	}
 	d.fillRegistryProvenance(&prov, "ctr-2", "x", "y")
 
@@ -239,7 +239,7 @@ func TestFillRegistryProvenance_ThumbprintMismatch(t *testing.T) {
 
 	prov := Provenance{
 		PeerCN:         "clawker.myproj.dev",
-		PeerThumbprint: peerThumb[:],
+		PeerThumbprint: peerThumb,
 	}
 	d.fillRegistryProvenance(&prov, "ctr-3", "myproj", "dev")
 
@@ -262,7 +262,7 @@ func TestFillRegistryProvenance_CNMismatch(t *testing.T) {
 
 	prov := Provenance{
 		PeerCN:         "clawker.different.dev", // does not match clawker.actual.dev
-		PeerThumbprint: thumb[:],
+		PeerThumbprint: thumb,
 	}
 	d.fillRegistryProvenance(&prov, "ctr-4", "actual", "dev")
 
@@ -280,12 +280,12 @@ func TestFillRegistryProvenance_LookupErrorSetsReason(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
 	prov := Provenance{
 		PeerCN:         "clawker.x.y",
-		PeerThumbprint: thumb[:],
+		PeerThumbprint: thumb,
 	}
 	d.fillRegistryProvenance(&prov, "ctr-5", "x", "y")
 
 	// RegistryOutcome stays unset — outcome is "could not query".
-	assert.Equal(t, RegistryOutcomeUnset, prov.RegistryOutcome)
+	assert.Equal(t, RegistryOutcomeNotQueried, prov.RegistryOutcome)
 	assert.Contains(t, prov.Reason, "registry lookup error")
 }
 
@@ -295,12 +295,12 @@ func TestFillRegistryProvenance_NilRegistrySetsReason(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
 	prov := Provenance{
 		PeerCN:         "clawker.x.y",
-		PeerThumbprint: thumb[:],
+		PeerThumbprint: thumb,
 	}
 	d.fillRegistryProvenance(&prov, "ctr-6", "x", "y")
 
 	assert.Equal(t, "registry not wired", prov.Reason)
-	assert.Equal(t, RegistryOutcomeUnset, prov.RegistryOutcome)
+	assert.Equal(t, RegistryOutcomeNotQueried, prov.RegistryOutcome)
 }
 
 // --- computeCNPinMatch: cert-vs-labels CN derivation ----------------
@@ -323,16 +323,57 @@ func TestComputeCNPinMatch(t *testing.T) {
 			peerCN:  auth.CanonicalAgentCN(auth.MustProjectSlug(""), auth.MustAgentName("solo")),
 			project: "", agent: "solo", want: true,
 		},
+		// One representative want=false case is enough — auth.NewAgentName /
+		// NewProjectSlug have their own tests for malformed/empty inputs;
+		// here we only need to confirm that any non-match resolves to false.
 		{name: "peer CN differs", peerCN: "clawker.other.bar", project: "foo", agent: "bar", want: false},
-		{name: "empty peer CN", peerCN: "", project: "foo", agent: "bar", want: false},
-		{name: "empty agent name", peerCN: "clawker.foo.bar", project: "foo", agent: "", want: false},
-		// Malformed agent: dot in name fails NewAgentName validation.
-		{name: "malformed agent", peerCN: "clawker.foo.bad.name", project: "foo", agent: "bad.name", want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, computeCNPinMatch(tc.peerCN, tc.project, tc.agent))
 		})
+	}
+}
+
+// TestPublishConnected_DeliversProvenanceIntact pins the bus payload
+// contract: every Provenance field set on publishConnected lands on
+// the SessionConnected event a subscriber receives. Subscribers driving
+// policy (containment, alerting) consume the typed fields directly;
+// a regression that drops a field on the wire (struct-tag rename,
+// future serialization hop) wouldn't surface from leaf-function tests
+// alone.
+func TestPublishConnected_DeliversProvenanceIntact(t *testing.T) {
+	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, bus.Start(ctx))
+	defer func() { _ = bus.Close() }()
+
+	sub, ok := overseer.Subscribe[SessionConnected](bus, "test")
+	require.True(t, ok)
+
+	d := &Dialer{bus: bus}
+	thumb := sha256.Sum256([]byte("peer-cert-bytes"))
+	prov := Provenance{
+		ChainVerified:   true,
+		PeerCN:          "clawker.proj.dev",
+		CNPinMatch:      true,
+		PeerThumbprint:  thumb,
+		RegistryOutcome: RegistryOutcomeMatch,
+		Reason:          "",
+	}
+	d.publishConnected(ctx, "ctr-prov", "dev", "proj", "10.1.1.5:7700", 3, prov)
+
+	select {
+	case ev := <-sub.C:
+		assert.Equal(t, "ctr-prov", ev.ContainerID)
+		assert.Equal(t, "dev", ev.AgentName)
+		assert.Equal(t, "proj", ev.Project)
+		assert.Equal(t, "10.1.1.5:7700", ev.Address)
+		assert.Equal(t, 3, ev.Attempts)
+		assert.Equal(t, prov, ev.Provenance, "Provenance must arrive intact through the bus")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SessionConnected event on bus")
 	}
 }
 
@@ -429,10 +470,10 @@ func (f *fakeMobyForDialer) ContainerInspect(_ context.Context, _ string, _ moby
 	if f.inspectErr != nil {
 		return mobyclient.ContainerInspectResult{}, f.inspectErr
 	}
-	// Default: succeed but report a non-running state so resolveAgent's
-	// "container not running" check trips. Tests that need a different
-	// shape override inspectErr.
-	return mobyclient.ContainerInspectResult{}, errors.New("container not running")
+	// Default: surface errContainerStopped so resolveAgent's terminal
+	// "stopped container" path fires. Tests that need a transient
+	// inspect error (retry behavior) override inspectErr instead.
+	return mobyclient.ContainerInspectResult{}, errContainerStopped
 }
 
 // mintLeafKeypair mints a leaf cert + private key signed by parent;

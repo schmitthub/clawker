@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,29 @@ const (
 // queue capacity — without container_id at the producer site,
 // operators investigating "why didn't agentdial dial container X"
 // have no thread to follow back through the timeline.
+// parseExitCode coerces moby's stringly-typed exitCode attribute to
+// int32 once at the dispatch boundary so consumers receive a typed
+// value. Empty input is the common case (not every action carries an
+// exitCode) and yields 0 silently. Truly malformed input (non-numeric,
+// out of range) logs at Debug with the raw string so a moby contract
+// change surfaces in logs without breaking dispatch.
+func (f *Feeder) parseExitCode(raw, containerID string) int32 {
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil {
+		f.log.Debug().
+			Err(err).
+			Str("event", "dockerevents_exit_code_parse_failed").
+			Str("container_id", containerID).
+			Str("raw", raw).
+			Msg("dockerevents: malformed exitCode attribute from moby")
+		return 0
+	}
+	return int32(n)
+}
+
 func (f *Feeder) publishContainerEvent(ev overseer.Event, containerID string) {
 	if overseer.Publish(f.bus, ev) {
 		return
@@ -168,7 +192,7 @@ func (f *Feeder) dispatchContainer(ev events.Message) {
 		f.containers[id] = true
 		f.publishContainerEvent(ContainerStopped{
 			ID:       id,
-			ExitCode: ev.Actor.Attributes["exitCode"],
+			ExitCode: f.parseExitCode(ev.Actor.Attributes["exitCode"], id),
 			OOM:      false,
 			At:       at,
 		}, id)
@@ -181,7 +205,7 @@ func (f *Feeder) dispatchContainer(ev events.Message) {
 		f.containers[id] = true
 		f.publishContainerEvent(ContainerStopped{
 			ID:       id,
-			ExitCode: ev.Actor.Attributes["exitCode"],
+			ExitCode: f.parseExitCode(ev.Actor.Attributes["exitCode"], id),
 			OOM:      true,
 			At:       at,
 		}, id)

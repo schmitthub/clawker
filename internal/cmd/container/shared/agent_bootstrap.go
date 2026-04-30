@@ -237,8 +237,17 @@ func RegisterAgentInRegistry(ctx context.Context, opts InstallAgentBootstrapOpti
 	}
 	closer, _ := reg.(interface{ Close() error })
 	defer func() {
-		if closer != nil {
-			_ = closer.Close()
+		if closer == nil {
+			return
+		}
+		if cerr := closer.Close(); cerr != nil {
+			// Writer close on the registry path can mean an unflushed
+			// COMMIT under WAL contention or "disk full" mid-write. Do
+			// not silently swallow — surface to operators.
+			log.Warn().Err(cerr).
+				Str("container_id", opts.ContainerID).
+				Str("event", "agentregistry_writer_close_failed").
+				Msg("failed to close registry writer after Add")
 		}
 	}()
 

@@ -72,12 +72,12 @@ func startClawkerdListener(boot *bootstrap, log *logger.Logger) (*grpc.Server, e
 
 // buildListenerTLSConfig returns the *tls.Config for the clawkerd
 // gRPC listener. ServerCert is the per-agent leaf the CLI minted —
-// the leaf carries BOTH ClientAuth (used by clawkerd's outbound dial
-// to CP's AgentService) and ServerAuth (used here, so CP-side chain
-// verify accepts the cert as a server cert). See
-// internal/auth/agent_cert.go for the dual-EKU rationale; without
-// ServerAuth here every CP→clawkerd dial fails with "incompatible
-// key usage".
+// the leaf carries BOTH ServerAuth (used here, so CP-side chain
+// verify accepts the cert as a server cert) and ClientAuth (held for
+// any future agent→CP dial; clawkerd has no outbound RPC in this
+// branch — see cmd/clawkerd/CLAUDE.md). See internal/auth/agent_cert.go
+// for the dual-EKU rationale; without ServerAuth here every
+// CP→clawkerd dial fails with "incompatible key usage".
 //
 // ClientCAs is the clawker CA bundle (so the CP's client cert chains
 // validate). ClientAuth requires a verified peer cert.

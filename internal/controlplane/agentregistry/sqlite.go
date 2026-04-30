@@ -336,19 +336,6 @@ func scanEntry(s rowScanner) (Entry, error) {
 
 const selectEntryCols = `thumbprint_hex, container_id, agent_name, project, registered_at, last_seen`
 
-func (r *sqliteRegistry) LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error) {
-	tpHex := hex.EncodeToString(thumbprint[:])
-	row := r.db.QueryRow(`SELECT `+selectEntryCols+` FROM agents WHERE thumbprint_hex = ?`, tpHex)
-	e, err := scanEntry(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrUnknownAgent
-	}
-	if err != nil {
-		return nil, fmt.Errorf("agentregistry: query LookupByThumbprint: %w", err)
-	}
-	return &e, nil
-}
-
 func (r *sqliteRegistry) LookupByContainerID(containerID string) (*Entry, error) {
 	if containerID == "" {
 		return nil, ErrUnknownAgent

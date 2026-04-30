@@ -104,17 +104,6 @@ type Registry interface {
 	// CN with subtle.ConstantTimeCompare. Mismatch on thumbprint OR CN
 	// returns ErrUnknownAgent.
 	Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)
-	// LookupByThumbprint returns the entry whose Thumbprint matches,
-	// without any CN cross-check. Today there is no live consumer; it
-	// stays on the interface as the symmetric peer of LookupByContainerID
-	// for any future direct-thumbprint lookup (e.g. operator tools that
-	// reverse-resolve a thumbprint to the registered agent without a CN
-	// to gate on). Distinct from Lookup (CN-gated identity resolution
-	// used by AgentPort RPCs) so a regression that swaps the two stays
-	// loud at the call site.
-	//
-	// Returns (nil, ErrUnknownAgent) when no entry matches.
-	LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error)
 	// LookupByContainerID returns the entry whose ContainerID matches,
 	// without any CN cross-check. Used by agentdial post-handshake to
 	// look up the registry row keyed by container_id and emit the
@@ -226,17 +215,6 @@ func validateEntry(entry Entry) {
 	if entry.RegisteredAt.IsZero() {
 		panic("agentregistry: Add called with zero RegisteredAt")
 	}
-}
-
-func (r *registryImpl) LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	me, ok := r.entries[thumbprint]
-	if !ok {
-		return nil, ErrUnknownAgent
-	}
-	e := me.e
-	return &e, nil
 }
 
 func (r *registryImpl) LookupByContainerID(containerID string) (*Entry, error) {

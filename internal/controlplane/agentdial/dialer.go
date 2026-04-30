@@ -60,6 +60,7 @@ import (
 	"sync"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	mobycontainer "github.com/moby/moby/api/types/container"
 	mobyclient "github.com/moby/moby/client"
 	"google.golang.org/grpc"
@@ -231,6 +232,9 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 		case outcomeContainerGone:
 			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr, "container_not_running", res.Attempt)
 			return
+		case outcomeAddrInvalid:
+			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr, "clawker_net_endpoint_missing", res.Attempt)
+			return
 		case outcomeRetryExhausted:
 			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr, "connect_total_timeout", res.Attempt)
 			return
@@ -326,10 +330,20 @@ const (
 	// outcomeSuccess: Hello + HelloAck completed. Conn / Stream are
 	// non-nil; Attempt records the number of tries.
 	outcomeSuccess establishOutcome = iota
-	// outcomeContainerGone: resolveAgent reported the container is
-	// no longer running (or its inspect failed). Distinct from a
-	// retry-budget exhaustion: nothing to retry against.
+	// outcomeContainerGone: docker reports the container is truly gone
+	// (errdefs.IsNotFound) or its State.Running flipped to false.
+	// Terminal — there is nothing to retry against. A generic inspect
+	// API failure (daemon transient hiccup, perms revoked) does NOT
+	// land here; it stays in the retry loop and surfaces as
+	// outcomeRetryExhausted on deadline.
 	outcomeContainerGone
+	// outcomeAddrInvalid: clawker-net contract violation — the
+	// container exists and is running but has no clawker-net endpoint
+	// (no NetworkSettings, missing endpoint, or invalid IP). Terminal:
+	// retrying won't fix a misconfigured network attachment, and
+	// subscribers driving containment policy off Reason need this to
+	// be distinct from "container_not_running".
+	outcomeAddrInvalid
 	// outcomeRetryExhausted: every attempt failed and
 	// connectTotalTimeout elapsed. Conn / Stream are nil; Addr / Agent /
 	// Project carry the latest inspect's view for the failure event.
@@ -337,6 +351,13 @@ const (
 	// outcomeCtxDone: parent ctx cancelled mid-retry. No publish.
 	outcomeCtxDone
 )
+
+// errContainerStopped is the sentinel resolveAgent returns when the
+// inspect succeeded but State.Running is false. Distinct from a
+// generic inspect error: a stopped container is terminal (no point
+// retrying), a generic inspect error is transient (retry within the
+// connect-total budget).
+var errContainerStopped = errors.New("container not running")
 
 // establishResult is the typed return of establishWithRetry.
 // Conn / Stream are populated only when Outcome is outcomeSuccess.
@@ -384,16 +405,43 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 		// snapshot from earlier in the cycle.
 		inspect, err := d.resolveAgent(ctx, containerID)
 		if err != nil {
-			// Inspect failed — container is gone or the daemon is
-			// blind. We don't have agent/project here (they live in
-			// labels we can't read), so mark with a sentinel
-			// "<unknown>" so downstream queries at least see *something*
-			// rather than an empty field.
-			log.With("agent", "<unknown>", "project", "<unknown>").Info().Err(err).
+			// Two flavors of inspect failure:
+			//   (a) container truly gone (errdefs.IsNotFound) or stopped
+			//       (errContainerStopped sentinel) — terminal, nothing to
+			//       retry against.
+			//   (b) generic inspect error (daemon transient, perms,
+			//       network blip) — keep trying within the per-cycle
+			//       retry budget; eventual deadline expiry surfaces as
+			//       outcomeRetryExhausted with a transport-specific
+			//       Reason rather than misclassifying as "container
+			//       gone".
+			if cerrdefs.IsNotFound(err) || errors.Is(err, errContainerStopped) {
+				log.With("agent", "<unknown>", "project", "<unknown>").Info().Err(err).
+					Int("attempt", attempt).
+					Str("event", "agentdial_attempt_resolve_failed").
+					Msg("container truly gone or stopped; exiting retry loop")
+				return establishResult{Attempt: attempt, Outcome: outcomeContainerGone}
+			}
+			if time.Now().After(deadline) {
+				log.With("agent", "<unknown>", "project", "<unknown>").Error().Err(err).
+					Int("attempt", attempt).
+					Str("event", "agentdial_inspect_timeout").
+					Msg("gave up on inspect after total timeout")
+				return establishResult{Attempt: attempt, Outcome: outcomeRetryExhausted}
+			}
+			sleep := backoffSleep(backoff)
+			log.With("agent", "<unknown>", "project", "<unknown>").Warn().Err(err).
 				Int("attempt", attempt).
-				Str("event", "agentdial_attempt_resolve_failed").
-				Msg("container not running at attempt time; exiting retry loop")
-			return establishResult{Attempt: attempt, Outcome: outcomeContainerGone}
+				Dur("retry_in", sleep).
+				Str("event", "agentdial_inspect_retry").
+				Msg("inspect failed transiently; will retry with backoff")
+			select {
+			case <-ctx.Done():
+				return establishResult{Attempt: attempt, Outcome: outcomeCtxDone}
+			case <-time.After(sleep):
+			}
+			backoff = nextBackoff(backoff)
+			continue
 		}
 		agent, project := agentLabels(inspect)
 		addr, err := clawkerNetAddr(inspect)
@@ -401,8 +449,8 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 			log.With("agent", agent, "project", project).Error().Err(err).
 				Int("attempt", attempt).
 				Str("event", "agentdial_attempt_addr_extract_failed").
-				Msg("clawker-net address extraction failed")
-			return establishResult{Agent: agent, Project: project, Attempt: attempt, Outcome: outcomeContainerGone}
+				Msg("clawker-net address extraction failed; aborting cycle")
+			return establishResult{Agent: agent, Project: project, Attempt: attempt, Outcome: outcomeAddrInvalid}
 		}
 
 		// Every log line from here forward carries agent + project +
@@ -445,13 +493,6 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 			return establishResult{Agent: agent, Project: project, Addr: addr, Attempt: attempt, Outcome: outcomeRetryExhausted}
 		}
 
-		// Full jitter: sleep ∈ [0, backoff). Prevents thundering-herd
-		// on CP boot when many clawkerds came up together and all
-		// failed their first dial in lockstep.
-		sleep := time.Duration(0)
-		if backoff > 0 {
-			sleep = time.Duration(rand.Int64N(int64(backoff)))
-		}
 		// dial_target + the unwrapped err separate "where we tried
 		// to connect" from "what surfaced when we opened the stream".
 		// grpc.NewClient is non-blocking, so the first observed
@@ -459,6 +500,7 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 		// on the Hello handshake — wrapping addr into the err string
 		// duplicated the structured field and obscured the actual
 		// cause.
+		sleep := backoffSleep(backoff)
 		attemptLog.Warn().
 			Str("dial_target", addr).
 			Err(dialErr).
@@ -472,11 +514,27 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 			return establishResult{Agent: agent, Project: project, Addr: addr, Attempt: attempt, Outcome: outcomeCtxDone}
 		case <-time.After(sleep):
 		}
-		backoff *= 2
-		if backoff > connectMaxBackoff {
-			backoff = connectMaxBackoff
-		}
+		backoff = nextBackoff(backoff)
 	}
+}
+
+// backoffSleep returns a full-jitter sleep ∈ [0, backoff). Prevents
+// thundering-herd on CP boot when many clawkerds came up together
+// and all failed their first dial in lockstep.
+func backoffSleep(backoff time.Duration) time.Duration {
+	if backoff <= 0 {
+		return 0
+	}
+	return time.Duration(rand.Int64N(int64(backoff)))
+}
+
+// nextBackoff doubles the current backoff up to connectMaxBackoff.
+func nextBackoff(backoff time.Duration) time.Duration {
+	backoff *= 2
+	if backoff > connectMaxBackoff {
+		backoff = connectMaxBackoff
+	}
+	return backoff
 }
 
 // tryEstablish runs one connection attempt: dial → open stream →
@@ -539,7 +597,7 @@ func (d *Dialer) resolveAgent(ctx context.Context, containerID string) (mobycont
 		if c.State != nil {
 			state = string(c.State.Status)
 		}
-		return mobycontainer.InspectResponse{}, fmt.Errorf("container not running (state=%s)", state)
+		return mobycontainer.InspectResponse{}, fmt.Errorf("%w (state=%s)", errContainerStopped, state)
 	}
 	return c, nil
 }
@@ -606,11 +664,7 @@ func (d *Dialer) fillRegistryProvenance(prov *Provenance, containerID, project, 
 		return
 	}
 
-	var peerThumb [sha256.Size]byte
-	if len(prov.PeerThumbprint) == sha256.Size {
-		copy(peerThumb[:], prov.PeerThumbprint)
-	}
-	if entry.Thumbprint != peerThumb {
+	if entry.Thumbprint != prov.PeerThumbprint {
 		prov.RegistryOutcome = RegistryOutcomeThumbprintMismatch
 		return
 	}
@@ -741,8 +795,7 @@ func (d *Dialer) capturePeerProvenance(rawCerts [][]byte, prov *Provenance) {
 	}
 	leaf := certs[0]
 	prov.PeerCN = leaf.Subject.CommonName
-	thumb := sha256.Sum256(rawCerts[0])
-	prov.PeerThumbprint = thumb[:]
+	prov.PeerThumbprint = sha256.Sum256(rawCerts[0])
 
 	// Chain-verify against the CLI CA. Outcome is a data point;
 	// failure does NOT abort.

@@ -10,7 +10,7 @@ The registry persists to a sqlite database under the CP-owned data subdirectory:
 - Container: `consts.CPControlPlaneDBPath` (bind-mounted RW into `consts.CPControlPlaneDir`)
 - Driver: `modernc.org/sqlite` (pure Go — no cgo toolchain in the CP build pipeline)
 
-There is **no in-memory cache**. Every `Lookup` / `Snapshot` / `LookupByThumbprint` / `LookupByContainerID` issues a fresh sqlite query. This was a deliberate decision in the Task #1 PR fix: the previous mirror-with-disk-as-source-of-truth design accumulated a class of drift bugs (orphan rows when DELETE failed but memory eviction proceeded; malformed rows resurrected on reload; partial-evict invariant violations) that all collapse to zero by construction once the cache is gone. modernc/sqlite + WAL on local fs makes per-RPC reads sub-millisecond, and the AgentPort RPC count is bounded by the per-host agent count (single digits). The DB survives CP container recreation.
+There is **no in-memory cache**. Every `Lookup` / `Snapshot` / `LookupByContainerID` issues a fresh sqlite query. This was a deliberate decision in the Task #1 PR fix: the previous mirror-with-disk-as-source-of-truth design accumulated a class of drift bugs (orphan rows when DELETE failed but memory eviction proceeded; malformed rows resurrected on reload; partial-evict invariant violations) that all collapse to zero by construction once the cache is gone. modernc/sqlite + WAL on local fs makes per-RPC reads sub-millisecond, and the AgentPort RPC count is bounded by the per-host agent count (single digits). The DB survives CP container recreation.
 
 ## Schema
 
@@ -74,7 +74,6 @@ type Entry struct {
 type Registry interface {
     Add(entry Entry) error                                            // Validates + persists; returns err on malformed identity OR sqlite write failure.
     Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)   // CN-gated identity resolution (IdentityInterceptor).
-    LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error)  // No CN check; symmetric peer of LookupByContainerID, kept for any future direct-thumbprint lookup.
     LookupByContainerID(containerID string) (*Entry, error)           // Used by agentdial post-handshake provenance lookup.
     EvictByContainerID(containerID string) error                      // Returns underlying DELETE error so callers log-and-proceed.
     Snapshot() []Entry

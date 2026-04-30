@@ -1,6 +1,7 @@
 package agentdial
 
 import (
+	"crypto/sha256"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
@@ -53,11 +54,14 @@ func (e SessionConnecting) ApplyTo(s *overseer.State) {
 type RegistryOutcome string
 
 const (
-	// RegistryOutcomeUnset is the zero value. Set when the registry
+	// RegistryOutcomeNotQueried is the zero value. Set when the registry
 	// could not be queried at all (lookup error, registry not wired);
-	// Provenance.Reason carries the detail. Distinct from Miss, which
-	// means the registry was queried successfully and returned no row.
-	RegistryOutcomeUnset RegistryOutcome = ""
+	// Provenance.Reason carries the detail. The name is deliberately
+	// loud at every reader site: a Provenance{} literal silently means
+	// "not queried", which would be wrong if the dialer simply forgot
+	// to populate the field. Distinct from Miss, which means the
+	// registry was queried successfully and returned no row.
+	RegistryOutcomeNotQueried RegistryOutcome = ""
 	// RegistryOutcomeMatch — row exists, thumbprint AND canonical_cn
 	// agree with the peer cert. The happy path.
 	RegistryOutcomeMatch RegistryOutcome = "match"
@@ -100,8 +104,11 @@ type Provenance struct {
 	// as suspicious.
 	CNPinMatch bool
 	// PeerThumbprint is the SHA-256 fingerprint of the peer's leaf
-	// certificate (raw bytes, no encoding). Empty on parse failure.
-	PeerThumbprint []byte
+	// certificate (raw bytes, no encoding). Zero array on parse
+	// failure. Fixed-size value type matches agentregistry.Entry.Thumbprint
+	// — no aliasing risk when a published event hands subscribers the
+	// payload, no length-equals-32 guard scattered through readers.
+	PeerThumbprint [sha256.Size]byte
 	// RegistryOutcome classifies the registry cross-check result.
 	// Exactly one value per event; structural mutual exclusion replaces
 	// the prior four-boolean shape.

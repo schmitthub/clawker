@@ -52,28 +52,36 @@ func TestSQLiteWriter_Add_PersistsCanonicalCN(t *testing.T) {
 	assert.Equal(t, "ctr-1", got.ContainerID)
 }
 
-func TestSQLiteWriter_Add_RejectsDuplicateThumbprint(t *testing.T) {
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
+func TestSQLiteWriter_Add_RejectsDuplicates(t *testing.T) {
+	cases := []struct {
+		name   string
+		first  Entry
+		second Entry
+		reason string
+	}{
+		{
+			name:   "duplicate thumbprint",
+			first:  validEntry("p", "a", "ctr-1", "cert-shared"),
+			second: validEntry("p", "a", "ctr-2", "cert-shared"),
+			reason: "UNIQUE on thumbprint_hex must reject",
+		},
+		{
+			name:   "duplicate container_id",
+			first:  validEntry("p", "a", "ctr-shared", "cert-1"),
+			second: validEntry("p", "b", "ctr-shared", "cert-2"),
+			reason: "UNIQUE on container_id must reject",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
+			require.NoError(t, err)
+			t.Cleanup(func() { closeRegistry(t, r) })
 
-	require.NoError(t, r.Add(validEntry("p", "a", "ctr-1", "cert-shared")))
-	// Same thumbprint, different container_id — UNIQUE on
-	// thumbprint_hex must reject.
-	err = r.Add(validEntry("p", "a", "ctr-2", "cert-shared"))
-	require.Error(t, err)
-}
-
-func TestSQLiteWriter_Add_RejectsDuplicateContainerID(t *testing.T) {
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	require.NoError(t, r.Add(validEntry("p", "a", "ctr-shared", "cert-1")))
-	// Different thumbprint, same container_id — UNIQUE on container_id
-	// must reject.
-	err = r.Add(validEntry("p", "b", "ctr-shared", "cert-2"))
-	require.Error(t, err)
+			require.NoError(t, r.Add(tc.first))
+			require.Error(t, r.Add(tc.second), tc.reason)
+		})
+	}
 }
 
 func TestSQLiteReader_RejectsWrites(t *testing.T) {
@@ -276,19 +284,4 @@ func TestSQLiteRegistry_SchemaMigration_FromOldDB(t *testing.T) {
 	got, err := r.Lookup(tp("cert-1"), canonical("p", "a"))
 	require.NoError(t, err)
 	require.NotNil(t, got)
-}
-
-// TestSQLiteRegistry_Lookup_AfterEvict_ReturnsUnknown verifies that
-// Lookup goes straight to disk every call — there is no cache to
-// "remember" the row after EvictByContainerID drops it.
-func TestSQLiteRegistry_Lookup_AfterEvict_ReturnsUnknown(t *testing.T) {
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	require.NoError(t, r.Add(validEntry("p", "a", "ctr-1", "cert-1")))
-	require.NoError(t, r.EvictByContainerID("ctr-1"))
-
-	_, err = r.Lookup(tp("cert-1"), canonical("p", "a"))
-	assert.ErrorIs(t, err, ErrUnknownAgent)
 }

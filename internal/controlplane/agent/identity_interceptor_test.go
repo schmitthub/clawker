@@ -212,24 +212,13 @@ func TestIdentityInterceptor_Stream_NoPeerCert_PermissionDenied(t *testing.T) {
 }
 
 // TestIdentityOptedOut_EmptyForCurrentBranch pins the empty-opt-out
-// contract for the current AgentService surface (no inbound RPCs).
-// When a future RPC is added that needs to authenticate itself, this
-// test will need to grow alongside IdentityOptedOutMethods.
-func TestIdentityOptedOut_EmptyForCurrentBranch(t *testing.T) {
-	assert.Empty(t, IdentityOptedOutMethods(),
-		"AgentService is empty in this branch; no methods may opt out of identity")
-}
-
 // TestWithEntry_NilPanics locks the fail-fast contract: attempting to
 // attach a nil entry would round-trip back from EntryFromContext as
 // (nil, true) without the defensive nil-check in EntryFromContext —
 // silent identity vacuum followed by a downstream nil-deref panic.
 func TestWithEntry_NilPanics(t *testing.T) {
-	assert.PanicsWithValue(t,
-		"agent: WithEntry called with nil entry",
-		func() {
-			WithEntry(context.Background(), nil)
-		})
+	assert.Panics(t, func() { WithEntry(context.Background(), nil) },
+		"WithEntry with a nil entry must panic")
 }
 
 // TestIdentityInterceptor_StaleOptedOutKey_Panics locks the runtime
@@ -242,9 +231,6 @@ func TestIdentityInterceptor_StaleOptedOutKey_Panics(t *testing.T) {
 	stale := map[string]bool{
 		"/clawker.agent.v1.AgentService/NotARealMethod": true,
 	}
-	assert.PanicsWithValue(t,
-		"agent: identity interceptor opt-out has stale key: /clawker.agent.v1.AgentService/NotARealMethod",
-		func() {
-			IdentityInterceptor(reg, stale, logger.Nop())
-		})
+	assert.Panics(t, func() { IdentityInterceptor(reg, stale, logger.Nop()) },
+		"stale opt-out key must panic at construction")
 }

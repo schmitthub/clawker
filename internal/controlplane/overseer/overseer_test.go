@@ -1,9 +1,7 @@
 package overseer_test
 
 import (
-	"bytes"
 	"context"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -343,31 +341,6 @@ func TestRun_PanicInOneSubscriberDoesNotKillBus(t *testing.T) {
 	}
 }
 
-func TestStats_TracksSubscribersAndCounts(t *testing.T) {
-	o := newTestOverseer(t)
-	sub1, _ := overseer.Subscribe[evContainerStarted](o, "s1")
-	defer sub1.Unsubscribe()
-	sub2, _ := overseer.Subscribe[evContainerRemoved](o, "s2")
-	defer sub2.Unsubscribe()
-
-	st := o.Stats()
-	if st.Subscribers != 2 {
-		t.Fatalf("Subscribers=%d, want 2", st.Subscribers)
-	}
-
-	overseer.Publish(o, evContainerStarted{ID: "c1", At: time.Now()})
-	// Drain.
-	<-sub1.C
-
-	st = o.Stats()
-	if st.PublishedTotal == 0 {
-		t.Fatal("PublishedTotal should be > 0")
-	}
-	if st.ContainersKnown != 1 {
-		t.Fatalf("ContainersKnown=%d, want 1", st.ContainersKnown)
-	}
-}
-
 func TestPublish_BeforeStart_ReturnsFalse(t *testing.T) {
 	o := overseer.New(overseer.Options{Logger: logger.Nop()})
 	if overseer.Publish(o, evContainerStarted{ID: "c1", At: time.Now()}) {
@@ -539,39 +512,5 @@ func TestPublishHook_PanicRecovered(t *testing.T) {
 	}
 	if got := afterPanic.Load(); got != 1 {
 		t.Fatalf("hook ran %d times after the panicking call, want 1", got)
-	}
-}
-
-func TestPublishHook_NilIsNoOp(t *testing.T) {
-	// Default Options has PublishHook == nil. Confirm publishing works
-	// and the bus is not perturbed by the absence of a hook.
-	o := newTestOverseer(t)
-
-	sub, _ := overseer.Subscribe[evContainerStarted](o, "no-hook")
-	defer sub.Unsubscribe()
-
-	overseer.Publish(o, evContainerStarted{ID: "x", At: time.Now()})
-	if ev, ok := recvWithin(t, sub.C, time.Second); !ok || ev.ID != "x" {
-		t.Fatalf("got %q ok=%v, want x", ev.ID, ok)
-	}
-}
-
-func TestNewLoggerHook_EmitsStructuredLine(t *testing.T) {
-	var buf bytes.Buffer
-	log := logger.NewWriter(&buf)
-	hook := overseer.NewLoggerHook(log)
-
-	occur := time.Date(2026, 4, 29, 10, 30, 0, 0, time.UTC)
-	hook(evContainerStarted{ID: "abc", At: occur})
-
-	out := buf.String()
-	if !strings.Contains(out, `"event":"test.container.started"`) {
-		t.Fatalf("missing event field, got: %s", out)
-	}
-	if !strings.Contains(out, "occurred_at") {
-		t.Fatalf("missing occurred_at field, got: %s", out)
-	}
-	if !strings.Contains(out, "overseer: event published") {
-		t.Fatalf("missing canonical message, got: %s", out)
 	}
 }

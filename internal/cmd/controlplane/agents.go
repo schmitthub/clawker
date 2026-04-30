@@ -180,8 +180,12 @@ func renderAgents(opts *AgentsOptions, rows []agentRow) error {
 }
 
 func formatUnix(unix int64) string {
+	// RegisteredAt / LastSeen are written by the CLI bootstrap path
+	// with time.Now() and should never be zero on a healthy row. Render
+	// zero as a loud sentinel so registry corruption surfaces in the
+	// table instead of being silently confused with "looks fine".
 	if unix == 0 {
-		return ""
+		return "<unset>"
 	}
 	return time.Unix(unix, 0).UTC().Format(time.RFC3339)
 }

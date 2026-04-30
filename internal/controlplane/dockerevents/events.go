@@ -62,8 +62,15 @@ func (e ContainerStarted) ApplyTo(s *overseer.State) {
 // state without being removed — Docker die/stop/kill actions, or a
 // reconcile pass observing exited/dead/removing.
 type ContainerStopped struct {
-	ID       string
-	ExitCode string // string because moby reports it as string in event Attrs
+	ID string
+	// ExitCode is the parsed numeric exit code from moby's event Actor
+	// attributes ("exitCode" key, reported as string on the wire). The
+	// dispatch boundary parses once with strconv.ParseInt; consumers
+	// receive a typed value rather than re-parsing per subscriber.
+	// Zero on missing or unparseable input — dispatch logs the parse
+	// failure at Debug so a moby contract change surfaces in logs
+	// without breaking the dispatch loop.
+	ExitCode int32
 	OOM      bool
 	At       time.Time
 }

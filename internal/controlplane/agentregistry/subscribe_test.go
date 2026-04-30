@@ -63,18 +63,19 @@ func TestSubscribe_DoesNotEvictOnStopped(t *testing.T) {
 	overseer.Publish(bus, dockerevents.ContainerStarted{ID: "ctr-stopped", At: time.Now()})
 	overseer.Publish(bus, dockerevents.ContainerStopped{ID: "ctr-stopped", At: time.Now()})
 
-	// Proof-by-absence: poll for a stable window. A sleep too short on
-	// a loaded runner could pass for the wrong reason (consumer hasn't
-	// drained the event yet).
-	const window = 100 * time.Millisecond
-	const interval = 5 * time.Millisecond
-	deadline := time.Now().Add(window)
-	for time.Now().Before(deadline) {
+	// Bus dispatch is FIFO — a follow-up Publish that we observe land
+	// on a sentinel container_id proves the consumer drained both
+	// non-eviction events ahead of it. Then assert the registered
+	// entry survived. No multi-iter poll needed; the FIFO guarantee
+	// is the synchronization point.
+	overseer.Publish(bus, dockerevents.ContainerRemoved{ID: "ctr-sentinel", At: time.Now()})
+	waitFor(t, func() bool {
 		got, err := r.Lookup(tp("cert-y"), canonical("", "y"))
-		require.NoError(t, err, "stopped must not evict registered entry")
-		assert.Equal(t, "y", got.AgentName)
-		time.Sleep(interval)
-	}
+		return err == nil && got != nil && got.AgentName == "y"
+	})
+	got, err := r.Lookup(tp("cert-y"), canonical("", "y"))
+	require.NoError(t, err, "stopped must not evict registered entry")
+	assert.Equal(t, "y", got.AgentName)
 }
 
 func TestSubscribe_CancelStopsConsumer(t *testing.T) {
@@ -109,9 +110,6 @@ func (p *panicOnceRegistry) Lookup(t [sha256.Size]byte, cn string) (*Entry, erro
 }
 func (p *panicOnceRegistry) LookupByContainerID(id string) (*Entry, error) {
 	return p.delegate.LookupByContainerID(id)
-}
-func (p *panicOnceRegistry) LookupByThumbprint(t [sha256.Size]byte) (*Entry, error) {
-	return p.delegate.LookupByThumbprint(t)
 }
 func (p *panicOnceRegistry) Snapshot() []Entry { return p.delegate.Snapshot() }
 func (p *panicOnceRegistry) EvictByContainerID(id string) error {
@@ -196,9 +194,6 @@ func (p *alwaysPanicRegistry) Lookup(t [sha256.Size]byte, cn string) (*Entry, er
 }
 func (p *alwaysPanicRegistry) LookupByContainerID(id string) (*Entry, error) {
 	return p.delegate.LookupByContainerID(id)
-}
-func (p *alwaysPanicRegistry) LookupByThumbprint(t [sha256.Size]byte) (*Entry, error) {
-	return p.delegate.LookupByThumbprint(t)
 }
 func (p *alwaysPanicRegistry) Snapshot() []Entry { return p.delegate.Snapshot() }
 func (p *alwaysPanicRegistry) EvictByContainerID(id string) error {

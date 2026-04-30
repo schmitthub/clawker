@@ -125,12 +125,19 @@ type runningCommand struct {
 	id     string
 	cancel context.CancelFunc
 
+	// stdinMu guards stdin/stdinClosed AND processes — all per-command
+	// IO state published from runShellCommand to routeStdin/
+	// routeCloseStdin/routeSignal. processes is written once just after
+	// spawn; routeSignal reads it after rc has been registered in
+	// s.cmds, but a Signal frame can race that window before
+	// runShellCommand's first lock.
 	stdinMu     sync.Mutex
 	stdin       io.WriteCloser // writer half of stage[0] stdin pipe
 	stdinClosed bool
 
 	// processes holds each stage's *exec.Cmd. Index matches stage_index.
-	// Used to forward Signal frames to each stage's process.
+	// Used to forward Signal frames to each stage's process. Guarded by
+	// stdinMu.
 	processes []*exec.Cmd
 }
 
@@ -244,6 +251,15 @@ func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 		}
 		s.routeSignal(ctx, cmd.CommandId, p.Signal)
 	default:
+		// Unknown payload is the canonical CP/clawkerd version-skew
+		// signal — the proto added a Command variant that this clawkerd
+		// build doesn't know how to handle. Audit log per package
+		// CLAUDE.md: every command-dispatch outcome must be observable.
+		s.log.Warn().
+			Str("event", "session_unknown_payload").
+			Str("command_id", cmd.CommandId).
+			Str("payload_type", fmt.Sprintf("%T", cmd.Payload)).
+			Msg("clawkerd: dispatch received unknown Command payload type — version skew?")
 		s.send(ctx, errResponse(cmd.CommandId,
 			clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
 			fmt.Sprintf("unknown payload type %T", cmd.Payload)))
@@ -356,14 +372,16 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 		}
 		cmds[i] = c
 	}
-	rc.processes = cmds
 
 	// Wire stdin into stage[0]: io.Pipe so we can feed initial_stdin
-	// and subsequent Stdin frames.
+	// and subsequent Stdin frames. Publish stdin AND processes under
+	// stdinMu in a single critical section so routeSignal observers
+	// see either both-zero or both-set, never a torn pair.
 	stdinR, stdinW := io.Pipe()
 	cmds[0].Stdin = stdinR
 	rc.stdinMu.Lock()
 	rc.stdin = stdinW
+	rc.processes = cmds
 	rc.stdinMu.Unlock()
 
 	// closeStats accumulates close-error accounting across every
@@ -680,7 +698,17 @@ func (s *session) routeCloseStdin(ctx context.Context, id string) {
 		return
 	}
 	if rc.stdin != nil {
-		_ = rc.stdin.Close()
+		// CP-driven explicit close. Surface real Close errors via the
+		// audit log so an EBADF / EIO doesn't vanish silently — the
+		// CP receives no Error response either way (CloseStdin has
+		// no Response payload), so the log is the only signal.
+		// io.ErrClosedPipe means the peer beat us; treat as success.
+		if err := rc.stdin.Close(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
+			s.log.Warn().Err(err).
+				Str("event", "session_close_stdin_failed").
+				Str("command_id", id).
+				Msg("clawkerd: explicit CloseStdin returned error")
+		}
 	}
 	rc.stdinClosed = true
 }
@@ -702,7 +730,12 @@ func (s *session) routeSignal(ctx context.Context, id string, sig *clawkerdv1.Si
 			"signal: no running command with that id"))
 		return
 	}
-	for i, c := range rc.processes {
+	// Snapshot processes under the publish lock so we don't race the
+	// runShellCommand goroutine writing the slice header.
+	rc.stdinMu.Lock()
+	processes := rc.processes
+	rc.stdinMu.Unlock()
+	for i, c := range processes {
 		if c == nil || c.Process == nil {
 			continue
 		}
