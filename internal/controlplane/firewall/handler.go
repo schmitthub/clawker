@@ -307,7 +307,7 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 	}
 	agents, err := h.listAgents(ctx)
 	if err != nil {
-		h.log.Warn().Err(err).Msg("re-enroll: list agents failed, skipping")
+		h.log.Warn().Err(err).Msg("firewall ebpf: re-enroll: list managed containers failed, skipping")
 		return
 	}
 	if len(agents) == 0 {
@@ -315,12 +315,12 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 	}
 	netInfo, err := h.stack.NetworkInfo(ctx)
 	if err != nil {
-		h.log.Warn().Err(err).Msg("re-enroll: network info failed, skipping")
+		h.log.Warn().Err(err).Msg("firewall ebpf: re-enroll: network info failed, skipping")
 		return
 	}
 	hostProxyIP, hostProxyPort, err := h.resolveHostProxy(ctx)
 	if err != nil {
-		h.log.Warn().Err(err).Msg("re-enroll: resolve host proxy failed, skipping")
+		h.log.Warn().Err(err).Msg("firewall ebpf: re-enroll: resolve host proxy failed, skipping")
 		return
 	}
 	bpfCfg, err := ebpf.NewContainerConfig(
@@ -333,14 +333,14 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 		uint16(h.cfg.EnvoyEgressPort()),
 	)
 	if err != nil {
-		h.log.Warn().Err(err).Msg("re-enroll: build container config failed, skipping")
+		h.log.Warn().Err(err).Msg("firewall ebpf: re-enroll: build container config failed, skipping")
 		return
 	}
 	var enrolled, failed int
 	for _, cid := range agents {
 		rid, cgroupPath, exists, resolveErr := h.resolve(ctx, cid)
 		if resolveErr != nil {
-			h.log.Warn().Err(resolveErr).Str("container_id", cid).Msg("re-enroll: resolve failed, skipping container")
+			h.log.Warn().Err(resolveErr).Str("container_id", cid).Msg("firewall ebpf: re-enroll: resolve failed, skipping container")
 			failed++
 			continue
 		}
@@ -350,22 +350,22 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 		}
 		cgroupID, err := h.cgroupIDFn(cgroupPath)
 		if err != nil {
-			h.log.Warn().Err(err).Str("container_id", rid).Msg("re-enroll: cgroup id failed, skipping container")
+			h.log.Warn().Err(err).Str("container_id", rid).Msg("firewall ebpf: re-enroll: cgroup id failed, skipping container")
 			failed++
 			continue
 		}
 		if err := h.ebpf.Install(cgroupID, cgroupPath, bpfCfg); err != nil {
-			h.log.Warn().Err(err).Str("container_id", rid).Msg("re-enroll: install failed, skipping container")
+			h.log.Warn().Err(err).Str("container_id", rid).Msg("firewall ebpf: re-enroll: install failed, skipping container")
 			failed++
 			continue
 		}
 		h.cgroupIDMu.Lock()
 		h.storedCgroupID[rid] = cgroupID
 		h.cgroupIDMu.Unlock()
-		h.log.Info().Str("container_id", rid).Uint64("cgroup_id", cgroupID).Msg("re-enrolled agent")
+		h.log.Info().Str("container_id", rid).Uint64("cgroup_id", cgroupID).Msg("firewall ebpf: container re-enrolled in container_map")
 		enrolled++
 	}
-	h.log.Info().Int("enrolled", enrolled).Int("failed", failed).Int("total", len(agents)).Msg("re-enroll complete")
+	h.log.Info().Int("enrolled", enrolled).Int("failed", failed).Int("total", len(agents)).Msg("firewall ebpf: re-enroll complete")
 }
 
 // FirewallRemove is global teardown. Pre-Submit: cancel pending bypass

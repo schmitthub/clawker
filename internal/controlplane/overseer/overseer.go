@@ -328,15 +328,14 @@ func (o *Overseer) safeHook(ev Event) {
 }
 
 // NewLoggerHook returns a PublishHook that emits one structured Info
-// line per event with the canonical fields (event, occurred_at) plus
-// the event's type-specific payload via zerolog.LogObjectMarshaler.
-// Use this as the default PublishHook so producers do not manually
-// pair log calls with Publish.
-//
-// Each Event implements MarshalZerologObject; the hook EmbedObjects
-// the value so per-type fields (container_id, agent, project,
-// address, registry outcomes, ...) land flat at the top level of the
-// log line. No reflection.
+// line per event. The log message text IS the event name
+// (e.g., "agentdial.session.connected") so Loki / Grafana line views
+// are scannable without expanding every entry — same identifying
+// string is also kept on the `event` field for label-filter queries.
+// occurred_at and the event's MarshalZerologObject payload land as
+// structured fields so per-type identity (container_id, agent,
+// project, address, registry outcomes, ...) is filterable and
+// labelable.
 func NewLoggerHook(log *logger.Logger) func(Event) {
 	if log == nil {
 		log = logger.Nop()
@@ -346,7 +345,7 @@ func NewLoggerHook(log *logger.Logger) func(Event) {
 			Str("event", ev.EventName()).
 			Time("occurred_at", ev.OccurredAt()).
 			EmbedObject(ev).
-			Msg("overseer: event published")
+			Msg(ev.EventName())
 	}
 }
 

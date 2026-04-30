@@ -555,4 +555,9 @@ func TestNewLoggerHook_EmbedsTypePayload(t *testing.T) {
 	if _, ok := got["occurred_at"]; !ok {
 		t.Fatalf("occurred_at missing from log line: %v", got)
 	}
+	// Message text must be the event name — Grafana/Loki line views are
+	// otherwise indistinguishable when every entry says the same string.
+	if got["message"] != "test.container.started" {
+		t.Fatalf("message=%v, want test.container.started (line-view scannability regression)", got["message"])
+	}
 }
