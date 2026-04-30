@@ -2,29 +2,33 @@
 
 Per-container agent daemon. Runs as a backgrounded child of the
 container entrypoint shell (started by `internal/bundler/assets/entrypoint.sh`
-right before the firewall healthz wait), opens the lifetime command
-channel with the control plane via `AgentService.Connect` (server-
-streaming), and drains commands until SIGTERM or the stream closes.
+right before the firewall healthz wait), serves the inbound
+`ClawkerdService.Session` listener on `:7700` that the CP dials for
+command dispatch, and idles for the container's lifetime.
 Not PID 1 — bash is. Not PID 0 either; PID 0 doesn't exist in user
 space.
 
 ## Role
 
 The CP is the daemon for the host. clawkerd is the daemon for one
-container. They speak only over the agent gRPC listener on
-clawker-net. The Connect stream IS the agent's lifetime command
-channel — single TCP connection per agent, all clawkerd-initiated;
-the first message after auth is `Welcome`, then subsequent messages
-are commands as B5+ adds payload variants.
+container. They speak only over the per-container gRPC listener on
+clawker-net (CP-dialed). The Session bidi-stream IS the per-command
+dispatch channel — CP opens a Session, sends a `Command` (Hello /
+ShellCommand / SignalCommand / etc.), receives streamed `Response`s,
+and closes. There is no clawkerd→CP outbound RPC in this branch —
+the asymmetric-trust model has clawkerd serve only.
 
 ## Boot sequence
 
 1. Read five bootstrap files from `consts.BootstrapDir`
    (`/run/clawker/bootstrap`):
    - `cert.pem`, `key.pem` — per-agent mTLS leaf signed by the CLI CA
-   - `ca.pem` — CLI CA cert (clawkerd's RootCA for trusting the CP server cert)
-   - `assertion.jwt` — CLI-signed `clawker-agent` Hydra assertion
-   - `verifier` — PKCE secret matching the slot's S256 challenge
+   - `ca.pem` — CLI CA cert (clawkerd's RootCA for verifying CP's client cert)
+   - `assertion.jwt` — CLI-signed `clawker-agent` Hydra assertion (auth
+     material, loaded but unused in this branch — kept for future
+     agent→CP RPCs)
+   - `verifier` — PKCE secret (auth material, loaded but unused in
+     this branch — kept for future agent→CP RPCs)
 
    Files land in the container's **writable layer** (NOT a tmpfs mount,
    NOT a bind mount). The CLI streams a tar archive into the live
@@ -37,32 +41,17 @@ are commands as B5+ adds payload variants.
    `internal/cmd/container/shared/agent_bootstrap.go` for the full
    tradeoff. Owner ends up being whoever the in-container tar extraction
    runs as — root in default images.
-2. Resolve env: `CLAWKER_CP_HYDRA_URL`, `CLAWKER_CP_AGENT_ADDR`,
-   `CLAWKER_AGENT`, `CLAWKER_PROJECT`. The (project, agent) pair
-   forms the composite identity the CP keys slots/registry by;
-   `CLAWKER_PROJECT` is allowed to be empty (matches the unscoped
-   2-segment naming case). Anything else is intentionally NOT in the
-   environment — clawkerd should not be able to assert identity it
-   didn't receive on a defended channel.
-3. POST `assertion.jwt` to Hydra → access token bound to the
-   `clawker-agent` client + `agent:self:register` scope.
-4. mTLS-dial the CP agent listener at `CLAWKER_CP_AGENT_ADDR` with the
-   per-agent cert. Bearer token attached via `PerRPCCredentials` so
-   it covers BOTH unary and streaming RPCs (a unary-only interceptor
-   would silently skip Connect).
-5. `Connect({agent_name, project, code_verifier})` opens the server-
-   streaming command channel. clawkerd sends short `agent_name` +
-   `project` as separate wire fields — the CP composes the canonical
-   `clawker.<project>.<agent>` server-side and cross-checks against
-   the peer cert CN. The first message MUST be `Welcome`; receipt
-   implies server-side auth fully succeeded (slot consume +
-   cross-checks). Only then is the single-use verifier safe to delete
-   — PKCE consumption is the replay defense.
-6. Drain `stream.Recv()` for the agent's lifetime. `io.EOF` =
-   graceful CP shutdown. SIGTERM cancels ctx → gRPC tears the stream
-   down → exit zero. Other errors surface to stderr and exit 1.
-   B5+ adds command-payload variants to the oneof; today the loop
-   acknowledges `Welcome` and forward-compat-ignores unknown payloads.
+2. Resolve env: `CLAWKER_AGENT` (required), `CLAWKER_PROJECT` (allowed
+   empty — matches the unscoped 2-segment naming case). Both bind to
+   the structured-log fields; the agent name also surfaces in the
+   `event=boot` log line. No other env is read in this branch.
+3. Start the ClawkerdService listener on
+   `consts.DefaultClawkerdPort` (see `listener.go`). The listener is
+   the entire RPC surface — CP dials in to dispatch commands.
+4. Idle on `ctx.Done`. SIGTERM (or SIGINT) cancels ctx → graceful
+   listener stop → clean exit. The `:7700` listener stays up for
+   CP to dial Session repeatedly; CP→clawkerd connection breaks are
+   logged from the listener side but do not kill the daemon.
 
 ## ClawkerdService listener (CP→clawkerd)
 
@@ -72,11 +61,10 @@ issuing commands. Three guards run before any handler executes:
 1. **mTLS, RequireAndVerifyClientCert.** `ClientCAs` is the clawker CA
    bundle so the CP's client cert chain validates. Server cert is the
    per-agent leaf the CLI minted — the leaf carries BOTH `ClientAuth`
-   (used by clawkerd's outbound dial to CP) AND `ServerAuth` (used by
-   this inbound listener so CP-side chain verify accepts it as a
-   server cert). See `internal/auth/agent_cert.go` for the dual-EKU
-   rationale; without `ServerAuth` here every CP→clawkerd dial fails
-   with "incompatible key usage".
+   AND `ServerAuth`. `ServerAuth` is what CP-side chain verify uses
+   to accept the cert as a server cert (without it every CP→clawkerd
+   dial fails with "incompatible key usage"). `ClientAuth` is held
+   for any future agent→CP dial.
 2. **CN pin.** `pinPeerCNToCP` (constant-time compare) rejects any
    verified peer whose CN is not `consts.ContainerCP`. Without this
    pin, any other clawker-CA-signed cert (e.g. another agent's) would
@@ -140,31 +128,28 @@ The `outcome` enum is the canonical terminal state. `incomplete`
 means runShellCommand returned via an unexpected path — treat as a
 clawkerd bug.
 
-## What it does NOT do (B4)
+## What it does NOT do
 
-- No heartbeat. CP knows liveness via Docker events + the mTLS connection.
+- No outbound dial to CP. `assertion.jwt` + `verifier` are loaded but
+  unused in this branch; agent→CP RPCs land in a future branch and
+  will reuse the on-disk auth material.
+- No heartbeat. CP knows liveness via Docker events + the dialer's
+  `SessionConnected` / `SessionBroken` overseer events.
 - No init-script execution. The existing `entrypoint.sh` flow is
   unchanged — clawkerd runs alongside it. Migration of init steps
   lands in a later branch.
-- No command-payload handling beyond Welcome acknowledgment. The
-  Connect stream IS the command-receiver surface; B5+ defines the
-  payload variants and dispatches them.
-- No token refresh + no reconnect-with-backoff. The bearer is consumed
-  via PerRPCCredentials at dial time and lasts for the stream's
-  lifetime; if Connect breaks, clawkerd exits and the container's
-  restart policy (or the user) re-runs. Reconnect lands with the
-  cp-restart-resilience initiative.
+- No reconnect logic. clawkerd is the SERVER; CP is the CLIENT. Reconnect
+  with backoff lives in `internal/controlplane/agentdial` on the CP side.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `main.go` | `run(ctx, log)` orchestrator: read bootstrap, exchange assertion, dial CP, Connect (server-streaming), receive Welcome, delete verifier, drain stream. Logger initialized in `main` BEFORE `run` so every event flows through `internal/logger` |
+| `main.go` | `run(ctx, log)` orchestrator: read bootstrap, start listener, idle on `ctx.Done`. Logger initialized in `main` BEFORE `run` so every event flows through `internal/logger` |
 | `listener.go` | CP→clawkerd inbound mTLS listener on `:7700`. `buildListenerTLSConfig` enforces RequireAndVerifyClientCert + dual-EKU server cert + chain validation; `pinPeerCNToCP` runs after Go's chain check and asserts the peer is `ContainerCP` with `ClientAuth` EKU |
 | `session.go` | `runSession` — per-stream owner: receive loop, sender goroutine, dispatch, ShellCommand pipeline (multi-stage exec, stdin/stdout/stderr fanout, signal forwarding, timeout watchdog, audit log) |
-| `interceptor.go` | `bearerCreds` (`credentials.PerRPCCredentials`) — attaches `authorization: Bearer <token>` on every outgoing RPC, unary AND streaming |
-| `bootstrap_test.go` | `readBootstrap` happy path, per-file missing variants, empty-file rejection, dial TLS rejects malformed key material |
-| `listener_test.go` | `pinPeerCNToCP` unit tests + `runSession` audit-log integration test (bufconn TLS) + bad-CN listener rejection |
+| `bootstrap_test.go` | `readBootstrap` happy path, per-file missing variants, empty-file rejection |
+| `listener_test.go` | `pinPeerCNToCP` unit tests + `runSession` audit-log integration test (bufconn TLS) + bad-CN listener rejection + no-cert / untrusted-CA / plain-TCP rejection |
 | `session_test.go` | dispatch/command_id contract, dup-ID rejection, ShellCommand audit log, spawn-failure outcome, concurrent-pipeline race-detector run, `closePipeOnce` dedup, `routeSignal` reaper-race filter |
 
 ## Logging
@@ -178,24 +163,20 @@ single logger-init failure write in `main.go`) and any Go runtime
 panic stack trace land in the same directory but NOT the rotated log
 (lumberjack is documented unsafe for multi-writer access; the shell's
 append fd would keep appending to the renamed inode post-rotation).
-Every
-log line carries `agent=<name>` and `project=<slug>` structured
+Every log line carries `agent=<name>` and `project=<slug>` structured
 fields so a multi-agent log (when shared via volume mount) is
 trivially filterable by container.
 
 Levels:
 
-- **ERROR** — any failure: token exchange rejected, dial refused,
-  Welcome timeout, stream Recv error (non-EOF), bootstrap-file read
-  failure, verifier delete failure, connection close failure,
-  duplicate-Welcome (CP bug).
-- **INFO** — state transitions: `boot`, `token_exchange_attempt`,
-  `token_acquired`, `connect_dial`, `welcome_received`,
-  `verifier_deleted` (once-per-lifetime security transition),
-  `stream_idle`, `stream_closed_eof`, `stream_closed_sigterm`,
-  `shutdown`.
-- **DEBUG** — per-tick / per-shutdown noise: `connection_closed`,
-  `unknown_command_payload` (forward-compat ignore for B5+ payloads).
+- **ERROR** — any failure: bootstrap-file read failure, listener bind
+  failure, unrecoverable Serve return.
+- **INFO** — state transitions: `boot`, `clawkerd_listener_started`,
+  `daemon_idle`, `session_started`, `session_ended`,
+  `shell_command_started`, `shell_command_done`,
+  `shutdown_signal_received`, `clawkerd_listener_stopping`,
+  `clawkerd_listener_stopped`, `shutdown`.
+- **DEBUG** — per-tick / per-shutdown noise (none in this branch).
 
 There is **no WARN tier** — errors are errors regardless of retry
 policy. The single allowed `os.Stderr` write is the logger init
@@ -204,25 +185,19 @@ writer).
 
 ## Failure model
 
-Every error before Welcome is fatal — clawkerd writes to stderr and
-exits 1. After Welcome, SIGTERM-driven teardown exits zero (clean) and
-any other Recv error exits 1 (broken stream). The container's restart
-policy (or in `--rm` mode, the user's next `clawker run`) decides
-whether to retry. Partial-success states are deliberately unreachable:
-either Welcome arrives and the agent is registered, or clawkerd dies
-and the slot expires after the 60s TTL.
+Bootstrap-read failure or listener-bind failure exits 1 (clawkerd writes
+to its log file and exits). Once the listener is up, SIGTERM-driven
+teardown exits zero (clean) and any unrecoverable Serve error exits 1.
+The container's restart policy (or in `--rm` mode, the user's next
+`clawker run`) decides whether to retry.
 
 ## Lifetime
 
-Bootstrap material is read once at boot. After Welcome receipt
-clawkerd:
-
-- Deletes `verifier` (single-use, replay defense).
-- Keeps `cert.pem`, `key.pem`, `ca.pem`, `assertion.jwt` available
-  on disk — the assertion has a 24h TTL and would be needed for any
-  future redial. The container's writable layer dies on `--rm` or
-  `docker rm`, so the material is bounded by the container lifetime
-  regardless.
+Bootstrap material is read once at boot. clawkerd holds `cert.pem`,
+`key.pem`, `ca.pem`, `assertion.jwt`, and `verifier` in memory for the
+process lifetime. The container's writable layer dies on `--rm` or
+`docker rm`, so the material is bounded by the container lifetime
+regardless.
 
 ## Used by
 

@@ -462,10 +462,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("step 8 (agent grpc listen): %w", err)
 	}
 
-	// AgentService is empty (Register retired alongside agentslots/
-	// AnnounceAgent). The listener stays bound to clawker-net so a
-	// future inbound agent RPC can land without re-wiring the listener
-	// or its interceptor chain.
+	// AgentService proto is empty in this branch. The listener stays
+	// bound to clawker-net so a future inbound agent RPC can land
+	// without re-wiring the listener or its interceptor chain.
 	agentv1.RegisterAgentServiceServer(agentServer, &agentv1.UnimplementedAgentServiceServer{})
 
 	// Cap covers gRPC admin, gRPC agent, healthz, and the dockerevents

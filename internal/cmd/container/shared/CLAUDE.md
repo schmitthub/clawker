@@ -75,10 +75,6 @@ type AgentBootstrap struct {
 // has a single equality to enforce.
 GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error)
 
-// project + agent travel as separate wire fields (no canonical-on-wire);
-// the CP composes the canonical name on its side.
-AnnounceAgent(ctx context.Context, admin AdminServiceClient, b *AgentBootstrap, project, agent, containerID string) error
-
 WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *AgentBootstrap) error
 
 // Create-time install is split into two halves so the agentregistry row
@@ -93,8 +89,8 @@ RegisterAgentInRegistry(ctx, opts InstallAgentBootstrapOptions, bootstrap *Agent
 
 `CommandOpts.AgentName` (the short user-typed name) and `CommandOpts.Project`
 (the project slug, empty allowed) feed `prepareAgentBootstrap` — both must
-be set on new-container start paths so AnnounceAgent + MintAgentCert agree
-on the canonical CN.
+be set on new-container start paths so the registry row's `canonical_cn`
+column + MintAgentCert agree on the canonical CN.
 
 `WriteAgentBootstrapToContainer` tars the five files into the container
 at `consts.BootstrapDir` (parent dir 0700, files 0400). The destination
@@ -154,7 +150,7 @@ Three-phase orchestration for container start: pre-start bootstrap, Docker start
 | `ProjectManager` | `func() (project.ProjectManager, error)` | Project manager provider |
 | `HostProxy` | `func() hostproxy.HostProxyService` | Host proxy provider |
 | `ControlPlane` | `func() cpboot.Manager` | Host-side CP container lifecycle noun (`EnsureRunning` / `Stop` / `IsRunning`) |
-| `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC AdminService client (mTLS + OAuth2) — drives firewall sync/enable/disable RPCs and `AnnounceAgent` |
+| `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC AdminService client (mTLS + OAuth2) — drives firewall sync/enable/disable RPCs |
 | `SocketBridge` | `func() socketbridge.SocketBridgeManager` | Socket bridge provider |
 | `Logger` | `func() (*logger.Logger, error)` | Logger provider |
 | `AgentName` | `string` | User-typed short agent name (set on new-container starts; empty on restart paths) |

@@ -1,8 +1,7 @@
 // Package agent serves the clawker.agent.v1.AgentService gRPC surface.
 //
 // The package is intentionally minimal in this branch: AgentService is
-// an empty proto service (the Register handshake was retired alongside
-// agentslots/AnnounceAgent). What stays is the cross-cutting
+// an empty proto service. What stays is the cross-cutting
 // IdentityInterceptor — a unary + stream interceptor that resolves the
 // peer cert thumbprint to an agentregistry entry on every non-opted-out
 // agent RPC, and a small helper (peerIdentityFromContext) used by the
@@ -31,7 +30,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
@@ -47,18 +45,12 @@ type peerIdentity struct {
 	CommonName string
 }
 
+var errNoPeerInfo = errors.New("agent: no peer info in context")
+
 // peerIdentityFromContext returns the leaf cert projection for the
 // gRPC peer attached to ctx. Returns an error when ctx carries no peer,
 // no TLS auth info, or no certificates — every case is a fail-secure
 // path that the interceptor maps to PermissionDenied.
-//
-// Note: the historical signature also returned the peer's network IP
-// for the agent.Register handler's container-IP cross-check; since
-// Register is gone, the IP is no longer extracted here. Add it back
-// (alongside the same TLS unwrap) when the next inbound agent RPC
-// needs it.
-var errNoPeerInfo = errors.New("agent: no peer info in context")
-
 func peerIdentityFromContext(ctx context.Context) (*peerIdentity, error) {
 	p, ok := peer.FromContext(ctx)
 	if !ok || p == nil {
@@ -73,30 +65,4 @@ func peerIdentityFromContext(ctx context.Context) (*peerIdentity, error) {
 	}
 	leaf := tlsInfo.State.PeerCertificates[0]
 	return &peerIdentity{Raw: leaf.Raw, CommonName: leaf.Subject.CommonName}, nil
-}
-
-// peerIPFromContext is a future-extension stub: when the next inbound
-// agent RPC needs the peer's network IP for a container-binding
-// cross-check, route through this helper rather than re-implementing
-// peer.FromContext + net.SplitHostPort gymnastics. Currently unused;
-// kept as a documented seam.
-//
-//nolint:unused // future-extension stub
-func peerIPFromContext(ctx context.Context) (net.IP, error) {
-	p, ok := peer.FromContext(ctx)
-	if !ok || p == nil {
-		return nil, errNoPeerInfo
-	}
-	host, _, splitErr := net.SplitHostPort(p.Addr.String())
-	if splitErr != nil {
-		host = p.Addr.String()
-	}
-	parsed := net.ParseIP(host)
-	if parsed == nil {
-		return nil, fmt.Errorf("agent: peer addr %q is not a valid IP", host)
-	}
-	if v4 := parsed.To4(); v4 != nil {
-		parsed = v4
-	}
-	return parsed, nil
 }

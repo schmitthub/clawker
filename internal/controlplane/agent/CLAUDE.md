@@ -1,9 +1,8 @@
 # Controlplane Agent Subpackage
 
 Hosts the cross-cutting `IdentityInterceptor` for the CP's agent gRPC
-listener. AgentService is empty in this branch — Register was retired
-alongside agentslots/AnnounceAgent — so the package's only live surface
-is the interceptor + its supporting helpers.
+listener. AgentService proto is empty in this branch, so the package's
+only live surface is the interceptor + its supporting helpers.
 
 The package stays in place because the listener mTLS + interceptor
 chain are still wired in `cmd/clawker-cp/main.go`: a future inbound
@@ -14,7 +13,7 @@ re-wiring.
 
 | File | Purpose |
 |------|---------|
-| `handler.go` | Package doc + `peerIdentity{Raw, CommonName}` projection + `peerIdentityFromContext` helper extracting the peer leaf cert from a gRPC context. The historical Register handler + Docker inspector + container-IP cross-check were retired with the AnnounceAgent/agentslots layer. |
+| `handler.go` | Package doc + `peerIdentity{Raw, CommonName}` projection + `peerIdentityFromContext` helper extracting the peer leaf cert from a gRPC context. |
 | `identity_interceptor.go` | `IdentityInterceptor(reg, optedOut, log) (UnaryServerInterceptor, StreamServerInterceptor)` resolves peer cert thumbprint to an `agentregistry.Entry` on every non-opted-out method; `IdentityOptedOutMethods()` returns an empty map today (AgentService has no inbound RPCs); `WithEntry` / `EntryFromContext` for downstream RPC handlers. |
 | `identity_interceptor_test.go` | Branch coverage: registry-hit (with the load-bearing wrapped-Context() check on the stream wrapper), lookup-miss, no-peer-cert; nil-entry panic; stale-opt-out-key panic; empty opt-out roster sanity. |
 

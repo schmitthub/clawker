@@ -64,7 +64,7 @@ type State struct {
 }
 ```
 
-In-memory only; cleared on CP restart. Distinct from durable subscriber-owned stores: `agentregistry`'s SQLite identity rows and `agentslots`' TTL slot map are separate concerns with their own persistence semantics. Overseer's State is the **observed** axis (events flowing in real time). agentregistry is the **attested** axis (durable identity).
+In-memory only; cleared on CP restart. Distinct from `agentregistry`'s SQLite identity rows: Overseer's State is the **observed** axis (events flowing in real time); agentregistry is the **attested** axis (durable identity).
 
 `ContainerStatus` and `SessionStatus` are typed string enums — disjoint vocabularies, no shared `Lifecycle` field for producers to collide on.
 

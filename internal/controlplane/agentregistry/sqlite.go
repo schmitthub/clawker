@@ -168,7 +168,17 @@ func openSQLite(dbPath string, log *logger.Logger, mode sqliteOpenMode) (Registr
 		db:  db,
 		log: log,
 	}
-	rowCount, _ := r.countRows()
+	rowCount, countErr := r.countRows()
+	if countErr != nil {
+		// SELECT COUNT failure right after a fresh schema apply is
+		// suspicious (corrupt page, lock contention, busted PRAGMA).
+		// Surface at Warn so the boot-log "rows=N" line is not
+		// misread as an authoritative empty-DB signal when the
+		// reader actually couldn't ask.
+		r.log.Warn().Err(countErr).
+			Str("db_path", dbPath).
+			Msg("agentregistry: countRows failed at open; row count is unknown")
+	}
 	r.log.Info().
 		Str("db_path", dbPath).
 		Str("mode", openModeName(mode)).
@@ -188,7 +198,7 @@ func openModeName(mode sqliteOpenMode) string {
 // the canonical_cn column (pre-Task-01 schema), the table is dropped
 // and recreated — alpha-only migration policy: the registry is
 // regenerable from the next clawker run/start, and a partial migration
-// is worse than a forced re-Register.
+// is worse than a forced re-create of every affected container.
 func applySchema(db *sql.DB, log *logger.Logger) error {
 	if needsMigration, err := schemaMissingCanonicalCN(db); err != nil {
 		return fmt.Errorf("inspect schema: %w", err)
@@ -393,14 +403,12 @@ func (r *sqliteRegistry) EvictByContainerID(containerID string) error {
 	}
 	rows, raErr := res.RowsAffected()
 	if raErr != nil {
-		// RowsAffected failure is unusual on modernc/sqlite; surface
-		// at Warn so an operator can investigate without failing the
-		// caller — the DELETE itself succeeded.
-		r.log.Warn().
-			Err(raErr).
-			Str("container_id", containerID).
-			Msg("agentregistry: RowsAffected after evict failed")
-		return nil
+		// Surface RowsAffected failure to the caller so reaper-driven
+		// errors.Join sweeps see it (Reap aggregates EvictByContainerID
+		// errors). The DELETE itself succeeded but we cannot confirm
+		// scope — operators investigating "why didn't this row evict?"
+		// need the typed-error path, not just a Warn line.
+		return fmt.Errorf("agentregistry: RowsAffected after evict (container_id=%s): %w", containerID, raErr)
 	}
 	if rows > 0 {
 		r.log.Info().

@@ -14,9 +14,9 @@ const (
 	ContainerStatusStopped ContainerStatus = "stopped"
 )
 
-// SessionStatus is the lifecycle of a CP→clawkerd Connect stream as
-// observed by the agentdial component. Disjoint from ContainerStatus
-// by design.
+// SessionStatus is the lifecycle of a CP→clawkerd ClawkerdService.Session
+// stream as observed by the agentdial component. Disjoint from
+// ContainerStatus by design.
 type SessionStatus string
 
 const (

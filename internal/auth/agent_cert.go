@@ -17,9 +17,10 @@ import (
 )
 
 // CanonicalAgentCN composes the canonical agent identity used as the
-// cert's CN and the registry/slot composite key. Three-segment for a
-// scoped project ("clawker.<project>.<agent>"), two-segment for the
-// unscoped/empty-project case ("clawker.<agent>") to match
+// cert's CN and as the agentregistry row's pre-computed canonical_cn
+// column. Three-segment for a scoped project
+// ("clawker.<project>.<agent>"), two-segment for the unscoped/
+// empty-project case ("clawker.<agent>") to match
 // docker.ContainerName naming.
 //
 // Takes typed AgentName + ProjectSlug values so the caller can't pass
@@ -75,11 +76,12 @@ func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 // shape so the agent handler's CN cross-check has a single equality to
 // enforce.
 //
-// The 24h lifetime is intentional — thumbprint pinning at Connect makes
-// longer-lived certs safe, but a tight ceiling caps the blast radius if
-// a leaf leaks. Thumbprint is what the CLI announces to the CP via
-// AnnounceAgent so the CP can reject any peer cert whose
-// SHA-256(cert.Raw) doesn't match.
+// The 24h lifetime is intentional — thumbprint pinning at registry
+// lookup time makes longer-lived certs safe, but a tight ceiling caps
+// the blast radius if a leaf leaks. The CLI writes the thumbprint into
+// the agentregistry row at container CREATE time, and CP-side lookups
+// keyed by container_id reject any peer cert whose SHA-256(cert.Raw)
+// doesn't match.
 // Returns *AgentCert (nil on error) so a caller that ignores the error
 // cannot accidentally log the redacted zero-value as a successful cert.
 //

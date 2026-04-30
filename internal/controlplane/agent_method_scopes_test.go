@@ -47,9 +47,9 @@ func TestAgentMethodScopes_CoversAllRPCs(t *testing.T) {
 // every agent RPC requires the agent:self:register scope — the sole
 // scope Hydra grants to the agent OAuth2 client. Accidentally widening
 // any of these (e.g. to `admin`) would silently grant agents privileged
-// surface. AgentService is currently empty (Register was retired
-// alongside agentslots/AnnounceAgent); when the next inbound RPC lands,
-// re-tighten this test to assert NotEmpty + scope value.
+// surface. AgentService proto is currently empty; when the next
+// inbound RPC lands, re-tighten this test to assert NotEmpty + scope
+// value.
 func TestAgentMethodScopes_AgentSelfRegisterScope(t *testing.T) {
 	const want = consts.ScopeAgentSelfRegister
 	scopes := AgentMethodScopes()

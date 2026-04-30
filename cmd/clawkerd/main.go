@@ -7,25 +7,19 @@
 //
 //  1. Read bootstrap material delivered by the CLI to
 //     consts.BootstrapDir (cert.pem, key.pem, ca.pem, assertion.jwt,
-//     verifier). All five files are written by the CLI between
-//     ContainerCreate and ContainerStart; the assertion + verifier are
-//     unused by clawkerd today (CLI is the registry writer) but stay
-//     on disk for the agent→CP RPCs landing in upcoming branches.
+//     verifier). cert/key/ca are loaded into the listener's TLS
+//     config; assertion + verifier are read in but unused by clawkerd
+//     today (CLI is the registry writer). They stay on disk and stay
+//     loaded so the agent→CP RPCs landing in upcoming branches can
+//     consume them without re-deriving the bootstrap surface.
 //  2. Start the ClawkerdService mTLS listener on
 //     consts.DefaultClawkerdPort. The listener pins peer CN to
 //     consts.ContainerCP so no other agent's CA-signed cert can
 //     connect.
-//  3. POST the CLI-signed client_assertion to Hydra → access token
-//     bound to the clawker-agent client. Wired so future agent→CP
-//     calls have the auth chain ready; clawkerd does not call any
-//     AgentService RPC in this branch.
-//  4. mTLS-dial the CP agent listener with the per-agent leaf cert.
-//     Same rationale as step 3 — agentClient is constructed and held
-//     for future RPCs.
-//  5. Idle on ctx.Done — daemon lifetime is bound to container
-//     lifetime, NOT to any single CP connection. The :7700 listener
-//     stays up for CP to dial Session repeatedly; CP→clawkerd
-//     connection breaks are logged but do not kill the daemon.
+//  3. Idle on ctx.Done — daemon lifetime is bound to container
+//     lifetime. The :7700 listener stays up for CP to dial Session
+//     repeatedly; CP→clawkerd connection breaks are logged from the
+//     listener side but do not kill the daemon.
 //
 // Identity / registration: the CLI writes the agentregistry row at
 // container CREATE time (via host-side sqlite). CP reads the registry
@@ -36,32 +30,16 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-
-	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
-
-// hydraTokenTimeout bounds the Hydra token-exchange round trip. 10s
-// covers a slow first-boot DNS resolution + TLS handshake without
-// letting a wedged Hydra block the entrypoint indefinitely.
-const hydraTokenTimeout = 10 * time.Second
 
 // logsDir is where clawkerd writes its rotated log file. Co-located
 // with the entrypoint's stdout/stderr capture target (/var/log/clawker/)
@@ -113,18 +91,13 @@ func main() {
 }
 
 func run(ctx context.Context, log *logger.Logger) error {
-	hydraURL := os.Getenv(consts.EnvClawkerdHydraURL)
-	agentAddr := os.Getenv(consts.EnvClawkerdAgentAddr)
 	agentName := os.Getenv(consts.EnvAgent)
 	// CLAWKER_PROJECT is allowed to be empty — empty matches the
 	// 2-segment naming case (docker.ContainerName behavior) where the
-	// canonical CN is "clawker.<agent>" and the slot key folds an empty
-	// project string. Required env validation below only checks the
-	// three load-bearing fields; project is read but not required.
+	// canonical CN is "clawker.<agent>".
 	project := os.Getenv(consts.EnvProject)
-	if hydraURL == "" || agentAddr == "" || agentName == "" {
-		return fmt.Errorf("required env not set: %s, %s, %s",
-			consts.EnvClawkerdHydraURL, consts.EnvClawkerdAgentAddr, consts.EnvAgent)
+	if agentName == "" {
+		return fmt.Errorf("required env not set: %s", consts.EnvAgent)
 	}
 
 	// Bind agent + project on every subsequent log line so a multi-
@@ -136,8 +109,6 @@ func run(ctx context.Context, log *logger.Logger) error {
 	log.Info().
 		Str("event", "boot").
 		Str("bootstrap_dir", consts.BootstrapDir).
-		Str("hydra_url", hydraURL).
-		Str("agent_addr", agentAddr).
 		Msg("clawkerd starting")
 
 	boot, err := readBootstrap(consts.BootstrapDir)
@@ -146,11 +117,6 @@ func run(ctx context.Context, log *logger.Logger) error {
 		return fmt.Errorf("read bootstrap: %w", err)
 	}
 
-	// Start the ClawkerdService listener BEFORE registering with CP.
-	// CP may dial concurrently with the registration call, so the
-	// listener must be ready first. Listener uses the same per-agent
-	// leaf cert as the outbound dial; the security boundary is the
-	// CN-pin on incoming peer certs (only consts.ContainerCP allowed).
 	clawkerdSrv, err := startClawkerdListener(boot, log)
 	if err != nil {
 		log.Error().Err(err).Str("event", "clawkerd_listener_start_failed").Msg("start clawkerd listener")
@@ -162,78 +128,22 @@ func run(ctx context.Context, log *logger.Logger) error {
 		log.Info().Str("event", "clawkerd_listener_stopped").Msg("listener torn down")
 	}()
 
-	tokenURL := strings.TrimRight(hydraURL, "/") + "/oauth2/token"
-	tokenTLS, err := buildTokenTLSConfig(boot.CACertPEM)
-	if err != nil {
-		log.Error().Err(err).Str("event", "token_tls_build_failed").Msg("token TLS config")
-		return fmt.Errorf("token TLS config: %w", err)
-	}
-
-	log.Info().Str("event", "token_exchange_attempt").Str("url", tokenURL).Msg("posting client_assertion to Hydra")
-	tokenCtx, tokenCancel := context.WithTimeout(ctx, hydraTokenTimeout)
-	defer tokenCancel()
-	token, err := exchangeAssertion(tokenCtx, tokenURL, boot.Assertion, tokenTLS)
-	if err != nil {
-		log.Error().Err(err).Str("event", "token_exchange_failed").Msg("hydra token exchange")
-		return fmt.Errorf("hydra token exchange: %w", err)
-	}
-	log.Info().Str("event", "token_acquired").Msg("Hydra issued access token")
-
-	dialTLS, err := buildDialTLSConfig(boot.CertPEM, boot.KeyPEM, boot.CACertPEM)
-	if err != nil {
-		log.Error().Err(err).Str("event", "dial_tls_build_failed").Msg("dial TLS config")
-		return fmt.Errorf("dial TLS config: %w", err)
-	}
-
-	log.Info().Str("event", "connect_dial").Str("addr", agentAddr).Msg("dialing CP agent listener")
-	conn, err := grpc.NewClient(
-		agentAddr,
-		grpc.WithTransportCredentials(credentials.NewTLS(dialTLS)),
-		// PerRPCCredentials covers BOTH unary and streaming RPCs. The
-		// previous unary-only interceptor silently skipped Connect
-		// (server-streaming) — CP would reject every announce attempt
-		// with codes.Unauthenticated before the agent saw Welcome.
-		grpc.WithPerRPCCredentials(newBearerCreds(token)),
-	)
-	if err != nil {
-		log.Error().Err(err).Str("event", "connect_dial_failed").Msg("dial CP agent listener")
-		return fmt.Errorf("dial CP agent listener: %w", err)
-	}
-	defer func() {
-		// Connection close is informational at exit but useful for
-		// debugging stuck FD leaks across rapid container churn. Log at
-		// debug — operators triaging shutdown rarely need to see it,
-		// but a regression that leaks conns shows up here.
-		if cerr := conn.Close(); cerr != nil {
-			log.Error().Err(cerr).Str("event", "connection_close_failed").Msg("closing CP agent connection")
-		} else {
-			log.Debug().Str("event", "connection_closed").Msg("CP agent connection closed")
-		}
-	}()
-
-	// Construct the AgentService client even though clawkerd no longer
-	// calls Register at boot in this branch — agentClient and the dial
-	// machinery above (Hydra token exchange, mTLS conn, bearer creds)
-	// are the foundation for the agent→CP RPCs that land in upcoming
-	// branches. Keeping the wiring live means the next RPC just needs
-	// its own call site, not a re-derivation of the auth chain.
-	agentClient := agentv1.NewAgentServiceClient(conn)
-	_ = agentClient
-
 	log.Info().Str("event", "daemon_idle").Msg("entering daemon idle loop; CP may dial Session at any time")
 
 	// clawkerd is a DAEMON. Its lifetime is the container's lifetime,
-	// bounded only by SIGTERM (ctx cancel). After Register succeeds
-	// the only outstanding responsibility is the :7700 ClawkerdService
-	// listener (already serving) where CP dials in to dispatch
-	// commands. CP→clawkerd connection breaks are logged from the
-	// listener side but do not kill the daemon.
+	// bounded only by SIGTERM (ctx cancel). The :7700 ClawkerdService
+	// listener (already serving) is the entire RPC surface — CP dials
+	// in to dispatch commands. CP→clawkerd connection breaks are logged
+	// from the listener side but do not kill the daemon.
 	<-ctx.Done()
 	log.Info().Str("event", "shutdown_signal_received").Msg("SIGTERM received; tearing down clawkerd")
 	return nil
 }
 
 // bootstrap mirrors the CLI's per-agent registration material on disk.
+// Assertion + Verifier are loaded but unused in this branch; they stay
+// loaded so the agent→CP RPCs landing in upcoming branches can consume
+// them without re-deriving the bootstrap surface.
 type bootstrap struct {
 	CertPEM, KeyPEM, CACertPEM []byte
 	Assertion                  string
@@ -242,7 +152,7 @@ type bootstrap struct {
 
 // readBootstrap reads the five bootstrap files from dir. Missing files
 // fail loudly — a partial boot is a security regression (e.g. cert
-// missing while verifier present would let clawkerd register without
+// missing while verifier present would let clawkerd proceed without
 // the cert pinning that defends against tmpfs swap).
 func readBootstrap(dir string) (*bootstrap, error) {
 	read := func(name string) ([]byte, error) {
@@ -285,93 +195,4 @@ func readBootstrap(dir string) (*bootstrap, error) {
 		Assertion: strings.TrimSpace(string(assertion)),
 		Verifier:  strings.TrimSpace(string(verifier)),
 	}, nil
-}
-
-func buildTokenTLSConfig(caPEM []byte) (*tls.Config, error) {
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("CA PEM did not parse")
-	}
-	return &tls.Config{
-		RootCAs:    pool,
-		ServerName: consts.ContainerCP,
-		MinVersion: tls.VersionTLS13,
-	}, nil
-}
-
-func buildDialTLSConfig(certPEM, keyPEM, caPEM []byte) (*tls.Config, error) {
-	leaf, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("agent leaf keypair: %w", err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("CA PEM did not parse")
-	}
-	return &tls.Config{
-		Certificates: []tls.Certificate{leaf},
-		RootCAs:      pool,
-		ServerName:   consts.ContainerCP,
-		MinVersion:   tls.VersionTLS13,
-	}, nil
-}
-
-// exchangeAssertion posts the CLI-signed client_assertion JWT to
-// Hydra's /oauth2/token endpoint and returns the access token. Single
-// shot — the bearer is consumed via PerRPCCredentials on every
-// outgoing RPC during the lifetime of the gRPC connection. Token
-// refresh lands with the cp-restart-resilience initiative alongside
-// reconnect-with-backoff.
-func exchangeAssertion(ctx context.Context, tokenURL, assertion string, tlsCfg *tls.Config) (string, error) {
-	form := url.Values{
-		"grant_type":            {"client_credentials"},
-		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
-		"client_assertion":      {assertion},
-		"scope":                 {consts.ScopeAgentSelfRegister},
-	}
-
-	httpClient := &http.Client{
-		Timeout:   hydraTokenTimeout,
-		Transport: &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: true},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("post to %s: %w", tokenURL, err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("hydra returned %d: %s", resp.StatusCode, body)
-	}
-
-	var out struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
-	}
-	if out.AccessToken == "" {
-		return "", fmt.Errorf("hydra returned empty access_token")
-	}
-	// Hydra always returns "Bearer" today, but defend against a future
-	// Hydra upgrade or misconfig that returns "DPoP" or some other
-	// type — clawkerd would happily attach the token as
-	// `authorization: Bearer <token>` and CP would reject mid-stream
-	// with an opaque codes.Unauthenticated. Fail early with a clear
-	// error so the operator sees the actual problem.
-	if out.TokenType != "" && !strings.EqualFold(out.TokenType, "Bearer") {
-		return "", fmt.Errorf("hydra returned unexpected token_type %q (expected Bearer)", out.TokenType)
-	}
-	return out.AccessToken, nil
 }

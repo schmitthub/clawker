@@ -247,10 +247,11 @@ const (
 const (
 	ScopeAdmin         = "admin"
 	ScopeAgentAnnounce = "agent:announce"
-	// ScopeAgentSelfRegister gates clawkerd's calls on AgentService —
-	// today, Connect (lifetime command channel) and Events (telemetry
-	// stub). Hydra grants only this scope to the agent OAuth2 client;
-	// finer-grained agent scopes land alongside future methods.
+	// ScopeAgentSelfRegister gates clawkerd's calls on AgentService.
+	// AgentService proto is empty in this branch; Hydra still grants
+	// this scope so future inbound clawkerd→CP RPCs land with the
+	// auth chain intact. Finer-grained agent scopes can be added
+	// alongside future methods.
 	ScopeAgentSelfRegister = "agent:self:register"
 )
 
@@ -299,16 +300,17 @@ const ChallengeMethodS256 ChallengeMethod = "S256"
 
 // Container env vars for clawkerd bootstrap. clawkerd reads only what
 // it can authoritatively assert: container_id is server-derived from
-// the slot at Connect, and project + agent_name travel as separate
-// wire fields (the CP composes the canonical name on its side).
+// the registry row keyed by container_id, and project + agent_name
+// travel via env vars only for log binding (the canonical CN comes
+// from the pre-computed registry column on the CP side).
 // Adding a CLAWKER_CONTAINER_ID env would let a coerced clawkerd lie
 // to itself; resist that temptation.
 const (
 	// EnvAgent is the agent name (e.g. "dev"). Container-wide env;
 	// readable by every process in the container including the
 	// unprivileged user's shell. Set by the CLI at container create
-	// from `--agent` (or generated). Used by the statusline and
-	// consumed by clawkerd as `req.AgentName` at Connect.
+	// from `--agent` (or generated). Consumed by the statusline and by
+	// clawkerd's structured-log binding.
 	EnvAgent = "CLAWKER_AGENT"
 	// EnvProject is the project name (e.g. "clawker"). Same scope +
 	// caveats as EnvAgent.

@@ -40,12 +40,12 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// Entry is one registered agent. Created by the Register handler with
-// data taken from the slot (ContainerID, AgentName, Project) plus the
-// SHA-256 over the peer cert DER (Thumbprint). LastSeen currently
-// equals RegisteredAt because the per-agent RPCs that bump it have not
-// shipped yet; future per-agent RPCs will refresh LastSeen at their
-// own boundary.
+// Entry is one registered agent. Created by the CLI at container
+// CREATE time (via shared.RegisterAgentInRegistry) carrying the
+// ContainerID, AgentName, Project, and the SHA-256 over the peer cert
+// DER (Thumbprint). LastSeen currently equals RegisteredAt because the
+// per-agent RPCs that bump it have not shipped yet; future per-agent
+// RPCs will refresh LastSeen at their own boundary.
 type Entry struct {
 	// AgentName is the user-typed short name (e.g. "dev"); composed with
 	// Project at Add time into the canonical CN that Lookup compares
@@ -105,12 +105,12 @@ type Registry interface {
 	// returns ErrUnknownAgent.
 	Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)
 	// LookupByThumbprint returns the entry whose Thumbprint matches,
-	// without any CN cross-check. Used by the Register handler to
-	// REJECT clawkerd that calls Register while it already has a row —
-	// the verifier-wipe contract means a Register call against a known
-	// thumbprint indicates a stale or replayed bootstrap, not a legit
-	// flow. Distinct from Lookup (CN-gated identity resolution used by
-	// AgentPort RPCs) so a future regression that swaps the two stays
+	// without any CN cross-check. Today there is no live consumer; it
+	// stays on the interface as the symmetric peer of LookupByContainerID
+	// for any future direct-thumbprint lookup (e.g. operator tools that
+	// reverse-resolve a thumbprint to the registered agent without a CN
+	// to gate on). Distinct from Lookup (CN-gated identity resolution
+	// used by AgentPort RPCs) so a regression that swaps the two stays
 	// loud at the call site.
 	//
 	// Returns (nil, ErrUnknownAgent) when no entry matches.
@@ -138,11 +138,11 @@ type Registry interface {
 	EvictByContainerID(containerID string) error
 	// Snapshot returns a copy of every live entry, sorted by
 	// (Project, AgentName) for deterministic output. Project is the
-	// primary key because the same short AgentName can be reused across
-	// different projects (the composite identity is (project, agent) —
-	// see internal/controlplane/agentslots/CLAUDE.md). Used by
-	// AdminService.ListAgents and the `clawker controlplane agents`
-	// CLI; both rely on stable ordering for diffability.
+	// primary sort key because the same short AgentName can be reused
+	// across different projects (the composite identity is
+	// (project, agent)). Used by AdminService.ListAgents and the
+	// `clawker controlplane agents` CLI; both rely on stable ordering
+	// for diffability.
 	Snapshot() []Entry
 }
 
@@ -261,11 +261,9 @@ func (r *registryImpl) Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, 
 	if !ok {
 		return nil, ErrUnknownAgent
 	}
-	// Pre-computed canonical CN; ConstantTimeCompare matches the
-	// timing-discipline of the Connect handler's own CN check (peer cert
-	// CN vs req-derived canonical) so a future regression that caches a
-	// thumbprint without invalidating it on rename can't be probed via
-	// per-byte CN compare latency.
+	// Pre-computed canonical CN; ConstantTimeCompare so a future
+	// regression that caches a thumbprint without invalidating it on
+	// rename can't be probed via per-byte CN compare latency.
 	if subtle.ConstantTimeCompare([]byte(cn), []byte(me.cn)) != 1 {
 		return nil, ErrUnknownAgent
 	}

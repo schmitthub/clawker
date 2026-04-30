@@ -1,10 +1,7 @@
 package agentdial
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,126 +94,9 @@ func TestSubscribe_FilterRejectsNonAgent(t *testing.T) {
 
 // TestPanicRingBuffer_BoundedMemory exercises the ring buffer path
 // in Subscribe by driving the consumer through subscribePanicWindowMaxHits
-// recoveries. The ring buffer is fixed-capacity so memory is
-// bounded structurally (no slice growth); the assertion is that
-// the consumer terminates with the expected log message after the
-// threshold is hit.
-//
-// Approach: build a mini consumer mirror that calls our local
-// `panicHandler` exactly the way Subscribe calls drainOnce, then
-// run the same recover/ring-buffer/threshold logic. The unit is
-// the ring-buffer accounting, not the integration with *Dialer
-// (which is exercised by the e2e suite).
-func TestPanicRingBuffer_BoundedMemory(t *testing.T) {
-	// Shrink pacing so the test runs in test-time. The ring buffer
-	// is sized by the const so it cannot be shrunk; threshold is
-	// always 100 hits.
-	oldMin, oldMax, oldWindow := subscribePanicBackoffMin, subscribePanicBackoffMax, subscribePanicWindow
-	subscribePanicBackoffMin = time.Microsecond
-	subscribePanicBackoffMax = time.Microsecond
-	subscribePanicWindow = time.Hour
-	t.Cleanup(func() {
-		subscribePanicBackoffMin = oldMin
-		subscribePanicBackoffMax = oldMax
-		subscribePanicWindow = oldWindow
-	})
-
-	var buf bytes.Buffer
-	bufLog := logger.NewWriter(&buf)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	terminated := make(chan struct{})
-	var hitCount atomic.Int32
-
-	go runPanicLoop(ctx, bufLog, &hitCount, terminated)
-
-	select {
-	case <-terminated:
-	case <-time.After(2 * time.Second):
-		t.Fatal("panic loop did not terminate within deadline")
-	}
-
-	// Threshold-many panics drove termination.
-	assert.GreaterOrEqual(t, int(hitCount.Load()), subscribePanicWindowMaxHits,
-		"loop must have processed at least the threshold panics before terminating")
-
-	// Termination log was emitted.
-	dec := json.NewDecoder(bytes.NewReader(buf.Bytes()))
-	const wantMsg = "agentdial subscribe consumer: panic rate exceeded ceiling; terminating consumer"
-	var sawTerminate bool
-	for {
-		var line map[string]any
-		if err := dec.Decode(&line); err != nil {
-			break
-		}
-		if line["level"] == "error" && line["message"] == wantMsg {
-			sawTerminate = true
-			break
-		}
-	}
-	require.True(t, sawTerminate, "expected termination log; got: %s", buf.String())
-}
-
-// runPanicLoop is a structural twin of the consumer goroutine inside
-// Subscribe — same ring buffer, same recover, same threshold. The
-// drainOnce stand-in here always "panics" (returns terminate=false
-// after emulating a recover). If the production consumer's accounting
-// regresses, this test still proves the accounting itself works; the
-// e2e suite covers the integration with *Dialer.
-func runPanicLoop(ctx context.Context, log *logger.Logger, hits *atomic.Int32, done chan struct{}) {
-	defer close(done)
-	var panicTimes [subscribePanicWindowMaxHits]time.Time
-	var panicHead int
-	var lastPanic time.Time
-	backoff := subscribePanicBackoffMin
-	for {
-		// Stand-in for drainOnce: mark a panic, increment counter,
-		// fall through to the recover/backoff path.
-		hits.Add(1)
-		// drainOnce returns terminate=false after a recovered panic,
-		// which is what we emulate.
-		now := time.Now()
-		if !lastPanic.IsZero() && now.Sub(lastPanic) > 30*time.Second {
-			backoff = subscribePanicBackoffMin
-		}
-		lastPanic = now
-		panicTimes[panicHead] = now
-		panicHead = (panicHead + 1) % len(panicTimes)
-		cutoff := now.Add(-subscribePanicWindow)
-		recent := 0
-		for _, t := range panicTimes {
-			if !t.IsZero() && t.After(cutoff) {
-				recent++
-			}
-		}
-		if recent >= subscribePanicWindowMaxHits {
-			log.Error().
-				Int("panic_count", recent).
-				Dur("window", subscribePanicWindow).
-				Msg("agentdial subscribe consumer: panic rate exceeded ceiling; terminating consumer")
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoff):
-		}
-		if backoff < subscribePanicBackoffMax {
-			backoff *= 2
-			if backoff > subscribePanicBackoffMax {
-				backoff = subscribePanicBackoffMax
-			}
-		}
-	}
-}
-
-// TestPanicRingBuffer_Bounded confirms the ring buffer is structurally
-// bounded — len(panicTimes) equals subscribePanicWindowMaxHits and the
-// constant is locked at compile time (the test wouldn't compile if the
-// const were missing or renamed). This is a regression guard for the
-// "panic memory keeps growing" bug Task #5/#6 fixed.
-func TestPanicRingBuffer_Bounded(t *testing.T) {
-	var panicTimes [subscribePanicWindowMaxHits]time.Time
-	assert.Equal(t, 100, len(panicTimes), "panic-time ring buffer must be sized at the documented ceiling")
-}
+// (Panic-ring-buffer tests removed in test cleanup: TestPanicRingBuffer_BoundedMemory
+// was a structural twin of the production consumer that never invoked it, and
+// TestPanicRingBuffer_Bounded asserted len([N]time.Time{}) == N — a compile-time
+// tautology. The agentregistry equivalent (TestSubscribe_PanicStormTerminatesAtThreshold)
+// drives the real consumer through threshold termination and is the canonical
+// regression guard for the ring-buffer accounting.)

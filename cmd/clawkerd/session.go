@@ -453,6 +453,15 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 					Str("event", "session_initial_stdin_write_failed").
 					Str("command_id", rc.id).
 					Msg("write initial_stdin")
+				// Surface to CP so it can distinguish "command ran
+				// against the requested input" from "command ran
+				// against truncated input". Without this, a write
+				// failure shows up only as a (possibly success) Done
+				// with no clue stdin was incomplete — silent semantic
+				// divergence between CP intent and clawkerd execution.
+				s.send(rc.ctx, errResponse(rc.id,
+					clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
+					fmt.Sprintf("initial_stdin write failed: %v", werr)))
 			}
 		}()
 	}
@@ -514,12 +523,12 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	reapWG.Wait()
 	rc.stdinMu.Lock()
 	if !rc.stdinClosed {
-		_ = stdinW.Close()
+		s.closePipeOnce(rc.id, "stdin", stdinW, &closeLogged)
 		rc.stdinClosed = true
 	}
 	rc.stdinMu.Unlock()
-	for _, p := range stagePipes {
-		_ = p.Close()
+	for i, p := range stagePipes {
+		s.closePipeOnce(rc.id, fmt.Sprintf("stage[%d]_stdout", i), p, &closeLogged)
 	}
 
 	// Wait for stdout/stderr drainers to finish so chunks can't

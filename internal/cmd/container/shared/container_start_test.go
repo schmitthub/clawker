@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
@@ -148,20 +146,13 @@ func testRuntimeConfig(projectYAML, settingsYAML string) func() (config.Config, 
 }
 
 // prepareAgentBootstrap was deleted when material delivery moved to
-// CreateContainer (and the AnnounceAgent call moved to
-// BootstrapServicesPreStart). The bootstrap mint + tar + registry
-// write is now exercised by InstallAgentBootstrap; AnnounceAgent's
-// minimal wire shape is exercised in agent_bootstrap_test.go.
-// TestHydraTokenAudienceFromPort_PinnedTo127001 locks the canonical
-// `aud` claim format. Hot-fix fd475fb1 pinned this format after a
-// regression where the audience matched the docker-DNS hostname
-// (`https://clawker-controlplane:<port>/...`) and Hydra rejected the
-// assertion at token exchange time. A regression that re-derives the
-// audience from the network endpoint clawkerd dials would compile and
-// pass every other unit test until manual UAT, so the test exists.
-func TestHydraTokenAudienceFromPort_PinnedTo127001(t *testing.T) {
-	assert.Equal(t, "https://127.0.0.1:4444/oauth2/token", hydraTokenAudienceFromPort(4444))
-	// Different ports thread through unchanged — the constant is the
-	// 127.0.0.1 host + /oauth2/token path, not the port itself.
-	assert.Equal(t, "https://127.0.0.1:7777/oauth2/token", hydraTokenAudienceFromPort(7777))
-}
+// CreateContainer. The bootstrap mint + tar + registry write is now
+// exercised by InstallAgentBootstrapMaterial + RegisterAgentInRegistry;
+// see agent_bootstrap_test.go.
+// (TestHydraTokenAudienceFromPort_PinnedTo127001 removed in test
+// cleanup — the function under test is `fmt.Sprintf("https://127.0.0.1:%d/oauth2/token", port)`,
+// so the test was exercising Sprintf rather than any clawker logic.
+// The regression it guarded — audience mismatching what Hydra
+// expects at token-exchange time — is only catchable end-to-end
+// against a real Hydra; that path lives in test/e2e and the manual
+// UAT flow.)

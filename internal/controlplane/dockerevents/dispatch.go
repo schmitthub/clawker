@@ -108,9 +108,9 @@ func shouldHandleAction(ev events.Message) bool {
 //   - destroy / remove → ContainerRemoved
 //   - die / stop / kill → ContainerStopped
 //   - create / start / restart / unpause → ContainerStarted
-//   - pause → no event published in v1 (no consumer; agent can survive
-//     a paused container window — see agentslots which does NOT evict
-//     on pause)
+//   - pause → no event published in v1 (no consumer; the agent's
+//     registry row + the dialer's runDial reconnect loop both
+//     intentionally survive a paused-container window)
 //
 // Other actions (rename, oom-without-die, health_status without state
 // change) are not republished; the feeder is interested in lifecycle

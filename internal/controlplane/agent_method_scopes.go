@@ -7,9 +7,8 @@ package controlplane
 // to the proto without a scope entry is rejected at runtime — and
 // `TestAgentMethodScopes_CoversAllRPCs` rejects it at build time.
 //
-// AgentService is empty in this branch (Register was retired alongside
-// agentslots/AnnounceAgent). Future inbound clawkerd→CP RPCs add their
-// scope entry here.
+// AgentService proto is empty in this branch. Future inbound
+// clawkerd→CP RPCs add their scope entry here.
 func AgentMethodScopes() map[string]string {
 	return map[string]string{}
 }

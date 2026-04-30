@@ -303,3 +303,121 @@ func TestListener_RejectsBadCN(t *testing.T) {
 	}
 	require.Error(t, err, "listener must reject bad-CN client")
 }
+
+// driveAndRequireError opens a Session, optionally Recv()s once to
+// surface deferred handshake errors (some platforms do not error on
+// the unary Session call itself), and asserts the dial path fails.
+// Used by the three rejection tests below.
+func driveAndRequireError(t *testing.T, conn *grpc.ClientConn, label string) {
+	t.Helper()
+	client := clawkerdv1.NewClawkerdServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	stream, err := client.Session(ctx)
+	if err == nil {
+		_, err = stream.Recv()
+	}
+	require.Error(t, err, label)
+}
+
+// TestListener_RejectsNoClientCert covers the load-bearing
+// RequireAndVerifyClientCert path: a client that presents NO cert at
+// all must be rejected at the TLS layer before any handler runs. This
+// is the entire defense against unauthenticated peers reaching the
+// root-level ShellCommand surface.
+func TestListener_RejectsNoClientCert(t *testing.T) {
+	stack := buildBufconnTLSStack(t)
+	var logBuf bytes.Buffer
+	_, lis := startListenerOnBufconn(t, stack, &logBuf)
+
+	// Empty Certificates slice → client presents nothing during the
+	// TLS handshake. RequireAndVerifyClientCert rejects.
+	tlsCfg := &tls.Config{
+		RootCAs:    stack.caPool,
+		ServerName: "clawker.test.agent",
+		MinVersion: tls.VersionTLS13,
+	}
+	conn, err := grpc.NewClient(
+		"passthrough:///bufconn",
+		grpc.WithContextDialer(func(_ context.Context, _ string) (net.Conn, error) {
+			return lis.Dial()
+		}),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	driveAndRequireError(t, conn, "listener must reject client with no cert")
+}
+
+// TestListener_RejectsUntrustedCAClientCert covers the chain-validation
+// path: a client cert that is structurally valid but signed by a CA
+// the listener does not trust must be rejected at the TLS layer (NOT
+// reach pinPeerCNToCP). Without this, a third-party CA whose key
+// leaked could mint a `ContainerCP`-CN cert and bypass the CN pin.
+func TestListener_RejectsUntrustedCAClientCert(t *testing.T) {
+	stack := buildBufconnTLSStack(t)
+	var logBuf bytes.Buffer
+	_, lis := startListenerOnBufconn(t, stack, &logBuf)
+
+	// Mint a separate, untrusted CA + a client cert under it. The
+	// listener's ClientCAs is the trusted CA's pool only, so the
+	// chain check fails before pinPeerCNToCP runs. CN is set to
+	// ContainerCP to prove the rejection happens at the chain check
+	// (not the CN pin) — defense-in-depth ordering matters.
+	rogueCAKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	rogueSerial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	require.NoError(t, err)
+	now := time.Now()
+	rogueCATmpl := &x509.Certificate{
+		SerialNumber:          rogueSerial,
+		Subject:               pkix.Name{CommonName: "rogue-CA"},
+		NotBefore:             now.Add(-time.Minute),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	rogueCADER, err := x509.CreateCertificate(rand.Reader, rogueCATmpl, rogueCATmpl, &rogueCAKey.PublicKey, rogueCAKey)
+	require.NoError(t, err)
+	rogueCACert, err := x509.ParseCertificate(rogueCADER)
+	require.NoError(t, err)
+
+	rogueClient, _ := signLeaf(t, rogueCACert, rogueCAKey, consts.ContainerCP,
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	// Dial uses the trusted CA pool for server verify (so the dial
+	// can validate the listener's server cert) but presents the
+	// rogue-signed client cert. The listener's ClientCAs rejects.
+	conn := dialBufconn(t, lis, rogueClient, stack.caPool, "clawker.test.agent")
+	driveAndRequireError(t, conn, "listener must reject client cert signed by untrusted CA")
+}
+
+// TestListener_RejectsPlainTCP drives a raw (non-TLS) TCP write into
+// the listener's bufconn endpoint and asserts the server tears the
+// connection down without producing a response. The listener requires
+// TLS handshake; bytes that don't begin a ClientHello are rejected.
+func TestListener_RejectsPlainTCP(t *testing.T) {
+	stack := buildBufconnTLSStack(t)
+	var logBuf bytes.Buffer
+	_, lis := startListenerOnBufconn(t, stack, &logBuf)
+
+	rawConn, err := lis.Dial()
+	require.NoError(t, err)
+	t.Cleanup(func() { rawConn.Close() })
+
+	// Send junk that's structurally not a TLS ClientHello. The server
+	// will read, fail TLS handshake, and close the connection. A
+	// subsequent Read on this side returns an error (typically EOF or
+	// a reset). If the server were to mis-route this to a handler,
+	// the read would either block waiting for a gRPC frame response
+	// or surface a non-error successful read of structured bytes —
+	// both are regressions.
+	require.NoError(t, rawConn.SetDeadline(time.Now().Add(2*time.Second)))
+	_, _ = rawConn.Write([]byte("not a TLS ClientHello\r\n"))
+
+	buf := make([]byte, 64)
+	_, readErr := rawConn.Read(buf)
+	require.Error(t, readErr, "listener must close plain-TCP connection")
+}

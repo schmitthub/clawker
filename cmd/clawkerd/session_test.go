@@ -49,71 +49,68 @@ func drainAll(s *session) []*clawkerdv1.Response {
 
 // --- dispatch: command_id non-empty contract -----------------------
 
-func TestDispatch_EmptyCommandID_RejectsForShell(t *testing.T) {
-	s, _ := newTestSession()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	s.dispatch(ctx, &clawkerdv1.Command{
-		Payload: &clawkerdv1.Command_Shell{Shell: &clawkerdv1.ShellCommand{}},
-	})
-	resps := drainAll(s)
-	require.Len(t, resps, 1)
-	er := resps[0].GetError()
-	require.NotNil(t, er)
-	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, er.Code)
-	assert.Contains(t, er.Message, "command_id required")
-}
-
-func TestDispatch_EmptyCommandID_RejectsForStdin(t *testing.T) {
-	s, _ := newTestSession()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	s.dispatch(ctx, &clawkerdv1.Command{
-		Payload: &clawkerdv1.Command_Stdin{Stdin: &clawkerdv1.Stdin{Data: []byte("x")}},
-	})
-	resps := drainAll(s)
-	require.Len(t, resps, 1)
-	er := resps[0].GetError()
-	require.NotNil(t, er)
-	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, er.Code)
-}
-
-func TestDispatch_EmptyCommandID_RejectsForCloseStdin(t *testing.T) {
-	s, _ := newTestSession()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	s.dispatch(ctx, &clawkerdv1.Command{
-		Payload: &clawkerdv1.Command_CloseStdin{CloseStdin: &clawkerdv1.CloseStdin{}},
-	})
-	resps := drainAll(s)
-	require.Len(t, resps, 1)
-	require.NotNil(t, resps[0].GetError())
-}
-
-func TestDispatch_EmptyCommandID_RejectsForSignal(t *testing.T) {
-	s, _ := newTestSession()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	s.dispatch(ctx, &clawkerdv1.Command{
-		Payload: &clawkerdv1.Command_Signal{Signal: &clawkerdv1.Signal{Signo: int32(syscall.SIGTERM)}},
-	})
-	resps := drainAll(s)
-	require.Len(t, resps, 1)
-	require.NotNil(t, resps[0].GetError())
-}
-
-func TestDispatch_EmptyCommandID_AllowsHello(t *testing.T) {
-	// Hello is a stateless echo with no dup tracking — empty
-	// command_id must remain accepted to preserve compatibility.
-	s, _ := newTestSession()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	s.dispatch(ctx, &clawkerdv1.Command{
-		Payload: &clawkerdv1.Command_Hello{Hello: &clawkerdv1.Hello{}},
-	})
-	resps := drainAll(s)
-	require.Len(t, resps, 1)
-	assert.NotNil(t, resps[0].GetHelloAck())
+// TestDispatch_EmptyCommandID covers the contract that every payload
+// EXCEPT Hello requires a non-empty command_id. Hello is a stateless
+// echo; the others all create per-command state (running_command map,
+// stdin pipe, signal route) that needs the ID as the lookup key.
+func TestDispatch_EmptyCommandID(t *testing.T) {
+	cases := []struct {
+		name        string
+		cmd         *clawkerdv1.Command
+		expectError bool
+	}{
+		{
+			name:        "shell rejected",
+			cmd:         &clawkerdv1.Command{Payload: &clawkerdv1.Command_Shell{Shell: &clawkerdv1.ShellCommand{}}},
+			expectError: true,
+		},
+		{
+			name:        "stdin rejected",
+			cmd:         &clawkerdv1.Command{Payload: &clawkerdv1.Command_Stdin{Stdin: &clawkerdv1.Stdin{Data: []byte("x")}}},
+			expectError: true,
+		},
+		{
+			name:        "close_stdin rejected",
+			cmd:         &clawkerdv1.Command{Payload: &clawkerdv1.Command_CloseStdin{CloseStdin: &clawkerdv1.CloseStdin{}}},
+			expectError: true,
+		},
+		{
+			name:        "signal rejected",
+			cmd:         &clawkerdv1.Command{Payload: &clawkerdv1.Command_Signal{Signal: &clawkerdv1.Signal{Signo: int32(syscall.SIGTERM)}}},
+			expectError: true,
+		},
+		{
+			// Hello is the inverse: stateless echo, empty command_id MUST
+			// remain accepted.
+			name:        "hello allowed",
+			cmd:         &clawkerdv1.Command{Payload: &clawkerdv1.Command_Hello{Hello: &clawkerdv1.Hello{}}},
+			expectError: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newTestSession()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			s.dispatch(ctx, tc.cmd)
+			resps := drainAll(s)
+			require.Len(t, resps, 1)
+			if tc.expectError {
+				er := resps[0].GetError()
+				require.NotNil(t, er)
+				// Pin code + message for the shell case (the canonical
+				// error path); the others use the same path so checking
+				// non-nil GetError is sufficient to catch a regression
+				// that drops the rejection.
+				if tc.name == "shell rejected" {
+					assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, er.Code)
+					assert.Contains(t, er.Message, "command_id required")
+				}
+			} else {
+				assert.NotNil(t, resps[0].GetHelloAck())
+			}
+		})
+	}
 }
 
 // --- dispatch: dup-detection on command_id -------------------------

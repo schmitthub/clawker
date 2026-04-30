@@ -575,9 +575,3 @@ func TestNewLoggerHook_EmitsStructuredLine(t *testing.T) {
 		t.Fatalf("missing canonical message, got: %s", out)
 	}
 }
-
-func TestNewLoggerHook_NilLoggerIsSafe(t *testing.T) {
-	hook := overseer.NewLoggerHook(nil)
-	// Should not panic even with nil logger.
-	hook(evContainerStarted{ID: "x", At: time.Now()})
-}

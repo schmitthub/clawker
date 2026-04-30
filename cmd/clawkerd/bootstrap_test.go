@@ -70,8 +70,3 @@ func TestReadBootstrap_EmptyFile(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty")
 }
-
-func TestBuildDialTLSConfig_RejectsBadKeypair(t *testing.T) {
-	_, err := buildDialTLSConfig([]byte("not-a-cert"), []byte("not-a-key"), []byte("ca"))
-	require.Error(t, err)
-}

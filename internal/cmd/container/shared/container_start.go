@@ -28,14 +28,14 @@ type CommandOpts struct {
 
 	// AgentName is the user-typed short agent name (e.g. "dev", "test").
 	// NOT the canonical "clawker.project.agent" form — the canonical name
-	// is composed downstream (in MintAgentCert / on the CP side) from
-	// (Project, AgentName) so it has a single home. New-container start
-	// paths MUST set this; without it ContainerStart skips the announce
-	// + bootstrap-delivery and the entrypoint silently skips clawkerd
-	// launch. Existing-container start/restart paths leave it empty by
-	// design — those containers' slots either already exist (and clawkerd
-	// is reconnecting, future B5 work) or were intentionally never
-	// registered.
+	// is composed downstream (in MintAgentCert and as the registry row's
+	// canonical_cn column) from (Project, AgentName) so it has a single
+	// home. New-container start paths MUST set this; without it
+	// ContainerStart skips the bootstrap-delivery + registry-write and
+	// the entrypoint silently skips clawkerd launch. Existing-container
+	// start/restart paths leave it empty by design — those containers'
+	// registry rows already exist (the CP-side agentdial picks up where
+	// it left off) or were intentionally never registered.
 	AgentName string
 
 	// Project is the clawker project slug the agent runs under, paired

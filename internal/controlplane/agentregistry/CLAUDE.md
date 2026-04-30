@@ -38,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_name_project ON agents(project, agent_name);
 
 ### Schema apply is transactional
 
-The `CREATE TABLE` + `CREATE INDEX` block runs inside an explicit `BEGIN/COMMIT` so an interrupted apply (process crash mid-DDL) leaves the DB in a coherent state. A pre-Task-01 `agents` table that lacks the `canonical_cn` column is detected via `PRAGMA table_info(agents)` and dropped+recreated on the next writer open. This is alpha-policy: the registry is regenerable on the next clawker run/start, and a forced re-Register beats a partial migration. The drop is logged at Warn so operators see it.
+The `CREATE TABLE` + `CREATE INDEX` block runs inside an explicit `BEGIN/COMMIT` so an interrupted apply (process crash mid-DDL) leaves the DB in a coherent state. A pre-Task-01 `agents` table that lacks the `canonical_cn` column is detected via `PRAGMA table_info(agents)` and dropped+recreated on the next writer open. This is alpha-policy: the registry is regenerable on the next clawker run/start, and a forced re-create of every affected container beats a partial migration. The drop is logged at Warn so operators see it.
 
 ## Identity contract
 
@@ -74,7 +74,7 @@ type Entry struct {
 type Registry interface {
     Add(entry Entry) error                                            // Validates + persists; returns err on malformed identity OR sqlite write failure.
     Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)   // CN-gated identity resolution (IdentityInterceptor).
-    LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error)  // No CN check; used by Register handler's existing-thumbprint REJECT.
+    LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error)  // No CN check; symmetric peer of LookupByContainerID, kept for any future direct-thumbprint lookup.
     LookupByContainerID(containerID string) (*Entry, error)           // Used by agentdial post-handshake provenance lookup.
     EvictByContainerID(containerID string) error                      // Returns underlying DELETE error so callers log-and-proceed.
     Snapshot() []Entry

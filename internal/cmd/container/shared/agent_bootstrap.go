@@ -171,8 +171,8 @@ type InstallAgentBootstrapOptions struct {
 	CopyToContainer CopyToContainerFn
 	// RegistryDBPath is the host-fs path to the agentregistry sqlite
 	// DB. The CLI is the sole authoritative writer; the row is
-	// inserted before this function returns so AnnounceAgent / agentdial
-	// can read it on the next start.
+	// inserted before this function returns so the CP-side agentdial
+	// post-handshake provenance lookup can find it on the next start.
 	RegistryDBPath string
 	// Logger receives a single info line on success and any audit
 	// breadcrumbs from agentregistry. Required.
@@ -263,10 +263,11 @@ func RegisterAgentInRegistry(ctx context.Context, opts InstallAgentBootstrapOpti
 }
 
 // validate ensures every load-bearing bootstrap field is populated
-// before the CLI commits to a Hydra-published slot or a tar copy. Empty
-// values would let an Announce slot reserve with no PKCE binding or a
-// container start with empty cert/key files — both fail later but with
-// confusing diagnostics, so reject up front.
+// before the CLI commits to writing a registry row or copying material
+// into the container. Empty values would let a registry row land with
+// no thumbprint binding or a container start with empty cert/key
+// files — both fail later but with confusing diagnostics, so reject
+// up front.
 func (b *AgentBootstrap) validate() error {
 	if b == nil {
 		return fmt.Errorf("bootstrap is nil")
