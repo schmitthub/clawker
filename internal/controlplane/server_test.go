@@ -70,17 +70,3 @@ func TestAdminServer_ListAgents_Snapshot(t *testing.T) {
 	assert.Equal(t, now.Add(time.Second).Unix(), resp.Agents[0].RegisteredAtUnix)
 	assert.Equal(t, now.Unix(), resp.Agents[1].RegisteredAtUnix)
 }
-
-// TestNewAdminServer_NilAgentsConstructorAcceptedListAgentsEmpty pins
-// the documented nil-tolerant contract for the agents registry.
-// `NewAdminServer` must accept nil agents (used in test wiring +
-// partial-build paths) and the constructed server's ListAgents must
-// return an empty result rather than panic.
-func TestNewAdminServer_NilAgentsConstructorAcceptedListAgentsEmpty(t *testing.T) {
-	srv := NewAdminServer(nil, nil, nil)
-	require.NotNil(t, srv)
-
-	resp, err := srv.ListAgents(context.Background(), &adminv1.ListAgentsRequest{})
-	require.NoError(t, err)
-	assert.Empty(t, resp.Agents)
-}

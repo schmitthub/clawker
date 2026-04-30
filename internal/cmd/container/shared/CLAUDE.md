@@ -174,7 +174,7 @@ Returns `mobyClient.ContainerStartResult` from the Docker start call. Errors at 
 | Type | Purpose |
 |------|---------|
 | `ContainerOptions` | All container CLI flags — basic, env, volumes, networking, resources, security, health, runtime, devices |
-| `CommandOpts` | DI container with lazy function closures (Client, Config, ProjectManager, HostProxy, ControlPlane, AdminClient, SocketBridge, Logger) plus per-call AgentName + Project for the announce/bootstrap path |
+| `CommandOpts` | DI container with lazy function closures (Client, Config, ProjectManager, HostProxy, ControlPlane, AdminClient, SocketBridge, Logger) plus per-call AgentName + Project for the bootstrap path |
 | `CreateContainerConfig` | All inputs: Client, Config, Options, Flags, ProjectManager, HostProxy, Logger, Version, color flags |
 | `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
 | `CreateContainerEvent` | Channel event: Step, Status, Type, Message |

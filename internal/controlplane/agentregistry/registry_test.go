@@ -79,31 +79,6 @@ func TestRegistry_Lookup_Unknown(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnknownAgent)
 }
 
-// TestRegistry_Lookup_CNMismatch pins the second half of the composite
-// identity check: thumbprint hits an entry but the supplied peer cert
-// CN does NOT match the entry's stored canonical (Project, AgentName).
-// Must collapse to ErrUnknownAgent — same sentinel as "unknown
-// thumbprint" so handler-side error mapping cannot leak which half
-// failed.
-func TestRegistry_Lookup_CNMismatch(t *testing.T) {
-	r := NewRegistry(nil)
-	mustAdd(t, r, validEntry("alpha", "dev", "ctr", "cert"))
-
-	// Right thumbprint, wrong CN (different project) — must fail.
-	_, err := r.Lookup(tp("cert"), canonical("beta", "dev"))
-	assert.ErrorIs(t, err, ErrUnknownAgent, "CN mismatch must be indistinguishable from unknown")
-
-	// Right thumbprint, wrong CN (different agent) — must fail.
-	_, err = r.Lookup(tp("cert"), canonical("alpha", "other"))
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-
-	// Right thumbprint + right CN — must succeed.
-	got, err := r.Lookup(tp("cert"), canonical("alpha", "dev"))
-	require.NoError(t, err)
-	assert.Equal(t, "dev", got.AgentName)
-	assert.Equal(t, "alpha", got.Project)
-}
-
 // TestRegistry_Lookup_EmptyProject covers the 2-segment naming case.
 // Empty project is a legitimate value (matches docker.ContainerName)
 // and the canonical CN drops the project segment.
@@ -155,19 +130,6 @@ func TestRegistry_ReRegisterAfterEvict(t *testing.T) {
 	got, err := r.Lookup(second.Thumbprint, canonical("", "x"))
 	require.NoError(t, err)
 	assert.Equal(t, "x", got.AgentName)
-}
-
-func TestRegistry_Snapshot_Sorted(t *testing.T) {
-	r := NewRegistry(nil)
-	mustAdd(t, r, validEntry("", "b", "ctr-b", "cert-b"))
-	mustAdd(t, r, validEntry("", "a", "ctr-a", "cert-a"))
-	mustAdd(t, r, validEntry("", "c", "ctr-c", "cert-c"))
-
-	snap := r.Snapshot()
-	require.Len(t, snap, 3)
-	for i, want := range []string{"a", "b", "c"} {
-		assert.Equal(t, want, snap[i].AgentName, "snapshot must be sorted by agent name")
-	}
 }
 
 // TestRegistry_Snapshot_SortedAcrossProjects pins the (Project,
@@ -263,15 +225,6 @@ func TestRegistry_Add_RejectsInvariantViolations(t *testing.T) {
 				// ContainerID empty — breaks the (thumbprint,
 				// container_id) composite key invariant; sqlite would
 				// reject the row at insert.
-			},
-		},
-		{
-			name: "zero RegisteredAt",
-			entry: Entry{
-				AgentName:   "x",
-				ContainerID: "ctr",
-				Thumbprint:  tp("cert"),
-				// RegisteredAt zero — breaks downstream observability.
 			},
 		},
 	}

@@ -117,9 +117,9 @@ type Registry interface {
 	LookupByThumbprint(thumbprint [sha256.Size]byte) (*Entry, error)
 	// LookupByContainerID returns the entry whose ContainerID matches,
 	// without any CN cross-check. Used by agentdial post-handshake to
-	// look up the registry row keyed by container_id and emit
-	// Provenance fields (RegistryMatch / Miss / ThumbprintMismatch /
-	// CNMismatch) on the SessionConnected event payload. The dialer
+	// look up the registry row keyed by container_id and emit the
+	// Provenance.RegistryOutcome enum (Match / Miss / ThumbprintMismatch
+	// / CNMismatch) on the SessionConnected event payload. The dialer
 	// performs the thumbprint + CN comparisons against the returned
 	// entry itself; this read intentionally does not gate on either
 	// so a mismatch surfaces as a typed event field rather than as

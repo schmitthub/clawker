@@ -258,10 +258,10 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 		// Anything else (peer EOF, transport break from laptop sleep,
 		// stream error) drops back into the loop to re-establish.
 		// publishBroken itself skips on ctx-done (defense in depth);
-		// the local check here also suppresses the "reconnecting"
-		// log line and prevents the loop from spinning for one more
-		// iteration.
-		if ctx.Err() != nil || drain.Outcome == drainCtxCanceled {
+		// shouldReconnect is the single decision point and the only
+		// thing the unit test for the reconnect-vs-teardown contract
+		// pins down.
+		if !shouldReconnect(ctx, drain) {
 			return
 		}
 		d.publishBroken(ctx, containerID, res.Agent, res.Project, res.Addr, drain.Reason)
@@ -270,6 +270,22 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 			Str("reason", drain.Reason).
 			Msg("CP→clawkerd Session broken; will reconnect")
 	}
+}
+
+// shouldReconnect classifies the post-drain decision: re-enter
+// establishWithRetry (true) or return from runDial (false). False
+// on intentional teardown — parent ctx cancelled (CP shutdown) or
+// drain reported the same outcome — so neither SessionBroken nor a
+// fresh establish cycle is published while the bus is on its way
+// down. Pure function; unit-testable independent of the dial path.
+func shouldReconnect(ctx context.Context, drain drainResult) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if drain.Outcome == drainCtxCanceled {
+		return false
+	}
+	return true
 }
 
 // closeAndCheckLeak closes the conn and tracks consecutive close
@@ -472,8 +488,7 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 // captured during the TLS handshake via VerifyPeerCertificate that
 // always returns nil — the dialer is permissive and never aborts on
 // cert grounds. The caller fills the registry-related fields
-// (RegistryMatch / Miss / ThumbprintMismatch / CNMismatch) and
-// CNPinMatch in fillRegistryProvenance.
+// (RegistryOutcome enum + CNPinMatch) in fillRegistryProvenance.
 //
 // The dial step is intentionally NOT wrapped with the addr — the
 // caller already carries dial_target as a structured log field,
@@ -561,15 +576,11 @@ func clawkerNetAddr(c mobycontainer.InspectResponse) (string, error) {
 // SessionConnected event payload. Subscribers consume the typed
 // fields to enact policy.
 //
-// Mutual exclusion (per Provenance godoc):
-//   - RegistryMatch       — row exists, thumbprint AND canonical_cn agree
-//   - ThumbprintMismatch  — row exists, thumbprint disagrees
-//   - CNMismatch          — row exists, thumbprint agrees, canonical_cn disagrees
-//   - RegistryMiss        — no row for this container_id
-//
-// Lookup errors that are NOT "no such row" set Reason instead — these
-// indicate a sqlite/IO regression and should be visible to operators
-// even though the connection still proceeds.
+// RegistryOutcome is the load-bearing field; exactly one value is set
+// per call. Lookup errors that are NOT "no such row" leave the outcome
+// unset and surface via Reason — these indicate a sqlite/IO regression
+// and should be visible to operators even though the connection still
+// proceeds.
 func (d *Dialer) fillRegistryProvenance(prov *Provenance, containerID, project, agent string) {
 	prov.CNPinMatch = computeCNPinMatch(prov.PeerCN, project, agent)
 
@@ -591,7 +602,7 @@ func (d *Dialer) fillRegistryProvenance(prov *Provenance, containerID, project, 
 		return
 	}
 	if entry == nil {
-		prov.RegistryMiss = true
+		prov.RegistryOutcome = RegistryOutcomeMiss
 		return
 	}
 
@@ -600,26 +611,26 @@ func (d *Dialer) fillRegistryProvenance(prov *Provenance, containerID, project, 
 		copy(peerThumb[:], prov.PeerThumbprint)
 	}
 	if entry.Thumbprint != peerThumb {
-		prov.ThumbprintMismatch = true
+		prov.RegistryOutcome = RegistryOutcomeThumbprintMismatch
 		return
 	}
 
 	expectedCN, cnErr := canonicalCNFromStrings(entry.Project, entry.AgentName)
 	if cnErr != nil {
 		// Registry row carries malformed Project/AgentName — surface as
-		// Reason; do NOT set RegistryMatch (we can't confirm CN) and
-		// do NOT set CNMismatch (we don't have a valid expected CN to
-		// compare against).
+		// Reason; leave RegistryOutcome unset so subscribers see this
+		// as a registry-side data corruption, not a normal cross-check
+		// outcome.
 		if prov.Reason == "" {
 			prov.Reason = "registry row CN compose failed: " + cnErr.Error()
 		}
 		return
 	}
 	if expectedCN != prov.PeerCN {
-		prov.CNMismatch = true
+		prov.RegistryOutcome = RegistryOutcomeCNMismatch
 		return
 	}
-	prov.RegistryMatch = true
+	prov.RegistryOutcome = RegistryOutcomeMatch
 }
 
 // computeCNPinMatch reports whether peerCN equals the canonical agent

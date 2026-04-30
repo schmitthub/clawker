@@ -1,6 +1,6 @@
 # agentregistry Package
 
-Persisted record of (cert thumbprint, container_id, project, agent_name, canonical_cn) for every clawker-managed container. Rows are written by the CLI at container create time alongside auth material delivery. Consumed by `agent.IdentityInterceptor` (every non-Connect AgentPort RPC), `AdminService.ListAgents`, and the local-read `clawker controlplane agents` CLI. Eviction is owned by the CP: startup `Reap` against live docker state, plus dockerevents `DeltaRemoved` (destroy) in steady state.
+Persisted record of (cert thumbprint, container_id, project, agent_name, canonical_cn) for every clawker-managed container. Rows are written by the CLI at container create time alongside auth material delivery. Consumed by `agent.IdentityInterceptor` (every non-opted-out AgentPort RPC — opt-out roster is empty in this branch since AgentService has no inbound RPCs), `AdminService.ListAgents`, and the local-read `clawker controlplane agents` CLI. Eviction is owned by the CP: startup `Reap` against live docker state, plus dockerevents `ContainerRemoved` (destroy) in steady state.
 
 ## Backing store: sqlite (cache-less)
 
@@ -50,7 +50,7 @@ Add takes string `Project` + `AgentName` on `Entry` and validates them via `auth
 
 A row exists ⇔ the named container exists in docker (running OR stopped). Eviction triggers narrowed to:
 
-- **`docker rm` (DeltaRemoved)** — steady-state, driven by the dockerevents subscription. Container is gone for good, row is orphaned.
+- **`docker rm` (`dockerevents.ContainerRemoved`)** — steady-state, driven by the dockerevents subscription. Container is gone for good, row is orphaned.
 - **CP startup reap** — `agentregistry.Reap(ctx, reg, lister, log)` lists every `purpose=agent` container with `All: true` (running + stopped + exited) and evicts every row whose container_id is missing. Heals the registry against `docker rm` events that landed while the CP was down.
 
 Stop/die/kill do NOT evict — a stopped container can be `docker start`-ed back into life and the row should pick up where it left off.

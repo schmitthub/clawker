@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
-
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 )
 
 // reconcile rebuilds the managed-container and managed-network sets
@@ -60,7 +58,7 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 	for _, c := range containers.Items {
 		f.containers[c.ID] = true
 		if ev := containerEventFromState(c.State, c.ID, c, now); ev != nil {
-			overseer.Publish(f.bus, ev)
+			f.publishContainerEvent(ev, c.ID)
 		}
 	}
 
@@ -81,11 +79,11 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 			if !f.networks[ep.NetworkID] {
 				continue
 			}
-			overseer.Publish(f.bus, NetworkAttached{
+			f.publishNetworkEvent(NetworkAttached{
 				ContainerID: c.ID,
 				NetworkID:   ep.NetworkID,
 				At:          now,
-			})
+			}, c.ID, ep.NetworkID)
 		}
 	}
 

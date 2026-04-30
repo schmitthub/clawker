@@ -31,6 +31,17 @@ var (
 	subscribePanicWindow     = 5 * time.Minute
 )
 
+// subscribeEvictEscalationThreshold is the number of consecutive
+// EvictByContainerID failures the consumer will log at Warn before
+// escalating to a single Error. Sustained sqlite write failures (disk
+// full, schema corruption, FS read-only after a host event) would
+// otherwise leak orphan rows indefinitely on a long-running CP — the
+// next reap only fires at CP restart, which may never come on a
+// stable host. Escalation surfaces the situation to operators while
+// the consumer keeps running so a transient blip recovers cleanly.
+// Reset on the first successful evict.
+var subscribeEvictEscalationThreshold = 5
+
 // Subscribe wires the registry to dockerevents.ContainerRemoved
 // events published on the Overseer bus. The returned cleanup must be
 // deferred by the caller; it cancels the bus subscription and waits
@@ -126,9 +137,9 @@ func Subscribe(ctx context.Context, reg Registry, bus *overseer.Overseer, log *l
 	}
 }
 
-func handleEvent(ev dockerevents.ContainerRemoved, reg Registry, log *logger.Logger) {
+func handleEvent(ev dockerevents.ContainerRemoved, reg Registry, log *logger.Logger) error {
 	if ev.ID == "" {
-		return
+		return nil
 	}
 	// Eviction is best-effort here: we cannot retry from a bus
 	// consumer (the next event is already queued), so log the error
@@ -139,7 +150,9 @@ func handleEvent(ev dockerevents.ContainerRemoved, reg Registry, log *logger.Log
 			Err(err).
 			Str("container_id", ev.ID).
 			Msg("agentregistry: evict-on-delete failed; row may persist until next reap")
+		return err
 	}
+	return nil
 }
 
 // drainOnce runs the typed-event consumer until ctx is done, the
@@ -148,6 +161,12 @@ func handleEvent(ev dockerevents.ContainerRemoved, reg Registry, log *logger.Log
 // closed) and false when it should be restarted (panic recovered).
 // Split out from Subscribe so the deferred recover has its own stack
 // frame.
+//
+// Tracks consecutive evict failures so a sustained sqlite write
+// failure doesn't decay into a silent row leak: once the threshold
+// is hit the consumer emits a single Error line and continues. The
+// counter resets on the first successful evict so a transient blip
+// recovers cleanly.
 func drainOnce(ctx context.Context, ch <-chan dockerevents.ContainerRemoved, reg Registry, log *logger.Logger) (terminate bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -155,6 +174,8 @@ func drainOnce(ctx context.Context, ch <-chan dockerevents.ContainerRemoved, reg
 			terminate = false
 		}
 	}()
+	consecutiveEvictFailures := 0
+	escalated := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -163,7 +184,18 @@ func drainOnce(ctx context.Context, ch <-chan dockerevents.ContainerRemoved, reg
 			if !ok {
 				return true
 			}
-			handleEvent(ev, reg, log)
+			if err := handleEvent(ev, reg, log); err != nil {
+				consecutiveEvictFailures++
+				if !escalated && consecutiveEvictFailures >= subscribeEvictEscalationThreshold {
+					log.Error().
+						Int("consecutive_failures", consecutiveEvictFailures).
+						Msg("agentregistry: sustained evict failures; rows are leaking and will not heal until restart-time Reap")
+					escalated = true
+				}
+			} else {
+				consecutiveEvictFailures = 0
+				escalated = false
+			}
 		}
 	}
 }

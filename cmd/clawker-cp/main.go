@@ -720,8 +720,38 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		// Initial path: dial every already-running agent container at
 		// CP boot. Runs in its own goroutine — must NOT block CP
 		// readiness, must NOT fail CP if listAgentIDs errors.
+		//
+		// A single failed list strands every container that was already
+		// running at CP boot — those containers' ContainerStarted
+		// events fired before the dockerevents subscription started, so
+		// the runtime path won't pick them up either. Retry with
+		// bounded backoff (3 × 100/200/400ms, mirroring the reaper's
+		// listWithRetry pattern) absorbs the transient docker-daemon
+		// hiccup that's the dominant failure mode at boot.
 		go func() {
-			initialAgents, listErr := listAgentIDs(watcherCtx, listAgentsOpts{})
+			const maxAttempts = 3
+			backoff := 100 * time.Millisecond
+			var initialAgents []string
+			var listErr error
+			for attempt := 1; attempt <= maxAttempts; attempt++ {
+				initialAgents, listErr = listAgentIDs(watcherCtx, listAgentsOpts{})
+				if listErr == nil {
+					if attempt > 1 {
+						log.Info().Int("attempt", attempt).Str("event", "agentdial_initial_list_recovered").Msg("list agent containers recovered after retry")
+					}
+					break
+				}
+				if attempt == maxAttempts {
+					break
+				}
+				log.Warn().Err(listErr).Int("attempt", attempt).Dur("backoff", backoff).Str("event", "agentdial_initial_list_retry").Msg("list agent containers failed; retrying")
+				select {
+				case <-watcherCtx.Done():
+					return
+				case <-time.After(backoff):
+				}
+				backoff *= 2
+			}
 			if listErr != nil {
 				log.Error().Err(listErr).Str("event", "agentdial_initial_list_failed").Msg("list agent containers")
 				return

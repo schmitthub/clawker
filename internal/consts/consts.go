@@ -245,8 +245,7 @@ const (
 
 // Auth scopes (for gRPC method authorization).
 const (
-	ScopeAdmin         = "admin"
-	ScopeAgentAnnounce = "agent:announce"
+	ScopeAdmin = "admin"
 	// ScopeAgentSelfRegister gates clawkerd's calls on AgentService.
 	// AgentService proto is empty in this branch; Hydra still grants
 	// this scope so future inbound clawkerd→CP RPCs land with the

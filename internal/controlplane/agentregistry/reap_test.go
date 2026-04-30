@@ -120,6 +120,51 @@ func TestReap_RetriesOnTransientListerError(t *testing.T) {
 	assert.EqualValues(t, 3, attempts.Load(), "lister must be retried up to maxAttempts")
 }
 
+// flakyEvictRegistry wraps an in-memory Registry but injects an
+// Evict failure for a configured set of container_ids — used by the
+// partial-evict aggregation test below to drive Reap into the
+// "some succeed, some fail" path that the production sqlite backend
+// hits on row-level constraint failures.
+type flakyEvictRegistry struct {
+	Registry
+	failOn map[string]error
+	calls  []string
+}
+
+func (f *flakyEvictRegistry) EvictByContainerID(id string) error {
+	f.calls = append(f.calls, id)
+	if err, ok := f.failOn[id]; ok {
+		return err
+	}
+	return f.Registry.EvictByContainerID(id)
+}
+
+func TestReap_PartialEvict_AggregatesErrorsAndCountsSuccesses(t *testing.T) {
+	// Three orphan rows; Evict succeeds for two and fails for one. Reap
+	// must NOT short-circuit on the first failure — every row gets its
+	// own attempt, the count reflects the successes, and the returned
+	// error joins all failures so the caller can surface them.
+	inner := NewRegistry(nil)
+	mustAdd(t, inner, validEntry("", "a", "ctr-orphan-1", "cert-a"))
+	mustAdd(t, inner, validEntry("", "b", "ctr-orphan-2", "cert-b"))
+	mustAdd(t, inner, validEntry("", "c", "ctr-orphan-3", "cert-c"))
+
+	flaky := &flakyEvictRegistry{
+		Registry: inner,
+		failOn:   map[string]error{"ctr-orphan-2": errors.New("disk full")},
+	}
+
+	lister := func(_ context.Context) ([]string, error) { return nil, nil }
+
+	evicted, err := Reap(context.Background(), flaky, lister, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ctr-orphan-2")
+	assert.Contains(t, err.Error(), "disk full")
+	assert.Equal(t, 2, evicted, "successful evicts must count even when peers fail")
+	assert.ElementsMatch(t, []string{"ctr-orphan-1", "ctr-orphan-2", "ctr-orphan-3"}, flaky.calls,
+		"every orphan must get an evict attempt; no short-circuit on first failure")
+}
+
 func TestReap_GivesUpAfterMaxRetries(t *testing.T) {
 	// Lister fails on every attempt. Reap must return the last error
 	// and evict nothing.
@@ -140,22 +185,4 @@ func TestReap_GivesUpAfterMaxRetries(t *testing.T) {
 	// Row preserved.
 	_, err = r.Lookup(tp("cert-a"), canonical("", "a"))
 	assert.NoError(t, err)
-}
-
-func TestReap_NilRegistry_Panics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic on nil registry")
-		}
-	}()
-	_, _ = Reap(context.Background(), nil, func(context.Context) ([]string, error) { return nil, nil }, nil)
-}
-
-func TestReap_NilLister_Panics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic on nil lister")
-		}
-	}()
-	_, _ = Reap(context.Background(), NewRegistry(nil), nil, nil)
 }

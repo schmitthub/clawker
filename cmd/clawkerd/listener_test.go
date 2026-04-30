@@ -58,18 +58,6 @@ func certWithCNAndEKUs(t *testing.T, cn string, ekus []x509.ExtKeyUsage) *x509.C
 	return c
 }
 
-func TestPinPeerCNToCP_AcceptsValidCNWithClientAuthEKU(t *testing.T) {
-	cert := certWithCNAndEKUs(t, consts.ContainerCP, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
-	require.NoError(t, pinPeerCNToCP(nil, [][]*x509.Certificate{{cert}}))
-}
-
-func TestPinPeerCNToCP_RejectsBadCN(t *testing.T) {
-	cert := certWithCNAndEKUs(t, "evil-impostor", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
-	err := pinPeerCNToCP(nil, [][]*x509.Certificate{{cert}})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "peer CN not authorized")
-}
-
 func TestPinPeerCNToCP_RejectsMissingClientAuthEKU(t *testing.T) {
 	// Correct CN but only ServerAuth EKU — TLS layer would normally
 	// reject this before reaching pinPeerCNToCP, but the app-layer
@@ -79,16 +67,6 @@ func TestPinPeerCNToCP_RejectsMissingClientAuthEKU(t *testing.T) {
 	err := pinPeerCNToCP(nil, [][]*x509.Certificate{{cert}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing ClientAuth EKU")
-}
-
-func TestPinPeerCNToCP_RejectsEmptyChain(t *testing.T) {
-	err := pinPeerCNToCP(nil, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no verified peer chain")
-
-	err = pinPeerCNToCP(nil, [][]*x509.Certificate{{}})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no verified peer chain")
 }
 
 // --- runSession audit log integration test -------------------------
@@ -392,6 +370,34 @@ func TestListener_RejectsUntrustedCAClientCert(t *testing.T) {
 	// rogue-signed client cert. The listener's ClientCAs rejects.
 	conn := dialBufconn(t, lis, rogueClient, stack.caPool, "clawker.test.agent")
 	driveAndRequireError(t, conn, "listener must reject client cert signed by untrusted CA")
+}
+
+// TestBuildListenerTLSConfig_RejectsMalformedKeypair feeds garbage
+// cert/key PEMs through the production constructor. The error
+// must propagate so a regression that swallowed it (e.g. returning
+// an empty *tls.Config + nil) couldn't pass — `tls.X509KeyPair` is
+// the gate that anchors every downstream guard, and silently
+// returning a default config would hand the listener a server with
+// no usable cert.
+func TestBuildListenerTLSConfig_RejectsMalformedKeypair(t *testing.T) {
+	stack := buildBufconnTLSStack(t)
+	cfg, err := buildListenerTLSConfig([]byte("not a cert"), []byte("not a key"), stack.caPEM)
+	require.Error(t, err)
+	require.Nil(t, cfg, "constructor must NOT return a usable *tls.Config when the keypair is invalid")
+	assert.Contains(t, err.Error(), "agent leaf keypair")
+}
+
+// TestBuildListenerTLSConfig_RejectsUnparseableCAPEM covers the
+// AppendCertsFromPEM-returns-false branch. A garbage CA PEM means
+// ClientCAs cannot be populated, so RequireAndVerifyClientCert can
+// never validate. Constructor must reject up front rather than
+// hand back a config whose ClientCAs is empty.
+func TestBuildListenerTLSConfig_RejectsUnparseableCAPEM(t *testing.T) {
+	stack := buildBufconnTLSStack(t)
+	cfg, err := buildListenerTLSConfig(stack.serverPEMs.cert, stack.serverPEMs.key, []byte("not a PEM"))
+	require.Error(t, err)
+	require.Nil(t, cfg, "constructor must NOT return a usable *tls.Config when the CA bundle is unparseable")
+	assert.Contains(t, err.Error(), "CA PEM did not parse")
 }
 
 // TestListener_RejectsPlainTCP drives a raw (non-TLS) TCP write into

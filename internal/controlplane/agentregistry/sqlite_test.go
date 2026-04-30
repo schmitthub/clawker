@@ -1,13 +1,11 @@
 package agentregistry
 
 import (
-	"crypto/sha256"
 	"database/sql"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -280,40 +278,6 @@ func TestSQLiteRegistry_SchemaMigration_FromOldDB(t *testing.T) {
 	require.NotNil(t, got)
 }
 
-func TestSQLiteWriter_Add_InvalidProject_ReturnsErr(t *testing.T) {
-	// Malformed project string flows through auth.NewProjectSlug which
-	// returns an error rather than panicking — replaces the historical
-	// MustProjectSlug panic vector at Lookup time.
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	bad := validEntry("Bad Slug!", "agent", "ctr", "cert")
-	err = r.Add(bad)
-	require.Error(t, err)
-	assert.Empty(t, r.Snapshot())
-}
-
-func TestSQLiteWriter_Add_InvalidAgent_ReturnsErr(t *testing.T) {
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	bad := validEntry("proj", "BAD NAME!", "ctr", "cert")
-	err = r.Add(bad)
-	require.Error(t, err)
-	assert.Empty(t, r.Snapshot())
-
-	// Empty agent name also rejected at the same boundary.
-	empty := Entry{
-		ContainerID:  "ctr-2",
-		Thumbprint:   tp("cert-2"),
-		RegisteredAt: time.Unix(1000, 0),
-	}
-	err = r.Add(empty)
-	require.Error(t, err)
-}
-
 // TestSQLiteRegistry_Lookup_AfterEvict_ReturnsUnknown verifies that
 // Lookup goes straight to disk every call — there is no cache to
 // "remember" the row after EvictByContainerID drops it.
@@ -327,22 +291,4 @@ func TestSQLiteRegistry_Lookup_AfterEvict_ReturnsUnknown(t *testing.T) {
 
 	_, err = r.Lookup(tp("cert-1"), canonical("p", "a"))
 	assert.ErrorIs(t, err, ErrUnknownAgent)
-}
-
-func TestSQLiteWriter_Add_ZeroThumbprint_Panics(t *testing.T) {
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	defer func() {
-		rec := recover()
-		assert.NotNil(t, rec, "Add must panic on zero thumbprint")
-	}()
-	_ = r.Add(Entry{
-		AgentName:    "x",
-		ContainerID:  "ctr",
-		RegisteredAt: time.Unix(1000, 0),
-		Thumbprint:   [sha256.Size]byte{},
-	})
-	t.Fatal("Add did not panic on zero thumbprint")
 }

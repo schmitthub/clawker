@@ -177,8 +177,7 @@ func TestCapturePeerProvenance_BadCertBytes_SetsReason(t *testing.T) {
 }
 
 // --- fillRegistryProvenance: registry-row cross-check ---------------
-// Populates RegistryMatch / Miss / ThumbprintMismatch / CNMismatch
-// based on agentregistry.LookupByContainerID.
+// Populates Provenance.RegistryOutcome via agentregistry.LookupByContainerID.
 
 func TestFillRegistryProvenance_RegistryMatch(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer-cert-bytes"))
@@ -201,10 +200,7 @@ func TestFillRegistryProvenance_RegistryMatch(t *testing.T) {
 	}
 	d.fillRegistryProvenance(&prov, "ctr-1", "myproj", "dev")
 
-	assert.True(t, prov.RegistryMatch)
-	assert.False(t, prov.RegistryMiss)
-	assert.False(t, prov.ThumbprintMismatch)
-	assert.False(t, prov.CNMismatch)
+	assert.Equal(t, RegistryOutcomeMatch, prov.RegistryOutcome)
 	assert.True(t, prov.CNPinMatch)
 }
 
@@ -223,8 +219,7 @@ func TestFillRegistryProvenance_RegistryMiss(t *testing.T) {
 	}
 	d.fillRegistryProvenance(&prov, "ctr-2", "x", "y")
 
-	assert.True(t, prov.RegistryMiss)
-	assert.False(t, prov.RegistryMatch)
+	assert.Equal(t, RegistryOutcomeMiss, prov.RegistryOutcome)
 }
 
 func TestFillRegistryProvenance_ThumbprintMismatch(t *testing.T) {
@@ -248,10 +243,7 @@ func TestFillRegistryProvenance_ThumbprintMismatch(t *testing.T) {
 	}
 	d.fillRegistryProvenance(&prov, "ctr-3", "myproj", "dev")
 
-	assert.True(t, prov.ThumbprintMismatch)
-	assert.False(t, prov.RegistryMatch)
-	assert.False(t, prov.RegistryMiss)
-	assert.False(t, prov.CNMismatch)
+	assert.Equal(t, RegistryOutcomeThumbprintMismatch, prov.RegistryOutcome)
 }
 
 func TestFillRegistryProvenance_CNMismatch(t *testing.T) {
@@ -274,9 +266,7 @@ func TestFillRegistryProvenance_CNMismatch(t *testing.T) {
 	}
 	d.fillRegistryProvenance(&prov, "ctr-4", "actual", "dev")
 
-	assert.True(t, prov.CNMismatch)
-	assert.False(t, prov.RegistryMatch)
-	assert.False(t, prov.ThumbprintMismatch)
+	assert.Equal(t, RegistryOutcomeCNMismatch, prov.RegistryOutcome)
 }
 
 func TestFillRegistryProvenance_LookupErrorSetsReason(t *testing.T) {
@@ -294,8 +284,8 @@ func TestFillRegistryProvenance_LookupErrorSetsReason(t *testing.T) {
 	}
 	d.fillRegistryProvenance(&prov, "ctr-5", "x", "y")
 
-	assert.False(t, prov.RegistryMatch)
-	assert.False(t, prov.RegistryMiss)
+	// RegistryOutcome stays unset — outcome is "could not query".
+	assert.Equal(t, RegistryOutcomeUnset, prov.RegistryOutcome)
 	assert.Contains(t, prov.Reason, "registry lookup error")
 }
 
@@ -310,7 +300,7 @@ func TestFillRegistryProvenance_NilRegistrySetsReason(t *testing.T) {
 	d.fillRegistryProvenance(&prov, "ctr-6", "x", "y")
 
 	assert.Equal(t, "registry not wired", prov.Reason)
-	assert.False(t, prov.RegistryMatch)
+	assert.Equal(t, RegistryOutcomeUnset, prov.RegistryOutcome)
 }
 
 // --- computeCNPinMatch: cert-vs-labels CN derivation ----------------
@@ -617,4 +607,56 @@ func TestDialAgent_CtxCancelDuringResolveTearsDownCleanly(t *testing.T) {
 		d.mu.Unlock()
 		return !present
 	}, 1*time.Second, 10*time.Millisecond)
+}
+
+// --- shouldReconnect: post-drain decision -------------------------
+//
+// The runDial loop's reconnect decision is the load-bearing piece of
+// the broken-Session→re-establish path. The full integration is
+// hard to unit-test (real moby, real bufconn clawkerd, real TLS),
+// but the decision itself is a pure function of (ctx, drainResult).
+// These cases pin the matrix:
+//
+//	ctx alive  + drainGracefulEOF  → reconnect (peer closed, transient)
+//	ctx alive  + drainStreamErr    → reconnect (transport break, transient)
+//	ctx alive  + drainCtxCanceled  → DON'T reconnect (drain reported teardown)
+//	ctx done   + ANY               → DON'T reconnect (CP shutting down)
+//
+// A regression that drops the ctx.Err() guard would re-enter
+// establishWithRetry during CP shutdown and spam SessionConnecting/
+// SessionFailed on a draining bus. A regression that drops the
+// drainCtxCanceled guard would do the same when the drain itself
+// observes ctx.Done() before the loop body checks ctx.Err().
+
+func TestShouldReconnect_AliveCtx_GracefulEOFReconnects(t *testing.T) {
+	got := shouldReconnect(context.Background(), drainResult{Outcome: drainGracefulEOF, Reason: "peer closed"})
+	assert.True(t, got, "graceful EOF on a live ctx is the reconnect happy path")
+}
+
+func TestShouldReconnect_AliveCtx_StreamErrReconnects(t *testing.T) {
+	got := shouldReconnect(context.Background(), drainResult{Outcome: drainStreamErr, Reason: "io: broken pipe"})
+	assert.True(t, got, "transport break on a live ctx must trigger reconnect")
+}
+
+func TestShouldReconnect_AliveCtx_DrainCtxCanceledReturns(t *testing.T) {
+	// Defense in depth: drain itself observed ctx.Done() before the
+	// loop's own ctx.Err() check could trip. Reconnect must NOT
+	// fire — bus is heading down.
+	got := shouldReconnect(context.Background(), drainResult{Outcome: drainCtxCanceled})
+	assert.False(t, got, "drainCtxCanceled is a teardown signal regardless of ctx state")
+}
+
+func TestShouldReconnect_DoneCtx_ReturnsRegardlessOfDrain(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cases := []drainResult{
+		{Outcome: drainGracefulEOF, Reason: "peer closed"},
+		{Outcome: drainStreamErr, Reason: "io: broken pipe"},
+		{Outcome: drainCtxCanceled},
+	}
+	for _, drain := range cases {
+		assert.Falsef(t, shouldReconnect(cancelled, drain),
+			"cancelled parent ctx must suppress reconnect for drain=%+v", drain)
+	}
 }

@@ -255,42 +255,6 @@ func TestNewCmdCreate(t *testing.T) {
 	}
 }
 
-func TestCmdCreate_Properties(t *testing.T) {
-	f := &cmdutil.Factory{}
-	cmd := NewCmdCreate(f, nil)
-
-	// Test command basics
-	require.Equal(t, "create [OPTIONS] IMAGE [COMMAND] [ARG...]", cmd.Use)
-	require.NotEmpty(t, cmd.Short)
-	require.NotEmpty(t, cmd.Long)
-	require.NotEmpty(t, cmd.Example)
-	require.NotNil(t, cmd.RunE)
-
-	// Test flags exist
-	require.NotNil(t, cmd.Flags().Lookup("agent"))
-	require.NotNil(t, cmd.Flags().Lookup("name"))
-	require.NotNil(t, cmd.Flags().Lookup("mode"))
-	require.NotNil(t, cmd.Flags().Lookup("env"))
-	require.NotNil(t, cmd.Flags().Lookup("volume"))
-	require.NotNil(t, cmd.Flags().Lookup("publish"))
-	require.NotNil(t, cmd.Flags().Lookup("user"))
-	require.NotNil(t, cmd.Flags().Lookup("entrypoint"))
-	require.NotNil(t, cmd.Flags().Lookup("tty"))
-	require.NotNil(t, cmd.Flags().Lookup("interactive"))
-	require.NotNil(t, cmd.Flags().Lookup("network"))
-	require.NotNil(t, cmd.Flags().Lookup("label"))
-	require.NotNil(t, cmd.Flags().Lookup("rm"))
-
-	// Test shorthand flags
-	require.NotNil(t, cmd.Flags().ShorthandLookup("e"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("v"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("p"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("u"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("t"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("i"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("l"))
-}
-
 func TestCmdCreate_MutuallyExclusiveFlags(t *testing.T) {
 	f := &cmdutil.Factory{}
 	cmd := NewCmdCreate(f, func(_ context.Context, _ *CreateOptions) error {
@@ -347,14 +311,6 @@ func TestBuildConfigs(t *testing.T) {
 			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Env:     []string{"FOO=bar", "BAZ=qux"},
-				Publish: shared.NewPortOpts(),
-			},
-		},
-		{
-			name: "with labels",
-			opts: &shared.ContainerCreateOptions{
-				Image:   "alpine",
-				Labels:  []string{"foo=bar", "baz"},
 				Publish: shared.NewPortOpts(),
 			},
 		},

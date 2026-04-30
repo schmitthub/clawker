@@ -45,24 +45,47 @@ func (e SessionConnecting) ApplyTo(s *overseer.State) {
 	s.AgentSessions[e.ContainerID] = view
 }
 
+// RegistryOutcome classifies the result of cross-checking the peer
+// certificate against the agentregistry row keyed by container_id.
+// Exactly one value is set per Provenance: the typed enum replaces an
+// earlier four-boolean shape where mutual exclusion lived only in a
+// doc comment. Subscribers switch on the value to enact policy.
+type RegistryOutcome string
+
+const (
+	// RegistryOutcomeUnset is the zero value. Set when the registry
+	// could not be queried at all (lookup error, registry not wired);
+	// Provenance.Reason carries the detail. Distinct from Miss, which
+	// means the registry was queried successfully and returned no row.
+	RegistryOutcomeUnset RegistryOutcome = ""
+	// RegistryOutcomeMatch — row exists, thumbprint AND canonical_cn
+	// agree with the peer cert. The happy path.
+	RegistryOutcomeMatch RegistryOutcome = "match"
+	// RegistryOutcomeMiss — no row for this container_id. Container
+	// started outside the CLI bootstrap path (raw `docker start`,
+	// manual `docker create`, or registry corruption).
+	RegistryOutcomeMiss RegistryOutcome = "miss"
+	// RegistryOutcomeThumbprintMismatch — row exists but its thumbprint
+	// disagrees with the peer cert thumbprint. Possible cert theft or
+	// wiring corruption.
+	RegistryOutcomeThumbprintMismatch RegistryOutcome = "thumbprint_mismatch"
+	// RegistryOutcomeCNMismatch — row exists, thumbprints agree, but
+	// the row's canonical_cn does not match the peer's CN. Structural
+	// drift between the CLI's registry write and the cert subject.
+	RegistryOutcomeCNMismatch RegistryOutcome = "cn_mismatch"
+)
+
 // Provenance carries connection-time identity outcomes determined
 // by the dialer at the moment of TLS handshake + post-handshake
 // inspection. The dialer is a sensor: every check produces a typed
-// boolean here, the connection NEVER aborts on cert/identity grounds
-// (CP-overlord asymmetric trust — see package doc + dialer.go header).
-// Subscribers consume these fields to enact policy (containment,
-// alerting, eviction). The dialer holds no policy.
+// data point here, the connection NEVER aborts on cert/identity
+// grounds (CP-overlord asymmetric trust — see package doc + dialer.go
+// header). Subscribers consume these fields to enact policy
+// (containment, alerting, eviction). The dialer holds no policy.
 //
-// Mutual-exclusion: exactly one of the registry-outcome booleans is
-// true per event:
-//
-//	RegistryMatch       — row found, thumbprint + canonical CN match
-//	RegistryMiss        — no row for this container_id (raw `docker start` bypass signal)
-//	ThumbprintMismatch  — row found but peer thumbprint != row thumbprint
-//	CNMismatch          — row found, thumbprints match, but peer CN != row canonical_cn
-//
-// ChainVerified, CNPinMatch, PeerCN, PeerThumbprint are independent
-// data points that ride alongside the registry outcome.
+// RegistryOutcome is the load-bearing field for registry-vs-peer
+// cross-check. ChainVerified, CNPinMatch, PeerCN, PeerThumbprint are
+// independent data points that ride alongside.
 type Provenance struct {
 	// ChainVerified reports whether the peer's leaf certificate chains
 	// up to the CLI CA pool. False on parse failure, missing chain,
@@ -79,31 +102,13 @@ type Provenance struct {
 	// PeerThumbprint is the SHA-256 fingerprint of the peer's leaf
 	// certificate (raw bytes, no encoding). Empty on parse failure.
 	PeerThumbprint []byte
-	// RegistryMatch is true when the agentregistry row keyed by
-	// container_id exists AND its thumbprint + canonical_cn match the
-	// peer cert. The "happy path" — CLI minted the cert, registered
-	// the row, and the same cert reached us at dial time.
-	RegistryMatch bool
-	// RegistryMiss is true when no row exists for this container_id.
-	// Indicates the container was started outside the CLI bootstrap
-	// path (raw `docker start`, manual `docker create`, or registry
-	// corruption).
-	RegistryMiss bool
-	// ThumbprintMismatch is true when a row exists for container_id
-	// but its thumbprint does not match the peer cert's thumbprint.
-	// Indicates a different cert reached us than the one the CLI
-	// minted — possible cert theft or wiring corruption.
-	ThumbprintMismatch bool
-	// CNMismatch is true when a row exists, thumbprints match, but
-	// the row's canonical_cn does not match the peer's CN. Indicates
-	// the row was registered against a different (project, agent_name)
-	// than the cert advertises — a structural drift between the
-	// CLI's registry write and the cert's subject.
-	CNMismatch bool
-	// Reason is a free-form note for outcomes that the boolean
-	// vocabulary doesn't cleanly describe (e.g. "leaf parse failed",
-	// "registry lookup error"). Empty when the booleans speak for
-	// themselves.
+	// RegistryOutcome classifies the registry cross-check result.
+	// Exactly one value per event; structural mutual exclusion replaces
+	// the prior four-boolean shape.
+	RegistryOutcome RegistryOutcome
+	// Reason is a free-form note for outcomes the typed fields don't
+	// cleanly describe (e.g. "leaf parse failed", "registry lookup
+	// error: <io>"). Empty when RegistryOutcome speaks for itself.
 	Reason string
 }
 

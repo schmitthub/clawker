@@ -73,11 +73,16 @@ func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Log
 
 	// Sender goroutine: single writer to stream.Send (gRPC's
 	// SendMsg is NOT goroutine-safe). All producers push to sendCh.
+	// Cancel handed in so a Send failure (broken stream) tears the
+	// session ctx down deterministically — without that, producer
+	// goroutines blocked on `sendCh <- resp` would park until the
+	// receiver loop independently noticed the broken transport,
+	// stretching the truncated-output window arbitrarily.
 	var senderWG sync.WaitGroup
 	senderWG.Add(1)
 	go func() {
 		defer senderWG.Done()
-		s.runSender(ctx)
+		s.runSender(ctx, cancel)
 	}()
 
 	// Receive loop: routes inbound Commands until the stream closes
@@ -112,10 +117,12 @@ type session struct {
 }
 
 // runningCommand tracks one in-flight ShellCommand for routing
-// follow-up Stdin / CloseStdin / Signal frames.
+// follow-up Stdin / CloseStdin / Signal frames. The per-command ctx
+// (derived from the Session ctx by startShellCommand) is plumbed as a
+// first parameter through runShellCommand and the drainers — never
+// stored on the struct, per the project ctx-handling rule.
 type runningCommand struct {
 	id     string
-	ctx    context.Context
 	cancel context.CancelFunc
 
 	stdinMu     sync.Mutex
@@ -128,9 +135,13 @@ type runningCommand struct {
 }
 
 // runSender drains sendCh into stream.Send. Exits when ctx is done.
-// Errors from Send are logged and exit the sender — there is no path
-// to recover a broken stream.
-func (s *session) runSender(ctx context.Context) {
+// Errors from Send are logged and propagate via cancel() — calling
+// cancel here is what unblocks producer goroutines parked on
+// `sendCh <- resp` (their select races against `<-ctx.Done()`). The
+// stream is unrecoverable past a Send error, so the session must end;
+// without cancel, the receiver loop is the only path to teardown and
+// it can lag arbitrarily on a half-broken transport.
+func (s *session) runSender(ctx context.Context, cancel context.CancelFunc) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -143,7 +154,8 @@ func (s *session) runSender(ctx context.Context) {
 				s.log.Error().Err(err).
 					Str("event", "session_send_failed").
 					Str("command_id", resp.CommandId).
-					Msg("stream.Send failed; abandoning sender")
+					Msg("stream.Send failed; cancelling session ctx and abandoning sender")
+				cancel()
 				return
 			}
 		}
@@ -272,13 +284,12 @@ func (s *session) startShellCommand(ctx context.Context, id string, sc *clawkerd
 	cmdCtx, cmdCancel := context.WithCancel(ctx)
 	rc := &runningCommand{
 		id:     id,
-		ctx:    cmdCtx,
 		cancel: cmdCancel,
 	}
 	s.cmds[id] = rc
 	s.mu.Unlock()
 
-	go s.runShellCommand(rc, sc)
+	go s.runShellCommand(cmdCtx, rc, sc)
 }
 
 // runShellCommand is the per-command worker. Lifetime: spawn → reap.
@@ -294,7 +305,7 @@ func (s *session) startShellCommand(ctx context.Context, id string, sc *clawkerd
 // cwd + uid/gid, and a `shell_command_done` event with duration +
 // outcome at Info on terminal exit. Operators forwarding clawkerd's
 // log to durable storage get a complete audit trail.
-func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellCommand) {
+func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *clawkerdv1.ShellCommand) {
 	startedAt := time.Now()
 	var (
 		auditFinalExit int32 = -1
@@ -332,7 +343,7 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	// cancel (timeout, Session teardown) sends SIGKILL automatically.
 	cmds := make([]*exec.Cmd, len(sc.Stages))
 	for i, st := range sc.Stages {
-		c := exec.CommandContext(rc.ctx, st.Argv[0], st.Argv[1:]...)
+		c := exec.CommandContext(ctx, st.Argv[0], st.Argv[1:]...)
 		c.Dir = st.Cwd
 		c.Env = buildEnv(st.Env)
 		// Per-stage credential: drop privileges if uid/gid set. Zero
@@ -355,9 +366,23 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	rc.stdin = stdinW
 	rc.stdinMu.Unlock()
 
-	// closeLogged dedupes Warn lines for setup-failure stdin closes.
-	// Per-goroutine flag — every site in this function shares it.
-	var closeLogged bool
+	// closeStats accumulates close-error accounting across every
+	// closePipeOnce call site in this goroutine: first failure lands
+	// as a Warn at the call site, subsequent ones increment
+	// Suppressed. A summary Warn is flushed via the deferred audit
+	// emitter below if Suppressed > 0 so a torrent of close failures
+	// (e.g. real FD leaks during pipeline teardown) cannot vanish
+	// silently.
+	var closeStats pipeCloseStats
+	defer func() {
+		if closeStats.suppressed > 0 {
+			s.log.Warn().
+				Str("event", "session_pipe_close_failed_suppressed").
+				Str("command_id", rc.id).
+				Int("suppressed", closeStats.suppressed).
+				Msg("clawkerd: additional pipe close failures suppressed during pipeline teardown")
+		}
+	}()
 
 	// Chain stage[i].stdout → stage[i+1].stdin via os pipes. Capture
 	// the final stage's stdout for streaming.
@@ -365,10 +390,10 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	for i := 0; i < len(cmds)-1; i++ {
 		out, err := cmds[i].StdoutPipe()
 		if err != nil {
-			s.send(rc.ctx, errResponse(rc.id,
+			s.send(ctx, errResponse(rc.id,
 				clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED,
 				fmt.Sprintf("stage[%d] StdoutPipe: %v", i, err)))
-			s.closePipeOnce(rc.id, "stdin", stdinW, &closeLogged)
+			s.closePipeOnce(rc.id, "stdin", stdinW, &closeStats)
 			auditOutcome = "spawn_failed"
 			return
 		}
@@ -378,10 +403,10 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 
 	finalStdout, err := cmds[len(cmds)-1].StdoutPipe()
 	if err != nil {
-		s.send(rc.ctx, errResponse(rc.id,
+		s.send(ctx, errResponse(rc.id,
 			clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED,
 			fmt.Sprintf("final stage StdoutPipe: %v", err)))
-		s.closePipeOnce(rc.id, "stdin", stdinW, &closeLogged)
+		s.closePipeOnce(rc.id, "stdin", stdinW, &closeStats)
 		auditOutcome = "spawn_failed"
 		return
 	}
@@ -391,10 +416,10 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	for i := range cmds {
 		errPipe, perr := cmds[i].StderrPipe()
 		if perr != nil {
-			s.send(rc.ctx, errResponse(rc.id,
+			s.send(ctx, errResponse(rc.id,
 				clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED,
 				fmt.Sprintf("stage[%d] StderrPipe: %v", i, perr)))
-			s.closePipeOnce(rc.id, "stdin", stdinW, &closeLogged)
+			s.closePipeOnce(rc.id, "stdin", stdinW, &closeStats)
 			auditOutcome = "spawn_failed"
 			return
 		}
@@ -405,22 +430,22 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	// stages by ctx cancel.
 	for i, c := range cmds {
 		if startErr := c.Start(); startErr != nil {
-			// Send the error response BEFORE cancelling rc.ctx —
-			// s.send select-races against ctx.Done, and a cancelled
-			// rc.ctx means the SPAWN_FAILED response can drop in
-			// favor of the ctx.Done branch.
-			s.send(rc.ctx, errResponse(rc.id,
+			// Send the error response BEFORE cancelling the per-command
+			// ctx — s.send select-races against ctx.Done, and a
+			// cancelled ctx means the SPAWN_FAILED response can drop
+			// in favor of the ctx.Done branch.
+			s.send(ctx, errResponse(rc.id,
 				clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED,
 				fmt.Sprintf("stage[%d] start: %v", i, startErr)))
 			rc.cancel() // kills any started stages via CommandContext
-			s.closePipeOnce(rc.id, "stdin", stdinW, &closeLogged)
+			s.closePipeOnce(rc.id, "stdin", stdinW, &closeStats)
 			auditOutcome = "spawn_failed"
 			return
 		}
 	}
 
 	// All stages running. Tell CP.
-	s.send(rc.ctx, &clawkerdv1.Response{
+	s.send(ctx, &clawkerdv1.Response{
 		CommandId: rc.id,
 		Payload:   &clawkerdv1.Response_Started{Started: &clawkerdv1.Started{}},
 	})
@@ -459,7 +484,7 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 				// failure shows up only as a (possibly success) Done
 				// with no clue stdin was incomplete — silent semantic
 				// divergence between CP intent and clawkerd execution.
-				s.send(rc.ctx, errResponse(rc.id,
+				s.send(ctx, errResponse(rc.id,
 					clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
 					fmt.Sprintf("initial_stdin write failed: %v", werr)))
 			}
@@ -477,7 +502,7 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.drainStderr(rc, uint32(i), stderrPipes[i])
+			s.drainStderr(ctx, rc, uint32(i), stderrPipes[i])
 		}()
 	}
 
@@ -485,7 +510,7 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.drainStdout(rc, finalStdout)
+		s.drainStdout(ctx, rc, finalStdout)
 	}()
 
 	// Stage reapers — emit StageExit for each as it finishes. Using
@@ -513,7 +538,7 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 			if isFinal {
 				finalStageErrCh <- waitErr
 			}
-			s.send(rc.ctx, stageExitResponse(rc.id, uint32(i), c, waitErr))
+			s.send(ctx, stageExitResponse(rc.id, uint32(i), c, waitErr))
 		}()
 	}
 
@@ -523,12 +548,12 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	reapWG.Wait()
 	rc.stdinMu.Lock()
 	if !rc.stdinClosed {
-		s.closePipeOnce(rc.id, "stdin", stdinW, &closeLogged)
+		s.closePipeOnce(rc.id, "stdin", stdinW, &closeStats)
 		rc.stdinClosed = true
 	}
 	rc.stdinMu.Unlock()
 	for i, p := range stagePipes {
-		s.closePipeOnce(rc.id, fmt.Sprintf("stage[%d]_stdout", i), p, &closeLogged)
+		s.closePipeOnce(rc.id, fmt.Sprintf("stage[%d]_stdout", i), p, &closeStats)
 	}
 
 	// Wait for stdout/stderr drainers to finish so chunks can't
@@ -536,7 +561,7 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 	wg.Wait()
 
 	if timedOut.Load() {
-		s.send(rc.ctx, errResponse(rc.id,
+		s.send(ctx, errResponse(rc.id,
 			clawkerdv1.ErrorCode_ERROR_CODE_TIMEOUT,
 			fmt.Sprintf("pipeline killed after %ds timeout", sc.TimeoutSeconds)))
 		auditTimedOut = true
@@ -544,7 +569,7 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 		return
 	}
 	finalExit := exitCodeOf(cmds[finalIdx], <-finalStageErrCh)
-	s.send(rc.ctx, &clawkerdv1.Response{
+	s.send(ctx, &clawkerdv1.Response{
 		CommandId: rc.id,
 		Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{
 			FinalExitCode: finalExit,
@@ -558,14 +583,14 @@ func (s *session) runShellCommand(rc *runningCommand, sc *clawkerdv1.ShellComman
 // emits StdoutChunk responses until EOF or read error. Read errors
 // other than EOF / ErrClosedPipe are surfaced as IO_ERROR but do not
 // kill the pipeline — the reaper still emits Done/StageExit.
-func (s *session) drainStdout(rc *runningCommand, r io.ReadCloser) {
+func (s *session) drainStdout(ctx context.Context, rc *runningCommand, r io.ReadCloser) {
 	buf := make([]byte, chunkBufSize)
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			s.send(rc.ctx, &clawkerdv1.Response{
+			s.send(ctx, &clawkerdv1.Response{
 				CommandId: rc.id,
 				Payload:   &clawkerdv1.Response_Stdout{Stdout: &clawkerdv1.StdoutChunk{Data: data}},
 			})
@@ -576,7 +601,7 @@ func (s *session) drainStdout(rc *runningCommand, r io.ReadCloser) {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) {
 			return
 		}
-		s.send(rc.ctx, errResponse(rc.id,
+		s.send(ctx, errResponse(rc.id,
 			clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
 			fmt.Sprintf("stdout drain: %v", err)))
 		return
@@ -584,14 +609,14 @@ func (s *session) drainStdout(rc *runningCommand, r io.ReadCloser) {
 }
 
 // drainStderr is the per-stage analog of drainStdout.
-func (s *session) drainStderr(rc *runningCommand, stageIndex uint32, r io.ReadCloser) {
+func (s *session) drainStderr(ctx context.Context, rc *runningCommand, stageIndex uint32, r io.ReadCloser) {
 	buf := make([]byte, chunkBufSize)
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			s.send(rc.ctx, &clawkerdv1.Response{
+			s.send(ctx, &clawkerdv1.Response{
 				CommandId: rc.id,
 				Payload: &clawkerdv1.Response_Stderr{Stderr: &clawkerdv1.StderrChunk{
 					StageIndex: stageIndex,
@@ -605,7 +630,7 @@ func (s *session) drainStderr(rc *runningCommand, stageIndex uint32, r io.ReadCl
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) {
 			return
 		}
-		s.send(rc.ctx, errResponse(rc.id,
+		s.send(ctx, errResponse(rc.id,
 			clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
 			fmt.Sprintf("stderr drain stage[%d]: %v", stageIndex, err)))
 		return
@@ -808,14 +833,28 @@ func exitCodeOf(c *exec.Cmd, waitErr error) int32 {
 	return int32(c.ProcessState.ExitCode())
 }
 
-// closePipeOnce closes w, logging at Warn on real errors. The
-// `logged` pointer dedupes per-goroutine: a runShellCommand goroutine
-// passes the same *bool to each call site so a torrent of failed
-// closes during pipeline teardown produces exactly one Warn line.
-// Repeated SPAWN_FAILED would otherwise mask FD leaks behind silent
-// `_ = w.Close()` swallows. io.ErrClosedPipe is treated as success
-// since it just means a peer already closed.
-func (s *session) closePipeOnce(cmdID, name string, w io.Closer, logged *bool) {
+// pipeCloseStats accumulates per-runShellCommand close-error
+// accounting. The first non-success Close lands as a Warn at its call
+// site so operators see the failure shape at the moment it surfaces;
+// subsequent failures (typical during pipeline teardown when the
+// kernel returns the same EBADF / EIO across every fd in the chain)
+// increment Suppressed instead, and runShellCommand emits a single
+// summary line on exit if Suppressed > 0. The earlier *bool-only
+// dedupe silently swallowed N-1 close failures with no surviving
+// signal — a regression that ate every close error past the first
+// (e.g. a real FD leak across the chain) would have been invisible.
+type pipeCloseStats struct {
+	logged     bool
+	suppressed int
+}
+
+// closePipeOnce closes w, logging at Warn on real errors. `stats`
+// dedupes per-goroutine: a runShellCommand goroutine passes the same
+// *pipeCloseStats to each call site so a torrent of failed closes
+// during pipeline teardown produces exactly one Warn line + a
+// suppressed counter the caller flushes on exit. io.ErrClosedPipe is
+// treated as success since it just means a peer already closed.
+func (s *session) closePipeOnce(cmdID, name string, w io.Closer, stats *pipeCloseStats) {
 	if w == nil {
 		return
 	}
@@ -823,7 +862,8 @@ func (s *session) closePipeOnce(cmdID, name string, w io.Closer, logged *bool) {
 	if err == nil || errors.Is(err, io.ErrClosedPipe) {
 		return
 	}
-	if *logged {
+	if stats.logged {
+		stats.suppressed++
 		return
 	}
 	s.log.Warn().Err(err).
@@ -831,7 +871,7 @@ func (s *session) closePipeOnce(cmdID, name string, w io.Closer, logged *bool) {
 		Str("command_id", cmdID).
 		Str("pipe", name).
 		Msg("clawkerd: pipe close failed during pipeline teardown")
-	*logged = true
+	stats.logged = true
 }
 
 // errResponse is a small helper for the Error variant.

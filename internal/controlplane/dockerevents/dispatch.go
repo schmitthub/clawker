@@ -24,6 +24,36 @@ const (
 	KindNetwork   = "network"
 )
 
+// publishContainerEvent fans an event onto the bus and logs a Warn
+// line carrying container_id when Publish drops it. The bus's own
+// drop-log fires inside subscribe.go but only carries event name +
+// queue capacity — without container_id at the producer site,
+// operators investigating "why didn't agentdial dial container X"
+// have no thread to follow back through the timeline.
+func (f *Feeder) publishContainerEvent(ev overseer.Event, containerID string) {
+	if overseer.Publish(f.bus, ev) {
+		return
+	}
+	f.log.Warn().
+		Str("event", ev.EventName()).
+		Str("container_id", containerID).
+		Msg("dockerevents: publish dropped — bus full or closed")
+}
+
+// publishNetworkEvent is the network-edge counterpart — drops carry
+// both container_id and network_id so the dropped edge can be
+// reconstructed.
+func (f *Feeder) publishNetworkEvent(ev overseer.Event, containerID, networkID string) {
+	if overseer.Publish(f.bus, ev) {
+		return
+	}
+	f.log.Warn().
+		Str("event", ev.EventName()).
+		Str("container_id", containerID).
+		Str("network_id", networkID).
+		Msg("dockerevents: publish dropped — bus full or closed")
+}
+
 // dispatch routes a single Docker event into typed Publish calls on
 // the bus. dispatch runs on Run's single goroutine; managed-set
 // mutations are goroutine-local and need no lock.
@@ -131,17 +161,17 @@ func (f *Feeder) dispatchContainer(ev events.Message) {
 	switch ev.Action {
 	case events.ActionDestroy, events.ActionRemove:
 		delete(f.containers, id)
-		overseer.Publish(f.bus, ContainerRemoved{ID: id, At: at})
+		f.publishContainerEvent(ContainerRemoved{ID: id, At: at}, id)
 		return
 
 	case events.ActionDie, events.ActionStop, events.ActionKill:
 		f.containers[id] = true
-		overseer.Publish(f.bus, ContainerStopped{
+		f.publishContainerEvent(ContainerStopped{
 			ID:       id,
 			ExitCode: ev.Actor.Attributes["exitCode"],
 			OOM:      false,
 			At:       at,
-		})
+		}, id)
 		return
 
 	case events.ActionOOM:
@@ -149,24 +179,24 @@ func (f *Feeder) dispatchContainer(ev events.Message) {
 		// stop with OOM=true so consumers get the signal even if Docker
 		// elides the die event.
 		f.containers[id] = true
-		overseer.Publish(f.bus, ContainerStopped{
+		f.publishContainerEvent(ContainerStopped{
 			ID:       id,
 			ExitCode: ev.Actor.Attributes["exitCode"],
 			OOM:      true,
 			At:       at,
-		})
+		}, id)
 		return
 
 	case events.ActionCreate, events.ActionStart, events.ActionRestart, events.ActionUnPause:
 		f.containers[id] = true
 		labels := stripEngineKeys(ev.Actor.Attributes, "image", "name", "exitCode")
-		overseer.Publish(f.bus, ContainerStarted{
+		f.publishContainerEvent(ContainerStarted{
 			ID:     id,
 			Name:   ev.Actor.Attributes["name"],
 			Image:  ev.Actor.Attributes["image"],
 			Labels: labels,
 			At:     at,
-		})
+		}, id)
 		return
 	}
 
@@ -223,17 +253,17 @@ func (f *Feeder) dispatchNetwork(ctx context.Context, ev events.Message) {
 		}
 		at := time.Unix(0, ev.TimeNano)
 		if ev.Action == events.ActionConnect {
-			overseer.Publish(f.bus, NetworkAttached{
+			f.publishNetworkEvent(NetworkAttached{
 				ContainerID: ctrID,
 				NetworkID:   netID,
 				At:          at,
-			})
+			}, ctrID, netID)
 		} else {
-			overseer.Publish(f.bus, NetworkDetached{
+			f.publishNetworkEvent(NetworkDetached{
 				ContainerID: ctrID,
 				NetworkID:   netID,
 				At:          at,
-			})
+			}, ctrID, netID)
 		}
 	}
 }

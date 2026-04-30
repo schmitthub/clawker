@@ -16,10 +16,32 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// fakeBidiStream satisfies grpc.BidiStreamingServer[Command, Response]
+// without standing up a real gRPC handshake. The embedded
+// grpc.ServerStream is nil — every method on it panics if called,
+// which is what we want for tests that exercise only the surface
+// runSender / receiver use (Send, Recv).
+type fakeBidiStream struct {
+	grpc.ServerStream
+	sendErr  error
+	sendOnce sync.Once
+}
+
+func (f *fakeBidiStream) Send(*clawkerdv1.Response) error {
+	var err error
+	f.sendOnce.Do(func() { err = f.sendErr })
+	return err
+}
+
+func (f *fakeBidiStream) Recv() (*clawkerdv1.Command, error) {
+	return nil, io.EOF
+}
 
 // newTestSession builds a session whose sendCh and cmds map are
 // exposed but no sender goroutine runs — tests drain responses
@@ -122,10 +144,10 @@ func TestStartShellCommand_DuplicateID_Rejects(t *testing.T) {
 	// Inject an already-running runningCommand with id "dup". Don't
 	// bother spawning a real process — the dup check fires before
 	// any pipeline setup.
-	cmdCtx, cmdCancel := context.WithCancel(ctx)
+	_, cmdCancel := context.WithCancel(ctx)
 	defer cmdCancel()
 	s.mu.Lock()
-	s.cmds["dup"] = &runningCommand{id: "dup", ctx: cmdCtx, cancel: cmdCancel}
+	s.cmds["dup"] = &runningCommand{id: "dup", cancel: cmdCancel}
 	s.mu.Unlock()
 
 	s.startShellCommand(ctx, "dup", &clawkerdv1.ShellCommand{
@@ -150,7 +172,7 @@ func TestStartShellCommand_DuplicateID_Rejects(t *testing.T) {
 func runUntilDone(t *testing.T, ctx context.Context, s *session, sc *clawkerdv1.ShellCommand, id string) {
 	t.Helper()
 	cmdCtx, cmdCancel := context.WithCancel(ctx)
-	rc := &runningCommand{id: id, ctx: cmdCtx, cancel: cmdCancel}
+	rc := &runningCommand{id: id, cancel: cmdCancel}
 	s.mu.Lock()
 	s.cmds[rc.id] = rc
 	s.mu.Unlock()
@@ -158,7 +180,7 @@ func runUntilDone(t *testing.T, ctx context.Context, s *session, sc *clawkerdv1.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.runShellCommand(rc, sc)
+		s.runShellCommand(cmdCtx, rc, sc)
 	}()
 
 	// Wait for the stdin pipe to be wired up, then close it so the
@@ -231,12 +253,12 @@ func TestRunShellCommand_AuditLogOnSpawnFailure(t *testing.T) {
 	defer cancel()
 
 	cmdCtx, cmdCancel := context.WithCancel(ctx)
-	rc := &runningCommand{id: "spawn-fail", ctx: cmdCtx, cancel: cmdCancel}
+	rc := &runningCommand{id: "spawn-fail", cancel: cmdCancel}
 	s.mu.Lock()
 	s.cmds[rc.id] = rc
 	s.mu.Unlock()
 
-	s.runShellCommand(rc, &clawkerdv1.ShellCommand{
+	s.runShellCommand(cmdCtx, rc, &clawkerdv1.ShellCommand{
 		Stages: []*clawkerdv1.PipeStage{{Argv: []string{"/no/such/binary/clawker-test"}}},
 	})
 
@@ -283,6 +305,49 @@ func TestRunShellCommand_ConcurrentClean(t *testing.T) {
 	wg.Wait()
 }
 
+// --- runSender: Send-failure cancels session ctx -------------------
+
+// TestRunSender_SendFailureCancelsCtx pins the contract: when
+// stream.Send returns error, runSender must call the cancel handed
+// to it so producer goroutines blocked on `sendCh <- resp` unblock
+// via their `<-ctx.Done` branch instead of parking until the
+// receiver loop notices the broken transport. Without this, a
+// half-broken stream (write side dead, read side momentarily alive)
+// would strand in-flight Stdout/Stderr/Done responses for arbitrary
+// time before the session fully tore down.
+func TestRunSender_SendFailureCancelsCtx(t *testing.T) {
+	s, _ := newTestSession()
+	stream := &fakeBidiStream{sendErr: errors.New("synthetic Send failure")}
+	s.stream = stream
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	// Push a response so runSender has something to drain.
+	s.sendCh <- &clawkerdv1.Response{CommandId: "fail-1"}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.runSender(ctx, cancel)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runSender did not exit after Send failure")
+	}
+
+	// runSender must have called cancel — a producer goroutine that
+	// would otherwise park on sendCh now races against ctx.Done and
+	// the test verifies ctx is actually done.
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("runSender did not cancel ctx on Send failure; producer goroutines would park indefinitely")
+	}
+}
+
 // --- closePipeOnce -------------------------------------------------
 
 type errCloser struct {
@@ -298,25 +363,31 @@ func (e *errCloser) Close() error {
 func TestClosePipeOnce_LogsExactlyOnce(t *testing.T) {
 	s, logBuf := newTestSession()
 	c := &errCloser{err: errors.New("synthetic close failure")}
-	var logged bool
+	var stats pipeCloseStats
 	for range 5 {
-		s.closePipeOnce("cmd-x", "stdin", c, &logged)
+		s.closePipeOnce("cmd-x", "stdin", c, &stats)
 	}
 	out := logBuf.String()
-	occurrences := strings.Count(out, "session_pipe_close_failed")
+	// First failure logs at Warn; remaining 4 increment Suppressed
+	// silently. The summary line is emitted by runShellCommand on
+	// exit, not by closePipeOnce, so this unit test sees only the
+	// first event line.
+	occurrences := strings.Count(out, `"event":"session_pipe_close_failed"`)
 	assert.Equal(t, 1, occurrences, "want exactly one Warn line, got %d:\n%s", occurrences, out)
-	assert.True(t, logged)
+	assert.True(t, stats.logged)
+	assert.Equal(t, 4, stats.suppressed, "remaining failures must be counted as suppressed")
 	assert.Equal(t, int32(5), c.closed.Load(), "closer should still be invoked every call")
 }
 
 func TestClosePipeOnce_SilentOnClosedPipe(t *testing.T) {
 	// io.ErrClosedPipe is success-equivalent — peer already closed.
-	// The helper must not log it.
+	// The helper must not log and must not count toward suppressed.
 	s, logBuf := newTestSession()
-	var logged bool
-	s.closePipeOnce("cmd-y", "stdin", &errCloser{err: io.ErrClosedPipe}, &logged)
+	var stats pipeCloseStats
+	s.closePipeOnce("cmd-y", "stdin", &errCloser{err: io.ErrClosedPipe}, &stats)
 	assert.NotContains(t, logBuf.String(), "session_pipe_close_failed")
-	assert.False(t, logged)
+	assert.False(t, stats.logged)
+	assert.Zero(t, stats.suppressed)
 }
 
 // --- routeSignal: os.ErrProcessDone + ESRCH filter -----------------
@@ -385,8 +456,12 @@ func TestShutdownRunning_CancelsAllCommands(t *testing.T) {
 		c, cancel := context.WithCancel(context.Background())
 		ctxs = append(ctxs, c)
 		id := "rc-" + string(rune('a'+i))
+		// Wrap cancel so shutdownRunning's rc.cancel() also cancels the
+		// per-test ctx — production wires these together via
+		// context.WithCancel(parent) inside startShellCommand.
+		wrapped := func() { cancel() }
 		s.mu.Lock()
-		s.cmds[id] = &runningCommand{id: id, ctx: c, cancel: cancel}
+		s.cmds[id] = &runningCommand{id: id, cancel: wrapped}
 		s.mu.Unlock()
 	}
 	s.shutdownRunning()
