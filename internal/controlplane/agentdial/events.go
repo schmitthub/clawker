@@ -2,7 +2,10 @@ package agentdial
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"time"
+
+	"github.com/rs/zerolog"
 
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 )
@@ -34,6 +37,12 @@ type SessionConnecting struct {
 
 func (e SessionConnecting) EventName() string     { return "agentdial.session.connecting" }
 func (e SessionConnecting) OccurredAt() time.Time { return e.At }
+func (e SessionConnecting) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("agent", e.AgentName).
+		Str("project", e.Project).
+		Str("address", e.Address)
+}
 func (e SessionConnecting) ApplyTo(s *overseer.State) {
 	view := s.AgentSessions[e.ContainerID]
 	view.ContainerID = e.ContainerID
@@ -137,6 +146,21 @@ type SessionConnected struct {
 
 func (e SessionConnected) EventName() string     { return "agentdial.session.connected" }
 func (e SessionConnected) OccurredAt() time.Time { return e.At }
+func (e SessionConnected) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("agent", e.AgentName).
+		Str("project", e.Project).
+		Str("address", e.Address).
+		Int("attempts", e.Attempts).
+		Bool("chain_verified", e.Provenance.ChainVerified).
+		Bool("cn_pin_match", e.Provenance.CNPinMatch).
+		Str("peer_cn", e.Provenance.PeerCN).
+		Str("peer_thumbprint", hex.EncodeToString(e.Provenance.PeerThumbprint[:])).
+		Str("registry_outcome", string(e.Provenance.RegistryOutcome))
+	if e.Provenance.Reason != "" {
+		z.Str("provenance_reason", e.Provenance.Reason)
+	}
+}
 func (e SessionConnected) ApplyTo(s *overseer.State) {
 	view := s.AgentSessions[e.ContainerID]
 	view.ContainerID = e.ContainerID
@@ -166,6 +190,14 @@ type SessionFailed struct {
 
 func (e SessionFailed) EventName() string     { return "agentdial.session.failed" }
 func (e SessionFailed) OccurredAt() time.Time { return e.At }
+func (e SessionFailed) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("agent", e.AgentName).
+		Str("project", e.Project).
+		Str("address", e.Address).
+		Str("reason", e.Reason).
+		Int("attempts", e.Attempts)
+}
 func (e SessionFailed) ApplyTo(s *overseer.State) {
 	view := s.AgentSessions[e.ContainerID]
 	view.ContainerID = e.ContainerID
@@ -194,6 +226,13 @@ type SessionBroken struct {
 
 func (e SessionBroken) EventName() string     { return "agentdial.session.broken" }
 func (e SessionBroken) OccurredAt() time.Time { return e.At }
+func (e SessionBroken) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("agent", e.AgentName).
+		Str("project", e.Project).
+		Str("address", e.Address).
+		Str("reason", e.Reason)
+}
 func (e SessionBroken) ApplyTo(s *overseer.State) {
 	view := s.AgentSessions[e.ContainerID]
 	view.ContainerID = e.ContainerID

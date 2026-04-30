@@ -20,16 +20,23 @@ package overseer
 import (
 	"time"
 
+	"github.com/rs/zerolog"
+
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // Event is the contract every published value implements. EventName
 // names the event for log lines; OccurredAt provides the canonical
 // timestamp consumed by State.LastUpdatedAt and any time-ordered
-// reasoning a consumer wants to do.
+// reasoning a consumer wants to do. zerolog.LogObjectMarshaler is the
+// per-type log payload — NewLoggerHook EmbedObjects every event so
+// type-specific fields (container_id, agent, project, address, ...)
+// land in log lines without reflection or producer-specific hook
+// wiring.
 type Event interface {
 	EventName() string
 	OccurredAt() time.Time
+	zerolog.LogObjectMarshaler
 }
 
 // Options configures an Overseer. Zero values are valid.

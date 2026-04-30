@@ -1,11 +1,15 @@
 package overseer_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/rs/zerolog"
 
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -25,6 +29,9 @@ type evContainerStarted struct {
 
 func (e evContainerStarted) EventName() string     { return "test.container.started" }
 func (e evContainerStarted) OccurredAt() time.Time { return e.At }
+func (e evContainerStarted) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ID).Str("name", e.Name)
+}
 func (e evContainerStarted) ApplyTo(s *overseer.State) {
 	s.Containers[e.ID] = overseer.ContainerView{
 		ID:        e.ID,
@@ -41,6 +48,9 @@ type evContainerRemoved struct {
 
 func (e evContainerRemoved) EventName() string     { return "test.container.removed" }
 func (e evContainerRemoved) OccurredAt() time.Time { return e.At }
+func (e evContainerRemoved) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ID)
+}
 func (e evContainerRemoved) ApplyTo(s *overseer.State) {
 	delete(s.Containers, e.ID)
 }
@@ -54,6 +64,9 @@ type evNoApply struct {
 
 func (e evNoApply) EventName() string     { return "test.no_apply" }
 func (e evNoApply) OccurredAt() time.Time { return e.At }
+func (e evNoApply) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("note", e.Note)
+}
 
 // --- helpers ----------------------------------------------------------
 
@@ -512,5 +525,34 @@ func TestPublishHook_PanicRecovered(t *testing.T) {
 	}
 	if got := afterPanic.Load(); got != 1 {
 		t.Fatalf("hook ran %d times after the panicking call, want 1", got)
+	}
+}
+
+func TestNewLoggerHook_EmbedsTypePayload(t *testing.T) {
+	// Captures the JSON line emitted by NewLoggerHook for an event whose
+	// MarshalZerologObject populates type-specific fields. Asserts the
+	// fields land at the top level (EmbedObject, not Object) alongside
+	// the canonical event/occurred_at — guards against regressing back
+	// to the old payload-stripped log shape that hid agent identity.
+	var buf bytes.Buffer
+	log := logger.NewWriter(&buf)
+	hook := overseer.NewLoggerHook(log)
+	hook(evContainerStarted{ID: "abc123", Name: "agent-7", At: time.Unix(1700000000, 0).UTC()})
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("hook output not valid JSON: %v\nraw: %s", err, buf.String())
+	}
+	if got["event"] != "test.container.started" {
+		t.Fatalf("event=%v, want test.container.started", got["event"])
+	}
+	if got["container_id"] != "abc123" {
+		t.Fatalf("container_id=%v, want abc123 (EmbedObject did not flatten payload)", got["container_id"])
+	}
+	if got["name"] != "agent-7" {
+		t.Fatalf("name=%v, want agent-7", got["name"])
+	}
+	if _, ok := got["occurred_at"]; !ok {
+		t.Fatalf("occurred_at missing from log line: %v", got)
 	}
 }

@@ -3,6 +3,8 @@ package dockerevents
 import (
 	"time"
 
+	"github.com/rs/zerolog"
+
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 )
 
@@ -41,6 +43,15 @@ func (e ContainerStarted) EventName() string { return "docker.container.started"
 // OccurredAt returns the event time.
 func (e ContainerStarted) OccurredAt() time.Time { return e.At }
 
+// MarshalZerologObject emits the type-specific log payload (container
+// id/name/image) so NewLoggerHook lines carry the identity that made
+// the event meaningful.
+func (e ContainerStarted) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ID).
+		Str("name", e.Name).
+		Str("image", e.Image)
+}
+
 // ApplyTo updates the Overseer worldview to reflect this container as
 // running. Labels are deep-copied so mutating the event's map after
 // publish does not affect state.
@@ -77,6 +88,11 @@ type ContainerStopped struct {
 
 func (e ContainerStopped) EventName() string     { return "docker.container.stopped" }
 func (e ContainerStopped) OccurredAt() time.Time { return e.At }
+func (e ContainerStopped) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ID).
+		Int32("exit_code", e.ExitCode).
+		Bool("oom", e.OOM)
+}
 func (e ContainerStopped) ApplyTo(s *overseer.State) {
 	view := s.Containers[e.ID]
 	view.ID = e.ID
@@ -95,6 +111,9 @@ type ContainerRemoved struct {
 
 func (e ContainerRemoved) EventName() string     { return "docker.container.removed" }
 func (e ContainerRemoved) OccurredAt() time.Time { return e.At }
+func (e ContainerRemoved) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ID)
+}
 func (e ContainerRemoved) ApplyTo(s *overseer.State) {
 	delete(s.Containers, e.ID)
 }
@@ -111,6 +130,11 @@ type NetworkAttached struct {
 
 func (e NetworkAttached) EventName() string     { return "docker.network.attached" }
 func (e NetworkAttached) OccurredAt() time.Time { return e.At }
+func (e NetworkAttached) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("network_id", e.NetworkID).
+		Str("network_name", e.NetworkName)
+}
 
 // NetworkDetached fires when a managed container disconnects from a
 // managed network.
@@ -122,6 +146,10 @@ type NetworkDetached struct {
 
 func (e NetworkDetached) EventName() string     { return "docker.network.detached" }
 func (e NetworkDetached) OccurredAt() time.Time { return e.At }
+func (e NetworkDetached) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("network_id", e.NetworkID)
+}
 
 // copyLabels returns nil for nil, otherwise a fresh map with the same
 // key/value pairs. Used by ApplyTo to keep the worldview from sharing

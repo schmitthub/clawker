@@ -328,14 +328,15 @@ func (o *Overseer) safeHook(ev Event) {
 }
 
 // NewLoggerHook returns a PublishHook that emits one structured Info
-// line per event with the canonical fields (event, occurred_at). Use
-// this as the default PublishHook so producers do not manually pair
-// log calls with Publish.
+// line per event with the canonical fields (event, occurred_at) plus
+// the event's type-specific payload via zerolog.LogObjectMarshaler.
+// Use this as the default PublishHook so producers do not manually
+// pair log calls with Publish.
 //
-// The hook intentionally stays minimal — type-specific payload (e.g.
-// container ID, session container_id, registry provenance fields) is
-// not reflected in. A consumer needing richer logs should subscribe to
-// the typed channel and emit per-type lines.
+// Each Event implements MarshalZerologObject; the hook EmbedObjects
+// the value so per-type fields (container_id, agent, project,
+// address, registry outcomes, ...) land flat at the top level of the
+// log line. No reflection.
 func NewLoggerHook(log *logger.Logger) func(Event) {
 	if log == nil {
 		log = logger.Nop()
@@ -344,6 +345,7 @@ func NewLoggerHook(log *logger.Logger) func(Event) {
 		log.Info().
 			Str("event", ev.EventName()).
 			Time("occurred_at", ev.OccurredAt()).
+			EmbedObject(ev).
 			Msg("overseer: event published")
 	}
 }

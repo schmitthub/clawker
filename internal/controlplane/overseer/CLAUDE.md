@@ -39,10 +39,17 @@ This package replaces the prior `internal/controlplane/informer/` (deleted). The
 
 ```go
 type Event interface {
-    EventName() string      // for log lines
+    EventName() string                   // for log lines
     OccurredAt() time.Time
+    zerolog.LogObjectMarshaler           // type-specific log payload
 }
 ```
+
+Every event implements `MarshalZerologObject(*zerolog.Event)` so the
+default `NewLoggerHook` can `EmbedObject(ev)` and surface
+type-specific identity (container_id, agent, project, address,
+registry outcomes, ...) in log lines without reflection or
+producer-specific hook wiring.
 
 A producer event type may also implement an unexported `applier` interface (`ApplyTo(s *State)`) to mutate worldview state when published. Producers in the tree:
 
