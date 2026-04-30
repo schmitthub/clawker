@@ -53,13 +53,8 @@ producer-specific hook wiring.
 
 A producer event type may also implement an unexported `applier` interface (`ApplyTo(s *State)`) to mutate worldview state when published. Producers in the tree:
 
-- `dockerevents.Container{Started,Restarted,Unpaused}` — set `State.Containers[ID].Status = ContainerStatusRunning`
-- `dockerevents.Container{Died,Stopped,OOM}` — set `Status = ContainerStatusStopped`
-- `dockerevents.ContainerDestroyed` — delete `State.Containers[ID]` (moby fires `destroy` for `docker rm`; `ActionRemove` is image-only)
-- `dockerevents.ContainerRenamed` — updates `Name` field in place
-- `dockerevents.Container{Created,Paused,Killed}` — pure pub/sub, no state projection (Created has no running transition; Paused / Killed are intermediate states the worldview doesn't model in v1)
+- `dockerevents.DockerEvent` — single envelope wrapping moby's `events.Message` verbatim. Its `ApplyTo` switches on the embedded `(Type, Action)` pair: container start/restart/unpause → `Status=running`; die/stop/kill/oom → `Status=stopped`; destroy → delete; rename → update `Name`. Network events and any other (Type, Action) combination fall through with no state side effect (Overseer doesn't project network edges into State). Subscribers express intent via `SubscribeFiltered` predicates on `ev.Type` + `ev.Action`.
 - `agentdial.SessionConnecting/Connected/Failed/Broken` — populate `State.AgentSessions[ContainerID]`
-- `dockerevents.Network{Created,Connected,Disconnected,Destroyed}` — pure pub/sub, no state side effect (Overseer doesn't project network edges into State)
 
 Events that don't implement applier are routed to subscribers without touching State.
 
@@ -95,20 +90,23 @@ In-memory only; cleared on CP restart. Distinct from `agentregistry`'s SQLite id
 
 ### Publishing
 
+The dockerevents feeder publishes a single typed envelope wrapping moby's `events.Message`:
+
 ```go
-overseer.Publish(bus, dockerevents.ContainerStarted{
-    ID:    "abc1234",
-    Name:  "my-agent",
-    Image: "alpine:3",
-    Labels: map[string]string{"dev.clawker.purpose": "agent"},
-    At:    time.Now(),
-})
+overseer.Publish(bus, dockerevents.DockerEvent{Message: events.Message{
+    Type:   events.ContainerEventType,
+    Action: events.ActionStart,
+    Actor:  events.Actor{ID: "abc1234", Attributes: map[string]string{"name": "my-agent"}},
+    TimeNano: time.Now().UnixNano(),
+}})
 ```
 
 ### Subscribing
 
 ```go
-sub, ok := overseer.Subscribe[dockerevents.ContainerRemoved](bus, "agentregistry")
+sub, ok := overseer.SubscribeFiltered(bus, "agentregistry", func(ev dockerevents.DockerEvent) bool {
+    return ev.Type == events.ContainerEventType && ev.Action == events.ActionDestroy
+})
 if !ok {
     // bus closed
     return
@@ -116,15 +114,22 @@ if !ok {
 defer sub.Unsubscribe()
 
 for ev := range sub.C {
-    reg.EvictByContainerID(ev.ID)
+    reg.EvictByContainerID(ev.Actor.ID)
 }
 ```
 
 ### Filtered subscribe
 
 ```go
-sub, ok := overseer.SubscribeFiltered(bus, "agentdial", func(ev dockerevents.ContainerStarted) bool {
-    return ev.Labels[consts.LabelPurpose] == consts.PurposeAgent
+sub, ok := overseer.SubscribeFiltered(bus, "agentdial", func(ev dockerevents.DockerEvent) bool {
+    if ev.Type != events.ContainerEventType {
+        return false
+    }
+    switch ev.Action {
+    case events.ActionStart, events.ActionRestart, events.ActionUnPause:
+        return ev.Actor.Attributes[consts.LabelPurpose] == consts.PurposeAgent
+    }
+    return false
 })
 ```
 

@@ -18,29 +18,16 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// mkContainerEvent builds a wire-equivalent ContainerEvent envelope
-// for tests. Mirrors the moby Message a real docker daemon would
-// send, so subscribers see the same shape they'd receive in
-// production.
-func mkContainerEvent(action events.Action, id string) dockerevents.ContainerEvent {
-	return dockerevents.ContainerEvent{Message: events.Message{
+// mkContainerEvent builds a wire-equivalent DockerEvent envelope for
+// tests. Mirrors the moby Message a real docker daemon would send,
+// so subscribers see the same shape they'd receive in production.
+func mkContainerEvent(action events.Action, id string) dockerevents.DockerEvent {
+	return dockerevents.DockerEvent{Message: events.Message{
 		Type:     events.ContainerEventType,
 		Action:   action,
 		Actor:    events.Actor{ID: id, Attributes: map[string]string{"name": id, "image": "alpine"}},
 		TimeNano: time.Now().UnixNano(),
 	}}
-}
-
-func mkDestroyed(id string) dockerevents.ContainerDestroyed {
-	return dockerevents.ContainerDestroyed{ContainerEvent: mkContainerEvent(events.ActionDestroy, id)}
-}
-
-func mkStarted(id string) dockerevents.ContainerStarted {
-	return dockerevents.ContainerStarted{ContainerEvent: mkContainerEvent(events.ActionStart, id)}
-}
-
-func mkDied(id string) dockerevents.ContainerDied {
-	return dockerevents.ContainerDied{ContainerEvent: mkContainerEvent(events.ActionDie, id)}
 }
 
 // liveBus constructs and starts an Overseer with deterministic options,
@@ -64,7 +51,7 @@ func TestSubscribe_EvictsOnContainerDestroyed(t *testing.T) {
 	cancel := Subscribe(context.Background(), r, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	overseer.Publish(bus, mkDestroyed("ctr-evict"))
+	overseer.Publish(bus, mkContainerEvent(events.ActionDestroy, "ctr-evict"))
 
 	waitFor(t, func() bool {
 		_, err := r.Lookup(tp("cert"), canonical("", "x"))
@@ -86,15 +73,15 @@ func TestSubscribe_DoesNotEvictOnStopped(t *testing.T) {
 	cancel := Subscribe(context.Background(), r, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	overseer.Publish(bus, mkStarted("ctr-stopped"))
-	overseer.Publish(bus, mkDied("ctr-stopped"))
+	overseer.Publish(bus, mkContainerEvent(events.ActionStart, "ctr-stopped"))
+	overseer.Publish(bus, mkContainerEvent(events.ActionDie, "ctr-stopped"))
 
 	// Bus dispatch is FIFO — a follow-up Publish that we observe land
 	// on a sentinel container_id proves the consumer drained both
 	// non-eviction events ahead of it. Then assert the registered
 	// entry survived. No multi-iter poll needed; the FIFO guarantee
 	// is the synchronization point.
-	overseer.Publish(bus, mkDestroyed("ctr-sentinel"))
+	overseer.Publish(bus, mkContainerEvent(events.ActionDestroy, "ctr-sentinel"))
 	waitFor(t, func() bool {
 		got, err := r.Lookup(tp("cert-y"), canonical("", "y"))
 		return err == nil && got != nil && got.AgentName == "y"
@@ -168,7 +155,7 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 	// First event — triggers the panic. The entry must still be in the
 	// registry afterward (the panic prevented the eviction) and the
 	// consumer must still be alive.
-	overseer.Publish(bus, mkDestroyed("ctr-first"))
+	overseer.Publish(bus, mkContainerEvent(events.ActionDestroy, "ctr-first"))
 
 	// Wait for the panic to actually fire before sending the second
 	// event. Otherwise we race the consumer and the second event can
@@ -177,7 +164,7 @@ func TestSubscribe_RecoversFromHookPanic(t *testing.T) {
 
 	// Second event — must be processed by the resumed consumer,
 	// proving subsequent events still drain after a recovered panic.
-	overseer.Publish(bus, mkDestroyed("ctr-second"))
+	overseer.Publish(bus, mkContainerEvent(events.ActionDestroy, "ctr-second"))
 
 	waitFor(t, func() bool {
 		_, err := delegate.Lookup(tp("cert-second"), canonical("", "second"))
@@ -254,7 +241,7 @@ func TestSubscribe_PanicStormTerminatesAtThreshold(t *testing.T) {
 	// triggers a panic. The window-check on the final panic fires
 	// the termination log.
 	for range subscribePanicWindowMaxHits {
-		for !overseer.Publish(bus, mkDestroyed("ctr-storm")) {
+		for !overseer.Publish(bus, mkContainerEvent(events.ActionDestroy, "ctr-storm")) {
 			time.Sleep(time.Microsecond)
 		}
 	}

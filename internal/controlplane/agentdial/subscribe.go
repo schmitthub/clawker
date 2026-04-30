@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/moby/moby/api/types/events"
+
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
@@ -28,19 +30,18 @@ var (
 )
 
 // Subscribe wires the Dialer to the union of moby container actions
-// that transition a container into running state — Started,
-// Restarted, Unpaused. Each fires its own typed bus event in the
-// post-refactor 1:1 vocabulary; a previously-not-running container
-// reaching running state via any of those paths needs a CP→clawkerd
-// dial, so we subscribe to all three. The Dialer's internal dedup
-// map prevents double-dial of the same container_id when multiple
-// inbound channels deliver overlapping events.
+// that transition a container into running state — Start, Restart,
+// UnPause. All three actions ride the single dockerevents.DockerEvent
+// envelope; the SubscribeFiltered predicate selects them at the
+// consumer boundary. A previously-not-running container reaching
+// running state via any of those paths needs a CP→clawkerd dial. The
+// Dialer's internal dedup map prevents double-dial of the same
+// container_id when overlapping events deliver.
 //
-// ContainerCreated is intentionally NOT in the subscription set: a
-// created-but-not-started container has no clawkerd listener, so
-// dialing it always fails. The next ActionStart (or ActionRestart /
-// ActionUnPause) republishes the appropriate typed event and the
-// Subscribe path re-fires DialAgent then.
+// ActionCreate is intentionally NOT in the predicate: a created-but-
+// not-started container has no clawkerd listener, so dialing it
+// always fails. The next ActionStart (or ActionRestart / ActionUnPause)
+// republishes the envelope and Subscribe re-fires DialAgent then.
 //
 // The same DialAgent function is the call target the initial
 // listAgentIDs poll uses at CP boot — one dial code path, multiple
@@ -52,79 +53,42 @@ var (
 // listener and shouldn't be dialed.
 //
 // log is required (pass logger.Nop() in tests). The returned cleanup
-// must be deferred by the caller; it cancels the bus subscriptions
-// and waits for every consumer goroutine to drain.
+// must be deferred by the caller; it cancels the bus subscription
+// and waits for the consumer goroutine to drain.
 func Subscribe(ctx context.Context, dialer *Dialer, bus *overseer.Overseer, log *logger.Logger) func() {
 	if log == nil {
 		log = logger.Nop()
 	}
 
-	startedSub, ok := overseer.SubscribeFiltered(bus, "agentdial.started", agentPurposeFilter[dockerevents.ContainerStarted])
+	sub, ok := overseer.SubscribeFiltered(bus, "agentdial", func(ev dockerevents.DockerEvent) bool {
+		if ev.Type != events.ContainerEventType {
+			return false
+		}
+		switch ev.Action {
+		case events.ActionStart, events.ActionRestart, events.ActionUnPause:
+			return ev.Actor.Attributes[consts.LabelPurpose] == consts.PurposeAgent
+		}
+		return false
+	})
 	if !ok {
 		log.Warn().Msg("agentdial: bus closed before subscribe; consumer not started")
 		return func() {}
 	}
-	restartedSub, ok := overseer.SubscribeFiltered(bus, "agentdial.restarted", agentPurposeFilter[dockerevents.ContainerRestarted])
-	if !ok {
-		startedSub.Unsubscribe()
-		log.Warn().Msg("agentdial: bus closed before restart subscribe; consumer not started")
-		return func() {}
-	}
-	unpausedSub, ok := overseer.SubscribeFiltered(bus, "agentdial.unpaused", agentPurposeFilter[dockerevents.ContainerUnpaused])
-	if !ok {
-		startedSub.Unsubscribe()
-		restartedSub.Unsubscribe()
-		log.Warn().Msg("agentdial: bus closed before unpause subscribe; consumer not started")
-		return func() {}
-	}
 
-	doneStarted := runConsumer(ctx, dialer, startedSub.C, log.With("running_transition", "started"))
-	doneRestarted := runConsumer(ctx, dialer, restartedSub.C, log.With("running_transition", "restarted"))
-	doneUnpaused := runConsumer(ctx, dialer, unpausedSub.C, log.With("running_transition", "unpaused"))
+	done := runConsumer(ctx, dialer, sub.C, log)
 
 	return func() {
-		startedSub.Unsubscribe()
-		restartedSub.Unsubscribe()
-		unpausedSub.Unsubscribe()
-		<-doneStarted
-		<-doneRestarted
-		<-doneUnpaused
+		sub.Unsubscribe()
+		<-done
 	}
 }
 
-// runningEvent is the constraint for events that signal "container
-// reached running state". Each implements Subscribe's union of
-// dockerevents types via embedded ContainerEvent — every one exposes
-// the container ID through Actor.ID.
-type runningEvent interface {
-	dockerevents.ContainerStarted | dockerevents.ContainerRestarted | dockerevents.ContainerUnpaused
-}
-
-// agentPurposeFilter returns a SubscribeFiltered predicate that
-// matches only events whose Actor.Attributes carry the
-// purpose=agent label. Generic over the running-event union so the
-// same predicate logic backs all three subscriptions without
-// per-type duplication.
-func agentPurposeFilter[T runningEvent](ev T) bool {
-	switch e := any(ev).(type) {
-	case dockerevents.ContainerStarted:
-		return e.Actor.Attributes[consts.LabelPurpose] == consts.PurposeAgent
-	case dockerevents.ContainerRestarted:
-		return e.Actor.Attributes[consts.LabelPurpose] == consts.PurposeAgent
-	case dockerevents.ContainerUnpaused:
-		return e.Actor.Attributes[consts.LabelPurpose] == consts.PurposeAgent
-	default:
-		return false
-	}
-}
-
-// runConsumer drives one typed channel until ctx cancels or the
+// runConsumer drives the typed channel until ctx cancels or the
 // channel closes, calling DialAgent with the container_id from each
-// event. Panic-loop guardrails mirror the original implementation —
-// a fixed-capacity ring buffer caps memory regardless of panic rate;
-// exceeding the ceiling terminates this consumer (other typed
-// consumers stay alive).
-func runConsumer[T runningEvent](ctx context.Context, dialer *Dialer, ch <-chan T, log *logger.Logger) <-chan struct{} {
+// event. Panic-loop guardrails: fixed-capacity ring buffer caps
+// memory regardless of panic rate; exceeding the ceiling terminates
+// the consumer.
+func runConsumer(ctx context.Context, dialer *Dialer, ch <-chan dockerevents.DockerEvent, log *logger.Logger) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -177,7 +141,7 @@ func runConsumer[T runningEvent](ctx context.Context, dialer *Dialer, ch <-chan 
 // channel is closed, or a panic in DialAgent unwinds. Mirrors
 // agentregistry.drainOnce — deferred recover lives in its own stack
 // frame so the inner select doesn't have to deal with recovery.
-func drainOnce[T runningEvent](ctx context.Context, ch <-chan T, dialer *Dialer, log *logger.Logger) (terminate bool) {
+func drainOnce(ctx context.Context, ch <-chan dockerevents.DockerEvent, dialer *Dialer, log *logger.Logger) (terminate bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error().Interface("panic", r).Msg("agentdial subscribe consumer panicked; resuming")
@@ -192,25 +156,7 @@ func drainOnce[T runningEvent](ctx context.Context, ch <-chan T, dialer *Dialer,
 			if !ok {
 				return true
 			}
-			dialer.DialAgent(ctx, containerID(ev))
+			dialer.DialAgent(ctx, ev.Actor.ID)
 		}
-	}
-}
-
-// containerID extracts the container ID from any running-transition
-// event. The ContainerEvent base embeds events.Message so Actor.ID
-// is the canonical path to the id; the per-action wrapper types
-// expose it via the same promoted field. Generic switch keeps the
-// extraction symmetrical with agentPurposeFilter.
-func containerID[T runningEvent](ev T) string {
-	switch e := any(ev).(type) {
-	case dockerevents.ContainerStarted:
-		return e.Actor.ID
-	case dockerevents.ContainerRestarted:
-		return e.Actor.ID
-	case dockerevents.ContainerUnpaused:
-		return e.Actor.ID
-	default:
-		return ""
 	}
 }

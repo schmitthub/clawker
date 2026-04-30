@@ -325,18 +325,24 @@ func TestReconcile_PublishesNetworkConnected(t *testing.T) {
 	}
 	f, bus := newFakeFeeder(t, cli, 5*time.Millisecond)
 
-	sub, ok := overseer.Subscribe[NetworkConnected](bus, "test")
+	sub, ok := overseer.Subscribe[DockerEvent](bus, "test")
 	require.True(t, ok)
 	defer sub.Unsubscribe()
 
 	require.NoError(t, f.reconcile(context.Background()))
 
-	select {
-	case ev := <-sub.C:
-		require.Equal(t, "ctr1", ev.Actor.Attributes["container"])
-		require.Equal(t, "net1", ev.Actor.ID)
-	case <-time.After(time.Second):
-		t.Fatal("did not receive NetworkConnected after reconcile")
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case ev := <-sub.C:
+			if ev.Type == events.NetworkEventType && ev.Action == events.ActionConnect {
+				require.Equal(t, "ctr1", ev.Actor.Attributes["container"])
+				require.Equal(t, "net1", ev.Actor.ID)
+				return
+			}
+		case <-deadline:
+			t.Fatal("did not receive network/connect after reconcile")
+		}
 	}
 }
 
@@ -353,20 +359,18 @@ func TestReconcile_PartialListErrorReturned(t *testing.T) {
 	require.Contains(t, err.Error(), "network endpoint borked")
 }
 
-// TestContainerEventFromState — reconcile observation maps moby
-// state to the typed wrapper that matches what the live event stream
-// would have published for that state. StateCreated and
-// StateRestarting return nil — created-but-not-started has no
-// running transition to fabricate, restarting is transient and the
-// next real event will redrive.
-func TestContainerEventFromState(t *testing.T) {
-	now := time.Now()
-	require.IsType(t, ContainerStarted{}, containerEventFromState(mobycontainer.StateRunning, "id", mobycontainer.Summary{}, now))
-	require.IsType(t, ContainerPaused{}, containerEventFromState(mobycontainer.StatePaused, "id", mobycontainer.Summary{}, now))
-	require.IsType(t, ContainerDied{}, containerEventFromState(mobycontainer.StateExited, "id", mobycontainer.Summary{}, now))
-	require.IsType(t, ContainerDied{}, containerEventFromState(mobycontainer.StateDead, "id", mobycontainer.Summary{}, now))
-	require.IsType(t, ContainerDestroyed{}, containerEventFromState(mobycontainer.StateRemoving, "id", mobycontainer.Summary{}, now))
-	require.Nil(t, containerEventFromState(mobycontainer.StateCreated, "id", mobycontainer.Summary{}, now))
-	require.Nil(t, containerEventFromState(mobycontainer.StateRestarting, "id", mobycontainer.Summary{}, now))
-	require.Nil(t, containerEventFromState(mobycontainer.ContainerState("nonsense"), "id", mobycontainer.Summary{}, now))
+// TestContainerActionFromState — reconcile observation maps moby
+// state to the action that the live event stream would have used.
+// StateCreated and StateRestarting return "" — created-but-not-
+// started has no running transition to fabricate, restarting is
+// transient and the next real event will redrive.
+func TestContainerActionFromState(t *testing.T) {
+	require.Equal(t, events.ActionStart, containerActionFromState(mobycontainer.StateRunning))
+	require.Equal(t, events.ActionPause, containerActionFromState(mobycontainer.StatePaused))
+	require.Equal(t, events.ActionDie, containerActionFromState(mobycontainer.StateExited))
+	require.Equal(t, events.ActionDie, containerActionFromState(mobycontainer.StateDead))
+	require.Equal(t, events.ActionDestroy, containerActionFromState(mobycontainer.StateRemoving))
+	require.Equal(t, events.Action(""), containerActionFromState(mobycontainer.StateCreated))
+	require.Equal(t, events.Action(""), containerActionFromState(mobycontainer.StateRestarting))
+	require.Equal(t, events.Action(""), containerActionFromState(mobycontainer.ContainerState("nonsense")))
 }

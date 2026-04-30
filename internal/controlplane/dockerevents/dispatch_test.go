@@ -81,12 +81,32 @@ func snapshotEventually(t *testing.T, bus *overseer.Overseer, cond func(overseer
 	return state
 }
 
+// recvEventByAction drains the bus's DockerEvent subscription until it
+// observes one whose Action equals want, or the deadline elapses.
+// Other actions are returned to the caller's tests by other matchers
+// — but for this single-channel shape we read past unrelated entries
+// since the test seeds them deliberately.
+func recvEventByAction(t *testing.T, ch <-chan DockerEvent, wantType events.Type, wantAction events.Action) DockerEvent {
+	t.Helper()
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type == wantType && ev.Action == wantAction {
+				return ev
+			}
+		case <-deadline:
+			t.Fatalf("did not receive %s/%s within deadline", wantType, wantAction)
+			return DockerEvent{}
+		}
+	}
+}
+
 // TestDispatch_ContainerLifecycle_OneToOne pins the 1:1 moby-action →
-// typed-event mapping. ActionCreate publishes ContainerCreated and
-// does NOT produce a "running" worldview — a created-but-not-started
-// container has no ContainerStarted firing. ActionStart later fires
-// ContainerStarted + flips Status=running. This invariant is the
-// whole point of the dockerevents 1:1 refactor.
+// envelope mapping. ActionCreate publishes a DockerEvent BUT does not
+// produce a "running" worldview — a created-but-not-started container
+// has no Status flip. ActionStart later flips Status=running. This
+// invariant is the whole point of the dockerevents 1:1 refactor.
 func TestDispatch_ContainerLifecycle_OneToOne(t *testing.T) {
 	f, bus := newTestFeeder(t, stubClient{})
 	ctx := context.Background()
@@ -102,45 +122,26 @@ func TestDispatch_ContainerLifecycle_OneToOne(t *testing.T) {
 		},
 	}
 
-	subCreated, ok := overseer.Subscribe[ContainerCreated](bus, "test.created")
+	sub, ok := overseer.Subscribe[DockerEvent](bus, "test")
 	require.True(t, ok)
-	defer subCreated.Unsubscribe()
-	subStarted, ok := overseer.Subscribe[ContainerStarted](bus, "test.started")
-	require.True(t, ok)
-	defer subStarted.Unsubscribe()
-	subDied, ok := overseer.Subscribe[ContainerDied](bus, "test.died")
-	require.True(t, ok)
-	defer subDied.Unsubscribe()
-	subDestroyed, ok := overseer.Subscribe[ContainerDestroyed](bus, "test.destroyed")
-	require.True(t, ok)
-	defer subDestroyed.Unsubscribe()
+	defer sub.Unsubscribe()
 
-	// ActionCreate → ContainerCreated; State.Containers must NOT carry
-	// running status (no ContainerStarted fired yet).
+	// ActionCreate → DockerEvent published; State.Containers must NOT
+	// carry running status (no start fired yet).
 	f.dispatch(ctx, events.Message{Type: events.ContainerEventType, Action: events.ActionCreate, Actor: managed, TimeNano: time.Now().UnixNano()})
-	select {
-	case ev := <-subCreated.C:
-		require.Equal(t, id, ev.Actor.ID)
-		require.Equal(t, "myctr", ev.Actor.Attributes["name"])
-	case <-time.After(time.Second):
-		t.Fatal("did not receive ContainerCreated")
-	}
-	// No ContainerStarted fan-out for create alone.
-	select {
-	case ev := <-subStarted.C:
-		t.Fatalf("ActionCreate must not publish ContainerStarted, got %+v", ev)
-	case <-time.After(50 * time.Millisecond):
-	}
+	ev := recvEventByAction(t, sub.C, events.ContainerEventType, events.ActionCreate)
+	require.Equal(t, id, ev.Actor.ID)
+	require.Equal(t, "myctr", ev.Actor.Attributes["name"])
 
-	// ActionStart → ContainerStarted with Status=running in worldview.
+	// No Status=running yet from create alone.
+	state, _ := bus.Snapshot(ctx)
+	require.NotEqual(t, overseer.ContainerStatusRunning, state.Containers[id].Status, "ActionCreate must not flip Status=running")
+
+	// ActionStart → publish + Status=running.
 	f.dispatch(ctx, events.Message{Type: events.ContainerEventType, Action: events.ActionStart, Actor: managed, TimeNano: time.Now().UnixNano()})
-	select {
-	case ev := <-subStarted.C:
-		require.Equal(t, id, ev.Actor.ID)
-	case <-time.After(time.Second):
-		t.Fatal("did not receive ContainerStarted")
-	}
-	state := snapshotEventually(t, bus, func(s overseer.State) bool {
+	ev = recvEventByAction(t, sub.C, events.ContainerEventType, events.ActionStart)
+	require.Equal(t, id, ev.Actor.ID)
+	state = snapshotEventually(t, bus, func(s overseer.State) bool {
 		return s.Containers[id].Status == overseer.ContainerStatusRunning
 	})
 	view := state.Containers[id]
@@ -149,7 +150,7 @@ func TestDispatch_ContainerLifecycle_OneToOne(t *testing.T) {
 	require.NotContains(t, view.Labels, "image", "engine-set 'image' must not pollute Labels")
 	require.NotContains(t, view.Labels, "name", "engine-set 'name' must not pollute Labels")
 
-	// ActionDie → ContainerDied; status flips to Stopped.
+	// ActionDie → publish + Status=stopped.
 	dieActor := managed
 	dieActor.Attributes = map[string]string{
 		testManagedKey: testManagedValue,
@@ -158,46 +159,35 @@ func TestDispatch_ContainerLifecycle_OneToOne(t *testing.T) {
 		"exitCode":     "137",
 	}
 	f.dispatch(ctx, events.Message{Type: events.ContainerEventType, Action: events.ActionDie, Actor: dieActor, TimeNano: time.Now().UnixNano()})
-	select {
-	case ev := <-subDied.C:
-		require.Equal(t, id, ev.Actor.ID)
-		require.Equal(t, int32(137), ev.ExitCode())
-	case <-time.After(time.Second):
-		t.Fatal("did not receive ContainerDied")
-	}
+	ev = recvEventByAction(t, sub.C, events.ContainerEventType, events.ActionDie)
+	require.Equal(t, id, ev.Actor.ID)
+	require.Equal(t, "137", ev.Actor.Attributes["exitCode"], "exitCode must ride through on Actor.Attributes")
 	state = snapshotEventually(t, bus, func(s overseer.State) bool {
 		return s.Containers[id].Status == overseer.ContainerStatusStopped
 	})
 	require.Equal(t, overseer.ContainerStatusStopped, state.Containers[id].Status)
 
-	// ActionDestroy → ContainerDestroyed; state entry deleted entirely.
+	// ActionDestroy → publish + state entry deleted.
 	f.dispatch(ctx, events.Message{Type: events.ContainerEventType, Action: events.ActionDestroy, Actor: dieActor, TimeNano: time.Now().UnixNano()})
-	select {
-	case ev := <-subDestroyed.C:
-		require.Equal(t, id, ev.Actor.ID)
-	case <-time.After(time.Second):
-		t.Fatal("did not receive ContainerDestroyed")
-	}
-	state = snapshotEventually(t, bus, func(s overseer.State) bool {
+	ev = recvEventByAction(t, sub.C, events.ContainerEventType, events.ActionDestroy)
+	require.Equal(t, id, ev.Actor.ID)
+	snapshotEventually(t, bus, func(s overseer.State) bool {
 		_, ok := s.Containers[id]
 		return !ok
 	})
 	require.False(t, f.containers[id], "destroy must drop the container from managed-set")
 }
 
-// TestDispatch_RestartPublishesContainerRestarted — moby fires a
-// single `restart` action atomically (not separate stop+start); the
-// dispatcher publishes ContainerRestarted, distinct from
-// ContainerStarted.
-func TestDispatch_RestartPublishesContainerRestarted(t *testing.T) {
+// TestDispatch_RestartPublishesRestartAction — moby fires a single
+// `restart` action atomically (not separate stop+start); the
+// dispatcher publishes DockerEvent{Action=restart}, distinct from
+// ActionStart.
+func TestDispatch_RestartPublishesRestartAction(t *testing.T) {
 	f, bus := newTestFeeder(t, stubClient{})
 
-	subRestarted, ok := overseer.Subscribe[ContainerRestarted](bus, "test.restarted")
+	sub, ok := overseer.Subscribe[DockerEvent](bus, "test")
 	require.True(t, ok)
-	defer subRestarted.Unsubscribe()
-	subStarted, ok := overseer.Subscribe[ContainerStarted](bus, "test.started")
-	require.True(t, ok)
-	defer subStarted.Unsubscribe()
+	defer sub.Unsubscribe()
 
 	id := "rstrtaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	a := events.Actor{ID: id, Attributes: map[string]string{
@@ -207,17 +197,9 @@ func TestDispatch_RestartPublishesContainerRestarted(t *testing.T) {
 		Type: events.ContainerEventType, Action: events.ActionRestart, Actor: a, TimeNano: time.Now().UnixNano(),
 	})
 
-	select {
-	case ev := <-subRestarted.C:
-		require.Equal(t, id, ev.Actor.ID)
-	case <-time.After(time.Second):
-		t.Fatal("did not receive ContainerRestarted")
-	}
-	select {
-	case ev := <-subStarted.C:
-		t.Fatalf("ActionRestart must not publish ContainerStarted, got %+v", ev)
-	case <-time.After(50 * time.Millisecond):
-	}
+	ev := recvEventByAction(t, sub.C, events.ContainerEventType, events.ActionRestart)
+	require.Equal(t, id, ev.Actor.ID)
+	require.Equal(t, events.ActionRestart, ev.Action, "must remain Action=restart, not collapse to Action=start")
 }
 
 // TestDispatch_UnmanagedContainerDropped — events without the managed
@@ -246,14 +228,13 @@ func TestDispatch_UnmanagedContainerDropped(t *testing.T) {
 	require.False(t, present, "unmanaged container must not appear in Snapshot")
 }
 
-// TestDispatch_OOMPublishesContainerOOM — moby's `oom` action gets
-// its own typed event, distinct from `die`. Consumers that need a
-// single "container terminated" notification dedup at the consumer
-// layer; the dispatcher does not collapse oom+die.
-func TestDispatch_OOMPublishesContainerOOM(t *testing.T) {
+// TestDispatch_OOMPublishesOOMAction — moby's `oom` action stays
+// distinct on the wire; subscribers that need a single "container
+// terminated" notification dedup at the consumer layer.
+func TestDispatch_OOMPublishesOOMAction(t *testing.T) {
 	f, bus := newTestFeeder(t, stubClient{})
 
-	sub, ok := overseer.Subscribe[ContainerOOM](bus, "test.oom")
+	sub, ok := overseer.Subscribe[DockerEvent](bus, "test")
 	require.True(t, ok)
 	defer sub.Unsubscribe()
 
@@ -265,12 +246,8 @@ func TestDispatch_OOMPublishesContainerOOM(t *testing.T) {
 		Type: events.ContainerEventType, Action: events.ActionOOM, Actor: a, TimeNano: time.Now().UnixNano(),
 	})
 
-	select {
-	case ev := <-sub.C:
-		require.Equal(t, id, ev.Actor.ID)
-	case <-time.After(time.Second):
-		t.Fatal("did not receive ContainerOOM within 1s")
-	}
+	ev := recvEventByAction(t, sub.C, events.ContainerEventType, events.ActionOOM)
+	require.Equal(t, id, ev.Actor.ID)
 }
 
 // TestShouldHandleAction_ExecAttachActionsDropped pins the action
@@ -289,19 +266,16 @@ func TestShouldHandleAction_ExecAttachActionsDropped(t *testing.T) {
 }
 
 // TestDispatch_NetworkConnectDisconnect_BothManaged — connect/
-// disconnect with both endpoints managed publishes typed
-// NetworkConnected / NetworkDisconnected events. Container ID lives
-// in Actor.Attributes["container"]; network ID is Actor.ID.
+// disconnect with both endpoints managed publishes DockerEvent
+// envelopes typed as network/connect and network/disconnect.
+// Container ID lives in Actor.Attributes["container"]; network ID
+// is Actor.ID.
 func TestDispatch_NetworkConnectDisconnect_BothManaged(t *testing.T) {
 	f, bus := newTestFeeder(t, stubClient{})
 
-	subConnected, ok := overseer.Subscribe[NetworkConnected](bus, "test.connected")
+	sub, ok := overseer.Subscribe[DockerEvent](bus, "test")
 	require.True(t, ok)
-	defer subConnected.Unsubscribe()
-
-	subDisconnected, ok := overseer.Subscribe[NetworkDisconnected](bus, "test.disconnected")
-	require.True(t, ok)
-	defer subDisconnected.Unsubscribe()
+	defer sub.Unsubscribe()
 
 	netID := "n0000000000000000000000000000000000000000000000000000000000000aa"
 	ctrID := "c0000000000000000000000000000000000000000000000000000000000000aa"
@@ -314,14 +288,9 @@ func TestDispatch_NetworkConnectDisconnect_BothManaged(t *testing.T) {
 		Actor:    events.Actor{ID: netID, Attributes: map[string]string{"container": ctrID}},
 		TimeNano: time.Now().UnixNano(),
 	})
-
-	select {
-	case ev := <-subConnected.C:
-		require.Equal(t, ctrID, ev.Actor.Attributes["container"])
-		require.Equal(t, netID, ev.Actor.ID)
-	case <-time.After(time.Second):
-		t.Fatal("did not receive NetworkConnected")
-	}
+	ev := recvEventByAction(t, sub.C, events.NetworkEventType, events.ActionConnect)
+	require.Equal(t, ctrID, ev.Actor.Attributes["container"])
+	require.Equal(t, netID, ev.Actor.ID)
 
 	f.dispatch(context.Background(), events.Message{
 		Type:     events.NetworkEventType,
@@ -329,21 +298,16 @@ func TestDispatch_NetworkConnectDisconnect_BothManaged(t *testing.T) {
 		Actor:    events.Actor{ID: netID, Attributes: map[string]string{"container": ctrID}},
 		TimeNano: time.Now().UnixNano(),
 	})
-
-	select {
-	case ev := <-subDisconnected.C:
-		require.Equal(t, ctrID, ev.Actor.Attributes["container"])
-		require.Equal(t, netID, ev.Actor.ID)
-	case <-time.After(time.Second):
-		t.Fatal("did not receive NetworkDisconnected")
-	}
+	ev = recvEventByAction(t, sub.C, events.NetworkEventType, events.ActionDisconnect)
+	require.Equal(t, ctrID, ev.Actor.Attributes["container"])
+	require.Equal(t, netID, ev.Actor.ID)
 }
 
 // TestDispatch_NetworkConnect_UnknownNetwork — connect with the
 // network not in managed-set must not publish anything.
 func TestDispatch_NetworkConnect_UnknownNetwork(t *testing.T) {
 	f, bus := newTestFeeder(t, stubClient{})
-	sub, ok := overseer.Subscribe[NetworkConnected](bus, "test")
+	sub, ok := overseer.Subscribe[DockerEvent](bus, "test")
 	require.True(t, ok)
 	defer sub.Unsubscribe()
 
@@ -385,8 +349,8 @@ func (c *netInspectClient) NetworkInspect(_ context.Context, _ string, _ mobycli
 
 // TestDispatch_NetworkCreate_PublishesForManaged — inspect-driven
 // create path: managed networks land in the in-feeder networkSet and
-// publish a NetworkCreated event; unmanaged networks are silently
-// dropped (no inspect-failure recheck flag for the managed case).
+// publish a DockerEvent{Type=network, Action=create}; unmanaged
+// networks are silently dropped.
 func TestDispatch_NetworkCreate_PublishesForManaged(t *testing.T) {
 	netID := "n0000000000000000000000000000000000000000000000000000000000000aa"
 
@@ -398,7 +362,7 @@ func TestDispatch_NetworkCreate_PublishesForManaged(t *testing.T) {
 			Labels: map[string]string{testManagedKey: testManagedValue, "clawker": "true"},
 		}}}
 		f, bus := newTestFeeder(t, cli)
-		sub, ok := overseer.Subscribe[NetworkCreated](bus, "test.netcreated")
+		sub, ok := overseer.Subscribe[DockerEvent](bus, "test")
 		require.True(t, ok)
 		defer sub.Unsubscribe()
 
@@ -409,12 +373,8 @@ func TestDispatch_NetworkCreate_PublishesForManaged(t *testing.T) {
 		})
 
 		require.True(t, f.networks[netID], "managed network must populate networkSet")
-		select {
-		case ev := <-sub.C:
-			require.Equal(t, netID, ev.Actor.ID)
-		case <-time.After(time.Second):
-			t.Fatal("did not receive NetworkCreated for managed network")
-		}
+		ev := recvEventByAction(t, sub.C, events.NetworkEventType, events.ActionCreate)
+		require.Equal(t, netID, ev.Actor.ID)
 	})
 
 	t.Run("unmanaged", func(t *testing.T) {
@@ -448,11 +408,11 @@ func TestDispatch_NetworkCreate_PublishesForManaged(t *testing.T) {
 }
 
 // TestDispatch_NetworkDestroy_PublishesAndDropsManagedSet — destroy
-// publishes NetworkDestroyed for previously-managed networks AND
-// drops them from the managed-set.
+// publishes DockerEvent{Type=network, Action=destroy} for previously-
+// managed networks AND drops them from the managed-set.
 func TestDispatch_NetworkDestroy_PublishesAndDropsManagedSet(t *testing.T) {
 	f, bus := newTestFeeder(t, stubClient{})
-	sub, ok := overseer.Subscribe[NetworkDestroyed](bus, "test.netdestroyed")
+	sub, ok := overseer.Subscribe[DockerEvent](bus, "test")
 	require.True(t, ok)
 	defer sub.Unsubscribe()
 
@@ -465,13 +425,9 @@ func TestDispatch_NetworkDestroy_PublishesAndDropsManagedSet(t *testing.T) {
 		Actor:  events.Actor{ID: netID},
 	})
 
+	ev := recvEventByAction(t, sub.C, events.NetworkEventType, events.ActionDestroy)
+	require.Equal(t, netID, ev.Actor.ID)
 	require.False(t, f.networks[netID], "destroy must drop the network from managed-set")
-	select {
-	case ev := <-sub.C:
-		require.Equal(t, netID, ev.Actor.ID)
-	case <-time.After(time.Second):
-		t.Fatal("did not receive NetworkDestroyed")
-	}
 }
 
 // TestStripEngineKeys

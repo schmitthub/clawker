@@ -43,7 +43,7 @@ agentServer := grpc.NewServer(
 agentv1.RegisterAgentServiceServer(agentServer, &agentv1.UnimplementedAgentServiceServer{})
 ```
 
-The agent registry subscribes to typed `dockerevents.ContainerRemoved` events on the Overseer bus:
+The agent registry subscribes (via `SubscribeFiltered`) to `dockerevents.DockerEvent` envelopes matching `container/destroy` on the Overseer bus:
 
 ```go
 cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, bus, log)

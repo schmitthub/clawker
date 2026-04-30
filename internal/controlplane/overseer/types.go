@@ -11,7 +11,7 @@
 // interface — Snapshot returns a deep copy.
 //
 // The package is deliberately consumer-agnostic at the bus layer:
-// event types live in producer packages (e.g., dockerevents.ContainerStarted),
+// event types live in producer packages (e.g., dockerevents.DockerEvent),
 // which import overseer for State definitions when their event
 // implements ApplyTo. Overseer never imports any producer package — it
 // is a leaf, like the informer it replaces.

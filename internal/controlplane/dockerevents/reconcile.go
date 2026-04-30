@@ -11,27 +11,21 @@ import (
 )
 
 // reconcile rebuilds the managed-container and managed-network sets
-// from authoritative Docker state and re-publishes a typed lifecycle
-// event for every managed container plus a NetworkAttached event for
-// every container→managed-network edge. Called at startup and after
-// every events stream reset.
+// from authoritative Docker state and re-publishes the single
+// DockerEvent envelope for every managed container plus a
+// network/connect envelope for every container→managed-network edge.
+// Called at startup and after every events stream reset.
 //
-// Reconcile is idempotent against the bus:
-//   - ContainerStarted/Stopped applier hooks set Status by overwrite,
-//     not insert-only — re-publish on top of existing state is safe.
-//   - NetworkAttached has no applier hook in v1 (Overseer doesn't
-//     project network edges into State); subscribers are responsible
-//     for their own dedup if they care.
+// Reconcile is idempotent against the bus: ApplyTo on the embedded
+// (Type, Action) pair sets Status by overwrite, not insert-only —
+// re-publish on top of existing state is safe. Network events have
+// no state projection in v1.
 //
-// Reconcile does NOT publish ContainerRemoved for objects that were
+// Reconcile does NOT publish a destroy envelope for objects that were
 // seen on a previous pass but are missing now. Removals come from the
 // events stream — between the last list and the current one, those
 // removals were either delivered as events (handled in dispatch) or
 // will be replayed on the next stream open via Since= timestamp.
-//
-// Volume/image listing was dropped along with their event publishes;
-// Overseer doesn't track them and the listing roundtrip was pure
-// overhead.
 func (f *Feeder) reconcile(ctx context.Context) error {
 	managedFilter := client.Filters{}.Add("label", f.opts.ManagedLabelKey+"="+f.opts.ManagedLabelValue)
 
@@ -47,8 +41,8 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 
 	// Rebuild the managed-sets fresh. Stream deliveries that arrive
 	// between this rebuild and runStream taking over are guarded by
-	// the Since= anchor — they will redeliver and pass through dispatch
-	// which patches the sets.
+	// the Since= anchor — they will redeliver and pass through
+	// dispatch which patches the sets.
 	f.containers = make(map[string]bool, len(containers.Items))
 	f.networks = make(map[string]bool, len(networks.Items))
 
@@ -58,20 +52,35 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 	// on f.containers membership.
 	for _, c := range containers.Items {
 		f.containers[c.ID] = true
-		if ev := containerEventFromState(c.State, c.ID, c, now); ev != nil {
-			f.publishContainerEvent(ev, c.ID)
+		action := containerActionFromState(c.State)
+		if action == "" {
+			// StateCreated / StateRestarting → no synthetic publish;
+			// the next real moby action will redrive when the
+			// container transitions.
+			continue
 		}
+		envelope := DockerEvent{Message: events.Message{
+			Type:   events.ContainerEventType,
+			Action: action,
+			Actor: events.Actor{
+				ID:         c.ID,
+				Attributes: containerAttributesFromSummary(c),
+			},
+			Scope:    "local",
+			Time:     now.Unix(),
+			TimeNano: now.UnixNano(),
+		}}
+		f.publishDockerEvent(envelope, c.ID)
 	}
 
 	for _, n := range networks.Items {
 		f.networks[n.ID] = true
 	}
 
-	// Container→network edges. Orphan edges to unmanaged networks add
-	// no value, so we gate on f.networks (fully populated above).
-	// Reconcile synthesizes a NetworkConnected event with a wire-
-	// equivalent envelope so subscribers can't tell stream-delivered
-	// from observed events apart.
+	// Container→network edges. Orphan edges to unmanaged networks
+	// add no value, so we gate on f.networks (fully populated above).
+	// Reconcile synthesizes a network/connect envelope so subscribers
+	// can't tell stream-delivered from observed events apart.
 	for _, c := range containers.Items {
 		if c.NetworkSettings == nil {
 			continue
@@ -83,7 +92,7 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 			if !f.networks[ep.NetworkID] {
 				continue
 			}
-			envelope := NetworkEvent{Message: events.Message{
+			envelope := DockerEvent{Message: events.Message{
 				Type:   events.NetworkEventType,
 				Action: events.ActionConnect,
 				Actor: events.Actor{
@@ -96,7 +105,7 @@ func (f *Feeder) reconcile(ctx context.Context) error {
 				Time:     now.Unix(),
 				TimeNano: now.UnixNano(),
 			}}
-			f.publishNetworkEvent(NetworkConnected{envelope}, c.ID, ep.NetworkID)
+			f.publishDockerEvent(envelope, c.ID)
 		}
 	}
 

@@ -1,6 +1,6 @@
 # agentregistry Package
 
-Persisted record of (cert thumbprint, container_id, project, agent_name, canonical_cn) for every clawker-managed container. Rows are written by the CLI at container create time alongside auth material delivery. Consumed by `agent.IdentityInterceptor` (every non-opted-out AgentPort RPC — opt-out roster is empty in this branch since AgentService has no inbound RPCs), `AdminService.ListAgents`, and the local-read `clawker controlplane agents` CLI. Eviction is owned by the CP: startup `Reap` against live docker state, plus dockerevents `ContainerRemoved` (destroy) in steady state.
+Persisted record of (cert thumbprint, container_id, project, agent_name, canonical_cn) for every clawker-managed container. Rows are written by the CLI at container create time alongside auth material delivery. Consumed by `agent.IdentityInterceptor` (every non-opted-out AgentPort RPC — opt-out roster is empty in this branch since AgentService has no inbound RPCs), `AdminService.ListAgents`, and the local-read `clawker controlplane agents` CLI. Eviction is owned by the CP: startup `Reap` against live docker state, plus dockerevents `container/destroy` in steady state.
 
 ## Backing store: sqlite (cache-less)
 
@@ -50,7 +50,7 @@ Add takes string `Project` + `AgentName` on `Entry` and validates them via `auth
 
 A row exists ⇔ the named container exists in docker (running OR stopped). Eviction triggers narrowed to:
 
-- **`docker rm` (`dockerevents.ContainerRemoved`)** — steady-state, driven by the dockerevents subscription. Container is gone for good, row is orphaned.
+- **`docker rm` (`dockerevents.DockerEvent` with `Type=container, Action=destroy`)** — steady-state, driven by the dockerevents subscription. Container is gone for good, row is orphaned.
 - **CP startup reap** — `agentregistry.Reap(ctx, reg, lister, log)` lists every `purpose=agent` container with `All: true` (running + stopped + exited) and evicts every row whose container_id is missing. Heals the registry against `docker rm` events that landed while the CP was down.
 
 Stop/die/kill do NOT evict — a stopped container can be `docker start`-ed back into life and the row should pick up where it left off.
@@ -96,7 +96,7 @@ func EnsureSchema(dbPath string, log *logger.Logger) error // Idempotent: opens 
 
 ## Subscriber
 
-`Subscribe(ctx, registry, bus, log)` subscribes the registry to typed `dockerevents.ContainerRemoved` events on the Overseer bus; **destroy only** drives `EvictByContainerID`. Stop/die/kill are deliberately ignored — see "Registry row ↔ extant container invariant" above. The handler logs Evict errors at Warn and proceeds — it cannot retry from a bus consumer because the next event is already queued. Reused by both in-memory and sqlite-backed registries; the subscription only sees the Registry interface.
+`Subscribe(ctx, registry, bus, log)` registers a `SubscribeFiltered` consumer for `dockerevents.DockerEvent` envelopes whose embedded `(Type, Action)` matches `container/destroy`. The predicate runs on the bus loop; only matching envelopes reach the consumer goroutine which calls `EvictByContainerID(ev.Actor.ID)`. Stop/die/kill are deliberately ignored — see "Registry row ↔ extant container invariant" above. The handler logs Evict errors at Warn and proceeds — it cannot retry from a bus consumer because the next event is already queued. Reused by both in-memory and sqlite-backed registries; the subscription only sees the Registry interface.
 
 ## Reaper
 

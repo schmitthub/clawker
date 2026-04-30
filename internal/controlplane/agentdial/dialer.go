@@ -3,9 +3,10 @@
 //
 // Single entry point: Dialer.DialAgent(ctx, containerID). The same
 // function is invoked at CP boot (over the result of listAgentIDs)
-// and from the typed-event subscriber on dockerevents.ContainerStarted
-// when an agent container starts at runtime — so two callers, one
-// dial path.
+// and from the typed-event subscriber on dockerevents.DockerEvent
+// (filtered to container start/restart/unpause for purpose=agent
+// containers) when an agent container reaches running state at
+// runtime — so two callers, one dial path.
 //
 // DialAgent is fire-and-forget: it spawns a goroutine that owns the
 // dial, the Session stream, and the lifetime drain loop. All failures

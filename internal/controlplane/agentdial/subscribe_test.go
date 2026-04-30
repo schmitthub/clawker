@@ -17,34 +17,22 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// mkContainerEvent builds a wire-equivalent ContainerEvent envelope
-// for tests. Mirrors the moby Message a real docker daemon would
-// send; subscribers see the same shape they'd receive in production.
-func mkContainerEvent(action events.Action, id string, labels map[string]string) dockerevents.ContainerEvent {
+// mkContainerEvent builds a wire-equivalent DockerEvent envelope for
+// tests. Mirrors the moby Message a real docker daemon would send;
+// subscribers see the same shape they'd receive in production.
+func mkContainerEvent(action events.Action, id string, labels map[string]string) dockerevents.DockerEvent {
 	attrs := make(map[string]string, len(labels)+2)
 	attrs["name"] = id
 	attrs["image"] = "alpine"
 	for k, v := range labels {
 		attrs[k] = v
 	}
-	return dockerevents.ContainerEvent{Message: events.Message{
+	return dockerevents.DockerEvent{Message: events.Message{
 		Type:     events.ContainerEventType,
 		Action:   action,
 		Actor:    events.Actor{ID: id, Attributes: attrs},
 		TimeNano: time.Now().UnixNano(),
 	}}
-}
-
-func mkStarted(id string, labels map[string]string) dockerevents.ContainerStarted {
-	return dockerevents.ContainerStarted{ContainerEvent: mkContainerEvent(events.ActionStart, id, labels)}
-}
-
-func mkRestarted(id string, labels map[string]string) dockerevents.ContainerRestarted {
-	return dockerevents.ContainerRestarted{ContainerEvent: mkContainerEvent(events.ActionRestart, id, labels)}
-}
-
-func mkUnpaused(id string, labels map[string]string) dockerevents.ContainerUnpaused {
-	return dockerevents.ContainerUnpaused{ContainerEvent: mkContainerEvent(events.ActionUnPause, id, labels)}
 }
 
 // liveBus mirrors the agentregistry test helper: real Overseer, Started,
@@ -89,7 +77,7 @@ func TestSubscribe_DialsOnPurposeAgentContainerStarted(t *testing.T) {
 	cancel := Subscribe(context.Background(), d, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	overseer.Publish(bus, mkStarted("ctr-agent", map[string]string{consts.LabelPurpose: consts.PurposeAgent}))
+	overseer.Publish(bus, mkContainerEvent(events.ActionStart, "ctr-agent", map[string]string{consts.LabelPurpose: consts.PurposeAgent}))
 
 	select {
 	case ev := <-sub.C:
@@ -114,7 +102,7 @@ func TestSubscribe_DialsOnPurposeAgentContainerRestarted(t *testing.T) {
 	cancel := Subscribe(context.Background(), d, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	overseer.Publish(bus, mkRestarted("ctr-agent-r", map[string]string{consts.LabelPurpose: consts.PurposeAgent}))
+	overseer.Publish(bus, mkContainerEvent(events.ActionRestart, "ctr-agent-r", map[string]string{consts.LabelPurpose: consts.PurposeAgent}))
 
 	select {
 	case ev := <-sub.C:
@@ -137,7 +125,7 @@ func TestSubscribe_DialsOnPurposeAgentContainerUnpaused(t *testing.T) {
 	cancel := Subscribe(context.Background(), d, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	overseer.Publish(bus, mkUnpaused("ctr-agent-u", map[string]string{consts.LabelPurpose: consts.PurposeAgent}))
+	overseer.Publish(bus, mkContainerEvent(events.ActionUnPause, "ctr-agent-u", map[string]string{consts.LabelPurpose: consts.PurposeAgent}))
 
 	select {
 	case ev := <-sub.C:
@@ -161,8 +149,8 @@ func TestSubscribe_IgnoresNonAgentContainerStarted(t *testing.T) {
 	cancel := Subscribe(context.Background(), d, bus, logger.Nop())
 	t.Cleanup(cancel)
 
-	overseer.Publish(bus, mkStarted("ctr-non-agent", map[string]string{consts.LabelPurpose: "host-proxy"}))
-	overseer.Publish(bus, mkStarted("ctr-no-label", nil))
+	overseer.Publish(bus, mkContainerEvent(events.ActionStart, "ctr-non-agent", map[string]string{consts.LabelPurpose: "host-proxy"}))
+	overseer.Publish(bus, mkContainerEvent(events.ActionStart, "ctr-no-label", nil))
 
 	select {
 	case ev := <-sub.C:
