@@ -250,7 +250,7 @@ func TestSetupMounts_SilentSkipWhenHostProjectsMissing(t *testing.T) {
 	}
 }
 
-func TestSetupMounts_WarnsWhenProjectsResolveFails(t *testing.T) {
+func TestSetupMounts_FailsWhenProjectsResolveFails(t *testing.T) {
 	cfg, hostDir, fake := setupMountsForBindBranch(t,
 		`agent:
   claude_code:
@@ -261,21 +261,15 @@ func TestSetupMounts_WarnsWhenProjectsResolveFails(t *testing.T) {
 		t.Fatalf("write projects file: %v", err)
 	}
 
-	res, err := SetupMounts(t.Context(), fake.Client, cfg)
-	if err != nil {
-		t.Fatalf("SetupMounts() error = %v", err)
+	_, err := SetupMounts(t.Context(), fake.Client, cfg)
+	if err == nil {
+		t.Fatal("SetupMounts() error = nil, want hard error when host projects path is a file")
 	}
-
-	for _, m := range res.Mounts {
-		if m.Target == ClaudeProjectsTargetPath {
-			t.Errorf("unexpected projects mount when host path is a file: %+v", m)
-		}
+	if !strings.Contains(err.Error(), "mount_projects") {
+		t.Errorf("error = %q, should mention mount_projects", err.Error())
 	}
-	if len(res.Warnings) == 0 {
-		t.Fatal("Warnings is empty; opted-in feature failure must surface to user")
-	}
-	if !strings.Contains(res.Warnings[0], "mount_projects") {
-		t.Errorf("Warnings[0] = %q, should mention mount_projects", res.Warnings[0])
+	if !strings.Contains(err.Error(), "mount_projects: false") {
+		t.Errorf("error = %q, should reference the opt-out (mount_projects: false)", err.Error())
 	}
 }
 

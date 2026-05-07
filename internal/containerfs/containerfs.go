@@ -31,14 +31,14 @@ func ResolveHostConfigDir() (string, error) {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
 		abs, err := filepath.Abs(dir)
 		if err != nil {
-			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path cannot be resolved: %w", dir, err)
+			return "", fmt.Errorf("CLAUDE_CONFIG_DIR=%q cannot be resolved to an absolute path: %w", dir, err)
 		}
 		info, err := os.Stat(abs)
 		if err != nil {
-			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path is invalid: %w", dir, err)
+			return "", fmt.Errorf("CLAUDE_CONFIG_DIR=%q (resolved %q) is invalid: %w", dir, abs, err)
 		}
 		if !info.IsDir() {
-			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path is not a directory", dir)
+			return "", fmt.Errorf("CLAUDE_CONFIG_DIR=%q (resolved %q) is not a directory", dir, abs)
 		}
 		return abs, nil
 	}

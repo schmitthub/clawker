@@ -401,6 +401,9 @@ func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes
 version: "1"
 workspace: { default_mode: "bind" }
 security: { enable_host_proxy: false }
+agent:
+  claude_code:
+    mount_projects: false
 `, "")
 			mock.GetProjectIgnoreFileFunc = func() (string, error) {
 				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil

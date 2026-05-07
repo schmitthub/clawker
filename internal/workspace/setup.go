@@ -178,20 +178,23 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 
 	// Bind mount host ~/.claude/projects/ on top of the config volume so
 	// auto-memory and session jsonls are shared across container runs.
-	// Missing host dir is the expected first-run case (silent skip);
-	// resolution errors and UID mismatches surface to the user via Warnings
-	// so an opted-in feature does not fail invisibly.
+	// Resolution failure is a hard error — clawker is not useful without
+	// host Claude Code installed, so we'd rather fail loud than mask a
+	// misconfigured $CLAUDE_CONFIG_DIR. Users who genuinely don't want the
+	// bind can set agent.claude_code.mount_projects: false. Missing
+	// projects/ subdir under an existing config dir is still a soft skip
+	// (Claude Code creates it on first session). UID mismatches surface as
+	// non-fatal Warnings.
 	var mountWarnings []string
 	if project.Agent.ClaudeCode.MountProjectsEnabled() {
 		src, ok, resolveErr := containerfs.ResolveHostProjectsDir()
 		if resolveErr != nil {
-			cfg.Log.Warn().Err(resolveErr).Msg("skip ~/.claude/projects bind: resolve failed")
-			mountWarnings = append(mountWarnings,
-				fmt.Sprintf("mount_projects is enabled but the host projects dir could not be resolved: %v. "+
-					"Container session history and auto-memory will not be shared across runs. "+
-					"Fix: ensure $CLAUDE_CONFIG_DIR or ~/.claude/ is readable, or set agent.claude_code.mount_projects: false to silence.",
-					resolveErr))
-		} else if !ok {
+			return nil, fmt.Errorf(
+				"mount_projects is enabled but the host claude config dir could not be resolved: %w. "+
+					"Run claude on the host first, or set agent.claude_code.mount_projects: false to opt out",
+				resolveErr)
+		}
+		if !ok {
 			cfg.Log.Debug().Msg("skip ~/.claude/projects bind: host dir does not exist (Claude Code has not created it yet)")
 		} else {
 			projectsMount, err := GetClaudeProjectsMount(src)

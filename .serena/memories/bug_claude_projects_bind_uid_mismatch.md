@@ -12,25 +12,26 @@ container gets `EACCES` writing session jsonls. Symptom: history +
 auto-memory silently fail to persist across runs. macOS unaffected
 (Docker Desktop virtiofs translates ownership).
 
-Today's PR ships a stderr warning (`internal/workspace/setup.go:177`)
-+ known-issues entry. That's a band-aid, not a fix.
+Today's PR ships a stderr warning (the UID-mismatch branch in
+`SetupMounts` in `internal/workspace/setup.go`) + known-issues entry.
+That's a band-aid, not a fix.
 
 ## Where the hardcode lives
 
-- `internal/consts/consts.go:242-243` — `ContainerUID = 1001`,
+- `internal/consts/consts.go` — `ContainerUID = 1001`,
   `ContainerGID = 1001`. Authoritative source for every other
   package (no per-package shadows allowed, see `dependency-placement.md`).
-- `internal/bundler/assets/Dockerfile.tmpl:172-176` — `useradd
-  --uid {{.UID}}` / Alpine `adduser -u {{.UID}}`. Template params
-  `.UID`/`.GID` come from `DockerfileContext` populated via
-  `cfg.ContainerUID()` / `cfg.ContainerGID()` (which currently
-  delegate to the `consts` constants).
+- `internal/bundler/assets/Dockerfile.tmpl` — `useradd --uid {{.UID}}` /
+  Alpine `adduser -u {{.UID}}` block. Template params `.UID`/`.GID`
+  come from `DockerfileContext` populated via `cfg.ContainerUID()` /
+  `cfg.ContainerGID()` (which currently delegate to the `consts`
+  constants).
 - `internal/bundler/assets/entrypoint.sh` — runs as root, drops to
   `${CLAWKER_USER}` (= `claude`) via `gosu`. No UID logic; trusts
   whatever UID the image baked in.
-- `internal/containerfs/containerfs.go:209-225` —
-  `PreparePostInitTar` stamps tar headers with `cfg.ContainerUID()`
-  /`cfg.ContainerGID()` for `.clawker/post-init.sh`.
+- `internal/containerfs/containerfs.go` `PreparePostInitTar` — stamps
+  tar headers with `cfg.ContainerUID()` / `cfg.ContainerGID()` for
+  `.clawker/post-init.sh`.
 - `internal/docker` `CopyToVolume` — two-phase ownership fix uses
   the same constants for tar headers + post-copy chown. Comfortable
   for staged copies into a Docker volume; breaks for live bind

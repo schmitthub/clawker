@@ -30,11 +30,17 @@ func (e testNotFoundError) NotFound()     {}
 
 // testConfigYAML is the base YAML for init test configs.
 // Loaded through NewFromString (real config pipeline, not direct struct construction).
+// mount_projects is disabled so SetupMounts doesn't depend on host ~/.claude state
+// (and so a deliberately-bad CLAUDE_CONFIG_DIR exercises InitContainerConfig, not the
+// projects bind-mount resolver).
 const testConfigYAML = `
 workspace:
   default_mode: bind
 security:
   enable_host_proxy: false
+agent:
+  claude_code:
+    mount_projects: false
 `
 
 // testConfig returns a minimal *config.Project loaded through NewFromString.

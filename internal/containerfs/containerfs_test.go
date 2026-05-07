@@ -84,7 +84,7 @@ func TestResolveHostConfigDir_EnvVarMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when CLAUDE_CONFIG_DIR is set to non-existent path, got nil")
 	}
-	if !strings.Contains(err.Error(), "CLAUDE_CONFIG_DIR is set to") {
+	if !strings.Contains(err.Error(), "CLAUDE_CONFIG_DIR=") {
 		t.Errorf("error should mention CLAUDE_CONFIG_DIR, got: %v", err)
 	}
 }
