@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-git/go-billy/v6/memfs"
 	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing/cache"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/go-git/go-git/v6/storage/filesystem"
@@ -40,6 +41,14 @@ func NewInMemoryGitManager(t *testing.T, repoRoot string) *InMemoryGitManager {
 	// Initialize the repository with the in-memory worktree
 	repo, err := gogit.Init(storer, gogit.WithWorkTree(worktreeFS))
 	require.NoError(t, err, "failed to init in-memory repo")
+
+	// go-git/v6 alpha.3 enforces commit.gpgSign at commit time.
+	// In-memory test repos must not inherit ambient host gpg-sign config.
+	cfg, err := repo.Config()
+	require.NoError(t, err, "failed to load repo config")
+	cfg.Commit.GpgSign = config.OptBoolFalse
+	cfg.Tag.GpgSign = config.OptBoolFalse
+	require.NoError(t, repo.SetConfig(cfg), "failed to disable gpgSign")
 
 	// Get the worktree to create a file and commit
 	wt, err := repo.Worktree()

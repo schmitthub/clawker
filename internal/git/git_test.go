@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/stretchr/testify/assert"
@@ -24,6 +25,14 @@ func newTestRepoOnDisk(t *testing.T) (*gogit.Repository, string) {
 
 	repo, err := gogit.PlainInit(dir, false)
 	require.NoError(t, err, "init test repo")
+
+	// go-git/v6 alpha.3 enforces commit.gpgSign at commit time;
+	// disable so test commits don't require a signer plugin.
+	cfg, err := repo.Config()
+	require.NoError(t, err)
+	cfg.Commit.GpgSign = config.OptBoolFalse
+	cfg.Tag.GpgSign = config.OptBoolFalse
+	require.NoError(t, repo.SetConfig(cfg))
 
 	// Seed with initial commit so HEAD exists
 	wt, err := repo.Worktree()
