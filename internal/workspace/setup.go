@@ -58,8 +58,8 @@ type SetupMountsResult struct {
 	// Warnings carries non-fatal user-facing diagnostics produced during mount
 	// setup (e.g. a configured ~/.claude/projects bind mount could not be
 	// resolved, or host UID will not be able to write to host-owned files).
-	// Callers are expected to surface these on stderr; they are NOT logged
-	// by SetupMounts beyond debug-level structured events.
+	// Callers are expected to surface these on stderr; some warning conditions
+	// may also be logged by SetupMounts.
 	Warnings []string
 }
 
@@ -208,9 +208,8 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 					fmt.Sprintf("host UID %d does not match container claude user (UID %d). "+
 						"Writes from the container to ~/.claude/projects/ may fail with EACCES; "+
 						"session history and auto-memory will not persist across runs. "+
-						"Workarounds: chown -R %d:%d ~/.claude/projects, run with --user, or "+
-						"set agent.claude_code.mount_projects: false.",
-						os.Getuid(), consts.ContainerUID, consts.ContainerUID, consts.ContainerUID))
+						"Workaround: set agent.claude_code.mount_projects: false to disable the bind mount.",
+						os.Getuid(), consts.ContainerUID))
 			}
 			cfg.Log.Debug().Str("src", src).Msg("mounted host ~/.claude/projects/")
 		}
