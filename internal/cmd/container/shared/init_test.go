@@ -640,7 +640,7 @@ func TestCreateContainer_WorkingDirDefault(t *testing.T) {
 		if opts.Config != nil {
 			capturedWorkingDir = opts.Config.WorkingDir
 		}
-		return moby.ContainerCreateResult{ID: "sha256:fakecontainer1234567890abcdef"}, nil
+		return moby.ContainerCreateResult{ID: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"}, nil
 	}
 
 	cmd := testFlags()
@@ -672,7 +672,7 @@ func TestCreateContainer_WorkingDirOverride(t *testing.T) {
 		if opts.Config != nil {
 			capturedWorkingDir = opts.Config.WorkingDir
 		}
-		return moby.ContainerCreateResult{ID: "sha256:fakecontainer1234567890abcdef"}, nil
+		return moby.ContainerCreateResult{ID: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"}, nil
 	}
 
 	cmd := testFlags()

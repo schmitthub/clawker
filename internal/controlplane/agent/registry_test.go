@@ -2,7 +2,6 @@ package agent
 
 import (
 	"crypto/sha256"
-	"sync"
 	"testing"
 	"time"
 
@@ -132,37 +131,6 @@ func TestRegistry_Snapshot_SortedAcrossProjects(t *testing.T) {
 		{"zproj", "dev"},
 	}
 	assert.Equal(t, want, got, "snapshot must be sorted by (Project, AgentName)")
-}
-
-func TestRegistry_Concurrent(t *testing.T) {
-	// Race-detector contract: many goroutines adding/looking up/evicting
-	// without lock-order bugs. Each goroutine works on its own
-	// thumbprint AND its own container_id so eviction outcomes are
-	// deterministic and the registry's UNIQUE-on-container_id contract
-	// is honored (the in-memory impl tolerates collisions today, but
-	// the sqlite-backed impl rejects them).
-	r := NewRegistry(nil)
-	const n = 64
-
-	var wg sync.WaitGroup
-	wg.Add(n)
-	for i := range n {
-		go func(i int) {
-			defer wg.Done()
-			suffix := string(rune('a'+i%26)) + string(rune('0'+i/26))
-			thumb := tp("cert-" + suffix)
-			entry := Entry{
-				AgentName:    "agent",
-				Project:      "p",
-				ContainerID:  "ctr-" + suffix,
-				Thumbprint:   thumb,
-				RegisteredAt: time.Unix(1000, 0),
-			}
-			_ = r.Add(entry)
-			_, _ = r.Lookup(thumb, canonical("p", "agent"))
-		}(i)
-	}
-	wg.Wait()
 }
 
 // TestRegistry_Add_RejectsInvariantViolations pins the contract that

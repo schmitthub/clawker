@@ -3,7 +3,7 @@
 // Sauron seat: it observes, reconciles, holds the realm's current
 // truth. Overseer is that seat.
 //
-// Producers (dockerevents, agentdial, future eBPF) publish typed events
+// Producers (dockerevents, agent, future eBPF) publish typed events
 // via Publish[T]. Consumers subscribe to a concrete event type via
 // Subscribe[T] and receive a typed channel. The bus also maintains an
 // in-memory State projection (containers, agent sessions) populated

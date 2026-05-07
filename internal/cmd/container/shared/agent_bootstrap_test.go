@@ -39,7 +39,7 @@ func setupAuthEnv(t *testing.T) (caCert, caKey string, signing *ecdsa.PrivateKey
 func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	caCert, caKey, signing := setupAuthEnv(t)
 
-	const project, agent, containerID = "alpha", "bravo", "ctr-happy-path"
+	const project, agent, containerID = "alpha", "bravo", "abcdef0123456789"
 	b, err := GenerateAgentBootstrap(caCert, caKey, auth.MustProjectSlug(project), auth.MustAgentName(agent), containerID, "https://hydra.example/oauth2/token", signing)
 	require.NoError(t, err)
 	require.NotNil(t, b)
@@ -68,7 +68,7 @@ func TestGenerateAgentBootstrap_EmptyProjectStillWorks(t *testing.T) {
 	// 2-segment naming case: empty project, short agent. Canonical CN is
 	// "clawker.<agent>" — same convention as docker.ContainerName.
 	caCert, caKey, signing := setupAuthEnv(t)
-	b, err := GenerateAgentBootstrap(caCert, caKey, auth.ProjectSlug{}, auth.MustAgentName("solo"), "ctr-empty-proj", "https://h.example/o/t", signing)
+	b, err := GenerateAgentBootstrap(caCert, caKey, auth.ProjectSlug{}, auth.MustAgentName("solo"), "fedcba9876543210", "https://h.example/o/t", signing)
 	require.NoError(t, err)
 	leaf := mustParseCert(t, b.CertPEM)
 	assert.Equal(t, "clawker.solo", leaf.Subject.CommonName)
@@ -230,15 +230,14 @@ func TestInstallAgentBootstrapMaterial_DoesNotTouchRegistry(t *testing.T) {
 		return nil
 	}
 
-	bootstrap, err := InstallAgentBootstrapMaterial(context.Background(), caCert, caKey, signing, InstallAgentBootstrapOptions{
+	err := InstallAgentBootstrapMaterial(context.Background(), caCert, caKey, signing, InstallAgentBootstrapOptions{
 		Project:            auth.MustProjectSlug("alpha"),
 		Agent:              auth.MustAgentName("bravo"),
-		ContainerID:        "ctr-id",
+		ContainerID:        "deadbeefcafef00d",
 		HydraTokenAudience: "https://hydra.example/oauth2/token",
 		CopyToContainer:    copyFn,
 	})
 	require.NoError(t, err)
-	require.NotNil(t, bootstrap)
 	assert.True(t, copied, "WriteAgentBootstrapToContainer must run")
 }
 

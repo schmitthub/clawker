@@ -62,43 +62,38 @@ managed container at boot.
 
 ```go
 type AgentBootstrap struct {
-    Verifier, Challenge, Method            string  // PKCE S256 pair + literal "S256"
-    CertPEM, KeyPEM                        []byte  // mTLS leaf + key, signed by CLI CA
-    ExpectedCertThumbprint                 string  // lowercase-hex SHA-256(cert.Raw)
-    CACertPEM                              []byte  // CP server-trust CA (CLI CA cert)
-    Assertion                              string  // Hydra client_assertion JWT
+    CertPEM, KeyPEM []byte  // mTLS leaf + key, signed by CLI CA
+    CACertPEM       []byte  // CP server-trust CA (CLI CA cert)
+    Assertion       string  // Hydra client_assertion JWT (single-use)
 }
 
 // project + agent are the user-typed short identifiers (e.g. "myapp",
 // "dev"). MintAgentCert composes the canonical "clawker.<project>.<agent>"
 // CN inside via auth.CanonicalAgentCN; the agent handler's CN cross-check
 // has a single equality to enforce.
-GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error)
+GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, containerID, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error)
 
 WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *AgentBootstrap) error
 
-// Create-time install is split into two halves so the agentregistry row
-// is the LAST step of container creation. Material delivery runs first
-// (mint + tar into container), then post-init injection (if configured)
-// runs against the bootstrapped container, and only on success does the
-// caller write the registry row. A failure in any earlier step removes
-// the container with no orphan registry row.
-InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, opts InstallAgentBootstrapOptions) (*AgentBootstrap, error)
-RegisterAgentInRegistry(ctx, opts InstallAgentBootstrapOptions, bootstrap *AgentBootstrap) error
+// Create-time install: mint cert + tar into the container's writable
+// layer at consts.BootstrapDir. CP is the SOLE writer of agentregistry
+// rows — the row is written CP-side at AgentService.Register handler
+// entry on the first CP-driven Register handshake, never from the CLI.
+// A failure here is recovered by the caller's ContainerRemove.
+InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, opts InstallAgentBootstrapOptions) error
 ```
 
 `CommandOpts.AgentName` (the short user-typed name) and `CommandOpts.Project`
-(the project slug, empty allowed) feed `prepareAgentBootstrap` — both must
-be set on new-container start paths so the registry row's `canonical_cn`
-column + MintAgentCert agree on the canonical CN.
+(the project slug, empty allowed) feed the bootstrap mint — both must
+be set on new-container start paths so the cert's canonical CN can be
+composed via `auth.CanonicalAgentCN`.
 
-`WriteAgentBootstrapToContainer` tars the five files into the container
+`WriteAgentBootstrapToContainer` tars the four files into the container
 at `consts.BootstrapDir` (parent dir 0700, files 0400). The destination
-is currently a regular path inside the container's writable layer rather
-than a tmpfs mount — Docker's CopyToContainer cannot pre-populate tmpfs
-mounts (tmpfs shadows writes made before start), so the pragmatic B4
-placement uses the writable layer with strict permissions. The container
-layer is destroyed on `--rm` or when the container is removed.
+is a regular path inside the container's writable layer rather than a
+tmpfs mount — Docker's CopyToContainer cannot pre-populate tmpfs
+mounts (tmpfs shadows writes made before start). The container layer
+is destroyed on `--rm` or when the container is removed.
 
 ### Container Init (`containerfs.go`)
 

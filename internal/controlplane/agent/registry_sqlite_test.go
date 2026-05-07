@@ -84,27 +84,6 @@ func TestSQLiteWriter_Add_RejectsDuplicates(t *testing.T) {
 	}
 }
 
-func TestSQLiteReader_RejectsWrites(t *testing.T) {
-	path := dbPath(t, "agents.db")
-	w, err := NewSQLiteWriter(path, logger.Nop())
-	require.NoError(t, err)
-	require.NoError(t, w.Add(validEntry("p", "a", "ctr-1", "cert-1")))
-	closeRegistry(t, w)
-
-	r, err := NewSQLiteReader(path, logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	// Read works.
-	got, err := r.Lookup(tp("cert-1"), canonical("p", "a"))
-	require.NoError(t, err)
-	require.NotNil(t, got)
-
-	// Add fails — sqlite returns "attempt to write a readonly database".
-	err = r.Add(validEntry("p", "b", "ctr-2", "cert-2"))
-	require.Error(t, err)
-}
-
 func TestSQLiteRegistry_Lookup_CNMismatch_ReturnsUnknownAgent(t *testing.T) {
 	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
 	require.NoError(t, err)

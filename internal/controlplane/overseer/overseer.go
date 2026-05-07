@@ -329,7 +329,7 @@ func (o *Overseer) safeHook(ev Event) {
 
 // NewLoggerHook returns a PublishHook that emits one structured Info
 // line per event. The log message text IS the event name
-// (e.g., "agentdial.session.connected") so Loki / Grafana line views
+// (e.g., "agent.session.connected") so Loki / Grafana line views
 // are scannable without expanding every entry — same identifying
 // string is also kept on the `event` field for label-filter queries.
 // occurred_at and the event's MarshalZerologObject payload land as

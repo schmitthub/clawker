@@ -6,7 +6,7 @@ This package replaces the prior `internal/controlplane/informer/` (deleted). The
 
 ## Decoupling Contract
 
-- **Zero imports** from any other `internal/controlplane/*` sibling. Producers (dockerevents, agentdial) import `overseer`; not the reverse.
+- **Zero imports** from any other `internal/controlplane/*` sibling. Producers (dockerevents, agent) import `overseer`; not the reverse.
 - **Zero imports** of moby, grpc, or any third-party client. The bus is in-process pub/sub plus an in-memory state map.
 - Only `internal/logger` is imported (audit output).
 - Adding a Docker-specific or agent-specific method to this package is wrong. Add it to the producer/consumer package instead.
@@ -54,7 +54,8 @@ producer-specific hook wiring.
 A producer event type may also implement an unexported `applier` interface (`ApplyTo(s *State)`) to mutate worldview state when published. Producers in the tree:
 
 - `dockerevents.DockerEvent` — single envelope wrapping moby's `events.Message` verbatim. Its `ApplyTo` switches on the embedded `(Type, Action)` pair: container start/restart/unpause → `Status=running`; die/stop/kill/oom → `Status=stopped`; destroy → delete; rename → update `Name`. Network events and any other (Type, Action) combination fall through with no state side effect (Overseer doesn't project network edges into State). Subscribers express intent via `SubscribeFiltered` predicates on `ev.Type` + `ev.Action`.
-- `agentdial.SessionConnecting/Connected/Failed/Broken` — populate `State.AgentSessions[ContainerID]`
+- `agent.SessionConnecting/Connected/Failed/Broken` — populate `State.Agents[ContainerID]` (session-axis fields)
+- `agent.AgentRegistered/AgentUntrusted` — populate `State.Agents[ContainerID]` (registration + trust verdict)
 
 Events that don't implement applier are routed to subscribers without touching State.
 
@@ -63,12 +64,16 @@ Events that don't implement applier are routed to subscribers without touching S
 ```go
 type State struct {
     Containers    map[string]ContainerView
-    AgentSessions map[string]SessionView
+    Agents        map[string]Agent
     LastUpdatedAt time.Time
 }
 ```
 
-In-memory only; cleared on CP restart. Distinct from `agentregistry`'s SQLite identity rows: Overseer's State is the **observed** axis (events flowing in real time); agentregistry is the **attested** axis (durable identity).
+In-memory only; cleared on CP restart. Distinct from the agent
+registry's SQLite identity rows: Overseer's State is the **observed**
+axis (events flowing in real time); the registry is the **attested**
+axis (durable identity). The `Agent` struct unifies session lifecycle
++ identity + trust verdict (`Trust` value type — see `state.go`).
 
 `ContainerStatus` and `SessionStatus` are typed string enums — disjoint vocabularies, no shared `Lifecycle` field for producers to collide on.
 
@@ -121,7 +126,7 @@ for ev := range sub.C {
 ### Filtered subscribe
 
 ```go
-sub, ok := overseer.SubscribeFiltered(bus, "agentdial", func(ev dockerevents.DockerEvent) bool {
+sub, ok := overseer.SubscribeFiltered(bus, "agent.dial", func(ev dockerevents.DockerEvent) bool {
     if ev.Type != events.ContainerEventType {
         return false
     }
@@ -138,7 +143,7 @@ sub, ok := overseer.SubscribeFiltered(bus, "agentdial", func(ev dockerevents.Doc
 ```go
 state, ok := bus.Snapshot(ctx)
 if !ok { /* bus closed or ctx cancelled */ }
-fmt.Printf("known containers: %d, sessions: %d\n", len(state.Containers), len(state.AgentSessions))
+fmt.Printf("known containers: %d, agents: %d\n", len(state.Containers), len(state.Agents))
 ```
 
 ## Tests

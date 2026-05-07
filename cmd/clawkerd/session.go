@@ -137,6 +137,13 @@ type session struct {
 // If the registerCoordinator is nil (test wiring without a coordinator),
 // reply with ok=false so the CP-side dialer doesn't hang waiting for
 // a Response that will never come.
+//
+// Panic safety: Run dials Hydra and CP, decodes JSON, parses certs —
+// any panic in that chain (nil pointer in a future refactor, malformed
+// input from a misbehaving Hydra) would otherwise crash clawkerd
+// (init=bash, but a Go panic still kills the daemon goroutine and the
+// surrounding process). Recover, log, reply ok=false so CP sees a
+// terminal outcome instead of timing out.
 func (s *session) handleRegisterRequired(ctx context.Context, commandID string) {
 	if s.register == nil {
 		s.send(ctx, &clawkerdv1.Response{
@@ -151,7 +158,24 @@ func (s *session) handleRegisterRequired(ctx context.Context, commandID string) 
 		return
 	}
 	go func() {
-		ok, errMsg := s.register.Run(ctx, s.log)
+		var (
+			ok     bool
+			errMsg string
+		)
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					s.log.Error().
+						Interface("panic", r).
+						Str("event", "register_panic").
+						Str("command_id", commandID).
+						Msg("clawkerd: registerCoordinator.Run panicked; replying RegisterDone{ok=false}")
+					ok = false
+					errMsg = fmt.Sprintf("register panic: %v", r)
+				}
+			}()
+			ok, errMsg = s.register.Run(ctx, s.log)
+		}()
 		s.send(ctx, &clawkerdv1.Response{
 			CommandId: commandID,
 			Payload: &clawkerdv1.Response_RegisterDone{
@@ -218,11 +242,21 @@ func (s *session) runSender(ctx context.Context, cancel context.CancelFunc) {
 }
 
 // send pushes a Response onto sendCh. Drops on ctx-done so producer
-// goroutines unblock when the stream is tearing down.
+// goroutines unblock when the stream is tearing down. The drop is
+// audited at Debug because a dropped RegisterDone (or any terminal
+// Response) means CP will not see the outcome and will rely on its own
+// timeout — operators triaging "RegisterDone timeout" upstream need a
+// breadcrumb here to distinguish "clawkerd never produced a Response"
+// from "clawkerd produced one but the stream died before it shipped".
 func (s *session) send(ctx context.Context, resp *clawkerdv1.Response) {
 	select {
 	case s.sendCh <- resp:
 	case <-ctx.Done():
+		s.log.Debug().
+			Str("event", "session_send_dropped").
+			Str("command_id", resp.CommandId).
+			Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
+			Msg("clawkerd: dropping Response on Session teardown")
 	}
 }
 

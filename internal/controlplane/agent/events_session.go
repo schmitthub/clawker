@@ -54,10 +54,9 @@ func (e SessionConnecting) ApplyTo(s *overseer.State) {
 	view.SessionStatus = overseer.SessionStatusConnecting
 	view.UpdatedAt = e.At
 	view.LastError = ""
-	if !view.Trusted && view.UntrustedReason == overseer.UntrustedReasonNone {
-		// First-ever observation defaults Trusted=true.
-		view.Trusted = true
-	}
+	// Trust zero value is already "trusted with no reason"; nothing to
+	// do here — Untrust events are what flip the verdict, never
+	// Session* events.
 	s.Agents[e.ContainerID] = view
 }
 
@@ -99,9 +98,7 @@ func (e SessionConnected) ApplyTo(s *overseer.State) {
 	view.UpdatedAt = e.At
 	view.LastError = ""
 	view.Thumbprint = e.PeerThumbprint
-	if !view.Trusted && view.UntrustedReason == overseer.UntrustedReasonNone {
-		view.Trusted = true
-	}
+	// Trust verdict is owned by AgentUntrusted events, not Session*.
 	s.Agents[e.ContainerID] = view
 }
 

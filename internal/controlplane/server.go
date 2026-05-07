@@ -36,16 +36,18 @@ type adminServer struct {
 var _ adminv1.AdminServiceServer = (*adminServer)(nil)
 
 // NewAdminServer returns the composite AdminServiceServer wired from
-// the supplied domain handlers.
+// the supplied domain handlers. agents is required — CP is the sole
+// sqlite writer in this design, so any wiring path that reaches here
+// without a registry is a programming error.
 //
-//   - agents may be nil — when nil, ListAgents returns an empty result
-//     so the CLI's `controlplane agents` command renders cleanly even
-//     on a CP build that hasn't wired the agent registry yet.
 //   - log defaults to logger.Nop() when nil. Production wiring passes
 //     the CP's structured logger.
 func NewAdminServer(fw *fwhandler.Handler, agents agent.Registry, log *logger.Logger) adminv1.AdminServiceServer {
 	if log == nil {
 		log = logger.Nop()
+	}
+	if agents == nil {
+		panic("controlplane.NewAdminServer: agents registry is required")
 	}
 	return &adminServer{Handler: fw, agents: agents, log: log}
 }
@@ -58,9 +60,6 @@ func NewAdminServer(fw *fwhandler.Handler, agents agent.Registry, log *logger.Lo
 // avoid pulling google.protobuf.Timestamp into the AdminService surface
 // for one read-only RPC.
 func (s *adminServer) ListAgents(_ context.Context, _ *adminv1.ListAgentsRequest) (*adminv1.ListAgentsResult, error) {
-	if s.agents == nil {
-		return &adminv1.ListAgentsResult{}, nil
-	}
 	snap := s.agents.Snapshot()
 	// Snapshot is documented to return entries sorted by (Project,
 	// AgentName); preserve that ordering on the wire.

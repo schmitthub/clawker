@@ -456,11 +456,15 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// docker container's labels + clawker-net IP, and writes the
 	// agentregistry row. The handler is the SOLE writer of the
 	// agentregistry sqlite DB.
-	agentv1.RegisterAgentServiceServer(agentServer, agent.NewHandler(
+	registerHandler, err := agent.NewHandler(
 		agentReg,
 		agent.NewMobyContainerInspector(dockerCli.APIClient),
 		log.With("component", "agent-register"),
-	))
+	)
+	if err != nil {
+		return fmt.Errorf("step 8 (agent register handler): %w", err)
+	}
+	agentv1.RegisterAgentServiceServer(agentServer, registerHandler)
 
 	// Cap covers gRPC admin, gRPC agent, healthz, and the dockerevents
 	// feeder. Buffered so any goroutine that fails before main reaches

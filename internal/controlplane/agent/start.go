@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/moby/moby/api/types/events"
@@ -77,8 +76,15 @@ func Start(ctx context.Context, deps StartDeps) (func(), error) {
 		// Soft-fail: the dockerevents/destroy subscription will catch
 		// future evictions, and the next CP restart re-runs reap. A
 		// startup-time reap failure must not block the bus from coming
-		// up — CP must always be reachable for containment.
+		// up — CP must always be reachable for containment. Publish a
+		// typed event so worldview consumers (alerting, monitoring)
+		// know the registry may contain ghost rows for containers
+		// destroyed while CP was down.
 		log.Warn().Err(err).Msg("agent: startup reap failed; continuing without orphan cleanup")
+		overseer.Publish(deps.Bus, ReapDegraded{
+			Reason: err.Error(),
+			At:     time.Now(),
+		})
 	}
 
 	// Step 2: container/destroy → evict registry row.
@@ -281,28 +287,34 @@ func drainEvictOnce(ctx context.Context, ch <-chan dockerevents.DockerEvent, reg
 	}
 }
 
-// subscribeDial wires the Dialer to the union of moby container actions
-// that transition a container into running state (Start, Restart,
-// UnPause). Filter scoped to purpose=agent containers — non-agent
-// containers (CP itself, host proxy) never start a clawkerd listener
-// and shouldn't be dialed. The Dialer's internal dedup map prevents
-// double-dial of the same container_id when overlapping events
-// deliver.
+// dialEventPredicate is the filter subscribeDial wires onto the
+// dockerevents bus. Exposed as a named function (not an inline
+// lambda) so tests can pin the exact predicate the production wiring
+// uses without duplicating the logic.
 //
-// ActionCreate is intentionally NOT in the predicate: a created-but-
-// not-started container has no clawkerd listener, so dialing always
-// fails. The next ActionStart re-fires DialAgent.
-func subscribeDial(ctx context.Context, dialer *Dialer, bus *overseer.Overseer, log *logger.Logger) (func(), error) {
-	sub, ok := overseer.SubscribeFiltered(bus, "agent.dial", func(ev dockerevents.DockerEvent) bool {
-		if ev.Type != events.ContainerEventType {
-			return false
-		}
-		switch ev.Action {
-		case events.ActionStart, events.ActionRestart, events.ActionUnPause:
-			return ev.Actor.Attributes[consts.LabelPurpose] == consts.PurposeAgent
-		}
+// Dial actions: Start, Restart, UnPause — every transition that takes
+// a container into running state. ActionCreate is intentionally
+// excluded: a created-but-not-started container has no clawkerd
+// listener, so dialing always fails. The next ActionStart re-fires.
+//
+// Scope: only purpose=agent containers. Non-agent containers (CP
+// itself, host proxy) never start a clawkerd listener.
+func dialEventPredicate(ev dockerevents.DockerEvent) bool {
+	if ev.Type != events.ContainerEventType {
 		return false
-	})
+	}
+	switch ev.Action {
+	case events.ActionStart, events.ActionRestart, events.ActionUnPause:
+		return ev.Actor.Attributes[consts.LabelPurpose] == consts.PurposeAgent
+	}
+	return false
+}
+
+// subscribeDial wires the Dialer to dialEventPredicate-matching
+// dockerevents. The Dialer's internal dedup map prevents double-dial
+// of the same container_id when overlapping events deliver.
+func subscribeDial(ctx context.Context, dialer *Dialer, bus *overseer.Overseer, log *logger.Logger) (func(), error) {
+	sub, ok := overseer.SubscribeFiltered(bus, "agent.dial", dialEventPredicate)
 	if !ok {
 		return nil, fmt.Errorf("bus closed before subscribe")
 	}
@@ -392,8 +404,3 @@ func runWithBackoff(ctx context.Context, log *logger.Logger, name string, drain 
 		}
 	}
 }
-
-// --- Compile-time use of sync to keep the import live for future
-// state hydration step that will need a Mutex. Remove when state
-// hydration lands. ---
-var _ = sync.Mutex{}

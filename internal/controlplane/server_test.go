@@ -14,13 +14,17 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/agent"
 )
 
-func TestAdminServer_ListAgents_NilRegistry(t *testing.T) {
-	// nil registry must NOT panic — allows tests / partial wiring to
-	// land cleanly. Empty result is the safe answer.
-	srv := &adminServer{}
-	resp, err := srv.ListAgents(context.Background(), &adminv1.ListAgentsRequest{})
-	require.NoError(t, err)
-	assert.Empty(t, resp.Agents)
+// TestAdminServer_NewAdminServer_NilAgentsPanics pins that the
+// constructor rejects nil registry — CP is the sole sqlite writer,
+// any wiring path reaching the constructor without a registry is a
+// programming bug that must surface loudly at startup.
+func TestAdminServer_NewAdminServer_NilAgentsPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("NewAdminServer(_, nil, _) must panic")
+		}
+	}()
+	NewAdminServer(nil, nil, nil)
 }
 
 func TestAdminServer_ListAgents_Snapshot(t *testing.T) {

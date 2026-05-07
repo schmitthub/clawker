@@ -1,5 +1,5 @@
-// Package agentdial holds the CP-side outbound mTLS dial logic for the
-// CP→clawkerd Session channel.
+// Dialer-side helpers in package agent: CP-side outbound mTLS dial
+// logic for the CP→clawkerd Session channel.
 //
 // Single entry point: Dialer.DialAgent(ctx, containerID). The same
 // function is invoked at CP boot (over the result of listAgentIDs)
@@ -17,10 +17,12 @@
 // # Asymmetric trust model — load-bearing
 //
 // CP is the overlord. The dial NEVER aborts on cert / identity grounds.
-// Cert chain verification, peer CN match, registry provenance — every
-// outcome is a typed data field on the SessionConnected event payload
-// (see Provenance in events.go). Subscribers consume those fields to
-// enact policy (containment, alerting, eviction); the dialer holds no
+// Cert chain verification, peer CN match, and registry classification
+// outcomes are captured on the establishResult and surfaced through
+// the typed event surface — SessionConnected carries flat
+// PeerCN/PeerThumbprint fields; AgentRegistered/AgentUntrusted carry
+// the policy outcomes. Subscribers consume those events to enact
+// policy (containment, alerting, eviction); the dialer holds no
 // policy itself.
 //
 // Why permissive: CP must always be able to reach clawkerd to issue
@@ -138,13 +140,13 @@ type Dialer struct {
 // bus is required: the dialer publishes typed Session* events
 // (SessionConnecting / Connected / Failed / Broken) so other CP
 // components can subscribe to connection lifecycle without coupling
-// to agentdial directly. Pass a real *overseer.Overseer; tests can
+// to the dialer directly. Pass a real *overseer.Overseer; tests can
 // use an in-memory bus (it's cheap).
 //
-// agents is required: every successful dial populates Provenance
-// fields on the SessionConnected event by cross-checking the peer
-// cert against the registry row keyed by container_id. Subscribers
-// rely on those fields; nil agents would silently strip the bypass
+// agents is required: every successful dial cross-checks the peer
+// cert against the registry row keyed by container_id and dispatches
+// the typed AgentRegistered / AgentUntrusted events accordingly. nil
+// agents would strand worldview consumers without a registration
 // signal.
 func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer, agents Registry, certPath, keyPath string, caPool *x509.CertPool) (*Dialer, error) {
 	if log == nil {
@@ -258,6 +260,13 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 		d.dispatchAgentEvents(ctx, containerID, res, cycleLog)
 
 		drain := d.drainStream(ctx, res.Stream, cycleLog)
+		// Cancel the stream-scoped ctx so any goroutine still parked on
+		// stream.Recv (e.g. a leftover from a driveRegister timeout that
+		// preceded drainStream) is guaranteed to unblock before the next
+		// cycle dials a new stream.
+		if res.StreamCancel != nil {
+			res.StreamCancel()
+		}
 		if d.closeAndCheckLeak(res.Conn, &closeErrCount, cycleLog) {
 			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr,
 				fmt.Sprintf("fd-leak-ceiling: %d consecutive close failures", closeErrCount),
@@ -371,25 +380,35 @@ var errContainerStopped = errors.New("container not running")
 // Conn / Stream are populated only when Outcome is outcomeSuccess.
 // Agent / Project / Addr carry the latest inspect's view; Attempt
 // records the cycle's attempt count (for both success and failure
-// publishing). Provenance carries the connection-time identity
-// outcomes (chain verify, CN pin, registry cross-check) populated
-// during the TLS handshake + post-handshake registry lookup.
+// publishing). PeerInfo captures the connection-time identity outcomes
+// (chain verify, CN pin, registry cross-check) populated during the
+// TLS handshake + post-handshake registry lookup.
+//
+// StreamCancel cancels the gRPC stream's underlying context. The dial
+// flow uses ONE Recv consumer at a time: helloHandshake then either
+// drainStream alone (Match) or driveRegister followed by drainStream
+// (Miss / mismatch). When driveRegister times out it must cancel the
+// stream to unblock its own Recv goroutine BEFORE returning — that
+// avoids two concurrent stream.Recv() callers (gRPC streams are not
+// safe for concurrent Recv). runDial defers StreamCancel at end of
+// cycle so the stream is always torn down even on early returns.
 type establishResult struct {
-	Conn     *grpc.ClientConn
-	Stream   clawkerdv1.ClawkerdService_SessionClient
-	Agent    string
-	Project  string
-	Addr     string
-	Attempt  int
-	Outcome  establishOutcome
-	PeerInfo peerInfo
+	Conn         *grpc.ClientConn
+	Stream       clawkerdv1.ClawkerdService_SessionClient
+	StreamCancel context.CancelFunc
+	Agent        string
+	Project      string
+	Addr         string
+	Attempt      int
+	Outcome      establishOutcome
+	PeerInfo     peerInfo
 }
 
 // peerInfo is the connection-time identity capture from the TLS
-// handshake. Replaces the prior `Provenance` struct — registry-
-// outcome state lives in the local registryOutcome enum, not on this
-// struct, since the dial flow drives event publication directly off
-// the outcome rather than threading a unified payload.
+// handshake. Registry-outcome state lives in the local registryOutcome
+// enum, not on this struct, since the dial flow drives event
+// publication directly off the outcome rather than threading a
+// unified payload.
 type peerInfo struct {
 	PeerCN         string
 	PeerThumbprint [sha256.Size]byte
@@ -519,17 +538,18 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 			publishedConnecting = true
 		}
 
-		conn, stream, peer, dialErr := d.tryEstablish(ctx, addr, attemptLog)
+		conn, stream, streamCancel, peer, dialErr := d.tryEstablish(ctx, addr, attemptLog)
 		if dialErr == nil {
 			return establishResult{
-				Conn:     conn,
-				Stream:   stream,
-				Agent:    agent,
-				Project:  project,
-				Addr:     addr,
-				Attempt:  attempt,
-				Outcome:  outcomeSuccess,
-				PeerInfo: peer,
+				Conn:         conn,
+				Stream:       stream,
+				StreamCancel: streamCancel,
+				Agent:        agent,
+				Project:      project,
+				Addr:         addr,
+				Attempt:      attempt,
+				Outcome:      outcomeSuccess,
+				PeerInfo:     peer,
 			}
 		}
 
@@ -597,25 +617,30 @@ func nextBackoff(backoff time.Duration) time.Duration {
 // always returns nil — the dialer is permissive and never aborts on
 // cert grounds. The dial flow drives registry classification +
 // event publication off the captured peerInfo.
-func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logger) (*grpc.ClientConn, clawkerdv1.ClawkerdService_SessionClient, peerInfo, error) {
+func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logger) (*grpc.ClientConn, clawkerdv1.ClawkerdService_SessionClient, context.CancelFunc, peerInfo, error) {
 	var peer peerInfo
 	conn, err := d.dial(ctx, addr, &peer)
 	if err != nil {
-		return nil, nil, peerInfo{}, err
+		return nil, nil, nil, peerInfo{}, err
 	}
 
+	// Stream-scoped ctx so driveRegister can cancel just this stream
+	// (not the whole runDial cycle) when RegisterDone times out.
+	streamCtx, streamCancel := context.WithCancel(ctx)
 	client := clawkerdv1.NewClawkerdServiceClient(conn)
-	stream, err := client.Session(ctx)
+	stream, err := client.Session(streamCtx)
 	if err != nil {
+		streamCancel()
 		_ = conn.Close()
-		return nil, nil, peerInfo{}, fmt.Errorf("open Session stream: %w", err)
+		return nil, nil, nil, peerInfo{}, fmt.Errorf("open Session stream: %w", err)
 	}
 
 	if err := d.helloHandshake(stream, log); err != nil {
+		streamCancel()
 		_ = conn.Close()
-		return nil, nil, peerInfo{}, fmt.Errorf("Hello handshake: %w", err)
+		return nil, nil, nil, peerInfo{}, fmt.Errorf("Hello handshake: %w", err)
 	}
-	return conn, stream, peer, nil
+	return conn, stream, streamCancel, peer, nil
 }
 
 // resolveAgent inspects the container and returns the moby
@@ -674,11 +699,18 @@ func clawkerNetAddr(c mobycontainer.InspectResponse) (string, error) {
 // to drive event publication (Match → SessionConnected only; Miss →
 // drives Register handshake; mismatch outcomes → AgentUntrusted).
 //
+// Identity comparison is between (a) the live peer cert thumbprint /
+// CN and (b) the registry row's Thumbprint / canonical_cn. The
+// inspect labels (project, agent on the docker container) are NOT
+// consulted here — they're consulted by the Register handler at row
+// CREATE time. After the row exists, the row IS the identity; later
+// label edits cannot drift identity without invalidating the cert.
+//
 // Connection NEVER aborts here. Lookup errors that are NOT
 // "no such row" return outcomeRegistryNotQueried and a non-empty
 // detail string — these indicate a sqlite/IO regression visible to
 // operators even though the connection proceeds.
-func (d *Dialer) classifyRegistry(peer peerInfo, containerID, project, agent string) (registryOutcome, string) {
+func (d *Dialer) classifyRegistry(peer peerInfo, containerID string) (registryOutcome, string) {
 	if d.agents == nil {
 		// Wiring bug — New rejected nil agents, so this can only
 		// happen in a test that bypassed New.
@@ -704,8 +736,6 @@ func (d *Dialer) classifyRegistry(peer peerInfo, containerID, project, agent str
 	if expectedCN != peer.PeerCN {
 		return outcomeRegistryCNMismatch, ""
 	}
-	_ = project
-	_ = agent
 	return outcomeRegistryMatch, ""
 }
 
@@ -929,7 +959,7 @@ const registerRequiredTimeout = 30 * time.Second
 // Caller must have already called publishConnected — the agent state
 // in overseer is populated by the time we evaluate trust outcomes.
 func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, res establishResult, log *logger.Logger) {
-	outcome, detail := d.classifyRegistry(res.PeerInfo, containerID, res.Project, res.Agent)
+	outcome, detail := d.classifyRegistry(res.PeerInfo, containerID)
 
 	switch outcome {
 	case outcomeRegistryMatch:
@@ -937,10 +967,6 @@ func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, re
 		// SessionConnected.ApplyTo set Trusted=true. The durable
 		// Registered=true is reflected via the Hello-time row
 		// existence; no event needed for the steady-state case.
-		// However we DO surface a separate AgentRegistered event ON
-		// startup hydration paths so subscribers know the agent is
-		// registered without re-querying — covered by hydration in
-		// agent.Start, not here.
 		return
 	case outcomeRegistryMiss:
 		// CP just observed a never-before-seen container. Drive the
@@ -972,7 +998,9 @@ func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, re
 			Reason:      overseer.UntrustedReasonCNMismatch,
 			At:          time.Now(),
 		})
-	default: // outcomeRegistryNotQueried (lookup error)
+	case outcomeRegistryNotQueried:
+		// Lookup error or wiring bug. Connection proceeds (asymmetric
+		// trust) but worldview reflects the unverifiable state.
 		log.Warn().
 			Str("event", "agent_untrusted").
 			Str("detail", detail).
@@ -985,6 +1013,22 @@ func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, re
 			Detail:      detail,
 			At:          time.Now(),
 		})
+	default:
+		// Exhaustive cases above; reaching this branch means a new
+		// outcome value was added without updating dispatch. Log as
+		// Error and treat as untrusted to fail closed.
+		log.Error().
+			Int("outcome", int(outcome)).
+			Str("event", "agent_dispatch_unknown_outcome").
+			Msg("registryOutcome added without dispatch wiring; failing closed")
+		overseer.Publish(d.bus, AgentUntrusted{
+			ContainerID: containerID,
+			AgentName:   res.Agent,
+			Project:     res.Project,
+			Reason:      overseer.UntrustedReasonCertInvalid,
+			Detail:      fmt.Sprintf("unknown registryOutcome %d", int(outcome)),
+			At:          time.Now(),
+		})
 	}
 }
 
@@ -994,10 +1038,19 @@ func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, re
 // landed and publishes AgentRegistered (success or failure) plus
 // AgentUntrusted on failure.
 //
-// The Session stream stays open throughout. drainStream is the
-// long-running consumer of the stream; we synchronously Send +
-// expect-Recv here BEFORE drainStream takes over, so RegisterDone is
-// observed cleanly without contention.
+// Concurrent-Recv safety: gRPC streams are NOT safe for concurrent
+// stream.Recv. driveRegister is called BEFORE drainStream and must
+// guarantee that its inner Recv goroutine has fully exited before it
+// returns — otherwise drainStream's Recv would race the leftover
+// goroutine on the same stream. On timeout we cancel the stream-scoped
+// ctx (res.StreamCancel) which unblocks the parked Recv with a ctx
+// error; we then wait on `done` to confirm the goroutine exited. On
+// the timeout path the stream is intentionally torn down — runDial
+// will reconnect on the next cycle (a clawkerd that didn't respond to
+// RegisterRequired in registerRequiredTimeout is unhealthy enough that
+// re-establishing is the right reaction). Asymmetric trust is still
+// preserved: we don't abort on cert grounds, only on protocol-level
+// liveness.
 func (d *Dialer) driveRegister(ctx context.Context, containerID string, res establishResult, log *logger.Logger) {
 	commandID := "register-" + containerID
 	if err := res.Stream.Send(&clawkerdv1.Command{
@@ -1010,7 +1063,7 @@ func (d *Dialer) driveRegister(ctx context.Context, containerID string, res esta
 
 	// Wait for RegisterDone with timeout. Other Response types that
 	// arrive in the interim are unexpected (clawkerd should serialize
-	// per-command Responses by command_id) — log and keep waiting.
+	// per-command Responses by command_id) — discard and keep waiting.
 	waitCtx, cancel := context.WithTimeout(ctx, registerRequiredTimeout)
 	defer cancel()
 
@@ -1019,10 +1072,9 @@ func (d *Dialer) driveRegister(ctx context.Context, containerID string, res esta
 		err  error
 	}
 	ch := make(chan recvResult, 1)
+	done := make(chan struct{})
 	go func() {
-		// stream.Recv blocks; this goroutine's lifetime is bounded by
-		// the parent ctx (drainStream takes over after this function
-		// returns and will eventually unblock the recv).
+		defer close(done)
 		for {
 			r, err := res.Stream.Recv()
 			if err != nil {
@@ -1038,18 +1090,25 @@ func (d *Dialer) driveRegister(ctx context.Context, containerID string, res esta
 
 	select {
 	case <-waitCtx.Done():
+		// Cancel the stream so the parked Recv unblocks, then wait for
+		// the goroutine to exit so drainStream can safely take over.
+		if res.StreamCancel != nil {
+			res.StreamCancel()
+		}
+		<-done
 		d.publishRegisterFailure(containerID, res, "RegisterDone timeout: "+waitCtx.Err().Error(), log)
 		return
 	case got := <-ch:
+		<-done
 		if got.err != nil {
 			d.publishRegisterFailure(containerID, res, "Recv RegisterDone: "+got.err.Error(), log)
 			return
 		}
-		done := got.resp.GetRegisterDone()
-		if done == nil || !done.GetOk() {
+		regDone := got.resp.GetRegisterDone()
+		if regDone == nil || !regDone.GetOk() {
 			detail := "clawkerd reported failure"
-			if done != nil && done.GetError() != "" {
-				detail = done.GetError()
+			if regDone != nil && regDone.GetError() != "" {
+				detail = regDone.GetError()
 			}
 			d.publishRegisterFailure(containerID, res, detail, log)
 			return
@@ -1057,13 +1116,18 @@ func (d *Dialer) driveRegister(ctx context.Context, containerID string, res esta
 	}
 
 	// Re-lookup to confirm the row actually landed in sqlite.
+	// Distinguish a sqlite I/O error (registry layer regression: the
+	// CP-side handler reported success but the row isn't readable)
+	// from "no row" (handler accepted Welcome but never wrote — also a
+	// regression). Both publish failure but with different reasons so
+	// containment subscribers can differentiate.
 	entry, err := d.agents.LookupByContainerID(containerID)
-	if err != nil || entry == nil {
-		reason := "registry row missing after RegisterDone"
-		if err != nil {
-			reason = err.Error()
-		}
-		d.publishRegisterFailure(containerID, res, reason, log)
+	if err != nil && !errors.Is(err, ErrUnknownAgent) {
+		d.publishRegisterFailure(containerID, res, "registry lookup error after RegisterDone: "+err.Error(), log)
+		return
+	}
+	if entry == nil {
+		d.publishRegisterFailure(containerID, res, "registry row missing after RegisterDone", log)
 		return
 	}
 

@@ -63,41 +63,20 @@ type sqliteRegistry struct {
 
 // NewSQLiteWriter opens (or creates) the sqlite database at dbPath,
 // applies the schema, and returns a registry suitable for the writer
-// process. The clawker CLI is the row creator and the CP is the row
-// evictor; both open the DB via this constructor and rely on sqlite's
-// file lock + busy_timeout to absorb transient contention.
+// process. CP is the SOLE writer in this design (the CLI no longer
+// opens the registry DB), so a separate reader-mode constructor is
+// not provided — every consumer that previously read from sqlite now
+// goes through `f.AdminClient(ctx).ListAgents`.
 //
 // The parent directory of dbPath must already exist.
 func NewSQLiteWriter(dbPath string, log *logger.Logger) (Registry, error) {
-	return openSQLite(dbPath, log, sqliteOpenWriter)
-}
-
-// NewSQLiteReader opens an existing sqlite database at dbPath in
-// read-only mode and returns a registry whose write methods (Add,
-// EvictByContainerID) all fail with the underlying sqlite "attempt to
-// write a readonly database" error. Used by the local-read CLI
-// (`clawker controlplane agents`) to consume the registry without
-// risking accidental mutation.
-func NewSQLiteReader(dbPath string, log *logger.Logger) (Registry, error) {
-	return openSQLite(dbPath, log, sqliteOpenReader)
-}
-
-// NewSQLite is retained for tests + paths that haven't migrated to
-// the writer/reader split. New call sites should use NewSQLiteWriter
-// or NewSQLiteReader explicitly so the open mode is obvious at the
-// wiring point.
-//
-// Deprecated: use NewSQLiteWriter or NewSQLiteReader.
-func NewSQLite(dbPath string, log *logger.Logger) (Registry, error) {
-	return NewSQLiteWriter(dbPath, log)
+	return openSQLite(dbPath, log)
 }
 
 // EnsureSchema opens the database in writer mode (creating the file
-// if missing), applies the schema, and closes. Called by host-side
-// CP bootstrap so that CP — which may open read-only — finds an
-// existing schema-applied DB even when no CLI write has happened yet
-// (e.g. the user runs `clawker controlplane up` before any `clawker
-// run`).
+// if missing), applies the schema, and closes. Called by the CP
+// daemon at startup before NewSQLiteWriter so the schema apply path
+// is observable independent of the long-lived writer handle.
 func EnsureSchema(dbPath string, log *logger.Logger) error {
 	r, err := NewSQLiteWriter(dbPath, log)
 	if err != nil {
@@ -109,14 +88,7 @@ func EnsureSchema(dbPath string, log *logger.Logger) error {
 	return nil
 }
 
-type sqliteOpenMode int
-
-const (
-	sqliteOpenWriter sqliteOpenMode = iota
-	sqliteOpenReader
-)
-
-func openSQLite(dbPath string, log *logger.Logger, mode sqliteOpenMode) (Registry, error) {
+func openSQLite(dbPath string, log *logger.Logger) (Registry, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -133,35 +105,19 @@ func openSQLite(dbPath string, log *logger.Logger, mode sqliteOpenMode) (Registr
 	// single writer, busy_timeout prevents transient contention from
 	// raising SQLITE_BUSY at the application layer, and foreign_keys
 	// is on so future child tables can rely on cascading deletes.
-	var dsn string
-	switch mode {
-	case sqliteOpenReader:
-		// `mode=ro` opens the file read-only; `query_only(true)` is a
-		// belt-and-suspenders runtime guard that blocks write
-		// statements on the connection even if a future code path
-		// mistakenly attempts one. The DB must already exist — reader
-		// open does not auto-create.
-		if _, err := os.Stat(dbPath); err != nil {
-			return nil, fmt.Errorf("agentregistry: db %s missing: %w", dbPath, err)
-		}
-		dsn = dbPath + "?mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(true)"
-	default:
-		dsn = dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)"
-	}
+	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)"
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("agentregistry: open sqlite: %w", err)
 	}
-	if mode == sqliteOpenWriter {
-		// Single writer connection. modernc/sqlite is goroutine-safe,
-		// but a single connection serialises writes which matches the
-		// single-writer model the design assumes.
-		db.SetMaxOpenConns(1)
-		if err := applySchema(db, log); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("agentregistry: apply schema: %w", err)
-		}
+	// Single writer connection. modernc/sqlite is goroutine-safe, but
+	// a single connection serialises writes which matches the
+	// single-writer model the design assumes.
+	db.SetMaxOpenConns(1)
+	if err := applySchema(db, log); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("agentregistry: apply schema: %w", err)
 	}
 
 	r := &sqliteRegistry{
@@ -181,17 +137,9 @@ func openSQLite(dbPath string, log *logger.Logger, mode sqliteOpenMode) (Registr
 	}
 	r.log.Info().
 		Str("db_path", dbPath).
-		Str("mode", openModeName(mode)).
 		Int("rows", rowCount).
 		Msg("agentregistry: sqlite registry opened")
 	return r, nil
-}
-
-func openModeName(mode sqliteOpenMode) string {
-	if mode == sqliteOpenReader {
-		return "reader"
-	}
-	return "writer"
 }
 
 // applySchema applies the schema atomically. If an existing DB lacks

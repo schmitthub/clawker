@@ -190,7 +190,7 @@ func TestClassifyRegistry_Match(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: expectedCN, PeerThumbprint: thumb}, "ctr-1", "myproj", "dev")
+	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: expectedCN, PeerThumbprint: thumb}, "ctr-1")
 	assert.Equal(t, outcomeRegistryMatch, outcome)
 }
 
@@ -203,7 +203,7 @@ func TestClassifyRegistry_Miss(t *testing.T) {
 	d := &Dialer{agents: reg}
 
 	thumb := sha256.Sum256([]byte("peer"))
-	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: thumb}, "ctr-2", "x", "y")
+	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: thumb}, "ctr-2")
 	assert.Equal(t, outcomeRegistryMiss, outcome)
 }
 
@@ -222,7 +222,7 @@ func TestClassifyRegistry_ThumbprintMismatch(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.myproj.dev", PeerThumbprint: peerThumb}, "ctr-3", "myproj", "dev")
+	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.myproj.dev", PeerThumbprint: peerThumb}, "ctr-3")
 	assert.Equal(t, outcomeRegistryThumbprintMismatch, outcome)
 }
 
@@ -240,7 +240,7 @@ func TestClassifyRegistry_CNMismatch(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.different.dev", PeerThumbprint: thumb}, "ctr-4", "actual", "dev")
+	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.different.dev", PeerThumbprint: thumb}, "ctr-4")
 	assert.Equal(t, outcomeRegistryCNMismatch, outcome)
 }
 
@@ -252,7 +252,7 @@ func TestClassifyRegistry_LookupErrorReturnsNotQueried(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	outcome, detail := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))}, "ctr-5", "x", "y")
+	outcome, detail := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))}, "ctr-5")
 	assert.Equal(t, outcomeRegistryNotQueried, outcome)
 	assert.Contains(t, detail, "registry lookup error")
 }
@@ -260,7 +260,7 @@ func TestClassifyRegistry_LookupErrorReturnsNotQueried(t *testing.T) {
 func TestClassifyRegistry_NilRegistryReturnsNotQueried(t *testing.T) {
 	d := &Dialer{agents: nil}
 
-	outcome, detail := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))}, "ctr-6", "x", "y")
+	outcome, detail := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))}, "ctr-6")
 	assert.Equal(t, outcomeRegistryNotQueried, outcome)
 	assert.Equal(t, "registry not wired", detail)
 }
@@ -275,20 +275,17 @@ func TestComputeCNPinMatch(t *testing.T) {
 		agent   string
 		want    bool
 	}{
-		{
-			name:    "match scoped",
-			peerCN:  auth.CanonicalAgentCN(auth.MustProjectSlug("foo"), auth.MustAgentName("bar")),
-			project: "foo", agent: "bar", want: true,
-		},
-		{
-			name:    "match unscoped (empty project)",
-			peerCN:  auth.CanonicalAgentCN(auth.MustProjectSlug(""), auth.MustAgentName("solo")),
-			project: "", agent: "solo", want: true,
-		},
-		// One representative want=false case is enough — auth.NewAgentName /
-		// NewProjectSlug have their own tests for malformed/empty inputs;
-		// here we only need to confirm that any non-match resolves to false.
+		// Hand-written CN strings rather than auth.CanonicalAgentCN
+		// composer: feeding the composer into both sides of the match
+		// reduces the assertion to `x == x` and would pass even if
+		// computeCNPinMatch returned `peerCN != ""`. Hand strings keep
+		// computeCNPinMatch as the system under test, not the composer.
+		{name: "match scoped 3-segment", peerCN: "clawker.foo.bar", project: "foo", agent: "bar", want: true},
+		{name: "match unscoped 2-segment", peerCN: "clawker.solo", project: "", agent: "solo", want: true},
 		{name: "peer CN differs", peerCN: "clawker.other.bar", project: "foo", agent: "bar", want: false},
+		{name: "wrong prefix", peerCN: "notclawker.foo.bar", project: "foo", agent: "bar", want: false},
+		{name: "extra segment", peerCN: "clawker.foo.bar.baz", project: "foo", agent: "bar", want: false},
+		{name: "missing project segment when scoped", peerCN: "clawker.bar", project: "foo", agent: "bar", want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

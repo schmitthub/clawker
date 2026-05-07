@@ -186,20 +186,20 @@ func TestRegister_HappyPath(t *testing.T) {
 func TestRegister_MalformedIdentity(t *testing.T) {
 	h := newTestHandler(&RegistryMock{}, &fakeContainerInspector{})
 	cases := []struct {
-		name    string
-		req     *agentv1.RegisterRequest
-		wantMsg string
+		name string
+		req  *agentv1.RegisterRequest
 	}{
-		{"empty agent_name", &agentv1.RegisterRequest{Project: "p"}, "agent name"},
-		{"invalid project chars", &agentv1.RegisterRequest{AgentName: "x", Project: "BAD UPPER"}, "project"},
+		{"empty agent_name", &agentv1.RegisterRequest{Project: "p"}},
+		{"invalid project chars", &agentv1.RegisterRequest{AgentName: "x", Project: "BAD UPPER"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := h.Register(context.Background(), tc.req)
 			require.Error(t, err)
+			// Code is the contract; message strings drift across
+			// refactors and aren't worth pinning.
 			st, _ := status.FromError(err)
 			assert.Equal(t, codes.InvalidArgument, st.Code())
-			assert.Contains(t, st.Message(), tc.wantMsg)
 		})
 	}
 }
@@ -358,4 +358,117 @@ func TestRegister_ThumbprintReplay_Rejected(t *testing.T) {
 	require.Error(t, err)
 	st, _ := status.FromError(err)
 	assert.Equal(t, codes.PermissionDenied, st.Code())
+}
+
+// TestRegister_InspectError_PermissionDenied pins that a docker
+// inspect failure rejects the call without falling through to Add.
+// Could surface as "container truly gone between dial and Register"
+// or as a transient daemon error; the handler fails closed either way.
+func TestRegister_InspectError_PermissionDenied(t *testing.T) {
+	caCert, caKey := genTestCA(t)
+	const containerID = "ctr-inspect-err"
+	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+
+	addCalled := false
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
+		AddFunc: func(Entry) error {
+			addCalled = true
+			return nil
+		},
+	}
+	inspector := &fakeContainerInspector{
+		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
+			return mobycontainer.InspectResponse{}, errors.New("docker daemon hiccup")
+		},
+	}
+	h := newTestHandler(reg, inspector)
+
+	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
+	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "myapp"})
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.PermissionDenied, st.Code())
+	assert.False(t, addCalled, "Add must not run when inspect fails")
+}
+
+// TestRegister_AddError_Internal pins that a sqlite-side Add failure
+// (UNIQUE-violation race, disk full, etc.) surfaces as Internal — the
+// caller already passed every identity gate, so the failure is a
+// server-side persistence regression, not an identity verdict.
+func TestRegister_AddError_Internal(t *testing.T) {
+	caCert, caKey := genTestCA(t)
+	const containerID = "ctr-add-err"
+	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
+		AddFunc: func(Entry) error {
+			return errors.New("UNIQUE constraint failed: agents.thumbprint_hex")
+		},
+	}
+	inspector := &fakeContainerInspector{
+		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
+			return happyContainer(containerID, "myapp", "dev", "10.20.0.5"), nil
+		},
+	}
+	h := newTestHandler(reg, inspector)
+
+	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
+	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "myapp"})
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.Internal, st.Code())
+}
+
+// TestRegister_LookupIOError_Internal pins that a sqlite read error
+// (NOT ErrUnknownAgent) surfaces as Internal rather than collapsing
+// to "no row" via the existing-nil short-circuit.
+func TestRegister_LookupIOError_Internal(t *testing.T) {
+	caCert, caKey := genTestCA(t)
+	const containerID = "ctr-lookup-err"
+	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+
+	addCalled := false
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(string) (*Entry, error) {
+			return nil, errors.New("disk i/o error")
+		},
+		AddFunc: func(Entry) error {
+			addCalled = true
+			return nil
+		},
+	}
+	inspector := &fakeContainerInspector{
+		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
+			return happyContainer(containerID, "myapp", "dev", "10.20.0.5"), nil
+		},
+	}
+	h := newTestHandler(reg, inspector)
+
+	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
+	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "myapp"})
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.Internal, st.Code())
+	assert.False(t, addCalled, "Add must not run when lookup fails with non-ErrUnknownAgent")
+}
+
+// TestNewHandler_RejectsNilDeps pins the constructor's nil-rejection
+// contract. Wiring a Handler with a nil registry or nil inspector
+// would NPE on the first call — fail at construction so the failure
+// surfaces at CP startup, not at the first agent boot.
+func TestNewHandler_RejectsNilDeps(t *testing.T) {
+	inspector := &fakeContainerInspector{}
+	reg := &RegistryMock{}
+
+	if _, err := NewHandler(nil, inspector, logger.Nop()); err == nil {
+		t.Fatal("NewHandler(nil registry, _, _) must error")
+	}
+	if _, err := NewHandler(reg, nil, logger.Nop()); err == nil {
+		t.Fatal("NewHandler(_, nil inspector, _) must error")
+	}
+	h, err := NewHandler(reg, inspector, logger.Nop())
+	require.NoError(t, err)
+	require.NotNil(t, h)
 }

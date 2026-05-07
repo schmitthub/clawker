@@ -436,7 +436,7 @@ func TestCreateRun(t *testing.T) {
 
 		// Create prints 12-char container ID to stdout
 		outStr := out.String()
-		require.Contains(t, outStr, "sha256:fakec")
+		require.Contains(t, outStr, "abcdef123456")
 		require.Len(t, strings.TrimSpace(outStr), 12)
 
 		fake.AssertCalled(t, "ContainerCreate")

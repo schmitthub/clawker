@@ -101,8 +101,26 @@ func (e AgentUntrusted) ApplyTo(s *overseer.State) {
 	if e.Project != "" {
 		view.Project = e.Project
 	}
-	view.Trusted = false
-	view.UntrustedReason = e.Reason
+	view.Trust = overseer.Untrust(e.Reason)
 	view.UpdatedAt = e.At
 	s.Agents[e.ContainerID] = view
+}
+
+// ReapDegraded fires when CP's startup reap of orphan registry rows
+// fails. The dockerevents/destroy subscription will pick up future
+// `docker rm`s, but rows for containers destroyed WHILE CP was down
+// may never be evicted until the next CP restart sweeps successfully.
+// Subscribers (operator alerting, monitoring panels) consume this
+// event to surface the degraded-worldview state. No worldview field
+// changes — the event is informational; State.Agents may still
+// contain ghost rows.
+type ReapDegraded struct {
+	Reason string
+	At     time.Time
+}
+
+func (e ReapDegraded) EventName() string     { return "agent.reap.degraded" }
+func (e ReapDegraded) OccurredAt() time.Time { return e.At }
+func (e ReapDegraded) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("reason", e.Reason)
 }

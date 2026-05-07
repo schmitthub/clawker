@@ -1696,7 +1696,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		CopyToContainer:    NewCopyToContainerFn(client),
 		Logger:             log,
 	}
-	if _, err := InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, bootstrapOpts); err != nil {
+	if err := InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, bootstrapOpts); err != nil {
 		cleanupCtx := context.Background()
 		if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
 			log.Warn().Str("containerID", resp.ID).Err(rmErr).

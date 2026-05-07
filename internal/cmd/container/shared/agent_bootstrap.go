@@ -144,23 +144,28 @@ type InstallAgentBootstrapOptions struct {
 // No DB I/O. The agentregistry row is written CP-side at Register
 // handler entry, not from the CLI. A failure here is recovered by the
 // caller's ContainerRemove without orphaning anything.
-func InstallAgentBootstrapMaterial(ctx context.Context, caCertPath, caKeyPath string, signingKey *ecdsa.PrivateKey, opts InstallAgentBootstrapOptions) (*AgentBootstrap, error) {
+//
+// Returns error only — the bootstrap struct is consumed entirely by
+// the tar copy step. Returning the struct previously suggested a
+// downstream consumer that no longer exists (the registry-write path
+// was retired); collapsing the signature removes that misleading hint.
+func InstallAgentBootstrapMaterial(ctx context.Context, caCertPath, caKeyPath string, signingKey *ecdsa.PrivateKey, opts InstallAgentBootstrapOptions) error {
 	if opts.ContainerID == "" {
-		return nil, fmt.Errorf("install agent bootstrap material: container id required")
+		return fmt.Errorf("install agent bootstrap material: container id required")
 	}
 	if opts.CopyToContainer == nil {
-		return nil, fmt.Errorf("install agent bootstrap material: copy-to-container fn required")
+		return fmt.Errorf("install agent bootstrap material: copy-to-container fn required")
 	}
 
 	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, opts.Project, opts.Agent, opts.ContainerID, opts.HydraTokenAudience, signingKey)
 	if err != nil {
-		return nil, fmt.Errorf("install agent bootstrap material: generate: %w", err)
+		return fmt.Errorf("install agent bootstrap material: generate: %w", err)
 	}
 
 	if err := WriteAgentBootstrapToContainer(ctx, opts.ContainerID, opts.CopyToContainer, bootstrap); err != nil {
-		return nil, fmt.Errorf("install agent bootstrap material: write: %w", err)
+		return fmt.Errorf("install agent bootstrap material: write: %w", err)
 	}
-	return bootstrap, nil
+	return nil
 }
 
 // validate ensures every load-bearing bootstrap field is populated

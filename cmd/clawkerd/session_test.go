@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"os"
@@ -472,5 +473,129 @@ func TestShutdownRunning_CancelsAllCommands(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatalf("rc-%d ctx not cancelled by shutdownRunning", i)
 		}
+	}
+}
+
+// --- handleRegisterRequired ----------------------------------------------
+
+// TestDispatch_RegisterRequired_EmptyCommandID pins the contract that
+// RegisterRequired (like every non-Hello payload) requires a non-empty
+// command_id. Without it CP cannot correlate the RegisterDone reply.
+func TestDispatch_RegisterRequired_EmptyCommandID(t *testing.T) {
+	s, _ := newTestSession()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.dispatch(ctx, &clawkerdv1.Command{
+		Payload: &clawkerdv1.Command_RegisterRequired{RegisterRequired: &clawkerdv1.RegisterRequired{}},
+	})
+	resps := drainAll(s)
+	require.Len(t, resps, 1)
+	er := resps[0].GetError()
+	require.NotNil(t, er)
+	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, er.Code)
+}
+
+// TestHandleRegisterRequired_NilCoordinator pins the safety branch:
+// when no coordinator is wired, reply ok=false instead of hanging the
+// CP-side dialer waiting for a Response that will never come.
+func TestHandleRegisterRequired_NilCoordinator(t *testing.T) {
+	s, _ := newTestSession()
+	s.register = nil
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.handleRegisterRequired(ctx, "cmd-1")
+
+	resps := drainAll(s)
+	require.Len(t, resps, 1)
+	rd := resps[0].GetRegisterDone()
+	require.NotNil(t, rd)
+	assert.False(t, rd.Ok)
+	assert.NotEmpty(t, rd.Error)
+	assert.Equal(t, "cmd-1", resps[0].CommandId)
+}
+
+// TestHandleRegisterRequired_HappyPath: with a coordinator that
+// returns (true, ""), RegisterDone{Ok:true} ships back on the wire
+// with the matching command_id.
+func TestHandleRegisterRequired_HappyPath(t *testing.T) {
+	s, _ := newTestSession()
+	s.register = &registerCoordinator{
+		exchange: func(_ context.Context, _, _ string, _ *tls.Config) (string, bool, error) {
+			return "tok", true, nil
+		},
+	}
+	s.register.dialAndRegister = func(context.Context, *logger.Logger, string) (bool, string) {
+		return true, ""
+	}
+	// Prevent the inner runOnce from rejecting on missing env.
+	s.register.hydraURL = "https://hydra.test"
+	s.register.agentAddr = "127.0.0.1:1"
+	caPEM, certPEM, keyPEM := validPEMs(t)
+	s.register.boot = &bootstrap{
+		CertPEM:   certPEM,
+		KeyPEM:    keyPEM,
+		CACertPEM: caPEM,
+		Assertion: "fake.jwt",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.handleRegisterRequired(ctx, "cmd-happy")
+
+	resp := waitOneResponse(t, s, time.Second)
+	require.Equal(t, "cmd-happy", resp.CommandId)
+	rd := resp.GetRegisterDone()
+	require.NotNil(t, rd)
+	assert.True(t, rd.Ok)
+	assert.Empty(t, rd.Error)
+}
+
+// TestHandleRegisterRequired_PanicRecovery pins panic safety: a panic
+// inside register.Run is caught, recovered, and surfaced as
+// RegisterDone{Ok:false}. Without recovery the goroutine would crash
+// the entire clawkerd daemon.
+func TestHandleRegisterRequired_PanicRecovery(t *testing.T) {
+	s, _ := newTestSession()
+	s.register = &registerCoordinator{
+		exchange: func(_ context.Context, _, _ string, _ *tls.Config) (string, bool, error) {
+			panic("simulated regression in token exchange")
+		},
+	}
+	s.register.dialAndRegister = func(context.Context, *logger.Logger, string) (bool, string) {
+		return true, ""
+	}
+	s.register.hydraURL = "https://hydra.test"
+	s.register.agentAddr = "127.0.0.1:1"
+	caPEM, certPEM, keyPEM := validPEMs(t)
+	s.register.boot = &bootstrap{
+		CertPEM:   certPEM,
+		KeyPEM:    keyPEM,
+		CACertPEM: caPEM,
+		Assertion: "fake.jwt",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.handleRegisterRequired(ctx, "cmd-panic")
+
+	resp := waitOneResponse(t, s, time.Second)
+	require.Equal(t, "cmd-panic", resp.CommandId)
+	rd := resp.GetRegisterDone()
+	require.NotNil(t, rd)
+	assert.False(t, rd.Ok)
+	assert.Contains(t, rd.Error, "register panic")
+}
+
+// waitOneResponse drains exactly one Response off s.sendCh within
+// timeout. handleRegisterRequired is async (spawns a goroutine), so a
+// drainAll snapshot may race the goroutine writing to sendCh.
+func waitOneResponse(t *testing.T, s *session, timeout time.Duration) *clawkerdv1.Response {
+	t.Helper()
+	select {
+	case r := <-s.sendCh:
+		return r
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for RegisterDone Response")
+		return nil
 	}
 }

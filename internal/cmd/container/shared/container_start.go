@@ -34,8 +34,8 @@ type CommandOpts struct {
 	// ContainerStart skips the bootstrap-delivery + registry-write and
 	// the entrypoint silently skips clawkerd launch. Existing-container
 	// start/restart paths leave it empty by design — those containers'
-	// registry rows already exist (the CP-side agentdial picks up where
-	// it left off) or were intentionally never registered.
+	// registry rows already exist (the CP-side agent dialer picks up
+	// where it left off) or were intentionally never registered.
 	AgentName string
 
 	// Project is the clawker project slug the agent runs under, paired

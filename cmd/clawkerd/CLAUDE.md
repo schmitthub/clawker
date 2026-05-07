@@ -15,20 +15,21 @@ container. They speak only over the per-container gRPC listener on
 clawker-net (CP-dialed). The Session bidi-stream IS the per-command
 dispatch channel — CP opens a Session, sends a `Command` (Hello /
 ShellCommand / SignalCommand / etc.), receives streamed `Response`s,
-and closes. There is no clawkerd→CP outbound RPC in this branch —
-the asymmetric-trust model has clawkerd serve only.
+and closes. clawkerd has ONE outbound call: the CP-driven Register handshake
+that mTLS-dials CP's AgentService at handler entry to write the
+identity row. Otherwise clawkerd serves only.
 
 ## Boot sequence
 
-1. Read five bootstrap files from `consts.BootstrapDir`
+1. Read four bootstrap files from `consts.BootstrapDir`
    (`/run/clawker/bootstrap`):
    - `cert.pem`, `key.pem` — per-agent mTLS leaf signed by the CLI CA
    - `ca.pem` — CLI CA cert (clawkerd's RootCA for verifying CP's client cert)
-   - `assertion.jwt` — CLI-signed `clawker-agent` Hydra assertion (auth
-     material, loaded but unused in this branch — kept for future
-     agent→CP RPCs)
-   - `verifier` — PKCE secret (auth material, loaded but unused in
-     this branch — kept for future agent→CP RPCs)
+   - `assertion.jwt` — CLI-signed `clawker-agent` Hydra
+     `client_assertion` JWT. Single-use: clawkerd exchanges it at
+     Hydra for an access token when CP dispatches `RegisterRequired`
+     on the Session stream, then holds the resulting bearer token
+     to call `AgentService.Register` (see `register.go`).
 
    Files land in the container's **writable layer** (NOT a tmpfs mount,
    NOT a bind mount). The CLI streams a tar archive into the live
@@ -130,16 +131,17 @@ clawkerd bug.
 
 ## What it does NOT do
 
-- No outbound dial to CP. `assertion.jwt` + `verifier` are loaded but
-  unused in this branch; agent→CP RPCs land in a future branch and
-  will reuse the on-disk auth material.
+- No proactive outbound dial to CP. The only outbound call is the
+  one-time CP-triggered Register handshake driven from the Session
+  stream — not an unsolicited dial.
 - No heartbeat. CP knows liveness via Docker events + the dialer's
   `SessionConnected` / `SessionBroken` overseer events.
 - No init-script execution. The existing `entrypoint.sh` flow is
   unchanged — clawkerd runs alongside it. Migration of init steps
   lands in a later branch.
-- No reconnect logic. clawkerd is the SERVER; CP is the CLIENT. Reconnect
-  with backoff lives in `internal/controlplane/agentdial` on the CP side.
+- No reconnect logic. clawkerd is the SERVER for Session; CP is the
+  CLIENT. Reconnect with backoff lives in
+  `internal/controlplane/agent/dialer.go` on the CP side.
 
 ## Files
 
@@ -194,8 +196,11 @@ The container's restart policy (or in `--rm` mode, the user's next
 ## Lifetime
 
 Bootstrap material is read once at boot. clawkerd holds `cert.pem`,
-`key.pem`, `ca.pem`, `assertion.jwt`, and `verifier` in memory for the
-process lifetime. The container's writable layer dies on `--rm` or
+`key.pem`, `ca.pem`, and `assertion.jwt` in memory for the process
+lifetime. The Hydra `client_assertion` JWT is single-use: the
+registerCoordinator (`register.go`) consumes it on the first
+CP-triggered Register handshake and short-circuits subsequent
+dispatches. The container's writable layer dies on `--rm` or
 `docker rm`, so the material is bounded by the container lifetime
 regardless.
 

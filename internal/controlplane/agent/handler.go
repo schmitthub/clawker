@@ -1,29 +1,22 @@
-// Package agent serves the clawker.agent.v1.AgentService gRPC surface.
-//
-// The package is intentionally minimal in this branch: AgentService is
-// an empty proto service. What stays is the cross-cutting
-// IdentityInterceptor — a unary + stream interceptor that resolves the
-// peer cert thumbprint to an agentregistry entry on every non-opted-out
-// agent RPC, and a small helper (peerIdentityFromContext) used by the
-// interceptor to extract the peer's leaf certificate from a gRPC
-// context.
-//
-// Identity resolution flow (when AgentService eventually carries
-// per-agent inbound RPCs):
+// Identity resolution flow for non-opt-out AgentService RPCs:
 //
 //  1. The CP's agent listener enforces mTLS at the TLS layer (server
 //     cert + ClientAuth EKU + chain to the CLI CA).
 //  2. AuthInterceptor verifies the bearer token + per-method scope.
 //  3. IdentityInterceptor (this package) reads the peer cert via
 //     peer.FromContext, computes its SHA-256 thumbprint, and looks up
-//     the corresponding agentregistry entry. The CN cross-check is done
-//     inside agentregistry.Lookup with constant-time compare against
-//     the row's pre-computed canonical CN.
+//     the corresponding registry entry via Registry.Lookup, which
+//     does a constant-time CN compare against the row's pre-computed
+//     canonical CN.
 //  4. The resolved entry is attached to ctx via WithEntry; downstream
 //     handlers read it via EntryFromContext.
 //
 // All rejections return codes.PermissionDenied with a generic envelope —
 // no leak about which check failed.
+//
+// AgentService.Register is opt-out (registry row doesn't exist
+// pre-call) — the Register handler in register_handler.go does its
+// own peer cert + IP + label cross-checks before writing the row.
 package agent
 
 import (

@@ -24,6 +24,13 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+// inspectTimeout bounds the read-only docker inspect call inside
+// Register. Decoupled from the per-RPC ctx so a CP-side cancel
+// (driveRegister's RegisterDone timeout, CP shutdown) does not abort
+// the inspect mid-flight and turn it into a "container not found"
+// rejection.
+const inspectTimeout = 5 * time.Second
+
 // ContainerInspector is the docker-side seam the Register handler uses
 // to resolve the container_id read from the cert URI SAN. Returns the
 // moby InspectResponse so the handler can read labels (project +
@@ -78,7 +85,18 @@ type Handler struct {
 // NewHandler constructs a Register handler. registry is the CP-owned
 // agentregistry; inspector resolves docker containers; log defaults
 // to logger.Nop() when nil. clock defaults to time.Now.
-func NewHandler(registry Registry, inspector ContainerInspector, log *logger.Logger) *Handler {
+//
+// registry and inspector MUST be non-nil — either being nil is a
+// wiring bug that would NPE on the first Register call. Reject at
+// construction so the failure surfaces at CP startup rather than at
+// the first agent boot.
+func NewHandler(registry Registry, inspector ContainerInspector, log *logger.Logger) (*Handler, error) {
+	if registry == nil {
+		return nil, errors.New("agent.NewHandler: registry is required")
+	}
+	if inspector == nil {
+		return nil, errors.New("agent.NewHandler: inspector is required")
+	}
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -87,7 +105,7 @@ func NewHandler(registry Registry, inspector ContainerInspector, log *logger.Log
 		inspector: inspector,
 		log:       log,
 		clock:     time.Now,
-	}
+	}, nil
 }
 
 // Compile-time guard: Handler must satisfy the AgentServiceServer
@@ -166,7 +184,14 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	}
 
 	// Cross-check against the docker container — labels + peer IP.
-	inspect, err := h.inspector.Inspect(ctx, containerID)
+	// Inspect runs against a detached ctx with a short timeout so an
+	// upstream caller cancel (driveRegister's RegisterDone timeout, CP
+	// shutdown mid-handler) does not abort a read-only docker call
+	// whose result we'd otherwise misclassify as "container_not_found".
+	// 5s is comfortably more than docker daemon p99 inspect latency.
+	inspectCtx, inspectCancel := context.WithTimeout(context.Background(), inspectTimeout)
+	defer inspectCancel()
+	inspect, err := h.inspector.Inspect(inspectCtx, containerID)
 	if err != nil {
 		h.log.Warn().Err(err).
 			Str("event", "agent_register_container_not_found").

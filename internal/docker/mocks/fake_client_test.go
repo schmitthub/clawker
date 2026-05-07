@@ -228,7 +228,7 @@ func TestSetupContainerStart(t *testing.T) {
 		fake := mocks.NewFakeClient(cfg)
 		fake.SetupContainerStart()
 
-		_, err := fake.Client.ContainerStart(ctx, mocks.MinimalStartOpts("sha256:fakecontainer1234567890abcdef"))
+		_, err := fake.Client.ContainerStart(ctx, mocks.MinimalStartOpts("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"))
 		if err != nil {
 			t.Fatalf("ContainerStart() error: %v", err)
 		}
@@ -428,7 +428,7 @@ func TestSetupContainerAttach(t *testing.T) {
 		fake := mocks.NewFakeClient(cfg)
 		fake.SetupContainerAttach()
 
-		containerID := "sha256:fakecontainer1234567890abcdef"
+		containerID := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 		result, err := fake.Client.ContainerAttach(ctx, containerID, moby.ContainerAttachOptions{
 			Stream: true,
 			Stdout: true,
@@ -456,7 +456,7 @@ func TestSetupContainerWait(t *testing.T) {
 		fake := mocks.NewFakeClient(cfg)
 		fake.SetupContainerWait(0)
 
-		containerID := "sha256:fakecontainer1234567890abcdef"
+		containerID := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 		waitResult := fake.Client.ContainerWait(ctx, containerID, container.WaitConditionNextExit)
 
 		select {
@@ -474,7 +474,7 @@ func TestSetupContainerWait(t *testing.T) {
 		fake := mocks.NewFakeClient(cfg)
 		fake.SetupContainerWait(42)
 
-		containerID := "sha256:fakecontainer1234567890abcdef"
+		containerID := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 		waitResult := fake.Client.ContainerWait(ctx, containerID, container.WaitConditionNextExit)
 
 		select {
@@ -495,7 +495,7 @@ func TestSetupContainerResize(t *testing.T) {
 		fake := mocks.NewFakeClient(cfg)
 		fake.SetupContainerResize()
 
-		containerID := "sha256:fakecontainer1234567890abcdef"
+		containerID := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 		_, err := fake.Client.ContainerResize(ctx, containerID, 24, 80)
 		if err != nil {
 			t.Fatalf("ContainerResize() error: %v", err)
@@ -511,7 +511,7 @@ func TestSetupContainerRemove(t *testing.T) {
 		fake := mocks.NewFakeClient(cfg)
 		fake.SetupContainerRemove()
 
-		containerID := "sha256:fakecontainer1234567890abcdef"
+		containerID := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 		_, err := fake.Client.ContainerRemove(ctx, containerID, false)
 		if err != nil {
 			t.Fatalf("ContainerRemove() error: %v", err)

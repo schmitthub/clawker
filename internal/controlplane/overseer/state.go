@@ -38,13 +38,16 @@ const (
 type UntrustedReason string
 
 const (
-	UntrustedReasonNone                UntrustedReason = ""
-	UntrustedReasonThumbprintMismatch  UntrustedReason = "cert_thumbprint_mismatch"
-	UntrustedReasonContainerIDMismatch UntrustedReason = "cert_container_id_mismatch"
-	UntrustedReasonCertInvalid         UntrustedReason = "cert_invalid"
-	UntrustedReasonCNMismatch          UntrustedReason = "cert_cn_mismatch"
-	UntrustedReasonPeerIPMismatch      UntrustedReason = "peer_ip_mismatch"
-	UntrustedReasonRegisterFailed      UntrustedReason = "register_failed"
+	UntrustedReasonNone               UntrustedReason = ""
+	UntrustedReasonThumbprintMismatch UntrustedReason = "cert_thumbprint_mismatch"
+	UntrustedReasonCertInvalid        UntrustedReason = "cert_invalid"
+	UntrustedReasonCNMismatch         UntrustedReason = "cert_cn_mismatch"
+	// Container-ID and peer-IP mismatches at Register handler time are
+	// rolled into UntrustedReasonRegisterFailed (with the specific
+	// classification in the structured log line). Resurfacing them as
+	// distinct event reasons would require plumbing structured failure
+	// codes through RegisterDone.error — out of scope for this branch.
+	UntrustedReasonRegisterFailed UntrustedReason = "register_failed"
 )
 
 // ContainerView is the Overseer's in-memory worldview of one container.
@@ -59,6 +62,47 @@ type ContainerView struct {
 	UpdatedAt time.Time
 }
 
+// Trust bundles the trust verdict for an Agent so the
+// "is the agent trusted?" and "if not, why?" questions are a single
+// invariant-respecting value rather than a (bool, enum) pair where
+// the zero value is structurally illegal ("untrusted with no reason"
+// is not a thing the worldview should be able to represent).
+//
+// Zero value = trusted with no reason. That's the right default: an
+// Agent struct freshly inserted into State.Agents has not yet been
+// proven untrustworthy, and the consumer-facing API (IsTrusted,
+// Reason) returns sensible answers immediately. Producers transition
+// to untrusted via Untrust(reason); that's the only path that flips
+// the verdict.
+type Trust struct {
+	untrusted bool
+	reason    UntrustedReason
+}
+
+// IsTrusted reports whether the agent is currently trusted by CP.
+// Zero-value Trust is trusted.
+func (t Trust) IsTrusted() bool { return !t.untrusted }
+
+// Reason returns the classification when IsTrusted is false.
+// UntrustedReasonNone otherwise.
+func (t Trust) Reason() UntrustedReason {
+	if t.untrusted {
+		return t.reason
+	}
+	return UntrustedReasonNone
+}
+
+// Untrust constructs a Trust value carrying the classification.
+// The reason MUST be non-empty; an empty reason is rejected by
+// returning a Trust whose IsTrusted is still true (no producer
+// should call Untrust(UntrustedReasonNone) — that's a logic bug).
+func Untrust(reason UntrustedReason) Trust {
+	if reason == UntrustedReasonNone {
+		return Trust{}
+	}
+	return Trust{untrusted: true, reason: reason}
+}
+
 // Agent is the Overseer's in-memory worldview of one clawker-managed
 // agent. Replaces the prior split between AgentSession (transport
 // lifecycle) and the durable agentregistry row (identity binding) by
@@ -71,24 +115,22 @@ type ContainerView struct {
 //   - Session* events from the dialer (SessionStatus, Address, Attempts,
 //     LastError, Thumbprint, AgentName, Project)
 //   - AgentRegistered event (Registered=Ok)
-//   - AgentUntrusted event (Trusted=false, UntrustedReason=Reason)
+//   - AgentUntrusted event (Trust=Untrust(Reason))
 //   - dockerevents container/destroy (entry deleted)
 //
-// Trusted defaults true (a row is trustworthy until something says
-// otherwise). UntrustedReason is non-empty iff Trusted=false.
+// Trust zero-value is "trusted with no reason" — see Trust docs.
 type Agent struct {
-	ContainerID     string
-	AgentName       string
-	Project         string
-	Address         string
-	SessionStatus   SessionStatus
-	Registered      bool
-	Trusted         bool
-	UntrustedReason UntrustedReason
-	Thumbprint      [sha256.Size]byte
-	Attempts        int
-	LastError       string
-	UpdatedAt       time.Time
+	ContainerID   string
+	AgentName     string
+	Project       string
+	Address       string
+	SessionStatus SessionStatus
+	Registered    bool
+	Trust         Trust
+	Thumbprint    [sha256.Size]byte
+	Attempts      int
+	LastError     string
+	UpdatedAt     time.Time
 }
 
 // State is the Overseer's full worldview projection at a point in time.

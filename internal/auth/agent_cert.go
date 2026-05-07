@@ -27,15 +27,41 @@ const ContainerSANScheme = "urn:clawker:container:"
 
 // BuildContainerSAN composes the URI SAN for a given container_id. The
 // returned *url.URL embeds in x509.Certificate.URIs.
+//
+// Docker container IDs are 64-char hex strings (truncated forms in CLI
+// output use prefixes of the same alphabet). We enforce hex-only here
+// so a malformed ID (whitespace, slashes, control chars) cannot ride
+// into the cert SAN — the Register handler reads this back via
+// ContainerIDFromCert and uses it to look up a docker container, so an
+// unvalidated value is a producer-side bug surface.
 func BuildContainerSAN(containerID string) (*url.URL, error) {
 	if containerID == "" {
 		return nil, fmt.Errorf("container id required")
+	}
+	if !isHexLower(containerID) {
+		return nil, fmt.Errorf("container id must be lowercase hex; got %q", containerID)
 	}
 	u, err := url.Parse(ContainerSANScheme + containerID)
 	if err != nil {
 		return nil, fmt.Errorf("build container SAN: %w", err)
 	}
 	return u, nil
+}
+
+// isHexLower reports whether s contains only [0-9a-f]. Docker engine's
+// canonical container ID is exactly that charset; uppercase isn't
+// produced by docker so we don't accept it.
+func isHexLower(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 // ContainerIDFromCert extracts the container_id encoded as a URI SAN
