@@ -21,6 +21,7 @@ github.com/containerd/ttrpc                                                    A
 github.com/containerd/typeurl/v2                                               Apache-2.0
 github.com/coredns/caddy                                                       Apache-2.0
 github.com/coredns/coredns                                                     Apache-2.0
+github.com/coreos/go-systemd/v22/activation                                    Apache-2.0
 github.com/distribution/reference                                              Apache-2.0
 github.com/dnstap/golang-dnstap                                                Apache-2.0
 github.com/docker/go-connections                                               Apache-2.0
@@ -32,7 +33,6 @@ github.com/go-git/go-git/v6                                                    A
 github.com/go-jose/go-jose/v4                                                  Apache-2.0
 github.com/go-logr/logr                                                        Apache-2.0
 github.com/go-logr/stdr                                                        Apache-2.0
-github.com/golang/groupcache/lru                                               Apache-2.0
 github.com/google/shlex                                                        Apache-2.0
 github.com/klauspost/compress                                                  Apache-2.0
 github.com/moby/buildkit                                                       Apache-2.0
@@ -42,6 +42,7 @@ github.com/moby/moby/api                                                       A
 github.com/moby/moby/client                                                    Apache-2.0
 github.com/moby/patternmatcher                                                 Apache-2.0
 github.com/moby/sys/signal                                                     Apache-2.0
+github.com/mwitkow/go-conntrack                                                Apache-2.0
 github.com/opencontainers/go-digest                                            Apache-2.0
 github.com/opencontainers/image-spec/specs-go                                  Apache-2.0
 github.com/opentracing/opentracing-go                                          Apache-2.0
@@ -50,6 +51,7 @@ github.com/pjbgf/sha1cd                                                        A
 github.com/prometheus/client_golang/prometheus                                 Apache-2.0
 github.com/prometheus/client_model/go                                          Apache-2.0
 github.com/prometheus/common                                                   Apache-2.0
+github.com/prometheus/exporter-toolkit/web                                     Apache-2.0
 github.com/prometheus/procfs                                                   Apache-2.0
 github.com/shibumi/go-pathspec                                                 Apache-2.0
 github.com/spf13/cobra                                                         Apache-2.0
@@ -119,10 +121,12 @@ go.opentelemetry.io/otel/sdk/log                                               B
 go.opentelemetry.io/otel/trace                                                 BSD-3-Clause
 golang.org/x/crypto                                                            BSD-3-Clause
 golang.org/x/net                                                               BSD-3-Clause
+golang.org/x/oauth2                                                            BSD-3-Clause
 golang.org/x/sync                                                              BSD-3-Clause
 golang.org/x/sys                                                               BSD-3-Clause
 golang.org/x/term                                                              BSD-3-Clause
 golang.org/x/text                                                              BSD-3-Clause
+golang.org/x/time/rate                                                         BSD-3-Clause
 google.golang.org/protobuf                                                     BSD-3-Clause
 modernc.org/libc                                                               BSD-3-Clause
 modernc.org/mathutil                                                           BSD-3-Clause
@@ -158,6 +162,8 @@ github.com/clipperhouse/uax29/v2/graphemes                                     M
 github.com/cpuguy83/go-md2man/v2/md2man                                        MIT
 github.com/dustin/go-humanize                                                  MIT
 github.com/felixge/httpsnoop                                                   MIT
+github.com/golang-jwt/jwt/v5                                                   MIT
+github.com/jpillora/backoff                                                    MIT
 github.com/kevinburke/ssh_config                                               MIT
 github.com/klauspost/compress                                                  MIT
 github.com/klauspost/compress/zstd/internal/xxhash                             MIT
@@ -166,6 +172,8 @@ github.com/lucasb-eyer/go-colorful                                             M
 github.com/mattn/go-colorable                                                  MIT
 github.com/mattn/go-isatty                                                     MIT
 github.com/mattn/go-runewidth                                                  MIT
+github.com/mdlayher/socket                                                     MIT
+github.com/mdlayher/vsock                                                      MIT
 github.com/muesli/ansi                                                         MIT
 github.com/muesli/cancelreader                                                 MIT
 github.com/muesli/termenv                                                      MIT
@@ -191,6 +199,7 @@ MPL-2.0
 ================================================================================
 
 github.com/cyphar/filepath-securejoin                                          MPL-2.0
+github.com/hashicorp/golang-lru/v2                                             MPL-2.0
 
 ================================================================================
 Unknown
