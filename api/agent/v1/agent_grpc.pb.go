@@ -7,7 +7,10 @@
 package v1
 
 import (
+	context "context"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -15,26 +18,51 @@ import (
 // Requires gRPC-Go v1.64.0 or later.
 const _ = grpc.SupportPackageIsVersion9
 
+const (
+	AgentService_Register_FullMethodName = "/clawker.agent.v1.AgentService/Register"
+)
+
 // AgentServiceClient is the client API for AgentService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// AgentService is the (currently empty) gRPC surface for per-agent
-// inbound RPCs to the control plane. The Register handshake was
-// retired alongside agentslots/AnnounceAgent — agent identity is now
-// CLI-written into agentregistry at container-create time and
-// re-resolved server-side when CP dials the running clawkerd's
-// ClawkerdService listener.
+// AgentService is the inbound gRPC surface clawkerd calls on the CP's
+// clawker-net agent listener. Today the only RPC is Register, the
+// one-time-per-container provenance handshake CP triggers via a
+// RegisterRequired Command on the existing CP→clawkerd Session stream.
 //
-// AgentService is preserved as the future-extension scaffold for any
-// inbound clawkerd-→-CP RPC that the asymmetric-trust model still
-// permits (e.g. agent-emitted telemetry).
+// Trust model:
+//   - The CLI mints the agent's leaf cert at container-create time,
+//     signed by the CLI CA. The cert's CN is the canonical
+//     clawker.<project>.<agent> identity. The cert carries a URI SAN of
+//     the form `urn:clawker:container:<id>` binding it to the docker
+//     container_id it was minted for.
+//   - clawkerd presents that cert in mTLS when calling Register. CP
+//     captures the peer thumbprint (SHA-256 over cert.Raw) at handler
+//     entry — the thumbprint is a CAPTURE, not a CLI-pre-staged
+//     attestation. CP writes the (thumbprint, container_id) row.
+//   - The Register call is gated by a Hydra-issued bearer token the
+//     agent obtains by exchanging a single-use CLI-signed
+//     client_assertion JWT. Once the assertion is consumed, Register
+//     cannot be re-attempted for that container — registration is
+//     one-time per container creation.
 //
-// Transport (when populated): mTLS over TCP on the CP's clawker-net
-// agent listener. Server requires a client cert chained to the CLI CA;
-// authorization via Hydra-issued bearer tokens scoped to the
-// `clawker-agent` OAuth2 client.
+// Transport: mTLS over TCP on the CP's clawker-net agent listener.
+// Server requires a client cert chained to the CLI CA; authorization
+// via Hydra-issued bearer tokens scoped to the `clawker-agent` OAuth2
+// client (scope `agent:self:register`).
 type AgentServiceClient interface {
+	// Register binds (peer cert thumbprint, container_id) into the CP's
+	// agentregistry. Container_id is read from the peer cert's URI SAN;
+	// the request body carries only the human-readable identity fields
+	// for cross-checking against the cert's CN and the docker
+	// container's labels.
+	//
+	// Welcome is empty — success is signaled by the call returning
+	// without error. Failure modes return PermissionDenied (cert/CN
+	// mismatch, peer-IP mismatch, label mismatch, thumbprint replay) or
+	// InvalidArgument (malformed identity fields).
+	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*Welcome, error)
 }
 
 type agentServiceClient struct {
@@ -45,26 +73,57 @@ func NewAgentServiceClient(cc grpc.ClientConnInterface) AgentServiceClient {
 	return &agentServiceClient{cc}
 }
 
+func (c *agentServiceClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*Welcome, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Welcome)
+	err := c.cc.Invoke(ctx, AgentService_Register_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
 // for forward compatibility.
 //
-// AgentService is the (currently empty) gRPC surface for per-agent
-// inbound RPCs to the control plane. The Register handshake was
-// retired alongside agentslots/AnnounceAgent — agent identity is now
-// CLI-written into agentregistry at container-create time and
-// re-resolved server-side when CP dials the running clawkerd's
-// ClawkerdService listener.
+// AgentService is the inbound gRPC surface clawkerd calls on the CP's
+// clawker-net agent listener. Today the only RPC is Register, the
+// one-time-per-container provenance handshake CP triggers via a
+// RegisterRequired Command on the existing CP→clawkerd Session stream.
 //
-// AgentService is preserved as the future-extension scaffold for any
-// inbound clawkerd-→-CP RPC that the asymmetric-trust model still
-// permits (e.g. agent-emitted telemetry).
+// Trust model:
+//   - The CLI mints the agent's leaf cert at container-create time,
+//     signed by the CLI CA. The cert's CN is the canonical
+//     clawker.<project>.<agent> identity. The cert carries a URI SAN of
+//     the form `urn:clawker:container:<id>` binding it to the docker
+//     container_id it was minted for.
+//   - clawkerd presents that cert in mTLS when calling Register. CP
+//     captures the peer thumbprint (SHA-256 over cert.Raw) at handler
+//     entry — the thumbprint is a CAPTURE, not a CLI-pre-staged
+//     attestation. CP writes the (thumbprint, container_id) row.
+//   - The Register call is gated by a Hydra-issued bearer token the
+//     agent obtains by exchanging a single-use CLI-signed
+//     client_assertion JWT. Once the assertion is consumed, Register
+//     cannot be re-attempted for that container — registration is
+//     one-time per container creation.
 //
-// Transport (when populated): mTLS over TCP on the CP's clawker-net
-// agent listener. Server requires a client cert chained to the CLI CA;
-// authorization via Hydra-issued bearer tokens scoped to the
-// `clawker-agent` OAuth2 client.
+// Transport: mTLS over TCP on the CP's clawker-net agent listener.
+// Server requires a client cert chained to the CLI CA; authorization
+// via Hydra-issued bearer tokens scoped to the `clawker-agent` OAuth2
+// client (scope `agent:self:register`).
 type AgentServiceServer interface {
+	// Register binds (peer cert thumbprint, container_id) into the CP's
+	// agentregistry. Container_id is read from the peer cert's URI SAN;
+	// the request body carries only the human-readable identity fields
+	// for cross-checking against the cert's CN and the docker
+	// container's labels.
+	//
+	// Welcome is empty — success is signaled by the call returning
+	// without error. Failure modes return PermissionDenied (cert/CN
+	// mismatch, peer-IP mismatch, label mismatch, thumbprint replay) or
+	// InvalidArgument (malformed identity fields).
+	Register(context.Context, *RegisterRequest) (*Welcome, error)
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -75,6 +134,9 @@ type AgentServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAgentServiceServer struct{}
 
+func (UnimplementedAgentServiceServer) Register(context.Context, *RegisterRequest) (*Welcome, error) {
+	return nil, status.Error(codes.Unimplemented, "method Register not implemented")
+}
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
 
@@ -96,13 +158,36 @@ func RegisterAgentServiceServer(s grpc.ServiceRegistrar, srv AgentServiceServer)
 	s.RegisterService(&AgentService_ServiceDesc, srv)
 }
 
+func _AgentService_Register_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).Register(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_Register_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).Register(ctx, req.(*RegisterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var AgentService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "clawker.agent.v1.AgentService",
 	HandlerType: (*AgentServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
-	Streams:     []grpc.StreamDesc{},
-	Metadata:    "agent/v1/agent.proto",
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Register",
+			Handler:    _AgentService_Register_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "agent/v1/agent.proto",
 }

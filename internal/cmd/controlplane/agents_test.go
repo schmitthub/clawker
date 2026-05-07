@@ -2,109 +2,59 @@ package controlplane
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
-// agentsHarness drives the agents verb against a real sqlite registry
-// rooted in a testenv-managed temp dir. Using the real registry keeps
-// the test honest about the local-read contract — a regression that
-// points the verb back at the AdminService gRPC path would compile but
-// the assertions on stdout/stderr would fail because no AdminClient was
-// wired.
-//
-// The DB path is resolved through `consts.ControlPlaneDBPath()`, which
-// reads `CLAWKER_DATA_DIR` at call time. `testenv.New(t)` sets that env
-// var to an isolated temp dir per test, so production code and tests
-// agree on a single accessor — no opts.DBPath injection seam.
+// agentsHarness drives the agents verb against a mock AdminService
+// gRPC client. The verb's only data path is f.AdminClient(ctx).ListAgents
+// — CP is the SOLE writer of the registry now, so the host can no
+// longer read sqlite directly.
 type agentsHarness struct {
 	IOStreams *iostreams.IOStreams
 	TUI       *tui.TUI
-	DBPath    string
 	opts      *AgentsOptions
 }
 
-func newAgentsHarness(t *testing.T) *agentsHarness {
+func newAgentsHarness(t *testing.T, mock *cpmocks.AdminServiceClientMock) (*agentsHarness, *iostreams.IOStreams) {
 	t.Helper()
-	testenv.New(t)
-	dbPath, err := consts.ControlPlaneDBPath()
-	require.NoError(t, err)
-
 	ios, _, _, _ := iostreams.Test()
 	tuiInst := tui.NewTUI(ios)
 	h := &agentsHarness{
 		IOStreams: ios,
 		TUI:       tuiInst,
-		DBPath:    dbPath,
 	}
 	h.opts = &AgentsOptions{
 		IOStreams: ios,
 		TUI:       tuiInst,
 		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
-		Format:    &cmdutil.FormatFlags{},
+		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
+			return mock, nil
+		},
+		Format: &cmdutil.FormatFlags{},
 	}
-	return h
+	return h, ios
 }
 
-// Stdout returns the captured stdout buffer. Re-resolving via the
-// IOStreams.Out type assertion keeps the harness simple — the
-// Test() helper returns a *bytes.Buffer for stdout that we can read
-// back directly via the writer interface on IOStreams.
-func (h *agentsHarness) writeAgent(t *testing.T, e agentregistry.Entry) {
-	t.Helper()
-	reg, err := agentregistry.NewSQLiteWriter(h.DBPath, logger.Nop())
-	require.NoError(t, err)
-	require.NoError(t, reg.Add(e))
-	if closer, ok := reg.(interface{ Close() error }); ok {
-		require.NoError(t, closer.Close())
+func TestAgentsRun_EmptyResponse(t *testing.T) {
+	mock := &cpmocks.AdminServiceClientMock{
+		ListAgentsFunc: func(_ context.Context, _ *adminv1.ListAgentsRequest, _ ...grpc.CallOption) (*adminv1.ListAgentsResult, error) {
+			return &adminv1.ListAgentsResult{}, nil
+		},
 	}
-}
-
-func mkThumbprint(seed byte) [sha256.Size]byte {
-	var tp [sha256.Size]byte
-	for i := range tp {
-		tp[i] = seed
-	}
-	return tp
-}
-
-func TestAgentsRun_NoDBFile_RendersEmpty(t *testing.T) {
-	// Brand-new host: no `clawker run` has ever fired, so the registry
-	// DB doesn't exist. The verb must render the empty-state branch
-	// rather than failing with a missing-file error — the data point
-	// "zero agents" is the correct answer.
-	h := newAgentsHarness(t)
-	ios, _, stdout, stderr := iostreams.Test()
-	tuiInst := tui.NewTUI(ios)
-	h.IOStreams = ios
-	h.TUI = tuiInst
-	h.opts.IOStreams = ios
-	h.opts.TUI = tuiInst
-
-	require.NoError(t, agentsRun(context.Background(), h.opts))
-	assert.Empty(t, stdout.String())
-	assert.Contains(t, stderr.String(), "No agents registered")
-}
-
-func TestAgentsRun_EmptyRegistry(t *testing.T) {
-	h := newAgentsHarness(t)
-	// Apply schema by opening writer, then close — leaves an empty DB.
-	require.NoError(t, agentregistry.EnsureSchema(h.DBPath, logger.Nop()))
-
+	h, _ := newAgentsHarness(t, mock)
 	ios, _, stdout, stderr := iostreams.Test()
 	tuiInst := tui.NewTUI(ios)
 	h.opts.IOStreams = ios
@@ -116,17 +66,21 @@ func TestAgentsRun_EmptyRegistry(t *testing.T) {
 }
 
 func TestAgentsRun_RendersTable(t *testing.T) {
-	h := newAgentsHarness(t)
-	now := time.Unix(1717000000, 0).UTC()
-	h.writeAgent(t, agentregistry.Entry{
-		AgentName:    "alpha",
-		Project:      "myapp",
-		ContainerID:  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		Thumbprint:   mkThumbprint(0xaa),
-		RegisteredAt: now,
-		LastSeen:     now,
-	})
-
+	mock := &cpmocks.AdminServiceClientMock{
+		ListAgentsFunc: func(_ context.Context, _ *adminv1.ListAgentsRequest, _ ...grpc.CallOption) (*adminv1.ListAgentsResult, error) {
+			return &adminv1.ListAgentsResult{
+				Agents: []*adminv1.Agent{{
+					AgentName:        "alpha",
+					Project:          "myapp",
+					ContainerId:      "0123456789abcdef0123456789abcdef",
+					CertThumbprint:   "aaaaaaaaaaaa1111222233334444555566667777888899990000aaaabbbbcccc",
+					RegisteredAtUnix: 1717000000,
+					LastSeenUnix:     1717000000,
+				}},
+			}, nil
+		},
+	}
+	h, _ := newAgentsHarness(t, mock)
 	ios, _, stdout, _ := iostreams.Test()
 	tuiInst := tui.NewTUI(ios)
 	h.opts.IOStreams = ios
@@ -141,17 +95,21 @@ func TestAgentsRun_RendersTable(t *testing.T) {
 }
 
 func TestAgentsRun_JSONOutput(t *testing.T) {
-	h := newAgentsHarness(t)
-	now := time.Unix(1, 0).UTC()
-	h.writeAgent(t, agentregistry.Entry{
-		AgentName:    "x",
-		Project:      "p",
-		ContainerID:  "ctr",
-		Thumbprint:   mkThumbprint(0x11),
-		RegisteredAt: now,
-		LastSeen:     time.Unix(2, 0).UTC(),
-	})
-
+	mock := &cpmocks.AdminServiceClientMock{
+		ListAgentsFunc: func(_ context.Context, _ *adminv1.ListAgentsRequest, _ ...grpc.CallOption) (*adminv1.ListAgentsResult, error) {
+			return &adminv1.ListAgentsResult{
+				Agents: []*adminv1.Agent{{
+					AgentName:        "x",
+					Project:          "p",
+					ContainerId:      "ctr",
+					CertThumbprint:   "abcd",
+					RegisteredAtUnix: 1,
+					LastSeenUnix:     2,
+				}},
+			}, nil
+		},
+	}
+	h, _ := newAgentsHarness(t, mock)
 	ios, _, stdout, _ := iostreams.Test()
 	tuiInst := tui.NewTUI(ios)
 	h.opts.IOStreams = ios
@@ -170,10 +128,12 @@ func TestAgentsRun_JSONOutput(t *testing.T) {
 	assert.Equal(t, "ctr", rows[0].ContainerID)
 }
 
-func TestAgentsRun_PropagatesLoggerError(t *testing.T) {
-	h := newAgentsHarness(t)
-	h.opts.Logger = func() (*logger.Logger, error) { return nil, errors.New("logger boom") }
+func TestAgentsRun_PropagatesAdminClientError(t *testing.T) {
+	h, _ := newAgentsHarness(t, &cpmocks.AdminServiceClientMock{})
+	h.opts.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+		return nil, errors.New("dial boom")
+	}
 	err := agentsRun(context.Background(), h.opts)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "logger boom")
+	assert.Contains(t, err.Error(), "dial boom")
 }

@@ -26,7 +26,6 @@ func validBootstrapFiles() map[string]string {
 		consts.BootstrapKeyFile:       "key-pem",
 		consts.BootstrapCAFile:        "ca-pem",
 		consts.BootstrapAssertionFile: "assertion-jwt\n",
-		consts.BootstrapVerifierFile:  "verifier-bytes\n",
 	}
 }
 
@@ -39,11 +38,10 @@ func TestReadBootstrap_HappyPath(t *testing.T) {
 	assert.Equal(t, []byte("cert-pem"), b.CertPEM)
 	assert.Equal(t, []byte("key-pem"), b.KeyPEM)
 	assert.Equal(t, []byte("ca-pem"), b.CACertPEM)
-	// Assertion + verifier are TrimSpace'd because they're read as
-	// strings — leading/trailing whitespace from text-mode tools must
-	// not break the JWT parse or the PKCE compare.
+	// Assertion is TrimSpace'd because it's read as a string —
+	// leading/trailing whitespace from text-mode tools must not break
+	// the JWT parse.
 	assert.Equal(t, "assertion-jwt", b.Assertion)
-	assert.Equal(t, "verifier-bytes", b.Verifier)
 }
 
 func TestReadBootstrap_MissingFile(t *testing.T) {
@@ -60,9 +58,9 @@ func TestReadBootstrap_MissingFile(t *testing.T) {
 }
 
 func TestReadBootstrap_EmptyFile(t *testing.T) {
-	// A zero-byte cert/key/CA/assertion/verifier is structurally
-	// useless and would only fail later with confusing parser errors.
-	// Reject up front.
+	// A zero-byte cert/key/CA/assertion is structurally useless and
+	// would only fail later with confusing parser errors. Reject up
+	// front.
 	files := validBootstrapFiles()
 	files[consts.BootstrapCertFile] = ""
 	dir := writeBootstrapDir(t, files)

@@ -279,23 +279,7 @@ const (
 	BootstrapKeyFile       = "key.pem"
 	BootstrapCAFile        = "ca.pem"
 	BootstrapAssertionFile = "assertion.jwt"
-	BootstrapVerifierFile  = "verifier"
 )
-
-// ChallengeMethod is the PKCE challenge method recorded in the agent
-// bootstrap material. At runtime exactly one method is accepted
-// (`S256`); typing it gives a single source of truth across the CLI
-// bootstrap and clawkerd consumers.
-type ChallengeMethod string
-
-// String satisfies fmt.Stringer so the typed value renders identically
-// to the wire representation.
-func (m ChallengeMethod) String() string { return string(m) }
-
-// ChallengeMethodS256 is the only PKCE challenge method accepted by the
-// CP. Reserve and the CLI bootstrap helper both reject anything else
-// before it can reach the wire.
-const ChallengeMethodS256 ChallengeMethod = "S256"
 
 // Container env vars for clawkerd bootstrap. clawkerd reads only what
 // it can authoritatively assert: container_id is server-derived from

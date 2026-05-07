@@ -43,6 +43,7 @@ message Command {
     Stdin stdin = 4;
     CloseStdin close_stdin = 5;
     Signal signal = 6;
+    RegisterRequired register_required = 7;
   }
 }
 
@@ -50,6 +51,16 @@ message Command {
 // opens. clawkerd replies with HelloAck. Liveness is otherwise
 // maintained via gRPC keepalive.
 message Hello {}
+
+// RegisterRequired tells clawkerd to perform the one-time CP-driven
+// Register handshake: exchange the CLI-signed client_assertion JWT at
+// Hydra for an access token, mTLS-dial CP's AgentService, and call
+// Register. Empty payload — the command itself is the signal.
+//
+// CP sends RegisterRequired when, post-Hello, it observes the agent's
+// container_id is missing from the agentregistry (Miss outcome).
+// clawkerd replies with RegisterDone correlated by command_id.
+message RegisterRequired {}
 
 // ShellCommand starts a shell pipeline. stages.len == 1 runs a
 // single command; stages.len > 1 chains stage[i].stdout into
@@ -106,10 +117,20 @@ message Response {
     StageExit stage_exit = 6;
     Done done = 7;
     Error error = 8;
+    RegisterDone register_done = 9;
   }
 }
 
 message HelloAck {}
+
+// RegisterDone is the terminal Response to a RegisterRequired Command.
+// ok=true signals AgentService.Register returned Welcome. ok=false
+// carries the human-readable failure reason in error (Hydra exchange
+// failed, dial failed, Register returned PermissionDenied, etc.).
+message RegisterDone {
+  bool ok = 1;
+  string error = 2;
+}
 
 // Started signals that ShellCommand has spawned all stages.
 message Started {}

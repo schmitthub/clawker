@@ -6,12 +6,11 @@
 // Boot sequence:
 //
 //  1. Read bootstrap material delivered by the CLI to
-//     consts.BootstrapDir (cert.pem, key.pem, ca.pem, assertion.jwt,
-//     verifier). cert/key/ca are loaded into the listener's TLS
-//     config; assertion + verifier are read in but unused by clawkerd
-//     today (CLI is the registry writer). They stay on disk and stay
-//     loaded so the agent→CP RPCs landing in upcoming branches can
-//     consume them without re-deriving the bootstrap surface.
+//     consts.BootstrapDir (cert.pem, key.pem, ca.pem, assertion.jwt).
+//     cert/key/ca are loaded into the listener's TLS config; the
+//     assertion JWT is held in memory for the CP-driven Register
+//     handshake (clawkerd exchanges it at Hydra for an access token
+//     when CP sends RegisterRequired on the Session stream).
 //  2. Start the ClawkerdService mTLS listener on
 //     consts.DefaultClawkerdPort. The listener pins peer CN to
 //     consts.ContainerCP so no other agent's CA-signed cert can
@@ -21,11 +20,15 @@
 //     repeatedly; CP→clawkerd connection breaks are logged from the
 //     listener side but do not kill the daemon.
 //
-// Identity / registration: the CLI writes the agentregistry row at
-// container CREATE time (via host-side sqlite). CP reads the registry
-// when it dials clawkerd's listener and verifies the peer cert
-// thumbprint against the registered row — provenance attestation flows
-// entirely through that path, no clawkerd outbound RPC required.
+// Identity / registration: clawkerd performs a one-time, CP-driven
+// Register call when CP sends a RegisterRequired Command on the
+// Session stream. clawkerd exchanges the CLI-signed client_assertion
+// JWT at Hydra for an access token, mTLS-dials CP's AgentService, and
+// calls Register. CP captures the live mTLS peer's cert thumbprint at
+// handler entry and writes the (thumbprint, container_id) row into
+// agentregistry. The assertion is single-use; subsequent Sessions for
+// the same container observe an existing registry row and skip
+// Register.
 package main
 
 import (
@@ -117,7 +120,22 @@ func run(ctx context.Context, log *logger.Logger) error {
 		return fmt.Errorf("read bootstrap: %w", err)
 	}
 
-	clawkerdSrv, err := startClawkerdListener(boot, log)
+	// registerCoordinator drives the CP-triggered Register handshake.
+	// CP sends RegisterRequired on the Session bidi stream when it
+	// observes Miss at Hello time; clawkerd routes it through this
+	// coordinator. Shared across every Session for the process
+	// lifetime so the (single-use) Hydra assertion is consumed at
+	// most once. CLAWKER_CP_HYDRA_URL + CLAWKER_CP_AGENT_ADDR may be
+	// empty at boot — Run() reports the failure on the first attempt.
+	register := newRegisterCoordinator(
+		boot,
+		os.Getenv(consts.EnvClawkerdHydraURL),
+		os.Getenv(consts.EnvClawkerdAgentAddr),
+		agentName,
+		project,
+	)
+
+	clawkerdSrv, err := startClawkerdListener(boot, register, log)
 	if err != nil {
 		log.Error().Err(err).Str("event", "clawkerd_listener_start_failed").Msg("start clawkerd listener")
 		return fmt.Errorf("start clawkerd listener: %w", err)
@@ -141,19 +159,18 @@ func run(ctx context.Context, log *logger.Logger) error {
 }
 
 // bootstrap mirrors the CLI's per-agent registration material on disk.
-// Assertion + Verifier are loaded but unused in this branch; they stay
-// loaded so the agent→CP RPCs landing in upcoming branches can consume
-// them without re-deriving the bootstrap surface.
+// Assertion is the single-use Hydra client_assertion JWT clawkerd
+// exchanges for an access token when CP triggers the Register
+// handshake.
 type bootstrap struct {
 	CertPEM, KeyPEM, CACertPEM []byte
 	Assertion                  string
-	Verifier                   string
 }
 
-// readBootstrap reads the five bootstrap files from dir. Missing files
+// readBootstrap reads the four bootstrap files from dir. Missing files
 // fail loudly — a partial boot is a security regression (e.g. cert
-// missing while verifier present would let clawkerd proceed without
-// the cert pinning that defends against tmpfs swap).
+// missing would let clawkerd proceed without the cert pinning that
+// defends against tmpfs swap).
 func readBootstrap(dir string) (*bootstrap, error) {
 	read := func(name string) ([]byte, error) {
 		path := filepath.Join(dir, name)
@@ -183,16 +200,11 @@ func readBootstrap(dir string) (*bootstrap, error) {
 	if err != nil {
 		return nil, err
 	}
-	verifier, err := read(consts.BootstrapVerifierFile)
-	if err != nil {
-		return nil, err
-	}
 
 	return &bootstrap{
 		CertPEM:   cert,
 		KeyPEM:    key,
 		CACertPEM: ca,
 		Assertion: strings.TrimSpace(string(assertion)),
-		Verifier:  strings.TrimSpace(string(verifier)),
 	}, nil
 }

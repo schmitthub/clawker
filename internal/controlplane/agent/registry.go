@@ -1,31 +1,29 @@
-// Package agentregistry is the persisted identity store for clawker-
-// managed containers. Rows record the mTLS cert thumbprint, container
-// ID, project, agent name, and pre-computed canonical CN that the CLI
-// minted for each container at create time. Reads are issued by:
+// Package agent owns the CP-side agent surface: the persisted
+// identity registry, the AgentService.Register handler, the per-RPC
+// IdentityInterceptor, the CP→clawkerd Session dialer, and the
+// AgentRegistered/AgentUntrusted event types.
 //
-//   - agent.IdentityInterceptor on every per-agent gRPC RPC
+// Registry rows record the (mTLS cert thumbprint, container_id,
+// project, agent_name, canonical_cn) tuple. Reads are issued by:
+//
+//   - IdentityInterceptor on every per-agent gRPC RPC
 //     (cert thumbprint → registry entry; CN cross-check inside Lookup)
-//   - agentdial.Dialer at handshake time (peer cert vs registry row →
-//     typed Provenance fields on SessionConnected event)
-//   - AdminService.ListAgents and the local-read `clawker controlplane
-//     agents` CLI
+//   - the dialer at Hello time (classifyRegistry → drives
+//     AgentRegistered / AgentUntrusted publication)
+//   - AdminService.ListAgents
 //
-// Writes are issued by the CLI (one Add per `clawker run`/`start` at
-// container-create time, alongside auth-material delivery into the
-// container's BootstrapDir). Eviction is owned by the CP: startup
-// `Reap` against live docker state, plus the dockerevents-driven
-// Subscribe consumer evicting on `ContainerRemoved` (destroy only —
-// stop/die/kill do NOT evict because a stopped container can be
-// `docker start`-ed back into life).
+// Writes are CP-only: the Register handler captures the live mTLS
+// peer's thumbprint and writes the row. Eviction: startup orphan-row
+// reap (in agent.Start), plus dockerevents container/destroy
+// (subscribed in agent.Start). Stop/die/kill do NOT evict because a
+// stopped container can be `docker start`-ed back into life.
 //
 // Identity is channel-bound: the registry key is `(thumbprint,
 // container_id)` (both UNIQUE in sqlite). The canonical CN composed
 // from `(project, agent_name)` is stored as a column at Add time and
 // compared via `subtle.ConstantTimeCompare` inside Lookup — no
-// reconstruction at read time. Container restart yields a new cert
-// and a new thumbprint; the old row is evicted by the dockerevents
-// subscription on `ContainerRemoved` (i.e. `docker rm`, not stop).
-package agentregistry
+// reconstruction at read time.
+package agent
 
 import (
 	"crypto/sha256"
@@ -40,11 +38,10 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// Entry is one registered agent. Created by the CLI at container
-// CREATE time (via shared.RegisterAgentInRegistry) carrying the
-// ContainerID, AgentName, Project, and the SHA-256 over the peer cert
-// DER (Thumbprint). LastSeen currently equals RegisteredAt because the
-// per-agent RPCs that bump it have not shipped yet; future per-agent
+// Entry is one registered agent. Created CP-side at Register handler
+// entry carrying the ContainerID, AgentName, Project, and the SHA-256
+// over the peer cert DER (Thumbprint, captured live from the mTLS
+// handshake). LastSeen currently equals RegisteredAt; future per-agent
 // RPCs will refresh LastSeen at their own boundary.
 type Entry struct {
 	// AgentName is the user-typed short name (e.g. "dev"); composed with
@@ -74,7 +71,7 @@ var ErrUnknownAgent = errors.New("agentregistry: unknown agent")
 
 // Registry is the consumer-facing contract.
 //
-//go:generate moq -rm -pkg mocks -out mocks/registry_mock.go . Registry
+//go:generate moq -rm -pkg agent -out registry_mock_test.go . Registry
 type Registry interface {
 	// Add inserts an entry keyed by (Entry.Thumbprint, Entry.ContainerID).
 	// Container restart produces a new cert and a new thumbprint, so
@@ -105,14 +102,13 @@ type Registry interface {
 	// returns ErrUnknownAgent.
 	Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error)
 	// LookupByContainerID returns the entry whose ContainerID matches,
-	// without any CN cross-check. Used by agentdial post-handshake to
-	// look up the registry row keyed by container_id and emit the
-	// Provenance.RegistryOutcome enum (Match / Miss / ThumbprintMismatch
-	// / CNMismatch) on the SessionConnected event payload. The dialer
-	// performs the thumbprint + CN comparisons against the returned
-	// entry itself; this read intentionally does not gate on either
-	// so a mismatch surfaces as a typed event field rather than as
-	// ErrUnknownAgent.
+	// without any CN cross-check. Used by the dialer at Hello time to
+	// drive registry classification (Match / Miss / ThumbprintMismatch
+	// / CNMismatch) and decide whether to send RegisterRequired or
+	// publish AgentUntrusted. The dialer performs the thumbprint + CN
+	// comparisons against the returned entry itself; this read
+	// intentionally does not gate on either so a mismatch surfaces as
+	// a typed local outcome rather than as ErrUnknownAgent.
 	//
 	// Returns (nil, ErrUnknownAgent) when no entry matches.
 	LookupByContainerID(containerID string) (*Entry, error)

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+	"github.com/schmitthub/clawker/internal/controlplane/agent"
 )
 
 func TestAdminServer_ListAgents_NilRegistry(t *testing.T) {
@@ -24,13 +24,13 @@ func TestAdminServer_ListAgents_NilRegistry(t *testing.T) {
 }
 
 func TestAdminServer_ListAgents_Snapshot(t *testing.T) {
-	reg := agentregistry.NewRegistry(nil)
+	reg := agent.NewRegistry(nil)
 	now := time.Unix(1000, 0)
 
 	thumbA := sha256.Sum256([]byte("cert-a"))
 	thumbB := sha256.Sum256([]byte("cert-b"))
 
-	require.NoError(t, reg.Add(agentregistry.Entry{
+	require.NoError(t, reg.Add(agent.Entry{
 		AgentName:    "b",
 		Project:      "p",
 		ContainerID:  "ctr-b",
@@ -38,7 +38,7 @@ func TestAdminServer_ListAgents_Snapshot(t *testing.T) {
 		RegisteredAt: now,
 		LastSeen:     now,
 	}))
-	require.NoError(t, reg.Add(agentregistry.Entry{
+	require.NoError(t, reg.Add(agent.Entry{
 		AgentName:    "a",
 		Project:      "p",
 		ContainerID:  "ctr-a",

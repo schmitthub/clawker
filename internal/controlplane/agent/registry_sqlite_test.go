@@ -1,4 +1,4 @@
-package agentregistry
+package agent
 
 import (
 	"database/sql"

@@ -11,7 +11,7 @@ import (
 	"sort"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+	"github.com/schmitthub/clawker/internal/controlplane/agent"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -27,7 +27,7 @@ type adminServer struct {
 	// rather than blocking the whole CP on a partial domain rewrite.
 	*fwhandler.Handler
 
-	agents agentregistry.Registry
+	agents agent.Registry
 	log    *logger.Logger
 }
 
@@ -43,7 +43,7 @@ var _ adminv1.AdminServiceServer = (*adminServer)(nil)
 //     on a CP build that hasn't wired the agent registry yet.
 //   - log defaults to logger.Nop() when nil. Production wiring passes
 //     the CP's structured logger.
-func NewAdminServer(fw *fwhandler.Handler, agents agentregistry.Registry, log *logger.Logger) adminv1.AdminServiceServer {
+func NewAdminServer(fw *fwhandler.Handler, agents agent.Registry, log *logger.Logger) adminv1.AdminServiceServer {
 	if log == nil {
 		log = logger.Nop()
 	}

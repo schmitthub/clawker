@@ -45,7 +45,7 @@
 // event (Reason carries the "fd-leak-ceiling" classification) so
 // operators see the outcome instead of a silent leak. A successful
 // close anywhere in the loop resets the counter.
-package agentdial
+package agent
 
 import (
 	"context"
@@ -71,7 +71,7 @@ import (
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -115,14 +115,14 @@ type Dialer struct {
 	log    *logger.Logger
 	docker mobyclient.APIClient
 	bus    *overseer.Overseer
-	// agents is the CLI-written agentregistry (RO from CP's POV). The
-	// dialer reads it at handshake time to populate the Provenance
-	// fields on the SessionConnected event payload: registry-match,
-	// thumbprint-mismatch, CN-mismatch, registry-miss. Connection
-	// stays open in all cases. Subscribers consume the typed event
-	// fields to enact policy. Required (non-nil) — wiring bug if
-	// unset.
-	agents agentregistry.Registry
+	// agents is the CP-owned agentregistry (read+write). The dialer
+	// reads it at handshake time to classify the peer cert against
+	// the registered row: match (registered), miss (drives Register
+	// handshake), thumbprint mismatch (untrusted), CN mismatch
+	// (untrusted). Connection stays open in all cases. The Register
+	// flow re-reads after RegisterDone to confirm the row landed.
+	// Required (non-nil) — wiring bug if unset.
+	agents Registry
 
 	cpClientCert tls.Certificate
 	caPool       *x509.CertPool
@@ -146,18 +146,18 @@ type Dialer struct {
 // cert against the registry row keyed by container_id. Subscribers
 // rely on those fields; nil agents would silently strip the bypass
 // signal.
-func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer, agents agentregistry.Registry, certPath, keyPath string, caPool *x509.CertPool) (*Dialer, error) {
+func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer, agents Registry, certPath, keyPath string, caPool *x509.CertPool) (*Dialer, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
 	if bus == nil {
-		return nil, errors.New("agentdial.New: overseer is required")
+		return nil, errors.New("agent.New: overseer is required")
 	}
 	if agents == nil {
-		return nil, errors.New("agentdial.New: agents registry is required")
+		return nil, errors.New("agent.New: agents registry is required")
 	}
 	if caPool == nil {
-		return nil, errors.New("agentdial.New: caPool is required")
+		return nil, errors.New("agent.New: caPool is required")
 	}
 	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
@@ -248,7 +248,14 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 		}
 
 		cycleLog := log.With("agent", res.Agent, "project", res.Project, "addr", res.Addr, "cycle", cycle)
-		d.publishConnected(ctx, containerID, res.Agent, res.Project, res.Addr, res.Attempt, res.Provenance)
+		d.publishConnected(ctx, containerID, res.Agent, res.Project, res.Addr, res.Attempt, res.PeerInfo)
+
+		// Classify the peer cert against the registry. Drives the
+		// agent-axis events (AgentRegistered for fresh registrations
+		// on Miss, AgentUntrusted for mismatch outcomes). The Session
+		// stream stays open in all cases — CP must remain reachable
+		// for containment commands even when the agent is untrusted.
+		d.dispatchAgentEvents(ctx, containerID, res, cycleLog)
 
 		drain := d.drainStream(ctx, res.Stream, cycleLog)
 		if d.closeAndCheckLeak(res.Conn, &closeErrCount, cycleLog) {
@@ -368,15 +375,58 @@ var errContainerStopped = errors.New("container not running")
 // outcomes (chain verify, CN pin, registry cross-check) populated
 // during the TLS handshake + post-handshake registry lookup.
 type establishResult struct {
-	Conn       *grpc.ClientConn
-	Stream     clawkerdv1.ClawkerdService_SessionClient
-	Agent      string
-	Project    string
-	Addr       string
-	Attempt    int
-	Outcome    establishOutcome
-	Provenance Provenance
+	Conn     *grpc.ClientConn
+	Stream   clawkerdv1.ClawkerdService_SessionClient
+	Agent    string
+	Project  string
+	Addr     string
+	Attempt  int
+	Outcome  establishOutcome
+	PeerInfo peerInfo
 }
+
+// peerInfo is the connection-time identity capture from the TLS
+// handshake. Replaces the prior `Provenance` struct — registry-
+// outcome state lives in the local registryOutcome enum, not on this
+// struct, since the dial flow drives event publication directly off
+// the outcome rather than threading a unified payload.
+type peerInfo struct {
+	PeerCN         string
+	PeerThumbprint [sha256.Size]byte
+	ChainVerified  bool
+	// CaptureReason is set when capturePeer hit an unusual case (no
+	// peer certs, leaf parse failed, chain verify failed). Empty on
+	// the happy path. Stays purely diagnostic — the dialer never
+	// aborts on cert grounds.
+	CaptureReason string
+}
+
+// registryOutcome classifies the result of cross-checking the peer
+// cert against the agentregistry row keyed by container_id. Internal
+// to the dialer — drives event publication; not exposed on any
+// public event type.
+type registryOutcome int
+
+const (
+	// outcomeRegistryNotQueried is the zero value. Set when the
+	// registry could not be queried at all (lookup error).
+	outcomeRegistryNotQueried registryOutcome = iota
+	// outcomeRegistryMatch — row exists, thumbprint AND canonical_cn
+	// agree with the peer cert. Trusted, registered.
+	outcomeRegistryMatch
+	// outcomeRegistryMiss — no row for this container_id. Drives the
+	// Register handshake (RegisterRequired Command on the Session
+	// stream).
+	outcomeRegistryMiss
+	// outcomeRegistryThumbprintMismatch — row exists but thumbprint
+	// disagrees with the live peer cert. Untrusted; AgentUntrusted
+	// fires with ReasonThumbprintMismatch.
+	outcomeRegistryThumbprintMismatch
+	// outcomeRegistryCNMismatch — row exists, thumbprints agree, but
+	// canonical_cn doesn't match the peer's CN. Untrusted;
+	// AgentUntrusted fires with ReasonCNMismatch.
+	outcomeRegistryCNMismatch
+)
 
 // establishWithRetry runs the inner exponential-backoff retry loop
 // until either Hello+HelloAck succeeds, the inspect at the start of
@@ -469,18 +519,17 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 			publishedConnecting = true
 		}
 
-		conn, stream, prov, dialErr := d.tryEstablish(ctx, addr, attemptLog)
+		conn, stream, peer, dialErr := d.tryEstablish(ctx, addr, attemptLog)
 		if dialErr == nil {
-			d.fillRegistryProvenance(&prov, containerID, project, agent)
 			return establishResult{
-				Conn:       conn,
-				Stream:     stream,
-				Agent:      agent,
-				Project:    project,
-				Addr:       addr,
-				Attempt:    attempt,
-				Outcome:    outcomeSuccess,
-				Provenance: prov,
+				Conn:     conn,
+				Stream:   stream,
+				Agent:    agent,
+				Project:  project,
+				Addr:     addr,
+				Attempt:  attempt,
+				Outcome:  outcomeSuccess,
+				PeerInfo: peer,
 			}
 		}
 
@@ -539,40 +588,34 @@ func nextBackoff(backoff time.Duration) time.Duration {
 }
 
 // tryEstablish runs one connection attempt: dial → open stream →
-// Hello handshake. Returns the open conn + stream + a partially
-// populated Provenance struct on success (cert-related fields), or
-// an error describing which step failed.
+// Hello handshake. Returns the open conn + stream + the captured
+// peerInfo (cert-related fields populated by VerifyPeerCertificate)
+// on success, or an error describing which step failed.
 //
-// Cert-related Provenance (PeerCN, PeerThumbprint, ChainVerified) is
+// Cert-related fields (PeerCN, PeerThumbprint, ChainVerified) are
 // captured during the TLS handshake via VerifyPeerCertificate that
 // always returns nil — the dialer is permissive and never aborts on
-// cert grounds. The caller fills the registry-related fields
-// (RegistryOutcome enum + CNPinMatch) in fillRegistryProvenance.
-//
-// The dial step is intentionally NOT wrapped with the addr — the
-// caller already carries dial_target as a structured log field,
-// duplicating it inside the err string was misleading (grpc.NewClient
-// is non-blocking; the first real transport failure always lands on
-// the Session open path).
-func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logger) (*grpc.ClientConn, clawkerdv1.ClawkerdService_SessionClient, Provenance, error) {
-	var prov Provenance
-	conn, err := d.dial(ctx, addr, &prov)
+// cert grounds. The dial flow drives registry classification +
+// event publication off the captured peerInfo.
+func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logger) (*grpc.ClientConn, clawkerdv1.ClawkerdService_SessionClient, peerInfo, error) {
+	var peer peerInfo
+	conn, err := d.dial(ctx, addr, &peer)
 	if err != nil {
-		return nil, nil, Provenance{}, err
+		return nil, nil, peerInfo{}, err
 	}
 
 	client := clawkerdv1.NewClawkerdServiceClient(conn)
 	stream, err := client.Session(ctx)
 	if err != nil {
 		_ = conn.Close()
-		return nil, nil, Provenance{}, fmt.Errorf("open Session stream: %w", err)
+		return nil, nil, peerInfo{}, fmt.Errorf("open Session stream: %w", err)
 	}
 
 	if err := d.helloHandshake(stream, log); err != nil {
 		_ = conn.Close()
-		return nil, nil, Provenance{}, fmt.Errorf("Hello handshake: %w", err)
+		return nil, nil, peerInfo{}, fmt.Errorf("Hello handshake: %w", err)
 	}
-	return conn, stream, prov, nil
+	return conn, stream, peer, nil
 }
 
 // resolveAgent inspects the container and returns the moby
@@ -625,67 +668,45 @@ func clawkerNetAddr(c mobycontainer.InspectResponse) (string, error) {
 	return net.JoinHostPort(ip.String(), strconv.Itoa(consts.DefaultClawkerdPort)), nil
 }
 
-// fillRegistryProvenance populates the registry-cross-check booleans
-// on Provenance from the agentregistry row keyed by container_id, plus
-// CNPinMatch derived from the inspect labels (project, agent_name).
-// Called after tryEstablish has populated the cert-related fields
-// (PeerCN, PeerThumbprint, ChainVerified) via VerifyPeerCertificate.
+// classifyRegistry cross-checks the captured peer cert against the
+// agentregistry row keyed by container_id and returns the typed
+// outcome plus any diagnostic detail. The dial flow uses the outcome
+// to drive event publication (Match → SessionConnected only; Miss →
+// drives Register handshake; mismatch outcomes → AgentUntrusted).
 //
-// Connection NEVER aborts here; the booleans flow into the
-// SessionConnected event payload. Subscribers consume the typed
-// fields to enact policy.
-//
-// RegistryOutcome is the load-bearing field; exactly one value is set
-// per call. Lookup errors that are NOT "no such row" leave the outcome
-// unset and surface via Reason — these indicate a sqlite/IO regression
-// and should be visible to operators even though the connection still
-// proceeds.
-func (d *Dialer) fillRegistryProvenance(prov *Provenance, containerID, project, agent string) {
-	prov.CNPinMatch = computeCNPinMatch(prov.PeerCN, project, agent)
-
+// Connection NEVER aborts here. Lookup errors that are NOT
+// "no such row" return outcomeRegistryNotQueried and a non-empty
+// detail string — these indicate a sqlite/IO regression visible to
+// operators even though the connection proceeds.
+func (d *Dialer) classifyRegistry(peer peerInfo, containerID, project, agent string) (registryOutcome, string) {
 	if d.agents == nil {
-		// Wiring bug — New rejected nil agents, so this can only happen
-		// in a test that bypassed New. Surface as a Reason so the
-		// regression is visible if it ever ships.
-		if prov.Reason == "" {
-			prov.Reason = "registry not wired"
-		}
-		return
+		// Wiring bug — New rejected nil agents, so this can only
+		// happen in a test that bypassed New.
+		return outcomeRegistryNotQueried, "registry not wired"
 	}
 
 	entry, err := d.agents.LookupByContainerID(containerID)
-	if err != nil && !errors.Is(err, agentregistry.ErrUnknownAgent) {
-		if prov.Reason == "" {
-			prov.Reason = "registry lookup error: " + err.Error()
-		}
-		return
+	if err != nil && !errors.Is(err, ErrUnknownAgent) {
+		return outcomeRegistryNotQueried, "registry lookup error: " + err.Error()
 	}
 	if entry == nil {
-		prov.RegistryOutcome = RegistryOutcomeMiss
-		return
+		return outcomeRegistryMiss, ""
 	}
 
-	if entry.Thumbprint != prov.PeerThumbprint {
-		prov.RegistryOutcome = RegistryOutcomeThumbprintMismatch
-		return
+	if entry.Thumbprint != peer.PeerThumbprint {
+		return outcomeRegistryThumbprintMismatch, ""
 	}
 
 	expectedCN, cnErr := canonicalCNFromStrings(entry.Project, entry.AgentName)
 	if cnErr != nil {
-		// Registry row carries malformed Project/AgentName — surface as
-		// Reason; leave RegistryOutcome unset so subscribers see this
-		// as a registry-side data corruption, not a normal cross-check
-		// outcome.
-		if prov.Reason == "" {
-			prov.Reason = "registry row CN compose failed: " + cnErr.Error()
-		}
-		return
+		return outcomeRegistryNotQueried, "registry row CN compose failed: " + cnErr.Error()
 	}
-	if expectedCN != prov.PeerCN {
-		prov.RegistryOutcome = RegistryOutcomeCNMismatch
-		return
+	if expectedCN != peer.PeerCN {
+		return outcomeRegistryCNMismatch, ""
 	}
-	prov.RegistryOutcome = RegistryOutcomeMatch
+	_ = project
+	_ = agent
+	return outcomeRegistryMatch, ""
 }
 
 // computeCNPinMatch reports whether peerCN equals the canonical agent
@@ -738,24 +759,24 @@ func agentLabels(c mobycontainer.InspectResponse) (agent, project string) {
 // clawkerd to issue containment commands; cert mismatch is a data
 // point, not an abort condition".
 //
-// prov is populated during the handshake with PeerCN,
+// peer is populated during the handshake with PeerCN,
 // PeerThumbprint, and ChainVerified. The handshake is lazy under
 // grpc.NewClient — these fields are not filled until the first RPC
 // (Session open) triggers the underlying TLS dial.
 //
 // Keepalive parameters are sourced from internal/consts so server
 // (clawkerd) and client (CP) cannot drift.
-func (d *Dialer) dial(_ context.Context, addr string, prov *Provenance) (*grpc.ClientConn, error) {
+func (d *Dialer) dial(_ context.Context, addr string, peer *peerInfo) (*grpc.ClientConn, error) {
 	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{d.cpClientCert},
 		RootCAs:      d.caPool,
 		MinVersion:   tls.VersionTLS13,
 		// InsecureSkipVerify disables the stdlib's hostname + chain
 		// gate so VerifyPeerCertificate can run as a permissive
-		// data-capture hook (see capturePeerProvenance + package doc).
+		// data-capture hook (see capturePeer + package doc).
 		InsecureSkipVerify: true,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			d.capturePeerProvenance(rawCerts, prov)
+			d.capturePeer(rawCerts, peer)
 			return nil // ALWAYS — connection never aborts on cert grounds
 		},
 	}
@@ -770,16 +791,16 @@ func (d *Dialer) dial(_ context.Context, addr string, prov *Provenance) (*grpc.C
 	)
 }
 
-// capturePeerProvenance populates PeerCN / PeerThumbprint /
-// ChainVerified on prov from the peer's TLS handshake material.
-// Permissive: every code path returns without error; outcomes flow
-// into prov fields (and prov.Reason for unusual cases). Extracted
-// from the dial() callback so tests can drive it directly without
-// standing up a TLS server.
-func (d *Dialer) capturePeerProvenance(rawCerts [][]byte, prov *Provenance) {
+// capturePeer populates PeerCN / PeerThumbprint / ChainVerified on
+// peer from the peer's TLS handshake material. Permissive: every
+// code path returns without error; outcomes flow into peer fields
+// (and peer.CaptureReason for unusual cases). Extracted from the
+// dial() callback so tests can drive it directly without standing
+// up a TLS server.
+func (d *Dialer) capturePeer(rawCerts [][]byte, peer *peerInfo) {
 	if len(rawCerts) == 0 {
-		if prov.Reason == "" {
-			prov.Reason = "peer presented no certs"
+		if peer.CaptureReason == "" {
+			peer.CaptureReason = "peer presented no certs"
 		}
 		return
 	}
@@ -787,16 +808,16 @@ func (d *Dialer) capturePeerProvenance(rawCerts [][]byte, prov *Provenance) {
 	for _, raw := range rawCerts {
 		c, err := x509.ParseCertificate(raw)
 		if err != nil {
-			if prov.Reason == "" {
-				prov.Reason = "leaf parse failed: " + err.Error()
+			if peer.CaptureReason == "" {
+				peer.CaptureReason = "leaf parse failed: " + err.Error()
 			}
 			return
 		}
 		certs = append(certs, c)
 	}
 	leaf := certs[0]
-	prov.PeerCN = leaf.Subject.CommonName
-	prov.PeerThumbprint = sha256.Sum256(rawCerts[0])
+	peer.PeerCN = leaf.Subject.CommonName
+	peer.PeerThumbprint = sha256.Sum256(rawCerts[0])
 
 	// Chain-verify against the CLI CA. Outcome is a data point;
 	// failure does NOT abort.
@@ -805,9 +826,9 @@ func (d *Dialer) capturePeerProvenance(rawCerts [][]byte, prov *Provenance) {
 		opts.Intermediates.AddCert(c)
 	}
 	if _, err := leaf.Verify(opts); err == nil {
-		prov.ChainVerified = true
-	} else if prov.Reason == "" {
-		prov.Reason = "chain verify: " + err.Error()
+		peer.ChainVerified = true
+	} else if peer.CaptureReason == "" {
+		peer.CaptureReason = "chain verify: " + err.Error()
 	}
 }
 
@@ -885,6 +906,202 @@ func (d *Dialer) drainStream(ctx context.Context, stream clawkerdv1.ClawkerdServ
 	}
 }
 
+// registerRequiredTimeout caps how long the dispatch path waits for
+// clawkerd's RegisterDone Response after sending RegisterRequired on
+// the Session stream. Hydra exchange + mTLS dial + Register handler
+// is the chain on the agent side; 30s is comfortably more than the
+// chained latency under normal conditions.
+const registerRequiredTimeout = 30 * time.Second
+
+// dispatchAgentEvents drives agent-axis event publication after the
+// Session is up. Branches on the registry classification:
+//
+//   - Match → no extra event (SessionConnected already updated the
+//     trusted state; the durable Registered=true flag persists
+//     because the row exists)
+//   - Miss → drive the Register handshake (send RegisterRequired,
+//     wait for RegisterDone, re-lookup), publish AgentRegistered
+//     and AgentUntrusted{ReasonRegisterFailed} on failure
+//   - ThumbprintMismatch → publish AgentUntrusted{ReasonThumbprintMismatch}
+//   - CNMismatch → publish AgentUntrusted{ReasonCNMismatch}
+//   - NotQueried (lookup error) → publish AgentUntrusted with detail
+//
+// Caller must have already called publishConnected — the agent state
+// in overseer is populated by the time we evaluate trust outcomes.
+func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, res establishResult, log *logger.Logger) {
+	outcome, detail := d.classifyRegistry(res.PeerInfo, containerID, res.Project, res.Agent)
+
+	switch outcome {
+	case outcomeRegistryMatch:
+		// Nothing to publish — agent is already provenanced and
+		// SessionConnected.ApplyTo set Trusted=true. The durable
+		// Registered=true is reflected via the Hello-time row
+		// existence; no event needed for the steady-state case.
+		// However we DO surface a separate AgentRegistered event ON
+		// startup hydration paths so subscribers know the agent is
+		// registered without re-querying — covered by hydration in
+		// agent.Start, not here.
+		return
+	case outcomeRegistryMiss:
+		// CP just observed a never-before-seen container. Drive the
+		// CP-triggered Register flow: send RegisterRequired on the
+		// Session bidi stream, wait for RegisterDone from clawkerd,
+		// re-lookup the registry to confirm the row landed.
+		d.driveRegister(ctx, containerID, res, log)
+	case outcomeRegistryThumbprintMismatch:
+		log.Warn().
+			Str("event", "agent_untrusted").
+			Str("reason", string(overseer.UntrustedReasonThumbprintMismatch)).
+			Msg("registered cert thumbprint differs from live peer cert; agent untrusted")
+		overseer.Publish(d.bus, AgentUntrusted{
+			ContainerID: containerID,
+			AgentName:   res.Agent,
+			Project:     res.Project,
+			Reason:      overseer.UntrustedReasonThumbprintMismatch,
+			At:          time.Now(),
+		})
+	case outcomeRegistryCNMismatch:
+		log.Warn().
+			Str("event", "agent_untrusted").
+			Str("reason", string(overseer.UntrustedReasonCNMismatch)).
+			Msg("registered canonical_cn differs from live peer CN; agent untrusted")
+		overseer.Publish(d.bus, AgentUntrusted{
+			ContainerID: containerID,
+			AgentName:   res.Agent,
+			Project:     res.Project,
+			Reason:      overseer.UntrustedReasonCNMismatch,
+			At:          time.Now(),
+		})
+	default: // outcomeRegistryNotQueried (lookup error)
+		log.Warn().
+			Str("event", "agent_untrusted").
+			Str("detail", detail).
+			Msg("registry classification could not be determined; agent untrusted")
+		overseer.Publish(d.bus, AgentUntrusted{
+			ContainerID: containerID,
+			AgentName:   res.Agent,
+			Project:     res.Project,
+			Reason:      overseer.UntrustedReasonCertInvalid,
+			Detail:      detail,
+			At:          time.Now(),
+		})
+	}
+}
+
+// driveRegister sends RegisterRequired on the Session stream and
+// waits for the matching RegisterDone Response. After the agent
+// reports completion, re-looks up the registry to confirm the row
+// landed and publishes AgentRegistered (success or failure) plus
+// AgentUntrusted on failure.
+//
+// The Session stream stays open throughout. drainStream is the
+// long-running consumer of the stream; we synchronously Send +
+// expect-Recv here BEFORE drainStream takes over, so RegisterDone is
+// observed cleanly without contention.
+func (d *Dialer) driveRegister(ctx context.Context, containerID string, res establishResult, log *logger.Logger) {
+	commandID := "register-" + containerID
+	if err := res.Stream.Send(&clawkerdv1.Command{
+		CommandId: commandID,
+		Payload:   &clawkerdv1.Command_RegisterRequired{RegisterRequired: &clawkerdv1.RegisterRequired{}},
+	}); err != nil {
+		d.publishRegisterFailure(containerID, res, "send RegisterRequired: "+err.Error(), log)
+		return
+	}
+
+	// Wait for RegisterDone with timeout. Other Response types that
+	// arrive in the interim are unexpected (clawkerd should serialize
+	// per-command Responses by command_id) — log and keep waiting.
+	waitCtx, cancel := context.WithTimeout(ctx, registerRequiredTimeout)
+	defer cancel()
+
+	type recvResult struct {
+		resp *clawkerdv1.Response
+		err  error
+	}
+	ch := make(chan recvResult, 1)
+	go func() {
+		// stream.Recv blocks; this goroutine's lifetime is bounded by
+		// the parent ctx (drainStream takes over after this function
+		// returns and will eventually unblock the recv).
+		for {
+			r, err := res.Stream.Recv()
+			if err != nil {
+				ch <- recvResult{err: err}
+				return
+			}
+			if _, ok := r.Payload.(*clawkerdv1.Response_RegisterDone); ok && r.CommandId == commandID {
+				ch <- recvResult{resp: r}
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-waitCtx.Done():
+		d.publishRegisterFailure(containerID, res, "RegisterDone timeout: "+waitCtx.Err().Error(), log)
+		return
+	case got := <-ch:
+		if got.err != nil {
+			d.publishRegisterFailure(containerID, res, "Recv RegisterDone: "+got.err.Error(), log)
+			return
+		}
+		done := got.resp.GetRegisterDone()
+		if done == nil || !done.GetOk() {
+			detail := "clawkerd reported failure"
+			if done != nil && done.GetError() != "" {
+				detail = done.GetError()
+			}
+			d.publishRegisterFailure(containerID, res, detail, log)
+			return
+		}
+	}
+
+	// Re-lookup to confirm the row actually landed in sqlite.
+	entry, err := d.agents.LookupByContainerID(containerID)
+	if err != nil || entry == nil {
+		reason := "registry row missing after RegisterDone"
+		if err != nil {
+			reason = err.Error()
+		}
+		d.publishRegisterFailure(containerID, res, reason, log)
+		return
+	}
+
+	log.Info().
+		Str("event", "agent_registered").
+		Msg("CP-driven Register completed; row written")
+	overseer.Publish(d.bus, AgentRegistered{
+		ContainerID: containerID,
+		AgentName:   res.Agent,
+		Project:     res.Project,
+		Ok:          true,
+		At:          time.Now(),
+	})
+}
+
+func (d *Dialer) publishRegisterFailure(containerID string, res establishResult, reason string, log *logger.Logger) {
+	log.Warn().
+		Str("event", "agent_register_failed").
+		Str("reason", reason).
+		Msg("CP-driven Register did not complete; agent unprovenanceable")
+	overseer.Publish(d.bus, AgentRegistered{
+		ContainerID: containerID,
+		AgentName:   res.Agent,
+		Project:     res.Project,
+		Ok:          false,
+		Reason:      reason,
+		At:          time.Now(),
+	})
+	overseer.Publish(d.bus, AgentUntrusted{
+		ContainerID: containerID,
+		AgentName:   res.Agent,
+		Project:     res.Project,
+		Reason:      overseer.UntrustedReasonRegisterFailed,
+		Detail:      reason,
+		At:          time.Now(),
+	})
+}
+
 // publishConnecting records the start of a dial attempt. Status is
 // "connecting" until the dial succeeds (→ connected) or the retry
 // budget exhausts (→ failed). agent + project may be empty if the
@@ -908,21 +1125,23 @@ func (d *Dialer) publishConnecting(ctx context.Context, containerID, agent, proj
 }
 
 // publishConnected records that the Session handshake succeeded
-// (mTLS + Hello + HelloAck) on the given attempt. prov carries the
-// connection-time identity outcomes (chain verify, CN pin, registry
-// cross-check) for subscribers that enact policy.
-func (d *Dialer) publishConnected(ctx context.Context, containerID, agent, project, addr string, attempt int, prov Provenance) {
+// (mTLS + Hello + HelloAck) on the given attempt. peer carries the
+// captured cert identity (PeerCN, PeerThumbprint) flat on the event.
+// Trust/registration outcomes are published via separate events
+// (AgentRegistered, AgentUntrusted).
+func (d *Dialer) publishConnected(ctx context.Context, containerID, agent, project, addr string, attempt int, peer peerInfo) {
 	if ctx.Err() != nil {
 		return
 	}
 	overseer.Publish(d.bus, SessionConnected{
-		ContainerID: containerID,
-		AgentName:   agent,
-		Project:     project,
-		Address:     addr,
-		Attempts:    attempt,
-		Provenance:  prov,
-		At:          time.Now(),
+		ContainerID:    containerID,
+		AgentName:      agent,
+		Project:        project,
+		Address:        addr,
+		Attempts:       attempt,
+		PeerCN:         peer.PeerCN,
+		PeerThumbprint: peer.PeerThumbprint,
+		At:             time.Now(),
 	})
 }
 

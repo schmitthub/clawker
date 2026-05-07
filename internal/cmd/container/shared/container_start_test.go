@@ -146,9 +146,11 @@ func testRuntimeConfig(projectYAML, settingsYAML string) func() (config.Config, 
 }
 
 // prepareAgentBootstrap was deleted when material delivery moved to
-// CreateContainer. The bootstrap mint + tar + registry write is now
-// exercised by InstallAgentBootstrapMaterial + RegisterAgentInRegistry;
-// see agent_bootstrap_test.go.
+// CreateContainer. The bootstrap mint + tar (cert/key/ca/assertion)
+// is now exercised by InstallAgentBootstrapMaterial; see
+// agent_bootstrap_test.go. CP is the sole writer of the agentregistry
+// row — captured at AgentService.Register handler entry from the
+// live mTLS peer's cert thumbprint.
 // (TestHydraTokenAudienceFromPort_PinnedTo127001 removed in test
 // cleanup — the function under test is `fmt.Sprintf("https://127.0.0.1:%d/oauth2/token", port)`,
 // so the test was exercising Sprintf rather than any clawker logic.

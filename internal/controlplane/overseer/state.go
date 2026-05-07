@@ -1,11 +1,14 @@
 package overseer
 
-import "time"
+import (
+	"crypto/sha256"
+	"time"
+)
 
 // ContainerStatus is the lifecycle of a container as observed by the
-// dockerevents feeder. Distinct from informer's old shared "Lifecycle"
-// string field — Y5 dies structurally because container lifecycle is a
-// container-only enum with no agent-session vocabulary mixed in.
+// dockerevents feeder. Distinct from the agent's session/registration
+// axis — container lifecycle is "is the docker container running?",
+// not "has CP attested its identity?".
 type ContainerStatus string
 
 const (
@@ -15,8 +18,8 @@ const (
 )
 
 // SessionStatus is the lifecycle of a CP→clawkerd ClawkerdService.Session
-// stream as observed by the agentdial component. Disjoint from
-// ContainerStatus by design.
+// stream as observed by the agent component's dialer. One axis on the
+// unified `Agent` view alongside Registered + Trusted.
 type SessionStatus string
 
 const (
@@ -27,11 +30,27 @@ const (
 	SessionStatusBroken     SessionStatus = "broken"
 )
 
+// UntrustedReason classifies why CP marked a container's agent as
+// untrusted. Subscribers to the AgentUntrusted event switch on this
+// value to enact policy (containment, alerting, eviction). Empty
+// string is the zero value — agent is trusted (or untrusted state not
+// yet observed).
+type UntrustedReason string
+
+const (
+	UntrustedReasonNone                UntrustedReason = ""
+	UntrustedReasonThumbprintMismatch  UntrustedReason = "cert_thumbprint_mismatch"
+	UntrustedReasonContainerIDMismatch UntrustedReason = "cert_container_id_mismatch"
+	UntrustedReasonCertInvalid         UntrustedReason = "cert_invalid"
+	UntrustedReasonCNMismatch          UntrustedReason = "cert_cn_mismatch"
+	UntrustedReasonPeerIPMismatch      UntrustedReason = "peer_ip_mismatch"
+	UntrustedReasonRegisterFailed      UntrustedReason = "register_failed"
+)
+
 // ContainerView is the Overseer's in-memory worldview of one container.
 // Populated and mutated exclusively by dockerevents events implementing
 // the unexported applier interface. Removed entirely when the container
-// is destroyed (no soft-delete — the informer's "ghost" semantics had
-// zero consumers).
+// is destroyed (no soft-delete).
 type ContainerView struct {
 	ID        string
 	Name      string
@@ -40,20 +59,36 @@ type ContainerView struct {
 	UpdatedAt time.Time
 }
 
-// SessionView is the Overseer's in-memory worldview of one CP→clawkerd
-// Connect session. Populated and mutated exclusively by agentdial
-// events. The post-Connect cert-thumbprint identity binding lives in
-// agentregistry's SQLite store — Overseer's view is the observed dial
-// lifecycle, not durable identity.
-type SessionView struct {
-	ContainerID string
-	AgentName   string
-	Project     string
-	Address     string
-	Status      SessionStatus
-	LastError   string
-	Attempts    int
-	UpdatedAt   time.Time
+// Agent is the Overseer's in-memory worldview of one clawker-managed
+// agent. Replaces the prior split between AgentSession (transport
+// lifecycle) and the durable agentregistry row (identity binding) by
+// holding both axes — session, registration, identity — as properties
+// of one entity. The agentregistry sqlite store remains the durable
+// truth source for identity rows; this struct is the observed-now view
+// derived from events.
+//
+// Populated and mutated by:
+//   - Session* events from the dialer (SessionStatus, Address, Attempts,
+//     LastError, Thumbprint, AgentName, Project)
+//   - AgentRegistered event (Registered=Ok)
+//   - AgentUntrusted event (Trusted=false, UntrustedReason=Reason)
+//   - dockerevents container/destroy (entry deleted)
+//
+// Trusted defaults true (a row is trustworthy until something says
+// otherwise). UntrustedReason is non-empty iff Trusted=false.
+type Agent struct {
+	ContainerID     string
+	AgentName       string
+	Project         string
+	Address         string
+	SessionStatus   SessionStatus
+	Registered      bool
+	Trusted         bool
+	UntrustedReason UntrustedReason
+	Thumbprint      [sha256.Size]byte
+	Attempts        int
+	LastError       string
+	UpdatedAt       time.Time
 }
 
 // State is the Overseer's full worldview projection at a point in time.
@@ -62,7 +97,7 @@ type SessionView struct {
 // never escape.
 type State struct {
 	Containers    map[string]ContainerView
-	AgentSessions map[string]SessionView
+	Agents        map[string]Agent
 	LastUpdatedAt time.Time
 }
 
@@ -70,8 +105,8 @@ type State struct {
 // to overseer; consumers receive deep copies via Snapshot.
 func newState() State {
 	return State{
-		Containers:    make(map[string]ContainerView),
-		AgentSessions: make(map[string]SessionView),
+		Containers: make(map[string]ContainerView),
+		Agents:     make(map[string]Agent),
 	}
 }
 
@@ -84,23 +119,23 @@ func (s State) clone() State {
 		containers[k] = v
 	}
 
-	sessions := make(map[string]SessionView, len(s.AgentSessions))
-	for k, v := range s.AgentSessions {
-		sessions[k] = v
+	agents := make(map[string]Agent, len(s.Agents))
+	for k, v := range s.Agents {
+		agents[k] = v
 	}
 
 	return State{
 		Containers:    containers,
-		AgentSessions: sessions,
+		Agents:        agents,
 		LastUpdatedAt: s.LastUpdatedAt,
 	}
 }
 
 // applier is the unexported interface that an event type may
-// implement to mutate worldview state. Implementations live in
-// producer packages (dockerevents, agentdial) — the bus dispatches
-// every published event through a type-assertion to applier and
-// invokes ApplyTo if matched.
+// implement to mutate worldview state when published. Implementations
+// live in producer packages — the bus dispatches every published
+// event through a type-assertion to applier and invokes ApplyTo if
+// matched.
 //
 // Unexported so only events explicitly designed against overseer's
 // State shape participate. A producer that publishes an event without

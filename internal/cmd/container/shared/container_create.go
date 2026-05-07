@@ -1654,10 +1654,6 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	if err != nil {
 		return nil, fmt.Errorf("agent bootstrap: load signing key: %w", err)
 	}
-	registryDBPath, err := consts.ControlPlaneDBPath()
-	if err != nil {
-		return nil, fmt.Errorf("agent bootstrap: registry db path: %w", err)
-	}
 	projectSlug, err := auth.NewProjectSlug(opts.ProjectName)
 	if err != nil {
 		return nil, fmt.Errorf("agent bootstrap: invalid project: %w", err)
@@ -1685,23 +1681,22 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	// Clear cleanup list so deferred cleanup won't remove them.
 	createdVolumes = nil
 
-	// Mint per-agent mTLS material + Hydra assertion + PKCE pair, tar
-	// into the container's BootstrapDir (writable layer survives stop/
-	// start/restart for the container's lifetime), and write the
-	// agentregistry row keyed by (thumbprint, container_id). The
-	// registry row gives CP the data point it needs to verify the
-	// thumbprint of the running clawkerd at dial time.
+	// Mint per-agent mTLS material + Hydra assertion JWT, tar into the
+	// container's BootstrapDir (writable layer survives stop/start/
+	// restart for the container's lifetime). The agentregistry row is
+	// NOT written from the host — CP is the sole sqlite writer and
+	// captures the thumbprint at Register handler entry from the live
+	// mTLS peer. Container_id is embedded as a URI SAN in the leaf cert
+	// so CP can read the binding without a CLI-pre-staged row.
 	bootstrapOpts := InstallAgentBootstrapOptions{
 		Project:            projectSlug,
 		Agent:              agentTyped,
 		ContainerID:        resp.ID,
 		HydraTokenAudience: hydraTokenAudienceFromPort(opts.Config.Settings().ControlPlane.HydraPublicPort),
 		CopyToContainer:    NewCopyToContainerFn(client),
-		RegistryDBPath:     registryDBPath,
 		Logger:             log,
 	}
-	bootstrap, err := InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, bootstrapOpts)
-	if err != nil {
+	if _, err := InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, bootstrapOpts); err != nil {
 		cleanupCtx := context.Background()
 		if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
 			log.Warn().Str("containerID", resp.ID).Err(rmErr).
@@ -1710,7 +1705,8 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		return nil, fmt.Errorf("agent bootstrap: %w", err)
 	}
 
-	// Inject post-init script if configured.
+	// Inject post-init script if configured. Last creation step;
+	// failure here removes the container so no orphan exists.
 	if projectCfg.Agent.PostInit != "" {
 		sendInfo(ctx, events, "container", "Injecting post-init script")
 		copyFn := NewCopyToContainerFn(client)
@@ -1728,20 +1724,6 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 			}
 			return nil, fmt.Errorf("inject post-init script: %w", err)
 		}
-	}
-
-	// Register agent in registry as the LAST creation step. Registry row
-	// signifies "container fully ready"; if material delivery or post-init
-	// failed above, no orphan row exists. If the row write itself fails on
-	// an otherwise fully-built container, ContainerRemove cleans up so the
-	// container does not outlive its registry entry.
-	if err := RegisterAgentInRegistry(ctx, bootstrapOpts, bootstrap); err != nil {
-		cleanupCtx := context.Background()
-		if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
-			log.Warn().Str("containerID", resp.ID).Err(rmErr).
-				Msg("failed to clean up container after registry write failure")
-		}
-		return nil, fmt.Errorf("register agent in registry: %w", err)
 	}
 
 	sendComplete(ctx, events, "container", "Container created")

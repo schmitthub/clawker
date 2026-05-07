@@ -1,4 +1,4 @@
-package agentdial
+package agent
 
 import (
 	"bytes"
@@ -22,8 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/auth"
-	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
-	regmocks "github.com/schmitthub/clawker/internal/controlplane/agentregistry/mocks"
+
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -96,7 +95,7 @@ func signLeaf(t *testing.T, cn string, notAfter time.Time, parent *x509.Certific
 // surface as Reason text + ChainVerified=false; populated fields
 // (PeerCN, PeerThumbprint) appear on the event payload.
 
-func TestCapturePeerProvenance_ValidChain(t *testing.T) {
+func TestCapturePeer_ValidChain(t *testing.T) {
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
 	leafDER, leaf := signLeaf(t, "clawker.proj.dev", time.Now().Add(time.Hour), caCert, caKey)
 
@@ -104,17 +103,17 @@ func TestCapturePeerProvenance_ValidChain(t *testing.T) {
 	pool.AddCert(caCert)
 	d := &Dialer{caPool: pool}
 
-	var prov Provenance
-	d.capturePeerProvenance([][]byte{leafDER}, &prov)
+	var peer peerInfo
+	d.capturePeer([][]byte{leafDER}, &peer)
 
-	assert.True(t, prov.ChainVerified, "trusted-CA chain must verify")
-	assert.Equal(t, leaf.Subject.CommonName, prov.PeerCN)
+	assert.True(t, peer.ChainVerified, "trusted-CA chain must verify")
+	assert.Equal(t, leaf.Subject.CommonName, peer.PeerCN)
 	want := sha256.Sum256(leafDER)
-	assert.Equal(t, want, prov.PeerThumbprint)
-	assert.Empty(t, prov.Reason)
+	assert.Equal(t, want, peer.PeerThumbprint)
+	assert.Empty(t, peer.CaptureReason)
 }
 
-func TestCapturePeerProvenance_UntrustedRoot_DoesNotAbort(t *testing.T) {
+func TestCapturePeer_UntrustedRoot_DoesNotAbort(t *testing.T) {
 	wrongCA, wrongKey := genCA(t, "wrong-ca", 24*time.Hour)
 	leafDER, leaf := signLeaf(t, "clawker.proj.dev", time.Now().Add(time.Hour), wrongCA, wrongKey)
 
@@ -123,19 +122,17 @@ func TestCapturePeerProvenance_UntrustedRoot_DoesNotAbort(t *testing.T) {
 	pool.AddCert(trustedCA)
 	d := &Dialer{caPool: pool}
 
-	var prov Provenance
-	d.capturePeerProvenance([][]byte{leafDER}, &prov)
+	var peer peerInfo
+	d.capturePeer([][]byte{leafDER}, &peer)
 
-	assert.False(t, prov.ChainVerified, "untrusted root must yield ChainVerified=false")
-	// Cert-level fields still populated — subscribers need them
-	// regardless of chain trust.
-	assert.Equal(t, leaf.Subject.CommonName, prov.PeerCN)
+	assert.False(t, peer.ChainVerified, "untrusted root must yield ChainVerified=false")
+	assert.Equal(t, leaf.Subject.CommonName, peer.PeerCN)
 	want := sha256.Sum256(leafDER)
-	assert.Equal(t, want, prov.PeerThumbprint)
-	assert.Contains(t, prov.Reason, "chain verify")
+	assert.Equal(t, want, peer.PeerThumbprint)
+	assert.Contains(t, peer.CaptureReason, "chain verify")
 }
 
-func TestCapturePeerProvenance_ExpiredLeaf_DoesNotAbort(t *testing.T) {
+func TestCapturePeer_ExpiredLeaf_DoesNotAbort(t *testing.T) {
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
 	leafDER, _ := signLeaf(t, "clawker.proj.dev", time.Now().Add(-time.Minute), caCert, caKey)
 
@@ -143,48 +140,47 @@ func TestCapturePeerProvenance_ExpiredLeaf_DoesNotAbort(t *testing.T) {
 	pool.AddCert(caCert)
 	d := &Dialer{caPool: pool}
 
-	var prov Provenance
-	d.capturePeerProvenance([][]byte{leafDER}, &prov)
+	var peer peerInfo
+	d.capturePeer([][]byte{leafDER}, &peer)
 
-	assert.False(t, prov.ChainVerified, "expired leaf must yield ChainVerified=false")
-	assert.Equal(t, "clawker.proj.dev", prov.PeerCN)
-	assert.NotEqual(t, [sha256.Size]byte{}, prov.PeerThumbprint)
-	assert.Contains(t, prov.Reason, "chain verify")
+	assert.False(t, peer.ChainVerified, "expired leaf must yield ChainVerified=false")
+	assert.Equal(t, "clawker.proj.dev", peer.PeerCN)
+	assert.NotEqual(t, [sha256.Size]byte{}, peer.PeerThumbprint)
+	assert.Contains(t, peer.CaptureReason, "chain verify")
 }
 
-func TestCapturePeerProvenance_NoCerts_SetsReason(t *testing.T) {
+func TestCapturePeer_NoCerts_SetsReason(t *testing.T) {
 	d := &Dialer{caPool: x509.NewCertPool()}
 
-	var prov Provenance
-	d.capturePeerProvenance(nil, &prov)
+	var peer peerInfo
+	d.capturePeer(nil, &peer)
 
-	assert.False(t, prov.ChainVerified)
-	assert.Empty(t, prov.PeerCN)
-	assert.Equal(t, [sha256.Size]byte{}, prov.PeerThumbprint)
-	assert.Equal(t, "peer presented no certs", prov.Reason)
+	assert.False(t, peer.ChainVerified)
+	assert.Empty(t, peer.PeerCN)
+	assert.Equal(t, [sha256.Size]byte{}, peer.PeerThumbprint)
+	assert.Equal(t, "peer presented no certs", peer.CaptureReason)
 }
 
-func TestCapturePeerProvenance_BadCertBytes_SetsReason(t *testing.T) {
+func TestCapturePeer_BadCertBytes_SetsReason(t *testing.T) {
 	d := &Dialer{caPool: x509.NewCertPool()}
 
-	var prov Provenance
-	d.capturePeerProvenance([][]byte{[]byte("not a cert")}, &prov)
+	var peer peerInfo
+	d.capturePeer([][]byte{[]byte("not a cert")}, &peer)
 
-	assert.False(t, prov.ChainVerified)
-	assert.Empty(t, prov.PeerCN)
-	assert.Equal(t, [sha256.Size]byte{}, prov.PeerThumbprint)
-	assert.Contains(t, prov.Reason, "leaf parse failed")
+	assert.False(t, peer.ChainVerified)
+	assert.Empty(t, peer.PeerCN)
+	assert.Equal(t, [sha256.Size]byte{}, peer.PeerThumbprint)
+	assert.Contains(t, peer.CaptureReason, "leaf parse failed")
 }
 
-// --- fillRegistryProvenance: registry-row cross-check ---------------
-// Populates Provenance.RegistryOutcome via agentregistry.LookupByContainerID.
+// --- classifyRegistry: registry-row cross-check ---------------------
 
-func TestFillRegistryProvenance_RegistryMatch(t *testing.T) {
+func TestClassifyRegistry_Match(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer-cert-bytes"))
 	expectedCN := auth.CanonicalAgentCN(auth.MustProjectSlug("myproj"), auth.MustAgentName("dev"))
-	reg := &regmocks.RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*agentregistry.Entry, error) {
-			return &agentregistry.Entry{
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*Entry, error) {
+			return &Entry{
 				AgentName:   "dev",
 				Project:     "myproj",
 				ContainerID: id,
@@ -194,40 +190,29 @@ func TestFillRegistryProvenance_RegistryMatch(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	prov := Provenance{
-		PeerCN:         expectedCN,
-		PeerThumbprint: thumb,
-	}
-	d.fillRegistryProvenance(&prov, "ctr-1", "myproj", "dev")
-
-	assert.Equal(t, RegistryOutcomeMatch, prov.RegistryOutcome)
-	assert.True(t, prov.CNPinMatch)
+	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: expectedCN, PeerThumbprint: thumb}, "ctr-1", "myproj", "dev")
+	assert.Equal(t, outcomeRegistryMatch, outcome)
 }
 
-func TestFillRegistryProvenance_RegistryMiss(t *testing.T) {
-	reg := &regmocks.RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*agentregistry.Entry, error) {
-			return nil, agentregistry.ErrUnknownAgent
+func TestClassifyRegistry_Miss(t *testing.T) {
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*Entry, error) {
+			return nil, ErrUnknownAgent
 		},
 	}
 	d := &Dialer{agents: reg}
 
 	thumb := sha256.Sum256([]byte("peer"))
-	prov := Provenance{
-		PeerCN:         "clawker.x.y",
-		PeerThumbprint: thumb,
-	}
-	d.fillRegistryProvenance(&prov, "ctr-2", "x", "y")
-
-	assert.Equal(t, RegistryOutcomeMiss, prov.RegistryOutcome)
+	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: thumb}, "ctr-2", "x", "y")
+	assert.Equal(t, outcomeRegistryMiss, outcome)
 }
 
-func TestFillRegistryProvenance_ThumbprintMismatch(t *testing.T) {
+func TestClassifyRegistry_ThumbprintMismatch(t *testing.T) {
 	peerThumb := sha256.Sum256([]byte("peer"))
 	rowThumb := sha256.Sum256([]byte("registry"))
-	reg := &regmocks.RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*agentregistry.Entry, error) {
-			return &agentregistry.Entry{
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*Entry, error) {
+			return &Entry{
 				AgentName:   "dev",
 				Project:     "myproj",
 				ContainerID: id,
@@ -237,20 +222,15 @@ func TestFillRegistryProvenance_ThumbprintMismatch(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	prov := Provenance{
-		PeerCN:         "clawker.myproj.dev",
-		PeerThumbprint: peerThumb,
-	}
-	d.fillRegistryProvenance(&prov, "ctr-3", "myproj", "dev")
-
-	assert.Equal(t, RegistryOutcomeThumbprintMismatch, prov.RegistryOutcome)
+	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.myproj.dev", PeerThumbprint: peerThumb}, "ctr-3", "myproj", "dev")
+	assert.Equal(t, outcomeRegistryThumbprintMismatch, outcome)
 }
 
-func TestFillRegistryProvenance_CNMismatch(t *testing.T) {
+func TestClassifyRegistry_CNMismatch(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
-	reg := &regmocks.RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*agentregistry.Entry, error) {
-			return &agentregistry.Entry{
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*Entry, error) {
+			return &Entry{
 				AgentName:   "dev",
 				Project:     "actual",
 				ContainerID: id,
@@ -260,47 +240,29 @@ func TestFillRegistryProvenance_CNMismatch(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	prov := Provenance{
-		PeerCN:         "clawker.different.dev", // does not match clawker.actual.dev
-		PeerThumbprint: thumb,
-	}
-	d.fillRegistryProvenance(&prov, "ctr-4", "actual", "dev")
-
-	assert.Equal(t, RegistryOutcomeCNMismatch, prov.RegistryOutcome)
+	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.different.dev", PeerThumbprint: thumb}, "ctr-4", "actual", "dev")
+	assert.Equal(t, outcomeRegistryCNMismatch, outcome)
 }
 
-func TestFillRegistryProvenance_LookupErrorSetsReason(t *testing.T) {
-	reg := &regmocks.RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*agentregistry.Entry, error) {
+func TestClassifyRegistry_LookupErrorReturnsNotQueried(t *testing.T) {
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*Entry, error) {
 			return nil, errors.New("disk i/o failed")
 		},
 	}
 	d := &Dialer{agents: reg}
 
-	thumb := sha256.Sum256([]byte("peer"))
-	prov := Provenance{
-		PeerCN:         "clawker.x.y",
-		PeerThumbprint: thumb,
-	}
-	d.fillRegistryProvenance(&prov, "ctr-5", "x", "y")
-
-	// RegistryOutcome stays unset — outcome is "could not query".
-	assert.Equal(t, RegistryOutcomeNotQueried, prov.RegistryOutcome)
-	assert.Contains(t, prov.Reason, "registry lookup error")
+	outcome, detail := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))}, "ctr-5", "x", "y")
+	assert.Equal(t, outcomeRegistryNotQueried, outcome)
+	assert.Contains(t, detail, "registry lookup error")
 }
 
-func TestFillRegistryProvenance_NilRegistrySetsReason(t *testing.T) {
+func TestClassifyRegistry_NilRegistryReturnsNotQueried(t *testing.T) {
 	d := &Dialer{agents: nil}
 
-	thumb := sha256.Sum256([]byte("peer"))
-	prov := Provenance{
-		PeerCN:         "clawker.x.y",
-		PeerThumbprint: thumb,
-	}
-	d.fillRegistryProvenance(&prov, "ctr-6", "x", "y")
-
-	assert.Equal(t, "registry not wired", prov.Reason)
-	assert.Equal(t, RegistryOutcomeNotQueried, prov.RegistryOutcome)
+	outcome, detail := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))}, "ctr-6", "x", "y")
+	assert.Equal(t, outcomeRegistryNotQueried, outcome)
+	assert.Equal(t, "registry not wired", detail)
 }
 
 // --- computeCNPinMatch: cert-vs-labels CN derivation ----------------
@@ -335,14 +297,13 @@ func TestComputeCNPinMatch(t *testing.T) {
 	}
 }
 
-// TestPublishConnected_DeliversProvenanceIntact pins the bus payload
-// contract: every Provenance field set on publishConnected lands on
-// the SessionConnected event a subscriber receives. Subscribers driving
-// policy (containment, alerting) consume the typed fields directly;
-// a regression that drops a field on the wire (struct-tag rename,
-// future serialization hop) wouldn't surface from leaf-function tests
-// alone.
-func TestPublishConnected_DeliversProvenanceIntact(t *testing.T) {
+// TestPublishConnected_DeliversPeerIntact pins the bus payload
+// contract: peer cert identity fields set on publishConnected land
+// on the SessionConnected event a subscriber receives. Subscribers
+// driving policy (containment, alerting) consume the typed fields
+// directly; a regression that drops a field on the wire wouldn't
+// surface from leaf-function tests alone.
+func TestPublishConnected_DeliversPeerIntact(t *testing.T) {
 	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -354,15 +315,12 @@ func TestPublishConnected_DeliversProvenanceIntact(t *testing.T) {
 
 	d := &Dialer{bus: bus}
 	thumb := sha256.Sum256([]byte("peer-cert-bytes"))
-	prov := Provenance{
-		ChainVerified:   true,
-		PeerCN:          "clawker.proj.dev",
-		CNPinMatch:      true,
-		PeerThumbprint:  thumb,
-		RegistryOutcome: RegistryOutcomeMatch,
-		Reason:          "",
+	peer := peerInfo{
+		ChainVerified:  true,
+		PeerCN:         "clawker.proj.dev",
+		PeerThumbprint: thumb,
 	}
-	d.publishConnected(ctx, "ctr-prov", "dev", "proj", "10.1.1.5:7700", 3, prov)
+	d.publishConnected(ctx, "ctr-prov", "dev", "proj", "10.1.1.5:7700", 3, peer)
 
 	select {
 	case ev := <-sub.C:
@@ -371,7 +329,8 @@ func TestPublishConnected_DeliversProvenanceIntact(t *testing.T) {
 		assert.Equal(t, "proj", ev.Project)
 		assert.Equal(t, "10.1.1.5:7700", ev.Address)
 		assert.Equal(t, 3, ev.Attempts)
-		assert.Equal(t, prov, ev.Provenance, "Provenance must arrive intact through the bus")
+		assert.Equal(t, "clawker.proj.dev", ev.PeerCN)
+		assert.Equal(t, thumb, ev.PeerThumbprint)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for SessionConnected event on bus")
 	}
@@ -504,7 +463,7 @@ func mintLeafKeypair(t *testing.T, cn string, parent *x509.Certificate, parentKe
 // chained to a fresh CA, a real Overseer bus, and the supplied moby
 // fake + registry. The bus is started; caller cancels the returned
 // ctx to drain it.
-func newDialerForTest(t *testing.T, docker mobyclient.APIClient, agents agentregistry.Registry) (*Dialer, *overseer.Overseer, context.Context, context.CancelFunc) {
+func newDialerForTest(t *testing.T, docker mobyclient.APIClient, agents Registry) (*Dialer, *overseer.Overseer, context.Context, context.CancelFunc) {
 	t.Helper()
 
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
@@ -532,9 +491,9 @@ func TestDialAgent_DedupsConcurrentCallsForSameContainerID(t *testing.T) {
 	// the dedup key permanent (caught separately by the
 	// "redial-after-teardown" test below).
 	docker := &fakeMobyForDialer{}
-	regMock := &regmocks.RegistryMock{
-		LookupByContainerIDFunc: func(string) (*agentregistry.Entry, error) {
-			return nil, agentregistry.ErrUnknownAgent
+	regMock := &RegistryMock{
+		LookupByContainerIDFunc: func(string) (*Entry, error) {
+			return nil, ErrUnknownAgent
 		},
 	}
 	d, bus, ctx, cancel := newDialerForTest(t, docker, regMock)
@@ -570,9 +529,9 @@ func TestDialAgent_RedialsAfterTerminalFailureClearsDedup(t *testing.T) {
 	// runs. Otherwise a transient docker-daemon hiccup at CP boot
 	// would permanently mark the container un-redialable.
 	docker := &fakeMobyForDialer{}
-	regMock := &regmocks.RegistryMock{
-		LookupByContainerIDFunc: func(string) (*agentregistry.Entry, error) {
-			return nil, agentregistry.ErrUnknownAgent
+	regMock := &RegistryMock{
+		LookupByContainerIDFunc: func(string) (*Entry, error) {
+			return nil, ErrUnknownAgent
 		},
 	}
 	d, bus, ctx, cancel := newDialerForTest(t, docker, regMock)
@@ -615,9 +574,9 @@ func TestDialAgent_CtxCancelDuringResolveTearsDownCleanly(t *testing.T) {
 		// and returns outcomeCtxDone before this stub is invoked.
 		inspectErr: errors.New("should not reach inspect after ctx cancel"),
 	}
-	regMock := &regmocks.RegistryMock{
-		LookupByContainerIDFunc: func(string) (*agentregistry.Entry, error) {
-			return nil, agentregistry.ErrUnknownAgent
+	regMock := &RegistryMock{
+		LookupByContainerIDFunc: func(string) (*Entry, error) {
+			return nil, ErrUnknownAgent
 		},
 	}
 	d, bus, ctx, cancel := newDialerForTest(t, docker, regMock)

@@ -29,7 +29,7 @@ import (
 // Returns the running grpc.Server so main can GracefulStop on
 // shutdown. The underlying net.Listener is owned by the goroutine
 // that runs Serve and is closed by Stop / GracefulStop.
-func startClawkerdListener(boot *bootstrap, log *logger.Logger) (*grpc.Server, error) {
+func startClawkerdListener(boot *bootstrap, register *registerCoordinator, log *logger.Logger) (*grpc.Server, error) {
 	tlsCfg, err := buildListenerTLSConfig(boot.CertPEM, boot.KeyPEM, boot.CACertPEM)
 	if err != nil {
 		return nil, fmt.Errorf("listener TLS config: %w", err)
@@ -52,7 +52,7 @@ func startClawkerdListener(boot *bootstrap, log *logger.Logger) (*grpc.Server, e
 			PermitWithoutStream: true,
 		}),
 	)
-	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log})
+	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register})
 
 	go func() {
 		if serveErr := srv.Serve(lis); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
@@ -134,14 +134,21 @@ func pinPeerCNToCP(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
 // compatibility — any RPC added to the proto without a matching
 // method here returns codes.Unimplemented instead of failing
 // compilation.
+//
+// register is the CP-driven Register coordinator. It's shared across
+// every Session a clawkerd serves for its container's lifetime so a
+// CP retry that re-sends RegisterRequired short-circuits to the
+// recorded outcome instead of burning the (single-use) Hydra
+// assertion JWT a second time.
 type clawkerdServer struct {
 	clawkerdv1.UnimplementedClawkerdServiceServer
-	log *logger.Logger
+	log      *logger.Logger
+	register *registerCoordinator
 }
 
 // Session is the bidi command-dispatch channel from CP to clawkerd.
 // All per-stream state lives in runSession; this method just hands
 // off and lets the helper own the lifecycle.
 func (s *clawkerdServer) Session(stream clawkerdv1.ClawkerdService_SessionServer) error {
-	return runSession(stream, s.log)
+	return runSession(stream, s.log, s.register)
 }

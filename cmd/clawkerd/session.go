@@ -39,7 +39,12 @@ const sendQueueDepth = 64
 // receives Commands, spawns per-command worker goroutines, serializes
 // Response writes through a single sender goroutine, and tears
 // everything down on stream close or context cancel.
-func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger) error {
+//
+// register is the CP-driven Register coordinator (shared across
+// every Session for a single clawkerd process). RegisterRequired
+// Commands route to register.Run; the result rides back on a
+// RegisterDone Response correlated by command_id.
+func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger, register *registerCoordinator) error {
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
@@ -65,10 +70,11 @@ func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Log
 	}()
 
 	s := &session{
-		log:    log,
-		stream: stream,
-		sendCh: make(chan *clawkerdv1.Response, sendQueueDepth),
-		cmds:   make(map[string]*runningCommand),
+		log:      log,
+		stream:   stream,
+		sendCh:   make(chan *clawkerdv1.Response, sendQueueDepth),
+		cmds:     make(map[string]*runningCommand),
+		register: register,
 	}
 
 	// Sender goroutine: single writer to stream.Send (gRPC's
@@ -114,6 +120,48 @@ type session struct {
 
 	mu   sync.Mutex
 	cmds map[string]*runningCommand
+
+	// register coordinates the CP-driven Register handshake. Shared
+	// with the parent clawkerdServer so the (single-use) Hydra
+	// assertion is consumed at most once across all Sessions for
+	// this process.
+	register *registerCoordinator
+}
+
+// handleRegisterRequired drives the CP-triggered Register handshake.
+// Runs in a goroutine so the Session receive loop stays responsive
+// (the Hydra exchange + AgentService.Register chain takes seconds).
+// The result rides back on a RegisterDone Response correlated by
+// command_id.
+//
+// If the registerCoordinator is nil (test wiring without a coordinator),
+// reply with ok=false so the CP-side dialer doesn't hang waiting for
+// a Response that will never come.
+func (s *session) handleRegisterRequired(ctx context.Context, commandID string) {
+	if s.register == nil {
+		s.send(ctx, &clawkerdv1.Response{
+			CommandId: commandID,
+			Payload: &clawkerdv1.Response_RegisterDone{
+				RegisterDone: &clawkerdv1.RegisterDone{
+					Ok:    false,
+					Error: "clawkerd has no register coordinator wired",
+				},
+			},
+		})
+		return
+	}
+	go func() {
+		ok, errMsg := s.register.Run(ctx, s.log)
+		s.send(ctx, &clawkerdv1.Response{
+			CommandId: commandID,
+			Payload: &clawkerdv1.Response_RegisterDone{
+				RegisterDone: &clawkerdv1.RegisterDone{
+					Ok:    ok,
+					Error: errMsg,
+				},
+			},
+		})
+	}()
 }
 
 // runningCommand tracks one in-flight ShellCommand for routing
@@ -250,6 +298,14 @@ func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 			return
 		}
 		s.routeSignal(ctx, cmd.CommandId, p.Signal)
+	case *clawkerdv1.Command_RegisterRequired:
+		if cmd.CommandId == "" {
+			s.send(ctx, errResponse("",
+				clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+				"command_id required"))
+			return
+		}
+		s.handleRegisterRequired(ctx, cmd.CommandId)
 	default:
 		// Unknown payload is the canonical CP/clawkerd version-skew
 		// signal — the proto added a Command variant that this clawkerd

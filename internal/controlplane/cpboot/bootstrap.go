@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -21,7 +20,6 @@ import (
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -137,18 +135,9 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("ensure auth material: %w", err)
 	}
 
-	// Ensure the agentregistry sqlite DB exists with schema applied.
-	// CP opens this DB read-only; without this step a fresh install
-	// running `clawker controlplane up` before any `clawker run` would
-	// fail at CP boot with a missing-file error from the RO open.
-	cpDataDir, err := consts.ControlPlaneSubdir()
-	if err != nil {
-		return fmt.Errorf("controlplane: resolve data dir: %w", err)
-	}
-	if err := agentregistry.EnsureSchema(filepath.Join(cpDataDir, consts.ControlPlaneDBFile), log); err != nil {
-		return fmt.Errorf("controlplane: ensure registry schema: %w", err)
-	}
-
+	// Note: agentregistry schema apply moved into the CP daemon
+	// (cmd/clawker-cp/main.go Step 8) now that CP is the sole sqlite
+	// writer. Host-side EnsureSchema is no longer needed.
 	if err := ensureCPImageFn(ctx, dc, log); err != nil {
 		return fmt.Errorf("controlplane: %w", err)
 	}

@@ -10,11 +10,53 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net/url"
 	"os"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/consts"
 )
+
+// ContainerSANScheme is the URI SAN scheme used to bind a leaf cert to
+// the docker container_id it was minted for. The Register handler
+// reads this SAN at handler entry and rejects any cert presenting a
+// container_id that doesn't match the cert's structural binding.
+//
+// Example: urn:clawker:container:abc123def456...
+const ContainerSANScheme = "urn:clawker:container:"
+
+// BuildContainerSAN composes the URI SAN for a given container_id. The
+// returned *url.URL embeds in x509.Certificate.URIs.
+func BuildContainerSAN(containerID string) (*url.URL, error) {
+	if containerID == "" {
+		return nil, fmt.Errorf("container id required")
+	}
+	u, err := url.Parse(ContainerSANScheme + containerID)
+	if err != nil {
+		return nil, fmt.Errorf("build container SAN: %w", err)
+	}
+	return u, nil
+}
+
+// ContainerIDFromCert extracts the container_id encoded as a URI SAN
+// of the form urn:clawker:container:<id>. Returns ("", false) when no
+// such SAN is present so callers can branch on a clean missing-binding
+// signal rather than parsing strings.
+func ContainerIDFromCert(cert *x509.Certificate) (string, bool) {
+	if cert == nil {
+		return "", false
+	}
+	for _, u := range cert.URIs {
+		if u == nil {
+			continue
+		}
+		s := u.String()
+		if len(s) > len(ContainerSANScheme) && s[:len(ContainerSANScheme)] == ContainerSANScheme {
+			return s[len(ContainerSANScheme):], true
+		}
+	}
+	return "", false
+}
 
 // CanonicalAgentCN composes the canonical agent identity used as the
 // cert's CN and as the agentregistry row's pre-computed canonical_cn
@@ -76,12 +118,21 @@ func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 // shape so the agent handler's CN cross-check has a single equality to
 // enforce.
 //
+// containerID is the docker container_id this cert is being minted for.
+// MintAgentCert embeds it as a URI SAN (urn:clawker:container:<id>) so
+// the CP-side Register handler can read the binding directly off the
+// peer cert at handler entry. A leaked cert presented for a different
+// container_id is rejected because the SAN won't match the docker
+// container the peer IP resolves to.
+//
 // The 24h lifetime is intentional — thumbprint pinning at registry
 // lookup time makes longer-lived certs safe, but a tight ceiling caps
-// the blast radius if a leaf leaks. The CLI writes the thumbprint into
-// the agentregistry row at container CREATE time, and CP-side lookups
-// keyed by container_id reject any peer cert whose SHA-256(cert.Raw)
-// doesn't match.
+// the blast radius if a leaf leaks. CP captures the thumbprint at
+// Register handler entry from the live mTLS peer (cert.Raw → SHA-256)
+// and writes it into the agentregistry row alongside container_id;
+// subsequent Sessions presenting a different cert for the same
+// container_id are rejected as untrusted.
+//
 // Returns *AgentCert (nil on error) so a caller that ignores the error
 // cannot accidentally log the redacted zero-value as a successful cert.
 //
@@ -90,9 +141,12 @@ func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 // canonical-form / dot-in-name / charset checks have already run. A
 // raw-string caller now produces a compile error instead of a silently-
 // malformed cert subject downstream.
-func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName) (*AgentCert, error) {
+func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName, containerID string) (*AgentCert, error) {
 	if agent.IsZero() {
 		return nil, fmt.Errorf("agent name required")
+	}
+	if containerID == "" {
+		return nil, fmt.Errorf("container id required")
 	}
 
 	caCert, caKey, err := loadCAFrom(caCertPath, caKeyPath)
@@ -108,6 +162,11 @@ func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent Agen
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return nil, fmt.Errorf("generate serial: %w", err)
+	}
+
+	containerSAN, err := BuildContainerSAN(containerID)
+	if err != nil {
+		return nil, fmt.Errorf("build container SAN: %w", err)
 	}
 
 	now := time.Now().UTC()
@@ -128,6 +187,9 @@ func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent Agen
 		// ExtKeyUsageServerAuth — without ServerAuth here, every
 		// CP→clawkerd dial fails with "incompatible key usage".
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		// URI SAN binds this cert to its container_id. Register
+		// handler reads it via auth.ContainerIDFromCert.
+		URIs: []*url.URL{containerSAN},
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &leafKey.PublicKey, caKey)

@@ -204,7 +204,7 @@ func (o *Overseer) run(ctx context.Context) {
 				req.statsProbe <- statsProbeResp{
 					subscribers:     total,
 					containersKnown: len(state.Containers),
-					sessionsKnown:   len(state.AgentSessions),
+					sessionsKnown:   len(state.Agents),
 				}
 				continue
 			}

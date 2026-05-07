@@ -8,17 +8,17 @@ List agents currently registered with the control plane
 
 ### Synopsis
 
-Snapshot every agent the CLI has registered with the control plane.
+Snapshot every agent currently registered with the control plane.
 
-The CLI is the sole writer of the agent registry — entries are written
-at container creation time alongside auth material delivery. This
-command reads the registry sqlite database directly off the host
-filesystem and works whether or not the control plane is running.
+The control plane is the sole writer of the agent registry — entries
+are written server-side at AgentService.Register handler entry when CP
+captures the live mTLS peer's cert thumbprint. This command queries
+AdminService.ListAgents over mTLS gRPC to retrieve the snapshot.
 
-Identity is channel-bound: the certificate thumbprint shown here is the
-SHA-256 over the agent's mTLS leaf cert. Agents are uniquely identified
-by the composite (project, agent_name) — agents with the same short
-name in different projects appear as separate rows.
+Identity is channel-bound: the certificate thumbprint shown here is
+the SHA-256 over the agent's mTLS leaf cert. Agents are uniquely
+identified by the composite (project, agent_name) — agents with the
+same short name in different projects appear as separate rows.
 
 ```
 clawker controlplane agents [flags]

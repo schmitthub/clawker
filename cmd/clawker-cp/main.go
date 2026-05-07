@@ -40,8 +40,6 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
 	"github.com/schmitthub/clawker/internal/controlplane/agent"
-	"github.com/schmitthub/clawker/internal/controlplane/agentdial"
-	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
@@ -389,38 +387,28 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		ListAgents: func(ctx context.Context) ([]string, error) { return listAgentIDs(ctx, listAgentsOpts{}) },
 	})
 
-	// Agent registry is needed BOTH by the AgentService handler (added
-	// below on the agent listener) and by AdminService.ListAgents on the
-	// admin listener — construct it here so a single instance is shared.
-	// Backed by sqlite at consts.CPControlPlaneDBPath; the parent dir is
-	// bind-mounted RW from the host, so the DB survives CP container
+	// Agent registry is needed BOTH by the Register handler on the
+	// agent listener and by AdminService.ListAgents on the admin
+	// listener — construct it here so a single instance is shared.
+	// Backed by sqlite at consts.CPControlPlaneDBPath; the parent dir
+	// is bind-mounted RW from the host, so the DB survives CP container
 	// recreation and reloads on next boot.
-	// CP opens the registry in writer mode. The CLI is the authoritative
-	// creator of rows (one per `clawker run`/`clawker start`), but the
-	// CP owns eviction: it reaps orphan rows on startup against live
-	// docker state and evicts on container destroy via dockerevents.
-	// sqlite serializes the two writers via its file lock; busy_timeout
-	// absorbs transient contention.
-	agentReg, err := agentregistry.NewSQLiteWriter(consts.CPControlPlaneDBPath, log.With("component", "agentregistry"))
-	if err != nil {
-		return fmt.Errorf("step 8 (agentregistry sqlite): %w", err)
+	//
+	// CP is the SOLE sqlite writer: it captures peer cert thumbprints
+	// at Register handler entry and writes the row, evicts on
+	// container/destroy via dockerevents, and reaps orphan rows at
+	// startup. The host CLI never opens this DB — that's what fixes
+	// the WAL coherence bug across the macOS bind-mount boundary.
+	//
+	// EnsureSchema runs first so a fresh CP container against an empty
+	// data dir comes up with the schema applied before NewSQLiteWriter
+	// queries SELECT COUNT (which would otherwise see "no such table").
+	if err := agent.EnsureSchema(consts.CPControlPlaneDBPath, log.With("component", "agent")); err != nil {
+		return fmt.Errorf("step 8 (agent ensure schema): %w", err)
 	}
-
-	// Startup reap: the CP was down while containers may have been
-	// `docker rm`'d. Sweep the registry against the current set of
-	// purpose=agent containers (running + stopped + exited) and evict
-	// any row whose container is gone. A failed list is a transient
-	// docker daemon issue — log and proceed; the dockerevents
-	// subscription will catch up on the next destroy event.
-	if _, err := agentregistry.Reap(
-		ctx,
-		agentReg,
-		func(ctx context.Context) ([]string, error) {
-			return listAgentIDs(ctx, listAgentsOpts{All: true})
-		},
-		log.With("component", "agentregistry"),
-	); err != nil {
-		log.Warn().Err(err).Msg("agentregistry: startup reap failed; continuing")
+	agentReg, err := agent.NewSQLiteWriter(consts.CPControlPlaneDBPath, log.With("component", "agent"))
+	if err != nil {
+		return fmt.Errorf("step 8 (agent sqlite): %w", err)
 	}
 
 	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, log))
@@ -462,10 +450,17 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("step 8 (agent grpc listen): %w", err)
 	}
 
-	// AgentService proto is empty in this branch. The listener stays
-	// bound to clawker-net so a future inbound agent RPC can land
-	// without re-wiring the listener or its interceptor chain.
-	agentv1.RegisterAgentServiceServer(agentServer, &agentv1.UnimplementedAgentServiceServer{})
+	// Register the AgentService.Register handler. Captures the live
+	// mTLS peer's cert thumbprint at handler entry, reads
+	// container_id from the cert URI SAN, cross-checks against the
+	// docker container's labels + clawker-net IP, and writes the
+	// agentregistry row. The handler is the SOLE writer of the
+	// agentregistry sqlite DB.
+	agentv1.RegisterAgentServiceServer(agentServer, agent.NewHandler(
+		agentReg,
+		agent.NewMobyContainerInspector(dockerCli.APIClient),
+		log.With("component", "agent-register"),
+	))
 
 	// Cap covers gRPC admin, gRPC agent, healthz, and the dockerevents
 	// feeder. Buffered so any goroutine that fails before main reaches
@@ -524,7 +519,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		PublishBufferSize: 2048,
 		SubscriberBuffer:  256,
 		// PublishHook emits one structured Info line per published
-		// event from the bus loop. Producers (dockerevents, agentdial)
+		// event from the bus loop. Producers (dockerevents, agent)
 		// no longer pair manual log calls with each Publish — the
 		// hook is the single canonical source of bus-event log lines.
 		PublishHook: overseer.NewLoggerHook(busLog),
@@ -553,10 +548,13 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	feederCtx, feederCancel := context.WithCancel(watcherCtx)
 	defer feederCancel()
 
-	// Hook agent registry to typed ContainerRemoved events — evicts
-	// registered agents when their containers are destroyed.
-	cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, bus, log.With("component", "agentregistry"))
-	defer cancelAgentSub()
+	// agentCleanup is wired below once the dialer is constructed —
+	// agent.Start is the single entry point that consolidates startup
+	// reap, container/destroy → registry evict, and container/start →
+	// dial agent into one bundle. Initialized to a no-op so deferred
+	// cleanup is safe even if Start fails before assignment.
+	agentCleanup := func() {}
+	defer func() { agentCleanup() }()
 
 	feederDone := make(chan struct{})
 	go func() {
@@ -695,8 +693,8 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// containers, individual dial) are logged and the rest of CP
 	// proceeds — a misconfigured agent or a flapping clawkerd cannot
 	// hold the control plane down.
-	dialer, err := agentdial.New(
-		log.With("component", "agentdial"),
+	dialer, err := agent.New(
+		log.With("component", "agent"),
 		dockerCli.APIClient,
 		bus,
 		agentReg,
@@ -705,17 +703,29 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		caCertPool,
 	)
 	if err != nil {
-		log.Error().Err(err).Str("event", "agentdial_init_failed").Msg("agentdial unavailable; CP→clawkerd dispatch disabled")
+		log.Error().Err(err).Str("event", "agentdial_init_failed").Msg("agent unavailable; CP→clawkerd dispatch disabled")
 		dialer = nil
 	}
 	if dialer != nil {
-		// Runtime path: dockerevents publishes typed ContainerStarted
-		// events on the bus; agentdial.Subscribe filters to
-		// purpose=agent and dials. Same DialAgent function the initial
-		// poll calls; dedup map on Dialer prevents the two paths from
-		// double-dialing the same containerID.
-		cancelDialSub := agentdial.Subscribe(watcherCtx, dialer, bus, log.With("component", "agentdial"))
-		defer cancelDialSub()
+		// Single agent startup procedure: reap orphan registry rows
+		// against live docker, subscribe to container/destroy for
+		// registry evict, subscribe to container/start|restart|unpause
+		// for CP→clawkerd dial. Replaces the previously fragmented
+		// Reap + two Subscribe wirings.
+		cleanup, err := agent.Start(watcherCtx, agent.StartDeps{
+			Registry: agentReg,
+			DockerLister: func(ctx context.Context) ([]string, error) {
+				return listAgentIDs(ctx, listAgentsOpts{All: true})
+			},
+			Dialer: dialer,
+			Bus:    bus,
+			Log:    log.With("component", "agent"),
+		})
+		if err != nil {
+			log.Error().Err(err).Msg("agent.Start failed; agent-axis subscriptions disabled")
+		} else {
+			agentCleanup = cleanup
+		}
 
 		// Initial path: dial every already-running agent container at
 		// CP boot. Runs in its own goroutine — must NOT block CP

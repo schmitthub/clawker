@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
-	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -18,10 +18,14 @@ import (
 // RPC methods that are EXEMPT from the identity-required default. Only
 // bootstrap RPCs that authenticate themselves belong here.
 //
-// The map is currently empty — AgentService has no inbound RPCs in
-// this branch (Register was retired). Future inbound RPCs that
-// authenticate themselves (rather than relying on the registry-lookup
-// default) add their full method path here.
+// Register is exempt because the registry row keyed by the peer cert
+// thumbprint does not exist yet — the entire point of the call is to
+// CREATE that row. Going through the identity interceptor would
+// reject every legitimate Register call with PermissionDenied. The
+// Register handler does its own peer-cert capture and cross-checks
+// (CN + container_id SAN + peer IP + container labels) so this
+// opt-out doesn't strip security; it just relocates the gate from
+// the interceptor to the handler.
 //
 // The shape mirrors AgentMethodScopes(): a build-time test walks the
 // AgentService_ServiceDesc and asserts every method has either an
@@ -30,11 +34,13 @@ import (
 // test, not the runtime — exactly the fail-secure posture the package
 // aims for.
 func IdentityOptedOutMethods() map[string]bool {
-	return map[string]bool{}
+	return map[string]bool{
+		"/" + agentv1.ServiceName + "/Register": true,
+	}
 }
 
 // entryCtxKey is the unexported key under which IdentityInterceptor
-// attaches the resolved *agentregistry.Entry. Using an unexported
+// attaches the resolved *Entry. Using an unexported
 // struct type guarantees no other package (and no caller code) can
 // forge or accidentally collide with the registry-bound identity —
 // the only path to read it back is EntryFromContext below.
@@ -49,9 +55,9 @@ type entryCtxKey struct{}
 // Panics on a nil entry. A typed-nil pointer survives `(*Entry)(nil)`
 // type assertions on the way back out of EntryFromContext as
 // `(nil, true)` — a silent identity vacuum that downstream handlers
-// would dereference. Mirrors agentregistry.Add's panic-on-misuse
+// would dereference. Mirrors agent.Add's panic-on-misuse
 // posture so the wiring bug surfaces during development.
-func WithEntry(ctx context.Context, entry *agentregistry.Entry) context.Context {
+func WithEntry(ctx context.Context, entry *Entry) context.Context {
 	if entry == nil {
 		panic("agent: WithEntry called with nil entry")
 	}
@@ -65,8 +71,8 @@ func WithEntry(ctx context.Context, entry *agentregistry.Entry) context.Context 
 // nil context values: a nil entry returns ok=false even if the type
 // assertion technically succeeds, so handlers can treat ok=true as
 // "non-nil entry available".
-func EntryFromContext(ctx context.Context) (*agentregistry.Entry, bool) {
-	entry, ok := ctx.Value(entryCtxKey{}).(*agentregistry.Entry)
+func EntryFromContext(ctx context.Context) (*Entry, bool) {
+	entry, ok := ctx.Value(entryCtxKey{}).(*Entry)
 	return entry, ok && entry != nil
 }
 
@@ -85,7 +91,7 @@ func EntryFromContext(ctx context.Context) (*agentregistry.Entry, bool) {
 // Every rejection returns codes.PermissionDenied with the same generic
 // envelope ("registration rejected") as Connect's other rejections —
 // attackers must not learn which check failed.
-func IdentityInterceptor(reg agentregistry.Registry, optedOut map[string]bool, log *logger.Logger) (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
+func IdentityInterceptor(reg Registry, optedOut map[string]bool, log *logger.Logger) (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
 	if reg == nil {
 		panic("agent: identity interceptor requires non-nil registry")
 	}
@@ -148,7 +154,7 @@ func IdentityInterceptor(reg agentregistry.Registry, optedOut map[string]bool, l
 			// both — attackers must not learn which path failed — but
 			// the log distinction guides the operator to the right
 			// root cause.
-			if errors.Is(err, agentregistry.ErrUnknownAgent) {
+			if errors.Is(err, ErrUnknownAgent) {
 				log.Warn().Str("method", method).Msg("agent identity: thumbprint not registered")
 			} else {
 				log.Error().Err(err).Str("method", method).Msg("agent identity: registry lookup failed")

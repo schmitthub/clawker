@@ -4,19 +4,60 @@ package clawker.agent.v1;
 
 option go_package = "github.com/schmitthub/clawker/api/agent/v1";
 
-// AgentService is the (currently empty) gRPC surface for per-agent
-// inbound RPCs to the control plane. The Register handshake was
-// retired alongside agentslots/AnnounceAgent — agent identity is now
-// CLI-written into agentregistry at container-create time and
-// re-resolved server-side when CP dials the running clawkerd's
-// ClawkerdService listener.
+// AgentService is the inbound gRPC surface clawkerd calls on the CP's
+// clawker-net agent listener. Today the only RPC is Register, the
+// one-time-per-container provenance handshake CP triggers via a
+// RegisterRequired Command on the existing CP→clawkerd Session stream.
 //
-// AgentService is preserved as the future-extension scaffold for any
-// inbound clawkerd-→-CP RPC that the asymmetric-trust model still
-// permits (e.g. agent-emitted telemetry).
+// Trust model:
+//   - The CLI mints the agent's leaf cert at container-create time,
+//     signed by the CLI CA. The cert's CN is the canonical
+//     clawker.<project>.<agent> identity. The cert carries a URI SAN of
+//     the form `urn:clawker:container:<id>` binding it to the docker
+//     container_id it was minted for.
+//   - clawkerd presents that cert in mTLS when calling Register. CP
+//     captures the peer thumbprint (SHA-256 over cert.Raw) at handler
+//     entry — the thumbprint is a CAPTURE, not a CLI-pre-staged
+//     attestation. CP writes the (thumbprint, container_id) row.
+//   - The Register call is gated by a Hydra-issued bearer token the
+//     agent obtains by exchanging a single-use CLI-signed
+//     client_assertion JWT. Once the assertion is consumed, Register
+//     cannot be re-attempted for that container — registration is
+//     one-time per container creation.
 //
-// Transport (when populated): mTLS over TCP on the CP's clawker-net
-// agent listener. Server requires a client cert chained to the CLI CA;
-// authorization via Hydra-issued bearer tokens scoped to the
-// `clawker-agent` OAuth2 client.
-service AgentService {}
+// Transport: mTLS over TCP on the CP's clawker-net agent listener.
+// Server requires a client cert chained to the CLI CA; authorization
+// via Hydra-issued bearer tokens scoped to the `clawker-agent` OAuth2
+// client (scope `agent:self:register`).
+service AgentService {
+  // Register binds (peer cert thumbprint, container_id) into the CP's
+  // agentregistry. Container_id is read from the peer cert's URI SAN;
+  // the request body carries only the human-readable identity fields
+  // for cross-checking against the cert's CN and the docker
+  // container's labels.
+  //
+  // Welcome is empty — success is signaled by the call returning
+  // without error. Failure modes return PermissionDenied (cert/CN
+  // mismatch, peer-IP mismatch, label mismatch, thumbprint replay) or
+  // InvalidArgument (malformed identity fields).
+  rpc Register(RegisterRequest) returns (Welcome);
+}
+
+// RegisterRequest carries the human-readable identity claim. The
+// agent_name and project are cross-checked against:
+//   - the peer cert's canonical CN (clawker.<project>.<agent>)
+//   - the docker container's dev.clawker.agent / dev.clawker.project
+//     labels (resolved via the container_id read from the cert URI SAN)
+//
+// container_id is NOT a request field — the handler reads it from the
+// cert's URI SAN to defend against a leaked cert being presented for
+// the wrong container. The cert's binding to container_id is
+// structural, not request-claimed.
+message RegisterRequest {
+  string agent_name = 1;
+  string project = 2;
+}
+
+// Welcome is the success response. Empty — the act of returning
+// without error is the signal.
+message Welcome {}

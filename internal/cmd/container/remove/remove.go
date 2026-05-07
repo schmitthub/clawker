@@ -7,7 +7,7 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
+	"github.com/schmitthub/clawker/internal/controlplane/agent"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -185,7 +185,7 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 		}
 	}
 
-	// Drop the agentregistry row keyed by container_id. Best-effort:
+	// Drop the agent row keyed by container_id. Best-effort:
 	// if the DB doesn't yet exist (fresh install with no managed
 	// container) or the eviction fails, the start path's evict-on-die
 	// dockerevents subscription cleans up later. Container removal is
@@ -193,12 +193,12 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 	// must not surface as remove failures.
 	registryDBPath, pathErr := consts.ControlPlaneDBPath()
 	if pathErr != nil {
-		log.Debug().Err(pathErr).Msg("agentregistry: skipping evict on remove (db path unresolved)")
+		log.Debug().Err(pathErr).Msg("agent: skipping evict on remove (db path unresolved)")
 		return nil
 	}
-	reg, openErr := agentregistry.NewSQLiteWriter(registryDBPath, log)
+	reg, openErr := agent.NewSQLiteWriter(registryDBPath, log)
 	if openErr != nil {
-		log.Debug().Err(openErr).Msg("agentregistry: skipping evict on remove (db open failed)")
+		log.Debug().Err(openErr).Msg("agent: skipping evict on remove (db open failed)")
 		return nil
 	}
 	defer func() {
@@ -211,7 +211,7 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 		// registry hiccup must not surface as a remove failure. Log at
 		// debug; the dockerevents subscription / startup reap heals
 		// the orphan row later.
-		log.Debug().Err(err).Str("container_id", container.ID).Msg("agentregistry: evict on remove failed")
+		log.Debug().Err(err).Str("container_id", container.ID).Msg("agent: evict on remove failed")
 	}
 	return nil
 }

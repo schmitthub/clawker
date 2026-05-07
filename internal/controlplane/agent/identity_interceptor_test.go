@@ -18,8 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
-	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
-	regmocks "github.com/schmitthub/clawker/internal/controlplane/agentregistry/mocks"
+
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -59,7 +58,7 @@ func fixturePeerCtx(certRaw []byte) context.Context {
 func TestIdentityInterceptor_Unary_RegistryHit_AttachesEntry(t *testing.T) {
 	certRaw := []byte("cert-der")
 	wantThumb := sha256.Sum256(certRaw)
-	wantEntry := &agentregistry.Entry{
+	wantEntry := &Entry{
 		AgentName:    "alpha",
 		Project:      "p",
 		ContainerID:  "ctr-xyz",
@@ -71,8 +70,8 @@ func TestIdentityInterceptor_Unary_RegistryHit_AttachesEntry(t *testing.T) {
 		lookupArg [sha256.Size]byte
 		gotCN     string
 	)
-	reg := &regmocks.RegistryMock{
-		LookupFunc: func(thumbprint [sha256.Size]byte, cn string) (*agentregistry.Entry, error) {
+	reg := &RegistryMock{
+		LookupFunc: func(thumbprint [sha256.Size]byte, cn string) (*Entry, error) {
 			lookupArg = thumbprint
 			gotCN = cn
 			return wantEntry, nil
@@ -80,7 +79,7 @@ func TestIdentityInterceptor_Unary_RegistryHit_AttachesEntry(t *testing.T) {
 	}
 	unary, _ := IdentityInterceptor(reg, IdentityOptedOutMethods(), nil)
 
-	var gotEntry *agentregistry.Entry
+	var gotEntry *Entry
 	_, err := unary(
 		fixturePeerCtx(certRaw),
 		"req",
@@ -98,9 +97,9 @@ func TestIdentityInterceptor_Unary_RegistryHit_AttachesEntry(t *testing.T) {
 }
 
 func TestIdentityInterceptor_Unary_LookupMiss_PermissionDenied(t *testing.T) {
-	reg := &regmocks.RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte, _ string) (*agentregistry.Entry, error) {
-			return nil, agentregistry.ErrUnknownAgent
+	reg := &RegistryMock{
+		LookupFunc: func(_ [sha256.Size]byte, _ string) (*Entry, error) {
+			return nil, ErrUnknownAgent
 		},
 	}
 	unary, _ := IdentityInterceptor(reg, IdentityOptedOutMethods(), nil)
@@ -119,8 +118,8 @@ func TestIdentityInterceptor_Unary_LookupMiss_PermissionDenied(t *testing.T) {
 }
 
 func TestIdentityInterceptor_Unary_NoPeerCert_PermissionDenied(t *testing.T) {
-	reg := &regmocks.RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte, _ string) (*agentregistry.Entry, error) {
+	reg := &RegistryMock{
+		LookupFunc: func(_ [sha256.Size]byte, _ string) (*Entry, error) {
 			t.Fatal("Lookup must NOT be called when peer info is missing")
 			return nil, nil
 		},
@@ -158,22 +157,22 @@ func (s *streamFake) Context() context.Context { return s.ctx }
 func TestIdentityInterceptor_Stream_RegistryHit_WrappedContextCarriesEntry(t *testing.T) {
 	certRaw := []byte("cert-der-stream")
 	wantThumb := sha256.Sum256(certRaw)
-	wantEntry := &agentregistry.Entry{
+	wantEntry := &Entry{
 		AgentName:    "beta",
 		Project:      "p",
 		ContainerID:  "ctr-stream",
 		Thumbprint:   wantThumb,
 		RegisteredAt: time.Unix(200, 0),
 	}
-	reg := &regmocks.RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte, _ string) (*agentregistry.Entry, error) {
+	reg := &RegistryMock{
+		LookupFunc: func(_ [sha256.Size]byte, _ string) (*Entry, error) {
 			return wantEntry, nil
 		},
 	}
 	_, stream := IdentityInterceptor(reg, IdentityOptedOutMethods(), nil)
 
 	ss := &streamFake{ctx: fixturePeerCtx(certRaw)}
-	var gotEntry *agentregistry.Entry
+	var gotEntry *Entry
 	err := stream(
 		nil,
 		ss,
@@ -189,8 +188,8 @@ func TestIdentityInterceptor_Stream_RegistryHit_WrappedContextCarriesEntry(t *te
 }
 
 func TestIdentityInterceptor_Stream_NoPeerCert_PermissionDenied(t *testing.T) {
-	reg := &regmocks.RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte, _ string) (*agentregistry.Entry, error) {
+	reg := &RegistryMock{
+		LookupFunc: func(_ [sha256.Size]byte, _ string) (*Entry, error) {
 			t.Fatal("Lookup must NOT be called when peer info is missing")
 			return nil, nil
 		},
@@ -227,7 +226,7 @@ func TestWithEntry_NilPanics(t *testing.T) {
 // rename surfaces during startup instead of silently locking a real
 // method out.
 func TestIdentityInterceptor_StaleOptedOutKey_Panics(t *testing.T) {
-	reg := agentregistry.NewRegistry(logger.Nop())
+	reg := NewRegistry(logger.Nop())
 	stale := map[string]bool{
 		"/clawker.agent.v1.AgentService/NotARealMethod": true,
 	}
