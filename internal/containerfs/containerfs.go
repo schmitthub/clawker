@@ -52,7 +52,10 @@ func ResolveHostConfigDir() (string, error) {
 // ResolveHostProjectsDir returns <hostConfigDir>/projects when the directory
 // exists on the host. The bool result is false when the dir does not exist —
 // callers should skip the bind mount in that case rather than treating it as
-// an error. Never creates the directory; that is Claude Code's responsibility.
+// an error. Errors from ResolveHostConfigDir (e.g. CLAUDE_CONFIG_DIR pointing
+// at a missing path) propagate verbatim. Uses os.Stat, so a symlink at the
+// path resolves to its target. Never creates the directory; that is Claude
+// Code's responsibility.
 func ResolveHostProjectsDir() (string, bool, error) {
 	hostConfigDir, err := ResolveHostConfigDir()
 	if err != nil {
@@ -60,14 +63,13 @@ func ResolveHostProjectsDir() (string, bool, error) {
 	}
 	dir := filepath.Join(hostConfigDir, "projects")
 	info, err := os.Stat(dir)
-	if errors.Is(err, fs.ErrNotExist) {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
 		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("stat host projects dir: %w", err)
-	}
-	if !info.IsDir() {
-		return "", false, fmt.Errorf("%s exists but is not a directory", dir)
+	case err != nil:
+		return "", false, fmt.Errorf("stat %s: %w", dir, err)
+	case !info.IsDir():
+		return "", false, fmt.Errorf("%s exists but is not a directory (mode=%s)", dir, info.Mode())
 	}
 	return dir, true, nil
 }

@@ -55,6 +55,12 @@ type SetupMountsResult struct {
 	WorkspaceVolumeName string
 	// ContainerPath is the resolved container-side workspace mount path.
 	ContainerPath string
+	// Warnings carries non-fatal user-facing diagnostics produced during mount
+	// setup (e.g. a configured ~/.claude/projects bind mount could not be
+	// resolved, or host UID will not be able to write to host-owned files).
+	// Callers are expected to surface these on stderr; they are NOT logged
+	// by SetupMounts beyond debug-level structured events.
+	Warnings []string
 }
 
 // SetupMounts prepares workspace mounts for container creation.
@@ -172,22 +178,39 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 
 	// Bind mount host ~/.claude/projects/ on top of the config volume so
 	// auto-memory and session jsonls are shared across container runs.
-	// Skipped silently when the host dir does not exist — never create
-	// Claude Code state on its behalf.
+	// Missing host dir is the expected first-run case (silent skip);
+	// resolution errors and UID mismatches surface to the user via Warnings
+	// so an opted-in feature does not fail invisibly.
+	var mountWarnings []string
 	if project.Agent.ClaudeCode.MountProjectsEnabled() {
 		src, ok, resolveErr := containerfs.ResolveHostProjectsDir()
-		switch {
-		case resolveErr != nil:
-			cfg.Log.Debug().Err(resolveErr).Msg("skip ~/.claude/projects bind: resolve failed")
-		case !ok:
-			cfg.Log.Debug().Msg("skip ~/.claude/projects bind: host dir does not exist")
-		default:
-			mounts = append(mounts, GetClaudeProjectsMount(src))
+		if resolveErr != nil {
+			cfg.Log.Warn().Err(resolveErr).Msg("skip ~/.claude/projects bind: resolve failed")
+			mountWarnings = append(mountWarnings,
+				fmt.Sprintf("mount_projects is enabled but the host projects dir could not be resolved: %v. "+
+					"Container session history and auto-memory will not be shared across runs. "+
+					"Fix: ensure $CLAUDE_CONFIG_DIR or ~/.claude/ is readable, or set agent.claude_code.mount_projects: false to silence.",
+					resolveErr))
+		} else if !ok {
+			cfg.Log.Debug().Msg("skip ~/.claude/projects bind: host dir does not exist (Claude Code has not created it yet)")
+		} else {
+			projectsMount, err := GetClaudeProjectsMount(src)
+			if err != nil {
+				return nil, fmt.Errorf("build claude projects mount: %w", err)
+			}
+			mounts = append(mounts, projectsMount)
 			if runtime.GOOS == "linux" && os.Getuid() != consts.ContainerUID {
 				cfg.Log.Warn().
 					Int("host_uid", os.Getuid()).
 					Int("container_uid", consts.ContainerUID).
-					Msg("~/.claude/projects bind mount may fail to write: host UID does not match container claude user (1001)")
+					Msg("~/.claude/projects bind mount may fail to write: host UID does not match container claude user")
+				mountWarnings = append(mountWarnings,
+					fmt.Sprintf("host UID %d does not match container claude user (UID %d). "+
+						"Writes from the container to ~/.claude/projects/ may fail with EACCES; "+
+						"session history and auto-memory will not persist across runs. "+
+						"Workarounds: chown -R %d:%d ~/.claude/projects, run with --user, or "+
+						"set agent.claude_code.mount_projects: false.",
+						os.Getuid(), consts.ContainerUID, consts.ContainerUID, consts.ContainerUID))
 			}
 			cfg.Log.Debug().Str("src", src).Msg("mounted host ~/.claude/projects/")
 		}
@@ -212,6 +235,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		ConfigVolumeResult:  configResult,
 		WorkspaceVolumeName: wsVolumeName,
 		ContainerPath:       containerPath,
+		Warnings:            mountWarnings,
 	}, nil
 }
 

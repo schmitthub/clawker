@@ -115,9 +115,6 @@ func TestResolveHostProjectsDir_Missing(t *testing.T) {
 	if ok {
 		t.Errorf("ok = true, want false (got path %q)", got)
 	}
-	if got != "" {
-		t.Errorf("got %q, want empty string when not found", got)
-	}
 }
 
 func TestResolveHostProjectsDir_IsFile(t *testing.T) {

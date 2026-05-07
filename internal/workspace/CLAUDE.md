@@ -59,20 +59,26 @@ type SetupMountsConfig struct {
 type SetupMountsResult struct {
     Mounts              []mount.Mount
     ConfigVolumeResult  ConfigVolumeResult
-    WorkspaceVolumeName string  // Non-empty only for snapshot mode when volume was newly created. Used for cleanup on init failure.
-    ContainerPath       string  // Resolved container-side workspace mount path
+    WorkspaceVolumeName string    // Non-empty only for snapshot mode when volume was newly created. Used for cleanup on init failure.
+    ContainerPath       string    // Resolved container-side workspace mount path
+    Warnings            []string  // Non-fatal user-facing diagnostics; callers must surface to stderr
 }
 
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)
 func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error)
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error)
 func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
-func GetClaudeProjectsMount(hostProjectsDir string) mount.Mount  // bind, RW; overlays config volume
+func GetClaudeProjectsMount(hostProjectsDir string) (mount.Mount, error)  // bind, RW; overlays config volume; errors when source not absolute
 ```
 
 ### Host `~/.claude/projects/` bind mount
 
-When `agent.claude_code.mount_projects` is true (default), `SetupMounts` appends a bind mount of `<hostConfigDir>/projects` → `/home/claude/.claude/projects` after the per-agent config volume mount. Docker's deeper-mount-wins rule lets the bind overlay the corresponding subdir in the volume, sharing auto-memory + session jsonls across container runs. Source dir resolved via `containerfs.ResolveHostProjectsDir`; mount is skipped silently when the host dir does not exist (we never create Claude Code state on its behalf). On Linux, a debug warning is emitted when `os.Getuid() != consts.ContainerUID` because the container `claude` user (UID 1001) cannot write to host-owned files; macOS Docker Desktop translates ownership transparently via virtiofs.
+When `agent.claude_code.mount_projects` is true (default), `SetupMounts` appends a bind mount of `<hostConfigDir>/projects` → `/home/claude/.claude/projects` after the per-agent config volume mount. Per Linux mount-namespace semantics, the deeper bind target layers over the corresponding subdir in the volume, sharing auto-memory + session jsonls across container runs. Source dir resolved via `containerfs.ResolveHostProjectsDir`. Mount target path is `workspace.ClaudeProjectsTargetPath` (single SSoT).
+
+Failure handling:
+- Host dir does not exist (Claude Code has not run yet) — silent debug log, mount skipped.
+- Resolution error (`CLAUDE_CONFIG_DIR` typo, `EACCES`, path-is-file) — warn-level structured log AND a string appended to `SetupMountsResult.Warnings` so the caller can surface it to stderr. The opted-in feature must not fail invisibly.
+- Linux UID mismatch (`os.Getuid() != consts.ContainerUID`) — warn-level structured log AND a `Warnings` entry suggesting `chown`, `--user`, or disabling the mount. The container `claude` user (UID 1001) may not be able to write to host-owned files when the host UID differs. macOS Docker Desktop translates ownership via virtiofs and the warning is suppressed.
 
 `SetupMounts` is the main entry point -- loads `.clawkerignore` patterns (via `cfg.Cfg.GetProjectIgnoreFile()` + `docker.LoadIgnorePatterns`), then combines workspace, git credentials, share volume, and Docker socket mounts into a single mount list. The ignore file is resolved by the Config interface from the project config directory — if no project is registered (`config.ErrNotInProject`), ignore patterns default to empty (graceful degradation, not a fatal error). Share dir host path comes from `cfg.Cfg.ShareSubdir()`. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` (value type) tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 

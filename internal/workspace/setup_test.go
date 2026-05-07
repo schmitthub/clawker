@@ -7,6 +7,9 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/mount"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/docker/mocks"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 func TestBuildWorktreeGitMount_Success(t *testing.T) {
@@ -137,6 +140,142 @@ func TestSetupMounts_RelativeContainerPath(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must be absolute") {
 		t.Errorf("error message = %q, should mention 'must be absolute'", err.Error())
+	}
+}
+
+// setupMountsForBindBranch builds a SetupMountsConfig + fake client that
+// drives SetupMounts through the bind-mount-append branch. CLAUDE_CONFIG_DIR
+// points at a temp dir; the caller controls whether a `projects/` subdir
+// (and its mode) exists by writing into hostDir before calling SetupMounts.
+func setupMountsForBindBranch(t *testing.T, projectYAML string) (cfg SetupMountsConfig, hostDir string, fake *mocks.FakeClient) {
+	t.Helper()
+	hostDir = t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+
+	mockCfg := configmocks.NewFromString(projectYAML, "")
+	fake = mocks.NewFakeClient(mockCfg)
+	fake.SetupVolumeExists("", false) // every volume reported missing
+	fake.SetupVolumeCreate()
+
+	wd := t.TempDir()
+	cfg = SetupMountsConfig{
+		Log:           logger.Nop(),
+		Cfg:           mockCfg,
+		AgentName:     "test-agent",
+		WorkDir:       wd,
+		ContainerPath: wd,
+	}
+	return cfg, hostDir, fake
+}
+
+func TestSetupMounts_AppendsClaudeProjectsBindMount(t *testing.T) {
+	cfg, hostDir, fake := setupMountsForBindBranch(t,
+		`agent:
+  claude_code:
+    mount_projects: true`)
+
+	projectsDir := filepath.Join(hostDir, "projects")
+	if err := os.Mkdir(projectsDir, 0o700); err != nil {
+		t.Fatalf("mkdir projects: %v", err)
+	}
+
+	res, err := SetupMounts(t.Context(), fake.Client, cfg)
+	if err != nil {
+		t.Fatalf("SetupMounts() error = %v", err)
+	}
+
+	var found *mount.Mount
+	for i := range res.Mounts {
+		if res.Mounts[i].Target == ClaudeProjectsTargetPath {
+			found = &res.Mounts[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected mount with Target=%q, got mounts=%+v", ClaudeProjectsTargetPath, res.Mounts)
+	}
+	if found.Source != projectsDir {
+		t.Errorf("Source = %q, want %q", found.Source, projectsDir)
+	}
+	if found.Type != mount.TypeBind {
+		t.Errorf("Type = %v, want %v", found.Type, mount.TypeBind)
+	}
+}
+
+func TestSetupMounts_SkipsClaudeProjectsBindMountWhenDisabled(t *testing.T) {
+	cfg, hostDir, fake := setupMountsForBindBranch(t,
+		`agent:
+  claude_code:
+    mount_projects: false`)
+
+	if err := os.Mkdir(filepath.Join(hostDir, "projects"), 0o700); err != nil {
+		t.Fatalf("mkdir projects: %v", err)
+	}
+
+	res, err := SetupMounts(t.Context(), fake.Client, cfg)
+	if err != nil {
+		t.Fatalf("SetupMounts() error = %v", err)
+	}
+
+	for _, m := range res.Mounts {
+		if m.Target == ClaudeProjectsTargetPath {
+			t.Errorf("unexpected projects mount when disabled: %+v", m)
+		}
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("Warnings = %v, want empty when feature disabled", res.Warnings)
+	}
+}
+
+func TestSetupMounts_SilentSkipWhenHostProjectsMissing(t *testing.T) {
+	cfg, _, fake := setupMountsForBindBranch(t,
+		`agent:
+  claude_code:
+    mount_projects: true`)
+	// No projects dir created — host has not run Claude Code yet.
+
+	res, err := SetupMounts(t.Context(), fake.Client, cfg)
+	if err != nil {
+		t.Fatalf("SetupMounts() error = %v", err)
+	}
+
+	for _, m := range res.Mounts {
+		if m.Target == ClaudeProjectsTargetPath {
+			t.Errorf("unexpected projects mount when host dir missing: %+v", m)
+		}
+	}
+	// Missing-dir is the expected first-run case — no user-visible warning.
+	if len(res.Warnings) != 0 {
+		t.Errorf("Warnings = %v, want empty for the missing-host-dir silent-skip case", res.Warnings)
+	}
+}
+
+func TestSetupMounts_WarnsWhenProjectsResolveFails(t *testing.T) {
+	cfg, hostDir, fake := setupMountsForBindBranch(t,
+		`agent:
+  claude_code:
+    mount_projects: true`)
+	// Plant a regular file at <hostDir>/projects so ResolveHostProjectsDir
+	// returns a real error rather than the missing-dir silent skip.
+	if err := os.WriteFile(filepath.Join(hostDir, "projects"), []byte("nope"), 0o600); err != nil {
+		t.Fatalf("write projects file: %v", err)
+	}
+
+	res, err := SetupMounts(t.Context(), fake.Client, cfg)
+	if err != nil {
+		t.Fatalf("SetupMounts() error = %v", err)
+	}
+
+	for _, m := range res.Mounts {
+		if m.Target == ClaudeProjectsTargetPath {
+			t.Errorf("unexpected projects mount when host path is a file: %+v", m)
+		}
+	}
+	if len(res.Warnings) == 0 {
+		t.Fatal("Warnings is empty; opted-in feature failure must surface to user")
+	}
+	if !strings.Contains(res.Warnings[0], "mount_projects") {
+		t.Errorf("Warnings[0] = %q, should mention mount_projects", res.Warnings[0])
 	}
 }
 

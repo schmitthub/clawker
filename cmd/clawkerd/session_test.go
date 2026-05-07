@@ -169,7 +169,7 @@ func TestStartShellCommand_DuplicateID_Rejects(t *testing.T) {
 	s.mu.Unlock()
 
 	s.startShellCommand(ctx, "dup", &clawkerdv1.ShellCommand{
-		Stages: []*clawkerdv1.PipeStage{{Argv: []string{"/bin/true"}}},
+		Stages: []*clawkerdv1.PipeStage{{Argv: []string{trueBinPath(t)}}},
 	})
 
 	resps := drainAll(s)
@@ -414,9 +414,8 @@ func TestClosePipeOnce_SilentOnClosedPipe(t *testing.T) {
 func TestRouteSignal_FiltersErrProcessDone(t *testing.T) {
 	// Spawn a real process that exits immediately. After Wait, the
 	// kernel has reaped the pid and Go's os.Process.Signal returns
-	// os.ErrProcessDone (Go 1.17+) or syscall.ESRCH or "process already
-	// finished" depending on runtime. Either way, routeSignal must NOT
-	// log at Error.
+	// os.ErrProcessDone (Go 1.17+) or syscall.ESRCH depending on
+	// runtime. Either way, routeSignal must NOT log at Error.
 	c := exec.Command(trueBinPath(t))
 	require.NoError(t, c.Start())
 	require.NoError(t, c.Wait())
