@@ -23,17 +23,24 @@ import (
 )
 
 // ResolveHostConfigDir returns the claude config dir ($CLAUDE_CONFIG_DIR or ~/.claude/).
-// Returns error if the directory doesn't exist.
+// Returns error if the directory doesn't exist. A relative $CLAUDE_CONFIG_DIR is
+// normalized to an absolute path against the current working directory so
+// downstream consumers (e.g. workspace.GetClaudeProjectsMount) get a usable
+// bind-mount source.
 func ResolveHostConfigDir() (string, error) {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		info, err := os.Stat(dir)
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path cannot be resolved: %w", dir, err)
+		}
+		info, err := os.Stat(abs)
 		if err != nil {
 			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path is invalid: %w", dir, err)
 		}
 		if !info.IsDir() {
 			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path is not a directory", dir)
 		}
-		return dir, nil
+		return abs, nil
 	}
 
 	home, err := os.UserHomeDir()

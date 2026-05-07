@@ -33,6 +33,49 @@ func TestResolveHostConfigDir_EnvVar(t *testing.T) {
 	}
 }
 
+func TestResolveHostConfigDir_RelativeEnvVar(t *testing.T) {
+	// Multi-account workflows set $CLAUDE_CONFIG_DIR to a relative path
+	// keyed off CWD. Resolve to absolute so workspace.GetClaudeProjectsMount
+	// (filepath.IsAbs guard) doesn't reject the resulting bind source.
+	parent := t.TempDir()
+	rel := "claude-rel-cfg"
+	absDir := filepath.Join(parent, rel)
+	if err := os.Mkdir(absDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(parent); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	t.Setenv("CLAUDE_CONFIG_DIR", rel)
+
+	got, err := ResolveHostConfigDir()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("got %q, want absolute path", got)
+	}
+	// EvalSymlinks both sides — macOS /var → /private/var.
+	gotResolved, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		t.Fatalf("eval symlinks got: %v", err)
+	}
+	wantResolved, err := filepath.EvalSymlinks(absDir)
+	if err != nil {
+		t.Fatalf("eval symlinks want: %v", err)
+	}
+	if gotResolved != wantResolved {
+		t.Errorf("got %q, want %q", gotResolved, wantResolved)
+	}
+}
+
 func TestResolveHostConfigDir_EnvVarMissing(t *testing.T) {
 	// env var points to non-existent dir → should return error (not fall through)
 	t.Setenv("CLAUDE_CONFIG_DIR", "/no/such/dir-containerfs-test")
