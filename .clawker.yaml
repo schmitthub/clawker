@@ -183,7 +183,7 @@ security:
       - tmaproduction.blob.core.windows.net
     rules:
       - action: allow
-        dst: gitlab.com
+        dst: github.com
         port: 22
         proto: ssh
       - action: allow
