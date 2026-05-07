@@ -6,6 +6,7 @@ agent:
     config:
       strategy: copy
     use_host_auth: true
+    mount_projects: true
   editor: nano
   enable_shared_dir: true
   env:

@@ -6,7 +6,8 @@ Prepares host Claude Code configuration for container injection. Receives `confi
 
 | Function | Purpose |
 |----------|---------|
-| `ResolveHostConfigDir() (string, error)` | Find host ~/.claude/ dir ($CLAUDE_CONFIG_DIR or default) |
+| `ResolveHostConfigDir() (string, error)` | Find host ~/.claude/ dir ($CLAUDE_CONFIG_DIR or default). Relative `$CLAUDE_CONFIG_DIR` is resolved to absolute via `filepath.Abs` (multi-account workflows set it relative to CWD). |
+| `ResolveHostProjectsDir() (string, bool, error)` | Resolve `<hostConfigDir>/projects` for the bind-mount path; returns `("", false, nil)` only when the projects dir is absent. Stat errors (EACCES, ELOOP, path-is-file) and propagated `ResolveHostConfigDir` errors come back as `(_, false, err)` with the path included. Symlinks resolve via `os.Stat`. Never creates the dir. |
 | `PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error)` | Stage host config for volume copy (settings, plugins, agents, etc.) |
 | `PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func(), err error)` | Stage credentials from keyring or file fallback |
 | `PreparePostInitTar(cfg config.Config, script string) (io.Reader, error)` | Create tar with .clawker/post-init.sh (bash shebang + set -e + user script); extracts at /home/claude |
@@ -24,6 +25,7 @@ Imports: `internal/config`, `internal/keyring`, `internal/logger`, stdlib only. 
 - known_marketplaces.json: `installPath` and `installLocation` values rewritten for container paths
 - installed_plugins.json: `installPath` rewritten for container paths, `projectPath` replaced with `containerWorkDir`
 - Missing files/dirs: logged and skipped (not errors)
+- projects/: NOT staged here — handled separately as a live bind mount in `internal/workspace` (see `GetClaudeProjectsMount`). Bind mount overlays the per-agent config volume on top of `/home/claude/.claude/projects` so auto-memory and session jsonls are shared across container runs.
 
 ## Path Rewriting
 

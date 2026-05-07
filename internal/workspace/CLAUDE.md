@@ -59,15 +59,27 @@ type SetupMountsConfig struct {
 type SetupMountsResult struct {
     Mounts              []mount.Mount
     ConfigVolumeResult  ConfigVolumeResult
-    WorkspaceVolumeName string  // Non-empty only for snapshot mode when volume was newly created. Used for cleanup on init failure.
-    ContainerPath       string  // Resolved container-side workspace mount path
+    WorkspaceVolumeName string    // Non-empty only for snapshot mode when volume was newly created. Used for cleanup on init failure.
+    ContainerPath       string    // Resolved container-side workspace mount path
+    Warnings            []string  // Non-fatal user-facing diagnostics; callers must surface to stderr
 }
 
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)
 func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error)
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error)
 func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
+func GetClaudeProjectsMount(hostProjectsDir string) (mount.Mount, error)  // bind, RW; overlays config volume; errors when source not absolute
 ```
+
+### Host `~/.claude/projects/` bind mount
+
+When `agent.claude_code.mount_projects` is true (default), `SetupMounts` appends a bind mount of `<hostConfigDir>/projects` → `/home/claude/.claude/projects` after the per-agent config volume mount. Per Linux mount-namespace semantics, the deeper bind target layers over the corresponding subdir in the volume, sharing auto-memory + session jsonls across container runs. Source dir resolved via `containerfs.ResolveHostProjectsDir`. Mount target path is `workspace.ClaudeProjectsTargetPath` (single SSoT).
+
+Failure handling:
+- Host config dir does not exist (no `$CLAUDE_CONFIG_DIR` and no `~/.claude/`) or `$CLAUDE_CONFIG_DIR` is misconfigured — **hard error**. `SetupMounts` returns; container creation aborts. clawker is not useful without host Claude Code installed, so masking this would just produce confusing downstream failures. Users who want to run without the bind set `agent.claude_code.mount_projects: false`.
+- `<hostConfigDir>/projects` subdir does not exist under an existing host config dir — silent debug log, mount skipped (Claude Code creates it on first session).
+- Path-is-file or other stat errors on `<hostConfigDir>/projects` — hard error (same path as above; `ResolveHostProjectsDir` returns an error).
+- Linux UID mismatch (`os.Getuid() != consts.ContainerUID`) — warn-level structured log AND a `Warnings` entry recommending `agent.claude_code.mount_projects: false` to disable the bind. The container `claude` user (UID 1001) may not be able to write to host-owned files when the host UID differs. `chown` and `--user` are NOT viable workarounds: `chown -R 1001:1001 ~/.claude/projects` would steal host Claude Code's own config dir; `--user` breaks `entrypoint.sh` because it needs root for `chgrp /var/run/docker.sock`, `chown ~/.ssh`, and `gosu` privilege drop. The container UID is also baked into the image at build time (`consts.ContainerUID = 1001`, `Dockerfile.tmpl` L172-176) so it cannot be overridden at runtime. macOS Docker Desktop translates ownership via virtiofs and the warning is suppressed.
 
 `SetupMounts` is the main entry point -- loads `.clawkerignore` patterns (via `cfg.Cfg.GetProjectIgnoreFile()` + `docker.LoadIgnorePatterns`), then combines workspace, git credentials, share volume, and Docker socket mounts into a single mount list. The ignore file is resolved by the Config interface from the project config directory — if no project is registered (`config.ErrNotInProject`), ignore patterns default to empty (graceful degradation, not a fatal error). Share dir host path comes from `cfg.Cfg.ShareSubdir()`. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` (value type) tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 

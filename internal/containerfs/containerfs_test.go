@@ -33,6 +33,49 @@ func TestResolveHostConfigDir_EnvVar(t *testing.T) {
 	}
 }
 
+func TestResolveHostConfigDir_RelativeEnvVar(t *testing.T) {
+	// Multi-account workflows set $CLAUDE_CONFIG_DIR to a relative path
+	// keyed off CWD. Resolve to absolute so workspace.GetClaudeProjectsMount
+	// (filepath.IsAbs guard) doesn't reject the resulting bind source.
+	parent := t.TempDir()
+	rel := "claude-rel-cfg"
+	absDir := filepath.Join(parent, rel)
+	if err := os.Mkdir(absDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(parent); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	t.Setenv("CLAUDE_CONFIG_DIR", rel)
+
+	got, err := ResolveHostConfigDir()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("got %q, want absolute path", got)
+	}
+	// EvalSymlinks both sides — macOS /var → /private/var.
+	gotResolved, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		t.Fatalf("eval symlinks got: %v", err)
+	}
+	wantResolved, err := filepath.EvalSymlinks(absDir)
+	if err != nil {
+		t.Fatalf("eval symlinks want: %v", err)
+	}
+	if gotResolved != wantResolved {
+		t.Errorf("got %q, want %q", gotResolved, wantResolved)
+	}
+}
+
 func TestResolveHostConfigDir_EnvVarMissing(t *testing.T) {
 	// env var points to non-existent dir → should return error (not fall through)
 	t.Setenv("CLAUDE_CONFIG_DIR", "/no/such/dir-containerfs-test")
@@ -41,7 +84,7 @@ func TestResolveHostConfigDir_EnvVarMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when CLAUDE_CONFIG_DIR is set to non-existent path, got nil")
 	}
-	if !strings.Contains(err.Error(), "CLAUDE_CONFIG_DIR is set to") {
+	if !strings.Contains(err.Error(), "CLAUDE_CONFIG_DIR=") {
 		t.Errorf("error should mention CLAUDE_CONFIG_DIR, got: %v", err)
 	}
 }
@@ -76,6 +119,60 @@ func TestResolveHostConfigDir_NeitherExists(t *testing.T) {
 	_, err := ResolveHostConfigDir()
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ResolveHostProjectsDir
+// ---------------------------------------------------------------------------
+
+func TestResolveHostProjectsDir_Exists(t *testing.T) {
+	hostDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	projectsDir := filepath.Join(hostDir, "projects")
+	if err := os.Mkdir(projectsDir, 0o700); err != nil {
+		t.Fatalf("create projects dir: %v", err)
+	}
+
+	got, ok, err := ResolveHostProjectsDir()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if got != projectsDir {
+		t.Errorf("got %q, want %q", got, projectsDir)
+	}
+}
+
+func TestResolveHostProjectsDir_Missing(t *testing.T) {
+	hostDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	// No projects subdir created.
+
+	got, ok, err := ResolveHostProjectsDir()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Errorf("ok = true, want false (got path %q)", got)
+	}
+}
+
+func TestResolveHostProjectsDir_IsFile(t *testing.T) {
+	hostDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	if err := os.WriteFile(filepath.Join(hostDir, "projects"), []byte("nope"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	_, _, err := ResolveHostProjectsDir()
+	if err == nil {
+		t.Fatal("expected error when projects exists as file, got nil")
+	}
+	if !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("error should mention 'not a directory', got: %v", err)
 	}
 }
 

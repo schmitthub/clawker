@@ -812,6 +812,9 @@ func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes
 version: "1"
 workspace: { default_mode: "bind" }
 security: { enable_host_proxy: false }
+agent:
+  claude_code:
+    mount_projects: false
 `, `firewall: { enable: false }`)
 			mock.GetProjectIgnoreFileFunc = func() (string, error) {
 				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
@@ -910,6 +913,9 @@ func TestRunRun(t *testing.T) {
 		testCfg := configmocks.NewFromString(`
 workspace: { default_mode: "bind" }
 security: { enable_host_proxy: false }
+agent:
+  claude_code:
+    mount_projects: false
 `, "")
 		testCfg.GetProjectIgnoreFileFunc = func() (string, error) {
 			return filepath.Join(os.TempDir(), testCfg.ClawkerIgnoreName()), nil

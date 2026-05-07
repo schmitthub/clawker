@@ -23,17 +23,24 @@ import (
 )
 
 // ResolveHostConfigDir returns the claude config dir ($CLAUDE_CONFIG_DIR or ~/.claude/).
-// Returns error if the directory doesn't exist.
+// Returns error if the directory doesn't exist. A relative $CLAUDE_CONFIG_DIR is
+// normalized to an absolute path against the current working directory so
+// downstream consumers (e.g. workspace.GetClaudeProjectsMount) get a usable
+// bind-mount source.
 func ResolveHostConfigDir() (string, error) {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		info, err := os.Stat(dir)
+		abs, err := filepath.Abs(dir)
 		if err != nil {
-			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path is invalid: %w", dir, err)
+			return "", fmt.Errorf("CLAUDE_CONFIG_DIR=%q cannot be resolved to an absolute path: %w", dir, err)
+		}
+		info, err := os.Stat(abs)
+		if err != nil {
+			return "", fmt.Errorf("CLAUDE_CONFIG_DIR=%q (resolved %q) is invalid: %w", dir, abs, err)
 		}
 		if !info.IsDir() {
-			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path is not a directory", dir)
+			return "", fmt.Errorf("CLAUDE_CONFIG_DIR=%q (resolved %q) is not a directory", dir, abs)
 		}
-		return dir, nil
+		return abs, nil
 	}
 
 	home, err := os.UserHomeDir()
@@ -47,6 +54,31 @@ func ResolveHostConfigDir() (string, error) {
 	}
 
 	return "", fmt.Errorf("claude config dir not found on host: checked $CLAUDE_CONFIG_DIR and ~/.claude/")
+}
+
+// ResolveHostProjectsDir returns <hostConfigDir>/projects when the directory
+// exists on the host. The bool result is false when the dir does not exist —
+// callers should skip the bind mount in that case rather than treating it as
+// an error. Errors from ResolveHostConfigDir (e.g. CLAUDE_CONFIG_DIR pointing
+// at a missing path) propagate verbatim. Uses os.Stat, so a symlink at the
+// path resolves to its target. Never creates the directory; that is Claude
+// Code's responsibility.
+func ResolveHostProjectsDir() (string, bool, error) {
+	hostConfigDir, err := ResolveHostConfigDir()
+	if err != nil {
+		return "", false, err
+	}
+	dir := filepath.Join(hostConfigDir, "projects")
+	info, err := os.Stat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", false, nil
+	case err != nil:
+		return "", false, fmt.Errorf("stat %s: %w", dir, err)
+	case !info.IsDir():
+		return "", false, fmt.Errorf("%s exists but is not a directory (mode=%s)", dir, info.Mode())
+	}
+	return dir, true, nil
 }
 
 // PrepareClaudeConfig creates a staging directory with host claude config

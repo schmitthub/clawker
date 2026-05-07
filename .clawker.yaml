@@ -91,7 +91,7 @@ build:
       - go install golang.org/x/vuln/cmd/govulncheck@latest
       - go install golang.org/x/tools/cmd/goimports@latest
       - go install honnef.co/go/tools/cmd/staticcheck@latest
-      - go install golang.org/dl/go1.25.9@latest && go1.25.9 download
+      - go install golang.org/dl/go1.25.10@latest && go1.25.10 download
       - go install github.com/matryer/moq@latest
       - go install github.com/goreleaser/goreleaser/v2@latest
       - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest

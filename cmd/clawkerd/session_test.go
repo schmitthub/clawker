@@ -44,6 +44,23 @@ func (f *fakeBidiStream) Recv() (*clawkerdv1.Command, error) {
 	return nil, io.EOF
 }
 
+// trueBinPath returns an absolute path to a real `true` binary on the
+// test host. macOS ships coreutils under /usr/bin/true; Linux (incl. the
+// clawker container images) ships them under /bin/true. The candidate
+// list is a closed set of absolute paths — no $PATH consultation — so a
+// hostile env cannot shadow `true` with an arbitrary binary at test
+// time. Skips the test if neither canonical location exists.
+func trueBinPath(t *testing.T) string {
+	t.Helper()
+	for _, p := range []string{"/bin/true", "/usr/bin/true"} {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p
+		}
+	}
+	t.Skip("no `true` binary at /bin/true or /usr/bin/true on this host")
+	return ""
+}
+
 // newTestSession builds a session whose sendCh and cmds map are
 // exposed but no sender goroutine runs — tests drain responses
 // directly off the channel. Returns the session plus a log buffer
@@ -152,7 +169,7 @@ func TestStartShellCommand_DuplicateID_Rejects(t *testing.T) {
 	s.mu.Unlock()
 
 	s.startShellCommand(ctx, "dup", &clawkerdv1.ShellCommand{
-		Stages: []*clawkerdv1.PipeStage{{Argv: []string{"/bin/true"}}},
+		Stages: []*clawkerdv1.PipeStage{{Argv: []string{trueBinPath(t)}}},
 	})
 
 	resps := drainAll(s)
@@ -216,14 +233,15 @@ func TestRunShellCommand_AuditLogStartedAndDone(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	truePath := trueBinPath(t)
 	runUntilDone(t, ctx, s, &clawkerdv1.ShellCommand{
-		Stages: []*clawkerdv1.PipeStage{{Argv: []string{"/bin/true"}}},
+		Stages: []*clawkerdv1.PipeStage{{Argv: []string{truePath}}},
 	}, "audit-1")
 
 	logs := logBuf.String()
 	assert.Contains(t, logs, `"event":"shell_command_started"`, "started event missing")
 	assert.Contains(t, logs, `"event":"shell_command_done"`, "done event missing")
-	assert.Contains(t, logs, `"argv":["/bin/true"]`, "argv field missing")
+	assert.Contains(t, logs, `"argv":["`+truePath+`"]`, "argv field missing")
 	assert.Contains(t, logs, `"command_id":"audit-1"`)
 	assert.Contains(t, logs, `"outcome":"completed"`)
 	assert.Contains(t, logs, `"final_exit_code":0`)
@@ -396,9 +414,9 @@ func TestClosePipeOnce_SilentOnClosedPipe(t *testing.T) {
 func TestRouteSignal_FiltersErrProcessDone(t *testing.T) {
 	// Spawn a real process that exits immediately. After Wait, the
 	// kernel has reaped the pid and Go's os.Process.Signal returns
-	// os.ErrProcessDone (Go 1.17+) or syscall.ESRCH on older runtimes.
-	// Either way, routeSignal must NOT log at Error.
-	c := exec.Command("/bin/true")
+	// os.ErrProcessDone (Go 1.17+) or syscall.ESRCH depending on
+	// runtime. Either way, routeSignal must NOT log at Error.
+	c := exec.Command(trueBinPath(t))
 	require.NoError(t, c.Start())
 	require.NoError(t, c.Wait())
 
