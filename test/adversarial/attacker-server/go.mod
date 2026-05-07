@@ -1,6 +1,6 @@
 module attacker-server
 
-go 1.25.9
+go 1.25.10
 
 require (
 	github.com/gorilla/websocket v1.5.3

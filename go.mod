@@ -1,6 +1,6 @@
 module github.com/schmitthub/clawker
 
-go 1.25.9
+go 1.25.10
 
 require (
 	github.com/a8m/tree v0.0.0-20240104212747-2c8764a5f17e

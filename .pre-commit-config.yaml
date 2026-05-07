@@ -32,7 +32,10 @@ repos:
     hooks:
       - id: govulncheck
         name: govulncheck SCA
-        entry: govulncheck ./...
+        # Pins GOTOOLCHAIN to the version in go.mod so stdlib vuln drift
+        # caught by CI (which installs go.mod's pinned version) can't sneak
+        # past a developer running a newer local toolchain.
+        entry: scripts/govulncheck.sh
         language: system
         always_run: true
         pass_filenames: false
