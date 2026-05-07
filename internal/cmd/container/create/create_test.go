@@ -517,7 +517,7 @@ func TestCreateRun(t *testing.T) {
 version: "1"
 workspace: { default_mode: "bind" }
 security: { enable_host_proxy: false }
-agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
+agent: { claude_code: { use_host_auth: false, mount_projects: false, config: { strategy: "fresh" } } }
 `, "")
 		useHostAuthCfg.GetProjectIgnoreFileFunc = func() (string, error) {
 			return filepath.Join(os.TempDir(), useHostAuthCfg.ClawkerIgnoreName()), nil
