@@ -49,6 +49,29 @@ func ResolveHostConfigDir() (string, error) {
 	return "", fmt.Errorf("claude config dir not found on host: checked $CLAUDE_CONFIG_DIR and ~/.claude/")
 }
 
+// ResolveHostProjectsDir returns <hostConfigDir>/projects when the directory
+// exists on the host. The bool result is false when the dir does not exist —
+// callers should skip the bind mount in that case rather than treating it as
+// an error. Never creates the directory; that is Claude Code's responsibility.
+func ResolveHostProjectsDir() (string, bool, error) {
+	hostConfigDir, err := ResolveHostConfigDir()
+	if err != nil {
+		return "", false, err
+	}
+	dir := filepath.Join(hostConfigDir, "projects")
+	info, err := os.Stat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("stat host projects dir: %w", err)
+	}
+	if !info.IsDir() {
+		return "", false, fmt.Errorf("%s exists but is not a directory", dir)
+	}
+	return dir, true, nil
+}
+
 // PrepareClaudeConfig creates a staging directory with host claude config
 // prepared for container injection. Caller must call cleanup() when done.
 //

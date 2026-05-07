@@ -87,6 +87,20 @@ func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error)
 	}, nil
 }
 
+// GetClaudeProjectsMount returns a bind mount sharing the host's
+// ~/.claude/projects/ into /home/claude/.claude/projects. Overlays the
+// per-agent config volume mount via Docker's deeper-mount-wins rule, so
+// auto-memory and session jsonls become shared across container runs and
+// instances. The caller is responsible for resolving the host source path
+// (typically containerfs.ResolveHostProjectsDir).
+func GetClaudeProjectsMount(hostProjectsDir string) mount.Mount {
+	return mount.Mount{
+		Type:   mount.TypeBind,
+		Source: hostProjectsDir,
+		Target: "/home/claude/.claude/projects",
+	}
+}
+
 // ConfigVolumeResult tracks which config volumes were newly created vs pre-existing.
 type ConfigVolumeResult struct {
 	ConfigCreated  bool

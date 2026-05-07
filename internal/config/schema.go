@@ -75,8 +75,9 @@ type ClaudeCodeConfigOptions struct {
 
 // ClaudeCodeConfig controls Claude Code settings and authentication in containers.
 type ClaudeCodeConfig struct {
-	Config      ClaudeCodeConfigOptions `yaml:"config"`
-	UseHostAuth *bool                   `yaml:"use_host_auth,omitempty" label:"Use Host Auth" desc:"Let the container use your host API keys so you don't have to re-authenticate" default:"true"`
+	Config        ClaudeCodeConfigOptions `yaml:"config"`
+	UseHostAuth   *bool                   `yaml:"use_host_auth,omitempty" label:"Use Host Auth" desc:"Let the container use your host API keys so you don't have to re-authenticate" default:"true"`
+	MountProjects *bool                   `yaml:"mount_projects,omitempty" label:"Mount Host Projects" desc:"Bind mount host ~/.claude/projects/ into the container so auto-memory and sessions are shared across container runs and instances" default:"true"`
 }
 
 // AgentConfig defines Claude agent-specific settings.
@@ -97,6 +98,15 @@ func (c *ClaudeCodeConfig) UseHostAuthEnabled() bool {
 		return true
 	}
 	return *c.UseHostAuth
+}
+
+// MountProjectsEnabled returns whether ~/.claude/projects/ should be bind
+// mounted into the container (default: true).
+func (c *ClaudeCodeConfig) MountProjectsEnabled() bool {
+	if c == nil || c.MountProjects == nil {
+		return true
+	}
+	return *c.MountProjects
 }
 
 // ConfigStrategy returns the config strategy (default: "copy").

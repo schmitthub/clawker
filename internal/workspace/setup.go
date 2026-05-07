@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -166,6 +169,29 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		return nil, fmt.Errorf("failed to resolve config volume names: %w", err)
 	}
 	mounts = append(mounts, configMounts...)
+
+	// Bind mount host ~/.claude/projects/ on top of the config volume so
+	// auto-memory and session jsonls are shared across container runs.
+	// Skipped silently when the host dir does not exist — never create
+	// Claude Code state on its behalf.
+	if project.Agent.ClaudeCode.MountProjectsEnabled() {
+		src, ok, resolveErr := containerfs.ResolveHostProjectsDir()
+		switch {
+		case resolveErr != nil:
+			cfg.Log.Debug().Err(resolveErr).Msg("skip ~/.claude/projects bind: resolve failed")
+		case !ok:
+			cfg.Log.Debug().Msg("skip ~/.claude/projects bind: host dir does not exist")
+		default:
+			mounts = append(mounts, GetClaudeProjectsMount(src))
+			if runtime.GOOS == "linux" && os.Getuid() != consts.ContainerUID {
+				cfg.Log.Warn().
+					Int("host_uid", os.Getuid()).
+					Int("container_uid", consts.ContainerUID).
+					Msg("~/.claude/projects bind mount may fail to write: host UID does not match container claude user (1001)")
+			}
+			cfg.Log.Debug().Str("src", src).Msg("mounted host ~/.claude/projects/")
+		}
+	}
 
 	// Ensure and mount shared directory (if enabled)
 	if project.Agent.SharedDirEnabled() {

@@ -80,6 +80,63 @@ func TestResolveHostConfigDir_NeitherExists(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ResolveHostProjectsDir
+// ---------------------------------------------------------------------------
+
+func TestResolveHostProjectsDir_Exists(t *testing.T) {
+	hostDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	projectsDir := filepath.Join(hostDir, "projects")
+	if err := os.Mkdir(projectsDir, 0o700); err != nil {
+		t.Fatalf("create projects dir: %v", err)
+	}
+
+	got, ok, err := ResolveHostProjectsDir()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if got != projectsDir {
+		t.Errorf("got %q, want %q", got, projectsDir)
+	}
+}
+
+func TestResolveHostProjectsDir_Missing(t *testing.T) {
+	hostDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	// No projects subdir created.
+
+	got, ok, err := ResolveHostProjectsDir()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Errorf("ok = true, want false (got path %q)", got)
+	}
+	if got != "" {
+		t.Errorf("got %q, want empty string when not found", got)
+	}
+}
+
+func TestResolveHostProjectsDir_IsFile(t *testing.T) {
+	hostDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	if err := os.WriteFile(filepath.Join(hostDir, "projects"), []byte("nope"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	_, _, err := ResolveHostProjectsDir()
+	if err == nil {
+		t.Fatal("expected error when projects exists as file, got nil")
+	}
+	if !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("error should mention 'not a directory', got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // PrepareClaudeConfig
 // ---------------------------------------------------------------------------
 

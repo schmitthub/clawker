@@ -67,7 +67,12 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error)
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error)
 func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
+func GetClaudeProjectsMount(hostProjectsDir string) mount.Mount  // bind, RW; overlays config volume
 ```
+
+### Host `~/.claude/projects/` bind mount
+
+When `agent.claude_code.mount_projects` is true (default), `SetupMounts` appends a bind mount of `<hostConfigDir>/projects` → `/home/claude/.claude/projects` after the per-agent config volume mount. Docker's deeper-mount-wins rule lets the bind overlay the corresponding subdir in the volume, sharing auto-memory + session jsonls across container runs. Source dir resolved via `containerfs.ResolveHostProjectsDir`; mount is skipped silently when the host dir does not exist (we never create Claude Code state on its behalf). On Linux, a debug warning is emitted when `os.Getuid() != consts.ContainerUID` because the container `claude` user (UID 1001) cannot write to host-owned files; macOS Docker Desktop translates ownership transparently via virtiofs.
 
 `SetupMounts` is the main entry point -- loads `.clawkerignore` patterns (via `cfg.Cfg.GetProjectIgnoreFile()` + `docker.LoadIgnorePatterns`), then combines workspace, git credentials, share volume, and Docker socket mounts into a single mount list. The ignore file is resolved by the Config interface from the project config directory — if no project is registered (`config.ErrNotInProject`), ignore patterns default to empty (graceful degradation, not a fatal error). Share dir host path comes from `cfg.Cfg.ShareSubdir()`. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` (value type) tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 

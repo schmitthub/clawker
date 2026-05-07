@@ -214,6 +214,8 @@ agent:
       strategy: <string>  # default: copy | required: false
     # Let the container use your host API keys so you don't have to re-authenticate
     use_host_auth: <boolean>  # default: true | required: false
+    # Bind mount host ~/.claude/projects/ into the container so auto-memory and sessions are shared across container runs and instances
+    mount_projects: <boolean>  # default: true | required: false
   # Share files between host and container via ~/.clawker-share (read-only in container)
   enable_shared_dir: <boolean>  # default: false | required: false
   # Shell commands run after container starts but before Claude Code launches (e.g. install MCP servers)
@@ -349,6 +351,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 |-------|------|---------|-------------|
 | `strategy` | string | `copy` | How to initialize Claude Code config: copy syncs host settings/plugins, fresh starts clean |
 | `use_host_auth` | boolean | `true` | Let the container use your host API keys so you don't have to re-authenticate |
+| `mount_projects` | boolean | `true` | Bind mount host ~/.claude/projects/ into the container so auto-memory and sessions are shared across container runs and instances |
 
 
 ### workspace
