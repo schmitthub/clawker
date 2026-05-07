@@ -68,8 +68,8 @@ func EnsureAuthMaterial() error {
 	if err := ensureOtelServerCert(); err != nil {
 		return fmt.Errorf("otel server cert: %w", err)
 	}
-	if err := ensureCPOtelClientCert(); err != nil {
-		return fmt.Errorf("cp otel client cert: %w", err)
+	if err := ensureCPClientCert(); err != nil {
+		return fmt.Errorf("cp client cert: %w", err)
 	}
 	return nil
 }
@@ -106,11 +106,11 @@ func RotateAuthMaterial(forceSigningKey bool) error {
 	if err := removeIfExists(consts.AuthOtelServerKeyPath); err != nil {
 		return fmt.Errorf("remove otel server key: %w", err)
 	}
-	if err := removeIfExists(consts.AuthCPOtelClientCertPath); err != nil {
-		return fmt.Errorf("remove cp otel client cert: %w", err)
+	if err := removeIfExists(consts.AuthCPClientCertPath); err != nil {
+		return fmt.Errorf("remove cp client cert: %w", err)
 	}
-	if err := removeIfExists(consts.AuthCPOtelClientKeyPath); err != nil {
-		return fmt.Errorf("remove cp otel client key: %w", err)
+	if err := removeIfExists(consts.AuthCPClientKeyPath); err != nil {
+		return fmt.Errorf("remove cp client key: %w", err)
 	}
 
 	if forceSigningKey {
@@ -155,8 +155,8 @@ func CheckAuthMaterial() ([]AuthFileStatus, error) {
 		{"CLI client key", consts.AuthCLIClientKeyPath, false},
 		{"OTEL server certificate", consts.AuthOtelServerCertPath, true},
 		{"OTEL server key", consts.AuthOtelServerKeyPath, false},
-		{"CP OTEL client certificate", consts.AuthCPOtelClientCertPath, true},
-		{"CP OTEL client key", consts.AuthCPOtelClientKeyPath, false},
+		{"CP client certificate", consts.AuthCPClientCertPath, true},
+		{"CP client key", consts.AuthCPClientKeyPath, false},
 	}
 
 	var results []AuthFileStatus
@@ -693,12 +693,12 @@ func ensureOtelServerCert() error {
 	return nil
 }
 
-func ensureCPOtelClientCert() error {
-	certPath, err := consts.AuthCPOtelClientCertPath()
+func ensureCPClientCert() error {
+	certPath, err := consts.AuthCPClientCertPath()
 	if err != nil {
 		return err
 	}
-	keyPath, err := consts.AuthCPOtelClientKeyPath()
+	keyPath, err := consts.AuthCPClientKeyPath()
 	if err != nil {
 		return err
 	}

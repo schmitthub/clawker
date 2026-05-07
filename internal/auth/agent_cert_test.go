@@ -44,7 +44,7 @@ func TestMintAgentCert_HappyPath(t *testing.T) {
 	caCertPath, caKeyPath := caPaths(t)
 
 	const project, agent = "alpha", "bravo"
-	got, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug(project), MustAgentName(agent))
+	got, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug(project), MustAgentName(agent), "abc1234567890def")
 	require.NoError(t, err)
 	require.NotEmpty(t, got.CertPEM)
 	require.NotEmpty(t, got.KeyPEM)
@@ -85,9 +85,9 @@ func TestMintAgentCert_HappyPath(t *testing.T) {
 func TestMintAgentCert_DistinctSerials(t *testing.T) {
 	caCertPath, caKeyPath := caPaths(t)
 
-	first, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug("x"), MustAgentName("y"))
+	first, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug("x"), MustAgentName("y"), "abc111")
 	require.NoError(t, err)
-	second, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug("x"), MustAgentName("y"))
+	second, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug("x"), MustAgentName("y"), "abc222")
 	require.NoError(t, err)
 
 	leaf1 := mustParse(t, first.CertPEM)
@@ -100,7 +100,7 @@ func TestMintAgentCert_DistinctSerials(t *testing.T) {
 
 func TestMintAgentCert_EmptyAgentName(t *testing.T) {
 	caCertPath, caKeyPath := caPaths(t)
-	_, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug("proj"), AgentName{})
+	_, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug("proj"), AgentName{}, "abc1234567890def")
 	require.Error(t, err)
 }
 
@@ -108,7 +108,7 @@ func TestMintAgentCert_EmptyProjectStillMints(t *testing.T) {
 	// 2-segment naming case (empty project) is legitimate — match
 	// docker.ContainerName behavior. CN must be "clawker.<agent>".
 	caCertPath, caKeyPath := caPaths(t)
-	got, err := MintAgentCert(caCertPath, caKeyPath, ProjectSlug{}, MustAgentName("solo"))
+	got, err := MintAgentCert(caCertPath, caKeyPath, ProjectSlug{}, MustAgentName("solo"), "abc1234567890def")
 	require.NoError(t, err)
 	leaf := mustParse(t, got.CertPEM)
 	assert.Equal(t, "clawker.solo", leaf.Subject.CommonName)
@@ -117,8 +117,31 @@ func TestMintAgentCert_EmptyProjectStillMints(t *testing.T) {
 func TestMintAgentCert_MissingCAPaths(t *testing.T) {
 	testenv.New(t)
 	missing := filepath.Join(t.TempDir(), "nope.pem")
-	_, err := MintAgentCert(missing, missing, MustProjectSlug("x"), MustAgentName("y"))
+	_, err := MintAgentCert(missing, missing, MustProjectSlug("x"), MustAgentName("y"), "abc1234567890def")
 	require.Error(t, err)
+}
+
+// TestBuildContainerSAN_RejectsNonHex pins the charset gate. Docker
+// container IDs are lowercase hex; any other string is a producer-side
+// bug that must surface here, not propagate into a malformed cert SAN.
+func TestBuildContainerSAN_RejectsNonHex(t *testing.T) {
+	for _, bad := range []string{
+		"",              // empty
+		"contains-dash", // dash
+		"WITHCAPS",      // upper case
+		"has space",     // space
+		"slash/in/it",   // slash
+		"nul\x00bytes",  // control char
+	} {
+		t.Run(bad, func(t *testing.T) {
+			_, err := BuildContainerSAN(bad)
+			require.Error(t, err, "BuildContainerSAN must reject non-hex container IDs")
+		})
+	}
+	// Valid hex must succeed.
+	u, err := BuildContainerSAN("abc123def456")
+	require.NoError(t, err)
+	require.NotNil(t, u)
 }
 
 // TestMintAgentCert_AdversarialCAInputs exercises the malformed-input
@@ -137,7 +160,7 @@ func TestMintAgentCert_AdversarialCAInputs(t *testing.T) {
 		certA, _ := writeCAPair(t, dir, "a")
 		_, keyB := writeCAPair(t, dir, "b")
 
-		_, err := MintAgentCert(certA, keyB, MustProjectSlug("x"), MustAgentName("y"))
+		_, err := MintAgentCert(certA, keyB, MustProjectSlug("x"), MustAgentName("y"), "abc1234567890def")
 		require.Error(t, err, "mismatched CA pair must fail")
 		assert.Contains(t, err.Error(), "matching pair")
 	})
@@ -151,7 +174,7 @@ func TestMintAgentCert_AdversarialCAInputs(t *testing.T) {
 		require.NoError(t, os.WriteFile(certPath, []byte("not a pem block at all"), 0o600))
 
 		_, keyPath := writeCAPair(t, dir, "valid")
-		_, err := MintAgentCert(certPath, keyPath, MustProjectSlug("x"), MustAgentName("y"))
+		_, err := MintAgentCert(certPath, keyPath, MustProjectSlug("x"), MustAgentName("y"), "abc1234567890def")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "PEM")
 	})
@@ -172,7 +195,7 @@ func TestMintAgentCert_AdversarialCAInputs(t *testing.T) {
 			pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: rsaDER}),
 			0o600))
 
-		_, err = MintAgentCert(certPath, rsaKeyPath, MustProjectSlug("x"), MustAgentName("y"))
+		_, err = MintAgentCert(certPath, rsaKeyPath, MustProjectSlug("x"), MustAgentName("y"), "abc1234567890def")
 		require.Error(t, err)
 	})
 }

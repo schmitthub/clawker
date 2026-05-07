@@ -35,7 +35,7 @@
   moby/moby (Docker SDK)
 ```
 
-> **CP ≠ firewall — common LLM confusion.** The "Security Subsystem" column above contains both `controlplane/` (CP daemon — **unconditional**: auth, AdminService, AgentService, agent slot/registry, mTLS, owns clawker-net) and `controlplane/firewall/` (**one optional subsystem CP manages**, toggled by `firewall.enable` in `settings.yaml`; the project schema's `security.firewall` holds per-project rules only, NOT the master switch). They are not the same. Disabling firewall does NOT disable CP, AdminService, AgentService, AnnounceAgent, clawkerd Connect, ListAgents, or any non-firewall AdminService RPC. CP owns firewall, not vice versa. Don't gate non-firewall behavior on the firewall flag.
+> **CP ≠ firewall — common LLM confusion.** The "Security Subsystem" column above contains both `controlplane/` (CP daemon — **unconditional**: auth, AdminService, AgentService listener, sqlite-persisted agentregistry, CP→clawkerd `agentdial`, mTLS, owns clawker-net) and `controlplane/firewall/` (**one optional subsystem CP manages**, toggled by `firewall.enable` in `settings.yaml`; the project schema's `security.firewall` holds per-project rules only, NOT the master switch). They are not the same. Disabling firewall does NOT disable CP, AdminService, AgentService, agentregistry, agentdial→clawkerd Session, ListAgents, or any non-firewall AdminService RPC. CP owns firewall, not vice versa. Don't gate non-firewall behavior on the firewall flag.
 
 ## Factory Dependency Injection (gh CLI Pattern)
 
@@ -522,13 +522,13 @@ Key packages:
 - `internal/controlplane/firewall` — firewall domain handler + Stack + rules store + Envoy/CoreDNS config + certs. See `internal/controlplane/firewall/CLAUDE.md`.
 - `internal/controlplane/firewall/ebpf` — BPF loader + manager + bpf2go bindings. See `internal/controlplane/firewall/ebpf/CLAUDE.md`.
 - `internal/controlplane/firewall/ebpf/cmd` — break-glass `ebpf-manager` CLI bundled alongside `clawker-cp` in the container image.
-- `internal/controlplane/agent` — `agent.Handler` (`AgentService.Connect` server-streaming, with five identity-binding cross-checks) plus `IdentityInterceptor` (cert-thumbprint binding, fail-secure opt-out map). See `internal/controlplane/agent/CLAUDE.md`.
-- `internal/controlplane/agentslots` — short-lived registration slots reserved by `AnnounceAgent` and consumed by `Connect` (constant-time PKCE compare, mismatch preserves slot for benign retry, sync.Once Stop).
-- `internal/controlplane/agentregistry` — registered-agent registry keyed by SHA-256 cert thumbprint with `dockerevents` subscription for eviction.
+- `internal/controlplane/agent` — `IdentityInterceptor` (cert-thumbprint → registry lookup, fail-secure opt-out map) for the AgentService listener. AgentService proto is empty in this branch; the interceptor stays wired for any future inbound clawkerd→CP RPC. See `internal/controlplane/agent/CLAUDE.md`.
+- `internal/controlplane/agentdial` — CP-side outbound dialer for `ClawkerdService.Session`. Permissive trust (always connects); cert/CN/registry outcomes surface as typed `Provenance` fields on `SessionConnected` overseer events. See `internal/controlplane/agentdial/CLAUDE.md`.
+- `internal/controlplane/agentregistry` — sqlite-persisted registry keyed by SHA-256 cert thumbprint + container_id. CLI writes rows at container CREATE time; `Reap` (startup) + dockerevents `container/destroy` (steady state) evict.
 - `internal/clawkerd` — `//go:embed assets/clawkerd` exports the per-container daemon binary; bundler drops it into every per-project image at `/usr/local/bin/clawkerd`.
 - `cmd/clawkerd` — per-container agent daemon. Boot sequence in `cmd/clawkerd/CLAUDE.md`.
 - `api/admin/v1` — AdminService proto + method-scope registration (`AdminMethodScopes`, covered by `TestAdminMethodScopes_CoversAllRPCs`).
-- `api/agent/v1` — AgentService proto (`Connect` server-streaming + `Events` stub in B4); method-scope map at `internal/controlplane/agent_method_scopes.go`.
+- `api/agent/v1` — AgentService proto. Empty in this branch (`Connect` and `Register` retired); method-scope map at `internal/controlplane/agent_method_scopes.go` is correspondingly empty. Listener stays bound for any future inbound clawkerd→CP RPC.
 - `cmd/clawker-cp/main.go` — daemon entry point. Wires Stack + `firewall.Handler` + `AgentWatcher` + drain callback + admin listener + agent listener + agent handler + dockerevents subscription.
 
 ## Command Dependency Injection Pattern

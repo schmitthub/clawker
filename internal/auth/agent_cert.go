@@ -10,16 +10,85 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net/url"
 	"os"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
+// ContainerSANScheme is the URI SAN scheme used to bind a leaf cert to
+// the docker container_id it was minted for. The Register handler
+// reads this SAN at handler entry and rejects any cert presenting a
+// container_id that doesn't match the cert's structural binding.
+//
+// Example: urn:clawker:container:abc123def456...
+const ContainerSANScheme = "urn:clawker:container:"
+
+// BuildContainerSAN composes the URI SAN for a given container_id. The
+// returned *url.URL embeds in x509.Certificate.URIs.
+//
+// Docker container IDs are 64-char hex strings (truncated forms in CLI
+// output use prefixes of the same alphabet). We enforce hex-only here
+// so a malformed ID (whitespace, slashes, control chars) cannot ride
+// into the cert SAN — the Register handler reads this back via
+// ContainerIDFromCert and uses it to look up a docker container, so an
+// unvalidated value is a producer-side bug surface.
+func BuildContainerSAN(containerID string) (*url.URL, error) {
+	if containerID == "" {
+		return nil, fmt.Errorf("container id required")
+	}
+	if !isHexLower(containerID) {
+		return nil, fmt.Errorf("container id must be lowercase hex; got %q", containerID)
+	}
+	u, err := url.Parse(ContainerSANScheme + containerID)
+	if err != nil {
+		return nil, fmt.Errorf("build container SAN: %w", err)
+	}
+	return u, nil
+}
+
+// isHexLower reports whether s contains only [0-9a-f]. Docker engine's
+// canonical container ID is exactly that charset; uppercase isn't
+// produced by docker so we don't accept it.
+func isHexLower(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+// ContainerIDFromCert extracts the container_id encoded as a URI SAN
+// of the form urn:clawker:container:<id>. Returns ("", false) when no
+// such SAN is present so callers can branch on a clean missing-binding
+// signal rather than parsing strings.
+func ContainerIDFromCert(cert *x509.Certificate) (string, bool) {
+	if cert == nil {
+		return "", false
+	}
+	for _, u := range cert.URIs {
+		if u == nil {
+			continue
+		}
+		s := u.String()
+		if len(s) > len(ContainerSANScheme) && s[:len(ContainerSANScheme)] == ContainerSANScheme {
+			return s[len(ContainerSANScheme):], true
+		}
+	}
+	return "", false
+}
+
 // CanonicalAgentCN composes the canonical agent identity used as the
-// cert's CN and the registry/slot composite key. Three-segment for a
-// scoped project ("clawker.<project>.<agent>"), two-segment for the
-// unscoped/empty-project case ("clawker.<agent>") to match
+// cert's CN and as the agentregistry row's pre-computed canonical_cn
+// column. Three-segment for a scoped project
+// ("clawker.<project>.<agent>"), two-segment for the unscoped/
+// empty-project case ("clawker.<agent>") to match
 // docker.ContainerName naming.
 //
 // Takes typed AgentName + ProjectSlug values so the caller can't pass
@@ -75,11 +144,21 @@ func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 // shape so the agent handler's CN cross-check has a single equality to
 // enforce.
 //
-// The 24h lifetime is intentional — thumbprint pinning at Connect makes
-// longer-lived certs safe, but a tight ceiling caps the blast radius if
-// a leaf leaks. Thumbprint is what the CLI announces to the CP via
-// AnnounceAgent so the CP can reject any peer cert whose
-// SHA-256(cert.Raw) doesn't match.
+// containerID is the docker container_id this cert is being minted for.
+// MintAgentCert embeds it as a URI SAN (urn:clawker:container:<id>) so
+// the CP-side Register handler can read the binding directly off the
+// peer cert at handler entry. A leaked cert presented for a different
+// container_id is rejected because the SAN won't match the docker
+// container the peer IP resolves to.
+//
+// The 24h lifetime is intentional — thumbprint pinning at registry
+// lookup time makes longer-lived certs safe, but a tight ceiling caps
+// the blast radius if a leaf leaks. CP captures the thumbprint at
+// Register handler entry from the live mTLS peer (cert.Raw → SHA-256)
+// and writes it into the agentregistry row alongside container_id;
+// subsequent Sessions presenting a different cert for the same
+// container_id are rejected as untrusted.
+//
 // Returns *AgentCert (nil on error) so a caller that ignores the error
 // cannot accidentally log the redacted zero-value as a successful cert.
 //
@@ -88,9 +167,12 @@ func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 // canonical-form / dot-in-name / charset checks have already run. A
 // raw-string caller now produces a compile error instead of a silently-
 // malformed cert subject downstream.
-func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName) (*AgentCert, error) {
+func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName, containerID string) (*AgentCert, error) {
 	if agent.IsZero() {
 		return nil, fmt.Errorf("agent name required")
+	}
+	if containerID == "" {
+		return nil, fmt.Errorf("container id required")
 	}
 
 	caCert, caKey, err := loadCAFrom(caCertPath, caKeyPath)
@@ -108,6 +190,11 @@ func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent Agen
 		return nil, fmt.Errorf("generate serial: %w", err)
 	}
 
+	containerSAN, err := BuildContainerSAN(containerID)
+	if err != nil {
+		return nil, fmt.Errorf("build container SAN: %w", err)
+	}
+
 	now := time.Now().UTC()
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
@@ -115,10 +202,20 @@ func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent Agen
 			CommonName:   CanonicalAgentCN(project, agent),
 			Organization: []string{"clawker"},
 		},
-		NotBefore:   now.Add(-5 * time.Minute),
-		NotAfter:    now.Add(24 * time.Hour),
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		NotBefore: now.Add(-5 * time.Minute),
+		NotAfter:  now.Add(24 * time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		// Dual-purpose cert: ClientAuth so clawkerd can present it
+		// when dialing CP's AgentService (mTLS to AgentPort), and
+		// ServerAuth so clawkerd can present the SAME cert as its
+		// server cert on the :7700 ClawkerdService listener that CP
+		// dials. CP-side chain verify defaults to checking
+		// ExtKeyUsageServerAuth — without ServerAuth here, every
+		// CP→clawkerd dial fails with "incompatible key usage".
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		// URI SAN binds this cert to its container_id. Register
+		// handler reads it via auth.ContainerIDFromCert.
+		URIs: []*url.URL{containerSAN},
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &leafKey.PublicKey, caKey)

@@ -140,12 +140,18 @@ func (f *FakeClient) SetupImageTag() {
 	}
 }
 
+// FakeContainerID is the lowercase-hex container ID SetupContainerCreate
+// returns. Real docker container IDs are 64-char lowercase hex; this
+// matches the shape so callers that pass the ID into
+// auth.BuildContainerSAN (which rejects non-hex) work without surgery.
+const FakeContainerID = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+
 // SetupContainerCreate configures the fake to succeed on ContainerCreate,
-// returning a container with the given fake ID.
+// returning a container with FakeContainerID.
 func (f *FakeClient) SetupContainerCreate() {
 	f.FakeAPI.ContainerCreateFn = func(_ context.Context, _ client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
 		return client.ContainerCreateResult{
-			ID: "sha256:fakecontainer1234567890abcdef",
+			ID: FakeContainerID,
 		}, nil
 	}
 }

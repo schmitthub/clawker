@@ -142,13 +142,16 @@ PROTO_SOURCES := \
 	buf.yaml \
 	buf.gen.yaml \
 	$(wildcard api/admin/v1/*.proto) \
-	$(wildcard api/agent/v1/*.proto)
+	$(wildcard api/agent/v1/*.proto) \
+	$(wildcard api/clawkerd/v1/*.proto)
 
 PROTO_GENERATED := \
 	api/admin/v1/admin.pb.go \
 	api/admin/v1/admin_grpc.pb.go \
 	api/agent/v1/agent.pb.go \
-	api/agent/v1/agent_grpc.pb.go
+	api/agent/v1/agent_grpc.pb.go \
+	api/clawkerd/v1/clawkerd.pb.go \
+	api/clawkerd/v1/clawkerd_grpc.pb.go
 
 # bpf2go-generated Go wrappers + compiled BPF bytecode extracted to the host
 # tree so host-side `go test` / `go vet` / `gopls` can compile
@@ -194,8 +197,14 @@ CP_BINARY_DEPS := \
 	$(PROTO_GENERATED) \
 	$(wildcard cmd/clawker-cp/*.go) \
 	$(wildcard internal/controlplane/*.go) \
-	internal/controlplane/firewall/ebpf/manager.go \
-	internal/controlplane/firewall/ebpf/types.go
+	$(wildcard internal/controlplane/agent/*.go) \
+	$(wildcard internal/controlplane/agentdial/*.go) \
+	$(wildcard internal/controlplane/agentregistry/*.go) \
+	$(wildcard internal/controlplane/agentslots/*.go) \
+	$(wildcard internal/controlplane/dockerevents/*.go) \
+	$(wildcard internal/controlplane/firewall/*.go) \
+	$(wildcard internal/controlplane/firewall/ebpf/*.go) \
+	$(wildcard internal/controlplane/informer/*.go)
 
 # `docker buildx build --output=type=local,dest=...` exports a stage's
 # filesystem to a host directory. The `*-extract` stages in Dockerfile.controlplane
@@ -338,7 +347,7 @@ $(CP_BINARY): $(CP_BINARY_DEPS) $(BPF_BINDINGS) $(CLAWKERD_BINARY)
 # per-project build context by internal/bundler.
 .PHONY: clawkerd-binary
 clawkerd-binary: $(CLAWKERD_BINARY)
-$(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard internal/consts/*.go) $(wildcard api/agent/v1/*.go)
+$(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard internal/consts/*.go) $(wildcard api/agent/v1/*.go) $(wildcard api/clawkerd/v1/*.go)
 	@echo "Building clawkerd for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/clawkerd

@@ -6,6 +6,8 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/controlplane/agent"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -173,10 +175,43 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 
 	// Use RemoveContainerWithVolumes if volumes flag is set
 	if opts.Volumes {
-		return client.RemoveContainerWithVolumes(ctx, container.ID, opts.Force)
+		if err := client.RemoveContainerWithVolumes(ctx, container.ID, opts.Force); err != nil {
+			return err
+		}
+	} else {
+		// Otherwise just remove the container
+		if _, err = client.ContainerRemove(ctx, container.ID, opts.Force); err != nil {
+			return err
+		}
 	}
 
-	// Otherwise just remove the container
-	_, err = client.ContainerRemove(ctx, container.ID, opts.Force)
-	return err
+	// Drop the agent row keyed by container_id. Best-effort:
+	// if the DB doesn't yet exist (fresh install with no managed
+	// container) or the eviction fails, the start path's evict-on-die
+	// dockerevents subscription cleans up later. Container removal is
+	// the user-facing success of this command, so registry hiccups
+	// must not surface as remove failures.
+	registryDBPath, pathErr := consts.ControlPlaneDBPath()
+	if pathErr != nil {
+		log.Debug().Err(pathErr).Msg("agent: skipping evict on remove (db path unresolved)")
+		return nil
+	}
+	reg, openErr := agent.NewSQLiteWriter(registryDBPath, log)
+	if openErr != nil {
+		log.Debug().Err(openErr).Msg("agent: skipping evict on remove (db open failed)")
+		return nil
+	}
+	defer func() {
+		if closer, ok := reg.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}()
+	if err := reg.EvictByContainerID(container.ID); err != nil {
+		// Best-effort: container removal already succeeded above so a
+		// registry hiccup must not surface as a remove failure. Log at
+		// debug; the dockerevents subscription / startup reap heals
+		// the orphan row later.
+		log.Debug().Err(err).Str("container_id", container.ID).Msg("agent: evict on remove failed")
+	}
+	return nil
 }

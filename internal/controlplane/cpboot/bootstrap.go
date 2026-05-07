@@ -135,6 +135,9 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("ensure auth material: %w", err)
 	}
 
+	// Note: agentregistry schema apply moved into the CP daemon
+	// (cmd/clawker-cp/main.go Step 8) now that CP is the sole sqlite
+	// writer. Host-side EnsureSchema is no longer needed.
 	if err := ensureCPImageFn(ctx, dc, log); err != nil {
 		return fmt.Errorf("controlplane: %w", err)
 	}

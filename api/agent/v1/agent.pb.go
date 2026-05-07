@@ -21,50 +21,38 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type ConnectRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// agent_name is the short agent name as the user types it on the CLI
-	// (e.g. "dev", "test"). NOT the canonical "clawker.project.agent". CP
-	// assembles the canonical CN as `clawker.<project>.<agent>` (or
-	// `clawker.<agent>` for empty project) via auth.CanonicalAgentCN and
-	// cross-checks against the peer cert's CN before consuming the slot.
-	AgentName string `protobuf:"bytes,1,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
-	// code_verifier is the PKCE secret matching the slot's S256 challenge.
-	// CLI delivers it to /run/clawker/bootstrap/verifier via Docker's
-	// CopyToContainer API between docker create and docker start
-	// (writable layer; see cmd/clawkerd/CLAUDE.md).
-	// Per RFC 7636, length is 43-128 unreserved characters.
-	//
-	// RECONNECT PATH (future, see cp-initiative-cp-restart-resilience):
-	// Empty verifier is reserved for the future reconnect flow after CP
-	// restart. clawkerd deletes the verifier on first-connect success
-	// (single-use); a reconnect attempt has no verifier to send. Today's
-	// handler requires verifier; the future patch will branch on
-	// registry-already-has-thumbprint to skip slot consume.
-	CodeVerifier string `protobuf:"bytes,2,opt,name=code_verifier,json=codeVerifier,proto3" json:"code_verifier,omitempty"`
-	// project is the clawker project slug the agent runs under (empty for
-	// 2-segment naming). Together with agent_name forms the composite slot
-	// identity — read by clawkerd from CLAWKER_PROJECT and forwarded as a
-	// separate wire field so the CP never has to parse a canonical form.
-	Project       string `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`
+// RegisterRequest carries the human-readable identity claim. The
+// agent_name and project are cross-checked against:
+//   - the peer cert's canonical CN (clawker.<project>.<agent>)
+//   - the docker container's dev.clawker.agent / dev.clawker.project
+//     labels (resolved via the container_id read from the cert URI SAN)
+//
+// container_id is NOT a request field — the handler reads it from the
+// cert's URI SAN to defend against a leaked cert being presented for
+// the wrong container. The cert's binding to container_id is
+// structural, not request-claimed.
+type RegisterRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentName     string                 `protobuf:"bytes,1,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
+	Project       string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ConnectRequest) Reset() {
-	*x = ConnectRequest{}
+func (x *RegisterRequest) Reset() {
+	*x = RegisterRequest{}
 	mi := &file_agent_v1_agent_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ConnectRequest) String() string {
+func (x *RegisterRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ConnectRequest) ProtoMessage() {}
+func (*RegisterRequest) ProtoMessage() {}
 
-func (x *ConnectRequest) ProtoReflect() protoreflect.Message {
+func (x *RegisterRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_agent_v1_agent_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -76,117 +64,36 @@ func (x *ConnectRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ConnectRequest.ProtoReflect.Descriptor instead.
-func (*ConnectRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use RegisterRequest.ProtoReflect.Descriptor instead.
+func (*RegisterRequest) Descriptor() ([]byte, []int) {
 	return file_agent_v1_agent_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *ConnectRequest) GetAgentName() string {
+func (x *RegisterRequest) GetAgentName() string {
 	if x != nil {
 		return x.AgentName
 	}
 	return ""
 }
 
-func (x *ConnectRequest) GetCodeVerifier() string {
-	if x != nil {
-		return x.CodeVerifier
-	}
-	return ""
-}
-
-func (x *ConnectRequest) GetProject() string {
+func (x *RegisterRequest) GetProject() string {
 	if x != nil {
 		return x.Project
 	}
 	return ""
 }
 
-// Command is the server-streamed envelope sent over the Connect stream.
-// First message after auth is always Welcome. B5+ adds payload variants
-// (e.g. ShellCommand, Stop, ReloadConfig) by extending the oneof — no
-// proto migration required, just new tags.
-type Command struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Types that are valid to be assigned to Payload:
-	//
-	//	*Command_Welcome
-	Payload       isCommand_Payload `protobuf_oneof:"payload"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Command) Reset() {
-	*x = Command{}
-	mi := &file_agent_v1_agent_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Command) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Command) ProtoMessage() {}
-
-func (x *Command) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Command.ProtoReflect.Descriptor instead.
-func (*Command) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *Command) GetPayload() isCommand_Payload {
-	if x != nil {
-		return x.Payload
-	}
-	return nil
-}
-
-func (x *Command) GetWelcome() *Welcome {
-	if x != nil {
-		if x, ok := x.Payload.(*Command_Welcome); ok {
-			return x.Welcome
-		}
-	}
-	return nil
-}
-
-type isCommand_Payload interface {
-	isCommand_Payload()
-}
-
-type Command_Welcome struct {
-	Welcome *Welcome `protobuf:"bytes,1,opt,name=welcome,proto3,oneof"`
-}
-
-func (*Command_Welcome) isCommand_Payload() {}
-
-// Welcome carries the post-auth ClawkerdConfiguration payload. The
-// configuration is empty in this branch (B5 fills in OTEL endpoint, file
-// logging context, identity context). Receipt of Welcome by clawkerd
-// implies server-side auth succeeded — only then is the single-use
-// PKCE verifier safe to delete.
+// Welcome is the success response. Empty — the act of returning
+// without error is the signal.
 type Welcome struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Config        *ClawkerdConfiguration `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Welcome) Reset() {
 	*x = Welcome{}
-	mi := &file_agent_v1_agent_proto_msgTypes[2]
+	mi := &file_agent_v1_agent_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -198,7 +105,7 @@ func (x *Welcome) String() string {
 func (*Welcome) ProtoMessage() {}
 
 func (x *Welcome) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[2]
+	mi := &file_agent_v1_agent_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -211,154 +118,21 @@ func (x *Welcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Welcome.ProtoReflect.Descriptor instead.
 func (*Welcome) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *Welcome) GetConfig() *ClawkerdConfiguration {
-	if x != nil {
-		return x.Config
-	}
-	return nil
-}
-
-// ClawkerdConfiguration is the post-auth runtime configuration delivered
-// to clawkerd inside Welcome. Empty in this branch — placeholder for
-// B5's OTEL/logging/identity-context fields.
-type ClawkerdConfiguration struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ClawkerdConfiguration) Reset() {
-	*x = ClawkerdConfiguration{}
-	mi := &file_agent_v1_agent_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ClawkerdConfiguration) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ClawkerdConfiguration) ProtoMessage() {}
-
-func (x *ClawkerdConfiguration) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ClawkerdConfiguration.ProtoReflect.Descriptor instead.
-func (*ClawkerdConfiguration) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{3}
-}
-
-// Event is the client-streamed telemetry payload sent over the Events
-// stream. Empty in this branch — B5 defines event types alongside the
-// CP-side consumer.
-type Event struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Event) Reset() {
-	*x = Event{}
-	mi := &file_agent_v1_agent_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Event) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Event) ProtoMessage() {}
-
-func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Event.ProtoReflect.Descriptor instead.
-func (*Event) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{4}
-}
-
-// EventAck is the server's response when clawkerd closes the Events
-// stream. Empty in this branch.
-type EventAck struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *EventAck) Reset() {
-	*x = EventAck{}
-	mi := &file_agent_v1_agent_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *EventAck) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EventAck) ProtoMessage() {}
-
-func (x *EventAck) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EventAck.ProtoReflect.Descriptor instead.
-func (*EventAck) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{5}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{1}
 }
 
 var File_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x14agent/v1/agent.proto\x12\x10clawker.agent.v1\"n\n" +
-	"\x0eConnectRequest\x12\x1d\n" +
+	"\x14agent/v1/agent.proto\x12\x10clawker.agent.v1\"J\n" +
+	"\x0fRegisterRequest\x12\x1d\n" +
 	"\n" +
-	"agent_name\x18\x01 \x01(\tR\tagentName\x12#\n" +
-	"\rcode_verifier\x18\x02 \x01(\tR\fcodeVerifier\x12\x18\n" +
-	"\aproject\x18\x03 \x01(\tR\aproject\"K\n" +
-	"\aCommand\x125\n" +
-	"\awelcome\x18\x01 \x01(\v2\x19.clawker.agent.v1.WelcomeH\x00R\awelcomeB\t\n" +
-	"\apayload\"J\n" +
-	"\aWelcome\x12?\n" +
-	"\x06config\x18\x01 \x01(\v2'.clawker.agent.v1.ClawkerdConfigurationR\x06config\"\x17\n" +
-	"\x15ClawkerdConfiguration\"\a\n" +
-	"\x05Event\"\n" +
-	"\n" +
-	"\bEventAck2\x99\x01\n" +
+	"agent_name\x18\x01 \x01(\tR\tagentName\x12\x18\n" +
+	"\aproject\x18\x02 \x01(\tR\aproject\"\t\n" +
+	"\aWelcome2X\n" +
 	"\fAgentService\x12H\n" +
-	"\aConnect\x12 .clawker.agent.v1.ConnectRequest\x1a\x19.clawker.agent.v1.Command0\x01\x12?\n" +
-	"\x06Events\x12\x17.clawker.agent.v1.Event\x1a\x1a.clawker.agent.v1.EventAck(\x01B,Z*github.com/schmitthub/clawker/api/agent/v1b\x06proto3"
+	"\bRegister\x12!.clawker.agent.v1.RegisterRequest\x1a\x19.clawker.agent.v1.WelcomeB,Z*github.com/schmitthub/clawker/api/agent/v1b\x06proto3"
 
 var (
 	file_agent_v1_agent_proto_rawDescOnce sync.Once
@@ -372,27 +146,19 @@ func file_agent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_agent_v1_agent_proto_rawDescData
 }
 
-var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_agent_v1_agent_proto_goTypes = []any{
-	(*ConnectRequest)(nil),        // 0: clawker.agent.v1.ConnectRequest
-	(*Command)(nil),               // 1: clawker.agent.v1.Command
-	(*Welcome)(nil),               // 2: clawker.agent.v1.Welcome
-	(*ClawkerdConfiguration)(nil), // 3: clawker.agent.v1.ClawkerdConfiguration
-	(*Event)(nil),                 // 4: clawker.agent.v1.Event
-	(*EventAck)(nil),              // 5: clawker.agent.v1.EventAck
+	(*RegisterRequest)(nil), // 0: clawker.agent.v1.RegisterRequest
+	(*Welcome)(nil),         // 1: clawker.agent.v1.Welcome
 }
 var file_agent_v1_agent_proto_depIdxs = []int32{
-	2, // 0: clawker.agent.v1.Command.welcome:type_name -> clawker.agent.v1.Welcome
-	3, // 1: clawker.agent.v1.Welcome.config:type_name -> clawker.agent.v1.ClawkerdConfiguration
-	0, // 2: clawker.agent.v1.AgentService.Connect:input_type -> clawker.agent.v1.ConnectRequest
-	4, // 3: clawker.agent.v1.AgentService.Events:input_type -> clawker.agent.v1.Event
-	1, // 4: clawker.agent.v1.AgentService.Connect:output_type -> clawker.agent.v1.Command
-	5, // 5: clawker.agent.v1.AgentService.Events:output_type -> clawker.agent.v1.EventAck
-	4, // [4:6] is the sub-list for method output_type
-	2, // [2:4] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	0, // 0: clawker.agent.v1.AgentService.Register:input_type -> clawker.agent.v1.RegisterRequest
+	1, // 1: clawker.agent.v1.AgentService.Register:output_type -> clawker.agent.v1.Welcome
+	1, // [1:2] is the sub-list for method output_type
+	0, // [0:1] is the sub-list for method input_type
+	0, // [0:0] is the sub-list for extension type_name
+	0, // [0:0] is the sub-list for extension extendee
+	0, // [0:0] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_agent_proto_init() }
@@ -400,16 +166,13 @@ func file_agent_v1_agent_proto_init() {
 	if File_agent_v1_agent_proto != nil {
 		return
 	}
-	file_agent_v1_agent_proto_msgTypes[1].OneofWrappers = []any{
-		(*Command_Welcome)(nil),
-	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_agent_proto_rawDesc), len(file_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

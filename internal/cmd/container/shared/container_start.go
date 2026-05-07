@@ -6,9 +6,7 @@ import (
 
 	mobyClient "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -30,23 +28,22 @@ type CommandOpts struct {
 
 	// AgentName is the user-typed short agent name (e.g. "dev", "test").
 	// NOT the canonical "clawker.project.agent" form — the canonical name
-	// is composed downstream (in MintAgentCert / on the CP side) from
-	// (Project, AgentName) so it has a single home. New-container start
-	// paths MUST set this; without it ContainerStart skips the announce
-	// + bootstrap-delivery and the entrypoint silently skips clawkerd
-	// launch. Existing-container start/restart paths leave it empty by
-	// design — those containers' slots either already exist (and clawkerd
-	// is reconnecting, future B5 work) or were intentionally never
-	// registered.
+	// is composed downstream (in MintAgentCert and as the registry row's
+	// canonical_cn column) from (Project, AgentName) so it has a single
+	// home. New-container start paths MUST set this; without it
+	// ContainerStart skips the bootstrap-delivery + registry-write and
+	// the entrypoint silently skips clawkerd launch. Existing-container
+	// start/restart paths leave it empty by design — those containers'
+	// registry rows already exist (the CP-side agent dialer picks up
+	// where it left off) or were intentionally never registered.
 	AgentName string
 
 	// Project is the clawker project slug the agent runs under, paired
-	// with AgentName to form the composite (project, agent) identity the
-	// CP keys slots and registry entries by. Empty string for the
-	// 2-segment unscoped naming case — same convention as
-	// docker.ContainerName. Must be set whenever AgentName is set on a
-	// new-container start path so AnnounceAgent + MintAgentCert agree on
-	// the canonical CN.
+	// with AgentName to form the (project, agent) identity the CP keys
+	// agentregistry entries by. Empty string for the 2-segment unscoped
+	// naming case — same convention as docker.ContainerName. Must be set
+	// whenever AgentName is set on a new-container start path so
+	// MintAgentCert composes the right canonical CN.
 	Project string
 }
 
@@ -133,12 +130,12 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 			return fmt.Errorf("bootstrapping services: firewall is enabled but no admin client provided")
 		}
 
-		client, err := cmdOpts.AdminClient(ctx)
+		adminClient, err := cmdOpts.AdminClient(ctx)
 		if err != nil {
 			return fmt.Errorf("bootstrapping services: connecting to control plane: %w", err)
 		}
 
-		if _, err := client.FirewallInit(ctx, &adminv1.FirewallInitRequest{}); err != nil {
+		if _, err := adminClient.FirewallInit(ctx, &adminv1.FirewallInitRequest{}); err != nil {
 			return fmt.Errorf("bootstrapping services: firewall init: %w", err)
 		}
 
@@ -153,7 +150,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		if err != nil {
 			return fmt.Errorf("bootstrapping services: resolving current project: %w", err)
 		}
-		if _, err := client.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
+		if _, err := adminClient.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
 			Rules: fwcp.ConfigRulesToProto(proj.EgressRules()),
 		}); err != nil {
 			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
@@ -256,18 +253,6 @@ func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.C
 		return mobyClient.ContainerStartResult{}, fmt.Errorf("starting container: docker client is nil")
 	}
 
-	// Announce the agent slot + write the bootstrap material into the
-	// container BEFORE docker start. Hard-fail policy: any error
-	// returns from ContainerStart before client.ContainerStart fires —
-	// the container is created but not started, and the caller's
-	// existing cleanup handles teardown. Empty AgentName skips the
-	// bootstrap (existing-container start/restart paths).
-	if cmdOpts.AgentName != "" {
-		if err := prepareAgentBootstrap(ctx, cmdOpts, startOpts.ContainerID, NewCopyToContainerFn(client)); err != nil {
-			return mobyClient.ContainerStartResult{}, fmt.Errorf("agent bootstrap: %w", err)
-		}
-	}
-
 	result, err := client.ContainerStart(ctx, startOpts)
 	if err != nil {
 		return result, err
@@ -284,96 +269,7 @@ func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.C
 // for the agent assertion. Pinned to 127.0.0.1 (NOT the CP container's
 // docker-network hostname) because Hydra checks `aud` against its own
 // `urls.self.issuer` config, regardless of which network path the
-// request arrived on. Inside a container clawkerd POSTs to
-// `clawker-controlplane:<port>` (Docker DNS — see EnvClawkerdHydraURL
-// set by buildCreateTimeEnv) but signs the assertion with the
-// 127.0.0.1 audience so Hydra accepts it.
-//
-// Hot-fix history: commit fd475fb1 pinned this format after a regression
-// where the audience matched the docker-DNS host. The dedicated unit
-// test TestHydraTokenAudienceFromPort_Pinned guards the format so a
-// future refactor of `prepareAgentBootstrap` can't silently revert.
+// request arrived on.
 func hydraTokenAudienceFromPort(port int) string {
 	return fmt.Sprintf("https://127.0.0.1:%d/oauth2/token", port)
-}
-
-// prepareAgentBootstrap mints fresh PKCE + per-agent mTLS material,
-// announces the slot to the CP via AdminService.AnnounceAgent, then
-// tars the bootstrap directory into the container at consts.BootstrapDir
-// (parent dir 0700, files 0400). Caller invokes this BEFORE
-// client.ContainerStart so:
-//
-//   - The slot is reserved in the CP before clawkerd boots and dials
-//     Connect (otherwise clawkerd's first Recv hits an unknown-slot
-//     rejection).
-//   - The bootstrap files are present in the writable layer when the
-//     container's entrypoint reads them (Docker's CopyToContainer can't
-//     pre-populate a tmpfs, so the writable layer is the only viable
-//     pre-start landing zone).
-//
-// Hard-fails the whole start path on any error — partial bootstrap
-// states are unreachable. Caller's deferred cleanup (or the user's
-// next `clawker run`) decides whether to retry.
-//
-// copyFn is injected (rather than derived from a *docker.Client inside
-// the helper) so unit tests can capture the tar payload landing in
-// the container without standing up a Docker daemon.
-func prepareAgentBootstrap(ctx context.Context, cmdOpts CommandOpts, containerID string, copyFn CopyToContainerFn) error {
-	if cmdOpts.Config == nil {
-		return fmt.Errorf("config provider is nil")
-	}
-	cfg, err := cmdOpts.Config()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	if cfg == nil {
-		return fmt.Errorf("config is nil")
-	}
-	if cmdOpts.AdminClient == nil {
-		return fmt.Errorf("admin client provider is nil")
-	}
-
-	caCertPath, err := consts.AuthCACertPath()
-	if err != nil {
-		return fmt.Errorf("ca cert path: %w", err)
-	}
-	caKeyPath, err := consts.AuthCAKeyPath()
-	if err != nil {
-		return fmt.Errorf("ca key path: %w", err)
-	}
-	signingKey, err := auth.LoadSigningKey()
-	if err != nil {
-		return fmt.Errorf("load signing key: %w", err)
-	}
-
-	hydraTokenAudience := hydraTokenAudienceFromPort(cfg.Settings().ControlPlane.HydraPublicPort)
-
-	// Validate (project, agent) at the CLI flag → bootstrap boundary.
-	// Downstream helpers take the typed values so a future refactor
-	// can't accidentally pass a canonical-form or dot-containing name.
-	project, err := auth.NewProjectSlug(cmdOpts.Project)
-	if err != nil {
-		return fmt.Errorf("invalid project: %w", err)
-	}
-	agentName, err := auth.NewAgentName(cmdOpts.AgentName)
-	if err != nil {
-		return fmt.Errorf("invalid agent name: %w", err)
-	}
-
-	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, project, agentName, hydraTokenAudience, signingKey)
-	if err != nil {
-		return fmt.Errorf("generate: %w", err)
-	}
-
-	admin, err := cmdOpts.AdminClient(ctx)
-	if err != nil {
-		return fmt.Errorf("dial control plane: %w", err)
-	}
-	if err := AnnounceAgent(ctx, admin, bootstrap, project, agentName, containerID); err != nil {
-		return fmt.Errorf("announce: %w", err)
-	}
-	if err := WriteAgentBootstrapToContainer(ctx, containerID, copyFn, bootstrap); err != nil {
-		return fmt.Errorf("write: %w", err)
-	}
-	return nil
 }

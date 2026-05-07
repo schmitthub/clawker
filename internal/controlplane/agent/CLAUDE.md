@@ -1,104 +1,183 @@
-# Controlplane Agent Subpackage
+# Controlplane Agent Package
 
-Implements the `clawker.agent.v1.AgentService` gRPC surface — the
-clawkerd-facing handler that opens the lifetime command channel after
-the PKCE-bound identity handshake.
+The unified CP-side surface for everything keyed on a clawker-managed
+agent: persisted identity registry, AgentService.Register handler,
+per-RPC IdentityInterceptor, CP→clawkerd Session dialer, and the
+agent-axis event types (`SessionConnecting/Connected/Failed/Broken`,
+`AgentRegistered`, `AgentUntrusted`).
+
+This package replaces the prior split between `agentdial`,
+`agentregistry`, and a stub `agent` package. One axis (the agent), one
+package, one umbrella entry point (`agent.Start`).
+
+## Single entry point: `agent.Start`
+
+`cmd/clawker-cp/main.go` Step 8 wires the entire agent surface with one
+call:
+
+```go
+agentCleanup, err := agent.Start(watcherCtx, agent.StartDeps{
+    Registry:     agentReg,            // CP-owned sqlite writer
+    DockerLister: listAgentIDsAll,     // returns purpose=agent containers, All:true
+    Dialer:       dialer,              // agent.New(...) for CP→clawkerd
+    Bus:          bus,
+    Log:          log.With("component", "agent"),
+})
+defer agentCleanup()
+```
+
+`Start` does, in order:
+
+1. **Reap orphan registry rows.** Lists `purpose=agent` containers
+   (`All: true`, includes stopped) and evicts rows whose container_id
+   is gone. Heals the registry against `docker rm`s that landed while
+   CP was down.
+2. **Subscribe to `dockerevents.DockerEvent` for evict.** Filter on
+   `container/destroy`; consumer evicts the registry row. Stop/die/
+   kill do NOT evict — a stopped container can be `docker start`-ed
+   back into life.
+3. **Subscribe to `dockerevents.DockerEvent` for dial.** Filter on
+   `container/start|restart|unpause` with `purpose=agent`; consumer
+   calls `dialer.DialAgent(ctx, containerID)`.
+
+The previously-fragmented `Reap`/`Subscribe`/`Subscribe` exports are
+now unexported helpers behind `Start`.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `handler.go` | `Handler` (`agentv1.AgentServiceServer`) + `NewHandler(slots, reg, inspector, log)`; `ContainerInspector` narrow Docker dependency + `MobyInspector` adapter; `peerIdentityAndIP` extracts a narrow `peerIdentity{Raw, CommonName}` projection + IPv4 from the gRPC context |
-| `handler_test.go` | Happy-path + every adversarial branch (missing fields, no peer cert, CN mismatch, wrong verifier, cert swap, peer-IP mismatch, label tampering, Docker inspect error, Send-failure orphan defense, ctx-cancel idle teardown) |
-| `identity_interceptor.go` | `IdentityInterceptor(reg, optedOut, log) (UnaryServerInterceptor, StreamServerInterceptor)` resolves peer cert thumbprint to a registry entry; `IdentityOptedOutMethods()` lists bootstrap RPCs that authenticate themselves; `WithEntry` / `EntryFromContext` for downstream RPC handlers |
-| `identity_interceptor_test.go` | Branch coverage for opt-out, registry-hit (with the load-bearing wrapped-Context() check), lookup-miss, and no-peer-cert; nil-entry panic; opt-out roster sanity vs proto descriptor |
-| `mocks/` | moq-generated `ContainerInspectorMock` for external consumers |
+| `start.go` | `Start(ctx, StartDeps)` umbrella + shared panic-loop guardrails for the two subscribers + private `reapOrphans` |
+| `registry.go` | `Registry` interface, `Entry`, `ErrUnknownAgent`, `NewRegistry` (in-memory test impl) |
+| `registry_sqlite.go` | sqlite-backed `Registry`: `NewSQLiteWriter`, `EnsureSchema`, schema apply with migration support |
+| `dialer.go` | `Dialer.DialAgent` — CP-side outbound mTLS dial to `ClawkerdService.Session`. Permissive trust posture (asymmetric: CP must always be reachable). Drives Register handshake on Miss, publishes Session* + AgentRegistered + AgentUntrusted events |
+| `events_session.go` | `SessionConnecting`, `SessionConnected`, `SessionFailed`, `SessionBroken` — all implement `overseer.applier` mutating `State.Agents` |
+| `events_agent.go` | `AgentRegistered{Ok, Reason}`, `AgentUntrusted{Reason UntrustedReason, Detail}` — also implement `applier` |
+| `register_handler.go` | `Handler` (AgentService.Register handler) + `ContainerInspector` interface + `NewMobyContainerInspector` |
+| `handler.go` | `peerIdentity` projection + `peerIdentityFromContext` (used by IdentityInterceptor) |
+| `identity_interceptor.go` | `IdentityInterceptor(reg, optedOut, log)` + `IdentityOptedOutMethods()` (Register is opt-out — registry row doesn't exist pre-call) + `WithEntry` / `EntryFromContext` |
+| `registry_mock_test.go` | moq-generated `RegistryMock` (test-only file; lives in `agent` package itself to break import cycle that prevented an `agent/mocks` subpackage from working) |
 
-## Connect flow (load-bearing)
+## Identity contract
 
-The Connect RPC is server-streaming. After auth, the handler sends
-exactly one `Welcome` and idles on `stream.Context().Done()` for the
-agent's lifetime — eviction (dockerevents → cancel) or clawkerd
-disconnect closes the stream.
+A row's identity is `(thumbprint, container_id)` — both UNIQUE in
+sqlite. The CN composed from `(project, agent_name)` is stored
+pre-computed (`canonical_cn` column) and compared via
+`subtle.ConstantTimeCompare` inside `Lookup`. No reconstruction at
+read time.
 
-1. AuthInterceptor verifies the bearer token + `agent:self:register` scope. mTLS itself is enforced by the listener; the handler reads the peer cert from `peer.FromContext`.
-2. `req` is validated for non-empty `agent_name` + `code_verifier`. Empty fields return `codes.InvalidArgument` so a confused client gets a clear failure mode rather than the generic registration-rejected envelope.
-3. **Cert CN cross-check** — `subtle.ConstantTimeCompare(peerCert.Subject.CommonName, auth.CanonicalAgentCN(req.Project, req.AgentName))`. Defends announce-payload tampering between cert mint and the ConnectRequest body — a tampered project OR agent on the wire produces a different canonical and fails this check. Runs BEFORE slot consume so a CN mismatch can't burn a legitimate slot.
-4. **Composite slot consume** — `slots.Consume(thumbprint, agent_name, project, verifier)`. The (thumbprint, agent_name, project) lookup folds the cert-thumbprint cross-check into the map key, eliminating the separate post-Consume thumbprint compare. PKCE compare is constant-time inside `agentslots`. Mismatch leaves the slot for benign retry (TTL evicts).
-5. **Docker inspect** — peer IP must match `clawker-net` IP for `slot.container_id`. Defends cert+verifier theft replayed from a different container.
-6. **Label cross-check** — BOTH `dev.clawker.agent` AND `dev.clawker.project` must equal the slot's `AgentName` and `Project`. Defends label tampering after announce; checking only the agent half would let an attacker who relabeled the project (but kept the agent name) ride a slot for the wrong project.
-7. **Send Welcome** — first message after auth. Receipt by clawkerd implies server-side auth fully succeeded and authorizes deletion of the single-use PKCE verifier. **Send fires BEFORE** `registry.Add` so a transport failure leaves no orphan registry entry.
-8. **Pin to registry** — keyed by SHA-256 over `peer_cert.Raw`. Per-agent RPCs in later branches resolve identity by recomputing the thumbprint.
-9. **Idle on `<-ctx.Done()`** — the connection is the agent's lifetime command channel. B5+ replaces this with a select on a per-agent command queue.
+CP is the SOLE writer of registry rows. The Register handler captures
+the live mTLS peer's cert thumbprint at handler entry and writes the
+row. The CLI never opens the sqlite DB — that's what fixes the WAL
+coherence bug across the macOS bind-mount boundary.
 
-Every failure returns a single `codes.PermissionDenied` with a generic message — no leak about which check failed. Send-failure is `codes.Unavailable` (auth succeeded, channel was the problem); never bare `fmt.Errorf` (would surface as `codes.Unknown`).
+## Register flow (CP-driven, one-time per container)
 
-## Identity interceptor
+1. **Container creation** (`clawker run`): CLI mints a leaf cert with
+   the container_id baked into a URI SAN (`urn:clawker:container:<id>`),
+   tars cert+key+ca+assertion JWT into the container, starts it. No
+   registry row written here.
+2. **Session establishment**: CP dials clawkerd via `agentdial.Dialer`,
+   completes mTLS + Hello, runs `classifyRegistry` → returns
+   `outcomeRegistryMiss` because no row exists.
+3. **RegisterRequired dispatch**: dialer sends
+   `Command{RegisterRequired{}}` on the Session bidi stream.
+4. **Agent-side handshake** (in clawkerd, see `cmd/clawkerd/register.go`):
+   `registerCoordinator.Run` exchanges the single-use Hydra
+   `client_assertion` JWT for an access token, mTLS-dials CP's
+   AgentPort with `bearerCreds`, calls `AgentService.Register`.
+5. **CP Register handler**: captures peer thumbprint, reads
+   container_id from cert URI SAN, validates CN (constant-time
+   compare against canonical CN), inspects container via
+   `ContainerInspector`, cross-checks labels + peer-IP-vs-clawker-net
+   IP, idempotently writes the row, returns Welcome.
+6. **clawkerd replies** with `Response{RegisterDone{ok:true}}`.
+7. **CP confirms** by re-looking-up the row, publishes
+   `AgentRegistered{Ok:true}` on the bus.
 
-`IdentityInterceptor` runs AFTER `AuthInterceptor` on the agent listener (token + scope first, identity second). Wired in `cmd/clawker-cp/main.go` via `grpc.ChainUnaryInterceptor` / `ChainStreamInterceptor`.
+Subsequent Sessions (after stop/start, CP restart, etc.) hit
+`outcomeRegistryMatch` at Hello time — no Register handshake fires.
+`AgentRegistered` is one-time per container; subscribers needing
+"this agent is currently registered" should query
+`State.Agents[containerID].Registered` instead.
 
-- Connect is on the opt-out list (it authenticates itself via slot consume + cross-checks). Every other agent RPC must be registry-bound by the time the handler sees it.
-- The stream wrapper `identityServerStream` defines `Context()` on the wrapper, NOT promoted from the embedded `grpc.ServerStream` — promotion silently breaks identity binding for streaming RPCs. The test `TestIdentityInterceptor_Stream_RegistryHit_WrappedContextCarriesEntry` reads `wrapped.Context()` so a regression that drops the override fails fast.
-- `WithEntry(nil)` panics — typed-nil pointers survive `(*Entry)(nil)` type assertions as `(nil, true)`, a silent identity vacuum that downstream handlers would dereference. `EntryFromContext` also returns `ok=false` when the stored entry is nil for belt-and-suspenders.
-- Lookup-error log differentiation: `errors.Is(err, ErrUnknownAgent)` logs at Warn (operator-expected); other errors log at Error (unexpected internal failure). Wire response stays generic `PermissionDenied` for both.
+## Asymmetric trust (load-bearing)
 
-## Wiring
+CP is the overlord. The dialer NEVER aborts on cert/identity grounds
+— Session stays open even when the agent is `AgentUntrusted` so CP
+can still dispatch containment commands. The Register handler DOES
+reject (`PermissionDenied`) on cert/IP/label mismatches because it's
+the gate that decides whether to write a row, not whether to keep
+the channel up.
 
-`cmd/clawker-cp/main.go` step 8 instantiates the handler and chains the identity interceptor on the agent listener:
+The clawkerd-side counterpart (`cmd/clawkerd/listener.go`) is STRICT:
+CP CN pin + Client-Auth EKU + CA chain enforced at TLS layer.
 
-```go
-slotRegistry := agentslots.NewRegistry(time.Now, 0, log)
-defer slotRegistry.Stop()
-agentReg := agentregistry.NewRegistry(log)
+## Trust outcomes via overseer events
 
-identityUnary, identityStream := agent.IdentityInterceptor(
-    agentReg, agent.IdentityOptedOutMethods(), log,
-)
-agentServer := grpc.NewServer(
-    grpc.Creds(credentials.NewTLS(agentTLSCfg)),
-    grpc.ChainUnaryInterceptor(authInterceptor.UnaryInterceptor(), identityUnary),
-    grpc.ChainStreamInterceptor(authInterceptor.StreamInterceptor(), identityStream),
-)
-agentInspector := agent.MobyInspector{Client: dockerCli.APIClient}
-agentHandler := agent.NewHandler(slotRegistry, agentReg, agentInspector, log)
-agentv1.RegisterAgentServiceServer(agentServer, agentHandler)
-```
+| Hello-time outcome | Events published |
+|---|---|
+| Match | `SessionConnected` (with PeerCN/PeerThumbprint) |
+| Miss | `SessionConnected` → drive Register handshake → `AgentRegistered` (+ `AgentUntrusted{ReasonRegisterFailed}` on failure) |
+| ThumbprintMismatch | `SessionConnected` + `AgentUntrusted{ReasonThumbprintMismatch}` |
+| CNMismatch | `SessionConnected` + `AgentUntrusted{ReasonCNMismatch}` |
+| Lookup error | `SessionConnected` + `AgentUntrusted{ReasonCertInvalid, Detail: <err>}` |
 
-The dockerevents subscriptions live below in step 9a — both `agentregistry` and `agentslots` subscribe to the shared informer:
+`SessionConnected.ApplyTo` populates `State.Agents[containerID]` with
+session lifecycle + identity fields. `AgentRegistered.ApplyTo` sets
+`Registered`. `AgentUntrusted.ApplyTo` sets `Trusted=false` +
+`UntrustedReason`.
 
-```go
-cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, inf, log)
-defer cancelAgentSub()
-cancelSlotSub := agentslots.Subscribe(watcherCtx, slotRegistry, inf, log)
-defer cancelSlotSub()
-```
+## Method scopes + interceptor opt-out
 
-## Test pattern
-
-Handler tests use a closure-backed `inspectorFn` (in-package, no
-moq) because the moq generated for `ContainerInspector` lives in
-`agent/mocks/` and importing it from `_test.go` would create an import
-cycle. The mock under `mocks/` exists for external consumers.
-
-Streaming Connect tests use a `connectStreamFake` that embeds
-`grpc.ServerStream` (nil interface — drift panics). Optional `sendErr`
-covers the Send-failure path; a `welcomed chan struct{}` closed on
-first Send eliminates busy-wait synchronization. `runConnect`
-goroutine wrapper has a 2s deadline guard so a regression in the
-idle-on-ctx.Done path fails fast instead of hanging.
-
-Tests use a fixed-time clock for the slot registry so `Reserve.ExpiresAt`
-and the registry's `now()` agree — without this, the registry's default
-`time.Now` evaluates against a fake-time slot and reports it expired
-instantly.
-
-## Known limitations
-
-- **Streaming RPC eviction broadcast deferred.** Today, eviction at the registry level (dockerevents → `EvictByContainerID`) does not cancel the per-agent Connect stream — clawkerd holds the stream open until the underlying mTLS connection's TCP socket dies on container exit. Closing this gap requires a per-agent cancel-func registry or an eviction channel; tracked in `cp-initiative-cp-restart-resilience`.
-- **CP restart resilience deferred.** When the CP restarts, the in-memory `agentregistry` and `agentslots` are lost; clawkerd's open stream tears down on the wire and the daemon exits. Reconnect requires registry persistence + a Connect handler reconnect branch (registry-already-has-thumbprint → skip slot consume) + clawkerd reconnect-with-backoff. The proto comment on `ConnectRequest.code_verifier` preserves the empty-verifier seam for the future reconnect path; full design in `cp-initiative-cp-restart-resilience`.
+- `controlplane.AgentMethodScopes()` maps
+  `/clawker.agent.v1.AgentService/Register` →
+  `consts.ScopeAgentSelfRegister`. AuthInterceptor on the agent
+  listener fails closed on unmapped methods.
+- `IdentityOptedOutMethods()` includes the Register method path.
+  Justification: the registry row keyed by peer thumbprint doesn't
+  exist yet at Register-call time — that's the entire purpose of
+  the call. Going through IdentityInterceptor would reject every
+  legitimate Register with `PermissionDenied`. The Register handler
+  does its own peer-cert capture + cross-checks, so opt-out
+  relocates the gate from interceptor to handler, not strips it.
 
 ## Imports
 
-**Uses**: `api/agent/v1`, `internal/auth` (CanonicalAgentCN), `internal/consts`, `internal/controlplane/agentregistry`, `internal/controlplane/agentslots`, `internal/logger`, `google.golang.org/grpc/{codes,credentials,peer,status}`, `crypto/{sha256,subtle}`.
+**Uses**: `internal/auth` (CanonicalAgentCN, NewAgentName,
+NewProjectSlug, ContainerIDFromCert), `internal/consts` (Network,
+LabelAgent/Project/Purpose, ContainerCP, ScopeAgentSelfRegister),
+`internal/controlplane/dockerevents`, `internal/controlplane/overseer`,
+`internal/logger`, `api/agent/v1`, `api/clawkerd/v1`,
+`modernc.org/sqlite`, `github.com/moby/moby/api/types/{container,
+network}`, `github.com/moby/moby/client`,
+`google.golang.org/grpc/{credentials,peer,status}`, stdlib
+`crypto/{sha256,subtle,tls,x509}`, `database/sql`, `encoding/hex`,
+`net/netip`.
 
-**Used by**: `cmd/clawker-cp` (handler registration + identity interceptor chain on the agent gRPC listener).
+**Used by**: `cmd/clawker-cp` (agent.Start, agent.NewSQLiteWriter,
+agent.NewHandler, agent.IdentityInterceptor, agent.New for the
+dialer), `internal/controlplane/server.go` (`agent.Registry` type
+on adminServer for ListAgents).
+
+## Test seam
+
+- `Registry` — moq-generated `RegistryMock` in `registry_mock_test.go`
+  (test-only, lives in the `agent` package itself).
+- `ContainerInspector` — hand-rolled `fakeContainerInspector` in
+  `register_handler_test.go`.
+- `Dialer` doesn't have a moq mock — tests construct `*Dialer`
+  directly with the fields they need.
+
+## Regenerating the mock
+
+```bash
+cd internal/controlplane/agent && go generate ./...
+```
+
+The `go:generate` directive on `Registry` writes
+`registry_mock_test.go` directly into the package. moq doesn't know
+the package's own type names; the generated file imports
+`agent` and references `agent.Entry` / `agent.Registry`. Strip the
+self-import and replace `agent.X` with `X` after regeneration (see
+the existing file for the post-edit shape — it's idempotent).

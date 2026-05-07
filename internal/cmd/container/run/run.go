@@ -163,8 +163,8 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	// Resolve project name from ProjectManager (empty if no project registered).
 	// Errors are non-fatal because an empty projectName IS the unscoped/2-segment
 	// naming case — but we log at debug so operators can tell "no project" from
-	// "lookup failed" when the composite-identity announce silently produces an
-	// unscoped slot in a project that was supposed to be registered.
+	// "lookup failed" when the composite-identity registry write silently lands
+	// against an unscoped row in a project that was supposed to be registered.
 	var projectName string
 	if opts.ProjectManager != nil {
 		log, _ := opts.Logger()

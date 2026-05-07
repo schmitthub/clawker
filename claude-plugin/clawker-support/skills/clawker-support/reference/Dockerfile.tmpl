@@ -258,12 +258,6 @@ RUN chmod +x /usr/local/bin/host-open /usr/local/bin/callback-forwarder /usr/loc
 COPY --from=socket-server-builder /build/clawker-socket-server /usr/local/bin/clawker-socket-server
 RUN chmod +x /usr/local/bin/clawker-socket-server
 
-# clawkerd: per-container agent daemon. Runs as root in the entrypoint
-# preamble, completes the announce → register handshake with the
-# control plane on clawker-net, and idles for the lifetime of the
-# container. See cmd/clawkerd for the source and CLAUDE.md.
-COPY --chown=root:root --chmod=755 clawkerd /usr/local/bin/clawkerd
-
 # Switch to non-root user for ENV/WORKDIR resolution.
 # Entrypoint runs as root (USER root before ENTRYPOINT) and drops to this user via gosu.
 USER ${USERNAME}
@@ -393,5 +387,12 @@ HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=3 \
 # Entrypoint runs as root for privileged init (chown), then drops to $USERNAME via gosu.
 USER root
 COPY entrypoint.sh /usr/local/bin/
+
+# clawkerd: per-container agent daemon. Runs as root in the entrypoint
+# preamble, completes the announce → register handshake with the
+# control plane on clawker-net, and idles for the lifetime of the
+# container. See cmd/clawkerd for the source and CLAUDE.md.
+COPY --chown=root:root --chmod=755 clawkerd /usr/local/bin/clawkerd
+
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["claude"]

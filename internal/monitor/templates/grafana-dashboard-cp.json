@@ -43,7 +43,7 @@
     },
     {
       "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-      "description": "Filter to dockerevents feeder dispatches and informer stats heartbeats only. Use during informer UAT.",
+      "description": "Filter to dockerevents feeder dispatches and overseer stats heartbeats only. Use during overseer UAT.",
       "gridPos": { "h": 10, "w": 12, "x": 0, "y": 13 },
       "id": 3,
       "options": {
@@ -59,12 +59,12 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-          "expr": "{service_name=\"clawker-cp\"} | ingest_source=`cp` |~ \"dockerevents|informer\"",
+          "expr": "{service_name=\"clawker-cp\"} | ingest_source=`cp` |~ \"dockerevents|overseer\"",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "informer + dockerevents",
+      "title": "overseer + dockerevents",
       "type": "logs"
     },
     {

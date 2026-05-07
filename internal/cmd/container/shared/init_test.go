@@ -112,6 +112,8 @@ func testCreateConfig(fake *mocks.FakeClient, project *config.Project, container
 }
 
 func TestCreateContainer_HappyPath(t *testing.T) {
+	setupAuthEnv(t)
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -133,6 +135,7 @@ func TestCreateContainer_HappyPath(t *testing.T) {
 }
 
 func TestCreateContainer_ContainerCreateError(t *testing.T) {
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
 		return moby.ContainerCreateResult{}, fmt.Errorf("disk full")
@@ -152,7 +155,9 @@ func TestCreateContainer_ContainerCreateError(t *testing.T) {
 }
 
 func TestCreateContainer_ConfigCached(t *testing.T) {
+	setupAuthEnv(t)
 	// Default fake: volumes exist → ConfigCreated=false → config step is cached
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -171,6 +176,7 @@ func TestCreateContainer_ConfigCached(t *testing.T) {
 
 func TestCreateContainer_ConfigFresh(t *testing.T) {
 	// Volumes don't exist → EnsureVolume creates → ConfigCreated=true → init runs
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupVolumeExists("", false)
 	fake.FakeAPI.VolumeCreateFn = func(_ context.Context, _ moby.VolumeCreateOptions) (moby.VolumeCreateResult, error) {
@@ -196,6 +202,7 @@ func TestCreateContainer_ConfigFresh(t *testing.T) {
 
 func TestCreateContainer_HostProxyFailure(t *testing.T) {
 	// Host proxy enabled in config, but proxy manager fails — non-fatal, continues with warning
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -244,6 +251,7 @@ func TestCreateContainer_HostProxyFailure(t *testing.T) {
 
 func TestCreateContainer_PostInit(t *testing.T) {
 	// PostInit configured → CopyToContainer called for post-init script injection
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -262,9 +270,9 @@ func TestCreateContainer_PostInit(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	fake.AssertCalled(t, "ContainerCreate")
-	// CopyToContainer should be called for post-init script injection
-	fake.AssertCalled(t, "CopyToContainer")
-	fake.AssertCalledN(t, "CopyToContainer", 1)
+	// CopyToContainer is called twice: once for the bootstrap material
+	// (InstallAgentBootstrap, always) and once for the post-init script.
+	fake.AssertCalledN(t, "CopyToContainer", 2)
 }
 
 func TestCreateContainer_NoPostInit(t *testing.T) {
@@ -276,9 +284,15 @@ func TestCreateContainer_NoPostInit(t *testing.T) {
 		Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
 	}
 
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
-	// No CopyToContainer setup — if called, would fail
+	// CopyToContainer is now ALWAYS called by CreateContainer because
+	// InstallAgentBootstrap tars per-agent mTLS material into the
+	// container's writable layer regardless of post-init configuration.
+	// We still verify post-init didn't fire by asserting the
+	// bootstrap-material copy is the only one (single CopyToContainer).
+	fake.SetupCopyToContainer()
 
 	cmd := testFlags()
 	containerOpts := NewContainerOptions()
@@ -290,17 +304,29 @@ func TestCreateContainer_NoPostInit(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	fake.AssertCalled(t, "ContainerCreate")
-	fake.AssertNotCalled(t, "CopyToContainer")
+	// Exactly one CopyToContainer call — bootstrap material. Post-init
+	// would have produced a second call.
+	fake.AssertCalledN(t, "CopyToContainer", 1)
 }
 
 func TestCreateContainer_PostInitInjectionError(t *testing.T) {
-	// PostInit configured but CopyToContainer fails → post-init injection error propagates.
+	// PostInit configured. The bootstrap material copy must succeed
+	// (so we reach the post-init step) and only the SECOND
+	// CopyToContainer call (post-init script) fails. Counts and fails
+	// the second invocation.
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupContainerRemove() // CreateContainer cleans up on injection failure
 
-	// CopyToContainer fails → post-init injection error propagates
+	var copyCalls int
 	fake.FakeAPI.CopyToContainerFn = func(_ context.Context, _ string, _ moby.CopyToContainerOptions) (moby.CopyToContainerResult, error) {
+		copyCalls++
+		if copyCalls == 1 {
+			// Bootstrap material — let it succeed.
+			return moby.CopyToContainerResult{}, nil
+		}
+		// Post-init script — fail.
 		return moby.CopyToContainerResult{}, fmt.Errorf("simulated copy failure")
 	}
 
@@ -322,6 +348,7 @@ func TestCreateContainer_PostInitInjectionError(t *testing.T) {
 
 func TestCreateContainer_EmptyProject(t *testing.T) {
 	// Empty project → 2-segment container name (clawker.agent)
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -346,6 +373,7 @@ func TestCreateContainer_EmptyProject(t *testing.T) {
 }
 
 func TestCreateContainer_EnvFileError(t *testing.T) {
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -367,6 +395,7 @@ func TestCreateContainer_EnvFileError(t *testing.T) {
 }
 
 func TestCreateContainer_FromEnvWarnings(t *testing.T) {
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -412,6 +441,7 @@ func TestCreateContainer_FromEnvWarnings(t *testing.T) {
 
 func TestCreateContainer_RandomAgentName(t *testing.T) {
 	// No agent specified → random name generated
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -433,6 +463,7 @@ func TestCreateContainer_CleanupVolumesOnCreateError(t *testing.T) {
 	// When volumes are freshly created and a subsequent init step fails,
 	// deferred cleanup removes newly-created volumes.
 	cfg := configmocks.NewBlankConfig()
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(cfg)
 
 	// Track which volumes have been "created" — allows VolumeInspect to return
@@ -483,6 +514,7 @@ func TestCreateContainer_CleanupVolumesOnCreateError(t *testing.T) {
 
 func TestCreateContainer_NoCleanupForPreExistingVolumes(t *testing.T) {
 	// When volumes already exist (ConfigCreated=false), no cleanup on failure.
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	// Default: VolumeExists returns true → no volumes created
 
@@ -509,6 +541,7 @@ func TestCreateContainer_NoCleanupForPreExistingVolumes(t *testing.T) {
 func TestCreateContainer_CleanupVolumeRemoveFailure(t *testing.T) {
 	// When volume cleanup fails, the original error is still returned.
 	cfg := configmocks.NewBlankConfig()
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(cfg)
 
 	// Volumes freshly created — track state so IsVolumeManaged works during cleanup
@@ -552,6 +585,7 @@ func TestCreateContainer_CleanupVolumeRemoveFailure(t *testing.T) {
 
 func TestCreateContainer_InvalidAgentName(t *testing.T) {
 	// Invalid agent name is rejected before any volumes are created.
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 
 	cmd := testFlags()
@@ -573,6 +607,7 @@ func TestCreateContainer_InvalidAgentName(t *testing.T) {
 
 func TestCreateContainer_FirewallEnabledFromSettings(t *testing.T) {
 	// FirewallEnabled env var is set from settings alone — no FirewallManager needed.
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
@@ -595,6 +630,7 @@ func TestCreateContainer_FirewallEnabledFromSettings(t *testing.T) {
 func TestCreateContainer_WorkingDirDefault(t *testing.T) {
 	// When --workdir is NOT set, WorkingDir defaults to wsResult.ContainerPath
 	// (the host absolute path used for session persistence).
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupCopyToContainer()
 
@@ -604,7 +640,7 @@ func TestCreateContainer_WorkingDirDefault(t *testing.T) {
 		if opts.Config != nil {
 			capturedWorkingDir = opts.Config.WorkingDir
 		}
-		return moby.ContainerCreateResult{ID: "sha256:fakecontainer1234567890abcdef"}, nil
+		return moby.ContainerCreateResult{ID: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"}, nil
 	}
 
 	cmd := testFlags()
@@ -627,6 +663,7 @@ func TestCreateContainer_WorkingDirDefault(t *testing.T) {
 
 func TestCreateContainer_WorkingDirOverride(t *testing.T) {
 	// When --workdir is explicitly set, it should override the default.
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupCopyToContainer()
 
@@ -635,7 +672,7 @@ func TestCreateContainer_WorkingDirOverride(t *testing.T) {
 		if opts.Config != nil {
 			capturedWorkingDir = opts.Config.WorkingDir
 		}
-		return moby.ContainerCreateResult{ID: "sha256:fakecontainer1234567890abcdef"}, nil
+		return moby.ContainerCreateResult{ID: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"}, nil
 	}
 
 	cmd := testFlags()
@@ -659,6 +696,7 @@ func TestCreateContainer_WorkingDirOverride(t *testing.T) {
 
 func TestCreateContainer_EventsSequence(t *testing.T) {
 	// Verify events are sent in expected order with expected steps.
+	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()

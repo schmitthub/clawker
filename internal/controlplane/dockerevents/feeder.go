@@ -1,25 +1,29 @@
 // Package dockerevents subscribes to the Docker engine's event stream
-// and pushes a clawker-managed view of the realm into an
-// informer.Interface.
+// and publishes typed lifecycle events for clawker-managed containers
+// and their network attachments to an *overseer.Overseer bus.
 //
 // Scope (v1)
 //
 // Resources mirrored:
-//   - container, network, volume, image
+//   - container (Started/Stopped/Removed)
+//   - container→network edges (Attached/Detached)
 //
-// Events mirrored: container create/start/die/destroy/rename/oom/health,
-// network create/destroy/connect/disconnect, volume create/destroy,
-// image pull/tag/untag/delete. Exec, attach, copy, top, archive-path
-// and other diagnostic actions are intentionally dropped — they are
-// high-volume and not realm state.
+// Events not republished:
+//   - volume create/destroy — no consumer; internal bookkeeping was
+//     dropped along with the publishes (Overseer doesn't track volumes
+//     in its worldview).
+//   - image pull/tag/untag/delete — same.
+//   - network create/destroy — feeder still tracks managed networks
+//     internally to filter Connect/Disconnect events, but does not
+//     publish a NetworkCreated event since no subscriber consumes it.
 //
 // # Filtering policy
 //
-// Only objects carrying dev.clawker.managed=true matter. Containers,
-// volumes, and images carry their labels in the event Actor.Attributes,
-// so the managed check happens directly on the event. Network actor
-// attributes do NOT carry network labels (verified vs moby
-// daemon/events.go LogNetworkEventWithAttributes), so the feeder
+// Only objects carrying dev.clawker.managed=true matter. Containers
+// carry their labels in the event Actor.Attributes, so the managed
+// check happens directly on the event. Network actor attributes do
+// NOT carry network labels (verified vs moby
+// daemon/events.go::LogNetworkEventWithAttributes), so the feeder
 // maintains an in-memory networkSet of managed network IDs, populated
 // at reconcile time and on every observed network create event via
 // NetworkInspect.
@@ -27,12 +31,10 @@
 // # Reconnect protocol
 //
 // The Docker events stream is a single long-lived HTTP connection.
-// Any error on the error channel kills the stream — the feeder rebuilds
-// it via reconcile + reopen. Reconcile rebuilds the four managed sets
-// from scratch and re-upserts every managed object. Informer Upsert is
-// idempotent (key-by-key merge) and Remove is idempotent (soft-delete
-// only on first transition), so a reconcile on top of partially-up-to-
-// date informer state is safe.
+// Any error on the error channel kills the stream — the feeder
+// rebuilds it via reconcile + reopen. Reconcile re-publishes a
+// ContainerStarted event for every running container; Overseer's
+// applier hooks idempotently set Status=running.
 package dockerevents
 
 import (
@@ -45,7 +47,7 @@ import (
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
 
-	"github.com/schmitthub/clawker/internal/controlplane/informer"
+	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -58,8 +60,6 @@ type EventsClient interface {
 	ContainerInspect(ctx context.Context, containerID string, options client.ContainerInspectOptions) (client.ContainerInspectResult, error)
 	NetworkList(ctx context.Context, options client.NetworkListOptions) (client.NetworkListResult, error)
 	NetworkInspect(ctx context.Context, networkID string, options client.NetworkInspectOptions) (client.NetworkInspectResult, error)
-	VolumeList(ctx context.Context, options client.VolumeListOptions) (client.VolumeListResult, error)
-	ImageList(ctx context.Context, options client.ImageListOptions) (client.ImageListResult, error)
 }
 
 // Options configures a Feeder. Zero values are valid.
@@ -86,42 +86,11 @@ const (
 	defaultReconnectMax = 30 * time.Second
 )
 
-// Resource Kind strings owned by this feeder. Other feeders use their
-// own vocabulary; informer treats Kind as opaque.
-const (
-	KindContainer = "container"
-	KindNetwork   = "network"
-	KindVolume    = "volume"
-	KindImage     = "image"
-)
-
-// Relation Kind owned by this feeder.
-const (
-	RelationAttachedTo = "attached-to" // container → network
-)
-
-// Lifecycle strings the feeder writes onto Resource.Lifecycle for
-// containers. Consumers (e.g. agentregistry.Subscribe) match against
-// these constants instead of stringly-typed literals so a rename surfaces
-// as a compile error.
-const (
-	LifecycleCreated = "created"
-	LifecycleRunning = "running"
-	LifecyclePaused  = "paused"
-	LifecycleStopped = "stopped"
-)
-
-// Verb prefix on every Transition.Verb so co-resident feeders cannot
-// collide in resource history rings.
-const verbPrefix = "docker."
-
-const transitionSource = "dockerevents"
-
-// Feeder maintains a clawker-managed mirror of Docker state inside an
-// informer.Interface.
+// Feeder maintains a clawker-managed mirror of Docker container and
+// container→network state in an *overseer.Overseer.
 type Feeder struct {
 	cli  EventsClient
-	inf  informer.Interface
+	bus  *overseer.Overseer
 	log  *logger.Logger
 	opts Options
 
@@ -129,8 +98,6 @@ type Feeder struct {
 	// lock needed. Populated by reconcile and patched by event dispatch.
 	containers map[string]bool
 	networks   map[string]bool
-	volumes    map[string]bool
-	images     map[string]bool
 
 	// networksNeedRecheck tracks network IDs whose initial Create-time
 	// NetworkInspect failed (transient daemon hiccup, race with
@@ -140,12 +107,14 @@ type Feeder struct {
 	networksNeedRecheck map[string]bool
 }
 
-func New(cli EventsClient, inf informer.Interface, opts Options) (*Feeder, error) {
+// New constructs a Feeder. Returns an error if cli or bus is nil, or
+// if managed-label config is missing.
+func New(cli EventsClient, bus *overseer.Overseer, opts Options) (*Feeder, error) {
 	if cli == nil {
 		return nil, errors.New("dockerevents: EventsClient is required")
 	}
-	if inf == nil {
-		return nil, errors.New("dockerevents: informer is required")
+	if bus == nil {
+		return nil, errors.New("dockerevents: overseer is required")
 	}
 	if opts.ManagedLabelKey == "" {
 		return nil, errors.New("dockerevents: ManagedLabelKey is required")
@@ -164,13 +133,11 @@ func New(cli EventsClient, inf informer.Interface, opts Options) (*Feeder, error
 	}
 	return &Feeder{
 		cli:                 cli,
-		inf:                 inf,
+		bus:                 bus,
 		log:                 opts.Logger.With("component", "dockerevents"),
 		opts:                opts,
 		containers:          make(map[string]bool),
 		networks:            make(map[string]bool),
-		volumes:             make(map[string]bool),
-		images:              make(map[string]bool),
 		networksNeedRecheck: make(map[string]bool),
 	}, nil
 }
@@ -190,9 +157,9 @@ func (f *Feeder) Run(ctx context.Context) error {
 		}
 
 		// Anchor the events Since timestamp BEFORE listing. Any event
-		// that fires between t0 and the listing landing in the informer
-		// will be replayed on the events channel — Upsert is
-		// idempotent so the duplicate is harmless.
+		// that fires between t0 and the listing landing on the bus will
+		// be replayed on the events channel — Overseer applier hooks
+		// are idempotent so the duplicate is harmless.
 		t0 := time.Now()
 
 		if err := f.reconcile(ctx); err != nil {
@@ -238,14 +205,13 @@ func (f *Feeder) runStream(ctx context.Context, since time.Time) error {
 		// Server-side prune to types we care about. label= is omitted
 		// deliberately — network connect/disconnect actor attributes
 		// don't carry the network's labels (verified vs moby
-		// daemon/events.go), so the only safe filter shared across all
-		// four event types is `type`.
+		// daemon/events.go), so the only safe filter shared across
+		// container + network events is `type`. Volume + image events
+		// are no longer subscribed to (Overseer doesn't track them).
 		Filters: client.Filters{}.
 			Add("type",
 				string(events.ContainerEventType),
 				string(events.NetworkEventType),
-				string(events.VolumeEventType),
-				string(events.ImageEventType),
 			),
 		Since: strconv.FormatInt(since.UnixNano(), 10),
 	})

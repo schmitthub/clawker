@@ -101,6 +101,10 @@ const (
 	EgressRulesFile     = "egress-rules.yaml"
 	EnvoyConfigFile     = "envoy.yaml"
 	Corefile            = "Corefile"
+	// ControlPlaneDBFile is the sqlite database the CP daemon owns under
+	// ControlPlaneSubdir. agentregistry holds the `agents` table; future
+	// CP-owned tables share the same file.
+	ControlPlaneDBFile = "controlplane.db"
 )
 
 // Subdirectory names within XDG base dirs.
@@ -117,6 +121,7 @@ const (
 	shareDir        = ".clawker-share"
 	socketsDir      = "sockets"
 	auditDir        = "audit"
+	controlPlaneDir = "controlplane"
 )
 
 // PID and log file names.
@@ -196,6 +201,40 @@ const (
 	// listener (mTLS, clawker-net only). Matches the
 	// ControlPlaneSettings.AgentPort struct-tag default.
 	DefaultCPAgentPort = 7444
+	// DefaultClawkerdPort is the in-container gRPC port for the
+	// clawkerd listener (mTLS, clawker-net only). CP dials this
+	// port to dispatch commands; the listener pins peer CN to
+	// ContainerCP.
+	DefaultClawkerdPort = 7700
+)
+
+// gRPC keepalive parameters for the CP↔clawkerd Session channel.
+// Shared by clawkerd (server) and CP (client) so the two sides
+// can't drift apart and start tearing down healthy connections.
+//
+// Constraint the gRPC library enforces: a client's ping interval
+// must be >= the server's EnforcementPolicy MinTime, otherwise
+// the server tears the connection with ENHANCE_YOUR_CALM. Setting
+// ClawkerdKeepaliveClientPingInterval == ClawkerdKeepaliveMinClientPing
+// keeps both sides aligned at the floor.
+const (
+	// ClawkerdKeepaliveServerPingInterval is how often the server
+	// (clawkerd) pings an otherwise-idle client (CP). Drives the
+	// server's keepalive.ServerParameters.Time.
+	ClawkerdKeepaliveServerPingInterval = 30 * time.Second
+	// ClawkerdKeepaliveClientPingInterval is how often the client
+	// (CP) pings an otherwise-idle server (clawkerd). Drives the
+	// client's keepalive.ClientParameters.Time.
+	ClawkerdKeepaliveClientPingInterval = 30 * time.Second
+	// ClawkerdKeepalivePingTimeout is how long either side waits
+	// for a keepalive ping response before declaring the connection
+	// dead. Drives keepalive.{Server,Client}Parameters.Timeout.
+	ClawkerdKeepalivePingTimeout = 10 * time.Second
+	// ClawkerdKeepaliveMinClientPing caps how often a client may
+	// ping the server (server-side abuse defense). MUST be <=
+	// ClawkerdKeepaliveClientPingInterval. Drives the server's
+	// keepalive.EnforcementPolicy.MinTime.
+	ClawkerdKeepaliveMinClientPing = 10 * time.Second
 )
 
 // Container user identity.
@@ -206,12 +245,12 @@ const (
 
 // Auth scopes (for gRPC method authorization).
 const (
-	ScopeAdmin         = "admin"
-	ScopeAgentAnnounce = "agent:announce"
-	// ScopeAgentSelfRegister gates clawkerd's calls on AgentService —
-	// today, Connect (lifetime command channel) and Events (telemetry
-	// stub). Hydra grants only this scope to the agent OAuth2 client;
-	// finer-grained agent scopes land alongside future methods.
+	ScopeAdmin = "admin"
+	// ScopeAgentSelfRegister gates clawkerd's calls on AgentService.
+	// AgentService proto is empty in this branch; Hydra still grants
+	// this scope so future inbound clawkerd→CP RPCs land with the
+	// auth chain intact. Finer-grained agent scopes can be added
+	// alongside future methods.
 	ScopeAgentSelfRegister = "agent:self:register"
 )
 
@@ -224,16 +263,8 @@ const (
 	ClientIDAgent = "clawker-agent"
 )
 
-// Agent registration handshake.
+// Agent bootstrap material (per-container auth artifacts).
 const (
-	// AgentSlotTTL bounds how long a slot reserved by AnnounceAgent
-	// remains valid before the CLI must re-announce. Sized to cover
-	// `docker create` + `docker start` + clawkerd boot on a cold first
-	// run, including image pull, while still expiring fast enough that
-	// an abandoned slot does not block re-announce for a noticeable
-	// window.
-	AgentSlotTTL = 60 * time.Second
-
 	// BootstrapDir is the in-container path where the CLI delivers
 	// per-agent registration material via Docker's CopyToContainer API
 	// between `docker create` and `docker start`. Files are 0400
@@ -248,40 +279,21 @@ const (
 	BootstrapKeyFile       = "key.pem"
 	BootstrapCAFile        = "ca.pem"
 	BootstrapAssertionFile = "assertion.jwt"
-	BootstrapVerifierFile  = "verifier"
 )
-
-// ChallengeMethod is the PKCE challenge method announced over the wire
-// in AnnounceAgent and stored on the slot. The proto field is a free-form
-// string for forward extensibility, but at runtime exactly one method is
-// accepted (`S256`). A typed string with a single defined constant gives
-// us a single source of truth that both the CLI bootstrap path
-// (`internal/cmd/container/shared`) and the CP slot registry
-// (`internal/controlplane/agentslots`) reference, while preserving the
-// proto's string-on-the-wire contract.
-type ChallengeMethod string
-
-// String satisfies fmt.Stringer so the typed value renders identically
-// to the wire representation.
-func (m ChallengeMethod) String() string { return string(m) }
-
-// ChallengeMethodS256 is the only PKCE challenge method accepted by the
-// CP. Reserve and the CLI bootstrap helper both reject anything else
-// before it can reach the wire.
-const ChallengeMethodS256 ChallengeMethod = "S256"
 
 // Container env vars for clawkerd bootstrap. clawkerd reads only what
 // it can authoritatively assert: container_id is server-derived from
-// the slot at Connect, and project + agent_name travel as separate
-// wire fields (the CP composes the canonical name on its side).
+// the registry row keyed by container_id, and project + agent_name
+// travel via env vars only for log binding (the canonical CN comes
+// from the pre-computed registry column on the CP side).
 // Adding a CLAWKER_CONTAINER_ID env would let a coerced clawkerd lie
 // to itself; resist that temptation.
 const (
 	// EnvAgent is the agent name (e.g. "dev"). Container-wide env;
 	// readable by every process in the container including the
 	// unprivileged user's shell. Set by the CLI at container create
-	// from `--agent` (or generated). Used by the statusline and
-	// consumed by clawkerd as `req.AgentName` at Connect.
+	// from `--agent` (or generated). Consumed by the statusline and by
+	// clawkerd's structured-log binding.
 	EnvAgent = "CLAWKER_AGENT"
 	// EnvProject is the project name (e.g. "clawker"). Same scope +
 	// caveats as EnvAgent.
@@ -437,6 +449,21 @@ func FirewallCertSubdir() (string, error) {
 // MonitorSubdir ensures and returns the monitor subdirectory path under DataDir.
 func MonitorSubdir() (string, error) { return subdirPath(monitorDir, DataDir) }
 
+// ControlPlaneSubdir ensures and returns the control-plane subdirectory path
+// under DataDir. Bind-mounted RW into the CP container at CPControlPlaneDir;
+// holds the sqlite database the CP daemon owns.
+func ControlPlaneSubdir() (string, error) { return subdirPath(controlPlaneDir, DataDir) }
+
+// ControlPlaneDBPath ensures the control-plane subdirectory and returns the
+// host-side path of the CP sqlite database.
+func ControlPlaneDBPath() (string, error) {
+	dir, err := ControlPlaneSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ControlPlaneDBFile), nil
+}
+
 // BuildSubdir ensures and returns the build subdirectory path under DataDir.
 func BuildSubdir() (string, error) { return subdirPath(buildDir, DataDir) }
 
@@ -590,26 +617,35 @@ func AuthOtelServerKeyPath() (string, error) {
 	return filepath.Join(dir, "server.key"), nil
 }
 
-// AuthCPOtelClientCertPath returns the path to the clawker-cp daemon's
-// mTLS client certificate for OTLP push to the monitoring stack.
-// Bind-mounted RO into the CP container at
-// CPClawkerOtelClientCertPath.
-func AuthCPOtelClientCertPath() (string, error) {
-	dir, err := AuthOtelDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "cp-client.pem"), nil
+// AuthCPDir ensures and returns the auth/cp directory under the
+// XDG data dir. Holds the CP's outbound mTLS identity (CN equals
+// ContainerCP, ClientAuth EKU) used by every CP-as-client dial:
+// OTLP push to the monitoring stack, the CP→clawkerd Session
+// channel, and any future outbound mTLS where the peer needs to
+// authenticate that the caller is the control plane.
+func AuthCPDir() (string, error) {
+	return subdirPathUnder(filepath.Join(authDir, "cp"), DataDir())
 }
 
-// AuthCPOtelClientKeyPath returns the path to the clawker-cp daemon's
-// mTLS client private key for OTLP push.
-func AuthCPOtelClientKeyPath() (string, error) {
-	dir, err := AuthOtelDir()
+// AuthCPClientCertPath returns the path to the CP's outbound mTLS
+// client certificate. Bind-mounted RO into the CP container at
+// CPClientCertPath.
+func AuthCPClientCertPath() (string, error) {
+	dir, err := AuthCPDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "cp-client.key"), nil
+	return filepath.Join(dir, "client.pem"), nil
+}
+
+// AuthCPClientKeyPath returns the path to the CP's outbound mTLS
+// client private key.
+func AuthCPClientKeyPath() (string, error) {
+	dir, err := AuthCPDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "client.key"), nil
 }
 
 // --- State dir paths (under StateDir) ---

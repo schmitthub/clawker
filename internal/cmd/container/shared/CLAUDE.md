@@ -62,38 +62,38 @@ managed container at boot.
 
 ```go
 type AgentBootstrap struct {
-    Verifier, Challenge, Method            string  // PKCE S256 pair + literal "S256"
-    CertPEM, KeyPEM                        []byte  // mTLS leaf + key, signed by CLI CA
-    ExpectedCertThumbprint                 string  // lowercase-hex SHA-256(cert.Raw)
-    CACertPEM                              []byte  // CP server-trust CA (CLI CA cert)
-    Assertion                              string  // Hydra client_assertion JWT
+    CertPEM, KeyPEM []byte  // mTLS leaf + key, signed by CLI CA
+    CACertPEM       []byte  // CP server-trust CA (CLI CA cert)
+    Assertion       string  // Hydra client_assertion JWT (single-use)
 }
 
 // project + agent are the user-typed short identifiers (e.g. "myapp",
 // "dev"). MintAgentCert composes the canonical "clawker.<project>.<agent>"
 // CN inside via auth.CanonicalAgentCN; the agent handler's CN cross-check
 // has a single equality to enforce.
-GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error)
-
-// project + agent travel as separate wire fields (no canonical-on-wire);
-// the CP composes the canonical name on its side.
-AnnounceAgent(ctx context.Context, admin AdminServiceClient, b *AgentBootstrap, project, agent, containerID string) error
+GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, containerID, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error)
 
 WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *AgentBootstrap) error
+
+// Create-time install: mint cert + tar into the container's writable
+// layer at consts.BootstrapDir. CP is the SOLE writer of agentregistry
+// rows — the row is written CP-side at AgentService.Register handler
+// entry on the first CP-driven Register handshake, never from the CLI.
+// A failure here is recovered by the caller's ContainerRemove.
+InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, opts InstallAgentBootstrapOptions) error
 ```
 
 `CommandOpts.AgentName` (the short user-typed name) and `CommandOpts.Project`
-(the project slug, empty allowed) feed `prepareAgentBootstrap` — both must
-be set on new-container start paths so AnnounceAgent + MintAgentCert agree
-on the canonical CN.
+(the project slug, empty allowed) feed the bootstrap mint — both must
+be set on new-container start paths so the cert's canonical CN can be
+composed via `auth.CanonicalAgentCN`.
 
-`WriteAgentBootstrapToContainer` tars the five files into the container
+`WriteAgentBootstrapToContainer` tars the four files into the container
 at `consts.BootstrapDir` (parent dir 0700, files 0400). The destination
-is currently a regular path inside the container's writable layer rather
-than a tmpfs mount — Docker's CopyToContainer cannot pre-populate tmpfs
-mounts (tmpfs shadows writes made before start), so the pragmatic B4
-placement uses the writable layer with strict permissions. The container
-layer is destroyed on `--rm` or when the container is removed.
+is a regular path inside the container's writable layer rather than a
+tmpfs mount — Docker's CopyToContainer cannot pre-populate tmpfs
+mounts (tmpfs shadows writes made before start). The container layer
+is destroyed on `--rm` or when the container is removed.
 
 ### Container Init (`containerfs.go`)
 
@@ -145,7 +145,7 @@ Three-phase orchestration for container start: pre-start bootstrap, Docker start
 | `ProjectManager` | `func() (project.ProjectManager, error)` | Project manager provider |
 | `HostProxy` | `func() hostproxy.HostProxyService` | Host proxy provider |
 | `ControlPlane` | `func() cpboot.Manager` | Host-side CP container lifecycle noun (`EnsureRunning` / `Stop` / `IsRunning`) |
-| `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC AdminService client (mTLS + OAuth2) — drives firewall sync/enable/disable RPCs and `AnnounceAgent` |
+| `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC AdminService client (mTLS + OAuth2) — drives firewall sync/enable/disable RPCs |
 | `SocketBridge` | `func() socketbridge.SocketBridgeManager` | Socket bridge provider |
 | `Logger` | `func() (*logger.Logger, error)` | Logger provider |
 | `AgentName` | `string` | User-typed short agent name (set on new-container starts; empty on restart paths) |
@@ -169,7 +169,7 @@ Returns `mobyClient.ContainerStartResult` from the Docker start call. Errors at 
 | Type | Purpose |
 |------|---------|
 | `ContainerOptions` | All container CLI flags — basic, env, volumes, networking, resources, security, health, runtime, devices |
-| `CommandOpts` | DI container with lazy function closures (Client, Config, ProjectManager, HostProxy, ControlPlane, AdminClient, SocketBridge, Logger) plus per-call AgentName + Project for the announce/bootstrap path |
+| `CommandOpts` | DI container with lazy function closures (Client, Config, ProjectManager, HostProxy, ControlPlane, AdminClient, SocketBridge, Logger) plus per-call AgentName + Project for the bootstrap path |
 | `CreateContainerConfig` | All inputs: Client, Config, Options, Flags, ProjectManager, HostProxy, Logger, Version, color flags |
 | `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
 | `CreateContainerEvent` | Channel event: Step, Status, Type, Message |

@@ -1,5 +1,0 @@
-2026-04-12 - container_config_test.go: TestINV_B1_008_AllPortsPublishedToLocalhostOnly
-  Reason: Test compares binding.HostIP (type netip.Addr) with string "127.0.0.1" using assert.Equal.
-  reflect.DeepEqual(netip.Addr, string) returns false, so the test always fails even with correct implementation.
-  Fix: Compare binding.HostIP.String() instead of binding.HostIP directly.
-  Category: Test bug (type mismatch in assertion)

@@ -4,101 +4,60 @@ package clawker.agent.v1;
 
 option go_package = "github.com/schmitthub/clawker/api/agent/v1";
 
-// AgentService is the gRPC surface clawkerd (the per-container agent
-// daemon) calls on the control plane.
+// AgentService is the inbound gRPC surface clawkerd calls on the CP's
+// clawker-net agent listener. Today the only RPC is Register, the
+// one-time-per-container provenance handshake CP triggers via a
+// RegisterRequired Command on the existing CP→clawkerd Session stream.
+//
+// Trust model:
+//   - The CLI mints the agent's leaf cert at container-create time,
+//     signed by the CLI CA. The cert's CN is the canonical
+//     clawker.<project>.<agent> identity. The cert carries a URI SAN of
+//     the form `urn:clawker:container:<id>` binding it to the docker
+//     container_id it was minted for.
+//   - clawkerd presents that cert in mTLS when calling Register. CP
+//     captures the peer thumbprint (SHA-256 over cert.Raw) at handler
+//     entry — the thumbprint is a CAPTURE, not a CLI-pre-staged
+//     attestation. CP writes the (thumbprint, container_id) row.
+//   - The Register call is gated by a Hydra-issued bearer token the
+//     agent obtains by exchanging a single-use CLI-signed
+//     client_assertion JWT. Once the assertion is consumed, Register
+//     cannot be re-attempted for that container — registration is
+//     one-time per container creation.
 //
 // Transport: mTLS over TCP on the CP's clawker-net agent listener.
-// Server requires a client cert chained to the CLI CA — clawkerd
-// presents the per-agent leaf cert that the CLI minted at AnnounceAgent
-// time.
-//
-// Authorization: bearer access token issued by Hydra to a dedicated
-// agent OAuth2 client whose scopes are validated by the CP's auth
-// interceptor.
-//
-// Topology: clawkerd is gRPC-client only; CP serves. The Connect stream
-// IS the agent's lifetime command channel — single mTLS connection per
-// agent, all clawkerd-initiated.
+// Server requires a client cert chained to the CLI CA; authorization
+// via Hydra-issued bearer tokens scoped to the `clawker-agent` OAuth2
+// client (scope `agent:self:register`).
 service AgentService {
-  // Connect opens the agent's lifetime command channel. clawkerd sends
-  // a ConnectRequest at startup (agent_name + PKCE verifier); CP
-  // authenticates the channel-bound identity via slot consume plus a
-  // cross-check on the peer cert CN, peer IP, and container labels,
-  // pins the agent in the registry, then server-streams Command
-  // messages for the lifetime of the agent. First message after auth
-  // is Welcome (config delivery). Subsequent messages carry commands
-  // as they are issued (B5+ adds payload variants). Stream closes on
-  // eviction (container dies → dockerevents → cancel) or clawkerd
-  // disconnect.
-  rpc Connect(ConnectRequest) returns (stream Command);
-
-  // Events streams runtime telemetry from clawkerd to CP: log scrapes,
-  // error events, monitoring data. Client-streaming; CP returns a
-  // single EventAck on close. Identity-bound — caller must already be
-  // registered via Connect (AgentIdentityInterceptor enforces). Stub
-  // in this branch; B5 defines the Event payload shape and CP-side
-  // consumer alongside the first concrete event type.
-  rpc Events(stream Event) returns (EventAck);
-}
-
-message ConnectRequest {
-  // agent_name is the short agent name as the user types it on the CLI
-  // (e.g. "dev", "test"). NOT the canonical "clawker.project.agent". CP
-  // assembles the canonical CN as `clawker.<project>.<agent>` (or
-  // `clawker.<agent>` for empty project) via auth.CanonicalAgentCN and
-  // cross-checks against the peer cert's CN before consuming the slot.
-  string agent_name = 1;
-
-  // code_verifier is the PKCE secret matching the slot's S256 challenge.
-  // CLI delivers it to /run/clawker/bootstrap/verifier via Docker's
-  // CopyToContainer API between docker create and docker start
-  // (writable layer; see cmd/clawkerd/CLAUDE.md).
-  // Per RFC 7636, length is 43-128 unreserved characters.
+  // Register binds (peer cert thumbprint, container_id) into the CP's
+  // agentregistry. Container_id is read from the peer cert's URI SAN;
+  // the request body carries only the human-readable identity fields
+  // for cross-checking against the cert's CN and the docker
+  // container's labels.
   //
-  // RECONNECT PATH (future, see cp-initiative-cp-restart-resilience):
-  // Empty verifier is reserved for the future reconnect flow after CP
-  // restart. clawkerd deletes the verifier on first-connect success
-  // (single-use); a reconnect attempt has no verifier to send. Today's
-  // handler requires verifier; the future patch will branch on
-  // registry-already-has-thumbprint to skip slot consume.
-  string code_verifier = 2;
-
-  // project is the clawker project slug the agent runs under (empty for
-  // 2-segment naming). Together with agent_name forms the composite slot
-  // identity — read by clawkerd from CLAWKER_PROJECT and forwarded as a
-  // separate wire field so the CP never has to parse a canonical form.
-  string project = 3;
+  // Welcome is empty — success is signaled by the call returning
+  // without error. Failure modes return PermissionDenied (cert/CN
+  // mismatch, peer-IP mismatch, label mismatch, thumbprint replay) or
+  // InvalidArgument (malformed identity fields).
+  rpc Register(RegisterRequest) returns (Welcome);
 }
 
-// Command is the server-streamed envelope sent over the Connect stream.
-// First message after auth is always Welcome. B5+ adds payload variants
-// (e.g. ShellCommand, Stop, ReloadConfig) by extending the oneof — no
-// proto migration required, just new tags.
-message Command {
-  oneof payload {
-    Welcome welcome = 1;
-  }
+// RegisterRequest carries the human-readable identity claim. The
+// agent_name and project are cross-checked against:
+//   - the peer cert's canonical CN (clawker.<project>.<agent>)
+//   - the docker container's dev.clawker.agent / dev.clawker.project
+//     labels (resolved via the container_id read from the cert URI SAN)
+//
+// container_id is NOT a request field — the handler reads it from the
+// cert's URI SAN to defend against a leaked cert being presented for
+// the wrong container. The cert's binding to container_id is
+// structural, not request-claimed.
+message RegisterRequest {
+  string agent_name = 1;
+  string project = 2;
 }
 
-// Welcome carries the post-auth ClawkerdConfiguration payload. The
-// configuration is empty in this branch (B5 fills in OTEL endpoint, file
-// logging context, identity context). Receipt of Welcome by clawkerd
-// implies server-side auth succeeded — only then is the single-use
-// PKCE verifier safe to delete.
-message Welcome {
-  ClawkerdConfiguration config = 1;
-}
-
-// ClawkerdConfiguration is the post-auth runtime configuration delivered
-// to clawkerd inside Welcome. Empty in this branch — placeholder for
-// B5's OTEL/logging/identity-context fields.
-message ClawkerdConfiguration {}
-
-// Event is the client-streamed telemetry payload sent over the Events
-// stream. Empty in this branch — B5 defines event types alongside the
-// CP-side consumer.
-message Event {}
-
-// EventAck is the server's response when clawkerd closes the Events
-// stream. Empty in this branch.
-message EventAck {}
+// Welcome is the success response. Empty — the act of returning
+// without error is the signal.
+message Welcome {}

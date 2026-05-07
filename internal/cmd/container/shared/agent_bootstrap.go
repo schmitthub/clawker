@@ -5,100 +5,61 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path"
 	"strings"
 	"time"
 
-	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // AgentBootstrap is the per-agent registration package the CLI delivers
-// to a managed container at boot. It collects the PKCE pair, the mTLS
-// leaf cert and key, the CA cert clawkerd uses to trust the CP server,
-// and the Hydra client_assertion JWT. Material is meant to be tarred
-// directly to the container — never persisted on the host.
+// to a managed container at boot. It collects the mTLS leaf cert and
+// key, the CA cert clawkerd uses to trust the CP server, and the Hydra
+// client_assertion JWT. Material is meant to be tarred directly to the
+// container — never persisted on the host.
 //
 // The String/GoString methods deliberately redact every field so the
-// struct (which holds the PKCE verifier, the per-agent private key,
-// and the Hydra assertion JWT) cannot leak via fmt verbs or zerolog's
+// struct (which holds the per-agent private key and the Hydra
+// client_assertion JWT) cannot leak via fmt verbs or zerolog's
 // interface logger. Callers needing the raw fields must read them
 // directly.
 //
-// The PKCE verifier is held in an unexported field and exposed only
-// via ConsumeVerifier, which returns it AND zeros the in-memory copy.
-// The verifier is a single-use bearer secret for the CP slot — once
-// it has been written into the container's bootstrap tar, the host
-// process has no legitimate reason to read it again. The consume-once
-// gate makes accidental misuse a compile error: external callers
-// cannot read the field directly, and even in-package callers go
-// through a method whose return-value-and-zero semantics surface in
-// the call site instead of being implicit on a public string field.
+// The cert thumbprint is intentionally NOT carried here. CP captures
+// the thumbprint at Register handler entry from the live mTLS peer
+// (cert.Raw → SHA-256). The CLI does not pre-stage a thumbprint
+// attestation in the registry — that was the source of the
+// cross-process WAL coherence bug this redesign fixes. The CLI's
+// trust contribution is the cert minting itself (chained to CLI CA,
+// container_id baked into the URI SAN); CP is the sole writer of
+// agentregistry rows.
 type AgentBootstrap struct {
-	// verifier is the PKCE secret. Access only via ConsumeVerifier or
-	// the in-package internal helpers below. NEVER make this exported.
-	verifier  string
-	Challenge string
-	// Method is the PKCE challenge method announced over the wire.
-	// Typed for safety; today only consts.ChallengeMethodS256 is
-	// accepted by the CP, and the bootstrap helpers reject anything
-	// else before it can reach the wire.
-	Method                 consts.ChallengeMethod
-	CertPEM                []byte
-	KeyPEM                 []byte
-	ExpectedCertThumbprint [sha256.Size]byte // SHA-256 over cert DER
-	CACertPEM              []byte
-	Assertion              string
-}
-
-// ConsumeVerifier returns the PKCE verifier ONCE and zeros the
-// in-memory copy. Subsequent calls return the empty string. Callers
-// that need to inspect verifier state (e.g. validate non-empty before
-// committing to a Hydra-published slot) must use HasVerifier — reading
-// the secret implies consuming it.
-func (b *AgentBootstrap) ConsumeVerifier() string {
-	if b == nil {
-		return ""
-	}
-	v := b.verifier
-	b.verifier = ""
-	return v
-}
-
-// HasVerifier reports whether the verifier is still populated. Used by
-// validate() so the caller can confirm the bootstrap is complete
-// without burning the single-use secret.
-func (b *AgentBootstrap) HasVerifier() bool {
-	return b != nil && b.verifier != ""
+	CertPEM   []byte
+	KeyPEM    []byte
+	CACertPEM []byte
+	Assertion string
 }
 
 // String redacts every field so AgentBootstrap can never accidentally
-// leak the per-agent private key, the PKCE verifier (a bearer secret
-// for the CP slot), or the Hydra assertion JWT via fmt.Sprintf("%v",
-// b) or zerolog.
+// leak the per-agent private key or the Hydra assertion JWT via
+// fmt.Sprintf("%v", b) or zerolog.
 func (*AgentBootstrap) String() string { return "AgentBootstrap{<redacted>}" }
 
 // GoString redacts so fmt.Sprintf("%#v", b) (and any logger that uses
-// Go-syntax representation) also does not leak Verifier / KeyPEM /
-// Assertion.
+// Go-syntax representation) also does not leak KeyPEM or Assertion.
 func (*AgentBootstrap) GoString() string { return "AgentBootstrap{<redacted>}" }
 
-// GenerateAgentBootstrap mints all material the CLI needs to announce
-// + start one agent: a fresh 32-byte PKCE verifier, the matching S256
-// challenge, the per-agent mTLS leaf cert + key signed by the CLI CA,
-// the CP server-trust CA cert, and a Hydra client_assertion for the
-// clawker-agent OAuth2 client. caCertPath/caKeyPath identify the CLI
-// CA on disk (typically `consts.AuthCACertPath()` /
-// `consts.AuthCAKeyPath()`); hydraTokenURL is the audience of the
-// assertion (the CP's Hydra `/oauth2/token` endpoint as clawkerd will
-// see it from inside the container).
+// GenerateAgentBootstrap mints all material the CLI needs to start one
+// agent: the per-agent mTLS leaf cert + key signed by the CLI CA (with
+// containerID embedded as a URI SAN), the CP server-trust CA cert, and
+// a Hydra client_assertion JWT for the clawker-agent OAuth2 client.
+// caCertPath/caKeyPath identify the CLI CA on disk (typically
+// `consts.AuthCACertPath()` / `consts.AuthCAKeyPath()`); hydraTokenURL
+// is the audience of the assertion (the CP's Hydra `/oauth2/token`
+// endpoint as clawkerd will see it from inside the container).
 //
 // project + agent are the user-typed short identifiers (e.g. "myapp",
 // "dev") — never the canonical "clawker.project.agent" form. The cert's
@@ -106,23 +67,26 @@ func (*AgentBootstrap) GoString() string { return "AgentBootstrap{<redacted>}" }
 // CLI caller produces the same canonical shape and the agent handler's
 // peer-cert CN cross-check has a single equality to enforce.
 //
+// containerID is the docker container_id returned by ContainerCreate —
+// MintAgentCert embeds it as a URI SAN so the CP-side Register handler
+// can read the cert's binding to a specific container directly off the
+// peer cert at handler entry.
+//
 // The signature uses the typed auth.ProjectSlug / auth.AgentName so
 // the caller has gone through NewProjectSlug / NewAgentName at the CLI
 // flag boundary — a raw `string` cannot reach this function.
-func GenerateAgentBootstrap(caCertPath, caKeyPath string, project auth.ProjectSlug, agent auth.AgentName, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error) {
+func GenerateAgentBootstrap(caCertPath, caKeyPath string, project auth.ProjectSlug, agent auth.AgentName, containerID, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error) {
 	if agent.IsZero() {
 		return nil, fmt.Errorf("agent name required")
+	}
+	if containerID == "" {
+		return nil, fmt.Errorf("container id required")
 	}
 	if signingKey == nil {
 		return nil, fmt.Errorf("signing key required")
 	}
 
-	verifier, challenge, err := newPKCEPair()
-	if err != nil {
-		return nil, fmt.Errorf("pkce: %w", err)
-	}
-
-	cert, err := auth.MintAgentCert(caCertPath, caKeyPath, project, agent)
+	cert, err := auth.MintAgentCert(caCertPath, caKeyPath, project, agent, containerID)
 	if err != nil {
 		return nil, fmt.Errorf("mint agent cert: %w", err)
 	}
@@ -138,75 +102,81 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath string, project auth.ProjectSl
 	}
 
 	return &AgentBootstrap{
-		verifier:               verifier,
-		Challenge:              challenge,
-		Method:                 consts.ChallengeMethodS256,
-		CertPEM:                cert.CertPEM,
-		KeyPEM:                 cert.KeyPEM,
-		ExpectedCertThumbprint: cert.Thumbprint,
-		CACertPEM:              caPEM,
-		Assertion:              assertion,
+		CertPEM:   cert.CertPEM,
+		KeyPEM:    cert.KeyPEM,
+		CACertPEM: caPEM,
+		Assertion: assertion,
 	}, nil
 }
 
-// AnnounceAgent reserves a registration slot on the CP for the given
-// container before docker start. CP slot stores the (project, agent)
-// composite identity, the Docker container ID CLI just received, the
-// cert thumbprint CLI minted, and the PKCE challenge. clawkerd consumes
-// the matching verifier at Connect; if the slot expires
-// (consts.AgentSlotTTL elapses) clawkerd's Connect fails fail-closed.
+// InstallAgentBootstrapOptions bundles the inputs InstallAgentBootstrap
+// needs at container CREATE time — fresh cert+key minted per container,
+// CopyToContainered into the writable layer.
 //
-// project + agent travel as separate wire fields (not assembled into a
-// canonical name) so the CP composite slot key can include both without
-// re-parsing on the server side. The thumbprint is sent over the wire as
-// lowercase hex because the proto field is a free-form `string` —
-// internally we keep the byte-array form to avoid carrying around a
-// redundantly-encoded representation.
+// No registry path here. CP is the sole sqlite writer; the registry row
+// is written server-side at Register handler entry, not from the CLI.
+type InstallAgentBootstrapOptions struct {
+	// Project + Agent are the typed (project, agent_name) identity
+	// validated upstream at the CLI flag boundary. Used to compose the
+	// canonical CN in the leaf cert.
+	Project auth.ProjectSlug
+	Agent   auth.AgentName
+	// ContainerID is the ID returned by client.ContainerCreate. Embedded
+	// as a URI SAN in the leaf cert and read by the CP-side Register
+	// handler at handler entry.
+	ContainerID string
+	// HydraTokenAudience is the `aud` claim in the Hydra
+	// client_assertion. Resolved by callers via
+	// hydraTokenAudienceFromPort(cfg.Settings().ControlPlane.HydraPublicPort).
+	HydraTokenAudience string
+	// CopyToContainer streams the bootstrap tar into ContainerID's
+	// writable layer at consts.BootstrapDir.
+	CopyToContainer CopyToContainerFn
+	// Logger receives a single info line on success. Required.
+	Logger *logger.Logger
+}
+
+// InstallAgentBootstrapMaterial is the create-time agent install: mint
+// cert/key/CA/assertion (GenerateAgentBootstrap) and tar them into the
+// container's writable layer at consts.BootstrapDir
+// (WriteAgentBootstrapToContainer).
 //
-// Typed (auth.ProjectSlug, auth.AgentName) inputs — the constructors
-// already validated charset/length/no-canonical-prefix at the CLI flag
-// boundary, so this function trusts the values it receives.
-func AnnounceAgent(ctx context.Context, admin adminv1.AdminServiceClient, b *AgentBootstrap, project auth.ProjectSlug, agent auth.AgentName, containerID string) error {
-	if err := b.validate(); err != nil {
-		return fmt.Errorf("announce agent %q: %w", agent, err)
+// No DB I/O. The agentregistry row is written CP-side at Register
+// handler entry, not from the CLI. A failure here is recovered by the
+// caller's ContainerRemove without orphaning anything.
+//
+// Returns error only — the bootstrap struct is consumed entirely by
+// the tar copy step. Returning the struct previously suggested a
+// downstream consumer that no longer exists (the registry-write path
+// was retired); collapsing the signature removes that misleading hint.
+func InstallAgentBootstrapMaterial(ctx context.Context, caCertPath, caKeyPath string, signingKey *ecdsa.PrivateKey, opts InstallAgentBootstrapOptions) error {
+	if opts.ContainerID == "" {
+		return fmt.Errorf("install agent bootstrap material: container id required")
 	}
-	if agent.IsZero() {
-		return fmt.Errorf("announce agent: agent name required")
+	if opts.CopyToContainer == nil {
+		return fmt.Errorf("install agent bootstrap material: copy-to-container fn required")
 	}
-	if containerID == "" {
-		return fmt.Errorf("announce agent %q: container id required", agent)
+
+	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, opts.Project, opts.Agent, opts.ContainerID, opts.HydraTokenAudience, signingKey)
+	if err != nil {
+		return fmt.Errorf("install agent bootstrap material: generate: %w", err)
 	}
-	if _, err := admin.AnnounceAgent(ctx, &adminv1.AnnounceAgentRequest{
-		AgentName:              agent.String(),
-		Project:                project.String(),
-		ContainerId:            containerID,
-		ExpectedCertThumbprint: hex.EncodeToString(b.ExpectedCertThumbprint[:]),
-		CodeChallenge:          b.Challenge,
-		CodeChallengeMethod:    string(b.Method),
-	}); err != nil {
-		return fmt.Errorf("announce agent %q (container %s): %w", agent, containerID, err)
+
+	if err := WriteAgentBootstrapToContainer(ctx, opts.ContainerID, opts.CopyToContainer, bootstrap); err != nil {
+		return fmt.Errorf("install agent bootstrap material: write: %w", err)
 	}
 	return nil
 }
 
 // validate ensures every load-bearing bootstrap field is populated
-// before the CLI commits to a Hydra-published slot or a tar copy. Empty
-// values would let an Announce slot reserve with no PKCE binding or a
-// container start with empty cert/key files — both fail later but with
-// confusing diagnostics, so reject up front.
+// before the CLI commits to copying material into the container. Empty
+// values would let a container start with empty cert/key files —
+// fail later but with confusing diagnostics, so reject up front.
 func (b *AgentBootstrap) validate() error {
 	if b == nil {
 		return fmt.Errorf("bootstrap is nil")
 	}
 	switch {
-	case b.Method != consts.ChallengeMethodS256:
-		return fmt.Errorf("bootstrap challenge method must be %s, got %q", consts.ChallengeMethodS256, b.Method)
-	case b.Challenge == "":
-		return fmt.Errorf("bootstrap challenge is empty")
-	case !b.HasVerifier():
-		return fmt.Errorf("bootstrap verifier is empty (or already consumed)")
-	case b.ExpectedCertThumbprint == [sha256.Size]byte{}:
-		return fmt.Errorf("bootstrap cert thumbprint is empty")
 	case len(b.CertPEM) == 0:
 		return fmt.Errorf("bootstrap cert PEM is empty")
 	case len(b.KeyPEM) == 0:
@@ -230,7 +200,7 @@ func (b *AgentBootstrap) validate() error {
 // container's writable layer rather than a tmpfs mount. Docker's
 // CopyToContainer cannot pre-populate tmpfs mounts (tmpfs is mounted
 // at start time, shadowing any contents written via cp before start),
-// so the pragmatic B4 placement uses the writable layer with strict
+// so the pragmatic placement uses the writable layer with strict
 // permissions. The container layer is destroyed on `--rm` or when
 // the container is removed; for non-`--rm` containers the material
 // stays in the writable layer until removal but is only useful
@@ -259,17 +229,6 @@ func WriteAgentBootstrapToContainer(ctx context.Context, containerID string, cop
 	return nil
 }
 
-func newPKCEPair() (verifier, challenge string, err error) {
-	raw := make([]byte, 32)
-	if _, err = rand.Read(raw); err != nil {
-		return "", "", err
-	}
-	verifier = base64.RawURLEncoding.EncodeToString(raw)
-	sum := sha256.Sum256([]byte(verifier))
-	challenge = base64.RawURLEncoding.EncodeToString(sum[:])
-	return verifier, challenge, nil
-}
-
 func bootstrapTar(b *AgentBootstrap) (*bytes.Buffer, error) {
 	buf := &bytes.Buffer{}
 	tw := tar.NewWriter(buf)
@@ -287,12 +246,6 @@ func bootstrapTar(b *AgentBootstrap) (*bytes.Buffer, error) {
 		return nil, err
 	}
 
-	// ConsumeVerifier zeros the in-memory copy after returning. This is
-	// the ONE legitimate read of the verifier in the host process —
-	// after the tar lands inside the container, clawkerd consumes the
-	// verifier from disk at Connect and the host has no further need
-	// for it. Future code that tries to read the secret again gets the
-	// empty string (and validate() catches it).
 	files := []struct {
 		name string
 		body []byte
@@ -301,7 +254,6 @@ func bootstrapTar(b *AgentBootstrap) (*bytes.Buffer, error) {
 		{consts.BootstrapKeyFile, b.KeyPEM},
 		{consts.BootstrapCAFile, b.CACertPEM},
 		{consts.BootstrapAssertionFile, []byte(b.Assertion)},
-		{consts.BootstrapVerifierFile, []byte(b.ConsumeVerifier())},
 	}
 	for _, f := range files {
 		hdr := &tar.Header{

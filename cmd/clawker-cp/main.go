@@ -3,7 +3,7 @@
 // It runs as the main process in the CP container, supervising Hydra,
 // Oathkeeper, Kratos as subprocesses. It loads eBPF programs, serves a
 // gRPC AdminService with Hydra token introspection, owns the Docker
-// events feeder + informer, and reports readiness on /healthz.
+// events feeder + Overseer bus, and reports readiness on /healthz.
 //
 // Oathkeeper runs as a subprocess for future webui HTTP auth. gRPC auth
 // (CLI + agents) uses direct Hydra introspection — no Ory Go imports.
@@ -40,12 +40,10 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
 	"github.com/schmitthub/clawker/internal/controlplane/agent"
-	"github.com/schmitthub/clawker/internal/controlplane/agentregistry"
-	"github.com/schmitthub/clawker/internal/controlplane/agentslots"
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
-	"github.com/schmitthub/clawker/internal/controlplane/informer"
+	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
@@ -350,16 +348,25 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			log.Warn().Err(err).Msg("actionQueue close failed")
 		}
 	}()
-	// listAgentIDs enumerates every running managed agent container ID.
-	// Handler's FirewallInit uses this to re-enroll per-container BPF
-	// enforcement after a CP restart — FlushAll wiped container_map on
-	// the previous CP's shutdown, so a fresh FirewallInit rebuilds from
-	// live Docker state instead of a silent fail-open.
-	listAgentIDs := func(ctx context.Context) ([]string, error) {
+	// listAgentIDs enumerates managed agent container IDs. Two callers
+	// at two scopes:
+	//   - Firewall handler + AgentWatcher pass {} → running only. They
+	//     drive per-container BPF enforcement and drain-to-zero, both
+	//     of which only care about live containers.
+	//   - Reaper passes {All: true} → running + stopped + exited. A
+	//     stopped container can be `docker start`-ed back into life so
+	//     its registry row must survive; only `docker rm` orphans it.
+	// The label filter is non-overridable so a caller can't accidentally
+	// widen scope past purpose=agent.
+	type listAgentsOpts struct{ All bool }
+	listAgentIDs := func(ctx context.Context, opts listAgentsOpts) ([]string, error) {
 		filter := mobyclient.Filters{}.
 			Add("label", cfg.LabelManaged()+"="+cfg.ManagedLabelValue()).
 			Add("label", cfg.LabelPurpose()+"="+cfg.PurposeAgent())
-		result, err := dockerCli.APIClient.ContainerList(ctx, mobyclient.ContainerListOptions{Filters: filter})
+		result, err := dockerCli.APIClient.ContainerList(ctx, mobyclient.ContainerListOptions{
+			All:     opts.All,
+			Filters: filter,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -377,23 +384,34 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		Resolver:   containerResolver,
 		Log:        log,
 		Queue:      actionQueue,
-		ListAgents: listAgentIDs,
+		ListAgents: func(ctx context.Context) ([]string, error) { return listAgentIDs(ctx, listAgentsOpts{}) },
 	})
 
-	// Agent registry is needed BOTH by the AgentService handler (added
-	// below on the agent listener) and by AdminService.ListAgents on the
-	// admin listener — construct it here so a single instance is shared.
-	agentReg := agentregistry.NewRegistry(log.With("component", "agentregistry"))
+	// Agent registry is needed BOTH by the Register handler on the
+	// agent listener and by AdminService.ListAgents on the admin
+	// listener — construct it here so a single instance is shared.
+	// Backed by sqlite at consts.CPControlPlaneDBPath; the parent dir
+	// is bind-mounted RW from the host, so the DB survives CP container
+	// recreation and reloads on next boot.
+	//
+	// CP is the SOLE sqlite writer: it captures peer cert thumbprints
+	// at Register handler entry and writes the row, evicts on
+	// container/destroy via dockerevents, and reaps orphan rows at
+	// startup. The host CLI never opens this DB — that's what fixes
+	// the WAL coherence bug across the macOS bind-mount boundary.
+	//
+	// EnsureSchema runs first so a fresh CP container against an empty
+	// data dir comes up with the schema applied before NewSQLiteWriter
+	// queries SELECT COUNT (which would otherwise see "no such table").
+	if err := agent.EnsureSchema(consts.CPControlPlaneDBPath, log.With("component", "agent")); err != nil {
+		return fmt.Errorf("step 8 (agent ensure schema): %w", err)
+	}
+	agentReg, err := agent.NewSQLiteWriter(consts.CPControlPlaneDBPath, log.With("component", "agent"))
+	if err != nil {
+		return fmt.Errorf("step 8 (agent sqlite): %w", err)
+	}
 
-	// Slot registry is needed by AdminService.AnnounceAgent (here) AND
-	// by the AgentService.Connect handler (further down). Hoisted above
-	// NewAdminServer so a single instance is shared; T6 wires the
-	// dockerevents subscription that drains stale slots on container
-	// exit alongside the agentregistry one.
-	slotRegistry := agentslots.NewRegistry(time.Now, 0, log.With("component", "agentslots"))
-	defer slotRegistry.Stop()
-
-	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, slotRegistry, time.Now, log))
+	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, log))
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
 	if err != nil {
@@ -413,9 +431,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	// IdentityInterceptor runs AFTER AuthInterceptor: token + scope
 	// pass first, then identity resolves the peer cert thumbprint to
-	// a registered agent (or rejects). Connect is on the opt-out list
-	// (it authenticates itself); every other agent RPC must be
-	// registry-bound by the time the handler sees it.
+	// a registered agent (or rejects). AgentService is empty in this
+	// branch (Register was retired); the interceptor is wired so the
+	// listener stays correctly configured for any future inbound
+	// agent RPC.
 	identityUnary, identityStream := agent.IdentityInterceptor(
 		agentReg,
 		agent.IdentityOptedOutMethods(),
@@ -431,13 +450,21 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("step 8 (agent grpc listen): %w", err)
 	}
 
-	// AgentService wiring: shared slot registry (announce-time
-	// reservations, hoisted above NewAdminServer) + the shared agent
-	// registry + handler. The agent registry's dockerevents
-	// subscription is set up further down, once the informer is alive.
-	agentInspector := agent.MobyInspector{Client: dockerCli.APIClient}
-	agentHandler := agent.NewHandler(slotRegistry, agentReg, agentInspector, log.With("component", "agent-handler"))
-	agentv1.RegisterAgentServiceServer(agentServer, agentHandler)
+	// Register the AgentService.Register handler. Captures the live
+	// mTLS peer's cert thumbprint at handler entry, reads
+	// container_id from the cert URI SAN, cross-checks against the
+	// docker container's labels + clawker-net IP, and writes the
+	// agentregistry row. The handler is the SOLE writer of the
+	// agentregistry sqlite DB.
+	registerHandler, err := agent.NewHandler(
+		agentReg,
+		agent.NewMobyContainerInspector(dockerCli.APIClient),
+		log.With("component", "agent-register"),
+	)
+	if err != nil {
+		return fmt.Errorf("step 8 (agent register handler): %w", err)
+	}
+	agentv1.RegisterAgentServiceServer(agentServer, registerHandler)
 
 	// Cap covers gRPC admin, gRPC agent, healthz, and the dockerevents
 	// feeder. Buffered so any goroutine that fails before main reaches
@@ -474,34 +501,42 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
-	// Step 9a: Informer + dockerevents feeder.
+	// Step 9a: Overseer + dockerevents feeder.
 	//
-	// The informer is the in-process realm model. It outlives every
-	// individual feeder/consumer for the daemon's lifetime; we close it
-	// explicitly during the drain sequence below (after ebpf flush) so
-	// any final dispatched events have a fully-functional informer to
-	// land on. The dockerevents feeder pushes a clawker-managed mirror
-	// of Docker state into it.
-	// WriteQueueSize=2048: high enough to absorb a docker events burst
-	// (image prune + network reconnect storm) without blocking the feeder
-	// goroutine but bounded so a stuck consumer doesn't grow unbounded.
-	// SubscriberBuffer=256: per-subscriber drop-oldest threshold; sized
-	// so a slow consumer only loses ~5s of activity at the heartbeat
-	// rate before deltas start dropping.
-	inf := informer.New(informer.Options{
-		Logger:           log.With("component", "informer"),
-		WriteQueueSize:   2048,
-		SubscriberBuffer: 256,
+	// The Overseer is the in-process worldview + typed event bus. It
+	// outlives every individual feeder/consumer for the daemon's
+	// lifetime; we close it explicitly during the drain sequence below
+	// (after ebpf flush) so any final dispatched events have a fully-
+	// functional bus to land on. The dockerevents feeder publishes
+	// typed ContainerStarted/Stopped/Removed (and NetworkAttached/
+	// Detached) events for clawker-managed containers.
+	//
+	// PublishBufferSize=2048: high enough to absorb a docker events
+	// burst (image prune + network reconnect storm) without blocking
+	// the feeder goroutine but bounded so a stuck consumer doesn't
+	// grow unbounded. SubscriberBuffer=256: per-subscriber drop-oldest
+	// threshold; sized so a slow consumer only loses ~5s of activity
+	// at the heartbeat rate before events start dropping.
+	busLog := log.With("component", "overseer")
+	bus := overseer.New(overseer.Options{
+		Logger:            busLog,
+		PublishBufferSize: 2048,
+		SubscriberBuffer:  256,
+		// PublishHook emits one structured Info line per published
+		// event from the bus loop. Producers (dockerevents, agent)
+		// no longer pair manual log calls with each Publish — the
+		// hook is the single canonical source of bus-event log lines.
+		PublishHook: overseer.NewLoggerHook(busLog),
 	})
 
 	watcherCtx, watcherCancel := context.WithCancel(context.Background())
 	defer watcherCancel()
 
-	if err := inf.Start(watcherCtx); err != nil {
-		return fmt.Errorf("step 9a (informer start): %w", err)
+	if err := bus.Start(watcherCtx); err != nil {
+		return fmt.Errorf("step 9a (overseer start): %w", err)
 	}
 
-	feeder, err := dockerevents.New(dockerCli.APIClient, inf, dockerevents.Options{
+	feeder, err := dockerevents.New(dockerCli.APIClient, bus, dockerevents.Options{
 		ManagedLabelKey:   cfg.LabelManaged(),
 		ManagedLabelValue: cfg.ManagedLabelValue(),
 		Logger:            log,
@@ -511,26 +546,20 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	// feederCtx is a child of watcherCtx so SIGTERM/drain-to-zero both
 	// reach it; feederCancel exists separately so drainCallbackBody can
-	// stop the feeder BEFORE closing the informer (avoids ErrClosed
-	// noise on in-flight Upsert calls when AgentWatcher fires the drain
+	// stop the feeder BEFORE closing the bus (avoids dropped-publish
+	// noise on in-flight events when AgentWatcher fires the drain
 	// while watcherCtx is still alive).
 	feederCtx, feederCancel := context.WithCancel(watcherCtx)
 	defer feederCancel()
 
-	// Hook agent registry to dockerevents container deltas — evicts
-	// registered agents when their containers die/destroy. Subscribe
-	// runs through the informer so the same drain that closes the
-	// informer also tears this down cleanly.
-	cancelAgentSub := agentregistry.Subscribe(watcherCtx, agentReg, inf, log.With("component", "agentregistry"))
-	defer cancelAgentSub()
+	// agentCleanup is wired below once the dialer is constructed —
+	// agent.Start is the single entry point that consolidates startup
+	// reap, container/destroy → registry evict, and container/start →
+	// dial agent into one bundle. Initialized to a no-op so deferred
+	// cleanup is safe even if Start fails before assignment.
+	agentCleanup := func() {}
+	defer func() { agentCleanup() }()
 
-	// Same wiring for the slot registry: a pending slot whose
-	// container died (e.g. ContainerStart failed mid-bootstrap) is
-	// dead-on-arrival; the TTL janitor would eventually sweep, but
-	// the dockerevents-driven path evicts immediately so a quick retry
-	// can re-announce without an ErrSlotExists collision.
-	cancelSlotSub := agentslots.Subscribe(watcherCtx, slotRegistry, inf, log.With("component", "agentslots"))
-	defer cancelSlotSub()
 	feederDone := make(chan struct{})
 	go func() {
 		defer close(feederDone)
@@ -550,10 +579,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
-	// Periodic informer stats heartbeat — gives an operator tailing the
-	// CP log (or querying Loki) a coarse health signal without needing
-	// a dedicated metrics surface. 30s cadence is below the OTEL
-	// resilience window and trivial overhead.
+	// Periodic Overseer stats heartbeat — gives an operator tailing
+	// the CP log (or querying Loki) a coarse health signal without
+	// needing a dedicated metrics surface. 30s cadence is below the
+	// OTEL resilience window and trivial overhead.
 	statsCtx, statsCancel := context.WithCancel(watcherCtx)
 	defer statsCancel()
 	go func() {
@@ -561,7 +590,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		// heartbeat loop and leave the operator without telemetry.
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error().Interface("panic", r).Msg("informer stats heartbeat panicked")
+				log.Error().Interface("panic", r).Msg("overseer stats heartbeat panicked")
 			}
 		}()
 		ticker := time.NewTicker(30 * time.Second)
@@ -571,23 +600,22 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			case <-statsCtx.Done():
 				return
 			case <-ticker.C:
-				st := inf.Stats()
+				st := bus.Stats()
 				log.Info().
-					Int("resources", st.Resources).
-					Int("relations", st.Relations).
 					Int("subscribers", st.Subscribers).
-					Uint64("writes_total", st.WritesTotal).
-					Uint64("deltas_emitted_total", st.DeltasEmittedTotal).
-					Uint64("deltas_dropped_total", st.DeltasDroppedTotal).
+					Uint64("published_total", st.PublishedTotal).
+					Uint64("dropped_total", st.DroppedTotal).
 					Int("queue_depth", st.QueueDepth).
 					Int("queue_capacity", st.QueueCapacity).
-					Msg("informer stats heartbeat")
+					Int("containers_known", st.ContainersKnown).
+					Int("sessions_known", st.SessionsKnown).
+					Msg("overseer stats heartbeat")
 			}
 		}
 	}()
 
 	listAgents := func(ctx context.Context) (int, error) {
-		ids, err := listAgentIDs(ctx)
+		ids, err := listAgentIDs(ctx, listAgentsOpts{})
 		if err != nil {
 			return 0, err
 		}
@@ -625,14 +653,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			log.Error().Err(err).Msg("drain: ebpf flush failed")
 			errs = append(errs, fmt.Errorf("ebpf flush: %w", err))
 		}
-		// Stop the feeder before closing the informer so any in-flight
-		// Upsert lands cleanly. feederCancel is idempotent; feederDone
+		// Stop the feeder before closing the bus so any in-flight
+		// Publish lands cleanly. feederCancel is idempotent; feederDone
 		// closes once the goroutine returns.
 		feederCancel()
 		<-feederDone
-		if err := inf.Close(); err != nil {
-			log.Error().Err(err).Msg("drain: informer close failed")
-			errs = append(errs, fmt.Errorf("informer close: %w", err))
+		if err := bus.Close(); err != nil {
+			log.Error().Err(err).Msg("drain: overseer close failed")
+			errs = append(errs, fmt.Errorf("overseer close: %w", err))
 		}
 		return errors.Join(errs...)
 	}
@@ -658,6 +686,96 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	go func() {
 		watcherDone <- watcher.Run(watcherCtx)
 	}()
+
+	// CP→clawkerd dial reconciler. Initial poll: open a Session to
+	// every running purpose=agent container so command dispatch is
+	// ready by the time anything wants to dispatch. The same DialAgent
+	// is the call target for the dockerevents container-start path
+	// added next; one dial code path, two callers.
+	//
+	// CP-readiness must NOT block on this. Failures (cert load, list
+	// containers, individual dial) are logged and the rest of CP
+	// proceeds — a misconfigured agent or a flapping clawkerd cannot
+	// hold the control plane down.
+	dialer, err := agent.New(
+		log.With("component", "agent"),
+		dockerCli.APIClient,
+		bus,
+		agentReg,
+		consts.CPClientCertPath,
+		consts.CPClientKeyPath,
+		caCertPool,
+	)
+	if err != nil {
+		log.Error().Err(err).Str("event", "agentdial_init_failed").Msg("agent unavailable; CP→clawkerd dispatch disabled")
+		dialer = nil
+	}
+	if dialer != nil {
+		// Single agent startup procedure: reap orphan registry rows
+		// against live docker, subscribe to container/destroy for
+		// registry evict, subscribe to container/start|restart|unpause
+		// for CP→clawkerd dial. Replaces the previously fragmented
+		// Reap + two Subscribe wirings.
+		cleanup, err := agent.Start(watcherCtx, agent.StartDeps{
+			Registry: agentReg,
+			DockerLister: func(ctx context.Context) ([]string, error) {
+				return listAgentIDs(ctx, listAgentsOpts{All: true})
+			},
+			Dialer: dialer,
+			Bus:    bus,
+			Log:    log.With("component", "agent"),
+		})
+		if err != nil {
+			log.Error().Err(err).Msg("agent.Start failed; agent-axis subscriptions disabled")
+		} else {
+			agentCleanup = cleanup
+		}
+
+		// Initial path: dial every already-running agent container at
+		// CP boot. Runs in its own goroutine — must NOT block CP
+		// readiness, must NOT fail CP if listAgentIDs errors.
+		//
+		// A single failed list strands every container that was already
+		// running at CP boot — those containers' ContainerStarted
+		// events fired before the dockerevents subscription started, so
+		// the runtime path won't pick them up either. Retry with
+		// bounded backoff (3 × 100/200/400ms, mirroring the reaper's
+		// listWithRetry pattern) absorbs the transient docker-daemon
+		// hiccup that's the dominant failure mode at boot.
+		go func() {
+			const maxAttempts = 3
+			backoff := 100 * time.Millisecond
+			var initialAgents []string
+			var listErr error
+			for attempt := 1; attempt <= maxAttempts; attempt++ {
+				initialAgents, listErr = listAgentIDs(watcherCtx, listAgentsOpts{})
+				if listErr == nil {
+					if attempt > 1 {
+						log.Info().Int("attempt", attempt).Str("event", "agentdial_initial_list_recovered").Msg("list agent containers recovered after retry")
+					}
+					break
+				}
+				if attempt == maxAttempts {
+					break
+				}
+				log.Warn().Err(listErr).Int("attempt", attempt).Dur("backoff", backoff).Str("event", "agentdial_initial_list_retry").Msg("list agent containers failed; retrying")
+				select {
+				case <-watcherCtx.Done():
+					return
+				case <-time.After(backoff):
+				}
+				backoff *= 2
+			}
+			if listErr != nil {
+				log.Error().Err(listErr).Str("event", "agentdial_initial_list_failed").Msg("list agent containers")
+				return
+			}
+			for _, id := range initialAgents {
+				dialer.DialAgent(watcherCtx, id)
+			}
+			log.Info().Int("count", len(initialAgents)).Str("event", "agentdial_initial_poll_dispatched").Msg("dispatched initial CP→clawkerd dials")
+		}()
+	}
 
 	log.Info().Msg("clawker-cp ready")
 

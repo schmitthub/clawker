@@ -24,6 +24,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -1636,6 +1637,32 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 
 	extraLabels := client.ContainerLabels(opts.ProjectName, agentName, opts.Version, containerOpts.Image, wd)
 
+	// Resolve agent bootstrap material BEFORE ContainerCreate so any failure
+	// here (path resolution, key load, user-input validation via NewProjectSlug
+	// / NewAgentName) leaves no orphan container + volumes behind. None of
+	// these calls depend on resp.ID; only bootstrapOpts (built post-create)
+	// does.
+	caCertPath, err := consts.AuthCACertPath()
+	if err != nil {
+		return nil, fmt.Errorf("agent bootstrap: ca cert path: %w", err)
+	}
+	caKeyPath, err := consts.AuthCAKeyPath()
+	if err != nil {
+		return nil, fmt.Errorf("agent bootstrap: ca key path: %w", err)
+	}
+	signingKey, err := auth.LoadSigningKey()
+	if err != nil {
+		return nil, fmt.Errorf("agent bootstrap: load signing key: %w", err)
+	}
+	projectSlug, err := auth.NewProjectSlug(opts.ProjectName)
+	if err != nil {
+		return nil, fmt.Errorf("agent bootstrap: invalid project: %w", err)
+	}
+	agentTyped, err := auth.NewAgentName(agentName)
+	if err != nil {
+		return nil, fmt.Errorf("agent bootstrap: invalid agent name: %w", err)
+	}
+
 	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
 		Config:           containerConfig,
 		HostConfig:       hostConfig,
@@ -1654,7 +1681,32 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	// Clear cleanup list so deferred cleanup won't remove them.
 	createdVolumes = nil
 
-	// Inject post-init script if configured.
+	// Mint per-agent mTLS material + Hydra assertion JWT, tar into the
+	// container's BootstrapDir (writable layer survives stop/start/
+	// restart for the container's lifetime). The agentregistry row is
+	// NOT written from the host — CP is the sole sqlite writer and
+	// captures the thumbprint at Register handler entry from the live
+	// mTLS peer. Container_id is embedded as a URI SAN in the leaf cert
+	// so CP can read the binding without a CLI-pre-staged row.
+	bootstrapOpts := InstallAgentBootstrapOptions{
+		Project:            projectSlug,
+		Agent:              agentTyped,
+		ContainerID:        resp.ID,
+		HydraTokenAudience: hydraTokenAudienceFromPort(opts.Config.Settings().ControlPlane.HydraPublicPort),
+		CopyToContainer:    NewCopyToContainerFn(client),
+		Logger:             log,
+	}
+	if err := InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, bootstrapOpts); err != nil {
+		cleanupCtx := context.Background()
+		if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
+			log.Warn().Str("containerID", resp.ID).Err(rmErr).
+				Msg("failed to clean up container after agent bootstrap failure")
+		}
+		return nil, fmt.Errorf("agent bootstrap: %w", err)
+	}
+
+	// Inject post-init script if configured. Last creation step;
+	// failure here removes the container so no orphan exists.
 	if projectCfg.Agent.PostInit != "" {
 		sendInfo(ctx, events, "container", "Injecting post-init script")
 		copyFn := NewCopyToContainerFn(client)

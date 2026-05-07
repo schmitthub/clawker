@@ -143,13 +143,13 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 	if err != nil {
 		return nil, fmt.Errorf("resolve server key path: %w", err)
 	}
-	cpOtelClientCertPath, err := consts.AuthCPOtelClientCertPath()
+	cpClientCertPath, err := consts.AuthCPClientCertPath()
 	if err != nil {
-		return nil, fmt.Errorf("resolve cp otel client cert path: %w", err)
+		return nil, fmt.Errorf("resolve cp client cert path: %w", err)
 	}
-	cpOtelClientKeyPath, err := consts.AuthCPOtelClientKeyPath()
+	cpClientKeyPath, err := consts.AuthCPClientKeyPath()
 	if err != nil {
-		return nil, fmt.Errorf("resolve cp otel client key path: %w", err)
+		return nil, fmt.Errorf("resolve cp client key path: %w", err)
 	}
 
 	// Config dir — CP loads config.NewConfig() from this mount.
@@ -160,6 +160,14 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 	firewallDataDir, err := consts.FirewallDataSubdir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve firewall data dir: %w", err)
+	}
+
+	// Control-plane data dir — the CP daemon is the sole writer of
+	// the sqlite DB that lives under this dir (agentregistry today;
+	// future CP-owned tables alongside).
+	cpDataDir, err := consts.ControlPlaneSubdir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve controlplane data dir: %w", err)
 	}
 
 	mounts := []mount.Mount{
@@ -200,22 +208,21 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			Target:   consts.CPTLSKeyPath,
 			ReadOnly: true,
 		},
-		// CP-side mTLS client cert + key for OTLP push to the
-		// monitoring stack's CP-only receiver. Issued + signed by the
-		// CLI CA at `clawker monitor init` (or any earlier CLI command
-		// that calls auth.EnsureAuthMaterial). The receiver gates
-		// `require_client_certificate: true` so this is the only way
-		// for the daemon to push there.
+		// CP outbound mTLS identity (CN=ContainerCP, ClientAuth EKU,
+		// signed by the CLI CA). Used wherever the CP is the client
+		// authenticating itself: OTLP push to the monitoring stack's
+		// CP-only receiver, the CP→clawkerd Session channel, and any
+		// future CP-as-client mTLS dial.
 		{
 			Type:     mount.TypeBind,
-			Source:   cpOtelClientCertPath,
-			Target:   consts.CPOtelClientCertPath,
+			Source:   cpClientCertPath,
+			Target:   consts.CPClientCertPath,
 			ReadOnly: true,
 		},
 		{
 			Type:     mount.TypeBind,
-			Source:   cpOtelClientKeyPath,
-			Target:   consts.CPOtelClientKeyPath,
+			Source:   cpClientKeyPath,
+			Target:   consts.CPClientKeyPath,
 			ReadOnly: true,
 		},
 		// CP logs — persisted to host for auditing.
@@ -251,6 +258,15 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			Type:     mount.TypeBind,
 			Source:   firewallDataDir,
 			Target:   consts.CPFirewallDataDir,
+			ReadOnly: false,
+		},
+		// Control-plane data dir — CP daemon owns the sqlite DB for
+		// agentregistry and any future CP-only persistence. Bind-mount
+		// makes it survive CP container recreation.
+		{
+			Type:     mount.TypeBind,
+			Source:   cpDataDir,
+			Target:   consts.CPControlPlaneDir,
 			ReadOnly: false,
 		},
 	}
@@ -316,8 +332,8 @@ func otelLogsEnv(cfg config.Config) []string {
 		// Client cert + key (mounted RO into the container). CA bundle
 		// is the same trust root used for the AdminService server cert
 		// — already mounted at consts.CPCACertPath.
-		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE=" + consts.CPOtelClientCertPath,
-		"OTEL_EXPORTER_OTLP_CLIENT_KEY=" + consts.CPOtelClientKeyPath,
+		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE=" + consts.CPClientCertPath,
+		"OTEL_EXPORTER_OTLP_CLIENT_KEY=" + consts.CPClientKeyPath,
 		"OTEL_EXPORTER_OTLP_CERTIFICATE=" + consts.CPCACertPath,
 		// service.name will be force-set on the receiver pipeline by a
 		// resource processor (see otel-config.yaml.tmpl) — this value

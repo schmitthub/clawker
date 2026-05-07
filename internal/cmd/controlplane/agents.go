@@ -10,12 +10,18 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
+// AgentsOptions wires the command's run function. The agents read path
+// goes through the AdminService gRPC surface — CP is the SOLE writer
+// of the agent registry, so the host can no longer read sqlite
+// directly. `f.AdminClient(ctx).ListAgents` is the canonical access.
 type AgentsOptions struct {
 	IOStreams   *iostreams.IOStreams
 	TUI         *tui.TUI
+	Logger      func() (*logger.Logger, error)
 	AdminClient func(context.Context) (adminv1.AdminServiceClient, error)
 	Format      *cmdutil.FormatFlags
 }
@@ -23,10 +29,6 @@ type AgentsOptions struct {
 // agentRow is the JSON/template-friendly representation of one agent.
 // Field tags are the wire contract for `--json` consumers — a rename
 // here breaks downstream tooling.
-//
-// Project + agent_name together form the composite identity the CP keys
-// agents by; emitting both is required so `--json` consumers can
-// distinguish two agents that share a short name across projects.
 type agentRow struct {
 	AgentName      string `json:"agent_name"`
 	Project        string `json:"project"`
@@ -41,19 +43,24 @@ func NewCmdAgents(f *cmdutil.Factory, runF func(context.Context, *AgentsOptions)
 	opts := &AgentsOptions{
 		IOStreams:   f.IOStreams,
 		TUI:         f.TUI,
+		Logger:      f.Logger,
 		AdminClient: f.AdminClient,
 	}
 
 	cmd := &cobra.Command{
 		Use:   "agents",
 		Short: "List agents currently registered with the control plane",
-		Long: `Snapshot every agent that has completed the AgentService.Connect handshake.
+		Long: `Snapshot every agent currently registered with the control plane.
 
-Identity is channel-bound: the certificate thumbprint shown here is the
-SHA-256 over the agent's mTLS leaf cert and is what the control plane
-uses as the registry key. Agents are uniquely identified by the
-composite (project, agent_name) — agents with the same short name in
-different projects appear as separate rows.`,
+The control plane is the sole writer of the agent registry — entries
+are written server-side at AgentService.Register handler entry when CP
+captures the live mTLS peer's cert thumbprint. This command queries
+AdminService.ListAgents over mTLS gRPC to retrieve the snapshot.
+
+Identity is channel-bound: the certificate thumbprint shown here is
+the SHA-256 over the agent's mTLS leaf cert. Agents are uniquely
+identified by the composite (project, agent_name) — agents with the
+same short name in different projects appear as separate rows.`,
 		Example: `  # Show all registered agents
   clawker controlplane agents
 
@@ -74,25 +81,25 @@ different projects appear as separate rows.`,
 func agentsRun(ctx context.Context, opts *AgentsOptions) error {
 	client, err := opts.AdminClient(ctx)
 	if err != nil {
-		return fmt.Errorf("connecting to control plane: %w", err)
+		return fmt.Errorf("dialing control plane: %w", err)
 	}
+
 	resp, err := client.ListAgents(ctx, &adminv1.ListAgentsRequest{})
 	if err != nil {
-		return fmt.Errorf("listing agents: %w", err)
+		return fmt.Errorf("ListAgents: %w", err)
 	}
 
-	rows := make([]agentRow, len(resp.Agents))
-	for i, a := range resp.Agents {
+	rows := make([]agentRow, len(resp.GetAgents()))
+	for i, a := range resp.GetAgents() {
 		rows[i] = agentRow{
-			AgentName:      a.AgentName,
-			Project:        a.Project,
-			ContainerID:    a.ContainerId,
-			CertThumbprint: a.CertThumbprint,
-			RegisteredAt:   formatUnix(a.RegisteredAtUnix),
-			LastSeen:       formatUnix(a.LastSeenUnix),
+			AgentName:      a.GetAgentName(),
+			Project:        a.GetProject(),
+			ContainerID:    a.GetContainerId(),
+			CertThumbprint: a.GetCertThumbprint(),
+			RegisteredAt:   formatUnix(a.GetRegisteredAtUnix()),
+			LastSeen:       formatUnix(a.GetLastSeenUnix()),
 		}
 	}
-
 	return renderAgents(opts, rows)
 }
 
@@ -127,8 +134,12 @@ func renderAgents(opts *AgentsOptions, rows []agentRow) error {
 }
 
 func formatUnix(unix int64) string {
+	// RegisteredAt / LastSeen are written by CP at Register handler
+	// entry with time.Now() and should never be zero on a healthy row.
+	// Render zero as a loud sentinel so registry corruption surfaces
+	// in the table instead of being silently confused with "looks fine".
 	if unix == 0 {
-		return ""
+		return "<unset>"
 	}
 	return time.Unix(unix, 0).UTC().Format(time.RFC3339)
 }

@@ -7,10 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,12 +16,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 
-	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
-	mocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
 
@@ -45,33 +39,23 @@ func setupAuthEnv(t *testing.T) (caCert, caKey string, signing *ecdsa.PrivateKey
 func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	caCert, caKey, signing := setupAuthEnv(t)
 
-	const project, agent = "alpha", "bravo"
-	b, err := GenerateAgentBootstrap(caCert, caKey, auth.MustProjectSlug(project), auth.MustAgentName(agent), "https://hydra.example/oauth2/token", signing)
+	const project, agent, containerID = "alpha", "bravo", "abcdef0123456789"
+	b, err := GenerateAgentBootstrap(caCert, caKey, auth.MustProjectSlug(project), auth.MustAgentName(agent), containerID, "https://hydra.example/oauth2/token", signing)
 	require.NoError(t, err)
 	require.NotNil(t, b)
-
-	require.True(t, b.HasVerifier())
-	assert.Equal(t, consts.ChallengeMethodS256, b.Method)
-
-	// Challenge must equal base64url(sha256(verifier)) with no padding.
-	// HasVerifier confirmed presence; reading the bytes through the
-	// unexported field is OK in same-package tests but consume-once
-	// semantics still apply if we use ConsumeVerifier — use direct
-	// field access here so the assertion doesn't burn the secret.
-	sum := sha256.Sum256([]byte(b.verifier))
-	expectedChallenge := base64.RawURLEncoding.EncodeToString(sum[:])
-	assert.Equal(t, expectedChallenge, b.Challenge)
-
-	// Cert thumbprint matches sha256(certDER).
-	assert.NotEqual(t, [sha256.Size]byte{}, b.ExpectedCertThumbprint, "thumbprint must not be zero-valued")
 
 	// Cert decodes; CN must be canonical "clawker.<project>.<agent>" —
 	// composed inside MintAgentCert so the agent handler's CN cross-check
 	// has a single equality to enforce.
 	leaf := mustParseCert(t, b.CertPEM)
-	got := sha256.Sum256(leaf.Raw)
 	assert.Equal(t, "clawker.alpha.bravo", leaf.Subject.CommonName)
-	assert.Equal(t, got, b.ExpectedCertThumbprint)
+
+	// Container_id must be embedded as a URI SAN — the load-bearing
+	// binding the Register handler reads to identify which container
+	// the request is about.
+	gotID, ok := auth.ContainerIDFromCert(leaf)
+	require.True(t, ok, "cert must carry container_id URI SAN")
+	assert.Equal(t, containerID, gotID)
 
 	// CA PEM matches the on-disk CA.
 	assert.Contains(t, string(b.CACertPEM), "BEGIN CERTIFICATE")
@@ -84,7 +68,7 @@ func TestGenerateAgentBootstrap_EmptyProjectStillWorks(t *testing.T) {
 	// 2-segment naming case: empty project, short agent. Canonical CN is
 	// "clawker.<agent>" — same convention as docker.ContainerName.
 	caCert, caKey, signing := setupAuthEnv(t)
-	b, err := GenerateAgentBootstrap(caCert, caKey, auth.ProjectSlug{}, auth.MustAgentName("solo"), "https://h.example/o/t", signing)
+	b, err := GenerateAgentBootstrap(caCert, caKey, auth.ProjectSlug{}, auth.MustAgentName("solo"), "fedcba9876543210", "https://h.example/o/t", signing)
 	require.NoError(t, err)
 	leaf := mustParseCert(t, b.CertPEM)
 	assert.Equal(t, "clawker.solo", leaf.Subject.CommonName)
@@ -93,19 +77,18 @@ func TestGenerateAgentBootstrap_EmptyProjectStillWorks(t *testing.T) {
 func TestGenerateAgentBootstrap_Validation(t *testing.T) {
 	caCert, caKey, signing := setupAuthEnv(t)
 	tests := []struct {
-		name    string
-		agent   auth.AgentName
-		signing *ecdsa.PrivateKey
+		name        string
+		agent       auth.AgentName
+		containerID string
+		signing     *ecdsa.PrivateKey
 	}{
-		// Zero-value AgentName mirrors the empty-input case at the
-		// post-NewAgentName boundary — production callers can't
-		// construct that value but tests can to exercise the guard.
-		{name: "zero agent name", agent: auth.AgentName{}, signing: signing},
-		{name: "nil signing key", agent: auth.MustAgentName("x"), signing: nil},
+		{name: "zero agent name", agent: auth.AgentName{}, containerID: "ctr", signing: signing},
+		{name: "empty container id", agent: auth.MustAgentName("x"), containerID: "", signing: signing},
+		{name: "nil signing key", agent: auth.MustAgentName("x"), containerID: "ctr", signing: nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := GenerateAgentBootstrap(caCert, caKey, auth.MustProjectSlug("proj"), tc.agent, "https://h", tc.signing)
+			_, err := GenerateAgentBootstrap(caCert, caKey, auth.MustProjectSlug("proj"), tc.agent, tc.containerID, "https://h", tc.signing)
 			require.Error(t, err)
 		})
 	}
@@ -113,97 +96,30 @@ func TestGenerateAgentBootstrap_Validation(t *testing.T) {
 
 func validBootstrap() *AgentBootstrap {
 	return &AgentBootstrap{
-		verifier:               "verifier",
-		Challenge:              "challenge",
-		Method:                 consts.ChallengeMethodS256,
-		CertPEM:                []byte("cert-pem"),
-		KeyPEM:                 []byte("key-pem"),
-		CACertPEM:              []byte("ca-pem"),
-		ExpectedCertThumbprint: sha256.Sum256([]byte("thumbprint-fixture")),
-		Assertion:              "assertion-jwt",
+		CertPEM:   []byte("cert-pem"),
+		KeyPEM:    []byte("key-pem"),
+		CACertPEM: []byte("ca-pem"),
+		Assertion: "assertion-jwt",
 	}
-}
-
-func TestAnnounceAgent_FieldsPropagate(t *testing.T) {
-	// Captures the full wire contract — a future field rename in the
-	// proto can't silently drop a security-relevant attribute.
-	var captured *adminv1.AnnounceAgentRequest
-	mock := &mocks.AdminServiceClientMock{
-		AnnounceAgentFunc: func(_ context.Context, in *adminv1.AnnounceAgentRequest, _ ...grpc.CallOption) (*adminv1.AnnounceAgentResult, error) {
-			captured = in
-			return &adminv1.AnnounceAgentResult{ExpiresAtUnix: 12345}, nil
-		},
-	}
-
-	b := validBootstrap()
-	require.NoError(t, AnnounceAgent(context.Background(), mock, b, auth.MustProjectSlug("alpha"), auth.MustAgentName("bravo"), "ctr-id"))
-	require.NotNil(t, captured)
-	// Wire fields are short (project, agent) — NOT canonical. CP composes
-	// the canonical name from these on its side.
-	assert.Equal(t, "bravo", captured.AgentName)
-	assert.Equal(t, "alpha", captured.Project)
-	assert.Equal(t, "ctr-id", captured.ContainerId)
-	// Wire field is hex-encoded SHA-256 over cert DER; round-trip
-	// confirms the encoding and that the bytes match the bootstrap.
-	assert.Equal(t, hex.EncodeToString(b.ExpectedCertThumbprint[:]), captured.ExpectedCertThumbprint)
-	assert.Equal(t, "challenge", captured.CodeChallenge)
-	assert.Equal(t, "S256", captured.CodeChallengeMethod)
-}
-
-func TestAnnounceAgent_PropagatesError(t *testing.T) {
-	want := errors.New("rejected")
-	mock := &mocks.AdminServiceClientMock{
-		AnnounceAgentFunc: func(_ context.Context, _ *adminv1.AnnounceAgentRequest, _ ...grpc.CallOption) (*adminv1.AnnounceAgentResult, error) {
-			return nil, want
-		},
-	}
-	err := AnnounceAgent(context.Background(), mock, validBootstrap(), auth.MustProjectSlug("p"), auth.MustAgentName("n"), "id")
-	assert.ErrorIs(t, err, want)
-}
-
-func TestAnnounceAgent_RejectsInvalidBootstrap(t *testing.T) {
-	mock := &mocks.AdminServiceClientMock{}
-	// Empty challenge would let the slot reserve with no PKCE binding.
-	b := validBootstrap()
-	b.Challenge = ""
-	require.Error(t, AnnounceAgent(context.Background(), mock, b, auth.MustProjectSlug("p"), auth.MustAgentName("n"), "id"))
-
-	// Empty agent name would key the slot to (p, "") — every announce in
-	// project p would collide on the same composite key. Zero-value
-	// auth.AgentName{} mirrors that case (constructors reject empty
-	// input, but the zero value is reachable for tests).
-	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), auth.MustProjectSlug("p"), auth.AgentName{}, "id"))
-
-	// Empty container ID would skip the IP cross-check at Connect.
-	require.Error(t, AnnounceAgent(context.Background(), mock, validBootstrap(), auth.MustProjectSlug("p"), auth.MustAgentName("n"), ""))
-
-	// Mock should never see a request — validation happens before RPC.
-	assert.Empty(t, mock.AnnounceAgentCalls())
 }
 
 // TestAgentBootstrap_RedactsViaFormatter pins the redaction contract:
 // none of fmt's verb permutations may surface the per-agent private
-// key, the PKCE verifier (a bearer secret to the CP slot), or the
-// Hydra assertion JWT. Catches the regression where someone adds a
-// log line `log.Debug().Interface("bootstrap", b)` and quietly leaks
-// every secret in the struct to the on-disk log.
+// key or the Hydra assertion JWT. Catches the regression where someone
+// adds a log line `log.Debug().Interface("bootstrap", b)` and quietly
+// leaks every secret in the struct to the on-disk log.
 func TestAgentBootstrap_RedactsViaFormatter(t *testing.T) {
 	b := &AgentBootstrap{
-		verifier:               "VERIFIER-BEARER-SECRET",
-		Challenge:              "challenge-public",
-		Method:                 consts.ChallengeMethodS256,
-		CertPEM:                []byte("PRIVATE-CERT-MATERIAL"),
-		KeyPEM:                 []byte("PRIVATE-KEY-MATERIAL"),
-		ExpectedCertThumbprint: sha256.Sum256([]byte("thumb")),
-		CACertPEM:              []byte("CA-MATERIAL"),
-		Assertion:              "ASSERTION-JWT-SECRET",
+		CertPEM:   []byte("PRIVATE-CERT-MATERIAL"),
+		KeyPEM:    []byte("PRIVATE-KEY-MATERIAL"),
+		CACertPEM: []byte("CA-MATERIAL"),
+		Assertion: "ASSERTION-JWT-SECRET",
 	}
 
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
 		t.Run(verb, func(t *testing.T) {
 			out := fmt.Sprintf(verb, b)
 			assert.Contains(t, out, "<redacted>", "formatter %q must include redaction marker", verb)
-			assert.NotContains(t, out, "VERIFIER-BEARER-SECRET", "formatter %q leaked Verifier", verb)
 			assert.NotContains(t, out, "PRIVATE-KEY-MATERIAL", "formatter %q leaked KeyPEM", verb)
 			assert.NotContains(t, out, "ASSERTION-JWT-SECRET", "formatter %q leaked Assertion", verb)
 		})
@@ -212,8 +128,6 @@ func TestAgentBootstrap_RedactsViaFormatter(t *testing.T) {
 
 func TestWriteAgentBootstrapToContainer_TarShape(t *testing.T) {
 	b := validBootstrap()
-	const wantVerifier = "verifier-bytes"
-	b.verifier = wantVerifier
 
 	var (
 		gotDest   string
@@ -238,11 +152,10 @@ func TestWriteAgentBootstrapToContainer_TarShape(t *testing.T) {
 	expectFile(t, files, leaf+"/"+consts.BootstrapKeyFile, 0o400, b.KeyPEM)
 	expectFile(t, files, leaf+"/"+consts.BootstrapCAFile, 0o400, b.CACertPEM)
 	expectFile(t, files, leaf+"/"+consts.BootstrapAssertionFile, 0o400, []byte(b.Assertion))
-	// Verifier was consumed by the tar build — read the snapshot we
-	// captured before WriteAgentBootstrapToContainer ran. b.HasVerifier()
-	// must now be false (consume-once contract).
-	expectFile(t, files, leaf+"/"+consts.BootstrapVerifierFile, 0o400, []byte(wantVerifier))
-	assert.False(t, b.HasVerifier(), "ConsumeVerifier must zero the in-memory copy after tar build")
+	// Verifier file was retired alongside PKCE — only 4 entries
+	// (1 dir + 3 normal files including assertion would be 5; verify
+	// total file count).
+	assert.Equal(t, 5, len(files), "expected exactly the directory + 4 files (cert, key, ca, assertion)")
 }
 
 func TestWriteAgentBootstrapToContainer_Validation(t *testing.T) {
@@ -304,6 +217,30 @@ func expectFile(t *testing.T, files map[string]tarEntry, name string, mode os.Fi
 	assert.Equal(t, body, entry.body, "body for %q", name)
 }
 
+// TestInstallAgentBootstrapMaterial_DoesNotTouchRegistry verifies the
+// material-delivery path does not open or write to the registry DB.
+// CP is the sole sqlite writer; the CLI only delivers material into
+// the container's writable layer.
+func TestInstallAgentBootstrapMaterial_DoesNotTouchRegistry(t *testing.T) {
+	caCert, caKey, signing := setupAuthEnv(t)
+
+	var copied bool
+	copyFn := func(_ context.Context, _ string, _ string, _ io.Reader) error {
+		copied = true
+		return nil
+	}
+
+	err := InstallAgentBootstrapMaterial(context.Background(), caCert, caKey, signing, InstallAgentBootstrapOptions{
+		Project:            auth.MustProjectSlug("alpha"),
+		Agent:              auth.MustAgentName("bravo"),
+		ContainerID:        "deadbeefcafef00d",
+		HydraTokenAudience: "https://hydra.example/oauth2/token",
+		CopyToContainer:    copyFn,
+	})
+	require.NoError(t, err)
+	assert.True(t, copied, "WriteAgentBootstrapToContainer must run")
+}
+
 func mustParseCert(t *testing.T, pemBytes []byte) *x509.Certificate {
 	t.Helper()
 	block, _ := pem.Decode(pemBytes)
@@ -312,3 +249,6 @@ func mustParseCert(t *testing.T, pemBytes []byte) *x509.Certificate {
 	require.NoError(t, err)
 	return leaf
 }
+
+// stub usage to keep import; thumbprint helper retained for any future test.
+var _ = sha256.Sum256

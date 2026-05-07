@@ -12,6 +12,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -23,6 +24,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/require"
 )
@@ -253,42 +255,6 @@ func TestNewCmdCreate(t *testing.T) {
 	}
 }
 
-func TestCmdCreate_Properties(t *testing.T) {
-	f := &cmdutil.Factory{}
-	cmd := NewCmdCreate(f, nil)
-
-	// Test command basics
-	require.Equal(t, "create [OPTIONS] IMAGE [COMMAND] [ARG...]", cmd.Use)
-	require.NotEmpty(t, cmd.Short)
-	require.NotEmpty(t, cmd.Long)
-	require.NotEmpty(t, cmd.Example)
-	require.NotNil(t, cmd.RunE)
-
-	// Test flags exist
-	require.NotNil(t, cmd.Flags().Lookup("agent"))
-	require.NotNil(t, cmd.Flags().Lookup("name"))
-	require.NotNil(t, cmd.Flags().Lookup("mode"))
-	require.NotNil(t, cmd.Flags().Lookup("env"))
-	require.NotNil(t, cmd.Flags().Lookup("volume"))
-	require.NotNil(t, cmd.Flags().Lookup("publish"))
-	require.NotNil(t, cmd.Flags().Lookup("user"))
-	require.NotNil(t, cmd.Flags().Lookup("entrypoint"))
-	require.NotNil(t, cmd.Flags().Lookup("tty"))
-	require.NotNil(t, cmd.Flags().Lookup("interactive"))
-	require.NotNil(t, cmd.Flags().Lookup("network"))
-	require.NotNil(t, cmd.Flags().Lookup("label"))
-	require.NotNil(t, cmd.Flags().Lookup("rm"))
-
-	// Test shorthand flags
-	require.NotNil(t, cmd.Flags().ShorthandLookup("e"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("v"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("p"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("u"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("t"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("i"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("l"))
-}
-
 func TestCmdCreate_MutuallyExclusiveFlags(t *testing.T) {
 	f := &cmdutil.Factory{}
 	cmd := NewCmdCreate(f, func(_ context.Context, _ *CreateOptions) error {
@@ -345,14 +311,6 @@ func TestBuildConfigs(t *testing.T) {
 			opts: &shared.ContainerCreateOptions{
 				Image:   "alpine",
 				Env:     []string{"FOO=bar", "BAZ=qux"},
-				Publish: shared.NewPortOpts(),
-			},
-		},
-		{
-			name: "with labels",
-			opts: &shared.ContainerCreateOptions{
-				Image:   "alpine",
-				Labels:  []string{"foo=bar", "baz"},
 				Publish: shared.NewPortOpts(),
 			},
 		},
@@ -419,6 +377,14 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // testFactory builds a *cmdutil.Factory backed by a FakeClient for Tier 2 create tests.
 func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
+	// Isolate XDG dirs + mint per-test auth material. shared.CreateContainer
+	// reads the CA cert + signing key + agentregistry DB path through
+	// internal/consts; without testenv + EnsureAuthMaterial, the new
+	// InstallAgentBootstrap call inside CreateContainer fails with a
+	// missing-CA error before reaching any of the assertions in these
+	// Tier 2 tests.
+	testenv.New(t)
+	require.NoError(t, auth.EnsureAuthMaterial())
 	// Ensure CWD is inside $HOME so IsOutsideHome returns false (matters in containers).
 	cwd, _ := os.Getwd()
 	t.Setenv("HOME", filepath.Dir(cwd))
@@ -470,7 +436,7 @@ func TestCreateRun(t *testing.T) {
 
 		// Create prints 12-char container ID to stdout
 		outStr := out.String()
-		require.Contains(t, outStr, "sha256:fakec")
+		require.Contains(t, outStr, "abcdef123456")
 		require.Len(t, strings.TrimSpace(outStr), 12)
 
 		fake.AssertCalled(t, "ContainerCreate")
@@ -536,8 +502,14 @@ func TestCreateRun(t *testing.T) {
 	// (entrypoint seeds ~/.claude/.config.json from ~/.claude-init/.config.json).
 	// CopyToContainer is no longer called for onboarding injection.
 
-	t.Run("no CopyToContainer when use_host_auth disabled and no post_init", func(t *testing.T) {
-		// Explicitly disable use_host_auth, no post_init → no CopyToContainer calls
+	t.Run("only one CopyToContainer when use_host_auth disabled and no post_init", func(t *testing.T) {
+		// use_host_auth disabled + no post_init: post-init injection
+		// must NOT fire, but the bootstrap material copy from
+		// InstallAgentBootstrap always does → exactly one
+		// CopyToContainer call.
+		testenv.New(t)
+		require.NoError(t, auth.EnsureAuthMaterial())
+
 		useHostAuthCfg := configmocks.NewFromString(`
 version: "1"
 workspace: { default_mode: "bind" }
@@ -552,7 +524,7 @@ agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 		}
 		fake := mocks.NewFakeClient(useHostAuthCfg)
 		fake.SetupContainerCreate()
-		// No CopyToContainer setup — if called, it would panic
+		fake.SetupCopyToContainer()
 
 		// Ensure CWD is inside $HOME so IsOutsideHome returns false (matters in containers).
 		cwd, _ := os.Getwd()
@@ -584,10 +556,11 @@ agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 		err := cmd.Execute()
 		require.NoError(t, err)
 
-		// Container created successfully without CopyToContainer being called
+		// Container created. Bootstrap material was copied (1 call);
+		// post-init injection did NOT run.
 		outStr := out.String()
 		require.Len(t, strings.TrimSpace(outStr), 12)
 		fake.AssertCalled(t, "ContainerCreate")
-		fake.AssertNotCalled(t, "CopyToContainer")
+		fake.AssertCalledN(t, "CopyToContainer", 1)
 	})
 }

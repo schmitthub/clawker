@@ -12,7 +12,6 @@ import (
 	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
-	"google.golang.org/grpc"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/auth"
@@ -791,8 +790,8 @@ func TestImageArg(t *testing.T) {
 // Sets up isolated auth material via testenv + EnsureAuthMaterial so the
 // shared.prepareAgentBootstrap path (which mints per-agent certs from the
 // CLI CA + signs Hydra assertions) succeeds without a real machine config.
-// AdminClient is wired with a no-op AnnounceAgent — tests that care about
-// the wire request body can override the mock.
+// AdminClient is wired with a default mock — tests that need specific
+// firewall RPC behavior can override it.
 func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	testenv.New(t)
@@ -831,11 +830,7 @@ security: { enable_host_proxy: false }
 			}
 		},
 		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
-			return &controlplanemocks.AdminServiceClientMock{
-				AnnounceAgentFunc: func(_ context.Context, _ *adminv1.AnnounceAgentRequest, _ ...grpc.CallOption) (*adminv1.AnnounceAgentResult, error) {
-					return &adminv1.AnnounceAgentResult{}, nil
-				},
-			}, nil
+			return &controlplanemocks.AdminServiceClientMock{}, nil
 		},
 		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 	}, in, out, errOut
@@ -861,7 +856,7 @@ func TestRunRun(t *testing.T) {
 
 		// Detached mode prints 12-char container ID to stdout
 		outStr := out.String()
-		require.Contains(t, outStr, "sha256:fakec")
+		require.Contains(t, outStr, "abcdef123456")
 		require.Len(t, strings.TrimSpace(outStr), 12)
 
 		fake.AssertCalled(t, "ContainerCreate")

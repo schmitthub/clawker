@@ -146,7 +146,7 @@ func assertKeyPerms(t *testing.T) {
 		{"server key", consts.AuthServerKeyPath, tightMode},
 		{"client key", consts.AuthCLIClientKeyPath, tightMode},
 		{"otel server key", consts.AuthOtelServerKeyPath, otelMode},
-		{"cp otel client key", consts.AuthCPOtelClientKeyPath, tightMode},
+		{"cp client key", consts.AuthCPClientKeyPath, tightMode},
 	} {
 		p, err := c.pathFn()
 		require.NoError(t, err)
@@ -187,7 +187,7 @@ func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
 		"Server certificate",
 		"CLI client certificate",
 		"OTEL server certificate",
-		"CP OTEL client certificate",
+		"CP client certificate",
 	} {
 		s := statusByName(t, status, name)
 		assert.False(t, s.Expires.IsZero(), "%s should have expiry", name)
@@ -291,14 +291,14 @@ func TestOtelServerCertSignedByCA(t *testing.T) {
 	assert.Contains(t, cert.DNSNames, "localhost")
 }
 
-func TestCPOtelClientCertSignedByCA(t *testing.T) {
+func TestCPClientCertSignedByCA(t *testing.T) {
 	testenv.New(t)
 	require.NoError(t, EnsureAuthMaterial())
 
 	caCert, err := CACert()
 	require.NoError(t, err)
 
-	certPath, err := consts.AuthCPOtelClientCertPath()
+	certPath, err := consts.AuthCPClientCertPath()
 	require.NoError(t, err)
 	certPEM, err := os.ReadFile(certPath)
 	require.NoError(t, err)
@@ -314,7 +314,7 @@ func TestCPOtelClientCertSignedByCA(t *testing.T) {
 		Roots:     pool,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	})
-	require.NoError(t, err, "CP OTEL client cert must be signed by CLI CA")
+	require.NoError(t, err, "CP client cert must be signed by CLI CA")
 	assert.Equal(t, consts.ContainerCP, cert.Subject.CommonName)
 	assert.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageClientAuth)
 }

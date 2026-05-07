@@ -36,6 +36,11 @@ var (
 	HostFirewallCertSubdir = filepath.Join(HostFirewallDataSubdir, firewallCertDir)
 	HostEnvoyConfigPath    = filepath.Join(HostFirewallDataSubdir, EnvoyConfigFile)
 	HostCorefilePath       = filepath.Join(HostFirewallDataSubdir, Corefile)
+	// HostControlPlaneSubdir is the host-FS path of the CP-owned data
+	// subdirectory. Bind source for the RW mount that backs the sqlite
+	// DB at HostControlPlaneDBPath.
+	HostControlPlaneSubdir = filepath.Join(HostDataDir, controlPlaneDir)
+	HostControlPlaneDBPath = filepath.Join(HostControlPlaneSubdir, ControlPlaneDBFile)
 )
 
 const (
@@ -71,14 +76,28 @@ const (
 	// CPCLIPubKeyPath is the container-side path for the CLI's public signing key (JWK).
 	CPCLIPubKeyPath = CPClawkerDir + "/auth/cli/signing-jwk.json"
 
-	// CPOtelClientCertPath / CPOtelClientKeyPath are the container-side
-	// paths for the daemon's mTLS client certificate used to push OTLP
-	// to the monitoring stack's CP-only receiver.
-	CPOtelClientCertPath = CPClawkerDir + "/auth/otel/cp-client.pem"
-	CPOtelClientKeyPath  = CPClawkerDir + "/auth/otel/cp-client.key"
+	// CPClientCertPath / CPClientKeyPath are the container-side paths
+	// for the CP's outbound mTLS identity. CN equals ContainerCP and
+	// ExtKeyUsage includes ClientAuth so any peer that needs to
+	// authenticate "this is the CP" (clawkerd's listener CN-pin, the
+	// OTLP receiver, etc.) accepts this cert. One identity cert
+	// across all CP-as-client uses keeps the contract simple — the
+	// cert IS "this is the CP".
+	CPClientCertPath = CPClawkerDir + "/auth/cp/client.pem"
+	CPClientKeyPath  = CPClawkerDir + "/auth/cp/client.key"
 
 	// CPFirewallDataDir is the container-side directory for CP-managed firewall state.
 	CPFirewallDataDir = CPClawkerDataDir + "/firewall"
+
+	// CPControlPlaneDir is the container-side directory holding the
+	// CP daemon's own state (sqlite DB, future CP-owned files).
+	// Bind-mounted RW from HostControlPlaneSubdir.
+	CPControlPlaneDir = CPClawkerDataDir + "/controlplane"
+
+	// CPControlPlaneDBPath is the container-side path to the sqlite
+	// database the CP daemon owns. agentregistry holds the `agents`
+	// table; future CP-owned tables share the same file.
+	CPControlPlaneDBPath = CPControlPlaneDir + "/controlplane.db"
 
 	CPKratosConfigFilename = "kratos.yaml"
 
