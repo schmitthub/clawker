@@ -36,6 +36,10 @@ const (
 	ErrorCode_ERROR_CODE_TIMEOUT ErrorCode = 4
 	// Pipe between stages broke unexpectedly mid-execution.
 	ErrorCode_ERROR_CODE_IO_ERROR ErrorCode = 5
+	// Required filesystem entry missing (e.g. AgentReady fifo
+	// never created — distinct from IO_ERROR which covers
+	// syscall failures on existing entries).
+	ErrorCode_ERROR_CODE_NOT_FOUND ErrorCode = 6
 )
 
 // Enum value maps for ErrorCode.
@@ -47,6 +51,7 @@ var (
 		3: "ERROR_CODE_SPAWN_FAILED",
 		4: "ERROR_CODE_TIMEOUT",
 		5: "ERROR_CODE_IO_ERROR",
+		6: "ERROR_CODE_NOT_FOUND",
 	}
 	ErrorCode_value = map[string]int32{
 		"ERROR_CODE_UNSPECIFIED":        0,
@@ -55,6 +60,7 @@ var (
 		"ERROR_CODE_SPAWN_FAILED":       3,
 		"ERROR_CODE_TIMEOUT":            4,
 		"ERROR_CODE_IO_ERROR":           5,
+		"ERROR_CODE_NOT_FOUND":          6,
 	}
 )
 
@@ -342,20 +348,11 @@ func (*RegisterRequired) Descriptor() ([]byte, []int) {
 	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{2}
 }
 
-// AgentReady is the terminal init-sequence signal CP sends after every
-// preceding init ShellCommand returns Done with exit_code=0. clawkerd
-// opens /run/clawker/agent.fifo with O_WRONLY|O_NONBLOCK, writes one
-// byte, closes — releasing the entrypoint's blocking read on the
-// fifo so it can exec the user CMD.
-//
-// Idempotent across CP reconnects: if the entrypoint already moved on
-// (no reader on the fifo), open returns ENXIO and clawkerd treats it
-// as a no-op success. This is the v1 strategy for "init runs every
-// Session reconnect" — see internal/controlplane/agent/init.go.
-//
-// Reply is a Done{exit_code: 0} on success or Error on hard failure
-// (fifo missing entirely, unexpected ioctl error). ENXIO is NOT a
-// failure.
+// AgentReady is the terminal init-sequence signal. clawkerd releases
+// the entrypoint to exec the user CMD. Idempotent on reconnect (no
+// reader → no-op success). Reply: Done{exit_code:0} on release or
+// reconnect-replay; Error{NOT_FOUND} if the fifo is missing entirely
+// (build drift); Error{IO_ERROR} on syscall-level failure.
 type AgentReady struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1323,14 +1320,15 @@ const file_clawkerd_v1_clawkerd_proto_rawDesc = "" +
 	"\x0ffinal_exit_code\x18\x01 \x01(\x05R\rfinalExitCode\"U\n" +
 	"\x05Error\x122\n" +
 	"\x04code\x18\x01 \x01(\x0e2\x1e.clawker.clawkerd.v1.ErrorCodeR\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage*\xb8\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage*\xd2\x01\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dERROR_CODE_UNKNOWN_COMMAND_ID\x10\x01\x12\x1e\n" +
 	"\x1aERROR_CODE_INVALID_REQUEST\x10\x02\x12\x1b\n" +
 	"\x17ERROR_CODE_SPAWN_FAILED\x10\x03\x12\x16\n" +
 	"\x12ERROR_CODE_TIMEOUT\x10\x04\x12\x17\n" +
-	"\x13ERROR_CODE_IO_ERROR\x10\x052]\n" +
+	"\x13ERROR_CODE_IO_ERROR\x10\x05\x12\x18\n" +
+	"\x14ERROR_CODE_NOT_FOUND\x10\x062]\n" +
 	"\x0fClawkerdService\x12J\n" +
 	"\aSession\x12\x1c.clawker.clawkerd.v1.Command\x1a\x1d.clawker.clawkerd.v1.Response(\x010\x01B/Z-github.com/schmitthub/clawker/api/clawkerd/v1b\x06proto3"
 

@@ -5,11 +5,14 @@ import (
 	"path/filepath"
 
 	"github.com/moby/moby/api/types/mount"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// HostGitConfigStagingPath is where the host's gitconfig is mounted for processing by entrypoint
-const HostGitConfigStagingPath = "/tmp/host-gitconfig"
+// HostGitConfigStagingPath re-exports consts.HostGitConfigStagingPath
+// so existing call sites (workspace.HostGitConfigStagingPath) keep
+// compiling. consts is the single source of truth.
+const HostGitConfigStagingPath = consts.HostGitConfigStagingPath
 
 // GetGitConfigMount returns a mount configuration for the host's ~/.gitconfig file.
 // The file is mounted read-only to a staging location where the entrypoint script

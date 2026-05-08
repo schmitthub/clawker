@@ -14,22 +14,26 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// Init step timeout defaults. Per-step shells are file-IO + small
-// process spawns and complete in milliseconds in the steady state;
-// 30s tolerates a slow filesystem on first boot. post-init runs
-// user-supplied bash that may install packages or warm caches —
-// 10 minutes is the same wall-clock ceiling the prior entrypoint
-// would have honored implicitly via container's overall start
-// budget.
+// Per-step timeout defaults. Must be aligned with the entrypoint
+// wall-clock ceiling: post-init can install packages and warm caches,
+// hence 600s; other steps are file-IO and should complete in
+// milliseconds in steady state, 30s tolerates a slow first-boot fs.
+// See consts.EntrypointInitTimeoutSeconds — the entrypoint must wait
+// at least postInit + slack so CP isn't beaten to the kill by bash.
 const (
-	initStepTimeoutDefault  uint32 = 30
-	initStepTimeoutPostInit uint32 = 600
+	initStepTimeoutDefault  = consts.InitStepTimeoutDefaultSeconds
+	initStepTimeoutPostInit = consts.InitStepTimeoutPostInitSeconds
 )
 
-// Default known_hosts blob seeded into ~/.ssh/known_hosts on every
-// init run. Sourced from openssh's published host keys for the most
-// common public Git forges. Idempotent: the ssh step appends only
-// lines not already present, so re-running does not duplicate.
+// defaultKnownHosts is the openssh published host-key blob for the
+// common public Git forges (github.com, gitlab.com, bitbucket.org),
+// seeded into ~/.ssh/known_hosts on every init run via the ssh step's
+// InitialStdin. Update if upstream rotates.
+//
+// Source: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
+//
+//	https://docs.gitlab.com/ee/user/gitlab_com/#ssh-host-keys-fingerprints
+//	https://support.atlassian.com/bitbucket-cloud/docs/configure-ssh-and-two-step-verification/
 const defaultKnownHosts = `github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
 github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
 github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
@@ -41,11 +45,10 @@ bitbucket.org ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNT
 bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2qOCsIsD1Xw0xSeiPDlCr7kq97NLmMbpKTX6Esc30NuoqEEHCuc7yWtwp8dI76EEEB1VqY9QJq6vk+aySyboD5QF61I/1WeTwu+deCbgKMGbUijeXhtfbxSxm6JwGrXrhBdofTsbKRUsrN1WoNgUa8uqN1Vx6WAJw1JHPhglEGGHea6QICwJOAr/6mrui/oB7pkaWKHj3z7d1IC4KWLtY47elvjbaTlkN04Kc/5LFEirorGYVbt15kAUlqGM65pk6ZBxtaO3+30LVlORZkxOh+LKL/BvbZ/iRNhItLqNyieoQj/uj/4PXhq0r2tVoBqXJCmLk7k+zpcaoprJBFQDa5A7SjqPQK0pCwBvhOT0hHpF0sWH4AIQHvYAWVTD0tBFPF1yENBxnVJpfL0L2qgGxLbQCWgOG0/1ygM+Gf9n0AIksE1h/uoLERBHQXE30XuP4pHV3n+7kO5+nw5VVFIsMfrQ3oT89Si/NvvmM=
 `
 
-// Inline self-gating shell scripts for the init plan. Each script's
-// effect is a strict subset of what the prior entrypoint.sh did
-// inline; the gating predicates ([ -d INIT_DIR ], [ -f /tmp/host-gitconfig ],
-// CLAWKER_GIT_HTTPS, etc.) are preserved here so CP doesn't have to
-// know which container has which optional features wired.
+// Inline self-gating shell scripts. Each script's gating predicates
+// ([ -d INIT_DIR ], [ -f $HOST_GITCONFIG ], CLAWKER_GIT_HTTPS, etc.)
+// keep the dispatch CP-feature-flag-free: CP doesn't need to know
+// which optional features a given container has wired.
 const (
 	configSeedScript = `INIT_DIR="$HOME/.claude-init"
 CONFIG_DIR="$HOME/.claude"
@@ -66,20 +69,19 @@ else
 fi
 `
 
-	// gitconfigFilterScript strips [credential] sections from the host
-	// gitconfig before placing it under the unprivileged user's home.
+	// gitconfigFilterTemplate strips [credential] sections from the
+	// host-mounted gitconfig before placing it under the unprivileged
+	// user's home. %q is replaced with consts.HostGitConfigStagingPath
+	// (Go-quoted so the bash literal never drifts from the workspace
+	// mount target).
 	//
 	// Three branches:
 	//   - awk succeeds with non-empty output → move into place
-	//   - awk succeeds with EMPTY output (host gitconfig contained
-	//     ONLY [credential] blocks) → discard the empty tmp and leave
-	//     ~/.gitconfig untouched. Copying the unfiltered host file
-	//     here would leak credentials into the container — exactly
-	//     what the filter exists to prevent.
-	//   - awk syscall failed (extremely rare exec failure) → discard
-	//     the partial tmp and bail. We do NOT fall back to copying
-	//     the unfiltered file; same credential-leak rationale.
-	gitconfigFilterScript = `HOST_GITCONFIG="/tmp/host-gitconfig"
+	//   - awk succeeds with empty output (host gitconfig had ONLY
+	//     [credential] blocks) → discard the empty tmp; copying the
+	//     unfiltered file would leak credentials.
+	//   - awk syscall failed → discard tmp and bail; same rationale.
+	gitconfigFilterTemplate = `HOST_GITCONFIG=%q
 [ -f "$HOST_GITCONFIG" ] || exit 0
 TMP="$HOME/.gitconfig.tmp"
 if awk '/^\[credential/ {in_cred=1; next} /^\[/ {in_cred=0} !in_cred {print}' "$HOST_GITCONFIG" > "$TMP" 2>/dev/null; then
@@ -98,10 +100,9 @@ fi
 git config --global credential.helper clawker
 `
 
-	// sshKnownHostsScript reads the host blob from stdin (delivered by
-	// PipeStage.initial_stdin) and appends only lines not already
-	// present in known_hosts. Idempotent across container restarts —
-	// fixes the dup-on-restart bug the prior entrypoint had.
+	// sshKnownHostsScript reads the host blob from stdin (PipeStage's
+	// initial_stdin) and appends only lines not already present.
+	// Idempotent across container restarts.
 	sshKnownHostsScript = `mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 KH="$HOME/.ssh/known_hosts"
@@ -127,24 +128,46 @@ fi
 `
 )
 
-// stepKind classifies a step's wire payload. Adding a new kind
-// requires updating runStep's switch.
-type stepKind int
+// gitconfigFilterScript is the rendered git-step body. Computed once
+// at package init; %s slot carries the workspace const.
+var gitconfigFilterScript = fmt.Sprintf(gitconfigFilterTemplate, consts.HostGitConfigStagingPath)
 
-const (
-	stepKindShell stepKind = iota
-	stepKindAgentReady
-)
+// step is one entry in the init plan. Sealed sum: shellStep or
+// agentReadyStep. Adding a new step kind is a compile-time change
+// (implement step) — runStep's type switch loses its runtime
+// "unknown step kind" branch entirely.
+type step interface {
+	stepName() string
+	// command builds the wire payload for this step under commandID.
+	// followCloseStdin reports whether runStep should follow with a
+	// CloseStdin frame (true for shell steps that don't consume
+	// stdin; false for AgentReady which has no stdin pipe).
+	command(commandID string) (cmd *clawkerdv1.Command, followCloseStdin bool)
+}
 
-// step is one entry in the init plan. Shell is non-nil iff
-// Kind == stepKindShell. Per-step timeout for shell steps lives on
-// Shell.TimeoutSeconds (the wire field clawkerd already enforces);
-// non-shell steps (agent-ready) inherit the package-level
-// initStepTimeoutDefault since they don't carry a Shell payload.
-type step struct {
+type shellStep struct {
 	Name  string
-	Kind  stepKind
 	Shell *clawkerdv1.ShellCommand
+}
+
+func (s shellStep) stepName() string { return s.Name }
+func (s shellStep) command(id string) (*clawkerdv1.Command, bool) {
+	return &clawkerdv1.Command{
+		CommandId: id,
+		Payload:   &clawkerdv1.Command_Shell{Shell: s.Shell},
+	}, true
+}
+
+type agentReadyStep struct {
+	Name string
+}
+
+func (s agentReadyStep) stepName() string { return s.Name }
+func (s agentReadyStep) command(id string) (*clawkerdv1.Command, bool) {
+	return &clawkerdv1.Command{
+		CommandId: id,
+		Payload:   &clawkerdv1.Command_AgentReady{AgentReady: &clawkerdv1.AgentReady{}},
+	}, false
 }
 
 // InitTarget identifies the agent the Executor is initializing.
@@ -160,25 +183,26 @@ type InitTarget struct {
 // Session stream. Owns Recv during Run; the dialer's drainStream
 // takes over after Run returns.
 //
-// V1 design choice: every Session establish runs the full plan,
-// including reconnects after CP restart. Each step is idempotent
-// (file-presence gates, append-if-missing, marker-file post-init),
-// and AgentReady is no-op success when the entrypoint has already
-// released. Trade: a small volume of shell commands fires on every
-// reconnect; gain: no per-container init-completed flag to track.
+// Plan idempotency contract: every Session establish runs the full
+// plan, including reconnects after CP restart. Each step is
+// idempotent (file-presence gates, append-if-missing, marker-file
+// post-init), and AgentReady is no-op success when the entrypoint
+// has already released. Trade: a small volume of shell commands
+// fires on every reconnect; gain: no per-container completed flag.
 type Executor struct {
 	bus *overseer.Overseer
 	log *logger.Logger
 }
 
-// NewExecutor constructs an Executor. The unprivileged container user
-// the user-space init steps drop to (uid/gid + username + home) is
-// fixed by the bundler and lives in consts: ContainerUID,
-// ContainerGID, ContainerUser. The root-only docker-socket step uses
-// uid=0 regardless. The ssh step's known_hosts payload is the package-
-// level defaultKnownHosts blob (forge host keys for github / gitlab /
-// bitbucket).
+// NewExecutor constructs an Executor. The container user identity
+// (uid/gid + username + home) is fixed by the bundler and read from
+// consts (ContainerUID/ContainerGID/ContainerUser/ContainerHomeDir).
+// nil log is replaced with logger.Nop(); nil bus would NPE on the
+// first Publish — caller is expected to pass a real bus.
 func NewExecutor(bus *overseer.Overseer, log *logger.Logger) *Executor {
+	if log == nil {
+		log = logger.Nop()
+	}
 	return &Executor{bus: bus, log: log}
 }
 
@@ -218,65 +242,78 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			ContainerID: target.ContainerID,
 			AgentName:   target.AgentName,
 			Project:     target.Project,
-			StepName:    st.Name,
+			StepName:    st.stepName(),
 			StepIndex:   i,
 			StepCount:   len(plan),
 			At:          stepStart,
 		})
 		log.Info().
 			Str("event", "agent_init_step_started").
-			Str("step", st.Name).
+			Str("step", st.stepName()).
 			Int("step_index", i).
 			Msg("agent.init: step started")
 
-		exit, reason, err := e.runStep(ctx, stream, target.ContainerID, i, st, log)
+		exit, reason, detail, err := e.runStep(ctx, stream, target.ContainerID, i, st, log)
 		dur := time.Since(stepStart)
-		failed := err != nil || exit != 0 || reason != ""
+		failed := err != nil || exit != 0 || reason != overseer.InitFailureReasonNone
 		if failed {
-			if reason == "" {
+			if reason == overseer.InitFailureReasonNone {
+				switch {
+				case err != nil:
+					reason = overseer.InitFailureReasonTransportError
+				case exit != 0:
+					reason = overseer.InitFailureReasonExitCode
+				default:
+					reason = overseer.InitFailureReasonUnknown
+				}
+			}
+			if detail == "" {
 				if err != nil {
-					reason = err.Error()
+					detail = err.Error()
 				} else {
-					reason = fmt.Sprintf("exit_code=%d", exit)
+					detail = fmt.Sprintf("exit_code=%d", exit)
 				}
 			}
 			overseer.Publish(e.bus, InitStepFailed{
 				ContainerID: target.ContainerID,
 				AgentName:   target.AgentName,
 				Project:     target.Project,
-				StepName:    st.Name,
+				StepName:    st.stepName(),
 				StepIndex:   i,
 				Duration:    dur,
 				ExitCode:    exit,
 				Reason:      reason,
+				Detail:      detail,
 				At:          time.Now(),
 			})
 			overseer.Publish(e.bus, InitFailed{
 				ContainerID: target.ContainerID,
 				AgentName:   target.AgentName,
 				Project:     target.Project,
-				FailedStep:  st.Name,
+				FailedStep:  st.stepName(),
 				Reason:      reason,
+				Detail:      detail,
 				Duration:    time.Since(startedAt),
 				At:          time.Now(),
 			})
 			log.Error().
 				Str("event", "agent_init_failed").
-				Str("step", st.Name).
+				Str("step", st.stepName()).
 				Int("step_index", i).
 				Int32("exit_code", exit).
-				Str("reason", reason).
+				Str("reason", string(reason)).
+				Str("detail", detail).
 				Msg("agent.init: plan halted on step failure")
 			if err != nil {
 				return err
 			}
-			return fmt.Errorf("agent.init: step %q failed: %s", st.Name, reason)
+			return fmt.Errorf("agent.init: step %q failed: %s", st.stepName(), detail)
 		}
 		overseer.Publish(e.bus, InitStepCompleted{
 			ContainerID: target.ContainerID,
 			AgentName:   target.AgentName,
 			Project:     target.Project,
-			StepName:    st.Name,
+			StepName:    st.stepName(),
 			StepIndex:   i,
 			Duration:    dur,
 			ExitCode:    exit,
@@ -284,7 +321,7 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 		})
 		log.Info().
 			Str("event", "agent_init_step_completed").
-			Str("step", st.Name).
+			Str("step", st.stepName()).
 			Int("step_index", i).
 			Dur("duration", dur).
 			Msg("agent.init: step completed")
@@ -305,81 +342,65 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 	return nil
 }
 
-// runStep dispatches one step's wire payload and waits for the matching
-// Done or Error. Returns (exit_code, reason, transport_err). All three
-// signals are needed because they have distinct downstream semantics:
-//
-//   - transport_err non-nil: stream is broken; caller bails out of Run
-//   - reason non-empty: CP saw an Error response (spawn fail, timeout, etc.)
-//     OR a non-zero Done that we annotated with stderr
-//   - exit_code != 0: step ran to completion but exited non-zero
+// maxStderrCapture caps how much stderr Run preserves on the failed-
+// step Detail. Truncation is marked explicitly so operators see the
+// boundary instead of guessing.
+const maxStderrCapture = 4096
+
+// runStep dispatches one step's wire payload and waits for its Done or
+// Error. Returns:
+//   - exitCode: process exit code (Done.final_exit_code, or -1 for
+//     Error / unknown).
+//   - reason: typed classification of the failure
+//     (InitFailureReasonNone on success).
+//   - detail: human-readable diagnostic for InitStepFailed.Detail.
+//   - transport error: non-nil iff the stream is broken; the caller
+//     should bail Run.
 //
 // Bounding wait time: clawkerd enforces the per-stage timeout server-
 // side (ShellCommand.TimeoutSeconds → time.AfterFunc → SIGKILL +
-// ERROR_CODE_TIMEOUT response), and the gRPC keepalive on this stream
-// (consts.ClawkerdKeepalive*) breaks a wedged transport. CP-side
-// wall-clock deadlines are deliberately omitted — a duplicate budget
-// here would race the server-side timer and risk misclassifying a
-// server-detected timeout as a client-side break.
-func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID string, idx int, st step, log *logger.Logger) (int32, string, error) {
-	commandID := buildCommandID(containerID, st.Name, idx)
+// ERROR_CODE_TIMEOUT response). gRPC keepalive (consts.Clawkerd*)
+// breaks a wedged transport. CP-side wall-clock deadlines are
+// deliberately omitted — a duplicate budget here would race the
+// server-side timer and risk misclassifying a server-detected timeout
+// as a client-side break.
+func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID string, idx int, st step, log *logger.Logger) (int32, overseer.InitFailureReason, string, error) {
+	commandID := buildCommandID(containerID, st.stepName(), idx)
 
-	var cmd *clawkerdv1.Command
-	switch st.Kind {
-	case stepKindShell:
-		cmd = &clawkerdv1.Command{
-			CommandId: commandID,
-			Payload:   &clawkerdv1.Command_Shell{Shell: st.Shell},
-		}
-	case stepKindAgentReady:
-		cmd = &clawkerdv1.Command{
-			CommandId: commandID,
-			Payload:   &clawkerdv1.Command_AgentReady{AgentReady: &clawkerdv1.AgentReady{}},
-		}
-	default:
-		return -1, "", fmt.Errorf("unknown step kind %d", st.Kind)
-	}
-
+	cmd, followCloseStdin := st.command(commandID)
 	if err := stream.Send(cmd); err != nil {
-		return -1, "", fmt.Errorf("send: %w", err)
+		return -1, overseer.InitFailureReasonNone, "", fmt.Errorf("send %s: %w", st.stepName(), err)
 	}
 
-	// For ShellCommand steps, immediately follow with CloseStdin.
-	// clawkerd's runShellCommand wires stage[0].Stdin through an
-	// io.Pipe; exec.Cmd.Wait blocks in awaitGoroutines until the
-	// stdin-copy goroutine drains, and that goroutine sits on Read
-	// until the writer (clawkerd's stdinW) closes. CloseStdin is the
-	// signal that closes stdinW. Without this, every init step that
-	// doesn't consume stdin (which is all of them) would hang until
-	// the entrypoint timeout fires. The receiver loop in clawkerd is
-	// sequential, so the post-Send-startShellCommand registration of
-	// rc.stdin happens-before our CloseStdin's routeCloseStdin
-	// lookup — race-free as long as clawkerd publishes stdinW under
-	// the registry lock at startShellCommand entry (it does, see
-	// cmd/clawkerd/session.go).
-	if st.Kind == stepKindShell {
+	// CloseStdin invariant: clawkerd's runShellCommand publishes
+	// stdinW under the registry lock at startShellCommand entry, so
+	// the Send below cannot race the worker goroutine's pipe
+	// registration. Without this Close, every shell step that doesn't
+	// consume stdin would hang in exec.Cmd.Wait's awaitGoroutines
+	// until the entrypoint timeout fires.
+	if followCloseStdin {
 		closeCmd := &clawkerdv1.Command{
 			CommandId: commandID,
 			Payload:   &clawkerdv1.Command_CloseStdin{CloseStdin: &clawkerdv1.CloseStdin{}},
 		}
 		if err := stream.Send(closeCmd); err != nil {
-			return -1, "", fmt.Errorf("send close_stdin: %w", err)
+			return -1, overseer.InitFailureReasonNone, "", fmt.Errorf("send %s close_stdin: %w", st.stepName(), err)
 		}
 	}
 
-	const maxStderrCapture = 4096
 	var stderrBuf strings.Builder
+	stderrTruncated := 0
 
 	for {
-		if ctx.Err() != nil {
-			return -1, "", ctx.Err()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return -1, overseer.InitFailureReasonTransportError, ctxErr.Error(), ctxErr
 		}
 		resp, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return -1, "", fmt.Errorf("stream EOF before terminal response")
+				return -1, overseer.InitFailureReasonTransportError, "stream EOF before terminal response", fmt.Errorf("stream EOF before terminal response")
 			}
-			return -1, "", fmt.Errorf("recv: %w", err)
+			return -1, overseer.InitFailureReasonTransportError, err.Error(), fmt.Errorf("recv %s: %w", st.stepName(), err)
 		}
 		if resp.GetCommandId() != commandID {
 			log.Debug().
@@ -392,31 +413,39 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 		}
 		switch p := resp.Payload.(type) {
 		case *clawkerdv1.Response_Started, *clawkerdv1.Response_StageExit, *clawkerdv1.Response_Stdout:
+			// Init steps run with stdout discarded; only Stderr,
+			// Done, and Error feed the failure-detail/exit pipeline.
 			continue
 		case *clawkerdv1.Response_Stderr:
 			if p.Stderr != nil {
+				data := p.Stderr.GetData()
 				if remaining := maxStderrCapture - stderrBuf.Len(); remaining > 0 {
-					data := p.Stderr.GetData()
 					if len(data) > remaining {
+						stderrTruncated += len(data) - remaining
 						data = data[:remaining]
 					}
 					stderrBuf.Write(data)
+				} else {
+					stderrTruncated += len(p.Stderr.GetData())
 				}
 			}
 		case *clawkerdv1.Response_Done:
 			exit := p.Done.GetFinalExitCode()
 			if exit == 0 {
-				return 0, "", nil
+				return 0, overseer.InitFailureReasonNone, "", nil
 			}
-			reason := fmt.Sprintf("exit_code=%d", exit)
+			detail := fmt.Sprintf("exit_code=%d", exit)
 			if s := strings.TrimSpace(stderrBuf.String()); s != "" {
-				reason += "; stderr: " + s
+				detail += "; stderr: " + s
+				if stderrTruncated > 0 {
+					detail += fmt.Sprintf(" ... [%d bytes truncated]", stderrTruncated)
+				}
 			}
-			return exit, reason, nil
+			return exit, overseer.InitFailureReasonExitCode, detail, nil
 		case *clawkerdv1.Response_Error:
-			code := p.Error.GetCode().String()
-			msg := p.Error.GetMessage()
-			return -1, fmt.Sprintf("%s: %s", code, msg), nil
+			reason := classifyErrorCode(p.Error.GetCode())
+			detail := fmt.Sprintf("%s: %s", p.Error.GetCode().String(), p.Error.GetMessage())
+			return -1, reason, detail, nil
 		default:
 			log.Debug().
 				Str("event", "agent_init_unknown_payload").
@@ -426,10 +455,28 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 	}
 }
 
-// buildCommandID composes a stable, human-debuggable command_id for one
-// init step dispatch. Bounded length keeps log lines compact while
-// retaining enough container-id prefix to triage in multi-agent CP
-// setups.
+// classifyErrorCode maps a clawkerd ErrorCode to the typed init
+// failure classification. New codes default to Unknown so producers
+// don't drop information silently — the human-readable detail still
+// carries the ErrorCode string.
+func classifyErrorCode(code clawkerdv1.ErrorCode) overseer.InitFailureReason {
+	switch code {
+	case clawkerdv1.ErrorCode_ERROR_CODE_TIMEOUT:
+		return overseer.InitFailureReasonTimeout
+	case clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED:
+		return overseer.InitFailureReasonSpawnFailed
+	case clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, clawkerdv1.ErrorCode_ERROR_CODE_NOT_FOUND:
+		return overseer.InitFailureReasonIOError
+	case clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+		clawkerdv1.ErrorCode_ERROR_CODE_UNKNOWN_COMMAND_ID:
+		return overseer.InitFailureReasonProtocol
+	default:
+		return overseer.InitFailureReasonUnknown
+	}
+}
+
+// buildCommandID composes a stable, human-debuggable command_id for
+// one step dispatch. Prefix is bounded so log lines stay compact.
 func buildCommandID(containerID, stepName string, idx int) string {
 	prefix := containerID
 	if len(prefix) > 12 {
@@ -438,16 +485,18 @@ func buildCommandID(containerID, stepName string, idx int) string {
 	return fmt.Sprintf("init-%s-%s-%d", prefix, stepName, idx)
 }
 
-// plan builds the static init step list. Order is the load-bearing
-// invariant: docker-socket runs first as the only privileged step,
-// then user-scoped steps populate ~/.claude / ~/.gitconfig / ~/.ssh
-// before post-init runs (which may reference any of them), and
-// agent-ready closes the sequence to release the entrypoint.
+// plan builds the static init step list. Order is load-bearing:
+// docker-socket runs first as the only privileged step, then user-
+// scoped steps populate ~/.claude / ~/.gitconfig / ~/.ssh before
+// post-init runs (which may reference any of them).
+//
+// AgentReady MUST be the terminal step. Any step appended after it
+// would race CMD execution — the entrypoint exec's the user CMD as
+// soon as AgentReady's fifo write lands.
 func (e *Executor) plan() []step {
 	return []step{
-		{
+		shellStep{
 			Name: "docker-socket",
-			Kind: stepKindShell,
 			Shell: &clawkerdv1.ShellCommand{
 				Stages: []*clawkerdv1.PipeStage{{
 					Argv: []string{"sh", "-c", `[ -S /var/run/docker.sock ] && chgrp docker /var/run/docker.sock || true`},
@@ -457,82 +506,64 @@ func (e *Executor) plan() []step {
 				TimeoutSeconds: initStepTimeoutDefault,
 			},
 		},
-		{
+		shellStep{
 			Name: "config",
-			Kind: stepKindShell,
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(configSeedScript)},
 				TimeoutSeconds: initStepTimeoutDefault,
 			},
 		},
-		{
+		shellStep{
 			Name: "git",
-			Kind: stepKindShell,
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(gitconfigFilterScript)},
 				TimeoutSeconds: initStepTimeoutDefault,
 			},
 		},
-		{
+		shellStep{
 			Name: "git-credentials",
-			Kind: stepKindShell,
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(gitCredentialsScript)},
 				TimeoutSeconds: initStepTimeoutDefault,
 			},
 		},
-		{
+		shellStep{
 			Name: "ssh",
-			Kind: stepKindShell,
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(sshKnownHostsScript)},
 				InitialStdin:   []byte(defaultKnownHosts),
 				TimeoutSeconds: initStepTimeoutDefault,
 			},
 		},
-		{
+		shellStep{
 			Name: "post-init",
-			Kind: stepKindShell,
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(postInitScript)},
 				TimeoutSeconds: initStepTimeoutPostInit,
 			},
 		},
-		{
-			Name: "agent-ready",
-			Kind: stepKindAgentReady,
-		},
+		agentReadyStep{Name: "agent-ready"},
 	}
 }
 
-// containerHomeDir is the unprivileged container user's home, fixed by
-// the bundler's Dockerfile template (`/home/${USERNAME}` where USERNAME
-// is consts.ContainerUser). Computed once here so the planner doesn't
-// repeat the join.
-var containerHomeDir = "/home/" + consts.ContainerUser
-
 // userStage returns a fresh PipeStage running `sh -c <script>` as the
-// unprivileged container user. consts is the source of truth for
-// uid/gid/username — see consts.ContainerUID/ContainerGID/ContainerUser.
+// unprivileged container user.
 //
-// HOME/USER override: clawkerd runs as root and spawns each stage with
-// SysProcAttr.Credential to drop privileges, but Linux's setuid syscall
-// does NOT update the process's HOME/USER env — those stay inherited
-// from clawkerd (HOME=/root). Init scripts reference $HOME for config
-// seed paths, gitconfig output, ssh known_hosts, post-init script
-// location, etc.; without an explicit override they'd write to /root
-// (permission denied → exit 1). We set HOME/USER per-stage so $HOME
-// resolves to the unprivileged user's home regardless of clawkerd's
-// environment. CALLERS dispatching ANY future ShellCommand with
-// uid != 0 must do the same — clawkerd is a dumb pipe and won't fix
-// HOME for you.
+// HOME/USER override: clawkerd runs as root and spawns each stage
+// with SysProcAttr.Credential to drop privileges, but the setuid
+// syscall does NOT update HOME/USER env — they stay inherited from
+// clawkerd (HOME=/root). Init scripts reference $HOME for config seed
+// paths, gitconfig output, ssh known_hosts, post-init script
+// location; without an explicit override they'd write to /root
+// (permission denied). Any future ShellCommand dispatched with
+// uid != 0 must do the same — clawkerd is a dumb pipe.
 func userStage(script string) *clawkerdv1.PipeStage {
 	return &clawkerdv1.PipeStage{
 		Argv: []string{"sh", "-c", script},
 		Uid:  uint32(consts.ContainerUID),
 		Gid:  uint32(consts.ContainerGID),
 		Env: map[string]string{
-			"HOME": containerHomeDir,
+			"HOME": consts.ContainerHomeDir,
 			"USER": consts.ContainerUser,
 		},
 	}

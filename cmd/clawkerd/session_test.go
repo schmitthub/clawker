@@ -557,24 +557,30 @@ func TestRouteSignal_FiltersErrProcessDone(t *testing.T) {
 		"reaper-race signal must surface as Debug audit event")
 }
 
-func TestRouteSignal_RejectsZeroSigno(t *testing.T) {
-	s, _ := newTestSession()
-	s.routeSignal(context.Background(), "any", &clawkerdv1.Signal{Signo: 0})
-	resps := drainAll(s)
-	require.Len(t, resps, 1)
-	er := resps[0].GetError()
-	require.NotNil(t, er)
-	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, er.Code)
-}
-
-func TestRouteSignal_UnknownCommandID(t *testing.T) {
-	s, _ := newTestSession()
-	s.routeSignal(context.Background(), "ghost", &clawkerdv1.Signal{Signo: int32(syscall.SIGTERM)})
-	resps := drainAll(s)
-	require.Len(t, resps, 1)
-	er := resps[0].GetError()
-	require.NotNil(t, er)
-	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_UNKNOWN_COMMAND_ID, er.Code)
+// TestRouteSignal_GuardClauses pins the two trivial argument-validation
+// branches of routeSignal in one table. Merged from previously
+// separate per-branch tests — the regression bait is identical.
+func TestRouteSignal_GuardClauses(t *testing.T) {
+	cases := []struct {
+		name     string
+		id       string
+		signo    int32
+		wantCode clawkerdv1.ErrorCode
+	}{
+		{"zero_signo", "any", 0, clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST},
+		{"unknown_command_id", "ghost", int32(syscall.SIGTERM), clawkerdv1.ErrorCode_ERROR_CODE_UNKNOWN_COMMAND_ID},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newTestSession()
+			s.routeSignal(context.Background(), tc.id, &clawkerdv1.Signal{Signo: tc.signo})
+			resps := drainAll(s)
+			require.Len(t, resps, 1)
+			er := resps[0].GetError()
+			require.NotNil(t, er)
+			assert.Equal(t, tc.wantCode, er.Code)
+		})
+	}
 }
 
 // --- shutdownRunning -----------------------------------------------
@@ -796,8 +802,9 @@ func TestHandleAgentReady_NoReader(t *testing.T) {
 
 // TestHandleAgentReady_FifoMissing covers the build-drift case: the
 // entrypoint never created the fifo (image misconfiguration). Open
-// returns a non-ENXIO error; handler surfaces Error so operators see
-// the failure rather than a silent hang.
+// returns fs.ErrNotExist; handler must surface NOT_FOUND (distinct
+// from IO_ERROR) so operators can branch on the typed code without
+// parsing the human-readable message.
 func TestHandleAgentReady_FifoMissing(t *testing.T) {
 	dir := t.TempDir()
 	fifo := dir + "/never-created.fifo"
@@ -812,6 +819,6 @@ func TestHandleAgentReady_FifoMissing(t *testing.T) {
 	assert.Equal(t, "ar-missing", resp.CommandId)
 	er := resp.GetError()
 	require.NotNil(t, er, "expected Error payload, got %T", resp.Payload)
-	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, er.Code)
-	assert.Contains(t, er.Message, "agent_ready: open")
+	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_NOT_FOUND, er.Code,
+		"missing fifo must classify as NOT_FOUND, distinct from syscall IO_ERROR")
 }

@@ -242,6 +242,37 @@ const (
 	ContainerUID  = 1001
 	ContainerGID  = 1001
 	ContainerUser = "claude"
+	// ContainerHomeDir is the unprivileged container user's home,
+	// fixed by the bundler's Dockerfile template. CP-side init scripts
+	// reference $HOME, but PipeStage.Env must set HOME explicitly per
+	// stage because Linux's setuid syscall does not update HOME/USER.
+	ContainerHomeDir = "/home/" + ContainerUser
+)
+
+// In-container paths that span the entrypoint↔CP-driven init contract.
+// The Dockerfile template (or CLI ContainerCopy) creates these; CP-side
+// init scripts read/write them. Single source of truth so a path
+// rename in the bundler doesn't drift silently from init.go.
+const (
+	// HostGitConfigStagingPath is the in-container target where the
+	// host's ~/.gitconfig is bind-mounted RO. The CP-driven init "git"
+	// step filters [credential] sections out and copies the result to
+	// $HOME/.gitconfig. Workspace mount setup re-exports this value.
+	HostGitConfigStagingPath = "/tmp/host-gitconfig"
+	// ReadyMarkerPath is the file the entrypoint touches after init
+	// completes. Docker HEALTHCHECK + external readiness probes look
+	// for it. Cleared on every container start.
+	ReadyMarkerPath = "/var/run/clawker/ready"
+)
+
+// Init-phase wall-clock ceilings used by the CP-driven init plan.
+// post-init governs the longest-running step. The entrypoint's
+// CLAWKER_INIT_TIMEOUT (currently 660 in entrypoint.sh) must stay >=
+// post-init + slack so the entrypoint doesn't kill the container
+// while CP is still waiting for a slow user post-init.
+const (
+	InitStepTimeoutDefaultSeconds  uint32 = 30
+	InitStepTimeoutPostInitSeconds uint32 = 600
 )
 
 // Auth scopes (for gRPC method authorization).

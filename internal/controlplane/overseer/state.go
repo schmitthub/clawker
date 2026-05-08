@@ -117,23 +117,62 @@ const (
 	InitStatusFailed    InitStatus = "failed"
 )
 
+// InitFailureReason classifies why an init step or terminal init phase
+// failed. Subscribers branch on this typed value rather than parsing a
+// free-form string so the producer/consumer wire vocabulary cannot
+// drift. Mirrors UntrustedReason precedent.
+type InitFailureReason string
+
+const (
+	InitFailureReasonNone           InitFailureReason = ""
+	InitFailureReasonExitCode       InitFailureReason = "exit_code"
+	InitFailureReasonTimeout        InitFailureReason = "timeout"
+	InitFailureReasonSpawnFailed    InitFailureReason = "spawn_failed"
+	InitFailureReasonIOError        InitFailureReason = "io_error"
+	InitFailureReasonTransportError InitFailureReason = "transport_error"
+	InitFailureReasonProtocol       InitFailureReason = "protocol_error"
+	InitFailureReasonUnknown        InitFailureReason = "unknown"
+)
+
+// Init bundles the CP-driven init phase fields for an Agent. Zero
+// value means no init phase has been observed (Status ==
+// InitStatusUnknown); producers transition by emitting Init* events
+// whose ApplyTo methods project here. Held as a sub-struct so the
+// init axis is isolated from the session axis (Session*, Address,
+// Attempts) and the identity axis (Trust, Registered).
+type Init struct {
+	Status InitStatus
+	// StepName is the most recently started step's human-readable
+	// label. Empty until the first InitStepStarted of the active
+	// phase fires. Retains the failing step name across a phase
+	// boundary until overwritten by the next InitStepStarted.
+	StepName string
+	// StepIndex is the 0-based index of StepName within the plan.
+	// Meaningful only when StepName != "".
+	StepIndex int
+	StepCount int
+	// StartedAt timestamps the active phase boundary; CompletedAt
+	// timestamps the terminal phase boundary (Completed or Failed).
+	StartedAt   time.Time
+	CompletedAt time.Time
+	// LastError carries the most recent init-axis failure detail.
+	// Cleared on InitCompleted (and zeroed by InitStarted resetting
+	// the substruct); populated by InitStepFailed and InitFailed.
+	// Distinct from the session-axis Agent.LastError so the two
+	// failure surfaces don't overwrite each other.
+	LastError string
+}
+
 // Agent is the Overseer's in-memory worldview of one clawker-managed
-// agent. Replaces the prior split between AgentSession (transport
-// lifecycle) and the durable agentregistry row (identity binding) by
-// holding both axes — session, registration, identity — as properties
-// of one entity. The agentregistry sqlite store remains the durable
-// truth source for identity rows; this struct is the observed-now view
-// derived from events.
+// agent. Three axes — session (SessionStatus, Address, Attempts,
+// LastError, Thumbprint), identity (Registered, Trust), and init
+// (Init) — held as a single entity. The agentregistry sqlite store
+// remains the durable truth source for identity rows; this struct is
+// the observed-now view derived from events.
 //
-// Populated and mutated by:
-//   - Session* events from the dialer (SessionStatus, Address, Attempts,
-//     LastError, Thumbprint, AgentName, Project)
-//   - AgentRegistered event (Registered=Ok)
-//   - AgentUntrusted event (Trust=Untrust(Reason))
-//   - InitStarted/Step*/Completed/Failed events from the init Executor
-//   - dockerevents container/destroy (entry deleted)
-//
-// Trust zero-value is "trusted with no reason" — see Trust docs.
+// LastError is the SESSION-axis last error (dial failures, broken
+// streams). Init-axis failures land in Init.LastError. Trust zero
+// value is "trusted with no reason" (see Trust).
 type Agent struct {
 	ContainerID   string
 	AgentName     string
@@ -146,29 +185,7 @@ type Agent struct {
 	Attempts      int
 	LastError     string
 	UpdatedAt     time.Time
-
-	// InitStatus is the current state of CP-driven init for this agent.
-	// Reset to InitStatusRunning on every Session establish that drives
-	// init; transitions to InitStatusCompleted on the AgentReady step
-	// or InitStatusFailed on any earlier step's non-zero exit.
-	InitStatus InitStatus
-	// InitCurrentStep is the human-readable name of the most recently
-	// started step (e.g. "config", "git", "ssh", "post-init",
-	// "agent-ready"). Empty until InitStarted fires; retains the
-	// failing step name across InitStatusFailed→InitStatusRunning
-	// transitions until overwritten by the next InitStepStarted.
-	InitCurrentStep string
-	// InitStepIndex is the 0-based index of InitCurrentStep within the
-	// plan. -1 when no init phase has been observed.
-	InitStepIndex int
-	// InitStepCount is the total number of steps in the active plan,
-	// captured at InitStarted time. 0 until first init phase.
-	InitStepCount int
-	// InitStartedAt / InitCompletedAt timestamp the most recent phase
-	// boundaries. CompletedAt holds the final outcome timestamp on
-	// either Completed or Failed.
-	InitStartedAt   time.Time
-	InitCompletedAt time.Time
+	Init          Init
 }
 
 // State is the Overseer's full worldview projection at a point in time.

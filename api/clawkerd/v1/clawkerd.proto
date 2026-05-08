@@ -63,20 +63,11 @@ message Hello {}
 // clawkerd replies with RegisterDone correlated by command_id.
 message RegisterRequired {}
 
-// AgentReady is the terminal init-sequence signal CP sends after every
-// preceding init ShellCommand returns Done with exit_code=0. clawkerd
-// opens /run/clawker/agent.fifo with O_WRONLY|O_NONBLOCK, writes one
-// byte, closes — releasing the entrypoint's blocking read on the
-// fifo so it can exec the user CMD.
-//
-// Idempotent across CP reconnects: if the entrypoint already moved on
-// (no reader on the fifo), open returns ENXIO and clawkerd treats it
-// as a no-op success. This is the v1 strategy for "init runs every
-// Session reconnect" — see internal/controlplane/agent/init.go.
-//
-// Reply is a Done{exit_code: 0} on success or Error on hard failure
-// (fifo missing entirely, unexpected ioctl error). ENXIO is NOT a
-// failure.
+// AgentReady is the terminal init-sequence signal. clawkerd releases
+// the entrypoint to exec the user CMD. Idempotent on reconnect (no
+// reader → no-op success). Reply: Done{exit_code:0} on release or
+// reconnect-replay; Error{NOT_FOUND} if the fifo is missing entirely
+// (build drift); Error{IO_ERROR} on syscall-level failure.
 message AgentReady {}
 
 // ShellCommand starts a shell pipeline. stages.len == 1 runs a
@@ -197,4 +188,8 @@ enum ErrorCode {
   ERROR_CODE_TIMEOUT = 4;
   // Pipe between stages broke unexpectedly mid-execution.
   ERROR_CODE_IO_ERROR = 5;
+  // Required filesystem entry missing (e.g. AgentReady fifo
+  // never created — distinct from IO_ERROR which covers
+  // syscall failures on existing entries).
+  ERROR_CODE_NOT_FOUND = 6;
 }

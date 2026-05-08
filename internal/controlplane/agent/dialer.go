@@ -126,12 +126,11 @@ type Dialer struct {
 	// Required (non-nil) — wiring bug if unset.
 	agents Registry
 
-	// initExec dispatches the CP-driven init plan after dispatchAgentEvents
-	// returns and before drainStream takes over Recv. nil disables CP-driven
-	// init entirely (the entrypoint then waits forever on its fifo and the
-	// container fails to launch CMD) — never pass nil in production. Tests
-	// that don't care about init pass nil; the dialer logs a warning and
-	// skips. Set once at construction; not safe to mutate after `Start`.
+	// initExec dispatches the CP-driven init plan after
+	// dispatchAgentEvents and before drainStream. nil disables init
+	// (entrypoint hangs on its fifo until timeout) — runInit logs a
+	// warning so the misconfiguration is observable. Set at
+	// construction; immutable after Start.
 	initExec *Executor
 
 	cpClientCert tls.Certificate
@@ -268,14 +267,9 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 		// for containment commands even when the agent is untrusted.
 		d.dispatchAgentEvents(ctx, containerID, res, cycleLog)
 
-		// Run the CP-driven init plan synchronously before drainStream
-		// takes over Recv. Init owns Recv during its phase; failures
-		// publish InitFailed but do NOT close the Session — asymmetric
-		// trust applies, CP must remain reachable for containment.
-		// Without an Executor wired the entrypoint will hang on its
-		// fifo until CLAWKER_INIT_TIMEOUT elapses; surface the
-		// misconfiguration loudly. Init re-runs on every Session
-		// reconnect (see Executor docs).
+		// Init owns Recv during its phase; failures publish InitFailed
+		// but never close the Session (asymmetric trust). Re-runs on
+		// every Session reconnect — see Executor.
 		d.runInit(ctx, containerID, res, cycleLog)
 
 		drain := d.drainStream(ctx, res.Stream, cycleLog)

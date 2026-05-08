@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -108,34 +107,48 @@ type initEventSlice struct {
 // after a real Run dispatches every step. Step kind / stages shape is
 // enforced structurally by runStep's switch + Go's type system.)
 
-// TestExecutor_Plan_UidGid_RootForDockerSocket_UserForRest pins the
-// privilege drop contract: only docker-socket runs as root; every
-// user-scoped step targets consts.ContainerUID/ContainerGID. Drift
-// here is a privilege-escalation or privilege-drop regression
-// depending on direction. HOME/USER must be set in env on every
-// user-scoped step (setuid does not update env on its own; without
-// these the script would write to clawkerd's HOME=/root and fail).
-func TestExecutor_Plan_UidGid_RootForDockerSocket_UserForRest(t *testing.T) {
-	wantUID := uint32(consts.ContainerUID)
-	wantGID := uint32(consts.ContainerGID)
-	wantHome := "/home/" + consts.ContainerUser
-	e := NewExecutor(nil, logger.Nop())
-	for _, st := range e.plan() {
-		if st.Kind == stepKindAgentReady {
+// TestExecutor_Plan_PrivilegeAndShape pins three load-bearing plan
+// invariants:
+//
+//  1. docker-socket is the SOLE uid=0 step (privilege-drop contract).
+//  2. AgentReady is the LAST step (any later step would race CMD
+//     execution past the entrypoint fifo release).
+//  3. ssh's InitialStdin is non-empty (the host-key blob known_hosts
+//     consumes; an empty payload silently produces an empty file).
+//
+// The per-stage HOME/USER override + uid/gid match against
+// consts.Container* values is enforced structurally by userStage:
+// build-time wiring, not a runtime invariant — exercised once in
+// TestExecutor_Run_HappyPath via the full plan.
+func TestExecutor_Plan_PrivilegeAndShape(t *testing.T) {
+	plan := NewExecutor(nil, logger.Nop()).plan()
+	require.NotEmpty(t, plan)
+
+	var rootSteps []string
+	for _, st := range plan {
+		s, ok := st.(shellStep)
+		if !ok {
 			continue
 		}
-		stage := st.Shell.Stages[0]
-		switch st.Name {
-		case "docker-socket":
-			assert.Equal(t, uint32(0), stage.Uid, "docker-socket must run as root to chgrp")
-			assert.Equal(t, uint32(0), stage.Gid, "docker-socket must run as root to chgrp")
-		default:
-			assert.Equal(t, wantUID, stage.Uid, "step %q uid", st.Name)
-			assert.Equal(t, wantGID, stage.Gid, "step %q gid", st.Name)
-			assert.Equal(t, wantHome, stage.Env["HOME"], "step %q HOME", st.Name)
-			assert.Equal(t, consts.ContainerUser, stage.Env["USER"], "step %q USER", st.Name)
+		if s.Shell.Stages[0].Uid == 0 {
+			rootSteps = append(rootSteps, s.Name)
 		}
 	}
+	assert.Equal(t, []string{"docker-socket"}, rootSteps,
+		"only docker-socket may run as root")
+
+	last := plan[len(plan)-1]
+	_, isAgentReady := last.(agentReadyStep)
+	assert.True(t, isAgentReady, "agent-ready must be terminal (no step may follow)")
+
+	for _, st := range plan {
+		if s, ok := st.(shellStep); ok && s.Name == "ssh" {
+			assert.NotEmpty(t, s.Shell.InitialStdin,
+				"ssh step must carry the known_hosts blob via InitialStdin")
+			return
+		}
+	}
+	t.Fatal("ssh step missing from plan")
 }
 
 // TestExecutor_Run_HappyPath drives the full plan with Done{0} on
@@ -262,8 +275,10 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 	assert.Empty(t, events.completed, "InitCompleted must NOT fire on failure")
 	assert.Equal(t, expectedInitStepNames[failAtIdx], events.stepFailed[0].StepName)
 	assert.Equal(t, int32(2), events.stepFailed[0].ExitCode)
-	assert.Contains(t, events.stepFailed[0].Reason, "boom")
+	assert.Equal(t, overseer.InitFailureReasonExitCode, events.stepFailed[0].Reason)
+	assert.Contains(t, events.stepFailed[0].Detail, "boom")
 	assert.Equal(t, expectedInitStepNames[failAtIdx], events.failed[0].FailedStep)
+	assert.Equal(t, overseer.InitFailureReasonExitCode, events.failed[0].Reason)
 
 	// Steps after the failure must not have started.
 	require.Len(t, events.stepStarted, failAtIdx+1, "step dispatch must halt at first failure")
@@ -299,17 +314,250 @@ func TestExecutor_Run_TransportError(t *testing.T) {
 
 	events := caps.drain(500 * time.Millisecond)
 	require.Len(t, events.started, 1)
+	require.Len(t, events.stepFailed, 1, "transport failure must carry a step-level event so subscribers see WHICH step was in flight")
 	require.Len(t, events.failed, 1)
 	assert.Empty(t, events.completed)
-	assert.Contains(t, events.failed[0].Reason, "rpc connection reset")
+	assert.Equal(t, overseer.InitFailureReasonTransportError, events.failed[0].Reason)
+	assert.Contains(t, events.failed[0].Detail, "rpc connection reset")
+}
+
+// TestExecutor_Run_StreamErrorResponse pins the typed-classification
+// surface for clawkerd-side ErrorCodes. Without explicit coverage, a
+// regression in classifyErrorCode (e.g. dropping the SPAWN_FAILED
+// case) would surface as InitFailureReasonUnknown on operator
+// dashboards with no compile-time signal.
+func TestExecutor_Run_StreamErrorResponse(t *testing.T) {
+	cases := []struct {
+		name       string
+		code       clawkerdv1.ErrorCode
+		wantReason overseer.InitFailureReason
+	}{
+		{"timeout", clawkerdv1.ErrorCode_ERROR_CODE_TIMEOUT, overseer.InitFailureReasonTimeout},
+		{"spawn_failed", clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED, overseer.InitFailureReasonSpawnFailed},
+		{"io_error", clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, overseer.InitFailureReasonIOError},
+		{"not_found", clawkerdv1.ErrorCode_ERROR_CODE_NOT_FOUND, overseer.InitFailureReasonIOError},
+		{"invalid_request", clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, overseer.InitFailureReasonProtocol},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bus := overseer.New(overseer.Options{})
+			require.NoError(t, bus.Start(context.Background()))
+			t.Cleanup(func() { _ = bus.Close() })
+
+			caps := subscribeInitEvents(t, bus)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			stream := newFakeStream(ctx)
+			exec := NewExecutor(bus, logger.Nop())
+			target := InitTarget{ContainerID: "c-err-1234567890ab", AgentName: "dev", Project: "clawker"}
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				for cmd := range stream.sent {
+					if _, isClose := cmd.Payload.(*clawkerdv1.Command_CloseStdin); isClose {
+						continue
+					}
+					stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+						CommandId: cmd.CommandId,
+						Payload: &clawkerdv1.Response_Error{Error: &clawkerdv1.Error{
+							Code:    tc.code,
+							Message: "synthetic " + tc.name,
+						}},
+					}}
+				}
+			}()
+
+			err := exec.Run(ctx, stream, target)
+			close(stream.sent)
+			<-done
+			require.Error(t, err)
+
+			events := caps.drain(500 * time.Millisecond)
+			require.Len(t, events.failed, 1)
+			require.Len(t, events.stepFailed, 1)
+			assert.Equal(t, tc.wantReason, events.stepFailed[0].Reason)
+			assert.Equal(t, tc.wantReason, events.failed[0].Reason)
+			assert.Contains(t, events.failed[0].Detail, tc.code.String())
+			assert.Contains(t, events.failed[0].Detail, "synthetic "+tc.name)
+		})
+	}
+}
+
+// TestExecutor_Run_StateProjection drives Run twice (first with a
+// failure, then a success) and asserts the overseer worldview's Init
+// axis reflects every transition: zero → Running → Failed → Running →
+// Completed, with Init.LastError clearing on the success cycle. The
+// projection contract is what subscribers (CLI WatchAgent, monitoring)
+// consume — an ApplyTo-method regression here would silently break
+// operator-facing UX.
+func TestExecutor_Run_StateProjection(t *testing.T) {
+	bus := overseer.New(overseer.Options{})
+	require.NoError(t, bus.Start(context.Background()))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	// Subscribe to the terminal events BEFORE running so we can wait
+	// for them to drain through the bus loop before snapshotting —
+	// Publish enqueues asynchronously, ApplyTo runs on the loop.
+	failedSub, ok := overseer.Subscribe[InitFailed](bus, "proj-failed")
+	require.True(t, ok)
+	defer failedSub.Unsubscribe()
+	completedSub, ok := overseer.Subscribe[InitCompleted](bus, "proj-completed")
+	require.True(t, ok)
+	defer completedSub.Unsubscribe()
+
+	target := InitTarget{ContainerID: "c-proj-1234567890ab", AgentName: "dev", Project: "clawker"}
+	exec := NewExecutor(bus, logger.Nop())
+
+	// Cycle 1: fail at step "config" (idx 1).
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		stream := newFakeStream(ctx)
+		done := make(chan struct{})
+		idx := 0
+		go func() {
+			defer close(done)
+			for cmd := range stream.sent {
+				if _, isClose := cmd.Payload.(*clawkerdv1.Command_CloseStdin); isClose {
+					continue
+				}
+				exit := int32(0)
+				if idx == 1 {
+					exit = 7
+				}
+				stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+					CommandId: cmd.CommandId,
+					Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: exit}},
+				}}
+				idx++
+			}
+		}()
+		err := exec.Run(ctx, stream, target)
+		close(stream.sent)
+		<-done
+		require.Error(t, err)
+	}
+
+	select {
+	case <-failedSub.C:
+	case <-time.After(time.Second):
+		t.Fatal("InitFailed did not drain")
+	}
+	snap1, ok := bus.Snapshot(context.Background())
+	require.True(t, ok)
+	view1 := snap1.Agents[target.ContainerID]
+	assert.Equal(t, overseer.InitStatusFailed, view1.Init.Status)
+	assert.NotEmpty(t, view1.Init.LastError, "Failed cycle must populate Init.LastError")
+
+	// Cycle 2: full success.
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		stream := newFakeStream(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for cmd := range stream.sent {
+				if _, isClose := cmd.Payload.(*clawkerdv1.Command_CloseStdin); isClose {
+					continue
+				}
+				stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+					CommandId: cmd.CommandId,
+					Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
+				}}
+			}
+		}()
+		err := exec.Run(ctx, stream, target)
+		close(stream.sent)
+		<-done
+		require.NoError(t, err)
+	}
+
+	select {
+	case <-completedSub.C:
+	case <-time.After(time.Second):
+		t.Fatal("InitCompleted did not drain")
+	}
+	snap2, ok := bus.Snapshot(context.Background())
+	require.True(t, ok)
+	view2 := snap2.Agents[target.ContainerID]
+	assert.Equal(t, overseer.InitStatusCompleted, view2.Init.Status)
+	assert.Empty(t, view2.Init.LastError, "Completed cycle must clear stale Init.LastError")
+	assert.Equal(t, len(expectedInitStepNames), view2.Init.StepCount)
+}
+
+// TestExecutor_Run_CloseStdinFollowsEveryShellStep pins the
+// CloseStdin contract: every shell step's ShellCommand is followed by
+// exactly one CloseStdin frame; AgentReady (last step) is NOT. A
+// regression that drops the CloseStdin Send re-introduces the 120s
+// init-step hang the gate exists to fix — and the HappyPath feeder
+// SKIPS CloseStdin frames, so without this assertion the regression
+// would pass green.
+func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
+	bus := overseer.New(overseer.Options{})
+	require.NoError(t, bus.Start(context.Background()))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream := newFakeStream(ctx)
+	exec := NewExecutor(bus, logger.Nop())
+	target := InitTarget{ContainerID: "c-cs-1234567890ab", AgentName: "dev", Project: "clawker"}
+
+	var captured []*clawkerdv1.Command
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for cmd := range stream.sent {
+			captured = append(captured, cmd)
+			if _, isClose := cmd.Payload.(*clawkerdv1.Command_CloseStdin); isClose {
+				continue
+			}
+			stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+				CommandId: cmd.CommandId,
+				Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
+			}}
+		}
+	}()
+	require.NoError(t, exec.Run(ctx, stream, target))
+	close(stream.sent)
+	<-done
+
+	var shellCount, agentReadyCount, closeCount int
+	for i := 0; i+1 < len(captured); i++ {
+		if _, isShell := captured[i].Payload.(*clawkerdv1.Command_Shell); !isShell {
+			continue
+		}
+		_, nextIsClose := captured[i+1].Payload.(*clawkerdv1.Command_CloseStdin)
+		assert.True(t, nextIsClose,
+			"Shell command at index %d must be immediately followed by CloseStdin", i)
+		assert.Equal(t, captured[i].CommandId, captured[i+1].CommandId,
+			"CloseStdin command_id must match the preceding Shell")
+	}
+	for _, cmd := range captured {
+		switch cmd.Payload.(type) {
+		case *clawkerdv1.Command_Shell:
+			shellCount++
+		case *clawkerdv1.Command_AgentReady:
+			agentReadyCount++
+		case *clawkerdv1.Command_CloseStdin:
+			closeCount++
+		}
+	}
+	assert.Equal(t, 6, shellCount, "expected 6 shell steps in the static plan")
+	assert.Equal(t, 1, agentReadyCount, "expected exactly one AgentReady step")
+	assert.Equal(t, shellCount, closeCount,
+		"every shell step needs exactly one CloseStdin (none for AgentReady)")
 }
 
 // TestRunInit_NoExecutorWired pins the misconfiguration warning
 // behavior: a Dialer without Executor wired logs a warning event and
 // skips (does not panic, does not block). The warn log is the
-// operator-facing signal — without it, an upgrade that drops the
-// agent.NewExecutor wiring would show up as silent container hangs
-// at the entrypoint fifo with no diagnostic breadcrumb.
+// operator-facing signal so a regression that drops NewExecutor
+// wiring is observable as a structured event, not a silent hang.
 func TestRunInit_NoExecutorWired(t *testing.T) {
 	var buf bytes.Buffer
 	stepLog := logger.NewWriter(&buf)
