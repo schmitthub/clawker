@@ -59,6 +59,7 @@ import (
 	"io"
 	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- non-security random for connect-retry jitter
 	"net"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -211,10 +212,56 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 	d.mu.Unlock()
 
 	go func() {
+		// Defer order is load-bearing (LIFO): recover wraps the
+		// dedup cleanup so a panic in cleanup is also caught and
+		// re-dial unblocks after a panicked cycle. See
+		// internal/controlplane/CLAUDE.md "Resilience contract".
 		defer func() {
 			d.mu.Lock()
 			delete(d.dialing, containerID)
 			d.mu.Unlock()
+		}()
+		defer func() {
+			r := recover()
+			if r == nil {
+				return
+			}
+			// Best-effort registry lookup so the synthetic
+			// SessionFailed and the structured log carry the
+			// agent/project identity — without this, downstream
+			// metrics indexed by (project, agent) lose track of the
+			// affected agent during exactly the failure mode
+			// (CP-internal panic) when high-quality signal matters
+			// most. The lookup is best-effort: if registry I/O is
+			// also broken, the empty fields are the audit signal.
+			agentName, project := "", ""
+			if d.agents != nil {
+				if entry, lerr := d.agents.LookupByContainerID(containerID); lerr == nil && entry != nil {
+					agentName, project = entry.AgentName, entry.Project
+				}
+			}
+			d.log.Error().
+				Interface("panic", r).
+				Bytes("stack", debug.Stack()).
+				Str("container_id", containerID).
+				Str("agent", agentName).
+				Str("project", project).
+				Str("event", "agentdial_panic").
+				Msg("agent.dial: dial goroutine panicked; CP otherwise unaffected. Publishing synthetic SessionFailed so worldview consumers see a terminal lifecycle event.")
+			// Publish directly with context.Background() instead of
+			// the dial ctx: publishFailed short-circuits when the
+			// ctx is done, but the panic path needs the worldview
+			// transition to land even during shutdown — operators
+			// are about to lose every other signal. overseer.Publish
+			// is no-op on a closed bus (returns false; doesn't
+			// panic), so this is safe to call from the recover.
+			overseer.Publish(d.bus, SessionFailed{
+				ContainerID: containerID,
+				AgentName:   agentName,
+				Project:     project,
+				Reason:      fmt.Sprintf("dial_goroutine_panic: %v", r),
+				At:          time.Now(),
+			})
 		}()
 		d.runDial(ctx, containerID)
 	}()

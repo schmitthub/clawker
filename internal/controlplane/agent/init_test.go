@@ -107,6 +107,69 @@ type initEventSlice struct {
 // after a real Run dispatches every step. Step kind / stages shape is
 // enforced structurally by runStep's switch + Go's type system.)
 
+// panickingSendStream wraps fakeSessionStream and panics on the Nth
+// Send. Used by TestExecutor_Run_PanicInStep to exercise the recover
+// defer in Executor.Run.
+type panickingSendStream struct {
+	*fakeSessionStream
+	panicAtSend int
+	sendCount   int
+}
+
+func (p *panickingSendStream) Send(c *clawkerdv1.Command) error {
+	p.sendCount++
+	if p.sendCount == p.panicAtSend {
+		panic("synthetic Send panic for Executor.Run recover test")
+	}
+	return p.fakeSessionStream.Send(c)
+}
+
+// TestExecutor_Run_PanicInStep verifies the recover defer at the top
+// of Executor.Run. A panic mid-step (here: Send panics on the first
+// frame of the first step) must:
+//  1. NOT propagate up to dialer.runInit's caller (would crash CP).
+//  2. Convert to an error return so dialer.runInit's existing
+//     log+continue path fires (Session held open per asymmetric
+//     trust).
+//  3. Publish synthetic InitStepFailed for the in-flight step so
+//     worldview consumers see the Init step axis transition out of
+//     Running.
+//  4. Publish synthetic InitFailed so the Init lifecycle axis also
+//     transitions out of Running.
+//  5. NOT publish InitCompleted.
+func TestExecutor_Run_PanicInStep(t *testing.T) {
+	bus := overseer.New(overseer.Options{})
+	require.NoError(t, bus.Start(context.Background()))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	caps := subscribeInitEvents(t, bus)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	fake := newFakeStream(ctx)
+	stream := &panickingSendStream{fakeSessionStream: fake, panicAtSend: 1}
+
+	exec, err := NewExecutor(bus, logger.Nop())
+	require.NoError(t, err)
+	target := InitTarget{ContainerID: "c-panic-1234567890ab", AgentName: "dev", Project: "clawker"}
+
+	err = exec.Run(ctx, stream, target)
+	require.Error(t, err, "panic must convert to error return (not propagate)")
+	assert.Contains(t, err.Error(), "panicked", "error must reference the panic")
+
+	events := caps.drain(500 * time.Millisecond)
+	assert.Empty(t, events.completed, "InitCompleted must NOT fire on panic")
+	require.Len(t, events.failed, 1, "synthetic InitFailed must fire so Init axis transitions out of Running")
+	assert.Equal(t, overseer.InitFailureReasonUnknown, events.failed[0].Reason,
+		"panic classifies as Unknown — distinct from Transport/ExitCode")
+	assert.Contains(t, events.failed[0].Detail, "panicked")
+	require.Len(t, events.stepFailed, 1, "synthetic InitStepFailed must fire for the in-flight step (currentIdx=0)")
+	assert.Equal(t, "docker-socket", events.stepFailed[0].StepName,
+		"in-flight step name must be the first step (panic on first Send before any step completed)")
+	assert.Equal(t, 0, events.stepFailed[0].StepIndex)
+}
+
 // TestNewExecutor_NilBusReturnsError pins the constructor-time
 // rejection of a nil bus. Returning an error (vs panicking) is
 // load-bearing for CP resilience: a wiring bug must surface as a

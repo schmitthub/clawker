@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -223,7 +224,7 @@ func NewExecutor(bus *overseer.Overseer, log *logger.Logger) (*Executor, error) 
 // Caller invariant: stream must already have completed Hello/HelloAck
 // and any Register handshake. Run owns stream.Recv until it returns;
 // drainStream must not be running concurrently.
-func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target InitTarget) error {
+func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target InitTarget) (runErr error) {
 	plan := e.plan()
 	startedAt := time.Now()
 	overseer.Publish(e.bus, InitStarted{
@@ -244,7 +245,62 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 		Int("step_count", len(plan)).
 		Msg("agent.init: dispatching plan")
 
+	// currentIdx / currentName are written at the head of each step
+	// iteration so the panic recover below can publish a synthetic
+	// InitStepFailed for the in-flight step. -1 means the panic
+	// happened before any step started (plan setup, log composition,
+	// etc.) — only InitFailed is synthesized in that case.
+	currentIdx, currentName := -1, ""
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		// Return the recovered value as an error so dialer.runInit
+		// hits the existing error path (Session held open per
+		// asymmetric trust). Re-panicking would land in the dial
+		// goroutine's outer recover and strand the Init axis at
+		// Running because that recover doesn't know step state.
+		now := time.Now()
+		dur := now.Sub(startedAt)
+		detail := fmt.Sprintf("Executor.Run panicked: %v", r)
+		log.Error().
+			Interface("panic", r).
+			Bytes("stack", debug.Stack()).
+			Str("event", "agent_init_panic").
+			Int("step_index", currentIdx).
+			Str("step", currentName).
+			Msg("agent.init: Executor.Run panicked; publishing synthetic terminal events; Session held open for containment")
+		if currentIdx >= 0 {
+			overseer.Publish(e.bus, InitStepFailed{
+				ContainerID: target.ContainerID,
+				AgentName:   target.AgentName,
+				Project:     target.Project,
+				StepName:    currentName,
+				StepIndex:   currentIdx,
+				Duration:    dur,
+				ExitCode:    -1,
+				Reason:      overseer.InitFailureReasonUnknown,
+				Detail:      detail,
+				At:          now,
+			})
+		}
+		overseer.Publish(e.bus, InitFailed{
+			ContainerID: target.ContainerID,
+			AgentName:   target.AgentName,
+			Project:     target.Project,
+			FailedStep:  currentName,
+			Reason:      overseer.InitFailureReasonUnknown,
+			Detail:      detail,
+			Duration:    dur,
+			At:          now,
+		})
+		runErr = errors.New(detail)
+	}()
+
 	for i, st := range plan {
+		currentIdx = i
+		currentName = st.stepName()
 		stepStart := time.Now()
 		overseer.Publish(e.bus, InitStepStarted{
 			ContainerID: target.ContainerID,
@@ -333,6 +389,12 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			Int("step_index", i).
 			Dur("duration", dur).
 			Msg("agent.init: step completed")
+		// Reset between steps: a panic here (between iterations,
+		// e.g. during defer scheduling) must not be mis-attributed
+		// to the just-completed step. The recover gates synthetic
+		// InitStepFailed on currentIdx >= 0; -1 means "between
+		// steps — publish only InitFailed".
+		currentIdx, currentName = -1, ""
 	}
 
 	totalDur := time.Since(startedAt)

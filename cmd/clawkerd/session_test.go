@@ -722,15 +722,18 @@ func waitOneResponse(t *testing.T, s *session, timeout time.Duration) *clawkerdv
 	}
 }
 
-// withFifoPath rebinds agentReadyFifoPath for the duration of one
-// test. Restores the prior value via t.Cleanup so test ordering can't
-// leak the override.
-func withFifoPath(t *testing.T, path string) {
+// withVar rebinds *target to v for the duration of one test and
+// restores the prior value via t.Cleanup so test ordering can't leak
+// the override. Generic so the same shape works for any package-level
+// test seam (fifo path, opener function, panic hook, ...).
+func withVar[T any](t *testing.T, target *T, v T) {
 	t.Helper()
-	prev := agentReadyFifoPath
-	agentReadyFifoPath = path
-	t.Cleanup(func() { agentReadyFifoPath = prev })
+	prev := *target
+	*target = v
+	t.Cleanup(func() { *target = prev })
 }
+
+func withFifoPath(t *testing.T, path string) { withVar(t, &agentReadyFifoPath, path) }
 
 // TestHandleAgentReady_HappyPath verifies the contract that drives
 // the entrypoint release: with a reader blocked on the fifo, the
@@ -821,4 +824,93 @@ func TestHandleAgentReady_FifoMissing(t *testing.T) {
 	require.NotNil(t, er, "expected Error payload, got %T", resp.Payload)
 	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_NOT_FOUND, er.Code,
 		"missing fifo must classify as NOT_FOUND, distinct from syscall IO_ERROR")
+}
+
+// TestHandleAgentReady_Panic_RepliesIOError: a panic in handleAgentReady
+// without recover would crash clawkerd (sibling daemon under bash); the
+// entrypoint then hangs on its fifo for ~660s with no diagnostic in
+// the rotated audit log — panic stacks land on stderr.log only.
+// Recover must surface Error{IO_ERROR} so CP sees a terminal Response.
+func TestHandleAgentReady_Panic_RepliesIOError(t *testing.T) {
+	withVar(t, &agentReadyOpener, func(_ string, _ int, _ os.FileMode) (*os.File, error) {
+		panic("synthetic test panic from agentReadyOpener")
+	})
+
+	s, logBuf := newTestSession()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.handleAgentReady(ctx, "ar-panic")
+
+	resp := waitOneResponse(t, s, time.Second)
+	assert.Equal(t, "ar-panic", resp.CommandId)
+	er := resp.GetError()
+	require.NotNil(t, er, "panic must surface as Error, got %T", resp.Payload)
+	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, er.Code,
+		"panic classifies as IO_ERROR — distinct from NOT_FOUND (build drift) and from a normal syscall failure")
+	assert.Contains(t, er.Message, "panic", "Detail must reference the panic so operators don't have to grep stderr")
+	assert.Contains(t, logBuf.String(), "agent_ready_panic",
+		"audit log must record the structured panic event so operators can triage without seeing the panic stack")
+}
+
+// TestRunShellCommand_FinalStageReaperPanic_DoesNotDeadlock pins the
+// recover defer added on the stage-reaper goroutines. A panic in the
+// reaper without recover would (a) crash clawkerd and (b) deadlock
+// the worker at <-finalStageErrCh because the panicked goroutine
+// never sends. The recover always sends a sentinel so the worker
+// unblocks and a synthetic StageExit so CP sees a terminal stage
+// outcome. Hook fires AFTER c.Wait() returns and BEFORE the
+// finalStageErrCh send, so the deadlock-prevention branch is the
+// path under test (not the post-send branch where the channel is
+// already filled).
+func TestRunShellCommand_FinalStageReaperPanic_DoesNotDeadlock(t *testing.T) {
+	withVar(t, &stageReaperPanicHookForTest, func(_ int, isFinal bool) {
+		if !isFinal {
+			return
+		}
+		panic("synthetic test panic from stage reaper hook")
+	})
+
+	s, logBuf := newTestSession()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	truePath := trueBinPath(t)
+
+	// runUntilDone wraps runShellCommand and drives the stdin close
+	// gate. Without recover the goroutine would crash AND the worker
+	// would block forever; runUntilDone's 5s deadline would fire as
+	// "runShellCommand did not return in time".
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runUntilDone(t, ctx, s, &clawkerdv1.ShellCommand{
+			Stages: []*clawkerdv1.PipeStage{{Argv: []string{truePath}}},
+		}, "reaper-panic")
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(4 * time.Second):
+		t.Fatal("worker deadlocked — recover did not unblock <-finalStageErrCh")
+	}
+
+	logs := logBuf.String()
+	assert.Contains(t, logs, `"event":"shell_stage_reaper_panic"`,
+		"audit log must record the structured panic event so operators can triage without seeing the panic stack")
+
+	resps := drainAll(s)
+	var stageExits int
+	var sawTerminal bool
+	for _, r := range resps {
+		if r.GetStageExit() != nil {
+			stageExits++
+		}
+		if r.GetDone() != nil || r.GetError() != nil {
+			sawTerminal = true
+		}
+	}
+	assert.GreaterOrEqual(t, stageExits, 1,
+		"recover must emit a synthetic StageExit so CP sees the stage axis transition out of running (the normal s.send never fires — hook panics first)")
+	assert.True(t, sawTerminal,
+		"worker must emit a terminal Done/Error after the recover unblocks finalStageErrCh — absence proves the worker deadlocked")
 }

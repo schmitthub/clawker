@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -196,6 +197,26 @@ func (s *session) handleRegisterRequired(ctx context.Context, commandID string) 
 // fifo so they don't need /run write access.
 var agentReadyFifoPath = consts.AgentReadyFifo
 
+// agentReadyOpener is the file-open seam for handleAgentReady. Real
+// builds use os.OpenFile; the panic-recovery regression test rebinds
+// to a function that panics, exercising the recover defer without
+// needing kernel-level injection (no chmod tricks, no race timing).
+var agentReadyOpener = os.OpenFile
+
+// stageReaperPanicHookForTest is the panic-injection seam for the
+// stage-reaper recover regression test. nil in production. When
+// non-nil, fires AFTER c.Wait() returns and BEFORE the
+// finalStageErrCh send, exercising the recover's deadlock-prevention
+// branch (always send sentinel so the worker at <-finalStageErrCh
+// unblocks).
+//
+// Test-only: set before runShellCommand starts and unset in t.Cleanup.
+// Concurrent access against a running reaper is racy by design — the
+// production path reads it once per stage on a cold path with no
+// synchronization, mirroring how Go test seams elsewhere in the
+// codebase work.
+var stageReaperPanicHookForTest func(stageIndex int, isFinal bool)
+
 // handleAgentReady is the terminal step of CP-driven init. Opens the
 // entrypoint's named pipe with O_WRONLY|O_NONBLOCK, writes one byte,
 // closes — releasing the entrypoint's blocking read so it can exec
@@ -213,7 +234,36 @@ var agentReadyFifoPath = consts.AgentReadyFifo
 //     entrypoint never observed the byte, so CP must NOT see Done{0}.
 func (s *session) handleAgentReady(ctx context.Context, commandID string) {
 	go func() {
-		f, err := os.OpenFile(agentReadyFifoPath, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+		// Mirror the handleRegisterRequired recover pattern: a panic
+		// here would crash clawkerd (PID-1 sibling under bash).
+		// Without recovery the entrypoint hangs on its fifo for the
+		// full timeout (~660s) with no diagnostic in the rotated log
+		// — clawkerd panic stacks land on stderr.log, not the
+		// audit-graded clawkerd.log. Surface as Error{IO_ERROR} so
+		// CP sees a terminal Response and operators see a structured
+		// log line. f is captured so a panic between OpenFile and
+		// the deferred Close still releases the fd.
+		var f *os.File
+		defer func() {
+			r := recover()
+			if r == nil {
+				return
+			}
+			if f != nil {
+				_ = f.Close()
+			}
+			s.log.Error().
+				Interface("panic", r).
+				Bytes("stack", debug.Stack()).
+				Str("event", "agent_ready_panic").
+				Str("command_id", commandID).
+				Msg("clawkerd: handleAgentReady panicked; reporting IO_ERROR so CP sees a terminal Response")
+			s.send(ctx, errResponse(commandID,
+				clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
+				fmt.Sprintf("agent_ready: panic: %v", r)))
+		}()
+		var err error
+		f, err = agentReadyOpener(agentReadyFifoPath, os.O_WRONLY|syscall.O_NONBLOCK, 0)
 		if err != nil {
 			if errors.Is(err, syscall.ENXIO) {
 				s.log.Info().
@@ -780,7 +830,46 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 		go func() {
 			defer reapWG.Done()
 			defer wg.Done()
+			// A panic here without recover would crash clawkerd
+			// AND leave the worker deadlocked at <-finalStageErrCh
+			// (line below the reapWG.Wait), because the channel
+			// would never receive. Recover ensures: (1) clawkerd
+			// stays up, (2) the final-stage channel always gets a
+			// value so the worker unblocks, (3) CP sees a synthetic
+			// StageExit so the stage axis transitions out of
+			// running.
+			defer func() {
+				r := recover()
+				if r == nil {
+					return
+				}
+				panicErr := fmt.Errorf("stage reaper panicked: %v", r)
+				s.log.Error().
+					Interface("panic", r).
+					Bytes("stack", debug.Stack()).
+					Str("event", "shell_stage_reaper_panic").
+					Str("command_id", rc.id).
+					Int("stage_index", i).
+					Bool("is_final", isFinal).
+					Msg("clawkerd: stage reaper panicked; sending sentinel + synthetic StageExit so worker unblocks and CP sees terminal")
+				if isFinal {
+					// Buffered cap 1 — non-blocking. Default
+					// branch guards the panic-after-send window
+					// (Wait completed, channel sent, then s.send
+					// or stageExitResponse panicked): the channel
+					// is already filled and the worker will
+					// proceed; sentinel is redundant.
+					select {
+					case finalStageErrCh <- panicErr:
+					default:
+					}
+				}
+				s.send(ctx, stageExitResponse(rc.id, uint32(i), c, panicErr))
+			}()
 			waitErr := c.Wait()
+			if hook := stageReaperPanicHookForTest; hook != nil {
+				hook(i, isFinal)
+			}
 			if isFinal {
 				finalStageErrCh <- waitErr
 			}

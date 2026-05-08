@@ -657,3 +657,57 @@ func TestShouldReconnect_DoneCtx_ReturnsRegardlessOfDrain(t *testing.T) {
 			"cancelled parent ctx must suppress reconnect for drain=%+v", drain)
 	}
 }
+
+// panickingMoby fails ContainerInspect with a panic; used by
+// TestDialAgent_PanicInRunDial.
+type panickingMoby struct {
+	mobyclient.APIClient
+}
+
+func (panickingMoby) ContainerInspect(_ context.Context, _ string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+	panic("synthetic test panic in ContainerInspect")
+}
+
+func TestDialAgent_PanicInRunDial_DoesNotCrashCP_PublishesTerminal(t *testing.T) {
+	// CP-resilience contract: a panic in the dial goroutine must NOT
+	// propagate up the goroutine stack (which would crash CP and
+	// strand eBPF programs unsupervised, silently breaking the
+	// firewall enforcement boundary). Regression catches:
+	//   1. The recover defer deleted from DialAgent.
+	//   2. The recover ordering swapped so dedup-cleanup defer runs
+	//      before recover (panic still escapes).
+	//   3. The synthetic SessionFailed publish removed (worldview
+	//      consumers see "Connecting" forever).
+	//   4. The dedup map entry not cleared after panic (re-dial
+	//      blocked permanently).
+	docker := panickingMoby{}
+	regMock := &RegistryMock{
+		LookupByContainerIDFunc: func(string) (*Entry, error) {
+			return nil, ErrUnknownAgent
+		},
+	}
+	d, bus, ctx, cancel := newDialerForTest(t, docker, regMock)
+	defer cancel()
+	defer bus.Close()
+
+	sub, ok := overseer.Subscribe[SessionFailed](bus, "test")
+	require.True(t, ok)
+
+	d.DialAgent(ctx, "container-panic")
+
+	select {
+	case ev := <-sub.C:
+		assert.Equal(t, "container-panic", ev.ContainerID)
+		assert.Contains(t, ev.Reason, "dial_goroutine_panic",
+			"recover must publish synthetic SessionFailed with the dial_goroutine_panic classification so subscribers driving containment can branch on it")
+	case <-time.After(2 * time.Second):
+		t.Fatal("recover failed to publish synthetic SessionFailed — either the panic crashed the goroutine without recover, or the publishFailed call inside the recover handler is wrong")
+	}
+
+	require.Eventually(t, func() bool {
+		d.mu.Lock()
+		_, present := d.dialing["container-panic"]
+		d.mu.Unlock()
+		return !present
+	}, 1*time.Second, 10*time.Millisecond, "dedup entry must clear after panic so subsequent DialAgent calls re-dial")
+}

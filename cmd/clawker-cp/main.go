@@ -698,19 +698,13 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// proceeds — a misconfigured agent or a flapping clawkerd cannot
 	// hold the control plane down.
 	// Wire the CP-driven init Executor into the dialer at construction.
-	// Each new Session establish runs the static init plan (config seed,
-	// gitconfig filter, ssh known_hosts, post-init, AgentReady) against
-	// the open stream. Without this, the entrypoint hangs on its fifo
-	// until CLAWKER_INIT_TIMEOUT and the container fails to launch CMD.
+	// Each new Session establish runs the static init plan against the
+	// open stream. Without this, the entrypoint hangs on its fifo until
+	// CLAWKER_INIT_TIMEOUT and the container fails to launch CMD.
 	// Container user identity (uid/gid/username/home) lives in consts
-	// and is read directly by the Executor.
-	initExec, err := agent.NewExecutor(bus, log.With("component", "agent.init"))
-	if err != nil {
-		log.Error().Err(err).
-			Str("event", "agent_init_executor_unavailable").
-			Msg("agent.init: Executor construction failed; CP-driven init disabled — agent containers will hang on the entrypoint fifo until timeout. CP otherwise continues.")
-		initExec = nil
-	}
+	// and is read directly by the Executor. See wireInitExecutor for the
+	// degrade contract.
+	initExec := wireInitExecutor(bus, log)
 	dialer, err := agent.New(
 		log.With("component", "agent"),
 		dockerCli.APIClient,
@@ -950,4 +944,22 @@ func parseOtlpEndpoint(raw string) (endpoint string, insecure bool) {
 		rest = rest[:i]
 	}
 	return rest, insecure
+}
+
+// wireInitExecutor constructs the CP-driven init Executor and applies
+// the degrade contract from internal/controlplane/CLAUDE.md
+// ("Resilience contract — CP crashing is a security incident"):
+// construction failure logs `agent_init_executor_unavailable` and
+// returns nil; CP keeps running. Extracted as its own function so the
+// degrade-not-crash invariant is unit-testable — see
+// TestWireInitExecutor_NilBus.
+func wireInitExecutor(bus *overseer.Overseer, log *logger.Logger) *agent.Executor {
+	exec, err := agent.NewExecutor(bus, log.With("component", "agent.init"))
+	if err == nil {
+		return exec
+	}
+	log.Error().Err(err).
+		Str("event", "agent_init_executor_unavailable").
+		Msg("agent.init: Executor construction failed; CP-driven init disabled — agent containers will hang on the entrypoint fifo until timeout. CP otherwise continues.")
+	return nil
 }
