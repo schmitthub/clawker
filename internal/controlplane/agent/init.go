@@ -198,9 +198,16 @@ type Executor struct {
 // NewExecutor constructs an Executor. The container user identity
 // (uid/gid + username + home) is fixed by the bundler and read from
 // consts (ContainerUID/ContainerGID/ContainerUser/ContainerHomeDir).
-// nil log is replaced with logger.Nop(); nil bus would NPE on the
-// first Publish — caller is expected to pass a real bus.
+// nil log is replaced with logger.Nop(). bus is required — Run
+// publishes init events unconditionally, so a nil bus would panic
+// inside overseer.Publish on the first event. Reject up front with a
+// clear message instead of letting the dereference surface as a
+// nil-pointer panic at the first init dispatch (matches the
+// nil-bus contract on agent.New for the dialer).
 func NewExecutor(bus *overseer.Overseer, log *logger.Logger) *Executor {
+	if bus == nil {
+		panic("agent.NewExecutor: bus is required")
+	}
 	if log == nil {
 		log = logger.Nop()
 	}

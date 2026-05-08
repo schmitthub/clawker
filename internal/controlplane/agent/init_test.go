@@ -107,6 +107,19 @@ type initEventSlice struct {
 // after a real Run dispatches every step. Step kind / stages shape is
 // enforced structurally by runStep's switch + Go's type system.)
 
+// TestNewExecutor_NilBusPanics pins the constructor-time rejection of
+// a nil bus. Run publishes init events unconditionally — a nil bus
+// would otherwise NPE deep inside overseer.Publish on the first event
+// dispatch, far from the wiring bug.
+func TestNewExecutor_NilBusPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		require.NotNil(t, r, "NewExecutor must panic on nil bus")
+		assert.Contains(t, r, "bus is required")
+	}()
+	_ = NewExecutor(nil, logger.Nop())
+}
+
 // TestExecutor_Plan_PrivilegeAndShape pins three load-bearing plan
 // invariants:
 //
@@ -121,7 +134,10 @@ type initEventSlice struct {
 // build-time wiring, not a runtime invariant — exercised once in
 // TestExecutor_Run_HappyPath via the full plan.
 func TestExecutor_Plan_PrivilegeAndShape(t *testing.T) {
-	plan := NewExecutor(nil, logger.Nop()).plan()
+	bus := overseer.New(overseer.Options{})
+	require.NoError(t, bus.Start(context.Background()))
+	t.Cleanup(func() { _ = bus.Close() })
+	plan := NewExecutor(bus, logger.Nop()).plan()
 	require.NotEmpty(t, plan)
 
 	var rootSteps []string
