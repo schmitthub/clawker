@@ -27,7 +27,7 @@ Prioritize fixing technical debt and improving architecture over completing the 
 ## CP ≠ firewall (common LLM confusion)
 
 - **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent registry, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `cpboot.EnsureRunning`. No "disable CP" flag. CP owns clawker-net.
-- **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml`). When disabled, CP/mTLS/registry/agentdial/ListAgents continue to operate.
+- **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml`). When disabled, CP/mTLS/registry/agent.Dialer/ListAgents continue to operate.
 
 Do **NOT** gate non-firewall behavior on `firewall.enable`.
 
@@ -38,7 +38,7 @@ Do **NOT** gate non-firewall behavior on `firewall.enable`.
 ## Asymmetric trust: dialer permissive, listener strict
 
 - **clawkerd-side listener (server):** STRICT. `cmd/clawkerd/listener.go` enforces CP CN pin + Client-Auth EKU + CA chain at TLS layer.
-- **CP-side dialer (client):** PERMISSIVE. `internal/controlplane/agentdial.Dialer` never aborts on cert/identity grounds. Outcomes emitted as typed `Provenance` fields on `SessionConnected` overseer events. Dial only fails on connectivity.
+- **CP-side dialer (client):** PERMISSIVE. `internal/controlplane/agent.Dialer` never aborts on cert/identity grounds. Outcomes emitted as typed fields on `SessionConnected` overseer events. Dial only fails on connectivity.
 
 **Why permissive:** CP must reach clawkerd to issue containment commands even when certs are bad. Subscribers to `SessionConnected` enact policy; the dialer holds none.
 
@@ -76,9 +76,9 @@ Do **NOT** gate non-firewall behavior on `firewall.enable`.
 │   ├── consts/                # Cross-package constants
 │   ├── containerfs/           # Host Claude config preparation
 │   ├── controlplane/          # CP daemon: Ory auth, AdminService, agent watcher
-│   │   ├── agent/             # AgentService identity interceptor
-│   │   ├── agentdial/         # CP→clawkerd dialer (permissive trust)
-│   │   ├── agentregistry/     # SQLite identity store
+│   │   ├── agent/             # Unified agent surface: Dialer, Registry, Register handler, IdentityInterceptor, events
+│   │   ├── adminclient/       # CLI-side AdminService gRPC dial (mTLS + OAuth2)
+│   │   ├── overseer/          # Typed event bus + worldview state
 │   │   ├── cpboot/            # Host-side CP lifecycle (EnsureRunning/Stop)
 │   │   ├── firewall/          # Firewall: Handler (13 RPCs), Stack, Envoy+CoreDNS, eBPF
 │   │   │   └── ebpf/          # eBPF loader + Manager

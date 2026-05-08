@@ -18,7 +18,7 @@ Packages that **should** have a CLAUDE.md (contain significant public API):
 - `internal/controlplane/`
 - `internal/controlplane/firewall/`
 - `internal/controlplane/overseer/`
-- `internal/controlplane/agentregistry/`
+- `internal/controlplane/agent/`
 - `internal/controlplane/dockerevents/`
 - `pkg/whail/`
 
