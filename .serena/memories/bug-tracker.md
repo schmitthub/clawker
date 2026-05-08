@@ -26,6 +26,8 @@ Next Steps:
 - [ ] controlplan up doesn't start firewall but should via settings
 - [ ] controleplane in docker image should be a stage because it requires a full rebuild otherwise
 - [ ] make localenv seems to break mounting on container create ie `clawker run` forcing a `docker run` and mounting the volumes seems to fix it. so something is up with bind mounting during container create, after the container is created. claude has no idea what to do its totally going in circles.
+- [ ] `internal/bundler/assets/entrypoint.sh` hardcodes `/run/clawker/agent.fifo` in three places (mkfifo + the rm + the timeout cat). The const `consts.AgentReadyFifo` already exists and the Go code uses it; the bash entrypoint should be a `text/template` rendered at image-build time so `consts` is the single source of truth. Also applies to the `CLAWKER_INIT_TIMEOUT` default (`660` literal in the script) which must stay aligned with `initStepTimeoutPostInit` in `internal/controlplane/agent/init.go`. Landed in commit `ae5dfd4e` with cross-reference comments as a stop-gap.
+- [ ] `internal/controlplane/agent/init_test.go::TestExecutor_Plan_UidGid_RootForDockerSocket_UserForRest` walks `e.plan()` directly and asserts UID/GID/HOME/USER on un-dispatched stages — pins constants against themselves. Should rewrite to capture the dispatched `*clawkerdv1.Command` payloads off `stream.sent` inside `TestExecutor_Run_HappyPath` and assert the privilege fields on the wire frames, so values flow through `runStep`'s payload construction. Landed as-is in commit `ae5dfd4e`.
 
 ## General
 
