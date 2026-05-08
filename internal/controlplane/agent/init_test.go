@@ -535,8 +535,8 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 	snap1, ok := bus.Snapshot(context.Background())
 	require.True(t, ok)
 	view1 := snap1.Agents[target.ContainerID]
-	assert.Equal(t, overseer.InitStatusFailed, view1.Init.Status)
-	assert.NotEmpty(t, view1.Init.LastError, "Failed cycle must populate Init.LastError")
+	assert.Equal(t, overseer.InitStatusFailed, view1.Init.Status())
+	assert.NotEmpty(t, view1.Init.LastError(), "Failed cycle must populate Init.LastError")
 
 	// Cycle 2: full success.
 	{
@@ -570,9 +570,9 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 	snap2, ok := bus.Snapshot(context.Background())
 	require.True(t, ok)
 	view2 := snap2.Agents[target.ContainerID]
-	assert.Equal(t, overseer.InitStatusCompleted, view2.Init.Status)
-	assert.Empty(t, view2.Init.LastError, "Completed cycle must clear stale Init.LastError")
-	assert.Equal(t, len(expectedInitStepNames), view2.Init.StepCount)
+	assert.Equal(t, overseer.InitStatusCompleted, view2.Init.Status())
+	assert.Empty(t, view2.Init.LastError(), "Completed cycle must clear stale Init.LastError")
+	assert.Equal(t, len(expectedInitStepNames), view2.Init.StepCount())
 }
 
 // TestExecutor_Run_CloseStdinFollowsEveryShellStep pins the
@@ -639,6 +639,123 @@ func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
 	assert.Equal(t, 1, agentReadyCount, "expected exactly one AgentReady step")
 	assert.Equal(t, shellCount, closeCount,
 		"every shell step needs exactly one CloseStdin (none for AgentReady)")
+}
+
+// TestExecutor_Run_RejectsConcurrent pins the runMu guard. Run owns
+// stream.Recv exclusively for its duration; a second concurrent Run
+// against the same Executor would race the dispatch state and corrupt
+// the worldview projection. The guard rejects the second call with a
+// descriptive error so misuse surfaces in the structured log surface
+// rather than as a hard-to-diagnose race detector hit. The dialer
+// drives Run serially through runDial, so production never trips
+// this — but it catches a future caller that wires per-Session
+// goroutines without preserving serialization.
+//
+// Coordination: subscribe to InitStarted so the second Run only fires
+// after the first has crossed the guard and entered the dispatch
+// loop. Avoids reaching into Executor's private state.
+func TestExecutor_Run_RejectsConcurrent(t *testing.T) {
+	bus := overseer.New(overseer.Options{})
+	require.NoError(t, bus.Start(context.Background()))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	startedSub, ok := overseer.Subscribe[InitStarted](bus, "concurrent-started")
+	require.True(t, ok)
+	defer startedSub.Unsubscribe()
+
+	exec, err := NewExecutor(bus, logger.Nop())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Stream that blocks Recv forever so the first Run never returns.
+	// We don't care about its event stream — only that the second
+	// concurrent Run lands in the guard before the first completes.
+	stream1 := newFakeStream(ctx)
+	target := InitTarget{ContainerID: "c-conc-1234567890ab", AgentName: "dev", Project: "clawker"}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- exec.Run(ctx, stream1, target)
+	}()
+
+	// Wait for the first Run to publish InitStarted — that proves the
+	// guard was acquired and Run is past the gate.
+	select {
+	case <-startedSub.C:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first Run never published InitStarted — guard never acquired")
+	}
+
+	stream2 := newFakeStream(ctx)
+	err2 := exec.Run(ctx, stream2, target)
+	require.Error(t, err2, "second concurrent Run must be rejected by the runMu guard")
+	assert.Contains(t, err2.Error(), "concurrent",
+		"error must reference the concurrent-Run violation so operators can grep for it")
+
+	// Tear down stream1 so the first Run can return — the test must
+	// not leak the goroutine.
+	cancel()
+	<-firstDone
+}
+
+// TestExecutor_Run_PlanIdempotent drives Run twice on the same
+// Executor + same target with full success on both cycles. The
+// idempotency contract is what allows Session reconnects to re-run the
+// plan without per-container "already done" tracking — pinning here
+// guards against a regression that adds stateful guards inside
+// Executor (which would silently break reconnect after CP restart).
+func TestExecutor_Run_PlanIdempotent(t *testing.T) {
+	bus := overseer.New(overseer.Options{})
+	require.NoError(t, bus.Start(context.Background()))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	completedSub, ok := overseer.Subscribe[InitCompleted](bus, "idempotent-completed")
+	require.True(t, ok)
+	defer completedSub.Unsubscribe()
+
+	exec, err := NewExecutor(bus, logger.Nop())
+	require.NoError(t, err)
+	target := InitTarget{ContainerID: "c-idem-1234567890ab", AgentName: "dev", Project: "clawker"}
+
+	for cycle := 0; cycle < 2; cycle++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		stream := newFakeStream(ctx)
+		feederDone := make(chan struct{})
+		go func() {
+			defer close(feederDone)
+			for cmd := range stream.sent {
+				if _, isClose := cmd.Payload.(*clawkerdv1.Command_CloseStdin); isClose {
+					continue
+				}
+				stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+					CommandId: cmd.CommandId,
+					Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
+				}}
+			}
+		}()
+
+		require.NoError(t, exec.Run(ctx, stream, target),
+			"cycle %d must succeed — Executor must be reusable across Sessions", cycle)
+		close(stream.sent)
+		<-feederDone
+		cancel()
+
+		select {
+		case <-completedSub.C:
+		case <-time.After(time.Second):
+			t.Fatalf("cycle %d: InitCompleted did not drain", cycle)
+		}
+
+		snap, ok := bus.Snapshot(context.Background())
+		require.True(t, ok)
+		view := snap.Agents[target.ContainerID]
+		assert.Equal(t, overseer.InitStatusCompleted, view.Init.Status(),
+			"cycle %d: worldview must reach Completed", cycle)
+		assert.Empty(t, view.Init.LastError(),
+			"cycle %d: LastError must clear on success — stale error from a prior cycle would mislead subscribers", cycle)
+	}
 }
 
 // TestRunInit_NoExecutorWired pins the misconfiguration warning

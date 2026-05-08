@@ -7,6 +7,7 @@ import (
 	"io"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
@@ -145,6 +146,11 @@ type step interface {
 	// CloseStdin frame (true for shell steps that don't consume
 	// stdin; false for AgentReady which has no stdin pipe).
 	command(commandID string) (cmd *clawkerdv1.Command, followCloseStdin bool)
+	// isStep is the unexported sealing marker. A third implementer
+	// outside this package is rejected at compile time; package-
+	// internal additions still need a paired runStep / plan() update
+	// by convention.
+	isStep()
 }
 
 type shellStep struct {
@@ -153,6 +159,7 @@ type shellStep struct {
 }
 
 func (s shellStep) stepName() string { return s.Name }
+func (shellStep) isStep()            {}
 func (s shellStep) command(id string) (*clawkerdv1.Command, bool) {
 	return &clawkerdv1.Command{
 		CommandId: id,
@@ -165,6 +172,7 @@ type agentReadyStep struct {
 }
 
 func (s agentReadyStep) stepName() string { return s.Name }
+func (agentReadyStep) isStep()            {}
 func (s agentReadyStep) command(id string) (*clawkerdv1.Command, bool) {
 	return &clawkerdv1.Command{
 		CommandId: id,
@@ -194,6 +202,16 @@ type InitTarget struct {
 type Executor struct {
 	bus *overseer.Overseer
 	log *logger.Logger
+	// runMu enforces the Run-owns-Recv contract at runtime. Run owns
+	// stream.Recv exclusively for its duration; a concurrent Run on
+	// the same Executor against a different stream would race the
+	// shared dispatch state. The dialer drives Run serially through
+	// runDial, so this guard catches misuse (a future caller wiring
+	// a per-Session goroutine that forgot the serialization invariant)
+	// rather than a normal-case collision. TryLock returns the
+	// "already in use" signal as a typed error rather than blocking,
+	// keeping the rejected caller observable in the structured log.
+	runMu sync.Mutex
 }
 
 // NewExecutor constructs an Executor. nil log is replaced with
@@ -222,9 +240,15 @@ func NewExecutor(bus *overseer.Overseer, log *logger.Logger) (*Executor, error) 
 // success.
 //
 // Caller invariant: stream must already have completed Hello/HelloAck
-// and any Register handshake. Run owns stream.Recv until it returns;
-// drainStream must not be running concurrently.
+// and any Register handshake. Run owns stream.Recv exclusively for
+// its duration — a second concurrent Run on the same Executor is
+// rejected by the runMu guard rather than serialized.
 func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target InitTarget) (runErr error) {
+	if !e.runMu.TryLock() {
+		return errors.New("agent.init: concurrent Executor.Run on the same instance — Run owns stream.Recv exclusively")
+	}
+	defer e.runMu.Unlock()
+
 	plan := e.plan()
 	startedAt := time.Now()
 	overseer.Publish(e.bus, InitStarted{
@@ -317,27 +341,9 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			Int("step_index", i).
 			Msg("agent.init: step started")
 
-		exit, reason, detail, err := e.runStep(ctx, stream, target.ContainerID, i, st, log)
+		out, err := e.runStep(ctx, stream, target.ContainerID, i, st, log)
 		dur := time.Since(stepStart)
-		failed := err != nil || exit != 0 || reason != overseer.InitFailureReasonNone
-		if failed {
-			if reason == overseer.InitFailureReasonNone {
-				switch {
-				case err != nil:
-					reason = overseer.InitFailureReasonTransportError
-				case exit != 0:
-					reason = overseer.InitFailureReasonExitCode
-				default:
-					reason = overseer.InitFailureReasonUnknown
-				}
-			}
-			if detail == "" {
-				if err != nil {
-					detail = err.Error()
-				} else {
-					detail = fmt.Sprintf("exit_code=%d", exit)
-				}
-			}
+		if out.Failed() {
 			overseer.Publish(e.bus, InitStepFailed{
 				ContainerID: target.ContainerID,
 				AgentName:   target.AgentName,
@@ -345,9 +351,9 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 				StepName:    st.stepName(),
 				StepIndex:   i,
 				Duration:    dur,
-				ExitCode:    exit,
-				Reason:      reason,
-				Detail:      detail,
+				ExitCode:    out.ExitCode,
+				Reason:      out.Reason,
+				Detail:      out.Detail,
 				At:          time.Now(),
 			})
 			overseer.Publish(e.bus, InitFailed{
@@ -355,8 +361,8 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 				AgentName:   target.AgentName,
 				Project:     target.Project,
 				FailedStep:  st.stepName(),
-				Reason:      reason,
-				Detail:      detail,
+				Reason:      out.Reason,
+				Detail:      out.Detail,
 				Duration:    time.Since(startedAt),
 				At:          time.Now(),
 			})
@@ -364,14 +370,14 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 				Str("event", "agent_init_failed").
 				Str("step", st.stepName()).
 				Int("step_index", i).
-				Int32("exit_code", exit).
-				Str("reason", string(reason)).
-				Str("detail", detail).
+				Int32("exit_code", out.ExitCode).
+				Str("reason", string(out.Reason)).
+				Str("detail", out.Detail).
 				Msg("agent.init: plan halted on step failure")
 			if err != nil {
 				return err
 			}
-			return fmt.Errorf("agent.init: step %q failed: %s", st.stepName(), detail)
+			return fmt.Errorf("agent.init: step %q failed: %s", st.stepName(), out.Detail)
 		}
 		overseer.Publish(e.bus, InitStepCompleted{
 			ContainerID: target.ContainerID,
@@ -380,7 +386,7 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			StepName:    st.stepName(),
 			StepIndex:   i,
 			Duration:    dur,
-			ExitCode:    exit,
+			ExitCode:    out.ExitCode,
 			At:          time.Now(),
 		})
 		log.Info().
@@ -417,15 +423,68 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 // boundary instead of guessing.
 const maxStderrCapture = 4096
 
-// runStep dispatches one step's wire payload and waits for its Done or
-// Error. Returns:
-//   - exitCode: process exit code (Done.final_exit_code, or -1 for
-//     Error / unknown).
-//   - reason: typed classification of the failure
-//     (InitFailureReasonNone on success).
-//   - detail: human-readable diagnostic for InitStepFailed.Detail.
+// stepOutcome bundles the per-step result fields runStep produces.
+// Zero value means the step succeeded; populated values are produced
+// only via the constructors below, which keep Reason / ExitCode /
+// Detail coherent. Run reads outcome.Failed() to decide whether to
+// publish terminal events.
+type stepOutcome struct {
+	ExitCode int32
+	Reason   overseer.InitFailureReason
+	Detail   string
+}
+
+func (o stepOutcome) Failed() bool {
+	return o.Reason != overseer.InitFailureReasonNone
+}
+
+// stepSucceeded is the zero outcome — the only success shape.
+func stepSucceeded() stepOutcome { return stepOutcome{} }
+
+// stepFailedTransport classifies any transport break (Send error,
+// Recv error, ctx cancel, premature EOF). The paired transport error
+// returned alongside drives Run's dispatch-halt branch; the outcome
+// carries the human-readable detail for the InitStepFailed event.
+func stepFailedTransport(detail string) stepOutcome {
+	return stepOutcome{
+		ExitCode: -1,
+		Reason:   overseer.InitFailureReasonTransportError,
+		Detail:   detail,
+	}
+}
+
+// stepFailedExit classifies a clawkerd Done with a non-zero exit
+// code. Stderr (truncated to maxStderrCapture) is folded into detail
+// upstream of this constructor.
+func stepFailedExit(exit int32, detail string) stepOutcome {
+	return stepOutcome{
+		ExitCode: exit,
+		Reason:   overseer.InitFailureReasonExitCode,
+		Detail:   detail,
+	}
+}
+
+// stepFailedClassified classifies a clawkerd Response_Error frame
+// (timeout, spawn failed, IO error, protocol violation, ...) into
+// the typed reason vocabulary subscribers branch on.
+func stepFailedClassified(reason overseer.InitFailureReason, detail string) stepOutcome {
+	return stepOutcome{
+		ExitCode: -1,
+		Reason:   reason,
+		Detail:   detail,
+	}
+}
+
+// runStep dispatches one step's wire payload and waits for its Done
+// or Error. Returns:
+//   - outcome: zero value on success, populated with Reason/Detail/
+//     ExitCode on step failure or transport break. Run consumes this
+//     to publish the terminal InitStepFailed + InitFailed events.
 //   - transport error: non-nil iff the stream is broken; the caller
-//     should bail Run.
+//     should bail Run after publishing terminal events. A non-nil
+//     err always pairs with outcome.Failed() == true (Reason ==
+//     InitFailureReasonTransportError) so Run branches on a single
+//     check.
 //
 // Bounding wait time: clawkerd enforces the per-stage timeout server-
 // side (ShellCommand.TimeoutSeconds → time.AfterFunc → SIGKILL +
@@ -434,12 +493,13 @@ const maxStderrCapture = 4096
 // deliberately omitted — a duplicate budget here would race the
 // server-side timer and risk misclassifying a server-detected timeout
 // as a client-side break.
-func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID string, idx int, st step, log *logger.Logger) (int32, overseer.InitFailureReason, string, error) {
+func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID string, idx int, st step, log *logger.Logger) (stepOutcome, error) {
 	commandID := buildCommandID(containerID, st.stepName(), idx)
 
 	cmd, followCloseStdin := st.command(commandID)
 	if err := stream.Send(cmd); err != nil {
-		return -1, overseer.InitFailureReasonNone, "", fmt.Errorf("send %s: %w", st.stepName(), err)
+		wrapped := fmt.Errorf("send %s: %w", st.stepName(), err)
+		return stepFailedTransport(wrapped.Error()), wrapped
 	}
 
 	// CloseStdin invariant: clawkerd's runShellCommand publishes
@@ -454,7 +514,8 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 			Payload:   &clawkerdv1.Command_CloseStdin{CloseStdin: &clawkerdv1.CloseStdin{}},
 		}
 		if err := stream.Send(closeCmd); err != nil {
-			return -1, overseer.InitFailureReasonNone, "", fmt.Errorf("send %s close_stdin: %w", st.stepName(), err)
+			wrapped := fmt.Errorf("send %s close_stdin: %w", st.stepName(), err)
+			return stepFailedTransport(wrapped.Error()), wrapped
 		}
 	}
 
@@ -463,14 +524,16 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 
 	for {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return -1, overseer.InitFailureReasonTransportError, ctxErr.Error(), ctxErr
+			return stepFailedTransport(ctxErr.Error()), ctxErr
 		}
 		resp, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return -1, overseer.InitFailureReasonTransportError, "stream EOF before terminal response", fmt.Errorf("stream EOF before terminal response")
+				const eofDetail = "stream EOF before terminal response"
+				return stepFailedTransport(eofDetail), errors.New(eofDetail)
 			}
-			return -1, overseer.InitFailureReasonTransportError, err.Error(), fmt.Errorf("recv %s: %w", st.stepName(), err)
+			wrapped := fmt.Errorf("recv %s: %w", st.stepName(), err)
+			return stepFailedTransport(err.Error()), wrapped
 		}
 		if resp.GetCommandId() != commandID {
 			log.Debug().
@@ -502,7 +565,7 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 		case *clawkerdv1.Response_Done:
 			exit := p.Done.GetFinalExitCode()
 			if exit == 0 {
-				return 0, overseer.InitFailureReasonNone, "", nil
+				return stepSucceeded(), nil
 			}
 			detail := fmt.Sprintf("exit_code=%d", exit)
 			if s := strings.TrimSpace(stderrBuf.String()); s != "" {
@@ -511,16 +574,24 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 					detail += fmt.Sprintf(" ... [%d bytes truncated]", stderrTruncated)
 				}
 			}
-			return exit, overseer.InitFailureReasonExitCode, detail, nil
+			return stepFailedExit(exit, detail), nil
 		case *clawkerdv1.Response_Error:
-			reason := classifyErrorCode(p.Error.GetCode())
-			detail := fmt.Sprintf("%s: %s", p.Error.GetCode().String(), p.Error.GetMessage())
-			return -1, reason, detail, nil
+			return stepFailedClassified(
+				classifyErrorCode(p.Error.GetCode()),
+				fmt.Sprintf("%s: %s", p.Error.GetCode().String(), p.Error.GetMessage()),
+			), nil
 		default:
-			log.Debug().
+			// Warn-level: an unknown payload variant means the
+			// clawkerd-CP wire vocabulary has drifted. Production
+			// Debug logs are typically off — operators would otherwise
+			// see only the eventual server-side timeout with no hint
+			// that a new payload variant slipped past the switch.
+			log.Warn().
 				Str("event", "agent_init_unknown_payload").
+				Str("command_id", resp.GetCommandId()).
+				Str("step", st.stepName()).
 				Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
-				Msg("agent.init: ignoring unknown response payload")
+				Msg("agent.init: ignoring unknown response payload — wire vocabulary drift")
 		}
 	}
 }

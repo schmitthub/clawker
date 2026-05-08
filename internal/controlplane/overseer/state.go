@@ -141,26 +141,108 @@ const (
 // init axis is isolated from the session axis (Session*, Address,
 // Attempts) and the identity axis (Trust, Registered).
 type Init struct {
-	Status InitStatus
-	// StepName is the most recently started step's human-readable
-	// label. Empty until the first InitStepStarted of the active
-	// phase fires. Retains the failing step name across a phase
-	// boundary until overwritten by the next InitStepStarted.
-	StepName string
-	// StepIndex is the 0-based index of StepName within the plan.
-	// Meaningful only when StepName != "".
-	StepIndex int
-	StepCount int
-	// StartedAt timestamps the active phase boundary; CompletedAt
-	// timestamps the terminal phase boundary (Completed or Failed).
-	StartedAt   time.Time
-	CompletedAt time.Time
-	// LastError carries the most recent init-axis failure detail.
-	// Cleared on InitCompleted (and zeroed by InitStarted resetting
-	// the substruct); populated by InitStepFailed and InitFailed.
-	// Distinct from the session-axis Agent.LastError so the two
-	// failure surfaces don't overwrite each other.
-	LastError string
+	// Encapsulated fields. Producers transition via the package
+	// constructors / methods below; readers go through accessors.
+	// Direct field access from outside the package is prevented at
+	// compile time, so an event ApplyTo cannot put the substruct in
+	// an illegal mid-transition state (Status=Completed with non-empty
+	// LastError, Status=Failed with empty LastError, CompletedAt
+	// before StartedAt, StepIndex out of range, etc.).
+	status      InitStatus
+	stepName    string
+	stepIndex   int
+	stepCount   int
+	startedAt   time.Time
+	completedAt time.Time
+	lastError   string
+}
+
+func (i Init) Status() InitStatus { return i.status }
+
+// StepName is the most recently started step's human-readable label.
+// Empty until the first WithStep transition fires.
+func (i Init) StepName() string { return i.stepName }
+
+func (i Init) StepIndex() int { return i.stepIndex }
+
+func (i Init) StepCount() int { return i.stepCount }
+
+func (i Init) StartedAt() time.Time { return i.startedAt }
+
+func (i Init) CompletedAt() time.Time { return i.completedAt }
+
+// LastError carries the most recent init-axis failure detail. Cleared
+// on Complete; populated by WithStepError and Fail. Distinct from the
+// session-axis Agent.LastError so the two failure surfaces don't
+// overwrite each other.
+func (i Init) LastError() string { return i.lastError }
+
+// InitRunning resets the substruct to an active phase: Status becomes
+// Running, StartedAt records the phase boundary, StepCount is captured
+// for streaming subscribers ("1 of N" rendering). Any stale step /
+// completion / failure carried by a previous phase is dropped — a
+// reconnect that re-runs the plan should not surface the prior
+// terminal state. A negative stepCount is clamped to zero.
+func InitRunning(stepCount int, at time.Time) Init {
+	if stepCount < 0 {
+		stepCount = 0
+	}
+	return Init{
+		status:    InitStatusRunning,
+		stepCount: stepCount,
+		startedAt: at,
+	}
+}
+
+// WithStep returns a copy of i with StepName / StepIndex updated.
+// StepIndex is clamped into [0, StepCount-1] when StepCount > 0; the
+// (name, index) pair stays internally consistent because both are
+// written together from the same event payload, so a clamp affects
+// only the index — not the human-readable name subscribers display.
+func (i Init) WithStep(stepName string, stepIndex int) Init {
+	if stepIndex < 0 {
+		stepIndex = 0
+	}
+	if i.stepCount > 0 && stepIndex >= i.stepCount {
+		stepIndex = i.stepCount - 1
+	}
+	i.stepName = stepName
+	i.stepIndex = stepIndex
+	return i
+}
+
+// WithStepError returns a copy of i with LastError set. Status is
+// untouched — InitStepFailed is mid-phase, the terminal transition
+// is Fail.
+func (i Init) WithStepError(detail string) Init {
+	i.lastError = detail
+	return i
+}
+
+// Complete returns a terminal Init in Completed state, clearing
+// LastError so a subscriber switching on Status sees a coherent
+// success snapshot. CompletedAt is forced to be at least StartedAt
+// so the (CompletedAt < StartedAt) projection bug is unrepresentable.
+func (i Init) Complete(at time.Time) Init {
+	if at.Before(i.startedAt) {
+		at = i.startedAt
+	}
+	i.status = InitStatusCompleted
+	i.completedAt = at
+	i.lastError = ""
+	return i
+}
+
+// Fail returns a terminal Init in Failed state with detail. Same
+// CompletedAt floor as Complete.
+func (i Init) Fail(at time.Time, detail string) Init {
+	if at.Before(i.startedAt) {
+		at = i.startedAt
+	}
+	i.status = InitStatusFailed
+	i.completedAt = at
+	i.lastError = detail
+	return i
 }
 
 // Agent is the Overseer's in-memory worldview of one clawker-managed

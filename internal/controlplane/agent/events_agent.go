@@ -117,11 +117,7 @@ func (e InitStarted) ApplyTo(s *overseer.State) {
 	if e.Project != "" {
 		view.Project = e.Project
 	}
-	view.Init = overseer.Init{
-		Status:    overseer.InitStatusRunning,
-		StepCount: e.StepCount,
-		StartedAt: e.At,
-	}
+	view.Init = overseer.InitRunning(e.StepCount, e.At)
 	view.UpdatedAt = e.At
 	s.Agents[e.ContainerID] = view
 }
@@ -158,11 +154,7 @@ func (e InitStepStarted) ApplyTo(s *overseer.State) {
 	if e.Project != "" {
 		view.Project = e.Project
 	}
-	view.Init.StepName = e.StepName
-	view.Init.StepIndex = e.StepIndex
-	if e.StepCount > 0 {
-		view.Init.StepCount = e.StepCount
-	}
+	view.Init = view.Init.WithStep(e.StepName, e.StepIndex)
 	view.UpdatedAt = e.At
 	s.Agents[e.ContainerID] = view
 }
@@ -234,7 +226,7 @@ func (e InitStepFailed) MarshalZerologObject(z *zerolog.Event) {
 func (e InitStepFailed) ApplyTo(s *overseer.State) {
 	view := s.Agents[e.ContainerID]
 	view.ContainerID = e.ContainerID
-	view.Init.LastError = e.Detail
+	view.Init = view.Init.WithStepError(e.Detail)
 	view.UpdatedAt = e.At
 	s.Agents[e.ContainerID] = view
 }
@@ -262,9 +254,7 @@ func (e InitCompleted) MarshalZerologObject(z *zerolog.Event) {
 func (e InitCompleted) ApplyTo(s *overseer.State) {
 	view := s.Agents[e.ContainerID]
 	view.ContainerID = e.ContainerID
-	view.Init.Status = overseer.InitStatusCompleted
-	view.Init.CompletedAt = e.At
-	view.Init.LastError = ""
+	view.Init = view.Init.Complete(e.At)
 	view.UpdatedAt = e.At
 	s.Agents[e.ContainerID] = view
 }
@@ -300,9 +290,7 @@ func (e InitFailed) MarshalZerologObject(z *zerolog.Event) {
 func (e InitFailed) ApplyTo(s *overseer.State) {
 	view := s.Agents[e.ContainerID]
 	view.ContainerID = e.ContainerID
-	view.Init.Status = overseer.InitStatusFailed
-	view.Init.CompletedAt = e.At
-	view.Init.LastError = e.Detail
+	view.Init = view.Init.Fail(e.At, e.Detail)
 	view.UpdatedAt = e.At
 	s.Agents[e.ContainerID] = view
 }
