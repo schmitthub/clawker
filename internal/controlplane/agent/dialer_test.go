@@ -473,7 +473,7 @@ func newDialerForTest(t *testing.T, docker mobyclient.APIClient, agents Registry
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, bus.Start(ctx))
 
-	d, err := New(logger.Nop(), docker, bus, agents, certPath, keyPath, caPool)
+	d, err := New(logger.Nop(), docker, bus, agents, certPath, keyPath, caPool, nil)
 	require.NoError(t, err)
 
 	return d, bus, ctx, cancel

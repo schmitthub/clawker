@@ -44,6 +44,7 @@ message Command {
     CloseStdin close_stdin = 5;
     Signal signal = 6;
     RegisterRequired register_required = 7;
+    AgentReady agent_ready = 8;
   }
 }
 
@@ -61,6 +62,22 @@ message Hello {}
 // container_id is missing from the agentregistry (Miss outcome).
 // clawkerd replies with RegisterDone correlated by command_id.
 message RegisterRequired {}
+
+// AgentReady is the terminal init-sequence signal CP sends after every
+// preceding init ShellCommand returns Done with exit_code=0. clawkerd
+// opens /run/clawker/agent.fifo with O_WRONLY|O_NONBLOCK, writes one
+// byte, closes — releasing the entrypoint's blocking read on the
+// fifo so it can exec the user CMD.
+//
+// Idempotent across CP reconnects: if the entrypoint already moved on
+// (no reader on the fifo), open returns ENXIO and clawkerd treats it
+// as a no-op success. This is the v1 strategy for "init runs every
+// Session reconnect" — see internal/controlplane/agent/init.go.
+//
+// Reply is a Done{exit_code: 0} on success or Error on hard failure
+// (fifo missing entirely, unexpected ioctl error). ENXIO is NOT a
+// failure.
+message AgentReady {}
 
 // ShellCommand starts a shell pipeline. stages.len == 1 runs a
 // single command; stages.len > 1 chains stage[i].stdout into

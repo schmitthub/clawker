@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -120,6 +121,16 @@ func TestDispatch_EmptyCommandID(t *testing.T) {
 			expectError: true,
 		},
 		{
+			name:        "register_required rejected",
+			cmd:         &clawkerdv1.Command{Payload: &clawkerdv1.Command_RegisterRequired{RegisterRequired: &clawkerdv1.RegisterRequired{}}},
+			expectError: true,
+		},
+		{
+			name:        "agent_ready rejected",
+			cmd:         &clawkerdv1.Command{Payload: &clawkerdv1.Command_AgentReady{AgentReady: &clawkerdv1.AgentReady{}}},
+			expectError: true,
+		},
+		{
 			// Hello is the inverse: stateless echo, empty command_id MUST
 			// remain accepted.
 			name:        "hello allowed",
@@ -190,7 +201,8 @@ func TestStartShellCommand_DuplicateID_Rejects(t *testing.T) {
 func runUntilDone(t *testing.T, ctx context.Context, s *session, sc *clawkerdv1.ShellCommand, id string) {
 	t.Helper()
 	cmdCtx, cmdCancel := context.WithCancel(ctx)
-	rc := &runningCommand{id: id, cancel: cmdCancel}
+	stdinR, stdinW := io.Pipe()
+	rc := &runningCommand{id: id, cancel: cmdCancel, stdin: stdinW, stdinReady: make(chan struct{})}
 	s.mu.Lock()
 	s.cmds[rc.id] = rc
 	s.mu.Unlock()
@@ -198,7 +210,7 @@ func runUntilDone(t *testing.T, ctx context.Context, s *session, sc *clawkerdv1.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.runShellCommand(cmdCtx, rc, sc)
+		s.runShellCommand(cmdCtx, rc, sc, stdinR)
 	}()
 
 	// Wait for the stdin pipe to be wired up, then close it so the
@@ -272,14 +284,15 @@ func TestRunShellCommand_AuditLogOnSpawnFailure(t *testing.T) {
 	defer cancel()
 
 	cmdCtx, cmdCancel := context.WithCancel(ctx)
-	rc := &runningCommand{id: "spawn-fail", cancel: cmdCancel}
+	stdinR, stdinW := io.Pipe()
+	rc := &runningCommand{id: "spawn-fail", cancel: cmdCancel, stdin: stdinW, stdinReady: make(chan struct{})}
 	s.mu.Lock()
 	s.cmds[rc.id] = rc
 	s.mu.Unlock()
 
 	s.runShellCommand(cmdCtx, rc, &clawkerdv1.ShellCommand{
 		Stages: []*clawkerdv1.PipeStage{{Argv: []string{"/no/such/binary/clawker-test"}}},
-	})
+	}, stdinR)
 
 	logs := logBuf.String()
 	assert.Contains(t, logs, `"event":"shell_command_started"`)
@@ -294,6 +307,105 @@ func TestRunShellCommand_AuditLogOnSpawnFailure(t *testing.T) {
 		}
 	}
 	assert.True(t, sawSpawnErr, "SPAWN_FAILED response missing")
+}
+
+// TestStartShellCommand_InitialStdinCloseStdinRace pins the regression
+// fix for the bug that caused agent-init's `ssh` step to land an empty
+// known_hosts file: CP sends ShellCommand+InitialStdin and immediately
+// follows with CloseStdin. Without the stdinReady gate, routeCloseStdin
+// would run BEFORE the InitialStdin write goroutine, the Write would
+// return ErrClosedPipe, and the payload would silently vanish.
+//
+// We dispatch through the real receiver path (runReceiver → dispatch →
+// startShellCommand → ...) so the gate's race-window is fully
+// exercised; child is `cat` which echoes its stdin to stdout. CP
+// expects to see the InitialStdin payload back as a StdoutChunk; if
+// the race is unfixed, stdout is empty.
+func TestStartShellCommand_InitialStdinCloseStdinRace(t *testing.T) {
+	const payload = "hello-from-initial-stdin\n"
+	const id = "init-stdin-race-1"
+
+	s, _ := newTestSession()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Dispatch ShellCommand and CloseStdin back-to-back via dispatch().
+	// dispatch is synchronous from the receiver loop's perspective;
+	// startShellCommand returns immediately after spawning the worker
+	// goroutine, then we immediately route CloseStdin against the same
+	// id — this is the exact ordering CP produces.
+	s.dispatch(ctx, &clawkerdv1.Command{
+		CommandId: id,
+		Payload: &clawkerdv1.Command_Shell{Shell: &clawkerdv1.ShellCommand{
+			Stages:         []*clawkerdv1.PipeStage{{Argv: []string{"/bin/cat"}}},
+			InitialStdin:   []byte(payload),
+			TimeoutSeconds: 5,
+		}},
+	})
+	s.dispatch(ctx, &clawkerdv1.Command{
+		CommandId: id,
+		Payload:   &clawkerdv1.Command_CloseStdin{CloseStdin: &clawkerdv1.CloseStdin{}},
+	})
+
+	// Drain Responses until Done; assemble stdout.
+	var stdout strings.Builder
+	deadline := time.After(4 * time.Second)
+	for {
+		select {
+		case r := <-s.sendCh:
+			if r == nil {
+				continue
+			}
+			if c := r.GetStdout(); c != nil && r.CommandId == id {
+				stdout.Write(c.Data)
+			}
+			if d := r.GetDone(); d != nil && r.CommandId == id {
+				assert.Equal(t, int32(0), d.FinalExitCode)
+				assert.Equal(t, payload, stdout.String(),
+					"InitialStdin payload must reach the child even when CloseStdin is sent immediately after ShellCommand")
+				return
+			}
+			if e := r.GetError(); e != nil && r.CommandId == id {
+				t.Fatalf("unexpected Error response: %v", e)
+			}
+		case <-deadline:
+			t.Fatalf("Done never arrived; stdout so far: %q", stdout.String())
+		}
+	}
+}
+
+// TestRunShellCommand_FastExitNoIOError pins the regression fix for
+// the bug that broke agent-init's `post-init` step on second boots
+// (when the marker file makes the script exit in <500ms).
+//
+// exec.Cmd.Wait closes stdout/stderr pipes after the child exits.
+// For a fast-exit command, the reaper goroutine wins the race against
+// the in-flight Read on the drain side, the stdlib returns
+// "read |0: file already closed" (a *fs.PathError wrapping
+// os.ErrClosed) — not io.EOF. Without isExpectedDrainEnd filtering
+// this, drainStdout/drainStderr would surface ERROR_CODE_IO_ERROR
+// even though clawkerd's own audit log records outcome=completed.
+//
+// /bin/true is the canonical fast exit. Run it many times to keep
+// the race window covered across scheduler vagaries; assert no
+// ERROR_CODE_IO_ERROR leaks through.
+func TestRunShellCommand_FastExitNoIOError(t *testing.T) {
+	truePath := trueBinPath(t)
+	const N = 20
+	for i := range N {
+		s, _ := newTestSession()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		runUntilDone(t, ctx, s, &clawkerdv1.ShellCommand{
+			Stages: []*clawkerdv1.PipeStage{{Argv: []string{truePath}}},
+		}, fmt.Sprintf("fast-exit-%d", i))
+		for _, r := range drainAll(s) {
+			if e := r.GetError(); e != nil {
+				t.Fatalf("iter %d: unexpected Error response: code=%v msg=%q",
+					i, e.Code, e.Message)
+			}
+		}
+		cancel()
+	}
 }
 
 // TestRunShellCommand_ConcurrentClean exercises the stage-reaper
@@ -496,22 +608,8 @@ func TestShutdownRunning_CancelsAllCommands(t *testing.T) {
 
 // --- handleRegisterRequired ----------------------------------------------
 
-// TestDispatch_RegisterRequired_EmptyCommandID pins the contract that
-// RegisterRequired (like every non-Hello payload) requires a non-empty
-// command_id. Without it CP cannot correlate the RegisterDone reply.
-func TestDispatch_RegisterRequired_EmptyCommandID(t *testing.T) {
-	s, _ := newTestSession()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	s.dispatch(ctx, &clawkerdv1.Command{
-		Payload: &clawkerdv1.Command_RegisterRequired{RegisterRequired: &clawkerdv1.RegisterRequired{}},
-	})
-	resps := drainAll(s)
-	require.Len(t, resps, 1)
-	er := resps[0].GetError()
-	require.NotNil(t, er)
-	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, er.Code)
-}
+// (Empty-command_id contract for RegisterRequired and AgentReady is
+// pinned in the parameterized TestDispatch_EmptyCommandID table.)
 
 // TestHandleRegisterRequired_NilCoordinator pins the safety branch:
 // when no coordinator is wired, reply ok=false instead of hanging the
@@ -616,4 +714,104 @@ func waitOneResponse(t *testing.T, s *session, timeout time.Duration) *clawkerdv
 		t.Fatal("timed out waiting for RegisterDone Response")
 		return nil
 	}
+}
+
+// withFifoPath rebinds agentReadyFifoPath for the duration of one
+// test. Restores the prior value via t.Cleanup so test ordering can't
+// leak the override.
+func withFifoPath(t *testing.T, path string) {
+	t.Helper()
+	prev := agentReadyFifoPath
+	agentReadyFifoPath = path
+	t.Cleanup(func() { agentReadyFifoPath = prev })
+}
+
+// TestHandleAgentReady_HappyPath verifies the contract that drives
+// the entrypoint release: with a reader blocked on the fifo, the
+// handler opens it for write, the kernel unblocks the reader, the
+// handler returns Done{0}.
+func TestHandleAgentReady_HappyPath(t *testing.T) {
+	dir := t.TempDir()
+	fifo := dir + "/agent.fifo"
+	require.NoError(t, syscall.Mkfifo(fifo, 0o600))
+	withFifoPath(t, fifo)
+
+	// Open the read side O_RDONLY|O_NONBLOCK in the test goroutine so
+	// we know it's open before dispatch — handler's O_WRONLY|O_NONBLOCK
+	// open then succeeds (reader fd present) instead of returning ENXIO.
+	// O_NONBLOCK on the reader makes the open non-blocking; subsequent
+	// reads still block until the writer arrives.
+	rfd, err := os.OpenFile(fifo, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rfd.Close() })
+
+	readerDone := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(rfd)
+		readerDone <- err
+	}()
+
+	s, _ := newTestSession()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.handleAgentReady(ctx, "ar-happy")
+
+	resp := waitOneResponse(t, s, time.Second)
+	assert.Equal(t, "ar-happy", resp.CommandId)
+	done := resp.GetDone()
+	require.NotNil(t, done, "expected Done payload, got %T", resp.Payload)
+	assert.Equal(t, int32(0), done.FinalExitCode)
+
+	select {
+	case err := <-readerDone:
+		assert.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("reader never observed the fifo write")
+	}
+}
+
+// TestHandleAgentReady_NoReader covers the reconnect path: CP redials
+// a long-running container after entrypoint already exec'd CMD, so
+// the fifo has no reader. O_WRONLY|O_NONBLOCK returns ENXIO; handler
+// treats it as no-op success.
+func TestHandleAgentReady_NoReader(t *testing.T) {
+	dir := t.TempDir()
+	fifo := dir + "/agent.fifo"
+	require.NoError(t, syscall.Mkfifo(fifo, 0o600))
+	withFifoPath(t, fifo)
+
+	s, logBuf := newTestSession()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.handleAgentReady(ctx, "ar-no-reader")
+
+	resp := waitOneResponse(t, s, time.Second)
+	assert.Equal(t, "ar-no-reader", resp.CommandId)
+	done := resp.GetDone()
+	require.NotNil(t, done, "expected Done on ENXIO path, got %T", resp.Payload)
+	assert.Equal(t, int32(0), done.FinalExitCode)
+	assert.Contains(t, logBuf.String(), "agent_ready_no_reader",
+		"audit log should record the no-reader path so operators can distinguish first-boot release from reconnect-replay")
+}
+
+// TestHandleAgentReady_FifoMissing covers the build-drift case: the
+// entrypoint never created the fifo (image misconfiguration). Open
+// returns a non-ENXIO error; handler surfaces Error so operators see
+// the failure rather than a silent hang.
+func TestHandleAgentReady_FifoMissing(t *testing.T) {
+	dir := t.TempDir()
+	fifo := dir + "/never-created.fifo"
+	withFifoPath(t, fifo)
+
+	s, _ := newTestSession()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.handleAgentReady(ctx, "ar-missing")
+
+	resp := waitOneResponse(t, s, time.Second)
+	assert.Equal(t, "ar-missing", resp.CommandId)
+	er := resp.GetError()
+	require.NotNil(t, er, "expected Error payload, got %T", resp.Payload)
+	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, er.Code)
+	assert.Contains(t, er.Message, "agent_ready: open")
 }

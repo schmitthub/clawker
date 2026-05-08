@@ -126,6 +126,14 @@ type Dialer struct {
 	// Required (non-nil) — wiring bug if unset.
 	agents Registry
 
+	// initExec dispatches the CP-driven init plan after dispatchAgentEvents
+	// returns and before drainStream takes over Recv. nil disables CP-driven
+	// init entirely (the entrypoint then waits forever on its fifo and the
+	// container fails to launch CMD) — never pass nil in production. Tests
+	// that don't care about init pass nil; the dialer logs a warning and
+	// skips. Set once at construction; not safe to mutate after `Start`.
+	initExec *Executor
+
 	cpClientCert tls.Certificate
 	caPool       *x509.CertPool
 
@@ -148,7 +156,7 @@ type Dialer struct {
 // the typed AgentRegistered / AgentUntrusted events accordingly. nil
 // agents would strand worldview consumers without a registration
 // signal.
-func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer, agents Registry, certPath, keyPath string, caPool *x509.CertPool) (*Dialer, error) {
+func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer, agents Registry, certPath, keyPath string, caPool *x509.CertPool, initExec *Executor) (*Dialer, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -170,6 +178,7 @@ func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer
 		docker:       docker,
 		bus:          bus,
 		agents:       agents,
+		initExec:     initExec,
 		cpClientCert: cert,
 		caPool:       caPool,
 		dialing:      make(map[string]struct{}),
@@ -258,6 +267,16 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 		// stream stays open in all cases — CP must remain reachable
 		// for containment commands even when the agent is untrusted.
 		d.dispatchAgentEvents(ctx, containerID, res, cycleLog)
+
+		// Run the CP-driven init plan synchronously before drainStream
+		// takes over Recv. Init owns Recv during its phase; failures
+		// publish InitFailed but do NOT close the Session — asymmetric
+		// trust applies, CP must remain reachable for containment.
+		// Without an Executor wired the entrypoint will hang on its
+		// fifo until CLAWKER_INIT_TIMEOUT elapses; surface the
+		// misconfiguration loudly. Init re-runs on every Session
+		// reconnect (see Executor docs).
+		d.runInit(ctx, containerID, res, cycleLog)
 
 		drain := d.drainStream(ctx, res.Stream, cycleLog)
 		// Cancel the stream-scoped ctx so any goroutine still parked on
@@ -1029,6 +1048,35 @@ func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, re
 			Detail:      fmt.Sprintf("unknown registryOutcome %d", int(outcome)),
 			At:          time.Now(),
 		})
+	}
+}
+
+// runInit invokes the wired Executor against the open Session. No-op
+// (with a warning) if no Executor was set — operators see the
+// misconfiguration in the structured log; the entrypoint will then
+// time out on its fifo and the container will fail to launch CMD.
+//
+// Failure to complete init is NOT terminal for the Session: the stream
+// stays open so subsequent containment commands can still be
+// dispatched (asymmetric trust). The init failure is captured on the
+// overseer worldview via InitFailed; subscribers (CLI WatchAgent,
+// monitoring) consume that to surface to operators.
+func (d *Dialer) runInit(ctx context.Context, containerID string, res establishResult, log *logger.Logger) {
+	if d.initExec == nil {
+		log.Warn().
+			Str("event", "agent_init_executor_unset").
+			Msg("agent.init: no Executor wired on dialer; entrypoint will hang on its fifo until timeout")
+		return
+	}
+	target := InitTarget{
+		ContainerID: containerID,
+		AgentName:   res.Agent,
+		Project:     res.Project,
+	}
+	if err := d.initExec.Run(ctx, res.Stream, target); err != nil {
+		log.Warn().Err(err).
+			Str("event", "agent_init_run_failed").
+			Msg("agent.init: Executor.Run returned error; Session held open for containment")
 	}
 }
 

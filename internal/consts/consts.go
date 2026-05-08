@@ -239,8 +239,9 @@ const (
 
 // Container user identity.
 const (
-	ContainerUID = 1001
-	ContainerGID = 1001
+	ContainerUID  = 1001
+	ContainerGID  = 1001
+	ContainerUser = "claude"
 )
 
 // Auth scopes (for gRPC method authorization).
@@ -279,6 +280,15 @@ const (
 	BootstrapKeyFile       = "key.pem"
 	BootstrapCAFile        = "ca.pem"
 	BootstrapAssertionFile = "assertion.jwt"
+
+	// AgentReadyFifo is the named pipe the entrypoint creates and reads
+	// to block exec of the user CMD until CP-driven init completes.
+	// clawkerd opens it O_WRONLY|O_NONBLOCK on AgentReady and writes one
+	// byte to release the entrypoint. ENXIO (no reader) is the
+	// reconnect-after-init-already-completed path and is treated as a
+	// no-op success — the entrypoint already exec'd CMD on the first
+	// AgentReady this boot.
+	AgentReadyFifo = "/run/clawker/agent.fifo"
 )
 
 // Container env vars for clawkerd bootstrap. clawkerd reads only what

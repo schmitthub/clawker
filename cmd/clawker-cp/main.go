@@ -697,6 +697,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// containers, individual dial) are logged and the rest of CP
 	// proceeds — a misconfigured agent or a flapping clawkerd cannot
 	// hold the control plane down.
+	// Wire the CP-driven init Executor into the dialer at construction.
+	// Each new Session establish runs the static init plan (config seed,
+	// gitconfig filter, ssh known_hosts, post-init, AgentReady) against
+	// the open stream. Without this, the entrypoint hangs on its fifo
+	// until CLAWKER_INIT_TIMEOUT and the container fails to launch CMD.
+	// Container user identity (uid/gid/username/home) lives in consts
+	// and is read directly by the Executor.
+	initExec := agent.NewExecutor(bus, log.With("component", "agent.init"))
 	dialer, err := agent.New(
 		log.With("component", "agent"),
 		dockerCli.APIClient,
@@ -705,6 +713,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		consts.CPClientCertPath,
 		consts.CPClientKeyPath,
 		caCertPool,
+		initExec,
 	)
 	if err != nil {
 		log.Error().Err(err).Str("event", "agentdial_init_failed").Msg("agent unavailable; CP→clawkerd dispatch disabled")

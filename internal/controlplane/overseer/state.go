@@ -103,6 +103,20 @@ func Untrust(reason UntrustedReason) Trust {
 	return Trust{untrusted: true, reason: reason}
 }
 
+// InitStatus is the lifecycle of a CP-driven init sequence as observed
+// by the agent component's init Executor. Distinct axis from Session*
+// (transport) and Trust (identity) — init is the post-Session,
+// post-trust phase that runs the per-container setup ShellCommands
+// before the entrypoint releases the user CMD.
+type InitStatus string
+
+const (
+	InitStatusUnknown   InitStatus = ""
+	InitStatusRunning   InitStatus = "running"
+	InitStatusCompleted InitStatus = "completed"
+	InitStatusFailed    InitStatus = "failed"
+)
+
 // Agent is the Overseer's in-memory worldview of one clawker-managed
 // agent. Replaces the prior split between AgentSession (transport
 // lifecycle) and the durable agentregistry row (identity binding) by
@@ -116,6 +130,7 @@ func Untrust(reason UntrustedReason) Trust {
 //     LastError, Thumbprint, AgentName, Project)
 //   - AgentRegistered event (Registered=Ok)
 //   - AgentUntrusted event (Trust=Untrust(Reason))
+//   - InitStarted/Step*/Completed/Failed events from the init Executor
 //   - dockerevents container/destroy (entry deleted)
 //
 // Trust zero-value is "trusted with no reason" — see Trust docs.
@@ -131,6 +146,29 @@ type Agent struct {
 	Attempts      int
 	LastError     string
 	UpdatedAt     time.Time
+
+	// InitStatus is the current state of CP-driven init for this agent.
+	// Reset to InitStatusRunning on every Session establish that drives
+	// init; transitions to InitStatusCompleted on the AgentReady step
+	// or InitStatusFailed on any earlier step's non-zero exit.
+	InitStatus InitStatus
+	// InitCurrentStep is the human-readable name of the most recently
+	// started step (e.g. "config", "git", "ssh", "post-init",
+	// "agent-ready"). Empty until InitStarted fires; retains the
+	// failing step name across InitStatusFailed→InitStatusRunning
+	// transitions until overwritten by the next InitStepStarted.
+	InitCurrentStep string
+	// InitStepIndex is the 0-based index of InitCurrentStep within the
+	// plan. -1 when no init phase has been observed.
+	InitStepIndex int
+	// InitStepCount is the total number of steps in the active plan,
+	// captured at InitStarted time. 0 until first init phase.
+	InitStepCount int
+	// InitStartedAt / InitCompletedAt timestamp the most recent phase
+	// boundaries. CompletedAt holds the final outcome timestamp on
+	// either Completed or Failed.
+	InitStartedAt   time.Time
+	InitCompletedAt time.Time
 }
 
 // State is the Overseer's full worldview projection at a point in time.
