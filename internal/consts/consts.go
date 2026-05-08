@@ -266,10 +266,10 @@ const (
 )
 
 // Init-phase wall-clock ceilings used by the CP-driven init plan.
-// post-init governs the longest-running step. The entrypoint's
-// CLAWKER_INIT_TIMEOUT (currently 660 in entrypoint.sh) must stay >=
-// post-init + slack so the entrypoint doesn't kill the container
-// while CP is still waiting for a slow user post-init.
+// post-init governs the longest-running step. The bundler renders
+// entrypoint.sh.tmpl with CLAWKER_INIT_TIMEOUT defaulted to
+// post-init + 60s slack at image-build time, so this constant is the
+// single source of truth — the bash script can never drift.
 const (
 	InitStepTimeoutDefaultSeconds  uint32 = 30
 	InitStepTimeoutPostInitSeconds uint32 = 600

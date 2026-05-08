@@ -26,6 +26,7 @@ import (
 	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/schmitthub/clawker/internal/clawkerd"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
 
@@ -44,8 +45,54 @@ var dockerfileFS embed.FS
 //go:embed assets/Dockerfile.tmpl
 var DockerfileTemplate string
 
-//go:embed assets/entrypoint.sh
-var EntrypointScript string
+//go:embed assets/entrypoint.sh.tmpl
+var entrypointTmpl string
+
+// EntrypointScript is the rendered container entrypoint. Rendered at
+// package-init from values in internal/consts so the bash script
+// cannot drift from Go callers. A panic here only fires on a
+// malformed compiled-in template, which is a build-time bug. The
+// blast radius is "binary refuses to start" (whether the importer is
+// the CLI or clawker-cp) — eBPF is not yet loaded at package-init,
+// so this does not violate the CP no-panic rule, which scopes to
+// post-SetReady code paths where a panic would strand eBPF state.
+var EntrypointScript = mustRenderEntrypoint()
+
+// renderedAssetByName overrides raw embed.FS bytes for templated
+// assets in EmbeddedScripts() so a bump to a templated value
+// invalidates the image content hash. Keys are filenames relative to
+// assets/.
+var renderedAssetByName = map[string]string{
+	"entrypoint.sh.tmpl": EntrypointScript,
+}
+
+func mustRenderEntrypoint() string {
+	t, err := template.New("entrypoint.sh").Parse(entrypointTmpl)
+	if err != nil {
+		panic(fmt.Errorf("bundler: parse entrypoint.sh.tmpl: %w", err))
+	}
+	// 60s slack keeps the bash timeout strictly later than the CP-side
+	// per-step ceiling so failures surface as CP's structured init
+	// event, not a bare shell timeout.
+	data := struct {
+		AgentReadyFifo     string
+		AgentReadyFifoDir  string
+		ReadyMarkerPath    string
+		ReadyMarkerDir     string
+		InitTimeoutSeconds int
+	}{
+		AgentReadyFifo:     consts.AgentReadyFifo,
+		AgentReadyFifoDir:  filepath.Dir(consts.AgentReadyFifo),
+		ReadyMarkerPath:    consts.ReadyMarkerPath,
+		ReadyMarkerDir:     filepath.Dir(consts.ReadyMarkerPath),
+		InitTimeoutSeconds: int(consts.InitStepTimeoutPostInitSeconds) + 60,
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		panic(fmt.Errorf("bundler: render entrypoint.sh.tmpl: %w", err))
+	}
+	return buf.String()
+}
 
 //go:embed assets/statusline.sh
 var StatuslineScript string
@@ -59,9 +106,8 @@ var ConfigFile string
 //go:embed assets/clawker-agent-prompt.md
 var AgentPromptFile string
 
-// Re-export hostproxy container scripts from internal/hostproxy/internals.
-// These were previously embedded directly in this package but now live
-// alongside the hostproxy code they interact with.
+// Re-exported from internal/hostproxy/internals so the bundler hashes
+// them with its own assets.
 var (
 	HostOpenScript          = internals.HostOpenScript
 	CallbackForwarderSource = internals.CallbackForwarderSource
@@ -69,33 +115,38 @@ var (
 	SocketForwarderSource   = internals.SocketForwarderSource
 )
 
-// EmbeddedScripts returns all embedded script contents for content hashing.
-// Scripts are read dynamically from embed.FS to ensure new scripts are
-// automatically included without manual list maintenance.
-//
-// IMPORTANT: This function includes ALL scripts that affect the built image:
-//   - Bundler assets (assets/*) are auto-discovered via embed.FS
-//   - Hostproxy container scripts are included via internals.AllScripts()
-//
-// New scripts added to either location will be automatically included.
-// Scripts are sorted for deterministic hashing.
+// EmbeddedScripts returns all embedded script contents for content
+// hashing. Bundler assets/ are auto-discovered via embed.FS; hostproxy
+// scripts come from internals.AllScripts(). Templated assets
+// substitute their rendered output so consts changes invalidate the
+// hash. Sorted for determinism.
 func EmbeddedScripts() []string {
 	var scripts []string
 
-	// Read bundler assets dynamically from embed.FS
-	entries, _ := fs.ReadDir(assetsFS, "assets")
+	entries, err := fs.ReadDir(assetsFS, "assets")
+	if err != nil {
+		// Reading a compiled-in embed.FS only fails on a corrupt
+		// binary. A silent empty list here would produce a stable but
+		// wrong content hash and cache-poison the image.
+		panic(fmt.Errorf("bundler: read embedded assets dir: %w", err))
+	}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		content, _ := fs.ReadFile(assetsFS, "assets/"+entry.Name())
+		name := entry.Name()
+		if rendered, ok := renderedAssetByName[name]; ok {
+			scripts = append(scripts, rendered)
+			continue
+		}
+		content, err := fs.ReadFile(assetsFS, "assets/"+name)
+		if err != nil {
+			panic(fmt.Errorf("bundler: read embedded asset %q: %w", name, err))
+		}
 		scripts = append(scripts, string(content))
 	}
 
-	// Add hostproxy container scripts via AllScripts()
 	scripts = append(scripts, internals.AllScripts()...)
-
-	// Sort for deterministic hashing
 	sort.Strings(scripts)
 	return scripts
 }
