@@ -18,8 +18,9 @@ import (
 // wall-clock ceiling: post-init can install packages and warm caches,
 // hence 600s; other steps are file-IO and should complete in
 // milliseconds in steady state, 30s tolerates a slow first-boot fs.
-// See consts.EntrypointInitTimeoutSeconds — the entrypoint must wait
-// at least postInit + slack so CP isn't beaten to the kill by bash.
+// The entrypoint script (internal/bundler/assets/entrypoint.sh) must
+// wait at least postInit + slack so CP isn't beaten to the kill by
+// bash.
 const (
 	initStepTimeoutDefault  = consts.InitStepTimeoutDefaultSeconds
 	initStepTimeoutPostInit = consts.InitStepTimeoutPostInitSeconds
