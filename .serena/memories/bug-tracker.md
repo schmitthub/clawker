@@ -2,6 +2,7 @@
 
 ## CP initiative
 
+- [ ] **Entrypoint timeout is the only abort guard for failed init.** When the CP-driven init plan fails (any `agent_init_run_failed` event), the agent container's entrypoint stays blocked on `timeout 660 cat /run/clawker/agent.fifo` for the full ceiling — up to 11 minutes — even though CP already knows the init failed and has logged it. The user's terminal hangs during `clawker run` for the entire timeout with zero indication of what's wrong. Fix: CP-side abort signal so the entrypoint exits ~immediately on detected failure with the reason. Sketch: new `AbortInit { string detail }` `Command` payload; clawkerd handler writes the detail to `/run/clawker/agent.failed` and writes one byte to the fifo to release `cat`; entrypoint after `cat fifo` checks for the marker file and exits 1 with the detail printed to stderr. Dialer dispatches `AbortInit` in `runInit` when `Executor.Run` returns non-nil.
 - [ ] Clawker firewall up / clawker controlplane up fails if CP image isn't built yet. needs to handle building and starting the cp image along with better helper instructions. Seems to have resolved on a second attempt but should be looked into.
 
 ```
