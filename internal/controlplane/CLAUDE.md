@@ -168,4 +168,4 @@ No circular dependencies.
 ## Known limitations (deferred to cp-restart-resilience)
 
 - **Per-agent Session teardown on registry evict.** Eviction at the registry level (dockerevents → `EvictByContainerID`) does not yet cancel the CP→clawkerd `Session` stream; the dialer's runDial loop notices the container disappearance via `outcomeContainerGone` on the next reconnect attempt and emits a `SessionFailed` event. Closing the in-flight stream synchronously with the evict requires plumbing a cancel handle from the dialer to the registry subscriber.
-- **CP restart resilience.** When the CP restarts, clawkerd's inbound `:7700` listener stays up and the dialer re-establishes the Session once the new CP boots and reaches the container. The agentregistry sqlite DB persists across CP restarts so identity is preserved without re-bootstrapping.
+- **CP restart resilience.** When the CP restarts, clawkerd's inbound `:7700` listener stays up and the dialer re-establishes the Session once the new CP boots and reaches the container. The agent registry sqlite DB persists across CP restarts so identity is preserved without re-bootstrapping.

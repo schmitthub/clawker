@@ -1,6 +1,12 @@
-# Storage Schema Contract
+---
+description: Storage schema struct tag contract and field system
+paths:
+  - "internal/storage/**"
+  - "internal/config/schema*"
+  - "internal/config/defaults*"
+---
 
-**Applies to**: `internal/storage/field*`, `internal/storage/defaults*`, `internal/config/schema*`, `internal/config/defaults*`
+# Storage Schema Contract
 
 ## Struct Tag Contract
 

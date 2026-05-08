@@ -74,15 +74,7 @@ f := &cmdutil.Factory{
 
 Commands that use `opts.TUI.RunProgress()` require the `TUI` field. Commands that only use `f.IOStreams` for static output don't need TUI. All commands that log require the `Logger` field.
 
-## Error Handling & Output (`output.go`, `errors.go`)
-
-### Active Functions
-
-None — all output helpers are deprecated. Use `fmt.Fprintf` with `ios.ColorScheme()` directly.
-
-**Deprecated** (`output.go`): `HandleError`, `PrintNextSteps`, `PrintErrorf`, `OutputJSON`, `PrintHelpHint` — use `fmt.Fprintf` with `ios.ColorScheme()` directly.
-
-### Error Types (`errors.go`)
+## Error Types (`errors.go`)
 
 ```go
 // FlagError triggers usage display in Main()'s centralized error rendering.

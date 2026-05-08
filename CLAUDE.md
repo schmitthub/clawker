@@ -4,28 +4,21 @@
 
 ## MANTRA
 
-This is an in-development alpha project. Features are sometimes made quickly or in haste, architecture and design can change Legacy code that no longer fits the big picture can be encountered often therefore...
+Alpha project — architecture and design change often. Legacy code that no longer fits gets encountered regularly.
 
-* we don't write bad hackish code just to get a single task or feature done. that is a sure fire way to create massive technical debt.
-* you must always be thinking about the big picture.
-* when we find gaps and bad patterns we pivot and address them before continuing so that the project can scale painlessly
-* when planning work, you must always consider the impact on architecture, design, testing, documentation, user and developer experience.
-* always think to yourself "will this make future work easier or harder? does this decision serve the entire project as a whole or just my task's?" if harder, rethink your approach.
-For example:
-* If a component needs a new public method, consider if it belongs in the package's public API at all. Should it be private? Should it be in another package?
-* If an internal package is missing a test subpackage, an interface, a mock implementation, or a fake for testing, add it to fit our standard patterns and factory DI pattern so that every other caller can benefit.
+* Don't write hacky code to get a task done. Think about the big picture.
+* When gaps or bad patterns are found, pivot and address them before continuing.
+* Consider impact on architecture, design, testing, documentation, user and developer experience.
+* Ask: "will this make future work easier or harder? does this decision serve the project or just my task?" If harder, rethink.
+* If a package is missing a test subpackage, interface, mock, or fake, add it to fit standard patterns so every caller benefits.
 
-Finding and fixing greater issues is fun, its more important than the task at hand. You love to pivot on fixing technical debt and improving architecture. You are a software craftsman.
-
-**Your success depends on this mantra**
+Prioritize fixing technical debt and improving architecture over completing the immediate task.
 
 ### Workflow Requirements
 
-**Planning**: You MUST adhere to design in `.claude/docs/DESIGN.md` and architecture in `.claude/docs/ARCHITECTURE.md` when planning work. If changes are needed, update those docs accordingly.
-**Testing**: You MUST adhere to TDD, writing tests before code changes. All tests must pass before considering a change complete. If a fixture, golden file, interface, mock, fake, or test helper is needed, add it.
-If an integration test is required, add it to the appropriate `test/*/` subpackage. If a new test suite is needed, create it under `test/`.
-**Documentation**: You MUST update README.md, */**CLAUDE.md, and relevant memories after
-It does not matter if the work has to be done in an out-of-scope dependency, it is for the greater good of the project which matters more than anything else.
+**Planning**: Adhere to `.claude/docs/DESIGN.md` and `.claude/docs/ARCHITECTURE.md`. Update those docs if changes are needed.
+**Testing**: TDD — write tests before code. All tests must pass. Add fixtures, golden files, interfaces, mocks, fakes, and test helpers as needed. Integration tests go in `test/*/`.
+**Documentation**: Update README.md, relevant CLAUDE.md files, and memories after completing changes.
 
 </critical_instructions>
 
@@ -33,14 +26,10 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 
 ## CP ≠ firewall (common LLM confusion)
 
-LLM sessions repeatedly conflate the Control Plane (CP) with the firewall. They are NOT the same thing.
+- **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent registry, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `cpboot.EnsureRunning`. No "disable CP" flag. CP owns clawker-net.
+- **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml`). When disabled, CP/mTLS/registry/agent.Dialer/ListAgents continue to operate.
 
-- **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent slot/registry bookkeeping, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `cpboot.EnsureRunning`. There is no "disable CP" flag. CP owns clawker-net.
-- **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml` — the project schema's `security.firewall` field is `FirewallConfig`, holding per-project `add_domains`/`rules` only; the master switch is global). When disabled, those components don't run — but CP, clawker-net, mTLS, agentregistry, agentdial→clawkerd Session, ListAgents, and every non-firewall AdminService RPC continue to operate.
-
-**CP owns firewall, not the other way around.** Older framings that put firewall above or alongside CP are stale — disregard them.
-
-Do **NOT** gate non-firewall behavior on `firewall.enable` (settings.yaml). The flag scopes the egress enforcement layer only.
+Do **NOT** gate non-firewall behavior on `firewall.enable`.
 
 </critical_clarification>
 
@@ -48,16 +37,12 @@ Do **NOT** gate non-firewall behavior on `firewall.enable` (settings.yaml). The 
 
 ## Asymmetric trust: dialer permissive, listener strict
 
-CP↔clawkerd is asymmetric on purpose:
+- **clawkerd-side listener (server):** STRICT. `cmd/clawkerd/listener.go` enforces CP CN pin + Client-Auth EKU + CA chain at TLS layer.
+- **CP-side dialer (client):** PERMISSIVE. `internal/controlplane/agent.Dialer` never aborts on cert/identity grounds. Outcomes emitted as typed fields on `SessionConnected` overseer events. Dial only fails on connectivity.
 
-- **clawkerd-side listener (server):** STRICT. `cmd/clawkerd/listener.go` enforces CP CN pin + Client-Auth EKU + CA chain at the TLS layer; any peer that isn't CP is rejected before reaching the handler.
-- **CP-side dialer (client):** PERMISSIVE. `internal/controlplane/agentdial.Dialer` NEVER aborts on cert / identity grounds. Cert chain verify, peer CN match, registry cross-check (thumbprint, canonical_cn) — every outcome is a typed boolean field on the `SessionConnected.Provenance` overseer event payload. The dial only fails on connectivity (TCP timeout, container gone, retry exhausted, ctx cancelled).
+**Why permissive:** CP must reach clawkerd to issue containment commands even when certs are bad. Subscribers to `SessionConnected` enact policy; the dialer holds none.
 
-**Why permissive on the dialer:** CP must always be able to reach clawkerd to issue containment commands (iptables lock, network detach, container kill, future BPF action). A compromised clawkerd presenting a bad cert is exactly when CP needs the channel up to issue lockdown commands. Aborting on cert grounds would strand CP at the moment governance is most needed.
-
-Subscribers to `SessionConnected` consume the `Provenance` fields to enact policy; the dialer holds no policy itself. Future "things" (containment actions, alerting, eviction) plug in by subscribing to overseer events — they never modify the dialer.
-
-**Trust attestation today:** CLI mints the agent cert + writes a sqlite registry row keyed by container_id at create time. The dialer cross-checks the peer cert thumbprint against the row and emits the result on the bus. There is no separate AnnounceAgent / slot reservation — those were retired alongside the in-memory `agentslots` package because the registry+cert binding subsumes their attestation value.
+**Trust attestation:** CLI mints agent cert + writes sqlite registry row at create time. Dialer cross-checks peer cert thumbprint against the row and emits result on the bus.
 
 </critical_clarification>
 
@@ -65,160 +50,107 @@ Subscribers to `SessionConnected` consume the `Provenance` fields to enact polic
 
 ```
 ├── api/
-│   ├── admin/v1/              # AdminService protobuf (CLI → CP gRPC, mTLS on AdminPort)
-│   └── agent/v1/              # AgentService protobuf — currently empty (Register retired); reserved for future inbound clawkerd→CP RPCs
+│   ├── admin/v1/              # AdminService protobuf (CLI → CP gRPC)
+│   └── agent/v1/              # AgentService protobuf (Register RPC for clawkerd→CP identity binding)
 ├── cmd/
 │   ├── clawker/               # Main CLI binary
-│   ├── clawker-cp/            # Control plane daemon binary — `clawker-cp` runs as PID 1 in the CP container, owns firewall/eBPF state, serves AdminService gRPC, dials each clawkerd's `ClawkerdService.Session` for command dispatch
+│   ├── clawker-cp/            # Control plane daemon (PID 1 in CP container)
 │   ├── clawker-generate/      # Code generation helper
-│   ├── clawkerd/              # Per-container agent daemon (Linux); started from the bundled image entrypoint, exchanges a JWT assertion for a Hydra access token, serves `ClawkerdService.Session` (CP-dialed, bidi-stream) for the container lifetime
-│   ├── coredns-clawker/       # Custom CoreDNS build embedding the dnsbpf plugin (Linux; embedded via go:embed into internal/controlplane/firewall)
-│   └── gen-docs/              # CLI doc generator (man/markdown/rst/yaml)
+│   ├── clawkerd/              # Per-container agent daemon (Linux)
+│   ├── coredns-clawker/       # Custom CoreDNS with dnsbpf plugin (Linux)
+│   └── gen-docs/              # CLI doc generator
 ├── internal/
-│   ├── auth/                  # CLI-side auth material + CP dial helpers (ES256 signing key, client cert, JWK, JWT assertion)
-│   ├── build/                 # Build-time metadata (version, date) — leaf, stdlib only
-│   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
+│   ├── auth/                  # CLI-side auth material + CP dial helpers
+│   ├── build/                 # Build-time metadata (leaf, stdlib only)
+│   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry
 │   ├── clawker/               # Main application lifecycle
-│   ├── clawkerd/              # Embedded clawkerd binary (assets/ + embed.go) — built by `make clawkerd-binary`, embedded into the clawker CLI for delivery into agent images by `internal/bundler`
-│   ├── cmd/                   # Cobra commands (auth/, container/, volume/, network/, image/, version/, loop/, worktree/, firewall/, controlplane/, root/)
-│   │   ├── factory/           # Factory constructor — wires real dependencies
-│   │   ├── settings/          # Settings parent command + edit subcommand
-│   │   ├── skill/             # Skill plugin management (install/show/remove) — wraps claude CLI
+│   ├── clawkerd/              # Embedded clawkerd binary (go:embed)
+│   ├── cmd/                   # Cobra commands
+│   │   ├── factory/           # Factory constructor
+│   │   ├── settings/          # Settings commands
+│   │   ├── skill/             # Skill plugin management
 │   │   └── project/edit/      # Project edit subcommand
-│   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
-│   ├── config/                # Storage.Store[T] config engine: schema types, multi-file loading, constants (see internal/config/CLAUDE.md)
-│   │   └── storeui/           # Domain adapters for storeui: settings/, project/
-│   ├── consts/                # Cross-package constants (CP container name, network labels, scopes)
-│   ├── containerfs/           # Host Claude config preparation for container init
-│   ├── controlplane/          # Control plane daemon: Ory auth stack, AdminService composition, startup orchestrator, agent watcher
-│   │   ├── agent/             # AgentService listener identity interceptor (cert-thumbprint → registry entry, fail-secure opt-out map). AgentService is empty in this branch.
-│   │   ├── agentdial/         # CP-side outbound dialer for `ClawkerdService.Session`. Permissive trust (always connects); cert/CN/registry outcomes emitted as typed `Provenance` fields on `SessionConnected` overseer events
-│   │   ├── agentregistry/     # SQLite-persisted identity store — CLI writes `(thumbprint, container_id, canonical_cn)` rows at container create time; CP-side reaper + dockerevents `container/destroy` evict
-│   │   ├── cpboot/            # Host-side CP lifecycle: `EnsureRunning`/`Stop`/`CPRunning`, `BuildCPContainerConfig`, `Manager` interface + `NewManager`, embedded clawker-cp + ebpf-manager binaries (split out so `cmd/clawker-cp` doesn't drag in its own `go:embed`)
-│   │   │   └── assets/        # Embedded CP + break-glass ebpf-manager Linux binaries (gitignored; built by make cp-binary / make ebpf-binary)
-│   │   ├── firewall/          # Firewall domain: `Handler` (13 firewall RPCs — AdminService total is 14 with `ListAgents`), `Stack` (Envoy+CoreDNS lifecycle), Envoy+CoreDNS config generators, certs, rules store, network discovery, cgroup helpers, embedded coredns-clawker binary
-│   │   │   └── ebpf/          # eBPF loader + `Manager` (cgroup programs, pinned maps); `cmd/` break-glass ebpf-manager CLI
-│   │   ├── overseer/          # Typed event bus + in-memory worldview state. Producers publish typed events; subscribers receive typed channels. Optional PublishHook middleware for cross-cutting concerns (default-logger hook lives here)
-│   │   ├── dockerevents/      # Docker events feeder + reconcile + single typed envelope (`DockerEvent`) wrapping moby's `events.Message` verbatim. Subscribers filter on `ev.Type` + `ev.Action`. Drift-safe — no parallel Go vocabulary on top of moby's actions. moby fires `container/destroy` for `docker rm`; `ActionRemove` is image-only and never produces a container event.
-│   │   └── mocks/             # ControlPlaneServiceMock, IntrospectorMock, AdminServiceClientMock (ManagerMock lives in cpboot/mocks/)
-│   ├── dnsbpf/                # CoreDNS plugin: writes DNS A-record resolutions (IPv4) to the BPF dns_cache map in real time (used by cmd/coredns-clawker)
-│   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
-│   │   └── mocks/             # FakeClient, test helpers, moby mock transport
-│   ├── docs/                  # CLI doc generation (man, markdown, rst, yaml)
-│   ├── git/                   # Git operations, worktree management (leaf — no internal imports, uses go-git)
-│   │   └── gittest/           # InMemoryGitManager for testing
+│   ├── cmdutil/               # Factory struct, error types, arg validators
+│   ├── config/                # Store[T] config engine (see internal/config/CLAUDE.md)
+│   │   └── storeui/           # Domain adapters for storeui
+│   ├── consts/                # Cross-package constants
+│   ├── containerfs/           # Host Claude config preparation
+│   ├── controlplane/          # CP daemon: Ory auth, AdminService, agent watcher
+│   │   ├── agent/             # Unified agent surface: Dialer, Registry, Register handler, IdentityInterceptor, events
+│   │   ├── adminclient/       # CLI-side AdminService gRPC dial (mTLS + OAuth2)
+│   │   ├── overseer/          # Typed event bus + worldview state
+│   │   ├── cpboot/            # Host-side CP lifecycle (EnsureRunning/Stop)
+│   │   ├── firewall/          # Firewall: Handler (13 RPCs), Stack, Envoy+CoreDNS, eBPF
+│   │   │   └── ebpf/          # eBPF loader + Manager
+│   │   ├── overseer/          # Typed event bus + worldview state
+│   │   ├── dockerevents/      # Docker events feeder + typed envelope
+│   │   └── mocks/
+│   ├── dnsbpf/                # CoreDNS plugin for BPF dns_cache
+│   ├── docker/                # Docker middleware (wraps pkg/whail + bundler)
+│   ├── docs/                  # CLI doc generation
+│   ├── git/                   # Git operations, worktree management (leaf)
 │   ├── hostproxy/             # Host proxy for container-to-host communication
-│   │   ├── hostproxytest/     # MockHostProxy for integration tests
-│   │   └── internals/         # Container-side hostproxy client scripts
-│   ├── iostreams/             # I/O streams, colors, styles, spinners, progress, layout
-│   ├── keyring/               # Keyring service for credential storage
-│   ├── logger/                # Struct-based zerolog (file + optional OTEL bridge); Factory noun
-│   ├── monitor/               # Monitoring stack templates (Grafana, Prometheus, Loki)
-│   ├── project/               # Project registration in user registry
-│   ├── prompter/              # Interactive prompts (String, Confirm, Select)
-│   ├── signals/               # OS signal utilities (leaf — stdlib only)
-│   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
-│   │   └── socketbridgetest/  # MockManager for testing
-│   ├── storage/               # Multi-file YAML store: discovery, merge, provenance-aware write, dir validation
-│   ├── storeui/               # Generic TUI for browsing/editing Store[T] instances (bridges storage + tui)
-│   ├── term/                  # Terminal capabilities + raw mode (leaf — sole x/term gateway)
-│   │   └── mocks/             # FakeTerm stub (satisfies iostreams.term interface)
-│   ├── testenv/               # Unified test environment: isolated dirs, config, project manager (test-only)
-│   ├── text/                  # Pure text utilities (leaf — stdlib only)
-│   ├── tui/                   # Interactive TUI layer: BubbleTea models, viewports, panels (imports iostreams for styles)
-│   ├── update/                # Background update checker — GitHub releases API, 24h cached notifications (foundation — no internal imports)
+│   ├── iostreams/             # I/O streams, colors, styles, spinners, layout
+│   ├── keyring/               # Credential storage
+│   ├── logger/                # Struct-based zerolog; Factory noun
+│   ├── monitor/               # Monitoring stack templates
+│   ├── project/               # Project registration
+│   ├── prompter/              # Interactive prompts
+│   ├── signals/               # OS signal utilities (leaf)
+│   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc
+│   ├── storage/               # Multi-file YAML store
+│   ├── storeui/               # Generic TUI for Store[T] editing
+│   ├── term/                  # Terminal capabilities (sole x/term gateway)
+│   ├── testenv/               # Unified test environment (test-only)
+│   ├── text/                  # Pure text utilities (leaf)
+│   ├── tui/                   # BubbleTea TUI layer
+│   ├── update/                # Background update checker
 │   └── workspace/             # Bind vs Snapshot strategies
-├── pkg/
-│   └── whail/                 # Reusable Docker engine with label-based isolation
-│       └── buildkit/          # BuildKit client (moby/buildkit) — isolated heavy deps
+├── pkg/whail/                 # Reusable Docker engine with label-based isolation
 ├── test/
-│   ├── e2e/                   # E2E integration tests (firewall, mounts, migrations, presets)
-│   │   └── harness/           # CLI test harness (delegates dirs to testenv, adds chdir + Factory + Run)
-│   └── whail/                 # Whail BuildKit integration tests (Docker + BuildKit)
-├── scripts/
-│   ├── install.sh                 # curl|bash installer (downloads pre-built binary from GitHub releases)
-│   ├── install-hooks.sh           # Install pre-commit hooks
-│   ├── check-claude-freshness.sh  # CLAUDE.md staleness checker
-│   ├── clawker-leak-monitor.sh    # Docker resource leak monitor
-│   ├── gen-dep-graphs.sh          # Dependency graph generator
-│   ├── gen-notice.sh              # Third-party notice generator
-│   └── localenv-dotenv.sh         # Local env .env updater (used by `make localenv`)
+│   ├── e2e/                   # E2E integration tests
+│   └── whail/                 # Whail BuildKit integration tests
+├── scripts/                   # install.sh, install-hooks.sh, check-claude-freshness.sh, etc.
 └── templates/                 # clawker.yaml scaffolding
 ```
 
 ## Build Commands
 
 ```bash
-# Install via Homebrew
-brew install schmitthub/tap/clawker
-
-# Install pre-built binary (no Go required)
-curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash
-bash scripts/install.sh --version v0.1.3 --dir $HOME/.local/bin  # Pin version + custom dir
-
-go build -o bin/clawker ./cmd/clawker  # Build CLI
-make test                                 # Unit tests (no Docker, excludes test/e2e,whail)
-./bin/clawker --debug run @              # Debug logging
-go run ./cmd/gen-docs --doc-path docs --markdown            # Regenerate CLI docs
-go run ./cmd/gen-docs --doc-path docs --markdown --website   # Regenerate CLI docs for Mintlify (MDX-safe + frontmatter)
-npx mintlify dev --docs-directory docs                       # Local Mintlify preview (http://localhost:3000)
+go build -o bin/clawker ./cmd/clawker                        # Build CLI
+make test                                                     # Unit tests (no Docker)
+make test-all                                                 # All suites (unit + e2e + whail)
+go run ./cmd/gen-docs --doc-path docs --markdown --website    # Regenerate CLI docs for Mintlify
+npx mintlify dev --docs-directory docs                        # Local Mintlify preview
 
 # Golden file tests
-GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios -v  # Regenerate JSON testdata
+GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios -v
 
-# Docker-required tests (directory separation, no build tags)
-go test ./test/e2e/... -v -timeout 10m           # E2E integration tests
-go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration tests
+# Docker-required tests
+go test ./test/e2e/... -v -timeout 10m
+go test ./test/whail/... -v -timeout 5m
 
-# Pre-commit hooks (mirrors CI quality gates locally)
-bash scripts/install-hooks.sh          # Install pre-commit hooks (run once after clone)
-make pre-commit                        # Run all hooks against entire repo
-pre-commit run gitleaks --all-files    # Run a single hook
-
-# Semgrep version: 1.146.0
-# Pre-commit uses system semgrep with --baseline-commit HEAD (diff-only scanning).
-# CI uses semgrep/semgrep:1.146.0 Docker image.
-# When upgrading, update both .pre-commit-config.yaml comment AND security.yml image tag.
+# Pre-commit hooks
+bash scripts/install-hooks.sh          # Install (once after clone)
+make pre-commit                        # Run all hooks
 ```
 
 ## Key Concepts
 
-See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index (one-liners for `Factory`, `docker.Client`, `firewall.Handler`, `firewall.Stack`, `controlplane.AgentWatcher`, `ebpf.Manager`, `dnsbpf.Handler`, `storage.Schema`, `storeui.Edit`, `tui.*`, and ~80 other named types). Load on demand when you need to remember which package owns a symbol or what a type is for — package-specific `internal/*/CLAUDE.md` files remain the source of truth for full API surface.
+See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Package-specific `internal/*/CLAUDE.md` files are the source of truth for API surface.
 
 ## CLI Commands
 
-See `docs/cli-reference/` for the complete auto-generated command reference (regenerated via `go run ./cmd/gen-docs --doc-path docs --markdown`).
+See `docs/cli-reference/` for auto-generated command reference.
 
-**Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `generate`, `loop iterate/tasks/status/reset`, `version`
-
-**Management commands**: `auth *` (rotate), `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`, `project edit`), `worktree *`, `firewall *` (status/list/add/remove/reload/up/down/enable/disable/bypass/rotate-ca — all routed through `f.AdminClient` gRPC to the CP daemon), `controlplane *` (break-glass up/down/status for the CP container), `settings *` (`settings edit`), `skill *` (install/show/remove)
-
-Commands use positional arguments for resource names (e.g., `clawker container stop clawker.myapp.dev`) matching Docker's interface.
+**Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `generate`, `loop`, `version`
+**Management**: `auth *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `skill *`
 
 ## Configuration
 
-> **For code**: Always use `Config` interface accessors (`cfg.ProjectConfigFileName()`, `cfg.SettingsFileName()`, `cfg.ProjectRegistryFileName()`, `cfg.ConfigDirEnvVar()`, `cfg.DataDirEnvVar()`, `cfg.StateDirEnvVar()`) — never hardcode filenames, paths, or env var names. See `internal/config/CLAUDE.md` for full accessor list.
+> Always use `Config` interface accessors — never hardcode filenames or env var names. See `internal/config/CLAUDE.md`.
 
-### User Settings (`cfg.SettingsFileName()` → settings.yaml)
-
-```yaml
-logging:
-  file_enabled: true
-  max_size_mb: 50
-```
-
-### Project Registry (`cfg.ProjectRegistryFileName()` → projects.yaml)
-
-```yaml
-projects:
-  my-app:
-    name: "my-app"
-    root: "/Users/dev/my-app"
-```
-
-Managed by `clawker project init` and `clawker project register`. The registry maps project slugs to filesystem paths.
-
-### Project Config (`cfg.ProjectConfigFileName()` → clawker.yaml)
+### Project Config (`clawker.yaml`)
 
 ```yaml
 build:
@@ -237,139 +169,65 @@ loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permis
 1. Firewall enabled, Docker socket disabled by default
 2. `run`/`start` are aliases for `container run` (Docker CLI pattern)
 3. Hierarchical naming: `clawker.project.agent`; labels (`dev.clawker.*`) authoritative for filtering
-4. stdout for user info (data, status messages, success confirmations, next steps), stderr for warnings/errors only; `--format` flag for machine-readable output; per-scenario stream strategy (see style guide)
+4. stdout for data/status/success/next-steps; stderr for warnings/errors only; `--format` for machine-readable output
 5. Project registry replaces directory walking for resolution
 6. Empty project → 2-segment names (`clawker.agent`), labels omit `dev.clawker.project`
-7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
-8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
-9. Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
-10. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
-11. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
-12. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `f.Logger` (Factory lazy noun captured on Options struct), library-layer code accepts `*logger.Logger` in constructors. Logger init happens lazily on first `f.Logger()` call
-13. Package boundary rule: path resolution + config file I/O belongs to `internal/config`; project identity/CRUD/worktree lifecycle orchestration belongs to `internal/project`
-14. Firewall uses a **global BPF route_map** keyed by `{domain_hash, dst_port}` (not per-container). Per-container enforcement comes from presence in `container_map`, which enables live rule sync across all running containers via `ebpf-manager sync-routes`. `connect6` routes IPv4-mapped addresses so dual-stack sockets cannot bypass the firewall.
-15. CoreDNS is a **custom build** (`cmd/coredns-clawker`) that embeds the `internal/dnsbpf` plugin. The binary is `go:embed`'d into `internal/controlplane/firewall/embed_coredns.go` and built into a Docker image on-demand by `firewall.Stack.ensureCorednsImage`, replacing the stock `coredns/coredns` image. CoreDNS runs with `CAP_BPF + CAP_SYS_ADMIN` and a `/sys/fs/bpf` mount so the plugin can write the dns_cache map directly. The CP loads eBPF before starting CoreDNS; DNS seeding from the Go side has been removed — the plugin is the source of truth.
-16. The firewall is owned by the control plane. `internal/controlplane/firewall.Handler` serves the 13 firewall RPCs (`FirewallInit`, `FirewallRemove`, `FirewallEnable`, `FirewallDisable`, `FirewallBypass`, `FirewallAddRules`/`RemoveRules`/`ListRules`, `FirewallReload`, `FirewallStatus`, `FirewallRotateCA`, `FirewallSyncRoutes`, `FirewallResolveHostname`); the AdminService surface as a whole is 14 methods (the firewall 13 + `ListAgents`). CLI callers dial via `f.AdminClient(ctx)` (mTLS + OAuth2 JWT). Host-side `cpboot.EnsureRunning` brings the CP container up on demand; the CP self-shuts-down after the `AgentWatcher` observes drain-to-zero + grace period (INV-B2-007). No PID-file daemon, no `FirewallManager` interface.
+7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands use `NewCmd(f, runF)` pattern
+8. Factory noun principle: fields return nouns, not verbs (`f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
+9. Package boundary: path resolution + config I/O → `internal/config`; project identity/CRUD → `internal/project`
 
 ## Mock Generation
 
-Mocks are generated by [moq](https://github.com/matryer/moq) via `//go:generate` directives on interfaces. **Never hand-edit generated mock files.** To regenerate after changing an interface:
-
-```bash
-cd internal/<package> && go generate ./...
-```
-
-Generated mocks live in `<package>/mocks/` and are prefixed with `// Code generated by moq; DO NOT EDIT.`
+Mocks generated by [moq](https://github.com/matryer/moq) via `//go:generate`. Never hand-edit. Regenerate: `cd internal/<package> && go generate ./...`
 
 ## Important Gotchas
 
 * `os.Exit()` does NOT run deferred functions — restore terminal state explicitly
 * Raw terminal mode: Ctrl+C goes to container, not as SIGINT
-* Never use `logger.Fatal()` in Cobra hooks — return errors instead
 * Don't wait for stdin goroutine on container exit (may block on Read)
 * Docker hijacked connections need cleanup of both read and write sides
-* Terminal visual state (alternate screen, cursor visibility, colors) must be reset separately from termios mode — `term.Restore()` sends escape sequences before restoring raw/cooked mode
-* Terminal resize +1/-1 trick: Resize to (height+1, width+1) then actual size to force SIGWINCH for TUI redraw
-* E2E tests use Docker resource labels (`dev.clawker.test=true`) for cleanup; `make test-clean` removes leaked resources
-* Container flag types and domain logic consolidated in `internal/cmd/container/shared/` — `CreateContainer()` is the single creation entry point
-* After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
-* Empty projects generate 2-segment names (`clawker.dev`), not 3 (`clawker..dev`)
-* Docker Desktop socket mounting: SDK `HostConfig.Mounts` (mount.Mount) behaves differently from `HostConfig.Binds` (CLI `-v`) for Unix sockets on macOS. The SDK may fail with `/socket_mnt` path errors while CLI works. Integration tests that mount sockets should skip on macOS or use Binds.
-* Clawker files can be in `./.clawkerlocal/` during local development. Check here first before the defaults when the user needs you to debug problems. UAT testing is often done using local repository config dirs (see: `make localenv`).
+* Terminal visual state must be reset separately from termios mode — `term.Restore()` sends escape sequences before restoring raw/cooked mode
+* Docker Desktop SDK `HostConfig.Mounts` behaves differently from `Binds` for Unix sockets on macOS
+* `.clawkerlocal/` may exist during local development — check before defaults (see: `make localenv`)
 
-## Context Management (Critical)
+## Context Management
 
-**NEVER** store `context.Context` in struct fields. Pass as first parameter to I/O methods. Use `context.Background()` for cleanup in deferred functions.
+**NEVER** store `context.Context` in struct fields. Pass as first parameter. Use `context.Background()` for cleanup in deferred functions.
 
-## Security
+## Security: Version Pinning
 
-### Version Pinning
-
-All external dependencies must be pinned to exact versions with integrity verification where possible. Never use `@latest`, floating tags, or unpinned references.
+All external dependencies pinned to exact versions with integrity verification. Never use `@latest` or floating tags.
 
 | Context | Pinning requirement | Example |
 |---------|-------------------|---------|
-| `go.mod` | Go manages this via `go.sum` checksums | Automatic |
-| Dockerfile base images | SHA256 digest | `FROM golang:1.24.1@sha256:abc123...` |
-| Dockerfile binary installs | Version + SHA256 checksum verification | `wget ... && echo "$SHA /tmp/file" \| sha256sum -c -` |
-| CI workflow actions | SHA commit hash, not version tag | `uses: actions/checkout@a1b2c3d...` |
-| CI tool installs | Pinned version + checksum where available | `GITLEAKS_VERSION=8.30.1` |
-| Pre-commit hooks | SHA commit hash with version comment | `rev: 83d9cd68...  # frozen: v8.30.1` |
-| Go tool installs (`go install`) | SHA commit hash or exact version | `go install tool@v2.0.1` or `tool@sha...` |
-| Container images in code | SHA256 digest in constants | `DefaultGoBuilderImage = "golang:1.24.1@sha256:..."` |
-| npm/pip installs in Dockerfiles | Exact version | `npm install -g @anthropic-ai/claude-code@${VERSION}` |
-| Firewall stack binaries (ebpf-manager, coredns-clawker, clawker-cp) | Single pinned multi-stage `Dockerfile.controlplane` — base image digest + apt package versions + Go toolchain digest + `bpf2go` version | `make ebpf-binary` / `make coredns-binary` / `make cp-binary` invoke `docker buildx build` against the pinned recipe; no generated artifacts committed. See `internal/controlplane/firewall/ebpf/REPRODUCIBILITY.md` |
+| Dockerfile base images | SHA256 digest | `FROM golang:1.25@sha256:abc...` |
+| CI workflow actions | SHA commit hash | `uses: actions/checkout@a1b2c3d...` |
+| Pre-commit hooks | SHA commit hash | `rev: 83d9cd68...  # frozen: v8.30.1` |
+| Container images in code | SHA256 digest | `DefaultGoBuilderImage = "golang:...@sha256:..."` |
+| Go tool installs | Exact version or SHA | `go install tool@v2.0.1` |
 
-**Why:** Version tags are mutable — a compromised upstream can re-tag a release. SHA pins are immutable and verifiable. This is defense-in-depth against supply chain attacks (see `docs/threat-model.mdx`).
+All `@sha256:` pins must be multi-arch manifest lists (`application/vnd.oci.image.index.v1+json`). Verify with `docker buildx imagetools inspect`. Firewall stack binaries built fresh via pinned multi-stage Docker builds — nothing generated is committed. See `internal/controlplane/firewall/ebpf/REPRODUCIBILITY.md`.
 
-**Multi-arch image pin rule:** every `@sha256:...` pin on a container image (`FROM` lines in any Dockerfile, `DefaultGoBuilderImage` in `internal/bundler/dockerfile.go`, the `cpImageDockerfile` literal in `internal/controlplane/cpboot/bootstrap.go`, CoreDNS stage in `internal/controlplane/firewall/stack.go`, etc.) **must** be a multi-arch manifest list (OCI image index, `application/vnd.oci.image.index.v1+json`), **not** a per-platform image digest. Single-platform digests break cross-platform builds because BuildKit can't select a matching per-arch manifest. Verify before committing with:
+## Testing
 
-```bash
-docker buildx imagetools inspect <image>@sha256:<digest>
-```
+All tests must pass before any change is complete. See `.claude/rules/testing.md` for conventions.
 
-`MediaType` must be `application/vnd.oci.image.index.v1+json`. `docker pull <image:tag>` + `docker inspect --format '{{index .RepoDigests 0}}'` typically returns the manifest-list digest for official images on Docker Hub, but always confirm via `imagetools inspect`.
-
-**Firewall stack binaries specifically:** `internal/controlplane/cpboot/assets/{ebpf-manager,clawker-cp}` and `internal/controlplane/firewall/assets/coredns-clawker` are Linux binaries `go:embed`'d into the clawker CLI, with BPF bytecode and the `dnsbpf` plugin baked in respectively. **Nothing generated is committed** — no `.o`, no `bpf2go` Go wrappers, no binaries. They are produced fresh on every `make ebpf-binary` / `make coredns-binary` / `make cp-binary` (transitively triggered by `make test`, `make clawker`, etc.) inside the pinned multi-stage Docker builds. Reproducibility is structural: the pinned recipe *is* the binary, there is no separate committed artifact to drift from. See `internal/controlplane/firewall/ebpf/REPRODUCIBILITY.md` for the full provenance chain and the pin-update procedure.
-
-**When adding any new external dependency**, look up the actual release SHA/digest — do not rely on training data or cached knowledge for version hashes.
-
-## Testing Requirements
-
-**All tests must pass before any change is complete.** Run `make test` (unit) or `make test-all` (all suites). See Build Commands above for individual test suites. See `.claude/rules/testing.md` for conventions.
-
-> **CRITICAL — IF YOU ARE RUNNING IN A CLAWKER CONTAINER (`$CLAWKER_AGENT` set): DO NOT RUN `go test ./...` (or any unscoped suite that pulls in `test/e2e`).** The e2e suite tears down the host CP container and firewall — you will lose your own network egress and block the user. Tests must be **targeted** (e.g. `go test ./internal/controlplane/agent/...`) or use **`make test`** (which excludes `test/e2e` and `test/whail`). The `test/e2e` and `test/whail` directories require an explicit invocation by the user on the host.
+> **CRITICAL — IF RUNNING IN A CLAWKER CONTAINER (`$CLAWKER_AGENT` set):** Do NOT run `go test ./...`. The e2e suite tears down the host CP. Use targeted tests or `make test`.
 
 ## Documentation
 
-* `.claude/rules/` — Auto-loaded guidelines (code style, testing, path-scoped package rules)
-* `.claude/docs/` — On-demand reference docs (architecture, CLI verbs, design)
+* `.claude/rules/` — Auto-loaded guidelines (code style, testing, package rules)
+* `.claude/docs/` — On-demand reference (architecture, design, key concepts)
 * `internal/*/CLAUDE.md` — Package-specific API references (lazy-loaded)
-* `.serena/memories/` — Active work-in-progress tracking
 
-**Critical**: After code changes, update README.md (user-facing), CLAUDE.md (developer-facing), and memories as appropriate.
+### Completion Gate
 
-### Completion Gate: Plugin & Docs
+After bug fixes or feature changes:
+- Check if fix addresses an issue in `claude-plugin/clawker-support/skills/clawker-support/reference/known-issues.md`
+- Update relevant Mintlify docs in `docs/` if user-facing behavior changed
 
-After completing any bug fix or feature change:
-- Check if the fix addresses an issue in `claude-plugin/clawker-support/skills/clawker-support/reference/known-issues.md`. If so, remove or update the entry so the support skill doesn't advise workarounds for fixed bugs.
-- If the change affects user-facing configuration, CLI commands, or behavior, update the relevant Mintlify docs in `docs/` (hand-authored `*.mdx` pages, not `cli-reference/` which is auto-generated).
+### Mintlify (docs.clawker.dev)
 
-### Mintlify Documentation Site (docs.clawker.dev)
-
-User-facing docs are powered by [Mintlify](https://mintlify.com/) and live in the `docs/` directory.
-
-* `docs/docs.json` — Mintlify site config (theme, nav, colors, integrations)
-* `docs/custom.css` — Dark terminal theme overrides (surface colors, glassmorphism navbar, amber hover glow)
-* `docs/favicon.svg` — `>_` terminal prompt favicon (amber on dark)
-* `docs/assets/` — Image assets directory
-* `docs/index.mdx` — Homepage
-* `docs/*.mdx` — Hand-authored pages (quickstart, installation, configuration)
-* `docs/cli-reference/*.md` — Auto-generated via Makefile, checked in, freshness verified separately in CI (**never edit directly**)
-* `docs/architecture.mdx`, `docs/design.mdx`, `docs/testing.md` — Developer docs with Mintlify frontmatter
-* See `.claude/rules/mintlify-docs.md` for full conventions (theming, MDX parsing, navigation)
-
-**Regenerating CLI reference**: `go run ./cmd/gen-docs --doc-path docs --markdown --website`
-
-* `--website` flag produces MDX-safe output (escapes bare `<word>` angle brackets) with Mintlify frontmatter
-* Source: `internal/docs/markdown.go` (`GenMarkdownTreeWebsite`, `EscapeMDXProse`)
-
-**Local preview**: `npx mintlify dev --docs-directory docs` (requires Node.js)
-
-**Deployment**: Mintlify-hosted with GitHub App auto-deploy. Custom domain via Cloudflare CNAME → `cname.vercel-dns.com`.
-
-## Documentation Maintenance
-
-* `bash scripts/check-claude-freshness.sh` — Check if CLAUDE.md files are stale vs Go source
-* `/audit-memory` — Comprehensive documentation health audit (in Claude Code)
-* `bash scripts/install-hooks.sh` — Install pre-commit hooks (all CI quality gates)
-
-## Correctless
-
-This project uses Correctless for structured development.
-Read .correctless/AGENT_CONTEXT.md before starting any work.
-Do NOT Read AGENT_CONTEXT.md from the project root — it may be stale or absent.
-Available commands: /csetup, /cspec, /creview, /cmodel, /creview-spec, /ctdd, /cverify, /caudit, /cupdate-arch, /cdocs, /cpostmortem, /cdevadv, /credteam, /crefactor, /cpr-review, /ccontribute, /cmaintain, /cstatus, /csummary, /cmetrics, /cdebug, /chelp, /cwtf, /cquick, /crelease, /cexplain
-
-## Correctless Learnings
-<!-- Auto-updated by Correctless workflow. Do not edit above this line. -->
+Regenerate CLI reference: `go run ./cmd/gen-docs --doc-path docs --markdown --website`
+Local preview: `npx mintlify dev --docs-directory docs`
+See `.claude/rules/mintlify-docs.md` for conventions.
