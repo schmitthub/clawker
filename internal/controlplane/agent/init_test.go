@@ -107,17 +107,18 @@ type initEventSlice struct {
 // after a real Run dispatches every step. Step kind / stages shape is
 // enforced structurally by runStep's switch + Go's type system.)
 
-// TestNewExecutor_NilBusPanics pins the constructor-time rejection of
-// a nil bus. Run publishes init events unconditionally — a nil bus
-// would otherwise NPE deep inside overseer.Publish on the first event
-// dispatch, far from the wiring bug.
-func TestNewExecutor_NilBusPanics(t *testing.T) {
-	defer func() {
-		r := recover()
-		require.NotNil(t, r, "NewExecutor must panic on nil bus")
-		assert.Contains(t, r, "bus is required")
-	}()
-	_ = NewExecutor(nil, logger.Nop())
+// TestNewExecutor_NilBusReturnsError pins the constructor-time
+// rejection of a nil bus. Returning an error (vs panicking) is
+// load-bearing for CP resilience: a wiring bug must surface as a
+// structured log line on the project's normal log surface, not crash
+// CP and strand the trace on os.Stderr where only `docker logs <cp>`
+// sees it. main.go logs and proceeds with initExec = nil; the dialer
+// logs agent_init_executor_unset per dial. CP stays up.
+func TestNewExecutor_NilBusReturnsError(t *testing.T) {
+	exec, err := NewExecutor(nil, logger.Nop())
+	require.Error(t, err, "NewExecutor must reject nil bus")
+	assert.Nil(t, exec)
+	assert.Contains(t, err.Error(), "bus is required")
 }
 
 // TestExecutor_Plan_PrivilegeAndShape pins three load-bearing plan
@@ -137,7 +138,9 @@ func TestExecutor_Plan_PrivilegeAndShape(t *testing.T) {
 	bus := overseer.New(overseer.Options{})
 	require.NoError(t, bus.Start(context.Background()))
 	t.Cleanup(func() { _ = bus.Close() })
-	plan := NewExecutor(bus, logger.Nop()).plan()
+	exec, err := NewExecutor(bus, logger.Nop())
+	require.NoError(t, err)
+	plan := exec.plan()
 	require.NotEmpty(t, plan)
 
 	var rootSteps []string
@@ -182,7 +185,8 @@ func TestExecutor_Run_HappyPath(t *testing.T) {
 	defer cancel()
 
 	stream := newFakeStream(ctx)
-	exec := NewExecutor(bus, logger.Nop())
+	exec, errExec := NewExecutor(bus, logger.Nop())
+	require.NoError(t, errExec)
 	target := InitTarget{ContainerID: "c-happy-1234567890ab", AgentName: "dev", Project: "clawker"}
 
 	// Stream-feeder goroutine: for each Command sent by Run, push back
@@ -247,7 +251,8 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 	defer cancel()
 
 	stream := newFakeStream(ctx)
-	exec := NewExecutor(bus, logger.Nop())
+	exec, errExec := NewExecutor(bus, logger.Nop())
+	require.NoError(t, errExec)
 	target := InitTarget{ContainerID: "c-fail-9876543210ab", AgentName: "dev", Project: "clawker"}
 
 	doneFeeder := make(chan struct{})
@@ -315,7 +320,8 @@ func TestExecutor_Run_TransportError(t *testing.T) {
 	defer cancel()
 
 	stream := newFakeStream(ctx)
-	exec := NewExecutor(bus, logger.Nop())
+	exec, errExec := NewExecutor(bus, logger.Nop())
+	require.NoError(t, errExec)
 	target := InitTarget{ContainerID: "c-transport-1234567890ab", AgentName: "dev", Project: "clawker"}
 
 	// Push an error frame that Run will see on its first Recv.
@@ -365,7 +371,8 @@ func TestExecutor_Run_StreamErrorResponse(t *testing.T) {
 			defer cancel()
 
 			stream := newFakeStream(ctx)
-			exec := NewExecutor(bus, logger.Nop())
+			exec, errExec := NewExecutor(bus, logger.Nop())
+			require.NoError(t, errExec)
 			target := InitTarget{ContainerID: "c-err-1234567890ab", AgentName: "dev", Project: "clawker"}
 
 			done := make(chan struct{})
@@ -424,7 +431,8 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 	defer completedSub.Unsubscribe()
 
 	target := InitTarget{ContainerID: "c-proj-1234567890ab", AgentName: "dev", Project: "clawker"}
-	exec := NewExecutor(bus, logger.Nop())
+	exec, errExec := NewExecutor(bus, logger.Nop())
+	require.NoError(t, errExec)
 
 	// Cycle 1: fail at step "config" (idx 1).
 	{
@@ -520,7 +528,8 @@ func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
 	defer cancel()
 
 	stream := newFakeStream(ctx)
-	exec := NewExecutor(bus, logger.Nop())
+	exec, errExec := NewExecutor(bus, logger.Nop())
+	require.NoError(t, errExec)
 	target := InitTarget{ContainerID: "c-cs-1234567890ab", AgentName: "dev", Project: "clawker"}
 
 	var captured []*clawkerdv1.Command

@@ -2,6 +2,49 @@
 
 The clawker control plane. A containerized, privileged, long-lived Go service that owns authoritative state for managed containers. The `clawker-controlplane` container runs `cmd/clawker-cp` as PID 1, owns the firewall stack (Envoy + CoreDNS) and eBPF state, and serves the `AdminService` gRPC surface consumed by the CLI via `f.AdminClient(ctx)`.
 
+## Resilience contract — CP crashing is a security incident, NOT an availability one
+
+This is the most important invariant in this package. Read it before adding any failure path to CP code. See the root `CLAUDE.md` for the canonical statement; this section enforces it for code under `internal/controlplane/`.
+
+### Why CP must not crash
+
+A panic, `log.Fatal`, `os.Exit`, or unrecovered goroutine in CP code:
+
+1. **Kills PID 1.** CP container exits non-zero. `on-failure` restart policy retries `consts.CPMaxRestartRetries` (3) times; deterministic bugs replay each time, then CP stays dead.
+2. **Skips the clean drain-to-zero path.** `firewall.Stack.Stop()` and `ebpfMgr.FlushAll()` are only called by the `AgentWatcher`'s drain callback in `cmd/clawker-cp/main.go`. A panic bypasses both.
+3. **Leaves eBPF programs pinned and unsupervised.** Programs are attached to cgroups and survive in `/sys/fs/bpf`. The kernel keeps filtering agent egress against whatever rules were loaded at the moment of death.
+4. **Strands the stack trace on `os.Stderr` → `docker logs <cp>`.** It is NOT in the rotating `ControlPlaneLogFile`; it is NOT visible via `clawker controlplane status` (which only reports up/down).
+5. **Leaves agent containers running with no supervisor.** clawkerd has no awareness CP died; agents keep serving workloads.
+
+### What this looks like to the user
+
+- They see agents running. They assume the firewall is enforcing (it technically is, against frozen rules) and that CP is observing and ready to dispatch containment (it isn't).
+- `clawker firewall add <domain>` writes to the rules file but Envoy/CoreDNS reload requires CP — silently drops.
+- A `clawker firewall bypass <duration>` in flight when CP died has no expiry timer — the bypass is now permanent until manual intervention.
+- No CP→clawkerd Session means no observation of agent behavior, no command dispatch, no containment available even if a compromise is detected.
+- Agents are exposed to prompt injection, exfiltration, and lateral-movement attempts CP would otherwise see and contain. The user's mental model — "CP has my agents covered" — is silently false.
+
+### Hard rules
+
+1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`** in any code reachable from `cmd/clawker-cp/main.go` after `SetReady`. The only acceptable hard exits are:
+   - Pre-`SetReady` orchestrator startup-gate failures (no agents are running yet, eBPF state isn't load-bearing).
+   - The orchestrator's intentional drain-to-zero clean exit (code 0).
+2. **Constructors return `(*T, error)`.** Pattern: `agent.New`, `agent.NewExecutor`. Nil deps, cert load failures, schema errors → return error, never panic. main.go logs structurally and degrades the subsystem (`dialer = nil`, `initExec = nil`).
+3. **Long-lived goroutines must recover.** Wrap heartbeats, watchers, dispatch handlers, RPC interceptors with `defer func() { if r := recover(); r != nil { log.Error().Interface("panic", r)... } }()`. The overseer stats heartbeat in `cmd/clawker-cp/main.go:592` is the template. One bad event must not silently strand eBPF.
+4. **Subsystem failures degrade.** Broken Executor → `initExec = nil` → dialer logs `agent_init_executor_unset` per dial → entrypoint fifo timeout is the user-visible failure. CP itself, firewall, registry, AdminService unaffected. Broken dialer → `dialer = nil` → CP→clawkerd dispatch disabled; everything else stays up. Copy `cmd/clawker-cp/main.go:707-714` (initExec) and `:718-721` (dialer) as templates for new subsystems.
+5. **Every degraded path emits a structured log line** (`event=<subsystem>_unavailable`) with enough fields for an operator to triage root cause AND blast radius. They will never see panic stacks; the structured log is the only surface.
+6. **Treat any urge to panic as a security review trigger.** Ask: "would this leave eBPF programs pinned with no supervisor?" If yes — you are about to silently break the firewall enforcement boundary the user trusts. Return an error.
+
+### Existing escape hatches you'll find in code (and must not add to)
+
+- The `register_panic` recover in `cmd/clawkerd/session.go:166-179` (NOT in CP — clawkerd-side, agent container can crash).
+- The overseer stats heartbeat recover (`main.go:592`) — keep doing this for new long-lived goroutines.
+- `firewall/handler.go` returns `status.Error(...)` for handler-level failures; never panics.
+
+### What about `consts.CPMaxRestartRetries`?
+
+It's a safety net, not a recovery strategy. By the time it triggers, eBPF has been pinned with no supervisor for at least the time it took to crash → restart → crash 3× → backoff. The restart policy exists for transient hardware/scheduler hiccups, not for software bugs we should have caught.
+
 ## Responsibilities (v1)
 
 1. **Authoritative eBPF management** — the CP owns `ebpf.Manager.Load()` lifetime for its process lifetime. BPF programs are loaded once at boot and stay live.

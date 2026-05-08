@@ -704,7 +704,13 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// until CLAWKER_INIT_TIMEOUT and the container fails to launch CMD.
 	// Container user identity (uid/gid/username/home) lives in consts
 	// and is read directly by the Executor.
-	initExec := agent.NewExecutor(bus, log.With("component", "agent.init"))
+	initExec, err := agent.NewExecutor(bus, log.With("component", "agent.init"))
+	if err != nil {
+		log.Error().Err(err).
+			Str("event", "agent_init_executor_unavailable").
+			Msg("agent.init: Executor construction failed; CP-driven init disabled — agent containers will hang on the entrypoint fifo until timeout. CP otherwise continues.")
+		initExec = nil
+	}
 	dialer, err := agent.New(
 		log.With("component", "agent"),
 		dockerCli.APIClient,

@@ -195,23 +195,23 @@ type Executor struct {
 	log *logger.Logger
 }
 
-// NewExecutor constructs an Executor. The container user identity
-// (uid/gid + username + home) is fixed by the bundler and read from
-// consts (ContainerUID/ContainerGID/ContainerUser/ContainerHomeDir).
-// nil log is replaced with logger.Nop(). bus is required — Run
-// publishes init events unconditionally, so a nil bus would panic
-// inside overseer.Publish on the first event. Reject up front with a
-// clear message instead of letting the dereference surface as a
-// nil-pointer panic at the first init dispatch (matches the
-// nil-bus contract on agent.New for the dialer).
-func NewExecutor(bus *overseer.Overseer, log *logger.Logger) *Executor {
+// NewExecutor constructs an Executor. nil log is replaced with
+// logger.Nop(). bus is required — Run publishes init events
+// unconditionally, so a nil bus would NPE deep inside overseer.Publish
+// on the first event dispatch. Returning an error lets the caller
+// (cmd/clawker-cp/main.go) log the wiring bug to the structured log
+// surface and degrade gracefully (initExec = nil → dialer logs
+// agent_init_executor_unset per dial) instead of crashing CP and
+// stranding the failure on os.Stderr where only `docker logs` sees it.
+// Matches the nil-bus contract on agent.New for the dialer.
+func NewExecutor(bus *overseer.Overseer, log *logger.Logger) (*Executor, error) {
 	if bus == nil {
-		panic("agent.NewExecutor: bus is required")
+		return nil, errors.New("agent.NewExecutor: bus is required")
 	}
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &Executor{bus: bus, log: log}
+	return &Executor{bus: bus, log: log}, nil
 }
 
 // Run dispatches the init plan one step at a time, awaiting Done or
