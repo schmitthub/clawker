@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/serena-first.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__serena__check_onboarding_performed",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/serena-init-marker.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
