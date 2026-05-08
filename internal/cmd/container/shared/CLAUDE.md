@@ -1,28 +1,18 @@
 # Container Shared Package
 
-Container flag types, domain orchestration logic, and container creation — shared between container subcommands (`run/`, `create/`, `start/`, `exec/`).
-
-This package consolidates what was previously split between `opts/` (flag types) and `shared/` (domain logic) into a single package.
+Container flag types, domain orchestration, and container creation -- shared between `run/`, `create/`, `start/`, `exec/`.
 
 ## API
 
-### Container Options (`container.go`)
+### ContainerOptions (`container.go`)
 
-All container CLI flag types and configuration building.
-
-`ContainerOptions` — all container flags. `NewContainerOptions()`, `AddFlags(flags, opts)`, `MarkMutuallyExclusive(cmd)`.
+`ContainerOptions` -- all container CLI flags. `NewContainerOptions()`, `AddFlags(flags, opts)`, `MarkMutuallyExclusive(cmd)`.
 
 Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, cfg)`, `ValidateFlags()`, `ResolveAgentName(agent, generateRandom)`, `ParseLabelsToMap(labels)`, `MergeLabels(base, user)`, `NeedsSocketBridge(cfg)`.
 
-**Types**: `ContainerOptions`, `ListOpts`, `MapOpts`, `PortOpts`, `NetworkOpt` with `NetworkAttachmentOpts`.
-
-**Flag categories**: Basic, Environment, Volumes, Networking, Resources, Security (incl. `--disable-firewall`), Health, Process & Runtime (incl. `--workdir`), Devices.
-
 ### CreateContainer (`container.go`)
 
-Single entry point for container creation, shared by `run` and `create` commands. Performs all init steps: workspace setup, config initialization, environment resolution, Docker container creation, and post-create injection.
-
-Progress is communicated via an events channel (nil for silent mode). Callers own all terminal output.
+Single entry point for container creation. Progress via events channel (nil for silent mode). Callers own all terminal output.
 
 ```go
 events := make(chan CreateContainerEvent, 64)
@@ -41,24 +31,16 @@ result, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
     HostProxy:  f.HostProxy,
 }, events)
 close(events)
-<-done // wait for consumer goroutine before reading result
-// result.ContainerID, result.AgentName, result.ContainerName, result.WorkDir, result.HostProxyRunning
+<-done
 ```
 
-**Steps** (streamed via events channel):
-1. **workspace** — resolve work dir, setup mounts, ensure volumes
-2. **config** — init container config (or cached if volume exists)
-3. **environment** — host proxy, git credentials, runtime env vars
-4. **container** — validate flags, build Docker configs, create, inject post-init (if configured)
+**Steps** (streamed via events): workspace, config, environment, container (validate+build+create+inject).
 
-**Volume cleanup on failure**: Uses named return values with deferred cleanup. Tracks newly-created volumes; removes only those on error. Pre-existing volumes are never touched.
-
-**Event types**: `CreateContainerEvent` with `Step` (string), `Status` (`StepRunning`/`StepComplete`/`StepCached`), `Type` (`MessageInfo`/`MessageWarning`), `Message` (string).
+**Volume cleanup on failure**: Deferred cleanup via named returns. Tracks newly-created volumes; removes only those on error. Pre-existing volumes untouched.
 
 ### Agent Bootstrap Delivery (`agent_bootstrap.go`)
 
-Building blocks for the per-agent registration material the CLI hands a
-managed container at boot.
+Per-agent registration material the CLI hands a managed container at boot.
 
 ```go
 type AgentBootstrap struct {
@@ -67,57 +49,34 @@ type AgentBootstrap struct {
     Assertion       string  // Hydra client_assertion JWT (single-use)
 }
 
-// project + agent are the user-typed short identifiers (e.g. "myapp",
-// "dev"). MintAgentCert composes the canonical "clawker.<project>.<agent>"
-// CN inside via auth.CanonicalAgentCN; the agent handler's CN cross-check
-// has a single equality to enforce.
 GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, containerID, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error)
-
 WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *AgentBootstrap) error
-
-// Create-time install: mint cert + tar into the container's writable
-// layer at consts.BootstrapDir. CP is the SOLE writer of agentregistry
-// rows — the row is written CP-side at AgentService.Register handler
-// entry on the first CP-driven Register handshake, never from the CLI.
-// A failure here is recovered by the caller's ContainerRemove.
 InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, opts InstallAgentBootstrapOptions) error
 ```
 
-`CommandOpts.AgentName` (the short user-typed name) and `CommandOpts.Project`
-(the project slug, empty allowed) feed the bootstrap mint — both must
-be set on new-container start paths so the cert's canonical CN can be
-composed via `auth.CanonicalAgentCN`.
+`project` + `agent` (user-typed short identifiers) feed `auth.CanonicalAgentCN` to compose the cert's canonical CN (`clawker.<project>.<agent>`).
 
-`WriteAgentBootstrapToContainer` tars the four files into the container
-at `consts.BootstrapDir` (parent dir 0700, files 0400). The destination
-is a regular path inside the container's writable layer rather than a
-tmpfs mount — Docker's CopyToContainer cannot pre-populate tmpfs
-mounts (tmpfs shadows writes made before start). The container layer
-is destroyed on `--rm` or when the container is removed.
+`WriteAgentBootstrapToContainer` tars four files into `consts.BootstrapDir` (dir 0700, files 0400). Uses container writable layer (not tmpfs -- Docker's CopyToContainer cannot pre-populate tmpfs mounts).
 
 ### Container Init (`containerfs.go`)
 
-One-time Claude config initialization for new containers. Called by `CreateContainer` when the config volume was freshly created.
+One-time Claude config initialization for new containers, called by `CreateContainer` when config volume is fresh.
 
 ```go
-import "github.com/schmitthub/clawker/internal/cmd/container/shared"
-
-// Copy host config and/or credentials to config volume
 err := shared.InitContainerConfig(ctx, shared.InitConfigOpts{
     ProjectName:      "myapp",
     AgentName:        "dev",
-    ContainerWorkDir: wsResult.ContainerPath, // host absolute path for Claude Code /resume compatibility
+    ContainerWorkDir: wsResult.ContainerPath,
     ClaudeCode:       cfg.Agent.ClaudeCode,
     CopyToVolume:     client.CopyToVolume,
 })
-
-// NOTE: Onboarding bypass (hasCompletedOnboarding) is handled at image level —
-// the entrypoint seeds ~/.claude/.config.json from ~/.claude-init/.config.json.
 ```
+
+Onboarding bypass is image-level -- entrypoint seeds `~/.claude/.config.json` from `~/.claude-init/.config.json`.
 
 ### Image Rebuild (`image.go`)
 
-Interactive rebuild flow for missing default images, shared between `run/` and `create/`.
+Interactive rebuild flow for missing default images.
 
 ```go
 err := shared.RebuildMissingDefaultImage(ctx, shared.RebuildMissingImageOpts{
@@ -130,13 +89,13 @@ err := shared.RebuildMissingDefaultImage(ctx, shared.RebuildMissingImageOpts{
 })
 ```
 
-Non-interactive mode prints instructions and returns an error. Interactive mode prompts for rebuild confirmation, flavor selection, then builds with TUI progress display (or spinner fallback when TUI is nil).
+Non-interactive: prints instructions, returns error. Interactive: prompts for rebuild + flavor, builds with TUI progress (spinner fallback when TUI nil).
 
 ### Container Start Orchestration (`container_start.go`)
 
-Three-phase orchestration for container start: pre-start bootstrap, Docker start, post-start bootstrap. Used by `run`, `start`, and `exec` commands.
+Three-phase orchestration: pre-start bootstrap, Docker start, post-start bootstrap.
 
-**`CommandOpts`** — DI container with lazy function closures for service providers:
+**`CommandOpts`** -- DI container with lazy function closures:
 
 | Field | Type | Purpose |
 |-------|------|---------|
@@ -144,47 +103,37 @@ Three-phase orchestration for container start: pre-start bootstrap, Docker start
 | `Config` | `func() (config.Config, error)` | Config provider (required) |
 | `ProjectManager` | `func() (project.ProjectManager, error)` | Project manager provider |
 | `HostProxy` | `func() hostproxy.HostProxyService` | Host proxy provider |
-| `ControlPlane` | `func() cpboot.Manager` | Host-side CP container lifecycle noun (`EnsureRunning` / `Stop` / `IsRunning`) |
-| `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC AdminService client (mTLS + OAuth2) — drives firewall sync/enable/disable RPCs |
+| `ControlPlane` | `func() cpboot.Manager` | CP container lifecycle |
+| `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC client (mTLS + OAuth2) |
 | `SocketBridge` | `func() socketbridge.SocketBridgeManager` | Socket bridge provider |
 | `Logger` | `func() (*logger.Logger, error)` | Logger provider |
-| `AgentName` | `string` | User-typed short agent name (set on new-container starts; empty on restart paths) |
-| `Project` | `string` | Project slug paired with `AgentName` to form the composite (project, agent) identity |
+| `AgentName` | `string` | Short agent name (set on new-container starts; empty on restart) |
+| `Project` | `string` | Project slug for composite identity |
 
-Nil providers are safely skipped (debug logged). `Config` is the only required provider.
+Nil providers safely skipped (debug logged). `Config` is the only required provider.
 
-**`BootstrapServicesPreStart(ctx, container, cmdOpts) error`** — Pre-start phase: syncs firewall project rules, ensures firewall daemon, waits for healthy (60s timeout), starts host proxy. Runs before Docker start so the network stack is ready.
-
-**`BootstrapServicesPostStart(ctx, container, cmdOpts) error`** — Post-start phase: attaches eBPF programs for the container, starts socket bridge for GPG/SSH forwarding. Runs after Docker start because the container must be running.
-
-**`ContainerStart(ctx, cmdOpts, startOpts) (ContainerStartResult, error)`** — Three-phase orchestrator:
-1. `BootstrapServicesPreStart` — firewall daemon + rules + health + host proxy
-2. `client.ContainerStart` — Docker container start
-3. `BootstrapServicesPostStart` — eBPF program attachment + socket bridge
-
-Returns `mobyClient.ContainerStartResult` from the Docker start call. Errors at any phase abort immediately.
+**Functions**:
+- `BootstrapServicesPreStart(ctx, container, cmdOpts)` -- firewall rules sync + daemon ensure + health wait (60s) + host proxy
+- `BootstrapServicesPostStart(ctx, container, cmdOpts)` -- eBPF attachment + socket bridge
+- `ContainerStart(ctx, cmdOpts, startOpts) (ContainerStartResult, error)` -- runs all three phases; errors abort immediately
 
 ### Types
 
 | Type | Purpose |
 |------|---------|
-| `ContainerOptions` | All container CLI flags — basic, env, volumes, networking, resources, security, health, runtime, devices |
-| `CommandOpts` | DI container with lazy function closures (Client, Config, ProjectManager, HostProxy, ControlPlane, AdminClient, SocketBridge, Logger) plus per-call AgentName + Project for the bootstrap path |
-| `CreateContainerConfig` | All inputs: Client, Config, Options, Flags, ProjectManager, HostProxy, Logger, Version, color flags |
+| `ContainerOptions` | All container CLI flags |
+| `CommandOpts` | DI container with lazy closures + AgentName/Project |
+| `CreateContainerConfig` | Inputs: Client, Config, Options, Flags, ProjectManager, HostProxy, Logger, Version |
 | `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
 | `CreateContainerEvent` | Channel event: Step, Status, Type, Message |
-| `StepStatus` | Step lifecycle: `StepRunning`, `StepComplete`, `StepCached` |
-| `MessageType` | Event severity: `MessageInfo`, `MessageWarning` |
-| `ListOpts` | pflag.Value for repeatable string list flags |
-| `MapOpts` | pflag.Value for key=value map flags |
-| `PortOpts` | pflag.Value for port mapping flags |
-| `NetworkOpt` | pflag.Value for advanced network flags with `NetworkAttachmentOpts` |
-| `CopyToVolumeFn` | Function type matching `(*docker.Client).CopyToVolume` |
-| `CopyToContainerFn` | Simplified function type for tar-to-container copy |
-| `CopyFromContainerFn` | Function type for reading a tar stream from a container |
-| `InitConfigOpts` | Project/agent names, `ContainerWorkDir`, `*config.ClaudeCodeConfig`, `CopyToVolumeFn` |
-| `InjectPostInitOpts` | Container ID, Script content, `CopyToContainerFn` — injects `~/.clawker/post-init.sh` |
+| `StepStatus` | `StepRunning`, `StepComplete`, `StepCached` |
+| `MessageType` | `MessageInfo`, `MessageWarning` |
+| `ListOpts` / `MapOpts` / `PortOpts` / `NetworkOpt` | pflag.Value types for repeatable/map/port/network flags |
+| `CopyToVolumeFn` / `CopyToContainerFn` / `CopyFromContainerFn` | Function types for Docker copy operations |
+| `InitConfigOpts` | Project/agent names, ContainerWorkDir, ClaudeCodeConfig, CopyToVolumeFn |
+| `InjectPostInitOpts` | Container ID, Script, CopyToContainerFn |
 | `RebuildMissingImageOpts` | Image ref, IOStreams, TUI, Prompter, BuildImage fn, CommandVerb |
+| `AgentBootstrap` | CertPEM, KeyPEM, CACertPEM, Assertion |
 
 ### Functions
 
@@ -192,54 +141,43 @@ Returns `mobyClient.ContainerStartResult` from the Docker start call. Errors at 
 |----------|-------------|
 | `NewContainerOptions()` | Create ContainerOptions with initialized pflag.Value fields |
 | `AddFlags(flags, opts)` | Register all container flags on a pflag.FlagSet |
-| `MarkMutuallyExclusive(cmd)` | Mark `--agent` and `--name` as mutually exclusive |
-| `CreateContainer(ctx, cfg, events)` | Single entry point — workspace, config, env, create, inject. Events channel for progress (nil = silent) |
-| `NeedsSocketBridge(cfg)` | Check if GPG/SSH socket bridge is needed based on project config |
-| `BootstrapServicesPreStart(ctx, container, cmdOpts)` | Pre-start: firewall daemon + rules sync + health wait + host proxy |
-| `BootstrapServicesPostStart(ctx, container, cmdOpts)` | Post-start: eBPF program attachment + socket bridge |
-| `ContainerStart(ctx, cmdOpts, startOpts)` | Three-phase orchestrator: pre-start bootstrap, Docker start, post-start bootstrap |
-| `InitContainerConfig(ctx, InitConfigOpts)` | Copy host Claude config (strategy=copy) and/or credentials (use_host_auth) to config volume |
-| `InjectPostInitScript(ctx, InjectPostInitOpts)` | Write `~/.clawker/post-init.sh` to a created container; entrypoint runs it once on first start |
-| `ResolveAgentEnv(agent, projectDir) (map[string]string, []string, error)` | Merges `env_file` + `from_env` + `env` into env map. Precedence: env_file < from_env < env |
-| `RebuildMissingDefaultImage(ctx, RebuildMissingImageOpts)` | Interactive rebuild flow for missing default images with TUI progress |
-| `NewListOpts(validator) *ListOpts` | Create ListOpts with optional validation function |
-| `NewListOptsRef(values, validator) *ListOpts` | Create ListOpts backed by an existing slice |
-| `NewMapOpts(validator) *MapOpts` | Create MapOpts with optional validation function |
-| `NewPortOpts() *PortOpts` | Create PortOpts for port mapping flags |
-| `NewCopyToContainerFn(client *docker.Client) CopyToContainerFn` | Creates a `CopyToContainerFn` closure wrapping `docker.Client.CopyToContainer` |
+| `MarkMutuallyExclusive(cmd)` | Mark `--agent`/`--name` mutually exclusive |
+| `CreateContainer(ctx, cfg, events)` | Single entry point -- workspace, config, env, create, inject |
+| `NeedsSocketBridge(cfg)` | Check if GPG/SSH bridge needed from project config |
+| `InitContainerConfig(ctx, opts)` | Copy host Claude config to volume |
+| `InjectPostInitScript(ctx, opts)` | Write `~/.clawker/post-init.sh` to container |
+| `ResolveAgentEnv(agent, projectDir)` | Merge env_file + from_env + env. Precedence: env_file < from_env < env |
+| `RebuildMissingDefaultImage(ctx, opts)` | Interactive rebuild flow with TUI progress |
+| `GenerateAgentBootstrap(...)` | Mint mTLS cert + JWT assertion for agent |
+| `WriteAgentBootstrapToContainer(...)` | Tar bootstrap files into container |
+| `InstallAgentBootstrapMaterial(...)` | Create-time install of agent bootstrap material |
+| `NewListOpts` / `NewListOptsRef` / `NewMapOpts` / `NewPortOpts` | pflag.Value constructors |
+| `NewCopyToContainerFn(client)` | Wraps `docker.Client.CopyToContainer` |
 
 ## Worktree Resolution (`resolveWorkDir`)
 
-`resolveWorkDir()` resolves the host path for the container's workspace mount (mounted at the same absolute path inside the container). When `--worktree` is set, it creates or reuses a Git worktree:
+Resolves host path for container workspace mount when `--worktree` is set:
 
-1. Parses flag via `cmdutil.ParseWorktreeFlag(value, agentName)` → `WorktreeSpec{Branch, Base}`
-2. Calls `proj.CreateWorktree(ctx, branch, base)` to create the worktree
-3. If `project.ErrWorktreeExists` → falls back to `proj.GetWorktree(ctx, branch)` for idempotent reuse
-4. Validates health: only `WorktreeHealthy` is accepted; stale worktrees produce an error suggesting `clawker worktree prune`
-5. Returns `(worktreePath, proj.RepoPath(), nil)` — the second return is the main repo root (used for `.git` directory mount)
+1. `cmdutil.ParseWorktreeFlag(value, agentName)` -> `WorktreeSpec{Branch, Base}`
+2. `proj.CreateWorktree(ctx, branch, base)` -- on `ErrWorktreeExists`, falls back to `proj.GetWorktree`
+3. Only `WorktreeHealthy` accepted; stale -> error suggesting `clawker worktree prune`
+4. Returns `(worktreePath, proj.RepoPath(), nil)`
 
-The `--worktree` flag is idempotent (get-or-create). This differs from `clawker worktree add` which is strict (create-only, rejects duplicates).
+The `--worktree` flag is idempotent (get-or-create), unlike `clawker worktree add` (create-only).
 
 ## Home Directory Safety (`safety.go`)
 
-`IsOutsideHome(dir string) bool` — pure function (no I/O, stdlib only) that returns `true` when `dir` is `$HOME` itself or any directory not within `$HOME`. Uses `filepath.EvalSymlinks` for consistent comparison (macOS `/var` → `/private/var`), then `filepath.Rel(home, dir)` — result of `"."` means dir IS home, prefix `".."` means outside.
-
-Returns `false` on any resolution error (conservative — don't block users when paths can't be resolved).
-
-**Callers**:
-- `run/create` commands: prompt for confirmation via `opts.Prompter().Confirm()` (default: No)
-- `loop iterate/tasks` commands: hard error (`fmt.Errorf("loop mode is not supported outside of, or in, the home directory")`)
+`IsOutsideHome(dir string) bool` -- pure function, returns `true` when `dir` is `$HOME` itself or outside `$HOME`. Uses `filepath.EvalSymlinks` + `filepath.Rel`. Returns `false` on resolution error (conservative).
 
 ## Dependencies
 
-Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/controlplane` (for `ensureRunning` seam consumed by `f.AdminClient`), `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/project`, `internal/socketbridge`, `internal/workspace`, `pkg/whail`, `api/admin/v1` (AdminService RPCs: FirewallInit, FirewallAddRules, FirewallEnable)
+Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/controlplane` (for `ensureRunning` seam), `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/project`, `internal/socketbridge`, `internal/workspace`, `pkg/whail`, `api/admin/v1`
 
 ## Testing
 
-Unit tests in `shared/init_test.go` — `CreateContainer` tests using `mocks.FakeClient` + `hostproxytest.MockManager`.
-Unit tests in `shared/container_test.go` — Flag parsing, BuildConfigs, ValidateFlags, pflag.Value types.
-Unit tests in `shared/image_test.go` — `RebuildMissingDefaultImage` interactive flow, `progressStatus` mapping.
-Unit tests in `shared/containerfs_test.go` — uses mock CopyToVolume/CopyToContainer function trackers.
-Unit tests in `shared/workdir_test.go` — `resolveWorkDir` worktree idempotent reuse: create new, reuse healthy existing, error on stale.
-Unit tests in `shared/safety_test.go` — `IsOutsideHome` tests: home dir (true), parent of home (true), root (true), subdirectory (false), deeply nested (false), outside home (true).
-Integration tests in `test/internals/containerfs_test.go` — exercises full pipeline with real Docker containers.
+- `shared/init_test.go` -- `CreateContainer` with `mocks.FakeClient` + `hostproxytest.MockManager`
+- `shared/container_test.go` -- Flag parsing, BuildConfigs, ValidateFlags, pflag.Value types
+- `shared/image_test.go` -- `RebuildMissingDefaultImage` interactive flow, `progressStatus` mapping
+- `shared/containerfs_test.go` -- Mock CopyToVolume/CopyToContainer trackers
+- `shared/workdir_test.go` -- `resolveWorkDir` worktree idempotent reuse
+- `shared/safety_test.go` -- `IsOutsideHome` boundary cases

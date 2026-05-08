@@ -2,18 +2,6 @@
 
 Leaf git operations package for repository discovery, branch safety checks, and linked worktree lifecycle.
 
-## Recent Changes (Current State)
-
-- Clarified package boundary language: callers own directory/layout concerns; git package stays pure stdlib + go-git.
-- Worktree orchestration now explicitly relies on caller-provided `WorktreeDirProvider` and caller-provided `WorktreeDirEntry` metadata.
-- Worktree branch creation path is hardened:
-  - existing branch => `AddWithExistingBranch`
-  - missing branch => `AddWithNewBranch`
-- Slashed branch names are intentionally supported without creating incorrect slug-derived git branches.
-- `ListWorktrees` behavior clearly includes orphan detection in both directions:
-  - git metadata without caller entry
-  - caller entry without git metadata
-
 ## Architecture
 
 This is a **Tier 1 leaf package**:

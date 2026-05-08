@@ -1,6 +1,14 @@
-# Store UI Rules
+---
+description: Store UI multi-layer config editor rules
+paths:
+  - "internal/storeui/**"
+  - "internal/config/storeui/**"
+  - "internal/tui/fieldbrowser*"
+  - "internal/tui/listeditor*"
+  - "internal/tui/textareaeditor*"
+---
 
-**Applies to**: `internal/storeui/**`, `internal/config/storeui/**`, `internal/tui/fieldbrowser*`, `internal/tui/listeditor*`, `internal/tui/textareaeditor*`
+# Store UI Rules
 
 > For the full architecture, data flow, TUI component API, test patterns, and gotchas, see `.claude/docs/STOREUI-REFERENCE.md`. This rule keeps only the load-bearing mental model and the checklist for adding a new store editor.
 

@@ -44,7 +44,7 @@ func DefaultFlavorOptions() []FlavorOption  // bookworm, trixie, alpine3.22, alp
 func FlavorToImage(flavor string) string    // Maps flavor to base image; unknown pass through
 ```
 
-Note: `DefaultImageTag` constant and `BuildDefaultImage` function have moved to `internal/docker/defaults.go`.
+`DefaultImageTag` constant and `BuildDefaultImage` function live in `internal/docker/defaults.go`, not here.
 
 ## Dockerfile Generation (`dockerfile.go`)
 
@@ -118,7 +118,7 @@ const DefaultClaudeCodeVersion, DefaultUsername, DefaultShell = "latest", "claud
 
 UID/GID come from `cfg.ContainerUID()` / `cfg.ContainerGID()` (no bundler-local constants).
 
-Embedded: `DockerfileTemplate`, `EntrypointScript`, `FirewallScript`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`.
+Embedded: `DockerfileTemplate`, `EntrypointScript`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `AgentPromptFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`.
 
 ## Version Management (`versions.go`)
 

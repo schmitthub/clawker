@@ -1,4 +1,5 @@
 ---
+description: Git package leaf constraints and worktree patterns
 paths: ["internal/git/**"]
 ---
 
