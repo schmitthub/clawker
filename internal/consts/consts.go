@@ -239,8 +239,40 @@ const (
 
 // Container user identity.
 const (
-	ContainerUID = 1001
-	ContainerGID = 1001
+	ContainerUID  = 1001
+	ContainerGID  = 1001
+	ContainerUser = "claude"
+	// ContainerHomeDir is the unprivileged container user's home,
+	// fixed by the bundler's Dockerfile template. CP-side init scripts
+	// reference $HOME, but PipeStage.Env must set HOME explicitly per
+	// stage because Linux's setuid syscall does not update HOME/USER.
+	ContainerHomeDir = "/home/" + ContainerUser
+)
+
+// In-container paths that span the entrypoint↔CP-driven init contract.
+// The Dockerfile template (or CLI ContainerCopy) creates these; CP-side
+// init scripts read/write them. Single source of truth so a path
+// rename in the bundler doesn't drift silently from init.go.
+const (
+	// HostGitConfigStagingPath is the in-container target where the
+	// host's ~/.gitconfig is bind-mounted RO. The CP-driven init "git"
+	// step filters [credential] sections out and copies the result to
+	// $HOME/.gitconfig. Workspace mount setup re-exports this value.
+	HostGitConfigStagingPath = "/tmp/host-gitconfig"
+	// ReadyMarkerPath is the file the entrypoint touches after init
+	// completes. Docker HEALTHCHECK + external readiness probes look
+	// for it. Cleared on every container start.
+	ReadyMarkerPath = "/var/run/clawker/ready"
+)
+
+// Init-phase wall-clock ceilings used by the CP-driven init plan.
+// post-init governs the longest-running step. The bundler renders
+// entrypoint.sh.tmpl with CLAWKER_INIT_TIMEOUT defaulted to
+// post-init + 60s slack at image-build time, so this constant is the
+// single source of truth — the bash script can never drift.
+const (
+	InitStepTimeoutDefaultSeconds  uint32 = 30
+	InitStepTimeoutPostInitSeconds uint32 = 600
 )
 
 // Auth scopes (for gRPC method authorization).
@@ -279,6 +311,15 @@ const (
 	BootstrapKeyFile       = "key.pem"
 	BootstrapCAFile        = "ca.pem"
 	BootstrapAssertionFile = "assertion.jwt"
+
+	// AgentReadyFifo is the named pipe the entrypoint creates and reads
+	// to block exec of the user CMD until CP-driven init completes.
+	// clawkerd opens it O_WRONLY|O_NONBLOCK on AgentReady and writes one
+	// byte to release the entrypoint. ENXIO (no reader) is the
+	// reconnect-after-init-already-completed path and is treated as a
+	// no-op success — the entrypoint already exec'd CMD on the first
+	// AgentReady this boot.
+	AgentReadyFifo = "/run/clawker/agent.fifo"
 )
 
 // Container env vars for clawkerd bootstrap. clawkerd reads only what

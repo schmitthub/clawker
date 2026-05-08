@@ -8,23 +8,11 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 )
 
-// AgentRegistered fires when a CP-driven Register handshake completes
-// (success or failure). The dialer publishes this event after sending
-// RegisterRequired on the Session stream and observing RegisterDone
-// from clawkerd plus a successful registry re-lookup.
-//
-// AgentRegistered does NOT fire for the steady-state "row already
-// exists" case — registration is one-time per container creation
-// (the Hydra client_assertion JWT is single-use). Subscribers needing
-// "is this agent registered right now" should consult
-// State.Agents[containerID].Registered instead.
-//
-// Ok=true means the row was written and is durable in the registry.
-// Ok=false carries Reason — Hydra exchange failed, mTLS dial to
-// AgentService failed, Register handler returned an error, etc. On
-// failure the dialer also publishes AgentUntrusted{Reason:
-// ReasonRegisterFailed} so consumers can branch on a single typed
-// event surface.
+// AgentRegistered fires once per container lifetime, after the
+// CP-driven Register handshake (success or failure). Steady-state
+// "row already exists" reconnects do NOT re-fire — query
+// State.Agents[ID].Registered for "is this agent registered now".
+// Ok=false also drives AgentUntrusted{ReasonRegisterFailed}.
 type AgentRegistered struct {
 	ContainerID string
 	AgentName   string
@@ -62,16 +50,10 @@ func (e AgentRegistered) ApplyTo(s *overseer.State) {
 	s.Agents[e.ContainerID] = view
 }
 
-// AgentUntrusted fires when the dialer or Register handler observes
-// a per-agent identity outcome that violates the trust contract
-// (cert thumbprint differs from registered row, container_id SAN on
-// the cert doesn't match the docker container, peer IP doesn't match
-// the container's clawker-net IP, Register failed, etc.).
-//
-// The CP-overlord asymmetric trust model is preserved: the Session
-// stream stays open even when the agent is untrusted, so CP can still
-// dispatch containment commands. Subscribers consume AgentUntrusted
-// to enact policy (containment, alerting, eviction).
+// AgentUntrusted fires when an identity outcome violates the trust
+// contract (thumbprint mismatch, CN mismatch, peer-IP mismatch,
+// Register failed). Session stays open (asymmetric trust); subscribers
+// enact policy.
 type AgentUntrusted struct {
 	ContainerID string
 	AgentName   string
@@ -106,14 +88,217 @@ func (e AgentUntrusted) ApplyTo(s *overseer.State) {
 	s.Agents[e.ContainerID] = view
 }
 
+// InitStarted fires when CP begins running the init plan against an
+// established Session. Re-published on every Session reconnect that
+// re-runs the plan. StepCount lets streaming subscribers render
+// "1 of N" progress without re-deriving plan length.
+type InitStarted struct {
+	ContainerID string
+	AgentName   string
+	Project     string
+	StepCount   int
+	At          time.Time
+}
+
+func (e InitStarted) EventName() string     { return "agent.init.started" }
+func (e InitStarted) OccurredAt() time.Time { return e.At }
+func (e InitStarted) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("agent", e.AgentName).
+		Str("project", e.Project).
+		Int("step_count", e.StepCount)
+}
+func (e InitStarted) ApplyTo(s *overseer.State) {
+	view := s.Agents[e.ContainerID]
+	view.ContainerID = e.ContainerID
+	if e.AgentName != "" {
+		view.AgentName = e.AgentName
+	}
+	if e.Project != "" {
+		view.Project = e.Project
+	}
+	view.Init = overseer.InitRunning(e.StepCount, e.At)
+	view.UpdatedAt = e.At
+	s.Agents[e.ContainerID] = view
+}
+
+// InitStepStarted fires when the Executor dispatches one step's
+// ShellCommand. StepName is the wire-contract vocabulary subscribers
+// match against ("config", "git", "ssh", "post-init", "agent-ready").
+type InitStepStarted struct {
+	ContainerID string
+	AgentName   string
+	Project     string
+	StepName    string
+	StepIndex   int
+	StepCount   int
+	At          time.Time
+}
+
+func (e InitStepStarted) EventName() string     { return "agent.init.step.started" }
+func (e InitStepStarted) OccurredAt() time.Time { return e.At }
+func (e InitStepStarted) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("agent", e.AgentName).
+		Str("project", e.Project).
+		Str("step", e.StepName).
+		Int("step_index", e.StepIndex).
+		Int("step_count", e.StepCount)
+}
+func (e InitStepStarted) ApplyTo(s *overseer.State) {
+	view := s.Agents[e.ContainerID]
+	view.ContainerID = e.ContainerID
+	if e.AgentName != "" {
+		view.AgentName = e.AgentName
+	}
+	if e.Project != "" {
+		view.Project = e.Project
+	}
+	view.Init = view.Init.WithStep(e.StepName, e.StepIndex)
+	view.UpdatedAt = e.At
+	s.Agents[e.ContainerID] = view
+}
+
+// InitStepCompleted fires when a step's ShellCommand returns Done
+// with exit_code == 0.
+type InitStepCompleted struct {
+	ContainerID string
+	AgentName   string
+	Project     string
+	StepName    string
+	StepIndex   int
+	Duration    time.Duration
+	ExitCode    int32
+	At          time.Time
+}
+
+func (e InitStepCompleted) EventName() string     { return "agent.init.step.completed" }
+func (e InitStepCompleted) OccurredAt() time.Time { return e.At }
+func (e InitStepCompleted) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("agent", e.AgentName).
+		Str("project", e.Project).
+		Str("step", e.StepName).
+		Int("step_index", e.StepIndex).
+		Dur("duration", e.Duration).
+		Int32("exit_code", e.ExitCode)
+}
+func (e InitStepCompleted) ApplyTo(s *overseer.State) {
+	view := s.Agents[e.ContainerID]
+	view.ContainerID = e.ContainerID
+	view.UpdatedAt = e.At
+	s.Agents[e.ContainerID] = view
+}
+
+// InitStepFailed fires when a step terminates non-zero, errors, or
+// times out. Reason is the typed classification subscribers branch
+// on; Detail is the human-readable diagnostic (formatted ErrorCode +
+// message + truncated stderr). The Executor halts the plan on this
+// event and publishes a terminal InitFailed.
+type InitStepFailed struct {
+	ContainerID string
+	AgentName   string
+	Project     string
+	StepName    string
+	StepIndex   int
+	Duration    time.Duration
+	ExitCode    int32
+	Reason      overseer.InitFailureReason
+	Detail      string
+	At          time.Time
+}
+
+func (e InitStepFailed) EventName() string     { return "agent.init.step.failed" }
+func (e InitStepFailed) OccurredAt() time.Time { return e.At }
+func (e InitStepFailed) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("agent", e.AgentName).
+		Str("project", e.Project).
+		Str("step", e.StepName).
+		Int("step_index", e.StepIndex).
+		Dur("duration", e.Duration).
+		Int32("exit_code", e.ExitCode).
+		Str("reason", string(e.Reason))
+	if e.Detail != "" {
+		z.Str("detail", e.Detail)
+	}
+}
+func (e InitStepFailed) ApplyTo(s *overseer.State) {
+	view := s.Agents[e.ContainerID]
+	view.ContainerID = e.ContainerID
+	view.Init = view.Init.WithStepError(e.Detail)
+	view.UpdatedAt = e.At
+	s.Agents[e.ContainerID] = view
+}
+
+// InitCompleted is the terminal success event for one init phase.
+// Subscribers waiting for "agent ready to serve user work" should
+// listen for this rather than SessionConnected — Session is connected
+// long before init finishes.
+type InitCompleted struct {
+	ContainerID string
+	AgentName   string
+	Project     string
+	Duration    time.Duration
+	At          time.Time
+}
+
+func (e InitCompleted) EventName() string     { return "agent.init.completed" }
+func (e InitCompleted) OccurredAt() time.Time { return e.At }
+func (e InitCompleted) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("agent", e.AgentName).
+		Str("project", e.Project).
+		Dur("duration", e.Duration)
+}
+func (e InitCompleted) ApplyTo(s *overseer.State) {
+	view := s.Agents[e.ContainerID]
+	view.ContainerID = e.ContainerID
+	view.Init = view.Init.Complete(e.At)
+	view.UpdatedAt = e.At
+	s.Agents[e.ContainerID] = view
+}
+
+// InitFailed is the terminal failure event for one init phase. Carries
+// the typed Reason classification and the human-readable Detail so
+// subscribers can surface the proximate cause without re-deriving from
+// the step event stream.
+type InitFailed struct {
+	ContainerID string
+	AgentName   string
+	Project     string
+	FailedStep  string
+	Reason      overseer.InitFailureReason
+	Detail      string
+	Duration    time.Duration
+	At          time.Time
+}
+
+func (e InitFailed) EventName() string     { return "agent.init.failed" }
+func (e InitFailed) OccurredAt() time.Time { return e.At }
+func (e InitFailed) MarshalZerologObject(z *zerolog.Event) {
+	z.Str("container_id", e.ContainerID).
+		Str("agent", e.AgentName).
+		Str("project", e.Project).
+		Str("failed_step", e.FailedStep).
+		Str("reason", string(e.Reason)).
+		Dur("duration", e.Duration)
+	if e.Detail != "" {
+		z.Str("detail", e.Detail)
+	}
+}
+func (e InitFailed) ApplyTo(s *overseer.State) {
+	view := s.Agents[e.ContainerID]
+	view.ContainerID = e.ContainerID
+	view.Init = view.Init.Fail(e.At, e.Detail)
+	view.UpdatedAt = e.At
+	s.Agents[e.ContainerID] = view
+}
+
 // ReapDegraded fires when CP's startup reap of orphan registry rows
-// fails. The dockerevents/destroy subscription will pick up future
-// `docker rm`s, but rows for containers destroyed WHILE CP was down
-// may never be evicted until the next CP restart sweeps successfully.
-// Subscribers (operator alerting, monitoring panels) consume this
-// event to surface the degraded-worldview state. No worldview field
-// changes — the event is informational; State.Agents may still
-// contain ghost rows.
+// fails. Rows for containers destroyed while CP was down may persist
+// as ghosts until a successful future reap. Pure informational event
+// (no ApplyTo).
 type ReapDegraded struct {
 	Reason string
 	At     time.Time

@@ -316,6 +316,47 @@ func TestDriveRegister_RecvError_PublishesFailure(t *testing.T) {
 	require.Len(t, untrusted, 1)
 }
 
+// TestDriveRegister_ResponseErrorSurfaces pins the
+// Response_Error-during-register branch: when clawkerd rejects
+// RegisterRequired with a typed Error frame addressed to our
+// command_id, driveRegister surfaces the ErrorCode + message in the
+// AgentRegistered.Reason and AgentUntrusted.Detail rather than swallowing
+// it and timing out. Without this branch, an INVALID_REQUEST rejection
+// would manifest as an opaque "RegisterDone timeout" — operators would
+// see the symptom but not the cause.
+func TestDriveRegister_ResponseErrorSurfaces(t *testing.T) {
+	d, ec := newDriveRegisterDialer(t, &RegistryMock{})
+
+	streamCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	stream := newFakeStream(streamCtx)
+
+	commandID := "register-abc"
+	stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+		CommandId: commandID,
+		Payload: &clawkerdv1.Response_Error{Error: &clawkerdv1.Error{
+			Code:    clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+			Message: "missing client_assertion",
+		}},
+	}}
+
+	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
+	res.StreamCancel = cancel
+
+	start := time.Now()
+	d.driveRegister(t.Context(), "abc", res, logger.Nop())
+	require.Less(t, time.Since(start), registerRequiredTimeout/2,
+		"a typed Response_Error must short-circuit the wait — not fall through to the timeout")
+
+	registered, untrusted := ec.drain(100 * time.Millisecond)
+	require.Len(t, registered, 1)
+	require.False(t, registered[0].Ok,
+		"register must fail on a typed Response_Error; downstream Reason assertions assume failure")
+	assert.Contains(t, registered[0].Reason, "ERROR_CODE_INVALID_REQUEST")
+	assert.Contains(t, registered[0].Reason, "missing client_assertion")
+	require.Len(t, untrusted, 1)
+}
+
 // TestDriveRegister_TimeoutCancelsStream: when no RegisterDone arrives
 // within the wait window, driveRegister cancels the stream-scoped
 // ctx so the inner Recv goroutine exits BEFORE driveRegister returns.

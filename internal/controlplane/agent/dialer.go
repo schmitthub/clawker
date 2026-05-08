@@ -59,6 +59,7 @@ import (
 	"io"
 	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- non-security random for connect-retry jitter
 	"net"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -126,6 +127,13 @@ type Dialer struct {
 	// Required (non-nil) — wiring bug if unset.
 	agents Registry
 
+	// initExec dispatches the CP-driven init plan after
+	// dispatchAgentEvents and before drainStream. nil disables init
+	// (entrypoint hangs on its fifo until timeout) — runInit logs a
+	// warning so the misconfiguration is observable. Set at
+	// construction; immutable after Start.
+	initExec *Executor
+
 	cpClientCert tls.Certificate
 	caPool       *x509.CertPool
 
@@ -148,7 +156,7 @@ type Dialer struct {
 // the typed AgentRegistered / AgentUntrusted events accordingly. nil
 // agents would strand worldview consumers without a registration
 // signal.
-func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer, agents Registry, certPath, keyPath string, caPool *x509.CertPool) (*Dialer, error) {
+func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer, agents Registry, certPath, keyPath string, caPool *x509.CertPool, initExec *Executor) (*Dialer, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -170,6 +178,7 @@ func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer
 		docker:       docker,
 		bus:          bus,
 		agents:       agents,
+		initExec:     initExec,
 		cpClientCert: cert,
 		caPool:       caPool,
 		dialing:      make(map[string]struct{}),
@@ -203,6 +212,53 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 	d.mu.Unlock()
 
 	go func() {
+		// Defer order is load-bearing (LIFO): recover registered
+		// first so it runs LAST, wrapping the dedup cleanup. A
+		// panic inside cleanup is then also caught instead of
+		// killing PID 1 and stranding eBPF programs. See
+		// internal/controlplane/CLAUDE.md "Resilience contract".
+		defer func() {
+			r := recover()
+			if r == nil {
+				return
+			}
+			// Best-effort registry lookup so the synthetic
+			// SessionFailed and the structured log carry the
+			// agent/project identity — without this, downstream
+			// metrics indexed by (project, agent) lose track of the
+			// affected agent during exactly the failure mode
+			// (CP-internal panic) when high-quality signal matters
+			// most. The lookup is best-effort: if registry I/O is
+			// also broken, the empty fields are the audit signal.
+			agentName, project := "", ""
+			if d.agents != nil {
+				if entry, lerr := d.agents.LookupByContainerID(containerID); lerr == nil && entry != nil {
+					agentName, project = entry.AgentName, entry.Project
+				}
+			}
+			d.log.Error().
+				Interface("panic", r).
+				Bytes("stack", debug.Stack()).
+				Str("container_id", containerID).
+				Str("agent", agentName).
+				Str("project", project).
+				Str("event", "agentdial_panic").
+				Msg("agent.dial: dial goroutine panicked; CP otherwise unaffected. Publishing synthetic SessionFailed so worldview consumers see a terminal lifecycle event.")
+			// Publish directly with context.Background() instead of
+			// the dial ctx: publishFailed short-circuits when the
+			// ctx is done, but the panic path needs the worldview
+			// transition to land even during shutdown — operators
+			// are about to lose every other signal. overseer.Publish
+			// is no-op on a closed bus (returns false; doesn't
+			// panic), so this is safe to call from the recover.
+			overseer.Publish(d.bus, SessionFailed{
+				ContainerID: containerID,
+				AgentName:   agentName,
+				Project:     project,
+				Reason:      fmt.Sprintf("dial_goroutine_panic: %v", r),
+				At:          time.Now(),
+			})
+		}()
 		defer func() {
 			d.mu.Lock()
 			delete(d.dialing, containerID)
@@ -258,6 +314,11 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 		// stream stays open in all cases — CP must remain reachable
 		// for containment commands even when the agent is untrusted.
 		d.dispatchAgentEvents(ctx, containerID, res, cycleLog)
+
+		// Init owns Recv during its phase; failures publish InitFailed
+		// but never close the Session (asymmetric trust). Re-runs on
+		// every Session reconnect — see Executor.
+		d.runInit(ctx, containerID, res, cycleLog)
 
 		drain := d.drainStream(ctx, res.Stream, cycleLog)
 		// Cancel the stream-scoped ctx so any goroutine still parked on
@@ -1032,6 +1093,35 @@ func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, re
 	}
 }
 
+// runInit invokes the wired Executor against the open Session. No-op
+// (with a warning) if no Executor was set — operators see the
+// misconfiguration in the structured log; the entrypoint will then
+// time out on its fifo and the container will fail to launch CMD.
+//
+// Failure to complete init is NOT terminal for the Session: the stream
+// stays open so subsequent containment commands can still be
+// dispatched (asymmetric trust). The init failure is captured on the
+// overseer worldview via InitFailed; subscribers (CLI WatchAgent,
+// monitoring) consume that to surface to operators.
+func (d *Dialer) runInit(ctx context.Context, containerID string, res establishResult, log *logger.Logger) {
+	if d.initExec == nil {
+		log.Warn().
+			Str("event", "agent_init_executor_unset").
+			Msg("agent.init: no Executor wired on dialer; entrypoint will hang on its fifo until timeout")
+		return
+	}
+	target := InitTarget{
+		ContainerID: containerID,
+		AgentName:   res.Agent,
+		Project:     res.Project,
+	}
+	if err := d.initExec.Run(ctx, res.Stream, target); err != nil {
+		log.Warn().Err(err).
+			Str("event", "agent_init_run_failed").
+			Msg("agent.init: Executor.Run returned error; Session held open for containment")
+	}
+}
+
 // driveRegister sends RegisterRequired on the Session stream and
 // waits for the matching RegisterDone Response. After the agent
 // reports completion, re-looks up the registry to confirm the row
@@ -1083,6 +1173,20 @@ func (d *Dialer) driveRegister(ctx context.Context, containerID string, res esta
 			}
 			if _, ok := r.Payload.(*clawkerdv1.Response_RegisterDone); ok && r.CommandId == commandID {
 				ch <- recvResult{resp: r}
+				return
+			}
+			// A Response_Error addressed to our register command_id is a
+			// terminal failure from clawkerd (e.g. INVALID_REQUEST). The
+			// recv loop would otherwise re-loop and time out, hiding a
+			// concrete server-side rejection behind an opaque
+			// "RegisterDone timeout" — surface it directly so the
+			// AgentUntrusted reason carries the ErrorCode + detail.
+			if errPayload, ok := r.Payload.(*clawkerdv1.Response_Error); ok && r.CommandId == commandID {
+				ch <- recvResult{err: fmt.Errorf(
+					"clawkerd rejected RegisterRequired: %s: %s",
+					errPayload.Error.GetCode().String(),
+					errPayload.Error.GetMessage(),
+				)}
 				return
 			}
 		}

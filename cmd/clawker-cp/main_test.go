@@ -1,10 +1,29 @@
 package main
 
 import (
+	"bytes"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
+
+// TestWireInitExecutor_NilBus pins the CP-resilience contract: a
+// regression that swaps the `if err != nil { return nil }` for
+// `panic(err)` would crash CP and strand eBPF programs unsupervised,
+// silently breaking the firewall enforcement boundary. The structured
+// `event=<subsystem>_unavailable` log line is the only triage surface
+// operators have once the wrapper degrades.
+func TestWireInitExecutor_NilBus(t *testing.T) {
+	var buf bytes.Buffer
+	log := logger.NewWriter(&buf)
+
+	exec := wireInitExecutor(nil, log)
+
+	require.Nil(t, exec, "nil bus must yield nil Executor (degrade), not crash")
+	require.Contains(t, buf.String(), "agent_init_executor_unavailable",
+		"degraded path must emit the structured event so operators can triage")
+}
 
 func TestParseOtlpEndpoint(t *testing.T) {
 	cases := []struct {

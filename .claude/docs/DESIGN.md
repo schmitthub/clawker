@@ -8,6 +8,34 @@ Clawker is a Go CLI tool that wraps the Claude Code agent in secure, reproducibl
 - `internal/storage/CLAUDE.md` — storage package API, node tree architecture, merge/write internals.
 - `internal/config/CLAUDE.md` — config package contracts, persistence model, and test helpers.
 
+## 0a. Critical Invariant: CP Crashing Is a Security Incident
+
+**This precedes everything else in this document. Internalize it before reading on.**
+
+CP crashing is not an availability problem — it is a security boundary integrity problem. The reason:
+
+- eBPF firewall programs are CP-managed but **kernel-pinned** under `/sys/fs/bpf`. They survive CP container death.
+- Clean lifecycle (`firewall.Stack.Stop()` → `ebpfMgr.FlushAll()`) only runs on the `AgentWatcher` drain-to-zero path. **Panics, `log.Fatal`, unrecovered goroutines all skip it.**
+- After a CP crash: agent containers keep running, eBPF keeps filtering against the rules loaded at crash time, but **CP is no longer there to observe, update rules, expire bypasses, or dispatch containment**.
+- The user has no idea. Their agents look healthy. Their mental model — "CP has them covered" — is silently false. They are now exposed to prompt injection, exfiltration, and lateral-movement attempts CP would otherwise see and contain.
+
+**Operational consequences when CP is dead but eBPF is still attached:**
+
+- `clawker firewall add <domain>` updates the file but reload requires CP → silently dropped.
+- An in-flight `clawker firewall bypass <duration>` loses its expiry timer → the bypass is permanent until manual intervention.
+- No CP→clawkerd Session → no observation, no command dispatch, no containment.
+- `clawker controlplane status` reports CP down, but the user has to know to look. Stack traces land on `os.Stderr` → `docker logs <cp>`, NOT in the rotating `ControlPlaneLogFile` operators are wired to grep.
+
+**Therefore — design rules for any code reachable from `cmd/clawker-cp/main.go` after `SetReady`:**
+
+1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`.** Constructors return `(nil, error)`. main.go logs and degrades.
+2. **Long-lived goroutines must `recover()`.** Heartbeats, watchers, RPC handlers — one bad event must not silently strand eBPF.
+3. **Subsystem failures degrade, never escalate.** Broken Executor → `initExec = nil`; broken dialer → `dialer = nil`. Everything else stays up. The patterns in `cmd/clawker-cp/main.go` — `wireInitExecutor` (initExec; emits `event=agent_init_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` — are canonical.
+4. **Every degraded path emits a structured log line** (`event=<subsystem>_unavailable`) with component, error, and blast-radius fields. Operators will not see panic stacks; the structured log is the only surface.
+5. **The only acceptable hard-exits** are pre-`SetReady` startup gates (no agents running yet, eBPF not load-bearing) and the orchestrator's intentional drain-to-zero clean exit.
+
+If you're tempted to panic in CP code, you are about to turn a logic bug into a silent firewall failure. See `CLAUDE.md` (project root) and `internal/controlplane/CLAUDE.md` for the full statement and templates.
+
 ## 0. Common Confusion: CP ≠ Firewall
 
 The Control Plane (CP) and the firewall are NOT the same thing. LLM sessions repeatedly conflate them — see project-root `CLAUDE.md` for the full callout. Summary:

@@ -697,6 +697,17 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// containers, individual dial) are logged and the rest of CP
 	// proceeds — a misconfigured agent or a flapping clawkerd cannot
 	// hold the control plane down.
+	// Wire the CP-driven init Executor into the dialer at construction.
+	// Each new Session establish runs the static init plan against the
+	// open stream. Without this, the entrypoint hangs on its fifo until
+	// CLAWKER_INIT_TIMEOUT and the container fails to launch CMD.
+	// Container user identity (uid/gid/username/home) lives in consts
+	// and is read directly by the Executor. The plan shape is defined
+	// in agent.Executor.plan() and audited by
+	// TestExecutor_Plan_PrivilegeAndShape — keep the enumeration there
+	// so this comment can't drift. See wireInitExecutor for the degrade
+	// contract.
+	initExec := wireInitExecutor(bus, log)
 	dialer, err := agent.New(
 		log.With("component", "agent"),
 		dockerCli.APIClient,
@@ -705,9 +716,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		consts.CPClientCertPath,
 		consts.CPClientKeyPath,
 		caCertPool,
+		initExec,
 	)
 	if err != nil {
-		log.Error().Err(err).Str("event", "agentdial_init_failed").Msg("agent unavailable; CP→clawkerd dispatch disabled")
+		log.Error().Err(err).
+			Str("event", "agent_dialer_unavailable").
+			Msg("agent.dial: Dialer construction failed; CP→clawkerd command dispatch disabled. AdminService, firewall, registry, and AgentService listener continue.")
 		dialer = nil
 	}
 	if dialer != nil {
@@ -935,4 +949,22 @@ func parseOtlpEndpoint(raw string) (endpoint string, insecure bool) {
 		rest = rest[:i]
 	}
 	return rest, insecure
+}
+
+// wireInitExecutor constructs the CP-driven init Executor and applies
+// the degrade contract from internal/controlplane/CLAUDE.md
+// ("Resilience contract — CP crashing is a security incident"):
+// construction failure logs `agent_init_executor_unavailable` and
+// returns nil; CP keeps running. Extracted as its own function so the
+// degrade-not-crash invariant is unit-testable — see
+// TestWireInitExecutor_NilBus.
+func wireInitExecutor(bus *overseer.Overseer, log *logger.Logger) *agent.Executor {
+	exec, err := agent.NewExecutor(bus, log.With("component", "agent.init"))
+	if err == nil {
+		return exec
+	}
+	log.Error().Err(err).
+		Str("event", "agent_init_executor_unavailable").
+		Msg("agent.init: Executor construction failed; CP-driven init disabled — agent containers will hang on the entrypoint fifo until timeout. CP otherwise continues.")
+	return nil
 }

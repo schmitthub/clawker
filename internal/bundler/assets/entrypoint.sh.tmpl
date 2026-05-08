@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+#
+# clawker container entrypoint. Launches clawkerd, blocks on the
+# AgentReady fifo until CP-driven init completes (see init.go), then
+# drops to the unprivileged user and execs CMD. Paths and the init
+# timeout are templated from internal/consts at bundle time so the
+# bash script cannot drift from Go callers.
+
+set -e
+# Tag any uncaught nonzero exit (mkfifo on a read-only /run, mkdir
+# permission denied, exec gosu missing) with a structured stderr line
+# so operators can grep for `\[clawker\] error` across the whole
+# entrypoint surface, not just the explicit guards below.
+trap 'echo "[clawker] error component=entrypoint cmd=${BASH_COMMAND} status=$?" >&2' ERR
+
+# /run is a writable container layer — stale fifo + marker from a
+# prior boot carry no cross-boot meaning.
+rm -f {{ .AgentReadyFifo }} {{ .ReadyMarkerPath }}
+mkdir -p {{ .AgentReadyFifoDir }} {{ .ReadyMarkerDir }}
+mkfifo -m 0600 {{ .AgentReadyFifo }}
+
+# Pre-launch guard: a missing binary would silently no-op the
+# background launch and hang the entrypoint on the fifo until the
+# init timeout fires with no diagnostic.
+if [ ! -x /usr/local/bin/clawkerd ]; then
+    echo "[clawker] error component=clawkerd msg=binary missing or not executable path=/usr/local/bin/clawkerd" >&2
+    exit 1
+fi
+
+/usr/local/bin/clawkerd &
+clawkerd_pid=$!
+
+# Post-launch guard: catch deterministic startup failures (missing
+# bootstrap material, bad cert chain, bound port) before they hide
+# behind the {{ .InitTimeoutSeconds }}s init timeout.
+sleep 1
+if ! kill -0 "${clawkerd_pid}" 2>/dev/null; then
+    echo "[clawker] error component=clawkerd msg=daemon exited at startup pid=${clawkerd_pid}" >&2
+    echo "[clawker] check rotated logs at \${CLAWKER_LOGS_DIR}/clawkerd.log for stack details" >&2
+    exit 1
+fi
+
+timeout "${CLAWKER_INIT_TIMEOUT:-{{ .InitTimeoutSeconds }}}" cat {{ .AgentReadyFifo }} >/dev/null \
+    || { echo "[clawker] init timeout (${CLAWKER_INIT_TIMEOUT:-{{ .InitTimeoutSeconds }}}s) — clawkerd output above" >&2; exit 1; }
+
+# Docker HEALTHCHECK + external readiness probes watch this path.
+touch {{ .ReadyMarkerPath }}
+
+# Preserve the docker-image convention where `docker run <image> --help`
+# routes flags to the default CMD.
+if [ "${1#-}" != "${1}" ] || [ -z "$(command -v "${1}" 2>/dev/null)" ]; then
+    set -- claude "$@"
+fi
+
+exec gosu "${CLAWKER_USER:-claude}" "$@"

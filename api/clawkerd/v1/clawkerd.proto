@@ -44,6 +44,7 @@ message Command {
     CloseStdin close_stdin = 5;
     Signal signal = 6;
     RegisterRequired register_required = 7;
+    AgentReady agent_ready = 8;
   }
 }
 
@@ -61,6 +62,13 @@ message Hello {}
 // container_id is missing from the agentregistry (Miss outcome).
 // clawkerd replies with RegisterDone correlated by command_id.
 message RegisterRequired {}
+
+// AgentReady is the terminal init-sequence signal. clawkerd releases
+// the entrypoint to exec the user CMD. Idempotent on reconnect (no
+// reader → no-op success). Reply: Done{exit_code:0} on release or
+// reconnect-replay; Error{NOT_FOUND} if the fifo is missing entirely
+// (build drift); Error{IO_ERROR} on syscall-level failure.
+message AgentReady {}
 
 // ShellCommand starts a shell pipeline. stages.len == 1 runs a
 // single command; stages.len > 1 chains stage[i].stdout into
@@ -180,4 +188,8 @@ enum ErrorCode {
   ERROR_CODE_TIMEOUT = 4;
   // Pipe between stages broke unexpectedly mid-execution.
   ERROR_CODE_IO_ERROR = 5;
+  // Required filesystem entry missing (e.g. AgentReady fifo
+  // never created — distinct from IO_ERROR which covers
+  // syscall failures on existing entries).
+  ERROR_CODE_NOT_FOUND = 6;
 }
