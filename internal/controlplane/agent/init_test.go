@@ -647,27 +647,16 @@ func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
 		"every shell step needs exactly one CloseStdin (none for AgentReady)")
 }
 
-// TestExecutor_Run_RejectsConcurrent pins the runMu guard. Run owns
-// stream.Recv exclusively for its duration; a second concurrent Run
-// against the same Executor would race the dispatch state and corrupt
-// the worldview projection. The guard rejects the second call with a
-// descriptive error so misuse surfaces in the structured log surface
-// rather than as a hard-to-diagnose race detector hit. The dialer
-// drives Run serially through runDial, so production never trips
-// this — but it catches a future caller that wires per-Session
-// goroutines without preserving serialization.
-//
-// Coordination: subscribe to InitStarted so the second Run only fires
-// after the first has crossed the guard and entered the dispatch
-// loop. Avoids reaching into Executor's private state.
+// TestExecutor_Run_ParallelStreamsBothComplete pins the requirement
+// that drove the runMu removal: a single CP-owned Executor must
+// dispatch the init plan in parallel across containers. CP boot with
+// multiple already-running agents fans out one DialAgent goroutine
+// per container; if Run serialized across the Executor, every-but-one
+// Run would reject and those agents would hang on the entrypoint fifo
+// until timeout. The test drives two concurrent Runs against distinct
+// streams and asserts both complete successfully — the Executor must
+// be safe to share across containers.
 func TestExecutor_Run_ParallelStreamsBothComplete(t *testing.T) {
-	// Pins the prod requirement that drove the runMu removal: a single
-	// CP-owned Executor must dispatch the init plan in parallel across
-	// containers. CP boot with multiple already-running agents fans
-	// out one DialAgent goroutine per container; if Run serialized
-	// across the Executor, every-but-one Run would reject with
-	// "concurrent Executor.Run" and those agents would hang on the
-	// entrypoint fifo until timeout.
 	bus := overseer.New(overseer.Options{})
 	require.NoError(t, bus.Start(context.Background()))
 	t.Cleanup(func() { _ = bus.Close() })

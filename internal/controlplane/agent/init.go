@@ -526,7 +526,7 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 				return stepFailedTransport(eofDetail), errors.New(eofDetail)
 			}
 			wrapped := fmt.Errorf("recv %s: %w", st.stepName(), err)
-			return stepFailedTransport(err.Error()), wrapped
+			return stepFailedTransport(wrapped.Error()), wrapped
 		}
 		if resp.GetCommandId() != commandID {
 			log.Debug().

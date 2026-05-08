@@ -212,15 +212,11 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 	d.mu.Unlock()
 
 	go func() {
-		// Defer order is load-bearing (LIFO): recover wraps the
-		// dedup cleanup so a panic in cleanup is also caught and
-		// re-dial unblocks after a panicked cycle. See
+		// Defer order is load-bearing (LIFO): recover registered
+		// first so it runs LAST, wrapping the dedup cleanup. A
+		// panic inside cleanup is then also caught instead of
+		// killing PID 1 and stranding eBPF programs. See
 		// internal/controlplane/CLAUDE.md "Resilience contract".
-		defer func() {
-			d.mu.Lock()
-			delete(d.dialing, containerID)
-			d.mu.Unlock()
-		}()
 		defer func() {
 			r := recover()
 			if r == nil {
@@ -262,6 +258,11 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 				Reason:      fmt.Sprintf("dial_goroutine_panic: %v", r),
 				At:          time.Now(),
 			})
+		}()
+		defer func() {
+			d.mu.Lock()
+			delete(d.dialing, containerID)
+			d.mu.Unlock()
 		}()
 		d.runDial(ctx, containerID)
 	}()
