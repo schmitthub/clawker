@@ -7,7 +7,6 @@ import (
 	"io"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"time"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
@@ -199,19 +198,17 @@ type InitTarget struct {
 // post-init), and AgentReady is no-op success when the entrypoint
 // has already released. Trade: a small volume of shell commands
 // fires on every reconnect; gain: no per-container completed flag.
+// Executor is shared across all containers — the dialer constructs
+// one at CP boot and calls Run from a goroutine per DialAgent (one per
+// agent container). Run holds no Executor-scoped mutable state: every
+// call gets its own (ctx, stream, target) and drives its own stream's
+// Recv loop in a single goroutine. The Run-owns-Recv invariant is
+// per-stream (one Run, one stream, one Recv-driving goroutine), not
+// per-Executor — concurrent Runs across different containers must not
+// be serialized.
 type Executor struct {
 	bus *overseer.Overseer
 	log *logger.Logger
-	// runMu enforces the Run-owns-Recv contract at runtime. Run owns
-	// stream.Recv exclusively for its duration; a concurrent Run on
-	// the same Executor against a different stream would race the
-	// shared dispatch state. The dialer drives Run serially through
-	// runDial, so this guard catches misuse (a future caller wiring
-	// a per-Session goroutine that forgot the serialization invariant)
-	// rather than a normal-case collision. TryLock returns the
-	// "already in use" signal as a typed error rather than blocking,
-	// keeping the rejected caller observable in the structured log.
-	runMu sync.Mutex
 }
 
 // NewExecutor constructs an Executor. nil log is replaced with
@@ -241,14 +238,10 @@ func NewExecutor(bus *overseer.Overseer, log *logger.Logger) (*Executor, error) 
 //
 // Caller invariant: stream must already have completed Hello/HelloAck
 // and any Register handshake. Run owns stream.Recv exclusively for
-// its duration — a second concurrent Run on the same Executor is
-// rejected by the runMu guard rather than serialized.
+// its duration — but per-stream, not per-Executor. Concurrent Runs
+// across different streams (the prod case: parallel agent containers
+// after a CP restart) execute in parallel.
 func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target InitTarget) (runErr error) {
-	if !e.runMu.TryLock() {
-		return errors.New("agent.init: concurrent Executor.Run on the same instance — Run owns stream.Recv exclusively")
-	}
-	defer e.runMu.Unlock()
-
 	plan := e.plan()
 	startedAt := time.Now()
 	overseer.Publish(e.bus, InitStarted{

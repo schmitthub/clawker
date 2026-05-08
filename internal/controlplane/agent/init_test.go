@@ -660,50 +660,58 @@ func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
 // Coordination: subscribe to InitStarted so the second Run only fires
 // after the first has crossed the guard and entered the dispatch
 // loop. Avoids reaching into Executor's private state.
-func TestExecutor_Run_RejectsConcurrent(t *testing.T) {
+func TestExecutor_Run_ParallelStreamsBothComplete(t *testing.T) {
+	// Pins the prod requirement that drove the runMu removal: a single
+	// CP-owned Executor must dispatch the init plan in parallel across
+	// containers. CP boot with multiple already-running agents fans
+	// out one DialAgent goroutine per container; if Run serialized
+	// across the Executor, every-but-one Run would reject with
+	// "concurrent Executor.Run" and those agents would hang on the
+	// entrypoint fifo until timeout.
 	bus := overseer.New(overseer.Options{})
 	require.NoError(t, bus.Start(context.Background()))
 	t.Cleanup(func() { _ = bus.Close() })
 
-	startedSub, ok := overseer.Subscribe[InitStarted](bus, "concurrent-started")
-	require.True(t, ok)
-	defer startedSub.Unsubscribe()
-
 	exec, err := NewExecutor(bus, logger.Nop())
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Stream that blocks Recv forever so the first Run never returns.
-	// We don't care about its event stream — only that the second
-	// concurrent Run lands in the guard before the first completes.
-	stream1 := newFakeStream(ctx)
-	target := InitTarget{ContainerID: "c-conc-1234567890ab", AgentName: "dev", Project: "clawker"}
-
-	firstDone := make(chan error, 1)
-	go func() {
-		firstDone <- exec.Run(ctx, stream1, target)
-	}()
-
-	// Wait for the first Run to publish InitStarted — that proves the
-	// guard was acquired and Run is past the gate.
-	select {
-	case <-startedSub.C:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first Run never published InitStarted — guard never acquired")
+	run := func(containerID string) error {
+		stream := newFakeStream(ctx)
+		feederDone := make(chan struct{})
+		go func() {
+			defer close(feederDone)
+			for cmd := range stream.sent {
+				if _, isClose := cmd.Payload.(*clawkerdv1.Command_CloseStdin); isClose {
+					continue
+				}
+				stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+					CommandId: cmd.CommandId,
+					Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
+				}}
+			}
+		}()
+		err := exec.Run(ctx, stream, InitTarget{ContainerID: containerID, AgentName: "dev", Project: "clawker"})
+		close(stream.sent)
+		<-feederDone
+		return err
 	}
 
-	stream2 := newFakeStream(ctx)
-	err2 := exec.Run(ctx, stream2, target)
-	require.Error(t, err2, "second concurrent Run must be rejected by the runMu guard")
-	assert.Contains(t, err2.Error(), "concurrent",
-		"error must reference the concurrent-Run violation so operators can grep for it")
+	results := make(chan error, 2)
+	go func() { results <- run("c-par-aaaaaaaaaaaa") }()
+	go func() { results <- run("c-par-bbbbbbbbbbbb") }()
 
-	// Tear down stream1 so the first Run can return — the test must
-	// not leak the goroutine.
-	cancel()
-	<-firstDone
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-results:
+			require.NoError(t, err,
+				"both parallel Runs must succeed — Executor must be safe to share across containers")
+		case <-time.After(8 * time.Second):
+			t.Fatal("parallel Runs did not both complete within timeout")
+		}
+	}
 }
 
 // TestExecutor_Run_PlanIdempotent drives Run twice on the same
