@@ -30,15 +30,15 @@ A panic, `log.Fatal`, `os.Exit`, or unrecovered goroutine in CP code:
    - Pre-`SetReady` orchestrator startup-gate failures (no agents are running yet, eBPF state isn't load-bearing).
    - The orchestrator's intentional drain-to-zero clean exit (code 0).
 2. **Constructors return `(*T, error)`.** Pattern: `agent.New`, `agent.NewExecutor`. Nil deps, cert load failures, schema errors → return error, never panic. main.go logs structurally and degrades the subsystem (`dialer = nil`, `initExec = nil`).
-3. **Long-lived goroutines must recover.** Wrap heartbeats, watchers, dispatch handlers, RPC interceptors with `defer func() { if r := recover(); r != nil { log.Error().Interface("panic", r)... } }()`. The overseer stats heartbeat in `cmd/clawker-cp/main.go:592` is the template. One bad event must not silently strand eBPF.
-4. **Subsystem failures degrade.** Broken Executor → `initExec = nil` → dialer logs `agent_init_executor_unset` per dial → entrypoint fifo timeout is the user-visible failure. CP itself, firewall, registry, AdminService unaffected. Broken dialer → `dialer = nil` → CP→clawkerd dispatch disabled; everything else stays up. Copy `cmd/clawker-cp/main.go:707-714` (initExec) and `:718-721` (dialer) as templates for new subsystems.
+3. **Long-lived goroutines must recover.** Wrap heartbeats, watchers, dispatch handlers, RPC interceptors with `defer func() { if r := recover(); r != nil { log.Error().Interface("panic", r)... } }()`. The overseer stats heartbeat goroutine in `cmd/clawker-cp/main.go` (search "overseer stats heartbeat") is the template. One bad event must not silently strand eBPF.
+4. **Subsystem failures degrade.** Broken Executor → `initExec = nil` → dialer logs `agent_init_executor_unset` per dial → entrypoint fifo timeout is the user-visible failure. CP itself, firewall, registry, AdminService unaffected. Broken dialer → `dialer = nil` → CP→clawkerd dispatch disabled; everything else stays up. Copy `wireInitExecutor` (initExec; emits `event=agent_init_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` in `cmd/clawker-cp/main.go` as templates for new subsystems.
 5. **Every degraded path emits a structured log line** (`event=<subsystem>_unavailable`) with enough fields for an operator to triage root cause AND blast radius. They will never see panic stacks; the structured log is the only surface.
 6. **Treat any urge to panic as a security review trigger.** Ask: "would this leave eBPF programs pinned with no supervisor?" If yes — you are about to silently break the firewall enforcement boundary the user trusts. Return an error.
 
 ### Existing escape hatches you'll find in code (and must not add to)
 
-- The `register_panic` recover in `cmd/clawkerd/session.go:166-179` (NOT in CP — clawkerd-side, agent container can crash).
-- The overseer stats heartbeat recover (`main.go:592`) — keep doing this for new long-lived goroutines.
+- The `register_panic` recover in `cmd/clawkerd/session.go::handleRegisterRequired` (NOT in CP — clawkerd-side, agent container can crash).
+- The overseer stats heartbeat recover in `cmd/clawker-cp/main.go` (search "overseer stats heartbeat") — keep doing this for new long-lived goroutines.
 - `firewall/handler.go` returns `status.Error(...)` for handler-level failures; never panics.
 
 ### What about `consts.CPMaxRestartRetries`?

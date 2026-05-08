@@ -537,6 +537,12 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 	view1 := snap1.Agents[target.ContainerID]
 	assert.Equal(t, overseer.InitStatusFailed, view1.Init.Status())
 	assert.NotEmpty(t, view1.Init.LastError(), "Failed cycle must populate Init.LastError")
+	// StepName is set by InitStepStarted's ApplyTo and survives both
+	// WithStepError (mid-phase) and Fail (terminal). At idx 1 the
+	// running step is "config"; the terminal projection must preserve
+	// it so subscribers can render "failed during <step>".
+	assert.Equal(t, expectedInitStepNames[1], view1.Init.StepName(),
+		"Failed cycle must keep the in-flight StepName from InitStepStarted's ApplyTo")
 
 	// Cycle 2: full success.
 	{
@@ -756,6 +762,70 @@ func TestExecutor_Run_PlanIdempotent(t *testing.T) {
 		assert.Empty(t, view.Init.LastError(),
 			"cycle %d: LastError must clear on success — stale error from a prior cycle would mislead subscribers", cycle)
 	}
+}
+
+// TestExecutor_Run_IgnoresUnknownAndMismatchedFrames pins the recv-loop
+// noise-tolerance contract: a frame with a mismatched command_id, a
+// Started/Stdout payload (explicit continue arms), and an unknown
+// payload type (default Warn-and-continue arm) must all be discarded
+// without affecting step outcome. Without this test, a regression that
+// converts any of those continues into a terminal arm would silently
+// fail every init step the moment any noise frame appeared on the
+// stream — which it routinely does in production (Started frames
+// always lead each ShellCommand response burst).
+func TestExecutor_Run_IgnoresUnknownAndMismatchedFrames(t *testing.T) {
+	bus := overseer.New(overseer.Options{})
+	require.NoError(t, bus.Start(context.Background()))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream := newFakeStream(ctx)
+	exec, errExec := NewExecutor(bus, logger.Nop())
+	require.NoError(t, errExec)
+	target := InitTarget{ContainerID: "c-noise-1234567890ab", AgentName: "dev", Project: "clawker"}
+
+	doneFeeder := make(chan struct{})
+	go func() {
+		defer close(doneFeeder)
+		for cmd := range stream.sent {
+			if _, isClose := cmd.Payload.(*clawkerdv1.Command_CloseStdin); isClose {
+				continue
+			}
+			// Mismatched command_id — runStep continues past frames
+			// that don't address the in-flight command. Pushed first
+			// so the Recv loop must skip it before reaching real frames.
+			stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+				CommandId: "noise-other-command",
+				Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 99}},
+			}}
+			// Started: explicit continue arm — always precedes the
+			// shell stage's stdout/stderr stream in production.
+			stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+				CommandId: cmd.CommandId,
+				Payload:   &clawkerdv1.Response_Started{Started: &clawkerdv1.Started{}},
+			}}
+			// Stdout: explicit continue arm — init steps run with
+			// stdout discarded; only Stderr/Done/Error feed the
+			// failure pipeline.
+			stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+				CommandId: cmd.CommandId,
+				Payload:   &clawkerdv1.Response_Stdout{Stdout: &clawkerdv1.StdoutChunk{Data: []byte("ignored stdout")}},
+			}}
+			// Real terminal frame.
+			stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+				CommandId: cmd.CommandId,
+				Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
+			}}
+		}
+	}()
+
+	err := exec.Run(ctx, stream, target)
+	close(stream.sent)
+	<-doneFeeder
+	require.NoError(t, err,
+		"Run must tolerate noise frames (mismatched command_id, Started, Stdout) and succeed when the terminal Done lands")
 }
 
 // TestRunInit_NoExecutorWired pins the misconfiguration warning

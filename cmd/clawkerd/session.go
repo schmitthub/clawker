@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rs/zerolog"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
@@ -294,16 +295,18 @@ func (s *session) handleAgentReady(ctx context.Context, commandID string) {
 		// One byte wakes the entrypoint's `cat fifo >/dev/null`. A
 		// failed write means the entrypoint never saw the release
 		// signal — surface as IO_ERROR rather than (mis)reporting
-		// success. ErrClosedPipe means the reader vanished mid-write
-		// (rare; treat as success — the close itself unblocks).
+		// success.
 		//
-		// Test gap: write/close failure paths aren't unit-tested
-		// directly. Synthesizing kernel-level write or close errors on
-		// a live fifo (EBADF / EFAULT) without dep-injecting the
-		// opener would mean either chmod tricks that hit the open
-		// path instead, or fragile race timing — both worse than the
-		// uncovered branches. The handler is small enough that a
-		// regression here surfaces in PR review.
+		// io.ErrClosedPipe (EPIPE) means the reader closed between our
+		// open and write. Reachability matters here: during FIRST init
+		// the entrypoint blocks on `cat fifo >/dev/null` for the full
+		// init timeout, so a reader-close race is not reachable. The
+		// dominant case is CP reconnect AFTER the entrypoint has
+		// already released — a stale Run is dispatching agent-ready
+		// against a fifo whose reader is long gone. The byte is not
+		// needed because the entrypoint already exec'd CMD; treat
+		// EPIPE as success so CP sees Done{0} and the plan finishes
+		// cleanly.
 		if _, werr := f.Write([]byte{1}); werr != nil && !errors.Is(werr, io.ErrClosedPipe) {
 			_ = f.Close()
 			s.log.Error().Err(werr).
@@ -401,22 +404,79 @@ func (s *session) runSender(ctx context.Context, cancel context.CancelFunc) {
 }
 
 // send pushes a Response onto sendCh. Drops on ctx-done so producer
-// goroutines unblock when the stream is tearing down. The drop is
-// audited at Debug because a dropped RegisterDone (or any terminal
-// Response) means CP will not see the outcome and will rely on its own
-// timeout — operators triaging "RegisterDone timeout" upstream need a
-// breadcrumb here to distinguish "clawkerd never produced a Response"
-// from "clawkerd produced one but the stream died before it shipped".
+// goroutines unblock when the stream is tearing down. Terminal
+// payloads (Done / Error / RegisterDone) are dropped at Warn — when
+// CP doesn't see the outcome it falls back to its own timeout, and
+// operators triaging "RegisterDone timeout" or "step timeout" upstream
+// need a breadcrumb here to distinguish "clawkerd never produced a
+// Response" from "clawkerd produced one but the stream died before it
+// shipped". Non-terminal chunks (Started / Stdout / Stderr / StageExit)
+// drop at Debug — losing one is at worst a gap in streaming output and
+// CP doesn't gate any control-flow decision on a specific chunk.
 func (s *session) send(ctx context.Context, resp *clawkerdv1.Response) {
 	select {
 	case s.sendCh <- resp:
 	case <-ctx.Done():
-		s.log.Debug().
-			Str("event", "session_send_dropped").
+		var (
+			event     *zerolog.Event
+			eventName string
+			msg       string
+		)
+		switch classifyDropPayload(resp) {
+		case payloadClassChunk:
+			event = s.log.Debug()
+			eventName = "session_send_dropped_chunk"
+			msg = "clawkerd: dropping non-terminal Response on Session teardown"
+		case payloadClassTerminal:
+			event = s.log.Warn()
+			eventName = "session_send_dropped_terminal"
+			msg = "clawkerd: dropping terminal Response on Session teardown — CP will see its own timeout instead of the true outcome"
+		default:
+			// Wire-vocabulary drift: a payload variant was added to
+			// clawkerd.proto without updating classifyDropPayload.
+			// Loud-fail at Warn so operators see the breadcrumb rather
+			// than silently downgrading to Debug under the chunk arm.
+			event = s.log.Warn()
+			eventName = "session_send_dropped_unknown"
+			msg = "clawkerd: dropping Response of unclassified payload type on Session teardown — classifyDropPayload missing a switch arm"
+		}
+		event.
+			Str("event", eventName).
 			Str("command_id", resp.CommandId).
 			Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
-			Msg("clawkerd: dropping Response on Session teardown")
+			Msg(msg)
 	}
+}
+
+// payloadClass is the drop-time classification of a Response payload:
+// terminal verdicts loss-blocks CP on its command_id (Warn); streaming
+// chunks lose at most a fragment of progress output (Debug); unknown
+// is drift (Warn, distinct event).
+type payloadClass int
+
+const (
+	payloadClassUnknown payloadClass = iota
+	payloadClassChunk
+	payloadClassTerminal
+)
+
+// classifyDropPayload returns the drop-time class of resp. The switch
+// is intentionally exhaustive over current proto variants — a new
+// variant added to clawkerd.proto without a matching arm here falls
+// to payloadClassUnknown, which send() logs at Warn with a distinct
+// event so operators see the breadcrumb rather than silently
+// downgrading to chunk-Debug.
+func classifyDropPayload(resp *clawkerdv1.Response) payloadClass {
+	if resp == nil {
+		return payloadClassUnknown
+	}
+	switch resp.Payload.(type) {
+	case *clawkerdv1.Response_Done, *clawkerdv1.Response_Error, *clawkerdv1.Response_RegisterDone:
+		return payloadClassTerminal
+	case *clawkerdv1.Response_Started, *clawkerdv1.Response_Stdout, *clawkerdv1.Response_Stderr, *clawkerdv1.Response_StageExit:
+		return payloadClassChunk
+	}
+	return payloadClassUnknown
 }
 
 // runReceiver loops on stream.Recv and dispatches each Command.

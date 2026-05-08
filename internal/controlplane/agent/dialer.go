@@ -1174,6 +1174,20 @@ func (d *Dialer) driveRegister(ctx context.Context, containerID string, res esta
 				ch <- recvResult{resp: r}
 				return
 			}
+			// A Response_Error addressed to our register command_id is a
+			// terminal failure from clawkerd (e.g. INVALID_REQUEST). The
+			// recv loop would otherwise re-loop and time out, hiding a
+			// concrete server-side rejection behind an opaque
+			// "RegisterDone timeout" — surface it directly so the
+			// AgentUntrusted reason carries the ErrorCode + detail.
+			if errPayload, ok := r.Payload.(*clawkerdv1.Response_Error); ok && r.CommandId == commandID {
+				ch <- recvResult{err: fmt.Errorf(
+					"clawkerd rejected RegisterRequired: %s: %s",
+					errPayload.Error.GetCode().String(),
+					errPayload.Error.GetMessage(),
+				)}
+				return
+			}
 		}
 	}()
 

@@ -702,8 +702,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// open stream. Without this, the entrypoint hangs on its fifo until
 	// CLAWKER_INIT_TIMEOUT and the container fails to launch CMD.
 	// Container user identity (uid/gid/username/home) lives in consts
-	// and is read directly by the Executor. See wireInitExecutor for the
-	// degrade contract.
+	// and is read directly by the Executor. The plan shape is defined
+	// in agent.Executor.plan() and audited by
+	// TestExecutor_Plan_PrivilegeAndShape — keep the enumeration there
+	// so this comment can't drift. See wireInitExecutor for the degrade
+	// contract.
 	initExec := wireInitExecutor(bus, log)
 	dialer, err := agent.New(
 		log.With("component", "agent"),
@@ -716,7 +719,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		initExec,
 	)
 	if err != nil {
-		log.Error().Err(err).Str("event", "agentdial_init_failed").Msg("agent unavailable; CP→clawkerd dispatch disabled")
+		log.Error().Err(err).
+			Str("event", "agent_dialer_unavailable").
+			Msg("agent.dial: Dialer construction failed; CP→clawkerd command dispatch disabled. AdminService, firewall, registry, and AgentService listener continue.")
 		dialer = nil
 	}
 	if dialer != nil {

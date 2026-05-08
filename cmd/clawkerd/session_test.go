@@ -479,6 +479,38 @@ func TestRunSender_SendFailureCancelsCtx(t *testing.T) {
 	}
 }
 
+// TestClassifyDropPayload pins the 3-way drop classification used by
+// send() to decide log severity. The default arm (payloadClassUnknown)
+// is the drift trap: a new payload variant added to clawkerd.proto
+// without updating the switch lands here and surfaces as a Warn
+// session_send_dropped_unknown rather than silently downgrading to a
+// Debug chunk drop. The nil and unset-oneof rows pin defensive entry —
+// no panic on a malformed Response.
+func TestClassifyDropPayload(t *testing.T) {
+	tests := []struct {
+		name string
+		resp *clawkerdv1.Response
+		want payloadClass
+	}{
+		{"nil response", nil, payloadClassUnknown},
+		{"unset payload", &clawkerdv1.Response{}, payloadClassUnknown},
+		{"Done", &clawkerdv1.Response{Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{}}}, payloadClassTerminal},
+		{"Error", &clawkerdv1.Response{Payload: &clawkerdv1.Response_Error{Error: &clawkerdv1.Error{}}}, payloadClassTerminal},
+		{"RegisterDone", &clawkerdv1.Response{Payload: &clawkerdv1.Response_RegisterDone{RegisterDone: &clawkerdv1.RegisterDone{}}}, payloadClassTerminal},
+		{"Started", &clawkerdv1.Response{Payload: &clawkerdv1.Response_Started{Started: &clawkerdv1.Started{}}}, payloadClassChunk},
+		{"Stdout", &clawkerdv1.Response{Payload: &clawkerdv1.Response_Stdout{Stdout: &clawkerdv1.StdoutChunk{}}}, payloadClassChunk},
+		{"Stderr", &clawkerdv1.Response{Payload: &clawkerdv1.Response_Stderr{Stderr: &clawkerdv1.StderrChunk{}}}, payloadClassChunk},
+		{"StageExit", &clawkerdv1.Response{Payload: &clawkerdv1.Response_StageExit{StageExit: &clawkerdv1.StageExit{}}}, payloadClassChunk},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyDropPayload(tt.resp); got != tt.want {
+				t.Errorf("classifyDropPayload(%T) = %v, want %v", tt.resp.GetPayload(), got, tt.want)
+			}
+		})
+	}
+}
+
 // --- closePipeOnce -------------------------------------------------
 
 type errCloser struct {
