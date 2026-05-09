@@ -194,9 +194,11 @@ RUN groupadd -g 999 docker 2>/dev/null || groupadd docker 2>/dev/null || true &&
 # /run/clawker (bootstrap dir, root-owned 0700 — only clawkerd-as-root reads it) and
 # /var/log/clawker (log file, root-owned — clawkerd writes the rotated log as root)
 # are pre-created so clawkerd-as-PID-1 doesn't need mkdir at boot. /var/run/clawker
-# is chowned to ${USERNAME} below so the HEALTHCHECK probe (which runs as the
-# unprivileged user) can stat the ready marker; clawkerd-as-root can still write
-# into a USERNAME-owned dir.
+# is chowned to ${USERNAME} below so the user CMD (spawned by clawkerd with a
+# privilege drop to ${USERNAME}) can read/write runtime state alongside the ready
+# marker that clawkerd-as-root writes; the HEALTHCHECK probe itself runs as root
+# (final USER directive at the bottom of this file) and stats the ready marker
+# regardless of ownership.
 RUN mkdir -p /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh {{.WorkspacePath}} /run/clawker /var/log/clawker /var/run/clawker && \
     chmod 700 /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh && \
     chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /var/run/clawker

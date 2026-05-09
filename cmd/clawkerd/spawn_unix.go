@@ -533,8 +533,10 @@ func (s *spawnState) runSignalForwarder(log *logger.Logger) {
 // is load-bearing: while main is alive, session.go ShellCommand
 // stages may be calling exec.Cmd.Wait — using Wait4(-1) here would
 // race those calls and steal their reapable pids. After phase 1 the
-// reaper closes mainExitedCh so callers (main()) can GracefulStop
-// the gRPC listener and drain in-flight pipelines, then waits on
+// reaper closes mainExitedCh so callers (main()) can Stop the gRPC
+// listener (force-close, not GracefulStop — CP holds the Session
+// stream open from its side; in-flight pipelines were already
+// drained by the main-child-exit cascade), then waits on
 // orphanDrainCh before phase 2 begins.
 //
 // Closes doneCh exactly once on exit (or on panic via
