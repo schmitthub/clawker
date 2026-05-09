@@ -42,6 +42,7 @@ github.com/moby/moby/api                                                       A
 github.com/moby/moby/client                                                    Apache-2.0
 github.com/moby/patternmatcher                                                 Apache-2.0
 github.com/moby/sys/signal                                                     Apache-2.0
+github.com/moby/sys/user                                                       Apache-2.0
 github.com/mwitkow/go-conntrack                                                Apache-2.0
 github.com/opencontainers/go-digest                                            Apache-2.0
 github.com/opencontainers/image-spec/specs-go                                  Apache-2.0
