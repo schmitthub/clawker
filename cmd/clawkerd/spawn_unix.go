@@ -234,6 +234,20 @@ func (s *spawnState) runOnce(cfg spawnConfig) error {
 		}
 	}
 
+	// Detect whether stdin is a controlling terminal. When clawkerd was
+	// started with `docker run -ti`, the kernel attached stdin/out/err
+	// to a pty whose foreground pgroup is currently PID 1 (clawkerd).
+	// Without explicit foreground transfer the spawn child sits in its
+	// own pgroup but the kernel routes keystrokes / SIGINT (Ctrl+C) to
+	// clawkerd's pgroup — interactive input never reaches the user CMD
+	// and the terminal looks hung. The legacy `exec gosu` path worked
+	// only because the bash shell was replaced and the new claude
+	// process inherited PID 1's foreground role.
+	//
+	// When stdin is NOT a TTY (`docker run` without -ti, CI, piped),
+	// we leave Foreground unset; the spawn happens detached, which is
+	// the right behavior for non-interactive runs.
+	cttyFd := stdinCttyFd(cfg.stdin)
 	// nosemgrep: go.lang.security.audit.dangerous-exec-cmd.dangerous-exec-cmd -- clawkerd is PID 1 and exists to spawn the container's user CMD; argv comes from os.Args, set by Docker from the image's CMD. No caller-attacker-controlled input path.
 	cmd := &exec.Cmd{
 		Path:        resolvedPath,
@@ -243,7 +257,7 @@ func (s *spawnState) runOnce(cfg spawnConfig) error {
 		Stdin:       cfg.stdin,
 		Stdout:      cfg.stdout,
 		Stderr:      cfg.stderr,
-		SysProcAttr: buildSysProcAttr(cfg.user),
+		SysProcAttr: buildSysProcAttr(cfg.user, cttyFd),
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -761,8 +775,20 @@ func forwardableSignals() []os.Signal {
 // Credential population (e.g. a refactor that loses cfg.user, or a
 // wiring bug that resolves uid=0) silently re-introduces root in the
 // user CMD.
-func buildSysProcAttr(user *ExecUser) *syscall.SysProcAttr {
+//
+// cttyFd >= 0 enables interactive-TTY mode: the kernel makes the
+// child's pgroup the controlling-terminal foreground (via tcsetpgrp
+// in the child between fork and exec), so keystrokes and Ctrl+C
+// route to the user CMD instead of clawkerd. cttyFd is the child's
+// fd number for the controlling TTY (0 when stdin is the TTY, since
+// exec.Cmd maps Stdin to fd 0). Pass -1 for non-interactive runs.
+func buildSysProcAttr(user *ExecUser, cttyFd int) *syscall.SysProcAttr {
 	attr := &syscall.SysProcAttr{Setpgid: true}
+	if cttyFd >= 0 {
+		attr.Setctty = true
+		attr.Foreground = true
+		attr.Ctty = cttyFd
+	}
 	if user != nil {
 		attr.Credential = &syscall.Credential{
 			Uid:    user.UID(),
@@ -771,6 +797,25 @@ func buildSysProcAttr(user *ExecUser) *syscall.SysProcAttr {
 		}
 	}
 	return attr
+}
+
+// stdinCttyFd reports the child fd number of the controlling TTY
+// when stdin is a *os.File backed by a terminal, or -1 otherwise.
+// Returns 0 for the TTY case because exec.Cmd.Stdin maps to fd 0 in
+// the child. The TTY check uses TIOCGPGRP rather than golang.org/x/term
+// to avoid pulling a new direct dependency for a one-line ioctl, and
+// because TIOCGPGRP is portable across linux + darwin (TCGETS is
+// linux-only) — the file is build-tagged unix and must compile for
+// macOS dev hosts.
+func stdinCttyFd(stdin io.Reader) int {
+	f, ok := stdin.(*os.File)
+	if !ok {
+		return -1
+	}
+	if _, err := unix.IoctlGetInt(int(f.Fd()), unix.TIOCGPGRP); err != nil {
+		return -1
+	}
+	return 0
 }
 
 // touchReadyFile creates or truncates path. O_TRUNC ensures
