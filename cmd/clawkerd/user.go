@@ -85,7 +85,13 @@ func resolveUser(spec, passwdPath, groupPath string) (*ExecUser, error) {
 		_ = groupFile.Close()
 	}()
 
-	resolved, err := mobyuser.GetExecUser(spec, nil, bytes.NewReader(passwdData), groupFile)
+	// Default Home="/" mirrors gosu's SetupUser: a numeric UID spec with
+	// no usable passwd Home would otherwise leave Home="" and HOME would
+	// fall through to PID-1's inherited value (HOME=/root from Docker).
+	// moby applies defaults to blank fields, so a passwd row with an
+	// empty Home column also gets "/" instead of "".
+	defaults := &mobyuser.ExecUser{Home: "/"}
+	resolved, err := mobyuser.GetExecUser(spec, defaults, bytes.NewReader(passwdData), groupFile)
 	if err != nil {
 		return nil, fmt.Errorf("clawkerd: resolve user %q: %w", spec, err)
 	}

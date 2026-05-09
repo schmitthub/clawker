@@ -211,9 +211,11 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	spawnEntry := func() error {
 		return spawn.Run(spawnConfig{
 			argv: os.Args[1:],
-			// Set Dir to the unprivileged user's home; PID 1 inherits
-			// / from Docker, but the user CMD expects $HOME as cwd.
-			dir:    execUser.Home(),
+			// Leave Dir empty so the child inherits PID 1's cwd, which
+			// the kernel set from Docker's WorkingDir (image WORKDIR or
+			// HostConfig.WorkingDir). Mirrors tini/gosu — neither
+			// chdirs; both let Docker's WorkingDir pass through to the
+			// user CMD.
 			env:    os.Environ(),
 			user:   execUser,
 			stdin:  os.Stdin,
