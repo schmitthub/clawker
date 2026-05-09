@@ -132,3 +132,5 @@ test/adversarial/certs/
 test/adversarial/attacker-server/attacker-server
 
 firewall-tests-debug.log
+
+.claude/scheduled_tasks.lock
