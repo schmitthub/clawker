@@ -178,7 +178,12 @@ func startListenerOnBufconn(t *testing.T, stack bufconnTLSStack, logBuf *bytes.B
 	require.NoError(t, err)
 
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
-	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: logger.NewWriter(logBuf)})
+	// spawnEntry is a no-op: these tests exercise listener TLS guards
+	// + audit logs, not the AgentReady handler.
+	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{
+		log:        logger.NewWriter(logBuf),
+		spawnEntry: func() error { return nil },
+	})
 
 	lis := bufconn.Listen(1 << 20)
 	go func() {

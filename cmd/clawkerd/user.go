@@ -75,7 +75,7 @@ func resolveUser(spec, passwdPath, groupPath string) (*ExecUser, error) {
 // Wrapping them in a function gives main.go (Task 2 wiring) a single
 // seam for path injection without touching resolveUser's signature.
 //
-//nolint:unused // wired by Task 2 cutover; landed unwired by design
+
 func passwdGroupPaths() (passwd, group string) {
 	return "/etc/passwd", "/etc/group"
 }

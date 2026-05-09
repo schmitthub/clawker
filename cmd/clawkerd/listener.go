@@ -26,10 +26,18 @@ import (
 // another agent's) would be accepted and could dispatch root-level
 // ShellCommands (agent-to-agent privilege escalation).
 //
+// spawnEntry is the AgentReady spawn-trigger thunk passed in as a
+// non-optional dependency: handleAgentReady invokes it to fork the
+// user CMD. nil is rejected at call time so a wiring bug fails loud
+// here rather than at first AgentReady.
+//
 // Returns the running grpc.Server so main can GracefulStop on
 // shutdown. The underlying net.Listener is owned by the goroutine
 // that runs Serve and is closed by Stop / GracefulStop.
-func startClawkerdListener(boot *bootstrap, register *registerCoordinator, log *logger.Logger) (*grpc.Server, error) {
+func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, log *logger.Logger) (*grpc.Server, error) {
+	if spawnEntry == nil {
+		return nil, fmt.Errorf("clawkerd listener: spawnEntry is required")
+	}
 	tlsCfg, err := buildListenerTLSConfig(boot.CertPEM, boot.KeyPEM, boot.CACertPEM)
 	if err != nil {
 		return nil, fmt.Errorf("listener TLS config: %w", err)
@@ -52,7 +60,7 @@ func startClawkerdListener(boot *bootstrap, register *registerCoordinator, log *
 			PermitWithoutStream: true,
 		}),
 	)
-	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register})
+	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register, spawnEntry: spawnEntry})
 
 	go func() {
 		if serveErr := srv.Serve(lis); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
@@ -140,15 +148,20 @@ func pinPeerCNToCP(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
 // CP retry that re-sends RegisterRequired short-circuits to the
 // recorded outcome instead of burning the (single-use) Hydra
 // assertion JWT a second time.
+//
+// spawnEntry is the AgentReady spawn-trigger thunk; threaded into
+// every session so handleAgentReady can fire the user-CMD fork
+// without the package-level mutable global the prototype used.
 type clawkerdServer struct {
 	clawkerdv1.UnimplementedClawkerdServiceServer
-	log      *logger.Logger
-	register *registerCoordinator
+	log        *logger.Logger
+	register   *registerCoordinator
+	spawnEntry func() error
 }
 
 // Session is the bidi command-dispatch channel from CP to clawkerd.
 // All per-stream state lives in runSession; this method just hands
 // off and lets the helper own the lifecycle.
 func (s *clawkerdServer) Session(stream clawkerdv1.ClawkerdService_SessionServer) error {
-	return runSession(stream, s.log, s.register)
+	return runSession(stream, s.log, s.register, s.spawnEntry)
 }

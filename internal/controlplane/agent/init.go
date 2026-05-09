@@ -15,13 +15,13 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// Per-step timeout defaults. Must be aligned with the entrypoint
-// wall-clock ceiling: post-init can install packages and warm caches,
-// hence 600s; other steps are file-IO and should complete in
+// Per-step timeout defaults. post-init can install packages and warm
+// caches, hence 600s; other steps are file-IO and should complete in
 // milliseconds in steady state, 30s tolerates a slow first-boot fs.
-// The entrypoint script (internal/bundler/assets/entrypoint.sh) must
-// wait at least postInit + slack so CP isn't beaten to the kill by
-// bash.
+// CP's `runStep` ceiling is now the only init wall-clock gate —
+// clawkerd-as-PID-1 has no separate shell-script timeout to align
+// with (the legacy bash entrypoint + fifo wait was retired by the
+// PID-1 cutover; see cmd/clawkerd/CLAUDE.md).
 const (
 	initStepTimeoutDefault  = consts.InitStepTimeoutDefaultSeconds
 	initStepTimeoutPostInit = consts.InitStepTimeoutPostInitSeconds
@@ -195,8 +195,9 @@ type InitTarget struct {
 // Plan idempotency contract: every Session establish runs the full
 // plan, including reconnects after CP restart. Each step is
 // idempotent (file-presence gates, append-if-missing, marker-file
-// post-init), and AgentReady is no-op success when the entrypoint
-// has already released. Trade: a small volume of shell commands
+// post-init), and AgentReady is no-op success when clawkerd already
+// spawned the user CMD (spawnState's CAS rejects re-fork; handler
+// replies Done{0}). Trade: a small volume of shell commands
 // fires on every reconnect; gain: no per-container completed flag.
 // Executor is shared across all containers — the dialer constructs
 // one at CP boot and calls Run from a goroutine per DialAgent (one per

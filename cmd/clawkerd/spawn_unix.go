@@ -36,37 +36,96 @@ type spawnConfig struct {
 }
 
 // spawnState tracks the user CMD across its lifetime. Exactly one
-// instance per clawkerd process. Single-shot via started CAS; mu
+// instance per clawkerd process. Single-shot via runEntered CAS; mu
 // guards proc/pgid/finalWS; doneCh closes exactly once after main
 // child reaped + descendants drained (closed exclusively by runReaper
 // or its panic-recovery path).
 //
-// CAUTION: runReaper drains via Wait4(mainPID) for the main child
-// only. After main exits, it switches to Wait4(-1, WNOHANG) to drain
-// reparented orphans. Concurrent Wait4(-1) AND exec.Cmd.Wait calls
-// (e.g. session.go's ShellCommand stages) race the kernel for
-// reapable children — Task 2 wiring must coordinate so the reaper
-// does not steal pids that session.go's c.Wait expects to consume.
+// Lifecycle (call ordering):
+//
+//	Run                 → installs child + reaper + signal forwarder
+//	  ↓
+//	[Stop(grace)]       → optional; SIGTERM child pgroup, escalate to SIGKILL
+//	  ↓
+//	<-MainExited()      → fires when phase 1 reaps the main child
+//	  ↓
+//	BeginOrphanDrain    → REQUIRED before Wait/Done unblock
+//	  ↓
+//	Wait()/<-Done()     → returns bash-convention exit code
+//
+// Started, SpawnErr, MainExited may be called at any time.
+//
+// Reaper phasing: runReaper waits on mainPID specifically (phase 1)
+// while the main child is alive — never Wait4(-1) — so concurrent
+// exec.Cmd.Wait calls in session.go's ShellCommand pipelines are not
+// stolen. After main exits, runReaper transitions to phase 2 which
+// drains reparented orphans via Wait4(-1, WNOHANG). Phase 2 races
+// session.go's c.Wait for any still-running stage children, so the
+// gate is HELD by default — callers MUST call BeginOrphanDrain after
+// they have torn down concurrent exec.Cmd.Wait surfaces (the gRPC
+// listener + ShellCommand pipelines). A caller that forgets gets a
+// loud hang on Wait/Done, never silent stage-pid theft. Tests with
+// no concurrent exec.Cmd.Wait surface call BeginOrphanDrain right
+// after Run.
+//
+// runEntered vs Started: runEntered is the CAS-once gate guarding
+// runOnce so a second Run returns errAlreadySpawned (only after the
+// first call succeeded — see Run godoc). Started reflects whether
+// runOnce installed a child process (s.proc != nil under mu); these
+// diverge during the spawn-error window (runEntered=true, proc=nil)
+// where main()'s Stop must no-op and MainExited must already be
+// closed via closeAllGates.
 type spawnState struct {
 	log *logger.Logger
 
-	started  atomic.Bool
-	spawnErr error
+	runEntered atomic.Bool
+	spawnErr   error
 
-	mu       sync.Mutex
-	proc     *os.Process // nil before spawn
-	pgid     int
-	finalWS  *syscall.WaitStatus // non-nil iff main child reaped
-	doneCh   chan struct{}
-	stopOnce sync.Once
+	mu              sync.Mutex
+	proc            *os.Process // nil before spawn
+	pgid            int
+	finalWS         *syscall.WaitStatus // non-nil iff main child reaped
+	doneCh          chan struct{}
+	mainExitedCh    chan struct{}
+	orphanDrainCh   chan struct{}
+	stopOnce        sync.Once
+	doneOnce        sync.Once
+	mainExitedOnce  sync.Once
+	orphanDrainOnce sync.Once
 }
 
 // newSpawnState returns a spawnState ready to receive Run.
 func newSpawnState(log *logger.Logger) *spawnState {
 	return &spawnState{
-		log:    log,
-		doneCh: make(chan struct{}),
+		log:           log,
+		doneCh:        make(chan struct{}),
+		mainExitedCh:  make(chan struct{}),
+		orphanDrainCh: make(chan struct{}),
 	}
+}
+
+// BeginOrphanDrain releases the phase-2 gate so the reaper can drain
+// reparented orphans via Wait4(-1, WNOHANG). Idempotent. The gate is
+// HELD by default (never auto-opened) so a caller that forgets to
+// release it gets a loud hang on Wait/Done rather than silent
+// stage-pid theft from concurrent exec.Cmd.Wait surfaces. Production
+// callers (clawkerd main()) release this AFTER GracefulStop drains
+// the gRPC listener; test callers with no concurrent exec.Cmd.Wait
+// surface release it immediately after Run.
+func (s *spawnState) BeginOrphanDrain() {
+	s.orphanDrainOnce.Do(func() { close(s.orphanDrainCh) })
+}
+
+// MainExited returns a channel that closes once the main child has
+// been reaped (phase 1 complete) — even if phase 2 has not started
+// yet. main() uses it as the trigger to GracefulStop the gRPC
+// listener before BeginOrphanDrain releases phase 2.
+func (s *spawnState) MainExited() <-chan struct{} {
+	return s.mainExitedCh
+}
+
+func (s *spawnState) closeMainExitedCh() {
+	s.mainExitedOnce.Do(func() { close(s.mainExitedCh) })
 }
 
 // Run forks+execs cfg.argv (after routeArgs) with privilege drop
@@ -80,7 +139,7 @@ func newSpawnState(log *logger.Logger) *spawnState {
 // reconnect that re-dispatches AgentReady cannot mask a never-spawned
 // child as Done{0}.
 func (s *spawnState) Run(cfg spawnConfig) error {
-	if !s.started.CompareAndSwap(false, true) {
+	if !s.runEntered.CompareAndSwap(false, true) {
 		if s.spawnErr != nil {
 			return s.spawnErr
 		}
@@ -88,9 +147,12 @@ func (s *spawnState) Run(cfg spawnConfig) error {
 	}
 	s.spawnErr = s.runOnce(cfg)
 	if s.spawnErr != nil {
-		// Close doneCh so any caller that selects on Done() unblocks
-		// rather than deadlocking after a spawn-error path.
-		s.closeDoneCh()
+		// Close every gate so callers selecting on MainExited/Done
+		// unblock rather than deadlocking after a spawn-error path.
+		// Including orphanDrainCh: a held gate would otherwise leave
+		// a caller's BeginOrphanDrain call dangling on a process
+		// that never spawned.
+		s.closeAllGates()
 	}
 	return s.spawnErr
 }
@@ -118,7 +180,7 @@ func (s *spawnState) runOnce(cfg spawnConfig) error {
 		resolvedPath = p
 	}
 
-	// nosemgrep: go.lang.security.audit.dangerous-exec-cmd.dangerous-exec-cmd -- clawkerd is PID 1 and exists to spawn the container's user CMD; argv comes from os.Args (operator-supplied at docker run time), exactly as the legacy entrypoint.sh + gosu pair did before.
+	// nosemgrep: go.lang.security.audit.dangerous-exec-cmd.dangerous-exec-cmd -- clawkerd is PID 1 and exists to spawn the container's user CMD; argv comes from os.Args, set by Docker from the image's CMD. No caller-attacker-controlled input path.
 	cmd := &exec.Cmd{
 		Path:   resolvedPath,
 		Args:   routedArgv,
@@ -212,6 +274,20 @@ func (s *spawnState) Done() <-chan struct{} {
 	return s.doneCh
 }
 
+// Started reports whether Run was invoked AND succeeded in installing
+// a child process. Used by main()'s teardown path to skip blocking
+// on MainExited when the daemon is shutting down before any spawn
+// occurred (e.g. SIGTERM arrives before AgentReady).
+func (s *spawnState) Started() bool { return s.spawned() }
+
+// SpawnErr returns the error captured from Run's first call, or nil
+// if Run succeeded or was never invoked. main() reads it after Wait
+// returns to decide whether to surface a non-zero exit cause to
+// the caller's runErr channel — without this, an AgentReady that
+// failed to fork the child would silently exit 1 with no shutdown
+// log line tying the exit code to the spawn error.
+func (s *spawnState) SpawnErr() error { return s.spawnErr }
+
 // Stop sends SIGTERM to the child pgroup, then SIGKILL after grace.
 // Idempotent. No-op if Run hasn't been called.
 func (s *spawnState) Stop(grace time.Duration) {
@@ -238,9 +314,15 @@ func (s *spawnState) Stop(grace time.Duration) {
 
 // runStopWatchdog escalates to SIGKILL if the child pgroup hasn't
 // drained within the grace window. Bails early if the reaper has
-// already closed doneCh.
+// already closed doneCh. The recover onPanic re-attempts SIGKILL
+// from the recovery path because a panic between the timer wait and
+// the kill (logger panic, kernel-side fault) would otherwise leave
+// the child running past grace — main()'s `<-MainExited` then waits
+// indefinitely until docker's external SIGKILL fires.
 func (s *spawnState) runStopWatchdog(grace time.Duration, pgid int) {
-	defer recoverGoroutine(s.log, "stop_watchdog", nil)
+	defer recoverGoroutine(s.log, "stop_watchdog", func() {
+		_ = unix.Kill(-pgid, unix.SIGKILL)
+	})
 	t := time.NewTimer(grace)
 	defer t.Stop()
 	select {
@@ -299,20 +381,22 @@ func (s *spawnState) runSignalForwarder(log *logger.Logger) {
 // any reparented orphans via Wait4(-1, WNOHANG). The two-phase split
 // is load-bearing: while main is alive, session.go ShellCommand
 // stages may be calling exec.Cmd.Wait — using Wait4(-1) here would
-// race those calls and steal their reapable pids. After main exits,
-// session.go should not be running new pipelines (Sessions tear down
-// on ctx cancel), so the orphan drain is safe.
+// race those calls and steal their reapable pids. After phase 1 the
+// reaper closes mainExitedCh so callers (main()) can GracefulStop
+// the gRPC listener and drain in-flight pipelines, then waits on
+// orphanDrainCh before phase 2 begins.
 //
 // Closes doneCh exactly once on exit (or on panic via
-// recoverGoroutine).
+// recoverGoroutine). closeAllGates also fires on the panic-recovery
+// path so callers waiting on MainExited do not deadlock.
 func (s *spawnState) runReaper(log *logger.Logger) {
-	defer recoverGoroutine(log, "reaper", s.closeDoneCh)
+	defer recoverGoroutine(log, "reaper", s.closeAllGates)
 	mainPID := s.mainPID()
 	if mainPID == 0 {
 		log.Error().
 			Str("event", "spawn_reaper_no_main_pid").
 			Msg("clawkerd: reaper started with no main pid; closing doneCh")
-		s.closeDoneCh()
+		s.closeAllGates()
 		return
 	}
 	sigchld := make(chan os.Signal, 1)
@@ -335,7 +419,7 @@ func (s *spawnState) runReaper(log *logger.Logger) {
 					Int("pid", mainPID).
 					Str("event", "spawn_reaper_main_already_reaped").
 					Msg("clawkerd: main child already reaped elsewhere; closing doneCh without final status")
-				s.closeDoneCh()
+				s.closeAllGates()
 				return
 			}
 			log.Error().Err(err).
@@ -359,6 +443,14 @@ func (s *spawnState) runReaper(log *logger.Logger) {
 		case <-ticker.C:
 		}
 	}
+	// Phase 1 done. Signal callers waiting to coordinate teardown
+	// (e.g. main()'s GracefulStop) BEFORE phase 2 starts draining.
+	s.closeMainExitedCh()
+	// Wait for the phase-2 gate before running Wait4(-1, WNOHANG):
+	// concurrent exec.Cmd.Wait surfaces (session.go's ShellCommand
+	// stages) must drain first, otherwise the reaper steals their
+	// stage-child pids and leaves c.Wait returning ECHILD.
+	<-s.orphanDrainCh
 
 	// Phase 2: drain reparented orphans now that main has exited.
 	for {
@@ -407,11 +499,17 @@ func (s *spawnState) drainOrphans(log *logger.Logger) bool {
 }
 
 func (s *spawnState) closeDoneCh() {
-	select {
-	case <-s.doneCh:
-	default:
-		close(s.doneCh)
-	}
+	s.doneOnce.Do(func() { close(s.doneCh) })
+}
+
+// closeAllGates is the failure-path bailout: closes every signal
+// channel a caller might be selecting on so a reaper bailout (panic,
+// no-main-pid, ECHILD on main) cannot strand main()'s teardown
+// select on MainExited or its BeginOrphanDrain follow-up.
+func (s *spawnState) closeAllGates() {
+	s.closeMainExitedCh()
+	s.BeginOrphanDrain()
+	s.closeDoneCh()
 }
 
 func (s *spawnState) mainPID() int {

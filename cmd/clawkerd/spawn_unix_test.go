@@ -32,6 +32,7 @@ func TestSpawnState_RunWaitEcho(t *testing.T) {
 	if err := s.Run(cfg); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	s.BeginOrphanDrain()
 	if code := s.Wait(); code != 0 {
 		t.Errorf("exit = %d, want 0", code)
 	}
@@ -52,6 +53,7 @@ func TestSpawnState_RunWaitFalse(t *testing.T) {
 	if err := s.Run(cfg); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	s.BeginOrphanDrain()
 	if code := s.Wait(); code != 1 {
 		t.Errorf("exit = %d, want 1", code)
 	}
@@ -69,6 +71,7 @@ func TestSpawnState_RunWaitExit42(t *testing.T) {
 	if err := s.Run(cfg); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	s.BeginOrphanDrain()
 	if code := s.Wait(); code != 42 {
 		t.Errorf("exit = %d, want 42", code)
 	}
@@ -86,6 +89,7 @@ func TestSpawnState_StopSignaled(t *testing.T) {
 	if err := s.Run(cfg); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	s.BeginOrphanDrain()
 	s.Stop(100 * time.Millisecond)
 	code := s.Wait()
 	wantTerm := 128 + int(syscall.SIGTERM)
@@ -107,6 +111,7 @@ func TestSpawnState_DoubleRunReturnsAlreadySpawned(t *testing.T) {
 	if err := s.Run(cfg); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
+	s.BeginOrphanDrain()
 	if err := s.Run(cfg); !errors.Is(err, errAlreadySpawned) {
 		t.Fatalf("second Run err = %v, want errAlreadySpawned", err)
 	}
@@ -164,6 +169,7 @@ func TestSpawnState_ReadyFileTouchedAfterStart(t *testing.T) {
 	if err := s.Run(cfg); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	s.BeginOrphanDrain()
 	if _, err := os.Stat(readyFile); err != nil {
 		t.Fatalf("ready file not created: %v", err)
 	}
@@ -185,6 +191,7 @@ func TestSpawnState_DescendantsReaped(t *testing.T) {
 	if err := s.Run(cfg); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	s.BeginOrphanDrain()
 	select {
 	case <-s.Done():
 	case <-time.After(fastReadyPoll):

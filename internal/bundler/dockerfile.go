@@ -26,7 +26,6 @@ import (
 	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/schmitthub/clawker/internal/clawkerd"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
 
@@ -44,55 +43,6 @@ var dockerfileFS embed.FS
 
 //go:embed assets/Dockerfile.tmpl
 var DockerfileTemplate string
-
-//go:embed assets/entrypoint.sh.tmpl
-var entrypointTmpl string
-
-// EntrypointScript is the rendered container entrypoint. Rendered at
-// package-init from values in internal/consts so the bash script
-// cannot drift from Go callers. A panic here only fires on a
-// malformed compiled-in template, which is a build-time bug. The
-// blast radius is "binary refuses to start" (whether the importer is
-// the CLI or clawker-cp) — eBPF is not yet loaded at package-init,
-// so this does not violate the CP no-panic rule, which scopes to
-// post-SetReady code paths where a panic would strand eBPF state.
-var EntrypointScript = mustRenderEntrypoint()
-
-// renderedAssetByName overrides raw embed.FS bytes for templated
-// assets in EmbeddedScripts() so a bump to a templated value
-// invalidates the image content hash. Keys are filenames relative to
-// assets/.
-var renderedAssetByName = map[string]string{
-	"entrypoint.sh.tmpl": EntrypointScript,
-}
-
-func mustRenderEntrypoint() string {
-	t, err := template.New("entrypoint.sh").Parse(entrypointTmpl)
-	if err != nil {
-		panic(fmt.Errorf("bundler: parse entrypoint.sh.tmpl: %w", err))
-	}
-	// 60s slack keeps the bash timeout strictly later than the CP-side
-	// per-step ceiling so failures surface as CP's structured init
-	// event, not a bare shell timeout.
-	data := struct {
-		AgentReadyFifo     string
-		AgentReadyFifoDir  string
-		ReadyMarkerPath    string
-		ReadyMarkerDir     string
-		InitTimeoutSeconds int
-	}{
-		AgentReadyFifo:     consts.AgentReadyFifo,
-		AgentReadyFifoDir:  filepath.Dir(consts.AgentReadyFifo),
-		ReadyMarkerPath:    consts.ReadyMarkerPath,
-		ReadyMarkerDir:     filepath.Dir(consts.ReadyMarkerPath),
-		InitTimeoutSeconds: int(consts.InitStepTimeoutPostInitSeconds) + 60,
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
-		panic(fmt.Errorf("bundler: render entrypoint.sh.tmpl: %w", err))
-	}
-	return buf.String()
-}
 
 //go:embed assets/statusline.sh
 var StatuslineScript string
@@ -117,9 +67,7 @@ var (
 
 // EmbeddedScripts returns all embedded script contents for content
 // hashing. Bundler assets/ are auto-discovered via embed.FS; hostproxy
-// scripts come from internals.AllScripts(). Templated assets
-// substitute their rendered output so consts changes invalidate the
-// hash. Sorted for determinism.
+// scripts come from internals.AllScripts(). Sorted for determinism.
 func EmbeddedScripts() []string {
 	var scripts []string
 
@@ -134,14 +82,9 @@ func EmbeddedScripts() []string {
 		if entry.IsDir() {
 			continue
 		}
-		name := entry.Name()
-		if rendered, ok := renderedAssetByName[name]; ok {
-			scripts = append(scripts, rendered)
-			continue
-		}
-		content, err := fs.ReadFile(assetsFS, "assets/"+name)
+		content, err := fs.ReadFile(assetsFS, "assets/"+entry.Name())
 		if err != nil {
-			panic(fmt.Errorf("bundler: read embedded asset %q: %w", name, err))
+			panic(fmt.Errorf("bundler: read embedded asset %q: %w", entry.Name(), err))
 		}
 		scripts = append(scripts, string(content))
 	}
@@ -286,8 +229,6 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		content []byte
 		mode    os.FileMode
 	}{
-		{"entrypoint.sh", []byte(EntrypointScript), 0755},
-
 		{"clawker-agent-prompt.md", []byte(AgentPromptFile), 0644},
 		{"statusline.sh", []byte(StatuslineScript), 0755},
 		{"claude-settings.json", []byte(SettingsFile), 0644},
@@ -455,11 +396,6 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
-	// Add entrypoint script
-	if err := addFileToTar(tw, "entrypoint.sh", []byte(EntrypointScript)); err != nil {
-		return nil, err
-	}
-
 	// Add statusline script
 	if err := addFileToTar(tw, "statusline.sh", []byte(StatuslineScript)); err != nil {
 		return nil, err
@@ -542,8 +478,6 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		content []byte
 		mode    os.FileMode
 	}{
-		{"entrypoint.sh", []byte(EntrypointScript), 0755},
-
 		{"clawker-agent-prompt.md", []byte(AgentPromptFile), 0644},
 		{"statusline.sh", []byte(StatuslineScript), 0755},
 		{"claude-settings.json", []byte(SettingsFile), 0644},

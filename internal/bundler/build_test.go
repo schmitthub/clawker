@@ -43,9 +43,11 @@ security:
 	require.NoError(t, err)
 	assert.Equal(t, dockerfile, content)
 
-	// Verify all expected scripts exist
+	// Verify all expected scripts exist. entrypoint.sh was retired
+	// when clawkerd became PID 1 — clawkerd is now invoked directly
+	// by Docker as the container's init.
 	expectedFiles := []string{
-		"entrypoint.sh",
+		"clawkerd",
 		"statusline.sh",
 		"claude-settings.json",
 		"claude-config.json",
@@ -60,7 +62,7 @@ security:
 	}
 
 	// Verify scripts are executable
-	for _, name := range []string{"entrypoint.sh", "host-open.sh"} {
+	for _, name := range []string{"clawkerd", "host-open.sh"} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		require.NoError(t, err)
 		assert.NotZero(t, info.Mode()&0111, "%s should be executable", name)
