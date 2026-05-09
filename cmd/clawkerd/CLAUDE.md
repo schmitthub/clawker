@@ -31,7 +31,7 @@ CP is the host daemon; clawkerd is the per-container daemon. They communicate ov
    - On `spawn.MainExited`: phase 1 reaped the user CMD; main proceeds to teardown.
 
 6. Teardown order is load-bearing:
-   1. `clawkerdSrv.GracefulStop()` — drains in-flight `ShellCommand` pipelines so `session.go`'s `exec.Cmd.Wait` calls complete.
+   1. `clawkerdSrv.Stop()` — force-close the listener. NOT `GracefulStop`: the user CMD has exited and CP holds the Session bidi stream open from its side, so `GracefulStop` would hang waiting for the streaming RPC handler to return. In-flight `ShellCommand` pipelines were already drained by the main-child-exit cascade BEFORE this point, so graceful drain is not needed.
    2. `spawn.BeginOrphanDrain()` — releases the reaper's phase 2 (`Wait4(-1, WNOHANG)`) so it can drain reparented orphans without racing `session.go`'s `c.Wait` for stage children.
    3. `os.Exit(spawn.Wait())` — bash-convention exit code (`128+signum` for signaled child) so Docker `restart: on-failure` reads the right value.
 
@@ -42,10 +42,10 @@ CP is the host daemon; clawkerd is the per-container daemon. They communicate ov
 **Goroutines installed by `Run` (each `defer recover()`-wrapped per the resilience contract):**
 
 - **Signal forwarder.** `signal.Notify(...forwardableSignals())` → `unix.Kill(-childPgid, sig)`. Forwardable set excludes SIGCHLD (reaper handles), SIGURG (Go runtime preemption), and program-error signals (SIGFPE/SIGILL/SIGSEGV/SIGBUS/SIGABRT/SIGTRAP/SIGSYS — let those crash the supervisor rather than masking via forward). Filtering SIGURG is non-negotiable: forwarding it interferes with Go's goroutine preemption.
-- **Reaper.** Two-phase. Phase 1: `Wait4(mainPID, &ws, WNOHANG)` only — never `Wait4(-1)` while the main child is alive, so concurrent `exec.Cmd.Wait` calls in `session.go`'s `ShellCommand` pipelines aren't stolen. Phase 2: `Wait4(-1, &ws, WNOHANG)` to drain reparented orphans, gated on `orphanDrainCh` so callers (main()) can `GracefulStop` the listener first.
+- **Reaper.** Two-phase. Phase 1: `Wait4(mainPID, &ws, WNOHANG)` only — never `Wait4(-1)` while the main child is alive, so concurrent `exec.Cmd.Wait` calls in `session.go`'s `ShellCommand` pipelines aren't stolen. Phase 2: `Wait4(-1, &ws, WNOHANG)` to drain reparented orphans, gated on `orphanDrainCh` so callers (main()) can `Stop` the listener first.
 - **Stop watchdog.** Timer-driven SIGKILL escalation if the child pgroup hasn't drained within `Stop`'s grace window.
 
-**Phase-2 gate** (`BeginOrphanDrain` / `MainExited`): the reaper holds at `<-orphanDrainCh` after phase 1. main() uses `MainExited` to trigger `GracefulStop`, then calls `BeginOrphanDrain` to release phase 2. Tests with no concurrent exec.Cmd.Wait surface call `BeginOrphanDrain` immediately after `Run`. The gate is held by default — a forgetful caller hangs loudly on Wait/Done rather than silently racing concurrent c.Wait surfaces.
+**Phase-2 gate** (`BeginOrphanDrain` / `MainExited`): the reaper holds at `<-orphanDrainCh` after phase 1. main() uses `MainExited` to trigger `Stop`, then calls `BeginOrphanDrain` to release phase 2. Tests with no concurrent exec.Cmd.Wait surface call `BeginOrphanDrain` immediately after `Run`. The gate is held by default — a forgetful caller hangs loudly on Wait/Done rather than silently racing concurrent c.Wait surfaces.
 
 **Privilege drop.** `SysProcAttr.Credential{Uid, Gid, Groups}` populated from `resolveUser(CLAWKER_USER, /etc/passwd, /etc/group)` (wraps `github.com/moby/sys/user.GetExecUserPath`). The kernel performs `setgroups → setgid → setuid` (in that order — `setgroups` MUST run while still root, before the `setuid` that drops privileges) between fork and exec; see Go's `syscall/exec_linux.go`. clawkerd's own goroutines stay root.
 
@@ -95,7 +95,7 @@ clawkerd is PID 1 of the agent container. A panic that escapes a goroutine kills
 
 1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`** outside the post-`spawn.Wait` exit in `run`'s tail and the logger-init failure in `main`. Constructors return `(nil, error)`; runtime paths log structurally and degrade.
 2. **Every long-lived goroutine recovers.** Signal forwarder, reaper, stop watchdog, gRPC `Serve`, session sender, runShellCommand worker, drainStdout/drainStderr, register handler, AgentReady handler, stage reapers — all wrap with `defer recoverGoroutine(...)` (or the equivalent inline pattern for session.go's stage reapers, which need the synthetic-StageExit emission too). The goroutine's panic-recovery path also closes any `chan struct{}` callers select on so nobody deadlocks. `recoverGoroutine` lives in `recover.go` (no build tag) so listener.go and session.go share it with the unix-tagged spawnState goroutines in spawn_unix.go.
-3. **Subsystem failures degrade, never cascade.** A broken spawn entry → `Error{SPAWN_FAILED}` Response, supervisor stays alive. A broken Session → cancelled Session ctx, listener stays up. A broken reaper goroutine → `closeAllGates` releases `MainExited`/`Done` waiters so main() can still exit cleanly.
+3. **Subsystem failures degrade, never cascade.** A broken spawn entry → `Error{IO_ERROR}` Response, supervisor stays alive. A broken Session → cancelled Session ctx, listener stays up. A broken reaper goroutine → `closeAllGates` releases `MainExited`/`Done` waiters so main() can still exit cleanly. (`SPAWN_FAILED` is reserved for `runShellCommand` stage spawn failures.)
 4. **Every degraded path emits a structured log line.** Operators see `event=<name>` with `command_id`, `pid`, `pgid`, `error` etc. Triage works from the log surface alone.
 
 ## What It Does NOT Do
@@ -109,10 +109,10 @@ clawkerd is PID 1 of the agent container. A panic that escapes a goroutine kills
 
 | File | Purpose |
 |------|---------|
-| `main.go` | Daemon entry + supervisor orchestrator: `run(ctx, log)` reads bootstrap, starts listener, builds `spawnState`, threads the `spawnEntry` closure into `startClawkerdListener`, drives the SIGTERM-or-MainExited select, sequences `GracefulStop → BeginOrphanDrain → spawn.Wait`, returns the bash-convention exit code |
+| `main.go` | Daemon entry + supervisor orchestrator: `run(ctx, log)` reads bootstrap, starts listener, builds `spawnState`, threads the `spawnEntry` closure into `startClawkerdListener`, drives the SIGTERM-or-MainExited select, sequences `Stop → BeginOrphanDrain → spawn.Wait`, returns the bash-convention exit code |
 | `listener.go` | CP→clawkerd inbound mTLS listener. `buildListenerTLSConfig` enforces RequireAndVerifyClientCert + dual-EKU server cert + chain validation; `pinPeerCNToCP` asserts peer is `ContainerCP` with `ClientAuth` EKU |
 | `session.go` | `runSession` per-stream owner: receive loop, sender goroutine, dispatch, ShellCommand pipeline (multi-stage exec, stdin/stdout/stderr fanout, signal forwarding, timeout watchdog, audit log). `handleAgentReady` invokes the package-level `spawnEntry` thunk |
-| `spawn.go` | Cross-platform pure logic: `mapExitCode`, `envWithHome`, `routeArgs`, `errAlreadySpawned`, `errEmptyArgv` |
+| `spawn.go` | Cross-platform pure logic: `mapExitCode`, `envForUser`, `routeArgs`, `errAlreadySpawned`, `errEmptyArgv` |
 | `spawn_unix.go` | `//go:build unix` — `spawnState` lifecycle: `Run` (fork+exec with privilege drop + Setpgid + ready-file touch), `Wait`, `Stop`, `MainExited`, `BeginOrphanDrain`, signal forwarder, two-phase reaper. `buildSysProcAttr` builds the `*syscall.SysProcAttr` (Setpgid + optional Credential) — extracted so the privilege-drop wiring is unit-testable without root. |
 | `recover.go` | Resilience-contract `recoverGoroutine` helper: structured-log + onPanic hook for every long-lived goroutine in clawkerd (no build tag — shared by spawn_unix's reaper/forwarder/watchdog AND listener.go's Serve AND session.go's sender/worker/drainers/register handler). |
 | `user.go` | `ExecUser` + `resolveUser` wrapping `github.com/moby/sys/user.GetExecUserPath` for `name`/`name:group`/`uid`/`uid:gid` spec parsing |
@@ -129,7 +129,7 @@ Structured zerolog via `internal/logger.New()` writing to `/var/log/clawker/claw
 Levels:
 - **ERROR** — bootstrap-file read failure, listener bind failure, unrecoverable Serve return, spawn-goroutine panic recovery, agent-ready spawn failure
 - **WARN** — pipe-close failures during pipeline teardown, signal forward failures (non-ESRCH), reaper main-already-reaped fallback, Stop SIGTERM/SIGKILL forward failures
-- **INFO** — state transitions: `boot`, `clawkerd_listener_started`, `daemon_idle`, `session_started`, `session_ended`, `shell_command_started`, `shell_command_done`, `agent_ready_spawned`, `agent_ready_already_spawned`, `spawn_started`, `spawn_main_reaped`, `main_child_exited`, `shutdown_signal_received`, `clawkerd_listener_stopping`, `clawkerd_listener_stopped`, `shutdown`
+- **INFO** — state transitions: `boot`, `clawkerd_listener_started`, `daemon_idle`, `session_started`, `session_ended`, `shell_command_started`, `shell_command_done`, `agent_ready_spawned`, `agent_ready_already_spawned`, `spawn_started`, `spawn_main_reaped`, `main_child_exited`, `shutdown_signal_received`, `clawkerd_listener_stopping`, `clawkerd_listener_stopped`, `shutdown` (when run() returns nil; logged at ERROR when run() returns non-nil)
 - **DEBUG** — orphan-reap events, signal-after-exit filter
 
 The single allowed `os.Stderr` write is the logger init failure path in `main`.
@@ -138,7 +138,7 @@ The single allowed `os.Stderr` write is the logger init failure path in `main`.
 
 - Deterministic pre-spawn config failure (missing `CLAWKER_AGENT`, `resolveUser` fails, bootstrap read fails) → **exit 2** (`exitCodeConfig`). Distinct from transient exit 1 so an operator running `restart: on-failure:max-retries=N` can trip-and-stop on broken config instead of restart-looping. Unix tradition: 2 = config error.
 - Listener-bind failure → exit 1 (transient — port-in-use clears on restart).
-- SIGTERM before `AgentReady` (no user CMD ever spawned) → main logs `event=shutdown_before_spawn`, skips the `MainExited` wait, GracefulStops the listener, returns `spawn.Wait()==1`. Operators grep for this event when a container exits 1 immediately on `docker stop` of an idle agent.
+- SIGTERM before `AgentReady` (no user CMD ever spawned) → main logs `event=shutdown_before_spawn` (Info), skips the `MainExited` wait, Stops the listener, returns exit 1. `spawn.SpawnErr()==nil` so the `event=shutdown` line carries no error field — the `shutdown_before_spawn` line is the sole signal. Operators grep for this event when a container exits 1 immediately on `docker stop` of an idle agent.
 - Once `spawn.Run` succeeds, exit code = bash-convention mapping of the user CMD's exit (`WEXITSTATUS` for normal, `128+signum` for signaled). Docker `restart: on-failure` reads this.
 - A clean SIGTERM that drains all goroutines and reaps the child = exit code carrying the child's signal exit (`128 + SIGTERM`).
 - Reaper or signal-forwarder panic → recovery closes `MainExited`/`Done`/`orphanDrainCh` so main()'s teardown progresses; supervisor exits 1 if `finalWS` was never recorded.

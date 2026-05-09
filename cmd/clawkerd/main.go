@@ -22,9 +22,9 @@
 //     SysProcAttr.Credential; clawkerd stays root.
 //  4. Wait for either ctx.Done (SIGTERM/SIGINT) or main child exit.
 //     On SIGTERM: forward to the child pgroup, escalate to SIGKILL
-//     after grace, then GracefulStop the listener and drain
-//     reparented orphans. On main exit: GracefulStop first so
-//     in-flight session.go pipelines drain before the reaper
+//     after grace, then Stop (force-close) the listener and drain
+//     reparented orphans. On main exit: Stop first so in-flight
+//     session.go pipelines see a closed listener before the reaper
 //     transitions to Wait4(-1) — see spawnState's reaper phasing.
 //     Exit with the child's bash-convention exit code so Docker's
 //     restart-on-failure machinery sees the right value.
@@ -92,9 +92,9 @@ func main() {
 	// container never exits, and the host's `clawker run` never sees
 	// container teardown so it cannot restore the host terminal mode
 	// the user sees as "frozen terminal after agent exit". Lifted
-	// from tini's configure_signals (src/tini.c:481-503): same shape,
-	// same reason. signal.Ignore installs SIG_IGN at the OS level so
-	// the kernel drops these signals before they ever stop the daemon.
+	// from tini's configure_signals: same shape, same reason.
+	// signal.Ignore installs SIG_IGN at the OS level so the kernel
+	// drops these signals before they ever stop the daemon.
 	signal.Ignore(syscall.SIGTTIN, syscall.SIGTTOU)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -228,7 +228,21 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		})
 	}
 
-	clawkerdSrv, err := startClawkerdListener(boot, register, spawnEntry, log)
+	// listenerFatalCh fires once if the Serve goroutine dies on a
+	// non-stop error or panics. Without this signal, main() sits on
+	// ctx.Done with a bricked listener — container looks alive but
+	// CP cannot dispatch commands. Buffered cap 1: the listener fires
+	// at most once per failure, but a future refactor that retries
+	// Serve must not block here.
+	listenerFatalCh := make(chan error, 1)
+	onListenerFatal := func(err error) {
+		select {
+		case listenerFatalCh <- err:
+		default:
+		}
+	}
+
+	clawkerdSrv, err := startClawkerdListener(boot, register, spawnEntry, onListenerFatal, log)
 	if err != nil {
 		log.Error().Err(err).Str("event", "clawkerd_listener_start_failed").Msg("start clawkerd listener")
 		// Wiring bugs and malformed bootstrap material are deterministic
@@ -244,11 +258,12 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 
 	log.Info().Str("event", "daemon_idle").Msg("entering daemon idle loop; CP may dial Session at any time")
 
-	// Wait for either signal-driven shutdown OR main child exit.
-	// MainExited fires once spawnState's reaper has reaped the user
-	// CMD pid (phase 1 done) but BEFORE phase 2's Wait4(-1) orphan
-	// drain — so we have a clean window to GracefulStop the listener
-	// (drains session.go's c.Wait calls) before releasing phase 2.
+	// Wait for either signal-driven shutdown, listener fatal, OR main
+	// child exit. MainExited fires once spawnState's reaper has reaped
+	// the user CMD pid (phase 1 done) but BEFORE phase 2's Wait4(-1)
+	// orphan drain — so we have a clean window to Stop the listener
+	// before releasing phase 2.
+	var listenerFatalErr error
 	select {
 	case <-ctx.Done():
 		log.Info().Str("event", "shutdown_signal_received").Msg("SIGTERM/SIGINT received")
@@ -257,7 +272,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		// no reaper goroutine running. Skip the MainExited wait —
 		// it would never fire — and proceed straight to listener
 		// teardown.
-		if spawn.Started() {
+		if spawn.Spawned() {
 			spawn.Stop(shutdownGrace)
 			<-spawn.MainExited()
 		} else {
@@ -267,6 +282,19 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		}
 	case <-spawn.MainExited():
 		log.Info().Str("event", "main_child_exited").Msg("main child exited")
+	case listenerFatalErr = <-listenerFatalCh:
+		// Listener Serve died (Serve returned non-stop error or the
+		// goroutine panicked). The daemon cannot dispatch any further
+		// commands — proceed to teardown. If the user CMD is running,
+		// terminate it gracefully so we don't strand a child while
+		// the container exits.
+		log.Error().Err(listenerFatalErr).
+			Str("event", "listener_fatal_received").
+			Msg("clawkerd: listener died; tearing down daemon")
+		if spawn.Spawned() {
+			spawn.Stop(shutdownGrace)
+			<-spawn.MainExited()
+		}
 	}
 
 	// Tear down the gRPC listener BEFORE phase 2 begins so
@@ -300,12 +328,19 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	exitCode := spawn.Wait()
 	// Surface the spawn error as runErr so a Run failure (no child
 	// ever forked) propagates to the shutdown log line and main()'s
-	// non-zero-exit path. Without this, a failed AgentReady spawn
-	// silently exits 1 with `event=shutdown` carrying no error
-	// field — operators have to grep for `agent_ready_spawn_failed`
-	// to find the cause.
+	// non-zero-exit path. SpawnErr also reports reaper-bailout causes
+	// (retry-budget exhaustion, ECHILD on main, panic recovery) so a
+	// supervisor that aborted phase 1/2 without recording finalWS
+	// surfaces its cause on the shutdown line instead of forcing
+	// operators to grep for `spawn_*_aborted` separately.
 	if err := spawn.SpawnErr(); err != nil {
 		return exitCode, fmt.Errorf("spawn user CMD: %w", err)
+	}
+	if listenerFatalErr != nil {
+		// Listener died but the user CMD reaped cleanly — exit code
+		// reflects the child but the runErr surfaces the listener
+		// cause so operators see it on the shutdown line.
+		return exitCode, fmt.Errorf("listener fatal: %w", listenerFatalErr)
 	}
 	return exitCode, nil
 }

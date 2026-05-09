@@ -19,17 +19,11 @@ var errAlreadySpawned = errors.New("clawkerd: user CMD already spawned")
 // the stack.
 var errEmptyArgv = errors.New("clawkerd: empty argv; container CMD is required")
 
-// mapExitCode converts a *os.ProcessState into a bash-convention
-// exit code:
-//
-//   - normal exit                → state.ExitCode()
-//   - signaled (WIFSIGNALED)     → 128 + signum
-//   - state == nil               → 1 (process never started)
-//   - any other unrecognized end → 1
-//
-// The 128+signum encoding matches what bash propagates from a child
-// killed by a signal, which is what the Docker `restart: on-failure`
-// machinery is calibrated against.
+// mapExitCode converts a *os.ProcessState to a bash-convention exit
+// code (`128+signum` for signaled). Returns 1 if state is nil or
+// untyped. The 128+signum encoding matches what bash propagates from
+// a child killed by a signal — Docker `restart: on-failure` is
+// calibrated against this convention.
 func mapExitCode(state *os.ProcessState) int {
 	if state == nil {
 		return 1
@@ -53,10 +47,9 @@ func mapExitCode(state *os.ProcessState) int {
 // root-shaped env (HOME=/root, USER=root, LOGNAME=root); forwarding
 // those verbatim to a privilege-dropped child means tools like
 // claude look for config under /root/.claude instead of the user's
-// real home and fail with permission errors. Override is the right
-// shape (gosu does the same — it Unsetenv("HOME") before SetupUser
-// so the SetupUser default applies; we replace in-place because we
-// build the env slice ourselves). Every other variable passes
+// real home and fail with permission errors. Override is correct
+// (matches gosu's Unsetenv("HOME") + SetupUser behavior). We replace
+// in-place because we own the env slice. Every other variable passes
 // through verbatim.
 //
 // USER and LOGNAME are set in addition to HOME because some tools

@@ -178,14 +178,13 @@ func (s *session) handleRegisterRequired(ctx context.Context, commandID string) 
 		return
 	}
 	go func() {
-		// Top-level recover wraps the WHOLE goroutine — register.Run
-		// AND the s.send that follows. Earlier shape recovered only
-		// the inner Run call, leaving s.send (which can panic on a
-		// torn-down sendCh from a future refactor) un-protected. Mirror
-		// the handleAgentReady pattern: any panic in the register path
-		// surfaces as a structured log line and the goroutine exits
-		// cleanly rather than killing PID 1.
-		defer recoverGoroutine(s.log, "register_required", nil)
+		// Top-level recover wraps the whole goroutine — register.Run
+		// AND s.send. s.send can panic on a torn-down sendCh, so a
+		// per-call recover would leak panics. Mirrors handleAgentReady.
+		// Enriched logger so a panic surfaces command_id in the
+		// goroutine_panic event.
+		recoverLog := s.log.With("command_id", commandID)
+		defer recoverGoroutine(recoverLog, "register_required", nil)
 		var (
 			ok     bool
 			errMsg string
@@ -329,16 +328,17 @@ func (s *session) handleAgentReady(ctx context.Context, commandID string) {
 // (derived from the Session ctx by startShellCommand) is plumbed as a
 // first parameter through runShellCommand and the drainers — never
 // stored on the struct, per the project ctx-handling rule.
+//
+// stdinMu guards stdin/stdinClosed/processes — all per-command IO
+// state published from runShellCommand to routeStdin/routeCloseStdin/
+// routeSignal. Callers MUST go through the methods (snapshotStdin /
+// markStdinClosed / closeStdinOnce / snapshotProcesses / publishProcesses)
+// rather than touching fields directly so the locking discipline is
+// centralized.
 type runningCommand struct {
 	id     string
 	cancel context.CancelFunc
 
-	// stdinMu guards stdin/stdinClosed AND processes — all per-command
-	// IO state published from runShellCommand to routeStdin/
-	// routeCloseStdin/routeSignal. processes is written once just after
-	// spawn; routeSignal reads it after rc has been registered in
-	// s.cmds, but a Signal frame can race that window before
-	// runShellCommand's first lock.
 	stdinMu     sync.Mutex
 	stdin       io.WriteCloser // writer half of stage[0] stdin pipe
 	stdinClosed bool
@@ -355,9 +355,69 @@ type runningCommand struct {
 	stdinReady chan struct{}
 
 	// processes holds each stage's *exec.Cmd. Index matches stage_index.
-	// Used to forward Signal frames to each stage's process. Guarded by
-	// stdinMu.
+	// Published once via publishProcesses; routeSignal reads via
+	// snapshotProcesses.
 	processes []*exec.Cmd
+}
+
+// snapshotStdin returns the current stdin writer + closed flag under
+// the publish lock. A (nil, _) return means stdin was never published.
+func (rc *runningCommand) snapshotStdin() (io.WriteCloser, bool) {
+	rc.stdinMu.Lock()
+	defer rc.stdinMu.Unlock()
+	return rc.stdin, rc.stdinClosed
+}
+
+// markStdinClosed sets the closed flag idempotently. Caller invokes
+// after a stdin Write fails so subsequent Stdin frames take the
+// "already closed" branch instead of re-attempting writes to a broken
+// pipe and re-reporting IO_ERROR per frame.
+func (rc *runningCommand) markStdinClosed() {
+	rc.stdinMu.Lock()
+	rc.stdinClosed = true
+	rc.stdinMu.Unlock()
+}
+
+// closeStdinOnce closes stdin idempotently. Returns the underlying
+// Close error with ErrClosedPipe filtered to nil (peer already closed
+// is success). Caller decides logging discipline (Warn for
+// CP-initiated CloseStdin; pipeCloseStats.record for pipeline
+// teardown). Lock is held across Close to keep stdinClosed and the
+// kernel-side close atomic against routeStdin/routeCloseStdin races.
+func (rc *runningCommand) closeStdinOnce() error {
+	rc.stdinMu.Lock()
+	defer rc.stdinMu.Unlock()
+	if rc.stdinClosed {
+		return nil
+	}
+	rc.stdinClosed = true
+	if rc.stdin == nil {
+		return nil
+	}
+	if err := rc.stdin.Close(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
+		return err
+	}
+	return nil
+}
+
+// snapshotProcesses returns a copy of the per-stage *exec.Cmd slice.
+// Caller must tolerate c.Process being nil or in the post-reap window
+// (see routeSignal's ESRCH/ErrProcessDone filter).
+func (rc *runningCommand) snapshotProcesses() []*exec.Cmd {
+	rc.stdinMu.Lock()
+	defer rc.stdinMu.Unlock()
+	out := make([]*exec.Cmd, len(rc.processes))
+	copy(out, rc.processes)
+	return out
+}
+
+// publishProcesses sets the per-stage *exec.Cmd slice. Called once
+// by runShellCommand after Start; subsequent reads via
+// snapshotProcesses observe a settled state.
+func (rc *runningCommand) publishProcesses(cmds []*exec.Cmd) {
+	rc.stdinMu.Lock()
+	rc.processes = cmds
+	rc.stdinMu.Unlock()
 }
 
 // runSender drains sendCh into stream.Send. Exits when ctx is done.
@@ -371,7 +431,28 @@ func (s *session) runSender(ctx context.Context, cancel context.CancelFunc) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			// Drain anything queued before ctx.Done fired so an
+			// operator triaging "CP saw timeout instead of terminal"
+			// sees exactly which command_id's Response landed in
+			// sendCh but never made it to stream.Send. Producers
+			// parked on `sendCh <- resp` unblock via their own
+			// ctx.Done branch (see s.send) so this drain only sweeps
+			// the buffer.
+			for {
+				select {
+				case resp := <-s.sendCh:
+					if resp == nil {
+						continue
+					}
+					s.log.Warn().
+						Str("event", "session_send_undelivered_on_teardown").
+						Str("command_id", resp.CommandId).
+						Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
+						Msg("clawkerd: response queued before teardown but never written to stream")
+				default:
+					return
+				}
+			}
 		case resp := <-s.sendCh:
 			if resp == nil {
 				continue
@@ -642,7 +723,8 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 	// the audit-log defer below has emitted shell_command_done with the
 	// (probably "incomplete") outcome. onPanic cancels the per-command
 	// ctx so any started exec.CommandContext stages get SIGKILL'd.
-	defer recoverGoroutine(s.log, "shell_command_worker", rc.cancel)
+	recoverLog := s.log.With("command_id", rc.id)
+	defer recoverGoroutine(recoverLog, "shell_command_worker", rc.cancel)
 	startedAt := time.Now()
 	var (
 		auditFinalExit int32 = -1
@@ -707,13 +789,11 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 	// spawned, and rc.stdin (== stdinW) was registered under the
 	// session lock at the same time so routeCloseStdin / routeStdin
 	// races are race-free. Here we just plumb stdinR into stage[0]
-	// and publish processes under stdinMu so routeSignal observers
-	// see a settled state.
+	// and publish processes so routeSignal observers see a settled
+	// state.
 	cmds[0].Stdin = stdinR
-	rc.stdinMu.Lock()
-	stdinW := rc.stdin
-	rc.processes = cmds
-	rc.stdinMu.Unlock()
+	stdinW, _ := rc.snapshotStdin()
+	rc.publishProcesses(cmds)
 
 	// closeStats accumulates close-error accounting across every
 	// closePipeOnce call site in this goroutine: first failure lands
@@ -819,11 +899,8 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 			// waiting on stdinReady do not deadlock; closeStdinReady
 			// then fires unconditionally.
 			defer closeStdinReady()
-			defer recoverGoroutine(s.log, "initial_stdin_writer", nil)
-			rc.stdinMu.Lock()
-			w := rc.stdin
-			closed := rc.stdinClosed
-			rc.stdinMu.Unlock()
+			defer recoverGoroutine(s.log.With("command_id", rc.id), "initial_stdin_writer", nil)
+			w, closed := rc.snapshotStdin()
 			if w == nil || closed {
 				return
 			}
@@ -860,7 +937,7 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 			defer wg.Done()
 			// PID-1 resilience: defer-LIFO means recover runs first
 			// on panic, then wg.Done — wg.Wait won't deadlock.
-			defer recoverGoroutine(s.log, "drain_stderr", nil)
+			defer recoverGoroutine(s.log.With("command_id", rc.id, "stage_index", i), "drain_stderr", nil)
 			s.drainStderr(ctx, rc, uint32(i), stderrPipes[i])
 		}()
 	}
@@ -869,7 +946,7 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer recoverGoroutine(s.log, "drain_stdout", nil)
+		defer recoverGoroutine(s.log.With("command_id", rc.id), "drain_stdout", nil)
 		s.drainStdout(ctx, rc, finalStdout)
 	}()
 
@@ -943,14 +1020,12 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 
 	// Block until every reaper finishes so the stdin writer can be
 	// safely closed (no further data flow possible) and downstream
-	// pipes drain.
+	// pipes drain. closeStdinOnce is idempotent — handles the
+	// already-closed case if routeCloseStdin won the race.
 	reapWG.Wait()
-	rc.stdinMu.Lock()
-	if !rc.stdinClosed {
-		s.closePipeOnce(rc.id, "stdin", stdinW, &closeStats)
-		rc.stdinClosed = true
+	if err := rc.closeStdinOnce(); err != nil {
+		closeStats.record(s.log, rc.id, "stdin", err)
 	}
-	rc.stdinMu.Unlock()
 	for i, p := range stagePipes {
 		s.closePipeOnce(rc.id, fmt.Sprintf("stage[%d]_stdout", i), p, &closeStats)
 	}
@@ -1094,10 +1169,7 @@ func (s *session) routeStdin(ctx context.Context, id string, st *clawkerdv1.Stdi
 	if !waitStdinReady(ctx, rc) {
 		return
 	}
-	rc.stdinMu.Lock()
-	w := rc.stdin
-	closed := rc.stdinClosed
-	rc.stdinMu.Unlock()
+	w, closed := rc.snapshotStdin()
 	if closed || w == nil {
 		s.send(ctx, errResponse(id,
 			clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
@@ -1107,12 +1179,8 @@ func (s *session) routeStdin(ctx context.Context, id string, st *clawkerdv1.Stdi
 	if _, err := w.Write(st.Data); err != nil && !errors.Is(err, io.ErrClosedPipe) {
 		// Mark stdinClosed so subsequent Stdin frames take the cleaner
 		// "already closed" branch above instead of re-attempting writes
-		// to a broken pipe and re-reporting IO_ERROR per frame. CP can
-		// keep streaming Stdin chunks under retry; without this, every
-		// chunk after the first failure spams a fresh IO_ERROR.
-		rc.stdinMu.Lock()
-		rc.stdinClosed = true
-		rc.stdinMu.Unlock()
+		// to a broken pipe and re-reporting IO_ERROR per frame.
+		rc.markStdinClosed()
 		s.send(ctx, errResponse(id,
 			clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
 			fmt.Sprintf("stdin write: %v", err)))
@@ -1133,25 +1201,16 @@ func (s *session) routeCloseStdin(ctx context.Context, id string) {
 	if !waitStdinReady(ctx, rc) {
 		return
 	}
-	rc.stdinMu.Lock()
-	defer rc.stdinMu.Unlock()
-	if rc.stdinClosed {
-		return
+	// CP-driven explicit close. Surface real Close errors via the
+	// audit log so an EBADF / EIO doesn't vanish silently — the
+	// CP receives no Error response either way (CloseStdin has no
+	// Response payload), so the log is the only signal.
+	if err := rc.closeStdinOnce(); err != nil {
+		s.log.Warn().Err(err).
+			Str("event", "session_close_stdin_failed").
+			Str("command_id", id).
+			Msg("clawkerd: explicit CloseStdin returned error")
 	}
-	if rc.stdin != nil {
-		// CP-driven explicit close. Surface real Close errors via the
-		// audit log so an EBADF / EIO doesn't vanish silently — the
-		// CP receives no Error response either way (CloseStdin has
-		// no Response payload), so the log is the only signal.
-		// io.ErrClosedPipe means the peer beat us; treat as success.
-		if err := rc.stdin.Close(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
-			s.log.Warn().Err(err).
-				Str("event", "session_close_stdin_failed").
-				Str("command_id", id).
-				Msg("clawkerd: explicit CloseStdin returned error")
-		}
-	}
-	rc.stdinClosed = true
 }
 
 // routeSignal forwards a POSIX signal to every stage's process.
@@ -1173,9 +1232,7 @@ func (s *session) routeSignal(ctx context.Context, id string, sig *clawkerdv1.Si
 	}
 	// Snapshot processes under the publish lock so we don't race the
 	// runShellCommand goroutine writing the slice header.
-	rc.stdinMu.Lock()
-	processes := rc.processes
-	rc.stdinMu.Unlock()
+	processes := rc.snapshotProcesses()
 	for i, c := range processes {
 		if c == nil || c.Process == nil {
 			continue
@@ -1331,17 +1388,12 @@ type pipeCloseStats struct {
 	suppressed int
 }
 
-// closePipeOnce closes w, logging at Warn on real errors. `stats`
-// dedupes per-goroutine: a runShellCommand goroutine passes the same
-// *pipeCloseStats to each call site so a torrent of failed closes
-// during pipeline teardown produces exactly one Warn line + a
-// suppressed counter the caller flushes on exit. io.ErrClosedPipe is
-// treated as success since it just means a peer already closed.
-func (s *session) closePipeOnce(cmdID, name string, w io.Closer, stats *pipeCloseStats) {
-	if w == nil {
-		return
-	}
-	err := w.Close()
+// record dedupes a close error onto stats. First non-success failure
+// logs at Warn; subsequent ones increment suppressed so a torrent of
+// close errors during pipeline teardown produces exactly one Warn +
+// a summary count flushed by the caller. io.ErrClosedPipe is success
+// (peer already closed).
+func (stats *pipeCloseStats) record(log *logger.Logger, cmdID, name string, err error) {
 	if err == nil || errors.Is(err, io.ErrClosedPipe) {
 		return
 	}
@@ -1349,12 +1401,20 @@ func (s *session) closePipeOnce(cmdID, name string, w io.Closer, stats *pipeClos
 		stats.suppressed++
 		return
 	}
-	s.log.Warn().Err(err).
+	log.Warn().Err(err).
 		Str("event", "session_pipe_close_failed").
 		Str("command_id", cmdID).
 		Str("pipe", name).
 		Msg("clawkerd: pipe close failed during pipeline teardown")
 	stats.logged = true
+}
+
+// closePipeOnce closes w and records the outcome on stats.
+func (s *session) closePipeOnce(cmdID, name string, w io.Closer, stats *pipeCloseStats) {
+	if w == nil {
+		return
+	}
+	stats.record(s.log, cmdID, name, w.Close())
 }
 
 // errResponse is a small helper for the Error variant.

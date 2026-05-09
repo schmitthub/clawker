@@ -340,6 +340,104 @@ func waitStatusFromShell(script string) (syscall.WaitStatus, error) {
 	return ws, nil
 }
 
+// TestBuildSysProcAttr pins the security-critical wiring from
+// spawnConfig.user to *syscall.SysProcAttr.Credential. A regression
+// that drops the Credential population (refactor that loses cfg.user,
+// or wiring bug that resolves uid=0) silently re-introduces root in
+// the user CMD. The privilege-drop integration test
+// (TestSpawnState_PrivilegeDrop_Linux) skips on non-root hosts so
+// only this unit test guards the wiring on dev/CI.
+func TestBuildSysProcAttr(t *testing.T) {
+	user := &ExecUser{name: "claude", uid: 1000, gid: 1000, groups: []uint32{10, 20}, home: "/home/claude"}
+
+	cases := []struct {
+		name           string
+		user           *ExecUser
+		ctty           int
+		wantSetpgid    bool
+		wantForeground bool
+		wantCtty       int
+		wantCred       bool
+		wantUID        uint32
+		wantGID        uint32
+		wantGroups     []uint32
+	}{
+		{
+			name:        "nil_user_no_ctty",
+			user:        nil,
+			ctty:        -1,
+			wantSetpgid: true,
+			wantCred:    false,
+		},
+		{
+			name:        "user_no_ctty",
+			user:        user,
+			ctty:        -1,
+			wantSetpgid: true,
+			wantCred:    true,
+			wantUID:     1000,
+			wantGID:     1000,
+			wantGroups:  []uint32{10, 20},
+		},
+		{
+			name:           "user_with_ctty",
+			user:           user,
+			ctty:           0,
+			wantSetpgid:    true,
+			wantForeground: true,
+			wantCtty:       0,
+			wantCred:       true,
+			wantUID:        1000,
+			wantGID:        1000,
+			wantGroups:     []uint32{10, 20},
+		},
+		{
+			name:           "nil_user_with_ctty",
+			user:           nil,
+			ctty:           0,
+			wantSetpgid:    true,
+			wantForeground: true,
+			wantCtty:       0,
+			wantCred:       false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			attr := buildSysProcAttr(tc.user, tc.ctty)
+			if attr.Setpgid != tc.wantSetpgid {
+				t.Errorf("Setpgid = %v, want %v", attr.Setpgid, tc.wantSetpgid)
+			}
+			if attr.Foreground != tc.wantForeground {
+				t.Errorf("Foreground = %v, want %v", attr.Foreground, tc.wantForeground)
+			}
+			if tc.wantForeground && attr.Ctty != tc.wantCtty {
+				t.Errorf("Ctty = %d, want %d", attr.Ctty, tc.wantCtty)
+			}
+			if tc.wantCred {
+				if attr.Credential == nil {
+					t.Fatalf("Credential nil, want populated")
+				}
+				if attr.Credential.Uid != tc.wantUID {
+					t.Errorf("Credential.Uid = %d, want %d", attr.Credential.Uid, tc.wantUID)
+				}
+				if attr.Credential.Gid != tc.wantGID {
+					t.Errorf("Credential.Gid = %d, want %d", attr.Credential.Gid, tc.wantGID)
+				}
+				if len(attr.Credential.Groups) != len(tc.wantGroups) {
+					t.Fatalf("Credential.Groups len = %d, want %d", len(attr.Credential.Groups), len(tc.wantGroups))
+				}
+				for i, g := range tc.wantGroups {
+					if attr.Credential.Groups[i] != g {
+						t.Errorf("Credential.Groups[%d] = %d, want %d", i, attr.Credential.Groups[i], g)
+					}
+				}
+			} else if attr.Credential != nil {
+				t.Errorf("Credential = %+v, want nil (no privilege drop for nil user)", attr.Credential)
+			}
+		})
+	}
+}
+
 type lockedBuf struct {
 	mu  sync.Mutex
 	buf bytes.Buffer

@@ -11,14 +11,14 @@ import (
 // recoverGoroutine is the resilience-contract recovery wrapper for
 // long-lived clawkerd goroutines. clawkerd is PID 1; a panic in any
 // of these would kill the supervisor → container exits → user CMD
-// dies with no observability surface (root CLAUDE.md "CP crashing
-// is a SECURITY incident" describes the same shape on the CP side
-// — eBPF state lives there, not here, but the resilience contract
-// is identical).
+// dies with no observability surface.
+//
 // onPanic, when non-nil, fires after the structured log so a panic
 // in a load-bearing goroutine (e.g. the reaper) can release waiters
 // via closeDoneCh, or the session sender can cancel its ctx, rather
-// than deadlocking peers.
+// than deadlocking peers. onPanic runs OUTSIDE the recover scope —
+// it must be panic-free or do its own recovery (the stop_watchdog
+// onPanic is the canonical sub-recover example).
 //
 // The recovery message is mirrored to os.Stderr so it survives
 // lumberjack rotation failure (full disk, broken symlink, etc.) —

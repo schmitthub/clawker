@@ -38,11 +38,12 @@ func TestResolveUser_HappyPaths(t *testing.T) {
 		wantUID  uint32
 		wantGID  uint32
 		wantHome string
+		wantName string
 	}{
-		{name: "name", spec: "claude", wantUID: 1000, wantGID: 1000, wantHome: "/home/claude"},
-		{name: "name:group", spec: "claude:wheel", wantUID: 1000, wantGID: 10, wantHome: "/home/claude"},
-		{name: "uid", spec: "1000", wantUID: 1000, wantGID: 1000, wantHome: "/home/claude"},
-		{name: "uid:gid", spec: "1000:10", wantUID: 1000, wantGID: 10, wantHome: "/home/claude"},
+		{name: "name", spec: "claude", wantUID: 1000, wantGID: 1000, wantHome: "/home/claude", wantName: "claude"},
+		{name: "name:group", spec: "claude:wheel", wantUID: 1000, wantGID: 10, wantHome: "/home/claude", wantName: "claude"},
+		{name: "uid", spec: "1000", wantUID: 1000, wantGID: 1000, wantHome: "/home/claude", wantName: "claude"},
+		{name: "uid:gid", spec: "1000:10", wantUID: 1000, wantGID: 10, wantHome: "/home/claude", wantName: "claude"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,6 +59,13 @@ func TestResolveUser_HappyPaths(t *testing.T) {
 			}
 			if got.Home() != tc.wantHome {
 				t.Errorf("Home = %q, want %q", got.Home(), tc.wantHome)
+			}
+			// Name populates USER/LOGNAME in the spawn child env. A
+			// regression that returns "" silently ships empty USER/
+			// LOGNAME — caught only by this assertion since UID/GID/
+			// Home alone don't surface it.
+			if got.Name() != tc.wantName {
+				t.Errorf("Name = %q, want %q", got.Name(), tc.wantName)
 			}
 		})
 	}

@@ -39,16 +39,25 @@ var errListenerConfig = errors.New("clawkerd listener: config error")
 // user CMD. nil is rejected at call time so a wiring bug fails loud
 // here rather than at first AgentReady.
 //
-// Returns the running grpc.Server so main can GracefulStop on
-// shutdown. The underlying net.Listener is owned by the goroutine
-// that runs Serve and is closed by Stop / GracefulStop.
-func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, log *logger.Logger) (*grpc.Server, error) {
+// onFatal is invoked when grpc.Serve returns a non-stop error (Serve
+// goroutine dead, no further commands can dispatch). main() wires it
+// to its NotifyContext stop func so the daemon exits cleanly rather
+// than hanging on ctx.Done with a bricked listener. nil onFatal is
+// rejected: a missing wiring would silently strand the daemon.
+//
+// Returns the running grpc.Server so main can Stop on shutdown. The
+// underlying net.Listener is owned by the goroutine that runs Serve
+// and is closed by Stop.
+func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, onFatal func(error), log *logger.Logger) (*grpc.Server, error) {
 	if spawnEntry == nil {
 		return nil, fmt.Errorf("%w: spawnEntry is required", errListenerConfig)
 	}
+	if onFatal == nil {
+		return nil, fmt.Errorf("%w: onFatal is required", errListenerConfig)
+	}
 	tlsCfg, err := buildListenerTLSConfig(boot.CertPEM, boot.KeyPEM, boot.CACertPEM)
 	if err != nil {
-		return nil, fmt.Errorf("%w: TLS config: %v", errListenerConfig, err)
+		return nil, fmt.Errorf("%w: TLS config: %w", errListenerConfig, err)
 	}
 
 	addr := fmt.Sprintf(":%d", consts.DefaultClawkerdPort)
@@ -83,11 +92,19 @@ func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawn
 		// in session.go (runSession, sender, drainers, register
 		// handler, AgentReady handler) — there is NO grpc.UnaryInterceptor
 		// or grpc.StreamInterceptor wired here.
-		defer recoverGoroutine(log, "clawkerd_listener_serve", nil)
-		if serveErr := srv.Serve(lis); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
+		// onPanic on the recover wraps a Serve panic — same shape
+		// as Serve returning a non-stop error: the listener is dead
+		// either way, so the daemon must exit rather than hang on
+		// ctx.Done with no command-dispatch surface.
+		defer recoverGoroutine(log, "clawkerd_listener_serve", func() {
+			onFatal(errors.New("clawkerd: listener Serve goroutine panicked"))
+		})
+		serveErr := srv.Serve(lis)
+		if serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
 			log.Error().Err(serveErr).
 				Str("event", "clawkerd_listener_serve_failed").
-				Msg("grpc.Serve returned non-stop error")
+				Msg("grpc.Serve returned non-stop error; cancelling daemon ctx so main exits cleanly")
+			onFatal(fmt.Errorf("clawkerd: listener Serve failed: %w", serveErr))
 		}
 	}()
 
