@@ -702,9 +702,9 @@ This supplements environment variable passing for persistent credential storage.
 
 **Hot-reload semantics**: Rule changes regenerate `envoy.yaml` and `Corefile` on disk AND atomically replace the global BPF `route_map` via gRPC `AdminService.SyncRoutes` RPC to the CP. Envoy picks up config via container restart; CoreDNS via its reload plugin (2s poll). No agent container restarts required — all running containers immediately see the updated rules. The CP owns `Manager.Load()` lifetime in-process, so the pinned `dns_cache` map persists across rule reloads by construction (old hot-reload pinning bug from `ebpfExec("init")` era is gone).
 
-**Three-phase container start (bootstrap / start / post-bootstrap)**: During bootstrap, the firewall manager attaches eBPF cgroup programs to the container, routing DNS to CoreDNS and TCP to Envoy. The entrypoint waits for a readiness signal, then `gosu` drops to the unprivileged `claude` user for the main process (start phase). Post-bootstrap hooks (e.g., `agent.post_init`) run after the container is started.
+**Three-phase container start (bootstrap / start / post-bootstrap)**: During bootstrap, the firewall manager attaches eBPF cgroup programs to the container. clawkerd boots as PID 1, reads its mTLS bootstrap material, and serves the `:7700` listener while CP drives the init plan over the Session bidi-stream (`agent.post_init`, MCP setup, etc.). The terminal `AgentReady` command triggers clawkerd to fork the user CMD (default `claude`) with kernel-side privilege drop via `SysProcAttr.Credential` (start phase). Post-bootstrap hooks run after `AgentReady`.
 
-**Entrypoint privilege model**: eBPF programs are attached from outside the container by the eBPF manager. Agent containers require no elevated capabilities — they run fully unprivileged. The entrypoint runs as root only for `chown` and config init, then drops to the `claude` user via `gosu`.
+**PID-1 privilege model**: eBPF programs are attached from outside the container by the eBPF manager. Agent containers require no elevated capabilities — they run fully unprivileged. clawkerd runs as root for log writes, bootstrap reads, and `Wait4(-1)` orphan drain; the user CMD is the privilege-dropped child, never the supervisor itself (kernel runs `setgroups → setgid → setuid` between fork and exec).
 
 #### Implementation
 
@@ -734,7 +734,7 @@ The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio runnin
 
 **Bypass escape hatch**: `clawker firewall bypass` sets an eBPF bypass flag for instant unrestricted egress, auto-clearing after a configurable timeout. No rule flushing or re-application needed — just a BPF map update.
 
-**Entrypoint privilege model**: Agent containers run fully unprivileged. The entrypoint runs as root only for config init (`chown`, git setup), then drops to the `claude` user via `gosu`. eBPF programs attach from outside — no in-container firewall scripts or capabilities.
+**PID-1 privilege model**: Agent containers run fully unprivileged. clawkerd is the container's `ENTRYPOINT` and runs as root only to host the mTLS listener, write log files, and reap reparented orphans; the user CMD it forks runs as the unprivileged `claude` user (kernel-side `setgroups → setgid → setuid` between fork and exec via `SysProcAttr.Credential`). eBPF programs attach from outside — no in-container firewall scripts or capabilities.
 
 ### 7.3 Strict Label Ownership
 

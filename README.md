@@ -272,7 +272,7 @@ clawker.clawker.example  exited                  clawker                example 
 $ docker ps -a 
 CONTAINER ID   IMAGE                    COMMAND                  CREATED         STATUS                    PORTS     NAMES
 6c6896073eb1   alpine:latest            "/bin/sh"                7 seconds ago   Created                             great_dubinsky
-73b4ac14c2b3   clawker-clawker:latest   "entrypoint.sh --dan…"   10 hours ago    Exited (0) 10 hours ago             clawker.clawker.example
+73b4ac14c2b3   clawker-clawker:latest   "/usr/local/bin/clawk…"   10 hours ago    Exited (0) 10 hours ago             clawker.clawker.example
 ```
 
 ## Creating and Using Containers
