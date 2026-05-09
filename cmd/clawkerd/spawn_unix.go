@@ -253,7 +253,7 @@ func (s *spawnState) runOnce(cfg spawnConfig) error {
 		Path:        resolvedPath,
 		Args:        routedArgv,
 		Dir:         cfg.dir,
-		Env:         envWithHome(cfg.env, cfg.user),
+		Env:         envForUser(cfg.env, cfg.user),
 		Stdin:       cfg.stdin,
 		Stdout:      cfg.stdout,
 		Stderr:      cfg.stderr,

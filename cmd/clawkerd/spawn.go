@@ -48,23 +48,51 @@ func mapExitCode(state *os.ProcessState) int {
 	return 1
 }
 
-// envWithHome returns env with HOME=user.Home appended unless env
-// already contains a HOME entry. Other entries pass through. user==nil
-// returns env unchanged. This is the only env shaping clawkerd
-// performs — every other variable inherited from clawkerd's own
-// environment is forwarded verbatim.
-func envWithHome(env []string, user *ExecUser) []string {
-	if user == nil || user.Home() == "" {
+// envForUser returns env with HOME, USER, and LOGNAME overridden
+// to match the resolved user. clawkerd as PID 1 inherits Docker's
+// root-shaped env (HOME=/root, USER=root, LOGNAME=root); forwarding
+// those verbatim to a privilege-dropped child means tools like
+// claude look for config under /root/.claude instead of the user's
+// real home and fail with permission errors. Override is the right
+// shape (gosu does the same — it Unsetenv("HOME") before SetupUser
+// so the SetupUser default applies; we replace in-place because we
+// build the env slice ourselves). Every other variable passes
+// through verbatim.
+//
+// USER and LOGNAME are set in addition to HOME because some tools
+// (npm, sshd, mail clients) read them as the canonical username
+// rather than calling getpwuid; those would otherwise see "root"
+// and produce surprising audit trails or pathing.
+func envForUser(env []string, user *ExecUser) []string {
+	if user == nil {
 		return env
 	}
-	for _, e := range env {
-		if strings.HasPrefix(e, "HOME=") {
-			return env
-		}
+	overrides := map[string]string{}
+	if user.Home() != "" {
+		overrides["HOME"] = user.Home()
 	}
-	out := make([]string, 0, len(env)+1)
-	out = append(out, env...)
-	out = append(out, "HOME="+user.Home())
+	if name := user.Name(); name != "" {
+		overrides["USER"] = name
+		overrides["LOGNAME"] = name
+	}
+	if len(overrides) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env)+len(overrides))
+	for _, e := range env {
+		key, _, ok := strings.Cut(e, "=")
+		if !ok {
+			out = append(out, e)
+			continue
+		}
+		if _, override := overrides[key]; override {
+			continue
+		}
+		out = append(out, e)
+	}
+	for k, v := range overrides {
+		out = append(out, k+"="+v)
+	}
 	return out
 }
 

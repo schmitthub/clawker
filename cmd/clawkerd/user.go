@@ -16,11 +16,18 @@ import (
 // drop happens in the child via SysProcAttr.Credential between fork
 // and execve.
 type ExecUser struct {
+	name   string // username from /etc/passwd row matching uid
 	uid    uint32
 	gid    uint32
 	groups []uint32 // supplementary groups
 	home   string   // used to set HOME in child env
 }
+
+// Name returns the resolved username (matching the uid's /etc/passwd
+// row). Used to set USER and LOGNAME in the child env so tools like
+// npm or sshd see the dropped-privilege identity instead of "root"
+// inherited from PID 1.
+func (u *ExecUser) Name() string { return u.name }
 
 // UID returns the resolved primary uid.
 func (u *ExecUser) UID() uint32 { return u.uid }
@@ -89,17 +96,46 @@ func resolveUser(spec, passwdPath, groupPath string) (eu *ExecUser, err error) {
 		return nil, fmt.Errorf("clawkerd: resolve user %q: %w", spec, err)
 	}
 
+	// Resolve the username from /etc/passwd by uid so USER/LOGNAME in
+	// the child env match the dropped-privilege identity. GetExecUser
+	// returns Uid/Gid/Home but not Name; ParsePasswdFileFilter walks
+	// the same passwd file we already validated above.
+	name, err := lookupUsernameByUID(passwdPath, resolved.Uid)
+	if err != nil {
+		return nil, fmt.Errorf("clawkerd: lookup username for uid=%d: %w", resolved.Uid, err)
+	}
+
 	groups := make([]uint32, 0, len(resolved.Sgids))
 	for _, g := range resolved.Sgids {
 		groups = append(groups, uint32(g))
 	}
 
 	return &ExecUser{
+		name:   name,
 		uid:    uint32(resolved.Uid),
 		gid:    uint32(resolved.Gid),
 		groups: groups,
 		home:   resolved.Home,
 	}, nil
+}
+
+// lookupUsernameByUID parses passwdPath and returns the Name field
+// of the row whose Uid matches the resolved uid. Returns an error if
+// no row matches — this should never happen because GetExecUser
+// already validated the user exists in the same file, but a race
+// between GetExecUser and this call would surface here loudly
+// rather than silently producing USER="".
+func lookupUsernameByUID(passwdPath string, uid int) (string, error) {
+	users, err := mobyuser.ParsePasswdFileFilter(passwdPath, func(u mobyuser.User) bool {
+		return u.Uid == uid
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(users) == 0 {
+		return "", fmt.Errorf("uid=%d not found in %s", uid, passwdPath)
+	}
+	return users[0].Name, nil
 }
 
 // passwdGroupPaths returns the production passwd/group file paths.

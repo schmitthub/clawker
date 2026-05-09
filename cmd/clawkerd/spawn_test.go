@@ -38,39 +38,64 @@ func TestMapExitCode_Signaled(t *testing.T) {
 	}
 }
 
-func TestEnvWithHome(t *testing.T) {
-	user := &ExecUser{uid: 1000, gid: 1000, home: "/home/claude"}
+func TestEnvForUser(t *testing.T) {
+	user := &ExecUser{name: "claude", uid: 1000, gid: 1000, home: "/home/claude"}
+
+	contains := func(t *testing.T, env []string, want string) {
+		t.Helper()
+		for _, e := range env {
+			if e == want {
+				return
+			}
+		}
+		t.Errorf("env missing %q; got %v", want, env)
+	}
+	notContains := func(t *testing.T, env []string, unwanted string) {
+		t.Helper()
+		for _, e := range env {
+			if e == unwanted {
+				t.Errorf("env unexpectedly contains %q; got %v", unwanted, env)
+				return
+			}
+		}
+	}
 
 	t.Run("nil user passes through", func(t *testing.T) {
-		got := envWithHome([]string{"PATH=/x"}, nil)
-		want := []string{"PATH=/x"}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("got %v, want %v", got, want)
+		got := envForUser([]string{"PATH=/x"}, nil)
+		if !reflect.DeepEqual(got, []string{"PATH=/x"}) {
+			t.Errorf("got %v, want unchanged", got)
 		}
 	})
 
-	t.Run("appends HOME when missing", func(t *testing.T) {
-		got := envWithHome([]string{"PATH=/x"}, user)
-		want := []string{"PATH=/x", "HOME=/home/claude"}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("got %v, want %v", got, want)
-		}
+	t.Run("overrides root-shaped HOME/USER/LOGNAME from PID 1", func(t *testing.T) {
+		// Docker's default PID-1 env shape: HOME=/root, USER=root,
+		// LOGNAME=root inherited from the image's USER root preamble.
+		// Forwarding those verbatim to claude (running as uid 1000)
+		// would point its config dir at /root which it cannot access.
+		got := envForUser([]string{"PATH=/x", "HOME=/root", "USER=root", "LOGNAME=root"}, user)
+		contains(t, got, "PATH=/x")
+		contains(t, got, "HOME=/home/claude")
+		contains(t, got, "USER=claude")
+		contains(t, got, "LOGNAME=claude")
+		notContains(t, got, "HOME=/root")
+		notContains(t, got, "USER=root")
+		notContains(t, got, "LOGNAME=root")
 	})
 
-	t.Run("preserves existing HOME", func(t *testing.T) {
-		env := []string{"PATH=/x", "HOME=/override"}
-		got := envWithHome(env, user)
-		if !reflect.DeepEqual(got, env) {
-			t.Errorf("got %v, want %v", got, env)
-		}
+	t.Run("appends when missing", func(t *testing.T) {
+		got := envForUser([]string{"PATH=/x"}, user)
+		contains(t, got, "PATH=/x")
+		contains(t, got, "HOME=/home/claude")
+		contains(t, got, "USER=claude")
+		contains(t, got, "LOGNAME=claude")
 	})
 
-	t.Run("empty user.Home no-ops", func(t *testing.T) {
+	t.Run("user with empty home and name is a no-op", func(t *testing.T) {
 		emptyUser := &ExecUser{uid: 1000, gid: 1000}
 		env := []string{"PATH=/x"}
-		got := envWithHome(env, emptyUser)
+		got := envForUser(env, emptyUser)
 		if !reflect.DeepEqual(got, env) {
-			t.Errorf("got %v, want %v", got, env)
+			t.Errorf("got %v, want unchanged", got)
 		}
 	})
 }

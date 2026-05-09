@@ -276,8 +276,19 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	// ordering, Wait4(-1) steals stage-child pids and session.go's
 	// c.Wait returns ECHILD with bogus exit codes for in-flight
 	// pipelines.
-	log.Info().Str("event", "clawkerd_listener_stopping").Msg("graceful stop")
-	clawkerdSrv.GracefulStop()
+	//
+	// Use Stop (force-close), NOT GracefulStop. The user CMD has
+	// already exited (or we're shutting down post-SIGTERM); there is
+	// nothing graceful left to do. CP holds the Session bidi stream
+	// open from its side and only releases on stream close, so
+	// GracefulStop would hang indefinitely waiting for the streaming
+	// RPC handler to return. Force-close the listener: CP observes a
+	// connection error on its end (which is the correct signal — the
+	// agent is gone), in-flight ShellCommands were already drained by
+	// main-child exit cascade, and the container can finally
+	// terminate so the host `clawker run` exits raw-tty mode.
+	log.Info().Str("event", "clawkerd_listener_stopping").Msg("stopping listener")
+	clawkerdSrv.Stop()
 	log.Info().Str("event", "clawkerd_listener_stopped").Msg("listener torn down")
 
 	// Phase 2: drain reparented orphans now that session.go can no
