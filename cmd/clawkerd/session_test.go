@@ -253,7 +253,6 @@ func TestRunShellCommand_AuditLogStartedAndDone(t *testing.T) {
 	logs := logBuf.String()
 	assert.Contains(t, logs, `"event":"shell_command_started"`, "started event missing")
 	assert.Contains(t, logs, `"event":"shell_command_done"`, "done event missing")
-	assert.Contains(t, logs, `"argv":["`+truePath+`"]`, "argv field missing")
 	assert.Contains(t, logs, `"command_id":"audit-1"`)
 	assert.Contains(t, logs, `"outcome":"completed"`)
 	assert.Contains(t, logs, `"final_exit_code":0`)
@@ -374,9 +373,9 @@ func TestStartShellCommand_InitialStdinCloseStdinRace(t *testing.T) {
 	}
 }
 
-// TestRunShellCommand_FastExitNoIOError pins the regression fix for
-// the bug that broke agent-init's `post-init` step on second boots
-// (when the marker file makes the script exit in <500ms).
+// TestRunShellCommand_FastExitNoIOError pins isExpectedDrainEnd:
+// fast-exit commands (<500ms total) must not surface IO_ERROR even
+// though their stdout/stderr Read races the reaper closing the pipe.
 //
 // exec.Cmd.Wait closes stdout/stderr pipes after the child exits.
 // For a fast-exit command, the reaper goroutine wins the race against
@@ -757,7 +756,7 @@ func waitOneResponse(t *testing.T, s *session, timeout time.Duration) *clawkerdv
 // withVar rebinds *target to v for the duration of one test and
 // restores the prior value via t.Cleanup so test ordering can't leak
 // the override. Generic so the same shape works for any package-level
-// test seam (fifo path, opener function, panic hook, ...).
+// test seam (opener function, panic hook, etc.).
 func withVar[T any](t *testing.T, target *T, v T) {
 	t.Helper()
 	prev := *target

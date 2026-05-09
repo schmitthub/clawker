@@ -191,9 +191,12 @@ RUN groupadd -g 999 docker 2>/dev/null || groupadd docker 2>/dev/null || true &&
 # Create workspace, config, runtime, and credential directories with proper permissions.
 # .gnupg and .ssh are pre-created so socket mounts don't create root-owned directories.
 # .clawker-share is pre-created so the share volume mount inherits correct ownership.
-# /run/clawker, /var/log/clawker, /var/run/clawker are pre-created (root-owned) for
-# clawkerd as PID 1: log file, bootstrap dir, and HEALTHCHECK ready marker land here
-# without the daemon needing mkdir at boot.
+# /run/clawker (bootstrap dir, root-owned 0700 — only clawkerd-as-root reads it) and
+# /var/log/clawker (log file, root-owned — clawkerd writes the rotated log as root)
+# are pre-created so clawkerd-as-PID-1 doesn't need mkdir at boot. /var/run/clawker
+# is chowned to ${USERNAME} below so the HEALTHCHECK probe (which runs as the
+# unprivileged user) can stat the ready marker; clawkerd-as-root can still write
+# into a USERNAME-owned dir.
 RUN mkdir -p /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh {{.WorkspacePath}} /run/clawker /var/log/clawker /var/run/clawker && \
     chmod 700 /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh && \
     chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /var/run/clawker

@@ -67,7 +67,16 @@ var (
 
 // EmbeddedScripts returns all embedded script contents for content
 // hashing. Bundler assets/ are auto-discovered via embed.FS; hostproxy
-// scripts come from internals.AllScripts(). Sorted for determinism.
+// scripts come from internals.AllScripts(); the clawkerd binary is
+// included separately so a CLI release that ships a new clawkerd with
+// no Dockerfile/asset changes still rolls a fresh content hash and
+// invalidates the build cache. Sorted for determinism.
+//
+// Without clawkerd.Binary in the hash, the cache-skip in
+// internal/docker/builder.go (ImageExists(hashTag)) would short-circuit
+// the rebuild and the user would keep running the old PID-1 binary
+// despite upgrading the CLI — a silent regression of every fix we
+// ship in clawkerd.
 func EmbeddedScripts() []string {
 	var scripts []string
 
@@ -90,6 +99,7 @@ func EmbeddedScripts() []string {
 	}
 
 	scripts = append(scripts, internals.AllScripts()...)
+	scripts = append(scripts, string(clawkerd.Binary))
 	sort.Strings(scripts)
 	return scripts
 }

@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,7 +20,23 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// spawnConfig is the all-inputs struct main() passes to the spawn entry.
+// reaperRetryBudget caps consecutive non-EINTR/non-ECHILD wait4
+// failures before the reaper escalates to closeAllGates. Sized for
+// transient kernel hiccups (EAGAIN-class faults) while still tripping
+// fast on a deterministic EINVAL/EFAULT bug — without a budget the
+// loop hot-spins at 20Hz emitting Error logs while main()'s
+// `<-MainExited()` hangs forever.
+const reaperRetryBudget = 32
+
+// orphanDrainRetryBudget caps consecutive unknown wait4(-1) errors
+// in drainOrphans before it gives up. The pre-budget fallback was
+// "treat as drained" — silently closing doneCh while reparented
+// orphans may still be alive. Now the reaper aborts loudly via the
+// spawn_orphan_drain_aborted event so operators see "supervisor gave
+// up draining" instead of "clean shutdown with zombie pile".
+const orphanDrainRetryBudget = 32
+
+// spawnConfig is the all-inputs struct passed to spawnState.Run.
 type spawnConfig struct {
 	argv      []string
 	dir       string
@@ -36,10 +51,14 @@ type spawnConfig struct {
 }
 
 // spawnState tracks the user CMD across its lifetime. Exactly one
-// instance per clawkerd process. Single-shot via runEntered CAS; mu
-// guards proc/pgid/finalWS; doneCh closes exactly once after main
-// child reaped + descendants drained (closed exclusively by runReaper
-// or its panic-recovery path).
+// instance per clawkerd process. runEntered is the CAS-once gate
+// guarding runOnce — a second Run after a successful first call
+// returns errAlreadySpawned; a second Run after a failed first call
+// returns the captured original spawn error so a Session reconnect
+// cannot mask a never-spawned child as Done{0}. mu guards
+// proc/pgid/finalWS; doneCh closes exactly once after main child
+// reaped + descendants drained (closed exclusively by runReaper or
+// its panic-recovery path).
 //
 // Lifecycle (call ordering):
 //
@@ -79,9 +98,10 @@ type spawnState struct {
 	log *logger.Logger
 
 	runEntered atomic.Bool
-	spawnErr   error
+	runDoneCh  chan struct{} // closed after the CAS-winner's runOnce returns
 
 	mu              sync.Mutex
+	spawnErr        error       // mu-guarded; published after runDoneCh closes
 	proc            *os.Process // nil before spawn
 	pgid            int
 	finalWS         *syscall.WaitStatus // non-nil iff main child reaped
@@ -98,6 +118,7 @@ type spawnState struct {
 func newSpawnState(log *logger.Logger) *spawnState {
 	return &spawnState{
 		log:           log,
+		runDoneCh:     make(chan struct{}),
 		doneCh:        make(chan struct{}),
 		mainExitedCh:  make(chan struct{}),
 		orphanDrainCh: make(chan struct{}),
@@ -134,19 +155,35 @@ func (s *spawnState) closeMainExitedCh() {
 // reaper goroutines.
 //
 // Single-use: a second call returns errAlreadySpawned only if the
-// first call succeeded. If the first call failed (s.spawnErr != nil),
-// every subsequent call returns that original error so a Session
-// reconnect that re-dispatches AgentReady cannot mask a never-spawned
-// child as Done{0}.
+// first call succeeded. If the first call failed, every subsequent
+// call returns that original error so a Session reconnect that
+// re-dispatches AgentReady cannot mask a never-spawned child as
+// Done{0}.
+//
+// A second caller that races the first one's runOnce blocks on
+// runDoneCh so it observes the final outcome rather than reading a
+// torn nil from spawnErr. Without this barrier, a CP retry storm
+// could land a second AgentReady mid-spawn, read spawnErr=nil, and
+// reply Done{0} for a child that ultimately failed to fork — exactly
+// the silent-spawn-failure mode the single-spawn invariant exists to
+// prevent.
 func (s *spawnState) Run(cfg spawnConfig) error {
 	if !s.runEntered.CompareAndSwap(false, true) {
-		if s.spawnErr != nil {
-			return s.spawnErr
+		<-s.runDoneCh
+		s.mu.Lock()
+		err := s.spawnErr
+		s.mu.Unlock()
+		if err != nil {
+			return err
 		}
 		return errAlreadySpawned
 	}
-	s.spawnErr = s.runOnce(cfg)
-	if s.spawnErr != nil {
+	defer close(s.runDoneCh)
+	err := s.runOnce(cfg)
+	s.mu.Lock()
+	s.spawnErr = err
+	s.mu.Unlock()
+	if err != nil {
 		// Close every gate so callers selecting on MainExited/Done
 		// unblock rather than deadlocking after a spawn-error path.
 		// Including orphanDrainCh: a held gate would otherwise leave
@@ -154,7 +191,7 @@ func (s *spawnState) Run(cfg spawnConfig) error {
 		// that never spawned.
 		s.closeAllGates()
 	}
-	return s.spawnErr
+	return err
 }
 
 func (s *spawnState) runOnce(cfg spawnConfig) error {
@@ -169,36 +206,44 @@ func (s *spawnState) runOnce(cfg spawnConfig) error {
 	if lookPath == nil {
 		lookPath = exec.LookPath
 	}
-	routedArgv := routeArgs(cfg.argv, lookPath)
+	routedArgv, resolvedPath, routedErr := routeArgs(cfg.argv, lookPath)
+	if routedErr != nil {
+		// Broken image path: argv[0] is not on PATH so we routed to
+		// "claude". Warn (not Info) — the supervisor is silently
+		// running "claude <orig_argv0>" instead of what the user
+		// asked for; an operator triaging "why is claude getting
+		// weird args" needs this to surface above operational noise.
+		cfg.log.Warn().Err(routedErr).
+			Str("event", "spawn_argv_routed_to_claude").
+			Str("orig_argv0", cfg.argv[0]).
+			Strs("routed_argv", routedArgv).
+			Msg("clawkerd: argv[0] not on PATH; routing through 'claude'")
+	}
 
-	resolvedPath := routedArgv[0]
-	if !strings.Contains(resolvedPath, "/") {
-		p, err := lookPath(resolvedPath)
-		if err != nil {
-			return fmt.Errorf("clawkerd: lookup %q: %w", resolvedPath, err)
+	// resolvedPath is non-empty only on the no-rewrite success path
+	// (routeArgs called lookPath and got a hit); on the rewrite paths
+	// argv[0]=="claude" and we resolve it here.
+	if resolvedPath == "" {
+		resolvedPath = routedArgv[0]
+		if !strings.Contains(resolvedPath, "/") {
+			p, err := lookPath(resolvedPath)
+			if err != nil {
+				return fmt.Errorf("clawkerd: lookup %q: %w", resolvedPath, err)
+			}
+			resolvedPath = p
 		}
-		resolvedPath = p
 	}
 
 	// nosemgrep: go.lang.security.audit.dangerous-exec-cmd.dangerous-exec-cmd -- clawkerd is PID 1 and exists to spawn the container's user CMD; argv comes from os.Args, set by Docker from the image's CMD. No caller-attacker-controlled input path.
 	cmd := &exec.Cmd{
-		Path:   resolvedPath,
-		Args:   routedArgv,
-		Dir:    cfg.dir,
-		Env:    envWithHome(cfg.env, cfg.user),
-		Stdin:  cfg.stdin,
-		Stdout: cfg.stdout,
-		Stderr: cfg.stderr,
-		SysProcAttr: &syscall.SysProcAttr{
-			Setpgid: true,
-		},
-	}
-	if cfg.user != nil {
-		cmd.SysProcAttr.Credential = &syscall.Credential{
-			Uid:    cfg.user.UID,
-			Gid:    cfg.user.GID,
-			Groups: cfg.user.Groups,
-		}
+		Path:        resolvedPath,
+		Args:        routedArgv,
+		Dir:         cfg.dir,
+		Env:         envWithHome(cfg.env, cfg.user),
+		Stdin:       cfg.stdin,
+		Stdout:      cfg.stdout,
+		Stderr:      cfg.stderr,
+		SysProcAttr: buildSysProcAttr(cfg.user),
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -211,9 +256,33 @@ func (s *spawnState) runOnce(cfg spawnConfig) error {
 		// Setpgid:true is the kernel-side guarantee. Getpgid failing
 		// here means the kernel returned an error on a pid we just
 		// forked — refuse the spawn rather than silently kill-targeting
-		// -pid and hoping pid==pgid held.
-		_ = proc.Kill()
-		_, _ = proc.Wait()
+		// -pid and hoping pid==pgid held. ESRCH is the expected path
+		// when the child exited immediately between Start and Getpgid;
+		// otherwise log the underlying error so an operator can
+		// distinguish "kernel race" from "rogue child still running
+		// under dropped UID with no supervisor".
+		if killErr := proc.Kill(); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+			cfg.log.Error().Err(killErr).
+				Str("event", "spawn_getpgid_recovery_kill_failed").
+				Int("pid", proc.Pid).
+				Msg("clawkerd: kill on getpgid recovery failed; child may still be running under dropped UID")
+		}
+		state, waitErr := proc.Wait()
+		if waitErr != nil && !errors.Is(waitErr, syscall.ECHILD) {
+			cfg.log.Error().Err(waitErr).
+				Str("event", "spawn_getpgid_recovery_wait_failed").
+				Int("pid", proc.Pid).
+				Msg("clawkerd: wait on getpgid recovery failed; child reaped status unknown")
+		} else if waitErr == nil && state != nil {
+			// Race-window child exited between Start and Getpgid.
+			// Surface its true exit status — the ESRCH that triggered
+			// this branch is the "child gone" symptom, not the cause.
+			cfg.log.Info().
+				Str("event", "spawn_child_exited_before_pgroup_install").
+				Int("pid", proc.Pid).
+				Int("exit_code", mapExitCode(state)).
+				Msg("clawkerd: child exited before Getpgid; treating as spawn failure")
+		}
 		return fmt.Errorf("clawkerd: getpgid pid=%d: %w", proc.Pid, err)
 	}
 
@@ -224,7 +293,7 @@ func (s *spawnState) runOnce(cfg spawnConfig) error {
 
 	uid, gid := uint32(0), uint32(0)
 	if cfg.user != nil {
-		uid, gid = cfg.user.UID, cfg.user.GID
+		uid, gid = cfg.user.UID(), cfg.user.GID()
 	}
 	cfg.log.Info().
 		Str("event", "spawn_started").
@@ -240,7 +309,7 @@ func (s *spawnState) runOnce(cfg spawnConfig) error {
 			cfg.log.Error().Err(err).
 				Str("event", "spawn_ready_file_touch_failed").
 				Str("path", cfg.readyFile).
-				Msg("clawkerd: HEALTHCHECK ready file write failed; container will appear unhealthy")
+				Msg("clawkerd: HEALTHCHECK ready file write failed; if HEALTHCHECK is configured, container will appear unhealthy")
 		}
 	}
 
@@ -250,10 +319,12 @@ func (s *spawnState) runOnce(cfg spawnConfig) error {
 	return nil
 }
 
-// Wait blocks until the main child has exited AND all reparented
-// descendants have been reaped, then returns the bash-convention exit
-// code. Returns 1 if Run was never called, returned a spawn error,
-// or the reaper closed doneCh without recording a final status.
+// Wait blocks until doneCh closes and returns the bash-convention
+// exit code recorded by the reaper. Returns 1 without blocking if
+// the spawn never installed a child (Run not called, or Run failed
+// before installing proc); returns 1 if the reaper closed doneCh
+// without recording a final status (panic, ECHILD on main, retry
+// budget exhausted).
 func (s *spawnState) Wait() int {
 	if !s.spawned() {
 		return 1
@@ -268,8 +339,6 @@ func (s *spawnState) Wait() int {
 	return mapWaitStatus(*ws)
 }
 
-// Done returns a channel that closes once the main child has been
-// reaped and all descendants have drained (or once Run has failed).
 func (s *spawnState) Done() <-chan struct{} {
 	return s.doneCh
 }
@@ -286,7 +355,11 @@ func (s *spawnState) Started() bool { return s.spawned() }
 // the caller's runErr channel — without this, an AgentReady that
 // failed to fork the child would silently exit 1 with no shutdown
 // log line tying the exit code to the spawn error.
-func (s *spawnState) SpawnErr() error { return s.spawnErr }
+func (s *spawnState) SpawnErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.spawnErr
+}
 
 // Stop sends SIGTERM to the child pgroup, then SIGKILL after grace.
 // Idempotent. No-op if Run hasn't been called.
@@ -318,10 +391,38 @@ func (s *spawnState) Stop(grace time.Duration) {
 // from the recovery path because a panic between the timer wait and
 // the kill (logger panic, kernel-side fault) would otherwise leave
 // the child running past grace — main()'s `<-MainExited` then waits
-// indefinitely until docker's external SIGKILL fires.
+// indefinitely until docker's external SIGKILL fires. Also closes
+// every gate so a recovery-path kill failure cannot strand main()'s
+// teardown; same shape as the reaper's panic-recovery contract.
 func (s *spawnState) runStopWatchdog(grace time.Duration, pgid int) {
 	defer recoverGoroutine(s.log, "stop_watchdog", func() {
-		_ = unix.Kill(-pgid, unix.SIGKILL)
+		// Recovery-path SIGKILL: log via the structured channel if
+		// possible — a kill failure here is exactly what the audit
+		// log surface exists to capture. If the logger itself is
+		// the source of the panic we just recovered from, a second
+		// log call would re-panic; sub-recover catches that and
+		// falls back to stderr so the worst-case stop trace still
+		// lands somewhere (`docker logs <agent>`).
+		err := unix.Kill(-pgid, unix.SIGKILL)
+		if err != nil && !errors.Is(err, unix.ESRCH) {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr, "clawkerd: stop_watchdog recovery SIGKILL failed pgid=%d err=%v (logger panicked: %v)\n", pgid, err, r)
+					}
+				}()
+				s.log.Error().Err(err).
+					Str("event", "spawn_stop_watchdog_sigkill_failed").
+					Int("pgid", pgid).
+					Msg("clawkerd: stop_watchdog recovery SIGKILL failed")
+			}()
+		}
+		// Release every gate so a watchdog panic cannot strand
+		// main()'s `<-MainExited` / `<-Done` selects. Idempotent;
+		// reaper paths normally close these themselves but a
+		// watchdog panic followed by a reaper that never observes
+		// the child exit (kill failed) would otherwise hang main().
+		s.closeAllGates()
 	})
 	t := time.NewTimer(grace)
 	defer t.Stop()
@@ -331,7 +432,11 @@ func (s *spawnState) runStopWatchdog(grace time.Duration, pgid int) {
 	case <-t.C:
 	}
 	if err := unix.Kill(-pgid, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
-		s.log.Warn().Err(err).
+		// Error not Warn: SIGKILL escalation failure means the child
+		// is still running past grace and docker's external SIGKILL
+		// will fire. Operators triaging "container took >10s to stop"
+		// need this at Error to find it via `journalctl -p err`.
+		s.log.Error().Err(err).
 			Str("event", "spawn_stop_sigkill_failed").
 			Int("pgid", pgid).
 			Msg("clawkerd: SIGKILL escalation failed")
@@ -355,6 +460,17 @@ func (s *spawnState) runSignalForwarder(log *logger.Logger) {
 			pgid := s.pgid
 			s.mu.Unlock()
 			if pgid == 0 {
+				// Spawn-error window: runEntered=true, proc=nil so
+				// pgid was never installed. Production callers
+				// shouldn't hit this (Run sets pgid before goroutines
+				// start) but a partial-Run race or test seam could.
+				// Log at Debug rather than dropping silently — a
+				// SIGTERM lost here is a correctness invariant worth
+				// observing.
+				log.Debug().
+					Str("event", "spawn_signal_dropped_no_pgid").
+					Str("signal", sig.String()).
+					Msg("clawkerd: signal received but child pgroup not installed; dropped")
 				continue
 			}
 			usig, ok := sig.(syscall.Signal)
@@ -407,6 +523,13 @@ func (s *spawnState) runReaper(log *logger.Logger) {
 
 	// Phase 1: wait on mainPID specifically. No -1 calls here so we
 	// don't race session.go's exec.Cmd.Wait for stage children.
+	//
+	// Bounded retry on unexpected wait4 errors (EINVAL/EFAULT/etc.):
+	// without a budget the loop hot-spins at 20Hz emitting Error logs
+	// while main()'s `<-MainExited()` hangs forever — container appears
+	// alive but is hung. After reaperRetryBudget consecutive non-EINTR/
+	// non-ECHILD failures, escalate to closeAllGates so callers unblock.
+	retries := 0
 	for {
 		var ws syscall.WaitStatus
 		pid, err := syscall.Wait4(mainPID, &ws, syscall.WNOHANG, nil)
@@ -415,17 +538,40 @@ func (s *spawnState) runReaper(log *logger.Logger) {
 				continue
 			}
 			if errors.Is(err, syscall.ECHILD) {
-				log.Warn().
+				// Error not Warn: with Setpgid:true the kernel
+				// guarantees nobody else can reap this child, so ECHILD
+				// here is an invariant violation (kernel/library bug
+				// or stolen reap). The container will then exit 1 with
+				// finalWS=nil and an operator triaging "exit 1, no
+				// spawn error" needs Error to find it.
+				log.Error().
 					Int("pid", mainPID).
 					Str("event", "spawn_reaper_main_already_reaped").
 					Msg("clawkerd: main child already reaped elsewhere; closing doneCh without final status")
 				s.closeAllGates()
 				return
 			}
-			log.Error().Err(err).
+			retries++
+			// Per-retry at Warn so journald rate-limiting doesn't
+			// drop the bookend abort line at Error below. Without
+			// this split, the only operator surface for "reaper
+			// gave up" can be silently rate-limited away alongside
+			// 31 noisy retry warnings.
+			log.Warn().Err(err).
 				Str("event", "spawn_wait4_main_failed").
 				Int("pid", mainPID).
+				Int("retries", retries).
+				Int("budget", reaperRetryBudget).
 				Msg("clawkerd: wait4 on main child failed; will retry")
+			if retries >= reaperRetryBudget {
+				log.Error().
+					Str("event", "spawn_wait4_main_aborted").
+					Int("pid", mainPID).
+					Int("retries", retries).
+					Msg("clawkerd: wait4 retry budget exhausted; closing gates so main() can exit")
+				s.closeAllGates()
+				return
+			}
 		} else if pid == mainPID {
 			s.mu.Lock()
 			s.finalWS = &ws
@@ -453,8 +599,32 @@ func (s *spawnState) runReaper(log *logger.Logger) {
 	<-s.orphanDrainCh
 
 	// Phase 2: drain reparented orphans now that main has exited.
+	// Bounded retry on unknown wait4(-1) errors: retry up to
+	// orphanDrainRetryBudget and abort loudly via the
+	// spawn_orphan_drain_aborted event if the kernel keeps returning
+	// errors, so operators distinguish "drain aborted" from
+	// "clean shutdown".
+	drainErrs := 0
 	for {
-		drained := s.drainOrphans(log)
+		drained, err := s.drainOrphans(log)
+		if err != nil {
+			drainErrs++
+			if drainErrs >= orphanDrainRetryBudget {
+				log.Error().Err(err).
+					Str("event", "spawn_orphan_drain_aborted").
+					Int("retries", drainErrs).
+					Msg("clawkerd: orphan drain retry budget exhausted; reparented orphans may still be alive")
+				// closeAllGates (not just closeDoneCh) for parity
+				// with every other reaper-bailout path. Idempotent;
+				// MainExited/orphanDrainCh are already closed above
+				// on the normal flow but a future refactor that
+				// reorders the close sequence stays safe.
+				s.closeAllGates()
+				return
+			}
+		} else {
+			drainErrs = 0
+		}
 		if drained {
 			s.closeDoneCh()
 			return
@@ -467,10 +637,23 @@ func (s *spawnState) runReaper(log *logger.Logger) {
 }
 
 // drainOrphans reaps every currently exitable orphan reparented to
-// PID 1. Returns true when Wait4 reports no reapable children remain.
-// Errors other than ECHILD are logged and treated as "drained" so
-// the reaper doesn't spin forever on a kernel-side fault.
-func (s *spawnState) drainOrphans(log *logger.Logger) bool {
+// PID 1. Return shape:
+//
+//   - (true,  nil) → ECHILD: no children left in the kernel's table;
+//     phase-2 complete. Caller closes doneCh.
+//   - (false, nil) → pid==0: children still alive, none ready right
+//     now. Caller waits on sigchld/ticker and re-enters
+//     drainOrphans.
+//   - (false, err) → unknown wait4 error: caller bumps retry counter
+//     and decides whether to abort.
+//
+// The pid==0/false distinction is load-bearing: under WNOHANG, pid==0
+// means "I have unreaped children but none has changed state yet"
+// — NOT "drained". Returning drained=true on pid==0 would close doneCh
+// while reparented orphans are still alive (a backgrounded sleeper
+// from the main child, a daemonized stage descendant), violating the
+// package contract that phase 2 drains before doneCh closes.
+func (s *spawnState) drainOrphans(log *logger.Logger) (bool, error) {
 	for {
 		var ws syscall.WaitStatus
 		pid, err := syscall.Wait4(-1, &ws, syscall.WNOHANG, nil)
@@ -479,15 +662,15 @@ func (s *spawnState) drainOrphans(log *logger.Logger) bool {
 				continue
 			}
 			if errors.Is(err, syscall.ECHILD) {
-				return true
+				return true, nil
 			}
 			log.Error().Err(err).
 				Str("event", "spawn_wait4_orphan_failed").
-				Msg("clawkerd: wait4 on orphan drain failed; treating as drained to avoid spin")
-			return true
+				Msg("clawkerd: wait4 on orphan drain failed")
+			return false, err
 		}
 		if pid == 0 {
-			return true
+			return false, nil
 		}
 		log.Debug().
 			Int("pid", pid).
@@ -521,7 +704,6 @@ func (s *spawnState) mainPID() int {
 	return s.proc.Pid
 }
 
-// spawned reports whether Run installed a child process.
 func (s *spawnState) spawned() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -540,15 +722,17 @@ func mapWaitStatus(ws syscall.WaitStatus) int {
 	return 1
 }
 
-// forwardableSignals returns the signal set the supervisor forwards
-// to the child's process group. Excludes:
+// forwardableSignals returns the inclusive set of signals the
+// supervisor forwards to the child's process group. The list is
+// authoritative — anything absent is intentionally NOT forwarded.
+// Notable absences:
 //
-//   - SIGCHLD: handled by the reaper
-//   - SIGURG:  Go runtime uses it for goroutine preemption
+//   - SIGCHLD: reaper handles it; forwarding would corrupt reap loops
+//   - SIGURG: Go runtime uses it for goroutine preemption
 //   - program-error signals (SIGFPE/SIGILL/SIGSEGV/SIGBUS/SIGABRT/
-//     SIGTRAP/SIGSYS): these indicate supervisor-side bugs; let them
-//     crash clawkerd rather than masking via forward
-//   - SIGKILL/SIGSTOP: cannot be caught
+//     SIGTRAP/SIGSYS): supervisor-side bugs; let them crash clawkerd
+//     rather than masking via forward
+//   - SIGKILL/SIGSTOP: cannot be caught at the OS level
 func forwardableSignals() []os.Signal {
 	return []os.Signal{
 		unix.SIGHUP,
@@ -566,35 +750,40 @@ func forwardableSignals() []os.Signal {
 	}
 }
 
-// touchReadyFile creates path if missing; touch-style.
+// buildSysProcAttr returns the SysProcAttr for the spawn child:
+// Setpgid:true so signals can target the child's pgroup, plus an
+// optional Credential populated from user. user==nil means "stay
+// root" (no Credential, kernel skips the setgroups/setgid/setuid
+// sequence); user!=nil drops privileges kernel-side between fork and
+// exec via setgroups → setgid → setuid (in that order; setgroups
+// MUST run while still root). This is the security boundary
+// clawkerd-as-PID-1 was built around — a regression that drops the
+// Credential population (e.g. a refactor that loses cfg.user, or a
+// wiring bug that resolves uid=0) silently re-introduces root in the
+// user CMD.
+func buildSysProcAttr(user *ExecUser) *syscall.SysProcAttr {
+	attr := &syscall.SysProcAttr{Setpgid: true}
+	if user != nil {
+		attr.Credential = &syscall.Credential{
+			Uid:    user.UID(),
+			Gid:    user.GID(),
+			Groups: user.Groups(),
+		}
+	}
+	return attr
+}
+
+// touchReadyFile creates or truncates path. O_TRUNC ensures
+// HEALTHCHECK can't read a stale marker from a prior incarnation
+// (clawkerd restart-loop, container recreated with a re-mounted
+// volume). Without O_TRUNC the file's mtime would update but its
+// "freshness" relative to the new clawkerd boot couldn't be asserted
+// — a race-prone source of "container reports healthy before user
+// CMD has actually started".
 func touchReadyFile(path string) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
 	return f.Close()
-}
-
-// recoverGoroutine is the resilience-contract recovery wrapper for
-// long-lived spawnState goroutines. clawkerd is PID 1; a panic in
-// any of these would kill the supervisor and strand eBPF state (root
-// CLAUDE.md "CP crashing is a SECURITY incident" — same contract
-// applies to clawkerd-as-PID-1). onPanic, when non-nil, fires after
-// the structured log so a panic in a load-bearing goroutine (e.g.
-// the reaper) can release waiters via closeDoneCh rather than
-// deadlocking Wait().
-func recoverGoroutine(log *logger.Logger, name string, onPanic func()) {
-	r := recover()
-	if r == nil {
-		return
-	}
-	log.Error().
-		Interface("panic", r).
-		Bytes("stack", debug.Stack()).
-		Str("event", "spawn_goroutine_panic").
-		Str("goroutine", name).
-		Msg("clawkerd: spawn goroutine recovered from panic; supervisor degrading but staying alive")
-	if onPanic != nil {
-		onPanic()
-	}
 }

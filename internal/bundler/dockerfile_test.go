@@ -272,14 +272,12 @@ func TestDockerfilesDir_DelegatesToConfig(t *testing.T) {
 		"DockerfilesDir must nest under build/dockerfiles")
 }
 
-// TestBuildContext_ClawkerdIsPID1 pins the PID-1 cutover: clawkerd
-// is the container's ENTRYPOINT, the legacy entrypoint.sh + gosu
-// pair are gone, and the structural directives that supported them
-// (USER root preamble + COPY entrypoint.sh) are not present in any
-// rendered Dockerfile. A regression that re-introduces gosu or
-// entrypoint.sh would silently revert the security boundary the
-// initiative establishes (privilege drop in a kernel-handled child
-// exec, not a userspace gosu wrapper).
+// TestBuildContext_ClawkerdIsPID1 pins the security-relevant
+// invariant: clawkerd is the container's ENTRYPOINT and no userspace
+// privilege-drop wrapper (gosu) or shell shim (entrypoint.sh) is
+// present in any rendered Dockerfile. Re-introducing either would
+// silently revert privilege drop from a kernel-handled child exec to
+// a userspace wrapper.
 func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := NewProjectGenerator(cfg, t.TempDir())
@@ -288,13 +286,13 @@ func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 	content := string(dockerfile)
 
 	assert.Contains(t, content, `ENTRYPOINT ["/usr/local/bin/clawkerd"]`,
-		"clawkerd must be PID 1 — the legacy bash entrypoint shim is retired")
+		"clawkerd must be PID 1 — privilege drop happens in the spawn child")
 	assert.Contains(t, content, `CMD ["claude"]`,
 		"default CMD must remain claude so `docker run <image>` keeps the same UX")
 	assert.NotContains(t, content, "gosu",
-		"gosu was retired by the PID-1 cutover; privilege drop now happens in the spawn child")
+		"no userspace privilege-drop wrapper allowed; privilege drop happens in the spawn child")
 	assert.NotContains(t, content, "entrypoint.sh",
-		"entrypoint.sh was retired; clawkerd owns the spawn directly")
+		"no shell entrypoint shim allowed; clawkerd owns the spawn directly")
 }
 
 func TestDockerfilesDir_PropagatesError(t *testing.T) {

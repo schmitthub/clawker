@@ -77,10 +77,14 @@ func TestSpawnState_RunWaitExit42(t *testing.T) {
 	}
 }
 
+// TestSpawnState_StopSignaled verifies the SIGTERM happy path: a
+// child that DOES handle SIGTERM exits within grace and the
+// supervisor returns 128+SIGTERM (not SIGKILL).
 func TestSpawnState_StopSignaled(t *testing.T) {
 	s := newSpawnState(logger.Nop())
 	cfg := spawnConfig{
-		argv:   []string{"/bin/sh", "-c", "trap '' INT; sleep 30"},
+		// Plain sleep — SIGTERM kills sleep immediately, no escalation.
+		argv:   []string{"/bin/sleep", "30"},
 		stdout: &lockedBuf{},
 		stderr: &lockedBuf{},
 		stdin:  bytes.NewReader(nil),
@@ -90,12 +94,45 @@ func TestSpawnState_StopSignaled(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	s.BeginOrphanDrain()
-	s.Stop(100 * time.Millisecond)
-	code := s.Wait()
-	wantTerm := 128 + int(syscall.SIGTERM)
-	wantKill := 128 + int(syscall.SIGKILL)
-	if code != wantTerm && code != wantKill {
-		t.Errorf("exit = %d, want %d (SIGTERM) or %d (SIGKILL)", code, wantTerm, wantKill)
+	s.Stop(2 * time.Second)
+	if code := s.Wait(); code != 128+int(syscall.SIGTERM) {
+		t.Errorf("exit = %d, want %d (SIGTERM)", code, 128+int(syscall.SIGTERM))
+	}
+}
+
+// TestSpawnState_StopEscalatesToSIGKILL pins runStopWatchdog: a
+// child that IGNORES SIGTERM AND SIGINT must be SIGKILLed after
+// grace. trap ” on TERM AND INT blocks both, forcing the watchdog
+// to escalate. The shell signals readiness via stdout ("READY")
+// before entering the sleep loop so Stop cannot race trap-install
+// (which would SIGTERM-kill sh and produce a false-pass 143).
+func TestSpawnState_StopEscalatesToSIGKILL(t *testing.T) {
+	s := newSpawnState(logger.Nop())
+	stdout := &lockedBuf{}
+	cfg := spawnConfig{
+		argv:   []string{"/bin/sh", "-c", "trap '' TERM INT; echo READY; while :; do sleep 0.1; done"},
+		stdout: stdout,
+		stderr: &lockedBuf{},
+		stdin:  bytes.NewReader(nil),
+		log:    logger.Nop(),
+	}
+	if err := s.Run(cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	s.BeginOrphanDrain()
+
+	// Wait for the shell to install the trap.
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(stdout.String(), "READY") {
+		if time.Now().After(deadline) {
+			t.Fatal("shell never wrote READY; trap-install race not closed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	s.Stop(50 * time.Millisecond)
+	if code := s.Wait(); code != 128+int(syscall.SIGKILL) {
+		t.Errorf("exit = %d, want %d (SIGKILL escalation)", code, 128+int(syscall.SIGKILL))
 	}
 }
 

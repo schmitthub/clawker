@@ -29,11 +29,15 @@ func TestSpawnState_PrivilegeDrop_Linux(t *testing.T) {
 		stderr: &lockedBuf{},
 		stdin:  bytes.NewReader(nil),
 		log:    logger.Nop(),
-		user:   &ExecUser{UID: targetUID, GID: targetUID},
+		user:   &ExecUser{uid: targetUID, gid: targetUID},
 	}
 	if err := s.Run(cfg); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	// BeginOrphanDrain releases the phase-2 reaper gate so Wait can
+	// unblock. Without it, Wait hangs to test timeout — which the
+	// non-root skip above masked, hiding the deadlock.
+	s.BeginOrphanDrain()
 	if code := s.Wait(); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}

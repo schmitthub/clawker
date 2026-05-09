@@ -54,7 +54,7 @@ func mapExitCode(state *os.ProcessState) int {
 // performs — every other variable inherited from clawkerd's own
 // environment is forwarded verbatim.
 func envWithHome(env []string, user *ExecUser) []string {
-	if user == nil || user.Home == "" {
+	if user == nil || user.Home() == "" {
 		return env
 	}
 	for _, e := range env {
@@ -64,31 +64,38 @@ func envWithHome(env []string, user *ExecUser) []string {
 	}
 	out := make([]string, 0, len(env)+1)
 	out = append(out, env...)
-	out = append(out, "HOME="+user.Home)
+	out = append(out, "HOME="+user.Home())
 	return out
 }
 
 // routeArgs implements the docker-image "--help routing" convention:
-// if argv[0] starts with "-" OR is not a resolvable executable on
-// PATH, prepend "claude" so `docker run <image> --help` invokes
-// claude with --help rather than failing with `exec: "--help": not
-// found`. Empty argv passes through; caller short-circuits.
-func routeArgs(argv []string, lookPath func(string) (string, error)) []string {
+// when argv[0] starts with "-" or is not on PATH, prepend "claude"
+// so `docker run <image> --help` invokes claude with --help rather
+// than failing with `exec: "--help": not found`. The string "claude"
+// is the image's default CMD; changing it requires changing the
+// Dockerfile CMD too.
+//
+// resolvedPath is non-empty only on the no-rewrite success path so
+// callers skip a redundant lookPath; the err return surfaces the
+// PATH-fail rewrite cause so callers can log a broken image rather
+// than silently running "claude <broken>".
+func routeArgs(argv []string, lookPath func(string) (string, error)) (routed []string, resolvedPath string, err error) {
 	if len(argv) == 0 {
-		return argv
+		return argv, "", nil
 	}
 	first := argv[0]
 	if strings.HasPrefix(first, "-") {
 		out := make([]string, 0, len(argv)+1)
 		out = append(out, "claude")
 		out = append(out, argv...)
-		return out
+		return out, "", nil
 	}
-	if _, err := lookPath(first); err != nil {
+	p, lookErr := lookPath(first)
+	if lookErr != nil {
 		out := make([]string, 0, len(argv)+1)
 		out = append(out, "claude")
 		out = append(out, argv...)
-		return out
+		return out, "", lookErr
 	}
-	return argv
+	return argv, p, nil
 }

@@ -19,7 +19,7 @@ Leaf package: Dockerfile generation, version management, content hashing, and bu
 |---------|---------|
 | `semver/` | Semantic version parsing, comparison, sorting, matching |
 | `registry/` | npm registry client, version info types, fetcher interface |
-| `assets/` | Dockerfile template, entrypoint, firewall, statusline scripts |
+| `assets/` | Dockerfile template, statusline script, claude config seeds, agent prompt, embedded clawkerd binary (PID 1) |
 
 ## Content Hashing (`hash.go`)
 
@@ -30,7 +30,7 @@ func EmbeddedScripts() []string  // Returns all embedded script contents for has
 
 SHA-256 of rendered Dockerfile + sorted include file contents + embedded scripts. Returns 12-char hex prefix. Images tagged `clawker-<project>:sha-<hash>` with `:latest` aliased.
 
-`EmbeddedScripts()` dynamically discovers all embedded assets via `embed.FS` (bundler/assets/) plus `internals.AllScripts()` (hostproxy scripts). Scripts are sorted for deterministic hashing. New scripts added to either location are automatically included without manual list maintenance.
+`EmbeddedScripts()` dynamically discovers all embedded assets via `embed.FS` (bundler/assets/) plus `internals.AllScripts()` (hostproxy scripts) plus `clawkerd.Binary` (the embedded PID-1 binary). Inputs are sorted for deterministic hashing. New scripts added to either location are automatically included without manual list maintenance. The clawkerd binary is included separately so a CLI release that ships a new clawkerd with no Dockerfile/asset changes still rolls a fresh content hash and invalidates the build cache (otherwise `ImageExists(hashTag)` would short-circuit the rebuild).
 
 **Stability guarantee:** Dockerfile only contains structural instructions (FROM, RUN, COPY, USER, WORKDIR, ARG). Config-dependent values injected at container creation time or via Docker build API.
 
@@ -118,7 +118,7 @@ const DefaultClaudeCodeVersion, DefaultUsername, DefaultShell = "latest", "claud
 
 UID/GID come from `cfg.ContainerUID()` / `cfg.ContainerGID()` (no bundler-local constants).
 
-Embedded: `DockerfileTemplate`, `EntrypointScript`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `AgentPromptFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`.
+Embedded: `DockerfileTemplate`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `AgentPromptFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`. The pre-compiled clawkerd binary (`internal/clawkerd.Binary`) is included in `EmbeddedScripts()` for content hashing — a clawkerd version bump rolls a fresh image hash so the cache-skip in `internal/docker/builder.go` does not silently skip rebuilds.
 
 ## Version Management (`versions.go`)
 

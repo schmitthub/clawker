@@ -18,6 +18,14 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+// errListenerConfig wraps deterministic pre-Serve failures (nil
+// thunk wiring bug, malformed bootstrap material) so main() can map
+// them to exit code 2 (config) instead of the generic 1 (transient).
+// Without this discriminator, a `restart: on-failure:max-retries=N`
+// container would restart-loop forever on a deterministic config bug
+// instead of trip-and-stop on the first failure.
+var errListenerConfig = errors.New("clawkerd listener: config error")
+
 // startClawkerdListener binds the ClawkerdService listener on
 // consts.DefaultClawkerdPort, registers the server impl, and starts
 // grpc.Serve in a goroutine. mTLS is required and the peer cert's CN
@@ -36,16 +44,19 @@ import (
 // that runs Serve and is closed by Stop / GracefulStop.
 func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, log *logger.Logger) (*grpc.Server, error) {
 	if spawnEntry == nil {
-		return nil, fmt.Errorf("clawkerd listener: spawnEntry is required")
+		return nil, fmt.Errorf("%w: spawnEntry is required", errListenerConfig)
 	}
 	tlsCfg, err := buildListenerTLSConfig(boot.CertPEM, boot.KeyPEM, boot.CACertPEM)
 	if err != nil {
-		return nil, fmt.Errorf("listener TLS config: %w", err)
+		return nil, fmt.Errorf("%w: TLS config: %v", errListenerConfig, err)
 	}
 
 	addr := fmt.Sprintf(":%d", consts.DefaultClawkerdPort)
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
+		// Bind failure stays transient: port-in-use clears on restart,
+		// and `restart: on-failure` is the right policy for the brief
+		// teardown→bind race after a `docker stop`.
 		return nil, fmt.Errorf("listen %s: %w", addr, err)
 	}
 
@@ -63,6 +74,16 @@ func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawn
 	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register, spawnEntry: spawnEntry})
 
 	go func() {
+		// PID-1 resilience: a panic inside grpc.Serve (e.g. from a
+		// future TLS-handshake nil-deref or a malformed-frame edge in
+		// the accept loop) would otherwise kill clawkerd → container
+		// exits → silent restart-loop. Recover and log structurally so
+		// the daemon stays up. Per-call panics inside Session handlers
+		// are caught by in-handler `defer recoverGoroutine(...)` wraps
+		// in session.go (runSession, sender, drainers, register
+		// handler, AgentReady handler) — there is NO grpc.UnaryInterceptor
+		// or grpc.StreamInterceptor wired here.
+		defer recoverGoroutine(log, "clawkerd_listener_serve", nil)
 		if serveErr := srv.Serve(lis); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
 			log.Error().Err(serveErr).
 				Str("event", "clawkerd_listener_serve_failed").
@@ -81,11 +102,11 @@ func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawn
 // buildListenerTLSConfig returns the *tls.Config for the clawkerd
 // gRPC listener. ServerCert is the per-agent leaf the CLI minted —
 // the leaf carries BOTH ServerAuth (used here, so CP-side chain
-// verify accepts the cert as a server cert) and ClientAuth (held for
-// any future agent→CP dial; clawkerd has no outbound RPC in this
-// branch — see cmd/clawkerd/CLAUDE.md). See internal/auth/agent_cert.go
-// for the dual-EKU rationale; without ServerAuth here every
-// CP→clawkerd dial fails with "incompatible key usage".
+// verify accepts the cert as a server cert) and ClientAuth (used for
+// the CP-triggered Register dial — clawkerd's only outbound mTLS
+// call). See internal/auth/agent_cert.go for the dual-EKU rationale;
+// without ServerAuth here every CP→clawkerd dial fails with
+// "incompatible key usage".
 //
 // ClientCAs is the clawker CA bundle (so the CP's client cert chains
 // validate). ClientAuth requires a verified peer cert.

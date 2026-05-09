@@ -42,6 +42,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -57,10 +58,7 @@ import (
 // logsDir is where clawkerd writes its rotated log file under
 // /var/log/clawker/ so an operator triaging issues finds early-boot
 // bootstrap failures AND structured log events under one directory.
-// The Dockerfile pre-creates the path; clawkerd runs as root inside
-// the container (PID 1, never drops privileges itself — privilege
-// drop happens in the child via SysProcAttr.Credential), so 0o755
-// is fine.
+// The Dockerfile pre-creates the path.
 const logsDir = "/var/log/clawker"
 
 // logFilename is the rotated log file's basename — distinct from
@@ -73,6 +71,15 @@ const logFilename = "clawkerd.log"
 // --stop-timeout (10s) so a clean operator-driven `docker stop` does
 // not race docker's own SIGKILL.
 const shutdownGrace = 10 * time.Second
+
+// exitCodeConfig is returned for deterministic pre-spawn config
+// failures (missing required env, /etc/passwd parse fails, malformed
+// bootstrap material). Distinct from the generic exit-1 transient
+// path so an operator running `restart: on-failure:max-retries=N`
+// can wire trip-and-stop on this code instead of restart-looping
+// the same broken config 3+ times. Unix tradition: 2 = configuration
+// error.
+const exitCodeConfig = 2
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -125,7 +132,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	// canonical CN is "clawker.<agent>".
 	project := os.Getenv(consts.EnvProject)
 	if agentName == "" {
-		return 1, fmt.Errorf("required env not set: %s", consts.EnvAgent)
+		return exitCodeConfig, fmt.Errorf("required env not set: %s", consts.EnvAgent)
 	}
 
 	// Bind agent + project on every subsequent log line so a multi-
@@ -154,13 +161,13 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 			Str("event", "resolve_user_failed").
 			Str("user", userSpec).
 			Msg("clawkerd: cannot resolve container user; refusing to spawn")
-		return 1, fmt.Errorf("resolve user %q: %w", userSpec, err)
+		return exitCodeConfig, fmt.Errorf("resolve user %q: %w", userSpec, err)
 	}
 
 	boot, err := readBootstrap(consts.BootstrapDir)
 	if err != nil {
 		log.Error().Err(err).Str("event", "bootstrap_read_failed").Msg("read bootstrap")
-		return 1, fmt.Errorf("read bootstrap: %w", err)
+		return exitCodeConfig, fmt.Errorf("read bootstrap: %w", err)
 	}
 
 	// registerCoordinator drives the CP-triggered Register handshake.
@@ -191,7 +198,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 			argv: os.Args[1:],
 			// Set Dir to the unprivileged user's home; PID 1 inherits
 			// / from Docker, but the user CMD expects $HOME as cwd.
-			dir:    execUser.Home,
+			dir:    execUser.Home(),
 			env:    os.Environ(),
 			user:   execUser,
 			stdin:  os.Stdin,
@@ -209,7 +216,15 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	clawkerdSrv, err := startClawkerdListener(boot, register, spawnEntry, log)
 	if err != nil {
 		log.Error().Err(err).Str("event", "clawkerd_listener_start_failed").Msg("start clawkerd listener")
-		return 1, fmt.Errorf("start clawkerd listener: %w", err)
+		// Wiring bugs and malformed bootstrap material are deterministic
+		// — exit 2 so `restart: on-failure:max-retries=N` trips and stops
+		// instead of restart-looping the same broken state forever. Bind
+		// failures (port-in-use after a teardown race) stay transient.
+		code := 1
+		if errors.Is(err, errListenerConfig) {
+			code = exitCodeConfig
+		}
+		return code, fmt.Errorf("start clawkerd listener: %w", err)
 	}
 
 	log.Info().Str("event", "daemon_idle").Msg("entering daemon idle loop; CP may dial Session at any time")
@@ -269,10 +284,10 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	return exitCode, nil
 }
 
-// bootstrap mirrors the CLI's per-agent registration material on disk.
-// Assertion is the single-use Hydra client_assertion JWT clawkerd
-// exchanges for an access token when CP triggers the Register
-// handshake.
+// bootstrap is the in-memory copy of the four bootstrap files
+// clawkerd reads at boot. Assertion is the single-use Hydra
+// client_assertion JWT clawkerd exchanges for an access token when
+// CP triggers the Register handshake.
 type bootstrap struct {
 	CertPEM, KeyPEM, CACertPEM []byte
 	Assertion                  string

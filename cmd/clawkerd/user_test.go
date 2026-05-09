@@ -50,14 +50,14 @@ func TestResolveUser_HappyPaths(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resolveUser(%q) error: %v", tc.spec, err)
 			}
-			if got.UID != tc.wantUID {
-				t.Errorf("UID = %d, want %d", got.UID, tc.wantUID)
+			if got.UID() != tc.wantUID {
+				t.Errorf("UID = %d, want %d", got.UID(), tc.wantUID)
 			}
-			if got.GID != tc.wantGID {
-				t.Errorf("GID = %d, want %d", got.GID, tc.wantGID)
+			if got.GID() != tc.wantGID {
+				t.Errorf("GID = %d, want %d", got.GID(), tc.wantGID)
 			}
-			if got.Home != tc.wantHome {
-				t.Errorf("Home = %q, want %q", got.Home, tc.wantHome)
+			if got.Home() != tc.wantHome {
+				t.Errorf("Home = %q, want %q", got.Home(), tc.wantHome)
 			}
 		})
 	}

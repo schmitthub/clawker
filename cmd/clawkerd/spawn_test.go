@@ -39,7 +39,7 @@ func TestMapExitCode_Signaled(t *testing.T) {
 }
 
 func TestEnvWithHome(t *testing.T) {
-	user := &ExecUser{UID: 1000, GID: 1000, Home: "/home/claude"}
+	user := &ExecUser{uid: 1000, gid: 1000, home: "/home/claude"}
 
 	t.Run("nil user passes through", func(t *testing.T) {
 		got := envWithHome([]string{"PATH=/x"}, nil)
@@ -66,7 +66,7 @@ func TestEnvWithHome(t *testing.T) {
 	})
 
 	t.Run("empty user.Home no-ops", func(t *testing.T) {
-		emptyUser := &ExecUser{UID: 1000, GID: 1000}
+		emptyUser := &ExecUser{uid: 1000, gid: 1000}
 		env := []string{"PATH=/x"}
 		got := envWithHome(env, emptyUser)
 		if !reflect.DeepEqual(got, env) {
@@ -76,26 +76,33 @@ func TestEnvWithHome(t *testing.T) {
 }
 
 func TestRouteArgs(t *testing.T) {
-	resolves := func(string) (string, error) { return "/usr/bin/found", nil }
+	resolves := func(s string) (string, error) { return "/usr/bin/" + s, nil }
 	notFound := func(string) (string, error) { return "", &exec.Error{Name: "x", Err: fs.ErrNotExist} }
 
 	cases := []struct {
-		name     string
-		argv     []string
-		lookPath func(string) (string, error)
-		want     []string
+		name         string
+		argv         []string
+		lookPath     func(string) (string, error)
+		want         []string
+		wantResolved string // non-empty only on the no-rewrite success path
+		wantErr      bool   // routeArgs surfaces lookPath errs only on PATH-fail rewrite
 	}{
 		{name: "empty", argv: nil, lookPath: resolves, want: nil},
 		{name: "leading dash", argv: []string{"--help"}, lookPath: resolves, want: []string{"claude", "--help"}},
-		{name: "leading dash short", argv: []string{"-c", "echo hi"}, lookPath: resolves, want: []string{"claude", "-c", "echo hi"}},
-		{name: "resolvable command", argv: []string{"bash", "-l"}, lookPath: resolves, want: []string{"bash", "-l"}},
-		{name: "unresolvable command", argv: []string{"unknown"}, lookPath: notFound, want: []string{"claude", "unknown"}},
+		{name: "resolvable command", argv: []string{"bash", "-l"}, lookPath: resolves, want: []string{"bash", "-l"}, wantResolved: "/usr/bin/bash"},
+		{name: "unresolvable command", argv: []string{"unknown"}, lookPath: notFound, want: []string{"claude", "unknown"}, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := routeArgs(tc.argv, tc.lookPath)
+			got, resolved, err := routeArgs(tc.argv, tc.lookPath)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("routeArgs(%v) = %v, want %v", tc.argv, got, tc.want)
+			}
+			if resolved != tc.wantResolved {
+				t.Errorf("routeArgs(%v) resolved = %q, want %q", tc.argv, resolved, tc.wantResolved)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Errorf("routeArgs(%v) err = %v, wantErr=%v", tc.argv, err, tc.wantErr)
 			}
 		})
 	}

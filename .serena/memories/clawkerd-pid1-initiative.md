@@ -22,7 +22,18 @@ directly.
 | Task | Status | Agent |
 |------|--------|-------|
 | Task 1: Spawn + user-resolve helpers in `cmd/clawkerd` (unwired) | `complete` | feat/clawkerd-pid1 |
-| Task 2: Cutover — wire spawn into clawkerd, retire entrypoint.sh + gosu | `pending` | — |
+| Task 2: Cutover — wire spawn into clawkerd, retire entrypoint.sh + gosu | `complete` | feat/clawkerd-pid1 (commit 3a7254cf) |
+
+**Status: both tasks merged.** This memory is now historical reference. Authoritative current docs: `cmd/clawkerd/CLAUDE.md` (PID-1 contract, resilience rules, file map) and `internal/bundler/CLAUDE.md` (asset embedding + content hashing).
+
+**Divergences from the original plan (kept here so future agents understand why current code does NOT match earlier sections of this doc):**
+
+- `SetSpawnEntry` package-level mutable global was rejected; spawn thunk is threaded as a constructor argument through `startClawkerdListener` → `clawkerdServer` → `runSession` → `session`. Wiring bug fails loud at startup (nil-thunk rejected) instead of at first AgentReady.
+- `sync.Once` for the single-shot spawn was replaced with `atomic.Bool` CAS (already noted in Key Learnings) — the contract is "first call returns its result, second-and-later return errAlreadySpawned OR the captured original spawn error", which CAS expresses cleanly and Once.Do does not.
+- `ReadyMarkerPath` was KEPT in `internal/consts/consts.go` (HEALTHCHECK still touches it) despite line ~196 of this doc listing it among fields to drop. The earlier "Keep `ReadyMarkerPath`" note (line ~198) was correct.
+- `chown root:root` for the new mkdir was NOT applied to `/var/run/clawker` — that dir is chowned to `${USERNAME}` so the HEALTHCHECK probe (which runs as the unprivileged user) can stat the marker file. clawkerd-as-root writes into a USERNAME-owned dir; the dir-permission flip is intentional.
+- Resilience contract (CLAUDE.md hard rule #2 — every long-lived goroutine recovers) was extended after initial cutover to include the listener `Serve` goroutine, the session sender, the runShellCommand worker, the drain goroutines, and the register handler. The `recoverGoroutine` helper was extracted from `spawn_unix.go` to a new `recover.go` (no build tag) so non-unix-tagged files share it.
+- `EmbeddedScripts()` now includes `clawkerd.Binary` so a CLI release that bumps the embedded binary rolls a fresh content hash; without this, `internal/docker/builder.go`'s `ImageExists` cache-skip silently kept the old PID-1 binary running on existing per-project images.
 
 ## Key Learnings
 

@@ -43,9 +43,7 @@ security:
 	require.NoError(t, err)
 	assert.Equal(t, dockerfile, content)
 
-	// Verify all expected scripts exist. entrypoint.sh was retired
-	// when clawkerd became PID 1 — clawkerd is now invoked directly
-	// by Docker as the container's init.
+	// Verify all expected scripts exist.
 	expectedFiles := []string{
 		"clawkerd",
 		"statusline.sh",
