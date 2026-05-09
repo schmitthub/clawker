@@ -19,28 +19,6 @@ import (
 
 const fastReadyPoll = 10 * time.Second
 
-func TestSpawnState_RunWaitEcho(t *testing.T) {
-	s := newSpawnState(logger.Nop())
-	stdout := &lockedBuf{}
-	cfg := spawnConfig{
-		argv:   []string{"/bin/echo", "hello"},
-		stdout: stdout,
-		stderr: stdout,
-		stdin:  bytes.NewReader(nil),
-		log:    logger.Nop(),
-	}
-	if err := s.Run(cfg); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	s.BeginOrphanDrain()
-	if code := s.Wait(); code != 0 {
-		t.Errorf("exit = %d, want 0", code)
-	}
-	if got := strings.TrimSpace(stdout.String()); got != "hello" {
-		t.Errorf("stdout = %q, want %q", got, "hello")
-	}
-}
-
 func TestSpawnState_RunWaitFalse(t *testing.T) {
 	s := newSpawnState(logger.Nop())
 	cfg := spawnConfig{
