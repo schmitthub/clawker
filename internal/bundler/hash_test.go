@@ -3,6 +3,7 @@ package bundler
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -405,22 +406,38 @@ func TestContentHash_EmbeddedScriptsHelper(t *testing.T) {
 	assert.Equal(t, h1, h2, "EmbeddedScripts() should produce stable hashes")
 }
 
-// TestEmbeddedScripts_ContainsExpectedContent verifies that EmbeddedScripts()
-// dynamically discovers scripts and includes expected content from both bundler
-// assets and hostproxy internals.
-func TestEmbeddedScripts_ContainsExpectedContent(t *testing.T) {
+// TestEmbeddedScripts_ClawkerdBinaryMutationShiftsHash pins the
+// cache-poisoning regression: a CLI release that ships a new clawkerd
+// binary with no Dockerfile/asset changes MUST roll a fresh content
+// hash so internal/docker/builder.go's ImageExists(hashTag) cache-skip
+// does not silently keep the old binary running. Mutating the
+// clawkerd entry in EmbeddedScripts must change the hash —
+// presence-only assertions cannot prove that.
+func TestEmbeddedScripts_ClawkerdBinaryMutationShiftsHash(t *testing.T) {
 	scripts := EmbeddedScripts()
-	combined := ""
-	for _, s := range scripts {
-		combined += s
+	require.NotEmpty(t, scripts)
+
+	// Locate the clawkerd binary via ELF magic, then assert that
+	// flipping a byte in it produces a different hash.
+	const elfMagic = "\x7fELF"
+	clawkerdIdx := -1
+	for i, s := range scripts {
+		if strings.Contains(s, elfMagic) {
+			clawkerdIdx = i
+			break
+		}
 	}
+	require.NotEqual(t, -1, clawkerdIdx, "EmbeddedScripts() must include clawkerd.Binary (ELF magic) so PID-1 binary changes invalidate the build cache")
 
-	// Bundler assets should be present
-	assert.Contains(t, combined, "#!/bin/bash", "Should contain shell scripts from bundler assets")
-	assert.Contains(t, combined, "ENTRYPOINT", "Should contain entrypoint markers")
+	dockerfile := []byte("FROM alpine:latest\n")
+	hashBefore, err := ContentHash(dockerfile, nil, "", scripts)
+	require.NoError(t, err)
 
-	// Hostproxy scripts should be present (from internals.AllScripts())
-	assert.Contains(t, combined, "host-open", "Should contain host-open script")
-	assert.Contains(t, combined, "callback", "Should contain callback forwarder")
-	assert.Contains(t, combined, "MsgReady", "Should contain socket server source")
+	mutated := append([]string(nil), scripts...)
+	mutated[clawkerdIdx] = mutated[clawkerdIdx] + "\x00"
+	hashAfter, err := ContentHash(dockerfile, nil, "", mutated)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, hashBefore, hashAfter,
+		"mutating clawkerd.Binary must change the content hash; otherwise builder.go would cache-skip stale PID-1 binaries")
 }

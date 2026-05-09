@@ -24,8 +24,9 @@ are NOT viable workarounds:
 - `chown` strips the host user's ownership of their own `~/.claude/`
   config dir, breaking host Claude Code.
 - `--user` breaks the container entrypoint, which needs root for
-  `chgrp /var/run/docker.sock`, `chown ~/.ssh`, and the `gosu`
-  privilege drop to the `claude` user.
+  `chgrp /var/run/docker.sock`, `chown ~/.ssh`, and clawkerd's own
+  startup as PID 1 (clawkerd then drops privileges kernel-side via
+  `SysProcAttr.Credential` when it spawns the user CMD).
 - The container UID `1001` is baked into the image at build time
   (`consts.ContainerUID`), so it cannot be overridden at runtime.
 

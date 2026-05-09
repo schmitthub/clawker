@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"runtime/debug"
@@ -21,7 +20,6 @@ import (
 	"google.golang.org/grpc/peer"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -48,7 +46,12 @@ const sendQueueDepth = 64
 // every Session for a single clawkerd process). RegisterRequired
 // Commands route to register.Run; the result rides back on a
 // RegisterDone Response correlated by command_id.
-func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger, register *registerCoordinator) error {
+//
+// spawnEntry is the AgentReady spawn-trigger thunk. handleAgentReady
+// invokes it to fork the user CMD; threaded through as a non-optional
+// dependency so a wiring bug fails loud at clawkerdServer construction
+// rather than silently no-op'ing on first AgentReady.
+func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger, register *registerCoordinator, spawnEntry func() error) error {
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
@@ -74,11 +77,12 @@ func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Log
 	}()
 
 	s := &session{
-		log:      log,
-		stream:   stream,
-		sendCh:   make(chan *clawkerdv1.Response, sendQueueDepth),
-		cmds:     make(map[string]*runningCommand),
-		register: register,
+		log:        log,
+		stream:     stream,
+		sendCh:     make(chan *clawkerdv1.Response, sendQueueDepth),
+		cmds:       make(map[string]*runningCommand),
+		register:   register,
+		spawnEntry: spawnEntry,
 	}
 
 	// Sender goroutine: single writer to stream.Send (gRPC's
@@ -92,6 +96,12 @@ func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Log
 	senderWG.Add(1)
 	go func() {
 		defer senderWG.Done()
+		// PID-1 resilience: a panic inside runSender (e.g. from a
+		// malformed gRPC frame nil-derefing inside stream.Send) would
+		// otherwise kill clawkerd. Recover, cancel the session ctx so
+		// producer goroutines unblock, and let the receiver loop
+		// surface a normal teardown.
+		defer recoverGoroutine(s.log, "session_sender", cancel)
 		s.runSender(ctx, cancel)
 	}()
 
@@ -130,6 +140,13 @@ type session struct {
 	// assertion is consumed at most once across all Sessions for
 	// this process.
 	register *registerCoordinator
+
+	// spawnEntry forks the user CMD on AgentReady. Closed over the
+	// spawnState built in main(); shared across every Session for
+	// the process lifetime. nil rejects with Error{IO_ERROR} so a
+	// wiring bug surfaces as a typed terminal failure rather than a
+	// silent timeout.
+	spawnEntry func() error
 }
 
 // handleRegisterRequired drives the CP-triggered Register handshake.
@@ -144,10 +161,9 @@ type session struct {
 //
 // Panic safety: Run dials Hydra and CP, decodes JSON, parses certs —
 // any panic in that chain (nil pointer in a future refactor, malformed
-// input from a misbehaving Hydra) would otherwise crash clawkerd
-// (init=bash, but a Go panic still kills the daemon goroutine and the
-// surrounding process). Recover, log, reply ok=false so CP sees a
-// terminal outcome instead of timing out.
+// input from a misbehaving Hydra) would otherwise kill clawkerd; as
+// PID 1, that exits the container. Recover, log, reply ok=false so
+// CP sees a terminal outcome instead of timing out.
 func (s *session) handleRegisterRequired(ctx context.Context, commandID string) {
 	if s.register == nil {
 		s.send(ctx, &clawkerdv1.Response{
@@ -162,6 +178,13 @@ func (s *session) handleRegisterRequired(ctx context.Context, commandID string) 
 		return
 	}
 	go func() {
+		// Top-level recover wraps the whole goroutine — register.Run
+		// AND s.send. s.send can panic on a torn-down sendCh, so a
+		// per-call recover would leak panics. Mirrors handleAgentReady.
+		// Enriched logger so a panic surfaces command_id in the
+		// goroutine_panic event.
+		recoverLog := s.log.With("command_id", commandID)
+		defer recoverGoroutine(recoverLog, "register_required", nil)
 		var (
 			ok     bool
 			errMsg string
@@ -171,6 +194,7 @@ func (s *session) handleRegisterRequired(ctx context.Context, commandID string) 
 				if r := recover(); r != nil {
 					s.log.Error().
 						Interface("panic", r).
+						Bytes("stack", debug.Stack()).
 						Str("event", "register_panic").
 						Str("command_id", commandID).
 						Msg("clawkerd: registerCoordinator.Run panicked; replying RegisterDone{ok=false}")
@@ -192,18 +216,6 @@ func (s *session) handleRegisterRequired(ctx context.Context, commandID string) 
 	}()
 }
 
-// agentReadyFifoPath is the filesystem path clawkerd opens for write
-// on the CP-dispatched AgentReady command. Defaults to the consts
-// path the bundler entrypoint creates; tests rebind to a tmpdir-local
-// fifo so they don't need /run write access.
-var agentReadyFifoPath = consts.AgentReadyFifo
-
-// agentReadyOpener is the file-open seam for handleAgentReady. Real
-// builds use os.OpenFile; the panic-recovery regression test rebinds
-// to a function that panics, exercising the recover defer without
-// needing kernel-level injection (no chmod tricks, no race timing).
-var agentReadyOpener = os.OpenFile
-
 // stageReaperPanicHookForTest is the panic-injection seam for the
 // stage-reaper recover regression test. nil in production. When
 // non-nil, fires AFTER c.Wait() returns and BEFORE the
@@ -218,125 +230,97 @@ var agentReadyOpener = os.OpenFile
 // codebase work.
 var stageReaperPanicHookForTest func(stageIndex int, isFinal bool)
 
-// handleAgentReady is the terminal step of CP-driven init. Opens the
-// entrypoint's named pipe with O_WRONLY|O_NONBLOCK, writes one byte,
-// closes — releasing the entrypoint's blocking read so it can exec
-// the user CMD.
+// handleAgentReady is the terminal step of CP-driven init. Invokes
+// s.spawnEntry (closed over the spawnState built in main()) which
+// forks the user CMD as PID 1's only child via spawnState.Run.
+// Source of truth for "already spawned" is spawnState's CAS.
 //
 // Outcomes (all replied as a Response correlated by commandID):
-//   - Reader present, write+close succeed → Done{0}.
-//   - ENXIO (no reader, O_NONBLOCK semantics) → Done{0}. Reconnect
-//     after init already released; the entrypoint already exec'd CMD.
-//   - fs.ErrNotExist (fifo missing entirely) → Error{NOT_FOUND}.
-//     Indicates build drift — the entrypoint never created the fifo.
-//   - Any other open / write / close error → Error{IO_ERROR}.
-//     Filesystem-level breakage (read-only mount, kernel error). Write
-//     and close failures are NOT swallowed: a failed write means the
-//     entrypoint never observed the byte, so CP must NOT see Done{0}.
+//   - Spawn succeeds → Done{0}. Listener stays live; main()'s wait
+//     loop sees the eventual MainExited signal when the child exits.
+//   - errAlreadySpawned → Done{0}. CP reconnect path: a previous
+//     AgentReady this process already forked the child. Reply
+//     idempotently rather than refusing — CP's plan would otherwise
+//     stall on a stale Session.
+//   - spawnEntry == nil → Error{IO_ERROR}. Wiring bug: handleAgentReady
+//     fired before main() set the entry. Same classification as the
+//     panic-recovery branch (both are clawkerd-internal bugs); CP sees
+//     a typed terminal failure rather than a silent timeout.
+//   - Any other spawn error → Error{IO_ERROR}, with the spawn error
+//     message in detail. The reaper has already closed Done on the
+//     spawn-error path, so the daemon will exit non-zero shortly
+//     after this Response ships.
+//
+// Spawned synchronously on the Session goroutine (no `go func()`
+// wrapper) — Run installs the goroutines and returns immediately on
+// success. Wrapping in a goroutine would race with the reply: CP
+// could see Done{0} before exec.Cmd.Start has actually forked, and
+// the next Session command (e.g. Hello reach-check) would race the
+// child's first scheduling slice. Keep this synchronous so the wire
+// order matches the kernel order.
 func (s *session) handleAgentReady(ctx context.Context, commandID string) {
-	go func() {
-		// Mirror the handleRegisterRequired recover pattern: a panic
-		// here would crash clawkerd (PID-1 sibling under bash).
-		// Without recovery the entrypoint hangs on its fifo for the
-		// full timeout (~660s) with no diagnostic in the rotated log
-		// — clawkerd panic stacks land on stderr.log, not the
-		// audit-graded clawkerd.log. Surface as Error{IO_ERROR} so
-		// CP sees a terminal Response and operators see a structured
-		// log line. f is captured so a panic between OpenFile and
-		// the deferred Close still releases the fd.
-		var f *os.File
-		defer func() {
-			r := recover()
-			if r == nil {
-				return
-			}
-			if f != nil {
-				_ = f.Close()
-			}
-			s.log.Error().
-				Interface("panic", r).
-				Bytes("stack", debug.Stack()).
-				Str("event", "agent_ready_panic").
-				Str("command_id", commandID).
-				Msg("clawkerd: handleAgentReady panicked; reporting IO_ERROR so CP sees a terminal Response")
-			s.send(ctx, errResponse(commandID,
-				clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
-				fmt.Sprintf("agent_ready: panic: %v", r)))
-		}()
-		var err error
-		f, err = agentReadyOpener(agentReadyFifoPath, os.O_WRONLY|syscall.O_NONBLOCK, 0)
-		if err != nil {
-			if errors.Is(err, syscall.ENXIO) {
-				s.log.Info().
-					Str("event", "agent_ready_no_reader").
-					Str("command_id", commandID).
-					Msg("clawkerd: AgentReady — fifo has no reader (entrypoint already released); replying success")
-				s.send(ctx, &clawkerdv1.Response{
-					CommandId: commandID,
-					Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
-				})
-				return
-			}
-			code := clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR
-			if errors.Is(err, fs.ErrNotExist) {
-				code = clawkerdv1.ErrorCode_ERROR_CODE_NOT_FOUND
-			}
-			s.log.Error().Err(err).
-				Str("event", "agent_ready_open_failed").
-				Str("command_id", commandID).
-				Str("fifo", agentReadyFifoPath).
-				Str("code", code.String()).
-				Msg("clawkerd: AgentReady — fifo open failed")
-			s.send(ctx, errResponse(commandID, code,
-				fmt.Sprintf("agent_ready: open %s: %v", agentReadyFifoPath, err)))
+	// Mirror the handleRegisterRequired recover pattern: a panic in
+	// the spawn path would otherwise kill clawkerd (PID 1) and the
+	// container with no diagnostic surface. Recover, log structurally,
+	// surface as Error{IO_ERROR} so CP sees a terminal Response and
+	// the audit log carries the panic event.
+	defer func() {
+		r := recover()
+		if r == nil {
 			return
 		}
-
-		// One byte wakes the entrypoint's `cat fifo >/dev/null`. A
-		// failed write means the entrypoint never saw the release
-		// signal — surface as IO_ERROR rather than (mis)reporting
-		// success.
-		//
-		// io.ErrClosedPipe (EPIPE) means the reader closed between our
-		// open and write. Reachability matters here: during FIRST init
-		// the entrypoint blocks on `cat fifo >/dev/null` for the full
-		// init timeout, so a reader-close race is not reachable. The
-		// dominant case is CP reconnect AFTER the entrypoint has
-		// already released — a stale Run is dispatching agent-ready
-		// against a fifo whose reader is long gone. The byte is not
-		// needed because the entrypoint already exec'd CMD; treat
-		// EPIPE as success so CP sees Done{0} and the plan finishes
-		// cleanly.
-		if _, werr := f.Write([]byte{1}); werr != nil && !errors.Is(werr, io.ErrClosedPipe) {
-			_ = f.Close()
-			s.log.Error().Err(werr).
-				Str("event", "agent_ready_write_failed").
-				Str("command_id", commandID).
-				Msg("clawkerd: AgentReady — fifo write failed; reporting IO_ERROR")
-			s.send(ctx, errResponse(commandID,
-				clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
-				fmt.Sprintf("agent_ready: write %s: %v", agentReadyFifoPath, werr)))
-			return
-		}
-		if cerr := f.Close(); cerr != nil && !errors.Is(cerr, io.ErrClosedPipe) {
-			s.log.Error().Err(cerr).
-				Str("event", "agent_ready_close_failed").
-				Str("command_id", commandID).
-				Msg("clawkerd: AgentReady — fifo close failed; reporting IO_ERROR")
-			s.send(ctx, errResponse(commandID,
-				clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
-				fmt.Sprintf("agent_ready: close %s: %v", agentReadyFifoPath, cerr)))
-			return
-		}
-		s.log.Info().
-			Str("event", "agent_ready_released").
+		s.log.Error().
+			Interface("panic", r).
+			Bytes("stack", debug.Stack()).
+			Str("event", "agent_ready_panic").
 			Str("command_id", commandID).
-			Msg("clawkerd: AgentReady — entrypoint released")
-		s.send(ctx, &clawkerdv1.Response{
-			CommandId: commandID,
-			Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
-		})
+			Msg("clawkerd: handleAgentReady panicked; reporting IO_ERROR so CP sees a terminal Response")
+		s.send(ctx, errResponse(commandID,
+			clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
+			fmt.Sprintf("agent_ready: panic: %v", r)))
 	}()
+
+	if s.spawnEntry == nil {
+		s.log.Error().
+			Str("event", "agent_ready_unwired").
+			Str("command_id", commandID).
+			Msg("clawkerd: AgentReady received before spawn entry was wired; container will not start the user CMD")
+		s.send(ctx, errResponse(commandID,
+			clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
+			"agent_ready: spawn entry not wired"))
+		return
+	}
+
+	err := s.spawnEntry()
+	if err != nil && !errors.Is(err, errAlreadySpawned) {
+		s.log.Error().Err(err).
+			Str("event", "agent_ready_spawn_failed").
+			Str("command_id", commandID).
+			Msg("clawkerd: AgentReady — spawn failed")
+		s.send(ctx, errResponse(commandID,
+			clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
+			fmt.Sprintf("agent_ready: spawn: %v", err)))
+		return
+	}
+
+	// Both happy-path (err == nil) and reconnect (errAlreadySpawned)
+	// reply Done{0}. The audit event differs so operators can
+	// distinguish first-boot from a CP reconnect re-dispatch.
+	if err == nil {
+		s.log.Info().
+			Str("event", "agent_ready_spawned").
+			Str("command_id", commandID).
+			Msg("clawkerd: AgentReady — user CMD spawned")
+	} else {
+		s.log.Info().
+			Str("event", "agent_ready_already_spawned").
+			Str("command_id", commandID).
+			Msg("clawkerd: AgentReady on reconnect — child already running")
+	}
+	s.send(ctx, &clawkerdv1.Response{
+		CommandId: commandID,
+		Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
+	})
 }
 
 // runningCommand tracks one in-flight ShellCommand for routing
@@ -344,16 +328,17 @@ func (s *session) handleAgentReady(ctx context.Context, commandID string) {
 // (derived from the Session ctx by startShellCommand) is plumbed as a
 // first parameter through runShellCommand and the drainers — never
 // stored on the struct, per the project ctx-handling rule.
+//
+// stdinMu guards stdin/stdinClosed/processes — all per-command IO
+// state published from runShellCommand to routeStdin/routeCloseStdin/
+// routeSignal. Callers MUST go through the methods (snapshotStdin /
+// markStdinClosed / closeStdinOnce / snapshotProcesses / publishProcesses)
+// rather than touching fields directly so the locking discipline is
+// centralized.
 type runningCommand struct {
 	id     string
 	cancel context.CancelFunc
 
-	// stdinMu guards stdin/stdinClosed AND processes — all per-command
-	// IO state published from runShellCommand to routeStdin/
-	// routeCloseStdin/routeSignal. processes is written once just after
-	// spawn; routeSignal reads it after rc has been registered in
-	// s.cmds, but a Signal frame can race that window before
-	// runShellCommand's first lock.
 	stdinMu     sync.Mutex
 	stdin       io.WriteCloser // writer half of stage[0] stdin pipe
 	stdinClosed bool
@@ -370,9 +355,69 @@ type runningCommand struct {
 	stdinReady chan struct{}
 
 	// processes holds each stage's *exec.Cmd. Index matches stage_index.
-	// Used to forward Signal frames to each stage's process. Guarded by
-	// stdinMu.
+	// Published once via publishProcesses; routeSignal reads via
+	// snapshotProcesses.
 	processes []*exec.Cmd
+}
+
+// snapshotStdin returns the current stdin writer + closed flag under
+// the publish lock. A (nil, _) return means stdin was never published.
+func (rc *runningCommand) snapshotStdin() (io.WriteCloser, bool) {
+	rc.stdinMu.Lock()
+	defer rc.stdinMu.Unlock()
+	return rc.stdin, rc.stdinClosed
+}
+
+// markStdinClosed sets the closed flag idempotently. Caller invokes
+// after a stdin Write fails so subsequent Stdin frames take the
+// "already closed" branch instead of re-attempting writes to a broken
+// pipe and re-reporting IO_ERROR per frame.
+func (rc *runningCommand) markStdinClosed() {
+	rc.stdinMu.Lock()
+	rc.stdinClosed = true
+	rc.stdinMu.Unlock()
+}
+
+// closeStdinOnce closes stdin idempotently. Returns the underlying
+// Close error with ErrClosedPipe filtered to nil (peer already closed
+// is success). Caller decides logging discipline (Warn for
+// CP-initiated CloseStdin; pipeCloseStats.record for pipeline
+// teardown). Lock is held across Close to keep stdinClosed and the
+// kernel-side close atomic against routeStdin/routeCloseStdin races.
+func (rc *runningCommand) closeStdinOnce() error {
+	rc.stdinMu.Lock()
+	defer rc.stdinMu.Unlock()
+	if rc.stdinClosed {
+		return nil
+	}
+	rc.stdinClosed = true
+	if rc.stdin == nil {
+		return nil
+	}
+	if err := rc.stdin.Close(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
+		return err
+	}
+	return nil
+}
+
+// snapshotProcesses returns a copy of the per-stage *exec.Cmd slice.
+// Caller must tolerate c.Process being nil or in the post-reap window
+// (see routeSignal's ESRCH/ErrProcessDone filter).
+func (rc *runningCommand) snapshotProcesses() []*exec.Cmd {
+	rc.stdinMu.Lock()
+	defer rc.stdinMu.Unlock()
+	out := make([]*exec.Cmd, len(rc.processes))
+	copy(out, rc.processes)
+	return out
+}
+
+// publishProcesses sets the per-stage *exec.Cmd slice. Called once
+// by runShellCommand after Start; subsequent reads via
+// snapshotProcesses observe a settled state.
+func (rc *runningCommand) publishProcesses(cmds []*exec.Cmd) {
+	rc.stdinMu.Lock()
+	rc.processes = cmds
+	rc.stdinMu.Unlock()
 }
 
 // runSender drains sendCh into stream.Send. Exits when ctx is done.
@@ -386,7 +431,28 @@ func (s *session) runSender(ctx context.Context, cancel context.CancelFunc) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			// Drain anything queued before ctx.Done fired so an
+			// operator triaging "CP saw timeout instead of terminal"
+			// sees exactly which command_id's Response landed in
+			// sendCh but never made it to stream.Send. Producers
+			// parked on `sendCh <- resp` unblock via their own
+			// ctx.Done branch (see s.send) so this drain only sweeps
+			// the buffer.
+			for {
+				select {
+				case resp := <-s.sendCh:
+					if resp == nil {
+						continue
+					}
+					s.log.Warn().
+						Str("event", "session_send_undelivered_on_teardown").
+						Str("command_id", resp.CommandId).
+						Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
+						Msg("clawkerd: response queued before teardown but never written to stream")
+				default:
+					return
+				}
+			}
 		case resp := <-s.sendCh:
 			if resp == nil {
 				continue
@@ -649,6 +715,16 @@ func (s *session) startShellCommand(ctx context.Context, id string, sc *clawkerd
 // outcome at Info on terminal exit. Operators forwarding clawkerd's
 // log to durable storage get a complete audit trail.
 func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *clawkerdv1.ShellCommand, stdinR *io.PipeReader) {
+	// PID-1 resilience: a panic anywhere in the worker outside the
+	// per-stage reapers (e.g. exec.CommandContext nil-deref, time.AfterFunc
+	// callback, unexpected pipe-close path) would otherwise kill clawkerd
+	// and the container with no diagnostic surface. Recover at the top
+	// level — declared first so it runs LAST in LIFO defer order, after
+	// the audit-log defer below has emitted shell_command_done with the
+	// (probably "incomplete") outcome. onPanic cancels the per-command
+	// ctx so any started exec.CommandContext stages get SIGKILL'd.
+	recoverLog := s.log.With("command_id", rc.id)
+	defer recoverGoroutine(recoverLog, "shell_command_worker", rc.cancel)
 	startedAt := time.Now()
 	var (
 		auditFinalExit int32 = -1
@@ -697,8 +773,10 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 		c.Dir = st.Cwd
 		c.Env = buildEnv(st.Env)
 		// Per-stage credential: drop privileges if uid/gid set. Zero
-		// means "inherit from clawkerd" (which currently runs as
-		// root inside the container — see entrypoint.sh).
+		// means "inherit from clawkerd" — clawkerd is PID 1 of the
+		// agent container and stays root for the supervisor's
+		// lifetime (privilege drop happens in the spawn child via
+		// SysProcAttr.Credential, not in clawkerd's own process).
 		if st.Uid != 0 || st.Gid != 0 {
 			c.SysProcAttr = &syscall.SysProcAttr{
 				Credential: &syscall.Credential{Uid: st.Uid, Gid: st.Gid},
@@ -711,13 +789,11 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 	// spawned, and rc.stdin (== stdinW) was registered under the
 	// session lock at the same time so routeCloseStdin / routeStdin
 	// races are race-free. Here we just plumb stdinR into stage[0]
-	// and publish processes under stdinMu so routeSignal observers
-	// see a settled state.
+	// and publish processes so routeSignal observers see a settled
+	// state.
 	cmds[0].Stdin = stdinR
-	rc.stdinMu.Lock()
-	stdinW := rc.stdin
-	rc.processes = cmds
-	rc.stdinMu.Unlock()
+	stdinW, _ := rc.snapshotStdin()
+	rc.publishProcesses(cmds)
 
 	// closeStats accumulates close-error accounting across every
 	// closePipeOnce call site in this goroutine: first failure lands
@@ -819,15 +895,16 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 	// like grep can deadlock on full pipe buffers otherwise).
 	if len(sc.InitialStdin) > 0 {
 		go func() {
+			// LIFO: recoverGoroutine fires FIRST on panic so peers
+			// waiting on stdinReady do not deadlock; closeStdinReady
+			// then fires unconditionally.
 			defer closeStdinReady()
-			rc.stdinMu.Lock()
-			w := rc.stdin
-			closed := rc.stdinClosed
-			rc.stdinMu.Unlock()
+			defer recoverGoroutine(s.log.With("command_id", rc.id), "initial_stdin_writer", nil)
+			w, closed := rc.snapshotStdin()
 			if w == nil || closed {
 				return
 			}
-			if _, werr := w.Write(sc.InitialStdin); werr != nil && !errors.Is(werr, io.ErrClosedPipe) {
+			if _, werr := w.Write(sc.InitialStdin); werr != nil && !isStdinPeerClosed(werr) {
 				s.log.Error().Err(werr).
 					Str("event", "session_initial_stdin_write_failed").
 					Str("command_id", rc.id).
@@ -858,6 +935,9 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// PID-1 resilience: defer-LIFO means recover runs first
+			// on panic, then wg.Done — wg.Wait won't deadlock.
+			defer recoverGoroutine(s.log.With("command_id", rc.id, "stage_index", i), "drain_stderr", nil)
 			s.drainStderr(ctx, rc, uint32(i), stderrPipes[i])
 		}()
 	}
@@ -866,6 +946,7 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer recoverGoroutine(s.log.With("command_id", rc.id), "drain_stdout", nil)
 		s.drainStdout(ctx, rc, finalStdout)
 	}()
 
@@ -924,7 +1005,7 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 					default:
 					}
 				}
-				s.send(ctx, stageExitResponse(rc.id, uint32(i), c, panicErr))
+				s.send(ctx, s.stageExitResponse(rc.id, uint32(i), c, panicErr))
 			}()
 			waitErr := c.Wait()
 			if hook := stageReaperPanicHookForTest; hook != nil {
@@ -933,20 +1014,18 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 			if isFinal {
 				finalStageErrCh <- waitErr
 			}
-			s.send(ctx, stageExitResponse(rc.id, uint32(i), c, waitErr))
+			s.send(ctx, s.stageExitResponse(rc.id, uint32(i), c, waitErr))
 		}()
 	}
 
 	// Block until every reaper finishes so the stdin writer can be
 	// safely closed (no further data flow possible) and downstream
-	// pipes drain.
+	// pipes drain. closeStdinOnce is idempotent — handles the
+	// already-closed case if routeCloseStdin won the race.
 	reapWG.Wait()
-	rc.stdinMu.Lock()
-	if !rc.stdinClosed {
-		s.closePipeOnce(rc.id, "stdin", stdinW, &closeStats)
-		rc.stdinClosed = true
+	if err := rc.closeStdinOnce(); err != nil {
+		closeStats.record(s.log, rc.id, "stdin", err)
 	}
-	rc.stdinMu.Unlock()
 	for i, p := range stagePipes {
 		s.closePipeOnce(rc.id, fmt.Sprintf("stage[%d]_stdout", i), p, &closeStats)
 	}
@@ -990,6 +1069,17 @@ func isExpectedDrainEnd(err error) bool {
 	return errors.Is(err, io.EOF) ||
 		errors.Is(err, io.ErrClosedPipe) ||
 		errors.Is(err, os.ErrClosed)
+}
+
+// isStdinPeerClosed reports whether a stdin Write error signals the
+// child closed its read side before the writer finished. Both
+// ErrClosedPipe (in-process io.Pipe) and EPIPE (kernel pipe; what
+// fast-exit children produce, e.g. `printf … | head -c1`) mean the
+// same thing: the child got the bytes it cared about and exited.
+// Surfacing IO_ERROR for either would tell CP "stdin truncated"
+// when the command actually completed normally.
+func isStdinPeerClosed(err error) bool {
+	return errors.Is(err, io.ErrClosedPipe) || errors.Is(err, syscall.EPIPE)
 }
 
 // drainStdout reads chunks from the final stage's stdout pipe and
@@ -1079,10 +1169,7 @@ func (s *session) routeStdin(ctx context.Context, id string, st *clawkerdv1.Stdi
 	if !waitStdinReady(ctx, rc) {
 		return
 	}
-	rc.stdinMu.Lock()
-	w := rc.stdin
-	closed := rc.stdinClosed
-	rc.stdinMu.Unlock()
+	w, closed := rc.snapshotStdin()
 	if closed || w == nil {
 		s.send(ctx, errResponse(id,
 			clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
@@ -1090,6 +1177,10 @@ func (s *session) routeStdin(ctx context.Context, id string, st *clawkerdv1.Stdi
 		return
 	}
 	if _, err := w.Write(st.Data); err != nil && !errors.Is(err, io.ErrClosedPipe) {
+		// Mark stdinClosed so subsequent Stdin frames take the cleaner
+		// "already closed" branch above instead of re-attempting writes
+		// to a broken pipe and re-reporting IO_ERROR per frame.
+		rc.markStdinClosed()
 		s.send(ctx, errResponse(id,
 			clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
 			fmt.Sprintf("stdin write: %v", err)))
@@ -1110,25 +1201,16 @@ func (s *session) routeCloseStdin(ctx context.Context, id string) {
 	if !waitStdinReady(ctx, rc) {
 		return
 	}
-	rc.stdinMu.Lock()
-	defer rc.stdinMu.Unlock()
-	if rc.stdinClosed {
-		return
+	// CP-driven explicit close. Surface real Close errors via the
+	// audit log so an EBADF / EIO doesn't vanish silently — the
+	// CP receives no Error response either way (CloseStdin has no
+	// Response payload), so the log is the only signal.
+	if err := rc.closeStdinOnce(); err != nil {
+		s.log.Warn().Err(err).
+			Str("event", "session_close_stdin_failed").
+			Str("command_id", id).
+			Msg("clawkerd: explicit CloseStdin returned error")
 	}
-	if rc.stdin != nil {
-		// CP-driven explicit close. Surface real Close errors via the
-		// audit log so an EBADF / EIO doesn't vanish silently — the
-		// CP receives no Error response either way (CloseStdin has
-		// no Response payload), so the log is the only signal.
-		// io.ErrClosedPipe means the peer beat us; treat as success.
-		if err := rc.stdin.Close(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
-			s.log.Warn().Err(err).
-				Str("event", "session_close_stdin_failed").
-				Str("command_id", id).
-				Msg("clawkerd: explicit CloseStdin returned error")
-		}
-	}
-	rc.stdinClosed = true
 }
 
 // routeSignal forwards a POSIX signal to every stage's process.
@@ -1150,9 +1232,7 @@ func (s *session) routeSignal(ctx context.Context, id string, sig *clawkerdv1.Si
 	}
 	// Snapshot processes under the publish lock so we don't race the
 	// runShellCommand goroutine writing the slice header.
-	rc.stdinMu.Lock()
-	processes := rc.processes
-	rc.stdinMu.Unlock()
+	processes := rc.snapshotProcesses()
 	for i, c := range processes {
 		if c == nil || c.Process == nil {
 			continue
@@ -1229,7 +1309,7 @@ func buildEnv(m map[string]string) []string {
 // exit (non-zero or zero) it's *exec.ExitError. For signaled exit
 // the ExitError carries WaitStatus with Signaled() true; we extract
 // signo and report exit_code = -1 to match POSIX convention.
-func stageExitResponse(id string, stageIndex uint32, c *exec.Cmd, waitErr error) *clawkerdv1.Response {
+func (s *session) stageExitResponse(id string, stageIndex uint32, c *exec.Cmd, waitErr error) *clawkerdv1.Response {
 	exitCode := int32(0)
 	signo := int32(0)
 
@@ -1245,6 +1325,15 @@ func stageExitResponse(id string, stageIndex uint32, c *exec.Cmd, waitErr error)
 				exitCode = int32(c.ProcessState.ExitCode())
 			}
 		} else {
+			// Non-WaitStatus Sys() means a future GOOS port (Windows)
+			// or a synthetic exec.Cmd test seam. Log at Debug so the
+			// regression surfaces if/when it happens — without this,
+			// the signaled-vs-exited distinction is silently lost
+			// and CP sees signo=0 for every signaled child.
+			s.log.Debug().
+				Str("event", "shell_stage_exit_unexpected_sys_type").
+				Str("sys_type", fmt.Sprintf("%T", c.ProcessState.Sys())).
+				Msg("clawkerd: ProcessState.Sys() is not a syscall.WaitStatus; signal info lost")
 			exitCode = int32(c.ProcessState.ExitCode())
 		}
 	} else if waitErr != nil {
@@ -1299,17 +1388,12 @@ type pipeCloseStats struct {
 	suppressed int
 }
 
-// closePipeOnce closes w, logging at Warn on real errors. `stats`
-// dedupes per-goroutine: a runShellCommand goroutine passes the same
-// *pipeCloseStats to each call site so a torrent of failed closes
-// during pipeline teardown produces exactly one Warn line + a
-// suppressed counter the caller flushes on exit. io.ErrClosedPipe is
-// treated as success since it just means a peer already closed.
-func (s *session) closePipeOnce(cmdID, name string, w io.Closer, stats *pipeCloseStats) {
-	if w == nil {
-		return
-	}
-	err := w.Close()
+// record dedupes a close error onto stats. First non-success failure
+// logs at Warn; subsequent ones increment suppressed so a torrent of
+// close errors during pipeline teardown produces exactly one Warn +
+// a summary count flushed by the caller. io.ErrClosedPipe is success
+// (peer already closed).
+func (stats *pipeCloseStats) record(log *logger.Logger, cmdID, name string, err error) {
 	if err == nil || errors.Is(err, io.ErrClosedPipe) {
 		return
 	}
@@ -1317,12 +1401,20 @@ func (s *session) closePipeOnce(cmdID, name string, w io.Closer, stats *pipeClos
 		stats.suppressed++
 		return
 	}
-	s.log.Warn().Err(err).
+	log.Warn().Err(err).
 		Str("event", "session_pipe_close_failed").
 		Str("command_id", cmdID).
 		Str("pipe", name).
 		Msg("clawkerd: pipe close failed during pipeline teardown")
 	stats.logged = true
+}
+
+// closePipeOnce closes w and records the outcome on stats.
+func (s *session) closePipeOnce(cmdID, name string, w io.Closer, stats *pipeCloseStats) {
+	if w == nil {
+		return
+	}
+	stats.record(s.log, cmdID, name, w.Close())
 }
 
 // errResponse is a small helper for the Error variant.

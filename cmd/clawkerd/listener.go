@@ -18,6 +18,14 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+// errListenerConfig wraps deterministic pre-Serve failures (nil
+// thunk wiring bug, malformed bootstrap material) so main() can map
+// them to exit code 2 (config) instead of the generic 1 (transient).
+// Without this discriminator, a `restart: on-failure:max-retries=N`
+// container would restart-loop forever on a deterministic config bug
+// instead of trip-and-stop on the first failure.
+var errListenerConfig = errors.New("clawkerd listener: config error")
+
 // startClawkerdListener binds the ClawkerdService listener on
 // consts.DefaultClawkerdPort, registers the server impl, and starts
 // grpc.Serve in a goroutine. mTLS is required and the peer cert's CN
@@ -26,18 +34,38 @@ import (
 // another agent's) would be accepted and could dispatch root-level
 // ShellCommands (agent-to-agent privilege escalation).
 //
-// Returns the running grpc.Server so main can GracefulStop on
-// shutdown. The underlying net.Listener is owned by the goroutine
-// that runs Serve and is closed by Stop / GracefulStop.
-func startClawkerdListener(boot *bootstrap, register *registerCoordinator, log *logger.Logger) (*grpc.Server, error) {
+// spawnEntry is the AgentReady spawn-trigger thunk passed in as a
+// non-optional dependency: handleAgentReady invokes it to fork the
+// user CMD. nil is rejected at call time so a wiring bug fails loud
+// here rather than at first AgentReady.
+//
+// onFatal is invoked when grpc.Serve returns a non-stop error (Serve
+// goroutine dead, no further commands can dispatch). main() wires it
+// to its NotifyContext stop func so the daemon exits cleanly rather
+// than hanging on ctx.Done with a bricked listener. nil onFatal is
+// rejected: a missing wiring would silently strand the daemon.
+//
+// Returns the running grpc.Server so main can Stop on shutdown. The
+// underlying net.Listener is owned by the goroutine that runs Serve
+// and is closed by Stop.
+func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, onFatal func(error), log *logger.Logger) (*grpc.Server, error) {
+	if spawnEntry == nil {
+		return nil, fmt.Errorf("%w: spawnEntry is required", errListenerConfig)
+	}
+	if onFatal == nil {
+		return nil, fmt.Errorf("%w: onFatal is required", errListenerConfig)
+	}
 	tlsCfg, err := buildListenerTLSConfig(boot.CertPEM, boot.KeyPEM, boot.CACertPEM)
 	if err != nil {
-		return nil, fmt.Errorf("listener TLS config: %w", err)
+		return nil, fmt.Errorf("%w: TLS config: %w", errListenerConfig, err)
 	}
 
 	addr := fmt.Sprintf(":%d", consts.DefaultClawkerdPort)
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
+		// Bind failure stays transient: port-in-use clears on restart,
+		// and `restart: on-failure` is the right policy for the brief
+		// teardown→bind race after a `docker stop`.
 		return nil, fmt.Errorf("listen %s: %w", addr, err)
 	}
 
@@ -52,13 +80,31 @@ func startClawkerdListener(boot *bootstrap, register *registerCoordinator, log *
 			PermitWithoutStream: true,
 		}),
 	)
-	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register})
+	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register, spawnEntry: spawnEntry})
 
 	go func() {
-		if serveErr := srv.Serve(lis); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
+		// PID-1 resilience: a panic inside grpc.Serve (e.g. from a
+		// future TLS-handshake nil-deref or a malformed-frame edge in
+		// the accept loop) would otherwise kill clawkerd → container
+		// exits → silent restart-loop. Recover and log structurally so
+		// the daemon stays up. Per-call panics inside Session handlers
+		// are caught by in-handler `defer recoverGoroutine(...)` wraps
+		// in session.go (runSession, sender, drainers, register
+		// handler, AgentReady handler) — there is NO grpc.UnaryInterceptor
+		// or grpc.StreamInterceptor wired here.
+		// onPanic on the recover wraps a Serve panic — same shape
+		// as Serve returning a non-stop error: the listener is dead
+		// either way, so the daemon must exit rather than hang on
+		// ctx.Done with no command-dispatch surface.
+		defer recoverGoroutine(log, "clawkerd_listener_serve", func() {
+			onFatal(errors.New("clawkerd: listener Serve goroutine panicked"))
+		})
+		serveErr := srv.Serve(lis)
+		if serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
 			log.Error().Err(serveErr).
 				Str("event", "clawkerd_listener_serve_failed").
-				Msg("grpc.Serve returned non-stop error")
+				Msg("grpc.Serve returned non-stop error; cancelling daemon ctx so main exits cleanly")
+			onFatal(fmt.Errorf("clawkerd: listener Serve failed: %w", serveErr))
 		}
 	}()
 
@@ -73,11 +119,11 @@ func startClawkerdListener(boot *bootstrap, register *registerCoordinator, log *
 // buildListenerTLSConfig returns the *tls.Config for the clawkerd
 // gRPC listener. ServerCert is the per-agent leaf the CLI minted —
 // the leaf carries BOTH ServerAuth (used here, so CP-side chain
-// verify accepts the cert as a server cert) and ClientAuth (held for
-// any future agent→CP dial; clawkerd has no outbound RPC in this
-// branch — see cmd/clawkerd/CLAUDE.md). See internal/auth/agent_cert.go
-// for the dual-EKU rationale; without ServerAuth here every
-// CP→clawkerd dial fails with "incompatible key usage".
+// verify accepts the cert as a server cert) and ClientAuth (used for
+// the CP-triggered Register dial — clawkerd's only outbound mTLS
+// call). See internal/auth/agent_cert.go for the dual-EKU rationale;
+// without ServerAuth here every CP→clawkerd dial fails with
+// "incompatible key usage".
 //
 // ClientCAs is the clawker CA bundle (so the CP's client cert chains
 // validate). ClientAuth requires a verified peer cert.
@@ -140,15 +186,20 @@ func pinPeerCNToCP(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
 // CP retry that re-sends RegisterRequired short-circuits to the
 // recorded outcome instead of burning the (single-use) Hydra
 // assertion JWT a second time.
+//
+// spawnEntry is the AgentReady spawn-trigger thunk; threaded into
+// every session so handleAgentReady can fire the user-CMD fork
+// without the package-level mutable global the prototype used.
 type clawkerdServer struct {
 	clawkerdv1.UnimplementedClawkerdServiceServer
-	log      *logger.Logger
-	register *registerCoordinator
+	log        *logger.Logger
+	register   *registerCoordinator
+	spawnEntry func() error
 }
 
 // Session is the bidi command-dispatch channel from CP to clawkerd.
 // All per-stream state lives in runSession; this method just hands
 // off and lets the helper own the lifecycle.
 func (s *clawkerdServer) Session(stream clawkerdv1.ClawkerdService_SessionServer) error {
-	return runSession(stream, s.log, s.register)
+	return runSession(stream, s.log, s.register, s.spawnEntry)
 }

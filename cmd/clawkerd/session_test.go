@@ -253,7 +253,6 @@ func TestRunShellCommand_AuditLogStartedAndDone(t *testing.T) {
 	logs := logBuf.String()
 	assert.Contains(t, logs, `"event":"shell_command_started"`, "started event missing")
 	assert.Contains(t, logs, `"event":"shell_command_done"`, "done event missing")
-	assert.Contains(t, logs, `"argv":["`+truePath+`"]`, "argv field missing")
 	assert.Contains(t, logs, `"command_id":"audit-1"`)
 	assert.Contains(t, logs, `"outcome":"completed"`)
 	assert.Contains(t, logs, `"final_exit_code":0`)
@@ -374,9 +373,9 @@ func TestStartShellCommand_InitialStdinCloseStdinRace(t *testing.T) {
 	}
 }
 
-// TestRunShellCommand_FastExitNoIOError pins the regression fix for
-// the bug that broke agent-init's `post-init` step on second boots
-// (when the marker file makes the script exit in <500ms).
+// TestRunShellCommand_FastExitNoIOError pins isExpectedDrainEnd:
+// fast-exit commands (<500ms total) must not surface IO_ERROR even
+// though their stdout/stderr Read races the reaper closing the pipe.
 //
 // exec.Cmd.Wait closes stdout/stderr pipes after the child exits.
 // For a fast-exit command, the reaper goroutine wins the race against
@@ -757,7 +756,7 @@ func waitOneResponse(t *testing.T, s *session, timeout time.Duration) *clawkerdv
 // withVar rebinds *target to v for the duration of one test and
 // restores the prior value via t.Cleanup so test ordering can't leak
 // the override. Generic so the same shape works for any package-level
-// test seam (fifo path, opener function, panic hook, ...).
+// test seam (opener function, panic hook, etc.).
 func withVar[T any](t *testing.T, target *T, v T) {
 	t.Helper()
 	prev := *target
@@ -765,110 +764,119 @@ func withVar[T any](t *testing.T, target *T, v T) {
 	t.Cleanup(func() { *target = prev })
 }
 
-func withFifoPath(t *testing.T, path string) { withVar(t, &agentReadyFifoPath, path) }
+// withSpawnEntry sets s.spawnEntry to fn for one test. Local mutation
+// only — session is parallel-safe because each test owns its session.
+// t.Cleanup is unnecessary (the session struct is dropped at end of
+// test scope).
+func withSpawnEntry(t *testing.T, s *session, fn func() error) {
+	t.Helper()
+	s.spawnEntry = fn
+}
 
-// TestHandleAgentReady_HappyPath verifies the contract that drives
-// the entrypoint release: with a reader blocked on the fifo, the
-// handler opens it for write, the kernel unblocks the reader, the
-// handler returns Done{0}.
-func TestHandleAgentReady_HappyPath(t *testing.T) {
-	dir := t.TempDir()
-	fifo := dir + "/agent.fifo"
-	require.NoError(t, syscall.Mkfifo(fifo, 0o600))
-	withFifoPath(t, fifo)
-
-	// Open the read side O_RDONLY|O_NONBLOCK in the test goroutine so
-	// we know it's open before dispatch — handler's O_WRONLY|O_NONBLOCK
-	// open then succeeds (reader fd present) instead of returning ENXIO.
-	// O_NONBLOCK on the reader makes the open non-blocking; subsequent
-	// reads still block until the writer arrives.
-	rfd, err := os.OpenFile(fifo, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = rfd.Close() })
-
-	readerDone := make(chan error, 1)
-	go func() {
-		_, err := io.ReadAll(rfd)
-		readerDone <- err
-	}()
-
+// TestHandleAgentReady_TriggersSpawn_DoneZero is the happy path: a
+// wired spawn entry is invoked exactly once and the handler replies
+// Done{0}. This is the only success surface — no fifo, no marker, no
+// retry loop. Failure modes are spawn-error-shaped (covered separately).
+func TestHandleAgentReady_TriggersSpawn_DoneZero(t *testing.T) {
+	var calls atomic.Int32
 	s, _ := newTestSession()
+	withSpawnEntry(t, s, func() error {
+		calls.Add(1)
+		return nil
+	})
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	s.handleAgentReady(ctx, "ar-happy")
+	s.handleAgentReady(ctx, "ar-spawn")
 
 	resp := waitOneResponse(t, s, time.Second)
-	assert.Equal(t, "ar-happy", resp.CommandId)
+	assert.Equal(t, "ar-spawn", resp.CommandId)
 	done := resp.GetDone()
 	require.NotNil(t, done, "expected Done payload, got %T", resp.Payload)
 	assert.Equal(t, int32(0), done.FinalExitCode)
-
-	select {
-	case err := <-readerDone:
-		assert.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("reader never observed the fifo write")
-	}
+	assert.Equal(t, int32(1), calls.Load(), "spawn entry must fire exactly once per AgentReady")
 }
 
-// TestHandleAgentReady_NoReader covers the reconnect path: CP redials
-// a long-running container after entrypoint already exec'd CMD, so
-// the fifo has no reader. O_WRONLY|O_NONBLOCK returns ENXIO; handler
-// treats it as no-op success.
-func TestHandleAgentReady_NoReader(t *testing.T) {
-	dir := t.TempDir()
-	fifo := dir + "/agent.fifo"
-	require.NoError(t, syscall.Mkfifo(fifo, 0o600))
-	withFifoPath(t, fifo)
-
+// TestHandleAgentReady_AlreadySpawned_ReplyDone covers Session
+// reconnect: CP redispatches AgentReady against a clawkerd whose
+// spawn entry has already fired. The CAS in spawnState rejects with
+// errAlreadySpawned; the handler replies Done{0} idempotently so
+// CP's plan completes rather than retry-looping.
+func TestHandleAgentReady_AlreadySpawned_ReplyDone(t *testing.T) {
 	s, logBuf := newTestSession()
+	withSpawnEntry(t, s, func() error { return errAlreadySpawned })
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	s.handleAgentReady(ctx, "ar-no-reader")
+	s.handleAgentReady(ctx, "ar-reconnect")
 
 	resp := waitOneResponse(t, s, time.Second)
-	assert.Equal(t, "ar-no-reader", resp.CommandId)
+	assert.Equal(t, "ar-reconnect", resp.CommandId)
 	done := resp.GetDone()
-	require.NotNil(t, done, "expected Done on ENXIO path, got %T", resp.Payload)
+	require.NotNil(t, done, "reconnect must reply Done, got %T", resp.Payload)
 	assert.Equal(t, int32(0), done.FinalExitCode)
-	assert.Contains(t, logBuf.String(), "agent_ready_no_reader",
-		"audit log should record the no-reader path so operators can distinguish first-boot release from reconnect-replay")
+	assert.Contains(t, logBuf.String(), "agent_ready_already_spawned",
+		"audit log must record reconnect-spawn so operators can distinguish first-boot from reconnect")
 }
 
-// TestHandleAgentReady_FifoMissing covers the build-drift case: the
-// entrypoint never created the fifo (image misconfiguration). Open
-// returns fs.ErrNotExist; handler must surface NOT_FOUND (distinct
-// from IO_ERROR) so operators can branch on the typed code without
-// parsing the human-readable message.
-func TestHandleAgentReady_FifoMissing(t *testing.T) {
-	dir := t.TempDir()
-	fifo := dir + "/never-created.fifo"
-	withFifoPath(t, fifo)
+// TestHandleAgentReady_SpawnFails_IOError pins that any non-
+// errAlreadySpawned error from spawnEntry surfaces as Error{IO_ERROR}
+// with the underlying error in detail. Without this, CP would see
+// Done{0} and report success even though the user CMD never started.
+func TestHandleAgentReady_SpawnFails_IOError(t *testing.T) {
+	wantErr := errors.New("synthetic spawn failure")
+	s, logBuf := newTestSession()
+	withSpawnEntry(t, s, func() error { return wantErr })
 
-	s, _ := newTestSession()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	s.handleAgentReady(ctx, "ar-missing")
+	s.handleAgentReady(ctx, "ar-fail")
 
 	resp := waitOneResponse(t, s, time.Second)
-	assert.Equal(t, "ar-missing", resp.CommandId)
+	assert.Equal(t, "ar-fail", resp.CommandId)
 	er := resp.GetError()
-	require.NotNil(t, er, "expected Error payload, got %T", resp.Payload)
-	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_NOT_FOUND, er.Code,
-		"missing fifo must classify as NOT_FOUND, distinct from syscall IO_ERROR")
+	require.NotNil(t, er, "expected Error on spawn failure, got %T", resp.Payload)
+	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, er.Code)
+	assert.Contains(t, er.Message, wantErr.Error(),
+		"detail must include the spawn error so CP/operator can triage without grepping logs")
+	assert.Contains(t, logBuf.String(), "agent_ready_spawn_failed",
+		"audit log must record the structured spawn-failure event")
 }
 
-// TestHandleAgentReady_Panic_RepliesIOError: a panic in handleAgentReady
-// without recover would crash clawkerd (sibling daemon under bash); the
-// entrypoint then hangs on its fifo for ~660s with no diagnostic in
-// the rotated audit log — panic stacks land on stderr.log only.
+// TestHandleAgentReady_Unwired_IOError pins the wiring-bug path:
+// AgentReady arrives on a session whose spawnEntry is nil. Production
+// can't reach this — startClawkerdListener rejects nil thunks at
+// construction time — but the handler still defends the contract.
+// Reply with Error{IO_ERROR} (matching the panic-recovery branch's
+// "clawkerd-internal bug" classification) rather than timing out the
+// dialer or silently no-op'ing — operators must see the bug as a
+// structured event, not a missing Response.
+func TestHandleAgentReady_Unwired_IOError(t *testing.T) {
+	s, logBuf := newTestSession()
+	withSpawnEntry(t, s, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.handleAgentReady(ctx, "ar-unwired")
+
+	resp := waitOneResponse(t, s, time.Second)
+	assert.Equal(t, "ar-unwired", resp.CommandId)
+	er := resp.GetError()
+	require.NotNil(t, er, "expected Error on unwired entry, got %T", resp.Payload)
+	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, er.Code)
+	assert.Contains(t, logBuf.String(), "agent_ready_unwired",
+		"audit log must record the wiring-bug event so operators don't chase a missing Response")
+}
+
+// TestHandleAgentReady_Panic_RepliesIOError: a panic in spawnEntry
+// without recover would crash clawkerd (PID 1) and the container.
 // Recover must surface Error{IO_ERROR} so CP sees a terminal Response.
 func TestHandleAgentReady_Panic_RepliesIOError(t *testing.T) {
-	withVar(t, &agentReadyOpener, func(_ string, _ int, _ os.FileMode) (*os.File, error) {
-		panic("synthetic test panic from agentReadyOpener")
+	s, logBuf := newTestSession()
+	withSpawnEntry(t, s, func() error {
+		panic("synthetic spawn panic")
 	})
 
-	s, logBuf := newTestSession()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	s.handleAgentReady(ctx, "ar-panic")
@@ -877,9 +885,8 @@ func TestHandleAgentReady_Panic_RepliesIOError(t *testing.T) {
 	assert.Equal(t, "ar-panic", resp.CommandId)
 	er := resp.GetError()
 	require.NotNil(t, er, "panic must surface as Error, got %T", resp.Payload)
-	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, er.Code,
-		"panic classifies as IO_ERROR — distinct from NOT_FOUND (build drift) and from a normal syscall failure")
-	assert.Contains(t, er.Message, "panic", "Detail must reference the panic so operators don't have to grep stderr")
+	assert.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, er.Code)
+	assert.Contains(t, er.Message, "panic", "detail must reference the panic so operators don't have to grep stderr")
 	assert.Contains(t, logBuf.String(), "agent_ready_panic",
 		"audit log must record the structured panic event so operators can triage without seeing the panic stack")
 }

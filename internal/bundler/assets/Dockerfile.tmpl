@@ -56,7 +56,6 @@ RUN apk add \
     less \
     procps \
     sudo \
-    gosu \
     fzf \
     gcc \
     git \
@@ -91,7 +90,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     less \
     procps \
     sudo \
-    gosu \
     fzf \
     gcc \
     git \
@@ -190,10 +188,18 @@ RUN groupadd -g 999 docker 2>/dev/null || groupadd docker 2>/dev/null || true &&
 {{- end}}
 {{- end}}
 
-# Create workspace, config, runtime, and credential directories with proper permissions
-# .gnupg and .ssh are pre-created so socket mounts don't create root-owned directories
-# .clawker-share is pre-created so the share volume mount inherits correct ownership
-RUN mkdir -p /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh {{.WorkspacePath}} /var/run/clawker && \
+# Create workspace, config, runtime, and credential directories with proper permissions.
+# .gnupg and .ssh are pre-created so socket mounts don't create root-owned directories.
+# .clawker-share is pre-created so the share volume mount inherits correct ownership.
+# /run/clawker (bootstrap dir, root-owned 0700 — only clawkerd-as-root reads it) and
+# /var/log/clawker (log file, root-owned — clawkerd writes the rotated log as root)
+# are pre-created so clawkerd-as-PID-1 doesn't need mkdir at boot. /var/run/clawker
+# is chowned to ${USERNAME} below so the user CMD (spawned by clawkerd with a
+# privilege drop to ${USERNAME}) can read/write runtime state alongside the ready
+# marker that clawkerd-as-root writes; the HEALTHCHECK probe itself runs as root
+# (final USER directive at the bottom of this file) and stats the ready marker
+# regardless of ownership.
+RUN mkdir -p /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh {{.WorkspacePath}} /run/clawker /var/log/clawker /var/run/clawker && \
     chmod 700 /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh && \
     chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /var/run/clawker
 
@@ -258,8 +264,12 @@ RUN chmod +x /usr/local/bin/host-open /usr/local/bin/callback-forwarder /usr/loc
 COPY --from=socket-server-builder /build/clawker-socket-server /usr/local/bin/clawker-socket-server
 RUN chmod +x /usr/local/bin/clawker-socket-server
 
-# Switch to non-root user for ENV/WORKDIR resolution.
-# Entrypoint runs as root (USER root before ENTRYPOINT) and drops to this user via gosu.
+# Switch to non-root user for ENV/WORKDIR resolution. clawkerd (PID 1)
+# is invoked as root by Docker — the USER directive only affects
+# ENV/WORKDIR/RUN scope below this line. Privilege drop to ${USERNAME}
+# happens in the spawn-child via SysProcAttr.Credential when clawkerd
+# forks the user CMD on AgentReady; clawkerd itself stays root for log
+# rotation, bootstrap reads, eBPF coordination, and Wait4(-1) reaping.
 USER ${USERNAME}
 ENV CLAWKER_USER=${USERNAME}
 
@@ -269,7 +279,8 @@ ENV PATH=/home/${USERNAME}/.local/bin:$PATH
 # Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
 ENV BROWSER=/usr/local/bin/host-open
 # Tell Claude Code where its config lives — must match the config volume mount.
-# The entrypoint seeds .config.json from ~/.claude-init/ on first boot.
+# CP-driven init (configSeedScript in internal/controlplane/agent/init.go)
+# seeds .config.json from ~/.claude-init/ on first boot.
 ENV CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude
 # Terminal color defaults; RuntimeEnv may override these based on host capabilities,
 # using safe fallback values (xterm-256color, truecolor) rather than passing through host TERM.
@@ -384,15 +395,16 @@ HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=3 \
 {{- end}}
 {{- end}}
 
-# Entrypoint runs as root for privileged init (chown), then drops to $USERNAME via gosu.
+# Switch back to root: clawkerd is PID 1, runs as root, owns the
+# supervisor responsibilities (spawn user CMD with privilege drop,
+# forward signals, reap zombies, serve the CP-dialed mTLS listener).
 USER root
-COPY entrypoint.sh /usr/local/bin/
 
-# clawkerd: per-container agent daemon. Runs as root in the entrypoint
-# preamble, completes the announce → register handshake with the
-# control plane on clawker-net, and idles for the lifetime of the
-# container. See cmd/clawkerd for the source and CLAUDE.md.
+# clawkerd: per-container agent daemon AND PID 1 init. Reads bootstrap
+# material, completes the CP-driven Register handshake, serves the
+# mTLS Session listener for command dispatch, and supervises the user
+# CMD across its lifetime. See cmd/clawkerd for the source + CLAUDE.md.
 COPY --chown=root:root --chmod=755 clawkerd /usr/local/bin/clawkerd
 
-ENTRYPOINT ["entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/clawkerd"]
 CMD ["claude"]
