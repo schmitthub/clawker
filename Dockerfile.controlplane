@@ -69,7 +69,7 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 ARG CLANG_VERSION=1:14.0-55.7~deb12u1
 ARG LLVM_VERSION=1:14.0-55.7~deb12u1
 ARG LIBBPF_DEV_VERSION=1:1.1.2-0+deb12u1
-ARG LINUX_LIBC_DEV_VERSION=6.1.170-1
+ARG LINUX_LIBC_DEV_VERSION=6.1.170-3
 
 # `llvm` provides llvm-strip, which bpf2go shells out to after compiling
 # the .o to strip debug symbols. The `clang` meta package does not pull it in.
