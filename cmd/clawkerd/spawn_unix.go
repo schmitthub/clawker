@@ -776,16 +776,23 @@ func forwardableSignals() []os.Signal {
 // wiring bug that resolves uid=0) silently re-introduces root in the
 // user CMD.
 //
-// cttyFd >= 0 enables interactive-TTY mode: the kernel makes the
-// child's pgroup the controlling-terminal foreground (via tcsetpgrp
-// in the child between fork and exec), so keystrokes and Ctrl+C
-// route to the user CMD instead of clawkerd. cttyFd is the child's
-// fd number for the controlling TTY (0 when stdin is the TTY, since
-// exec.Cmd maps Stdin to fd 0). Pass -1 for non-interactive runs.
+// cttyFd >= 0 enables interactive-TTY mode: Foreground:true makes
+// the kernel run tcsetpgrp(Ctty, child_pgrp) in the child between
+// fork and exec, so the child's pgroup becomes the controlling
+// terminal's foreground — keystrokes and Ctrl+C route to the user
+// CMD instead of clawkerd. cttyFd is the child's fd number for the
+// controlling TTY (0 when stdin is the TTY, since exec.Cmd maps
+// Stdin to fd 0). Pass -1 for non-interactive runs.
+//
+// Setctty is intentionally NOT set: Go's exec validation rejects
+// `both Setctty and Foreground set in SysProcAttr` (they are mutually
+// exclusive). Setctty would also require Setsid (new session leader),
+// which is the wrong shape — the child should inherit clawkerd's
+// session, not start a new one. Foreground:true is the correct
+// minimal primitive for "transfer foreground pgroup ownership".
 func buildSysProcAttr(user *ExecUser, cttyFd int) *syscall.SysProcAttr {
 	attr := &syscall.SysProcAttr{Setpgid: true}
 	if cttyFd >= 0 {
-		attr.Setctty = true
 		attr.Foreground = true
 		attr.Ctty = cttyFd
 	}
