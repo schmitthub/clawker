@@ -204,9 +204,11 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	// handleAgentReady invokes spawnEntry when CP dispatches
 	// AgentReady, the terminal step of the CP-driven init plan. The
 	// reaper's Wait4(-1, WNOHANG) phase 2 is HELD by default; main()
-	// releases it via BeginOrphanDrain only AFTER GracefulStop
-	// drains session.go's in-flight ShellCommand pipelines, so
-	// phase 2 never races c.Wait for stage children.
+	// releases it via BeginOrphanDrain only AFTER the listener Stop
+	// (force-close, NOT GracefulStop — see teardown below) and after
+	// the main-child-exit cascade has torn down session.go's
+	// in-flight ShellCommand pipelines, so phase 2 never races
+	// c.Wait for stage children.
 	spawn := newSpawnState(log)
 	spawnEntry := func() error {
 		return spawn.Run(spawnConfig{

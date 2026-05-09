@@ -640,7 +640,7 @@ func (s *spawnState) runReaper(log *logger.Logger) {
 		}
 	}
 	// Phase 1 done. Signal callers waiting to coordinate teardown
-	// (e.g. main()'s GracefulStop) BEFORE phase 2 starts draining.
+	// (e.g. main()'s listener Stop) BEFORE phase 2 starts draining.
 	s.closeMainExitedCh()
 	// Wait for the phase-2 gate before running Wait4(-1, WNOHANG):
 	// concurrent exec.Cmd.Wait surfaces (session.go's ShellCommand

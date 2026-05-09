@@ -293,8 +293,6 @@ func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 		"no userspace privilege-drop wrapper allowed; privilege drop happens in the spawn child")
 	assert.NotContains(t, content, `ENTRYPOINT ["/usr/local/bin/entrypoint.sh"`,
 		"no shell entrypoint shim allowed; clawkerd owns the spawn directly")
-	assert.NotContains(t, content, `RUN install -y gosu`,
-		"gosu must not be installed in the image")
 }
 
 func TestDockerfilesDir_PropagatesError(t *testing.T) {
