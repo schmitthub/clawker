@@ -82,6 +82,21 @@ const shutdownGrace = 10 * time.Second
 const exitCodeConfig = 2
 
 func main() {
+	// Ignore SIGTTIN/SIGTTOU before any other setup. Once the spawn
+	// child becomes the controlling tty's foreground pgroup (via
+	// Foreground:true in spawn_unix.go), clawkerd is a background
+	// process w.r.t. that tty. Any read/write by clawkerd against
+	// stdin/stdout/stderr (final shutdown logs to os.Stderr fallback,
+	// fmt.Fprintf paths) would trigger SIGTTOU/SIGTTIN, whose default
+	// action is "stop the process" — clawkerd freezes in T state, the
+	// container never exits, and the host's `clawker run` never sees
+	// container teardown so it cannot restore the host terminal mode
+	// the user sees as "frozen terminal after agent exit". Lifted
+	// from tini's configure_signals (src/tini.c:481-503): same shape,
+	// same reason. signal.Ignore installs SIG_IGN at the OS level so
+	// the kernel drops these signals before they ever stop the daemon.
+	signal.Ignore(syscall.SIGTTIN, syscall.SIGTTOU)
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 
 	// Logger init has to land BEFORE run() so every subsequent event

@@ -743,6 +743,13 @@ func mapWaitStatus(ws syscall.WaitStatus) int {
 //
 //   - SIGCHLD: reaper handles it; forwarding would corrupt reap loops
 //   - SIGURG: Go runtime uses it for goroutine preemption
+//   - SIGTTIN/SIGTTOU: ignored by the supervisor itself (main.go's
+//     signal.Ignore) because once the child becomes the tty foreground
+//     pgroup, any I/O by clawkerd would otherwise stop the daemon.
+//     The kernel-delivered TTOU is for the SUPERVISOR's I/O attempt —
+//     forwarding it to the child would be meaningless (the child is
+//     the foreground; it doesn't get TTOU) and dangerous (default
+//     action stops the child).
 //   - program-error signals (SIGFPE/SIGILL/SIGSEGV/SIGBUS/SIGABRT/
 //     SIGTRAP/SIGSYS): supervisor-side bugs; let them crash clawkerd
 //     rather than masking via forward
@@ -758,8 +765,6 @@ func forwardableSignals() []os.Signal {
 		unix.SIGPIPE,
 		unix.SIGALRM,
 		unix.SIGTSTP,
-		unix.SIGTTIN,
-		unix.SIGTTOU,
 		unix.SIGWINCH,
 	}
 }
