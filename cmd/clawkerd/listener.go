@@ -48,7 +48,7 @@ var errListenerConfig = errors.New("clawkerd listener: config error")
 // Returns the running grpc.Server so main can Stop on shutdown. The
 // underlying net.Listener is owned by the goroutine that runs Serve
 // and is closed by Stop.
-func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, onFatal func(error), log *logger.Logger) (*grpc.Server, error) {
+func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, onFatal func(error), log *logger.Logger, progress *progressReporter) (*grpc.Server, error) {
 	if spawnEntry == nil {
 		return nil, fmt.Errorf("%w: spawnEntry is required", errListenerConfig)
 	}
@@ -80,7 +80,7 @@ func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawn
 			PermitWithoutStream: true,
 		}),
 	)
-	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register, spawnEntry: spawnEntry})
+	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register, spawnEntry: spawnEntry, progress: progress})
 
 	go func() {
 		// PID-1 resilience: a panic inside grpc.Serve (e.g. from a
@@ -195,11 +195,15 @@ type clawkerdServer struct {
 	log        *logger.Logger
 	register   *registerCoordinator
 	spawnEntry func() error
+	// progress drives the user-facing TTY boot-status reporter (plain
+	// status lines, no animation) shared across every Session for the
+	// process lifetime. Nil-tolerant; tests pass nil.
+	progress *progressReporter
 }
 
 // Session is the bidi command-dispatch channel from CP to clawkerd.
 // All per-stream state lives in runSession; this method just hands
 // off and lets the helper own the lifecycle.
 func (s *clawkerdServer) Session(stream clawkerdv1.ClawkerdService_SessionServer) error {
-	return runSession(stream, s.log, s.register, s.spawnEntry)
+	return runSession(stream, s.log, s.register, s.spawnEntry, s.progress)
 }

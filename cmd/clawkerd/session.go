@@ -51,7 +51,7 @@ const sendQueueDepth = 64
 // invokes it to fork the user CMD; threaded through as a non-optional
 // dependency so a wiring bug fails loud at clawkerdServer construction
 // rather than silently no-op'ing on first AgentReady.
-func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger, register *registerCoordinator, spawnEntry func() error) error {
+func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger, register *registerCoordinator, spawnEntry func() error, progress *progressReporter) error {
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
@@ -69,6 +69,11 @@ func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Log
 		Str("peer_thumbprint", peerThumbprint).
 		Msg("clawkerd: Session started")
 	defer func() {
+		// Settle the progress reporter on every Session exit so a
+		// transport break or init failure (no AgentReady received)
+		// quiets further writes. Idempotent + race-safe with
+		// handleAgentReady's Final.
+		progress.Stop()
 		log.Info().
 			Str("event", "session_ended").
 			Str("peer_cn", peerCN).
@@ -83,6 +88,7 @@ func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Log
 		cmds:       make(map[string]*runningCommand),
 		register:   register,
 		spawnEntry: spawnEntry,
+		progress:   progress,
 	}
 
 	// Sender goroutine: single writer to stream.Send (gRPC's
@@ -147,6 +153,14 @@ type session struct {
 	// wiring bug surfaces as a typed terminal failure rather than a
 	// silent timeout.
 	spawnEntry func() error
+
+	// progress drives the user-facing TTY boot-status reporter (plain
+	// status lines, no animation). Owned by main(); shared across every
+	// Session for the process lifetime so a CP reconnect after the user
+	// CMD has spawned silently no-ops on the already-stopped reporter
+	// rather than re-emitting init banners. nil-tolerant; test fixtures
+	// leave it unset.
+	progress *progressReporter
 }
 
 // handleRegisterRequired drives the CP-triggered Register handshake.
@@ -290,6 +304,14 @@ func (s *session) handleAgentReady(ctx context.Context, commandID string) {
 			"agent_ready: spawn entry not wired"))
 		return
 	}
+
+	// Settle the progress reporter with a closing banner BEFORE spawning.
+	// SysProcAttr.Foreground=true transfers the controlling tty's
+	// foreground pgroup to the child during fork — once spawn returns,
+	// any further clawkerd write would visually clobber the user CMD's
+	// startup output. Final is idempotent so a CP reconnect re-dispatch
+	// (errAlreadySpawned path) cleanly no-ops.
+	s.progress.Final()
 
 	err := s.spawnEntry()
 	if err != nil && !errors.Is(err, errAlreadySpawned) {
@@ -465,7 +487,33 @@ func (s *session) runSender(ctx context.Context, cancel context.CancelFunc) {
 				cancel()
 				return
 			}
+			// Settle the user-facing init-step line only after the
+			// terminal Response has shipped on the wire. Mirrors the
+			// "starting" line emitted in dispatch. EndStep on a dropped
+			// or unsent Response would leave the user with a "✓ done"
+			// line for a step CP never saw the outcome of.
+			s.settleInitStep(resp)
 		}
+	}
+}
+
+// settleInitStep emits the user-facing completion line for an init
+// step's terminal Response after a successful stream.Send. Non-init
+// CommandIDs (parseInitStep returns false) and non-terminal payloads
+// are no-ops.
+func (s *session) settleInitStep(resp *clawkerdv1.Response) {
+	if s.progress == nil || resp == nil {
+		return
+	}
+	label, ok := parseInitStep(resp.CommandId)
+	if !ok {
+		return
+	}
+	switch resp.Payload.(type) {
+	case *clawkerdv1.Response_Done:
+		s.progress.EndStep(label, true)
+	case *clawkerdv1.Response_Error:
+		s.progress.EndStep(label, false)
 	}
 }
 
@@ -591,6 +639,14 @@ func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 				clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
 				"command_id required"))
 			return
+		}
+		// CP-driven init steps carry an `init-` prefixed CommandID;
+		// emit the "in progress" status line off the boundary. Done/Error
+		// completion is fired in runSender via settleInitStep, only after
+		// stream.Send succeeds — so a step's "✓ done" line is never emitted
+		// for a Response CP didn't actually receive.
+		if label, ok := parseInitStep(cmd.CommandId); ok {
+			s.progress.StartStep(label)
 		}
 		s.startShellCommand(ctx, cmd.CommandId, p.Shell)
 	case *clawkerdv1.Command_Stdin:
