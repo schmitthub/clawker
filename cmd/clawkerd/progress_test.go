@@ -134,7 +134,7 @@ func TestProgressReporter_StopMutesFurtherWrites(t *testing.T) {
 // TestProgressReporter_StopBeforeFinalSuppressesBanner verifies the
 // Stop-then-Final ordering. Stop is "quiet cleanup, no banner" — once
 // it claims the muted slot, a subsequent Final must NOT emit a closing
-// banner. Final's CAS is the gate.
+// banner. Final's mutex-guarded `stopped` check is the gate.
 func TestProgressReporter_StopBeforeFinalSuppressesBanner(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer

@@ -253,8 +253,9 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.L
 	}
 
 	// Pre-start already ran in cooked mode at the call site (startRun) — only
-	// docker start + post-start here, silently. clawkerd's in-container spinner
-	// owns the visual surface via pty.Stream → ios.Out from this point on.
+	// docker start + post-start here, silently. clawkerd's in-container
+	// init-progress reporter owns the foreground TTY via pty.Stream
+	// (which copies hijacked container output to os.Stdout) from this point on.
 	log.Debug().Msg("starting container")
 	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{
 		ContainerID: containerID,

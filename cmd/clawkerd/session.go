@@ -154,11 +154,12 @@ type session struct {
 	// silent timeout.
 	spawnEntry func() error
 
-	// progress drives the user-facing TTY spinner. Owned by main();
-	// shared across every Session for the process lifetime so a CP
-	// reconnect after the user CMD has spawned silently no-ops on the
-	// already-stopped reporter rather than re-emitting init banners.
-	// nil-tolerant; test fixtures leave it unset.
+	// progress drives the user-facing TTY boot-status reporter (plain
+	// status lines, no animation). Owned by main(); shared across every
+	// Session for the process lifetime so a CP reconnect after the user
+	// CMD has spawned silently no-ops on the already-stopped reporter
+	// rather than re-emitting init banners. nil-tolerant; test fixtures
+	// leave it unset.
 	progress *progressReporter
 }
 

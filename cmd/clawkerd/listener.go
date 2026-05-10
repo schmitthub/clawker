@@ -195,8 +195,9 @@ type clawkerdServer struct {
 	log        *logger.Logger
 	register   *registerCoordinator
 	spawnEntry func() error
-	// progress drives the user-facing TTY spinner shared across every
-	// Session for the process lifetime. Nil-tolerant; tests pass nil.
+	// progress drives the user-facing TTY boot-status reporter (plain
+	// status lines, no animation) shared across every Session for the
+	// process lifetime. Nil-tolerant; tests pass nil.
 	progress *progressReporter
 }
 

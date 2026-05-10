@@ -30,13 +30,15 @@ import (
 // without trying to make microscopic intervals look animated.
 //
 // All methods are nil-safe so test sessions can leave progress unset.
-// Methods are safe to call concurrently: session.send invokes EndStep
-// from per-stage reapers, drainers, and runShellCommand workers while
-// the receiver goroutine drives StartStep / Final / Stop. mu serializes
-// the stopped check + write so once Stop or Final returns, no further
-// line can land on the TTY (which would otherwise clobber the user
-// CMD's startup output once handleAgentReady transfers the foreground
-// pgroup).
+// Methods are safe to call concurrently: the per-Session sender
+// goroutine drives EndStep via session.runSender's settleInitStep call
+// (after each terminal stream.Send), while the receive loop goroutine
+// drives Banner / StartStep / Final / Stop from dispatch,
+// handleAgentReady, and runSession's defer. mu serializes the stopped
+// check + write so once Stop or Final returns, no further line can
+// land on the TTY (which would otherwise clobber the user CMD's
+// startup output once handleAgentReady transfers the foreground pgroup
+// during spawn).
 type progressReporter struct {
 	out     io.Writer
 	isTTY   bool
@@ -46,8 +48,12 @@ type progressReporter struct {
 
 // newProgressReporter returns a reporter that writes to out. TTY
 // detection probes TIOCGPGRP — same shape used by spawn_unix.go's
-// stdinCttyFd, portable across linux + darwin (TCGETS is linux-only).
-// On a non-TTY out, ANSI color codes are suppressed so log scrapes
+// stdinCttyFd, portable across the unix targets clawkerd builds for
+// (TCGETS would be linux-only). progress.go has no //go:build unix
+// tag itself, but importing golang.org/x/sys/unix unconditionally
+// fences this file to unix in practice, matching clawkerd's
+// linux-only deployment. On a non-TTY out, ANSI color codes are
+// suppressed and the info icon falls back to "[info]" so log scrapes
 // stay clean.
 func newProgressReporter(out io.Writer) *progressReporter {
 	p := &progressReporter{out: out}
@@ -113,8 +119,9 @@ const finalLabel = "Running agent command..."
 
 // Final prints the closing banner then mutes the reporter. Use on the
 // happy path (handleAgentReady, immediately before spawning the user
-// CMD). After this returns, the user CMD takes the TTY foreground
-// and clawkerd writes are muted.
+// CMD). After this returns, clawkerd writes are muted; the subsequent
+// spawnEntry call is what transfers the controlling-tty foreground
+// pgroup to the user CMD via SysProcAttr.Foreground.
 func (p *progressReporter) Final() {
 	if p == nil {
 		return
@@ -189,11 +196,13 @@ var initStepLabels = map[string]initStepLabel{
 }
 
 // parseInitStep extracts the step label from a CP-issued init
-// CommandID. Format: `init-<containerID prefix up to 12 chars>-<stepname>-<idx>`
+// CommandID. Format: `init-<containerID truncated to 12 chars>-<stepname>-<idx>`
 // — see internal/controlplane/agent/init.go::buildCommandID. Returns
 // the matched label and ok=true when the ID matches the init shape.
-// CP always emits 12-char prefixes for real container IDs, so the
-// strip is fixed-width.
+// The strip is fixed-width 13 (12 chars + the trailing hyphen), so a
+// container ID shorter than 12 chars would mis-parse. Real Docker
+// container IDs are 64 hex chars and always truncate to exactly 12;
+// only synthetic test IDs would trip the assumption.
 func parseInitStep(commandID string) (initStepLabel, bool) {
 	const prefix = "init-"
 	if !strings.HasPrefix(commandID, prefix) {

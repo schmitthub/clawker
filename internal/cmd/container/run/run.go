@@ -277,9 +277,9 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	// under a spinner BEFORE attach. Doing it here — in cooked mode, before
 	// pty.Setup hijacks the terminal — keeps the spinner clear of the raw-tty
 	// stream and guarantees the host stops writing to ios.ErrOut before
-	// clawkerd starts writing to the attached TTY (ios.Out via pty.Stream).
-	// Both detach and attach paths share the same pre-start, so the bootstrap
-	// effort isn't repeated downstream.
+	// clawkerd starts writing to the attached TTY (pty.Stream copies hijacked
+	// container output to os.Stdout). Both detach and attach paths share the
+	// same pre-start, so the bootstrap effort isn't repeated downstream.
 	cmdOpts := shared.CommandOpts{
 		Client:         opts.Client,
 		Config:         opts.Config,
@@ -391,8 +391,9 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	}
 
 	// Docker start + post-start run silently — clawkerd boots immediately and
-	// owns the visible window from this point via pty.Stream → ios.Out. Any
-	// host-side spinner here would interleave with that output on the same
+	// owns the foreground TTY from here on, writing init progress lines to
+	// os.Stdout via pty.Stream. Any host-side output (spinner, log line,
+	// prompt) here would interleave with clawkerd's lines on the same
 	// terminal; keep this silent.
 	log.Debug().Msg("starting container")
 	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
