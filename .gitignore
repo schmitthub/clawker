@@ -36,6 +36,8 @@ Temporary Items
 # Build output directories
 bin/
 dist/
+# Release pipeline staging (per-arch linux embed sets, see Makefile release-embeds)
+embeds/
 
 # Root-level binaries (build output belongs in bin/)
 /clawker

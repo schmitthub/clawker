@@ -13,17 +13,6 @@ Top-level tracker for features and architectural improvements that are known but
 
 ---
 
-## 0. Release pipeline adaptation for Dockerfile.controlplane build chain
-
-**Status:** release pipeline broken on main — must land before next tag push
-**Scope:** medium
-
-`make clawker` works locally (Make triggers pinned Docker builds for firewall stack binaries). But `.github/workflows/release.yml` + `.goreleaser.yaml` use `go generate ./...` which needs BPF toolchain not present on the runner, and `go:embed` assets don't exist.
-
-**Fix:** Switch GoReleaser to `builder: prebuilt`. Makefile produces all cross-arch binaries via pinned Docker chain, GoReleaser just packages/signs/publishes. See detailed plan in git history.
-
----
-
 ## 2. Native IPv6 support
 
 **Status:** not supported (documented limitation)

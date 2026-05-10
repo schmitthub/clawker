@@ -25,11 +25,13 @@ git push origin v1.0.0
 1. **Checkout** with full history (`fetch-depth: 0`)
 2. **Validate** tag is semver and on main
 3. **Setup Go** from `go.mod` version
-4. **Verify build** — `go build ./cmd/clawker`
-5. **Install cosign** (sigstore) + **syft** (SBOM generation)
-6. **GoReleaser v2** — `goreleaser release --clean`
-   - Pre-hooks: `go mod tidy`, `go generate ./...`
-   - Builds 4 platform binaries (CGO_ENABLED=0)
+4. **Setup Docker Buildx** — required for the pinned multi-stage build that produces the embedded firewall stack binaries
+5. **`make release-embeds`** — builds both linux arch embed sets (amd64 + arm64). Three of the four binaries (clawker-cp, ebpf-manager, coredns-clawker) go through the pinned `Dockerfile.controlplane` chain; clawkerd is a plain CGO_ENABLED=0 host-Go cross-compile (pure Go, no BPF). Stages them under `embeds/{amd64,arm64}/` outside `dist/`. Asserts ELF e_machine on each staged binary — silent wrong-arch is unrecoverable once published.
+6. **Install cosign** (sigstore) + **syft** (SBOM generation)
+7. **GoReleaser v2** — `goreleaser release --clean --parallelism 1`
+   - Two build IDs: `clawker-amd64`, `clawker-arm64`. Each has a `hooks.pre` calling `make stage-embeds-<arch>` to swap the matching arch's embeds into `assets/` paths immediately before that build's `go build` runs.
+   - `--parallelism 1` is REQUIRED — the build IDs share the `assets/` paths and would race otherwise.
+   - Builds 4 platform binaries (CGO_ENABLED=0, pure-Go cross-compile of `./cmd/clawker`)
    - Creates tar.gz archives with LICENSE + README.md
    - Generates SHA256 checksums
    - Signs checksums with cosign (keyless, OIDC)
@@ -83,16 +85,30 @@ cosign verify-blob \
 
 ```bash
 make clawker              # Build for current platform with version from git describe
-make clawker-build-all    # Cross-compile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
+make clawker-build-all    # Dev-fast cross-compile (host Go for embeds — NOT pin-reproducible)
+make release-embeds       # Reproducible: build both linux arch embed sets via pinned Docker
 ```
 
-Local builds use the same ldflags pattern. Version is derived from `git describe --tags --always --dirty`.
+`clawker-build-{linux,darwin}` use plain `go build` for the embedded firewall stack
+binaries, bypassing the pinned `Dockerfile.controlplane` chain. They're dev shortcuts
+only — release pipeline uses `release-embeds` exclusively.
+
+## Reproducibility gap (known)
+
+The final clawker CLI binary is cross-compiled by the runner's Go toolchain
+(`actions/setup-go` reads `go.mod`). Embedded firewall stack binaries are
+fully pin-reproducible via `Dockerfile.controlplane` (clang/llvm/libbpf-dev/Go
+all digest-pinned — see `internal/controlplane/firewall/ebpf/REPRODUCIBILITY.md`).
+
+For full reproducibility of the final clawker binary, use the same Go version
+declared in `go.mod`'s `toolchain` directive on the rebuild host.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `.github/workflows/release.yml` | Release workflow (trigger: `v*` tag push) |
-| `.goreleaser.yaml` | GoReleaser v2 config (builds, archives, signing, changelog) |
+| `.goreleaser.yaml` | GoReleaser v2 config (two build IDs + per-arch pre-hooks) |
 | `internal/build/build.go` | Build-time metadata vars (`Version`, `Date`) |
-| `Makefile` | Local build targets with ldflags injection |
+| `Makefile` | `release-embeds` (pinned Docker), `stage-embeds-{amd64,arm64}` (per-build swap) |
+| `Dockerfile.controlplane` | Pinned multi-stage recipe for the four linux embeds |

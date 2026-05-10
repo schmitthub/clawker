@@ -41,11 +41,24 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install moq
-        run: go install github.com/matryer/moq@66a933417c1a7ca1302529db332fecbf77e166d9 # v0.6.0
+      # Required for `make release-embeds`, which invokes `docker buildx build`
+      # against the pinned multi-stage Dockerfile.controlplane to produce the
+      # four embedded linux binaries (clawker-cp, ebpf-manager, coredns-clawker,
+      # clawkerd) for both amd64 and arm64. ubuntu-latest ships with Docker;
+      # this action wires up buildx.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
-      - name: Verify build
-        run: go build ./cmd/clawker
+      # Stages both linux arch embed sets under embeds/{amd64,arm64}/. The
+      # subsequent goreleaser run consumes them via per-build-id pre-hooks
+      # (.goreleaser.yaml -> hooks.pre -> make stage-embeds-<arch>).
+      #
+      # No CLAWKER_VERSION/CLAWKER_DATE override here — the embedded binaries
+      # (clawker-cp, clawkerd, etc.) don't currently consume those vars (no
+      # internal/build-style version stamping in their builds). Goreleaser
+      # injects version+date into the final ./cmd/clawker via ldflags below.
+      - name: Build linux embed sets
+        run: make release-embeds
 
       - name: Install cosign
         uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
@@ -53,12 +66,16 @@ jobs:
       - name: Install syft
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
 
+      # `--parallelism 1` is REQUIRED. The two build IDs (clawker-amd64,
+      # clawker-arm64) share the assets/ go:embed source paths and would race
+      # on each other's pre-hooks under the default parallelism. Serializing
+      # is cheap — host-Go cross-compile of ./cmd/clawker is ~5s per target.
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7.2.1
         with:
           distribution: goreleaser
           version: "v2.15.2"
-          args: release --clean
+          args: release --clean --parallelism 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
