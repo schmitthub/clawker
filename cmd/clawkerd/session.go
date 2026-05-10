@@ -642,8 +642,9 @@ func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 		}
 		// CP-driven init steps carry an `init-` prefixed CommandID;
 		// emit the "in progress" status line off the boundary. Done/Error
-		// hooks live in s.send so every exit path emits a completion
-		// line for the step.
+		// completion is fired in runSender via settleInitStep, only after
+		// stream.Send succeeds — so a step's "✓ done" line is never emitted
+		// for a Response CP didn't actually receive.
 		if label, ok := parseInitStep(cmd.CommandId); ok {
 			s.progress.StartStep(label)
 		}
