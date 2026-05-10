@@ -138,7 +138,27 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		}
 
 		containerName := containers[0]
-		return attachAndStart(ctx, ios, log, client, containerName, cfg, opts)
+		// Bootstrap host services (CP ensure, host proxy, firewall init/rules)
+		// under a spinner BEFORE attach. Run in cooked mode here so the spinner
+		// stays clear of the raw-tty stream attachAndStart sets up. attachAndStart
+		// then handles attach + docker start + post-start without re-running
+		// pre-start.
+		cmdOpts := shared.CommandOpts{
+			Client:         opts.Client,
+			Config:         opts.Config,
+			ProjectManager: opts.ProjectManager,
+			HostProxy:      opts.HostProxy,
+			ControlPlane:   opts.ControlPlane,
+			AdminClient:    opts.AdminClient,
+			SocketBridge:   opts.SocketBridge,
+			Logger:         opts.Logger,
+		}
+		if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
+			return shared.BootstrapServicesPreStart(ctx, containerName, cmdOpts)
+		}); err != nil {
+			return fmt.Errorf("starting container: %w", err)
+		}
+		return attachAndStart(ctx, ios, log, client, containerName, cfg, cmdOpts, opts)
 	}
 
 	// Start all containers without attaching
@@ -152,7 +172,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 //
 // I/O streaming starts pre-start; resize starts post-start. This ensures we're
 // ready to receive output immediately and avoids kernel pipe buffer issues.
-func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.Logger, client *docker.Client, containerName string, cfg config.Config, opts *StartOptions) error {
+func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.Logger, client *docker.Client, containerName string, cfg config.Config, cmdOpts shared.CommandOpts, opts *StartOptions) error {
 	// Find and inspect the container
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -232,27 +252,20 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.L
 		}
 	}
 
-	// Now start the container — I/O streaming goroutines are already running
+	// Pre-start already ran in cooked mode at the call site (startRun) — only
+	// docker start + post-start here, silently. clawkerd's in-container spinner
+	// owns the visual surface via pty.Stream → ios.Out from this point on.
 	log.Debug().Msg("starting container")
-	_, err = shared.ContainerStart(ctx,
-		shared.CommandOpts{
-			Client:         opts.Client,
-			Config:         opts.Config,
-			ProjectManager: opts.ProjectManager,
-			HostProxy:      opts.HostProxy,
-			ControlPlane:   opts.ControlPlane,
-			AdminClient:    opts.AdminClient,
-			SocketBridge:   opts.SocketBridge,
-			Logger:         opts.Logger,
+	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{
+		ContainerID: containerID,
+		EnsureNetwork: &docker.EnsureNetworkOptions{
+			Name: cfg.ClawkerNetwork(),
 		},
-		docker.ContainerStartOptions{
-			ContainerID: containerID,
-			EnsureNetwork: &docker.EnsureNetworkOptions{
-				Name: cfg.ClawkerNetwork(),
-			},
-		})
-	if err != nil {
+	}); err != nil {
 		log.Debug().Err(err).Msg("container start failed")
+		return fmt.Errorf("starting container: %w", err)
+	}
+	if err := shared.BootstrapServicesPostStart(ctx, containerID, cmdOpts); err != nil {
 		return fmt.Errorf("starting container: %w", err)
 	}
 	log.Debug().Msg("container started successfully")

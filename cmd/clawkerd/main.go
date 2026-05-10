@@ -161,6 +161,17 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		Str("bootstrap_dir", consts.BootstrapDir).
 		Msg("clawkerd starting")
 
+	// User-facing boot progress on the attached TTY. clawkerd is PID 1
+	// of the agent container; until handleAgentReady transfers the
+	// controlling tty's foreground pgroup to the spawned user CMD, the
+	// user otherwise sees a blank terminal during CP-driven init.
+	// Threaded through the listener → server → session chain so step
+	// boundaries observed in dispatch/send/handleAgentReady can drive
+	// the spinner. nil-safe, so a wiring oversight is benign.
+	progress := newProgressReporter(os.Stdout)
+	progress.Banner("Starting Clawker agent...")
+	defer progress.Stop()
+
 	// Resolve the unprivileged user the spawn child will run as.
 	// Default to consts.ContainerUser ("claude") when CLAWKER_USER is
 	// unset so a hand-built image without the Dockerfile-set env
@@ -246,7 +257,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		}
 	}
 
-	clawkerdSrv, err := startClawkerdListener(boot, register, spawnEntry, onListenerFatal, log)
+	clawkerdSrv, err := startClawkerdListener(boot, register, spawnEntry, onListenerFatal, log, progress)
 	if err != nil {
 		log.Error().Err(err).Str("event", "clawkerd_listener_start_failed").Msg("start clawkerd listener")
 		// Wiring bugs and malformed bootstrap material are deterministic
