@@ -83,21 +83,23 @@ func (p *progressReporter) EndStep(label initStepLabel, ok bool) {
 	fmt.Fprintf(p.out, "  %s %s (failed)\n", p.red("✗"), label.Active)
 }
 
-// Final prints a closing banner then mutes the reporter. Use on the
+// finalLabel is the fixed closing-banner text. Hard-coded (not a
+// parameter) so a caller can't accidentally burn the once-only Final
+// slot with an empty string.
+const finalLabel = "Running agent command..."
+
+// Final prints the closing banner then mutes the reporter. Use on the
 // happy path (handleAgentReady, immediately before spawning the user
 // CMD). After this returns, the user CMD takes the TTY foreground
 // and clawkerd writes are muted.
-func (p *progressReporter) Final(label string) {
+func (p *progressReporter) Final() {
 	if p == nil {
 		return
 	}
 	if !p.stopped.CompareAndSwap(false, true) {
 		return
 	}
-	if label == "" {
-		return
-	}
-	fmt.Fprintf(p.out, "%s %s\n", p.info(), label)
+	fmt.Fprintf(p.out, "%s %s\n", p.info(), finalLabel)
 }
 
 // Stop is the quiet cleanup path — disables further writes without

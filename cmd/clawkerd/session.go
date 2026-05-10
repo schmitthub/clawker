@@ -310,7 +310,7 @@ func (s *session) handleAgentReady(ctx context.Context, commandID string) {
 	// any further clawkerd write would visually clobber the user CMD's
 	// startup output. Final is idempotent so a CP reconnect re-dispatch
 	// (errAlreadySpawned path) cleanly no-ops.
-	s.progress.Final("Running agent command...")
+	s.progress.Final()
 
 	err := s.spawnEntry()
 	if err != nil && !errors.Is(err, errAlreadySpawned) {

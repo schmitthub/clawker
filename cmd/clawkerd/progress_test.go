@@ -88,7 +88,7 @@ func TestProgressReporter_LinearOutput(t *testing.T) {
 	p.EndStep(cfgLabel, true)
 	p.StartStep(gitLabel)
 	p.EndStep(gitLabel, false)
-	p.Final("Running agent command...")
+	p.Final()
 
 	out := buf.String()
 	for _, want := range []string{
@@ -115,7 +115,7 @@ func TestProgressReporter_StopMutesFurtherWrites(t *testing.T) {
 	p := newProgressReporter(&buf)
 
 	p.Banner("first")
-	p.Final("done")
+	p.Final()
 
 	preStop := buf.String()
 	// Anything after Final must NOT change the buffer.
@@ -123,10 +123,44 @@ func TestProgressReporter_StopMutesFurtherWrites(t *testing.T) {
 	p.Banner("after-final-banner")
 	p.StartStep(label)
 	p.EndStep(label, true)
-	p.Final("second-final")
+	p.Final()
 	p.Stop()
 
 	if buf.String() != preStop {
 		t.Errorf("post-Final writes leaked into buffer:\nbefore: %q\nafter: %q", preStop, buf.String())
 	}
+}
+
+// TestProgressReporter_StopBeforeFinalSuppressesBanner verifies the
+// Stop-then-Final ordering. Stop is "quiet cleanup, no banner" — once
+// it claims the muted slot, a subsequent Final must NOT emit a closing
+// banner. Final's CAS is the gate.
+func TestProgressReporter_StopBeforeFinalSuppressesBanner(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	p := newProgressReporter(&buf)
+
+	p.Stop()
+	p.Final()
+
+	if got := buf.String(); got != "" {
+		t.Errorf("Stop-then-Final emitted output, want none: %q", got)
+	}
+}
+
+// TestProgressReporter_NilReceiverSafe verifies the documented
+// nil-safe contract — every method must no-op on a nil receiver so
+// test sessions and degraded wiring paths can leave progress unset
+// without crashing PID 1.
+func TestProgressReporter_NilReceiverSafe(t *testing.T) {
+	t.Parallel()
+	var p *progressReporter
+	label := initStepLabel{Active: "x...", Done: "x done"}
+
+	p.Banner("nope")
+	p.StartStep(label)
+	p.EndStep(label, true)
+	p.EndStep(label, false)
+	p.Final()
+	p.Stop()
 }
