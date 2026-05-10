@@ -486,7 +486,33 @@ func (s *session) runSender(ctx context.Context, cancel context.CancelFunc) {
 				cancel()
 				return
 			}
+			// Settle the user-facing init-step line only after the
+			// terminal Response has shipped on the wire. Mirrors the
+			// "starting" line emitted in dispatch. EndStep on a dropped
+			// or unsent Response would leave the user with a "✓ done"
+			// line for a step CP never saw the outcome of.
+			s.settleInitStep(resp)
 		}
+	}
+}
+
+// settleInitStep emits the user-facing completion line for an init
+// step's terminal Response after a successful stream.Send. Non-init
+// CommandIDs (parseInitStep returns false) and non-terminal payloads
+// are no-ops.
+func (s *session) settleInitStep(resp *clawkerdv1.Response) {
+	if s.progress == nil || resp == nil {
+		return
+	}
+	label, ok := parseInitStep(resp.CommandId)
+	if !ok {
+		return
+	}
+	switch resp.Payload.(type) {
+	case *clawkerdv1.Response_Done:
+		s.progress.EndStep(label, true)
+	case *clawkerdv1.Response_Error:
+		s.progress.EndStep(label, false)
 	}
 }
 
@@ -501,22 +527,6 @@ func (s *session) runSender(ctx context.Context, cancel context.CancelFunc) {
 // drop at Debug — losing one is at worst a gap in streaming output and
 // CP doesn't gate any control-flow decision on a specific chunk.
 func (s *session) send(ctx context.Context, resp *clawkerdv1.Response) {
-	// Mirror init-step boundaries onto the user-facing status lines.
-	// The dispatch hook for Command_Shell emits the "starting" line; here
-	// we emit the completion line when CP gets the terminal Response.
-	// Hooked at this single chokepoint so every runShellCommand exit path
-	// (success, timeout, stage spawn fail, IO_ERROR, panic recovery)
-	// settles the step.
-	if s.progress != nil && resp != nil {
-		if label, ok := parseInitStep(resp.CommandId); ok {
-			switch resp.Payload.(type) {
-			case *clawkerdv1.Response_Done:
-				s.progress.EndStep(label, true)
-			case *clawkerdv1.Response_Error:
-				s.progress.EndStep(label, false)
-			}
-		}
-	}
 	select {
 	case s.sendCh <- resp:
 	case <-ctx.Done():

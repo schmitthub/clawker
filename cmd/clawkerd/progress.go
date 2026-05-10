@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
-	"sync/atomic"
+	"sync"
 
 	"golang.org/x/sys/unix"
 )
@@ -30,10 +30,18 @@ import (
 // without trying to make microscopic intervals look animated.
 //
 // All methods are nil-safe so test sessions can leave progress unset.
+// Methods are safe to call concurrently: session.send invokes EndStep
+// from per-stage reapers, drainers, and runShellCommand workers while
+// the receiver goroutine drives StartStep / Final / Stop. mu serializes
+// the stopped check + write so once Stop or Final returns, no further
+// line can land on the TTY (which would otherwise clobber the user
+// CMD's startup output once handleAgentReady transfers the foreground
+// pgroup).
 type progressReporter struct {
 	out     io.Writer
 	isTTY   bool
-	stopped atomic.Bool
+	mu      sync.Mutex
+	stopped bool
 }
 
 // newProgressReporter returns a reporter that writes to out. TTY
@@ -53,7 +61,12 @@ func newProgressReporter(out io.Writer) *progressReporter {
 
 // Banner prints a top-level header once at boot.
 func (p *progressReporter) Banner(label string) {
-	if p == nil || p.stopped.Load() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
 		return
 	}
 	fmt.Fprintf(p.out, "%s %s\n", p.info(), label)
@@ -64,7 +77,12 @@ func (p *progressReporter) Banner(label string) {
 // lines per step. CP issues init steps strictly sequentially, so we
 // never have to track which step is "current".
 func (p *progressReporter) StartStep(label initStepLabel) {
-	if p == nil || p.stopped.Load() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
 		return
 	}
 	fmt.Fprintf(p.out, "  %s\n", label.Active)
@@ -73,7 +91,12 @@ func (p *progressReporter) StartStep(label initStepLabel) {
 // EndStep prints the completion line for an init step. ok=true → ✓ +
 // done form; ok=false → ✗ + active form annotated as failed.
 func (p *progressReporter) EndStep(label initStepLabel, ok bool) {
-	if p == nil || p.stopped.Load() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
 		return
 	}
 	if ok {
@@ -96,10 +119,13 @@ func (p *progressReporter) Final() {
 	if p == nil {
 		return
 	}
-	if !p.stopped.CompareAndSwap(false, true) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
 		return
 	}
 	fmt.Fprintf(p.out, "%s %s\n", p.info(), finalLabel)
+	p.stopped = true
 }
 
 // Stop is the quiet cleanup path — disables further writes without
@@ -110,7 +136,9 @@ func (p *progressReporter) Stop() {
 	if p == nil {
 		return
 	}
-	p.stopped.Store(true)
+	p.mu.Lock()
+	p.stopped = true
+	p.mu.Unlock()
 }
 
 // info returns the standard info icon — cyan ℹ on a TTY, [info] as
