@@ -18,7 +18,7 @@
 |------|--------|-------|
 | Task 1: Dry-run validation of same-repo reusable workflow signing pattern | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 2: Makefile cleanup + L1 bug fixes | `complete` | claude/opus-4-7 (2026-05-11) |
-| Task 3: Split release.yml into caller + reusable workflow | `pending` | — |
+| Task 3: Split release.yml into caller + reusable workflow | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 4: Migrate to actions/attest@v4 with enriched SLSA v1 provenance | `pending` | — |
 | Task 5: Add SPDX SBOM-mode attestation | `pending` | — |
 | Task 6: Consumer surface fixes | `pending` | — |
@@ -209,6 +209,83 @@ OK    (no `reproducib|pin.reproducible|for reproducibility`)
 **Surprise:** The release-guide memory's "Reproducibility gap (known)" subsection claimed full pin-reproducibility of embeds via Dockerfile.controlplane. This isn't actually true — Docker buildx builds aren't byte-identical across hosts without `--reproducible` flag (which isn't set), and clawkerd cross-compile depends on the host Go toolchain. The framing was aspirational. Stripped.
 
 **No production unit test, e2e, or whail run is necessary at this gate** — Task 2 changes are pure Makefile/workflow comments + memory text. The single `make test` run + targeted re-runs of the flaky clawkerd race test cover the verification surface adequately.
+
+### Task 3 — Split release.yml into caller + reusable workflow (2026-05-11)
+
+**Final SHA pin set (all re-verified against `gh api repos/<owner>/<repo>/git/refs/tags/<tag>` at start of task):**
+
+| Action | Tag | Commit SHA | Δ from prior |
+|---|---|---|---|
+| `actions/checkout` | v6.0.2 | `de0fac2e4500dabe0009e67214ff5f5447ce83dd` | unchanged |
+| `actions/setup-go` | v6.4.0 | `4a3601121dd01d1626a1e23e37211e3254c1c06c` | unchanged |
+| `docker/setup-buildx-action` | v4.0.0 | `4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd` | unchanged |
+| `sigstore/cosign-installer` | v4.1.2 | `6f9f17788090df1f26f669e9d70d6ae9567deba6` | **BUMPED** from v4.1.1 (published 2026-05-07) |
+| `anchore/sbom-action/download-syft` | v0.24.0 | `e22c389904149dbc22b58101806040fa8d37a610` | unchanged |
+| `goreleaser/goreleaser-action` | v7.2.1 | `1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8` | unchanged |
+| `actions/attest-build-provenance` | v4.1.0 | `a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32` | unchanged (Task 4 replaces with `actions/attest@v4`) |
+
+Goreleaser CLI version input bumped `v2.15.2` → `v2.15.4` (current stable per `gh api repos/goreleaser/goreleaser/releases/latest`).
+
+**File layout:**
+
+- `.github/workflows/release.yml` (caller, 51 lines): `on: push tags v*` → 2 jobs: `validate` (semver + on-main checks, `contents: read` only) → `build` (`needs: validate`, declares full permission superset, `uses: ./.github/workflows/release-build.yml`, explicit secrets pass-through). No workflow-level `permissions:` block — per-job only.
+- `.github/workflows/release-build.yml` (reusable, NEW, 80 lines): `on: workflow_call` with required `HOMEBREW_TAP_GITHUB_TOKEN` secret. Single `build` job, 8 steps (identical to current release.yml minus tag validation). No `permissions:` block inside this file — inherits from caller's `build` job.
+
+**Permissions on caller's `build` job (full superset, per Task 1 finding #5 + new v4 requirement):**
+
+```yaml
+permissions:
+  contents: write          # goreleaser publishes the GitHub release
+  id-token: write          # Sigstore OIDC token for attestation signing
+  attestations: write      # GitHub attestation API write
+  artifact-metadata: write # required by actions/attest@v4 (wrapper relies on it)
+```
+
+`artifact-metadata: write` is the new-in-v4 requirement Task 1 surfaced. Per `actions/attest-build-provenance@v4.1.0` README: "As of version 4, `actions/attest-build-provenance` is simply a wrapper on top of `actions/attest`." → wrapper inherits the same permission profile. Declared up front so Task 4 swap to `actions/attest@v4` is a no-op on permissions.
+
+**Secrets pattern chosen: explicit, NOT `secrets: inherit`** (per Task 1 surprise #6 — audit-friendlier). Caller's `build` job declares:
+
+```yaml
+secrets:
+  HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+```
+
+Reusable declares the secret as `required: true`. `GITHUB_TOKEN` is auto-available in reusable; no declaration needed. Sigstore signing uses the OIDC ID token (gated by `id-token: write` on the calling job), NOT any repo secret — so the secrets surface is just the homebrew tap token.
+
+**No workflow-level `permissions:` block in caller.** Reusable workflows inherit from the calling JOB (not the workflow). Putting a workflow-level block would mislead — the `validate` job correctly restricts to `contents: read`, the `build` job declares the full superset for itself. Cleaner than relying on workflow-level scope.
+
+**Comment preservation:** load-bearing rationale comments (buildx requirement, `--parallelism 1` race story, embeds-don't-link-internal/build) moved into the reusable where goreleaser/make-release-embeds now live. Caller's comments scoped to permission/inheritance reasoning only.
+
+**Goreleaser bump rationale.** v2.15.2 → v2.15.4 is two patch versions. Did not audit changelog in detail since Task 3 spec explicitly directs updating to current stable, and patch bumps within the same v2.15.x line should be safe. If a regression surfaces during the Task 7 E2E test, can roll back to v2.15.2 — pin lives in one place (`release-build.yml` step).
+
+**cosign-installer bump rationale.** v4.1.1 → v4.1.2 published 2026-05-07 (4 days before this task). Same v4.x line; no breaking changes expected. The verify commands captured in Task 1 used a host cosign v3.0.5 binary (independent of this installer); production CI uses whatever this installer ships. Smoke-tested at Task 7 E2E.
+
+**Acceptance criteria — all pass:**
+
+```
+=== files exist ===
+release.yml OK
+release-build.yml OK
+=== caller validates + calls reusable ===
+workflow_call OK
+caller uses reusable OK
+=== SHA-pin check (should be empty) ===
+all pinned by SHA
+=== YAML parse ===
+YAML valid (both files)
+=== goreleaser version bumped ===
+v2.15.4
+=== cosign SHA bumped ===
+sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+```
+
+**Manual test deferred to Task 7 E2E** (can't fully exercise a push-tag trigger from a feature branch without polluting release history). The structural acceptance gates above + YAML parse confirm shape correctness.
+
+**Surprises / non-obvious decisions:**
+
+1. **Reusable file has no `permissions:` block.** Task 3 spec was explicit about this, but worth re-stating: declaring permissions in the reusable would be additive-only AND scope-down, never scope-up, on whatever the caller already granted. Cleaner to declare once on the caller's calling job — single audit point. Future maintainers tempted to "be safe" and copy the permissions block into the reusable should not — it's noise that pretends the reusable is self-contained when it isn't.
+2. **`validate` job's `contents: read` is intentional.** It runs checkout + git operations only; doesn't need write. Tightening helps reduce the blast radius if a future maintainer adds an unsafe step here. Defense in depth — the validate job runs before any third-party action consumes the tag.
+3. **Goreleaser CLI version (v2.15.4) is a `with:` input, NOT pinned by SHA.** The `goreleaser-action` itself is SHA-pinned (`1a80836c...`); the goreleaser CLI binary it downloads is selected by tag. This is the only floating-by-tag bit, and unavoidable — there's no SHA-input mode for that. The goreleaser binary's integrity comes from its own release-time signing, verified by the action.
 
 ---
 
@@ -920,3 +997,4 @@ git log main..HEAD --oneline   # expect ~6 commits, one per task
 ```
 Release pipeline overhaul — SLSA Build L3 via same-repo reusable workflow, enriched SLSA v1 provenance with 16 subjects + full resolvedDependencies, SPDX SBOM-mode attestation per archive, Makefile cleanup, consumer surface fixes. See .serena/memories/release-pipeline-overhaul for the full initiative + key learnings.
 ```
+
