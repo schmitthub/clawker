@@ -123,10 +123,6 @@ clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 # They are NOT sidecars — one control plane + firewall stack is shared by
 # all clawker-managed containers on the host.
 #
-# Both targets build through `docker buildx build` against a single pinned
-# multi-stage Dockerfile.controlplane whose `bpf-builder` stage is shared between
-# the ebpf-manager and coredns-clawker compile paths (coredns-clawker imports
-# internal/controlplane/firewall/ebpf and so needs the bpf2go-generated wrappers at compile time).
 # Nothing generated is ever committed to the repo: .o files, bpf2go Go
 # wrappers, and the extracted binaries are all gitignored.
 
