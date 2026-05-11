@@ -19,7 +19,7 @@
 | Task 1: Dry-run validation of same-repo reusable workflow signing pattern | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 2: Makefile cleanup + L1 bug fixes | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 3: Split release.yml into caller + reusable workflow | `complete` | claude/opus-4-7 (2026-05-11) |
-| Task 4: Migrate to actions/attest@v4 with enriched SLSA v1 provenance | `pending` | — |
+| Task 4: Migrate to actions/attest@v4 with enriched SLSA v1 provenance | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 5: Add SPDX SBOM-mode attestation | `pending` | — |
 | Task 6: Consumer surface fixes | `pending` | — |
 | Task 7: Final review + documentation completion gate | `pending` | — |
@@ -209,6 +209,115 @@ OK    (no `reproducib|pin.reproducible|for reproducibility`)
 **Surprise:** The release-guide memory's "Reproducibility gap (known)" subsection claimed full pin-reproducibility of embeds via Dockerfile.controlplane. This isn't actually true — Docker buildx builds aren't byte-identical across hosts without `--reproducible` flag (which isn't set), and clawkerd cross-compile depends on the host Go toolchain. The framing was aspirational. Stripped.
 
 **No production unit test, e2e, or whail run is necessary at this gate** — Task 2 changes are pure Makefile/workflow comments + memory text. The single `make test` run + targeted re-runs of the flaky clawkerd race test cover the verification surface adequately.
+
+### Task 4 — Migrate to actions/attest@v4 with enriched SLSA v1 provenance (2026-05-11)
+
+**Pinned `actions/attest` SHA:** `59d89421af93a897026c735860bf21b6eb4f7b26` (v4.1.0, published 2026-02-26). Verified current latest release via `gh api repos/actions/attest/releases/latest` — no v4.2 yet. Unchanged from Task 1's dry-run pin.
+
+**Wrapper replacement:** removed `actions/attest-build-provenance@a2bbfa25...` from `release-build.yml`; added direct `actions/attest@59d89421...` invocation with `predicate-type: https://slsa.dev/provenance/v1` + `predicate-path: ./dist/provenance-predicate.json` (custom-predicate mode). `subject-checksums: ./dist/attestation-subjects.txt` (16 subjects).
+
+**Predicate generator design choice: Go program** (`cmd/gen-provenance/main.go`), pure stdlib + pflag. Picked over bash because:
+1. Project convention — parallel to `cmd/gen-docs`, `cmd/clawker-generate` (every code-gen leaf binary is Go).
+2. Static typing for the SLSA v1 predicate schema (json struct tags eliminate hand-marshaled string concat hazards).
+3. Unit-testable parsers (`main_test.go` covers Dockerfile FROM lines, workflow `uses:` lines, go.mod toolchain directive, apt list malformation).
+4. No new shell maintenance burden — all the regex parsing lives in one file.
+
+**Generator inputs (flags):**
+
+- `--repo-uri`, `--source-commit`, `--source-ref`, `--workflow-ref`, `--builder-id` — from `${GITHUB_*}` env in the workflow step.
+- `--repository-id`, `--repository-owner-id`, `--event-name`, `--runner-environment` — for `internalParameters.github` (matches the default attestation's shape; what `gh attestation verify` expects).
+- `--invocation-id` — constructed as `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}`.
+- `--started-on`, `--finished-on` — wall-clock RFC3339. `BUILD_STARTED_ON` is captured via a `Record build start` step at the top of the job and stored in `$GITHUB_ENV`; `finished-on` is computed at predicate-generation time. Required for forensic timeline.
+- `--apt-packages` — path to `dist/apt-packages.txt`, produced by `scripts/capture-apt-packages.sh`. Format: one `<pkg>=<version>|<arch>` per line.
+- File paths default to repo-relative (`Dockerfile.controlplane`, `Makefile`, etc.), overridable for tests.
+
+**resolvedDependencies enumeration (in emit order — stable for diff-based audit):**
+
+1. Source commit — `git+<repo-uri>@<ref>`, `gitCommit` digest.
+2. Distinct Dockerfile `FROM ...@sha256:<digest>` images (also picks up `COPY --from=<image>@sha256:...` for the cross-stage Go toolchain copy). Dedup by `image+digest` so the 3 `golang:1.25.10-alpine` references collapse into one entry.
+3. apt package closure (one `pkg:deb/debian/<pkg>@<version>?arch=<arch>` per line of the captured file).
+4. Go toolchain — prefers `toolchain go<ver>` directive, falls back to `go <ver>` line in go.mod.
+5. bpf2go pin — parsed from `//go:generate go run github.com/cilium/ebpf/cmd/bpf2go@<version>` in `internal/controlplane/firewall/ebpf/gen.go`.
+6. BPF C sources — every file under `internal/controlplane/firewall/ebpf/bpf/` hashed individually, plus gen.go itself.
+7. Pinned GitHub Actions — `uses: <owner>/<repo>@<40-hex-sha>` lines from both workflow files, deduped, sorted alphabetically. Short names like `action-checkout`, `action-sbom-action-download-syft`.
+8. File content hashes (sha256) — release.yml, release-build.yml, Dockerfile.controlplane, Makefile, .goreleaser.yaml. Redundant with the source commit digest, but cheaper for an offline verifier than walking git.
+
+**externalParameters.buildConfig captures build-output knobs:** goreleaser args (`release --clean --parallelism 1`), goreleaser version (parsed from the `version:` line under goreleaser-action's `with:`), Go env (`CGO_ENABLED=0`, `GOFLAGS=-trimpath`), ldflags template values (`{{.Version}}`, `{{.CommitDate}}`, `-s -w`), clang `-cflags` and bpf2go `-target` (parsed from gen.go).
+
+**externalParameters.workflow mirrors GitHub's default attestation:** caller workflow path/ref/repository (so `gh attestation verify` validates the workflow field cleanly). The reusable workflow path is captured separately via `runDetails.builder.id`.
+
+**Smoke test (locally with mock env vars, before commit):**
+
+```
+go run ./cmd/gen-provenance \
+  --repo-uri https://github.com/schmitthub/clawker \
+  --source-commit 8ce07534... --source-ref refs/tags/v0.99.0 \
+  --workflow-ref schmitthub/clawker/.github/workflows/release.yml@refs/tags/v0.99.0 \
+  --builder-id https://github.com/.../release-build.yml@refs/tags/v0.99.0 \
+  --repository-id 1129396406 --repository-owner-id 8697299 \
+  --event-name push --runner-environment github-hosted \
+  --invocation-id https://github.com/.../actions/runs/12345/attempts/1 \
+  --apt-packages /tmp/apt-packages.txt --output /tmp/predicate.json
+```
+
+Result: 25 resolvedDependencies entries with a 5-package apt list. Real release-time apt closure expands to ~60+ entries (transitive deps for clang/llvm/libbpf-dev/linux-libc-dev/ca-certificates), pushing the total to ~80 entries.
+
+**Subject list — `scripts/release-subjects.sh <version>`** emits `dist/attestation-subjects.txt` in sha256sum format. 16 entries enforced by `wc -l != 16` fail-fast guard:
+
+- 4 archive lines lifted from `dist/checksums.txt` (goreleaser already emits sha256sum format)
+- 4 unpacked `clawker` CLI binaries — `tar -xzOf <archive> clawker | sha256sum` per archive. Names: `clawker-linux-amd64`, `clawker-linux-arm64`, `clawker-darwin-amd64`, `clawker-darwin-arm64`.
+- 8 embed binaries from `embeds/<arch>/`. Names: `clawkerd-linux-amd64`, `clawker-cp-linux-amd64`, `ebpf-manager-linux-amd64`, `coredns-clawker-linux-amd64`, and the four arm64 equivalents.
+
+The unpacked-CLI digests are "phantom" subjects — they don't correspond to files on disk; they're the digests of the bytes the user will eventually `tar -xz` out of an archive. Validity proof for an investigator: download the release archive, `tar -xzf` it, `sha256sum bin/clawker`, compare to the attestation's subject digest with that name.
+
+**apt package closure — `scripts/capture-apt-packages.sh <out-file>`** runs `docker buildx build --target bpf-builder --load -t clawker-bpf-builder:provenance .` to materialize the bpf-builder image (cache reused from `make release-embeds`), then `docker run --rm clawker-bpf-builder:provenance dpkg-query -W -f '${Package}=${Version}|${Architecture}\n'`. Output captured directly to the file the generator reads. Fail-fast if `< 5` entries (would indicate the dpkg-query ran against the wrong image or returned an empty closure).
+
+**Workflow ordering in release-build.yml (post-Task-4):**
+
+```
+1. Record build start          → exports BUILD_STARTED_ON via $GITHUB_ENV
+2. Checkout                    → unchanged
+3. Set up Go                   → unchanged
+4. Set up Docker Buildx        → unchanged
+5. Build linux embed sets      → make release-embeds (unchanged)
+6. Install cosign              → unchanged
+7. Install syft                → unchanged
+8. Run GoReleaser              → unchanged
+9. Capture apt package closure → NEW (scripts/capture-apt-packages.sh)
+10. Build attestation subjects → NEW (scripts/release-subjects.sh)
+11. Generate SLSA v1 predicate → NEW (go run ./cmd/gen-provenance)
+12. Attest build provenance    → REPLACED (actions/attest@v4 custom-predicate mode)
+```
+
+The apt capture deliberately runs AFTER goreleaser even though it could run earlier (it doesn't depend on goreleaser output) — placing it adjacent to the predicate-generation step keeps the "build provenance" block visually grouped and the goreleaser-fails-loudly path uncluttered.
+
+**Surprises / non-obvious decisions:**
+
+1. **Generator parses workflow YAMLs by regex, not yaml.Unmarshal.** Could pull `gopkg.in/yaml.v3`, but regex on `uses:` / `version:` / `args:` lines is sufficient for the few fields we care about, keeps the binary stdlib-only (parallel to gen-docs), and avoids drift if a future GitHub Actions feature changes the YAML shape. The regexes are unit-tested.
+2. **Dockerfile image dedup by `image+digest`.** Same `golang:1.25.10-alpine@sha256:...` appears 3 times across stages — we emit one entry. The `name` field reflects the first-encountered stage, slightly misleading; verifiers care about uri+digest, not name.
+3. **`name` field on apt packages is `apt-<pkg>`**, not just `<pkg>`. Prefix keeps a verifier scanning `.name` strings able to filter by category at a glance (`apt-*`, `action-*`, `base-image-*`, `bpf-source-*`).
+4. **`subject-checksums` accepts phantom subjects.** The 4 unpacked CLI binaries don't exist as files in `dist/` — we extract their digests via `tar -xzOf` and write them to the subjects file under semantic names like `clawker-linux-amd64`. actions/attest@v4 doesn't try to resolve subject names to filesystem paths; it just embeds them in the signed envelope.
+5. **`BUILD_STARTED_ON` via `$GITHUB_ENV` rather than passing through a `with:` input.** GitHub Actions doesn't expose a "job started" timestamp; capturing it ourselves as the first job step is the only way. The reusable workflow contract stays unchanged (no new inputs/secrets).
+6. **goreleaser version parser anchors on `v[0-9]`.** The regex `^\s*version:\s*"?(v[0-9][^"\s]*)"?` matches the goreleaser-action `with:` block's `version: "v2.15.4"` line while excluding goreleaser's own top-level config `version: 2` (which has integer value, not a `v` prefix).
+
+**Acceptance criteria — all pass:**
+
+```
+=== actions/attest@v4 ==                     OK
+=== SLSA v1 predicate-type ==                OK
+=== subject-checksums attestation-subjects ==OK
+=== all uses: pins are SHA ==                OK
+=== old attest-build-provenance removed ==   OK
+=== gen-provenance compiles ==               OK
+=== gen-provenance tests pass ==             OK (6 tests, pure unit)
+=== shell scripts syntax-check ==            OK
+=== actionlint clean ==                      OK
+=== smoke test 25 deps emitted ==            OK
+```
+
+The `gh attestation verify` end-to-end and reproducible-build discovery walkthrough are deferred to Task 7 E2E — they require a real push-tag trigger that this branch cannot exercise without polluting release history.
+
+---
 
 ### Task 3 — Split release.yml into caller + reusable workflow (2026-05-11)
 

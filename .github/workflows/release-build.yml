@@ -27,6 +27,12 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
+      # Record the wall-clock job start so the SLSA v1 predicate's
+      # runDetails.metadata.startedOn matches the actual build window
+      # rather than the predicate-generation step's invocation time.
+      - name: Record build start
+        run: echo "BUILD_STARTED_ON=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -75,11 +81,60 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
-      # Wrapper on top of actions/attest@v4. Task 4 replaces this with a direct
-      # actions/attest call using a custom-predicate enriched SLSA v1 body and
-      # 16 per-binary subjects. For now the thin auto-populated predicate is
-      # acceptable — this task is structural only.
+      # Capture the bpf-builder stage's apt package closure (incl. transitive
+      # deps pulled in by `apt-get install --no-install-recommends`) so the
+      # SLSA v1 predicate's resolvedDependencies can enumerate every Debian
+      # package that affected the BPF compile environment.
+      #
+      # Reuses the buildx cache populated by `make release-embeds`; marginal
+      # cost is just the dpkg-query in a throwaway container (~1s).
+      - name: Capture bpf-builder apt package closure
+        run: bash scripts/capture-apt-packages.sh dist/apt-packages.txt
+
+      # Build the 16-subject checksum file consumed by actions/attest below:
+      #   4 archives + 4 unpacked CLI binaries + 8 linux embed binaries.
+      # Forensic motivation: an investigator presented with a running
+      # `clawker-cp` inside a CP container can extract it, hash it, and
+      # verify against this attestation directly — answering "which binary
+      # diverged" cryptographically rather than by elimination.
+      - name: Build attestation subject list
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash scripts/release-subjects.sh "$VERSION"
+
+      # Generate the enriched SLSA v1 build provenance predicate (full
+      # resolvedDependencies inventory: source commit, base image digests,
+      # apt package closure, Go toolchain, BPF sources, pinned action SHAs,
+      # workflow/Makefile/Dockerfile/goreleaser content hashes, tool
+      # versions). Replaces the thin auto-populated predicate that the
+      # default GitHub build-provenance attestation emits.
+      - name: Generate SLSA v1 provenance predicate
+        run: |
+          go run ./cmd/gen-provenance \
+            --repo-uri "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --source-commit "${GITHUB_SHA}" \
+            --source-ref "${GITHUB_REF}" \
+            --workflow-ref "${GITHUB_WORKFLOW_REF}" \
+            --builder-id "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/release-build.yml@${GITHUB_REF}" \
+            --repository-id "${GITHUB_REPOSITORY_ID}" \
+            --repository-owner-id "${GITHUB_REPOSITORY_OWNER_ID}" \
+            --event-name "${GITHUB_EVENT_NAME}" \
+            --runner-environment "${RUNNER_ENVIRONMENT}" \
+            --invocation-id "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}" \
+            --started-on "${BUILD_STARTED_ON}" \
+            --finished-on "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --apt-packages dist/apt-packages.txt \
+            --output dist/provenance-predicate.json
+
+      # actions/attest@v4 in custom-predicate mode. predicate-type +
+      # predicate-path tells the action to wrap our pre-built body in a
+      # DSSE envelope and sign it via the runner's Sigstore OIDC token.
+      # subject-checksums references the 16-subject file built above; the
+      # action validates each subject's digest against the named file in
+      # the workspace.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
-          subject-checksums: ./dist/checksums.txt
+          subject-checksums: ./dist/attestation-subjects.txt
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: ./dist/provenance-predicate.json
