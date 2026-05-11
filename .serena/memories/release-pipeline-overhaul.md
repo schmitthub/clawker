@@ -20,7 +20,7 @@
 | Task 2: Makefile cleanup + L1 bug fixes | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 3: Split release.yml into caller + reusable workflow | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 4: Migrate to actions/attest@v4 with enriched SLSA v1 provenance | `complete` | claude/opus-4-7 (2026-05-11) |
-| Task 5: Add SPDX SBOM-mode attestation | `pending` | — |
+| Task 5: Add SPDX SBOM-mode attestation | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 6: Consumer surface fixes | `pending` | — |
 | Task 7: Final review + documentation completion gate | `pending` | — |
 
@@ -395,6 +395,41 @@ sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
 1. **Reusable file has no `permissions:` block.** Task 3 spec was explicit about this, but worth re-stating: declaring permissions in the reusable would be additive-only AND scope-down, never scope-up, on whatever the caller already granted. Cleaner to declare once on the caller's calling job — single audit point. Future maintainers tempted to "be safe" and copy the permissions block into the reusable should not — it's noise that pretends the reusable is self-contained when it isn't.
 2. **`validate` job's `contents: read` is intentional.** It runs checkout + git operations only; doesn't need write. Tightening helps reduce the blast radius if a future maintainer adds an unsafe step here. Defense in depth — the validate job runs before any third-party action consumes the tag.
 3. **Goreleaser CLI version (v2.15.4) is a `with:` input, NOT pinned by SHA.** The `goreleaser-action` itself is SHA-pinned (`1a80836c...`); the goreleaser CLI binary it downloads is selected by tag. This is the only floating-by-tag bit, and unavoidable — there's no SHA-input mode for that. The goreleaser binary's integrity comes from its own release-time signing, verified by the action.
+
+### Task 5 — Add SPDX SBOM-mode attestation (2026-05-11)
+
+**Confirmed `actions/attest@v4.1.0` (pin `59d89421af93a897026c735860bf21b6eb4f7b26`) has a first-class `sbom-path` input** — DeepWiki insisted otherwise; verified empirically by fetching `action.yml` at the pinned SHA via `gh api repos/actions/attest/contents/action.yml?ref=<sha>`. The input description: *"Path to the JSON-formatted SBOM file (SPDX or CycloneDX) to attest. File size cannot exceed 16MB. When provided, creates an SBOM attestation. Cannot be used together with `predicate-type`, `predicate`, or `predicate-path`."* So `sbom-path` is mutually exclusive with the custom-predicate inputs — auto-detects SPDX vs CycloneDX from the file content and emits the canonical predicate type. The SLSA provenance step (custom-predicate mode) and the SBOM steps (sbom-path mode) coexist in the same job; each emits a separate in-toto bundle.
+
+Lesson: always verify action inputs against the pinned commit's `action.yml`, not against DeepWiki/training data. DeepWiki returned a confidently-wrong answer here.
+
+**goreleaser SBOM file naming confirmed via DeepWiki against goreleaser source (`internal/pipe/sbom/sbom_test.go::TestSBOMCatalogDefault`):** `sboms: - artifacts: archive` with no explicit `cmd`/`documents`/`args` produces `dist/<archive>.sbom.json` in SPDX-JSON format via syft. For archives templated as `clawker_${VERSION}_${OS}_${ARCH}.tar.gz`, SBOM files land at `dist/clawker_${VERSION}_${OS}_${ARCH}.tar.gz.sbom.json`. Defaults applied: `cmd: syft`, `args: ["$artifact", "--output", "spdx-json=$document"]`, `documents: ["{{ .ArtifactName }}.sbom.json"]`.
+
+**VERSION env hoisting refactor.** Existing `Build attestation subject list` step inlined `VERSION="${GITHUB_REF_NAME#v}"`. Hoisted to a dedicated `Compute release version` step that writes `VERSION` to `$GITHUB_ENV` (runs right after `Record build start`, before checkout). Two consumers now share it: (a) the subject-list step's shell, (b) the four SBOM attest steps' `subject-path` / `sbom-path` `with:` inputs via `${{ env.VERSION }}`. Required because GitHub Actions `with:` blocks don't run a shell — can't expand `${GITHUB_REF_NAME#v}` inline; the env-var indirection is the canonical pattern.
+
+**Step layout: 4 explicit per-archive steps, not a matrix.** Matrix strategies are job-level, not step-level, in GitHub Actions. A separate matrixed job would defeat SLSA L3 isolation (each matrix shard would get its own Sigstore signing identity = N×4 attestations under N parallel signer identities). 4 explicit steps in the single `build` job → all SBOM attestations share the build-provenance attestation's signing identity (reusable workflow path + ref). Repetition is mild (4× ~5-line blocks); readability + isolation worth it.
+
+**Default `actions/attest@v4` SBOM-mode permissions** match the existing build-provenance requirements — no additional grants on the calling job. The full permission set is already declared on `release.yml`'s `build` job (`contents: write`, `id-token: write`, `attestations: write`, `artifact-metadata: write`). `contents: read` is implicit-superset of `contents: write`. No edits to `release.yml`.
+
+**Acceptance criteria — all pass:**
+
+```
+=== sbom-path count (expect 4) ===                4
+=== SLSA provenance step intact ===               1
+=== subject-checksums references 16-subject file ===  1
+=== all uses: SHA-pinned (expect empty) ===       (empty — all pinned by SHA)
+=== goreleaser sboms block untouched ===          sboms:\n  - artifacts: archive
+=== actionlint clean ===                          OK
+```
+
+YAML parse via `python3 -c "import yaml"` not exercised (no PyYAML in container); `actionlint` parses YAML strictly as part of its validation and passed cleanly, providing equivalent confidence.
+
+**Deferred to Task 7 E2E:** `gh attestation verify <archive> --predicate-type https://spdx.dev/Document` per archive (requires real tag push). Structural acceptance gates above + actionlint clean + `action.yml` schema confirmation are sufficient at this gate.
+
+**Surprises / non-obvious decisions:**
+
+1. **DeepWiki hallucinated about `sbom-path`.** Asked specifically about `actions/attest@v4.1.0` sbom-path behavior; got a confident response claiming the input doesn't exist and that `predicate-type` would have to be set manually. Fetching the pinned `action.yml` immediately falsified that. Always verify against the actual commit, especially for security-critical inputs.
+2. **Single shared signing identity across all 5 attestations** (1 SLSA + 4 SBOM). All five `actions/attest@v4` invocations run inside the same reusable workflow job → same Fulcio cert SAN URI → one signer-workflow identity to verify against. cosign verify-blob regex from Task 1 covers all five bundle types without modification.
+3. **No matrix strategy attempted.** The temptation was strong (4 archives = matrix candidate), but step-level matrices don't exist in GitHub Actions, and a job-level matrix would split signing identities. 4 explicit steps was unambiguously the right call.
 
 ---
 

@@ -33,6 +33,12 @@ jobs:
       - name: Record build start
         run: echo "BUILD_STARTED_ON=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
+      # Strip the leading "v" from the tag so VERSION matches goreleaser's
+      # archive name_template ({{.Version}}). Consumed by the subject-list
+      # script and by the per-archive SBOM attest steps below.
+      - name: Compute release version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -98,9 +104,7 @@ jobs:
       # verify against this attestation directly — answering "which binary
       # diverged" cryptographically rather than by elimination.
       - name: Build attestation subject list
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          bash scripts/release-subjects.sh "$VERSION"
+        run: bash scripts/release-subjects.sh "$VERSION"
 
       # Generate the enriched SLSA v1 build provenance predicate (full
       # resolvedDependencies inventory: source commit, base image digests,
@@ -138,3 +142,35 @@ jobs:
           subject-checksums: ./dist/attestation-subjects.txt
           predicate-type: https://slsa.dev/provenance/v1
           predicate-path: ./dist/provenance-predicate.json
+
+      # One SPDX SBOM attestation per archive. goreleaser's sboms: block
+      # (artifacts: archive) calls syft per archive and writes
+      # dist/<archive>.sbom.json in SPDX-JSON format. actions/attest@v4
+      # auto-detects SPDX from the sbom-path content and emits a separate
+      # in-toto bundle with predicateType https://spdx.dev/Document — distinct
+      # from the SLSA provenance attestation produced above. Verify with:
+      #   gh attestation verify <archive> --owner schmitthub \
+      #     --predicate-type https://spdx.dev/Document
+      - name: Attest SBOM for linux/amd64 archive
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: ./dist/clawker_${{ env.VERSION }}_linux_amd64.tar.gz
+          sbom-path: ./dist/clawker_${{ env.VERSION }}_linux_amd64.tar.gz.sbom.json
+
+      - name: Attest SBOM for linux/arm64 archive
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: ./dist/clawker_${{ env.VERSION }}_linux_arm64.tar.gz
+          sbom-path: ./dist/clawker_${{ env.VERSION }}_linux_arm64.tar.gz.sbom.json
+
+      - name: Attest SBOM for darwin/amd64 archive
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: ./dist/clawker_${{ env.VERSION }}_darwin_amd64.tar.gz
+          sbom-path: ./dist/clawker_${{ env.VERSION }}_darwin_amd64.tar.gz.sbom.json
+
+      - name: Attest SBOM for darwin/arm64 archive
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: ./dist/clawker_${{ env.VERSION }}_darwin_arm64.tar.gz
+          sbom-path: ./dist/clawker_${{ env.VERSION }}_darwin_arm64.tar.gz.sbom.json
