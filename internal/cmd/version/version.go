@@ -11,8 +11,8 @@ import (
 // NewCmdVersion creates the "version" subcommand.
 func NewCmdVersion(f *cmdutil.Factory, version, buildDate string) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "version",
-		Short: "Show clawker version and build date",
+		Use:    "version",
+		Hidden: true,
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Fprint(f.IOStreams.Out, cmd.Root().Annotations["versionInfo"])
 		},

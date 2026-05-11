@@ -17,8 +17,6 @@ func Format(version, buildDate string) string
 
 `NewCmdVersion` reads formatted version from `cmd.Root().Annotations["versionInfo"]` (set by root command). `Format` strips `v` prefix and appends date in parentheses when non-empty.
 
-The root command's `--version` flag uses the same annotation via `SetVersionTemplate`, so `clawker --version` and `clawker version` print byte-identical output.
-
 ## Testing
 
 `version_test.go` covers `Format` with version-only, version+date, and dev cases. No Docker required.

@@ -407,19 +407,15 @@ sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
 
 **Real follow-up (separate issue, NOT this PR):** if install.sh-trust ever becomes a load-bearing concern, the correct fix is to make install.sh verify the cosign bundle of the downloaded `checksums.txt` against the pinned `release-build.yml` identity regex BEFORE extracting the binary. That bounds the script's blast radius to "refuse to install" or "install genuine binary" — trust shifts from "whoever served the script" to the Sigstore + GitHub OIDC chain the rest of the initiative just built.
 
-**`--version` flag implementation: `cmd.SetVersionTemplate("{{ index .Annotations \"versionInfo\" }}")`.**
+**`--version` flag + version-subcommand-visibility changes: REVERTED.** Original spec called for unhiding the `version` subcommand and wiring `--version` to print the same format. On review, the project owner directed full revert. Reasoning:
 
-Cobra auto-wires a `--version` flag whenever `cmd.Version` is set (already done at `root.go:51`: `Version: f.Version`). Cobra's default version template prints `<binary> version <version>` — wrong format for clawker (we want `clawker version <ver> (<date>)` matching the existing `version` subcommand). Solution: read the same `versionInfo` annotation the subcommand reads, via `SetVersionTemplate`. Single source of truth (`versioncmd.Format(version, buildDate)` writes the annotation; both `--version` and `version` read it).
+- Cobra already auto-wires `--version` whenever `cmd.Version` is set (was true before this initiative). It just used Cobra's default template (`<binary> version <version>`) instead of clawker's `Format(version, buildDate)`. Difference is purely cosmetic — release builds got version without build date in `--version` output; both surfaces printed identical strings on dev builds.
+- `Hidden: true` on the version subcommand may have been deliberate (canonical surface = `--version`; subcommand = quiet alternative). Spec author's "convention compliance" framing didn't justify overriding that intent without evidence of user pain.
+- Same energy as the install.sh scope error: cosmetic change with no user-visible bug, framed as a fix. If it ain't broke, don't touch it.
 
-Smoke test confirms byte-identical output across both surfaces:
-```
-$ bin/clawker --version
-clawker version 0.7.8-22-g82af1ca2
-$ bin/clawker version
-clawker version 0.7.8-22-g82af1ca2
-```
+`internal/cmd/version/version.go` restored to `Hidden: true`, no `Short:` field. `internal/cmd/root/root.go` `SetVersionTemplate` block removed. `internal/cmd/version/CLAUDE.md` paragraph about `--version` removed. `docs/docs.json` nav line removed. `docs/cli-reference/clawker_version.md` deleted. `docs/cli-reference/clawker.md` regenerated cleanly (gen-docs respects `Hidden: true`).
 
-`clawker --help` now lists `version` in the available subcommands (was `Hidden: true` before; that line removed). Added `Short: "Show clawker version and build date"` so the auto-rendered help row is non-empty.
+Net: no Go code or doc surface in the version system changed across this initiative.
 
 **CONTRIBUTING.md `make clawker` (not `go build`)**: verified `make clawker` depends on `ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)` (Makefile:108), so it produces all four embeds via the pinned Docker chain before the final `go build` of the host CLI. Bare `go build ./cmd/clawker` would compile a CLI with empty embeds (the `assets/` directories are gitignored) → runtime crash on first use. Added an explanatory note to the CONTRIBUTING setup block so new contributors don't re-discover this the hard way.
 
@@ -433,27 +429,31 @@ Added `--new-bundle-format` flag to the cosign command (Task 1 surface — requi
 
 **Scope discipline**: did NOT rewrite the broader release-guide.md sections (workflow flow, key files table, version injection, etc.) — Task 7 explicitly owns that rewrite. Task 6 is just the cosign-regex tightening + caller/reusable identity correction.
 
-**Acceptance criteria (post-revert) — all pass:**
+**Final Task 6 surface (after both reverts):**
+
+| File | Change kept |
+|---|---|
+| `CONTRIBUTING.md` | `go build` → `make clawker` + explanation of why bare go build / go install are unsupported (gitignored embeds). Real bug fix. |
+| `docs/installation.mdx` | "Build from Source" note added — same fix as CONTRIBUTING. |
+| `.serena/memories/release-guide.md` | cosign verify regex tightened from substring to anchored `release-build.yml@refs/tags/v…` form; added `--new-bundle-format`; added parallel `gh attestation verify --signer-workflow` example. |
+
+That's it. The install.sh distribution work and the version-flag/visibility work were both rejected as scope errors. Build-artifact provenance (which this initiative is actually about) lives in Tasks 1-5; consumer-facing helpers live elsewhere.
+
+**Acceptance criteria (post-both-reverts) — all pass:**
 
 ```
 === install.sh URL surface unchanged from baseline ===                OK (raw.githubusercontent main)
 === goreleaser extra_files removed ===                                OK
-=== version subcommand no longer Hidden ===                           OK
-=== bin/clawker --version + bin/clawker version match byte-for-byte === OK
+=== version subcommand still Hidden ===                               OK
+=== root command no SetVersionTemplate ===                            OK
+=== docs/cli-reference/clawker_version.md absent ===                  OK
 === CONTRIBUTING.md uses make clawker ===                             OK
 === CONTRIBUTING.md no bare go build line ===                         OK
 === release-guide cosign regex anchored to release-build.yml ===      OK
 === make test ===                                                     5099 tests pass, 8 platform-skipped
 === goreleaser check ===                                              1 configuration file(s) validated
-=== actionlint ===                                                    clean (no workflow yaml changes)
-=== go vet (changed packages) ===                                     clean
+=== make docs-check ===                                               clean
 ```
-
-**Surprises / non-obvious decisions:**
-
-1. **Cobra `--version` flag has no short alias by default.** Cobra auto-wires `--version` long flag when `cmd.Version` is set, but does NOT add `-v` short. Did not add one — `-v` collides with common verbose-flag conventions (e.g., kubectl, curl), and clawker doesn't use `-v` for verbose either. Leaving short flag space open for future use.
-2. **`SetVersionTemplate` template syntax**: the Cobra docs show `"{{.Version}}\n"` examples, but referencing annotations needs `{{ index .Annotations "key" }}` — the `.Annotations` map isn't directly indexable as `.Annotations.key` because the keys may contain non-Go-identifier chars. Verified by running `bin/clawker --version`.
-3. **`docs/installation.mdx` "Build from Source" note kept.** The revert undid the URL changes but left the new line "Use the Makefile entry point — `go install` is unsupported because the embedded Linux binaries are gitignored and produced by `make release-embeds`." This parallels the CONTRIBUTING.md fix and is a legitimate doc bug fix (bare `go build`/`go install` produces a CLI with empty embeds → runtime crash). Not part of the install.sh scope, kept.
 
 ### Task 5 — Add SPDX SBOM-mode attestation (2026-05-11)
 

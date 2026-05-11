@@ -54,7 +54,6 @@ Workspace modes:
 * [clawker stop](clawker_stop) - Stop one or more running containers
 * [clawker top](clawker_top) - Display the running processes of a container
 * [clawker unpause](clawker_unpause) - Unpause all processes within one or more containers
-* [clawker version](clawker_version) - Show clawker version and build date
 * [clawker volume](clawker_volume) - Manage volumes
 * [clawker wait](clawker_wait) - Block until one or more containers stop, then print their exit codes
 * [clawker worktree](clawker_worktree) - Manage git worktrees for isolated branch development
