@@ -6,7 +6,8 @@
 
 - [x] ~~**Entrypoint timeout is the only abort guard for failed init.**~~ **[resolved by clawkerd-pid1]** Entrypoint + fifo are gone — clawkerd is PID 1 and supervises the spawn directly. When the CP-driven init plan fails, CP simply never dispatches `AgentReady`; clawkerd never spawns the user CMD; on `ctx.Done` (container stop or SIGTERM) clawkerd exits without the 11-minute fifo wait. The bug is resolved by elimination, not by adding an explicit `AbortInit` Command.
 - [ ] Clawker firewall up / clawker controlplane up fails if CP image isn't built yet. needs to handle building and starting the cp image along with better helper instructions. Seems to have resolved on a second attempt but should be looked into.
-
+- [ ] clawker project templates (ie golang) giving error, might need node for claude hooks to work: "UserPromptSubmit hook error",  "SessionStart:startup hook error": "Failed with non-blocking status code: /bin/sh: 1: node: not found". we should ensure this is installed on dockefile templates. or there might be an issue with clawkerd unpriv user drop. 
+  
 ```
 clawker firewall up
 Error: Image 'clawker-controlplane:latest' not found
