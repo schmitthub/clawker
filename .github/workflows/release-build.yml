@@ -70,19 +70,56 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
-      # Single attestation covering the four release archives plus the eight
-      # embed binaries. actions/attest@v4 auto-generates an SLSA v1 build
-      # provenance predicate from GitHub Actions context (source commit,
-      # workflow ref, builder ID, runner environment). That binding pins
-      # everything in the source tree — Dockerfile.controlplane, Makefile
-      # (BPF_APT_DEPS), .goreleaser.yaml, internal/controlplane/firewall/ebpf
+      # Stage every attestation subject under release-subjects/ with the final
+      # name we want to appear in the attestation. actions/attest derives the
+      # subject name from each file's basename, so renaming is the only way to
+      # surface version/os/arch in the SLSA statement.
+      #
+      # Subjects (16 total):
+      #   - 4 release archives (goreleaser already names them correctly; copied as-is)
+      #   - 4 standalone CLI binaries from goreleaser dist/ ({linux,darwin}×{amd64,arm64}).
+      #     Redundant with the archives (which contain the same bytes) but lets
+      #     forensics verify a loose `clawker` binary by digest without unpacking.
+      #   - 8 linux embed binaries ({ebpf-manager,coredns-clawker,clawker-cp,clawkerd}
+      #     × {amd64,arm64}). The CLI binary already embeds these, but attesting
+      #     them individually lets verification of an extracted embed succeed
+      #     without first hashing the host CLI it came from.
+      #
+      # Goreleaser dist/ binary layout: dist/<build-id>_<goos>_<goarch>[_<variant>]/clawker
+      # The trailing `*` glob in cp covers the GOAMD64/GOARM64 variant suffix
+      # (e.g. `_v1`, `_v8.0`) which differs across goreleaser versions.
+      - name: Stage attestation subjects
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          SUBJECTS=release-subjects
+          rm -rf "$SUBJECTS"
+          mkdir -p "$SUBJECTS"
+
+          cp dist/clawker_*.tar.gz "$SUBJECTS/"
+
+          cp dist/clawker-amd64_linux_amd64*/clawker  "${SUBJECTS}/clawker_${VERSION}_linux_amd64"
+          cp dist/clawker-amd64_darwin_amd64*/clawker "${SUBJECTS}/clawker_${VERSION}_darwin_amd64"
+          cp dist/clawker-arm64_linux_arm64*/clawker  "${SUBJECTS}/clawker_${VERSION}_linux_arm64"
+          cp dist/clawker-arm64_darwin_arm64*/clawker "${SUBJECTS}/clawker_${VERSION}_darwin_arm64"
+
+          for arch in amd64 arm64; do
+            for bin in ebpf-manager coredns-clawker clawker-cp clawkerd; do
+              cp "embeds/${arch}/${bin}" "${SUBJECTS}/${bin}_${VERSION}_linux_${arch}"
+            done
+          done
+
+          ls -la "$SUBJECTS"
+
+      # Single attestation covering all 16 staged subjects. actions/attest@v4
+      # auto-generates an SLSA v1 build provenance predicate from GitHub Actions
+      # context (source commit, workflow ref, builder ID, runner environment).
+      # That binding pins everything in the source tree — Dockerfile.controlplane,
+      # Makefile (BPF_APT_DEPS), .goreleaser.yaml, internal/controlplane/firewall/ebpf
       # (clang -cflags, bpf2go pin), workflow YAMLs (with their pinned action
       # SHAs), BPF C sources. SBOMs are emitted by goreleaser/syft as release
       # assets and signed via cosign; they don't need separate attestations.
       - name: Attest release artifacts
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
-          subject-path: |
-            dist/clawker_*.tar.gz
-            embeds/amd64/*
-            embeds/arm64/*
+          subject-path: release-subjects/*
