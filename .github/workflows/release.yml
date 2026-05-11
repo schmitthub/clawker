@@ -53,10 +53,9 @@ jobs:
       # subsequent goreleaser run consumes them via per-build-id pre-hooks
       # (.goreleaser.yaml -> hooks.pre -> make stage-embeds-<arch>).
       #
-      # No CLAWKER_VERSION/CLAWKER_DATE override here — the embedded binaries
-      # (clawker-cp, clawkerd, etc.) don't currently consume those vars (no
-      # internal/build-style version stamping in their builds). Goreleaser
-      # injects version+date into the final ./cmd/clawker via ldflags below.
+      # `make release-embeds` doesn't need version stamping — the embedded
+      # binaries don't link internal/build. Final CLI version+date are
+      # stamped by goreleaser's ldflags below.
       - name: Build linux embed sets
         run: make release-embeds
 

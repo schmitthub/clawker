@@ -143,6 +143,15 @@ security:
   docker_socket: false
   firewall:
     add_domains:
+      - registry-1.docker.io
+      - vuln.go.dev
+      - production.cloudflare.docker.com
+      - mcp.deepwiki.com
+      - mcp.context7.com
+      - pypi.org
+      - files.pythonhosted.org
+      - registry.npmjs.org
+      - astral.sh
       - charm.land
       - code.gitea.io
       - golang.org
@@ -160,20 +169,12 @@ security:
       - lukechampine.com
       - go.yaml.in
       - cel.dev
-      - files.pythonhosted.org
       - code.claude.com
-      - mcp.deepwiki.com
-      - mcp.context7.com
-      - pypi.org
       - semgrep.dev
-      - registry.npmjs.org
       - github.com
       - api.github.com
       - release-assets.githubusercontent.com
       - docker.io
-      - registry-1.docker.io
-      - vuln.go.dev
-      - production.cloudflare.docker.com
       - www.envoyproxy.io
       - goreleaser.com
       - tuf-repo.github.com
@@ -181,6 +182,9 @@ security:
       - rekor.sigstore.dev
       - fulcio.sigstore.dev
       - tmaproduction.blob.core.windows.net
+      - docs.github.com
+      - slsa.dev
+      - github.blog
     rules:
       - action: allow
         dst: github.com

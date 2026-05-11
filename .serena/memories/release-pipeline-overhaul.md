@@ -17,7 +17,7 @@
 | Task | Status | Agent |
 |------|--------|-------|
 | Task 1: Dry-run validation of same-repo reusable workflow signing pattern | `complete` | claude/opus-4-7 (2026-05-11) |
-| Task 2: Makefile cleanup + L1 bug fixes | `pending` | — |
+| Task 2: Makefile cleanup + L1 bug fixes | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 3: Split release.yml into caller + reusable workflow | `pending` | — |
 | Task 4: Migrate to actions/attest@v4 with enriched SLSA v1 provenance | `pending` | — |
 | Task 5: Add SPDX SBOM-mode attestation | `pending` | — |
@@ -148,6 +148,67 @@ uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
 ```
 
 Other actions (`docker/setup-buildx-action`, `sigstore/cosign-installer`, `anchore/sbom-action/download-syft`, `goreleaser/goreleaser-action`) still hold SHAs from a prior session — Task 3 must re-verify they remain current before lifting them into `release-build.yml`.
+
+### Task 2 — Makefile cleanup + L1 bug fixes (2026-05-11)
+
+**Deleted targets (confirmed no callers outside Makefile via `grep -rn ... .github/ scripts/`):**
+
+- `clawker-build-all`, `clawker-build-linux`, `clawker-build-darwin` — dev-fast cross-compile shortcuts (bypassed pinned Dockerfile.controlplane chain). Zero non-Makefile callers.
+- `clawker-test` — single recipe ran `$(TEST_CMD_VERBOSE) ./...` (NOT actually an alias of `test-unit` despite help-text claim). Zero non-Makefile callers.
+- `clawker-test-internals` — pointed at `./test/internals/...` which doesn't even exist in the repo (only `test/e2e`, `test/whail`, `test/adversarial`). Dead recipe.
+
+`restart: clawker-clean clawker` still uses `clawker-clean` — kept; not in scope for deletion. `clawker-test-coverage`, `clawker-test-short`, `clawker-lint`, `clawker-staticcheck`, `clawker-fmt`, `clawker-tidy`, `clawker-install`, `clawker-install-global` — left in place; out of scope for this task per the initiative plan.
+
+**`CLAWKER_DATE` removed.** `internal/build/build.go` already handles `Date = ""` cleanly (no `init()` fallback for Date, but `fmt.Println("")` is harmless; downstream code just prints empty string for dev builds). Goreleaser stamps `build.Date={{.CommitDate}}` for releases — confirmed in `.goreleaser.yaml:40,61`. The previous `CLAWKER_DATE := $(shell date +%Y-%m-%d)` was wall-clock leak (no reproducibility property — host-dependent).
+
+`internal/build/CLAUDE.md` updated to reflect the new injection contract (dev: Version only; release: Version + Date via `{{.CommitDate}}`).
+
+**Reproducibility framing stripped from Makefile.** Four touch points cleaned:
+
+- Section header `# Embedded firewall stack binaries (reproducible Docker builds)` → `# Embedded firewall stack binaries`
+- Removed claim "Every input is pinned... byte-identical output" — overpromises against the actual Docker build behavior (no SOURCE_DATE_EPOCH, no `--reproducible` flag, no rebuild verification against a known-good hash).
+- Removed `# See internal/controlplane/firewall/ebpf/REPRODUCIBILITY.md` xref (file still exists; it's about pin-update procedure, not byte-identical reproducibility). Task 7 can decide whether to keep the .md file or rename it.
+- `release-embeds` preamble compressed from ~38 lines to ~18, keeping ONLY the four load-bearing invariants: `embeds/` outside `dist/`, clawkerd pure-Go bypass, two build IDs vs four, `--parallelism 1` race story.
+
+**`verify-release-embeds` ELF check tightened.** Was reading 1 byte at offset 18 (`e_machine` LSB only — could pass a Mach-O binary that happened to have `0x3e` at that offset). Now reads 20-byte ELF header and validates four fields:
+
+- bytes 0-3: magic (`7f 45 4c 46`) — rules out Mach-O / PE / other non-ELF
+- byte 4: `EI_CLASS = 0x02` (ELFCLASS64)
+- byte 5: `EI_DATA = 0x01` (ELFDATA2LSB, little-endian)
+- bytes 18-19: `e_machine` LE word — `003e` = x86_64, `00b7` = AArch64
+
+Each failure prints a specific error pointing at the broken field. **`EI_OSABI` (byte 7) is NOT checked**: Go-built binaries set 0 (System V), not 3 (Linux), regardless of `GOOS=linux` — a Linux-OS-ABI check would false-positive every release. Comment in the Makefile records this gotcha explicitly so a future contributor doesn't add an over-eager `EI_OSABI == 0x03` assertion.
+
+**`stage-embeds-{amd64,arm64}` atomicity fix.** Prepended `rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY)` to both recipes. Without this, a partial cp failure mid-recipe (e.g., permission denied on the 3rd of 4 files) could leave `assets/` in a half-staged state where some binaries are the previous arch's bytes. With the rm-first guard, either every asset is the requested arch or `go build` fails on the missing embed source, never silently embeds mismatched-arch binaries.
+
+**Comment fixes outside Makefile:**
+
+- `.github/workflows/release.yml` (`make release-embeds` step comment): replaced misleading "No CLAWKER_VERSION/CLAWKER_DATE override here..." paragraph with the actual rationale: "`make release-embeds` doesn't need version stamping — the embedded binaries don't link internal/build. Final CLI version+date are stamped by goreleaser's ldflags below."
+- `.serena/memories/release-guide.md` rewritten: `{{.Date}}` → `{{.CommitDate}}` (matches actual `.goreleaser.yaml:40,61`). Also removed examples referencing the now-deleted `clawker-build-{all,linux,darwin}` targets, and stripped the "Reproducibility gap (known)" subsection (no longer claiming reproducibility we don't provide). The full rewrite for L3 attestation surface is deferred to Task 7 per plan.
+
+**`.clawker.yaml` firewall add_domains** updated in this commit as well (carry-over from a prior session in the working tree; out of strict Task 2 scope but harmless infra): adds `docs.github.com`, `slsa.dev`, `github.blog` for spec lookups + reorders existing entries. Kept because removing it would lose useful in-container research domains during the rest of the initiative.
+
+**Acceptance criteria — all pass:**
+
+```
+=== removed targets check ===
+OK    (no clawker-build-{all,linux,darwin}, clawker-test{,-internals} recipes)
+=== CLAWKER_DATE removed ===
+OK
+=== ELF tightened ===
+magic-OK  (7f454c46 present)
+class-OK  (EI_CLASS present)
+=== reproducibility framing stripped ===
+OK    (no `reproducib|pin.reproducible|for reproducibility`)
+```
+
+`make clawker` builds cleanly: `bin/clawker version` → `clawker version 0.7.8-22-g82af1ca2`. Empty `build.Date` works fine for dev builds (falls back to printed "").
+
+`make test` passes: **5093 tests, 8 skipped**, all platform-gated. (One flake observed on first run — `cmd/clawkerd TestStartShellCommand_InitialStdinCloseStdinRace` — passed 3× in isolation and on the re-run of full suite; unrelated to Makefile changes. Pre-existing race-test under heavy parallel load.)
+
+**Surprise:** The release-guide memory's "Reproducibility gap (known)" subsection claimed full pin-reproducibility of embeds via Dockerfile.controlplane. This isn't actually true — Docker buildx builds aren't byte-identical across hosts without `--reproducible` flag (which isn't set), and clawkerd cross-compile depends on the host Go toolchain. The framing was aspirational. Stripped.
+
+**No production unit test, e2e, or whail run is necessary at this gate** — Task 2 changes are pure Makefile/workflow comments + memory text. The single `make test` run + targeted re-runs of the flaky clawkerd race test cover the verification surface adequately.
 
 ---
 

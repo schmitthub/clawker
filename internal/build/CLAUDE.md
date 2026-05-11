@@ -31,11 +31,10 @@ fmt.Println(build.Date)    // "" or "2024-06-01"
 ## Build Injection
 
 ```bash
-# Makefile
+# Makefile (dev builds — Date intentionally not stamped; falls back to "")
 -X 'github.com/schmitthub/clawker/internal/build.Version=$(CLAWKER_VERSION)'
--X 'github.com/schmitthub/clawker/internal/build.Date=$(shell date +%Y-%m-%d)'
 
-# GoReleaser
+# GoReleaser (release builds — Date pinned to tag's commit timestamp)
 -X github.com/schmitthub/clawker/internal/build.Version={{.Version}}
--X github.com/schmitthub/clawker/internal/build.Date={{.Date}}
+-X github.com/schmitthub/clawker/internal/build.Date={{.CommitDate}}
 ```
