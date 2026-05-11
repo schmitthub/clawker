@@ -286,13 +286,18 @@ proto: proto-tools
 	@$(MAKE) --no-print-directory $(PROTO_GENERATED)
 
 # File-target rule: Make regenerates PROTO_GENERATED whenever any source is
-# newer (edited .proto, updated buf config). Group target (&:) means a single
-# `buf generate` invocation produces all four files. | proto-tools is an
-# order-only prerequisite: it runs before regeneration (installing tools if
-# needed) but its phony nature doesn't trigger regeneration by itself.
-$(PROTO_GENERATED) &: $(PROTO_SOURCES) | proto-tools
+# newer (edited .proto, updated buf config). A single `buf generate` produces
+# all six files. The grouped-target operator `&:` only works on GNU Make 4.3+
+# (Apple's default `/usr/bin/make` is 3.81), so use the canonical-target
+# pattern: one representative file gets the recipe, the rest depend on it.
+# If any are deleted/stale, Make rebuilds via the chain and the recipe fires
+# once. | proto-tools is order-only — runs first when missing but its phony
+# nature doesn't trigger regeneration by itself.
+PROTO_CANONICAL := api/admin/v1/admin.pb.go
+$(PROTO_CANONICAL): $(PROTO_SOURCES) | proto-tools
 	@echo "Regenerating Go code from .proto files via buf..."
 	@PATH="$$(go env GOPATH)/bin:$$PATH" buf generate
+$(filter-out $(PROTO_CANONICAL),$(PROTO_GENERATED)): $(PROTO_CANONICAL)
 
 proto-tools:
 	@echo "Installing pinned proto toolchain..."
@@ -318,12 +323,19 @@ ebpf: $(BPF_BINDINGS)
 # `//go:generate moq` directive on EBPFManager in manager.go, which would
 # require moq on $PATH. The mock is committed; bpf2go is the only directive
 # we want to run here.
+#
+# Both Linux and macOS branches produce all four bindings in one invocation.
+# Grouped-target `&:` requires GNU Make 4.3+ (Apple's default `/usr/bin/make`
+# is 3.81), so use the canonical-target pattern: one representative file gets
+# the recipe, the rest depend on it. Whichever sibling is stale forces the
+# canonical to rebuild, the recipe fires once, all four land.
+BPF_BINDINGS_CANONICAL := internal/controlplane/firewall/ebpf/clawker_x86_bpfel.go
 ifeq ($(HOST_OS),Linux)
-$(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
+$(BPF_BINDINGS_CANONICAL): $(BPF_BINDING_DEPS)
 	@echo "Generating bpf2go bindings via native go generate (linux host)..."
 	$(GO) generate ./internal/controlplane/firewall/ebpf/gen.go
 else
-$(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
+$(BPF_BINDINGS_CANONICAL): $(BPF_BINDING_DEPS)
 	@echo "Extracting bpf2go bindings via Dockerfile.controlplane (non-linux host)..."
 	@rm -rf internal/controlplane/firewall/ebpf/.bpf-bindings-extract
 	$(BUILDX_BUILD) \
@@ -337,6 +349,7 @@ $(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
 	@mv internal/controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.o  internal/controlplane/firewall/ebpf/
 	@rm -rf internal/controlplane/firewall/ebpf/.bpf-bindings-extract
 endif
+$(filter-out $(BPF_BINDINGS_CANONICAL),$(BPF_BINDINGS)): $(BPF_BINDINGS_CANONICAL)
 
 # Once $(BPF_BINDINGS) exist on the host tree, every embed binary is a plain
 # CGO_ENABLED=0 Go cross-compile to linux/$(BUILDX_TARGETARCH). bpf2go's
@@ -560,6 +573,7 @@ clawker-clean:
 	@echo "Cleaning Clawker build artifacts..."
 	rm -rf $(BIN_DIR) $(DIST_DIR) $(RELEASE_EMBED_STAGE)
 	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) coverage.out coverage.html
+	rm -f $(BPF_BINDINGS)
 
 # ============================================================================
 # Test Targets
