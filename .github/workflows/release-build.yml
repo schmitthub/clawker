@@ -41,7 +41,7 @@ jobs:
       # Versions are defined in the Makefile's BPF_APT_DEPS variable so the
       # macOS dev path (Dockerfile.controlplane) and CI stay aligned.
       - name: Install BPF toolchain
-        run: sudo make bpf-deps
+        run: sudo apt-get update && sudo make bpf-deps
 
       # Native build of the four linux/{amd64,arm64} embed binaries
       # (clawker-cp, clawkerd, ebpf-manager, coredns-clawker). Runs bpf2go

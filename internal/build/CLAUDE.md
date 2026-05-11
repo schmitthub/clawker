@@ -12,7 +12,7 @@ No unit tests for `build.go` — it is straightforward wiring and regressions su
 
 ```go
 var Version string  // Default "DEV", set via -ldflags
-var Date    string  // Default "", YYYY-MM-DD, set via -ldflags
+var Date    string  // Default "", RFC3339 commit timestamp from GoReleaser {{.CommitDate}}, set via -ldflags
 ```
 
 ### `init()` Fallback
@@ -25,7 +25,7 @@ When `Version` is `"DEV"` (no ldflags), `init()` attempts `debug.ReadBuildInfo()
 import "github.com/schmitthub/clawker/internal/build"
 
 fmt.Println(build.Version) // "DEV" or "1.2.3"
-fmt.Println(build.Date)    // "" or "2024-06-01"
+fmt.Println(build.Date)    // "" or "2026-05-11T14:30:45Z"
 ```
 
 ## Build Injection

@@ -10,7 +10,7 @@ import "runtime/debug"
 // Defaults are used for development builds (go run / go build without flags).
 var (
 	Version = "DEV"
-	Date    = "" // YYYY-MM-DD, empty for dev builds
+	Date    = "" // RFC3339 commit timestamp (from GoReleaser {{.CommitDate}}), empty for dev builds
 )
 
 func init() {

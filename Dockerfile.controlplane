@@ -3,11 +3,12 @@
 #
 # This file exists ONLY because bpf2go's clang invocation needs Linux UAPI
 # headers and a Linux clang. CI builds these binaries natively on the pinned
-# `ubuntu-24.04` runner via `sudo make bpf-deps && make release-embeds` — it
-# does NOT go through this Dockerfile. To keep CI and macOS dev byte-for-byte
-# aligned, the `bpf-builder` stage below pins to the same ubuntu:24.04 base
-# (matching SHA) the runner uses, so the Makefile's BPF_APT_DEPS versions
-# resolve identically on both paths.
+# `ubuntu-24.04` runner (a GitHub-hosted Ubuntu 24.04 LTS VM image — not a
+# container) via `sudo apt-get update && sudo make bpf-deps && make
+# release-embeds` — it does NOT go through this Dockerfile. The `bpf-builder`
+# stage below pins to the `ubuntu:24.04` container base at a fixed SHA. Both
+# paths share the Ubuntu 24.04 (noble) package archive, so the Makefile's
+# BPF_APT_DEPS versions resolve identically on CI and macOS dev.
 #
 # Builds three Linux binaries that clawker go:embed's into its CLI:
 #

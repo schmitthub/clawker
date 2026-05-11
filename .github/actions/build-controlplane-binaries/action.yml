@@ -61,7 +61,7 @@ runs:
     - name: Install BPF toolchain
       if: runner.os == 'Linux'
       shell: bash
-      run: sudo make bpf-deps
+      run: sudo apt-get update && sudo make bpf-deps
 
     - name: Build embedded control plane binaries
       shell: bash

@@ -86,8 +86,8 @@ help:
 	@echo ""
 	@echo "Release targets:"
 	@echo "  release             Tag and push a release (VERSION=v0.7.6 MESSAGE=\"...\" required)"
-	@echo "  release-embeds      Build both linux arch embed sets via pinned Docker chain"
-	@echo "                      (amd64+arm64), staged under embeds/. Used by release-build.yml."
+	@echo "  release-embeds      Cross-compile linux/amd64+arm64 embed sets (go build; bpf2go"
+	@echo "                      native on Linux, Docker on macOS), staged under embeds/."
 	@echo ""
 	@echo "Examples:"
 	@echo "  make clawker"
@@ -241,12 +241,14 @@ BPF_APT_DEPS := \
 
 # Install the pinned BPF toolchain via apt. Requires Ubuntu 24.04 (Noble)
 # and root — versions pinned above only resolve against Noble's apt repos.
-# CI invokes via `sudo make bpf-deps` on the pinned `ubuntu-24.04` runner;
-# in Dockerfile.controlplane the build runs as root inside the matching
-# ubuntu:24.04 base. No-op on non-Noble hosts — call `make ebpf` instead,
-# which routes through Dockerfile.controlplane on macOS.
+# Callers are responsible for refreshing the apt index first (`apt-get
+# update`); this target only installs. CI invokes via `sudo apt-get update
+# && sudo make bpf-deps` on the pinned `ubuntu-24.04` runner; in
+# Dockerfile.controlplane the build runs as root inside the matching
+# ubuntu:24.04 base with its own preceding `apt-get update`. No-op on
+# non-Noble hosts — call `make ebpf` instead, which routes through
+# Dockerfile.controlplane on macOS.
 bpf-deps:
-	apt-get update
 	apt-get install -y --no-install-recommends $(BPF_APT_DEPS) ca-certificates
 	rm -rf /var/lib/apt/lists/*
 
