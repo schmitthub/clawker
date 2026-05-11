@@ -316,10 +316,14 @@ HOST_OS := $(shell uname -s)
 bpf-bindings: $(BPF_BINDINGS)
 ebpf: $(BPF_BINDINGS)
 
+# Target gen.go specifically — recursing via `./...` also processes the
+# `//go:generate moq` directive on EBPFManager in manager.go, which would
+# require moq on $PATH. The mock is committed; bpf2go is the only directive
+# we want to run here.
 ifeq ($(HOST_OS),Linux)
 $(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
 	@echo "Generating bpf2go bindings via native go generate (linux host)..."
-	$(GO) generate ./internal/controlplane/firewall/ebpf/...
+	$(GO) generate ./internal/controlplane/firewall/ebpf/gen.go
 else
 $(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
 	@echo "Extracting bpf2go bindings via Dockerfile.controlplane (non-linux host)..."
