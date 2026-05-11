@@ -1,6 +1,7 @@
 .PHONY: help \
-        clawker clawker-generate clawker-test clawker-test-internals clawker-lint clawker-staticcheck clawker-install clawker-clean \
-        ebpf-binary coredns-binary cp-binary \
+        clawker clawker-generate clawker-lint clawker-staticcheck clawker-install clawker-clean \
+        bpf-deps ebpf ebpf-binary coredns-binary cp-binary \
+        release-embeds verify-release-embeds stage-embeds-amd64 stage-embeds-arm64 \
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e \
         licenses licenses-check \
         docs docs-check \
@@ -14,11 +15,17 @@ BINARY_NAME := clawker
 CLAWKER_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GO ?= go
 GOFLAGS := -trimpath
+# Dev builds leave build.Date empty; release goreleaser stamps it via
+# {{.CommitDate}} in .goreleaser.yaml.
 LDFLAGS := -s -w \
-	-X 'github.com/schmitthub/clawker/internal/build.Version=$(CLAWKER_VERSION)' \
-	-X 'github.com/schmitthub/clawker/internal/build.Date=$(shell date +%Y-%m-%d)'
+	-X 'github.com/schmitthub/clawker/internal/build.Version=$(CLAWKER_VERSION)'
 BIN_DIR := bin
 DIST_DIR := dist
+# Staging directory for per-arch linux embed sets used by the release pipeline.
+# Populated by `make release-embeds`, consumed by `make stage-embeds-{amd64,arm64}`
+# from goreleaser's per-build-id pre-hooks. Outside dist/ so `goreleaser release
+# --clean` cannot wipe it.
+RELEASE_EMBED_STAGE := embeds
 
 # Test runner configuration
 # Use gotestsum if available for human-friendly output, fall back to go test
@@ -52,8 +59,6 @@ help:
 	@echo "Clawker targets:"
 	@echo "  clawker                 Build the clawker Clawker binary"
 	@echo "  clawker-generate        Build the standalone clawker-generate binary"
-	@echo "  clawker-test            Run Clawker tests (alias for 'test')"
-	@echo "  clawker-test-internals  Run Clawker internal integration tests"
 	@echo "  clawker-lint            Run golangci-lint on Clawker code"
 	@echo "  clawker-staticcheck     Run staticcheck on Clawker code"
 	@echo "  clawker-install         Install Clawker to GOPATH/bin"
@@ -81,10 +86,12 @@ help:
 	@echo ""
 	@echo "Release targets:"
 	@echo "  release             Tag and push a release (VERSION=v0.7.6 MESSAGE=\"...\" required)"
+	@echo "  release-embeds      Cross-compile linux/amd64+arm64 embed sets (go build; bpf2go"
+	@echo "                      native on Linux, Docker on macOS), staged under embeds/."
 	@echo ""
 	@echo "Examples:"
 	@echo "  make clawker"
-	@echo "  make clawker-test"
+	@echo "  make test"
 	@echo "  make release VERSION=v0.7.6 MESSAGE=\"my release\""
 
 # ============================================================================
@@ -104,7 +111,7 @@ clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
 
 # =============================================================================
-# Embedded firewall stack binaries (reproducible Docker builds)
+# Embedded firewall stack binaries
 # =============================================================================
 #
 # The clawker CLI go:embed's three Linux binaries: clawker-cp (CP daemon),
@@ -116,17 +123,8 @@ clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 # They are NOT sidecars — one control plane + firewall stack is shared by
 # all clawker-managed containers on the host.
 #
-# Both targets build through `docker buildx build` against a single pinned
-# multi-stage Dockerfile.controlplane whose `bpf-builder` stage is shared between
-# the ebpf-manager and coredns-clawker compile paths (coredns-clawker imports
-# internal/controlplane/firewall/ebpf and so needs the bpf2go-generated wrappers at compile time).
-# Every input is pinned — base image digest, apt package versions, Go
-# toolchain digest, bpf2go version — so a fresh `make` on any host produces
-# byte-identical output. Nothing generated is ever committed to the repo:
-# .o files, bpf2go Go wrappers, and the extracted binaries are all gitignored.
-#
-# See internal/controlplane/firewall/ebpf/REPRODUCIBILITY.md for the full provenance chain and the
-# pin update procedure.
+# Nothing generated is ever committed to the repo: .o files, bpf2go Go
+# wrappers, and the extracted binaries are all gitignored.
 
 EBPF_BINARY := internal/controlplane/cpboot/assets/ebpf-manager
 COREDNS_BINARY := internal/controlplane/firewall/assets/coredns-clawker
@@ -213,6 +211,43 @@ CP_BINARY_DEPS := \
 BUILDX_BUILD := docker buildx build
 BUILDX_TARGETARCH := $(shell $(GO) env GOARCH)
 
+# =============================================================================
+# BPF toolchain dependencies
+# =============================================================================
+#
+# Single source of truth for the pinned apt versions that produce the BPF
+# bytecode. Both CI (pinned `ubuntu-24.04` runner) and Dockerfile.controlplane
+# (macOS dev convenience, ubuntu:24.04 base) install from this list —
+# `sudo make bpf-deps` in CI, `COPY Makefile . && make bpf-deps` inside the
+# dev container.
+#
+# Updating versions: bump the values below. Resolve fresh pins against the
+# same ubuntu:24.04 digest used by Dockerfile.controlplane with:
+#     docker run --rm ubuntu:24.04@sha256:<digest> bash -c \
+#         'apt-get update >/dev/null && apt-cache policy clang llvm libbpf-dev linux-libc-dev'
+#
+# `llvm` provides the unversioned `/usr/bin/llvm-strip`, which bpf2go shells
+# out to after compiling the .o to strip debug symbols. The `clang` meta
+# package does not pull it in.
+BPF_APT_DEPS := \
+    clang=1:18.0-59~exp2 \
+    llvm=1:18.0-59~exp2 \
+    libbpf-dev=1:1.3.0-2build2 \
+    linux-libc-dev=6.8.0-111.111
+
+# Install the pinned BPF toolchain via apt. Requires Ubuntu 24.04 (Noble)
+# and root — versions pinned above only resolve against Noble's apt repos.
+# Callers are responsible for refreshing the apt index first (`apt-get
+# update`); this target only installs. CI invokes via `sudo apt-get update
+# && sudo make bpf-deps` on the pinned `ubuntu-24.04` runner; in
+# Dockerfile.controlplane the build runs as root inside the matching
+# ubuntu:24.04 base with its own preceding `apt-get update`. No-op on
+# non-Noble hosts — call `make ebpf` instead, which routes through
+# Dockerfile.controlplane on macOS.
+bpf-deps:
+	apt-get install -y --no-install-recommends $(BPF_APT_DEPS) ca-certificates
+	rm -rf /var/lib/apt/lists/*
+
 # bpf-bindings: extract bpf2go-generated Go wrappers + .o bytecode to
 # internal/controlplane/firewall/ebpf/. This is a prerequisite for any host-side Go tool (go build,
 # go test, golangci-lint, staticcheck, gopls) touching the internal/controlplane/firewall/ebpf
@@ -251,13 +286,18 @@ proto: proto-tools
 	@$(MAKE) --no-print-directory $(PROTO_GENERATED)
 
 # File-target rule: Make regenerates PROTO_GENERATED whenever any source is
-# newer (edited .proto, updated buf config). Group target (&:) means a single
-# `buf generate` invocation produces all four files. | proto-tools is an
-# order-only prerequisite: it runs before regeneration (installing tools if
-# needed) but its phony nature doesn't trigger regeneration by itself.
-$(PROTO_GENERATED) &: $(PROTO_SOURCES) | proto-tools
+# newer (edited .proto, updated buf config). A single `buf generate` produces
+# all six files. The grouped-target operator `&:` only works on GNU Make 4.3+
+# (Apple's default `/usr/bin/make` is 3.81), so use the canonical-target
+# pattern: one representative file gets the recipe, the rest depend on it.
+# If any are deleted/stale, Make rebuilds via the chain and the recipe fires
+# once. | proto-tools is order-only — runs first when missing but its phony
+# nature doesn't trigger regeneration by itself.
+PROTO_CANONICAL := api/admin/v1/admin.pb.go
+$(PROTO_CANONICAL): $(PROTO_SOURCES) | proto-tools
 	@echo "Regenerating Go code from .proto files via buf..."
 	@PATH="$$(go env GOPATH)/bin:$$PATH" buf generate
+$(filter-out $(PROTO_CANONICAL),$(PROTO_GENERATED)): $(PROTO_CANONICAL)
 
 proto-tools:
 	@echo "Installing pinned proto toolchain..."
@@ -265,10 +305,38 @@ proto-tools:
 	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
 	$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
 
-.PHONY: bpf-bindings
+# Ubuntu 24.04 hosts (the pinned CI runner; the dev container) run bpf2go
+# natively after `make bpf-deps` installs clang + libbpf-dev + linux-libc-dev.
+# macOS hosts route through Dockerfile.controlplane because clang on macOS
+# can't produce BPF object files — this is the only reason
+# Dockerfile.controlplane exists at all.
+HOST_OS := $(shell uname -s)
+
+# `make ebpf` is the ergonomic alias for whichever bpf2go path the host
+# supports. Same on-disk output (BPF_BINDINGS); differs only in how it gets
+# produced.
+.PHONY: bpf-bindings ebpf
 bpf-bindings: $(BPF_BINDINGS)
-$(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
-	@echo "Extracting bpf2go bindings to internal/controlplane/firewall/ebpf/ via pinned Dockerfile.controlplane..."
+ebpf: $(BPF_BINDINGS)
+
+# Target gen.go specifically — recursing via `./...` also processes the
+# `//go:generate moq` directive on EBPFManager in manager.go, which would
+# require moq on $PATH. The mock is committed; bpf2go is the only directive
+# we want to run here.
+#
+# Both Linux and macOS branches produce all four bindings in one invocation.
+# Grouped-target `&:` requires GNU Make 4.3+ (Apple's default `/usr/bin/make`
+# is 3.81), so use the canonical-target pattern: one representative file gets
+# the recipe, the rest depend on it. Whichever sibling is stale forces the
+# canonical to rebuild, the recipe fires once, all four land.
+BPF_BINDINGS_CANONICAL := internal/controlplane/firewall/ebpf/clawker_x86_bpfel.go
+ifeq ($(HOST_OS),Linux)
+$(BPF_BINDINGS_CANONICAL): $(BPF_BINDING_DEPS)
+	@echo "Generating bpf2go bindings via native go generate (linux host)..."
+	$(GO) generate ./internal/controlplane/firewall/ebpf/gen.go
+else
+$(BPF_BINDINGS_CANONICAL): $(BPF_BINDING_DEPS)
+	@echo "Extracting bpf2go bindings via Dockerfile.controlplane (non-linux host)..."
 	@rm -rf internal/controlplane/firewall/ebpf/.bpf-bindings-extract
 	$(BUILDX_BUILD) \
 		-f Dockerfile.controlplane \
@@ -280,64 +348,42 @@ $(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
 	@mv internal/controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.go internal/controlplane/firewall/ebpf/
 	@mv internal/controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.o  internal/controlplane/firewall/ebpf/
 	@rm -rf internal/controlplane/firewall/ebpf/.bpf-bindings-extract
+endif
+$(filter-out $(BPF_BINDINGS_CANONICAL),$(BPF_BINDINGS)): $(BPF_BINDINGS_CANONICAL)
 
+# Once $(BPF_BINDINGS) exist on the host tree, every embed binary is a plain
+# CGO_ENABLED=0 Go cross-compile to linux/$(BUILDX_TARGETARCH). bpf2go's
+# generated clawker_*_bpfel.go files embed the .o bytecode via `//go:embed`,
+# so the binary build itself never needs clang or Docker.
 ebpf-binary: $(EBPF_BINARY)
 $(EBPF_BINARY): $(EBPF_BINARY_DEPS) $(BPF_BINDINGS)
-	@echo "Building ebpf-manager for linux/$(BUILDX_TARGETARCH) via pinned Dockerfile.controlplane..."
+	@echo "Building ebpf-manager for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
-	@rm -rf $(@D)/.ebpf-extract
-	$(BUILDX_BUILD) \
-		-f Dockerfile.controlplane \
-		--target=ebpf-manager-extract \
-		--build-arg TARGETOS=linux \
-		--build-arg TARGETARCH=$(BUILDX_TARGETARCH) \
-		--output=type=local,dest=$(@D)/.ebpf-extract \
-		.
-	@mv $(@D)/.ebpf-extract/ebpf-manager $@
-	@rm -rf $(@D)/.ebpf-extract
+	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./internal/controlplane/firewall/ebpf/cmd
 
 coredns-binary: $(COREDNS_BINARY)
 $(COREDNS_BINARY): $(COREDNS_BINARY_DEPS) $(BPF_BINDINGS)
-	@echo "Building coredns-clawker for linux/$(BUILDX_TARGETARCH) via pinned Dockerfile.controlplane..."
+	@echo "Building coredns-clawker for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
-	@rm -rf $(@D)/.coredns-extract
-	$(BUILDX_BUILD) \
-		-f Dockerfile.controlplane \
-		--target=coredns-extract \
-		--build-arg TARGETOS=linux \
-		--build-arg TARGETARCH=$(BUILDX_TARGETARCH) \
-		--output=type=local,dest=$(@D)/.coredns-extract \
-		.
-	@mv $(@D)/.coredns-extract/coredns-clawker $@
-	@rm -rf $(@D)/.coredns-extract
+	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/coredns-clawker
 
-# cp-binary builds the clawker-cp containerized control plane daemon via
-# the same pinned multi-stage Dockerfile.controlplane. The resulting binary is
-# go:embed'd into the clawker CLI (internal/controlplane/cpboot/embed_cp.go)
-# and baked into the clawker-cp image at runtime by
-# internal/controlplane/cpboot/bootstrap.go (cpImageDockerfile) alongside
+# cp-binary builds the clawker-cp containerized control plane daemon. The
+# resulting binary is go:embed'd into the clawker CLI
+# (internal/controlplane/cpboot/embed_cp.go) and baked into the clawker-cp
+# image at runtime by internal/controlplane/cpboot/bootstrap.go alongside
 # ebpf-manager (break-glass).
 #
 # cp-binary depends on $(CLAWKERD_BINARY) because cmd/clawker-cp transitively
-# imports internal/clawkerd via internal/docker → internal/bundler. The
-# inner Dockerfile.controlplane Go build refuses to compile internal/clawkerd
-# until its `//go:embed assets/clawkerd` target exists on disk. Make builds
-# prereqs in declared order, but adding this as an explicit prerequisite of
-# the file target also makes parallel `make -j` correct.
+# imports internal/clawkerd via internal/docker → internal/bundler. The Go
+# build refuses to compile internal/clawkerd until its `//go:embed
+# assets/clawkerd` target exists on disk. Make builds prereqs in declared
+# order, but adding this as an explicit prerequisite of the file target
+# also makes parallel `make -j` correct.
 cp-binary: $(CP_BINARY)
 $(CP_BINARY): $(CP_BINARY_DEPS) $(BPF_BINDINGS) $(CLAWKERD_BINARY)
-	@echo "Building clawker-cp for linux/$(BUILDX_TARGETARCH) via pinned Dockerfile.controlplane..."
+	@echo "Building clawker-cp for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
-	@rm -rf $(@D)/.cp-extract
-	$(BUILDX_BUILD) \
-		-f Dockerfile.controlplane \
-		--target=clawker-cp-extract \
-		--build-arg TARGETOS=linux \
-		--build-arg TARGETARCH=$(BUILDX_TARGETARCH) \
-		--output=type=local,dest=$(@D)/.cp-extract \
-		.
-	@mv $(@D)/.cp-extract/clawker-cp $@
-	@rm -rf $(@D)/.cp-extract
+	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/clawker-cp
 
 # clawkerd-binary builds the per-container agent daemon. Pure Go (no
 # BPF), so the build is a plain CGO_ENABLED=0 cross-compile to
@@ -358,63 +404,115 @@ clawker-generate:
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/clawker-generate ./cmd/clawker-generate
 
-# Build Clawker for all supported platforms (linux, darwin — windows is not
-# currently supported).
+# ============================================================================
+# Release pipeline support
+# ============================================================================
 #
-# clawker-build-linux and clawker-build-darwin each overwrite the shared
-# $(EBPF_BINARY)/$(COREDNS_BINARY) asset paths during their recipe (first
-# amd64, then arm64). Under `make -j clawker-build-all` the platform targets
-# would run concurrently and stomp each other's asset files, silently
-# embedding the wrong-arch binaries into the cross-compiled clawker output.
-# Invoke each platform as a sub-make so -j does not parallelize them.
-clawker-build-all:
-	@echo "Building Clawker for all platforms..."
-	$(MAKE) clawker-build-linux
-	$(MAKE) clawker-build-darwin
+# `make release-embeds` produces both linux embed sets ({amd64,arm64}) under
+# embeds/ for goreleaser to consume via per-arch `hooks.pre`. Load-bearing
+# invariants the rest of the file relies on:
+#
+#   - embeds/ lives OUTSIDE dist/ so `goreleaser release --clean` cannot
+#     wipe staged binaries mid-release.
+#   - All four embeds are plain CGO_ENABLED=0 Go cross-compiles. The BPF
+#     bytecode is produced once by `make ebpf` (Linux: native bpf2go;
+#     macOS: via Dockerfile.controlplane) and lands in the source tree as
+#     clawker_*_bpfel.{go,o} where `//go:embed` pulls it into the binary.
+#   - goreleaser runs with TWO build IDs (clawker-amd64, clawker-arm64),
+#     not four (per-goos/arch). Splitting by arch lets a single staged embed
+#     set serve both linux and darwin targets of that arch — embeds are
+#     linux-only regardless of host CLI OS.
+#   - `goreleaser release --parallelism 1` is REQUIRED. Both build IDs share
+#     the same internal/.../assets/ paths; default parallelism would let
+#     build B's pre-hook overwrite build A's staged embeds mid-compile,
+#     silently producing archives whose embedded binaries don't match the
+#     archive's advertised arch.
 
-clawker-build-linux:
-	@echo "Building Clawker for Linux..."
-	@mkdir -p $(DIST_DIR)
-	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/firewall/ebpf/cmd
-	@echo "  coredns-clawker linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
-	@echo "  clawker-cp linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CP_BINARY) ./cmd/clawker-cp
-	@echo "  clawkerd linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CLAWKERD_BINARY) ./cmd/clawkerd
-	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/clawker
-	@echo "  ebpf-manager linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/firewall/ebpf/cmd
-	@echo "  coredns-clawker linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
-	@echo "  clawker-cp linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CP_BINARY) ./cmd/clawker-cp
-	@echo "  clawkerd linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CLAWKERD_BINARY) ./cmd/clawkerd
-	GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/clawker
+release-embeds: $(PROTO_GENERATED)
+	@rm -rf $(RELEASE_EMBED_STAGE)/amd64 $(RELEASE_EMBED_STAGE)/arm64
+	@echo "==> Building linux/amd64 embed set"
+	@rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY)
+	$(MAKE) BUILDX_TARGETARCH=amd64 ebpf-binary coredns-binary cp-binary clawkerd-binary
+	@mkdir -p $(RELEASE_EMBED_STAGE)/amd64
+	cp $(EBPF_BINARY)     $(RELEASE_EMBED_STAGE)/amd64/ebpf-manager
+	cp $(COREDNS_BINARY)  $(RELEASE_EMBED_STAGE)/amd64/coredns-clawker
+	cp $(CP_BINARY)       $(RELEASE_EMBED_STAGE)/amd64/clawker-cp
+	cp $(CLAWKERD_BINARY) $(RELEASE_EMBED_STAGE)/amd64/clawkerd
+	@echo "==> Building linux/arm64 embed set"
+	@rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY)
+	$(MAKE) BUILDX_TARGETARCH=arm64 ebpf-binary coredns-binary cp-binary clawkerd-binary
+	@mkdir -p $(RELEASE_EMBED_STAGE)/arm64
+	cp $(EBPF_BINARY)     $(RELEASE_EMBED_STAGE)/arm64/ebpf-manager
+	cp $(COREDNS_BINARY)  $(RELEASE_EMBED_STAGE)/arm64/coredns-clawker
+	cp $(CP_BINARY)       $(RELEASE_EMBED_STAGE)/arm64/clawker-cp
+	cp $(CLAWKERD_BINARY) $(RELEASE_EMBED_STAGE)/arm64/clawkerd
+	@$(MAKE) verify-release-embeds
+	@echo "==> Embed sets staged under $(RELEASE_EMBED_STAGE)/ (verified)"
 
-clawker-build-darwin:
-	@echo "Building Clawker for macOS..."
-	@mkdir -p $(DIST_DIR)
-	@echo "  ebpf-manager linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/firewall/ebpf/cmd
-	@echo "  coredns-clawker linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
-	@echo "  clawker-cp linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CP_BINARY) ./cmd/clawker-cp
-	@echo "  clawkerd linux/amd64"; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CLAWKERD_BINARY) ./cmd/clawkerd
-	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/clawker
-	@echo "  ebpf-manager linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(EBPF_BINARY) ./internal/controlplane/firewall/ebpf/cmd
-	@echo "  coredns-clawker linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(COREDNS_BINARY) ./cmd/coredns-clawker
-	@echo "  clawker-cp linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CP_BINARY) ./cmd/clawker-cp
-	@echo "  clawkerd linux/arm64"; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $(CLAWKERD_BINARY) ./cmd/clawkerd
-	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/clawker
+# verify-release-embeds asserts that each staged binary is a 64-bit
+# little-endian ELF for the expected arch. Catches the silent-wrong-arch
+# failure mode where Make variable propagation breaks (e.g.,
+# BUILDX_TARGETARCH override stops taking effect) and both passes produce
+# host-arch binaries — archives would still build cleanly but ship the
+# wrong embeds. Validates four ELF header fields read from one 20-byte
+# `dd` slurp per file:
+#   - bytes 0-3: magic (7f 45 4c 46) — rules out non-ELF (e.g., Mach-O)
+#   - byte 4:    EI_CLASS = 0x02 (ELFCLASS64)
+#   - byte 5:    EI_DATA  = 0x01 (ELFDATA2LSB, little-endian)
+#   - bytes 18-19: e_machine LE word — 0x003e = x86_64, 0x00b7 = AArch64
+# OS/ABI (byte 7) is NOT checked: Go-built binaries set 0 (System V), not
+# 3 (Linux), regardless of GOOS. Magic + class + endianness + e_machine is
+# sufficient to prove "64-bit ELF for the right linux arch", which is what
+# the Linux container runtime cares about.
+verify-release-embeds:
+	@for arch in amd64 arm64; do \
+		case $$arch in amd64) want=3e00 ;; arm64) want=b700 ;; esac; \
+		for bin in ebpf-manager coredns-clawker clawker-cp clawkerd; do \
+			f=$(RELEASE_EMBED_STAGE)/$$arch/$$bin; \
+			test -f $$f || { echo "ERROR: missing $$f" >&2; exit 1; }; \
+			hdr=$$(dd if=$$f bs=1 count=20 status=none 2>/dev/null | od -An -tx1 | tr -d ' \n'); \
+			magic=$$(printf '%s' "$$hdr" | cut -c1-8); \
+			class=$$(printf '%s' "$$hdr" | cut -c9-10); \
+			data=$$(printf '%s'  "$$hdr" | cut -c11-12); \
+			machine=$$(printf '%s' "$$hdr" | cut -c37-40); \
+			if [ "$$magic" != "7f454c46" ]; then \
+				echo "ERROR: $$f is not an ELF file (magic=0x$$magic, expected 0x7f454c46)" >&2; exit 1; \
+			fi; \
+			if [ "$$class" != "02" ]; then \
+				echo "ERROR: $$f is not 64-bit ELF (EI_CLASS=0x$$class, expected 0x02)" >&2; exit 1; \
+			fi; \
+			if [ "$$data" != "01" ]; then \
+				echo "ERROR: $$f is not little-endian ELF (EI_DATA=0x$$data, expected 0x01)" >&2; exit 1; \
+			fi; \
+			if [ "$$machine" != "$$want" ]; then \
+				echo "ERROR: $$f has ELF e_machine=0x$$machine (expected 0x$$want for linux/$$arch)" >&2; exit 1; \
+			fi; \
+		done; \
+	done
 
-# Run Clawker tests
-clawker-test: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
-	@echo "Running Clawker tests..."
-ifndef GOTESTSUM
-	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
-endif
-	$(TEST_CMD_VERBOSE) ./...
+# stage-embeds-<arch> places the staged linux/<arch> embed binaries at the
+# per-package go:embed source paths so the next `go build` of ./cmd/clawker
+# picks them up. Called from goreleaser's per-build hooks.pre. Plain (non-`@`)
+# cp so any failure (missing source, permissions) shows the offending file
+# in the goreleaser log, not just a bare `cp: cannot stat`.
+#
+# rm -f all destination assets first so a partial failure (e.g., mid-cp
+# permission denied) cannot leave a half-staged set where some assets are
+# the previous arch's bytes. Either every asset is the requested arch, or
+# the build fails before `go build` runs.
+stage-embeds-amd64:
+	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/amd64/ebpf-manager     $(EBPF_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/amd64/coredns-clawker  $(COREDNS_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/amd64/clawker-cp       $(CP_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/amd64/clawkerd         $(CLAWKERD_BINARY)
 
-# Run Clawker internals tests
-clawker-test-internals: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
-	@echo "Running Clawker internal integration tests (requires Docker)..."
-ifndef GOTESTSUM
-	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
-endif
-	$(TEST_CMD_VERBOSE) -timeout 10m ./test/internals/...
+stage-embeds-arm64:
+	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/arm64/ebpf-manager     $(EBPF_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/arm64/coredns-clawker  $(COREDNS_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/arm64/clawker-cp       $(CP_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/arm64/clawkerd         $(CLAWKERD_BINARY)
 
 # Run Clawker tests with coverage
 clawker-test-coverage: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
@@ -473,8 +571,9 @@ clawker-install-global: clawker
 # Clean Clawker build artifacts
 clawker-clean:
 	@echo "Cleaning Clawker build artifacts..."
-	rm -rf $(BIN_DIR) $(DIST_DIR)
-	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) coverage.out coverage.html
+	rm -rf $(BIN_DIR) $(DIST_DIR) $(RELEASE_EMBED_STAGE)
+	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) coverage.out coverage.html
+	rm -f $(BPF_BINDINGS)
 
 # ============================================================================
 # Test Targets

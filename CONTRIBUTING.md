@@ -15,9 +15,11 @@ Thanks for your interest in contributing to Clawker! This project is currently i
 ```bash
 git clone https://github.com/schmitthub/clawker.git
 cd clawker
-go build -o bin/clawker ./cmd/clawker
+make clawker
 export PATH="$PWD/bin:$PATH"
 ```
+
+> `go install ./cmd/clawker` and bare `go build ./cmd/clawker` are unsupported — they fail at compile time because the four Linux assets (`clawkerd`, `clawker-cp`, `ebpf-manager`, `coredns-clawker`) referenced by `//go:embed` are gitignored. `make clawker` produces them via the per-target chain (`clawkerd-binary`, `cp-binary`, `ebpf-binary`, `coredns-binary`) and then builds the host CLI. All four are plain `CGO_ENABLED=0` Go cross-compiles to `linux/$GOARCH`; the only Docker hop is the `bpf-bindings` extraction needed on macOS (where clang cannot emit BPF object files) — Linux contributors install the pinned BPF toolchain once with `sudo make bpf-deps` and everything builds natively. The `make release-embeds` / `make stage-embeds-{amd64,arm64}` targets are for the goreleaser pipeline; contributors do not invoke them for local development.
 
 ## Running Tests
 

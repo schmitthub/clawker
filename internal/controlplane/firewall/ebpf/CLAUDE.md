@@ -10,13 +10,12 @@ The BPF source (`bpf/clawker.c`) and its generated Go bindings (`clawker_*_bpfel
 bpf/clawker.c        BPF C source (connect4/6, sendmsg4/6, recvmsg4/6, sock_create)
 bpf/common.h         Shared structs: container_config, dns_entry, route_key/val, metric_key
 gen.go               //go:generate bpf2go directive
-clawker_*_bpfel.go   bpf2go-generated Go bindings (gitignored, produced by `make ebpf-binary`)
+clawker_*_bpfel.go   bpf2go-generated Go bindings (gitignored, produced by `make ebpf`)
 clawker_*_bpfel.o    BPF bytecode (gitignored)
 manager.go           Go-side Manager: Load/Enable/Disable/SyncRoutes/Bypass/DNS helpers
 types.go             Exported types: ContainerConfig, DNSEntry, RouteKey/Val, MetricKey
 manager_test.go      Unit tests (no kernel required — exercises non-BPF code paths)
 cmd/                 break-glass ebpf-manager binary (see cmd/CLAUDE.md)
-REPRODUCIBILITY.md   Provenance chain — pin-update procedure for the BPF toolchain
 ```
 
 ## Lifetime ownership
@@ -94,9 +93,11 @@ func Supported() error                                       // checks cgroup v2
 
 ## Build and Provenance
 
-The BPF toolchain pins (clang, libbpf-dev, linux-libc-dev, bpf2go version, Go toolchain digest) are all captured in `Dockerfile.controlplane` at the repo root. `make ebpf-binary` runs `docker buildx build` against that pinned recipe, produces `internal/controlplane/assets/ebpf-manager`, and does **not** commit any generated artifacts. See `REPRODUCIBILITY.md` for the full chain.
+The BPF toolchain pins (clang, libbpf-dev, linux-libc-dev) live in the Makefile's `BPF_APT_DEPS` variable; the bpf2go version + clang flags live in `gen.go`. CI runs `sudo apt-get update && sudo make bpf-deps` on the pinned `ubuntu-24.04` runner to apt-install the pinned toolchain, then `make ebpf` (native `go generate`) produces `clawker_*_bpfel.{go,o}` on the host tree. macOS dev routes through `Dockerfile.controlplane`, which `COPY`s the same Makefile and runs `make bpf-deps` inside a pinned `ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b` image. Either path produces identical bpf2go bindings; nothing generated is committed.
 
-`make cp-binary` builds the CP daemon `clawker-cp` via the same pinned Dockerfile.controlplane (new `clawker-cp-builder` stage added for this work). Both binaries end up in `internal/controlplane/assets/` and are `go:embed`'d into the clawker CLI.
+To bump pins: resolve fresh apt versions against the pinned `ubuntu:24.04@sha256:...` with `docker run --rm ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b bash -c 'apt-get update >/dev/null && apt-cache policy clang llvm libbpf-dev linux-libc-dev | grep Candidate'`, paste each `Candidate:` into `BPF_APT_DEPS` in the Makefile. The Dockerfile picks up the new values automatically.
+
+`make ebpf-binary` / `make cp-binary` / `make coredns-binary` / `make clawkerd-binary` are plain `CGO_ENABLED=0 GOOS=linux GOARCH=$(BUILDX_TARGETARCH) go build` targets. The `//go:embed` of the BPF `.o` bytecode is pulled in by `clawker_*_bpfel.go`, so the binary build itself never touches clang or Docker.
 
 ## Imports
 

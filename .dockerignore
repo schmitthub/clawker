@@ -14,7 +14,9 @@
 Dockerfile*
 
 # Build
-Makefile
+# Makefile is kept in the build context — Dockerfile.controlplane's
+# bpf-builder stage `COPY`s it to run `make bpf-deps`, single source of
+# truth for the pinned BPF apt versions.
 
 # OS
 .DS_Store
