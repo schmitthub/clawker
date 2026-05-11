@@ -2,10 +2,12 @@
 # firewall stack binaries.
 #
 # This file exists ONLY because bpf2go's clang invocation needs Linux UAPI
-# headers and a Linux clang. CI builds these binaries natively on the
-# ubuntu-latest runner via `sudo make bpf-deps && make release-embeds` — it
-# does NOT go through this Dockerfile. Stay close to CI but byte-for-byte
-# parity is not the goal; "no surprises in CI" is.
+# headers and a Linux clang. CI builds these binaries natively on the pinned
+# `ubuntu-24.04` runner via `sudo make bpf-deps && make release-embeds` — it
+# does NOT go through this Dockerfile. To keep CI and macOS dev byte-for-byte
+# aligned, the `bpf-builder` stage below pins to the same ubuntu:24.04 base
+# (matching SHA) the runner uses, so the Makefile's BPF_APT_DEPS versions
+# resolve identically on both paths.
 #
 # Builds three Linux binaries that clawker go:embed's into its CLI:
 #
@@ -28,9 +30,10 @@
 #                       the eBPF subsystem.
 #
 # Stages:
-#   1. bpf-builder             — pinned debian + clang + llvm + libbpf-dev +
-#                                linux-libc-dev + Go; runs `go generate` to
-#                                produce clawker_*_bpfel.{go,o} from the BPF C
+#   1. bpf-builder             — pinned ubuntu:24.04 + clang + llvm +
+#                                libbpf-dev + linux-libc-dev + Go; runs
+#                                `go generate` to produce clawker_*_bpfel.{go,o}
+#                                from the BPF C
 #   2. ebpf-manager-builder    — pinned golang:alpine; overlays stage 1's
 #                                generated bindings and `go build`s the
 #                                ebpf-manager Linux binary
@@ -61,10 +64,12 @@
 #
 # Compiles internal/controlplane/firewall/ebpf/bpf/clawker.c → clawker_*_bpfel.{go,o} via bpf2go.
 # Uses pinned clang + llvm (for llvm-strip) + libbpf-dev + linux-libc-dev
-# from Debian bookworm. The UAPI header set (linux/bpf.h, linux/types.h) is
-# what anchors the BPF build since clawker's programs touch only stable
-# kernel UAPI and do not use CO-RE.
-FROM debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d AS bpf-builder
+# from Ubuntu 24.04 (Noble). Same base as the GitHub-hosted `ubuntu-24.04`
+# runner so the apt versions pinned in the Makefile resolve identically on
+# both the macOS dev path (this Dockerfile) and CI. The UAPI header set
+# (linux/bpf.h, linux/types.h) is what anchors the BPF build since clawker's
+# programs touch only stable kernel UAPI and do not use CO-RE.
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b AS bpf-builder
 
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
@@ -72,8 +77,8 @@ WORKDIR /build
 
 # Install pinned BPF toolchain (clang, llvm, libbpf-dev, linux-libc-dev) via
 # the Makefile's `bpf-deps` target. Single source of truth shared with CI's
-# `sudo make bpf-deps` step on the Linux runner — bumping versions in one
-# place updates both paths.
+# `sudo make bpf-deps` step on the pinned `ubuntu-24.04` runner — bumping
+# versions in one place updates both paths.
 COPY Makefile ./
 RUN apt-get update && \
     apt-get install -y --no-install-recommends make && \

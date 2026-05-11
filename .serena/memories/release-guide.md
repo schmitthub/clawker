@@ -145,7 +145,7 @@ make release-embeds       # both linux arch embed sets, plain Go cross-compile
 | `.github/workflows/release-build.yml` | Reusable build + attest workflow (~85 lines). Single signing identity for L3 isolation. |
 | `.goreleaser.yaml` | GoReleaser v2 config (two build IDs + per-arch pre-hooks). No `extra_files:` block — install.sh is not a release asset. |
 | `Makefile` | `BPF_APT_DEPS` (pinned apt versions, single source of truth shared with Dockerfile.controlplane), `bpf-deps` (apt install), `ebpf` (host-aware bpf2go runner — native on linux, docker buildx on macOS), `release-embeds` (per-arch embed sets), `stage-embeds-{amd64,arm64}` (per-build swap), `verify-release-embeds` (ELF magic+class+endian+e_machine). |
-| `Dockerfile.controlplane` | macOS-dev convenience for running bpf2go inside a pinned `debian:bookworm-slim` image. **NOT used in CI.** Reads `BPF_APT_DEPS` via `make bpf-deps` so version pins stay aligned with the Linux CI path. |
+| `Dockerfile.controlplane` | macOS-dev convenience for running bpf2go inside a pinned `ubuntu:24.04` image (same SHA as the GitHub `ubuntu-24.04` runner). **NOT used in CI.** Reads `BPF_APT_DEPS` via `make bpf-deps` so version pins resolve identically on the macOS dev path and on CI. |
 | `internal/build/build.go` | Build-time metadata vars (`Version`, `Date`). |
 
 ## Pinned Action SHAs (live across release.yml + release-build.yml)

@@ -55,8 +55,9 @@ runs:
     # Install pinned BPF toolchain (clang/llvm/libbpf-dev/linux-libc-dev) so
     # `go generate ./internal/controlplane/firewall/ebpf/...` — invoked by
     # the bpf-bindings prereq below — can drive bpf2go's native compile +
-    # llvm-strip path. macOS dev routes through Dockerfile.controlplane
-    # instead; this action only runs on Linux runners.
+    # llvm-strip path. The pinned versions in the Makefile only resolve on
+    # Ubuntu 24.04 (Noble) — callers must use `runs-on: ubuntu-24.04`. macOS
+    # dev routes through Dockerfile.controlplane (same ubuntu:24.04 base).
     - name: Install BPF toolchain
       if: runner.os == 'Linux'
       shell: bash

@@ -220,26 +220,30 @@ BUILDX_TARGETARCH := $(shell $(GO) env GOARCH)
 # =============================================================================
 #
 # Single source of truth for the pinned apt versions that produce the BPF
-# bytecode. Both CI (Linux runner) and Dockerfile.controlplane (macOS dev
-# convenience) install from this list — `sudo make bpf-deps` in CI,
-# `COPY Makefile . && make bpf-deps` inside the dev container.
+# bytecode. Both CI (pinned `ubuntu-24.04` runner) and Dockerfile.controlplane
+# (macOS dev convenience, ubuntu:24.04 base) install from this list —
+# `sudo make bpf-deps` in CI, `COPY Makefile . && make bpf-deps` inside the
+# dev container.
 #
-# Updating versions: bump the values below. Resolve fresh pins against a
-# pinned debian:bookworm-slim digest with:
-#     docker run --rm debian:bookworm-slim@sha256:<digest> bash -c \
+# Updating versions: bump the values below. Resolve fresh pins against the
+# same ubuntu:24.04 digest used by Dockerfile.controlplane with:
+#     docker run --rm ubuntu:24.04@sha256:<digest> bash -c \
 #         'apt-get update >/dev/null && apt-cache policy clang llvm libbpf-dev linux-libc-dev'
 #
-# `llvm` provides llvm-strip, which bpf2go shells out to after compiling the
-# .o to strip debug symbols. The `clang` meta package does not pull it in.
+# `llvm` provides the unversioned `/usr/bin/llvm-strip`, which bpf2go shells
+# out to after compiling the .o to strip debug symbols. The `clang` meta
+# package does not pull it in.
 BPF_APT_DEPS := \
-    clang=1:14.0-55.7~deb12u1 \
-    llvm=1:14.0-55.7~deb12u1 \
-    libbpf-dev=1:1.1.2-0+deb12u1 \
-    linux-libc-dev=6.1.170-3
+    clang=1:18.0-59~exp2 \
+    llvm=1:18.0-59~exp2 \
+    libbpf-dev=1:1.3.0-2build2 \
+    linux-libc-dev=6.8.0-111.111
 
-# Install the pinned BPF toolchain via apt. Requires Debian/Ubuntu and root
-# (CI invokes via `sudo make bpf-deps`; in Dockerfile.controlplane the
-# build runs as root). No-op on non-apt hosts — call `make ebpf` instead,
+# Install the pinned BPF toolchain via apt. Requires Ubuntu 24.04 (Noble)
+# and root — versions pinned above only resolve against Noble's apt repos.
+# CI invokes via `sudo make bpf-deps` on the pinned `ubuntu-24.04` runner;
+# in Dockerfile.controlplane the build runs as root inside the matching
+# ubuntu:24.04 base. No-op on non-Noble hosts — call `make ebpf` instead,
 # which routes through Dockerfile.controlplane on macOS.
 bpf-deps:
 	apt-get update
@@ -298,10 +302,11 @@ proto-tools:
 	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
 	$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
 
-# Linux runners (CI, devcontainer) run bpf2go natively after `make bpf-deps`
-# installs clang + libbpf-dev + linux-libc-dev. macOS hosts route through
-# Dockerfile.controlplane because clang on macOS can't produce BPF object
-# files — this is the only reason Dockerfile.controlplane exists at all.
+# Ubuntu 24.04 hosts (the pinned CI runner; the dev container) run bpf2go
+# natively after `make bpf-deps` installs clang + libbpf-dev + linux-libc-dev.
+# macOS hosts route through Dockerfile.controlplane because clang on macOS
+# can't produce BPF object files — this is the only reason
+# Dockerfile.controlplane exists at all.
 HOST_OS := $(shell uname -s)
 
 # `make ebpf` is the ergonomic alias for whichever bpf2go path the host
