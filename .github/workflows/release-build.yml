@@ -27,18 +27,6 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      # Record the wall-clock job start so the SLSA v1 predicate's
-      # runDetails.metadata.startedOn matches the actual build window
-      # rather than the predicate-generation step's invocation time.
-      - name: Record build start
-        run: echo "BUILD_STARTED_ON=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
-
-      # Strip the leading "v" from the tag so VERSION matches goreleaser's
-      # archive name_template ({{.Version}}). Consumed by the subject-list
-      # script and by the per-archive SBOM attest steps below.
-      - name: Compute release version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -49,21 +37,16 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Required for `make release-embeds`, which invokes `docker buildx build`
-      # against the pinned multi-stage Dockerfile.controlplane to produce the
-      # four embedded linux binaries (clawker-cp, ebpf-manager, coredns-clawker,
-      # clawkerd) for both amd64 and arm64. ubuntu-latest ships with Docker;
-      # this action wires up buildx.
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      # Install pinned BPF toolchain (clang/llvm/libbpf-dev/linux-libc-dev).
+      # Versions are defined in the Makefile's BPF_APT_DEPS variable so the
+      # macOS dev path (Dockerfile.controlplane) and CI stay aligned.
+      - name: Install BPF toolchain
+        run: sudo make bpf-deps
 
-      # Stages both linux arch embed sets under embeds/{amd64,arm64}/. The
-      # subsequent goreleaser run consumes them via per-build-id pre-hooks
-      # (.goreleaser.yaml -> hooks.pre -> make stage-embeds-<arch>).
-      #
-      # `make release-embeds` doesn't need version stamping — the embedded
-      # binaries don't link internal/build. Final CLI version+date are
-      # stamped by goreleaser's ldflags below.
+      # Native build of the four linux/{amd64,arm64} embed binaries
+      # (clawker-cp, clawkerd, ebpf-manager, coredns-clawker). Runs bpf2go
+      # via `go generate` plus 4×2 plain Go cross-compiles; no Docker.
+      # Outputs staged under embeds/{amd64,arm64}/ for goreleaser pre-hooks.
       - name: Build linux embed sets
         run: make release-embeds
 
@@ -87,90 +70,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
-      # Capture the bpf-builder stage's apt package closure (incl. transitive
-      # deps pulled in by `apt-get install --no-install-recommends`) so the
-      # SLSA v1 predicate's resolvedDependencies can enumerate every Debian
-      # package that affected the BPF compile environment.
-      #
-      # Reuses the buildx cache populated by `make release-embeds`; marginal
-      # cost is just the dpkg-query in a throwaway container (~1s).
-      - name: Capture bpf-builder apt package closure
-        run: bash scripts/capture-apt-packages.sh dist/apt-packages.txt
-
-      # Build the 16-subject checksum file consumed by actions/attest below:
-      #   4 archives + 4 unpacked CLI binaries + 8 linux embed binaries.
-      # Forensic motivation: an investigator presented with a running
-      # `clawker-cp` inside a CP container can extract it, hash it, and
-      # verify against this attestation directly — answering "which binary
-      # diverged" cryptographically rather than by elimination.
-      - name: Build attestation subject list
-        run: bash scripts/release-subjects.sh "$VERSION"
-
-      # Generate the enriched SLSA v1 build provenance predicate (full
-      # resolvedDependencies inventory: source commit, base image digests,
-      # apt package closure, Go toolchain, BPF sources, pinned action SHAs,
-      # workflow/Makefile/Dockerfile/goreleaser content hashes, tool
-      # versions). Replaces the thin auto-populated predicate that the
-      # default GitHub build-provenance attestation emits.
-      - name: Generate SLSA v1 provenance predicate
-        run: |
-          go run ./cmd/gen-provenance \
-            --repo-uri "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            --source-commit "${GITHUB_SHA}" \
-            --source-ref "${GITHUB_REF}" \
-            --workflow-ref "${GITHUB_WORKFLOW_REF}" \
-            --builder-id "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/release-build.yml@${GITHUB_REF}" \
-            --repository-id "${GITHUB_REPOSITORY_ID}" \
-            --repository-owner-id "${GITHUB_REPOSITORY_OWNER_ID}" \
-            --event-name "${GITHUB_EVENT_NAME}" \
-            --runner-environment "${RUNNER_ENVIRONMENT}" \
-            --invocation-id "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}" \
-            --started-on "${BUILD_STARTED_ON}" \
-            --finished-on "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --apt-packages dist/apt-packages.txt \
-            --output dist/provenance-predicate.json
-
-      # actions/attest@v4 in custom-predicate mode. predicate-type +
-      # predicate-path tells the action to wrap our pre-built body in a
-      # DSSE envelope and sign it via the runner's Sigstore OIDC token.
-      # subject-checksums references the 16-subject file built above; the
-      # action validates each subject's digest against the named file in
-      # the workspace.
-      - name: Attest build provenance
+      # Single attestation covering the four release archives plus the eight
+      # embed binaries. actions/attest@v4 auto-generates an SLSA v1 build
+      # provenance predicate from GitHub Actions context (source commit,
+      # workflow ref, builder ID, runner environment). That binding pins
+      # everything in the source tree — Dockerfile.controlplane, Makefile
+      # (BPF_APT_DEPS), .goreleaser.yaml, internal/controlplane/firewall/ebpf
+      # (clang -cflags, bpf2go pin), workflow YAMLs (with their pinned action
+      # SHAs), BPF C sources. SBOMs are emitted by goreleaser/syft as release
+      # assets and signed via cosign; they don't need separate attestations.
+      - name: Attest release artifacts
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
-          subject-checksums: ./dist/attestation-subjects.txt
-          predicate-type: https://slsa.dev/provenance/v1
-          predicate-path: ./dist/provenance-predicate.json
-
-      # One SPDX SBOM attestation per archive. goreleaser's sboms: block
-      # (artifacts: archive) calls syft per archive and writes
-      # dist/<archive>.sbom.json in SPDX-JSON format. actions/attest@v4
-      # auto-detects SPDX from the sbom-path content and emits a separate
-      # in-toto bundle with predicateType https://spdx.dev/Document — distinct
-      # from the SLSA provenance attestation produced above. Verify with:
-      #   gh attestation verify <archive> --owner schmitthub \
-      #     --predicate-type https://spdx.dev/Document
-      - name: Attest SBOM for linux/amd64 archive
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        with:
-          subject-path: ./dist/clawker_${{ env.VERSION }}_linux_amd64.tar.gz
-          sbom-path: ./dist/clawker_${{ env.VERSION }}_linux_amd64.tar.gz.sbom.json
-
-      - name: Attest SBOM for linux/arm64 archive
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        with:
-          subject-path: ./dist/clawker_${{ env.VERSION }}_linux_arm64.tar.gz
-          sbom-path: ./dist/clawker_${{ env.VERSION }}_linux_arm64.tar.gz.sbom.json
-
-      - name: Attest SBOM for darwin/amd64 archive
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        with:
-          subject-path: ./dist/clawker_${{ env.VERSION }}_darwin_amd64.tar.gz
-          sbom-path: ./dist/clawker_${{ env.VERSION }}_darwin_amd64.tar.gz.sbom.json
-
-      - name: Attest SBOM for darwin/arm64 archive
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        with:
-          subject-path: ./dist/clawker_${{ env.VERSION }}_darwin_arm64.tar.gz
-          sbom-path: ./dist/clawker_${{ env.VERSION }}_darwin_arm64.tar.gz.sbom.json
+          subject-path: |
+            dist/clawker_*.tar.gz
+            embeds/amd64/*
+            embeds/arm64/*

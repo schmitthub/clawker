@@ -1,7 +1,13 @@
-# Dockerfile.controlplane — Reproducible build recipe for clawker firewall stack binaries.
+# Dockerfile.controlplane — macOS dev convenience for producing clawker
+# firewall stack binaries.
 #
-# This is the single source of truth for building the three Linux binaries
-# that clawker go:embed's into its CLI:
+# This file exists ONLY because bpf2go's clang invocation needs Linux UAPI
+# headers and a Linux clang. CI builds these binaries natively on the
+# ubuntu-latest runner via `sudo make bpf-deps && make release-embeds` — it
+# does NOT go through this Dockerfile. Stay close to CI but byte-for-byte
+# parity is not the goal; "no surprises in CI" is.
+#
+# Builds three Linux binaries that clawker go:embed's into its CLI:
 #
 #   * ebpf-manager    — compiled from ./internal/controlplane/firewall/ebpf/cmd with BPF bytecode
 #                       baked in via bpf2go + go:embed. Break-glass debug tool
@@ -62,25 +68,16 @@ FROM debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e
 
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
-# Exact apt package versions shipped by this debian digest. If the digest
-# changes these need to be re-resolved via:
-#   docker run --rm debian:bookworm-slim@sha256:<digest> bash -c \
-#     'apt-get update >/dev/null && apt-cache policy clang llvm libbpf-dev linux-libc-dev'
-ARG CLANG_VERSION=1:14.0-55.7~deb12u1
-ARG LLVM_VERSION=1:14.0-55.7~deb12u1
-ARG LIBBPF_DEV_VERSION=1:1.1.2-0+deb12u1
-ARG LINUX_LIBC_DEV_VERSION=6.1.170-3
+WORKDIR /build
 
-# `llvm` provides llvm-strip, which bpf2go shells out to after compiling
-# the .o to strip debug symbols. The `clang` meta package does not pull it in.
+# Install pinned BPF toolchain (clang, llvm, libbpf-dev, linux-libc-dev) via
+# the Makefile's `bpf-deps` target. Single source of truth shared with CI's
+# `sudo make bpf-deps` step on the Linux runner — bumping versions in one
+# place updates both paths.
+COPY Makefile ./
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        clang="${CLANG_VERSION}" \
-        llvm="${LLVM_VERSION}" \
-        libbpf-dev="${LIBBPF_DEV_VERSION}" \
-        linux-libc-dev="${LINUX_LIBC_DEV_VERSION}" \
-        ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends make && \
+    make bpf-deps
 
 # Go toolchain copied from the pinned golang:alpine image used by stages 2
 # and 4 so bpf2go runs under the exact same Go version. Update this digest
@@ -89,8 +86,6 @@ COPY --from=golang:1.25.10-alpine@sha256:8d22e29d960bc50cd025d93d5b7c7d220b1ee9a
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOCACHE=/tmp/gocache
 ENV GOMODCACHE=/tmp/gomodcache
-
-WORKDIR /build
 
 # Cache dependency layer.
 COPY go.mod go.sum ./

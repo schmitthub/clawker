@@ -1,6 +1,6 @@
 .PHONY: help \
         clawker clawker-generate clawker-lint clawker-staticcheck clawker-install clawker-clean \
-        ebpf-binary coredns-binary cp-binary \
+        bpf-deps ebpf ebpf-binary coredns-binary cp-binary \
         release-embeds verify-release-embeds stage-embeds-amd64 stage-embeds-arm64 \
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e \
         licenses licenses-check \
@@ -215,6 +215,37 @@ CP_BINARY_DEPS := \
 BUILDX_BUILD := docker buildx build
 BUILDX_TARGETARCH := $(shell $(GO) env GOARCH)
 
+# =============================================================================
+# BPF toolchain dependencies
+# =============================================================================
+#
+# Single source of truth for the pinned apt versions that produce the BPF
+# bytecode. Both CI (Linux runner) and Dockerfile.controlplane (macOS dev
+# convenience) install from this list — `sudo make bpf-deps` in CI,
+# `COPY Makefile . && make bpf-deps` inside the dev container.
+#
+# Updating versions: bump the values below. Resolve fresh pins against a
+# pinned debian:bookworm-slim digest with:
+#     docker run --rm debian:bookworm-slim@sha256:<digest> bash -c \
+#         'apt-get update >/dev/null && apt-cache policy clang llvm libbpf-dev linux-libc-dev'
+#
+# `llvm` provides llvm-strip, which bpf2go shells out to after compiling the
+# .o to strip debug symbols. The `clang` meta package does not pull it in.
+BPF_APT_DEPS := \
+    clang=1:14.0-55.7~deb12u1 \
+    llvm=1:14.0-55.7~deb12u1 \
+    libbpf-dev=1:1.1.2-0+deb12u1 \
+    linux-libc-dev=6.1.170-3
+
+# Install the pinned BPF toolchain via apt. Requires Debian/Ubuntu and root
+# (CI invokes via `sudo make bpf-deps`; in Dockerfile.controlplane the
+# build runs as root). No-op on non-apt hosts — call `make ebpf` instead,
+# which routes through Dockerfile.controlplane on macOS.
+bpf-deps:
+	apt-get update
+	apt-get install -y --no-install-recommends $(BPF_APT_DEPS) ca-certificates
+	rm -rf /var/lib/apt/lists/*
+
 # bpf-bindings: extract bpf2go-generated Go wrappers + .o bytecode to
 # internal/controlplane/firewall/ebpf/. This is a prerequisite for any host-side Go tool (go build,
 # go test, golangci-lint, staticcheck, gopls) touching the internal/controlplane/firewall/ebpf
@@ -267,10 +298,26 @@ proto-tools:
 	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
 	$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
 
-.PHONY: bpf-bindings
+# Linux runners (CI, devcontainer) run bpf2go natively after `make bpf-deps`
+# installs clang + libbpf-dev + linux-libc-dev. macOS hosts route through
+# Dockerfile.controlplane because clang on macOS can't produce BPF object
+# files — this is the only reason Dockerfile.controlplane exists at all.
+HOST_OS := $(shell uname -s)
+
+# `make ebpf` is the ergonomic alias for whichever bpf2go path the host
+# supports. Same on-disk output (BPF_BINDINGS); differs only in how it gets
+# produced.
+.PHONY: bpf-bindings ebpf
 bpf-bindings: $(BPF_BINDINGS)
+ebpf: $(BPF_BINDINGS)
+
+ifeq ($(HOST_OS),Linux)
 $(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
-	@echo "Extracting bpf2go bindings to internal/controlplane/firewall/ebpf/ via pinned Dockerfile.controlplane..."
+	@echo "Generating bpf2go bindings via native go generate (linux host)..."
+	$(GO) generate ./internal/controlplane/firewall/ebpf/...
+else
+$(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
+	@echo "Extracting bpf2go bindings via Dockerfile.controlplane (non-linux host)..."
 	@rm -rf internal/controlplane/firewall/ebpf/.bpf-bindings-extract
 	$(BUILDX_BUILD) \
 		-f Dockerfile.controlplane \
@@ -282,64 +329,41 @@ $(BPF_BINDINGS) &: $(BPF_BINDING_DEPS)
 	@mv internal/controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.go internal/controlplane/firewall/ebpf/
 	@mv internal/controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.o  internal/controlplane/firewall/ebpf/
 	@rm -rf internal/controlplane/firewall/ebpf/.bpf-bindings-extract
+endif
 
+# Once $(BPF_BINDINGS) exist on the host tree, every embed binary is a plain
+# CGO_ENABLED=0 Go cross-compile to linux/$(BUILDX_TARGETARCH). bpf2go's
+# generated clawker_*_bpfel.go files embed the .o bytecode via `//go:embed`,
+# so the binary build itself never needs clang or Docker.
 ebpf-binary: $(EBPF_BINARY)
 $(EBPF_BINARY): $(EBPF_BINARY_DEPS) $(BPF_BINDINGS)
-	@echo "Building ebpf-manager for linux/$(BUILDX_TARGETARCH) via pinned Dockerfile.controlplane..."
+	@echo "Building ebpf-manager for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
-	@rm -rf $(@D)/.ebpf-extract
-	$(BUILDX_BUILD) \
-		-f Dockerfile.controlplane \
-		--target=ebpf-manager-extract \
-		--build-arg TARGETOS=linux \
-		--build-arg TARGETARCH=$(BUILDX_TARGETARCH) \
-		--output=type=local,dest=$(@D)/.ebpf-extract \
-		.
-	@mv $(@D)/.ebpf-extract/ebpf-manager $@
-	@rm -rf $(@D)/.ebpf-extract
+	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./internal/controlplane/firewall/ebpf/cmd
 
 coredns-binary: $(COREDNS_BINARY)
 $(COREDNS_BINARY): $(COREDNS_BINARY_DEPS) $(BPF_BINDINGS)
-	@echo "Building coredns-clawker for linux/$(BUILDX_TARGETARCH) via pinned Dockerfile.controlplane..."
+	@echo "Building coredns-clawker for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
-	@rm -rf $(@D)/.coredns-extract
-	$(BUILDX_BUILD) \
-		-f Dockerfile.controlplane \
-		--target=coredns-extract \
-		--build-arg TARGETOS=linux \
-		--build-arg TARGETARCH=$(BUILDX_TARGETARCH) \
-		--output=type=local,dest=$(@D)/.coredns-extract \
-		.
-	@mv $(@D)/.coredns-extract/coredns-clawker $@
-	@rm -rf $(@D)/.coredns-extract
+	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/coredns-clawker
 
-# cp-binary builds the clawker-cp containerized control plane daemon via
-# the same pinned multi-stage Dockerfile.controlplane. The resulting binary is
-# go:embed'd into the clawker CLI (internal/controlplane/cpboot/embed_cp.go)
-# and baked into the clawker-cp image at runtime by
-# internal/controlplane/cpboot/bootstrap.go (cpImageDockerfile) alongside
+# cp-binary builds the clawker-cp containerized control plane daemon. The
+# resulting binary is go:embed'd into the clawker CLI
+# (internal/controlplane/cpboot/embed_cp.go) and baked into the clawker-cp
+# image at runtime by internal/controlplane/cpboot/bootstrap.go alongside
 # ebpf-manager (break-glass).
 #
 # cp-binary depends on $(CLAWKERD_BINARY) because cmd/clawker-cp transitively
-# imports internal/clawkerd via internal/docker → internal/bundler. The
-# inner Dockerfile.controlplane Go build refuses to compile internal/clawkerd
-# until its `//go:embed assets/clawkerd` target exists on disk. Make builds
-# prereqs in declared order, but adding this as an explicit prerequisite of
-# the file target also makes parallel `make -j` correct.
+# imports internal/clawkerd via internal/docker → internal/bundler. The Go
+# build refuses to compile internal/clawkerd until its `//go:embed
+# assets/clawkerd` target exists on disk. Make builds prereqs in declared
+# order, but adding this as an explicit prerequisite of the file target
+# also makes parallel `make -j` correct.
 cp-binary: $(CP_BINARY)
 $(CP_BINARY): $(CP_BINARY_DEPS) $(BPF_BINDINGS) $(CLAWKERD_BINARY)
-	@echo "Building clawker-cp for linux/$(BUILDX_TARGETARCH) via pinned Dockerfile.controlplane..."
+	@echo "Building clawker-cp for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
-	@rm -rf $(@D)/.cp-extract
-	$(BUILDX_BUILD) \
-		-f Dockerfile.controlplane \
-		--target=clawker-cp-extract \
-		--build-arg TARGETOS=linux \
-		--build-arg TARGETARCH=$(BUILDX_TARGETARCH) \
-		--output=type=local,dest=$(@D)/.cp-extract \
-		.
-	@mv $(@D)/.cp-extract/clawker-cp $@
-	@rm -rf $(@D)/.cp-extract
+	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/clawker-cp
 
 # clawkerd-binary builds the per-container agent daemon. Pure Go (no
 # BPF), so the build is a plain CGO_ENABLED=0 cross-compile to
@@ -370,11 +394,10 @@ clawker-generate:
 #
 #   - embeds/ lives OUTSIDE dist/ so `goreleaser release --clean` cannot
 #     wipe staged binaries mid-release.
-#   - clawkerd is pure-Go and built via a plain CGO_ENABLED=0 cross-compile
-#     ($(CLAWKERD_BINARY)) — it bypasses the Docker/clang chain because it
-#     has no BPF dependency. The other three embeds (clawker-cp,
-#     ebpf-manager, coredns-clawker) MUST go through Dockerfile.controlplane
-#     for bpf2go bytecode.
+#   - All four embeds are plain CGO_ENABLED=0 Go cross-compiles. The BPF
+#     bytecode is produced once by `make ebpf` (Linux: native bpf2go;
+#     macOS: via Dockerfile.controlplane) and lands in the source tree as
+#     clawker_*_bpfel.{go,o} where `//go:embed` pulls it into the binary.
 #   - goreleaser runs with TWO build IDs (clawker-amd64, clawker-arm64),
 #     not four (per-goos/arch). Splitting by arch lets a single staged embed
 #     set serve both linux and darwin targets of that arch — embeds are

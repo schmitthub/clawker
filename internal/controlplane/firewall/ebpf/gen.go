@@ -13,12 +13,11 @@ package ebpf
 //      relocations, so vmlinux.h is unnecessary and has been removed.
 //
 // The generated files (clawker_*_bpfel.go, clawker_*_bpfel.o) are NOT
-// committed to the repo — they are gitignored and produced fresh on every
-// build by `make ebpf-binary`, which runs `go generate` inside the pinned
-// bpf-builder stage of Dockerfile.controlplane. Reproducibility is structural:
-// the pinned multi-stage Dockerfile is the source of truth; there is no
-// separate committed artifact to drift from. See
-// internal/ebpf/REPRODUCIBILITY.md for the full provenance chain.
+// committed to the repo — they are gitignored and produced fresh by
+// `make ebpf` (Linux: native `go generate` after `sudo make bpf-deps`
+// installs the pinned BPF apt toolchain; macOS: docker buildx against
+// Dockerfile.controlplane). The pinned toolchain versions live in the
+// Makefile's BPF_APT_DEPS variable.
 
 // bpf2go is pinned to match the cilium/ebpf library version in go.mod so the
 // generator and the runtime agree on the loader shape. Update both together.

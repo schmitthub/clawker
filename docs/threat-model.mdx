@@ -37,14 +37,12 @@ The clawker project leverages every version pinning and integrity check opportun
 The release pipeline specifically:
 
 - **Immutable CI inputs.** All GitHub Actions and tool binaries are pinned to exact versions or SHA commit hashes, not mutable version tags. Go dependencies are integrity-checked via `go.sum` checksums. The inline Dockerfiles used to build the embedded firewall infrastructure images (eBPF manager and custom CoreDNS) are pinned to a SHA256 digest of `alpine:3.21`, so an attacker cannot substitute a tampered base image by re-tagging upstream.
-- **Deterministic build inputs.** Binaries are compiled with `CGO_ENABLED=0` (pure Go, no C toolchain), stripped (`-s -w`), and built with `-trimpath` via GoReleaser. Build metadata (version, commit date) is injected via ldflags at compile time from the tagged commit, not from wall-clock or host environment. Byte-identical reproduction across hosts is not a claimed property — the three Linux embed binaries (`clawker-cp`, `ebpf-manager`, `coredns-clawker`) are produced inside `Dockerfile.controlplane` and are subject to BuildKit non-determinism; the integrity story rests on signed attestations against the CI build, not local re-runs.
+- **Pinned BPF toolchain.** The BPF object files are produced by `clang`+`llvm-strip` from the Debian apt repos, pinned to exact versions (`clang=1:14.0-55.7~deb12u1`, `llvm=1:14.0-55.7~deb12u1`, `libbpf-dev=1:1.1.2-0+deb12u1`, `linux-libc-dev=6.1.170-3`) in the Makefile's `BPF_APT_DEPS` variable. CI's `sudo make bpf-deps` step and the macOS-developer `Dockerfile.controlplane` install from the same list — the Makefile is the single source of truth, so version bumps update both paths atomically.
+- **Deterministic build inputs.** Binaries are compiled with `CGO_ENABLED=0` (pure Go, no C toolchain), stripped (`-s -w`), and built with `-trimpath` via GoReleaser. Build metadata (version, commit date) is injected via ldflags at compile time from the tagged commit, not from wall-clock or host environment. Byte-identical reproduction across hosts is not a claimed property — the BPF bytecode is produced by a pinned-but-not-snapshotted apt closure on `ubuntu-latest`; the integrity story rests on signed attestations against the CI build, not local re-runs.
 - **SHA256 checksums.** GoReleaser generates a `checksums.txt` containing SHA256 hashes for every release artifact.
 - **Cosign keyless signing.** The checksums file is signed using [Sigstore Cosign](https://docs.sigstore.dev/) in keyless mode (OIDC identity from the GitHub Actions workflow). This produces a Sigstore bundle (`checksums.txt.sigstore.json`) published as a release asset. The signing identity anchors to the **reusable workflow** `release-build.yml` at the release tag, not the caller `release.yml` — see [Verifying a release](#verifying-a-release) for the exact identity regex.
-- **SBOM generation.** A Software Bill of Materials is generated for every release archive using [Syft](https://github.com/anchore/syft) (SPDX-JSON format) and published as a release asset *and* as a separate signed attestation (see below).
-- **GitHub artifact attestation.** Two attestation types are produced via `actions/attest@v4`, both signed by the same Sigstore keyless identity (reusable workflow path + tag ref):
-    - **One SLSA v1 build-provenance attestation** (`predicateType: https://slsa.dev/provenance/v1`) covering **16 subjects per release**: 4 release archives, 4 unpacked `clawker` CLI binaries (one per `OS_ARCH`), and 8 embedded Linux binaries (`clawkerd`, `clawker-cp`, `ebpf-manager`, `coredns-clawker` × `amd64`, `arm64`). The predicate's `resolvedDependencies` enumerates every input that affected output bytes — source commit, Dockerfile base images by `sha256` digest, the full apt closure inside the BPF-builder stage, Go toolchain version, bpf2go pin, every BPF C source by content hash, every GitHub Action by commit SHA, and content hashes of the workflow + Makefile + goreleaser config. An investigator reading the attestation alone can enumerate every input — completeness of enumeration is the property, not byte-identical reproducibility.
-    - **Four SPDX SBOM attestations** (`predicateType: https://spdx.dev/Document`), one per release archive, sourced from the same syft output published as release assets.
-  Same-repo SLSA Build L3 isolation is provided by GitHub's reusable-workflow boundary: signing happens in the reusable workflow's isolated job context, so the Fulcio cert SAN cryptographically binds to `release-build.yml@refs/tags/<tag>` and cannot be impersonated by any other workflow in this repo. Browse attestations at [github.com/schmitthub/clawker/attestations](https://github.com/schmitthub/clawker/attestations).
+- **SBOM generation.** A Software Bill of Materials is generated for every release archive using [Syft](https://github.com/anchore/syft) (SPDX-JSON format) and published as a release asset alongside the archives.
+- **GitHub artifact attestation.** One SLSA v1 build-provenance attestation is produced per release via `actions/attest@v4`, covering **twelve subjects**: the four release archives plus the eight embedded Linux binaries (`clawkerd`, `clawker-cp`, `ebpf-manager`, `coredns-clawker` × `amd64`, `arm64`). The predicate is auto-generated by the action from GitHub Actions context — source commit, workflow ref, builder ID, runner environment. That source-commit binding transitively pins every reproducibility input in the repo: `Makefile` (`BPF_APT_DEPS`), `Dockerfile.controlplane`, `.goreleaser.yaml`, `internal/controlplane/firewall/ebpf/gen.go` (clang `-cflags`, bpf2go pin), BPF C sources, and the workflow YAMLs (with their pinned action SHAs). Anyone with a verified attestation can `git checkout` and inspect every input that affected output bytes. Same-repo SLSA Build L3 isolation is provided by GitHub's reusable-workflow boundary: signing happens in the reusable workflow's isolated job context, so the Fulcio cert SAN cryptographically binds to `release-build.yml@refs/tags/<tag>` and cannot be impersonated by any other workflow in this repo. Browse attestations at [github.com/schmitthub/clawker/attestations](https://github.com/schmitthub/clawker/attestations).
 - **Tag integrity.** The release pipeline's tag trigger is protected by a GitHub repository ruleset that restricts creation, update, and deletion of release tags to repository administrators and requires cryptographic signing. The workflow additionally validates that release tags match a valid semver pattern and that the tagged commit is an ancestor of `main` — rejecting malformed version tags, tags on feature branches, or tags on arbitrary commits. Together, these controls ensure that only authorized, signed release tags with valid version syntax pointing to reviewed code on the main branch can trigger a release.
 - **Immutable releases.** The tag ruleset prevents release tags from being deleted, moved, or force-pushed. Once a release is published, its artifacts, checksums, and attestations are frozen — a compromised CI pipeline cannot silently replace a previously published binary.
 - **Branch rulesets.** All commits require cryptographic signing on every commit. Branches can not be deleted. The main branch requires all merges to pass CI status checks (security scanning, linting, unit tests, license checks, generated docs freshness) and be approved by a code owner. 
@@ -88,7 +86,7 @@ cosign verify-blob \
 
 The regex anchors to the **reusable** workflow `release-build.yml` (where the cosign sign step runs), not the caller `release.yml`. A substring-only regex like `'github\.com/schmitthub/clawker'` would also match a forged attestation produced by any other workflow file in this repo. `--new-bundle-format` is required for bundles emitted by `actions/attest@v4` (`mediaType: application/vnd.dev.sigstore.bundle.v0.3+json`); cosign v3 defaults to the legacy format and rejects v0.3 silently.
 
-**3. Verify SLSA build provenance + SPDX SBOM attestations.** GitHub's verifier auto-fetches the signed bundle from the attestation store. Requires `gh` >= 2.49.
+**3. Verify SLSA build provenance attestation.** GitHub's verifier auto-fetches the signed bundle from the attestation store. Requires `gh` >= 2.49.
 
 ```bash
 gh attestation verify /tmp/verify/clawker_0.7.6_linux_arm64.tar.gz \
@@ -96,40 +94,27 @@ gh attestation verify /tmp/verify/clawker_0.7.6_linux_arm64.tar.gz \
   --signer-workflow schmitthub/clawker/.github/workflows/release-build.yml
 ```
 
-`gh attestation verify` returns no stdout on success — only an exit code. Add `--format json | jq` to surface the subject digest, builder ID, and signing identity. Both the SLSA build-provenance attestation and the per-archive SPDX SBOM attestation are signed by the same identity, so a single `gh attestation verify` call resolves all attestations for the archive's digest.
+`gh attestation verify` returns no stdout on success — only an exit code. Add `--format json | jq` to surface the subject digest, builder ID, and signing identity.
 
 ### Per-binary forensic verification
 
-Because the SLSA build provenance covers **16 subjects** — not just the 4 archives — an investigator can verify any individual binary that came out of a clawker release without re-downloading the archive. This matters when:
+The SLSA build-provenance attestation covers **twelve subjects** — the four release archives plus the eight embedded Linux binaries — so an investigator can verify any individual embed binary without re-downloading the archive. This matters when:
 
 - A long-running container holds a `clawker-cp` or `clawkerd` binary unpacked from a release months ago, and you want to confirm it has not been swapped under you.
 - You have only one of the four embedded Linux binaries from a forensic image and need to answer "which release did this come from, and is it intact?"
 - You are doing differential analysis after an incident and need to know which specific binary (if any) diverged from what was attested at build time.
 
-The procedure:
+The procedure is the same `gh attestation verify` call against the suspect binary — gh resolves the attestation by the binary's sha256 digest. The signing identity is the reusable workflow at the release tag; the subject set inside the signed predicate must contain that binary's `sha256` digest or verification fails.
+
+To enumerate the attested inputs from the predicate alone (source commit, workflow ref, builder ID), dump the statement:
 
 ```bash
-# Unpack the archive (or pull the binary out of a running container).
-tar -xzf /tmp/verify/clawker_0.7.6_linux_arm64.tar.gz -C /tmp/verify
-
-# Verify the unpacked CLI binary against the attestation.
-# Note: the bundle is the same one signed at build time; gh resolves it by digest.
-gh attestation verify /tmp/verify/clawker \
-  --owner schmitthub \
-  --signer-workflow schmitthub/clawker/.github/workflows/release-build.yml
-```
-
-The same call works against any of the embedded Linux binaries (`clawkerd`, `clawker-cp`, `ebpf-manager`, `coredns-clawker`) extracted from a running CP container or a forensic disk image. The signing identity is the reusable workflow at the release tag; the subject set inside the signed predicate must contain that binary's `sha256` digest, or verification fails.
-
-The `resolvedDependencies` block of the predicate is what makes "what built this" auditable from the attestation alone. To dump it:
-
-```bash
-gh attestation verify /tmp/verify/clawker --owner schmitthub \
+gh attestation verify /tmp/verify/clawker_0.7.6_linux_arm64.tar.gz --owner schmitthub \
   --signer-workflow schmitthub/clawker/.github/workflows/release-build.yml \
-  --format json | jq '.[].verificationResult.statement.predicate.buildDefinition.resolvedDependencies'
+  --format json | jq '.[].verificationResult.statement.predicate.buildDefinition'
 ```
 
-Entries are categorized by `name` prefix (`base-image-*`, `apt-*`, `action-*`, `bpf-source-*`, `tool-*`, `config-*`) so you can filter by input class.
+Every reproducibility input lives in the source tree at the attested commit — `Makefile` for the BPF apt pins, `internal/controlplane/firewall/ebpf/gen.go` for the bpf2go pin and clang flags, the workflow YAMLs for action SHAs. Resolve them via `git show <commit>:<path>` once you have the source commit from the attestation.
 
 ## How the Firewall Works
 

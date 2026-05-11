@@ -22,7 +22,7 @@ Host-side orchestration for the clawker control plane container. Split out of `i
 | `container_config_test.go` | Unit tests asserting `BuildCPContainerConfig` invariants (INV-B1-005/006/008/009/015/017/018/020) |
 | `ebpf_regression_test.go` | Port-publishing coverage + CP purpose-label exclusion from `container_map` (INV-B1-017) |
 | `mocks/manager_mock.go` | moq-generated `ManagerMock` for CLI tests that drive `controlplane up/down/status` without a real CP |
-| `assets/` | **Gitignored.** Holds the pre-compiled Linux binaries produced by `make cp-binary` / `make ebpf-binary`. Never committed — reproduced on every invocation via `Dockerfile.controlplane`. |
+| `assets/` | **Gitignored.** Holds the pre-compiled Linux binaries produced by `make cp-binary` / `make ebpf-binary` (plain `GOOS=linux` cross-compile after `make ebpf` stages the bpf2go bindings). Never committed. |
 
 ## Test seams
 
