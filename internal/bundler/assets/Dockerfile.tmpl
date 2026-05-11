@@ -30,6 +30,14 @@ ENV TZ="$TZ"
 
 ENV CLAUDE_CODE_VERSION={{.ClaudeVersion}}
 
+# Node.js (≥22.10) trusts the OS CA bundle. Set globally — applies to root
+# (clawkerd-as-PID-1, build-time RUN steps) AND to the unprivileged ${USERNAME}
+# (Claude Code hooks, user `npm`/`npx`). When the firewall MITM CA is added to
+# /etc/ssl/certs via update-ca-certificates (see HasFirewallCA block below),
+# `fetch()` and TLS calls from any process transparently trust clawker's
+# interception cert.
+ENV NODE_USE_SYSTEM_CA=1
+
 {{/* User-defined ARGs */}}
 {{- if .Instructions}}
 {{- range .Instructions.Args}}
@@ -147,6 +155,64 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" > /etc/apt/sources.list.d/docker.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin
+{{end}}
+
+# Install Node.js (required at runtime for Claude Code hooks; Claude Code's
+# own installer uses bun, but UserPromptSubmit/SessionStart hooks shell out to
+# `node`). Mirrors nodejs/docker-node: Debian downloads the prebuilt tarball
+# from nodejs.org and verifies via GPG-signed SHASUMS256.txt; Alpine uses the
+# community nodejs/npm packages (musl prebuilt source-builds are too heavy for
+# the arm64 image build path). Installed to /usr/local so it lands on the
+# default PATH for the unprivileged user.
+ARG NODE_VERSION=24.15.0
+{{if .IsAlpine -}}
+{{- if $.BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    apk add nodejs npm
+{{- else}}
+RUN apk add nodejs npm
+{{- end}}
+{{else -}}
+{{- if $.BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates dirmngr xz-utils libatomic1 && \
+{{- else}}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates dirmngr xz-utils libatomic1 && \
+{{- end}}
+    ARCH= && dpkgArch="$(dpkg --print-architecture)" && \
+    case "${dpkgArch##*-}" in \
+      amd64) ARCH='x64' ;; \
+      arm64) ARCH='arm64' ;; \
+      *) echo "ERROR: node prebuilt does not support architecture: $dpkgArch (only amd64 and arm64)" >&2; exit 1 ;; \
+    esac && \
+    set -ex && \
+    export GNUPGHOME="$(mktemp -d)" && \
+    for key in \
+      C0D6248439F1D5604AAFFB4021D900FFDB233756 \
+      DD792F5973C6DE52C432CBDAC77ABFA00DDBF2B7 \
+      CC68F5A3106FF448322E48ED27F5E38D5B0A215F \
+      8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600 \
+      890C08DB8579162FEE0DF9DB8BEAB4DFCF555EF4 \
+      C82FA3AE1CBEDC6BE46B9360C43CEC45C17AB93C \
+      108F52B48DB57BB0CC439B2997B01419BD92F80A \
+      A363A499291CBBC940DD62E41F10027AF002F8B0 \
+    ; do \
+      { gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$key" && gpg --batch --fingerprint "$key"; } || \
+      { gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" && gpg --batch --fingerprint "$key"; } ; \
+    done && \
+    curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-$ARCH.tar.xz" && \
+    curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt.asc" && \
+    gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc && \
+    gpgconf --kill all && \
+    rm -rf "$GNUPGHOME" && \
+    grep " node-v$NODE_VERSION-linux-$ARCH.tar.xz\$" SHASUMS256.txt | sha256sum -c - && \
+    tar -xJf "node-v$NODE_VERSION-linux-$ARCH.tar.xz" -C /usr/local --strip-components=1 --no-same-owner && \
+    rm "node-v$NODE_VERSION-linux-$ARCH.tar.xz" SHASUMS256.txt.asc SHASUMS256.txt && \
+    ln -s /usr/local/bin/node /usr/local/bin/nodejs && \
+    node --version && npm --version
 {{end}}
 
 # Setup locale
