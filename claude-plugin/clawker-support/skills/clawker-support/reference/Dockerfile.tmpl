@@ -160,10 +160,13 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 # Install Node.js (required at runtime for Claude Code hooks; Claude Code's
 # own installer uses bun, but UserPromptSubmit/SessionStart hooks shell out to
 # `node`). Mirrors nodejs/docker-node: Debian downloads the prebuilt tarball
-# from nodejs.org and verifies via GPG-signed SHASUMS256.txt; Alpine uses the
-# community nodejs/npm packages (musl prebuilt source-builds are too heavy for
-# the arm64 image build path). Installed to /usr/local so it lands on the
-# default PATH for the unprivileged user.
+# from nodejs.org and verifies via GPG-signed SHASUMS256.txt (extracted to
+# /usr/local); Alpine uses the community nodejs/npm packages (installed under
+# /usr/bin) because musl prebuilt source-builds are too heavy for the arm64
+# image build path. Either way `node` lands on the default PATH. npm's global
+# prefix is preconfigured below (/usr/local/share/npm-global, owned by
+# ${USERNAME}) so `npm install -g ...` works for the unprivileged user without
+# further setup — matches the anthropics/claude-code devcontainer pattern.
 ARG NODE_VERSION=24.15.0
 {{if .IsAlpine -}}
 {{- if $.BuildKitEnabled}}
@@ -265,9 +268,9 @@ RUN groupadd -g 999 docker 2>/dev/null || groupadd docker 2>/dev/null || true &&
 # marker that clawkerd-as-root writes; the HEALTHCHECK probe itself runs as root
 # (final USER directive at the bottom of this file) and stats the ready marker
 # regardless of ownership.
-RUN mkdir -p /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh {{.WorkspacePath}} /run/clawker /var/log/clawker /var/run/clawker && \
+RUN mkdir -p /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh {{.WorkspacePath}} /run/clawker /var/log/clawker /var/run/clawker /usr/local/share/npm-global && \
     chmod 700 /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh && \
-    chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /var/run/clawker
+    chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /var/run/clawker /usr/local/share/npm-global
 
 # Persist bash history
 RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
@@ -341,7 +344,11 @@ ENV CLAWKER_USER=${USERNAME}
 
 # Set static environment (PATH, SHELL, BROWSER — not config-dependent)
 ENV SHELL={{.Shell}}
-ENV PATH=/home/${USERNAME}/.local/bin:$PATH
+# npm global prefix points at a user-owned dir (created+chowned above) so
+# `npm install -g ...` succeeds without root. Mirrors anthropics/claude-code
+# devcontainer Dockerfile.
+ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
+ENV PATH=/usr/local/share/npm-global/bin:/home/${USERNAME}/.local/bin:$PATH
 # Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
 ENV BROWSER=/usr/local/bin/host-open
 # Tell Claude Code where its config lives — must match the config volume mount.
