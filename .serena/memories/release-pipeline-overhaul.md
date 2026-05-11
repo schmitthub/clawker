@@ -398,28 +398,14 @@ sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
 
 ### Task 6 — Consumer surface fixes (2026-05-11)
 
-**install.sh distribution: shipped as a goreleaser release asset, not a separately uploaded blob.** Added one block to `.goreleaser.yaml`:
+**Scope correction (2026-05-11, post-implementation):** the spec proposed pinning the install.sh URL by shipping it as a goreleaser release asset under `releases/latest/download/install.sh`. That was wrong on two counts:
 
-```yaml
-release:
-  ...
-  extra_files:
-    - glob: scripts/install.sh
-```
+1. **`latest` is not a pin.** It's a moving GitHub redirect that resolves to the most-recent non-prerelease's asset. Swapping `raw.../main/scripts/install.sh` for `releases/latest/download/install.sh` shifts the trust surface (helper script now updated only via tag push, not arbitrary main push) but does NOT pin anything.
+2. **install.sh is a bootstrap helper, not a build artifact.** It downloads + installs the actual artifact (the signed binary). It has no per-release lifecycle, no per-release content. Shipping it as a release asset creates N copies of the same file across N releases, solves no real problem, and matches no major project's pattern (rustup/uv/bun/deno host on project domains; gh CLI ships nothing — package managers; helm uses raw git). Reviewer (project owner) called this out and directed full revert.
 
-`extra_files` glob within the `release:` block uploads matching files alongside goreleaser's own archives onto the GitHub Release. The `releases/latest/download/<basename>` GitHub redirect resolves any uploaded asset by basename, so the curl URL `https://github.com/schmitthub/clawker/releases/latest/download/install.sh` lands on the script that shipped with the most recent (non-prerelease) release. No goreleaser custom upload step needed; no separate workflow upload step needed.
+**Decision: reverted all install.sh distribution changes.** URL stays at `raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh` across README, docs/installation.mdx, docs/quickstart.mdx, internal/clawker/cmd.go runtime hint, and scripts/install.sh self-reference. `.goreleaser.yaml` `extra_files` block removed. Branch protection on main + required PR reviews are the existing defense for the helper-script surface; the initiative's actual scope is build-artifact provenance (inputs/deps/outputs of the binary), which Tasks 1-5 already deliver via SLSA L3 attestation. Helper-script provenance is a different problem and not in scope.
 
-Audited `goreleaser check` clean against pinned `.goreleaser.yaml`. The `extra_files` shape is documented at `https://goreleaser.com/customization/release/#custom-release-notes` (reference: `extra_files` field).
-
-**URL surface swept**: 4 docs surfaces + 1 runtime hint + 1 self-reference all moved off `raw.githubusercontent.com/.../main/scripts/install.sh`:
-
-- `README.md` (3 occurrences)
-- `docs/installation.mdx` (3 occurrences)
-- `docs/quickstart.mdx` (1 occurrence)
-- `internal/clawker/cmd.go:143` (1 occurrence — runtime "A new release is available" upgrade hint printed by the background update checker on TTY stderr; same URL, same fix)
-- `scripts/install.sh:6` (1 occurrence — the script's own usage comment block; updated for consistency so users who download and read it don't see a stale URL)
-
-The runtime hint in `cmd.go` was NOT in the Task 6 written checklist but is a consumer surface in the strictest sense — it's the only place in the install path the user sees that URL after first-install. Updated for parity. Same call applies to `scripts/install.sh`'s own usage comments — kept aligned with the published surface.
+**Real follow-up (separate issue, NOT this PR):** if install.sh-trust ever becomes a load-bearing concern, the correct fix is to make install.sh verify the cosign bundle of the downloaded `checksums.txt` against the pinned `release-build.yml` identity regex BEFORE extracting the binary. That bounds the script's blast radius to "refuse to install" or "install genuine binary" — trust shifts from "whoever served the script" to the Sigstore + GitHub OIDC chain the rest of the initiative just built.
 
 **`--version` flag implementation: `cmd.SetVersionTemplate("{{ index .Annotations \"versionInfo\" }}")`.**
 
@@ -447,17 +433,16 @@ Added `--new-bundle-format` flag to the cosign command (Task 1 surface — requi
 
 **Scope discipline**: did NOT rewrite the broader release-guide.md sections (workflow flow, key files table, version injection, etc.) — Task 7 explicitly owns that rewrite. Task 6 is just the cosign-regex tightening + caller/reusable identity correction.
 
-**Acceptance criteria — all pass:**
+**Acceptance criteria (post-revert) — all pass:**
 
 ```
-=== install URL no longer references main ===                         OK
-=== releases/latest/download pattern in README + docs ===             OK (5 occurrences)
-=== install.sh published as release asset ===                         OK (extra_files block in .goreleaser.yaml)
+=== install.sh URL surface unchanged from baseline ===                OK (raw.githubusercontent main)
+=== goreleaser extra_files removed ===                                OK
 === version subcommand no longer Hidden ===                           OK
+=== bin/clawker --version + bin/clawker version match byte-for-byte === OK
 === CONTRIBUTING.md uses make clawker ===                             OK
 === CONTRIBUTING.md no bare go build line ===                         OK
 === release-guide cosign regex anchored to release-build.yml ===      OK
-=== bin/clawker --version + bin/clawker version match byte-for-byte === OK
 === make test ===                                                     5099 tests pass, 8 platform-skipped
 === goreleaser check ===                                              1 configuration file(s) validated
 === actionlint ===                                                    clean (no workflow yaml changes)
@@ -466,11 +451,9 @@ Added `--new-bundle-format` flag to the cosign command (Task 1 surface — requi
 
 **Surprises / non-obvious decisions:**
 
-1. **`raw.githubusercontent.com/.../main/...` lurked in `internal/clawker/cmd.go:143`.** The Task 6 spec listed README + docs as the install URL surface, but the upgrade-hint string printed by the TTY background updater also referenced the same moving URL. A user already running clawker would see the stale URL. Fixed for parity — single search-replace sweep across docs + runtime + script self-reference.
-2. **install.sh's own header comment** also referenced the raw.githubusercontent URL. Updated for consistency. Less load-bearing than the printed surfaces (only seen by people who download the script and `cat` it), but the cost is one Edit and the win is no stale guidance any consumer touches.
-3. **Cobra `--version` flag has no short alias by default.** Cobra auto-wires `--version` long flag when `cmd.Version` is set, but does NOT add `-v` short. Did not add one — `-v` collides with common verbose-flag conventions (e.g., kubectl, curl), and clawker doesn't use `-v` for verbose either. Leaving short flag space open for future use.
-4. **`SetVersionTemplate` template syntax**: the Cobra docs show `"{{.Version}}\n"` examples, but referencing annotations needs `{{ index .Annotations "key" }}` — the `.Annotations` map isn't directly indexable as `.Annotations.key` because the keys may contain non-Go-identifier chars. Verified by running `bin/clawker --version`.
-5. **`extra_files` is at the `release:` level, not top-level**. goreleaser also has `release.disable: true` and per-archive `files:`. Don't conflate — `archives[].files` lives inside the tarball; `release.extra_files` lives next to the tarball on the GitHub Release page. Different scopes entirely.
+1. **Cobra `--version` flag has no short alias by default.** Cobra auto-wires `--version` long flag when `cmd.Version` is set, but does NOT add `-v` short. Did not add one — `-v` collides with common verbose-flag conventions (e.g., kubectl, curl), and clawker doesn't use `-v` for verbose either. Leaving short flag space open for future use.
+2. **`SetVersionTemplate` template syntax**: the Cobra docs show `"{{.Version}}\n"` examples, but referencing annotations needs `{{ index .Annotations "key" }}` — the `.Annotations` map isn't directly indexable as `.Annotations.key` because the keys may contain non-Go-identifier chars. Verified by running `bin/clawker --version`.
+3. **`docs/installation.mdx` "Build from Source" note kept.** The revert undid the URL changes but left the new line "Use the Makefile entry point — `go install` is unsupported because the embedded Linux binaries are gitignored and produced by `make release-embeds`." This parallels the CONTRIBUTING.md fix and is a legitimate doc bug fix (bare `go build`/`go install` produces a CLI with empty embeds → runtime crash). Not part of the install.sh scope, kept.
 
 ### Task 5 — Add SPDX SBOM-mode attestation (2026-05-11)
 
@@ -540,7 +523,7 @@ End state of this initiative:
 3. **16 subjects per build-provenance attestation**: 4 archives + 4 unpacked CLI binaries + 8 embedded Linux binaries ({clawkerd, clawker-cp, ebpf-manager, coredns-clawker} × {amd64, arm64}). SBOM files are **not** subjects of the build provenance (covered by separate SBOM-mode attestation to avoid redundancy).
 4. **Separate SPDX SBOM attestations** via `actions/attest@v4` `sbom-path` mode (one per archive, predicate type auto-detected as `https://spdx.dev/Document`). Goreleaser's existing `sboms:` block stays — it produces the SBOM files that get attested.
 5. **Cleaned-up Makefile** scoped to build/test/QA. Removed: `clawker-build-{all,linux,darwin}` (unused dev shortcuts), `CLAWKER_DATE` wall-clock injection (fake reproducibility), alias test targets (`clawker-test`, `clawker-test-internals`), reproducibility-flavored comments. Kept: `make release` (git tag pusher), `make restart` (dev workflow tool).
-6. **Updated docs** — threat-model.mdx covering forensic capability + verify commands, release-guide.md rewritten without reproducibility theater, CONTRIBUTING.md build instructions fixed, install.sh URL pinned to release tag in README/docs.
+6. **Updated docs** — threat-model.mdx covering forensic capability + verify commands, release-guide.md rewritten without reproducibility theater, CONTRIBUTING.md build instructions fixed. (Original plan also included install.sh URL re-pinning; that subtask was reverted during Task 6 — see Task 6 key learnings for rationale.)
 
 The clout/forensic motivation: with per-binary subjects, an investigator presented with a running `clawker-cp` inside a CP container can extract it, hash it, and run `gh attestation verify` against the binary directly — answering "which binary diverged" cryptographically rather than by elimination.
 

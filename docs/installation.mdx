@@ -18,10 +18,10 @@ brew install schmitthub/tap/clawker
 
 ## Install Script
 
-Downloads a pre-built binary from GitHub releases. No Go toolchain required. The install script itself is published as a release asset, so the URL is pinned to a tagged release rather than a moving branch.
+Downloads a pre-built binary from GitHub releases. No Go toolchain required.
 
 ```bash
-curl -fsSL https://github.com/schmitthub/clawker/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash
 ```
 
 ### Options
@@ -29,13 +29,13 @@ curl -fsSL https://github.com/schmitthub/clawker/releases/latest/download/instal
 Pin a specific version:
 
 ```bash
-curl -fsSL https://github.com/schmitthub/clawker/releases/latest/download/install.sh | CLAWKER_VERSION=v0.1.3 bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | CLAWKER_VERSION=v0.1.3 bash
 ```
 
 Install to a custom directory:
 
 ```bash
-curl -fsSL https://github.com/schmitthub/clawker/releases/latest/download/install.sh | CLAWKER_INSTALL_DIR=$HOME/.local/bin bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | CLAWKER_INSTALL_DIR=$HOME/.local/bin bash
 ```
 
 ## Build from Source

@@ -87,7 +87,7 @@ brew install schmitthub/tap/clawker
 
 **Install script** (macOS / Linux):
 ```bash
-curl -fsSL https://github.com/schmitthub/clawker/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash
 ```
 
 <details>
@@ -95,12 +95,12 @@ curl -fsSL https://github.com/schmitthub/clawker/releases/latest/download/instal
 
 **Specific version:**
 ```bash
-curl -fsSL https://github.com/schmitthub/clawker/releases/latest/download/install.sh | CLAWKER_VERSION=v0.1.3 bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | CLAWKER_VERSION=v0.1.3 bash
 ```
 
 **Custom directory:**
 ```bash
-curl -fsSL https://github.com/schmitthub/clawker/releases/latest/download/install.sh | CLAWKER_INSTALL_DIR=$HOME/.local/bin bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | CLAWKER_INSTALL_DIR=$HOME/.local/bin bash
 ```
 
 **Build from source** (requires Go 1.25+):
