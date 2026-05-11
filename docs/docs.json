@@ -125,7 +125,8 @@
               "cli-reference/clawker_restart",
               "cli-reference/clawker_stats",
               "cli-reference/clawker_top",
-              "cli-reference/clawker_wait"
+              "cli-reference/clawker_wait",
+              "cli-reference/clawker_version"
             ]
           },
           {

@@ -15,9 +15,11 @@ Thanks for your interest in contributing to Clawker! This project is currently i
 ```bash
 git clone https://github.com/schmitthub/clawker.git
 cd clawker
-go build -o bin/clawker ./cmd/clawker
+make clawker
 export PATH="$PWD/bin:$PATH"
 ```
+
+> `go install ./cmd/clawker` and bare `go build` are unsupported. The four embedded Linux binaries (`clawkerd`, `clawker-cp`, `ebpf-manager`, `coredns-clawker`) are gitignored — they are produced by `make release-embeds` (Docker-driven, multi-arch) and staged into `internal/.../assets/` immediately before the host CLI build by `make stage-embeds-{amd64,arm64}`. `make clawker` runs that chain for you; `go build` would compile a CLI with empty embeds that crashes at runtime.
 
 ## Running Tests
 

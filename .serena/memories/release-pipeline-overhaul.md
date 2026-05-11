@@ -21,7 +21,7 @@
 | Task 3: Split release.yml into caller + reusable workflow | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 4: Migrate to actions/attest@v4 with enriched SLSA v1 provenance | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 5: Add SPDX SBOM-mode attestation | `complete` | claude/opus-4-7 (2026-05-11) |
-| Task 6: Consumer surface fixes | `pending` | — |
+| Task 6: Consumer surface fixes | `complete` | claude/opus-4-7 (2026-05-11) |
 | Task 7: Final review + documentation completion gate | `pending` | — |
 
 ## Key Learnings
@@ -395,6 +395,82 @@ sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
 1. **Reusable file has no `permissions:` block.** Task 3 spec was explicit about this, but worth re-stating: declaring permissions in the reusable would be additive-only AND scope-down, never scope-up, on whatever the caller already granted. Cleaner to declare once on the caller's calling job — single audit point. Future maintainers tempted to "be safe" and copy the permissions block into the reusable should not — it's noise that pretends the reusable is self-contained when it isn't.
 2. **`validate` job's `contents: read` is intentional.** It runs checkout + git operations only; doesn't need write. Tightening helps reduce the blast radius if a future maintainer adds an unsafe step here. Defense in depth — the validate job runs before any third-party action consumes the tag.
 3. **Goreleaser CLI version (v2.15.4) is a `with:` input, NOT pinned by SHA.** The `goreleaser-action` itself is SHA-pinned (`1a80836c...`); the goreleaser CLI binary it downloads is selected by tag. This is the only floating-by-tag bit, and unavoidable — there's no SHA-input mode for that. The goreleaser binary's integrity comes from its own release-time signing, verified by the action.
+
+### Task 6 — Consumer surface fixes (2026-05-11)
+
+**install.sh distribution: shipped as a goreleaser release asset, not a separately uploaded blob.** Added one block to `.goreleaser.yaml`:
+
+```yaml
+release:
+  ...
+  extra_files:
+    - glob: scripts/install.sh
+```
+
+`extra_files` glob within the `release:` block uploads matching files alongside goreleaser's own archives onto the GitHub Release. The `releases/latest/download/<basename>` GitHub redirect resolves any uploaded asset by basename, so the curl URL `https://github.com/schmitthub/clawker/releases/latest/download/install.sh` lands on the script that shipped with the most recent (non-prerelease) release. No goreleaser custom upload step needed; no separate workflow upload step needed.
+
+Audited `goreleaser check` clean against pinned `.goreleaser.yaml`. The `extra_files` shape is documented at `https://goreleaser.com/customization/release/#custom-release-notes` (reference: `extra_files` field).
+
+**URL surface swept**: 4 docs surfaces + 1 runtime hint + 1 self-reference all moved off `raw.githubusercontent.com/.../main/scripts/install.sh`:
+
+- `README.md` (3 occurrences)
+- `docs/installation.mdx` (3 occurrences)
+- `docs/quickstart.mdx` (1 occurrence)
+- `internal/clawker/cmd.go:143` (1 occurrence — runtime "A new release is available" upgrade hint printed by the background update checker on TTY stderr; same URL, same fix)
+- `scripts/install.sh:6` (1 occurrence — the script's own usage comment block; updated for consistency so users who download and read it don't see a stale URL)
+
+The runtime hint in `cmd.go` was NOT in the Task 6 written checklist but is a consumer surface in the strictest sense — it's the only place in the install path the user sees that URL after first-install. Updated for parity. Same call applies to `scripts/install.sh`'s own usage comments — kept aligned with the published surface.
+
+**`--version` flag implementation: `cmd.SetVersionTemplate("{{ index .Annotations \"versionInfo\" }}")`.**
+
+Cobra auto-wires a `--version` flag whenever `cmd.Version` is set (already done at `root.go:51`: `Version: f.Version`). Cobra's default version template prints `<binary> version <version>` — wrong format for clawker (we want `clawker version <ver> (<date>)` matching the existing `version` subcommand). Solution: read the same `versionInfo` annotation the subcommand reads, via `SetVersionTemplate`. Single source of truth (`versioncmd.Format(version, buildDate)` writes the annotation; both `--version` and `version` read it).
+
+Smoke test confirms byte-identical output across both surfaces:
+```
+$ bin/clawker --version
+clawker version 0.7.8-22-g82af1ca2
+$ bin/clawker version
+clawker version 0.7.8-22-g82af1ca2
+```
+
+`clawker --help` now lists `version` in the available subcommands (was `Hidden: true` before; that line removed). Added `Short: "Show clawker version and build date"` so the auto-rendered help row is non-empty.
+
+**CONTRIBUTING.md `make clawker` (not `go build`)**: verified `make clawker` depends on `ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)` (Makefile:108), so it produces all four embeds via the pinned Docker chain before the final `go build` of the host CLI. Bare `go build ./cmd/clawker` would compile a CLI with empty embeds (the `assets/` directories are gitignored) → runtime crash on first use. Added an explanatory note to the CONTRIBUTING setup block so new contributors don't re-discover this the hard way.
+
+**`.serena/memories/release-guide.md` cosign regex tightened.** Old: substring `'github\.com/schmitthub/clawker'` — would match a forged attestation produced by ANY workflow file in this repo. New: anchored to the reusable `release-build.yml` at the release tag, mirrors the format Task 1 validated empirically:
+
+```
+^https://github\.com/schmitthub/clawker/\.github/workflows/release-build\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?(\+[A-Za-z0-9._-]+)?$
+```
+
+Added `--new-bundle-format` flag to the cosign command (Task 1 surface — required for `actions/attest@v4` bundles in `application/vnd.dev.sigstore.bundle.v0.3+json` mediaType). Added a `gh attestation verify --signer-workflow schmitthub/clawker/.github/workflows/release-build.yml` example for the SLSA + SBOM attestations. Stripped the parenthetical "Task 7 will tighten this later" note since we did it now.
+
+**Scope discipline**: did NOT rewrite the broader release-guide.md sections (workflow flow, key files table, version injection, etc.) — Task 7 explicitly owns that rewrite. Task 6 is just the cosign-regex tightening + caller/reusable identity correction.
+
+**Acceptance criteria — all pass:**
+
+```
+=== install URL no longer references main ===                         OK
+=== releases/latest/download pattern in README + docs ===             OK (5 occurrences)
+=== install.sh published as release asset ===                         OK (extra_files block in .goreleaser.yaml)
+=== version subcommand no longer Hidden ===                           OK
+=== CONTRIBUTING.md uses make clawker ===                             OK
+=== CONTRIBUTING.md no bare go build line ===                         OK
+=== release-guide cosign regex anchored to release-build.yml ===      OK
+=== bin/clawker --version + bin/clawker version match byte-for-byte === OK
+=== make test ===                                                     5099 tests pass, 8 platform-skipped
+=== goreleaser check ===                                              1 configuration file(s) validated
+=== actionlint ===                                                    clean (no workflow yaml changes)
+=== go vet (changed packages) ===                                     clean
+```
+
+**Surprises / non-obvious decisions:**
+
+1. **`raw.githubusercontent.com/.../main/...` lurked in `internal/clawker/cmd.go:143`.** The Task 6 spec listed README + docs as the install URL surface, but the upgrade-hint string printed by the TTY background updater also referenced the same moving URL. A user already running clawker would see the stale URL. Fixed for parity — single search-replace sweep across docs + runtime + script self-reference.
+2. **install.sh's own header comment** also referenced the raw.githubusercontent URL. Updated for consistency. Less load-bearing than the printed surfaces (only seen by people who download the script and `cat` it), but the cost is one Edit and the win is no stale guidance any consumer touches.
+3. **Cobra `--version` flag has no short alias by default.** Cobra auto-wires `--version` long flag when `cmd.Version` is set, but does NOT add `-v` short. Did not add one — `-v` collides with common verbose-flag conventions (e.g., kubectl, curl), and clawker doesn't use `-v` for verbose either. Leaving short flag space open for future use.
+4. **`SetVersionTemplate` template syntax**: the Cobra docs show `"{{.Version}}\n"` examples, but referencing annotations needs `{{ index .Annotations "key" }}` — the `.Annotations` map isn't directly indexable as `.Annotations.key` because the keys may contain non-Go-identifier chars. Verified by running `bin/clawker --version`.
+5. **`extra_files` is at the `release:` level, not top-level**. goreleaser also has `release.disable: true` and per-archive `files:`. Don't conflate — `archives[].files` lives inside the tarball; `release.extra_files` lives next to the tarball on the GitHub Release page. Different scopes entirely.
 
 ### Task 5 — Add SPDX SBOM-mode attestation (2026-05-11)
 

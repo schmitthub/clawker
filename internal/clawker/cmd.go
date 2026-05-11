@@ -140,7 +140,7 @@ func printUpdateNotification(ios *iostreams.IOStreams, result *update.CheckResul
 		cs.Cyan(result.LatestVersion))
 	fmt.Fprintf(ios.ErrOut, "To upgrade:\n")
 	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("brew upgrade clawker"))
-	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash"))
+	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("curl -fsSL https://github.com/schmitthub/clawker/releases/latest/download/install.sh | bash"))
 	fmt.Fprintf(ios.ErrOut, "%s\n", cs.Yellow(result.ReleaseURL))
 	fmt.Fprintf(ios.ErrOut, "\n%s After upgrading, run %s in each project to apply security fixes and avoid breaking changes.\n",
 		cs.WarningIcon(), cs.Bold("clawker build"))

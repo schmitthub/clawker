@@ -71,17 +71,28 @@ These set `build.Version` and `build.Date` in `internal/build/build.go`. Without
 
 ## Cosign Verification
 
-After a release, verify artifact signatures:
+After a release, verify the goreleaser checksum signature. The signing identity is anchored to the reusable workflow `release-build.yml` (where the cosign sign step actually runs) at the release tag, NOT the caller `release.yml`. Substring-only regexes (e.g. `'github\.com/schmitthub/clawker'`) are insufficient — they would also match a forged attestation produced by any other workflow file in this repo.
 
 ```bash
 cosign verify-blob \
   --bundle checksums.txt.sigstore.json \
+  --new-bundle-format \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp 'github\.com/schmitthub/clawker' \
+  --certificate-identity-regexp '^https://github\.com/schmitthub/clawker/\.github/workflows/release-build\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?(\+[A-Za-z0-9._-]+)?$' \
   checksums.txt
 ```
 
-(Task 7 of the release-pipeline-overhaul initiative will tighten this to the reusable workflow's path+ref once the L3 split lands.)
+`--new-bundle-format` is required for bundles emitted by `actions/attest@v4` / `gh attestation download` (`mediaType: application/vnd.dev.sigstore.bundle.v0.3+json`). cosign v3 defaults to the legacy format and rejects v0.3 without the flag.
+
+For the SLSA build-provenance and SPDX SBOM attestations (one per release artifact), prefer the GitHub-side verifier — it auto-fetches the bundle:
+
+```bash
+gh attestation verify <artifact> \
+  --owner schmitthub \
+  --signer-workflow schmitthub/clawker/.github/workflows/release-build.yml
+```
+
+`gh attestation verify` returns no stdout on success (only an exit code). Use `--format json` + `jq` if you want to surface the subject digest, builder ID, or signing identity.
 
 ## Local Build
 

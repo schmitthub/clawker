@@ -132,3 +132,8 @@ release:
     name: clawker
   prerelease: auto
   name_template: "{{.ProjectName}} v{{.Version}}"
+  # Ship install.sh as a release asset so docs/README can pin the curl URL to
+  # `releases/latest/download/install.sh` (a tagged surface) instead of the
+  # moving `raw.githubusercontent.com/.../main/scripts/install.sh` URL.
+  extra_files:
+    - glob: scripts/install.sh

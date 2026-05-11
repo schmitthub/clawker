@@ -3,7 +3,7 @@
 # install.sh — Download and install the clawker binary from GitHub releases.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash
+#   curl -fsSL https://github.com/schmitthub/clawker/releases/latest/download/install.sh | bash
 #   curl -fsSL ... | CLAWKER_VERSION=v0.1.3 bash
 #   curl -fsSL ... | CLAWKER_INSTALL_DIR=$HOME/.local/bin bash
 #   bash scripts/install.sh --version v0.1.3 --dir /usr/local/bin

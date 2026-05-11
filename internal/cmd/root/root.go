@@ -51,6 +51,11 @@ Workspace modes:
 		Version: f.Version,
 	}
 
+	// Render `--version` with the same string the `version` subcommand prints —
+	// reads from the `versionInfo` annotation set above so there is one source
+	// of truth for the formatted version string.
+	cmd.SetVersionTemplate("{{ index .Annotations \"versionInfo\" }}")
+
 	// Global flags
 	cmd.PersistentFlags().BoolVarP(&debug, "debug", "D", false, "Enable debug logging")
 
