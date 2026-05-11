@@ -79,6 +79,18 @@ for a in "${ARCHIVES[@]}"; do
   fi
 done
 
+# assert_digest validates a sha256sum capture is exactly 64 lowercase hex.
+# Defence-in-depth against tar/sha256sum producing the empty-string digest
+# `e3b0c4...` (zero-byte input) — the wc -l guard would still report 16
+# subjects but one of them would be garbage.
+assert_digest() {
+  local d="$1" ctx="$2"
+  if ! [[ "$d" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: bad sha256 digest for ${ctx}: ${d:-<empty>}" >&2
+    exit 1
+  fi
+}
+
 # 2. Bare `clawker` binary inside each archive. `tar -xzOf` streams the
 # member to stdout without extracting; sha256sum reads from stdin. Subject
 # name uses os-arch suffix so the verifier sees one entry per (os, arch).
@@ -88,6 +100,7 @@ for a in "${ARCHIVES[@]}"; do
   osArch="${a#clawker_${VERSION}_}"
   osArch="${osArch%.tar.gz}"
   digest=$(tar -xzOf "$DIST/$a" clawker | sha256sum | awk '{print $1}')
+  assert_digest "$digest" "$a/clawker"
   printf '%s  clawker-%s\n' "$digest" "$osArch" >> "$OUT"
 done
 
@@ -95,6 +108,7 @@ done
 for arch in "${ARCHES[@]}"; do
   for bin in "${EMBEDS_LIST[@]}"; do
     digest=$(sha256sum "$EMBEDS/$arch/$bin" | awk '{print $1}')
+    assert_digest "$digest" "$EMBEDS/$arch/$bin"
     printf '%s  %s-linux-%s\n' "$digest" "$bin" "$arch" >> "$OUT"
   done
 done
@@ -103,6 +117,16 @@ count=$(wc -l < "$OUT")
 if [ "$count" -ne 16 ]; then
   echo "ERROR: expected 16 subjects, got $count" >&2
   cat "$OUT" >&2
+  exit 1
+fi
+
+# Subject names (column 2) must all be distinct. wc -l catches an under-count
+# but a duplicate line would still produce 16 entries with one subject double-
+# attested and another missing.
+unique_names=$(awk '{print $2}' "$OUT" | sort -u | wc -l)
+if [ "$unique_names" -ne 16 ]; then
+  echo "ERROR: subject names not unique (got $unique_names distinct out of 16)" >&2
+  awk '{print $2}' "$OUT" | sort | uniq -c | sort -rn >&2
   exit 1
 fi
 

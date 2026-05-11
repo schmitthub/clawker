@@ -87,7 +87,7 @@ help:
 	@echo "Release targets:"
 	@echo "  release             Tag and push a release (VERSION=v0.7.6 MESSAGE=\"...\" required)"
 	@echo "  release-embeds      Build both linux arch embed sets via pinned Docker chain"
-	@echo "                      (amd64+arm64), staged under embeds/. Used by release.yml."
+	@echo "                      (amd64+arm64), staged under embeds/. Used by release-build.yml."
 	@echo ""
 	@echo "Examples:"
 	@echo "  make clawker"

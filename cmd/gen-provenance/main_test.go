@@ -211,6 +211,52 @@ func TestLoadAptPackages_MalformedLine(t *testing.T) {
 	}
 }
 
+func TestLoadAptPackages_EmptyField(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{name: "empty pkg", in: "=1.0|amd64"},
+		{name: "empty ver", in: "clang=|amd64"},
+		{name: "empty arch", in: "clang=1.0|"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tmp := filepath.Join(t.TempDir(), "apt.txt")
+			if err := os.WriteFile(tmp, []byte(c.in), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadAptPackages(tmp); err == nil {
+				t.Fatalf("expected error on empty field, got nil for %q", c.in)
+			}
+		})
+	}
+}
+
+func TestParseFailFast(t *testing.T) {
+	// Every parser whose miss would silently degrade the signed predicate
+	// must return a real error, not "". Regression guard against future
+	// refactors that resurrect the silent-empty pattern.
+	if _, err := parseBpf2goVersion("nothing here"); err == nil {
+		t.Errorf("parseBpf2goVersion: expected error on miss")
+	}
+	if _, err := parseBpf2goTarget("no target"); err == nil {
+		t.Errorf("parseBpf2goTarget: expected error on miss")
+	}
+	if _, err := parseClangCflags("no flags"); err == nil {
+		t.Errorf("parseClangCflags: expected error on miss")
+	}
+	if _, err := parseGoreleaserVersion("no version"); err == nil {
+		t.Errorf("parseGoreleaserVersion: expected error on miss")
+	}
+	if _, err := parseGoreleaserArgs("no args"); err == nil {
+		t.Errorf("parseGoreleaserArgs: expected error on miss")
+	}
+	if _, err := parseLdflagTemplate("no ldflags", "Version"); err == nil {
+		t.Errorf("parseLdflagTemplate: expected error on miss")
+	}
+}
+
 // findRepoRoot walks up from the test's CWD looking for go.mod.
 func findRepoRoot(t *testing.T) string {
 	t.Helper()

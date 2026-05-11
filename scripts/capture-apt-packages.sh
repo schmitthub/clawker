@@ -46,10 +46,24 @@ docker run --rm "$TAG" \
   > "$OUT"
 
 count=$(wc -l < "$OUT")
-if [ "$count" -lt 5 ]; then
-  echo "ERROR: apt package closure has only $count entries (expected at least 5 — clang/llvm/libbpf-dev/linux-libc-dev/ca-certificates)" >&2
+# Realistic bpf-builder closure is ~80 transitive deps. A trip-wire at 30
+# catches the "wrong --target stage / base image only" regression that a
+# threshold of 5 would silently let through (Debian slim ships ≥5 packages).
+if [ "$count" -lt 30 ]; then
+  echo "ERROR: apt package closure has only $count entries (expected ~80, refuse <30)" >&2
   cat "$OUT" >&2
   exit 1
 fi
+
+# Positive-name assertions: the bpf-builder stage MUST install these
+# specific packages. If --target ever resolves to a stage that doesn't
+# install them, the predicate would ship a misleading apt closure for a
+# stage that doesn't actually feed into the build.
+for pkg in clang libbpf-dev linux-libc-dev; do
+  if ! grep -q "^${pkg}=" "$OUT"; then
+    echo "ERROR: required package '$pkg' not present in captured apt closure (wrong build stage?)" >&2
+    exit 1
+  fi
+done
 
 echo "Captured $count apt packages to $OUT"

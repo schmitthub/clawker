@@ -3,8 +3,9 @@
 //
 // The release workflow (.github/workflows/release-build.yml) consumes its
 // output as the `predicate-path` input to actions/attest@v4 in custom-
-// predicate mode, replacing the thin auto-populated predicate that
-// actions/attest-build-provenance@v4 emits by default.
+// predicate mode. Without these inputs, actions/attest@v4 falls back to a
+// thin auto-populated predicate (just the source commit). This generator
+// replaces that with the full input inventory required for forensic audit.
 //
 // Reproducible-build discovery requirement: every input that affects the
 // shipped binary bytes must be enumerable from the predicate alone. The
@@ -307,15 +308,19 @@ func build(in *inputs) (*predicate, error) {
 		Annotations: map[string]string{"source": "go.mod go directive"},
 	})
 
-	// 5. bpf2go tool version (pinned in gen.go's //go:generate line).
-	bpf2goVersion := parseBpf2goVersion(bpfGenText)
-	if bpf2goVersion != "" {
-		deps = append(deps, resourceDescriptor{
-			URI:         fmt.Sprintf("pkg:golang/github.com/cilium/ebpf/cmd/bpf2go@%s", bpf2goVersion),
-			Name:        "bpf2go",
-			Annotations: map[string]string{"source": "//go:generate directive in gen.go"},
-		})
+	// 5. bpf2go tool version (pinned in gen.go's //go:generate line). The
+	// pin affects every BPF wrapper Go file shipped inside clawker-cp /
+	// ebpf-manager / coredns-clawker, so a silent miss here would leave an
+	// entire input class out of the signed predicate. Fail fast.
+	bpf2goVersion, err := parseBpf2goVersion(bpfGenText)
+	if err != nil {
+		return nil, err
 	}
+	deps = append(deps, resourceDescriptor{
+		URI:         fmt.Sprintf("pkg:golang/github.com/cilium/ebpf/cmd/bpf2go@%s", bpf2goVersion),
+		Name:        "bpf2go",
+		Annotations: map[string]string{"source": "//go:generate directive in gen.go"},
+	})
 
 	// 6. BPF C source + headers.
 	bpfFiles, err := hashDir(path(in.bpfSourceDir))
@@ -370,10 +375,33 @@ func build(in *inputs) (*predicate, error) {
 	}
 
 	// externalParameters.buildConfig — knobs that affect output bytes.
-	goreleaserVersion := parseGoreleaserVersion(string(reusableBytes))
-	goreleaserArgs := parseGoreleaserArgs(string(reusableBytes))
-	bpf2goTarget := parseBpf2goTarget(bpfGenText)
-	clangCflags := parseClangCflags(bpfGenText)
+	// Every parser fails fast on miss: a silently-empty buildConfig field
+	// would degrade the predicate to "this input was unknown at build time"
+	// and break the "investigator can enumerate every input" contract.
+	goreleaserVersion, err := parseGoreleaserVersion(string(reusableBytes))
+	if err != nil {
+		return nil, err
+	}
+	goreleaserArgs, err := parseGoreleaserArgs(string(reusableBytes))
+	if err != nil {
+		return nil, err
+	}
+	bpf2goTarget, err := parseBpf2goTarget(bpfGenText)
+	if err != nil {
+		return nil, err
+	}
+	clangCflags, err := parseClangCflags(bpfGenText)
+	if err != nil {
+		return nil, err
+	}
+	ldflagVersion, err := parseLdflagTemplate(goreleaserText, "Version")
+	if err != nil {
+		return nil, err
+	}
+	ldflagDate, err := parseLdflagTemplate(goreleaserText, "Date")
+	if err != nil {
+		return nil, err
+	}
 
 	pred := &predicate{
 		BuildDefinition: buildDefinition{
@@ -392,8 +420,8 @@ func build(in *inputs) (*predicate, error) {
 						"GOFLAGS":     "-trimpath",
 					},
 					Ldflags: map[string]string{
-						"version": parseLdflagTemplate(goreleaserText, "Version"),
-						"date":    parseLdflagTemplate(goreleaserText, "Date"),
+						"version": ldflagVersion,
+						"date":    ldflagDate,
 						"strip":   "-s -w",
 					},
 					ClangCflags:  clangCflags,
@@ -406,6 +434,11 @@ func build(in *inputs) (*predicate, error) {
 					"repository_id":       in.repositoryID,
 					"repository_owner_id": in.repositoryOwnerID,
 					"runner_environment":  in.runnerEnvironment,
+					// workflow_ref is the GITHUB_WORKFLOW_REF value of the
+					// running workflow (the reusable). Useful for offline
+					// cross-check against the Fulcio cert SAN URI — both
+					// should resolve to the same reusable workflow path+ref.
+					"workflow_ref": in.workflowRef,
 				},
 			},
 			ResolvedDependencies: deps,
@@ -497,6 +530,12 @@ func loadAptPackages(path string) ([]resourceDescriptor, error) {
 		pkg := ln[:eq]
 		ver := ln[eq+1 : bar]
 		arch := ln[bar+1:]
+		// dpkg-query never emits empty fields in practice. Guard anyway so a
+		// regression in the capture script can't ship malformed PURLs
+		// (`pkg:deb/debian/@1.0?arch=amd64`) inside the signed predicate.
+		if pkg == "" || ver == "" || arch == "" {
+			return nil, fmt.Errorf("apt-packages line has empty field: %q", ln)
+		}
 		out = append(out, resourceDescriptor{
 			URI:  fmt.Sprintf("pkg:deb/debian/%s@%s?arch=%s", pkg, ver, arch),
 			Name: "apt-" + pkg,
@@ -526,29 +565,29 @@ func parseGoModToolchain(text string) (string, error) {
 
 var bpf2goVersionRE = regexp.MustCompile(`github\.com/cilium/ebpf/cmd/bpf2go@(v[0-9][^\s]+)`)
 
-func parseBpf2goVersion(text string) string {
+func parseBpf2goVersion(text string) (string, error) {
 	if m := bpf2goVersionRE.FindStringSubmatch(text); m != nil {
-		return m[1]
+		return m[1], nil
 	}
-	return ""
+	return "", fmt.Errorf("bpf2go version pin not found in gen.go (expected //go:generate go run github.com/cilium/ebpf/cmd/bpf2go@v...)")
 }
 
 var bpf2goTargetRE = regexp.MustCompile(`-target\s+(\S+)`)
 
-func parseBpf2goTarget(text string) string {
+func parseBpf2goTarget(text string) (string, error) {
 	if m := bpf2goTargetRE.FindStringSubmatch(text); m != nil {
-		return m[1]
+		return m[1], nil
 	}
-	return ""
+	return "", fmt.Errorf("bpf2go -target flag not found in gen.go")
 }
 
 var clangCflagsRE = regexp.MustCompile(`-cflags\s+"([^"]+)"`)
 
-func parseClangCflags(text string) string {
+func parseClangCflags(text string) (string, error) {
 	if m := clangCflagsRE.FindStringSubmatch(text); m != nil {
-		return m[1]
+		return m[1], nil
 	}
-	return ""
+	return "", fmt.Errorf("clang -cflags not found in gen.go")
 }
 
 type actionRef struct {
@@ -588,36 +627,37 @@ func actionShortName(repo string) string {
 
 var goreleaserVersionRE = regexp.MustCompile(`(?m)^\s*version:\s*"?(v[0-9][^"\s]*)"?`)
 
-func parseGoreleaserVersion(text string) string {
+func parseGoreleaserVersion(text string) (string, error) {
 	for line := range strings.SplitSeq(text, "\n") {
 		// `version: "vX.Y.Z"` lines under goreleaser-action's `with:` block.
-		// The regex's `v[0-9]` anchor excludes the unrelated top-level
-		// `version: 2` of goreleaser's own config schema.
+		// The regex's `v[0-9]` anchor matches the goreleaser-action input
+		// (`version: v2.15.4`) and would also exclude an integer like
+		// `version: 2` if this parser were ever fed .goreleaser.yaml.
 		if m := goreleaserVersionRE.FindStringSubmatch(line); m != nil {
-			return m[1]
+			return m[1], nil
 		}
 	}
-	return ""
+	return "", fmt.Errorf("goreleaser-action `version: vX.Y.Z` input not found in reusable workflow")
 }
 
 var goreleaserArgsRE = regexp.MustCompile(`(?m)^\s*args:\s*(.+?)\s*$`)
 
-func parseGoreleaserArgs(text string) string {
+func parseGoreleaserArgs(text string) (string, error) {
 	if m := goreleaserArgsRE.FindStringSubmatch(text); m != nil {
-		return strings.Trim(m[1], `"`)
+		return strings.Trim(m[1], `"`), nil
 	}
-	return ""
+	return "", fmt.Errorf("goreleaser-action `args:` input not found in reusable workflow")
 }
 
 var ldflagTemplateRE = regexp.MustCompile(`internal/build\.([A-Za-z]+)=({{[^}]+}})`)
 
-func parseLdflagTemplate(text, field string) string {
+func parseLdflagTemplate(text, field string) (string, error) {
 	for _, m := range ldflagTemplateRE.FindAllStringSubmatch(text, -1) {
 		if m[1] == field {
-			return m[2]
+			return m[2], nil
 		}
 	}
-	return ""
+	return "", fmt.Errorf("ldflag template internal/build.%s={{...}} not found in goreleaser config", field)
 }
 
 type fileHash struct {

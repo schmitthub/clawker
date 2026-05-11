@@ -45,7 +45,7 @@ jobs:
       contents: write          # goreleaser publishes the GitHub release
       id-token: write          # Sigstore OIDC token for attestation signing
       attestations: write      # GitHub attestation API write
-      artifact-metadata: write # required by actions/attest@v4 (wrapper relies on it)
+      artifact-metadata: write # new in actions/attest@v4 — required even though listed only in the README Usage section, not the inline Examples block
     uses: ./.github/workflows/release-build.yml
     secrets:
       HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
