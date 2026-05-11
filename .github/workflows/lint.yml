@@ -21,7 +21,7 @@ jobs:
       # go:embed's assets/coredns-clawker, and internal/controlplane/firewall/ebpf/manager.go
       # references types from the bpf2go-generated wrappers, so typecheck fails
       # without these files on disk. The composite action handles setup-go +
-      # make ebpf-binary coredns-binary cp-binary.
+      # make bpf-deps + make ebpf-binary coredns-binary clawkerd-binary cp-binary.
       - name: Build embedded control plane binaries
         uses: ./.github/actions/build-controlplane-binaries
 
