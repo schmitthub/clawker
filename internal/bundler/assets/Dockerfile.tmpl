@@ -315,6 +315,25 @@ RUN mkdir -p /tmp/downloads && \
 # Clawker agent environment awareness
 RUN mkdir -p /etc/claude-code
 COPY clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
+
+# Managed enterprise settings (Linux managed path, highest precedence,
+# cannot be overridden by user/project settings). Used to inject env
+# vars into every Claude Code session — specifically PATH additions for
+# user-installed `npm install -g` binaries. Claude Code captures process
+# env into the shell snapshot at session start and the snapshot OVERRIDES
+# anything .zshenv/.bashrc set later in the Bash tool's `zsh -c` invocation
+# (the snapshot file is `source`d AFTER shell init files). Setting PATH via
+# managed-settings.json is the only documented enterprise mechanism that
+# lands in the snapshot. Value is a literal full PATH (no ${VAR} expansion
+# in settings.json) that mirrors the ENV PATH set after USER ${USERNAME}
+# below — keep these in sync.
+RUN cat > /etc/claude-code/managed-settings.json <<EOF
+{
+  "env": {
+    "PATH": "/home/${USERNAME}/.local/bin:/home/${USERNAME}/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  }
+}
+EOF
 {{- if .HasFirewallCA}}
 
 # Firewall CA cert for TLS inspection
@@ -430,17 +449,11 @@ RUN wget -O /tmp/zsh-in-docker.sh "https://github.com/deluan/zsh-in-docker/relea
     rm /tmp/zsh-in-docker.sh
 {{end}}
 
-{{/* User-mode RUN commands (as claude user).
-     Switch the RUN shell to zsh so each user_run instruction sources
-     /home/${USERNAME}/.zshenv (which puts /home/${USERNAME}/.npm-global/bin
-     on PATH). Restored to /bin/sh -c immediately after so subsequent RUNs
-     (claude install, USER root section, etc.) behave normally. */}}
-{{- if and .Instructions .Instructions.UserRun}}
-SHELL ["/bin/zsh", "-c"]
+{{/* User-mode RUN commands (as claude user) */}}
+{{- if .Instructions}}
 {{- range .Instructions.UserRun}}
 RUN {{.}}
 {{- end}}
-SHELL ["/bin/sh", "-c"]
 {{- end}}
 
 # Install Claude Code
