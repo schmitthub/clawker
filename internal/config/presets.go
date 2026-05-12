@@ -106,38 +106,18 @@ security:
       - index.crates.io
 `
 
-const typescriptPreset = `agent:
-  env:
-    NODE_USE_SYSTEM_CA: 1
-build:
-  image: "node:24-bookworm"
+// Node + npm are baked into every agent image by the default Dockerfile
+// template (see internal/bundler/assets/Dockerfile.tmpl) and NODE_USE_SYSTEM_CA
+// is set globally there. registry.npmjs.org is in the required firewall set
+// (see internal/config/defaults.go). TypeScript-specific tooling (pnpm, tsc)
+// layers on top.
+const typescriptPreset = `build:
+  image: "buildpack-deps:bookworm-scm"
   packages:
     - ripgrep
-    - ca-certificates
-    - openssh-client
-  inject:
-    after_user_switch:
-      - ENV NVM_DIR="/home/${USERNAME}/.nvm"
-      - ENV NODE_VERSION="24"
   instructions:
     user_run:
-      - curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-      - |
-          . "$NVM_DIR/nvm.sh" && \
-          nvm install $NODE_VERSION && \
-          nvm use $NODE_VERSION && \
-          nvm alias default $NODE_VERSION
-      - |
-          . "$NVM_DIR/nvm.sh" && \
-          npm install -g pnpm typescript
-      - |
-          echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.bashrc && \
-          echo '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"' >> ~/.bashrc && \
-          echo '[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"' >> ~/.bashrc
-security:
-  firewall:
-    add_domains:
-      - registry.npmjs.org
+      - npm install -g pnpm typescript
 `
 
 const javaPreset = `build:

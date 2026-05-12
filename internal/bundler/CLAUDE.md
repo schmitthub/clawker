@@ -92,6 +92,12 @@ type DockerfileContext struct {
 
 `GoBuilderImage` is the Go toolchain image for builder stages, pinned to exact patch version + SHA digest (default: `DefaultGoBuilderImage`). Tracks `go.mod`.
 
+### Baked-in Node.js Runtime
+
+Node + npm baked into every generated image so Claude Code hooks (`UserPromptSubmit`, `SessionStart` — these shell out to `node`) work without setup. Faithful copy of `nodejs/docker-node` 24/{bullseye-slim, alpine3.22}: Debian fetches the prebuilt tarball from nodejs.org/dist; Alpine x86_64 fetches the musl prebuilt from unofficial-builds.nodejs.org (SHA256 hardcoded inline alongside `NODE_VERSION`, matching upstream); other Alpine arches build from source. `NODE_VERSION` is honored on every variant/arch combo. Bumping `NODE_VERSION` requires updating the inline x86_64 musl checksum in the Alpine `case` block alongside it (same dual-bump constraint upstream lives with — they automate via update.sh; we do it manually). `NODE_VERSION` flows into the rendered template → image content hash rolls automatically.
+
+`ENV NODE_USE_SYSTEM_CA=1` set near the top of the final stage (before USER switch) so root and unprivileged `${USERNAME}` both trust `/etc/ssl/certs/ca-certificates.crt`. When `HasFirewallCA` is set, the firewall MITM cert is merged into that bundle via `update-ca-certificates`, transparently trusting the interception cert for `fetch()`/TLS.
+
 ### Dockerfile Instruction Types
 
 ```go

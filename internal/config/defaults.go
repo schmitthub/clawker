@@ -20,6 +20,10 @@ var requiredFirewallRules = []EgressRule{
 	{Dst: ".claude.ai", Proto: "tls", Port: 443, Action: "allow"},
 	// Claude Code — MCP proxy
 	{Dst: "mcp-proxy.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	// Node.js / npm — registry for `npm install -g` (presets + user_run) and
+	// runtime hook deps. Node is baked into every image; without registry
+	// access the unprivileged user cannot install global packages.
+	{Dst: "registry.npmjs.org", Proto: "tls", Port: 443, Action: "allow"},
 	// Claude Code — telemetry
 	{Dst: "sentry.io", Proto: "tls", Port: 443, Action: "allow"},
 	{Dst: "statsig.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},

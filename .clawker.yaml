@@ -7,7 +7,6 @@ agent:
   enable_shared_dir: true
   env:
     CLAWKER_TEST_DIR: .clawkerlocal/.test-tmp
-    NODE_USE_SYSTEM_CA: "1"
   from_env:
     - GH_TOKEN
     - CONTEXT7_API_KEY
@@ -20,23 +19,9 @@ build:
   image: golang:1.26-bookworm
   instructions:
     root_run:
+      - npm install -g wscat
       - |-
-        NODE_USE_SYSTEM_CA=1 && \
-          npm install -g wscat
-      - |-
-        WEBSOCAT_VERSION=v1.14.1 && \
-          ARCH=$(dpkg --print-architecture) && \
-          case "$ARCH" in \
-            amd64) WEBSOCAT_FILE="websocat.x86_64-unknown-linux-musl" SHA="66f8dd3a0394761556339117f8bb5123bddefd44e087af2a72ec22b0bd08d514" ;; \
-            arm64) WEBSOCAT_FILE="websocat.aarch64-unknown-linux-musl" SHA="711a69576a2ff473fb01a90ffafb571c2ed019e55479d7ae71b12c2eadeb7011" ;; \
-            *) echo "Unsupported architecture for websocat: $ARCH" >&2; exit 1 ;; \
-          esac && \
-          curl -fsSL -o /tmp/websocat "https://github.com/vi/websocat/releases/download/${WEBSOCAT_VERSION}/${WEBSOCAT_FILE}" && \
-          echo "$SHA /tmp/websocat" | sha256sum -c - && \
-          install -m 755 /tmp/websocat /usr/local/bin/websocat && \
-          rm -f /tmp/websocat
-      - |-
-        GH_VERSION=2.89.0 && \
+        GH_VERSION=2.92.0 && \
           ARCH=$(dpkg --print-architecture) && \
           GH_FILE="gh_${GH_VERSION}_linux_${ARCH}.tar.gz" && \
           CHECKSUMS_FILE="gh_${GH_VERSION}_checksums.txt" && \
@@ -96,6 +81,18 @@ build:
       - go install github.com/goreleaser/goreleaser/v2@latest
       - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
       - uv tool install semgrep
+      - |-
+        WEBSOCAT_VERSION=v1.14.1 && \
+          ARCH=$(dpkg --print-architecture) && \
+          case "$ARCH" in \
+            amd64) WEBSOCAT_FILE="websocat.x86_64-unknown-linux-musl" SHA="66f8dd3a0394761556339117f8bb5123bddefd44e087af2a72ec22b0bd08d514" ;; \
+            arm64) WEBSOCAT_FILE="websocat.aarch64-unknown-linux-musl" SHA="711a69576a2ff473fb01a90ffafb571c2ed019e55479d7ae71b12c2eadeb7011" ;; \
+            *) echo "Unsupported architecture for websocat: $ARCH" >&2; exit 1 ;; \
+          esac && \
+          curl -fsSL -o /tmp/websocat "https://github.com/vi/websocat/releases/download/${WEBSOCAT_VERSION}/${WEBSOCAT_FILE}" && \
+          echo "$SHA /tmp/websocat" | sha256sum -c - && \
+          install -m 755 /tmp/websocat /$HOME/.local/bin/websocat && \
+          rm -f /tmp/websocat
   packages:
     - git
     - curl
@@ -124,8 +121,6 @@ build:
     - llvm
     - libbpf-dev
     - bpftool
-    - nodejs
-    - npm
 loop:
   calls_per_hour: 100
   completion_threshold: 2
@@ -185,6 +180,7 @@ security:
       - docs.github.com
       - slsa.dev
       - github.blog
+      - docs.claude.com
     rules:
       - action: allow
         dst: github.com

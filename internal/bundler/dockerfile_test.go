@@ -178,6 +178,48 @@ monitoring:
 		"default OTEL endpoint should not appear when custom settings are provided")
 }
 
+func TestBuildContext_NodeInstall_Debian(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := NewProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.Generate()
+	require.NoError(t, err)
+
+	content := string(dockerfile)
+	assert.Contains(t, content, "ARG NODE_VERSION=", "node version must be pinned via ARG")
+	assert.Contains(t, content, "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-$ARCH.tar.xz",
+		"Debian path must download prebuilt node tarball from nodejs.org")
+	assert.Contains(t, content, "SHASUMS256.txt.asc", "Debian path must GPG-verify SHASUMS256")
+	assert.Contains(t, content, "sha256sum -c -", "Debian path must verify tarball checksum")
+	assert.Contains(t, content, "tar -xJf", "Debian path must extract xz tarball")
+	assert.Contains(t, content, "/usr/local/bin/node", "node must land on default PATH")
+	assert.Contains(t, content, "ENV NODE_USE_SYSTEM_CA=1",
+		"Node must be configured to trust the OS CA bundle (which holds the firewall MITM CA)")
+	assert.NotContains(t, content, "apk add nodejs", "Debian image should not use apk")
+}
+
+func TestBuildContext_NodeInstall_Alpine(t *testing.T) {
+	cfg := testConfig(t, `
+version: "1"
+build:
+  image: "alpine:3.23"
+`)
+	gen := NewProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.Generate()
+	require.NoError(t, err)
+
+	content := string(dockerfile)
+	assert.Contains(t, content, `case "${alpineArch##*-}" in`,
+		"Alpine path must dispatch by alpineArch (faithful copy of nodejs/docker-node alpine3.22)")
+	assert.Contains(t, content, "unofficial-builds.nodejs.org/download/release/v$NODE_VERSION",
+		"Alpine x86_64 must fetch musl prebuilt from unofficial-builds")
+	assert.Contains(t, content, "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION.tar.xz",
+		"Alpine non-x86_64 must source-build from nodejs.org tarball")
+	assert.Contains(t, content, "ENV NODE_USE_SYSTEM_CA=1",
+		"Node must be configured to trust the OS CA bundle (which holds the firewall MITM CA)")
+	assert.NotContains(t, content, "apk add nodejs npm",
+		"Alpine path must NOT use the community apk shortcut — that ignores NODE_VERSION")
+}
+
 func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := NewProjectGenerator(cfg, t.TempDir())
