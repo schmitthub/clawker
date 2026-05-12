@@ -14,7 +14,7 @@ compatibility: >
   Requires the clawker CLI installed on the host. Network access needed for
   fetching docs.clawker.dev documentation pages. Works best inside a clawker
   project directory with a .clawker.yaml config file present.
-allowed-tools: Bash(clawker *), Bash(which clawker), Bash(ls *), Bash(cat *), Bash(docker logs *), Read, Glob, Grep, WebFetch, WebSearch
+allowed-tools: Bash(clawker *), Bash(which clawker), Bash(ls *), Bash(cat *), Read, Glob, Grep, WebFetch, WebSearch
 ---
 
 # Clawker Support

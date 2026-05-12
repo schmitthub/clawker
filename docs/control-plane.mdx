@@ -47,9 +47,9 @@ Either way, the CP image is built from binaries embedded in the `clawker` CLI it
 
 ### Networking
 
-CP joins `clawker-net` with a deterministic static IP — `gateway + 202` (so e.g. `192.168.215.202` on a default Docker bridge). The CLI talks to it over host loopback for `AdminClient` (mTLS gRPC on port `7443`) and `/healthz` (plain HTTP on port `7080`). The agent listener (`7444`) is **only** reachable from other containers on `clawker-net`.
+CP joins `clawker-net` with a deterministic static IP computed by replacing the gateway's last octet with `202` — so e.g. `192.168.215.202` on a default Docker bridge with gateway `192.168.215.1`. The CLI talks to it over host loopback for `AdminClient` (mTLS gRPC on port `7443`) and `/healthz` (plain HTTP on port `7080`). The agent listener (`7444`) is **only** reachable from other containers on `clawker-net`.
 
-When CP brings up the firewall, it places Envoy at `gateway + 200` and CoreDNS at `gateway + 201` on the same network. Agent containers join `clawker-net` with `--dns` pointing at CoreDNS so DNS resolution is filtered from the very first lookup.
+When CP brings up the firewall, it places Envoy at `<network>.200` and CoreDNS at `<network>.201` on the same network (last-octet replacement, same scheme). Agent containers join `clawker-net` with `--dns` pointing at CoreDNS so DNS resolution is filtered from the very first lookup.
 
 ## CLI Surface
 
@@ -60,7 +60,7 @@ All `clawker controlplane` subcommands are break-glass — useful for debugging,
 | `clawker controlplane up` | Idempotent `EnsureRunning`. Brings CP up if it isn't already; no-op if `/healthz` is green. |
 | `clawker controlplane down` | Stops the CP container. `clawker-cp`'s SIGTERM handler runs the clean drain (graceful gRPC stop → Stack stop → eBPF flush → exit 0). |
 | `clawker controlplane status` | Probes `/healthz`; if up, also fetches firewall subsystem state via the AdminService. Output via `--format json` for scripts. |
-| `clawker controlplane agents` | Lists every agent currently registered with CP — composite (`project`, `agent_name`) plus cert thumbprint, container ID, and session state. Output via `--format json` for scripts. |
+| `clawker controlplane agents` | Lists every agent currently registered with CP — composite (`project`, `agent_name`) plus container ID, cert thumbprint, registration time, and last-seen time. Output via `--format json` for scripts. |
 
 The `clawker auth` group manages the CLI-side auth material CP depends on:
 
@@ -97,9 +97,9 @@ clawker controlplane agents
 ```
 
 ```text
-PROJECT     AGENT   CONTAINER                THUMBPRINT                                  SESSION
-myapp       dev     clawker.myapp.dev        a1b2c3d4e5f6...   connected
-myapp       review  clawker.myapp.review     7890abcdef12...   connected
+AGENT   PROJECT  CONTAINER     THUMBPRINT     REGISTERED            LAST SEEN
+dev     myapp    a1b2c3d4e5f6  9f8e7d6c5b4a   2026-05-12T09:14:02Z  2026-05-12T09:42:18Z
+review  myapp    7890abcdef12  1234567890ab   2026-05-12T09:14:05Z  2026-05-12T09:42:18Z
 ```
 
 ## Settings

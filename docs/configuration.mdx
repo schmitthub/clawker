@@ -248,7 +248,7 @@ security:
         path_default: <string>  # default: n/a | required: false
   # Mount the host Docker socket (DooD, not DinD) — lets the container manage sibling containers but is a security risk
   docker_socket: <boolean>  # default: false | required: true
-  # Extra Linux capabilities granted to the container. Empty by default — agent containers are fully unprivileged and the firewall (eBPF cgroup programs) is attached from outside the container so it needs no in-container caps. Add capabilities only if your workflow needs them (e.g. SYS_PTRACE for debugging).
+  # Extra Linux capabilities for the agent container. Empty by default — the eBPF firewall is attached from outside, so no in-container caps are needed. Add e.g. SYS_PTRACE only if your workflow requires it.
   cap_add:  # default: n/a | required: false
     - <string>
   # Run a proxy for browser-based auth flows and credential forwarding from the host
@@ -337,7 +337,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `docker_socket` | boolean | `false` | Mount the host Docker socket (DooD, not DinD) — lets the container manage sibling containers but is a security risk **(required)** |
-| `cap_add` | string list | — | Extra Linux capabilities granted to the container. Empty by default — agent containers are fully unprivileged and the firewall (eBPF cgroup programs) is attached from outside the container so it needs no in-container caps. Add capabilities only if your workflow needs them (e.g. SYS_PTRACE for debugging). |
+| `cap_add` | string list | — | Extra Linux capabilities for the agent container. Empty by default — the eBPF firewall is attached from outside, so no in-container caps are needed. Add e.g. SYS_PTRACE only if your workflow requires it. |
 | `enable_host_proxy` | boolean | `true` | Run a proxy for browser-based auth flows and credential forwarding from the host |
 
 
