@@ -94,18 +94,9 @@ type DockerfileContext struct {
 
 ### Baked-in Node.js Runtime
 
-Every generated image installs Node.js so Claude Code's hooks (`UserPromptSubmit`, `SessionStart`, etc. — these shell out to `node`) and any user `npm`/`npx` calls work without further setup. `claude.ai/install.sh` itself uses bun, but the running CLI requires `node` on PATH.
+Node + npm baked into every generated image so Claude Code hooks (`UserPromptSubmit`, `SessionStart` — these shell out to `node`) work without setup. Faithful copy of `nodejs/docker-node` 24/{bullseye-slim, alpine3.22}: Debian fetches the prebuilt tarball from nodejs.org/dist; Alpine x86_64 fetches the musl prebuilt from unofficial-builds.nodejs.org (SHA256 hardcoded inline alongside `NODE_VERSION`, matching upstream); other Alpine arches build from source. `NODE_VERSION` is honored on every variant/arch combo. Bumping `NODE_VERSION` requires updating the inline x86_64 musl checksum in the Alpine `case` block alongside it (same dual-bump constraint upstream lives with — they automate via update.sh; we do it manually). `NODE_VERSION` flows into the rendered template → image content hash rolls automatically.
 
-Install paths are distro-specific (matches `nodejs/docker-node`):
-
-- **Debian/Ubuntu** (`!IsAlpine`): downloads `node-v$NODE_VERSION-linux-$ARCH.tar.xz` from `nodejs.org/dist`, verifies SHASUMS256 via the Node release-keys GPG signature, extracts to `/usr/local` (`/usr/local/bin/node`). Only `amd64`/`arm64` supported (matches `VariantConfig.Arches`).
-- **Alpine** (`IsAlpine`): `apk add nodejs npm`. Alpine community packages cover both arches with musl, avoiding the multi-hour source build that the official ref uses for non-x64. The version is whatever the Alpine release ships (Alpine 3.23 = Node 22.x as of late 2025) — Alpine drives this, `NODE_VERSION` does not apply to the Alpine path.
-
-`NODE_VERSION` is pinned as a Dockerfile `ARG` in `assets/Dockerfile.tmpl` and consumers can override at build time. Bumping it changes the rendered template → image content hash rolls automatically.
-
-Default `NODE_VERSION` tracks current Active LTS (24.x — Iron entered LTS in Oct 2025).
-
-`ENV NODE_USE_SYSTEM_CA=1` is set near the top of the final stage (before USER switches) so Node trusts `/etc/ssl/certs/ca-certificates.crt` for every process in the container — root (clawkerd-as-PID-1, build-time `RUN` steps) and the unprivileged `${USERNAME}` (Claude Code hooks, user `npm`/`npx`) alike. When `HasFirewallCA` is true the firewall MITM cert has already been merged into that bundle via `update-ca-certificates`, so `fetch()` and TLS calls transparently trust the interception cert. Node falls back to the OS default bundle when no firewall CA is configured. (Flag exists on Node ≥ 22.10; baking it in is safe regardless of the active major.)
+`ENV NODE_USE_SYSTEM_CA=1` set near the top of the final stage (before USER switch) so root and unprivileged `${USERNAME}` both trust `/etc/ssl/certs/ca-certificates.crt`. When `HasFirewallCA` is set, the firewall MITM cert is merged into that bundle via `update-ca-certificates`, transparently trusting the interception cert for `fetch()`/TLS.
 
 ### Dockerfile Instruction Types
 

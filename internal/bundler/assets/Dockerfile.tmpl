@@ -159,23 +159,93 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 
 # Install Node.js (required at runtime for Claude Code hooks; Claude Code's
 # own installer uses bun, but UserPromptSubmit/SessionStart hooks shell out to
-# `node`). Mirrors nodejs/docker-node: Debian downloads the prebuilt tarball
-# from nodejs.org and verifies via GPG-signed SHASUMS256.txt (extracted to
-# /usr/local); Alpine uses the community nodejs/npm packages (installed under
-# /usr/bin) because musl prebuilt source-builds are too heavy for the arm64
-# image build path. Either way `node` lands on the default PATH. npm's global
-# prefix is set per-user via .npmrc (written further down) so `npm install -g`
-# writes under /home/${USERNAME}/.npm-global without root — and never appears
-# on root's PATH/env because the configuration lives in user dotfiles, not
-# Docker ENV.
+# `node`). Faithful copy of nodejs/docker-node 24/{bullseye-slim,alpine3.22}:
+#   - Debian: prebuilt tarball from nodejs.org/dist, GPG-verified via
+#     SHASUMS256.txt.asc, extracted to /usr/local.
+#   - Alpine x86_64: prebuilt musl tarball from unofficial-builds.nodejs.org,
+#     SHA256-pinned per release.
+#   - Alpine other arches: source build (./configure + make), GPG-verified
+#     against nodejs.org/dist SHASUMS256.txt.
+# `NODE_VERSION` ARG is honored on every variant/arch combination. Bumping
+# it requires updating NODE_CHECKSUM_X64_MUSL alongside (only x86_64
+# Alpine reads it). Both prebuilt and source paths land `node`/`npm` under
+# /usr/local. npm's global prefix is set per-user via .npmrc (written
+# further down) so `npm install -g` writes under
+# /home/${USERNAME}/.npm-global without root.
 ARG NODE_VERSION=24.15.0
 {{if .IsAlpine -}}
 {{- if $.BuildKitEnabled}}
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
-    apk add nodejs npm
+    apk add --no-cache libstdc++ && \
+    apk add --no-cache --virtual .build-deps curl && \
 {{- else}}
-RUN apk add nodejs npm
+RUN apk add --no-cache libstdc++ && \
+    apk add --no-cache --virtual .build-deps curl && \
 {{- end}}
+    ARCH= OPENSSL_ARCH='linux*' && alpineArch="$(apk --print-arch)" && \
+    case "${alpineArch##*-}" in \
+      x86_64) ARCH='x64' CHECKSUM="8b75070ed35ef8381548f4396d3cf957fd1449db063f288fe00b0cb64456477f" OPENSSL_ARCH=linux-x86_64 ;; \
+      x86) OPENSSL_ARCH=linux-elf ;; \
+      aarch64) OPENSSL_ARCH=linux-aarch64 ;; \
+      arm*) OPENSSL_ARCH=linux-armv4 ;; \
+      ppc64le) OPENSSL_ARCH=linux-ppc64le ;; \
+      s390x) OPENSSL_ARCH=linux-s390x ;; \
+      *) ;; \
+    esac && \
+    if [ -n "${CHECKSUM}" ]; then \
+      set -eu; \
+      curl -fsSLO --compressed "https://unofficial-builds.nodejs.org/download/release/v$NODE_VERSION/node-v$NODE_VERSION-linux-$ARCH-musl.tar.xz"; \
+      echo "$CHECKSUM  node-v$NODE_VERSION-linux-$ARCH-musl.tar.xz" | sha256sum -c - && \
+      tar -xJf "node-v$NODE_VERSION-linux-$ARCH-musl.tar.xz" -C /usr/local --strip-components=1 --no-same-owner && \
+      ln -s /usr/local/bin/node /usr/local/bin/nodejs; \
+    else \
+      echo "Building from source" && \
+      apk add --no-cache --virtual .build-deps-full \
+          binutils-gold \
+          g++ \
+          gcc \
+          gnupg \
+          libgcc \
+          linux-headers \
+          make \
+          python3 \
+          py-setuptools && \
+      export GNUPGHOME="$(mktemp -d)" && \
+      for key in \
+        5BE8A3F6C8A5C01D106C0AD820B1A390B168D356 \
+        DD792F5973C6DE52C432CBDAC77ABFA00DDBF2B7 \
+        CC68F5A3106FF448322E48ED27F5E38D5B0A215F \
+        8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600 \
+        890C08DB8579162FEE0DF9DB8BEAB4DFCF555EF4 \
+        C82FA3AE1CBEDC6BE46B9360C43CEC45C17AB93C \
+        108F52B48DB57BB0CC439B2997B01419BD92F80A \
+        A363A499291CBBC940DD62E41F10027AF002F8B0 \
+      ; do \
+        { gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$key" && gpg --batch --fingerprint "$key"; } || \
+        { gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" && gpg --batch --fingerprint "$key"; } ; \
+      done && \
+      curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION.tar.xz" && \
+      curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt.asc" && \
+      gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc && \
+      gpgconf --kill all && \
+      rm -rf "$GNUPGHOME" && \
+      grep " node-v$NODE_VERSION.tar.xz\$" SHASUMS256.txt | sha256sum -c - && \
+      tar -xf "node-v$NODE_VERSION.tar.xz" && \
+      cd "node-v$NODE_VERSION" && \
+      ./configure && \
+      make -j$(getconf _NPROCESSORS_ONLN) V= && \
+      make install && \
+      apk del .build-deps-full && \
+      cd .. && \
+      rm -Rf "node-v$NODE_VERSION" && \
+      rm "node-v$NODE_VERSION.tar.xz" SHASUMS256.txt.asc SHASUMS256.txt; \
+    fi && \
+    rm -f "node-v$NODE_VERSION-linux-$ARCH-musl.tar.xz" && \
+    find /usr/local/include/node/openssl/archs -mindepth 1 -maxdepth 1 ! -name "$OPENSSL_ARCH" -exec rm -rf {} \; && \
+    apk del .build-deps && \
+    node --version && \
+    npm --version && \
+    rm -rf /tmp/*
 {{else -}}
 {{- if $.BuildKitEnabled}}
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -317,16 +387,17 @@ RUN mkdir -p /etc/claude-code
 COPY clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
 
 # Managed enterprise settings (Linux managed path, highest precedence,
-# cannot be overridden by user/project settings). Used to inject env
-# vars into every Claude Code session — specifically PATH additions for
-# user-installed `npm install -g` binaries. Claude Code captures process
-# env into the shell snapshot at session start and the snapshot OVERRIDES
-# anything .zshenv/.bashrc set later in the Bash tool's `zsh -c` invocation
-# (the snapshot file is `source`d AFTER shell init files). Setting PATH via
-# managed-settings.json is the only documented enterprise mechanism that
-# lands in the snapshot. Value is a literal full PATH (no ${VAR} expansion
-# in settings.json) that mirrors the ENV PATH set after USER ${USERNAME}
-# below — keep these in sync.
+# cannot be overridden by user/project settings). REQUIRED — do not
+# remove. Claude Code's Bash tool runs `/bin/zsh -c` and source's its own
+# shell snapshot AFTER zsh init files, so the snapshot's PATH overrides
+# anything `.zshenv` exports. That makes `.zshenv` insufficient on its
+# own for hooks/Bash-tool to see `.npm-global/bin` — the snapshot is
+# built from process env at session start, and managed-settings.json is
+# the only documented enterprise mechanism that injects into that env.
+# Value is a literal full PATH (settings.json does not expand ${VAR}).
+# Includes `.npm-global/bin` (which is NOT in the container's ENV PATH
+# below — intentionally scoped to user shells + Claude Code only, not
+# root) and `.local/bin` (claude binary lives there).
 RUN cat > /etc/claude-code/managed-settings.json <<EOF
 {
   "env": {
@@ -362,7 +433,12 @@ RUN chmod +x /usr/local/bin/clawker-socket-server
 USER ${USERNAME}
 ENV CLAWKER_USER=${USERNAME}
 
-# Set static environment (PATH, SHELL, BROWSER — not config-dependent)
+# Set static environment (PATH, SHELL, BROWSER — not config-dependent).
+# `.local/bin` is load-bearing: Claude Code's installer drops the `claude`
+# binary there (symlink to ~/.local/share/claude/versions/...), so without
+# this PATH entry the agent itself is not invokable. Side benefit: any
+# user_run installer that follows XDG (uv, pip --user, cargo, etc.) lands
+# on PATH automatically.
 ENV SHELL={{.Shell}}
 ENV PATH=/home/${USERNAME}/.local/bin:$PATH
 

@@ -208,10 +208,16 @@ build:
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	assert.Contains(t, content, "apk add nodejs npm", "Alpine path must install node via apk")
+	assert.Contains(t, content, `case "${alpineArch##*-}" in`,
+		"Alpine path must dispatch by alpineArch (faithful copy of nodejs/docker-node alpine3.22)")
+	assert.Contains(t, content, "unofficial-builds.nodejs.org/download/release/v$NODE_VERSION",
+		"Alpine x86_64 must fetch musl prebuilt from unofficial-builds")
+	assert.Contains(t, content, "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION.tar.xz",
+		"Alpine non-x86_64 must source-build from nodejs.org tarball")
 	assert.Contains(t, content, "ENV NODE_USE_SYSTEM_CA=1",
 		"Node must be configured to trust the OS CA bundle (which holds the firewall MITM CA)")
-	assert.NotContains(t, content, "nodejs.org/dist", "Alpine path should not download from nodejs.org")
+	assert.NotContains(t, content, "apk add nodejs npm",
+		"Alpine path must NOT use the community apk shortcut — that ignores NODE_VERSION")
 }
 
 func TestBuildContext_DefaultMonitoring(t *testing.T) {
