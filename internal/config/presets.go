@@ -108,7 +108,9 @@ security:
 
 // Node + npm are baked into every agent image by the default Dockerfile
 // template (see internal/bundler/assets/Dockerfile.tmpl) and NODE_USE_SYSTEM_CA
-// is set globally there. TypeScript-specific tooling (pnpm, tsc) layers on top.
+// is set globally there. registry.npmjs.org is in the required firewall set
+// (see internal/config/defaults.go). TypeScript-specific tooling (pnpm, tsc)
+// layers on top.
 const typescriptPreset = `build:
   image: "buildpack-deps:bookworm-scm"
   packages:
@@ -116,10 +118,6 @@ const typescriptPreset = `build:
   instructions:
     user_run:
       - npm install -g pnpm typescript
-security:
-  firewall:
-    add_domains:
-      - registry.npmjs.org
 `
 
 const javaPreset = `build:

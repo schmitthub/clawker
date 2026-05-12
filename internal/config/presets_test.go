@@ -24,8 +24,11 @@ func TestPresets_AllParseSuccessfully(t *testing.T) {
 
 func TestPresets_FieldAssertions(t *testing.T) {
 	// Presets that have language-specific firewall domains (not Bare/C++).
+	// TypeScript's only domain (registry.npmjs.org) is in the required
+	// firewall set — see internal/config/defaults.go — so the preset no
+	// longer adds language-specific domains.
 	presetsWithDomains := map[string]bool{
-		"Python": true, "Go": true, "Rust": true, "TypeScript": true,
+		"Python": true, "Go": true, "Rust": true,
 		"Java": true, "Ruby": true, "C#/.NET": true,
 	}
 
