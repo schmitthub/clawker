@@ -54,7 +54,8 @@ When I began experimenting with Claude Code to keep up with the Agentic AI trend
 
 ## High-Level Feature Overview
 
-- **Embedded parameterized Dockerfile template** inspired by the official devcontainer image, supporting Alpine or Debian base images with common tools preinstalled: git, curl, vim, zsh, ripgrep, etc. An entrypoint script that lets you bypass Claude Code or just pass flags as the default command, unprivileged `claude` user, and more
+- **Embedded parameterized Dockerfile template** inspired by the official devcontainer image, supporting Alpine or Debian base images with common tools preinstalled: git, curl, vim, zsh, ripgrep, etc. The per-container `clawkerd` daemon runs as PID 1, handles signal forwarding, drops privilege to the unprivileged `claude` user kernel-side, and supervises the user CMD for the container's lifetime
+- **Per-host clawker control plane** (`clawker-controlplane` container) runs as a long-lived supervisor — it owns the firewall lifecycle, eBPF program lifetime, agent identity registry (sqlite), mTLS auth, and the command channel to every agent's `clawkerd`. The CLI talks to it over mTLS gRPC + OAuth2; see `clawker controlplane status`, `clawker controlplane agents`
 - **Static Dockerfile generation** if you desire a tangible Dockerfile to build and customize yourself (this repo was at first going to just be a docker image packaging repo for my private dockerhub lol so I kept this in here)
 - **Injectable build-time instructions** to customize images per project: packages, environment variables, root run commands, user run commands, and more
 - **Bind or snapshot workspace modes**: mount your repository to the container for live editing, or copy it at runtime for pure isolation
@@ -63,7 +64,7 @@ When I began experimenting with Claude Code to keep up with the Agentic AI trend
 - **Host proxy service** copies git ssh keys into the container and sends events like "browser open" from the container to your host for browser authentication, then proxies the callback back to the container. Great for when you have to authenticate with `claude` or `gh`
 - **Configurable environment variables**: set or copy environment variables and env files from the host into containers at runtime
 - **Injectable post-initialization bash script** that runs after the container starts but before Claude Code launches, letting you set up MCPs, etc.
-- **Envoy+CoreDNS network firewall** enabled by default — Envoy proxy and CoreDNS containers run as managed Docker containers on the shared clawker network, providing DNS-level deny-by-default (unlisted domains return NXDOMAIN) and TLS inspection with per-domain MITM certificates for path-level filtering. System-required rules (Claude API, Docker registry) are always present; project rules merge additively. Manage rules dynamically with `clawker firewall add/remove/list/status`, temporarily bypass with `clawker firewall bypass 5m --agent <agent_name>`, or disable entirely. A great security layer to mitigate runaway agents or prompt injections while giving them the network access they need.
+- **Envoy + custom CoreDNS + eBPF network firewall** enabled by default — Envoy and a custom CoreDNS build run as managed Docker containers on the shared `clawker-net` network, while eBPF cgroup programs (loaded and attached from outside agent containers by the control plane) redirect TCP to Envoy and DNS to CoreDNS. Provides DNS-level deny-by-default (unlisted domains return NXDOMAIN), per-domain TCP routing via a real-time BPF DNS cache, and TLS inspection with per-domain MITM certificates for path-level filtering. Agent containers themselves get **no Linux capabilities** — all enforcement happens kernel-side, outside the container's privilege scope. System-required rules (Claude API, Docker registry) are always present; project rules merge additively. Manage rules dynamically with `clawker firewall add/remove/list/status`, temporarily bypass with `clawker firewall bypass 5m --agent <agent_name>`, or disable entirely. A great security layer to mitigate runaway agents or prompt injections while giving them the network access they need.
 - **Toggleable read-only global share**: volume mount from the host giving all containers real-time access to files you place in it
 - **Project-based namespace isolation** of container resources. Clawker detects if it's in a project directory and automatically, via docker label prefixes, lets you filter for resources with re-usable names like "dev" or "main" that are scoped to the project. So you can have a "dev" container in multiple projects without conflict, and you can easily filter `clawker ps --filter agent=dev` to see all your dev containers across projects or `clawker ps --project myapp` to see all containers for a specific project.
 - **Dedicated Docker network** that all containers run in
@@ -317,6 +318,15 @@ clawker firewall disable --agent dev   # Unrestricted egress for one agent
 clawker firewall enable --agent dev    # Re-apply firewall rules
 clawker firewall bypass 5m --agent dev      # Temporary unrestricted egress with auto-re-enable
 clawker firewall bypass --stop --agent dev  # End bypass early, re-enable firewall
+
+# Control plane (break-glass — normally bootstrapped automatically)
+clawker controlplane status             # Show CP health + firewall subsystem state
+clawker controlplane up                 # Bring CP up (idempotent)
+clawker controlplane down               # Stop CP cleanly (drains eBPF + Envoy/CoreDNS)
+clawker controlplane agents             # List agents registered with the CP
+
+# Auth material
+clawker auth rotate                     # Rotate CA, server certs, and OAuth2 signing key
 
 # Configuration editing
 clawker project edit                    # Interactive TUI editor for .clawker.yaml

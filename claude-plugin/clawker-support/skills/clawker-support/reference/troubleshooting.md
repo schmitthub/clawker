@@ -14,6 +14,8 @@ reference files. Check these first if the issue matches:
 | MCP server setup and debugging | `reference/mcp-recipes.md` | Troubleshooting |
 | Settings not taking effect | `reference/settings.md` | Troubleshooting |
 | Disk space, build cache, Docker cleanup | `reference/docker-hygiene.md` | Full reference |
+| Control plane down or unreachable | This file | Control plane down or unhealthy |
+| Agent missing from CP registry | This file | Agent appears in clawker ps but missing from CP |
 
 ## Global issues
 
@@ -187,4 +189,82 @@ User reports the container fails to start or immediately exits.
    ```bash
    clawker volume list
    clawker volume remove <volume-name>
+   ```
+
+6. **Control plane down**: Container init is dispatched by the clawker
+   control plane (CP) over an mTLS Session to the per-container clawkerd
+   daemon. If CP is unreachable, `clawkerd` boots the listener but never
+   gets `AgentReady` — the container hangs without spawning the user CMD
+   and the HEALTHCHECK never goes green.
+   ```bash
+   clawker controlplane status
+   clawker controlplane up         # idempotent — brings CP up if needed
+   ```
+
+---
+
+## Control plane down or unhealthy
+
+User reports `clawker firewall *` or container commands hang, time out, or
+report `connection refused` against the CP.
+
+1. **Check CP health**:
+   ```bash
+   clawker controlplane status
+   ```
+   Reports container running state, IP on `clawker-net`, `/healthz` result,
+   and (if reachable) firewall subsystem state.
+
+2. **Bring CP up explicitly**:
+   ```bash
+   clawker controlplane up
+   ```
+   Idempotent — no-op if CP is already healthy.
+
+3. **CP container exists but unhealthy**: Inspect Docker logs directly.
+   CP panic traces and Ory subprocess output land here, NOT in clawker's
+   rotating logs.
+   ```bash
+   docker logs clawker-controlplane
+   ```
+
+4. **Auth material out of sync** (CP reports TLS or OAuth2 errors): rotate
+   the CLI's auth material. The CLI is the root of trust — CP loads
+   bind-mounted certs and signing keys from `~/.config/clawker/`.
+   ```bash
+   clawker auth rotate
+   ```
+
+5. **Recovery — full restart**:
+   ```bash
+   clawker controlplane down
+   clawker controlplane up
+   ```
+
+---
+
+## Agent appears in `clawker ps` but missing from CP
+
+User reports a running agent container but `clawker controlplane agents`
+doesn't list it.
+
+This means the agent's clawkerd hasn't completed the Register handshake
+with CP. Either CP wasn't up when the container started, or the agent's
+mTLS bootstrap material is invalid.
+
+1. **List registered agents**:
+   ```bash
+   clawker controlplane agents
+   ```
+
+2. **Inspect the agent's clawkerd logs**:
+   ```bash
+   docker logs <container-name>
+   ```
+   Look for `event=register_failed` or TLS handshake errors.
+
+3. **Rotate auth and restart the agent**:
+   ```bash
+   clawker auth rotate
+   clawker container restart --agent <agent-name>
    ```

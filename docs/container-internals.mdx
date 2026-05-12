@@ -8,24 +8,26 @@ Clawker containers are more than a simple `docker run`. Every container goes thr
 
 ## Container Lifecycle
 
-When you run `clawker run @` or `clawker container create @`, the container goes through four phases before it's ready:
+When you run `clawker run @` or `clawker container create @`, the container goes through four host-side phases before clawkerd takes over inside:
 
 1. **Workspace** — resolve the working directory, set up mounts, ensure volumes
 2. **Config** — initialize the Claude Code config volume (first run only)
 3. **Environment** — start the host proxy, forward git credentials, resolve environment variables
-4. **Container** — validate flags, build Docker configs, create the container, inject post-init scripts
+4. **Container** — validate flags, build Docker configs, create the container, stream bootstrap material (mTLS leaf cert, CA cert, Hydra JWT) into the container's writable layer, then start it
 
-Each phase streams progress events to the terminal so you can see exactly what's happening.
+After `docker start`, the control plane attaches eBPF firewall programs from outside and dials into the container's mTLS listener to drive a fifth phase **inside** the container — environment wiring, MCP setup, any `agent.post_init` script you've configured — before issuing the terminal `AgentReady` that tells `clawkerd` to fork the user CMD (Claude Code).
+
+Each host-side phase streams progress events to the terminal; clawkerd renders the in-container init steps on the same attached TTY so you see one unified boot log.
 
 ### Create vs Start vs Run
 
 | Command | What it does |
 |---------|-------------|
-| `clawker container create` | Runs all four init phases, produces a stopped container |
-| `clawker container start` | Starts an existing container (no init, attaches if interactive) |
+| `clawker container create` | Runs all four host-side init phases, produces a stopped container with bootstrap material staged |
+| `clawker container start` | Starts an existing container — clawkerd boots, CP attaches eBPF and dispatches CP-driven init, then forks the user CMD |
 | `clawker run` | Create + Start in one step |
 
-Init only happens at **creation time**. Starting, stopping, and restarting a container never re-runs initialization. This means your session data, config, and command history survive restarts.
+The host-side init phases only run at **creation time**. Starting, stopping, and restarting a container does not re-run the host-side phases — your session data, config, and command history survive restarts. CP-driven init steps that need to re-run on every start (env wiring, etc.) are dispatched every time `clawkerd` boots; steps that should only run once (like your `agent.post_init` script) are gated by a marker file on the config volume.
 
 ## Workspace Mounting
 
@@ -78,7 +80,7 @@ Git credentials are forwarded into the container automatically based on your pro
 - **HTTPS** — Clawker runs a host proxy that the container's git credential helper calls through. Your host's git credentials are never copied into the container.
 - **SSH** — SSH agent forwarding is handled via a socket bridge (muxrpc over `docker exec`). Your SSH keys stay on the host.
 - **GPG** — GPG agent forwarding works the same way as SSH, via the socket bridge.
-- **Git config** — Your `~/.gitconfig` is bind-mounted read-only at `/tmp/host-gitconfig` inside the container. On startup, the entrypoint reads that file, filters out any `[credential]` sections, and writes the sanitized result to `~/.gitconfig` inside the container (which then uses its own credential forwarding).
+- **Git config** — Your `~/.gitconfig` is bind-mounted read-only at `/tmp/host-gitconfig` inside the container. During CP-driven init, clawkerd reads that file, filters out any `[credential]` sections, and writes the sanitized result to `~/.gitconfig` inside the container (which then uses its own credential forwarding).
 
 ## Session Persistence
 
@@ -129,7 +131,9 @@ On subsequent container recreations with the same agent name, the config volume 
 
 ### Post-Init Scripts
 
-If your `clawker.yaml` includes a `post_init` script, it's injected into the container after creation and runs once on first start. A marker file prevents it from running again on restarts. This is useful for project-specific setup like installing dependencies or configuring tools.
+If your `clawker.yaml` includes a `post_init` script, it runs once during the in-container init phase — dispatched by the control plane to `clawkerd` as a `ShellCommand` before the user CMD is forked. A marker file on the config volume prevents it from running again on subsequent restarts. To re-run, delete the marker (`~/.claude/post-initialized`) or remove the config volume.
+
+This is useful for project-specific setup like installing dependencies or configuring MCP servers — anything that needs to run inside the container with `agent.env` available, before Claude Code starts.
 
 ## Volumes and Naming
 
@@ -158,11 +162,11 @@ Clawker builds custom Docker images tailored to your project. The image includes
 - System packages you've specified (`build.packages`)
 - Claude Code (installed via npm)
 - An agent awareness prompt at `/etc/claude-code/CLAUDE.md`
-- An entrypoint script that handles init, firewall readiness, and privilege drop
-- Firewall and credential helper scripts
-- A non-root user (`claude`) with sudo access
+- A baked-in copy of `clawkerd` at `/usr/local/bin/clawkerd` — the per-container daemon that runs as PID 1
+- Credential helper binaries (`git-credential-clawker`, socket-bridge server)
+- A non-root user (`claude`, UID 1001) with sudo access
 
-See [Custom Images](/custom-images) for details on customizing the build.
+The container's `ENTRYPOINT` is `clawkerd`. See [Custom Images](/custom-images) for build customization.
 
 ## Agent Awareness Prompt
 
@@ -178,36 +182,69 @@ The prompt tells the agent:
 
 This creates a self-service experience: when a network connection fails, the agent diagnoses it and tells the user exactly what to do — no manual troubleshooting required.
 
-## Entrypoint
+## clawkerd: The Container's PID 1
 
-The entrypoint script (`entrypoint.sh`) runs as root on every container start. It performs initialization, then drops privileges to the `claude` user before launching the main process. All output is suppressed except for structured progress signals — a spinner shows each step in TTY mode, plain log lines in non-TTY mode.
+Every agent container runs `clawkerd` as PID 1. clawkerd is the per-container supervisor — it owns the container's lifecycle, terminates correctly under `docker stop`, signs into the clawker control plane over mTLS, and only **then** forks the user CMD (Claude Code, by default) with kernel-side privilege drop.
 
-### Initialization Steps
+clawkerd itself runs as **root** inside the container. It does not drop its own privileges — privilege drop happens kernel-side, between fork and exec, on the child it spawns. The supervisor stays root to: write `/var/log/clawker/clawkerd.log` (rotated), read its mTLS bootstrap material, reap reparented orphan zombies via `Wait4(-1)`, and hold open the mTLS listener.
 
-1. **Firewall readiness** (if `CLAWKER_FIREWALL_ENABLED=true`) — The entrypoint waits for the host-side eBPF manager to attach cgroup programs to the container. The manager attaches eBPF programs from outside the container after it starts, then touches a signal file. The entrypoint polls for this file with a 30-second timeout. This ensures the agent's first network request goes through the firewall, not around it.
+### Why PID 1 Matters
 
-2. **Config seeding** — If the config volume (`~/.claude`) doesn't have a `.config.json`, the entrypoint seeds it from the image's init directory. This bypasses Claude Code's first-run onboarding wizard. The `settings.json` is merged: image defaults first, then any existing user settings override.
+A PID 1 process in Linux has special responsibilities the kernel does not delegate elsewhere:
 
-3. **Git config** — Copies the host's `.gitconfig` (bind-mounted at `/tmp/host-gitconfig`) into the container, filtering out `[credential]` sections so the container uses Clawker's forwarded credential helpers instead of host-side stores that don't exist in the container.
+- **Signal handling.** SIGTERM, SIGINT, SIGHUP are not handled by default for PID 1. A naive `claude` process running as PID 1 would ignore `docker stop` until the 10-second grace expired and Docker escalated to SIGKILL — leaving no time for clean teardown of Claude Code's session state. clawkerd installs explicit signal handlers and forwards forwardable signals to the user CMD's process group.
+- **Zombie reaping.** Any orphaned process whose parent dies is reparented to PID 1. If PID 1 doesn't call `Wait4(-1)`, those zombies accumulate forever. clawkerd runs a two-phase reaper: phase 1 reaps only the user CMD (so concurrent `exec` pipelines from CP don't get their child stolen); phase 2 drains orphans after the user CMD has exited.
+- **Exit code propagation.** Docker reads PID 1's exit code as the container's exit code, which is what `restart: on-failure` switches on. clawkerd maps the user CMD's wait status to the bash convention (`WEXITSTATUS` for normal exit, `128 + signum` for signaled) so Docker's restart policy interprets it correctly.
 
-4. **Git credential helper** — If HTTPS forwarding is enabled (`CLAWKER_HOST_PROXY` set + `CLAWKER_GIT_HTTPS=true`), configures `git-credential-clawker` as the global credential helper.
+### Boot Sequence
 
-5. **SSH known hosts** — Unconditionally adds GitHub, GitLab, and Bitbucket SSH host keys to `~/.ssh/known_hosts`. This runs regardless of credential forwarding settings because SSH operations need known hosts even without agent forwarding.
+When the container starts, clawkerd executes in this order:
 
-6. **Post-init script** — If `agent.post_init` is configured and hasn't been run yet (tracked by a marker file on the config volume), executes it as the container user. Failure aborts startup. The marker persists across container recreations — to re-run, delete `~/.claude/post-initialized` or the config volume.
+1. **Read bootstrap material.** Four files in `/run/clawker/bootstrap` (per-agent mTLS leaf cert + key, the clawker CA cert, and a single-use Hydra JWT). The CLI streams these into the container as a tar archive between `docker create` and `docker start` — they live on the container's writable layer, not on tmpfs or a bind mount.
+2. **Resolve environment.** `CLAWKER_AGENT` is required; `CLAWKER_PROJECT` may be empty (for orphan-project containers). `CLAWKER_USER` (defaults to `claude`) is resolved against `/etc/passwd` to populate the kernel-side privilege-drop credentials for the eventual spawn.
+3. **Start the mTLS listener.** clawkerd serves a gRPC `ClawkerdService.Session` endpoint on `:7700`, reachable only over the `clawker-net` network. The listener enforces `RequireAndVerifyClientCert` plus a CN pin: the only authorized peer is the clawker control plane's cert (CN = `clawker-controlplane`). Any other peer is rejected at the TLS layer, before any RPC handler runs.
+4. **Wait for CP-driven init.** The control plane dials in over mTLS, registers the agent's identity (binding the container ID to the captured cert thumbprint in CP's sqlite agent registry), and then dispatches one or more `ShellCommand` steps — environment setup, MCP wiring, your `agent.post_init` script if configured. Each step's exit code, stdout, and stderr flow back over the same Session stream.
+5. **Fork the user CMD on `AgentReady`.** When CP issues the terminal `AgentReady` command, clawkerd forks the user CMD (default: `claude`) using `SysProcAttr.Credential` so the kernel performs `setgroups → setgid → setuid` between fork and exec. The user CMD never runs as root; clawkerd does, but it never executes user-controlled code in its own process.
+6. **Supervise.** clawkerd holds open the Session for the container's lifetime — CP can dispatch additional `ShellCommand`s, signal-forward into the child pgroup, or trigger a clean shutdown.
+7. **Reap and exit.** On `docker stop` (SIGTERM) or when the user CMD exits, clawkerd runs an ordered teardown: stop the listener, run phase-2 orphan drain, then `os.Exit` with the bash-convention exit code so Docker's restart policy reads the right value.
 
-7. **Privilege drop + exec** — Signals readiness, restores stdout/stderr, and execs `gosu claude <command>` (default: `claude`).
+If the user CMD exits cleanly (e.g. you `/exit` from Claude Code), clawkerd exits with the same code and the container stops. If you used `--rm`, Docker removes the container. If you didn't, you can start it again later with `clawker start -a -i --agent <agent>` — the config and history volumes still hold your settings and shell history.
 
-### Firewall Decoupling
+### Privilege Model
 
-The firewall is intentionally **not** configured by the entrypoint. Instead:
+| Process | UID | Why |
+|---------|----:|-----|
+| `clawkerd` (PID 1) | 0 (`root`) | mTLS listener, log writes, bootstrap reads, `Wait4(-1)` orphan reap |
+| User CMD (`claude` by default) | 1001 (`claude`) | Forked with `SysProcAttr.Credential`; kernel performs the privilege drop |
+| Anything the user CMD spawns | 1001 (`claude`) | Inherits from the user CMD; never reaches clawkerd's privilege |
 
-1. The container starts with default network connectivity
-2. The host-side eBPF manager attaches cgroup programs to the container from outside, routing traffic through Envoy and DNS queries through CoreDNS
-3. The manager touches `/var/run/clawker/firewall-ready` as a signal
-4. The entrypoint unblocks and proceeds with user-level init
+The kernel performs the credential switch atomically between fork and exec, so there is no user-mode code path that holds root and then drops it.
 
-This decoupled design means the container image has no baked-in network addresses and no container capabilities are needed for traffic routing — eBPF programs are attached from outside the container. The eBPF manager passes the Envoy and CoreDNS IPs at attach time, making the image portable across different Docker network configurations.
+clawkerd's `ShellCommand` surface (CP-dispatched, root-capable) is the entire trust boundary. The CN-pinned mTLS listener (CP is the sole authorized caller) is what protects it. There is no per-command argv allow-list — anything that can mint a `clawker-controlplane`-CN cert chained to the clawker CA gets root-equivalent code execution inside the container. Bootstrap material lives only on the container's writable layer, which dies with `--rm` or `docker rm`.
+
+### What clawkerd Does Not Do
+
+- **No proactive outbound dial** outside the one-time CP-triggered Register handshake. clawkerd is a server — CP dials in, not the other way around.
+- **No heartbeat or keepalive.** CP knows liveness via Docker events plus the Session stream's TCP keepalives.
+- **No init-script execution as part of clawkerd's own logic.** Setup steps (env wiring, MCP install, `agent.post_init`) are dispatched by CP over the Session as `ShellCommand`s — clawkerd just runs them and reports the result.
+- **No firewall configuration.** eBPF cgroup programs are attached to the container's cgroup from outside by the control plane. clawkerd has no role in firewall enforcement.
+- **No reconnect logic.** clawkerd serves; if CP loses the connection, CP reconnects with backoff. clawkerd just waits for the next dial.
+
+## Boot Progress on the Terminal
+
+When you attach an interactive terminal (`-it`), clawkerd renders per-step boot progress in plain text: an "Active" status line for the current step, then a check mark (`✓`) or cross (`✗`) when the step finishes. Steps run in milliseconds typically, so there's no spinner animation — just a clean log of what CP dispatched and how it resolved. On a non-TTY (e.g. `--detach`), the same events go to clawkerd's structured log at `/var/log/clawker/clawkerd.log` (rotated, 50MB × 3 backups, 7-day retention).
+
+After the final `AgentReady` step completes, clawkerd transfers TTY foreground to the user CMD and Claude Code takes over the terminal.
+
+## Firewall Decoupling
+
+The firewall is intentionally **not** configured inside the container. eBPF cgroup programs are attached from outside by the control plane before the user CMD starts, and they remain attached for the container's lifetime. This means:
+
+- The container image has no baked-in firewall addresses or capabilities — it is portable across different Docker network configurations.
+- Agent containers run with **no Linux capabilities** (`cap_add: []`). No `NET_ADMIN`, no `NET_RAW`. The firewall enforcement happens kernel-side, outside the container's privilege scope.
+- A compromised user CMD cannot modify, weaken, or bypass the firewall from inside — the eBPF programs, the BPF maps, and the route table are all in kernel space owned by the host, not the container.
+
+If you need extra capabilities for your workflow (e.g. `SYS_PTRACE` for debugging), add them to `security.cap_add` in your `.clawker.yaml`. The firewall does not require any.
 
 ## Shared Directory
 

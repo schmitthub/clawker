@@ -65,7 +65,11 @@ An agent is a named container instance. One project can have multiple agents, ea
 
 ### Firewall
 
-The firewall init script blocks all outbound traffic by default, then allowlists specific domains. IP range sources fetch CIDR blocks from cloud provider APIs for services like GitHub.
+The firewall is deny-by-default. Outbound TCP is redirected to an Envoy egress proxy via eBPF cgroup programs (attached to each agent container's cgroup from outside, by the clawker control plane). DNS is redirected to a custom CoreDNS that returns NXDOMAIN for any domain not in the allowlist. Allowed domains are configured per project (`security.firewall` in `.clawker.yaml`) and merged with a minimal hardcoded system list (Anthropic API, OAuth, telemetry). See the [Firewall](/firewall) guide for the full design.
+
+### Control Plane
+
+The clawker control plane (`cmd/clawker-cp`, PID 1 of the `clawker-controlplane` container) is the authoritative supervisor. It owns the firewall lifecycle, eBPF program lifetime, agent identity registry, and the mTLS Session over which it dispatches in-container commands to `clawkerd`. CP is not the firewall — it is the host-level daemon that, among other things, manages the firewall. The Ory stack (Hydra, Kratos, Oathkeeper) runs as subprocesses inside CP; the CLI exchanges OAuth2 tokens with Hydra and calls AdminService gRPC over mTLS for every privileged operation. See [Control Plane](/control-plane) for the user-facing guide and [Container Internals → clawkerd](/container-internals#clawkerd-the-containers-pid-1) for the in-container counterpart.
 
 ## Key Design Decisions
 
@@ -97,7 +101,7 @@ Commands mirror Docker's CLI structure:
 
 Top-level shortcuts: `init`, `build`, `run`, `start`, `generate`, `monitor *`, `version`
 
-Management commands: `container`, `volume`, `network`, `image`, `project`, `worktree`, `firewall`
+Management commands: `container`, `volume`, `network`, `image`, `project`, `worktree`, `firewall`, `controlplane`, `auth`, `settings`, `skill`
 
 ## Multi-Agent Operations
 

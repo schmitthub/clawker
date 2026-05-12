@@ -183,7 +183,7 @@ func (f *FirewallConfig) GetFirewallDomains(requiredDomains []string) []string {
 type SecurityConfig struct {
 	Firewall        *FirewallConfig       `yaml:"firewall,omitempty"`
 	DockerSocket    bool                  `yaml:"docker_socket" label:"Docker Socket" desc:"Mount the host Docker socket (DooD, not DinD) — lets the container manage sibling containers but is a security risk" default:"false" required:"true"`
-	CapAdd          []string              `yaml:"cap_add,omitempty" label:"Cap Add" desc:"Linux capabilities granted to the container; NET_ADMIN and NET_RAW are required — removing them will break the firewall" default:"NET_ADMIN,NET_RAW"`
+	CapAdd          []string              `yaml:"cap_add,omitempty" label:"Cap Add" desc:"Extra Linux capabilities granted to the container. Empty by default — agent containers are fully unprivileged and the firewall (eBPF cgroup programs) is attached from outside the container so it needs no in-container caps. Add capabilities only if your workflow needs them (e.g. SYS_PTRACE for debugging)."`
 	EnableHostProxy *bool                 `yaml:"enable_host_proxy,omitempty" label:"Host Proxy" desc:"Run a proxy for browser-based auth flows and credential forwarding from the host" default:"true"`
 	GitCredentials  *GitCredentialsConfig `yaml:"git_credentials,omitempty"`
 }

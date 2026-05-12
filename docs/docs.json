@@ -88,6 +88,7 @@
           "configuration",
           "security",
           "firewall",
+          "control-plane",
           "credentials",
           "custom-images",
           "container-internals",
@@ -240,6 +241,32 @@
               "cli-reference/clawker_firewall_disable",
               "cli-reference/clawker_firewall_bypass",
               "cli-reference/clawker_firewall_rotate-ca"
+            ]
+          },
+          {
+            "group": "Control Plane",
+            "pages": [
+              "cli-reference/clawker_controlplane",
+              "cli-reference/clawker_controlplane_status",
+              "cli-reference/clawker_controlplane_up",
+              "cli-reference/clawker_controlplane_down",
+              "cli-reference/clawker_controlplane_agents"
+            ]
+          },
+          {
+            "group": "Auth",
+            "pages": [
+              "cli-reference/clawker_auth",
+              "cli-reference/clawker_auth_rotate"
+            ]
+          },
+          {
+            "group": "Skill",
+            "pages": [
+              "cli-reference/clawker_skill",
+              "cli-reference/clawker_skill_install",
+              "cli-reference/clawker_skill_show",
+              "cli-reference/clawker_skill_remove"
             ]
           }
         ]

@@ -61,6 +61,12 @@ Every Clawker container image includes an agent prompt file at `/etc/claude-code
 
 This means when the agent hits a blocked domain, it can explain the problem and suggest the right `clawker firewall add` command — without the user needing to know the details.
 
+## Container PID 1 and Privilege Drop
+
+The container's PID 1 is `clawkerd`, the per-container daemon that supervises Claude Code. clawkerd runs as root inside the container, but it never executes user-controlled code in its own process. The user CMD (Claude Code by default) is forked with kernel-side privilege drop via `SysProcAttr.Credential` — between `fork()` and `execve()` the kernel performs `setgroups → setgid → setuid` atomically, so there is no user-mode code path between root and the unprivileged `claude` user (UID 1001).
+
+The clawker control plane talks to clawkerd over a CN-pinned mTLS Session — only a peer holding a cert with CN `clawker-controlplane` chained to the clawker CA can dispatch commands. See [Container Internals → clawkerd](/container-internals#clawkerd-the-containers-pid-1) for the full PID-1 contract.
+
 ## Docker Socket
 
 By default, the Docker socket is **not** mounted into containers:
@@ -74,18 +80,18 @@ Enabling `docker_socket: true` mounts `/var/run/docker.sock` read-write into the
 
 ## Linux Capabilities
 
-Agent containers require no special privileges for firewall enforcement. eBPF cgroup programs are attached from outside the container by the eBPF manager — raw socket creation is blocked by the eBPF `sock_create` program rather than by container capabilities.
+Agent containers require no special privileges for firewall enforcement. eBPF cgroup programs are attached from outside the container by the clawker control plane — raw socket creation is blocked by the eBPF `sock_create` program rather than by container capabilities.
 
-The firewall infrastructure containers themselves use minimal capabilities: the eBPF manager runs with `CAP_BPF` + `CAP_SYS_ADMIN` (to load and attach BPF programs), and the custom CoreDNS build runs with `CAP_BPF` + `CAP_SYS_ADMIN` (to open the pinned `dns_cache` BPF map and update it on DNS responses). Both mount only `/sys/fs/bpf` — no broader host access. See [DNS Cache Population](#dns-cache-population) below for why CoreDNS needs these capabilities.
+The supporting infrastructure containers use minimal capabilities. The clawker control plane (`clawker-controlplane`) runs with `CAP_BPF` + `CAP_SYS_ADMIN` to load, attach, and pin eBPF programs and maps. The custom CoreDNS build runs with `CAP_BPF` + `CAP_SYS_ADMIN` to open the pinned `dns_cache` BPF map and update it on DNS responses. Both mount only `/sys/fs/bpf` — no broader host access. See [DNS Cache Population](#dns-cache-population) below for why CoreDNS needs these capabilities.
 
-The `cap_add` field on agent containers is available if your workflow needs additional Linux capabilities:
+Agent containers default to **no extra capabilities** (`cap_add: []`). The `cap_add` field is available if your workflow needs additional Linux capabilities:
 
 ```yaml
 security:
-  cap_add: []  # No capabilities needed for the firewall
+  cap_add: []  # default — agent containers are fully unprivileged
+  # cap_add:
+  #   - SYS_PTRACE   # only add capabilities your workflow actually needs
 ```
-
-If you need additional capabilities for your workflow (e.g., `SYS_PTRACE` for debugging), add them here.
 
 ### IPv6 Support
 
@@ -94,9 +100,6 @@ Clawker's firewall is IPv4-first. There are two cases to understand:
 - **Dual-stack sockets (IPv4-mapped IPv6, `::ffff:x.x.x.x`).** Most modern programs — `ssh`, `curl`, Node.js, Python, Go — open dual-stack IPv6 sockets by default and connect to IPv4 targets via IPv4-mapped addresses. The eBPF `cgroup/connect6` program detects these and applies the **same full routing logic as IPv4**: DNS redirect to CoreDNS, gateway lockdown, per-domain route lookup via the DNS cache, and Envoy fallback for unknown destinations. From the user's perspective, dual-stack traffic is enforced identically to pure IPv4.
 - **Native IPv6.** Connections to real IPv6 addresses (e.g., `2606:4700::1` or anything forced via `-6`) are **denied**. The egress stack (Envoy listeners, CoreDNS forward zones, eBPF DNS cache) is IPv4-only, and there is no safe way to transparently route native IPv6 traffic today. If your workflow requires IPv6 connectivity, prefer hostnames so the container resolves an A record, or open an issue describing the use case.
 
-<Note>
-Prior to the dual-stack fix, `cgroup/connect6` allowed all IPv4-mapped IPv6 addresses through unconditionally. This was a silent bypass — any program using a dual-stack socket (almost all modern software) skipped the firewall entirely. The current implementation closes that gap: dual-stack traffic is routed through the same enforcement path as pure IPv4.
-</Note>
 
 ### DNS Cache Population
 

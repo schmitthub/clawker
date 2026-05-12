@@ -14,7 +14,7 @@ compatibility: >
   Requires the clawker CLI installed on the host. Network access needed for
   fetching docs.clawker.dev documentation pages. Works best inside a clawker
   project directory with a .clawker.yaml config file present.
-allowed-tools: Bash(clawker *), Bash(which clawker), Bash(ls *), Bash(cat *), Read, Glob, Grep, WebFetch, WebSearch
+allowed-tools: Bash(clawker *), Bash(which clawker), Bash(ls *), Bash(cat *), Bash(docker logs *), Read, Glob, Grep, WebFetch, WebSearch
 ---
 
 # Clawker Support
@@ -132,6 +132,15 @@ If firewall-related, also run:
 ```bash
 clawker firewall status
 clawker firewall list
+```
+
+If the user reports hangs, timeouts, or `connection refused` on `clawker
+firewall *` or container commands, the control plane (CP) may be down.
+CP is the host-side daemon that owns the firewall, eBPF lifetime, agent
+registry, and mTLS command channel to every per-container `clawkerd`:
+```bash
+clawker controlplane status     # CP /healthz + firewall subsystem state
+clawker controlplane agents     # agents registered with CP (mTLS thumbprints)
 ```
 
 ### Step 3: Research — mandatory, never skip
@@ -264,6 +273,14 @@ These are the things users consistently get wrong. Keep them in mind always:
 - **Firewall is deny-by-default.** Everything except a small set of hardcoded
   Anthropic domains must be explicitly allowed. Fetch the current firewall
   docs if you need the exact list.
+
+- **Control plane (CP) is required for runtime firewall operations.** `clawker
+  firewall add/remove/reload/bypass/enable/disable` all route through the CP
+  daemon's AdminService gRPC. CP is bootstrapped transparently on first use,
+  but if it's down all those commands fail with `connection refused`. CP also
+  drives in-container init via mTLS Session — a container that boots without
+  CP available will hang in clawkerd before spawning the user CMD. Check with
+  `clawker controlplane status`.
 
 - **MCP servers need firewall rules for their API endpoints.** Installing the
   package isn't enough — if the MCP calls an external API, that domain must be
