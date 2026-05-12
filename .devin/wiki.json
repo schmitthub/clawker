@@ -250,35 +250,6 @@
       ]
     },
     {
-      "title": "Autonomous Loop Mode",
-      "purpose": "Overview of the loop iterate and loop tasks commands for autonomous agent execution. Links to child pages on the runner engine and the TUI dashboard.",
-      "page_notes": [
-        {
-          "content": ""
-        }
-      ]
-    },
-    {
-      "title": "Loop Runner Engine",
-      "purpose": "The loop runner internals: circuit breaker (stagnation detection, output decline threshold, same-error threshold), session history, stream parsing, rate limiting, concurrency detection, hook injection, and the container lifecycle per iteration.",
-      "parent": "Autonomous Loop Mode",
-      "page_notes": [
-        {
-          "content": ""
-        }
-      ]
-    },
-    {
-      "title": "Loop TUI Dashboard",
-      "purpose": "The real-time BubbleTea dashboard for loop mode: LoopDashEvent channel, activity log ring buffer, streaming output display, cost/token tracking, detach (q/Esc) vs interrupt (Ctrl+C) flows, and the DashboardRenderer interface.",
-      "parent": "Autonomous Loop Mode",
-      "page_notes": [
-        {
-          "content": ""
-        }
-      ]
-    },
-    {
       "title": "Project and Worktree Management",
       "purpose": "Overview of project registration and Git worktree lifecycle management. Links to child pages on the project domain and worktree health model.",
       "page_notes": [

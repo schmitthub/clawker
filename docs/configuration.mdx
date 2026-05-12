@@ -262,35 +262,6 @@ security:
     forward_gpg: <boolean>  # default: true | required: false
     # Sync your host .gitconfig (aliases, user.name, user.email) into the container
     copy_git_config: <boolean>  # default: true | required: false
-loop:
-  # Hard cap on iterations to prevent runaway loops
-  max_loops: <integer>  # default: n/a | required: false
-  # Stop early if this many consecutive loops make no progress
-  stagnation_threshold: <integer>  # default: n/a | required: false
-  # Kill the loop after this long regardless of progress
-  timeout_minutes: <integer>  # default: n/a | required: false
-  # Throttle API calls to control cost
-  calls_per_hour: <integer>  # default: n/a | required: false
-  # Quality score at which the task is considered done
-  completion_threshold: <integer>  # default: n/a | required: false
-  # Discard loop state after this many hours of inactivity
-  session_expiration_hours: <integer>  # default: n/a | required: false
-  # Stop if the same error repeats this many times (stuck in a loop)
-  same_error_threshold: <integer>  # default: n/a | required: false
-  # Stop if output quality drops by this amount between iterations
-  output_decline_threshold: <integer>  # default: n/a | required: false
-  # Stop if the agent only runs tests for this many loops without code changes
-  max_consecutive_test_loops: <integer>  # default: n/a | required: false
-  # Pause between iterations (e.g. to avoid rate limits)
-  loop_delay_seconds: <integer>  # default: n/a | required: false
-  # Minimum safety score required before marking a task complete
-  safety_completion_threshold: <integer>  # default: n/a | required: false
-  # Run Claude Code with --dangerously-skip-permissions for fully autonomous loops
-  skip_permissions: <boolean>  # default: n/a | required: false
-  # Script called on loop events (start, complete, error) for custom integrations
-  hooks_file: <string>  # default: n/a | required: false
-  # Extra instructions appended to Claude's system prompt in each loop iteration
-  append_system_prompt: <string>  # default: n/a | required: false
 
 ```
 
@@ -386,26 +357,6 @@ The following tables are auto-generated from the schema struct tags in `internal
 | `forward_ssh` | boolean | `true` | Let git use your host SSH keys for cloning and pushing |
 | `forward_gpg` | boolean | `true` | Let git sign commits using your host GPG keys |
 | `copy_git_config` | boolean | `true` | Sync your host .gitconfig (aliases, user.name, user.email) into the container |
-
-
-### loop
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `max_loops` | integer | — | Hard cap on iterations to prevent runaway loops |
-| `stagnation_threshold` | integer | — | Stop early if this many consecutive loops make no progress |
-| `timeout_minutes` | integer | — | Kill the loop after this long regardless of progress |
-| `calls_per_hour` | integer | — | Throttle API calls to control cost |
-| `completion_threshold` | integer | — | Quality score at which the task is considered done |
-| `session_expiration_hours` | integer | — | Discard loop state after this many hours of inactivity |
-| `same_error_threshold` | integer | — | Stop if the same error repeats this many times (stuck in a loop) |
-| `output_decline_threshold` | integer | — | Stop if output quality drops by this amount between iterations |
-| `max_consecutive_test_loops` | integer | — | Stop if the agent only runs tests for this many loops without code changes |
-| `loop_delay_seconds` | integer | — | Pause between iterations (e.g. to avoid rate limits) |
-| `safety_completion_threshold` | integer | — | Minimum safety score required before marking a task complete |
-| `skip_permissions` | boolean | — | Run Claude Code with --dangerously-skip-permissions for fully autonomous loops |
-| `hooks_file` | string | — | Script called on loop events (start, complete, error) for custom integrations |
-| `append_system_prompt` | string | — | Extra instructions appended to Claude's system prompt in each loop iteration |
 
 
 ## Interactive Editing
@@ -634,6 +585,6 @@ Clawker follows the [XDG Base Directory Specification](https://specifications.fr
 |-----------|-------------|----------|
 | Config | `~/.config/clawker/` | `settings.yaml`, `clawker.yaml` (user-level project overrides) |
 | Data | `~/.local/share/clawker/` | `registry.yaml`, worktree directories, `.clawker-share` |
-| State | `~/.local/state/clawker/` | Log files, PID files, loop sessions, update cache |
+| State | `~/.local/state/clawker/` | Log files, PID files, update cache |
 
 Override with environment variables: `CLAWKER_CONFIG_DIR`, `CLAWKER_DATA_DIR`, `CLAWKER_STATE_DIR`.

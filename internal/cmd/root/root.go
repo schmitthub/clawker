@@ -10,7 +10,6 @@ import (
 	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
 	"github.com/schmitthub/clawker/internal/cmd/image"
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
-	"github.com/schmitthub/clawker/internal/cmd/loop"
 	"github.com/schmitthub/clawker/internal/cmd/monitor"
 	"github.com/schmitthub/clawker/internal/cmd/network"
 	"github.com/schmitthub/clawker/internal/cmd/project"
@@ -68,7 +67,6 @@ Workspace modes:
 	cmd.AddCommand(skill.NewCmdSkill(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
 	cmd.AddCommand(generate.NewCmdGenerate(f, nil))
-	cmd.AddCommand(loop.NewCmdLoop(f))
 
 	// Add management commands
 	cmd.AddCommand(authcmd.NewCmdAuth(f))

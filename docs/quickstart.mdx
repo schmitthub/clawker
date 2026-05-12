@@ -149,20 +149,6 @@ clawker monitor down    # Stop when done
 
 See the [Monitoring](/monitoring) guide for details.
 
-## 7. Autonomous Loops (Experimental)
-
-Run Claude Code in iterative loops with a fresh container per iteration:
-
-```bash
-clawker loop iterate \
-  --prompt "Fix all failing tests and open a PR" \
-  --max-loops 10 \
-  --skip-permissions \
-  --worktree fix/tests:main
-```
-
-A TUI dashboard shows progress, tool calls, costs, and circuit breaker status in real time. See the [Loop Mode](/loops) guide for configuration.
-
 ## Managing Resources
 
 Clawker mirrors Docker CLI patterns but only operates on Clawker-managed resources:

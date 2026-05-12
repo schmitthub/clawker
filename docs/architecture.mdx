@@ -49,12 +49,11 @@ Commands are organized under `internal/cmd/` with subpackages per subcommand:
 | `worktree` | add, list, prune, remove | Git worktree management |
 | `firewall` | status, list, add, remove, reload, up, down, enable, disable, bypass, rotate-ca | Egress firewall control |
 | `monitor` | init, up, down, status | Observability stack (Grafana, Prometheus) |
-| `loop` | iterate, status, tasks, reset | Autonomous agent loops |
 | `settings` | edit | User settings TUI editor |
 
 **Top-level shortcuts**: `init` → `project init`, `build` → `image build`, `run`/`start` → `container run`/`start`, `generate`, `version`
 
-Shared domain logic (container creation, loop orchestration) lives in `shared/` subpackages within each command group — not in library packages.
+Shared domain logic (container creation) lives in `shared/` subpackages within each command group — not in library packages.
 
 ## Package Dependency Graph
 

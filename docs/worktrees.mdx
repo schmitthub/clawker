@@ -11,7 +11,7 @@ Clawker integrates with Git worktrees to let you run multiple agents on separate
 Without worktrees, running two agents on the same project means they share the same working directory and branch. Changes from one agent can conflict with the other. Worktrees solve this by giving each agent its own checkout of the repository on a separate branch.
 
 Common patterns:
-- Run a feature development loop while a review agent works on a different branch
+- Run a feature development agent while a review agent works on a different branch
 - Test multiple approaches to the same problem in parallel
 - Keep the main branch clean while agents experiment on feature branches
 
@@ -30,7 +30,7 @@ clawker worktree add hotfix/login-redirect
 
 The worktree directory is created under `~/.local/share/clawker/worktrees/<repoName>-<projectName>-<sha256(uuid)[:12]>/`. If the branch already exists, it's checked out in the new worktree. If it doesn't exist, it's created from the base ref (default: HEAD).
 
-If the worktree already exists in the registry, the command returns an error. Use `clawker worktree list` to check existing worktrees, or use the `--worktree` flag on container/loop commands for idempotent "get or create" behavior.
+If the worktree already exists in the registry, the command returns an error. Use `clawker worktree list` to check existing worktrees, or use the `--worktree` flag on container commands for idempotent "get or create" behavior.
 
 ## Listing Worktrees
 
@@ -110,7 +110,7 @@ A worktree is considered prunable when any of: the directory is missing, git met
 
 ## Automatic Worktree Creation via `--worktree`
 
-Container and loop commands accept a `--worktree` flag that automatically creates or reuses a worktree:
+Container commands accept a `--worktree` flag that automatically creates or reuses a worktree:
 
 ```bash
 # Container commands
@@ -118,15 +118,8 @@ clawker run --worktree feature/auth @
 clawker container run --worktree feature/cache @
 clawker container create --worktree hotfix/login @
 
-# Loop commands
-clawker loop iterate --prompt "Build auth system" --worktree feature/auth
-clawker loop tasks --file tasks.md --worktree feature/tasks
-
 # Create branch from a specific base
 clawker run --worktree hotfix/login:main @
-
-# Auto-generate a branch name (loop only)
-clawker loop iterate --prompt "Experiment" --worktree ""
 ```
 
 The flag syntax is `branch` or `branch:base`. If the branch doesn't exist, it's created from the base ref (default: HEAD). If it already exists, it's checked out in the worktree.
@@ -146,7 +139,7 @@ clawker run --worktree feature/auth @
 If the worktree exists in the registry but is unhealthy (directory deleted, `.git` file missing, git metadata gone, or branch deleted), the command fails with a message suggesting `clawker worktree prune` to clean up the stale entry first. Only worktrees with a `healthy` status are accepted for reuse.
 
 <Note>
-This differs from `clawker worktree add`, which is a strict creation command — it errors if the worktree already exists. The `--worktree` flag on container/loop commands is designed for repeated use in workflows where you want "get or create" semantics.
+This differs from `clawker worktree add`, which is a strict creation command — it errors if the worktree already exists. The `--worktree` flag on container commands is designed for repeated use in workflows where you want "get or create" semantics.
 </Note>
 
 ### Path mirroring
@@ -155,23 +148,14 @@ When `--worktree` is used, the worktree directory is mounted into the container 
 
 See [Container Internals](/container-internals) for the full explanation of path mirroring and session persistence.
 
-### Loop conflict detection
-
-If a loop is already running in the project root, Clawker detects the conflict and offers to create a worktree automatically:
-
-- **Interactive mode**: Prompts with three choices -- use a worktree, proceed anyway, or abort
-- **Non-interactive mode**: Warns and suggests `--worktree`
-
 ## Example: Parallel Feature Development
 
 ```bash
 # Terminal 1: Feature A on its own branch
-clawker loop iterate --prompt "Implement user authentication" \
-  --worktree feature/auth
+clawker run --worktree feature/auth @
 
 # Terminal 2: Feature B in parallel
-clawker loop iterate --prompt "Add API rate limiting" \
-  --worktree feature/rate-limit
+clawker run --worktree feature/rate-limit @
 
 # Terminal 3: Check on both
 clawker worktree list

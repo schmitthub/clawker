@@ -39,8 +39,6 @@
   - [Working with Worktrees](#working-with-worktrees)
   - [Managing Resources](#managing-resources)
   - [Monitoring](#monitoring)
-  - [Autonomous Loops (Experimental)](#autonomous-loops-experimental)
-    - [A TUI will open showing you the agent's progress, decisions, tool calls, and more in real time](#a-tui-will-open-showing-you-the-agents-progress-decisions-tool-calls-and-more-in-real-time)
   - [Roadmap / Known Issues](#roadmap--known-issues)
   - [Contributing](#contributing)
   - [License](#license)
@@ -74,7 +72,6 @@ When I began experimenting with Claude Code to keep up with the Agentic AI trend
 - **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees created by clawker, uses `go-git` under the hood to avoid relying on the host git binary
 - **Optional monitoring stack** with Prometheus, Loki, and Grafana to monitor agents and containers; every container has the environment variables needed to communicate with it
 - **Interactive configuration editing**: TUI-based editors for project config (`clawker project edit`) and user settings (`clawker settings edit`) with tabbed field browsing, per-field type-appropriate editors (text, boolean, list, multiline), layer-aware provenance display showing which file each value comes from, and per-field save targeting to choose which config layer to write to
-- **Looping mode (experimental)**: pass a prompt, file, or task list to Clawker and it runs an autonomous loop with a fresh container each iteration with stagnation detection, circuit breaker protection, max loops, tracking container agent output, progress, costs, token usage, etc.
 
 ## Installation
 
@@ -137,7 +134,7 @@ The `--rm` flag removes the container when you exit, so it's perfect for quick t
 If you want persistence, omit `--rm` and start the same container again later with `clawker start -a -i --agent example`.
 You can also keep it running by detaching (`Ctrl+P`, `Ctrl+Q`) and reattach later with `clawker attach --agent example` to the same terminal session.
 
-If you want to learn more about image customization, worktree support, loops, monitoring, and other bells and whistles, keep reading for the walkthrough below.
+If you want to learn more about image customization, worktree support, monitoring, and other bells and whistles, keep reading for the walkthrough below.
 
 ## Walkthrough
 
@@ -194,27 +191,6 @@ When I'm done I easily remove the worktree
 ```bash
 clawker worktree remove a/example --delete-branch  # this deletes the worktree and the branch since it was only for this worktree, if you want to keep the branch just omit the flag. Delete won't work if the branch isn't fully merged
 ```
-
-If I want to iterate over a prompt with a fresh containerized claude code each time (aka "ralph wiggum")
-
-```bash
-# Start a new autonomous loop; TUI tracks output, tool use, costs etc via Agent SDK streaming events
-LOOP_PROMPT=$(cat <<'EOF'
-Write a story in @docs/sadboy.md about a sad boy who struggles with context window 
-management, token costs, and genai hallucinations.
-
-If the file doesn't exist, create it with:
-- Title and table of contents with chapters "The Struggle" and "A Sad Conclusion"
-- Author section (make up an author name for yourself and write a short bio about your tragic life inspired by artists like Edgar Allen Poe, Van Gogh, etc)
-- Two opening paragraphs to start the story
-
-If the file exists, add two new chapter paragraphs that continue the story and update the sad conclusion.
-EOF
-)
-clawker loop iterate --prompt "$LOOP_PROMPT" --max-loops 5 --skip-permissions
-```
-> Note: I've decided to commit ["The Sorrows of Token Boy"](docs/sadboy.md) so that the world can know his story. But be warned, you will weep uncontrollably.
->> "And each morning, the machine would respond with supreme confidence about things that had never happened, places that did not exist, and APIs that were fabricated from whole cloth. "The fs.readFileSync method accepts a feelings parameter," it once told him, with the calm authority of a professor." - AI Author: Cornelius Vex Holloway 
 
 If I plan on having long sessions with many agents ripping through features and fixes and want a high level overview of my coding armada I start the monitoring stack (need to do this before starting the containers, claude code doesn't retry if it can't establish a connection)
 
@@ -373,25 +349,9 @@ clawker monitor down
 <img src="docs/assets/monitor-firewall.png" alt="Monitor Firewall" width="600">
 
 
-## Autonomous Loops (Experimental)
-
-Loop runs Claude Code in autonomous loops with stagnation detection and circuit breaker protection:
-
-```bash
-# Start a new autonomous loop; this prints a generated agent name like "loop-abc123"
-clawker loop iterate --prompt "write a small poem to a file @test.txt" --max-loops 3 --skip-permissions
-```
-
-### A TUI will open showing you the agent's progress, decisions, tool calls, and more in real time
-
-<img src="docs/assets/tui-dashboard.png" alt="TUI Dashboard" width="600">
-<img src="docs/assets/sadboy.png" alt="TUI Dashboard" width="600">
-
-See `clawker loop --help` for all options and configuration.
-
 ## Roadmap / Known Issues
 
-- Currently, clawker containers use stdout/stderr as a poor man's event transport for monitoring and looping mode. A proper control plane with container agent daemon for managing container lifecycles, configs, and events via gRPC is on the roadmap. This will keep container stdout/err sacred and allow for more robust features, better monitoring, better loop control, peering communications, and a more seamless experience overall
+- Currently, clawker containers use stdout/stderr as a poor man's event transport for monitoring. A proper control plane with container agent daemon for managing container lifecycles, configs, and events via gRPC is on the roadmap. This will keep container stdout/err sacred and allow for more robust features, better monitoring, peering communications, and a more seamless experience overall
 - **Firewall: one domain per TCP/SSH port.** Raw TCP/SSH has no domain metadata (unlike TLS and HTTP where Envoy does full HTTP inspection), so for a given TCP/SSH port eBPF can only route all traffic to the single whitelisted destination configured for that port. Two SSH hosts on port 22 isn't supported yet — first rule wins. Deferred for after the control plane work ([#235](https://github.com/schmitthub/clawker/issues/235))
 - Linux might have a bug involving accessing the keychain for creds, I haven't focused on linux extensively yet
 - The TUI/UI formatting is mainly a polished turd currently, I'm aware of this. It's functional, but it'll be the last thing I really care about 

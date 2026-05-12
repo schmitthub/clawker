@@ -91,7 +91,6 @@
           "credentials",
           "custom-images",
           "container-internals",
-          "loops",
           "worktrees",
           "monitoring",
           "docker-hygiene"
@@ -195,16 +194,6 @@
               "cli-reference/clawker_worktree_list",
               "cli-reference/clawker_worktree_prune",
               "cli-reference/clawker_worktree_remove"
-            ]
-          },
-          {
-            "group": "Loop",
-            "pages": [
-              "cli-reference/clawker_loop",
-              "cli-reference/clawker_loop_iterate",
-              "cli-reference/clawker_loop_tasks",
-              "cli-reference/clawker_loop_status",
-              "cli-reference/clawker_loop_reset"
             ]
           },
           {
